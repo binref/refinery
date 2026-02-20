@@ -23,7 +23,7 @@ class csv(Unit):
     ):
         super().__init__(quote=quote, delim=delim)
 
-    def json_to_csv(self, table: list | dict):
+    def _json_to_csv(self, table: list | dict):
         quote = self.args.quote.decode(self.codec)
         delim = self.args.delim.decode(self.codec)
 
@@ -74,7 +74,7 @@ class csv(Unit):
             table: list[dict[str, Any]] = json.loads(data)
         except Exception:
             table: list[dict[str, Any]] = [json.loads(line) for line in data.splitlines()]
-        return self.json_to_csv(table)
+        return self._json_to_csv(table)
 
     def process(self, data):
         quote = self.args.quote.decode(self.codec)

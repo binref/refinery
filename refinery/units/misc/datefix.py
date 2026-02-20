@@ -5,7 +5,7 @@ import re
 from datetime import datetime, timedelta
 
 from refinery.lib.decorators import unicoded
-from refinery.lib.dt import date_from_timestamp
+from refinery.lib.dt import date_from_timestamp, dostime
 from refinery.lib.types import Param
 from refinery.units import Arg, Unit
 
@@ -74,23 +74,6 @@ class datefix(Unit):
     ):
         super().__init__(format=format, dos=dos)
 
-    @staticmethod
-    def dostime(stamp: int) -> datetime:
-        """
-        Parses a given DOS timestamp into a datetime object.
-        """
-        d, t = stamp >> 16, stamp & 0xFFFF
-        s = (t & 0x1F) << 1
-
-        return datetime(
-            year   = ((d & 0xFE00) >> 0x9) + 1980,  # noqa
-            month  = ((d & 0x01E0) >> 0x5),         # noqa
-            day    = ((d & 0x001F) >> 0x0),         # noqa
-            hour   = ((t & 0xF800) >> 0xB),         # noqa
-            minute = ((t & 0x07E0) >> 0x5),         # noqa
-            second = 59 if s == 60 else s,          # noqa
-        )
-
     def _format(self, dt: datetime) -> str:
         return dt.strftime(self.args.format)
 
@@ -141,7 +124,7 @@ class datefix(Unit):
                 time_stamp //= 1000
                 data = data[:-3]
             if self.args.dos:
-                return self._format(self.dostime(time_stamp))
+                return self._format(dostime(time_stamp))
             else:
                 return self._format(date_from_timestamp(time_stamp))
 

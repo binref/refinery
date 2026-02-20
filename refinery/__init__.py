@@ -41,7 +41,7 @@ import pickle
 
 from datetime import datetime
 from threading import RLock
-from typing import TYPE_CHECKING, Iterable, TypeVar, cast
+from typing import TYPE_CHECKING, Iterable, TypeVar, cast as typecast
 
 from refinery.lib import resources
 from refinery.units import Arg, Unit
@@ -110,7 +110,7 @@ class __unit_loader__:
 
     def save(self):
         try:
-            with cast('Path', self.path).open('wb') as out:
+            with typecast('Path', self.path).open('wb') as out:
                 pickle.dump({'units': self.units, 'version': __version__}, out)
         except Exception:
             pass

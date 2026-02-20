@@ -947,7 +947,7 @@ class MissingFunction:
 
     @classmethod
     def Wrap(cls, _: _F) -> _F:
-        return cast('_F', cls())
+        return cast('_F', wraps(_)(cls()))
 
 
 class Executable(ABCMeta):

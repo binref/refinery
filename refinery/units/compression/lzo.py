@@ -151,7 +151,7 @@ class lzo(Unit):
     certain outputs produced by the lzop command-line tool when high compression ratio is
     favoured (i.e. when the -9 switch is used).
     """
-    def decompress_stream(self, data: buf, LZOv1: bool = False) -> bytearray:
+    def _decompress_stream(self, data: buf, LZOv1: bool = False) -> bytearray:
         """
         An implementation of LZO decompression. We use the article
         "[LZO stream format as understood by Linux's LZO decompressor](https://www.kernel.org/doc/html/latest/staging/lzo.html)"
@@ -265,11 +265,11 @@ class lzo(Unit):
             lzo = LZO.Parse(data)
         except LZOError:
             self.log_info('Not an LZO archive, processing raw stream.')
-            return self.decompress_stream(data)
+            return self._decompress_stream(data)
         with MemoryFile() as output:
             for k, chunk in enumerate(lzo, 1):
                 self.log_debug(F'decompressing chunk {k}')
-                output.write(self.decompress_stream(chunk.data))
+                output.write(self._decompress_stream(chunk.data))
             return self.labelled(
                 output.getvalue(),
                 path=lzo.name,

@@ -19,13 +19,13 @@ from Cryptodome.Protocol.KDF import PBKDF2
 from Cryptodome.Util import Counter
 
 from refinery.lib.decompression import parse_lzma_properties
+from refinery.lib.dt import dostime
 from refinery.lib.fast import zipcrypto
 from refinery.lib.id import buffer_offset
 from refinery.lib.intervals import IntIntervalUnion
 from refinery.lib.shared import pyppmd, pyzstd
 from refinery.lib.structures import FlagAccessMixin, Struct, StructReader, StructReaderBits
 from refinery.lib.types import buf
-from refinery.units.misc.datefix import datefix
 
 if TYPE_CHECKING:
     from typing import Self
@@ -470,7 +470,7 @@ class ZipFileRecord(Struct):
         except ValueError:
             self.method = None
         try:
-            self.date = datefix.dostime(reader.u32(peek=True))
+            self.date = dostime(reader.u32(peek=True))
         except Exception:
             self.date = None
         self.mtime = reader.u16()
@@ -948,7 +948,7 @@ class ZipDirEntry(Struct):
         except ValueError:
             self.compression = None
         try:
-            self.date = datefix.dostime(reader.u32(peek=True))
+            self.date = dostime(reader.u32(peek=True))
         except Exception:
             self.date = None
         self.mtime = reader.u16()

@@ -580,8 +580,8 @@ class pemeta(JSONTableUnit):
             rsrc: lief.PE.ResourceDirectory = pe.resources
             if res_timestamp := rsrc.time_date_stamp:
                 with suppress(ValueError):
-                    from refinery.units.misc.datefix import datefix
-                    dos = datefix.dostime(res_timestamp)
+                    from refinery.lib.dt import dostime
+                    dos = dostime(res_timestamp)
                     info.update(Delphi=dos)
                     info.update(RsrcTS=dt(res_timestamp))
 

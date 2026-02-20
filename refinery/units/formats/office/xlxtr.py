@@ -146,7 +146,7 @@ class Workbook:
         xlrd = 2
         pyxlsb2 = 3
 
-    def __init__(self, data, unit: _ExcelUnit):
+    def __init__(self, data, unit: ExcelUnit):
         def openpyxl():
             return unit._openpyxl.load_workbook(MemoryFile(data), read_only=True)
 
@@ -244,7 +244,7 @@ class Workbook:
         return data
 
 
-class _ExcelUnit(Unit, abstract=True):
+class ExcelUnit(Unit, abstract=True):
 
     @Unit.Requires('xlrd2', ['formats', 'office', 'extended'])
     def _xlrd():
@@ -268,14 +268,15 @@ class _ExcelUnit(Unit, abstract=True):
             def write(self, string: str):
                 string = string.strip()
                 if not string or '\n' in string:
-                    return
+                    return 0
                 if re.search(R'^[A-Z]+:', string) or '***' in string:
                     self.unit.log_debug(string)
+                return len(string)
 
         return logger()
 
 
-class xlxtr(_ExcelUnit):
+class xlxtr(ExcelUnit):
     """
     Extract data from Microsoft Excel documents, both Legacy and new XML type documents. A sheet
     reference is of the form `B1` or `1.2`, both specifying the first cell of the second column.

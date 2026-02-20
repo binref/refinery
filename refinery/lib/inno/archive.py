@@ -2355,8 +2355,8 @@ class SetupDataEntry(InnoStruct):
             self.Checksum = bytes(reader.read(4))
 
         if version.bits == 16:
-            from refinery.units.misc.datefix import datefix
-            ts = datefix.dostime(reader.u32())
+            from refinery.lib.dt import dostime
+            ts = dostime(reader.u32())
         else:
             ts = reader.u64() - _FILE_TIME_1970_01_01
             ts = datetime.fromtimestamp(ts / 10000000, timezone.utc)
