@@ -145,39 +145,50 @@ class ZipCrypto(Struct):
         self.state = (0x12345678, 0x23456789, 0x34567890)
 
     def _decrypt(self, password: Iterable[int], data: buf):
-        key0, key1, key2 = self.state
-        crc32table = self.CRC32Table
-
-        def update_keys(char: int):
-            nonlocal key0, key1, key2
-            key0 = (key0 >> 8) ^ crc32table[(key0 ^ char) & 0xFF]
-            key1 = (key1 + (key0 & 0xFF)) & 0xFFFFFFFF
-            key1 = (key1 * 134775813 + 1) & 0xFFFFFFFF
-            char = (key1 >> 24)
-            key2 = (key2 >> 8) ^ crc32table[(key2 ^ char) & 0xFF]
+        X, Y, Z = self.state
+        T = self.CRC32Table
+        output = bytearray()
+        append = output.append
 
         for c in password:
-            update_keys(c)
+            # --------------- UPDATE KEYS ---------------
+            X = (X >> 8) ^ T[(X ^ c) & 0xFF]
+            Y += X & 0xFF
+            Y &= 0xFFFFFFFF
+            Y *= 134775813
+            Y += 1
+            Y &= 0xFFFFFFFF
+            Z = (Z >> 8) ^ T[(Z ^ (Y >> 24)) & 0xFF]
+            # --------------- UPDATE KEYS ---------------
 
         for c in data:
-            k = key2 | 2
+            k = Z | 2
             c ^= ((k * (k ^ 1)) >> 8) & 0xFF
-            update_keys(c)
-            yield c
+            # --------------- UPDATE KEYS ---------------
+            X = (X >> 8) ^ T[(X ^ c) & 0xFF]
+            Y += X & 0xFF
+            Y &= 0xFFFFFFFF
+            Y *= 134775813
+            Y += 1
+            Y &= 0xFFFFFFFF
+            Z = (Z >> 8) ^ T[(Z ^ (Y >> 24)) & 0xFF]
+            # --------------- UPDATE KEYS ---------------
+            append(c)
 
-        self.state = key0, key1, key2
+        self.state = X, Y, Z
+        return output
 
     def checkpwd(self, password: str | None):
         if password is None:
             return False
         self._restart()
-        head = bytes(self._decrypt(password.encode('latin1'), self.header))
+        head = self._decrypt(password.encode('latin1'), self.header)
         return head[11] == (self.crc >> 24) & 0xFF
 
     def decrypt(self, password: str, data: buf):
         if not self.checkpwd(password):
             raise InvalidPassword
-        return bytearray(self._decrypt((), data))
+        return self._decrypt((), data)
 
 
 class ZipInternalFileAttributes(FlagAccessMixin, enum.IntFlag):
