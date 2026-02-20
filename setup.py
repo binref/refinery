@@ -79,8 +79,15 @@ def get_config():
     import refinery
     import refinery.lib.shared
 
+    import importlib
+    import pkgutil
+
     with refinery.__unit_loader__ as ldr:
         ldr.reload()
+
+    for _, name, _ in pkgutil.iter_modules(refinery.lib.shared.__path__):
+        # populate all shared dependencies
+        importlib.import_module(F'refinery.lib.shared.{name}')
 
     def get_setup_extras(requirements: list[str] | None = None):
         all_optional: set[str] = set()
