@@ -22,10 +22,10 @@ class defang(Unit):
     ]
 
     _PROTOCOL_ESCAPES = {
-        B'http': B'hxxp',
+        B'http' : B'hxxp',
         B'https': B'hxxps',
-        B'ftp': B'fxp',
-        B'ftps': B'fxps',
+        B'ftp'  : B'fxp',
+        B'ftps' : B'fxps',
     }
 
     def __init__(
@@ -50,11 +50,11 @@ class defang(Unit):
 
     def reverse(self, data: bytes | bytearray):
         def refang(hostname: re.Match[bytes]):
-            return hostname[0].replace(B'[.]', B'.')
+            return hostname[0].replace(B'[.]', B'.').replace(B'(.)', B'.')
         data = defanged.hostname.value.bin.sub(refang, data)
         data = data.replace(B'[:]//', B'://')
         data = data.replace(B'[://]', B'://')
-        data = re.sub(B'h.{3}?(s?)://', B'http\\1://', data)
+        data = re.sub(B'h..p(s?)://', B'http\\1://', data)
         data = re.sub(B'fxp(s?)://', B'ftp\\1://', data)
         return data
 

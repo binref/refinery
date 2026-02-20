@@ -263,8 +263,8 @@ _format_serrated_domain = (
     R'\w[a-zA-Z0-9\-\_]{{0,62}}\.{tlds}'
 )
 _format_defanged_domain = (
-    R'(?:\w[a-zA-Z0-9\-\_]{{0,62}}?(?:\[\.\]|\.)){repeat}'
-    R'\w[a-zA-Z0-9\-\_]{{0,62}}(?:\[\.\]|\.){tlds}'
+    R'(?:\w[a-zA-Z0-9\-\_]{{0,62}}?(?:\[\.\]|\(.\)|\.)){repeat}'
+    R'\w[a-zA-Z0-9\-\_]{{0,62}}(?:\[\.\]|\(.\)|\.){tlds}'
 )
 
 _pattern_utf8 = R'(?:[\x00-\x7F]|[\xC0-\xDF][\x80-\xBF]|[\xE0-\xEF][\x80-\xBF]{2}|[\xF0-\xF7][\x80-\xBF]{3})+'
