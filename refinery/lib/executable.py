@@ -254,6 +254,14 @@ class Symbol(NamedTuple):
             return F'sym_{self.address:08X}'
 
 
+class Sub(NamedTuple):
+    chunks: list[Range]
+
+    @property
+    def address(self):
+        return self.chunks[0].lower
+
+
 class Segment(NamedTuple):
     """
     An abstract representation of a segment inside an `refinery.lib.executable.Executable`.
@@ -325,6 +333,28 @@ class Executable(ABC):
         self._data = data
         self._head = head
         self._base = base
+
+    def subroutines(self) -> Generator[Sub, None, None]:
+        from refinery.lib.intervals import IntIntervalUnion
+        from refinery.lib.shared.smda import smda
+        from refinery.lib.tools import NoLogging
+        with NoLogging():
+            cfg = smda.Disassembler.SmdaConfig()
+            setattr(cfg, 'CALCULATE_SCC', False)
+            setattr(cfg, 'CALCULATE_HASHING', False)
+            setattr(cfg, 'CALCULATE_NESTING', False)
+            setattr(cfg, 'TIMEOUT', 600)
+            dsm = smda.Disassembler.Disassembler(cfg)
+            if not isinstance((_input := self._data), bytes):
+                _input = bytes(_input)
+            graph = dsm.disassembleUnmappedBuffer(_input)
+        for fn in graph.getFunctions():
+            blocks = IntIntervalUnion()
+            for block in fn.getBlocks():
+                assert isinstance(block.offset, int)
+                assert isinstance(block.length, int)
+                blocks.addi(block.offset, block.length)
+            yield Sub([Range(start, start + size) for start, size in blocks])
 
     @property
     def head(self):
