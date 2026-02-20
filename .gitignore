@@ -1,5 +1,7 @@
 __pycache__
 /refinery/data/units.pkl
+/refinery/**/*.c
+/refinery/**/*.pyd
 /venv*
 /temp*
 /html

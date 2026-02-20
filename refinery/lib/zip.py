@@ -19,6 +19,7 @@ from Cryptodome.Protocol.KDF import PBKDF2
 from Cryptodome.Util import Counter
 
 from refinery.lib.decompression import parse_lzma_properties
+from refinery.lib.fast import zipcrypto
 from refinery.lib.id import buffer_offset
 from refinery.lib.intervals import IntIntervalUnion
 from refinery.lib.shared import pyppmd, pyzstd
@@ -27,7 +28,7 @@ from refinery.lib.types import buf
 from refinery.units.misc.datefix import datefix
 
 if TYPE_CHECKING:
-    from typing import Iterable, Self
+    from typing import Self
 
 
 class PasswordRequired(Exception):
@@ -144,39 +145,9 @@ class ZipCrypto(Struct):
     def _restart(self):
         self.state = (0x12345678, 0x23456789, 0x34567890)
 
-    def _decrypt(self, password: Iterable[int], data: buf):
-        X, Y, Z = self.state
-        T = self.CRC32Table
-        output = bytearray()
-        append = output.append
-
-        for c in password:
-            # --------------- UPDATE KEYS ---------------
-            X = (X >> 8) ^ T[(X ^ c) & 0xFF]
-            Y += X & 0xFF
-            Y &= 0xFFFFFFFF
-            Y *= 134775813
-            Y += 1
-            Y &= 0xFFFFFFFF
-            Z = (Z >> 8) ^ T[(Z ^ (Y >> 24)) & 0xFF]
-            # --------------- UPDATE KEYS ---------------
-
-        for c in data:
-            k = Z | 2
-            c ^= ((k * (k ^ 1)) >> 8) & 0xFF
-            # --------------- UPDATE KEYS ---------------
-            X = (X >> 8) ^ T[(X ^ c) & 0xFF]
-            Y += X & 0xFF
-            Y &= 0xFFFFFFFF
-            Y *= 134775813
-            Y += 1
-            Y &= 0xFFFFFFFF
-            Z = (Z >> 8) ^ T[(Z ^ (Y >> 24)) & 0xFF]
-            # --------------- UPDATE KEYS ---------------
-            append(c)
-
-        self.state = X, Y, Z
-        return output
+    def _decrypt(self, password: bytes, data: buf):
+        result, *self.state = zipcrypto.decrypt(password, data, *self.state)
+        return result
 
     def checkpwd(self, password: str | None):
         if password is None:
@@ -188,7 +159,7 @@ class ZipCrypto(Struct):
     def decrypt(self, password: str, data: buf):
         if not self.checkpwd(password):
             raise InvalidPassword
-        return self._decrypt((), data)
+        return self._decrypt(b'', data)
 
 
 class ZipInternalFileAttributes(FlagAccessMixin, enum.IntFlag):

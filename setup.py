@@ -8,6 +8,8 @@ import pathlib
 import sys
 import toml
 
+from setuptools import Extension
+
 __prefix__ = os.getenv('REFINERY_PREFIX') or ''
 __minver__ = '3.8'
 __github__ = 'https://github.com/binref/refinery/'
@@ -154,6 +156,18 @@ def get_config():
     extras = get_setup_extras(requirements)
     config = get_setup_common()
 
+    extensions = [
+        Extension(
+            'refinery.lib.fast.zipcrypto', ['refinery/lib/fast/zipcrypto.pyx'],
+        )
+    ]
+
+    try:
+        import Cython.Build as cy
+        ext = cy.cythonize(extensions)
+    except Exception:
+        ext = []
+
     config.update(
         name=refinery.__distribution__,
         packages=setuptools.find_packages(include=('refinery*',)),
@@ -162,6 +176,7 @@ def get_config():
         include_package_data=True,
         entry_points={'console_scripts': console_scripts},
         cmdclass={'deploy': DeployCommand},
+        ext_modules=ext,
     )
 
     return config

@@ -1,5 +1,6 @@
 [build-system]
 requires = [
+    "cython",
     "colorama",
     "defusedxml",
     "lief>=0.17.0",
