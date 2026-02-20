@@ -13,11 +13,6 @@ import zlib
 from datetime import datetime
 from typing import TYPE_CHECKING, NamedTuple
 
-from Cryptodome.Cipher import AES, ARC2, ARC4, DES, DES3, Blowfish
-from Cryptodome.Hash import HMAC, SHA1
-from Cryptodome.Protocol.KDF import PBKDF2
-from Cryptodome.Util import Counter
-
 from refinery.lib.decompression import parse_lzma_properties
 from refinery.lib.dt import dostime
 from refinery.lib.fast import zipcrypto
@@ -291,6 +286,10 @@ class ZipEncryptionHeader(Struct):
         try:
             derived = self._derivations[password]
         except KeyError:
+            from Cryptodome.Cipher import AES, ARC2, ARC4, DES, DES3, Blowfish
+            from Cryptodome.Hash import SHA1
+            from Cryptodome.Protocol.KDF import PBKDF2
+
             algorithm = self.algorithm
             key_size = 16
 
@@ -373,6 +372,7 @@ class ZipEncryptionHeader(Struct):
             return True
 
     def decrypt(self, password: str, data: bytes):
+        from Cryptodome.Hash import HMAC, SHA1
         cipher, hmk = self.derive_key(password)
 
         if len(self.validation) > 2:
@@ -812,6 +812,8 @@ class AExCrypto(Struct):
         self.keylen = (ae.strength + 1) << 3
 
     def _derive(self, password: str, salt: buf):
+        from Cryptodome.Hash import SHA1
+        from Cryptodome.Protocol.KDF import PBKDF2
         ks = self.keylen
         dk = ks + 2
         if self.version < 3:
@@ -830,6 +832,9 @@ class AExCrypto(Struct):
         return dp == self.pvv
 
     def decrypt(self, password: str, data: buf):
+        from Cryptodome.Cipher import AES
+        from Cryptodome.Hash import HMAC, SHA1
+        from Cryptodome.Util import Counter
         dk, dm, dp = self._derive(password, self.salt)
         if dp != self.pvv:
             raise InvalidPassword
