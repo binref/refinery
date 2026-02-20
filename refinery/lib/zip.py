@@ -502,8 +502,10 @@ class ZipFileRecord(Struct):
                 self.csize = z64.csize
                 is64bit = True
             elif ae := ZipExtAES.TryParse(x):
-                if self.method != ZipCompressionMethod.AExENCRYPTION:
-                    raise ValueError(F'AES extension found, but compression method was {self.method.name}.')
+                if (m := self.method) != ZipCompressionMethod.AExENCRYPTION:
+                    if m is not None:
+                        m = m.name
+                    raise ValueError(F'AES extension found, but compression method was {m}.')
                 self.ae = ae
                 self.method = ae.method
             elif up := ZipExtUnicodePath.TryParse(x):
