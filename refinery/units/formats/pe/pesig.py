@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import struct
 
-from refinery.lib import lief
 from refinery.units import RefineryPartialResult, Unit
 
 
@@ -12,6 +11,7 @@ class pesig(Unit):
     i.e. the digital signatures in DER format.
     """
     def process(self, data: bytearray):
+        from refinery.lib import lief
         view = memoryview(data)
         pe = lief.load_pe_fast(view)
         security = pe.data_directory(lief.PE.DataDirectory.TYPES.CERTIFICATE_TABLE)

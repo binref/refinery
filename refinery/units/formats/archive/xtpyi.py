@@ -15,7 +15,6 @@ from typing import TYPE_CHECKING, Callable, cast
 
 from Cryptodome.Cipher import AES
 
-from refinery.lib import lief
 from refinery.lib.id import is_likely_pe
 from refinery.lib.py import decompile_buffer, version2tuple
 from refinery.lib.structures import StreamDetour, Struct, StructReader
@@ -406,6 +405,7 @@ class xtpyi(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
     def _search_pyi_start(self, data: memoryview):
         if not is_likely_pe(data):
             return None
+        from refinery.lib import lief
         pe = lief.load_pe_fast(data)
         overlay = get_pe_size(pe, certificate=False)
         size = len(data)

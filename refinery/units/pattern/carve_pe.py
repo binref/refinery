@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from struct import unpack
 
-from refinery.lib import lief
 from refinery.lib.mime import FileMagicInfo as magic
 from refinery.lib.types import Param
 from refinery.units.formats import Arg, PathExtractorUnit, UnpackResult
@@ -35,6 +34,8 @@ class carve_pe(PathExtractorUnit):
         )
 
     def unpack(self, data):
+        from refinery.lib import lief
+
         cursor = 0
         mv = memoryview(data)
 

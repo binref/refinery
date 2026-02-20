@@ -3,14 +3,18 @@ A package containing Portable Executable (PE) file related units.
 """
 from __future__ import annotations
 
-from refinery.lib import lief
+from typing import TYPE_CHECKING
+
 from refinery.lib.tools import NoLoggingProxy
 from refinery.lib.types import Param, buf
 from refinery.units import Arg, Unit
 
+if TYPE_CHECKING:
+    from refinery.lib.lief import PE
+
 
 def get_pe_size(
-    pe: buf | lief.PE.Binary,
+    pe: buf | PE.Binary,
     overlay=True,
     sections=True,
     directories=True,
@@ -21,6 +25,8 @@ def get_pe_size(
     This fuction determines the size of a PE file, optionally taking into account the PE overlay
     computation, section information, data directory information, and certificate entries.
     """
+    from refinery.lib import lief
+
     if not isinstance(pe, (NoLoggingProxy, lief.PE.Binary)):
         pe = lief.load_pe_fast(pe)
 

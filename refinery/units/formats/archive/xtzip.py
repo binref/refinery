@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import codecs
 
-from refinery.lib import lief
 from refinery.lib.id import buffer_offset, is_likely_pe
 from refinery.lib.types import buf
 from refinery.lib.zip import InvalidChecksum, InvalidPassword, PasswordRequired, Zip, ZipDirEntry
@@ -87,6 +86,7 @@ class xtzip(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
         memory = memoryview(data)
         if 0 <= buffer_offset(memory[-0x400:], ZipDirEntry.Signature):
             return True
+        from refinery.lib import lief
         pe = lief.load_pe_fast(data)
         offset = get_pe_size(pe)
         if 0 <= buffer_offset(memory[offset:], B'PK\x03\x04') < 0x1000:
