@@ -6,6 +6,7 @@ cimport cython
 
 from libc.stdint cimport uint8_t, uint32_t, uint64_t
 
+
 cdef uint32_t CRC32_TABLE[256]
 
 cdef void _init_crc32_table():
