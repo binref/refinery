@@ -190,7 +190,7 @@ class xtmsi(xtdoc):
     def unpack(self, data: buf):
         streams = {
             result.path: result
-            for result in super().unpack(self.get_msi_from_overlay(data))
+            for result in super().unpack(self._get_msi_from_overlay(data))
         }
 
         def stream(name: str):
@@ -434,7 +434,7 @@ class xtmsi(xtdoc):
             yield streams[path]
 
     @classmethod
-    def get_msi_from_overlay(cls, data: buf) -> buf:
+    def _get_msi_from_overlay(cls, data: buf) -> buf:
         if is_likely_pe(data):
             from refinery.units.formats.pe import get_pe_size
             view = memoryview(data)

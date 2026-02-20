@@ -12,7 +12,7 @@ class xt(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
     @classmethod
     def handles(cls, data) -> bool | None:
         out = False
-        for engine in cls.handlers():
+        for engine in cls._handlers():
             engine_verdict = engine.handles(data)
             if engine_verdict is True:
                 return True
@@ -21,7 +21,7 @@ class xt(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
         return out
 
     @staticmethod
-    def handlers():
+    def _handlers():
         """
         Returns all archive handlers supported by the unit.
         """
@@ -135,7 +135,7 @@ class xt(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
 
         extracted = 0
 
-        for handler in self.handlers():
+        for handler in self._handlers():
             self.CustomPathSeparator = handler.CustomPathSeparator
             self.CustomJoinBehaviour = handler.CustomJoinBehaviour
             it = unpacker(handler, fallback=False)

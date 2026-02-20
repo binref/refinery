@@ -107,7 +107,7 @@ class xtsim(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
 
     def unpack(self, data):
         mem = memoryview(data)
-        sim = self.get_offsets(data)
+        sim = self._get_offsets(data)
 
         if sim is None:
             return B''
@@ -268,7 +268,7 @@ class xtsim(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
         check_empty_reader(content, 'content')
 
     @classmethod
-    def get_offsets(cls, data: bytes | bytearray) -> SIMOffsets | None:
+    def _get_offsets(cls, data: bytes | bytearray) -> SIMOffsets | None:
         if len(data) < 0x1000:
             return None
 
@@ -315,4 +315,4 @@ class xtsim(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
     @classmethod
     def handles(cls, data) -> bool | None:
         if isinstance(data, (bytes, bytearray)):
-            return cls.get_offsets(data) is not None
+            return cls._get_offsets(data) is not None
