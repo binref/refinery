@@ -3,13 +3,15 @@ from refinery.lib.shared import dependency
 
 @dependency('xdis', ['arc', 'python', 'extended'])
 def xdis():
+    import sys
+
     import xdis
     import xdis.load
     import xdis.magics
     import xdis.marsh
     import xdis.op_imports
     import xdis.version_info
-    import sys
+
     A, B, C, *_ = sys.version_info
     version = F'{A}.{B}.{C}'
     canonic = F'{A}.{B}'
