@@ -14,7 +14,12 @@
     color_admonition_neutral = '#054000'
 
     def getfont(module):
-      font, name, path = 'FixedSysEx.ttf', '', os.path.dirname(os.path.abspath(module.obj.__file__))
+      if module_path := module.obj.__file__:
+        path = os.path.dirname(module_path)         
+      else:
+        path = os.path.abspath(os.path.curdir)
+      font = 'FixedSysEx.ttf'
+      name = ''
       while True:
         name = os.path.basename(path)
         if name == 'refinery':
