@@ -697,7 +697,9 @@ class ZipFileRecord(Struct):
             import lzma
             u = lzma.decompress(compressed, format=lzma.FORMAT_XZ)
         else:
-            raise NotImplementedError(F'Compression method {m.name} is not implemented.')
+            if m is not None:
+                m = m.name
+            raise NotImplementedError(F'Compression method {m} is not implemented.')
 
         self._unpacked = u
         return _checked(u)
