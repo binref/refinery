@@ -2,6 +2,7 @@ __pycache__
 /refinery/data/units.pkl
 /refinery/**/*.c
 /refinery/**/*.pyd
+/refinery/**/*.so
 /venv*
 /temp*
 /html
