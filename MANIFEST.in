@@ -2,3 +2,5 @@ include requirements.txt
 include README.md
 include LICENSE.md
 include refinery/data/rich.json
+recursive-include refinery/lib/fast *.pyx
+recursive-include refinery/lib/seven *.pyx

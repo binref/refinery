@@ -1,5 +1,6 @@
 """
-This module contains compression algorithms that were ported from the 7zip source code. They are
-pure Python implementations, so their performance is fairly poor, but at the time of writing there
-is no reasonable alternative if we want to use these algorithms.
+This module contains compression algorithms that were ported from the 7zip source code. Cython
+versions of these modules are available for improved performance. When Cython extensions have been
+compiled and installed, they will be used automatically. Otherwise, the pure Python implementations
+serve as a fallback.
 """

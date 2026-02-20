@@ -163,11 +163,12 @@ def get_config():
     extras = get_setup_extras(requirements)
     config = get_setup_common()
 
-    extensions = [
-        Extension(
-            'refinery.lib.fast.zipcrypto', ['refinery/lib/fast/zipcrypto.pyx'],
-        )
-    ]
+    extensions = [Extension(key, [value]) for key, value in {
+        'refinery.lib.fast.zipcrypto' : 'refinery/lib/fast/zipcrypto.pyx',
+        'refinery.lib.seven.deflate'  : 'refinery/lib/seven/deflate.pyx',
+        'refinery.lib.seven.huffman'  : 'refinery/lib/seven/huffman.pyx',
+        'refinery.lib.seven.lzx'      : 'refinery/lib/seven/lzx.pyx',
+    }.items()]
 
     try:
         import Cython.Build as cy
