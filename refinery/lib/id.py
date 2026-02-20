@@ -778,7 +778,7 @@ def guess_text_encoding(
         except UnicodeDecodeError:
             continue
         else:
-            bad = sum(1 for c in decoded if unicode_category(c).startswith('C') and not c.isspace())
+            bad = sum(1 for c in decoded if unicode_category(c).startswith('C') and c not in '\040\n\r\t')
             if bad / len(decoded) <= maxbad:
                 return TextEncoding(encoding, bom, lsb, step)
 
