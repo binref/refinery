@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from typing import Iterable
 
-from refinery.lib.shared import pyzstd
 from refinery.lib.structures import Struct, StructReader
 from refinery.lib.types import buf
 from refinery.units.formats import PathExtractorUnit, UnpackResult
@@ -19,6 +18,8 @@ class xtnuitka(PathExtractorUnit):
             unit = self
 
             def __init__(self, reader: StructReader):
+                from refinery.lib.shared.pyzstd import pyzstd
+
                 self.magic = reader.read_exactly(2)
                 self.compression_flag = reader.read_exactly(1)
                 if self.compressed:

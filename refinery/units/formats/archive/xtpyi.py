@@ -18,7 +18,6 @@ from Cryptodome.Cipher import AES
 from refinery.lib import lief
 from refinery.lib.id import is_likely_pe
 from refinery.lib.py import decompile_buffer, version2tuple
-from refinery.lib.shared import xdis
 from refinery.lib.structures import StreamDetour, Struct, StructReader
 from refinery.lib.types import Param, buf
 from refinery.units.formats.archive import ArchiveUnit, Arg
@@ -101,6 +100,7 @@ class PYZ(Struct):
         self.signature = reader.read(4)
         magic = bytes(reader.read(4))
         with contextlib.suppress(KeyError, AttributeError):
+            from refinery.lib.shared.xdis import xdis
             version = xdis.magics.versions[magic]
         vtuple = version2tuple(version)
         padding_size = 4

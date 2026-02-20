@@ -14,7 +14,7 @@ from refinery.lib.emulator.abstract import (
     Register,
 )
 from refinery.lib.executable import Arch
-from refinery.lib.shared import icicle as ic
+from refinery.lib.shared.icicle import icicle as ic
 
 if TYPE_CHECKING:
     from icicle import Icicle as Ic

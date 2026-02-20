@@ -3,7 +3,6 @@ from __future__ import annotations
 from enum import Enum
 
 from refinery.lib.executable import align
-from refinery.lib.shared import pefile
 from refinery.lib.structures import StructReader
 from refinery.lib.types import Param
 from refinery.units import Arg, Unit
@@ -66,6 +65,8 @@ class pefix(Unit):
         super().__init__(unmap=unmap)
 
     def process(self, data):
+        from refinery.lib.shared.pefile import pefile
+
         sr = StructReader(data)
         sr.write(B'MZ')
         sr.seekset(0x3C)

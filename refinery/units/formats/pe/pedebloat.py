@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Generator, Iterable
 from refinery.lib.executable import Executable
 from refinery.lib.meta import SizeInt
 from refinery.lib.meta import TerseSizeInt as TI
-from refinery.lib.shared import pefile
+from refinery.lib.shared.pefile import pefile
 from refinery.lib.types import Param
 from refinery.units.formats.pe import Arg, OverlayUnit
 from refinery.units.formats.pe.perc import RSRC

@@ -1,6 +1,6 @@
 
 from refinery.lib.emulator.abstract import MemAccess
-from refinery.lib.shared import unicorn as uc
+from refinery.lib.shared.unicorn import unicorn as uc
 
 
 def get_access_map():

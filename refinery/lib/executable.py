@@ -18,7 +18,6 @@ from functools import lru_cache
 from typing import TYPE_CHECKING, NamedTuple
 
 from refinery.lib import lief
-from refinery.lib.shared import capstone as cs
 from refinery.lib.types import INF, buf
 
 if TYPE_CHECKING:
@@ -616,6 +615,8 @@ class Executable(ABC):
         """
         Create a capstone disassembler that matches the emulator's architecture.
         """
+        from refinery.lib.shared.capstone import capstone as cs
+
         cs_arch, cs_mode = {
             Arch.X32     : (cs.CS_ARCH_X86,   cs.CS_MODE_32),     # noqa
             Arch.X64     : (cs.CS_ARCH_X86,   cs.CS_MODE_64),     # noqa

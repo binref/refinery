@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any, TypeVar
 from refinery.lib.emulator.abstract import EmulationError, MemAccess, RawMetalEmulator, Register
 from refinery.lib.emulator.uc_shared import get_access_map
 from refinery.lib.executable import BO, Arch
-from refinery.lib.shared import unicorn as uc
+from refinery.lib.shared.unicorn import unicorn as uc
 
 if TYPE_CHECKING:
     from unicorn.unicorn import Uc

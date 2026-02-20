@@ -16,7 +16,8 @@ class TestIDLib(TestBase):
         self.assertEqual(enc.step, 2)
 
     def test_all_pyc_magics(self):
-        from refinery.lib.shared import xdis
+        from refinery.lib.shared.xdis import xdis
+
         mismatches = [
             (magic, version) for magic, version in xdis.magics.versions.items()
             if idlib.PycMagicPattern.fullmatch(magic) is None

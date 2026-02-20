@@ -4,7 +4,6 @@ from collections import deque
 from typing import TYPE_CHECKING, Container
 
 from refinery.lib.executable import CompartmentNotFound, Executable, Range
-from refinery.lib.shared import smda
 from refinery.lib.tools import NoLogging
 from refinery.lib.types import Param
 from refinery.units import Arg, Unit
@@ -114,6 +113,7 @@ class vmemref(Unit):
 
         self.log_info('disassembling and exploring call graph using smda')
         with NoLogging():
+            from refinery.lib.shared.smda import smda
             cfg = smda.Disassembler.SmdaConfig()
             setattr(cfg, 'CALCULATE_SCC', False)
             setattr(cfg, 'CALCULATE_HASHING', False)

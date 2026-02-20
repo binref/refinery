@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from refinery.lib.shared import pefile
 from refinery.units import Unit
 
 
@@ -12,6 +11,7 @@ class pecdb(Unit):
     which can make debugging easier.
     """
     def process(self, data: bytearray):
+        from refinery.lib.shared.pefile import pefile
         pe = pefile.PE(data=data, fast_load=True)
         dc = pe.OPTIONAL_HEADER.DllCharacteristics
         dc = dc & ~0x40 # IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE

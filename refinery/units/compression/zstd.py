@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from refinery.lib.shared import pyzstd
 from refinery.units import RefineryPartialResult, Unit
 
 
@@ -9,6 +8,7 @@ class zstd(Unit):
     ZStandard (ZSTD) compression and decompression.
     """
     def process(self, data):
+        from refinery.lib.shared.pyzstd import pyzstd
         zd = pyzstd.ZstdDecompressor()
         out = zd.decompress(data)
         if zd.needs_input:
@@ -16,6 +16,7 @@ class zstd(Unit):
         return out
 
     def reverse(self, data):
+        from refinery.lib.shared.pyzstd import pyzstd
         zc = pyzstd.ZstdCompressor()
         return zc.compress(data) + zc.flush()
 

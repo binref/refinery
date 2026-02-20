@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from refinery.lib.shared import capstone as cs
 from refinery.lib.types import Param
 from refinery.units.sinks import Arg, Unit
 
@@ -47,6 +46,8 @@ class opc(Unit):
 
     @property
     def _capstone_engine(self) -> Cs:
+        from refinery.lib.shared.capstone import capstone as cs
+
         mode = self.args.mode.lower()
         init = {
             'arm'    : (cs.CS_ARCH_ARM, cs.CS_MODE_ARM),
@@ -58,8 +59,10 @@ class opc(Unit):
             'x32'    : (cs.CS_ARCH_X86, cs.CS_MODE_32),
             'x64'    : (cs.CS_ARCH_X86, cs.CS_MODE_64),
         }.get(mode)
+
         if init is not None:
             return cs.Cs(*init)
+
         raise AttributeError(F'invalid mode: {mode}')
 
     def process(self, data):

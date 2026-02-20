@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, TypeVar
 from refinery.lib.emulator.abstract import EmulationError, Emulator, MemAccess, Register
 from refinery.lib.emulator.uc_shared import get_access_map
 from refinery.lib.executable import ET, Arch
-from refinery.lib.shared import speakeasy as se
+from refinery.lib.shared.speakeasy import speakeasy as se
 from refinery.lib.vfs import VirtualFileSystem
 
 if TYPE_CHECKING:

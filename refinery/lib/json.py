@@ -13,7 +13,7 @@ from datetime import date, datetime, time
 from enum import Enum, IntFlag
 from uuid import UUID
 
-from refinery.lib.shared import orjson
+from refinery.lib.shared.orjson import orjson
 from refinery.lib.types import Any, Callable, Generator, isbuffer
 
 

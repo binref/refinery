@@ -10,7 +10,7 @@ import sys
 from types import CodeType
 from typing import Generator, NamedTuple, TypeVar, get_args, get_origin, overload
 
-from refinery.lib.shared import decompyle3, uncompyle6, xdis
+from refinery.lib.shared.xdis import xdis
 from refinery.lib.structures import MemoryFile, StructReader
 from refinery.lib.tools import NoLogging, normalize_word_separators
 from refinery.lib.types import buf
@@ -93,12 +93,14 @@ def decompile_buffer(buffer: Code | buf, file_name: str | None = None) -> buf:
     def _engines():
         nonlocal errors
         try:
+            from refinery.lib.shared.decompyle3 import decompyle3
             dc = decompyle3.main.decompile
         except ImportError:
             errors += '# The decompiler decompyle3 is not installed.\n'
         else:
             yield 'decompyle3', dc
         try:
+            from refinery.lib.shared.uncompyle6 import uncompyle6
             dc = uncompyle6.main.decompile
         except ImportError:
             errors += '# The decompiler decompyle3 is not installed.\n'

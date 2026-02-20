@@ -5,7 +5,6 @@ import ntpath
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
-from refinery.lib.shared import pefile
 from refinery.lib.structures import MemoryFile
 from refinery.units.formats.archive import ArchiveUnit, UnpackResult
 
@@ -30,6 +29,8 @@ class xtdmp(ArchiveUnit):
         return minidump
 
     def unpack(self, data):
+        from refinery.lib.shared.pefile import pefile
+
         mdmp = self._minidump.minidumpfile.MinidumpFile.parse_buff(
             MemoryFile(data, output=bytearray)
         )

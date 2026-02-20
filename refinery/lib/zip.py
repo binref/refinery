@@ -23,7 +23,6 @@ from refinery.lib.dt import dostime
 from refinery.lib.fast import zipcrypto
 from refinery.lib.id import buffer_offset
 from refinery.lib.intervals import IntIntervalUnion
-from refinery.lib.shared import pyppmd, pyzstd
 from refinery.lib.structures import FlagAccessMixin, Struct, StructReader, StructReaderBits
 from refinery.lib.types import buf
 
@@ -680,6 +679,7 @@ class ZipFileRecord(Struct):
                 lzma.FORMAT_RAW, filters=[parse_lzma_properties(properties_data, 1)])
             u = decompressor.decompress(compressed_data)
         elif m == ZipCompressionMethod.PPMD:
+            from refinery.lib.shared.pyppmd import pyppmd
             cv = memoryview(compressed)
             cr = StructReaderBits(cv)
             order = 1 + cr.read_nibble()
@@ -688,6 +688,7 @@ class ZipFileRecord(Struct):
             ppmd = pyppmd.PpmdDecompressor(order, msize, restore_method=rm)
             u = ppmd.decompress(bytes(cr.read()))
         elif m == ZipCompressionMethod.ZSTD:
+            from refinery.lib.shared.pyzstd import pyzstd
             dctx = pyzstd.ZstdDecompressor()
             u = dctx.decompress(compressed)
         elif m == ZipCompressionMethod.XZ:
