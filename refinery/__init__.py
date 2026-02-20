@@ -41,7 +41,8 @@ import pickle
 
 from datetime import datetime
 from threading import RLock
-from typing import TYPE_CHECKING, Iterable, TypeVar, cast as typecast
+from typing import TYPE_CHECKING, Iterable, TypeVar
+from typing import cast as typecast
 
 from refinery.lib import resources
 from refinery.units import Arg, Unit
