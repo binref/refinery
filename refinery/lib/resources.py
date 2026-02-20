@@ -5,10 +5,9 @@ from __future__ import annotations
 
 import sys
 
-from importlib import resources
-
 
 def datapath(name: str):
+    from importlib import resources
     if sys.version_info >= (3, 9):
         from refinery import data
         return resources.files(data).joinpath(name)
