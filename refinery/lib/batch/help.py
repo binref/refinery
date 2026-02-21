@@ -847,6 +847,306 @@ class TYPE:
 
 
 @_help
+class START:
+    """
+    Starts a separate window to run a specified program or command.
+
+    START ["title"] [/D path] [/I] [/MIN] [/MAX] [/SEPARATE | /SHARED]
+          [/LOW | /NORMAL | /HIGH | /REALTIME | /ABOVENORMAL | /BELOWNORMAL]
+          [/NODE <NUMA node>] [/AFFINITY <hex affinity mask>] [/WAIT] [/B]
+          [/MACHINE <x86|amd64|arm|arm64>][command/program] [parameters]
+
+        "title"     Title to display in window title bar.
+        path        Starting directory.
+        B           Start application without creating a new window. The
+                    application has ^C handling ignored. Unless the application
+                    enables ^C processing, ^Break is the only way to interrupt
+                    the application.
+        I           The new environment will be the original environment passed
+                    to the cmd.exe and not the current environment.
+        MIN         Start window minimized.
+        MAX         Start window maximized.
+        SEPARATE    Start 16-bit Windows program in separate memory space.
+        SHARED      Start 16-bit Windows program in shared memory space.
+        LOW         Start application in the IDLE priority class.
+        NORMAL      Start application in the NORMAL priority class.
+        HIGH        Start application in the HIGH priority class.
+        REALTIME    Start application in the REALTIME priority class.
+        ABOVENORMAL Start application in the ABOVENORMAL priority class.
+        BELOWNORMAL Start application in the BELOWNORMAL priority class.
+        NODE        Specifies the preferred Non-Uniform Memory Architecture (NUMA)
+                    node as a decimal integer.
+        AFFINITY    Specifies the processor affinity mask as a hexadecimal number.
+                    The process is restricted to running on these processors.
+
+                    The affinity mask is interpreted differently when /AFFINITY and
+                    /NODE are combined.  Specify the affinity mask as if the NUMA
+                    node's processor mask is right shifted to begin at bit zero.
+                    The process is restricted to running on those processors in
+                    common between the specified affinity mask and the NUMA node.
+                    If no processors are in common, the process is restricted to
+                    running on the specified NUMA node.
+        WAIT        Start application and wait for it to terminate.
+        MACHINE     Specifies the machine architecture of the application process.
+
+        command/program
+                    If it is an internal cmd command or a batch file then
+                    the command processor is run with the /K switch to cmd.exe.
+                    This means that the window will remain after the command
+                    has been run.
+
+                    If it is not an internal cmd command or batch file then
+                    it is a program and will run as either a windowed application
+                    or a console application.
+
+        parameters  These are the parameters passed to the command/program.
+
+    NOTE: The SEPARATE and SHARED options are not supported on 64-bit platforms.
+
+    Specifying /NODE allows processes to be created in a way that leverages memory
+    locality on NUMA systems.  For example, two processes that communicate with
+    each other heavily through shared memory can be created to share the same
+    preferred NUMA node in order to minimize memory latencies.  They allocate
+    memory from the same NUMA node when possible, and they are free to run on
+    processors outside the specified node.
+
+        start /NODE 1 application1.exe
+        start /NODE 1 application2.exe
+
+    These two processes can be further constrained to run on specific processors
+    within the same NUMA node.  In the following example, application1 runs on the
+    low-order two processors of the node, while application2 runs on the next two
+    processors of the node.  This example assumes the specified node has at least
+    four logical processors.  Note that the node number can be changed to any valid
+    node number for that computer without having to change the affinity mask.
+
+        start /NODE 1 /AFFINITY 0x3 application1.exe
+        start /NODE 1 /AFFINITY 0xc application2.exe
+
+    If Command Extensions are enabled, external command invocation
+    through the command line or the START command changes as follows:
+
+    non-executable files may be invoked through their file association just
+        by typing the name of the file as a command.  (e.g.  WORD.DOC would
+        launch the application associated with the .DOC file extension).
+        See the ASSOC and FTYPE commands for how to create these
+        associations from within a command script.
+
+    When executing an application that is a 32-bit GUI application, CMD.EXE
+        does not wait for the application to terminate before returning to
+        the command prompt.  This new behavior does NOT occur if executing
+        within a command script.
+
+    When executing a command line whose first token is the string "CMD "
+        without an extension or path qualifier, then "CMD" is replaced with
+        the value of the COMSPEC variable.  This prevents picking up CMD.EXE
+        from the current directory.
+
+    When executing a command line whose first token does NOT contain an
+        extension, then CMD.EXE uses the value of the PATHEXT
+        environment variable to determine which extensions to look for
+        and in what order.  The default value for the PATHEXT variable
+        is:
+
+            .COM;.EXE;.BAT;.CMD
+
+        Notice the syntax is the same as the PATH variable, with
+        semicolons separating the different elements.
+
+    When searching for an executable, if there is no match on any extension,
+    then looks to see if the name matches a directory name.  If it does, the
+    START command launches the Explorer on that path.  If done from the
+    command line, it is the equivalent to doing a CD /D to that path.
+    """
+
+
+@_help
+class CMD:
+    R"""
+    Starts a new instance of the Windows command interpreter
+
+    CMD [/A | /U] [/Q] [/D] [/E:ON | /E:OFF] [/F:ON | /F:OFF] [/V:ON | /V:OFF]
+        [[/S] [/C | /K] string]
+
+    /C      Carries out the command specified by string and then terminates
+    /K      Carries out the command specified by string but remains
+    /S      Modifies the treatment of string after /C or /K (see below)
+    /Q      Turns echo off
+    /D      Disable execution of AutoRun commands from registry (see below)
+    /A      Causes the output of internal commands to a pipe or file to be ANSI
+    /U      Causes the output of internal commands to a pipe or file to be
+            Unicode
+    /T:fg   Sets the foreground/background colors (see COLOR /? for more info)
+    /E:ON   Enable command extensions (see below)
+    /E:OFF  Disable command extensions (see below)
+    /F:ON   Enable file and directory name completion characters (see below)
+    /F:OFF  Disable file and directory name completion characters (see below)
+    /V:ON   Enable delayed environment variable expansion using ! as the
+            delimiter. For example, /V:ON would allow !var! to expand the
+            variable var at execution time.  The var syntax expands variables
+            at input time, which is quite a different thing when inside of a FOR
+            loop.
+    /V:OFF  Disable delayed environment expansion.
+
+    Note that multiple commands separated by the command separator '&&'
+    are accepted for string if surrounded by quotes.  Also, for compatibility
+    reasons, /X is the same as /E:ON, /Y is the same as /E:OFF and /R is the
+    same as /C.  Any other switches are ignored.
+
+    If /C or /K is specified, then the remainder of the command line after
+    the switch is processed as a command line, where the following logic is
+    used to process quote (") characters:
+
+        1.  If all of the following conditions are met, then quote characters
+            on the command line are preserved:
+
+            - no /S switch
+            - exactly two quote characters
+            - no special characters between the two quote characters,
+              where special is one of: &<>()@^|
+            - there are one or more whitespace characters between the
+              two quote characters
+            - the string between the two quote characters is the name
+              of an executable file.
+
+        2.  Otherwise, old behavior is to see if the first character is
+            a quote character and if so, strip the leading character and
+            remove the last quote character on the command line, preserving
+            any text after the last quote character.
+
+    If /D was NOT specified on the command line, then when CMD.EXE starts, it
+    looks for the following REG_SZ/REG_EXPAND_SZ registry variables, and if
+    either or both are present, they are executed first.
+
+        HKEY_LOCAL_MACHINE\Software\Microsoft\Command Processor\AutoRun
+
+            and/or
+
+        HKEY_CURRENT_USER\Software\Microsoft\Command Processor\AutoRun
+
+    Command Extensions are enabled by default.  You may also disable
+    extensions for a particular invocation by using the /E:OFF switch.  You
+    can enable or disable extensions for all invocations of CMD.EXE on a
+    machine and/or user logon session by setting either or both of the
+    following REG_DWORD values in the registry using REGEDIT.EXE:
+
+        HKEY_LOCAL_MACHINE\Software\Microsoft\Command Processor\EnableExtensions
+
+            and/or
+
+        HKEY_CURRENT_USER\Software\Microsoft\Command Processor\EnableExtensions
+
+    to either 0x1 or 0x0.  The user specific setting takes precedence over
+    the machine setting.  The command line switches take precedence over the
+    registry settings.
+
+    In a batch file, the SETLOCAL ENABLEEXTENSIONS or DISABLEEXTENSIONS arguments
+    takes precedence over the /E:ON or /E:OFF switch. See SETLOCAL /? for details.
+
+    The command extensions involve changes and/or additions to the following
+    commands:
+
+        DEL or ERASE
+        COLOR
+        CD or CHDIR
+        MD or MKDIR
+        PROMPT
+        PUSHD
+        POPD
+        SET
+        SETLOCAL
+        ENDLOCAL
+        IF
+        FOR
+        CALL
+        SHIFT
+        GOTO
+        START (also includes changes to external command invocation)
+        ASSOC
+        FTYPE
+
+    To get specific details, type commandname /? to view the specifics.
+
+    Delayed environment variable expansion is NOT enabled by default.  You
+    can enable or disable delayed environment variable expansion for a
+    particular invocation of CMD.EXE with the /V:ON or /V:OFF switch.  You
+    can enable or disable delayed expansion for all invocations of CMD.EXE on a
+    machine and/or user logon session by setting either or both of the
+    following REG_DWORD values in the registry using REGEDIT.EXE:
+
+        HKEY_LOCAL_MACHINE\Software\Microsoft\Command Processor\DelayedExpansion
+
+            and/or
+
+        HKEY_CURRENT_USER\Software\Microsoft\Command Processor\DelayedExpansion
+
+    to either 0x1 or 0x0.  The user specific setting takes precedence over
+    the machine setting.  The command line switches take precedence over the
+    registry settings.
+
+    In a batch file the SETLOCAL ENABLEDELAYEDEXPANSION or DISABLEDELAYEDEXPANSION
+    arguments takes precedence over the /V:ON or /V:OFF switch. See SETLOCAL /?
+    for details.
+
+    If delayed environment variable expansion is enabled, then the exclamation
+    character can be used to substitute the value of an environment variable
+    at execution time.
+
+    You can enable or disable file name completion for a particular
+    invocation of CMD.EXE with the /F:ON or /F:OFF switch.  You can enable
+    or disable completion for all invocations of CMD.EXE on a machine and/or
+    user logon session by setting either or both of the following REG_DWORD
+    values in the registry using REGEDIT.EXE:
+
+        HKEY_LOCAL_MACHINE\Software\Microsoft\Command Processor\CompletionChar
+        HKEY_LOCAL_MACHINE\Software\Microsoft\Command Processor\PathCompletionChar
+
+            and/or
+
+        HKEY_CURRENT_USER\Software\Microsoft\Command Processor\CompletionChar
+        HKEY_CURRENT_USER\Software\Microsoft\Command Processor\PathCompletionChar
+
+    with the hex value of a control character to use for a particular
+    function (e.g.  0x4 is Ctrl-D and 0x6 is Ctrl-F).  The user specific
+    settings take precedence over the machine settings.  The command line
+    switches take precedence over the registry settings.
+
+    If completion is enabled with the /F:ON switch, the two control
+    characters used are Ctrl-D for directory name completion and Ctrl-F for
+    file name completion.  To disable a particular completion character in
+    the registry, use the value for space (0x20) as it is not a valid
+    control character.
+
+    Completion is invoked when you type either of the two control
+    characters.  The completion function takes the path string to the left
+    of the cursor appends a wild card character to it if none is already
+    present and builds up a list of paths that match.  It then displays the
+    first matching path.  If no paths match, it just beeps and leaves the
+    display alone.  Thereafter, repeated pressing of the same control
+    character will cycle through the list of matching paths.  Pressing the
+    Shift key with the control character will move through the list
+    backwards.  If you edit the line in any way and press the control
+    character again, the saved list of matching paths is discarded and a new
+    one generated.  The same occurs if you switch between file and directory
+    name completion.  The only difference between the two control characters
+    is the file completion character matches both file and directory names,
+    while the directory completion character only matches directory names.
+    If file completion is used on any of the built in directory commands
+    (CD, MD or RD) then directory completion is assumed.
+
+    The completion code deals correctly with file names that contain spaces
+    or other special characters by placing quotes around the matching path.
+    Also, if you back up, then invoke completion from within a line, the
+    text to the right of the cursor at the point completion was invoked is
+    discarded.
+
+    The special characters that require quotes are:
+         <space>
+         &()[]{}^=;!'+,`~
+    """
+
+
+@_help
 class HELP:
     """
     For more information on a specific command, type HELP command-name
