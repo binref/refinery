@@ -300,6 +300,7 @@ class BatchEmulator:
         flags = {}
         it = iter(cmd.args)
         arg = None
+        yield cmd
 
         for arg in it:
             if not arg.startswith('/'):
@@ -628,15 +629,18 @@ class BatchEmulator:
     @_command('CHDIR')
     @_command('CD')
     def execute_chdir(self, cmd: SynCommand, *_):
+        yield cmd
         self.state.cwd = cmd.argument_string.strip()
 
     @_command('PUSHD')
     def execute_pushd(self, cmd: SynCommand, *_):
+        yield cmd
         self.state.dirstack.append(self.state.cwd)
         self.execute_chdir(cmd)
 
     @_command('POPD')
-    def execute_popd(self, *_):
+    def execute_popd(self, cmd: SynCommand, *_):
+        yield cmd
         try:
             self.state.cwd = self.state.dirstack.pop()
         except IndexError:
@@ -1179,6 +1183,7 @@ class BatchEmulator:
         for syn in self.trace(offset):
             if not isinstance(syn, SynNodeBase):
                 continue
+            # yield str(syn); continue
             ast = syn.ast
             if isinstance(syn, SynCommand) and syn.junk:
                 junk = ast
