@@ -7,8 +7,9 @@ Huffman decoder classes ported from 7zip, Cython-optimized version.
 """
 cimport cython
 
-from libc.stdint cimport uint32_t, uint8_t
+from libc.stdint cimport uint8_t, uint32_t
 from libc.string cimport memset
+
 
 cdef int _NUM_PAIR_LEN_BITS = 4
 cdef uint32_t _PAIR_LEN_MASK = (1 << _NUM_PAIR_LEN_BITS) - 1
