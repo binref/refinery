@@ -164,6 +164,7 @@ def get_config():
     config = get_setup_common()
 
     extensions = [Extension(key, [value]) for key, value in {
+        'refinery.lib.fast.a3x'       : 'refinery/lib/fast/a3x.pyx',
         'refinery.lib.fast.zipcrypto' : 'refinery/lib/fast/zipcrypto.pyx',
         'refinery.lib.seven.deflate'  : 'refinery/lib/seven/deflate.pyx',
         'refinery.lib.seven.huffman'  : 'refinery/lib/seven/huffman.pyx',

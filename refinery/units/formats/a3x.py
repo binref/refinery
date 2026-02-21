@@ -8,8 +8,9 @@ from enum import Enum
 from typing import Generator, Iterable, NamedTuple
 
 from refinery.lib.dt import date_from_timestamp
+from refinery.lib.fast.a3x import a3x_decompress, a3x_decrypt
 from refinery.lib.id import buffer_contains
-from refinery.lib.structures import MemoryFile, Struct, StructReader, StructReaderBits
+from refinery.lib.structures import MemoryFile, Struct, StructReader
 from refinery.units.formats import PathExtractorUnit, UnpackResult
 
 A3X_KEYWORDS = [
@@ -629,151 +630,6 @@ def a3x_decompile(bytecode: bytearray | memoryview) -> Generator[tuple[int, str]
             tokens.append(opt)
     if expected_terminators:
         raise ValueError('Script truncated.')
-
-
-def a3x_decompress(data: bytearray | memoryview, is_current: bool) -> bytearray:
-    output = MemoryFile()
-    cursor = 0
-    view = memoryview(data)
-    size = int.from_bytes(view[4:8], 'big')
-    bit_reader = StructReaderBits(view[8:], bigendian=True)
-    bits = bit_reader.read_integer
-    while cursor < size:
-        check = bits(1)
-        if check == is_current:
-            output.write_byte(bits(8))
-            cursor += 1
-            continue
-        delta = 0
-        offset = bits(15)
-        length = bits(2)
-        if length == 0b00000011:
-            delta = 0x003
-            length = bits(3)
-            if length == 0b00000111:
-                delta = 0x00A
-                length = bits(5)
-                if length == 0b00011111:
-                    delta = 0x029
-                    length = bits(8)
-                    if length == 0b11111111:
-                        delta = 0x128
-                        length = bits(8)
-        while length == 0b11111111:
-            delta += 0xFF
-            length = bits(8)
-        length += delta + 3
-        length &= 0xFFFFFFFF
-        output.replay(offset, length)
-        cursor += length
-    return output.getvalue()
-
-
-def a3x_decrypt_current(data: memoryview | bytearray, key: int) -> bytearray:
-    a, b, t = 16, 6, []
-
-    for _ in range(17):
-        key = 1 - key * 0x53A9B4FB & 0xFFFFFFFF
-        t.append(key)
-
-    t.reverse()
-
-    for _ in range(9):
-        r = (t[a] << 9 | t[a] >> 23) + (t[b] << 13 | t[b] >> 19) & 0xFFFFFFFF
-        t[a] = r
-        a = (a + 1) % 17
-        b = (b + 1) % 17
-
-    def _decrypted():
-        nonlocal a, b
-        for v in data:
-            x = t[a]
-            y = t[b]
-            t[a] = (x << 9 | x >> 23) + (y << 13 | y >> 19) & 0xFFFFFFFF
-            a = (a + 1) % 17
-            b = (b + 1) % 17
-            x = t[a]
-            y = t[b]
-            r = (x << 9 | x >> 23) + (y << 13 | y >> 19) & 0xFFFFFFFF
-            t[a] = r
-            a = (a + 1) % 17
-            b = (b + 1) % 17
-            yield (r >> 24) ^ v
-
-    return bytearray(_decrypted())
-
-
-def a3x_decrypt_legacy(data: bytearray | memoryview, key: int) -> bytearray:
-    a, b, t = 1, 0, []
-
-    t.append(key)
-    for i in range(1, 624):
-        key = ((((key ^ key >> 30) * 0x6C078965) & 0xFFFFFFFF) + i) & 0xFFFFFFFF
-        t.append(key)
-
-    def _refactor_state():
-        for i in range(0, 0xe3):
-            x = t[i] ^ t[i + 1]
-            x &= 0x7FFFFFFE
-            x ^= t[i]
-            x >>= 1
-            y = 0x9908B0DF
-            if (t[i + 1] % 2 == 0):
-                y = 0
-            x ^= y
-            x ^= t[i + 397]
-            t[i] = x
-
-        for i in range(0xe3, 0x18c + 0xe3):
-            x = t[i] ^ t[i + 1]
-            x &= 0x7FFFFFFE
-            x ^= t[i]
-            x >>= 1
-            y = 0x9908B0DF
-            if (t[i + 1] % 2 == 0):
-                y = 0
-            x ^= y
-            x ^= t[i - 227]
-            t[i] = x
-
-        x = t[0]
-        y = t[0x18c + 0xe3] ^ x
-        y &= 0x7FFFFFFE
-        y ^= t[0x18c + 0xe3]
-        y >>= 1
-        if (x % 2 == 1):
-            x = 0x9908B0DF
-        else:
-            x = 0
-        y ^= x
-        y ^= t[0x18c + 0xe3 - 227]
-        t[0x18c + 0xe3] = y
-
-    def _decrypted():
-        nonlocal a, b
-        for v in data:
-            a -= 1
-            b += 1
-            if a == 0:
-                a = 0x270
-                b = 0
-                _refactor_state()
-            x = t[b]
-            x = x ^ x >> 11
-            y = ((x & 0xFF3A58AD) << 7) & 0xFFFFFFFF
-            x ^= y
-            y = ((x & 0xFFFFDF8C) << 15) & 0xFFFFFFFF
-            x ^= y
-            y = x ^ x >> 0x12
-            yield ((y >> 1) ^ v) & 0xFF
-
-    return bytearray(_decrypted())
-
-
-def a3x_decrypt(data: memoryview | bytearray, key: int, is_current: bool = True) -> bytearray:
-    if is_current:
-        return a3x_decrypt_current(data, key)
-    return a3x_decrypt_legacy(data, key)
 
 
 class A3xType(str, Enum):
