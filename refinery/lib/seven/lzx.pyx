@@ -7,12 +7,13 @@ This is a port of the LZX implementation in 7Zip to Python, Cython-optimized ver
 """
 cimport cython
 
-from libc.stdint cimport uint8_t, uint32_t, int32_t
-from libc.string cimport memset, memcpy
+from libc.stdint cimport int32_t, uint8_t, uint32_t
+from libc.string cimport memcpy, memset
 
 from refinery.lib.array import uint32array
 from refinery.lib.seven.huffman import BitDecoderBase, HuffmanDecoder, HuffmanDecoder7b, OutOfBounds
 from refinery.lib.types import INF
+
 
 cdef int _BLOCK_TYPE_NUM_BITS = 3
 cdef int _BLOCK_TYPE_VERBATIM = 1
