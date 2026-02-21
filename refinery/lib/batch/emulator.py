@@ -430,9 +430,6 @@ class BatchEmulator:
         if cmd.verb.upper() != 'SET':
             raise RuntimeError
 
-        cmd.junk = True
-        yield cmd
-
         arithmetic = False
         quote_mode = False
         prompt = None
@@ -441,7 +438,6 @@ class BatchEmulator:
         tk = next(it)
 
         if tk.upper() == '/P':
-            yield cmd
             if std.i.closed:
                 prompt = ''
             elif not (prompt := std.i.readline()).endswith('\n'):
@@ -449,6 +445,10 @@ class BatchEmulator:
             else:
                 prompt = prompt.rstrip('\r\n')
             tk = next(it)
+        else:
+            cmd.junk = True
+
+        yield cmd
 
         if tk.upper() == '/A':
             arithmetic = True
