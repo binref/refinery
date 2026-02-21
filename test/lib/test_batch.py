@@ -435,6 +435,18 @@ class TestBatchEmulator(TestBase):
         it = (cmd[5:] for cmd in bat.emulate() if cmd.startswith('echo'))
         self.assertEqual(next(it), 'SE"CO^"N')
 
+    def test_set_with_prompt_output(self):
+        @emulate
+        class bat:
+            '''
+            set Railway=S
+            set Signature=e
+            set Bennett=T
+            %Railway%%Signature%%Bennett% /p ="MZ" > boom.exe <nul
+            '''
+        bat.execute()
+        self.assertEqual(bat.state.ingest_file('boom.exe'), 'MZ')
+
     def test_set_has_weird_escaping_rules_02(self):
         @emulate
         class bat:

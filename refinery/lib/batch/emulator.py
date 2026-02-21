@@ -90,6 +90,10 @@ class DevNull:
     def seek(self, k: int, whence: int = 0, /):
         return
 
+    @property
+    def closed(self):
+        return True
+
 
 class Error(str):
     pass
@@ -386,10 +390,13 @@ class BatchEmulator:
         tk = next(it)
 
         if tk.upper() == '/P':
-            prompt = std.i.readline()
-            if not prompt.endswith('\n'):
+            yield cmd
+            if std.i.closed:
+                prompt = ''
+            elif not (prompt := std.i.readline()).endswith('\n'):
                 raise InputLocked
-            prompt = prompt.rstrip('\r\n')
+            else:
+                prompt = prompt.rstrip('\r\n')
             tk = next(it)
 
         if tk.upper() == '/A':
@@ -451,30 +458,39 @@ class BatchEmulator:
             else:
                 std.o.write(F'{value!s}\r\n')
         else:
-            if (n := len(args)) >= 2 and args[1] == '=':
-                name = args[0]
-                with StringIO() as rest:
-                    for k in range(2, n):
-                        rest.write(args[k])
-                    content = rest.getvalue()
-            elif (assignment := cmd.argument_string).startswith('"'):
-                quote_mode = True
-                assignment, _, unquoted = assignment[1:].rpartition('"')
-                assignment = assignment or unquoted
+            try:
+                eq = args.index(Ctrl.Equals)
+            except ValueError:
+                assignment = cmd.argument_string
+                if assignment.startswith('"'):
+                    quote_mode = True
+                    assignment, _, unquoted = assignment[1:].rpartition('"')
+                    assignment = assignment or unquoted
+                else:
+                    assignment = ''.join(args)
                 name, _, content = assignment.partition('=')
             else:
-                name, _, content = ''.join(args).partition('=')
+                with StringIO() as io:
+                    for k in range(eq + 1, len(args)):
+                        io.write(args[k])
+                    content = io.getvalue()
+                    name = cmd.args[eq - 1] if eq else ''
             name = name.upper()
             trailing_caret, content = uncaret(content, quote_mode)
             if trailing_caret:
                 content = content[:-1]
             if prompt is not None:
+                if (qc := content.strip()).startswith('"'):
+                    _, _, qc = qc. partition('"') # noqa
+                    qc, _, r = qc.rpartition('"') # noqa
+                    content = qc or r
                 std.o.write(content)
-                self.environment[name] = prompt
-            elif not content:
-                self.environment.pop(name, None)
-            else:
-                self.environment[name] = content
+                content = prompt
+            if name:
+                if content:
+                    self.environment[name] = content
+                else:
+                    self.environment.pop(name, None)
 
     @_command('CALL')
     def execute_call(self, cmd: SynCommand, std: IO, *_):
