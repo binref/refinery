@@ -7,7 +7,7 @@ Structures for unpacking ZIP archives, Cython-optimized version.
 """
 cimport cython
 
-from libc.stdint cimport uint8_t, uint32_t, int32_t
+from libc.stdint cimport int32_t, uint8_t, uint32_t
 from libc.string cimport memcpy, memset
 
 import enum
@@ -15,6 +15,7 @@ import enum
 from refinery.lib.array import make_array
 from refinery.lib.seven.huffman import BitDecoderBase, HuffmanDecoder, HuffmanDecoder7b
 from refinery.lib.structures import StructReader
+
 
 cdef int kNumHuffmanBits = 15
 cdef int kHistorySize32 = (1 << 15)
