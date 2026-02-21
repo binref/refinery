@@ -614,7 +614,7 @@ class TestBatchEmulator(TestBase):
             R'echo#Test6',
             R'echo!Test7',
         ]
-        test = list(bat.emulate())
+        test = list(bat.emulate_commands())
         self.assertListEqual(test, goal)
 
     def test_labels_within_line_continuations_work(self):

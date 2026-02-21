@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ntpath
 import re
 import uuid
 
@@ -166,7 +167,7 @@ class BatchEmulator:
         ]] = {}
 
         def __init__(self, key: str):
-            self.key = key
+            self.key = key.upper()
 
         def __call__(self, handler):
             self.handlers[self.key] = handler
@@ -671,15 +672,170 @@ class BatchEmulator:
                 state.remove_file(path)
         return 0
 
+    @_command('ARP')
+    @_command('AT')
+    @_command('ATBROKER')
+    @_command('BGINFO')
+    @_command('BITSADMIN')
+    @_command('CERTUTIL')
+    @_command('CLIP')
+    @_command('CMSTP')
+    @_command('COMPACT')
+    @_command('CONTROL')
+    @_command('CSCRIPT')
+    @_command('CURL')
+    @_command('DEFRAG')
+    @_command('DISKSHADOW')
+    @_command('ESENTUTL')
+    @_command('EXPAND')
+    @_command('EXPLORER')
+    @_command('EXTRAC32')
+    @_command('FODHELPER')
+    @_command('FORFILES')
+    @_command('FTP')
+    @_command('HOSTNAME')
+    @_command('HOSTNAME')
+    @_command('INSTALLUTIL')
+    @_command('IPCONFIG')
+    @_command('LOGOFF')
+    @_command('MAKECAB')
+    @_command('MAVINJECT')
+    @_command('MOUNTVOL')
+    @_command('MSBUILD')
+    @_command('MSHTA')
+    @_command('MSIEXEC')
+    @_command('MSTSC')
+    @_command('NET')
+    @_command('NET1')
+    @_command('NETSH')
+    @_command('NSLOOKUP')
+    @_command('ODBCCONF')
+    @_command('PATHPING')
+    @_command('PING')
+    @_command('POWERSHELL')
+    @_command('PRESENTATIONHOST')
+    @_command('PWSH')
+    @_command('REG')
+    @_command('REGSVR32')
+    @_command('ROUTE')
+    @_command('RUNDLL32')
+    @_command('SCP')
+    @_command('SDCLT')
+    @_command('SETX')
+    @_command('SFTP')
+    @_command('SHUTDOWN')
+    @_command('SSH')
+    @_command('SUBST')
+    @_command('SYNCAPPVPUBLISHINGSERVER')
+    @_command('SYSTEMINFO')
+    @_command('TAR')
+    @_command('TELNET')
+    @_command('TFTP')
+    @_command('TIMEOUT')
+    @_command('TRACERT')
+    @_command('VSSADMIN')
+    @_command('WBADMIN')
+    @_command('WHERE')
+    @_command('WHOAMI')
+    @_command('WINRM')
+    @_command('WINRS')
+    @_command('WSCRIPT')
+    def execute_unimplemented_program(self, cmd: SynCommand, *_):
+        yield cmd
+
+    @_command('ASSOC')
+    @_command('ATTRIB')
+    @_command('BCDEDIT')
+    @_command('BREAK')
+    @_command('CACLS')
+    @_command('CHCP')
+    @_command('CHKDSK')
+    @_command('CHKNTFS')
+    @_command('CLS')
+    @_command('CMD')
+    @_command('COLOR')
+    @_command('COMP')
+    @_command('COMPACT')
+    @_command('CONVERT')
+    @_command('COPY')
+    @_command('DATE')
+    @_command('DIR')
+    @_command('DISKPART')
+    @_command('DOSKEY')
+    @_command('DRIVERQUERY')
+    @_command('FC')
+    @_command('FORMAT')
+    @_command('FSUTIL')
+    @_command('FTYPE')
+    @_command('GPRESULT')
+    @_command('ICACLS')
+    @_command('LABEL')
+    @_command('MD')
+    @_command('MKDIR')
+    @_command('MKLINK')
+    @_command('MODE')
+    @_command('MORE')
+    @_command('MOVE')
+    @_command('OPENFILES')
+    @_command('PATH')
+    @_command('PAUSE')
+    @_command('PRINT')
+    @_command('PROMPT')
+    @_command('RD')
+    @_command('RECOVER')
+    @_command('REM')
+    @_command('REN')
+    @_command('RENAME')
+    @_command('REPLACE')
+    @_command('RMDIR')
+    @_command('ROBOCOPY')
+    @_command('SC')
+    @_command('SCHTASKS')
+    @_command('SHIFT')
+    @_command('SHUTDOWN')
+    @_command('SORT')
+    @_command('START')
+    @_command('SUBST')
+    @_command('SYSTEMINFO')
+    @_command('TASKKILL')
+    @_command('TASKLIST')
+    @_command('TIME')
+    @_command('TITLE')
+    @_command('TREE')
+    @_command('TYPE')
+    @_command('VER')
+    @_command('VERIFY')
+    @_command('VOL')
+    @_command('WMIC')
+    @_command('XCOPY')
+    def execute_unimplemented_command(self, cmd: SynCommand, *_):
+        yield cmd
+
+    @_command('HELP')
+    def execute_help(self, cmd: SynCommand, std: IO, *_):
+        yield cmd
+        std.o.write(HelpOutput['HELP'])
+        return 0
+
     def execute_command(self, cmd: SynCommand, std: IO, in_group: bool):
         verb = cmd.verb.upper().strip()
 
         try:
             handler = self._command.handlers[verb]
         except KeyError:
+            handler = None
+            verb, ext = ntpath.splitext(verb)
+            if ext in ('.EXE', '.COM', '.BAT', '.CMD', '.VBS', '.VBE', '.JS', '.JSE', '.WSF', '.WSH', '.MSC'):
+                handler = self._command.handlers.get(verb)
+
+        if handler is None:
+            if self.state.exists_file(verb):
+                self.state.ec = 0
+            else:
+                cmd.fake = True
+                bogus_command = '\uFFFD' in verb or not verb.isprintable()
+                self.state.ec = bogus_command * 9009
             yield cmd
-            bogus_command = '\uFFFD' in verb or not verb.isprintable()
-            self.state.ec = bogus_command * 9009
             return
 
         paths: dict[int, str] = {}
@@ -902,6 +1058,8 @@ class BatchEmulator:
         cursor: AstNode | None = None
         for syn in self.trace(offset):
             if not isinstance(syn, SynNodeBase):
+                continue
+            if isinstance(syn, SynCommand) and syn.fake:
                 continue
             ast = syn.ast
             if cursor is not None and ast.is_descendant_of(cursor):

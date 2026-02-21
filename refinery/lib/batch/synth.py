@@ -74,16 +74,18 @@ class SynNode(SynNodeBase[_A]):
 
 
 class SynCommand(SynNode[AstCommand]):
-    __slots__ = 'args', 'verb', 'silent', 'argument_string', 'trailing_spaces'
+    __slots__ = 'args', 'fake', 'verb', 'silent', 'argument_string', 'trailing_spaces'
 
     args: list[str]
     verb: str
+    fake: bool
 
     def __init__(self, ast: AstCommand):
         super().__init__(ast)
         self.silent = False
         self.args = []
         self.verb = ''
+        self.fake = False
         arg_string = io.StringIO()
         spaces = []
         for token in self.ast.fragments:
