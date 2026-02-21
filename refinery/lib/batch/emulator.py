@@ -742,6 +742,11 @@ class BatchEmulator:
     @_command('WSCRIPT')
     def execute_unimplemented_program(self, cmd: SynCommand, *_):
         yield cmd
+        return 0
+
+    @_command('CLS')
+    def execute_unimplemented_command_unmodified_ec(self, cmd: SynCommand, *_):
+        yield cmd
 
     @_command('ASSOC')
     @_command('ATTRIB')
@@ -751,7 +756,6 @@ class BatchEmulator:
     @_command('CHCP')
     @_command('CHKDSK')
     @_command('CHKNTFS')
-    @_command('CLS')
     @_command('CMD')
     @_command('COLOR')
     @_command('COMP')
@@ -810,6 +814,7 @@ class BatchEmulator:
     @_command('XCOPY')
     def execute_unimplemented_command(self, cmd: SynCommand, *_):
         yield cmd
+        return 0
 
     @_command('HELP')
     def execute_help(self, cmd: SynCommand, std: IO, *_):
@@ -823,10 +828,11 @@ class BatchEmulator:
         try:
             handler = self._command.handlers[verb]
         except KeyError:
-            handler = None
             verb, ext = ntpath.splitext(verb)
-            if ext in ('.EXE', '.COM', '.BAT', '.CMD', '.VBS', '.VBE', '.JS', '.JSE', '.WSF', '.WSH', '.MSC'):
+            if any(ext == pe.upper() for pe in self.state.envar('PATHEXT', '').split(';')):
                 handler = self._command.handlers.get(verb)
+            else:
+                handler = None
 
         if handler is None:
             if self.state.exists_file(verb):
