@@ -32,6 +32,8 @@ def a3x_decompress(data, bint is_current):
         uint32_t rep, r
         int i
         uint8_t byte_val
+        uint8_t *out_buf
+        uint32_t copy_src, copy_len
 
     size = (
         (<uint32_t>view[4] << 24) |
@@ -44,100 +46,89 @@ def a3x_decompress(data, bint is_current):
     src = src_bytes
     src_len = len(src_bytes)
 
-    cdef bytearray output = bytearray()
-    cdef uint8_t[::1] chunk_view
+    out_buf = <uint8_t *>malloc(size)
+    if out_buf == NULL:
+        raise MemoryError
 
-    while cursor < size:
-        # inline _bits(1)
-        while bit_count < 1:
-            if src_pos >= src_len:
-                raise EOFError
-            bit_buffer = (bit_buffer << 8) | src[src_pos]
-            src_pos += 1
-            bit_count += 8
-        bit_count -= 1
-        check = (bit_buffer >> bit_count) & 1
-        bit_buffer &= (1 << bit_count) - 1
-
-        if check == <uint32_t>is_current:
-            # inline _bits(8)
-            while bit_count < 8:
+    try:
+        while cursor < size:
+            # inline _bits(1)
+            while bit_count < 1:
                 if src_pos >= src_len:
                     raise EOFError
                 bit_buffer = (bit_buffer << 8) | src[src_pos]
                 src_pos += 1
                 bit_count += 8
-            bit_count -= 8
-            byte_val = (bit_buffer >> bit_count) & 0xFF
-            bit_buffer &= (1 << bit_count) - 1
-            output.append(byte_val)
-            cursor += 1
-            continue
-
-        # inline _bits(15)
-        while bit_count < 15:
-            if src_pos >= src_len:
-                raise EOFError
-            bit_buffer = (bit_buffer << 8) | src[src_pos]
-            src_pos += 1
-            bit_count += 8
-        bit_count -= 15
-        offset = (bit_buffer >> bit_count) & 0x7FFF
-        bit_buffer &= (1 << bit_count) - 1
-
-        # inline _bits(2)
-        while bit_count < 2:
-            if src_pos >= src_len:
-                raise EOFError
-            bit_buffer = (bit_buffer << 8) | src[src_pos]
-            src_pos += 1
-            bit_count += 8
-        bit_count -= 2
-        length = (bit_buffer >> bit_count) & 0x3
-        bit_buffer &= (1 << bit_count) - 1
-
-        delta = 0
-        if length == 3:
-            delta = 3
-            # inline _bits(3)
-            while bit_count < 3:
-                if src_pos >= src_len:
-                    raise EOFError
-                bit_buffer = (bit_buffer << 8) | src[src_pos]
-                src_pos += 1
-                bit_count += 8
-            bit_count -= 3
-            length = (bit_buffer >> bit_count) & 0x7
+            bit_count -= 1
+            check = (bit_buffer >> bit_count) & 1
             bit_buffer &= (1 << bit_count) - 1
 
-            if length == 7:
-                delta = 0x0A
-                # inline _bits(5)
-                while bit_count < 5:
+            if check == <uint32_t>is_current:
+                # inline _bits(8)
+                while bit_count < 8:
                     if src_pos >= src_len:
                         raise EOFError
                     bit_buffer = (bit_buffer << 8) | src[src_pos]
                     src_pos += 1
                     bit_count += 8
-                bit_count -= 5
-                length = (bit_buffer >> bit_count) & 0x1F
+                bit_count -= 8
+                byte_val = (bit_buffer >> bit_count) & 0xFF
+                bit_buffer &= (1 << bit_count) - 1
+                out_buf[cursor] = byte_val
+                cursor += 1
+                continue
+
+            # inline _bits(15)
+            while bit_count < 15:
+                if src_pos >= src_len:
+                    raise EOFError
+                bit_buffer = (bit_buffer << 8) | src[src_pos]
+                src_pos += 1
+                bit_count += 8
+            bit_count -= 15
+            offset = (bit_buffer >> bit_count) & 0x7FFF
+            bit_buffer &= (1 << bit_count) - 1
+
+            # inline _bits(2)
+            while bit_count < 2:
+                if src_pos >= src_len:
+                    raise EOFError
+                bit_buffer = (bit_buffer << 8) | src[src_pos]
+                src_pos += 1
+                bit_count += 8
+            bit_count -= 2
+            length = (bit_buffer >> bit_count) & 0x3
+            bit_buffer &= (1 << bit_count) - 1
+
+            delta = 0
+            if length == 3:
+                delta = 3
+                # inline _bits(3)
+                while bit_count < 3:
+                    if src_pos >= src_len:
+                        raise EOFError
+                    bit_buffer = (bit_buffer << 8) | src[src_pos]
+                    src_pos += 1
+                    bit_count += 8
+                bit_count -= 3
+                length = (bit_buffer >> bit_count) & 0x7
                 bit_buffer &= (1 << bit_count) - 1
 
-                if length == 0x1F:
-                    delta = 0x29
-                    # inline _bits(8)
-                    while bit_count < 8:
+                if length == 7:
+                    delta = 0x0A
+                    # inline _bits(5)
+                    while bit_count < 5:
                         if src_pos >= src_len:
                             raise EOFError
                         bit_buffer = (bit_buffer << 8) | src[src_pos]
                         src_pos += 1
                         bit_count += 8
-                    bit_count -= 8
-                    length = (bit_buffer >> bit_count) & 0xFF
+                    bit_count -= 5
+                    length = (bit_buffer >> bit_count) & 0x1F
                     bit_buffer &= (1 << bit_count) - 1
 
-                    if length == 0xFF:
-                        delta = 0x128
+                    if length == 0x1F:
+                        delta = 0x029
                         # inline _bits(8)
                         while bit_count < 8:
                             if src_pos >= src_len:
@@ -149,38 +140,60 @@ def a3x_decompress(data, bint is_current):
                         length = (bit_buffer >> bit_count) & 0xFF
                         bit_buffer &= (1 << bit_count) - 1
 
-        while length == 0xFF:
-            delta += 0xFF
-            # inline _bits(8)
-            while bit_count < 8:
-                if src_pos >= src_len:
-                    raise EOFError
-                bit_buffer = (bit_buffer << 8) | src[src_pos]
-                src_pos += 1
-                bit_count += 8
-            bit_count -= 8
-            length = (bit_buffer >> bit_count) & 0xFF
-            bit_buffer &= (1 << bit_count) - 1
+                        if length == 0xFF:
+                            delta = 0x128
+                            # inline _bits(8)
+                            while bit_count < 8:
+                                if src_pos >= src_len:
+                                    raise EOFError
+                                bit_buffer = (bit_buffer << 8) | src[src_pos]
+                                src_pos += 1
+                                bit_count += 8
+                            bit_count -= 8
+                            length = (bit_buffer >> bit_count) & 0xFF
+                            bit_buffer &= (1 << bit_count) - 1
 
-        length = (length + delta + 3) & 0xFFFFFFFF
+            while length == 0xFF:
+                delta += 0xFF
+                # inline _bits(8)
+                while bit_count < 8:
+                    if src_pos >= src_len:
+                        raise EOFError
+                    bit_buffer = (bit_buffer << 8) | src[src_pos]
+                    src_pos += 1
+                    bit_count += 8
+                bit_count -= 8
+                length = (bit_buffer >> bit_count) & 0xFF
+                bit_buffer &= (1 << bit_count) - 1
 
-        out_len = <uint32_t>len(output)
-        if offset == 0 or offset > out_len:
-            raise ValueError(
-                f'Invalid back-reference: offset={offset}, output_size={out_len}')
-        start = out_len - offset
+            length = (length + delta + 3) & 0xFFFFFFFF
 
-        rep = length // offset
-        r = length % offset
+            if offset == 0 or offset > cursor:
+                raise ValueError(
+                    f'Invalid back-reference: offset={offset}, output_size={cursor}')
+            start = cursor - offset
 
-        chunk = bytes(output[start:out_len])
-        if rep > 0:
-            output.extend(chunk * rep)
-        if r > 0:
-            output.extend(chunk[:r])
-        cursor += length
+            # Back-reference copy using C-level memory operations.
+            # When offset >= length, the source and destination regions do not
+            # overlap, so we can use a single memcpy. When they do overlap
+            # (offset < length), we copy in offset-sized chunks, which is
+            # correct because each chunk only references already-written data.
+            copy_src = start
+            copy_len = length
+            if offset >= copy_len:
+                memcpy(&out_buf[cursor], &out_buf[copy_src], copy_len)
+            else:
+                while copy_len >= offset:
+                    memcpy(&out_buf[cursor + (length - copy_len)], &out_buf[copy_src], offset)
+                    copy_len -= offset
+                if copy_len > 0:
+                    memcpy(&out_buf[cursor + (length - copy_len)], &out_buf[copy_src], copy_len)
 
-    return output
+            cursor += length
+
+        return bytearray(out_buf[:size])
+    finally:
+        free(out_buf)
 
 
 def a3x_decrypt_current(data, uint32_t key):
