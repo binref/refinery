@@ -74,21 +74,30 @@ class SynNode(SynNodeBase[_A]):
 
 
 class SynCommand(SynNode[AstCommand]):
-    __slots__ = 'args', 'fake', 'verb', 'silent', 'argument_string', 'trailing_spaces'
+    __slots__ = (
+        'args',
+        'junk',
+        'verb',
+        'silent',
+        'argument_string',
+        'argument_offset',
+        'trailing_spaces',
+    )
 
     args: list[str]
     verb: str
-    fake: bool
+    junk: bool
 
     def __init__(self, ast: AstCommand):
         super().__init__(ast)
         self.silent = False
         self.args = []
         self.verb = ''
-        self.fake = False
+        self.junk = False
         arg_string = io.StringIO()
+        arg_offset = 0
         spaces = []
-        for token in self.ast.fragments:
+        for k, token in enumerate(self.ast.fragments):
             if token.isspace():
                 if self.verb:
                     arg_string.write(token)
@@ -99,10 +108,12 @@ class SynCommand(SynNode[AstCommand]):
                 continue
             self.args.append(token)
             arg_string.write(token)
+            arg_offset = arg_offset or k
             spaces.clear()
         if not self.verb:
             raise ValueError('Empty Command')
         self.argument_string = arg_string.getvalue().lstrip()
+        self.argument_offset = arg_offset
         self.trailing_spaces = spaces
 
     def oneline(self) -> bool:
@@ -123,6 +134,9 @@ class SynCommand(SynNode[AstCommand]):
 
 class SynGroup(SynNodeBase[AstGroup]):
     def oneline(self) -> bool:
+        ast = self.ast
+        if (pl := ast.parent) and (seq := pl.parent) and isinstance(seq.parent, (AstFor, AstIf)):
+            return False
         fragments = self.ast.fragments
         if len(fragments) == 0:
             return True
@@ -253,7 +267,7 @@ class SynIf(SynNodeBase[AstIf]):
             assert cmp is not None
             out.write(F' {ast.lhs!s} {cmp.value} {ast.rhs!s}')
         out.write(K.SP)
-        indented = synthesize(ast.then_do).pretty(out, indent, indented)
+        indented = synthesize(ast.then_do).pretty(out, indent, True)
         if else_do := ast.else_do:
             out.write(K.SP)
             out.write(K.ELSE)

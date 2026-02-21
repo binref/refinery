@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import itertools
 import ntpath
 import re
 import uuid
@@ -64,6 +65,26 @@ def winfnmatch(pattern: str, path: str, cwd: str):
     cwd = re.escape(cwd.rstrip('\\'))
     pattern = rF'(?s:{cwd}\\{regex.getvalue()})$'
     return bool(re.match(pattern, path))
+
+
+def _fuse(*iters):
+    with StringIO() as io:
+        for it in iters:
+            if isinstance(it, str):
+                io.write(it)
+                continue
+            for i in it:
+                io.write(i)
+        return io.getvalue()
+
+
+def _onoff(v: str) -> bool:
+    vc = v.upper()
+    if vc == 'ON':
+        return True
+    if vc == 'OFF':
+        return False
+    raise ValueError(v)
 
 
 class DevNull:
@@ -196,6 +217,32 @@ class BatchEmulator:
     @property
     def delayexpand(self):
         return self.state.delayexpand
+
+    def clone_state(
+        self,
+        delayexpand: bool | None = None,
+        cmdextended: bool | None = None,
+        environment: dict | None | ellipsis = ...,
+        filename: str | None = None,
+    ):
+        state = self.state
+        if delayexpand is None:
+            delayexpand = False
+        if cmdextended is None:
+            cmdextended = state.cmdextended
+        if environment is ...:
+            environment = dict(state.environment)
+        return BatchState(
+            delayexpand,
+            cmdextended,
+            environment=environment,
+            file_system=state.file_system,
+            username=state.username,
+            hostname=state.hostname,
+            now=state.now,
+            cwd=state.cwd,
+            filename=filename,
+        )
 
     def expand_delayed_variables(self, block: str):
         def expansion(match: re.Match[str]):
@@ -383,6 +430,9 @@ class BatchEmulator:
         if cmd.verb.upper() != 'SET':
             raise RuntimeError
 
+        cmd.junk = True
+        yield cmd
+
         arithmetic = False
         quote_mode = False
         prompt = None
@@ -510,15 +560,8 @@ class BatchEmulator:
             if code is None:
                 yield cmd
                 return
-            emu = BatchEmulator(code, std=std, state=BatchState(
-                environment=self.state.environment,
-                file_system=self.state.file_system,
-                now=self.state.now,
-                cwd=self.state.cwd,
-                username=self.state.username,
-                hostname=self.state.hostname,
-                filename=path,
-            ))
+            state = self.clone_state(environment=self.state.environment, filename=path)
+            emu = BatchEmulator(code, std=std, state=state)
         yield from emu.trace(offset, called=True)
 
     @_command('SETLOCAL')
@@ -531,16 +574,16 @@ class BatchEmulator:
         cmdxt = {
             'DISABLEEXTENSIONS': False,
             'ENABLEEXTENSIONS' : True,
-        }.get(setting, self.state.ext_setting)
-        self.state.delayexpands.append(delay)
-        self.state.ext_settings.append(cmdxt)
-        self.state.environments.append(dict(self.environment))
+        }.get(setting, self.state.cmdextended)
+        self.state.delayexpand_stack.append(delay)
+        self.state.cmdextended_stack.append(cmdxt)
+        self.state.environment_stack.append(dict(self.environment))
 
     @_command('ENDLOCAL')
     def execute_endlocal(self, *_):
-        if len(self.state.environments) > 1:
-            self.state.environments.pop()
-            self.state.delayexpands.pop()
+        if len(self.state.environment_stack) > 1:
+            self.state.environment_stack.pop()
+            self.state.delayexpand_stack.pop()
 
     @_command('GOTO')
     def execute_goto(self, cmd: SynCommand, std: IO, *_):
@@ -579,6 +622,7 @@ class BatchEmulator:
             code = int(token)
         except ValueError:
             code = 0
+        yield cmd
         raise Exit(code, exit)
 
     @_command('CHDIR')
@@ -672,6 +716,86 @@ class BatchEmulator:
                 state.remove_file(path)
         return 0
 
+    @_command('START')
+    def execute_start(self, cmd: SynCommand, std: IO, *_):
+        it = iter(cmd.ast.fragments)
+        it = itertools.islice(it, cmd.argument_offset, None)
+        title = None
+        start = None
+        cwd = self.state.cwd
+        env = ...
+        for arg in it:
+            if title is None:
+                if '"' not in arg:
+                    title = ''
+                else:
+                    title = unquote(arg)
+                    continue
+            if arg.isspace():
+                continue
+            if not arg.startswith('/'):
+                start = unquote(arg)
+                break
+            if (flag := arg.upper()) in ('/NODE', '/AFFINITY', '/MACHINE'):
+                next(it)
+            elif flag == '/D':
+                cwd = next(it)
+            elif flag == '/I':
+                env = None
+        if start and (batch := self.state.ingest_file(start)):
+            state = self.clone_state(environment=env)
+            state.cwd = cwd
+            state.command_line = _fuse(it)
+            shell = BatchEmulator(batch, state, std, self.show_noops)
+            yield from shell.trace()
+        else:
+            yield cmd
+
+    @_command('CMD')
+    def execute_cmd(self, cmd: SynCommand, std: IO, *_):
+        it = iter(cmd.ast.fragments)
+        command = None
+        quiet = False
+        strip = False
+        codec = 'cp1252'
+        delayexpand = None
+        cmdextended = None
+
+        for arg in it:
+            if arg.isspace() or not arg.startswith('/'):
+                continue
+            name, _, flag = arg[1:].partition(':')
+            flag = flag.upper()
+            name = name.upper()
+            if name in 'CKR':
+                command = _fuse(it)
+                break
+            elif name == 'Q':
+                quiet = True
+            elif name == 'S':
+                strip = True
+            elif name == 'U':
+                codec = 'utf-16le'
+            elif name == 'E':
+                cmdextended = _onoff(flag)
+            elif name == 'V':
+                delayexpand = _onoff(flag)
+        else:
+            return 0
+
+        if (stripped := re.search('^\\s*"(.*)"', command)) and (strip
+            or command.count('"') != 2
+            or re.search('[&<>()@^|]', stripped[1])
+            or re.search('\\s', stripped[1]) is None
+        ):
+            command = stripped[1]
+
+        state = self.clone_state(delayexpand=delayexpand, cmdextended=cmdextended)
+        state.codec = codec
+        state.echo = not quiet
+        shell = BatchEmulator(command, state, std, self.show_noops)
+        yield from shell.trace()
+
     @_command('ARP')
     @_command('AT')
     @_command('ATBROKER')
@@ -756,7 +880,6 @@ class BatchEmulator:
     @_command('CHCP')
     @_command('CHKDSK')
     @_command('CHKNTFS')
-    @_command('CMD')
     @_command('COLOR')
     @_command('COMP')
     @_command('COMPACT')
@@ -798,7 +921,6 @@ class BatchEmulator:
     @_command('SHIFT')
     @_command('SHUTDOWN')
     @_command('SORT')
-    @_command('START')
     @_command('SUBST')
     @_command('SYSTEMINFO')
     @_command('TASKKILL')
@@ -838,7 +960,7 @@ class BatchEmulator:
             if self.state.exists_file(verb):
                 self.state.ec = 0
             else:
-                cmd.fake = True
+                cmd.junk = True
                 bogus_command = '\uFFFD' in verb or not verb.isprintable()
                 self.state.ec = bogus_command * 9009
             yield cmd
@@ -981,15 +1103,8 @@ class BatchEmulator:
 
         if _for.variant == AstForVariant.FileParsing:
             if _for.mode == AstForParserMode.Command:
-                emulator = BatchEmulator(_for.specline, BatchState(
-                    username=state.username,
-                    hostname=state.hostname,
-                    now=state.now,
-                    cwd=state.cwd,
-                    file_system=state.file_system,
-                    environment=dict(state.environment),
-                    filename=state.name,
-                ))
+                state = self.clone_state(filename=state.name)
+                emulator = BatchEmulator(_for.specline, state)
                 yield from emulator.trace()
                 lines = emulator.std.o.getvalue().splitlines()
             elif _for.mode == AstForParserMode.Literal:
@@ -1033,9 +1148,9 @@ class BatchEmulator:
 
     @_node(AstGroup)
     def trace_group(self, group: AstGroup, std: IO, in_group: bool):
-        yield synthesize(group)
         for sequence in group.fragments:
             yield from self.trace_sequence(sequence, std, True)
+        yield synthesize(group)
 
     @_node(AstLabel)
     def trace_label(self, *_):
@@ -1061,19 +1176,27 @@ class BatchEmulator:
                 yield str(syn)
 
     def emulate(self, offset: int = 0):
-        cursor: AstNode | None = None
+        last: AstNode | None = None
+        junk: AstNode | None = None
         for syn in self.trace(offset):
             if not isinstance(syn, SynNodeBase):
                 continue
-            if isinstance(syn, SynCommand) and syn.fake:
-                continue
             ast = syn.ast
-            if cursor is not None and ast.is_descendant_of(cursor):
+            if isinstance(syn, SynCommand) and syn.junk:
+                junk = ast
                 continue
+            if junk is not None:
+                if junk.is_descendant_of(ast):
+                    continue
+            if last is not None:
+                if ast.is_descendant_of(last):
+                    continue
+                if last.is_descendant_of(ast):
+                    continue
             if isinstance(ast, AstPipeline):
                 if len(ast.parts) == 1:
                     continue
-            cursor = ast
+            last = ast
             yield str(syn)
 
     def execute(self, offset: int = 0):

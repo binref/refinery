@@ -81,16 +81,16 @@ class BatchState:
     now: datetime
     start_time: datetime
 
-    environments: list[dict[str, str]]
-    delayexpands: list[bool]
-    ext_settings: list[bool]
+    environment_stack: list[dict[str, str]]
+    delayexpand_stack: list[bool]
+    cmdextended_stack: list[bool]
 
     _for_loops: list[dict[str, str]]
     file_system: dict[str, str]
 
     def __init__(
         self,
-        delayed_expansion: bool = False,
+        delayexpand: bool = False,
         extensions_enabled: bool = True,
         extensions_version: int = 2,
         environment: dict | None = None,
@@ -100,7 +100,8 @@ class BatchState:
         now: int | float | str | datetime | None = None,
         cwd: str = 'C:\\',
         filename: str | None = '',
-        echo: bool = True
+        echo: bool = True,
+        codec: str = 'cp1252',
     ):
         self.extensions_version = extensions_version
         file_system = file_system or {}
@@ -126,9 +127,9 @@ class BatchState:
         self.username = username
         self.labels = {}
         self._for_loops = []
-        self.environments = [environment]
-        self.delayexpands = [delayed_expansion]
-        self.ext_settings = [extensions_enabled]
+        self.environment_stack = [environment]
+        self.delayexpand_stack = [delayexpand]
+        self.cmdextended_stack = [extensions_enabled]
         self.file_system = file_system
         self.dirstack = []
         self.linebreaks = []
@@ -137,6 +138,7 @@ class BatchState:
         self._cmd = ''
         self.ec = None
         self.echo = echo
+        self.codec = codec
 
     @property
     def cwd(self):
@@ -243,15 +245,23 @@ class BatchState:
 
     @property
     def environment(self):
-        return self.environments[-1]
+        return self.environment_stack[-1]
 
     @property
     def delayexpand(self):
-        return self.delayexpands[-1]
+        return self.delayexpand_stack[-1]
+
+    @delayexpand.setter
+    def delayexpand(self, v):
+        self.delayexpand_stack[-1] = v
 
     @property
-    def ext_setting(self):
-        return self.ext_settings[-1]
+    def cmdextended(self):
+        return self.cmdextended_stack[-1]
+
+    @cmdextended.setter
+    def cmdextended(self, v):
+        self.cmdextended_stack[-1] = v
 
     @property
     def for_loop_variables(self):
