@@ -946,15 +946,13 @@ class BatchEmulator:
 
     def execute_command(self, cmd: SynCommand, std: IO, in_group: bool):
         verb = cmd.verb.upper().strip()
+        handler = self._command.handlers.get(verb)
 
-        try:
-            handler = self._command.handlers[verb]
-        except KeyError:
-            verb, ext = ntpath.splitext(verb)
+        if handler is None:
+            base, ext = ntpath.splitext(verb)
+            handler = None
             if any(ext == pe.upper() for pe in self.state.envar('PATHEXT', '').split(';')):
-                handler = self._command.handlers.get(verb)
-            else:
-                handler = None
+                handler = self._command.handlers.get(base)
 
         if handler is None:
             if self.state.exists_file(verb):
@@ -1187,7 +1185,8 @@ class BatchEmulator:
                 continue
             if junk is not None:
                 if junk.is_descendant_of(ast):
-                    continue
+                    if not last or not last.is_descendant_of(ast):
+                        continue
             if last is not None:
                 if ast.is_descendant_of(last):
                     continue
