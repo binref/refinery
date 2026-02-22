@@ -9,13 +9,18 @@ from refinery.units.blockwise import Arg, BlockTransformation
 
 class map(BlockTransformation):
     """
-    Each block of the input data which occurs as a block of the index argument is replaced by the
-    corresponding block of the image argument. If a block size is specified, and if the index or
-    image argument are byte sequences, they are unpacked into chunks of that size, and excess bytes
-    that are not an integer multiple of the block size are discarded. To prevent any automatic
-    chunking, the `refinery.lib.argformats.DelayedArgument.btoi` handler can be used.
-    An optional default value can be provided to serve as inserts for any blocks in the input that
-    do not occur in the index sequence. If this argument is not specified, such blocks are left
+    Replace multiple characters by other characters simultaneously. For example, the following will
+    replace A by X, B by Y, and C by Z:
+
+        map ABC XYZ
+
+    More formally: Each block of the input data which occurs as a block of the index argument is
+    replaced by the corresponding block of the image argument. If a block size is specified, and if
+    the index or image argument are byte sequences, they are unpacked into chunks of that size, and
+    excess bytes that are not an integer multiple of the block size are discarded. To prevent any
+    automatic chunking, the `refinery.lib.argformats.DelayedArgument.btoi` handler can be used. An
+    optional default value can be provided to serve as inserts for any blocks in the input that do
+    not occur in the index sequence. If this argument is not specified, such blocks are left
     unchanged.
     """
     _map: dict[int, int]
