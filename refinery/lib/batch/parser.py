@@ -201,6 +201,8 @@ class BatchParser:
         add_space = False
         nsp_merge = True
 
+        nonspace = io.StringIO()
+
         if not ast.redirects:
             assert not isinstance(tok, RedirectIO)
             tok_upper = tok.upper()
@@ -218,10 +220,11 @@ class BatchParser:
                 nsp_merge = False
             elif tok_upper == 'GOTO':
                 nsp_merge = False
-            cmd.append(tok)
+            if add_space or not nsp_merge:
+                cmd.append(tok)
+            else:
+                nonspace.write(tok)
             tok = tokens.drop_and_peek()
-
-        nonspace = io.StringIO()
 
         while tok not in (
             Ctrl.Ampersand,

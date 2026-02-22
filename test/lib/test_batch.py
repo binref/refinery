@@ -153,6 +153,13 @@ class TestBatchParser(TestBase):
         cmd, = parser.parse(0)
         self.assertEqual(str(cmd), text)
 
+    def test_full_paths(self):
+        text = r'C:\WINDOWS\system32\scrnsave.scr /s\r\n'
+        parser = BatchParser(text)
+        cmd, = parser.parse(0)
+        syn = SynCommand(cmd.head.parts[0])
+        self.assertEqual(syn.verb, r'C:\WINDOWS\system32\scrnsave.scr')
+
     def test_regression_set_with_escapes(self):
         @docs
         class code:

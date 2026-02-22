@@ -205,6 +205,7 @@ class BatchEmulator:
         self.parser = BatchParser(data, state)
         self.std = std or IO()
         self.show_noops = show_noops
+        self.block_labels = set()
 
     @property
     def state(self):
@@ -431,6 +432,9 @@ class BatchEmulator:
         if cmd.verb.upper() != 'SET':
             raise RuntimeError
 
+        # Since variables can be used in GOTO, a SET can be used to change the behavior of a GOTO.
+        self.block_labels.clear()
+
         arithmetic = False
         quote_mode = False
         prompt = None
@@ -604,9 +608,13 @@ class BatchEmulator:
             std.e.write('No batch label specified to GOTO command.\r\n')
             raise AbortExecution
         label, *_ = label.split(maxsplit=1)
-        if mark and label.upper() == 'EOF':
+        key = label.upper()
+        if mark and key == 'EOF':
             raise Exit(int(self.state.ec), False)
-        raise Goto(label)
+        if key not in self.block_labels:
+            raise Goto(label)
+        else:
+            yield Error(F'Infinite Loop detected for label {key}')
 
     @_command('EXIT')
     def execute_exit(self, cmd: SynCommand, *_):
@@ -722,6 +730,7 @@ class BatchEmulator:
 
     @_command('START')
     def execute_start(self, cmd: SynCommand, std: IO, *_):
+        yield cmd
         it = iter(cmd.ast.fragments)
         it = itertools.islice(it, cmd.argument_offset, None)
         title = None
@@ -757,6 +766,7 @@ class BatchEmulator:
 
     @_command('CMD')
     def execute_cmd(self, cmd: SynCommand, std: IO, *_):
+        yield cmd
         it = iter(cmd.ast.fragments)
         command = None
         quiet = False
@@ -1050,6 +1060,7 @@ class BatchEmulator:
     def trace_if(self, _if: AstIf, std: IO, in_group: bool):
         yield synthesize(_if)
         _if = self.expand_ast_node(_if)
+        self.block_labels.clear()
 
         if _if.variant == AstIfVariant.ErrorLevel:
             condition = _if.var_int <= self.state.ec
@@ -1154,8 +1165,9 @@ class BatchEmulator:
         yield synthesize(group)
 
     @_node(AstLabel)
-    def trace_label(self, *_):
+    def trace_label(self, label: AstLabel, *_):
         yield from ()
+        self.block_labels.add(label.label.upper())
 
     def trace_statement(self, statement: AstStatement, std: IO, in_group: bool):
         try:
@@ -1196,8 +1208,11 @@ class BatchEmulator:
                         continue
             if last is not None:
                 if ast.is_descendant_of(last):
+                    # we already synthesized a parent construct, like a FOR loop or IF block
                     continue
                 if last.is_descendant_of(ast):
+                    # we synthesized a command and no longer need to synthesize an AST node that
+                    # wraps it, like a group
                     continue
             if isinstance(ast, AstPipeline):
                 if len(ast.parts) == 1:
