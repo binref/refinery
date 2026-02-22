@@ -14,6 +14,11 @@ class batchrange:
         self.inc = inc
         self.max = max
 
+    def __len__(self):
+        if self.inc <= 0 or self.max < self.min:
+            return 0
+        return (self.max - self.min) // self.inc + 1
+
     def __iter__(self):
         val = self.min
         inc = self.inc

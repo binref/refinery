@@ -8,7 +8,7 @@ import uuid
 from dataclasses import dataclass, field, fields
 from enum import Enum
 from io import StringIO
-from typing import Callable, ClassVar, Generator, TypeVar
+from typing import Callable, ClassVar, Iterable, Generator, TypeVar
 
 from refinery.lib.patterns import indicators
 from refinery.lib.batch.help import HelpOutput
@@ -246,6 +246,9 @@ class BatchEmulator:
             filename=filename,
         )
 
+    def get_for_variable_regex(self, vars: Iterable[str]):
+        return re.compile(RF'%((?:~[fdpnxsatz]*)?)((?:\\$\\w+)?)([{"".join(vars)}])')
+
     def expand_delayed_variables(self, block: str):
         def expansion(match: re.Match[str]):
             name = match.group(1)
@@ -266,8 +269,27 @@ class BatchEmulator:
         if not vars:
             return block
         _vars = vars
-        return re.sub(
-            RF'%((?:~[fdpnxsatz]*)?)((?:\\$\\w+)?)([{"".join(vars)}])', expansion, block)
+        return self.get_for_variable_regex(vars).sub(expansion, block)
+
+    def contains_for_variable(self, ast: AstNode, vars: Iterable[str]):
+        def check(token):
+            if isinstance(token, list):
+                return any(check(v) for v in token)
+            if isinstance(token, dict):
+                return any(check(v) for v in token.values())
+            if isinstance(token, Enum):
+                return False
+            if isinstance(token, str):
+                return bool(checker(token))
+            if isinstance(token, AstNode):
+                for tf in fields(token):
+                    if tf.name == 'parent':
+                        continue
+                    if check(getattr(token, tf.name)):
+                        return True
+            return False
+        checker = self.get_for_variable_regex(vars).search
+        return check(ast) # type:ignore
 
     def expand_ast_node(self, ast: _T) -> _T:
         def expand(token):
@@ -1106,12 +1128,19 @@ class BatchEmulator:
 
     @_node(AstFor)
     def trace_for(self, _for: AstFor, std: IO, in_group: bool):
-        yield synthesize(_for)
         state = self.state
         cwd = state.cwd
         vars = state.new_forloop()
         body = _for.body
         name = _for.variable
+        vars[name] = ''
+
+        if (
+            self.contains_for_variable(body, vars)
+                or _for.variant != AstForVariant.NumericLoop
+                or len(_for.spec) != 1
+        ):
+            yield synthesize(_for)
 
         if _for.variant == AstForVariant.FileParsing:
             if _for.mode == AstForParserMode.Command:
