@@ -759,11 +759,9 @@ class BatchEmulator:
         if start and (batch := self.state.ingest_file(start)):
             state = self.clone_state(environment=env)
             state.cwd = cwd
-            state.command_line = _fuse(it)
+            state.command_line = _fuse(it).strip()
             shell = BatchEmulator(batch, state, std, self.show_noops)
             yield from shell.trace()
-        else:
-            yield cmd
 
     @_command('CMD')
     def execute_cmd(self, cmd: SynCommand, std: IO, *_):
@@ -1218,6 +1216,8 @@ class BatchEmulator:
             if isinstance(ast, AstPipeline):
                 if len(ast.parts) == 1:
                     continue
+            if last is ast:
+                raise RuntimeError('Emulator attempted to synthesize the same command twice.')
             last = ast
             yield str(syn)
 
