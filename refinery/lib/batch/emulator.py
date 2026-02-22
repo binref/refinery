@@ -16,6 +16,7 @@ from refinery.lib.batch.model import (
     AbortExecution,
     ArgVarFlags,
     AstCondition,
+    AstError,
     AstFor,
     AstForParserMode,
     AstForVariant,
@@ -1265,6 +1266,9 @@ class BatchEmulator:
         while offset < length:
             try:
                 for sequence in self.parser.parse(offset):
+                    if isinstance(sequence, AstError):
+                        yield Error(sequence.error)
+                        continue
                     yield from self.trace_sequence(sequence, self.std, False)
             except Goto as goto:
                 try:

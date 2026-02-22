@@ -10,6 +10,7 @@ from refinery.lib.batch.model import (
     AstCommand,
     AstCondition,
     AstConditionalStatement,
+    AstError,
     AstFor,
     AstForOptions,
     AstForParserMode,
@@ -97,7 +98,7 @@ class LookAhead:
     def word(self, upper=False) -> Word | Ctrl:
         self.skip_space()
         if isinstance((token := next(self)), RedirectIO):
-            raise UnexpectedToken(str(token))
+            raise UnexpectedToken(self.offset(), str(token))
         if upper:
             token = token.upper()
         return token
@@ -314,14 +315,14 @@ class BatchParser:
                 if tokens.pop(Ctrl.Equals):
                     cmp = AstIfCmp('==')
                 else:
-                    raise UnexpectedToken(tokens.peek())
+                    raise UnexpectedToken(offset, tokens.peek())
             else:
                 try:
                     cmp = AstIfCmp(cmp.upper())
                 except Exception:
-                    raise UnexpectedToken(cmp)
+                    raise UnexpectedToken(offset, cmp)
                 if cmp != AstIfCmp.STR and self.state.extensions_version < 1:
-                    raise UnexpectedToken(cmp)
+                    raise UnexpectedToken(offset, cmp)
 
             rhs = tokens.consume_nonspace_words()
 
@@ -345,7 +346,7 @@ class BatchParser:
         then_do = self.sequence(None, tokens, in_group)
 
         if then_do is None:
-            raise UnexpectedToken(tokens.peek())
+            raise UnexpectedToken(offset, tokens.peek())
 
         tokens.skip_space()
 
@@ -374,9 +375,7 @@ class BatchParser:
 
         if not options:
             return result
-        elif not (quote := re.search('"(.*?)"', options)):
-            raise UnexpectedToken(options)
-        else:
+        elif (quote := re.search('"(.*?)"', options)):
             options = quote[1]
 
         parts = options.strip().split()
@@ -440,12 +439,12 @@ class BatchParser:
         if isvar(variable := tokens.word()):
             variant = AstForVariant.Default
         elif len(variable) != 2 or not variable.startswith('/'):
-            raise UnexpectedToken(variable)
+            raise UnexpectedToken(offset, variable)
         else:
             try:
                 variant = AstForVariant(variable[1].upper())
             except ValueError:
-                raise UnexpectedToken(variable)
+                raise UnexpectedToken(offset, variable)
             variable = tokens.word()
             if not isvar(variable):
                 if variant == AstForVariant.FileParsing:
@@ -453,33 +452,33 @@ class BatchParser:
                 elif variant == AstForVariant.DescendRecursively:
                     path = unquote(variable)
                 else:
-                    raise UnexpectedToken(variable)
+                    raise UnexpectedToken(offset, variable)
                 variable = tokens.word()
                 if not isvar(variable):
-                    raise UnexpectedToken(variable)
+                    raise UnexpectedToken(offset, variable)
 
         if (t := tokens.word()).upper() != 'IN':
-            raise UnexpectedToken(t)
+            raise UnexpectedToken(offset, t)
 
         tokens.skip_space()
 
         if not tokens.pop(Ctrl.NewGroup):
-            raise UnexpectedToken(tokens.peek())
+            raise UnexpectedToken(offset, tokens.peek())
 
         with io.StringIO() as _spec:
             while not tokens.pop(Ctrl.EndGroup):
                 if isinstance((t := next(tokens)), RedirectIO):
-                    raise UnexpectedToken(t)
+                    raise UnexpectedToken(offset, t)
                 _spec.write(t)
             spec_string = _spec.getvalue().strip()
 
         tokens.skip_space()
 
         if not tokens.pop_string('DO'):
-            raise UnexpectedToken(tokens.peek())
+            raise UnexpectedToken(offset, tokens.peek())
 
         if not (body := self.sequence(None, tokens, in_group)):
-            raise UnexpectedToken(tokens.peek())
+            raise UnexpectedToken(offset, tokens.peek())
 
         options = self.forloop_options(options)
 
@@ -492,7 +491,7 @@ class BatchParser:
             ):
                 if spec_string.startswith(q):
                     if not spec_string.endswith(q):
-                        raise UnexpectedToken(spec_string)
+                        raise UnexpectedToken(offset, spec_string)
                     mode = m
                     spec = [spec_string[1:-1]]
                     break
@@ -610,4 +609,10 @@ class BatchParser:
 
     def parse(self, offset: int):
         tokens = LookAhead(self.lexer, offset)
-        yield from self.block(None, tokens, False)
+        while True:
+            try:
+                yield from self.block(None, tokens, False)
+            except UnexpectedToken as ut:
+                yield AstError(ut.offset, None, ut.token, ut.error)
+            else:
+                break

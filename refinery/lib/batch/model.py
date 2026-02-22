@@ -209,6 +209,12 @@ class AstNode:
 
 
 @dataclass(repr=False)
+class AstError(AstNode):
+    token: str
+    error: str | None
+
+
+@dataclass(repr=False)
 class AstStatement(AstNode):
     silenced: bool
 
@@ -402,18 +408,23 @@ class UnexpectedEOF(EmulatorException, EOFError):
 
 
 class UnexpectedToken(EmulatorException):
-    def __init__(self, token, msg: str | None = None) -> None:
+    def __init__(self, offset: int, token, error: str | None = None) -> None:
         if isinstance(token, int):
             token = chr(token)
         else:
             token = str(token)
-        end = msg and F': {msg}' or '.'
-        super().__init__(F'The token "{token}" was unexpected{end}')
+        self.token = token
+        self.error = error
+        self.offset = offset
+
+    def __str__(self):
+        end = self.error and F': {self.error}' or '.'
+        return F'The token "{self.token}" was unexpected{end}'
 
 
 class UnexpectedFirstToken(UnexpectedToken):
-    def __init__(self, token: str | int) -> None:
-        super().__init__(token, 'This token may not occur as the first token in a line.')
+    def __init__(self, offset: int, token: str | int) -> None:
+        super().__init__(offset, token, 'This token may not occur as the first token in a line.')
 
 
 class InvalidLabel(EmulatorException):
