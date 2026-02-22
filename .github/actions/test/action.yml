@@ -10,11 +10,28 @@ inputs:
 runs:
   using: "composite"
   steps:
-    - name: Unit Tests
+    - name: Unit Tests (Pure Python)
       if: ${{ !contains(inputs.os, 'ubuntu') }}
       shell: ${{ contains(inputs.os, 'windows') && 'cmd' || 'bash' }}
       run: pytest -n=8 --dist=loadgroup test
-    - name: Unit Tests
+    - name: Unit Tests (Pure Python)
       if: ${{  contains(inputs.os, 'ubuntu') }}
       shell: bash
       run: XDG_SESSION_TYPE=x11 xvfb-run pytest -n=8 --dist=loadgroup test
+    - name: Prepare Compiled Module Tests
+      shell: ${{ contains(inputs.os, 'windows') && 'pwsh' || 'bash' }}
+      run: |
+        mkdir "${{ runner.temp }}/ctest"
+        cp -r test "${{ runner.temp }}/ctest/"
+        cp -r samples "${{ runner.temp }}/ctest/"
+        cp pytest.ini "${{ runner.temp }}/ctest/"
+    - name: Unit Tests (Compiled Modules)
+      if: ${{ !contains(inputs.os, 'ubuntu') }}
+      shell: ${{ contains(inputs.os, 'windows') && 'cmd' || 'bash' }}
+      run: pytest -n=8 --dist=loadgroup test
+      working-directory: ${{ runner.temp }}/ctest
+    - name: Unit Tests (Compiled Modules)
+      if: ${{  contains(inputs.os, 'ubuntu') }}
+      shell: bash
+      run: XDG_SESSION_TYPE=x11 xvfb-run pytest -n=8 --dist=loadgroup test
+      working-directory: ${{ runner.temp }}/ctest
