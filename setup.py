@@ -175,6 +175,15 @@ def get_config():
         import Cython.Build as cy
         ext = cy.cythonize(extensions)
     except Exception:
+        if sys.platform == 'win32':
+            remedy = 'Visual Studio Build Tools'
+        elif sys.platform == 'darwin':
+            remedy = 'XCode Command Line Tools [xcode-select --install]'
+        else:
+            remedy = 'GCC [sudo apt-get install build-essential]'
+        sys.stderr.write(
+            '[!] Cython extensions could not be compiled.\n'
+            F'    Pure Python fallbacks will be used. For better performance, install {remedy}.\n')
         ext = []
 
     config.update(
