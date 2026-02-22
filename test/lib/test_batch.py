@@ -182,7 +182,7 @@ class TestBatchEmulator(TestBase):
 
     def test_arithmetic_if(self):
         def _bat(s: str):
-            for e in BatchEmulator(F'if {s} (true) else (false)').emulate_commands():
+            for e in BatchEmulator(F'if {s} (true) else (false)').emulate_commands(allow_junk=True):
                 return e
 
         self.assertEqual(_bat('"^="==^='), 'false')
@@ -211,7 +211,8 @@ class TestBatchEmulator(TestBase):
             :ABORT
             exit 0
             '''
-        self.assertListEqual(list(bat.emulate_commands()), [])
+        bat.execute()
+        self.assertEqual(bat.std.o.read(), '')
         self.assertEqual(bat.state.envar('cl'), 'CALL')
 
     def test_file_exists(self):
@@ -250,7 +251,7 @@ class TestBatchEmulator(TestBase):
                 echo harry
             ) | findstr h
             '''
-        self.assertListEqual(list(bat.emulate_commands()), ['echo hello', 'echo harry'])
+        self.assertListEqual(list(bat.emulate_commands()), ['echo hello', 'echo harry', 'findstr h'])
         self.assertEqual(bat.std.o.getvalue(), 'hello\x20\r\nharry\x20\r\n')
 
     def test_labels_can_be_variables(self):
@@ -614,7 +615,7 @@ class TestBatchEmulator(TestBase):
             R'echo#Test6',
             R'echo!Test7',
         ]
-        test = list(bat.emulate_commands())
+        test = list(bat.emulate_commands(allow_junk=True))
         self.assertListEqual(test, goal)
 
     def test_labels_within_line_continuations_work(self):
@@ -686,7 +687,7 @@ class TestBatchEmulator(TestBase):
             SET VAR=CHANGED
             EXIT/B 0011
             '''
-        self.assertListEqual(list(bat.emulate_commands()), [
+        self.assertListEqual([cmd for cmd in bat.emulate_commands() if cmd.startswith('ECHO')], [
             'ECHO 11',
             'ECHO CHANGED',
             'ECHO FOO',

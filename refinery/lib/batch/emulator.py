@@ -1105,8 +1105,7 @@ class BatchEmulator:
 
         if _for.variant == AstForVariant.FileParsing:
             if _for.mode == AstForParserMode.Command:
-                state = self.clone_state(filename=state.name)
-                emulator = BatchEmulator(_for.specline, state)
+                emulator = BatchEmulator(_for.specline, self.clone_state(filename=state.name))
                 yield from emulator.trace()
                 lines = emulator.std.o.getvalue().splitlines()
             elif _for.mode == AstForParserMode.Literal:
@@ -1165,10 +1164,13 @@ class BatchEmulator:
             raise RuntimeError(statement)
         yield from handler(self, statement, std, in_group)
 
-    def emulate_commands(self):
+    def emulate_commands(self, allow_junk=False):
         for syn in self.trace():
-            if isinstance(syn, SynCommand):
-                yield str(syn)
+            if not isinstance(syn, SynCommand):
+                continue
+            if not allow_junk and syn.junk:
+                continue
+            yield str(syn)
 
     def emulate_to_depth(self, depth: int = 0):
         for syn in self.trace():
