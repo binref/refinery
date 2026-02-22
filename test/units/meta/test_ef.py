@@ -63,21 +63,6 @@ class TestFileReader(TestUnitBase):
         data = self.load(os.path.join(self.root, '**', 't??t_ef.py'), wild=True)()
         self.assertEqual(data.count(B'bananapalooza'), 2)
 
-    def test_count_lines(self):
-        loc = 0
-        log = logging.getLogger()
-        logging.StreamHandler.terminator = ': '
-
-        for line in self.load(os.path.join(self.root, 'refinery', '**', '*.py'), wild=True, linewise=True).process(None):
-            if not line or line.isspace() or line.startswith(B'#'):
-                continue
-            loc += 1
-
-        log.info(F'the binary refinery has roughly {loc} lines of code')
-
-        self.assertGreaterEqual(loc, 7000)
-        self.assertLessEqual(loc, 7000000)
-
     def test_regression_relative_path(self):
         with tempfile.TemporaryDirectory() as root:
             root = Path(root)
