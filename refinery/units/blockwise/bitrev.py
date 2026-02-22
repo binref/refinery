@@ -8,8 +8,7 @@ class bitrev(UnaryOperation):
     Reverse the bits of every block. Any excess bytes at the end of the input that are not
     an integer multiple of the block size are ignored.
     """
-    @staticmethod
-    def operate(arg):
+    def operate(self, block, *args):
         raise RuntimeError('operate was called before the unit was initialized')
 
     def __init__(self, bigendian=False, blocksize=1):
@@ -39,4 +38,4 @@ class bitrev(UnaryOperation):
                 for s in range(self.fbits):
                     w |= ((v >> s) & 1) << (self.fbits - s - 1)
                 return w
-        self.operate = operate
+        self.operate = operate # type:ignore

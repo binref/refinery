@@ -234,17 +234,19 @@ def splitchunks(
 
 
 def infinitize(it: _T | Iterable[_T]) -> Iterable[_T]:
+    """
+    Creates an infinite iterable from the input.
+    """
     if isinstance(it, (
         itertools.cycle,
         itertools.repeat,
         itertools.count,
     )):
         return it
-    try:
-        it = iter(it)           # type:ignore
-    except TypeError:
-        it = (it,)              # type:ignore
-    return itertools.cycle(it)  # type:ignore
+    elif isinstance(it, Iterable):
+        return itertools.cycle(it)
+    else:
+        return itertools.repeat(it)
 
 
 class NoLogging:

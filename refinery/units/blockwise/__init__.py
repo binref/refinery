@@ -7,6 +7,7 @@ from __future__ import annotations
 import abc
 import itertools
 
+from collections.abc import Sized
 from functools import cached_property
 from typing import TYPE_CHECKING
 
@@ -17,7 +18,7 @@ from refinery.lib.types import INF, NoMask, Param, asbuffer, buf, isq
 from refinery.units import Arg, Unit
 
 if TYPE_CHECKING:
-    from typing import Generator, Iterable, Literal, TypeVar, Union
+    from typing import Generator, Iterable, Iterator, Literal, TypeVar, Union
 
     from numpy import ndarray
     _I = Union[Iterable[int], list[int], int]
@@ -69,7 +70,7 @@ class BlockTransformationBase(Unit, abstract=True):
         return self.args.blocksize or 1
 
     @property
-    def precision(self) -> int | Literal[INF]:
+    def precision(self) -> int | INF:
         precision = self.args.precision
         if precision < 0:
             return self.blocksize
@@ -78,7 +79,7 @@ class BlockTransformationBase(Unit, abstract=True):
         return precision
 
     @property
-    def fbits(self):
+    def fbits(self) -> int | INF:
         return 8 * self.precision
 
     @property
@@ -171,11 +172,12 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
     def _argument_parse_hook(self, it: _I) -> tuple[_I, bool]:
         return it, False
 
-    def _infinitize_argument(self, min_size: int, it: _I, masked=False) -> Iterable[int]:
-        def _mask(it):
+    def _infinitize_argument(self, min_size: int, it: _I, masked=False) -> Iterator[int]:
+        def _mask(it: Iterable[int]):
             warnings = 3
             for block in it:
                 out = block & self.fmask
+                assert isinstance(out, int)
                 if warnings and out != block:
                     warnings -= 1
                     self.log_warn(F'reduced argument to 0x{out:0{self.fbits // 4}X}; original value was 0x{block:X}')
@@ -188,18 +190,17 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
                 quotient += 1
             if quotient > 1:
                 it = it * quotient
-            return it
+            return iter(it)
         if isinstance(it, int):
             it = (it,)
         if not masked:
             it = _mask(it)
-        return infinitize(it)
+        return iter(infinitize(iter(it)))
 
     @abc.abstractmethod
     def operate(self, block: _T, *args) -> _T:
         raise NotImplementedError
 
-    @abc.abstractmethod
     def inplace(self, block: ndarray, *args) -> ndarray | None:
         tmp = self.operate(block, *args)
         if tmp.dtype != block.dtype:
@@ -355,16 +356,10 @@ class UnaryOperation(ArithmeticUnit, abstract=True):
         super().__init__(
             bigendian=bigendian, blocksize=blocksize, **kw)
 
-    def inplace(self, block) -> None:
-        super().inplace(block)
-
 
 class BinaryOperation(ArithmeticUnit, abstract=True):
     def __init__(self, *argument, bigendian=False, blocksize=1):
         super().__init__(*argument, bigendian=bigendian, blocksize=blocksize)
-
-    def inplace(self, block, argument) -> None:
-        super().inplace(block, argument)
 
 
 class BinaryOperationWithAutoBlockAdjustment(BinaryOperation, abstract=True):
@@ -380,13 +375,8 @@ class BinaryOperationWithAutoBlockAdjustment(BinaryOperation, abstract=True):
         super().__init__(*argument, bigendian=bigendian, blocksize=blocksize)
 
     def _argument_parse_hook(self, it: _I) -> tuple[_I, bool]:
-        try:
-            n = len(it)
-        except TypeError:
-            pass
-        else:
-            if n == 1:
-                it = it[0]
+        if isinstance(it, Sized) and len(it) == 1:
+            it = it[0]
         if masked := isinstance(it, int):
             if not self.args.blocksize:
                 self.log_debug('detected numeric argument with no specified block size')
