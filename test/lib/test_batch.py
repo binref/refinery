@@ -229,7 +229,7 @@ class TestBatchEmulator(TestBase):
             @echo off
             if exist "ex"""""i"sts" echo hi
             '''
-        bat.show_noops = True
+        bat.show_nops = True
         bat.state.create_file('exists')
         self.assertListEqual(list(bat.emulate_commands()), ['@echo off', 'echo hi'])
         bat.state.remove_file('exists')

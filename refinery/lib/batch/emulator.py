@@ -201,13 +201,26 @@ class BatchEmulator:
         data: str | buf | BatchParser,
         state: BatchState | None = None,
         std: IO | None = None,
-        show_noops: bool = False,
+        show_nops: bool = False,
+        show_junk: bool = False,
+        show_sets: bool = False,
     ):
         self.stack = []
         self.parser = BatchParser(data, state)
         self.std = std or IO()
-        self.show_noops = show_noops
+        self.show_nops = show_nops
+        self.show_junk = show_junk
+        self.show_sets = show_sets
         self.block_labels = set()
+
+    def spawn(self, data: str | buf | BatchParser, state: BatchState | None = None, std: IO | None = None):
+        return BatchEmulator(
+            data,
+            state,
+            std,
+            self.show_nops,
+            self.show_junk,
+        )
 
     @property
     def state(self):
@@ -475,7 +488,7 @@ class BatchEmulator:
                 prompt = prompt.rstrip('\r\n')
             tk = next(it)
         else:
-            cmd.junk = True
+            cmd.junk = not self.show_sets
 
         yield cmd
 
@@ -581,7 +594,7 @@ class BatchEmulator:
                 offset = self.parser.lexer.labels[label.upper()]
             except KeyError as KE:
                 raise InvalidLabel(label) from KE
-            emu = BatchEmulator(self.parser, std=std)
+            emu = self.spawn(self.parser, std=std)
         else:
             offset = 0
             path = cmdl.strip()
@@ -590,7 +603,7 @@ class BatchEmulator:
                 yield cmd
                 return
             state = self.clone_state(environment=self.state.environment, filename=path)
-            emu = BatchEmulator(code, std=std, state=state)
+            emu = self.spawn(code, std=std, state=state)
         yield from emu.trace(offset, called=True)
 
     @_command('SETLOCAL')
@@ -684,12 +697,12 @@ class BatchEmulator:
         mode = cmdl.strip().lower()
         current_state = self.state.echo
         if mode == 'on':
-            if self.show_noops or current_state is False:
+            if self.show_nops or current_state is False:
                 yield cmd
             self.state.echo = True
             return
         if mode == 'off':
-            if self.show_noops or current_state is True:
+            if self.show_nops or current_state is True:
                 yield cmd
             self.state.echo = False
             return
@@ -783,7 +796,7 @@ class BatchEmulator:
             state = self.clone_state(environment=env)
             state.cwd = cwd
             state.command_line = _fuse(it).strip()
-            shell = BatchEmulator(batch, state, std, self.show_noops)
+            shell = self.spawn(batch, state, std)
             yield from shell.trace()
 
     @_command('CMD')
@@ -829,7 +842,7 @@ class BatchEmulator:
         state = self.clone_state(delayexpand=delayexpand, cmdextended=cmdextended)
         state.codec = codec
         state.echo = not quiet
-        shell = BatchEmulator(command, state, std, self.show_noops)
+        shell = self.spawn(command, state, std)
         yield from shell.trace()
 
     @_command('ARP')
@@ -994,7 +1007,7 @@ class BatchEmulator:
             if self.state.exists_file(verb):
                 self.state.ec = 0
             elif not indicators.winfpath.value.fullmatch(verb):
-                cmd.junk = True
+                cmd.junk = not self.show_junk
                 bogus_command = '\uFFFD' in verb or not verb.isprintable()
                 self.state.ec = bogus_command * 9009
             yield cmd
@@ -1145,7 +1158,7 @@ class BatchEmulator:
 
         if _for.variant == AstForVariant.FileParsing:
             if _for.mode == AstForParserMode.Command:
-                emulator = BatchEmulator(_for.specline, self.clone_state(filename=state.name))
+                emulator = self.spawn(_for.specline, self.clone_state(filename=state.name))
                 yield from emulator.trace()
                 lines = emulator.std.o.getvalue().splitlines()
             elif _for.mode == AstForParserMode.Literal:
@@ -1198,9 +1211,8 @@ class BatchEmulator:
 
     @_node(AstLabel)
     def trace_label(self, label: AstLabel, *_):
-        if label.comment:
-            yield synthesize(label)
-        else:
+        yield from ()
+        if not label.comment:
             self.block_labels.add(label.label.upper())
 
     def trace_statement(self, statement: AstStatement, std: IO, in_group: bool):
@@ -1231,7 +1243,6 @@ class BatchEmulator:
         for syn in self.trace(offset):
             if not isinstance(syn, SynNodeBase):
                 continue
-            # yield str(syn); continue
             ast = syn.ast
             if isinstance(syn, SynCommand) and syn.junk:
                 junk = ast
