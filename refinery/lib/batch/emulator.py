@@ -10,6 +10,7 @@ from enum import Enum
 from io import StringIO
 from typing import Callable, ClassVar, Generator, TypeVar
 
+from refinery.lib.patterns import indicators
 from refinery.lib.batch.help import HelpOutput
 from refinery.lib.batch.model import (
     AbortExecution,
@@ -971,7 +972,7 @@ class BatchEmulator:
         if handler is None:
             if self.state.exists_file(verb):
                 self.state.ec = 0
-            else:
+            elif not indicators.winfpath.value.fullmatch(verb):
                 cmd.junk = True
                 bogus_command = '\uFFFD' in verb or not verb.isprintable()
                 self.state.ec = bogus_command * 9009

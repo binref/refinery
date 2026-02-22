@@ -455,7 +455,7 @@ _pattern_win_path = _pattern_win_path_template.format(
     p=_pattern_win_path_element
 )
 _pattern_win_path_terse = _pattern_win_path_template.format(
-    s=_pattern_win_root,
+    s="[A-Za-z]:",
     p=_pattern_pathpart_nospace
 )
 
@@ -678,6 +678,12 @@ class indicators(_PatternEnum):
     "Windows path names"
     nixpath = pattern(_pattern_nix_path)
     "Posix path names"
+    fpath = pattern(_pattern_any_path_terse)
+    "Terser pattern for Windows and Linux path names"
+    winfpath = pattern(_pattern_win_path_terse)
+    "Terser pattern for Windows path names"
+    nixfpath = pattern(_pattern_nix_path_terse)
+    "Terser pattern for Posix path names"
     evar = pattern(_pattern_win_env_variable)
     "Windows environment variables, i.e. something like `%APPDATA%`"
 
