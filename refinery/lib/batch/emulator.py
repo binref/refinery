@@ -1162,7 +1162,7 @@ class BatchEmulator:
             opt = _for.options
             tokens = sorted(opt.tokens)
             split = re.compile('[{}]+'.format(re.escape(opt.delims)))
-            count = tokens[-1] + 1
+            count = tokens[-1] + 1 if tokens else 0
             first_variable = ord(name)
             if opt.asterisk:
                 tokens.append(count)
@@ -1171,7 +1171,10 @@ class BatchEmulator:
                     continue
                 if opt.comment and line.startswith(opt.comment):
                     continue
-                tokenized = split.split(line, maxsplit=count)
+                if count:
+                    tokenized = split.split(line, maxsplit=count)
+                else:
+                    tokenized = (line,)
                 for k, tok in enumerate(tokens):
                     name = chr(first_variable + k)
                     if not name.isalpha():

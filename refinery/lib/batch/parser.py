@@ -408,6 +408,9 @@ class BatchParser:
                 if value.endswith('*'):
                     result.asterisk = True
                     value = value[:-1]
+                    if not value:
+                        result.tokens = ()
+                        continue
                 for x in value.split(','):
                     x, _, y = x.partition('-')
                     x = batchint(x) - 1
