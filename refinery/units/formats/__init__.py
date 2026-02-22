@@ -100,7 +100,23 @@ class PathExtractorUnit(Unit, abstract=True):
     to properly process. In order to dump all extracted data to disk, the following pipeline can be
     used:
 
-        emit something | <this> [| dump {path} ]
+        emit something | <this> [| d2p ]
+
+    If you using <this> to unpack a file on disk, the following pattern can be useful:
+
+        ef pack.foo [| <this> -j | d2p ]
+
+    The unit `refinery.ef` is also a path extractor. By specifying `-j` (or `--join`), the paths of
+    extracted items are combined. The `refinery.d2p` unit will deconflict these with the local file
+    system. For example, if `pack.foo` contains items `one.txt` and `two.txt`, the following local
+    file tree would be the result:
+
+        pack.foo
+        pack/one.txt
+        pack/two.txt
+
+    Finally, the `-d` (or `--drop`) switch can be used to not create (or alter) the path metadata
+    at all, which is useful in cases where path metadata from a previous unit should be preserved.
     """
 
     CustomJoinBehaviour = '{root}{sep}{path}'
