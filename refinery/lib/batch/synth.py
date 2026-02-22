@@ -190,7 +190,8 @@ class SynLabel(SynNode[AstLabel]):
         return True
 
     def __str__(self):
-        return F':{self.ast.label}'
+        prefix = '::' if self.ast.comment else ':'
+        return F'{prefix}{self.ast.label}'
 
 
 class SynFor(SynNodeBase[AstFor]):

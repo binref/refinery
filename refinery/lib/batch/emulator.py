@@ -1194,8 +1194,10 @@ class BatchEmulator:
 
     @_node(AstLabel)
     def trace_label(self, label: AstLabel, *_):
-        yield from ()
-        self.block_labels.add(label.label.upper())
+        if label.comment:
+            yield synthesize(label)
+        else:
+            self.block_labels.add(label.label.upper())
 
     def trace_statement(self, statement: AstStatement, std: IO, in_group: bool):
         try:

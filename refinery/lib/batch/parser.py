@@ -553,17 +553,23 @@ class BatchParser:
             return group
 
     def label(self, tokens: LookAhead, silenced: bool) -> AstLabel | None:
-        if tokens.peek() != Ctrl.Label:
+        comment = False
+        if (t := tokens.peek()) == Ctrl.Comment:
+            comment = True
+        elif t != Ctrl.Label:
             return None
         offset = tokens.offset()
         lexer = self.lexer
         lexer.parse_label()
         tokens.pop()
         line = tokens.word()
-        label = lexer.label(line)
-        if (x := lexer.labels[label]) != offset:
-            raise RuntimeError(F'Expected offset for label {label} to be {offset}, got {x} instead.')
-        return AstLabel(offset, None, silenced, line, label)
+        if comment:
+            label = line
+        else:
+            label = lexer.label(line)
+            if (x := lexer.labels[label]) != offset - 1:
+                raise RuntimeError(F'Expected offset for label {label} to be {offset}, got {x} instead.')
+        return AstLabel(offset, None, silenced, line, label, comment)
 
     def statement(self, parent: AstNode | None, tokens: LookAhead, in_group: bool):
         at, _ = self.skip_prefix(tokens)

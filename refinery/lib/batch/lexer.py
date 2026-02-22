@@ -73,7 +73,6 @@ class EV(enum.IntEnum):
 
 SeparatorMap = {
     AT          : Ctrl.At,
-    COLON       : Ctrl.Label,
     COMMA       : Ctrl.Comma,
     EQUALS      : Ctrl.Equals,
     PAREN_CLOSE : Ctrl.EndGroup,
@@ -695,6 +694,15 @@ class BatchLexer:
             return True
         if char == SLASH and not self.pending_redirect:
             yield from self.emit_token()
+        if char == COLON:
+            if (yield from self.emit_token()):
+                return False
+            elif self.next_char() == COLON:
+                yield Ctrl.Comment
+                return True
+            else:
+                yield Ctrl.Label
+                return False
         try:
             token = SeparatorMap[char]
         except KeyError:

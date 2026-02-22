@@ -18,6 +18,7 @@ class Ctrl(str, enum.Enum):
     Semicolon           = ';'   # noqa;
     Comma               = ','   # noqa;
     Label               = ':'   # noqa;
+    Comment             = '::'  # noqa;
     Equals              = '='   # noqa;
     NewGroup            = '('   # noqa;
 #   The following can terminate a command:
@@ -216,6 +217,7 @@ class AstStatement(AstNode):
 class AstLabel(AstStatement):
     line: str = ''
     label: str = ''
+    comment: bool = False
 
 
 @dataclass(repr=False)
