@@ -4,24 +4,10 @@ A wrapper around the LIEF library.
 from __future__ import annotations
 
 import io
+from typing import TYPE_CHECKING
 
-import lief as lib
-import lief.COFF as COFF
-import lief.ELF as ELF
-import lief.MachO as MachO
-import lief.PE as PE
-
-if True:
-    lib.disable_leak_warning()
-    lib.logging.disable()
-
-from refinery.lib.types import buf
-
-AbstractBinary = lib.Binary
-Relocation = lib.Relocation
-Header = lib.Header
-Symbol = lib.Symbol
-Section = lib.Section
+if TYPE_CHECKING:
+    from refinery.lib.types import buf
 
 __all__ = [
     'ELF',
@@ -42,6 +28,48 @@ __all__ = [
 
 __pdoc__ = {_forward: False for _forward in __all__[:9]}
 
+_lib = None
+
+
+def _init():
+    global _lib
+    if _lib is not None:
+        return _lib
+    import lief as lib
+    lib.disable_leak_warning()
+    lib.logging.disable()
+    _lib = lib
+    return lib
+
+
+def __getattr__(name):
+    lib = _init()
+    if name == 'lib':
+        return lib
+    if name == 'ELF':
+        import lief.ELF as ELF
+        return ELF
+    if name == 'MachO':
+        import lief.MachO as MachO
+        return MachO
+    if name == 'PE':
+        import lief.PE as PE
+        return PE
+    if name == 'COFF':
+        import lief.COFF as COFF
+        return COFF
+    if name == 'AbstractBinary':
+        return lib.Binary
+    if name == 'Relocation':
+        return lib.Relocation
+    if name == 'Header':
+        return lib.Header
+    if name == 'Symbol':
+        return lib.Symbol
+    if name == 'Section':
+        return lib.Section
+    raise AttributeError(F'module {__name__!r} has no attribute {name!r}')
+
 
 def load_pe(
     data: buf,
@@ -56,6 +84,7 @@ def load_pe(
     to a config object and then invokes the LIEF parser. Everything is parsed by default. For speed
     over completeness, see `refinery.lib.lief.load_pe_fast`.
     """
+    import lief.PE as PE
     with io.BytesIO(data) as stream:
         cfg = PE.ParserConfig()
         cfg.parse_exports = bool(parse_exports)
@@ -90,10 +119,11 @@ def load_pe_fast(
     )
 
 
-def load_macho(data: buf) -> MachO.FatBinary | MachO.Binary:
+def load_macho(data: buf):
     """
     Load a MachO file using LIEF.
     """
+    import lief.MachO as MachO
     with io.BytesIO(data) as stream:
         config = MachO.ParserConfig()
         config.parse_dyld_bindings = True
@@ -104,10 +134,11 @@ def load_macho(data: buf) -> MachO.FatBinary | MachO.Binary:
         raise ValueError
 
 
-def load_elf(data: buf) -> ELF.Binary:
+def load_elf(data: buf):
     """
     Load an ELF file using LIEF.
     """
+    import lief.ELF as ELF
     with io.BytesIO(data) as stream:
         config = ELF.ParserConfig()
         config.parse_dyn_symbols = True

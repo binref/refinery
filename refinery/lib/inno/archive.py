@@ -32,9 +32,6 @@ from refinery.lib.structures import Struct, StructReader, StructReaderBits
 from refinery.lib.tools import exception_to_string, one
 from refinery.lib.types import buf
 from refinery.units import Unit
-from refinery.units.crypto.cipher.chacha import xchacha
-from refinery.units.crypto.cipher.rc4 import rc4
-from refinery.units.formats.pe.perc import perc
 
 if TYPE_CHECKING:
     from typing import (
@@ -1444,6 +1441,7 @@ class XChaChaMixin(SetupEncryptionHeader):
 
     def decrypt(self, password_bytes: buf, data: buf, chunk_start: int, first_slice: int) -> buf:
         key = self._derive(password_bytes)
+        from refinery.units.crypto.cipher.chacha import xchacha
         nonce = self.PasswordSeed.BaseNonce.compile(chunk_start, first_slice)
         return data | xchacha(key, nonce=nonce) | bytes
 
@@ -1489,6 +1487,7 @@ class SetupEncryptionHeaderV1(Struct, SetupEncryptionHeader):
         view = memoryview(data)
         hash = self._algorithm(view[:slen])
         hash.update(password_bytes)
+        from refinery.units.crypto.cipher.rc4 import rc4
         return view[slen:] | rc4(hash.digest(), discard=1000) | bytes
 
 
@@ -2454,6 +2453,7 @@ class InnoArchive:
     ):
         if not (meta := TSetupLdrOffsetTable.FindInBinary(data)):
             try:
+                from refinery.units.formats.pe.perc import perc
                 _meta = one(data | perc(self.OffsetsPath))
             except Exception as E:
                 raise ValueError(F'Could not find TSetupOffsets PE resource at {self.OffsetsPath}') from E
