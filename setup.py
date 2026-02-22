@@ -9,33 +9,6 @@ import sys
 import toml
 
 from setuptools import Extension
-from setuptools.command.build_ext import build_ext as _build_ext
-
-
-class OptionalBuildExt(_build_ext):
-    """
-    A custom build_ext command that gracefully handles C compilation failures. The cythonize() call
-    only transpiles .pyx to .c files; the actual C compiler invocation happens here. If no C
-    compiler is available, this allows the installation to proceed without the Cython extensions,
-    falling back to the pure Python implementations.
-    """
-    def build_extensions(self):
-        try:
-            _build_ext.build_extensions(self)
-        except Exception as e:
-            if sys.platform == 'win32':
-                remedy = 'Visual Studio Build Tools'
-            elif sys.platform == 'darwin':
-                remedy = 'XCode Command Line Tools [xcode-select --install]'
-            else:
-                remedy = 'GCC [sudo apt-get install build-essential]'
-            sys.stderr.write(
-                F'[!] C compilation of Cython extensions failed: {e}\n'
-                F'    Pure Python fallbacks will be used. For better performance, install {remedy}.\n')
-            self.extensions = []
-        else:
-            sys.stderr.write(
-                '[!] C compilation of Cython extensions successful!')
 
 
 __prefix__ = os.getenv('REFINERY_PREFIX') or ''
@@ -203,15 +176,6 @@ def get_config():
         import Cython.Build as cy
         ext = cy.cythonize(extensions)
     except Exception:
-        if sys.platform == 'win32':
-            remedy = 'Visual Studio Build Tools'
-        elif sys.platform == 'darwin':
-            remedy = 'XCode Command Line Tools [xcode-select --install]'
-        else:
-            remedy = 'GCC [sudo apt-get install build-essential]'
-        sys.stderr.write(
-            '[!] Cython extensions could not be compiled.\n'
-            F'    Pure Python fallbacks will be used. For better performance, install {remedy}.\n')
         ext = []
 
     config.update(
@@ -221,7 +185,7 @@ def get_config():
         extras_require=extras,
         include_package_data=True,
         entry_points={'console_scripts': console_scripts},
-        cmdclass={'deploy': DeployCommand, 'build_ext': OptionalBuildExt},
+        cmdclass={'deploy': DeployCommand},
         ext_modules=ext,
     )
 
