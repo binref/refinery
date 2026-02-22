@@ -30,6 +30,9 @@ runs:
       if: ${{ contains(inputs.os, 'macos') }}
       shell: bash
       run: brew install libmagic zbar
+    - name: Set up MSVC Developer Environment (Windows)
+      if: ${{ contains(inputs.os, 'windows') }}
+      uses: ilammy/msvc-dev-cmd@v1
     - name: Install Dependencies
       shell: ${{ contains(inputs.os, 'windows') && 'cmd' || 'bash' }}
       run: |
