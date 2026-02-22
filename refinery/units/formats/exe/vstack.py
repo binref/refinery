@@ -471,7 +471,7 @@ class vstack(EmulatingUnit):
         flags = Hook.Default | Hook.ApiCall
         self.log_debug(F'attempting to use {engine.name}')
 
-        Emu = EmuFactory(engine.value)
+        Emu = EmuFactory(engine.cls)
 
         emu = Emu(
             data,
