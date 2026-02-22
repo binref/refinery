@@ -7,6 +7,7 @@ import itertools
 
 from typing import Generic, TypeVar, overload
 
+from refinery.lib.batch.util import unquote, enquote
 from refinery.lib.batch.model import (
     AstCommand,
     AstFor,
@@ -104,7 +105,7 @@ class SynCommand(SynNode[AstCommand]):
                 spaces.append(token)
                 continue
             if not self.verb:
-                self.verb = token.strip()
+                self.verb = unquote(token.strip())
                 continue
             self.args.append(token)
             arg_string.write(token)
@@ -126,7 +127,7 @@ class SynCommand(SynNode[AstCommand]):
                 out.write(K.SP)
             if self.ast.silenced:
                 out.write('@')
-            out.write(self.verb)
+            out.write(enquote(self.verb))
             for a in itertools.islice(self.ast.fragments, 1, None):
                 out.write(a)
             return out.getvalue()
