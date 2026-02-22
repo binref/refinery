@@ -57,7 +57,14 @@ def u16(t):
 
 
 def unquote(token: str) -> str:
-    return re.sub('"(.*?)"', '\\1', token)
+    return re.sub('"(.*?)("|$)', '\\1', token)
+
+
+def enquote(token: str) -> str:
+    if re.search('[\\x20\\t\\v&<>^|]', token):
+        token = '"""'.join(token.split('"'))
+        token = '"{token}"'
+    return token.replace('%', '%%')
 
 
 def uncaret(token: str, ignore_quotes: bool = False) -> tuple[bool, str]:
