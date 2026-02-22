@@ -96,23 +96,9 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         python -m pip install pytest pytest-cov
-    - name: Debug Cython Import
-      run: |
-        python -c "from refinery.lib.fast import zipcrypto; print(zipcrypto.__file__)"
-      shell: powershell
-    - name: Prepare Coverage Run
-      run: |
-        $tmp = Join-Path $env:RUNNER_TEMP "coverage-run"
-        New-Item -ItemType Directory -Force -Path $tmp
-        Copy-Item -Path "test" -Destination $tmp -Recurse
-        Copy-Item -Path "samples" -Destination $tmp -Recurse
-        Copy-Item -Path ".coveragerc" -Destination $tmp
-        Copy-Item -Path "pytest.ini" -Destination $tmp
-      shell: powershell
     - name: Run tests and collect coverage
       run: pytest --disable-warnings --cov-config=.coveragerc --cov refinery -n=8 test
       shell: powershell
-      working-directory: ${{ runner.temp }}/coverage-run
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v5
       with:
