@@ -33,6 +33,9 @@ class OptionalBuildExt(_build_ext):
                 F'[!] C compilation of Cython extensions failed: {e}\n'
                 F'    Pure Python fallbacks will be used. For better performance, install {remedy}.\n')
             self.extensions = []
+        else:
+            sys.stderr.write(
+                '[!] C compilation of Cython extensions successful!')
 
 
 __prefix__ = os.getenv('REFINERY_PREFIX') or ''
