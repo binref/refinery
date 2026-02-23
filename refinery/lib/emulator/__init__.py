@@ -23,8 +23,8 @@ from .abstract import (
 )
 
 if TYPE_CHECKING:
-    from .se import SpeakeasyEmulator
     from .ic import IcicleEmulator
+    from .se import SpeakeasyEmulator
     from .uc import UnicornEmulator
 
 

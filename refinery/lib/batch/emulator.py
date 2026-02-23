@@ -8,9 +8,8 @@ import uuid
 from dataclasses import dataclass, field, fields
 from enum import Enum
 from io import StringIO
-from typing import Callable, ClassVar, Iterable, Generator, TypeVar
+from typing import Callable, ClassVar, Generator, Iterable, TypeVar
 
-from refinery.lib.patterns import indicators
 from refinery.lib.batch.help import HelpOutput
 from refinery.lib.batch.model import (
     AbortExecution,
@@ -42,6 +41,7 @@ from refinery.lib.batch.state import BatchState, ErrorZero
 from refinery.lib.batch.synth import SynCommand, SynNodeBase, synthesize
 from refinery.lib.batch.util import batchint, uncaret, unquote
 from refinery.lib.deobfuscation import cautious_parse, names_in_expression
+from refinery.lib.patterns import indicators
 from refinery.lib.types import buf
 
 _T = TypeVar('_T')
