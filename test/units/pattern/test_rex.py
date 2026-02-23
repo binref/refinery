@@ -13,6 +13,11 @@ class TestRex(TestUnitBase):
         unit = self.load(r'(?P<foo>x.*?)?bar', '{foo}')
         self.assertSetEqual(B'bar and xbazbar' | unit | {str}, {'', 'xbaz'})
 
+    def test_skip_internal_groups(self):
+        unit = self.load(r'((??intarray))#((??integer))', '{1}', '{2}')
+        test = '12,1,9,13,36#6' | unit | [str]
+        self.assertListEqual(test, ['12,1,9,13,36', '6'])
+
     def test_nested_substitution_expressions(self):
         unit = self.load(
             R'((?:[A-F0-9]{2})+)-((?:[A-F0-9]{2})+)-(\d+)',

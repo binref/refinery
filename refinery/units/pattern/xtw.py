@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import re
-
 from refinery.lib.patterns import wallets
 from refinery.units import RefineryCriticalException
-from refinery.units.pattern import PatternExtractor
+from refinery.units.pattern import PatternExtractor, RefinedMatch
 
 
 class xtw(PatternExtractor):
@@ -20,7 +18,7 @@ class xtw(PatternExtractor):
         pattern = '|'.join(FR'(?P<{p.name}>\b{p.value}\b)' for p in wallets)
         pattern = FR'\b{pattern}\b'.encode('latin1')
 
-        def check(match: re.Match[bytes]):
+        def check(match: RefinedMatch):
             for name, value in match.groupdict().items():
                 if value is not None:
                     break

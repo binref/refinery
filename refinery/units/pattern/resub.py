@@ -4,7 +4,7 @@ from typing import Match
 
 from refinery.lib.meta import metavars
 from refinery.lib.types import Param, buf
-from refinery.units.pattern import Arg, SingleRegexTransformUnit
+from refinery.units.pattern import Arg, RefinedMatch, SingleRegexTransformUnit
 
 
 class resub(SingleRegexTransformUnit, docs=(
@@ -33,20 +33,18 @@ class resub(SingleRegexTransformUnit, docs=(
         )
 
     def process(self, data):
-        def repl(match: Match):
-            d = match.groupdict()
-            for k in list(d):
-                if k[:2] == k[-2:] == '__':
-                    del d[k]
-            r = meta.format_bin(spec, self.codec, [match[0], *match.groups()], match.groupdict())
+        def repl(match: Match[bytes]):
+            refined = RefinedMatch(match, pattern.groups, pattern.groupindex)
+            r = meta.format_bin(spec, self.codec, refined.grouplist(), refined.groupdict())
             self.log_debug('substitution:', repr(r), clip=True)
             return r
         self.log_info('pattern:', getattr(self.regex, 'pattern', self.regex))
         self.log_info('replace:', self.args.subst)
         meta = metavars(data)
         spec = self.args.subst.decode('ascii', 'backslashreplace')
-        substitute = self.regex.sub
+        pattern = self.regex
+        sub = pattern.sub
         if self.args.count:
             from functools import partial
-            substitute = partial(substitute, count=self.args.count)
-        return substitute(repl, data)
+            sub = partial(sub, count=self.args.count)
+        return sub(repl, data)

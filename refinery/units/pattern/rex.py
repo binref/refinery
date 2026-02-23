@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-from typing import Match
-
 from refinery.lib.meta import ByteStringWrapper, metavars
 from refinery.lib.types import Param
 from refinery.units import Chunk
-from refinery.units.pattern import Arg, PatternExtractor, SingleRegexTransformUnit
+from refinery.units.pattern import Arg, PatternExtractor, RefinedMatch, SingleRegexTransformUnit
 
 _FORWARD_VAR = '.'
 
@@ -66,21 +64,20 @@ class rex(SingleRegexTransformUnit, PatternExtractor, docs=(
             if spec.startswith('{') and spec.endswith('}') and (group := spec[1:-1]).isdigit():
                 transformations.append(int(group))
             else:
-                def transformation(match: Match, s=spec):
-                    symb: dict = {
-                        key: (value or b'') for key, value in match.groupdict().items()
-                        if not (key[:2] == key[-2:] == '__')
-                    }
-                    args: list = [match.group(0), *match.groups()]
+                def transformation(match: RefinedMatch, _spec=spec):
                     used = set()
+                    symb = match.groupdict()
+                    args = match.grouplist()
                     symb[_FORWARD_VAR] = wrap
-                    item = meta.format(s, self.codec, args, symb, True, True, used)
+                    for key, value in list(symb.items()):
+                        if value is None:
+                            symb[key] = B''
+                    item = meta.format(_spec, self.codec, args, symb, True, True, used)
                     assert not isinstance(item, str)
                     used.update(key for key, value in symb.items() if not value)
                     used.add(_FORWARD_VAR)
                     for variable in used:
                         symb.pop(variable, None)
-                    symb.update(offset=match.start())
                     chunk = Chunk(item, meta=symb)
                     return chunk
                 transformations.append(transformation)

@@ -13,7 +13,7 @@ from urllib.parse import urlparse
 from refinery.lib.patterns import indicators
 from refinery.lib.types import Param
 from refinery.units import RefineryCriticalException
-from refinery.units.pattern import Arg, PatternExtractor
+from refinery.units.pattern import Arg, PatternExtractor, RefinedMatch
 
 
 class LetterWeight:
@@ -413,7 +413,7 @@ class xtp(PatternExtractor):
     def process(self, data):
         whitelist = set()
 
-        def check(match: re.Match):
+        def check(match: RefinedMatch):
             for name, value in match.groupdict().items():
                 if value is not None:
                     break

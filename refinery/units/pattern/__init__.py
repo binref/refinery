@@ -14,9 +14,66 @@ from refinery.lib.types import INF, Callable, Iterable, Param, bounds, buf
 from refinery.units import Arg, Unit
 
 if TYPE_CHECKING:
-    from typing import Tuple
+    from typing import Mapping, Tuple
     MT = Tuple[int, re.Match[bytes]]
     MB = re.Match[bytes]
+    PT = re.Pattern[bytes]
+    MC = Callable[['RefinedMatch'], buf | None]
+
+
+class RefinedMatch:
+    """
+    Refinery allows insertion of patterns from `refinery.lib.patterns` into the user's regular
+    expressions. Since some of those patterns include match groups for back-references, the final
+    constructed expression might contain more groups than the user expects. This class builds a
+    match object that retroactively removes these internal groups from a match object that came
+    out of the pattern matching engine.
+    """
+
+    __slots__ = '_match', '_ignored_keys', '_mapped_index'
+
+    def __init__(self, match: MB, group_count: int, group_index: Mapping[str, int]):
+        self._match = match
+        ignored = [
+            key for key in group_index if key.startswith('__') and key.endswith('__')]
+        skipped_nums = sorted(group_index[key] for key in ignored)
+        skipped_nums.append(group_count + 1)
+        index = 0
+        delta = 0
+        self._ignored_keys = ignored
+        self._mapped_index = _map = {0: 0}
+        for num in skipped_nums:
+            for index in range(index + 1, num - delta):
+                _map[index] = index + delta
+            delta += 1
+
+    def grouplist(self):
+        g = self._match.group
+        return [g(k) for k in self._mapped_index.values()]
+
+    def groupdict(self):
+        groupdict = self._match.groupdict()
+        for key in self._ignored_keys:
+            del groupdict[key]
+        return groupdict
+
+    def start(self, group: int = 0) -> int:
+        return self._match.start(self._mapped_index[group])
+
+    def end(self, group: int = 0) -> int:
+        return self._match.end(self._mapped_index[group])
+
+    def group(self, group: int = 0) -> bytes:
+        return self._match.group(self._mapped_index[group])
+
+    def span(self, group: int = 0) -> tuple[int, int]:
+        return self._match.span(self._mapped_index[group])
+
+    __getitem__ = group
+
+    @property
+    def string(self):
+        return self._match.string
 
 
 class PatternExtractorBase(Unit, abstract=True):
@@ -57,15 +114,13 @@ class PatternExtractorBase(Unit, abstract=True):
             **keywords
         )
 
-    def matches(self, data: buf, pattern: buf | re.Pattern[bytes]):
+    def matches(self, data: buf, pattern: re.Pattern[bytes]):
         """
         Searches the input data for the given regular expression pattern. If the
         argument `utf16` is `True`, search for occurrences where a zero byte
         is between every character of the match. The `ascii` option allows to
         control whether normal matching results are also returned.
         """
-        if not isinstance(pattern, re.Pattern):
-            pattern = re.compile(pattern)
         if self.args.ascii:
             for match in pattern.finditer(data):
                 yield match.start(), match
@@ -139,7 +194,7 @@ class PatternExtractorBase(Unit, abstract=True):
         self,
         data: buf,
         pattern: buf | re.Pattern,
-        *transforms: int | buf | Callable[[MB], buf | None],
+        *transforms: int | MC,
         expose_named_groups: bool = False,
     ):
         """
@@ -148,11 +203,16 @@ class PatternExtractorBase(Unit, abstract=True):
         dictionary mapping its position (start, end) in the input data to the
         filtered and transformed match that was found at this position.
         """
+        if not isinstance(pattern, re.Pattern):
+            pattern = re.compile(pattern)
         if self.args.stripspace:
             data = re.sub(BR'\s+', B'', data)
         if not transforms:
             transforms = 0,
+        group_index = pattern.groupindex
+        group_count = pattern.groups
         for k, (offset, match) in enumerate(self.matchfilter(self.matches(memoryview(data), pattern))):
+            match = RefinedMatch(match, group_count, group_index)
             for transform in transforms:
                 kwargs: dict = {
                     'offset': offset
@@ -167,12 +227,7 @@ class PatternExtractorBase(Unit, abstract=True):
                     else:
                         transformed = transform
                     if expose_named_groups:
-                        for key, value in match.groupdict().items():
-                            if key.startswith('__'):
-                                continue
-                            if value is None:
-                                value = B''
-                            kwargs[key] = value
+                        kwargs.update(match.groupdict())
                 chunk = self.labelled(transformed, **kwargs)
                 chunk.set_next_batch(k)
                 yield chunk
