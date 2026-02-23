@@ -16,14 +16,15 @@ class imgdb(Unit):
     Provides access to the direct bytes of an image file. Each row of pixels is emitted as an
     individual chunk.
     """
-    @Unit.Requires('Pillow', ['formats'])
+    @Unit.Requires('Pillow>=12.1.1', ['formats'])
     def _image():
         from PIL import Image
         return Image
 
     def _get_rows(self, image: Image):
         width = image.width
-        pixels = iter(image.getdata())
+        image.load()
+        pixels = iter(image.im)
         while row := list(islice(pixels, 0, width)):
             yield row
 

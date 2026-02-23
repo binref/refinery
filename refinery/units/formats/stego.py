@@ -35,7 +35,7 @@ class stego(Unit):
             parts=tuple(Arg.AsOption(p, PIXEL_PART) for p in parts)
         )
 
-    @Unit.Requires('Pillow', ['formats'])
+    @Unit.Requires('Pillow>=12.1.1', ['formats'])
     def _image():
         from PIL import Image
         return Image
@@ -56,7 +56,8 @@ class stego(Unit):
         chunk_size = 1 if no_colors else len(parts)
         output = MemoryFile()
         buffer = bytearray(chunk_size * width)
-        pixels = iter(image.getdata())
+        image.load()
+        pixels = iter(image.im)
 
         for _ in range(height):
             offset = 0
