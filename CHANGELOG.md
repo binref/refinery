@@ -5,9 +5,19 @@
 > If a release contains only bugfix, it is marked as a 'bugfix release'.
 > Otherwise, the changelog entries highlight only new or changed functionality.
 
-## Version 0.10.0 (UPCOMING)
+## Version 0.10.0
 - Switches `-T` in the units `alu` and `pemeta` were removed to add a new global option named `--try`:
   This option allows forwarding the input when a unit fails to process it.
+- Adds a proper parser and emulator for Batch files which is exposed via the `bat` unit.
+  The unit now has some switches to control how emulated commands are synthesized.
+- A number of CPU-intensive tasks have been extended with a parallel Cython implementation,
+  specifically PKZIP crypto, AutoIt decryption & decompression,
+  and the 7zip ported code for LZX and deflate.
+- Execution performance has been improved by several hundred milliseconds by delaying imports
+  and entirely avoiding unnecessary imports in some cases.
+- The `idbmeta` unit was added to read metadata from older IDA databases.
+- The unit `carve-tar` for carving TAR files was added.
+- The unit `carve-png` for carving PNG files was added.
 
 ## Version 0.9.26 - bugfix release
 
