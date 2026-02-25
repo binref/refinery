@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sys
 
-from subprocess import PIPE, Popen
+from subprocess import PIPE, STDOUT, Popen
 
 from refinery.lib.meta import metavars
 from refinery.lib.structures import MemoryFile
@@ -65,10 +65,11 @@ class run(Unit):
             self.log_info(shlexjoin)
 
         posix = 'posix' in sys.builtin_module_names
+        merge = self.args.errors
         process = Popen(commandline, shell=True,
-            stdin=PIPE, stdout=PIPE, stderr=PIPE, close_fds=posix)
+            stdin=PIPE, stdout=PIPE, stderr=STDOUT if merge else PIPE, close_fds=posix)
 
-        if not self.args.stream and not self.args.timeout:
+        if not self.args.stream and not self.args.timeout and not merge:
             out, err = process.communicate(data)
             for line in err.splitlines():
                 self.log_info(line)
@@ -96,10 +97,13 @@ class run(Unit):
             stream.close()
 
         recvout = Thread(target=adapter, args=(process.stdout, qout, done), daemon=True)
-        recverr = Thread(target=adapter, args=(process.stderr, qerr, done), daemon=True)
-
         recvout.start()
-        recverr.start()
+
+        if not merge:
+            recverr = Thread(target=adapter, args=(process.stderr, qerr, done), daemon=True)
+            recverr.start()
+        else:
+            recverr = None
 
         if stdin := process.stdin:
             if data:
@@ -148,13 +152,14 @@ class run(Unit):
                     yield out
 
             if done.is_set():
-                if recverr.is_alive():
+                if recverr is not None and recverr.is_alive():
                     self.log_warn('stderr receiver thread zombied')
                 if recvout.is_alive():
                     self.log_warn('stdout receiver thread zombied')
                 break
             elif not err and not out and process.poll() is not None:
-                recverr.join(self._JOIN_TIME)
+                if recverr is not None:
+                    recverr.join(self._JOIN_TIME)
                 recvout.join(self._JOIN_TIME)
                 done.set()
             elif self.args.timeout:
@@ -169,7 +174,8 @@ class run(Unit):
                         sleep(self._JOIN_TIME)
                     else:
                         self.log_warn('process termination may have failed')
-                    recverr.join(self._JOIN_TIME)
+                    if recverr is not None:
+                        recverr.join(self._JOIN_TIME)
                     recvout.join(self._JOIN_TIME)
                     if not len(result):
                         errobj = RuntimeError('timeout reached, process had no output')
