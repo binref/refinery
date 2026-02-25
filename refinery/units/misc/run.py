@@ -53,7 +53,7 @@ class run(Unit):
         meta.ghost = True
         used = set()
         commandline = [
-            meta.format(cmd, self.codec, [data], None, False, used=used)
+            meta.format_str(cmd, self.codec, [data], None, used=used)
             for cmd in self.args.commandline
         ]
 

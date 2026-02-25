@@ -628,7 +628,7 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
         self,
         spec: str,
         codec: str,
-        args: Iterable | None = None,
+        args: list | tuple = (),
         symb: dict | None = None,
         used: set | None = None,
     ) -> str:
@@ -642,13 +642,15 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
         - `sha1`, `sha256`, `sha512`, and `md5` are formatted as hex strings.
         - `size` is formatted as a human-readable size with unit.
         """
-        return self.format(spec, codec, args, symb, binary=False, used=used)
+        ret = self.format(spec, codec, args, symb, binary=False, used=used)
+        assert isinstance(ret, str)
+        return ret
 
     def format_bin(
         self,
         spec: str,
         codec: str,
-        args: Iterable | None = None,
+        args: list | tuple = (),
         symb: dict | None = None,
         used: set | None = None,
     ) -> buf:
@@ -669,7 +671,9 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
         - `h`: literal is a hex-encoded binary string
         - `e`: literal is an escaped ASCII string
         """
-        return self.format(spec, codec, args, symb, binary=True, used=used)
+        ret = self.format(spec, codec, args, symb, binary=True, used=used)
+        assert not isinstance(ret, str)
+        return ret
 
     def format(
         self,
