@@ -523,12 +523,12 @@ class BatchEmulator:
             value = None
             if not (program := ''.join(args)):
                 std.e.write('The syntax of the command is incorrect.\r\n')
-                return ErrorZero
+                return ErrorZero.Val
             for assignment in program.split(','):
                 assignment = assignment.strip()
                 if not assignment:
                     std.e.write('Missing operand.\r\n')
-                    return ErrorZero
+                    return ErrorZero.Val
                 name, operator, definition = re.split(r'([*+^|/%-&]|<<|>>|)=', assignment, maxsplit=1)
                 name = name.upper()
                 definition = re.sub(r'\b0([0-7]+)\b', r'0o\1', definition)
@@ -1071,7 +1071,7 @@ class BatchEmulator:
 
         if (result := handler(self, cmd, std, in_group)) is None:
             pass
-        elif not isinstance(result, (int, type(ErrorZero))):
+        elif not isinstance(result, (int, ErrorZero)):
             result = (yield from result)
 
         for k, path in paths.items():

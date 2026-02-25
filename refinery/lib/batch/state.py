@@ -3,15 +3,17 @@ from __future__ import annotations
 import ntpath
 
 from datetime import datetime
+from enum import Enum
 from random import randrange, seed
 from uuid import uuid4
 
 from refinery.lib.batch.model import MissingVariable
 from refinery.lib.dt import date_from_timestamp, isodate
-from refinery.lib.types import Singleton
 
 
-class ErrorZeroType(metaclass=Singleton):
+class ErrorZero(int, Enum):
+    Val = 0
+
     def __bool__(self):
         return True
 
@@ -21,7 +23,8 @@ class ErrorZeroType(metaclass=Singleton):
     __repr__ = __str__
 
 
-ErrorZero = ErrorZeroType()
+class RetainVariable(str, Enum):
+    Val = ''
 
 
 _DEFAULT_ENVIRONMENT = {
@@ -81,7 +84,7 @@ class BatchState:
     now: datetime
     start_time: datetime
 
-    environment_stack: list[dict[str, str]]
+    environment_stack: list[dict[str, str | RetainVariable]]
     delayexpand_stack: list[bool]
     cmdextended_stack: list[bool]
 
@@ -174,7 +177,7 @@ class BatchState:
         self._cmd = value
         self.args = value.split()
 
-    def envar(self, name: str, default: str | None = None) -> str:
+    def envar(self, name: str, default: str | None = None) -> str | RetainVariable:
         name = name.upper()
         if name in (e := self.environment):
             return e[name]

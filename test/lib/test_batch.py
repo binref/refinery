@@ -229,7 +229,7 @@ class TestBatchEmulator(TestBase):
             @echo off
             if exist "ex"""""i"sts" echo hi
             '''
-        bat.show_nops = True
+        bat.cfg.show_nops = True
         bat.state.create_file('exists')
         self.assertListEqual(list(bat.emulate_commands()), ['@echo off', 'echo hi'])
         bat.state.remove_file('exists')
@@ -312,7 +312,9 @@ class TestBatchEmulator(TestBase):
             set "c=%_a%!_b!
             echo %c%
             '''
-        self.assertListEqual(list(bat.emulate()), ['echo FOO BAR'])
+        self.assertListEqual(list(bat.emulate()), [
+            'setlocal enabledelayedexpansion',
+            'echo FOO BAR'])
 
     def test_delayed_expansion_simple_01(self):
         @emulate
@@ -429,6 +431,7 @@ class TestBatchEmulator(TestBase):
             REM
             echo %A%
             '''
+        bat.cfg.show_comments = True
         it = bat.emulate()
         self.assertEqual(next(it), 'REM')
         self.assertEqual(next(it), 'echo F')
@@ -599,7 +602,9 @@ class TestBatchEmulator(TestBase):
             @ @ @ @ @@ set foo=bar
             @@@@@ echo !foo:oo=ar!!u:bong!
             '''
-        self.assertListEqual(list(bat.emulate()), ['@echo barbong'])
+        self.assertListEqual(list(bat.emulate()), [
+            '@setlocal EnableDelayedExpansion',
+            '@echo barbong'])
 
     def test_leading_semicolons(self):
         @emulate
@@ -998,9 +1003,12 @@ class TestBatchEmulator(TestBase):
         @emulate
         class bat:
             '''
-            setlocal enableDelayedExpansion &&  (set foo=REFINARY) && echo !foo:REF=B!
+            (setlocal enableDelayedExpansion) &&  (set foo=REFINARY) && echo !foo:REF=B!
             '''
-        self.assertListEqual(list(bat.emulate_commands()), ['echo BINARY'])
+        self.assertListEqual(list(bat.emulate_commands()), [
+            'setlocal enableDelayedExpansion',
+            'echo BINARY'
+        ])
 
     def test_expansion_directly_after_set(self):
         @emulate
