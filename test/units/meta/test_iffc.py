@@ -6,5 +6,10 @@ from .. import TestUnitBase
 class TestIfCount(TestUnitBase):
 
     def test_simple_01(self):
-        pl = L('emit The Binary Refinery is cool!') [ self.load('6:') ]
+        cmd = 'emit The Binary Refinery is cool!'
+        pl = L(cmd) [ self.load('6:') ]
         self.assertEqual(pl(), B'BinaryRefinery')
+        pl = L(cmd) [ self.load('6') ]
+        self.assertEqual(pl(), B'Binary')
+        pl = L(cmd) [ self.load(':5') ]
+        self.assertEqual(pl(), B'Theiscool!')
