@@ -1,5 +1,6 @@
 ignore:
   - "refinery/lib/thirdparty"
+  - "refinery/lib/annotations.py"
 coverage:
   status:
     project:
