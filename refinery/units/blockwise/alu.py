@@ -157,16 +157,13 @@ class alu(ArithmeticUnit):
                 return n
 
         if fbits is INF:
-            def rotate_r(n, k):
-                return n >> k
-
-            def rotate_l(n, k):
-                return n << k
+            rotate_r = int.__rshift__
+            rotate_l = int.__lshift__
         else:
-            def rotate_r(n, k):
+            def rotate_r(n: int, k: int, /):
                 return (n >> k) | (n << (fbits - k)) & fmask
 
-            def rotate_l(n, k):
+            def rotate_l(n: int, k: int, /):
                 return (n << k) | (n >> (fbits - k)) & fmask
 
         def negate_bits(n):
