@@ -31,6 +31,8 @@ class imgdb(Unit):
     def process(self, data):
         try:
             image = self._image.open(MemoryFile(data, output=bytes))
+        except ImportError:
+            raise
         except Exception:
             raise ValueError('input could not be parsed as an image')
         test = image.getpixel((0, 0))
