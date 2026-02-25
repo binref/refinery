@@ -67,14 +67,20 @@ def unicoded(method: Callable[[Any, str], str | None]) -> Callable[[Any, Chunk],
     return method_wrapper
 
 
-def masked(modulus: int):
+def masked(mask: int, mod: bool = False):
     """
     Convert arithmetic operations that occur within the decorated function body in such a way that
-    the result is reduced using the given modulus. All additions, subtractions, multiplications,
-    left shifts, and taking powers are augmented by introducing a modulo operation.
+    the result is reduced with the given bit mask. All additions, subtractions, multiplications,
+    left shifts, and taking powers are augmented by introducing a binary AND. If the mod parameter
+    is enabled, a modulo operation is introduced instead.
     """
     import ast
     import inspect
+
+    if mod:
+        op = ast.Mod
+    else:
+        op = ast.BitAnd
 
     def decorator(function):
         code = inspect.getsource(function)
@@ -88,7 +94,7 @@ def masked(modulus: int):
                 self.generic_visit(node)
                 if not isinstance(node.op, (ast.USub, ast.Invert)):
                     return node
-                return ast.BinOp(node, ast.Mod(), ast.Constant(modulus))
+                return ast.BinOp(node, op(), ast.Constant(mask))
 
             def visit_AugAssign(self, node: ast.AugAssign) -> Any:
                 self.generic_visit(node)
@@ -97,14 +103,14 @@ def masked(modulus: int):
                 target_load = copy.deepcopy(node.target)
                 target_load.ctx = ast.Load()
                 computation = ast.BinOp(left=target_load, op=node.op, right=node.value)
-                reduced = ast.BinOp(left=computation, op=ast.Mod(), right=ast.Constant(modulus))
+                reduced = ast.BinOp(left=computation, op=op(), right=ast.Constant(mask))
                 return ast.Assign(targets=[node.target], value=reduced)
 
             def visit_BinOp(self, node: ast.BinOp):
                 self.generic_visit(node)
                 if not isinstance(node.op, (ast.Add, ast.Mult, ast.Sub, ast.LShift, ast.Pow)):
                     return node
-                return ast.BinOp(node, ast.Mod(), ast.Constant(modulus))
+                return ast.BinOp(node, op(), ast.Constant(mask))
 
             def visit_FunctionDef(self, node: ast.FunctionDef):
                 self.generic_visit(node)
