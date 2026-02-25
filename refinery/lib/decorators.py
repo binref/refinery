@@ -128,9 +128,63 @@ def masked(mask: int, mod: bool = False):
 
         pp = Postprocessor()
         fixed = ast.fix_missing_locations(pp.visit(tree))
-        eval(compile(fixed, function.__code__.co_filename, 'exec'))
         if (name := pp.name) is None:
             raise RuntimeError
-        return wraps(function)(eval(name))
+
+        import types
+
+        freevars = function.__code__.co_freevars
+        closure = function.__closure__
+        namespace = {**function.__globals__}
+
+        if freevars and closure:
+            # Wrap the rewritten function definition inside a factory function that takes the free
+            # variables as parameters, recreating the closure binding. The factory is needed so
+            # that the inner function has the correct co_freevars, allowing us to reconstruct it
+            # with the original closure cells to preserve late binding.
+            factory_name = '__closure_factory'
+            factory_args = ast.arguments(
+                posonlyargs=[],
+                args=[ast.arg(arg=v) for v in freevars],
+                vararg=None,
+                kwonlyargs=[],
+                kw_defaults=[],
+                kwarg=None,
+                defaults=[],
+            )
+            factory_body: list[ast.stmt] = fixed.body + [
+                ast.Return(value=ast.Name(id=name, ctx=ast.Load()))]
+            no_decorators: list[ast.expr] = []
+            factory_def = ast.FunctionDef(
+                name=factory_name,
+                args=factory_args,
+                body=factory_body,
+                decorator_list=no_decorators,
+                returns=None,
+                type_comment=None,
+                type_params=[],
+            )
+            fixed = ast.Module(body=[factory_def], type_ignores=[])
+            fixed = ast.fix_missing_locations(fixed)
+            exec(compile(fixed, function.__code__.co_filename, 'exec'), namespace)
+            # We can't call the factory directly because the closure cells may not
+            # have been assigned yet (late binding). Instead, we extract the inner
+            # function's code object from the factory and reconstruct the function
+            # with the original closure cells and the real globals dict.
+            factory_fn = namespace[factory_name]
+            inner_code = None
+            for const in factory_fn.__code__.co_consts:
+                if isinstance(const, types.CodeType) and const.co_name == name:
+                    inner_code = const
+                    break
+            if inner_code is None:
+                raise RuntimeError(F'Could not find inner code object {name!r} in factory')
+            result = types.FunctionType(inner_code, function.__globals__, name, closure=closure)
+        else:
+            exec(compile(fixed, function.__code__.co_filename, 'exec'), namespace)
+            result = types.FunctionType(
+                namespace[name].__code__, function.__globals__, name)
+
+        return wraps(function)(result)
 
     return decorator
