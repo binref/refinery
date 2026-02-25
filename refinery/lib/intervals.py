@@ -7,7 +7,10 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from bisect import bisect_right
-from typing import ClassVar, Generic, Iterator, TypeVar
+from typing import Generic, Iterator, TypeVar
+
+from refinery.lib.types import buf
+
 
 Value = TypeVar('Value')
 """
@@ -18,21 +21,26 @@ this object. The `refinery.lib.intervals.MemoryIntervalUnion` implementation, fo
 a `bytearray` type for the `refinery.lib.intervals.Value`.
 """
 
+Input = TypeVar('Input')
+"""
+A generic type variable representing accepted inputs when adding a new interval to an interval
+union. For `refinery.lib.intervals.MemoryIntervalUnion`, the storage type is `bytearray`, but
+the accepted inputs are `bytes`, `bytearray`, and `memoryview`.
+"""
 
-class IntervalUnion(ABC, Generic[Value]):
+
+class IntervalUnion(ABC, Generic[Value, Input]):
     """
     An abstract class representing a generic union of intervals. Intervals inserted into the union
     are automatically fused if they overlap or touch.
     """
-
-    value_type: ClassVar[type]
-    """
-    This class variable contains the type of `refinery.lib.intervals.Value`.
-    """
-
     def __init__(self):
         self._starts: list[int] = []
         self._values: dict[int, Value] = {}
+
+    @abstractmethod
+    def new_value(self) -> Value:
+        ...
 
     @abstractmethod
     def sizeof(self, d: int | Value) -> int:
@@ -46,7 +54,7 @@ class IntervalUnion(ABC, Generic[Value]):
         start: int,
         value: Value,
         new_start: int,
-        new_value: Value,
+        new_value: Input | Value,
     ) -> Value:
         """
         Insert new interval data into an interval that already exists and covers the start of the
@@ -59,7 +67,7 @@ class IntervalUnion(ABC, Generic[Value]):
         start: int,
         value: Value,
         new_delta: int,
-        new_value: Value
+        new_value: Input | Value
     ) -> Value:
         """
         This function extends the interval given by `(start;value)` with the data from the interval
@@ -115,7 +123,7 @@ class IntervalUnion(ABC, Generic[Value]):
                 value = _value
         return index, start, value
 
-    def addi(self, start: int, value: Value):
+    def addi(self, start: int, value: Input | Value):
         """
         Insert a new interval into the union.
         """
@@ -128,7 +136,7 @@ class IntervalUnion(ABC, Generic[Value]):
 
         if cursor_value is None or cursor_start is None:
             cursor_start = start
-            cursor_value = values[cursor_start] = self.value_type()
+            cursor_value = values[cursor_start] = self.new_value()
             index_of_start = index_of_next
             index_of_next = index_of_next + 1
             starts.append(cursor_start)
@@ -223,12 +231,13 @@ class IntervalUnion(ABC, Generic[Value]):
             yield (lower, upper)
 
 
-class IntIntervalUnion(IntervalUnion[int]):
+class IntIntervalUnion(IntervalUnion[int, int]):
     """
     An `refinery.lib.intervals.IntervalUnion` of `(start, length)` pairs. Notably, the length of an
     inclusive interval `[A,B]` is computed as `(B-A+1)`.
     """
-    value_type = int
+    def new_value(self) -> int:
+        return 0
 
     def sizeof(self, d: int) -> int:
         return d
@@ -242,27 +251,27 @@ class IntIntervalUnion(IntervalUnion[int]):
         return value
 
 
-class MemoryIntervalUnion(IntervalUnion[bytearray]):
+class MemoryIntervalUnion(IntervalUnion[bytearray, buf]):
     """
     An `refinery.lib.intervals.IntervalUnion` of memory patches, implemented as `(start, data)`
     paris. Each `data` value is a `bytearray` which contains the region of memory that starts at
     the base address `start`.
     """
-
-    value_type = bytearray
+    def new_value(self):
+        return bytearray()
 
     def sizeof(self, d: int | bytearray) -> int:
         if isinstance(d, int):
             return d
         return len(d)
 
-    def insert(self, start: int, value: bytearray, new_start: int, new_value: bytearray) -> bytearray:
+    def insert(self, start: int, value: bytearray, new_start: int, new_value: buf) -> bytearray:
         rva = new_start - start
         end = rva + len(new_value)
         value[rva:end] = new_value
         return value
 
-    def extend(self, start: int, value: bytearray, new_delta: int, new_value: bytearray) -> bytearray:
+    def extend(self, start: int, value: bytearray, new_delta: int, new_value: buf) -> bytearray:
         view = memoryview(new_value)
         value.extend(view[new_delta:])
         return value
