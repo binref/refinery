@@ -30,3 +30,46 @@ class TestCSVConverter(TestUnitBase):
         self.assertEqual(result[1]['timeGenerated'], '2021-09-30 12:29:19')
         self.assertEqual(result[2]['owner'], R'NT AUTHORITY\SYSTEM | S-1-5-18')
         self.assertEqual(result[0]['foo'], 12)
+
+    def test_reverse_as_list(self):
+        data = [{
+            'Name': 'Alice',
+            'Role': 'Director',
+        }, {
+            'Name': 'Henry',
+            'Role': 'Manager',
+        }, {
+            'Name': 'Sally',
+            'Role': 'Programmer',
+        }, {
+            'Name': 'Morty',
+            'Role': 'Programmer',
+        }]
+        for encoded in (
+            json.dumps(data),
+            '\n'.join(json.dumps(line, indent=None, separators=(',', ':')) for line in data),
+        ):
+            csv = encoded | self.load(reverse=True) | str
+            self.assertListEqual(csv.splitlines(), [
+                'Name,Role',
+                'Alice,Director',
+                'Henry,Manager',
+                'Sally,Programmer',
+                'Morty,Programmer',
+            ])
+
+    def test_reverse_as_dict(self):
+        data = {
+            'Alice': 'Director',
+            'Henry': 'Manager',
+            'Sally': 'Programmer',
+            'Morty': 'Programmer',
+        }
+        csv = json.dumps(data) | self.load(reverse=True) | str
+        self.assertListEqual(csv.splitlines(), [
+            'Name,Value',
+            'Alice,Director',
+            'Henry,Manager',
+            'Sally,Programmer',
+            'Morty,Programmer',
+        ])
