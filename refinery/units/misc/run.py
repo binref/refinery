@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shlex
 import sys
 
 from subprocess import PIPE, STDOUT, Popen
@@ -66,7 +67,7 @@ class run(Unit):
 
         posix = 'posix' in sys.builtin_module_names
         merge = self.args.errors
-        process = Popen(commandline, shell=True,
+        process = Popen(shlex.join(commandline) if posix else commandline, shell=True,
             stdin=PIPE, stdout=PIPE, stderr=STDOUT if merge else PIPE, close_fds=posix)
 
         if not self.args.stream and not self.args.timeout and not merge:
@@ -78,7 +79,7 @@ class run(Unit):
 
         from queue import Empty, Queue
         from threading import Event, Thread
-        from time import process_time, sleep
+        from time import monotonic, sleep
 
         start = 0
         result = None
@@ -109,7 +110,7 @@ class run(Unit):
             if data:
                 stdin.write(data)
             stdin.close()
-        start = process_time()
+        start = monotonic()
 
         if not self.args.stream or self.args.timeout:
             result = MemoryFile()
@@ -164,7 +165,7 @@ class run(Unit):
                 done.set()
             elif self.args.timeout:
                 assert result is not None
-                if process_time() - start > self.args.timeout:
+                if monotonic() - start > self.args.timeout:
                     self.log_info('terminating process after timeout expired')
                     done.set()
                     process.terminate()
