@@ -87,14 +87,22 @@ class httprequest(Unit):
             _, _, message_data = data.partition(b'\n')
             msg = BytesParser().parsebytes(message_data)
             for part in msg.walk():
+                def get_param(name: str):
+                    if value := part.get_param(name, None, 'content-disposition'):
+                        return value
+                    if value := part.get_param(name, None, 'content-type'):
+                        return value
                 payloads = part.get_payload(decode=True)
                 if not isinstance(payloads, list):
                     payloads = [payloads]
                 for payload in payloads:
                     if buffer := asbuffer(payload):
-                        if name := part.get_filename():
-                            buffer = self.labelled(buffer, name=name)
-                        yield buffer
+                        kwargs = {}
+                        if value := get_param('name'):
+                            kwargs.update(name=value)
+                        if value := get_param('filename'):
+                            kwargs.update(file=value)
+                        yield self.labelled(buffer, **kwargs)
 
         if mode is _Fmt.UrlEncode:
             yield from chunks(parse_qs(body, keep_blank_values=True))

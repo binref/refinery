@@ -1,7 +1,7 @@
 from .. import TestUnitBase
 
 
-class TestHTTPParser(TestUnitBase):
+class TestHTTPResponse(TestUnitBase):
 
     def test_basic(self):
         unit = self.load()
