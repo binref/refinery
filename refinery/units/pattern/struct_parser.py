@@ -77,34 +77,36 @@ class struct(Unit):
         multi: Param[bool, Arg.Switch('-m', help=(
             'Read as many pieces of structured data as possible intead of just one.'))] = False,
         count: Param[int, Arg.Number('-c', help=(
-            'A limit on the number of chunks to read in multi mode; default is {default}.'))] = INF,
+            'A limit on the number of chunks to read in multi mode; there is no limit by default.'))] = 0,
         until: Param[str, Arg.String('-u', metavar='E', help=(
             'An expression evaluated on each chunk in multi mode. New chunks will be parsed '
-            'only if the result is nonzero.'))] = None,
+            'only if the result is nonzero.'))] = '',
         format: Param[str, Arg.String('-f', metavar='F', help=(
             'Optionally specify a format string expression to auto-name extracted fields without a '
             'given name. The format string accepts the field {{c}} for the type code and {{n}} for '
-            'the variable index.'))] = None,
+            'the variable index.'))] = '',
         name: Param[str, Arg.String('-n', metavar='VAR', group='FIELDS', help=(
-            'Equivalent to --format=VAR{{n}}.'))] = None,
+            'Equivalent to --format=VAR{{n}}.'))] = '',
         more: Param[bool, Arg.Switch('-M', help=(
             'After parsing the struct, emit one chunk that contains the data that was left '
             'over in the buffer. If no data was left over, this chunk will be empty.'))] = False
     ):
         if name:
             format = format or F'{name}{{n}}'
-        outputs = outputs or [F'{{{_REST_MARKER}}}']
+        outputs = outputs or (F'{{{_REST_MARKER}}}',)
         super().__init__(spec=spec, outputs=outputs, until=until, format=format, count=count, multi=multi, more=more)
 
     def process(self, data: Chunk):
         formatter = string.Formatter()
-        field_format: str | None = self.args.format
+        field_format: str = self.args.format
         until = self.args.until
         until = until and PythonExpression(until, all_variables_allowed=True)
         reader = StructReader(memoryview(data))
         checkpoint = 0
         mainspec = self.args.spec
         byteorder = mainspec[:1]
+        count = self.args.count
+
         if byteorder in '<@=!>':
             mainspec = mainspec[1:]
         else:
@@ -125,7 +127,7 @@ class struct(Unit):
 
             if reader.eof:
                 break
-            if index >= self.args.count:
+            if 0 < count <= index:
                 break
 
             meta = metavars(data)
@@ -138,11 +140,9 @@ class struct(Unit):
 
             try:
                 for prefix, name, spec, conversion in formatter.parse(mainspec):
-                    name: str
-                    spec: str = spec and spec.strip()
                     if prefix:
                         fields = reader.read_struct(fixorder(prefix))
-                        if field_format is not None:
+                        if field_format:
                             codes = re.findall('[?cbBhHiIlLqQnNefdspPauwgk]', prefix)
                             if len(codes) != len(fields):
                                 codes = 'v' * len(fields)
@@ -155,6 +155,11 @@ class struct(Unit):
 
                     if name is None:
                         continue
+                    if spec is None:
+                        spec = ''
+
+                    assert isinstance(spec, str)
+                    assert isinstance(name, str)
 
                     field_counter += 1
 
@@ -264,4 +269,5 @@ class struct(Unit):
             self.log_info(F'discarding {leftover} left in buffer')
 
 
-struct.__doc__ %= _REST_MARKER
+if __d := struct.__doc__:
+    struct.__doc__ = __d % _REST_MARKER

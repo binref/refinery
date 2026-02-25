@@ -132,7 +132,7 @@ from refinery.lib.tools import (
     normalize_to_identifier,
     one,
 )
-from refinery.lib.types import NoMask, RepeatedInteger, bounds, buf, isbuffer
+from refinery.lib.types import RepeatedInteger, bounds, buf, isbuffer
 
 if TYPE_CHECKING:
     from refinery import Unit
@@ -172,7 +172,7 @@ class PythonExpression:
     of the expression if no variables were present, or a callable which expects keyword arguments
     corresponding to the permitted variable names.
     """
-    def __init__(self, definition: str | buf, *variables, constants=None, all_variables_allowed=False, modulus=None, mask=None):
+    def __init__(self, definition: str | buf, *variables, constants=None, all_variables_allowed=False, modulus=None, mask=-1):
         if not isinstance(definition, str):
             definition = codecs.decode(definition, 'utf8')
         self.definition = definition = definition.strip()
@@ -183,10 +183,8 @@ class PythonExpression:
         except Exception as error:
             raise ParserError(F'The provided expression could not be parsed: {definition!s}; {exception_to_string(error)}')
 
-        if mask not in (None, NoMask):
-            if modulus is not None:
-                raise ValueError('Cannot specify both modulus and mask.')
-            modulus = mask + 1
+        if mask > 0 and modulus is not None:
+            raise ValueError('Cannot specify both modulus and mask.')
 
         class Postprocessor(ast.NodeTransformer):
             def visit_Constant(self, node: ast.Constant):
@@ -199,19 +197,25 @@ class PythonExpression:
 
             def visit_BinOp(self, node: ast.BinOp) -> Any:
                 self.generic_visit(node)
-                if modulus is None:
-                    return node
                 if not isinstance(node.op, (ast.Add, ast.Mult, ast.Sub, ast.LShift, ast.Pow)):
                     return node
-                return ast.BinOp(node, ast.Mod(), ast.Constant(modulus))
+                if modulus is not None:
+                    return ast.BinOp(node, ast.Mod(), ast.Constant(modulus))
+                elif mask > 0:
+                    return ast.BinOp(node, ast.BitAnd(), ast.Constant(mask))
+                else:
+                    return node
 
             def visit_UnaryOp(self, node: ast.UnaryOp) -> Any:
                 self.generic_visit(node)
-                if modulus is None:
-                    return node
                 if not isinstance(node.op, (ast.UAdd, ast.USub, ast.Invert)):
                     return node
-                return ast.BinOp(node, ast.Mod(), ast.Constant(modulus))
+                if modulus is not None:
+                    return ast.BinOp(node, ast.Mod(), ast.Constant(modulus))
+                elif mask > 0:
+                    return ast.BinOp(node, ast.BitAnd(), ast.Constant(mask))
+                else:
+                    return node
 
         expression = ast.fix_missing_locations(Postprocessor().visit(expression))
         nodes = ast.walk(expression)

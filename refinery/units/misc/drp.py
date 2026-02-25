@@ -55,7 +55,7 @@ class drp(Unit):
             min = max = len
         super().__init__(
             min=min,
-            max=max or INF,
+            max=max or INF(),
             all=all,
             consecutive=consecutive,
             align=align,

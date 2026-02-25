@@ -360,7 +360,7 @@ class LzxDecoder:
             self._reps[2] = 1
 
         if cur_size == 0:
-            cur_size = INF
+            cur_size = INF()
             eof_halt = True
         else:
             eof_halt = False

@@ -28,7 +28,7 @@ class iffc(ConditionalUnit, docs='{0}{p}{1}'):
                     return True
             if isinstance(bounds, slice):
                 a = bounds.start or 0
-                b = bounds.stop or INF
+                b = bounds.stop or INF()
                 t = bounds.step or 1
                 if a <= length <= b and not (length - a) % t:
                     return True

@@ -212,7 +212,7 @@ class decompress(Unit):
             @property
             def ratio(self):
                 if not self.result:
-                    return INF
+                    return INF()
                 return (len(data) + int(bool(self.prefix)) - self.cutoff) / len(self)
 
             @property

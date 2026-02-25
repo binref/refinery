@@ -80,7 +80,6 @@ __all__ = [
     'JSON',
     'JSONDict',
     'NamedTuple',
-    'NoMask',
     'Param',
     'RepeatedInteger',
     'Self',
@@ -187,7 +186,12 @@ class Singleton(type):
         return type.__new__(mcs, name, bases, namespace)
 
 
-class _INF(metaclass=Singleton):
+class INF(metaclass=Singleton):
+    """
+    A crude object representing infinity, which is greater than anything it is compared to, and
+    only equal to itself.
+    """
+
     def __lt__(self, _: Any):
         return False
 
@@ -254,18 +258,17 @@ class _INF(metaclass=Singleton):
     def __rrshift__(self, _: Any):
         return 0
 
+    def __rlshift__(self, _: Any):
+        return 0
+
     def __format__(self, *_):
         return str(self)
 
 
-INF = _INF()
-"""
-A crude object representing infinity, which is greater than anything it
-is compared to, and only equal to itself.
-"""
-
-
-class _AST(metaclass=Singleton):
+class AST(metaclass=Singleton):
+    """
+    A wildcard object which is equal to everything.
+    """
     def __eq__(self, _: Any):
         return True
 
@@ -282,27 +285,6 @@ class _AST(metaclass=Singleton):
         return '*'
 
 
-AST = _AST()
-"""
-A wildcard object which is equal to everything.
-"""
-
-
-class _NoMask(metaclass=Singleton):
-    def __rand__(self, other):
-        return other
-
-    def __and__(self, other):
-        return other
-
-
-NoMask = _NoMask()
-"""
-The value of `NoMask & X` and `X & NoMask` is always equal to `X`. This singleton serves as a
-mock bitmask when the value `X` should not be masked at all.
-"""
-
-
 class RepeatedInteger(int):
     """
     This class serves as a dual-purpose result for `refinery.lib.argformats.numseq` types. It
@@ -315,14 +297,11 @@ class RepeatedInteger(int):
         return self
 
 
-class _NoDefault(metaclass=Singleton):
+class NoDefault(metaclass=Singleton):
+    """
+    A sentinel singleton that can be used as a no-default marker when "None" is a valid option.
+    """
     pass
-
-
-NoDefault = _NoDefault()
-"""
-A sentinel singleton that can be used as a no-default marker when "None" is a valid option.
-"""
 
 
 class BoundsType:
@@ -346,7 +325,7 @@ class BoundsType:
     def __init__(self, bounds: int | slice[int, int | None | INF, int | None] | None):
         if bounds is None:
             self.min = 0
-            self.max = INF
+            self.max = INF()
             self.inc = 1
         elif isinstance(bounds, int):
             self.min = self.max = bounds
@@ -354,7 +333,7 @@ class BoundsType:
         else:
             _min, _max, _inc = bounds.start, bounds.stop, bounds.step
             self.min = _min or 0
-            self.max = _max or INF
+            self.max = _max or INF()
             self.inc = _inc or 1
             if _max and _max < self.min:
                 raise ValueError(F'The maximum {self.max} is lesser than the minimum {self.min}.')

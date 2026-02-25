@@ -3,7 +3,7 @@ from __future__ import annotations
 import itertools
 
 from refinery.lib.meta import check_variable_name
-from refinery.lib.types import NoDefault, Param, isbuffer, isq, typename
+from refinery.lib.types import Param, NoDefault, isbuffer, isq, typename
 from refinery.units import Arg, Chunk, Unit
 
 
@@ -15,7 +15,7 @@ class put(Unit):
     def __init__(
         self,
         name: Param[str, Arg.String(help='The name of the variable to be used.')],
-        value: Param[isq | NoDefault, Arg.NumSeq(check=False, help=(
+        value: Param[isq | type[NoDefault], Arg.NumSeq(check=False, help=(
             'The value for the variable. If no value is given, the entire current chunk is stored.'
         ))] = NoDefault
     ):

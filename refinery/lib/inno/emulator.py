@@ -67,7 +67,7 @@ from refinery.lib.inno.ifps import (
     VariableType,
 )
 from refinery.lib.patterns import formats
-from refinery.lib.types import AST, INF, NoMask
+from refinery.lib.types import AST, INF
 
 if TYPE_CHECKING:
     from typing import ParamSpec
@@ -203,9 +203,9 @@ class Variable(VariableBase, Generic[_T]):
             else:
                 self._int_good = range(umax)
         else:
-            self._int_mask = NoMask
-            self._int_bits = INF
-            self._int_good = AST
+            self._int_mask = -1
+            self._int_bits = INF()
+            self._int_good = AST()
 
         if data is None:
             self.setdefault()

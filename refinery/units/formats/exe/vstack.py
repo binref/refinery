@@ -82,7 +82,7 @@ class EmuState:
     callstack_ceiling: int = 0
     invalid_instructions: int = 0
     synthesized: dict[bytes, str] = field(default_factory=dict)
-    ticks: int | Literal[INF] = field(default_factory=lambda: INF)
+    ticks: int | INF = field(default_factory=lambda: INF())
     visits: dict[int, int] = field(default_factory=lambda: defaultdict(int))
     memory: MemoryIntervalUnion = field(default_factory=MemoryIntervalUnion)
     init_registers: list[Register] = field(default_factory=list)

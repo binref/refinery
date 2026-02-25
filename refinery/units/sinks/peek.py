@@ -61,7 +61,7 @@ class peek(HexViewer):
             narrow = True
         if environment.colorless.value:
             gray = True
-        lines = 1 if brief else INF if all else lines
+        lines = 1 if brief else INF() if all else lines
         super().__init__(
             brief=brief,
             gray=gray,

@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 from refinery.lib import chunks
 from refinery.lib.inline import iterspread
 from refinery.lib.tools import infinitize
-from refinery.lib.types import INF, NoMask, Param, asbuffer, buf, isq
+from refinery.lib.types import INF, Param, asbuffer, buf, isq
 from refinery.units import Arg, Unit
 
 if TYPE_CHECKING:
@@ -75,7 +75,7 @@ class BlockTransformationBase(Unit, abstract=True):
         if precision < 0:
             return self.blocksize
         if precision == 0:
-            return INF
+            return INF()
         return precision
 
     @property
@@ -83,11 +83,8 @@ class BlockTransformationBase(Unit, abstract=True):
         return 8 * self.precision
 
     @property
-    def fmask(self) -> int | NoMask:
-        fbits = self.fbits
-        if fbits == INF:
-            return NoMask
-        return (1 << fbits) - 1
+    def fmask(self) -> int:
+        return (1 << self.fbits) - 1
 
     def rest(self, data: bytearray):
         """
@@ -326,15 +323,12 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
         else:
             self.log_debug('fast block method successful')
             return result
+        size = len(data)
         arguments = [
-            self._infinitize_argument(len(data), *self._argument_parse_hook(a))
+            self._infinitize_argument(size, *self._argument_parse_hook(a))
             for a in self.args.argument]
         try:
-            mask = self.fmask
-            size = len(data)
-            if mask is NoMask:
-                mask = None
-            spread = iterspread(self.operate, self.chunk(data), *arguments, mask=mask)
+            spread = iterspread(self.operate, self.chunk(data), *arguments, mask=self.fmask)
             out = self.unchunk(spread(self))
             if self._truncate < 1:
                 del out[size:]

@@ -514,7 +514,7 @@ class Executable(ABC):
         Returns the size of the executalbe in memory.
         """
         upper = 0
-        lower = INF
+        lower = INF()
         for segment in self.segments():
             upper = max(upper, segment.virtual.upper)
             lower = min(lower, segment.virtual.lower)
