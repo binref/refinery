@@ -142,7 +142,7 @@ class run(Unit):
                             self.log_info(line)
             if out:
                 if not self.args.stream or self.args.timeout:
-                    if result:
+                    if result is not None:
                         result.write(out)
                 if self.args.stream:
                     yield out
