@@ -8,7 +8,47 @@ import pathlib
 import sys
 import toml
 
+from contextlib import suppress
 from setuptools import Extension
+from setuptools.command.build_ext import build_ext as _build_ext
+
+
+class BuildCommand(_build_ext):
+    """
+    Custom command that fixes a Windows issue for building Cython extensions: as the setup imports
+    refinery modules, loaded Cython extension get loaded and are locked by the OS. The default
+    inplace build fails because it cannot overwrite the locked file.
+    The workaround renames existing .pyd files before the build. Windows allows renaming open files
+    even when they are locked for deletion. After the build, the renamed files are cleaned up on a
+    best-effort basis.
+    """
+    _renamed: dict[str, str] = {}
+
+    def _rename_locked_extensions(self):
+        if not self.inplace:
+            return
+        for ext in self.extensions:
+            if not os.path.exists(fullpath := self.get_ext_fullpath(ext.name)):
+                continue
+            renamed = F'{fullpath}.old'
+            with suppress(OSError):
+                os.remove(renamed)
+            with suppress(OSError):
+                os.rename(fullpath, renamed)
+                self._renamed[fullpath] = renamed
+
+    def _cleanup_renamed(self):
+        for renamed in self._renamed.values():
+            with suppress(OSError):
+                os.remove(renamed)
+
+    def run(self):
+        self._renamed.clear()
+        self._rename_locked_extensions()
+        try:
+            _build_ext.run(self)
+        finally:
+            self._cleanup_renamed()
 
 
 __prefix__ = os.getenv('REFINERY_PREFIX') or ''
@@ -25,6 +65,86 @@ __topics__ = [
     'Topic :: Security :: Cryptography',
     'Topic :: System :: Archiving :: Compression'
 ]
+
+EXTENSION_DICT = {
+    'refinery.lib.fast.a3x'       : 'refinery/lib/fast/a3x.pyx',
+    'refinery.lib.fast.zipcrypto' : 'refinery/lib/fast/zipcrypto.pyx',
+    'refinery.lib.seven.deflate'  : 'refinery/lib/seven/deflate.pyx',
+    'refinery.lib.seven.huffman'  : 'refinery/lib/seven/huffman.pyx',
+    'refinery.lib.seven.lzx'      : 'refinery/lib/seven/lzx.pyx',
+}
+
+EXTENSION_LIST = [
+    Extension(key, [value]) for key, value in EXTENSION_DICT.items()]
+
+
+class DisableExtCommand(setuptools.Command):
+    description = 'Rename all in-place Cython extensions to .old so they are not loaded.'
+    user_options = []
+
+    def initialize_options(self):
+        pass
+
+    def finalize_options(self):
+        pass
+
+    def run(self):
+        count = 0
+        for ext in EXTENSION_LIST:
+            name = ext.name
+            # Compute the expected filename for this platform
+            fullpath = os.path.join(*name.split('.'))
+            import importlib.machinery
+            for suffix in importlib.machinery.EXTENSION_SUFFIXES:
+                candidate = fullpath + suffix
+                if os.path.exists(candidate):
+                    renamed = F'{candidate}.old'
+                    with suppress(OSError):
+                        os.remove(renamed)
+                    try:
+                        os.rename(candidate, renamed)
+                        print(F'disabled: {candidate} -> {renamed}')
+                        count += 1
+                    except OSError as e:
+                        print(F'failed to disable {candidate}: {e}')
+        if count:
+            print(F'Disabled {count} extension(s).')
+        else:
+            print('No extensions found to disable.')
+
+
+class EnableExtCommand(setuptools.Command):
+    description = 'Restore previously disabled (.old) Cython extensions.'
+    user_options = []
+
+    def initialize_options(self):
+        pass
+
+    def finalize_options(self):
+        pass
+
+    def run(self):
+        count = 0
+        for ext in EXTENSION_LIST:
+            name = ext.name
+            fullpath = os.path.join(*name.split('.'))
+            import importlib.machinery
+            for suffix in importlib.machinery.EXTENSION_SUFFIXES:
+                candidate = fullpath + suffix + '.old'
+                if os.path.exists(candidate):
+                    original = fullpath + suffix
+                    with suppress(OSError):
+                        os.remove(original)
+                    try:
+                        os.rename(candidate, original)
+                        print(F'enabled: {candidate} -> {original}')
+                        count += 1
+                    except OSError as e:
+                        print(F'failed to enable {candidate}: {e}')
+        if count:
+            print(F'Enabled {count} extension(s).')
+        else:
+            print('No disabled extensions found to restore.')
 
 
 class DeployCommand(setuptools.Command):
@@ -164,17 +284,9 @@ def get_config():
     extras = get_setup_extras(requirements)
     config = get_setup_common()
 
-    extensions = [Extension(key, [value]) for key, value in {
-        'refinery.lib.fast.a3x'       : 'refinery/lib/fast/a3x.pyx',
-        'refinery.lib.fast.zipcrypto' : 'refinery/lib/fast/zipcrypto.pyx',
-        'refinery.lib.seven.deflate'  : 'refinery/lib/seven/deflate.pyx',
-        'refinery.lib.seven.huffman'  : 'refinery/lib/seven/huffman.pyx',
-        'refinery.lib.seven.lzx'      : 'refinery/lib/seven/lzx.pyx',
-    }.items()]
-
     try:
         import Cython.Build as cy
-        ext = cy.cythonize(extensions)
+        ext = cy.cythonize(EXTENSION_LIST)
     except Exception:
         ext = []
 
@@ -185,7 +297,12 @@ def get_config():
         extras_require=extras,
         include_package_data=True,
         entry_points={'console_scripts': console_scripts},
-        cmdclass={'deploy': DeployCommand},
+        cmdclass={
+            'deploy': DeployCommand,
+            'build_ext': BuildCommand,
+            'disable_ext': DisableExtCommand,
+            'enable_ext': EnableExtCommand,
+        },
         ext_modules=ext,
     )
 
