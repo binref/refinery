@@ -717,7 +717,7 @@ class BatchLexer:
         return True
 
     @staticmethod
-    def label(text: str):
+    def label(text: str, uppercase=True):
         parts = re.split('([\x20\t\v])', text.lstrip())
         for k, part in itertools.islice(enumerate(parts), 0, None, 2):
             tq, part = uncaret(part, True)
@@ -726,7 +726,10 @@ class BatchLexer:
                 del parts[k + 1:]
                 break
             parts[k] = part[:-1]
-        return ''.join(parts).upper()
+        label = ''.join(parts)
+        if uppercase:
+            label = label.upper()
+        return label
 
     def preparse(self, text: str | buf):
         self.labels = {}

@@ -568,8 +568,8 @@ class BatchParser:
         if comment:
             label = line
         else:
-            label = lexer.label(line)
-            if (x := lexer.labels[label]) != offset - 1:
+            label = lexer.label(line, uppercase=False)
+            if (x := lexer.labels[label.upper()]) != offset - 1:
                 raise RuntimeError(F'Expected offset for label {label} to be {offset}, got {x} instead.')
         return AstLabel(offset, None, silenced, line, label, comment)
 

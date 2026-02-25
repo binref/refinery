@@ -158,6 +158,18 @@ class IO:
             raise IndexError(k)
 
 
+@dataclass
+class BatchEmulatorConfig:
+    show_nops: bool = False
+    show_junk: bool = False
+    show_labels: bool = False
+    show_sets: bool = False
+    show_comments: bool = False
+    skip_goto: bool = False
+    skip_call: bool = False
+    skip_exit: bool = False
+
+
 class BatchEmulator:
 
     class _node:
@@ -200,26 +212,21 @@ class BatchEmulator:
         self,
         data: str | buf | BatchParser,
         state: BatchState | None = None,
+        cfg: BatchEmulatorConfig | None = None,
         std: IO | None = None,
-        show_nops: bool = False,
-        show_junk: bool = False,
-        show_sets: bool = False,
     ):
         self.stack = []
         self.parser = BatchParser(data, state)
         self.std = std or IO()
-        self.show_nops = show_nops
-        self.show_junk = show_junk
-        self.show_sets = show_sets
+        self.cfg = cfg or BatchEmulatorConfig()
         self.block_labels = set()
 
     def spawn(self, data: str | buf | BatchParser, state: BatchState | None = None, std: IO | None = None):
         return BatchEmulator(
             data,
             state,
+            self.cfg,
             std,
-            self.show_nops,
-            self.show_junk,
         )
 
     @property
@@ -488,7 +495,7 @@ class BatchEmulator:
                 prompt = prompt.rstrip('\r\n')
             tk = next(it)
         else:
-            cmd.junk = not self.show_sets
+            cmd.junk = not self.cfg.show_sets
 
         yield cmd
 
@@ -604,10 +611,14 @@ class BatchEmulator:
                 return
             state = self.clone_state(environment=self.state.environment, filename=path)
             emu = self.spawn(code, std=std, state=state)
-        yield from emu.trace(offset, called=True)
+        if self.cfg.skip_call:
+            emu.execute(called=True)
+        else:
+            yield from emu.trace(offset, called=True)
 
     @_command('SETLOCAL')
     def execute_setlocal(self, cmd: SynCommand, *_):
+        yield cmd
         setting = cmd.argument_string.strip().upper()
         delay = {
             'DISABLEDELAYEDEXPANSION': False,
@@ -622,13 +633,17 @@ class BatchEmulator:
         self.state.environment_stack.append(dict(self.environment))
 
     @_command('ENDLOCAL')
-    def execute_endlocal(self, *_):
+    def execute_endlocal(self, cmd: SynCommand, *_):
+        yield cmd
         if len(self.state.environment_stack) > 1:
             self.state.environment_stack.pop()
             self.state.delayexpand_stack.pop()
 
     @_command('GOTO')
     def execute_goto(self, cmd: SynCommand, std: IO, *_):
+        if self.cfg.skip_goto:
+            yield cmd
+            return
         it = iter(cmd.args)
         mark = False
         for label in it:
@@ -669,6 +684,8 @@ class BatchEmulator:
         except ValueError:
             code = 0
         yield cmd
+        if self.cfg.skip_exit:
+            return
         raise Exit(code, exit)
 
     @_command('CHDIR')
@@ -697,12 +714,12 @@ class BatchEmulator:
         mode = cmdl.strip().lower()
         current_state = self.state.echo
         if mode == 'on':
-            if self.show_nops or current_state is False:
+            if self.cfg.show_nops or current_state is False:
                 yield cmd
             self.state.echo = True
             return
         if mode == 'off':
-            if self.show_nops or current_state is True:
+            if self.cfg.show_nops or current_state is True:
                 yield cmd
             self.state.echo = False
             return
@@ -959,7 +976,6 @@ class BatchEmulator:
     @_command('PROMPT')
     @_command('RD')
     @_command('RECOVER')
-    @_command('REM')
     @_command('REN')
     @_command('RENAME')
     @_command('REPLACE')
@@ -987,6 +1003,11 @@ class BatchEmulator:
         yield cmd
         return 0
 
+    @_command('REM')
+    def execute_rem(self, cmd: SynCommand, *_):
+        if self.cfg.show_comments:
+            yield cmd
+
     @_command('HELP')
     def execute_help(self, cmd: SynCommand, std: IO, *_):
         yield cmd
@@ -1007,9 +1028,11 @@ class BatchEmulator:
             if self.state.exists_file(verb):
                 self.state.ec = 0
             elif not indicators.winfpath.value.fullmatch(verb):
-                cmd.junk = not self.show_junk
-                bogus_command = '\uFFFD' in verb or not verb.isprintable()
-                self.state.ec = bogus_command * 9009
+                if '\uFFFD' in verb or not verb.isprintable():
+                    self.state.ec = 9009
+                    cmd.junk = True
+                else:
+                    cmd.junk = not self.cfg.show_junk
             yield cmd
             return
 
@@ -1211,8 +1234,12 @@ class BatchEmulator:
 
     @_node(AstLabel)
     def trace_label(self, label: AstLabel, *_):
-        yield from ()
-        if not label.comment:
+        if label.comment:
+            if self.cfg.show_comments:
+                yield synthesize(label)
+        else:
+            if self.cfg.show_labels:
+                yield synthesize(label)
             self.block_labels.add(label.label.upper())
 
     def trace_statement(self, statement: AstStatement, std: IO, in_group: bool):
@@ -1267,8 +1294,8 @@ class BatchEmulator:
             last = ast
             yield str(syn)
 
-    def execute(self, offset: int = 0):
-        for _ in self.trace(offset):
+    def execute(self, offset: int = 0, called: bool = False):
+        for _ in self.trace(offset, called=called):
             pass
 
     def trace(self, offset: int = 0, called: bool = False):
