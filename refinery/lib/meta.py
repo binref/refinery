@@ -120,7 +120,7 @@ import re
 import string
 
 from io import StringIO
-from typing import TYPE_CHECKING, Any, Callable, Iterable
+from typing import TYPE_CHECKING, Any, Callable
 from urllib.parse import unquote_to_bytes
 
 from refinery.lib.environment import environment

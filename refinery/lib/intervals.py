@@ -11,7 +11,6 @@ from typing import Generic, Iterator, TypeVar
 
 from refinery.lib.types import buf
 
-
 Value = TypeVar('Value')
 """
 A generic type variable representing the value type for `refinery.lib.intervals.IntervalUnion`.
