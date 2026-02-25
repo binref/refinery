@@ -66,7 +66,7 @@ class FNVUnit(HashUnit, abstract=True):
                 F'Invalid bit size {bits}, only the following are supported: {bit_options}.')
         else:
             size = bits // 8
-            mask = ~(-1 << size)
+            mask = ~(-1 << bits)
             return mask, size, prime, base
 
 
