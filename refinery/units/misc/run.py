@@ -101,9 +101,10 @@ class run(Unit):
         recvout.start()
         recverr.start()
 
-        if data:
-            process.stdin.write(data)
-        process.stdin.close()
+        if stdin := process.stdin:
+            if data:
+                stdin.write(data)
+            stdin.close()
         start = process_time()
 
         if not self.args.stream or self.args.timeout:
@@ -116,6 +117,7 @@ class run(Unit):
                 return None
 
         errbuf = MemoryFile()
+        errobj = None
 
         while True:
             out = queue_read(qout)
@@ -140,7 +142,8 @@ class run(Unit):
                             self.log_info(line)
             if out:
                 if not self.args.stream or self.args.timeout:
-                    result.write(out)
+                    if result:
+                        result.write(out)
                 if self.args.stream:
                     yield out
 
@@ -155,6 +158,7 @@ class run(Unit):
                 recvout.join(self._JOIN_TIME)
                 done.set()
             elif self.args.timeout:
+                assert result is not None
                 if process_time() - start > self.args.timeout:
                     self.log_info('terminating process after timeout expired')
                     done.set()
@@ -168,13 +172,13 @@ class run(Unit):
                     recverr.join(self._JOIN_TIME)
                     recvout.join(self._JOIN_TIME)
                     if not len(result):
-                        result = RuntimeError('timeout reached, process had no output')
+                        errobj = RuntimeError('timeout reached, process had no output')
                     else:
-                        result = RefineryPartialResult(
+                        errobj = RefineryPartialResult(
                             'timeout reached, returning all collected output',
                             partial=result.getvalue())
 
-        if isinstance(result, Exception):
-            raise result
-        elif not self.args.stream:
+        if errobj is not None:
+            raise errobj
+        if result is not None:
             yield result.getvalue()
