@@ -22,11 +22,15 @@ class resub(SingleRegexTransformUnit, docs=(
             'Substitution value: use {1} for group 1, {0} for entire match. The default value is '
             'an empty string, i.e. matches are removed from the input by default.'
         ))] = B'',
+        unesc: Param[bool, Arg.Switch('-n', help=(
+            'Interpret and replace string escape sequences in the substutution expression.'
+        ))] = False,
         multiline=False, ignorecase=False, count=0
     ):
         super().__init__(
             regex=regex,
             subst=subst,
+            unesc=unesc,
             multiline=multiline,
             ignorecase=ignorecase,
             count=count,
@@ -35,12 +39,19 @@ class resub(SingleRegexTransformUnit, docs=(
     def process(self, data):
         def repl(match: Match[bytes]):
             refined = RefinedMatch(match, pattern.groups, pattern.groupindex)
-            r = meta.format_bin(spec, self.codec, refined.grouplist(), refined.groupdict())
+            r = meta.format_bin(
+                spec,
+                self.codec,
+                refined.grouplist(),
+                refined.groupdict(),
+                escaped=escaped,
+            )
             self.log_debug('substitution:', repr(r), clip=True)
             return r
         self.log_info('pattern:', getattr(self.regex, 'pattern', self.regex))
         self.log_info('replace:', self.args.subst)
         meta = metavars(data)
+        escaped = self.args.unesc
         spec = self.args.subst.decode('ascii', 'backslashreplace')
         pattern = self.regex
         sub = pattern.sub

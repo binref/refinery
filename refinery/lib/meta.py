@@ -631,6 +631,7 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
         args: list | tuple = (),
         symb: dict | None = None,
         used: set | None = None,
+        escaped: bool = False,
     ) -> str:
         """
         Formats the input expression like a normal Python format string expression. Certain refinery
@@ -642,7 +643,7 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
         - `sha1`, `sha256`, `sha512`, and `md5` are formatted as hex strings.
         - `size` is formatted as a human-readable size with unit.
         """
-        ret = self.format(spec, codec, args, symb, binary=False, used=used)
+        ret = self.format(spec, codec, args, symb, binary=False, used=used, escaped=escaped)
         assert isinstance(ret, str)
         return ret
 
@@ -653,6 +654,7 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
         args: list | tuple = (),
         symb: dict | None = None,
         used: set | None = None,
+        escaped: bool = False,
     ) -> buf:
         """
         Formats the input expression using a Python F-string like expression. These strings contain
@@ -671,7 +673,7 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
         - `h`: literal is a hex-encoded binary string
         - `e`: literal is an escaped ASCII string
         """
-        ret = self.format(spec, codec, args, symb, binary=True, used=used)
+        ret = self.format(spec, codec, args, symb, binary=True, used=used, escaped=escaped)
         assert not isinstance(ret, str)
         return ret
 
@@ -684,6 +686,7 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
         binary  : bool,
         fixup   : bool = True,
         used    : set | None = None,
+        escaped : bool = False
     ) -> str | buf:
         """
         Formats a string using Python-like string fomatting syntax. The formatter for `binary`
@@ -727,13 +730,16 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
         formatter = string.Formatter()
         autoindex = 0
 
-        if binary:
-            def putstr(s: str):
+        def putstr(s: str):
+            if isinstance(stream, MemoryFile):
                 stream.write(s.encode(codec))
+            else:
+                stream.write(s)
+
+        if binary:
             stream = MemoryFile()
         else:
             stream = StringIO()
-            putstr = stream.write
 
         with stream:
             for prefix, field, modifier, conversion in formatter.parse(spec):
@@ -747,13 +753,18 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
 
                 value = None
 
-                converter = {
-                    'a': ascii,
-                    's': str,
-                    'r': repr,
-                }.get(conversion)
+                if conversion == 'a':
+                    converter = ascii
+                elif conversion == 's':
+                    converter = str
+                elif conversion == 'r':
+                    converter = repr
+                else:
+                    converter = None
 
                 if prefix:
+                    if escaped:
+                        prefix = prefix.encode('latin1').decode('unicode-escape')
                     putstr(prefix)
 
                 if field is None:
@@ -805,16 +816,18 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
                         expression = PythonExpression(field, *self, *symb)
                         value = expression(self, **symb)
                     except ParserError:
-                        ph = recover_placeholder()
                         if self.ghost:
-                            putstr(ph)
+                            putstr(recover_placeholder())
                             continue
-                        raise KeyError(ph)
+                        if modifier:
+                            value = field
+                        else:
+                            raise KeyError
                     except Exception:
                         value = B''
 
                 try:
-                    converted = ByteStringWrapper.Wrap(value)
+                    converted = ByteStringWrapper.Wrap(value, codec)
                 except TypeError:
                     if converter:
                         converted = converter(value)
@@ -838,7 +851,7 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
                     expression = self.format(modifier, codec, args, symb, True, False, used)
                     output = DelayedNumSeqArgument(
                         expression.decode(codec), reverse=True, seed=converted)
-                    output = output(Chunk(value, meta=self))
+                    output = output(Chunk(converted, meta=self))
 
                 if output is None:
                     output = converted

@@ -133,3 +133,9 @@ class TestRegexSubstitution(TestUnitBase):
         pipe = self.load_pipeline(r'resub "\\(((??string)),(.*?)\)" "{1:esc:resub[\D,/]:pack:sub[e:{2}]:esc[-qR]}"')
         pipe.log_level = LogLevel.INFO
         self.assertEqual(data | pipe | bytes, B'')
+
+    def test_insert_line_breaks(self):
+        pl = self.load_pipeline('emit CGH DFA [| resub    . {0}{0a:hex} ]')
+        self.assertListEqual((pl | str).split(), list('CGHDFA'))
+        pl = self.load_pipeline('emit CGH DFA [| resub -n . {0}\\\\n ]')
+        self.assertListEqual((pl | str).split(), list('CGHDFA'))

@@ -407,7 +407,7 @@ class XMLToPathExtractorUnit(PathExtractorUnit, abstract=True):
             if nfmt and meta is not None:
                 try:
                     symbols = {nkey(key): nval(val) for key, val in attrs.items()}
-                    return meta.format_str(nfmt, self.codec, node.tag, symbols)
+                    return meta.format_str(nfmt, self.codec, [node.tag], symbols)
                 except KeyError:
                     pass
             try:
