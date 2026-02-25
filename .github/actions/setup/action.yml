@@ -20,7 +20,6 @@ runs:
       run: |
         sudo apt-get update
         sudo apt-get install xclip xvfb libzbar0
-      continue-on-error: true
     - name: Undo Windows AutoCRLF in GIT
       if: ${{ contains(inputs.os, 'windows') }}
       shell: cmd
