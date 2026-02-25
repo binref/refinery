@@ -22,6 +22,7 @@ jobs:
         pip install .[all]
         pip install pdoc3
         sudo apt-get install libzbar0
+      continue-on-error: true
     - name: Generate documentation
       run: |
         pdoc3 --html --force --template-dir pdoc3-template refinery

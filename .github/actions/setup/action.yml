@@ -18,6 +18,7 @@ runs:
       if: ${{ contains(inputs.os, 'ubuntu') }}
       shell: ${{ contains(inputs.os, 'windows') && 'cmd' || 'bash' }}
       run: sudo apt-get install xclip xvfb libzbar0
+      continue-on-error: true
     - name: Undo Windows AutoCRLF in GIT
       if: ${{ contains(inputs.os, 'windows') }}
       shell: cmd
