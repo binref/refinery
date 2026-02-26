@@ -4,6 +4,7 @@ import shlex
 import sys
 
 from subprocess import PIPE, STDOUT, Popen
+from io import BytesIO
 
 from refinery.lib.meta import metavars
 from refinery.lib.structures import MemoryFile
@@ -23,7 +24,8 @@ class run(Unit):
     this case, the data will not be sent to the standard input device of the new process.
     """
 
-    _JOIN_TIME = 0.1
+    _JOIN_TIME = 2
+    _WAIT_TIME = 0.01
 
     def __init__(
         self, *commandline: Param[str, Arg.String(nargs='...', metavar='(all remaining)', help=(
@@ -65,12 +67,15 @@ class run(Unit):
         if not self.log_debug(commandline):
             self.log_info(shlexjoin)
 
+        stream: bool = self.args.stream
+        merge: bool = self.args.errors
+        timeout: int = self.args.timeout
+
         posix = 'posix' in sys.builtin_module_names
-        merge = self.args.errors
         process = Popen(shlex.join(commandline) if posix else commandline, shell=True,
             stdin=PIPE, stdout=PIPE, stderr=STDOUT if merge else PIPE, close_fds=posix)
 
-        if not self.args.stream and not self.args.timeout and not merge:
+        if not stream and not timeout and not merge:
             out, err = process.communicate(data)
             for line in err.splitlines():
                 self.log_info(line)
@@ -83,12 +88,14 @@ class run(Unit):
 
         start = 0
         result = None
+        _jt = self._JOIN_TIME
+        _wt = self._WAIT_TIME
 
-        qerr = Queue()
-        qout = Queue()
+        qerr: Queue[bytes] = Queue()
+        qout: Queue[bytes] = Queue()
         done = Event()
 
-        def adapter(stream, queue: Queue, event: Event):
+        def adapter(stream: BytesIO, queue: Queue[bytes], event: Event):
             while not event.is_set():
                 out = stream.read1()
                 if out:
@@ -112,10 +119,10 @@ class run(Unit):
             stdin.close()
         start = monotonic()
 
-        if not self.args.stream or self.args.timeout:
+        if not stream or timeout:
             result = MemoryFile()
 
-        def queue_read(q: Queue):
+        def queue_read(q: Queue[bytes]):
             try:
                 return q.get_nowait()
             except Empty:
@@ -128,9 +135,7 @@ class run(Unit):
             out = queue_read(qout)
             err = None
 
-            if self.args.errors:
-                out = out or queue_read(qerr)
-            else:
+            if not merge:
                 err = queue_read(qerr)
 
             if err and self.log_info():
@@ -146,10 +151,10 @@ class run(Unit):
                         if line := line.rstrip(B'\n'):
                             self.log_info(line)
             if out:
-                if not self.args.stream or self.args.timeout:
+                if not stream or timeout:
                     if result is not None:
                         result.write(out)
-                if self.args.stream:
+                if stream:
                     yield out
 
             if done.is_set():
@@ -158,26 +163,29 @@ class run(Unit):
                 if recvout.is_alive():
                     self.log_warn('stdout receiver thread zombied')
                 break
-            elif not err and not out and process.poll() is not None:
-                if recverr is not None:
-                    recverr.join(self._JOIN_TIME)
-                recvout.join(self._JOIN_TIME)
-                done.set()
-            elif self.args.timeout:
+            elif not err and not out:
+                if process.poll() is None:
+                    sleep(_wt)
+                else:
+                    if recverr is not None:
+                        recverr.join(_jt)
+                    recvout.join(_jt)
+                    done.set()
+            elif timeout:
                 assert result is not None
-                if monotonic() - start > self.args.timeout:
+                if monotonic() - start > timeout:
                     self.log_info('terminating process after timeout expired')
                     done.set()
                     process.terminate()
                     for wait in range(4):
                         if process.poll() is not None:
                             break
-                        sleep(self._JOIN_TIME)
+                        sleep(_wt)
                     else:
                         self.log_warn('process termination may have failed')
                     if recverr is not None:
-                        recverr.join(self._JOIN_TIME)
-                    recvout.join(self._JOIN_TIME)
+                        recverr.join(_jt)
+                    recvout.join(_jt)
                     if not len(result):
                         errobj = RuntimeError('timeout reached, process had no output')
                     else:
