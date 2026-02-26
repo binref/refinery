@@ -5,6 +5,8 @@
 > If a release contains only bugfix, it is marked as a 'bugfix release'.
 > Otherwise, the changelog entries highlight only new or changed functionality.
 
+## Version 0.10.1 - bugfix release
+
 ## Version 0.10.0
 - Switches `-T` in the units `alu` and `pemeta` were removed to add a new global option named `--try`:
   This option allows forwarding the input when a unit fails to process it.
