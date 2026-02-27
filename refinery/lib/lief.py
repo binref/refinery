@@ -8,6 +8,14 @@ import io
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    import lief.COFF as COFF
+    import lief.ELF as ELF
+    import lief.MachO as MachO
+    import lief.PE as PE
+
+    from lief import Binary as AbstractBinary
+    from lief import Header, Relocation, Section, Symbol
+
     from refinery.lib.types import buf
 
 __all__ = [

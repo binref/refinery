@@ -3,8 +3,8 @@ from __future__ import annotations
 import shlex
 import sys
 
-from subprocess import PIPE, STDOUT, Popen
 from io import BytesIO
+from subprocess import PIPE, STDOUT, Popen
 
 from refinery.lib.meta import metavars
 from refinery.lib.structures import MemoryFile
