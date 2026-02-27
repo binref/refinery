@@ -11,8 +11,9 @@ class TestPHPDeserializer(TestUnitBase):
         self.assertEqual(json.dumps(data) | -ds | ds | json.loads, data)
 
     def test_wikipedia(self):
-        out = B'O:8:"stdClass":2:{s:4:"John";d:3.14;s:4:"Jane";d:2.718;}' | self.load() | json.loads
-        self.assertEqual(out, {
+        data = B'O:8:"stdClass":2:{s:4:"John";d:3.14;s:4:"Jane";d:2.718;}'
+        test = data | self.load() | json.loads
+        self.assertEqual(test, {
             "John": 3.14,
             "Jane": 2.718
         })

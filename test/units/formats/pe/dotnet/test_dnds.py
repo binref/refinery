@@ -8,8 +8,9 @@ from .... import TestUnitBase
 class TestDotNetDeserializer(TestUnitBase):
 
     def test_real_world_01(self):
+        from refinery.lib.id import get_structured_data_type, Fmt
         unit = self.load(encode='hex')
-        data = json.loads(unit(zlib.decompress(base64.b85decode(
+        data = zlib.decompress(base64.b85decode(
             'c-muNWME+U4+J0@1bCQ$L||}baY<^fo=Z_;d1hX^jzU;!QE_H|o~@Cd0SM|SIG5&>loqAh=B1XF6eZ^9C<K%y<zyy%r&fmKXQ$@b'
             'CK(u~nWmYi85*XT8YCJgvVzPPMKxB>DYGOuu>d5);*waB$j$_^o0Azx@Pi0$AeX5#z|WnRONtA~=k@e(2?EjrAk4uAB;`N<PXy^s'
             'cl32+VA$Bt{U?zX$X7`A2=ZlMs8VBKXlP+z_yrVdc)`F>YQVtoDuIE)Y6b&?c)^@qfi?^bjMF?_978PpmtMZB?OZ5x{NsE1gRL>0'
@@ -19,18 +20,20 @@ class TestDotNetDeserializer(TestUnitBase):
             'I5>Zwdmz((*s43d!<_$Qy3G4X2cUcu%L@CicDbKJw>F)%KIPvs(Y~fe-Lly`<3do?WIn04>wfd@d&Xj)JLkE1MECk+uX7E2yis0j'
             '<Ckq|o0?Xq&ph8w*I4xPYvcP4{cO5Rujq<x-gj^2;z+wA63YK(6e)qcb29W+-5(vpnO+Omw+WqI<|X8%?rtzy%VbH*o}ZufSH(=Z'
             '$GG}%TSn6%(Qlw6>FMg{vd$@?i5mc8JO-@'
-        ))))
-        self.assertEqual(len(data), 3)
+        ))
+        self.assertEqual(get_structured_data_type(data), Fmt.S_DOT)
+        test = json.loads(unit(data))
+        self.assertEqual(len(test), 3)
         self.assertEqual(
-            data[1]['Data']['LibraryName'],
+            test[1]['Data']['LibraryName'],
             'System.Drawing, Version=2.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a'
         )
         self.assertEqual(
-            data[2]['Data']['ClassInfo']['ClassName'],
+            test[2]['Data']['ClassInfo']['ClassName'],
             'System.Drawing.Bitmap'
         )
         self.assertEqual(
-            bytes.fromhex(data[2]['Data']['Members']['Data'])[:6],
+            bytes.fromhex(test[2]['Data']['Members']['Data'])[:6],
             B'\x89PNG\r\n'
         )
 
