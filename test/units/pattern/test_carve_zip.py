@@ -1,6 +1,9 @@
+import pytest
+
 from .. import TestUnitBase
 
 
+@pytest.mark.cythonized
 class TestCarveZIP(TestUnitBase):
 
     def test_simple_01(self):

@@ -1,6 +1,9 @@
 from ... import TestUnitBase
 
+import pytest
 
+
+@pytest.mark.cythonized
 class TestChmExtractor(TestUnitBase):
 
     def test_chm_normal_document(self):

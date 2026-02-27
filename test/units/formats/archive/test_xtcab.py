@@ -1,6 +1,7 @@
 from ... import TestUnitBase
 
 import base64
+import pytest
 
 _KADATH_CAB_PARTS = [base64.b85decode(x) for x in [
     'O;bZg0000000;m800000Jpcdz000000|5a50RRF3`vU*~aA9(EGA?6bVgN*Gb88?n09XJ30096204gc~000000RI1eTL^C;0Bd1n'
@@ -72,6 +73,7 @@ _KADATH_CAB_PARTS = [base64.b85decode(x) for x in [
 ]]
 
 
+@pytest.mark.cythonized
 class TestCabExtractor(TestUnitBase):
 
     def test_x86_filter_regression(self):

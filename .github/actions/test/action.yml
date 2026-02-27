@@ -28,10 +28,10 @@ runs:
     - name: Unit Tests (Compiled Modules)
       if: ${{ !contains(inputs.os, 'ubuntu') }}
       shell: ${{ contains(inputs.os, 'windows') && 'cmd' || 'bash' }}
-      run: pytest -n=8 --dist=loadgroup test
+      run: pytest -n=8 --dist=loadgroup -m cythonized test
       working-directory: ${{ runner.temp }}/ctest
     - name: Unit Tests (Compiled Modules)
       if: ${{  contains(inputs.os, 'ubuntu') }}
       shell: bash
-      run: XDG_SESSION_TYPE=x11 xvfb-run pytest -n=8 --dist=loadgroup test
+      run: XDG_SESSION_TYPE=x11 xvfb-run pytest -n=8 --dist=loadgroup -m cythonized test
       working-directory: ${{ runner.temp }}/ctest

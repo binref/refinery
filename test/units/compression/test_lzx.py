@@ -1,5 +1,7 @@
 from .. import TestUnitBase
 
+import pytest
+
 _LZX_TEST_DATA = bytes.fromhex(
     '5b80808d051016f200002243002600005f006b6aacc506aac58430929583328aae22fedf92b498ad'
     '4744f564855a453e7f79019401df3990f2bbf7c9c16063cfdc616fecb08d839b668295bfa995f554'
@@ -266,6 +268,7 @@ _LZX_TEST_DATA = bytes.fromhex(
 )
 
 
+@pytest.mark.cythonized
 class TestLZX(TestUnitBase):
 
     def test_malware_cab_buffer(self):

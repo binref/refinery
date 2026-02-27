@@ -1,6 +1,9 @@
 from .. import TestUnitBase
 
+import pytest
 
+
+@pytest.mark.cythonized
 class TestA3X(TestUnitBase):
 
     def test_ea06(self):

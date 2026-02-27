@@ -1,6 +1,9 @@
 from ... import TestUnitBase
 
+import pytest
 
+
+@pytest.mark.cythonized
 class TestZipFileExtractor(TestUnitBase):
 
     def test_winzip_self_extracting_archive(self):

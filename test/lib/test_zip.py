@@ -2,11 +2,13 @@ from .. import TestBase
 
 import codecs
 import base64
+import pytest
 
 from refinery.lib.zip import Zip, InvalidPassword
 from test.units.compression import KADATH1, KADATH2
 
 
+@pytest.mark.cythonized
 class TestZIP(TestBase):
 
     def test_deflate64(self):

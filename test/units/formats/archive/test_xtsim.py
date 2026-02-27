@@ -1,6 +1,9 @@
+import pytest
+
 from ... import TestUnitBase
 
 
+@pytest.mark.cythonized
 class TestSmartInstallMakerExtractor(TestUnitBase):
 
     def test_simple_archive(self):

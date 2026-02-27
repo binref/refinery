@@ -1,9 +1,12 @@
 import json
 import hashlib
 
+import pytest
+
 from .. import TestUnitBase
 
 
+@pytest.mark.cythonized
 class TestMSI(TestUnitBase):
 
     def test_real_world_01(self):
