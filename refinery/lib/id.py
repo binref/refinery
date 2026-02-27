@@ -292,6 +292,8 @@ class Fmt(Format, enum.Enum):
     XLSX = (FC.Document, 'xlsx', 'OFFICE/ZIP/XLSX', 'Microsoft ZIP/XML Document for Excel')
     PPTX = (FC.Document, 'pptx', 'OFFICE/ZIP/PPTX', 'Microsoft ZIP/XML Document for PowerPoint')
 
+    ODT = (FC.Document, 'odt', 'ZIP/ODT', 'Open Document Format')
+
     TEXT = (FC.Text, 'txt', 'Text', 'Plain Text Data')
     ASCII = (FC.Text, 'txt', 'Text/ASCII', 'Plain Text, Single Byte Encoding')
     UTF08 = (FC.Text, 'txt', 'Text/UTF08', 'Plain Text, UTF-08 Encoding')
@@ -967,6 +969,11 @@ def get_office_xml_type(data: buf):
     """
     if data[:2] != B'PK':
         return None
+    if buffer_contains(data, B'application/vnd.oasis.opendocument.text'):
+        if buffer_contains(data, B'settings.xml'):
+            return Fmt.ODT
+        if buffer_contains(data, B'META-INF/manifest.xml'):
+            return Fmt.ODT
     if not buffer_contains(data, B'_rels/.rels'):
         return None
     if not buffer_contains(data, B'[Content_Types].xml'):
@@ -1327,6 +1334,6 @@ def is_likely_email(data: buf):
 def is_likely_doc(data: buf):
     if get_microsoft_format(data) == Fmt.DOC:
         return True
-    if get_office_xml_type(data) == Fmt.DOCX:
+    if get_office_xml_type(data) in (Fmt.DOCX, Fmt.ODT):
         return True
     return False

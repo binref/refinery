@@ -32,6 +32,7 @@ PARAGRAPHS = [
 class TestDocumentTextExtractor(TestUnitBase):
 
     def test_simple_samples(self):
+        from refinery.lib.id import is_likely_doc
         unit = self.load()
         for filetype, sample in {
             'odt'  : '2b3ed3eea86116bf1e644da8c945f1df4972052fb4e3c4a3a30b1e68da27f0ce',
@@ -39,6 +40,7 @@ class TestDocumentTextExtractor(TestUnitBase):
             'doc'  : '0adb998791595d9f127750313289d62ad1c452415d4e995d3ca7b903860dd7d5',
         }.items():
             data = self.download_sample(sample)
+            self.assertTrue(is_likely_doc(data))
             output = str(data | unit)
             for k, p in enumerate(PARAGRAPHS):
                 self.assertIn(p, output, F'Extraction for {filetype} sample did not contain paragraph {k}')
