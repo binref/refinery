@@ -58,6 +58,7 @@ class xt(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
         from refinery.units.formats.office.xtdoc import xtdoc         ; yield xtdoc     # noqa
         # units that implement more complex parsing / searching:
         from refinery.units.formats.archive.xtsim import xtsim        ; yield xtsim     # noqa
+        from refinery.units.formats.archive.xtsf import xtsf          ; yield xtsf      # noqa
         from refinery.units.formats.archive.xtnuitka import xtnuitka  ; yield xtnuitka  # noqa
         # fallbacks that have to be attempted last
         from refinery.units.formats.json import xtjson                ; yield xtjson    # noqa
