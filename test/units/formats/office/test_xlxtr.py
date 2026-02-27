@@ -17,6 +17,10 @@ class TestCellIndexConverter(TestUnitBase):
 
 class TestExcelExtractor(TestUnitBase):
 
+    def test_id(self):
+        from refinery.lib.id import get_office_xml_type, Fmt
+        self.assertEqual(get_office_xml_type(self.TEST_XLSX), Fmt.XLSX)
+
     def test_regular_xlsx(self):
         data = self.TEST_XLSX
         unit = self.load()
