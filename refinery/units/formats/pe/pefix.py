@@ -73,8 +73,7 @@ class pefix(Unit):
         nt = sr.u16()
         oh = nt + 0x18
         sr.seekset(nt)
-        sr.write(B'PE')
-        sr.seekrel(2)
+        sr.write(B'PE\0\0')
         mt = sr.u16()
 
         try:
@@ -98,10 +97,12 @@ class pefix(Unit):
         if ms is None:
             self.log_warn('could not determine image state; nulling field')
             sr.write(B'\0\0')
+            x64 = True
         else:
             sr.write(ms.value)
+            x64 = ms == ImgState.x64
 
-        if mt is None:
+        if not mt:
             if mt := {
                 None: None,
                 ImgState.x32: MachineType.I386,
@@ -111,12 +112,13 @@ class pefix(Unit):
                 sr.seekset(nt + 4)
                 sr.write(mt.value.to_bytes(2, 'little'))
 
+        reasonable_alignments = {1 << k for k in range(4, 18)}
         pe = pefile.PE(data=data, fast_load=True)
 
-        if (alignment := pe.OPTIONAL_HEADER.FileAlignment) not in {1 << k for k in range(9, 16)}:
-            for k in range(9, 16):
+        if (alignment := pe.OPTIONAL_HEADER.FileAlignment) not in reasonable_alignments:
+            for k in range(4, 16):
                 alignment = 1 << k
-                size_of_headers = 0x28 * len(pe.sections) + oh + 0xF0
+                size_of_headers = 0x28 * len(pe.sections) + oh + 0xE0 + (x64 * 0x10)
                 soh = align(alignment, size_of_headers)
                 if any(data[size_of_headers:soh]):
                     raise ValueError('nonzero bytes in what must be header padding')
@@ -127,14 +129,16 @@ class pefix(Unit):
                 raise ValueError('unable to find a valid file alignment')
 
         pe.OPTIONAL_HEADER.FileAlignment = alignment
-        pe.OPTIONAL_HEADER.SectionAlignment = max(pe.OPTIONAL_HEADER.SectionAlignment, alignment)
+        if (sa := pe.OPTIONAL_HEADER.SectionAlignment) not in reasonable_alignments:
+            sa = 0
+        pe.OPTIONAL_HEADER.SectionAlignment = max(sa, alignment)
 
-        if self.args.unmap:
-            last = pe.OPTIONAL_HEADER.SizeOfImage
-            for section in pe.sections:
+        last = pe.OPTIONAL_HEADER.SizeOfImage
+        for section in pe.sections:
+            if self.args.unmap:
                 section.PointerToRawData = section.VirtualAddress
-                section.SizeOfRawData = section.Misc_VirtualSize
-                last = section.VirtualAddress + section.Misc_VirtualSize
-            pe.OPTIONAL_HEADER.SizeOfImage = last
+                section.SizeOfRawData = align(alignment, section.Misc_VirtualSize)
+            last = section.VirtualAddress + section.Misc_VirtualSize
+        pe.OPTIONAL_HEADER.SizeOfImage = last
 
         return pe.write()
