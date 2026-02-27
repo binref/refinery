@@ -9,6 +9,25 @@ from .. import TestBase
 
 class TestIDLib(TestBase):
 
+    def test_image_detection(self):
+        png = base64.b85decode(
+            'iBL{Q4GJ0x0000DNk~Le0000G0000G1Oos70PWr4QUCw|0drDELIAGL9O(c600d`2O+f$vv5yP<VFdsH01{A4R7L+cFd_#AD+vey'
+            '000UC0Tl!T`4U9`00009a7bBm000id000id0mpBsWB>pF8FWQhbW?9;ba!ELWdKlNX>N2bPDNB8H7+qOF)@k=7R~?w0JvpXNoGk&'
+            'DgX!o000F58UY0W0RR91N&o-=8vz9X0RR91QUCw|C;<Zi0RR910ssI2F#!Sq5dZ)HS^xk5X@>*=0RR91YybcN00000U;qFB0RR91'
+            'U;qFB0RR91P+@6qbS_RsR3J4jF)lGN000930FVa&1ONa4FfubR0iXi_0RR910RR911)u}~0RR91mH+?%000000ssL30ssU6002@s'
+            'H~<0w2LJ>B001yCFfafB000Ix)N`_raytM307gkfK~xyiV_<**K|vt~ML|J91`|P11rb3(X9hzCMgc(v24O4=xEf<)Lk1BM6NoNB'
+            'MneXO8UhT6VxTUNrAkadOJM*2e;^3K@XyYj00000NkvXXu0mjf'
+        )
+        self.assertEqual(idlib.get_image_format(png), idlib.Fmt.PNG)
+        jpg = png | self.ldu('imgto', 'jpeg') | bytes
+        self.assertEqual(idlib.get_image_format(jpg), idlib.Fmt.JPG)
+        bmp = jpg | self.ldu('imgto', 'bmp') | bytes
+        self.assertEqual(idlib.get_image_format(bmp), idlib.Fmt.BMP)
+        gif = bmp | self.ldu('imgto', 'gif') | bytes
+        self.assertEqual(idlib.get_image_format(gif), idlib.Fmt.GIF)
+        ico = png | self.ldu('imgto', 'ico') | bytes
+        self.assertEqual(idlib.get_image_format(ico), idlib.Fmt.ICO)
+
     def test_detect_unicode(self):
         data = B'H\0e\0l\0l\0o\0,\0\x20\0W\0r\0l\0d\0!\0\0\0'
         enc = idlib.guess_text_encoding(data)
@@ -60,7 +79,7 @@ class TestIDLib(TestBase):
         self.assertLessEqual(idlib.Fmt.OFFICE, idlib.Fmt.DOCX)
 
     def test_not_json_regression(self):
-        a = B'Acceptance of the QuoVadis Root CA 3 Certificate'
+        a = B'Acceptance of the QuoVadis Root CA 3 Cerbmpicate'
         self.assertNotEqual(idlib.get_structured_data_type(a), idlib.Fmt.JSON)
 
     def test_utf8_with_some_chinese(self):

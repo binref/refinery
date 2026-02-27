@@ -1090,9 +1090,9 @@ def get_image_format(data: buf):
         return Fmt.ICO
 
     if data[:3] == B'\xFF\xD8\xFF':
-        if data[4] in (0xDB, 0xEE, 0xE0):
+        if data[3] in (0xDB, 0xEE, 0xE0):
             return Fmt.JPG
-        if data[4] == 0xE1 and data[7:13] == B'\x45\x78\x69\x66\0\0':
+        if data[3] == 0xE1 and data[6:12] == B'Exif\0\0':
             return Fmt.JPG
         return None
 

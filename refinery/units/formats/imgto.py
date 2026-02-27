@@ -31,9 +31,15 @@ class imgto(Unit):
             raise
         except Exception:
             raise ValueError('input could not be parsed as an image')
-        with io.BytesIO() as out:
-            image.save(out, self.args.format)
-            return out.getvalue()
+        format = self.args.format.upper()
+        format = {'JPG': 'JPEG'}.get(format, format)
+        try:
+            out = io.BytesIO()
+            image.save(out, format)
+        except Exception:
+            out = io.BytesIO()
+            image.convert('RGB').save(out, format)
+        return out.getvalue()
 
     @classmethod
     def handles(cls, data) -> bool | None:
