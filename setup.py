@@ -68,6 +68,7 @@ __topics__ = [
 
 EXTENSION_DICT = {
     'refinery.lib.fast.a3x'       : 'refinery/lib/fast/a3x.pyx',
+    'refinery.lib.fast.pkware'    : 'refinery/lib/fast/pkware.pyx',
     'refinery.lib.fast.zipcrypto' : 'refinery/lib/fast/zipcrypto.pyx',
     'refinery.lib.seven.deflate'  : 'refinery/lib/seven/deflate.pyx',
     'refinery.lib.seven.huffman'  : 'refinery/lib/seven/huffman.pyx',

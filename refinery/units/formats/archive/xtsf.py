@@ -35,8 +35,11 @@ def _decompress(compression: _Compression, data: buf) -> buf:
     if compression is _Compression.Uncompressed:
         return data
     if compression is _Compression.PKWare:
-        from refinery.units.compression.pkw import pkw
-        return pkw().process(data)
+        from refinery.lib.fast.pkware import PKWareError, pkware_decompress
+        try:
+            return pkware_decompress(data)
+        except PKWareError as E:
+            raise RefineryPartialResult(str(E), E.partial) from E
     if compression is _Compression.LZMA1:
         return lzma.decompress(data)
     if compression is _Compression.LZMA2:
