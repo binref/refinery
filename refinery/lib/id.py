@@ -656,7 +656,7 @@ def buffer_contains(haystack: buf, needle: buf):
     """
     Determines whether `haystack` contains `needle`.
     """
-    return buffer_offset(haystack, needle) > 0
+    return buffer_offset(haystack, needle) >= 0
 
 
 def is_likely_pe_dotnet(data: buf):
@@ -794,10 +794,10 @@ def xml_or_html(view: buf):
         <               # a tag opens
         ([?!]?          # allow for question or exclamation mark
          [-:\w]{3,64})  # the tag name
-        \s{1,20}        # white space after tag name
+        \s{0,20}        # white space after tag name
         (/?>            # the tag may end here, or:
         |[-:\w]{3,32})  # we have an attribute.
-    ''', view):
+    ''', view, flags=re.DOTALL):
         tag = tag_match[1].lower()
         end = tag_match[2].lower()
         # <?xml...

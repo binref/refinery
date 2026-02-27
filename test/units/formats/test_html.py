@@ -24,6 +24,11 @@ class TestHTMLExtractor(TestUnitBase):
         """
     ).encode('utf8')
 
+    def test_id(self):
+        from refinery.lib.id import get_text_format, is_likely_htm, Fmt
+        self.assertEqual(get_text_format(self._TEST_DOCUMENT), Fmt.HTM)
+        self.assertTrue(is_likely_htm(self._TEST_DOCUMENT))
+
     def test_listing(self):
         listing = str(self._TEST_DOCUMENT | self.load('-l', '??*'))
         self.assertEqual(

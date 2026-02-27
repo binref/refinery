@@ -4,6 +4,10 @@ from .. import TestUnitBase
 
 class TestScriptDecoder(TestUnitBase):
 
+    def test_id(self):
+        from refinery.lib.id import is_likely_vbe
+        self.assertTrue(is_likely_vbe(B'TESTSCRIPT' | self.load(reverse=True) | bytes))
+
     def test_doubly_encoded_script(self):
         unit = self.load()
         data = bytes.fromhex(

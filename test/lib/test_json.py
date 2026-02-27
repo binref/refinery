@@ -58,6 +58,8 @@ class TestJSONLib(TestBase):
                 self.assertEqual(py_dumped, or_dumped)
 
     def test_orjson_vs_pyjson_02(self):
+        from refinery.lib.id import get_text_format, Fmt
+
         test_data = {
             uuid4(): 569493374326423423723463737777473821332347344463,
             b'key1': [
@@ -83,3 +85,4 @@ class TestJSONLib(TestBase):
             py_dumped = py_dumps(test_data, pretty=pretty, tojson=json.standard_conversions)
             or_dumped = or_dumps(test_data, pretty=pretty)
             self.assertEqual(py_dumped, or_dumped)
+            self.assertEqual(get_text_format(or_dumped), Fmt.JSON)
