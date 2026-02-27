@@ -9,6 +9,8 @@ from refinery.units import Unit
 
 from test import TestBase
 
+NOMATCH = 'No matching unit was found.'
+
 
 class TestHighlight(TestBase):
 
@@ -118,34 +120,34 @@ class TestExplorer(TestBase):
     def test_no_keywords_lists_all_units(self):
         output = self._run_explorer([])
         self.assertGreater(len(output), 0)
-        self.assertNotIn('No matching unit was found.', output)
+        self.assertNotIn(NOMATCH, output)
 
     def test_nonexistent_keyword_no_results(self):
         output = self._run_explorer(['zzzyyyxxxwwwvvv'])
-        self.assertIn('No matching unit was found.', output)
+        self.assertIn(NOMATCH, output)
 
     def test_keyword_match(self):
         output = self._run_explorer(['base64'])
-        self.assertNotIn('No matching unit was found.', output)
+        self.assertNotIn(NOMATCH, output)
         self.assertGreater(len(output.strip()), 0)
 
     def test_or_flag(self):
         output = self._run_explorer(['-o', 'base64', 'zzzyyyxxxwwwvvv'])
-        self.assertNotIn('No matching unit was found.', output)
+        self.assertNotIn(NOMATCH, output)
 
     def test_all_flag_searches_full_help(self):
         output_brief = self._run_explorer(['base64'])
         output_all = self._run_explorer(['-a', 'base64'])
-        self.assertNotIn('No matching unit was found.', output_brief)
-        self.assertNotIn('No matching unit was found.', output_all)
+        self.assertNotIn(NOMATCH, output_brief)
+        self.assertNotIn(NOMATCH, output_all)
 
     def test_case_sensitive_flag(self):
         output_insensitive = self._run_explorer(['BASE64'])
         output_sensitive = self._run_explorer(['-c', 'BASE64'])
-        if 'No matching unit was found.' in output_insensitive:
+        if NOMATCH in output_insensitive:
             self.skipTest('no units match BASE64 case-insensitively')
-        has_insensitive_results = 'No matching unit was found.' not in output_insensitive
-        has_sensitive_results = 'No matching unit was found.' not in output_sensitive
+        has_insensitive_results = NOMATCH not in output_insensitive
+        has_sensitive_results = NOMATCH not in output_sensitive
         if has_insensitive_results:
             self.assertTrue(True)
         if has_sensitive_results:
@@ -165,7 +167,7 @@ class TestExplorer(TestBase):
 
     def test_multiple_keywords_all_must_match(self):
         output = self._run_explorer(['zzzyyyxxx', 'wwwvvvuuu'])
-        self.assertIn('No matching unit was found.', output)
+        self.assertIn(NOMATCH, output)
 
     def test_verbose_flag(self):
         output = self._run_explorer(['-v', 'base64'])
@@ -173,7 +175,7 @@ class TestExplorer(TestBase):
 
     def test_separator_is_printed_when_results_found(self):
         output = self._run_explorer(['base64'])
-        if 'No matching unit was found.' not in output:
+        if NOMATCH not in output:
             lines = output.strip().split('\n')
             last_line = lines[-1]
             self.assertTrue(all(c == '-' for c in last_line))
