@@ -18,3 +18,4 @@ __pycache__
 *.eggs
 *.pyc
 mptest.errors
+.coverage
