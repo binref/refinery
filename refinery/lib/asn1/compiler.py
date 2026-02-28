@@ -253,7 +253,7 @@ class _Parser:
                 else:
                     break
             self._expect_ident('FROM')
-            _module_name = self._expect_type(_TT.IDENT)
+            self._expect_type(_TT.IDENT)
             # optional OID value after module name
             if self._check_type(_TT.LBRACE):
                 self._skip_braces()
@@ -583,8 +583,7 @@ class _Parser:
                     # at top level except in assignment like:
                     #   Foo ::= [0] IMPLICIT Bar
                     # In that case, just resolve the inner type
-                    _tag_num, _tagging, inner, _tag_class_val = t[1], t[2], t[3], t[4]
-                    return resolve_type(inner)
+                    return resolve_type(t[3])
 
             return ANY
 
