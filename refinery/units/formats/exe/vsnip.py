@@ -11,7 +11,7 @@ class EndOfStringNotFound(ValueError):
 
 
 class MemoryArea:
-    def __init__(self, slice: slice):
+    def __init__(self, slice: slice, bounded: bool):
         if slice.start is None:
             self.start = slice.stop
             self.count = None
@@ -20,6 +20,10 @@ class MemoryArea:
             self.start = slice.start
             self.count = slice.stop
             self.align = slice.step or 1
+            if bounded:
+                if (count := self.count - self.start) < 0:
+                    raise ValueError(F'Invalid bounds: {self.start:#x}-{self.count:#x}')
+                self.count = count
 
 
 class vsnip(Unit):
@@ -31,6 +35,9 @@ class vsnip(Unit):
         self, *addresses: Param[slice, Arg.Bounds(metavar='start:count:align', help=(
             'Use Python slice syntax to describe an area of virtual memory to read. If a chunksize is '
             'specified, then the unit will always read a multiple of that number of bytes'))],
+        bounded: Param[bool, Arg.Switch('-d', group='END', help=(
+            'When this flag is specified, addresses are understood as start:end:align, i.e. the second '
+            'part of the slice marks the end of the buffer to be extracted.'))] = False,
         ascii: Param[bool, Arg.Switch('-a', group='END',
             help='Read ASCII strings; equivalent to -th:00')] = False,
         utf16: Param[bool, Arg.Switch('-u', group='END',
@@ -42,9 +49,10 @@ class vsnip(Unit):
     ):
         if sum(1 for t in (until, utf16, ascii) if t) > 1:
             raise ValueError('Only one of utf16, ascii, and until can be specified.')
-        return super().__init__(addresses=addresses, utf16=utf16, ascii=ascii, until=until, base=base)
+        return super().__init__(addresses=addresses, bounded=bounded, utf16=utf16, ascii=ascii, until=until, base=base)
 
     def process(self, data: bytearray):
+        bounded = self.args.bounded
         until = self.args.until
         addrs = self.args.addresses
         if self.args.ascii:
@@ -56,7 +64,7 @@ class vsnip(Unit):
         exe = Executable.Load(data, self.args.base)
 
         for addr in addrs:
-            area = MemoryArea(addr)
+            area = MemoryArea(addr, bounded)
             location = exe.location_from_address(area.start)
             offset = location.physical.position
             max_offset = location.physical.box.upper
