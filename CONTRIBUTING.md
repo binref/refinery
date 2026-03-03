@@ -42,22 +42,8 @@ If you would like to contribute to the development, here are a few things that y
   [refinery test data repository](https://github.com/binref/refinery-test-data)
   so you can reference it by hash in your test.
   For an example, look at the [test for jcalg](test/units/compression/test_jcalg.py).
-- Make sure that you stick to the style guide;
-  refinery code should pass [flake8], with some tests disabled.
-
-You do not have to worry about the following [flake8] tests:
-
-- The following tests are disabled to allow command line argument annotations to work:
-  - `F821` (undefined name)
-  - `F722` (syntax error in forward annotation)
-- The following tests are disabled because the maintainer doesn't like them:
-  - `E128` (continuation line is under-indented for a visual indentation)
-  - `E203` (colons should not have any space before them)
-  - `E261` (at least two spaces before inline comment)
-  - `W503` (line break occurred before a binary operator)
-
+- Make sure that you stick to the [style guide](STYLEGUIDE.md).
 
 [b64]: refinery/units/encoding/b64.py
-[flake8]: https://pypi.org/project/flake8/
 [pypi]: https://pypi.org/project/binary-refinery/
 [test]: test/
