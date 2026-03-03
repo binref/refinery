@@ -2,6 +2,11 @@
 
 This document is the style guide for all code in Binary Refinery.
 
+## Compatibility
+
+All refinery code must support **Python 3.8** and later versions.
+For example, this means that the `match` statement is currently not supported.
+
 ## Flake8 Specification
 
 First and foremost, all code should pass [flake8], with the following tests disabled:
