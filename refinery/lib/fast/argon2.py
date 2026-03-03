@@ -132,20 +132,33 @@ def _gb(v: list[int], a: int, b: int, c: int, d: int) -> None:
     v[d] = vd
 
 
-def _P(v: list[int],
-    i0: int, i1: int, i2: int, i3: int,
-    i4: int, i5: int, i6: int, i7: int,
-    i8: int, i9: int, iA: int, iB: int,
-    iC: int, iD: int, iE: int, iF: int,
+def _P(
+    _v: list[int],
+    i0: int,
+    i1: int,
+    i2: int,
+    i3: int,
+    i4: int,
+    i5: int,
+    i6: int,
+    i7: int,
+    i8: int,
+    i9: int,
+    iA: int,
+    iB: int,
+    iC: int,
+    iD: int,
+    iE: int,
+    iF: int,
 ) -> None:
-    _gb(v, i0, i4, i8, iC)
-    _gb(v, i1, i5, i9, iD)
-    _gb(v, i2, i6, iA, iE)
-    _gb(v, i3, i7, iB, iF)
-    _gb(v, i0, i5, iA, iF)
-    _gb(v, i1, i6, iB, iC)
-    _gb(v, i2, i7, i8, iD)
-    _gb(v, i3, i4, i9, iE)
+    _gb(_v, i0, i4, i8, iC)
+    _gb(_v, i1, i5, i9, iD)
+    _gb(_v, i2, i6, iA, iE)
+    _gb(_v, i3, i7, iB, iF)
+    _gb(_v, i0, i5, iA, iF)
+    _gb(_v, i1, i6, iB, iC)
+    _gb(_v, i2, i7, i8, iD)
+    _gb(_v, i3, i4, i9, iE)
 
 
 def _compress(x: list[int], y: list[int]) -> list[int]:
