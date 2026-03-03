@@ -22,6 +22,10 @@ First and foremost, all code should pass [flake8], with the following tests disa
 Comments should be avoided wherever it is possible and used only when important information about the code cannot be communicated otherwise.
 Prioritize expressive, well-structured code and comprehensive naming of variables and functions.
 
+### Line Breaks
+
+All code in refinery uses LF line breaks exclusively, never CR/LF.
+
 ### Line Length
 
 All lines should wrap at **100** characters.
