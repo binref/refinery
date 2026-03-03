@@ -10,7 +10,7 @@ from refinery.lib.types import Param, buf
 from refinery.units import Arg, Unit
 
 
-class argon2id(Unit):
+class argon2(Unit):
     """
     Implements Argon2-based key derivation.
     """
