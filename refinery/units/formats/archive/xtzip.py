@@ -36,7 +36,7 @@ class xtzip(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
             password = codecs.decode(password, self.codec)
         passwords = [password]
         if not password:
-            passwords.extend(self._COMMON_PASSWORDS)
+            passwords.extend(self.CommonPasswords)
         for p in passwords:
             if zipf := trypwd(p):
                 break

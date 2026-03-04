@@ -1030,6 +1030,7 @@ def get_compression_type(
         (Fmt.XZ          , F, 0, B'\xFD\x37\x7A\x58\x5A\x00'),                  # noqa
         (Fmt.MSCF        , T, 0, B'\x0A\x51\xE5\xC0'),                          # noqa
         (Fmt.RAR         , T, 0, B'Rar!\x1A\x07'),                              # noqa
+        (Fmt.RAR         , T, 0, B'RE\x7E\x5E'),                                # noqa
         (Fmt.XAR         , T, 0, B'xar!'),                                      # noqa
         (Fmt.SZDD        , T, 0, B'SZDD'),                                      # noqa
         (Fmt.ZLIB0       , T, 0, B'\x78\x01'),                                  # noqa

@@ -33,7 +33,7 @@ class ArchiveUnit(PathExtractorUnit, abstract=True):
             **kwargs
         )
 
-    _COMMON_PASSWORDS = [
+    CommonPasswords = [
         'infected',
         'virus',
         'malware',

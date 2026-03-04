@@ -71,7 +71,7 @@ class xt7z(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
         else:
             def passwords():
                 yield None
-                yield from self._COMMON_PASSWORDS
+                yield from self.CommonPasswords
             for pwd in passwords():
                 if pwd is None:
                     self.log_debug('trying empty password')

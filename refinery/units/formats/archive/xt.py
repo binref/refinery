@@ -44,6 +44,7 @@ class xt(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
         from refinery.units.formats.msi import xtmsi                  ; yield xtmsi     # noqa
         # units that search for markers
         from refinery.units.formats.archive.xt7z import xt7z          ; yield xt7z      # noqa
+        from refinery.units.formats.archive.xtrar import xtrar        ; yield xtrar     # noqa
         from refinery.units.formats.archive.xtzip import xtzip        ; yield xtzip     # noqa
         from refinery.units.formats.pe.dotnet.dnsfx import dnsfx      ; yield dnsfx     # noqa
         from refinery.units.formats.archive.xtinno import xtinno      ; yield xtinno    # noqa
