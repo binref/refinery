@@ -22,14 +22,15 @@ Usage::
 from __future__ import annotations
 
 import re
+
 from enum import Enum, auto
 
 from refinery.lib.asn1.schema import (
-    CLASS_APPLICATION,
-    CLASS_CONTEXT,
     ANY,
     BIT_STRING,
     BOOLEAN,
+    CLASS_APPLICATION,
+    CLASS_CONTEXT,
     ENUMERATED,
     GEN_TIME,
     IA5_STRING,
@@ -38,8 +39,8 @@ from refinery.lib.asn1.schema import (
     OCTET_STRING,
     OID,
     PRINTABLE_STRING,
-    UTF8_STRING,
     UTC_TIME,
+    UTF8_STRING,
     Choice,
     F,
     SchemaType,

@@ -8,12 +8,11 @@ from enum import Enum
 from itertools import cycle
 from pathlib import PureWindowsPath
 
-from refinery.lib.id import buffer_offset, buffer_contains
 from refinery.lib.exceptions import RefineryPartialResult
+from refinery.lib.id import buffer_contains, buffer_offset
 from refinery.lib.structures import StructReader
 from refinery.lib.types import buf
 from refinery.units.formats.archive import ArchiveUnit
-
 
 _SCRIPT_FILE_NAME = b'irsetup.dat'
 
@@ -136,8 +135,8 @@ class xtsf(ArchiveUnit):
     """
 
     def unpack(self, data):
-        from refinery.units.formats.pe import get_pe_size
         from refinery.lib.lief import load_pe_fast
+        from refinery.units.formats.pe import get_pe_size
         pe = load_pe_fast(data)
         overlay_offset = get_pe_size(pe)
         overlay = memoryview(data)[overlay_offset:]

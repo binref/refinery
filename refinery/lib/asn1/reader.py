@@ -5,12 +5,10 @@ import codecs
 from collections import OrderedDict
 from typing import TYPE_CHECKING, Any, Union
 
-from refinery.lib.structures import StructReader
-
 from refinery.lib.asn1.schema import (
-    CLASS_UNIVERSAL,
     _MISSING,
     ANY,
+    CLASS_UNIVERSAL,
     SEQUENCE,
     SET,
     ASN1SchemaMismatch,
@@ -20,6 +18,7 @@ from refinery.lib.asn1.schema import (
     SeqOf,
     SetOf,
 )
+from refinery.lib.structures import StructReader
 
 if TYPE_CHECKING:
     ASN1Value = Union[

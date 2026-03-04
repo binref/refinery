@@ -7,7 +7,8 @@ from refinery.units import Arg, Unit
 
 class officecrypt(Unit):
     """
-    A simple proxy for the `msoffcrypto` package to decrypt office documents.
+    A simple proxy for the `msoffcrypto` package to decrypt encrypted office documents. This can
+    include Word, Excel, PowerPoint, and Access documents.
     """
 
     def __init__(self, password: Param[buf, Arg.Binary(help=(
