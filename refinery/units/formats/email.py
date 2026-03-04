@@ -167,14 +167,19 @@ class xtmail(PathExtractorUnit):
         return chardet
 
     def _get_parts_regular(self, data: bytes):
-        try:
-            info = self._chardet.detect(data)
-            msg = data.decode(str(info['encoding']))
-        except UnicodeDecodeError:
-            raise ValueError('This is not a plaintext email message.')
+        for codec in ('ascii', 'utf8', ...):
+            try:
+                if codec is ...:
+                    info = self._chardet.detect(data)
+                    codec = str(info['encoding'])
+                msg = data.decode(codec)
+                break
+            except UnicodeDecodeError:
+                continue
         else:
-            msg = Parser().parsestr(msg)
+            raise ValueError('This is not a plaintext email message.')
 
+        msg = Parser().parsestr(msg)
         yield from self._get_headparts(msg.items())
 
         for k, part in enumerate(msg.walk()):
