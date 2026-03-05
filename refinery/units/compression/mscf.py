@@ -36,9 +36,9 @@ class MODE(enum.IntEnum):
 class mscf(Unit):
     """
     The Microsoft Compression Format unit implements the format and algorithms used by the Microsoft
-    Compression API. The implementation for LZMS is currently missing, but MSZIP and XPRESS (both
-    with and without Huffman table) are supported. This pure Python implementation is very slow when
-    compared to native code, so decompressing very large inputs can take several minutes.
+    Compression API, supporting MSZIP, XPRESS (with and without Huffman table), and LZMS. This pure
+    Python implementation is very slow when compared to native code, so decompressing very large
+    inputs can take several minutes.
     """
 
     _SIGNATURE = B'\x0A\x51\xE5\xC0'
@@ -143,10 +143,20 @@ class mscf(Unit):
             mode.MSZIP       : self._decompress_mszip,
             mode.XPRESS_HUFF : self._decompress_xpress_huffman,
             mode.XPRESS      : self._decompress_xpress,
+            mode.LZMS        : self._decompress_lzms,
         }.get(mode, None)
         if decompress is None:
             raise NotImplementedError(F'algorithm {mode.name} is not yet implemented')
         return decompress
+
+    def _decompress_lzms(self, reader: StructReader, writer: MemoryFile, target: int | None = None) -> None:
+        src_data = reader.read()
+        if len(src_data) < 4 or (len(src_data) & 1):
+            raise ValueError('Invalid Input for LZMS.')
+        if target is None:
+            target = len(src_data) * 16
+        from refinery.lib.lzms import lzms_decompress
+        writer.write(lzms_decompress(src_data, target))
 
     def _decompress_mszip(self, reader: StructReader, writer: MemoryFile, target: int | None = None):
         header = bytes(reader.read(2))

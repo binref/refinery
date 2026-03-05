@@ -127,7 +127,7 @@ class TestMicrosoftCompressionFormat(TestUnitBase):
         decompressed = str(compressed | self.load())
         self.assertIn(KADATH2, decompressed)
 
-    def _disabled_test_lzms_01(self):
+    def test_lzms_01(self):
         compressed = bytes.fromhex(
             '0A51E5C0' '1800C105' 'E7030000' '00000000' 'E7030000' '00000000' '16030000'
             '0C001FFF602BF3E01CBC93C73D7033E660EB7624CA103E92F4C2FC6B237F672A276733A7A851B78D6104346F5B520038B981D5C729A2EF658F1E371D18B203AB'
