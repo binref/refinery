@@ -10,7 +10,7 @@ class carve_elf(Unit):
     file. The unit scans for the magic ELF signature and then parses the ELF header to compute the
     file size from program headers, section headers, and segment file ranges.
     """
-    def unpack(self, data):
+    def process(self, data):
         cursor = 0
         mv = memoryview(data)
 
