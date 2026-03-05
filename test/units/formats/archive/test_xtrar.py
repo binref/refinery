@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from ... import TestUnitBase
 
 from refinery.lib.unrar import RarInvalidPassword, RarMissingPassword
