@@ -12,6 +12,8 @@ from refinery.units.pattern.carve_rtf import carve_rtf
 from refinery.units.pattern.carve_tar import carve_tar
 from refinery.units.pattern.carve_xml import carve_xml
 from refinery.units.pattern.carve_zip import carve_zip
+from refinery.units.pattern.carve_pdf import carve_pdf
+from refinery.units.pattern.carve_elf import carve_elf
 
 
 class subfiles(Unit):
@@ -47,6 +49,8 @@ class subfiles(Unit):
             'xml'  : carve_xml(),
             'rtf'  : carve_rtf(),
             'png'  : carve_png(),
+            'elf'  : carve_elf(),
+            'pdf'  : carve_pdf(),
         }
 
         covered = IntIntervalUnion()
