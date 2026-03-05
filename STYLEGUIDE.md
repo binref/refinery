@@ -37,36 +37,48 @@ All lines should wrap at **100** characters.
 This is a hard limit for docstrings and comments, and a soft limit for code.
 The hard limit for code is at **140** characters to allow for occasional long lines.
 
-When a function call becomes too long for the line width limit, it should be split like so:
+When a function call or definition becomes too long for the line width limit, it should be split like so:
 ```python
 result = function_call(
-  argument_1,
-  argument_2,
-  keyword_parameter_1=keyword_argument_1,
-  keyword_parameter_2=keyword_argument_2,
+    argument_1,
+    argument_2,
+    keyword_parameter_1=keyword_argument_1,
+    keyword_parameter_2=keyword_argument_2,
 )
 ```
-Or like this, but only when two lines are sufficient:
+And for function definitions:
+```python
+def function_call(
+    argument_1: int,
+    argument_2: int,
+    keyword_parameter_1: str = '',
+    keyword_parameter_2: str = '',
+):
+  ...
+```
+In other words, each positional and keyword argument as well as the closing parenthesis are on one separate line respectively.
+Indentation is increased by one for the arguments, the closing parenthesis is not indented.
+The same rule applies to other comma-separated list, tuple, or set literals.
+
+The following style is only permitted for function calls, and only if the line is broken exactly once:
 ```python
 result = function_call(argument_1, argument_2, argument_3,
-  argument_4, keyword_parameter_1=keyword_argument_1, keyword_parameter_2=keyword_argument_2)
+    argument_4, keyword_parameter_1=keyword_argument_1, keyword_parameter_2=keyword_argument_2)
 ```
-In either case, the indentation after a line break is increased by exactly one block width,
-not up to the opening parenthesis in the line above.
 
 ### Docstrings
 
 Docstrings use three double quotes `"""` as separators. Always write docstrings like this:
 ```python
 class cls:
-  """
-  [docstring]
-  """
+    """
+    [docstring]
+    """
 ```
 and **never** like this:
 ```python
 class cls:
-  """[docstring]"""
+    """[docstring]"""
 ```
 The docstrings for refinery units should be written with keyword search in mind.
 A short paragraph at the beginning should give a quick overview of what the unit does,
@@ -77,9 +89,9 @@ followed by a lengthy explanation including the possible keywords that would hel
 When typing large dictionaries, the omission of `E203` is to allow you to write them like so:
 ```python
 data = {
-  'key1'         : 'data1',
-  'a-longer-key' : 'data2',
-  'other-key'    : 'data3',
+    'key1'         : 'data1',
+    'a-longer-key' : 'data2',
+    'other-key'    : 'data3',
 }
 ```
 This can make large dictionaries with somewhat tabular data easier to read in the code.
