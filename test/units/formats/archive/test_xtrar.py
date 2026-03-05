@@ -427,3 +427,14 @@ class TestRarSamples(TestUnitBase):
             'WarKey.exe'   : '5a40c774bb83b69e3bc2c1b6c172a69afb7737b58bfe3920b01b7529150a8497',
             'YuLv.Net.url' : 'a86842fdd64219ea9b5e93c0c3e5887ecdd56a8417695cbeacd633db2e0458b6',
         })
+
+    def test_real_world_02(self):
+        data = self.download_sample('1a1af0d6b8caf1dd5f56dc2c6a02a768a1c27960171dc21ddbac244e02fd25c1')
+        sha2 = self.ldu('sha256', text=True)
+        unit = self.load()
+        x = data | unit[sha2] | {'path': str}
+        self.assertDictEqual(x, {
+            'mcz-chromeplmi.nfo'       : '7baa799e5e88463e8e979875b266932bc3ae126544b79939c70ca44fdc291dfe',
+            'mcz-chromeplmi.iso'       : 'cf1f984e9caa8729ab0b9bee847fcf286a3dbc5aca8542c6d548b3620a112d26',
+            'cda_exe/ChromeSingle.exe' : 'f4b74e8dc753d4aceeb3e7fe66327db33c7d6eb7e863989271f51e2fb426f86d',
+        })

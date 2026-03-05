@@ -1588,6 +1588,7 @@ class Unpack30:
         self._output = bytearray()
         self._written = 0
         self._solid = True
+        self._init_filters(True)
 
     def decompress(self) -> bytearray:
         """
@@ -1604,7 +1605,7 @@ class Unpack30:
             self._block_type = BLOCK_LZ
             self._init_filters(False)
 
-        if not self._read_tables():
+        if (not self._solid or not self._tables_read) and not self._read_tables():
             return self._output
 
         tbl = self._block_tables
