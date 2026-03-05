@@ -15,7 +15,6 @@ from refinery.lib.id import buffer_offset, is_likely_msi, is_likely_pe
 from refinery.lib.structures import StructReader
 from refinery.lib.types import Param, buf
 from refinery.units import Arg
-from refinery.units.formats.csv import csv
 from refinery.units.formats.office.xtdoc import UnpackResult, xtdoc
 
 
@@ -418,13 +417,15 @@ class xtmsi(xtdoc):
         ds = UnpackResult(self._SYNTHETIC_STREAMS_FILENAME, json.dumps(processed_table_data))
         streams[ds.path] = ds
 
-        converter = csv()
+        from refinery.units.formats.csv import json_to_csv
+
         for key, jd in processed_table_data.items():
+            self.log_debug("whoop")
             sk = key.strip('_')
             if sk not in processed_table_data:
                 key = sk
             try:
-                tbl = UnpackResult(F'{self._SYNTHETIC_STREAMS_TOPLEVEL}/{key}.csv', converter.json_to_csv(jd))
+                tbl = UnpackResult(F'{self._SYNTHETIC_STREAMS_TOPLEVEL}/{key}.csv', json_to_csv(jd))
             except Exception:
                 continue
             streams[tbl.path] = tbl
