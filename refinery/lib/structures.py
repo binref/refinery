@@ -1004,8 +1004,10 @@ class StructMeta(abc.ABCMeta):
                         interface = None
                 if not isinstance(interface, type):
                     interface = get_origin(interface)
-                if not isinstance(interface, type) or not issubclass(interface, StructReader):
-                    raise RuntimeError
+                if not isinstance(interface, type):
+                    raise RuntimeError(F'Definition of {name} requires an interface that is not a type: {interface}')
+                elif not issubclass(interface, StructReader):
+                    raise RuntimeError(F'Definition of {name} requires invalid type: {interface.__name__}')
             else:
                 interface = StructReader
 
@@ -1044,6 +1046,8 @@ class Struct(Generic[T], Buffer, metaclass=StructMeta):
     as `reader`. Otherwise, the argument will be wrapped in a `refinery.lib.structures.StructReader`.
     Additional arguments to the struct are passed through.
     """
+    __slots__ = '_data',
+
     _data: memoryview | bytearray
 
     @classmethod
