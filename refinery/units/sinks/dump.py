@@ -11,6 +11,7 @@ from string import Formatter
 
 from refinery.lib.meta import metavars
 from refinery.lib.types import Param
+from refinery.lib.tools import exception_to_string
 from refinery.units import Arg, RefineryCriticalException, Unit
 
 
@@ -237,7 +238,11 @@ class dump(Unit):
                             raise ValueError(
                                 F'Could not resolve formatting in path "{path}"; '
                                 R'increase leniency to ignore this.')
-                    self.stream = self._open(path)
+                    try:
+                        self.stream = self._open(path)
+                    except Exception as e:
+                        self.log_warn(exception_to_string(e))
+                        continue
             yield chunk
 
         self._close(final=True)
