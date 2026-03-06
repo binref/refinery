@@ -358,16 +358,16 @@ def decode_rar4_filename(name_bytes: bytes, enc_data: bytes) -> str:
 
 
 class RarMainHeader(NamedTuple):
-    flags: int
-    is_volume: bool
-    is_solid: bool
-    is_locked: bool
-    is_protected: bool
-    is_encrypted: bool
-    first_volume: bool
-    new_numbering: bool
-    comment_in_header: bool
-    vol_number: int
+    flags: int = 0
+    is_volume: bool = False
+    is_solid: bool = False
+    is_locked: bool = False
+    is_protected: bool = False
+    is_encrypted: bool = False
+    first_volume: bool = False
+    new_numbering: bool = False
+    comment_in_header: bool = False
+    vol_number: int = 0
 
 
 class RarEndArchiveHeader(NamedTuple):
@@ -541,6 +541,85 @@ def _detect_crypt_method_15(unp_ver: int) -> int:
         return CryptMethod.CRYPT_RAR20
     else:
         return CryptMethod.CRYPT_RAR30
+
+
+def parse_header14_main(data: bytes | memoryview) -> RarMainHeader:
+    """
+    Parse a RAR 1.4 main archive header from the full 7-byte header
+    (including the 4-byte magic RE~^).
+    """
+    if len(data) < SIZEOF_MAINHEAD14:
+        return RarMainHeader()
+    flags = data[6]
+    return RarMainHeader(
+        flags=flags,
+        is_volume=bool(flags & 0x01),
+        is_solid=bool(flags & 0x08),
+        is_locked=bool(flags & 0x04),
+        comment_in_header=bool(flags & 0x02),
+    )
+
+
+def parse_header14_file(data: bytes | memoryview, pos: int) -> tuple[RarFileEntry, int] | None:
+    """
+    Parse a RAR 1.4 file header at the given position.
+    Returns (entry, next_pos) or None if data exhausted.
+
+    RAR 1.4 file header layout (21 bytes + name):
+      4 bytes LE: DataSize (packed size)
+      4 bytes LE: UnpSize
+      2 bytes LE: CRC16
+      2 bytes LE: HeadSize
+      4 bytes LE: FileTime (DOS format)
+      1 byte:    FileAttr
+      1 byte:    Flags (bit 2 = encrypted)
+      1 byte:    UnpVer raw (2 → version 13, else version 10)
+      1 byte:    NameSize
+      1 byte:    Method
+      N bytes:   FileName
+    """
+    if pos + SIZEOF_FILEHEAD14 > len(data):
+        return None
+
+    data_size, = struct.unpack_from('<I', data, pos)
+    unp_size, = struct.unpack_from('<I', data, pos + 4)
+    file_crc, = struct.unpack_from('<H', data, pos + 8)
+    file_time, = struct.unpack_from('<I', data, pos + 12)
+    file_attr = data[pos + 16]
+    flags = data[pos + 17]
+    name_size = data[pos + 19]
+    method = data[pos + 20]
+
+    if pos + SIZEOF_FILEHEAD14 + name_size > len(data):
+        return None
+
+    name_bytes = bytes(data[pos + SIZEOF_FILEHEAD14:pos + SIZEOF_FILEHEAD14 + name_size])
+    name = name_bytes.rstrip(b'\x00').decode('latin-1')
+
+    encrypted = bool(flags & 0x04)
+
+    hd = RarFileEntry()
+    hd.header_type = HeaderType.HEAD_FILE
+    hd.name = name
+    hd.size = unp_size
+    hd.packed_size = data_size
+    hd.date = dos_datetime(file_time)
+    hd.method = method
+    hd.is_encrypted = encrypted
+    hd.crypt_method = CryptMethod.CRYPT_RAR13 if encrypted else CryptMethod.CRYPT_NONE
+    hd.hash_type = HashType.HASH_RAR14
+    hd.crc32 = file_crc
+    hd.unp_ver = 15
+    hd.win_size = 0x10000
+    hd.file_flags = file_attr
+    hd.is_dir = bool(file_attr & 0x10)
+
+    actual_head_size = SIZEOF_FILEHEAD14 + name_size
+    hd._data_offset = pos + actual_head_size
+    hd._data_size = data_size
+
+    next_pos = pos + actual_head_size + data_size
+    return hd, next_pos
 
 
 def parse_header15(raw: RawHeaderReader) -> tuple:
@@ -975,7 +1054,22 @@ def parse_headers(
     elif fmt == RarFormat.RARFMT15:
         pos = SIZEOF_MARKHEAD3
     elif fmt == RarFormat.RARFMT14:
-        pos = 4
+        pos = 0
+
+    if fmt == RarFormat.RARFMT14:
+        main_header = parse_header14_main(view)
+        pos = SIZEOF_MAINHEAD14
+        while pos < len(data):
+            result = parse_header14_file(view, pos)
+            if result is None:
+                break
+            entry, next_pos = result
+            entry._volume_index = 0
+            entries.append(entry)
+            if next_pos <= pos:
+                break
+            pos = next_pos
+        return main_header, entries, end_header, crypt_header
 
     while pos < len(data):
         remaining = view[pos:]
@@ -1032,7 +1126,7 @@ def parse_headers(
 
                 pos = abs_data_offset + data_size
                 continue
-            elif fmt in (RarFormat.RARFMT15, RarFormat.RARFMT14):
+            elif fmt == RarFormat.RARFMT15:
                 if password is None:
                     break
                 if len(remaining) < SIZE_SALT30 + CRYPT_BLOCK_SIZE:
@@ -1078,7 +1172,7 @@ def parse_headers(
 
         if fmt == RarFormat.RARFMT50:
             header_type, header_size, parsed, next_delta = parse_header50(remaining)
-        elif fmt in (RarFormat.RARFMT15, RarFormat.RARFMT14):
+        elif fmt == RarFormat.RARFMT15:
             raw = RawHeaderReader(remaining)
             header_type, header_size, flags, parsed, next_delta = parse_header15(raw)
         else:

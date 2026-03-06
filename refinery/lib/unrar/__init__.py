@@ -435,6 +435,13 @@ class RarFile:
             if computed != expected:
                 raise RarInvalidChecksum('CRC32', entry.name, data, expected.to_bytes(4), computed.to_bytes(4))
 
+        elif entry.hash_type == HashType.HASH_RAR14:
+            from refinery.lib.unrar.crc import checksum14
+            computed = checksum14(data)
+            expected = entry.crc32
+            if computed != expected:
+                raise RarInvalidChecksum('CRC14', entry.name, data, expected.to_bytes(2), computed.to_bytes(2))
+
         elif entry.hash_type == HashType.HASH_BLAKE2:
             from refinery.lib.unrar.crc import blake2sp_hash
             computed_hash = blake2sp_hash(data)
