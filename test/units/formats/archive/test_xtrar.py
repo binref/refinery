@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from ... import TestUnitBase
 
+from test.units.compression import KADATH1, KADATH2
 from refinery.lib.unrar import RarInvalidPassword, RarMissingPassword
 
 import unittest
@@ -439,8 +440,7 @@ class TestRarSamples(TestUnitBase):
         sha2 = self.ldu('sha256', text=True)
         unit = self.load(pwd='refinery')
         dirlist = REFINERY_ARCHIVES[sample]
-        # arc = self.download_sample(sample)
-        arc = open(RF'C:\Workspace\projects\refinery\test\rar-coverage\tests\{sample}', 'rb').read()
+        arc = self.download_sample(sample)
         test = arc | unit[sha2] | {'path': str}
         self.assertSetEqual(set(test), dirlist)
         for path, content_hash in test.items():
