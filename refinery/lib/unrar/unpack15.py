@@ -82,6 +82,7 @@ class Unpack15:
     ):
         self._inp = BitInput(data)
         self._dest_size = unp_size
+        self._orig_size = unp_size
         self._win_size = 0x10000
         self._win_mask = self._win_size - 1
         self._window = bytearray(self._win_size)
@@ -158,7 +159,7 @@ class Unpack15:
             length -= 1
 
     def _write_data(self, data: memoryview | bytes | bytearray):
-        remaining = self._dest_size - self._written
+        remaining = self._orig_size - self._written
         if remaining <= 0:
             return
         write_size = min(len(data), remaining)
@@ -434,9 +435,9 @@ class Unpack15:
                     self._dest_size -= length
                     return
         else:
-            self._num_huf += 1
             if self._num_huf >= 16 and self._flags_cnt == 0:
                 self._st_mode = 1
+            self._num_huf += 1
 
         self._avr_plc += byte_place
         self._avr_plc -= self._avr_plc >> 8
@@ -468,6 +469,7 @@ class Unpack15:
         """
         self._inp = BitInput(data)
         self._dest_size = dest_size
+        self._orig_size = dest_size
         self._output = bytearray()
         self._written = 0
         self._solid = True

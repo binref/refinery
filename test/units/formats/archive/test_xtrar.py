@@ -415,7 +415,57 @@ class TestMinimalArchives(TestUnitBase):
         self._run_test('testfile.rar5.solid.rar')
 
 
+SUBFILE_HASHES = {
+    'win32test.exe' : 'b753e148e239defb066444107e1444757dfc693f8a854127744b644df6c8da05',
+    'kadath.txt'    : '3f317c30309f87a598bc7b66580e3a6033aef516a732eaa32dbd490d6c77ce55',
+    'ex.wav'        : '243db4a8da413d9e56140b841a5c4d75d146247afb0526e3bbaa3f4dd3dcd4cd',
+    'arrow.bmp'     : 'f1dfb50efbd9dc69818175eadd0ca8c8f975ae6916f83523505e488d48f21e6a',
+}
+
+REFINERY_ARCHIVES = {
+    '39b9254577589b3e9e874c02a6a1a88ef76eb75445b3ebba45493d888df9bc5c': {'win32test.exe'},
+    '3ca9425acc3f0751876a6fc2c76c41662291185d1d08738fafbb30d4ae80e095': {'win32test.exe'},
+    '9306efa6714ffc6036a22bfc43ac4e2959d1afb61b632f5c8c2d0c8ad3b72067': {'kadath.txt'},
+    '2d596b0dd07260a18c20e309b5d2eb90ac2beb318da018bf6a66495bd191a184': {'kadath.txt'},
+    '2d0f5a2d67a83d356350022293b6377fdf18f12bb4c1a99fd8a7fe8cbf152438': {'ex.wav'},
+    '27e6e6b5e9d204854e4d3e1026075b3a8fb7e43b1a43f968e80fa6056a067659': {'kadath.txt', 'ex.wav'},
+    'c02990bb7036054c82aacc9a3b51d34c2fb6c894dfa0ed1cc49fb240bca47949': {'arrow.bmp'},
+}
+
+
 class TestRarSamples(TestUnitBase):
+
+    def _run(self, sample: str):
+        sha2 = self.ldu('sha256', text=True)
+        unit = self.load(pwd='refinery')
+        dirlist = REFINERY_ARCHIVES[sample]
+        # arc = self.download_sample(sample)
+        arc = open(RF'C:\Workspace\projects\refinery\test\rar-coverage\tests\{sample}', 'rb').read()
+        test = arc | unit[sha2] | {'path': str}
+        self.assertSetEqual(set(test), dirlist)
+        for path, content_hash in test.items():
+            self.assertEqual(content_hash, SUBFILE_HASHES[path])
+
+    def test_rar5_exe(self):
+        self._run('39b9254577589b3e9e874c02a6a1a88ef76eb75445b3ebba45493d888df9bc5c')
+
+    def test_rar5_txt(self):
+        self._run('9306efa6714ffc6036a22bfc43ac4e2959d1afb61b632f5c8c2d0c8ad3b72067')
+
+    def test_rar4_bmp(self):
+        self._run('c02990bb7036054c82aacc9a3b51d34c2fb6c894dfa0ed1cc49fb240bca47949')
+
+    def test_rar4_exe(self):
+        self._run('3ca9425acc3f0751876a6fc2c76c41662291185d1d08738fafbb30d4ae80e095')
+
+    def test_rar4_wav(self):
+        self._run('2d0f5a2d67a83d356350022293b6377fdf18f12bb4c1a99fd8a7fe8cbf152438')
+
+    def test_rar2_wav(self):
+        self._run('27e6e6b5e9d204854e4d3e1026075b3a8fb7e43b1a43f968e80fa6056a067659')
+
+    def test_rar4_txt(self):
+        self._run('9306efa6714ffc6036a22bfc43ac4e2959d1afb61b632f5c8c2d0c8ad3b72067')
 
     def test_real_world_01(self):
         data = self.download_sample('0623048c3fd16ad3376d3df28fec9f2e474c58b9583583df652f3b7717e766c9')
@@ -438,3 +488,26 @@ class TestRarSamples(TestUnitBase):
             'mcz-chromeplmi.iso'       : 'cf1f984e9caa8729ab0b9bee847fcf286a3dbc5aca8542c6d548b3620a112d26',
             'cda_exe/ChromeSingle.exe' : 'f4b74e8dc753d4aceeb3e7fe66327db33c7d6eb7e863989271f51e2fb426f86d',
         })
+
+
+class TestRAR15(TestUnitBase):
+    def test_sample_without_password(self):
+        sha2 = self.ldu('sha256', text=True)
+        unit = self.load()
+        data = self.download_sample('f377ce183ef620c56b8fbb87e59b630ecf1e0de4348b10a4a6183233353b04a6')
+        test = data | unit | sha2 | str
+        self.assertEqual(test, 'b9956778103a291446346af3ccc60b5c6d9aedbb31122861e758170d2d28cec4')
+
+    def test_sample_with_password_solid(self):
+        sha2 = self.ldu('sha256', text=True)
+        unit = self.load(pwd='refinery')
+        data = self.download_sample('bf4808ad7f727eb11a55ead036d87b727c2db7e0c46a6faf96808d1a246ec6d2')
+        test = data | unit | sha2 | str
+        self.assertEqual(test, 'b9956778103a291446346af3ccc60b5c6d9aedbb31122861e758170d2d28cec4')
+
+    def test_sample_with_password(self):
+        sha2 = self.ldu('sha256', text=True)
+        unit = self.load(pwd='refinery')
+        data = self.download_sample('a0da650ff76dce82a3c77818276d79771a5b751a9bfb6dc00ff8d372c7aaf38f')
+        test = data | unit | sha2 | str
+        self.assertEqual(test, 'b9956778103a291446346af3ccc60b5c6d9aedbb31122861e758170d2d28cec4')

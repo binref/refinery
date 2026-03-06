@@ -29,13 +29,16 @@ class CryptRar13:
             key[0] = (key[0] + b) & 0xFF
             key[1] = (key[1] ^ b) & 0xFF
             key[2] = (key[2] + b) & 0xFF
+            key[2] = ((key[2] << 1) | (key[2] >> 7)) & 0xFF  # rotls(Key13[2], 1, 8)
         self._key = list(key)
 
     def decrypt(self, data: buf) -> bytearray:
         key = list(self._key)
         out = bytearray(len(data))
         for i, b in enumerate(data):
-            out[i] = (b - key[i % 3]) & 0xFF
+            key[1] = (key[1] + key[2]) & 0xFF
+            key[0] = (key[0] + key[1]) & 0xFF
+            out[i] = (b - key[0]) & 0xFF
         return out
 
 
@@ -46,28 +49,37 @@ class CryptRar15:
 
     def __init__(self, password: str):
         crc_tab = _get_crc_table()
-        self._key = [0, 0, 0, 0]
-        for ch in password:
-            b = ord(ch) & 0xFF
-            self._key[0] ^= crc_tab[(self._key[0] ^ b) & 0xFF]
-            v = b + 3
-            self._key[1] = (self._key[1] + crc_tab[v & 0xFF]) & 0xFFFF
-            self._key[2] = (self._key[2] ^ crc_tab[(v + 3) & 0xFF]) & 0xFFFF
-            self._key[3] = crc_tab[(self._key[3] + v) & 0xFF] ^ (self._key[3] + b)
-            self._key[3] &= 0xFFFF
+        pw_bytes = password.encode('latin-1', errors='replace')
+        # CRC32 of the full password
+        psw_crc = 0xFFFFFFFF
+        for b in pw_bytes:
+            psw_crc = (psw_crc >> 8) ^ crc_tab[(psw_crc ^ b) & 0xFF]
+        self._crc_tab = crc_tab
+        self._key = [
+            (psw_crc >> 0x00) & 0xFFFF,    # Key15[0]
+            (psw_crc >> 0x10) & 0xFFFF,    # Key15[1]
+            0,                             # Key15[2]
+            0,                             # Key15[3]
+        ]
+        for b in pw_bytes:
+            self._key[2] = (self._key[2] ^ (b ^ crc_tab[b])) & 0xFFFF
+            self._key[3] = (self._key[3] + b + (crc_tab[b] >> 16)) & 0xFFFF
 
     def decrypt(self, data: buf) -> bytearray:
-        crc_tab = _get_crc_table()
+        crc_tab = self._crc_tab
         key = list(self._key)
-        out = bytearray(len(data))
-        for i, b in enumerate(data):
-            out[i] = b ^ (key[0] & 0xFF)
-            key[0] = (((key[0] >> 1) & 0x7FFF) | (key[0] << 15)) & 0xFFFF
-            key[0] ^= key[1] & 0xFFFF
-            key[2] = (key[2] + (crc_tab[key[2] & 0xFF] >> 16)) & 0xFFFF
-            key[0] ^= key[2] & 0xFFFF
-            key[3] = (key[3] * 0x6D + 1) & 0xFFFF
-            key[0] = (key[0] - key[3]) & 0xFFFF
+        out = bytearray(data)
+        for i in range(len(out)):
+            key[0] = (key[0] + 0x1234) & 0xFFFF
+            idx = (key[0] & 0x1FE) >> 1
+            crc_val = crc_tab[idx]
+            key[1] = (key[1] ^ crc_val) & 0xFFFF
+            key[2] = (key[2] - (crc_val >> 16)) & 0xFFFF
+            key[0] = (key[0] ^ key[2]) & 0xFFFF
+            key[3] = (((key[3] >> 1) | (key[3] << 15)) & 0xFFFF) ^ key[1]
+            key[3] = ((key[3] >> 1) | (key[3] << 15)) & 0xFFFF
+            key[0] = (key[0] ^ key[3]) & 0xFFFF
+            out[i] ^= (key[0] >> 8) & 0xFF
         return out
 
 

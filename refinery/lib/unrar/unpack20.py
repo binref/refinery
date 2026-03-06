@@ -133,7 +133,7 @@ class Unpack20:
         ch = (pch - delta) & 0xFF
 
         d = delta if delta < 128 else delta - 256
-        d = (d & 0xFFFFFFFF) << 3 if d >= 0 else (((d + 0x100000000) & 0xFFFFFFFF) << 3)
+        d = ((d & 0xFFFFFFFF) << 3) & 0xFFFFFFFF
         d_s = d if d < 0x80000000 else d - 0x100000000
 
         v.dif[0] += abs(d_s)
@@ -162,14 +162,14 @@ class Unpack20:
                     min_dif = v.dif[i]
                     num_min_dif = i
                 v.dif[i] = 0
-            if num_min_dif in range(10):
-                direction = (num_min_dif + 1) % -2
-                index = num_min_dif // 2
-                val = k[index]
-                if direction < 0 and val >= -16:
-                    k[index] = val - 1
-                elif direction > 0 and val < 16:
-                    k[index] = val + 1
+            if num_min_dif >= 1:
+                index = (num_min_dif - 1) // 2
+                if num_min_dif % 2 == 1:
+                    if k[index] >= -16:
+                        k[index] -= 1
+                else:
+                    if k[index] < 16:
+                        k[index] += 1
 
         return ch & 0xFF
 
@@ -263,6 +263,7 @@ class Unpack20:
             return self._output
 
         remaining = self._dest_size
+        remaining -= 1
         while remaining >= 0:
             self._unp_ptr &= mask
 
