@@ -6,7 +6,6 @@ from __future__ import annotations
 import enum
 import itertools
 import struct
-import zlib
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -28,15 +27,8 @@ class RarFormat(enum.IntEnum):
 SIZEOF_MARKHEAD3 = 7
 SIZEOF_MARKHEAD5 = 8
 SIZEOF_MAINHEAD14 = 7
-SIZEOF_MAINHEAD3 = 13
 SIZEOF_FILEHEAD14 = 21
-SIZEOF_FILEHEAD3 = 32
 SIZEOF_SHORTBLOCKHEAD = 7
-SIZEOF_SHORTBLOCKHEAD5 = 7
-SIZEOF_LONGBLOCKHEAD = 11
-SIZEOF_SUBBLOCKHEAD = 14
-SIZEOF_COMMHEAD = 13
-SIZEOF_PROTECTHEAD = 26
 
 
 class HeaderType(enum.IntEnum):
@@ -153,17 +145,10 @@ class FCI(enum.IntEnum):
     DICT_MASK = 0x3C00
 
 
-MHEXTRA_LOCATOR = 0x01
-MHEXTRA_LOCATOR_QLIST = 0x01
-MHEXTRA_LOCATOR_RR = 0x02
-
 FHEXTRA_CRYPT = 0x01
 FHEXTRA_HASH = 0x02
 FHEXTRA_HTIME = 0x03
-FHEXTRA_VERSION = 0x04
 FHEXTRA_REDIR = 0x05
-FHEXTRA_UOWNER = 0x06
-FHEXTRA_SUBDATA = 0x07
 
 FHEXTRA_HASH_BLAKE2 = 0x00
 
@@ -171,17 +156,9 @@ FHEXTRA_HTIME_UNIXTIME = 0x01
 FHEXTRA_HTIME_MTIME = 0x02
 FHEXTRA_HTIME_CTIME = 0x04
 FHEXTRA_HTIME_ATIME = 0x08
-FHEXTRA_HTIME_UNIX_NS = 0x10
 
 FHEXTRA_CRYPT_PSWCHECK = 0x01
 FHEXTRA_CRYPT_HASHMAC = 0x02
-
-FHEXTRA_REDIR_DIR = 0x01
-
-FHEXTRA_UOWNER_UNAME = 0x01
-FHEXTRA_UOWNER_GNAME = 0x02
-FHEXTRA_UOWNER_NUMUID = 0x04
-FHEXTRA_UOWNER_NUMGID = 0x08
 
 
 SIZE_SALT50 = 16
@@ -236,33 +213,6 @@ class HashType(enum.IntEnum):
 
 
 BLAKE2_DIGEST_SIZE = 32
-
-
-def read_vint(data: bytes | memoryview, pos: int = 0) -> tuple[int, int]:
-    """
-    Decode a RAR5 variable-length integer from data starting at pos.
-    Returns (value, new_pos).
-    """
-    result = 0
-    shift = 0
-    while pos < len(data) and shift < 64:
-        b = data[pos]
-        pos += 1
-        result += (b & 0x7F) << shift
-        if not (b & 0x80):
-            return result, pos
-        shift += 7
-    return 0, pos
-
-
-def vint_size(data: bytes | memoryview, pos: int = 0) -> int:
-    """
-    Return the number of bytes a vint occupies at the given position.
-    """
-    for i in range(pos, len(data)):
-        if not (data[i] & 0x80):
-            return i - pos + 1
-    return 0
 
 
 def dos_datetime(dostime: int) -> datetime | None:
@@ -509,27 +459,6 @@ class RawHeaderReader:
 
     def get_pos(self) -> int:
         return self.pos
-
-    def size(self) -> int:
-        return len(self.data)
-
-    def crc15(self, processed_only: bool = False) -> int:
-        """
-        Compute RAR 1.5 header CRC (16-bit).
-        """
-        if len(self.data) <= 2:
-            return 0
-        end = self.pos if processed_only else len(self.data)
-        crc = zlib.crc32(self.data[2:end], 0xFFFFFFFF)
-        return (~crc) & 0xFFFF
-
-    def crc50(self) -> int:
-        """
-        Compute RAR 5.0 header CRC32.
-        """
-        if len(self.data) <= 4:
-            return 0xFFFFFFFF
-        return zlib.crc32(self.data[4:]) & 0xFFFFFFFF
 
 
 def _detect_crypt_method_15(unp_ver: int) -> int:

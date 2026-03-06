@@ -3,8 +3,6 @@ Bit-level I/O for RAR decompression.
 """
 from __future__ import annotations
 
-MAX_SIZE = 0x8000  # 32 KB input buffer size
-
 
 class BitInput:
     """
@@ -64,14 +62,6 @@ class BitInput:
         total = (self.in_addr << 3) + self.in_bit + bits
         self.in_addr = total >> 3
         self.in_bit = total & 7
-
-    def aligned_addr(self) -> int:
-        """
-        Return byte-aligned address (skip partial bits).
-        """
-        if self.in_bit > 0:
-            return self.in_addr + 1
-        return self.in_addr
 
     @property
     def remaining(self) -> int:
