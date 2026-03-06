@@ -349,11 +349,12 @@ class TestJohnTheRipperRAR(TestUnitBase):
 
 class TestMinimalArchives(TestUnitBase):
     def _run_test(self, name: str):
-        xtrar = self.load()
         sha256 = self.ldu('sha256', text=True)
         archive = TEST_RAR_ARCHIVES[name]
         xtrar_list = archive | self.load(list=True) | [str]
-        results = archive | xtrar[sha256] | {'path': str}
+        results = {}
+        for path in xtrar_list:
+            results[path] = archive | self.load(path) | sha256 | str
         self.assertGreaterEqual(len(xtrar_list), 1)
         for path in xtrar_list:
             self.assertIn(path, results)
@@ -536,7 +537,8 @@ class TestRAR15(TestUnitBase):
             '8B37983C3502C04C784C31DC21152030497295CAFBF48AD12988AC70E314EC7805A751BCB57B3D15F284C3A495A85CBBD2E7'
             '11FC7CB5000CA5122CDD6BD96FFB91298C7D42F87C997351312A2823313F047498BDF7394A6C'
         )
-        self.assertEqual(data | self.load(pwd='refinery') | str, KADATH1)
+        unit = self.load(pwd='refinery')
+        self.assertEqual(data | unit | str, KADATH1)
 
     def test_rar_1_3_password_and_compress(self):
         data = bytes.fromhex(
@@ -553,4 +555,6 @@ class TestRAR15(TestUnitBase):
             'D63F0634919B18DD94334A09D701B473F6072E6CD65A5E181C265A4B5F0F7906A48273087E9E67D8005C8808036559BE1F88'
             '99C6106CDE77D1C1E1F7CA03D94D2D237846B98FEB6D'
         )
-        self.assertEqual(data | self.load(pwd='refinery') | str, KADATH2)
+        unit = self.load(pwd='refinery')
+        self.assertEqual(data[:90] | unit | str, '')
+        self.assertEqual(data | unit | str, KADATH2)
