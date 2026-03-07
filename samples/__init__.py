@@ -13,10 +13,28 @@ import urllib.request
 from refinery.units.crypto.cipher.aes import aes
 
 
+_sample_path = pathlib.Path(__file__).absolute()
+while 'refinery' in _sample_path.parts:
+    p = _sample_path.parent
+    if p == _sample_path:
+        _sample_path = None
+        break
+    else:
+        _sample_path = p
+if _sample_path:
+    _sample_path /= 'refinery-test-data'
+    if not _sample_path.exists() or not (_sample_path / '_encode.bat').exists():
+        _sample_path = None
+
+
 class SampleStore:
     lock = threading.Lock()
-    temp = tempfile.TemporaryDirectory(prefix='binary-refinery.test-data.')
-    root = pathlib.Path(temp.name)
+
+    if _sample_path is None:
+        temp = tempfile.TemporaryDirectory(prefix='binary-refinery.test-data.')
+        root = pathlib.Path(temp.name)
+    else:
+        root = _sample_path
 
     def __init__(self):
         self.wait = 0.1
