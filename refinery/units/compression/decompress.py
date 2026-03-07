@@ -27,6 +27,7 @@ from .lzjb import lzjb
 from .lznt1 import lznt1
 from .lzo import lzo
 from .lzw import lzw
+from .lzx import lzx
 from .mscf import MODE as MSCF_MODE
 from .mscf import mscf
 from .nrv import nrv2b, nrv2d, nrv2e
@@ -148,6 +149,10 @@ class decompress(Unit):
             mode = normalize_to_display(mode.name).casefold()
             unit = mscf.assemble(mode)
             self.engines[F'{unit.name}[{mode}]'] = unit
+        for wim in (True, False):
+            unit = lzx.assemble(wim=wim)
+            name = unit.name if not wim else F'{unit.name}[-w]'
+            self.engines[name] = unit
         for engine in [
             mscf,
             pkw,
