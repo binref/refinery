@@ -117,7 +117,7 @@ class EnvironmentVariableSetting(Generic[_T]):
         self.key = F'REFINERY_{name}'
         self.value = self.read()
 
-    def read(self) -> _T:
+    def read(self) -> _T | None:
         return None
 
 
@@ -152,7 +152,7 @@ class EVInt(EnvironmentVariableSetting[int]):
             return 0
 
 
-class EVPath(EnvironmentVariableSetting[Path | None]):
+class EVPath(EnvironmentVariableSetting[Path]):
     """
     A file system path stored in an environment variable.
     """
