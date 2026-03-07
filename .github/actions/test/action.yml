@@ -13,11 +13,11 @@ runs:
     - name: Unit Tests (Pure Python)
       if: ${{ !contains(inputs.os, 'ubuntu') }}
       shell: ${{ contains(inputs.os, 'windows') && 'cmd' || 'bash' }}
-      run: pytest -n=8 --dist=loadgroup test
+      run: python -m unittest discover -v -p test_*.py
     - name: Unit Tests (Pure Python)
       if: ${{  contains(inputs.os, 'ubuntu') }}
       shell: bash
-      run: XDG_SESSION_TYPE=x11 xvfb-run pytest -n=8 --dist=loadgroup test
+      run: XDG_SESSION_TYPE=x11 xvfb-run python -m unittest discover -v -p test_*.py
     - name: Prepare Compiled Module Tests
       shell: ${{ contains(inputs.os, 'windows') && 'pwsh' || 'bash' }}
       run: |
