@@ -6,8 +6,18 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from refinery.lib.unrar.reader import BitInput
-from refinery.lib.unrar.unpack import RarUnpacker
-from refinery.lib.unrar.unpack50 import DecodeTable, decode_number, make_decode_tables
+from refinery.lib.unrar.unpack import (
+    RarUnpacker,
+    LBits,
+    LDecode,
+    SDBits,
+    SDDecode,
+)
+from refinery.lib.unrar.unpack50 import (
+    DecodeTable,
+    decode_number,
+    make_decode_tables,
+)
 
 NC20 = 298
 DC20 = 48
@@ -16,15 +26,11 @@ BC20 = 19
 MC20 = 257
 
 
-_LDecode = [0, 1, 2, 3, 4, 5, 6, 7, 8, 10, 12, 14, 16, 20, 24, 28, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224]
-_LBits = [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5]
 _DDecode = [0, 1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64, 96, 128, 192, 256, 384, 512, 768, 1024, 1536, 2048, 3072, 4096,
     6144, 8192, 12288, 16384, 24576, 32768, 49152, 65536, 98304, 131072, 196608, 262144, 327680, 393216, 458752, 524288,
     589824, 655360, 720896, 786432, 851968, 917504, 983040]
 _DBits = [0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13, 14, 14, 15,
     15, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16]
-_SDDecode = [0, 4, 8, 16, 32, 64, 128, 192]
-_SDBits = [2, 2, 3, 4, 5, 6, 6, 6]
 
 
 @dataclass
@@ -257,8 +263,8 @@ class Unpack20(RarUnpacker):
 
             if number > 269:
                 idx = number - 270
-                length = _LDecode[idx] + 3
-                bits = _LBits[idx]
+                length = LDecode[idx] + 3
+                bits = LBits[idx]
                 if bits > 0:
                     length += inp.getbits() >> (16 - bits)
                     inp.addbits(bits)
@@ -292,8 +298,8 @@ class Unpack20(RarUnpacker):
             if number < 261:
                 distance = self._old_dist[(self._old_dist_ptr - (number - 256)) & 3]
                 length_number = decode_number(inp, self._block_tables.RD)
-                length = _LDecode[length_number] + 2
-                bits = _LBits[length_number]
+                length = LDecode[length_number] + 2
+                bits = LBits[length_number]
                 if bits > 0:
                     length += inp.getbits() >> (16 - bits)
                     inp.addbits(bits)
@@ -311,8 +317,8 @@ class Unpack20(RarUnpacker):
 
             if number < 270:
                 idx = number - 261
-                distance = _SDDecode[idx] + 1
-                bits = _SDBits[idx]
+                distance = SDDecode[idx] + 1
+                bits = SDBits[idx]
                 if bits > 0:
                     distance += inp.getbits() >> (16 - bits)
                     inp.addbits(bits)

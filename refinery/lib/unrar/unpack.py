@@ -5,6 +5,11 @@ from __future__ import annotations
 
 from refinery.lib.unrar.reader import BitInput
 
+LDecode = [0, 1, 2, 3, 4, 5, 6, 7, 8, 10, 12, 14, 16, 20, 24, 28, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224]
+LBits = [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5]
+SDDecode = [0, 4, 8, 16, 32, 64, 128, 192]
+SDBits = [2, 2, 3, 4, 5, 6, 6, 6]
+
 
 class RarUnpacker:
     _inp: BitInput

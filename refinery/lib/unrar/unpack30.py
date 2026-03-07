@@ -15,8 +15,18 @@ from refinery.lib.unrar.filters import (
     identify_v3_filter,
 )
 from refinery.lib.unrar.reader import BitInput
-from refinery.lib.unrar.unpack import RarUnpacker
-from refinery.lib.unrar.unpack50 import DecodeTable, decode_number, make_decode_tables
+from refinery.lib.unrar.unpack import (
+    RarUnpacker,
+    LBits,
+    LDecode,
+    SDBits,
+    SDDecode,
+)
+from refinery.lib.unrar.unpack50 import (
+    BlockTables,
+    decode_number,
+    make_decode_tables,
+)
 
 NC30 = 299
 DC30 = 60
@@ -51,12 +61,6 @@ N4 = (128 + 3 - 1 * N1 - 2 * N2 - 3 * N3) // 4
 N_INDEXES = N1 + N2 + N3 + N4
 UNIT_SIZE = 12
 FIXED_UNIT_SIZE = 12
-
-_LDecode = [0, 1, 2, 3, 4, 5, 6, 7, 8, 10, 12, 14, 16, 20, 24, 28, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224]
-_LBits = [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5]
-
-_SDDecode = [0, 4, 8, 16, 32, 64, 128, 192]
-_SDBits = [2, 2, 3, 4, 5, 6, 6, 6]
 
 ExpEscape = [25, 14, 9, 7, 5, 5, 4, 4, 4, 3, 3, 3, 2, 2, 2, 2]
 
@@ -1223,7 +1227,7 @@ class Unpack30(RarUnpacker):
         self._output = bytearray()
         self._tables_read = False
         self._block_type = BLOCK_LZ
-        self._block_tables = _BlockTables30()
+        self._block_tables = BlockTables()
         self._unp_old_table = bytearray(HUFF_TABLE_SIZE30)
         self._ppm = _ModelPPM()
         self._ppm_esc_char = 2
@@ -1643,8 +1647,8 @@ class Unpack30(RarUnpacker):
 
             if number >= 271:
                 num = number - 271
-                length = _LDecode[num] + 3
-                bits = _LBits[num]
+                length = LDecode[num] + 3
+                bits = LBits[num]
                 if bits > 0:
                     length += inp.getbits() >> (16 - bits)
                     inp.addbits(bits)
@@ -1706,8 +1710,8 @@ class Unpack30(RarUnpacker):
                 self._old_dist[0] = distance
 
                 length_number = decode_number(inp, tbl.RD)
-                length = _LDecode[length_number] + 2
-                bits = _LBits[length_number]
+                length = LDecode[length_number] + 2
+                bits = LBits[length_number]
                 if bits > 0:
                     length += inp.getbits() >> (16 - bits)
                     inp.addbits(bits)
@@ -1717,8 +1721,8 @@ class Unpack30(RarUnpacker):
 
             if number < 272:
                 num = number - 263
-                distance = _SDDecode[num] + 1
-                bits = _SDBits[num]
+                distance = SDDecode[num] + 1
+                bits = SDBits[num]
                 if bits > 0:
                     distance += inp.getbits() >> (16 - bits)
                     inp.addbits(bits)
@@ -1729,12 +1733,3 @@ class Unpack30(RarUnpacker):
 
         self._write_buf()
         return self._output
-
-
-@dataclass
-class _BlockTables30:
-    LD: DecodeTable = field(default_factory=DecodeTable)
-    DD: DecodeTable = field(default_factory=DecodeTable)
-    LDD: DecodeTable = field(default_factory=DecodeTable)
-    RD: DecodeTable = field(default_factory=DecodeTable)
-    BD: DecodeTable = field(default_factory=DecodeTable)
