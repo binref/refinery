@@ -14,21 +14,10 @@ from refinery.units.crypto.cipher.aes import aes
 from refinery.lib.environment import environment
 
 
-_sample_path = environment.storepath.value
-
-if _sample_path is None:
-    _sample_path = pathlib.Path(__file__)
-    while 'refinery' in _sample_path.parts:
-        p = _sample_path.parent
-        if p == _sample_path:
-            _sample_path = None
-            break
-        else:
-            _sample_path = p
-    if _sample_path:
-        _sample_path /= 'refinery-test-data'
-        if not _sample_path.exists() or not (_sample_path / '_encode.bat').exists():
-            _sample_path = None
+if (_sample_path := environment.storepath.value) is None:
+    _sample_path = pathlib.Path(__file__).parent.parent.parent / 'refinery-test-data'
+    if not _sample_path.exists() or not (_sample_path / '_encode.bat').exists():
+        _sample_path = None
 
 
 class SampleStore:
@@ -91,13 +80,17 @@ class SampleStore:
                 with path.open('rb') as fd:
                     encoded = fd.read()
             except FileNotFoundError:
+                on_disk = False
                 encoded = self._download(sha256hash)
+            else:
+                on_disk = True
             result = self.decode(encoded, key)
             checksum = hashlib.sha256(result).hexdigest().lower()
             if not result or checksum != sha256hash:
                 raise ValueError(F'The sample {sha256hash} did not decode correctly with key {key}.')
-            with path.open('wb') as fd:
-                fd.write(encoded)
+            if not on_disk:
+                with path.open('wb') as fd:
+                    fd.write(encoded)
             return result
 
     def __getitem__(self, sha256hash: str):
