@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 
 from refinery.lib.unrar.filters import FilterType, UnpackFilter, apply_filter
 from refinery.lib.unrar.reader import BitInput
+from refinery.lib.unrar.unpack import RarUnpacker
 
 NC = 306
 DC = 64
@@ -298,7 +299,7 @@ def read_filter(inp: BitInput) -> UnpackFilter | None:
     return flt
 
 
-class Unpack50:
+class Unpack50(RarUnpacker):
     """
     RAR 5.0 decompression engine
     """
@@ -327,43 +328,6 @@ class Unpack50:
         self._block_header = BlockHeader()
         self._block_tables = BlockTables()
         self._write_border = min(self._win_size, UNPACK_MAX_WRITE) & self._win_mask
-
-    def _insert_old_dist(self, distance: int):
-        self._old_dist[3] = self._old_dist[2]
-        self._old_dist[2] = self._old_dist[1]
-        self._old_dist[1] = self._old_dist[0]
-        self._old_dist[0] = distance
-
-    def _copy_string(self, length: int, distance: int):
-        mask = self._win_mask
-        win = self._window
-        src = self._unp_ptr - distance
-        dst = self._unp_ptr
-        while length > 0:
-            win[dst & mask] = win[src & mask]
-            src += 1
-            dst += 1
-            length -= 1
-        self._unp_ptr = dst & mask
-
-    def _write_data(self, data: memoryview | bytes | bytearray):
-        """
-        Write extracted data, respecting dest_size limit.
-        """
-        remaining = self._dest_size - self._written
-        if remaining <= 0:
-            return
-        write_size = min(len(data), remaining)
-        self._output.extend(data[:write_size])
-        self._written += write_size
-
-    def _write_area(self, start: int, end: int):
-        win = self._window
-        if end < start:
-            self._write_data(win[start:self._win_size])
-            self._write_data(win[:end])
-        elif end > start:
-            self._write_data(win[start:end])
 
     def _write_buf(self):
         """
@@ -423,16 +387,6 @@ class Unpack50:
         self._write_area(written_border, self._unp_ptr)
         self._wr_ptr = self._unp_ptr
         self._write_border = (self._unp_ptr + min(self._win_size, UNPACK_MAX_WRITE)) & mask
-
-    def init_solid(self, data: bytes | memoryview, dest_size: int):
-        """
-        Reinitialize for the next file in a solid archive chain.
-        """
-        self._inp = BitInput(data)
-        self._dest_size = dest_size
-        self._output = bytearray()
-        self._written = 0
-        self._solid = True
 
     def decompress(self) -> bytearray:
         """

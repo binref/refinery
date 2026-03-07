@@ -199,6 +199,10 @@ class RarFile:
             if pending_split is not None:
                 if entry.split_before and entry.name == pending_split.name:
                     pending_split.packed_size += entry.packed_size
+                    pending_split.crc32 = entry.crc32
+                    pending_split.use_hash_key = entry.use_hash_key
+                    pending_split.hash_type = entry.hash_type
+                    pending_split.hash_digest = entry.hash_digest
                     if not entry.split_after:
                         merged.append(pending_split)
                         pending_split = None

@@ -4,6 +4,7 @@ RAR 1.5 decompression algorithm.
 from __future__ import annotations
 
 from refinery.lib.unrar.reader import BitInput
+from refinery.lib.unrar.unpack import RarUnpacker
 
 _DecL1 = [0x8000, 0xA000, 0xC000, 0xD000, 0xE000, 0xEA00, 0xEE00, 0xF000, 0xF200, 0xF200, 0xFFFF]
 _PosL1 = [0, 0, 0, 2, 3, 5, 7, 11, 16, 20, 24, 32, 32]
@@ -69,7 +70,7 @@ def _corr_huff(char_set: list[int], num_to_place: list[int]):
         num_to_place[i] = (7 - i) * 32
 
 
-class Unpack15:
+class Unpack15(RarUnpacker):
     """
     RAR 1.5 decompression engine.
     """
@@ -165,15 +166,6 @@ class Unpack15:
         write_size = min(len(data), remaining)
         self._output.extend(data[:write_size])
         self._written += write_size
-
-    def _write_buf(self):
-        win = self._window
-        if self._unp_ptr < self._wr_ptr:
-            self._write_data(win[self._wr_ptr:self._win_size])
-            self._write_data(win[:self._unp_ptr])
-        elif self._unp_ptr > self._wr_ptr:
-            self._write_data(win[self._wr_ptr:self._unp_ptr])
-        self._wr_ptr = self._unp_ptr
 
     def _get_flags_buf(self):
         """
@@ -467,12 +459,8 @@ class Unpack15:
         """
         Reinitialize for the next file in a solid archive chain.
         """
-        self._inp = BitInput(data)
-        self._dest_size = dest_size
+        super().init_solid(data, dest_size)
         self._orig_size = dest_size
-        self._output = bytearray()
-        self._written = 0
-        self._solid = True
 
     def decompress(self) -> bytearray:
         """

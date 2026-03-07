@@ -15,6 +15,7 @@ from refinery.lib.unrar.filters import (
     identify_v3_filter,
 )
 from refinery.lib.unrar.reader import BitInput
+from refinery.lib.unrar.unpack import RarUnpacker
 from refinery.lib.unrar.unpack50 import DecodeTable, decode_number, make_decode_tables
 
 NC30 = 299
@@ -1196,7 +1197,7 @@ class _UnpackFilter30:
     init_r: list[int] = field(default_factory=lambda: [0] * 8)
 
 
-class Unpack30:
+class Unpack30(RarUnpacker):
     """
     RAR 3.0 decompression engine.
     """
@@ -1240,40 +1241,6 @@ class Unpack30:
         ch = inp.buf[inp.in_addr]
         inp.in_addr += 1
         return ch
-
-    def _insert_old_dist(self, distance: int):
-        self._old_dist[3] = self._old_dist[2]
-        self._old_dist[2] = self._old_dist[1]
-        self._old_dist[1] = self._old_dist[0]
-        self._old_dist[0] = distance
-
-    def _copy_string(self, length: int, distance: int):
-        mask = self._win_mask
-        win = self._window
-        src = self._unp_ptr - distance
-        dst = self._unp_ptr
-        while length > 0:
-            win[dst & mask] = win[src & mask]
-            src += 1
-            dst += 1
-            length -= 1
-        self._unp_ptr = dst & mask
-
-    def _write_data(self, data: memoryview | bytes | bytearray):
-        remaining = self._dest_size - self._written
-        if remaining <= 0:
-            return
-        write_size = min(len(data), remaining)
-        self._output.extend(data[:write_size])
-        self._written += write_size
-
-    def _write_area(self, start: int, end: int):
-        win = self._window
-        if end < start:
-            self._write_data(win[start:self._win_size])
-            self._write_data(win[:end])
-        elif end > start:
-            self._write_data(win[start:end])
 
     def _write_buf(self):
         written_border = self._wr_ptr
@@ -1583,11 +1550,7 @@ class Unpack30:
         """
         Reinitialize for the next file in a solid archive chain.
         """
-        self._inp = BitInput(data)
-        self._dest_size = dest_size
-        self._output = bytearray()
-        self._written = 0
-        self._solid = True
+        super().init_solid(data, dest_size)
         self._init_filters(True)
 
     def decompress(self) -> bytearray:

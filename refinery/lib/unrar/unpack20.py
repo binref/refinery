@@ -6,6 +6,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from refinery.lib.unrar.reader import BitInput
+from refinery.lib.unrar.unpack import RarUnpacker
 from refinery.lib.unrar.unpack50 import DecodeTable, decode_number, make_decode_tables
 
 NC20 = 298
@@ -47,7 +48,7 @@ class _BlockTables20:
     BD: DecodeTable = field(default_factory=DecodeTable)
 
 
-class Unpack20:
+class Unpack20(RarUnpacker):
     """
     RAR 2.0 decompression engine.
     """
@@ -87,33 +88,7 @@ class Unpack20:
         self._old_dist[self._old_dist_ptr] = distance
         self._old_dist_ptr = (self._old_dist_ptr + 1) & 3
         self._last_length = length
-        mask = self._win_mask
-        win = self._window
-        src = self._unp_ptr - distance
-        dst = self._unp_ptr
-        while length > 0:
-            win[dst & mask] = win[src & mask]
-            src += 1
-            dst += 1
-            length -= 1
-        self._unp_ptr = dst & mask
-
-    def _write_data(self, data: memoryview | bytes | bytearray):
-        remaining = self._dest_size - self._written
-        if remaining <= 0:
-            return
-        write_size = min(len(data), remaining)
-        self._output.extend(data[:write_size])
-        self._written += write_size
-
-    def _write_buf(self):
-        win = self._window
-        if self._unp_ptr < self._wr_ptr:
-            self._write_data(win[self._wr_ptr:self._win_size])
-            self._write_data(win[:self._unp_ptr])
-        elif self._unp_ptr > self._wr_ptr:
-            self._write_data(win[self._wr_ptr:self._unp_ptr])
-        self._wr_ptr = self._unp_ptr
+        super()._copy_string(length, distance)
 
     def _decode_audio(self, delta: int) -> int:
         """
@@ -240,16 +215,6 @@ class Unpack20:
 
         self._old_table[:table_size] = table[:table_size]
         return True
-
-    def init_solid(self, data: bytes | memoryview, dest_size: int):
-        """
-        Reinitialize for the next file in a solid archive chain.
-        """
-        self._inp = BitInput(data)
-        self._dest_size = dest_size
-        self._output = bytearray()
-        self._written = 0
-        self._solid = True
 
     def decompress(self) -> bytearray:
         """

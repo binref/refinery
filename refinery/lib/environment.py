@@ -9,6 +9,7 @@ import os
 
 from enum import IntEnum
 from typing import Generic, Optional, TypeVar
+from pathlib import Path
 
 _T = TypeVar('_T')
 
@@ -151,6 +152,17 @@ class EVInt(EnvironmentVariableSetting[int]):
             return 0
 
 
+class EVPath(EnvironmentVariableSetting[Path | None]):
+    """
+    A file system path stored in an environment variable.
+    """
+    def read(self):
+        try:
+            return Path(os.environ[self.key])
+        except (KeyError, ValueError):
+            return None
+
+
 class EVLog(EnvironmentVariableSetting[Optional[LogLevel]]):
     """
     A log level stored in an environment variable. This can be specified as either the name of the
@@ -181,6 +193,7 @@ class environment:
     verbosity = EVLog('VERBOSITY')
     term_size = EVInt('TERM_SIZE')
     colorless = EVBool('COLORLESS')
+    storepath = EVPath('STOREPATH')
     disable_size_format = EVBool('DISABLE_SIZE_FORMAT')
     silence_ps1_warning = EVBool('SILENCE_PS1_WARNING')
     disable_ps1_bandaid = EVBool('DISABLE_PS1_BANDAID')
