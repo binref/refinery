@@ -16,20 +16,6 @@ from refinery.lib.environment import environment
 
 _sample_path = environment.storepath.value
 
-if _sample_path is None:
-    _sample_path = pathlib.Path(__file__)
-    while 'refinery' in _sample_path.parts:
-        p = _sample_path.parent
-        if p == _sample_path:
-            _sample_path = None
-            break
-        else:
-            _sample_path = p
-    if _sample_path:
-        _sample_path /= 'refinery-test-data'
-        if not _sample_path.exists() or not (_sample_path / '_encode.bat').exists():
-            _sample_path = None
-
 
 class SampleStore:
     lock = threading.Lock()
