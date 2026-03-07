@@ -207,6 +207,10 @@ def pkware_decompress(data) -> bytearray:
                     if out_buf == NULL:
                         raise MemoryError
 
+                if offset > cursor:
+                    raise ValueError(
+                        f'Back-reference offset {offset} exceeds output position {cursor}.')
+
                 # Back-reference copy
                 copy_src = cursor - offset
                 copy_len = length
