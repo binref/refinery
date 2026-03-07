@@ -14,10 +14,21 @@ from refinery.units.crypto.cipher.aes import aes
 from refinery.lib.environment import environment
 
 
-if (_sample_path := environment.storepath.value) is None:
-    _sample_path = pathlib.Path(__file__).parent.parent.parent / 'refinery-test-data'
-    if not _sample_path.exists() or not (_sample_path / '_encode.bat').exists():
-        _sample_path = None
+_sample_path = environment.storepath.value
+
+if _sample_path is None:
+    _sample_path = pathlib.Path(__file__)
+    while 'refinery' in _sample_path.parts:
+        p = _sample_path.parent
+        if p == _sample_path:
+            _sample_path = None
+            break
+        else:
+            _sample_path = p
+    if _sample_path:
+        _sample_path /= 'refinery-test-data'
+        if not _sample_path.exists() or not (_sample_path / '_encode.bat').exists():
+            _sample_path = None
 
 
 class SampleStore:
@@ -42,7 +53,7 @@ class SampleStore:
         backoff = 0
         req = F'https://github.com/binref/refinery-test-data/blob/master/{sha256hash}.enc?raw=true'
         while remaining > 0:
-            clock = time.thread_time()
+            clock = time.monotonic()
             try:
                 with urllib.request.urlopen(req, timeout=remaining) as response:
                     encoded_sample = tobytearray(response.read())
@@ -59,7 +70,7 @@ class SampleStore:
                     wait = max(0.1, wait / 2)
                 self.wait = wait
                 return encoded_sample
-            remaining -= time.thread_time() - clock
+            remaining -= time.monotonic() - clock
         raise LookupError(F'Timeout exceeded while looking for {sha256hash}, backed off {backoff} times.')
 
     def decode(self, data: bytes, key: Optional[str] = None):
