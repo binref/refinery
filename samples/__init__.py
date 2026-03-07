@@ -11,20 +11,12 @@ import urllib.error
 import urllib.request
 
 from refinery.units.crypto.cipher.aes import aes
-from refinery.lib.environment import environment
-
-
-_sample_path = environment.storepath.value
 
 
 class SampleStore:
     lock = threading.Lock()
-
-    if _sample_path is None:
-        temp = tempfile.TemporaryDirectory(prefix='binary-refinery.test-data.')
-        root = pathlib.Path(temp.name)
-    else:
-        root = _sample_path
+    temp = tempfile.TemporaryDirectory(prefix='binary-refinery.test-data.')
+    root = pathlib.Path(temp.name)
 
     def __init__(self):
         self.wait = 0.1
