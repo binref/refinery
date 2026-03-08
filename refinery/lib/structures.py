@@ -57,7 +57,7 @@ else:
 
 class ToJSON(Protocol):
     @abc.abstractmethod
-    def __json__(self) -> JSON:
+    def __json__(self):
         raise NotImplementedError
 
 
@@ -1066,6 +1066,9 @@ class Struct(Generic[T], Buffer, metaclass=StructMeta):
     def __init__(self, reader: StructReader[T], *args, **kwargs):
         pass
 
+    def __json__(self) -> dict:
+        return {k: struct_to_json(v) for k, v in self.__dict__.items() if not k.startswith('_')}
+
 
 AttrType = TypeVar('AttrType')
 
@@ -1098,14 +1101,15 @@ class PerInstanceAttribute(Generic[AttrType]):
         return self.__get[pid]
 
 
-def struct_to_json(o: dict | list | enum.IntFlag | enum.IntEnum | Struct | ToJSON | NamedTuple | None, codec: str | None = None) -> JSON:
+def struct_to_json(
+    o: dict | list | bytes | enum.IntFlag | enum.IntEnum | Struct | ToJSON | NamedTuple | None,
+    codec: str | None = None
+) -> JSON:
     """
     Attempt to convert a `refinery.lib.structures.Struct` to a JSON representation.
     """
     if o is None:
         return o
-    if isinstance(o, Struct):
-        return {k: struct_to_json(v) for k, v in o.__dict__.items() if not k.startswith('_')}
     if isinstance(o, tuple):
         o = o._asdict()
     if isinstance(o, dict):
@@ -1118,15 +1122,19 @@ def struct_to_json(o: dict | list | enum.IntFlag | enum.IntEnum | Struct | ToJSO
         return [option.name for option in o.__class__ if o & option == option]
     elif isinstance(o, enum.IntEnum):
         return o.name
-    elif isinstance(o, int) and o.bit_length() > 64:
-        return hex(o)
-    elif codec is not None and isinstance(o, (memoryview, bytes, bytearray)):
-        return codecs.decode(o, codec)
+    elif isinstance(o, int):
+        if o.bit_length() > 64:
+            return hex(o)
+    elif isinstance(o, (memoryview, bytes, bytearray)):
+        if codec is not None:
+            return codecs.decode(o, codec)
     else:
         try:
-            return o.__json__()
+            json = o.__json__()
         except AttributeError:
             pass
+        else:
+            return struct_to_json(json, codec)
     return cast('JSON', o)
 
 
