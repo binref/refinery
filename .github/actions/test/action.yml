@@ -10,28 +10,33 @@ inputs:
 runs:
   using: "composite"
   steps:
+    - name: Disable Compiled Modules
+      shell: ${{ contains(inputs.os, 'windows') && 'pwsh' || 'bash' }}
+      run: python setup.py disable_ext
     - name: Unit Tests (Pure Python)
-      if: ${{ !contains(inputs.os, 'ubuntu') }}
-      shell: ${{ contains(inputs.os, 'windows') && 'cmd' || 'bash' }}
+      if: ${{ contains(inputs.os, 'windows') }}
+      shell: cmd
+      run: pytest -n=8 --dist=loadgroup test 2>NUL
+    - name: Unit Tests (Pure Python)
+      if: ${{ contains(inputs.os, 'mac') }}
+      shell: bash
       run: pytest -n=8 --dist=loadgroup test
     - name: Unit Tests (Pure Python)
-      if: ${{  contains(inputs.os, 'ubuntu') }}
+      if: ${{ contains(inputs.os, 'ubuntu') }}
       shell: bash
       run: XDG_SESSION_TYPE=x11 xvfb-run pytest -n=8 --dist=loadgroup test
     - name: Prepare Compiled Module Tests
       shell: ${{ contains(inputs.os, 'windows') && 'pwsh' || 'bash' }}
-      run: |
-        mkdir "${{ runner.temp }}/ctest"
-        cp -r test "${{ runner.temp }}/ctest/"
-        cp -r samples "${{ runner.temp }}/ctest/"
-        cp pytest.ini "${{ runner.temp }}/ctest/"
-    - name: Unit Tests (Compiled Modules)
-      if: ${{ !contains(inputs.os, 'ubuntu') }}
-      shell: ${{ contains(inputs.os, 'windows') && 'cmd' || 'bash' }}
+      run: python setup.py build_ext --inplace
+    - name: Unit Tests (Cython Modules)
+      if: ${{ contains(inputs.os, 'windows') }}
+      shell: cmd
+      run: pytest -n=8 --dist=loadgroup -m cythonized test 2>NUL
+    - name: Unit Tests (Cython Modules)
+      if: ${{ contains(inputs.os, 'mac') }}
+      shell: bash
       run: pytest -n=8 --dist=loadgroup -m cythonized test
-      working-directory: ${{ runner.temp }}/ctest
-    - name: Unit Tests (Compiled Modules)
-      if: ${{  contains(inputs.os, 'ubuntu') }}
+    - name: Unit Tests (Cython Modules)
+      if: ${{ contains(inputs.os, 'ubuntu') }}
       shell: bash
       run: XDG_SESSION_TYPE=x11 xvfb-run pytest -n=8 --dist=loadgroup -m cythonized test
-      working-directory: ${{ runner.temp }}/ctest
