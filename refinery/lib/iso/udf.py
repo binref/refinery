@@ -193,8 +193,8 @@ class UDFArchive:
         anchor_data = self._data[anchor_pos:anchor_pos + 512]
         if len(anchor_data) < 32:
             return
-        main_extent_loc = _read_u32(anchor_data, 16)
-        main_extent_len = _read_u32(anchor_data, 20)
+        main_extent_len = _read_u32(anchor_data, 16)
+        main_extent_loc = _read_u32(anchor_data, 20)
 
         sector = main_extent_loc
         sectors_count = main_extent_len // self._sector_size
@@ -245,10 +245,10 @@ class UDFArchive:
             tag_id = _verify_tag(fsd_data)
             if tag_id != TAG_ID_FILE_SET:
                 continue
-            if len(fsd_data) < 404:
+            if len(fsd_data) < 410:
                 continue
-            root_icb_loc = _read_u32(fsd_data, 400)
-            root_icb_part = _read_u16(fsd_data, 404)
+            root_icb_loc = _read_u32(fsd_data, 404)
+            root_icb_part = _read_u16(fsd_data, 408)
             visited: set[int] = set()
             self._read_directory(root_icb_loc, root_icb_part, '', visited, 0)
 
@@ -298,12 +298,12 @@ class UDFArchive:
             return -1
         file_version = _read_u16(data, offset + 16)
         file_char = data[offset + 18]
-        icb_loc = _read_u32(data, offset + 20)
-        icb_part = _read_u16(data, offset + 24)
+        icb_loc = _read_u32(data, offset + 24)
+        icb_part = _read_u16(data, offset + 28)
         impl_use_len = _read_u16(data, offset + 36)
-        name_len = data[offset + 38] if offset + 38 < len(data) else 0
+        name_len = data[offset + 19] if offset + 19 < len(data) else 0
 
-        total_len = 38 + 1 + impl_use_len + name_len
+        total_len = 38 + impl_use_len + name_len
         padding = (4 - (total_len % 4)) % 4
         total_len += padding
 
@@ -314,7 +314,7 @@ class UDFArchive:
         if is_parent or is_deleted:
             return total_len
 
-        name_start = offset + 38 + 1 + impl_use_len
+        name_start = offset + 38 + impl_use_len
         if name_start + name_len > len(data):
             return total_len
 
@@ -373,20 +373,20 @@ class UDFArchive:
         if tag_id != TAG_ID_FILE_ENTRY and not is_extended:
             return None, None
 
-        icb_flags = _read_u16(entry_data, 20) if len(entry_data) > 22 else 0
+        icb_flags = _read_u16(entry_data, 34) if len(entry_data) > 36 else 0
         desc_type = icb_flags & 0x07
         info_length = _read_u64(entry_data, 56)
 
         if is_extended:
-            ea_length = _read_u32(entry_data, 208)
-            ad_length = _read_u32(entry_data, 212)
-            ad_offset = 216 + ea_length
+            ea_length = _read_u32(entry_data, 204)
+            ad_length = _read_u32(entry_data, 208)
+            ad_offset = 212 + ea_length
         else:
             ea_length = _read_u32(entry_data, 168)
             ad_length = _read_u32(entry_data, 172)
             ad_offset = 176 + ea_length
 
-        date = _parse_timestamp(entry_data, 84) if len(entry_data) > 96 else None
+        date = _parse_timestamp(entry_data, 92 if is_extended else 84) if len(entry_data) > 96 else None
 
         if ad_offset + ad_length > len(entry_data):
             ad_length = max(0, len(entry_data) - ad_offset)
@@ -412,20 +412,20 @@ class UDFArchive:
         if tag_id != TAG_ID_FILE_ENTRY and not is_extended:
             return None, None, 0
 
-        icb_flags = _read_u16(entry_data, 20) if len(entry_data) > 22 else 0
+        icb_flags = _read_u16(entry_data, 34) if len(entry_data) > 36 else 0
         desc_type = icb_flags & 0x07
         info_length = _read_u64(entry_data, 56)
 
         if is_extended:
-            ea_length = _read_u32(entry_data, 208)
-            ad_length = _read_u32(entry_data, 212)
-            ad_offset = 216 + ea_length
+            ea_length = _read_u32(entry_data, 204)
+            ad_length = _read_u32(entry_data, 208)
+            ad_offset = 212 + ea_length
         else:
             ea_length = _read_u32(entry_data, 168)
             ad_length = _read_u32(entry_data, 172)
             ad_offset = 176 + ea_length
 
-        date = _parse_timestamp(entry_data, 84) if len(entry_data) > 96 else None
+        date = _parse_timestamp(entry_data, 92 if is_extended else 84) if len(entry_data) > 96 else None
 
         if desc_type == ICB_DESC_TYPE_INLINE:
             if ad_offset + ad_length <= len(entry_data):
@@ -448,13 +448,13 @@ class UDFArchive:
         if tag_id != TAG_ID_FILE_ENTRY and not is_extended:
             return []
 
-        icb_flags = _read_u16(entry_data, 20) if len(entry_data) > 22 else 0
+        icb_flags = _read_u16(entry_data, 34) if len(entry_data) > 36 else 0
         desc_type = icb_flags & 0x07
 
         if is_extended:
-            ea_length = _read_u32(entry_data, 208)
-            ad_length = _read_u32(entry_data, 212)
-            ad_offset = 216 + ea_length
+            ea_length = _read_u32(entry_data, 204)
+            ad_length = _read_u32(entry_data, 208)
+            ad_offset = 212 + ea_length
         else:
             ea_length = _read_u32(entry_data, 168)
             ad_length = _read_u32(entry_data, 172)

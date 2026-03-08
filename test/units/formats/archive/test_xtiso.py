@@ -67,6 +67,9 @@ class TestISOFileExtractor(TestUnitBase):
     def test_coverage_d17b(self):
         self._test_coverage_sample('d17b4c19412a5ad927b6249a29a3b7901ce8815dcfa048531e67a4439298dcc5')
 
+    def test_coverage_d0b7(self):
+        self._test_coverage_sample('d0b714860765ab1c5d751a7237b1c768248754f2b593b70deccac266366f2289')
+
 
 _COVERAGE_SAMPLES = {
     '00cd2850489cf197ac4ba99786d192dd0135fdbd6922130a0ad17ecf905de2d1': {
@@ -192,5 +195,13 @@ _COVERAGE_SAMPLES = {
         '6ddd602cc282b8a72-816779ddd662cc282b8a72-8166-9ceb-898064d602cc.vbs': (
             '838bd2701eb717008085a3eab646d939350ae920b514628d2da492e35bd762f0'
         ),
+    },
+    'd0b714860765ab1c5d751a7237b1c768248754f2b593b70deccac266366f2289': {
+        'BonziBuddy_432.ico': '7e0d14c71bdb519e3ccac8203ac177e37bae2ac3e326ebfb93a8c994851b7c5f',
+        'Crack/BonziBuddy432.bat': 'c0843312c15d37c8a6d692ba3dca9eeecb7506f043a9a574ec417642a8b4945d',
+        'Crack/BonziBuddy_432.exe': '266c416bc7891cedc0b8620fd46bd3c90b05557ebe0639cfe3ccc967a0ed7cce',
+        'Setup.exe': '96cfdc41ce92ebb61f989b6680ab09b2e19b5a6ea13c0b3d2f4b9a8b433e504e',
+        'autorun.inf': '507515063ad615328f96e2c11f280148858659289a59f65864c0c846a9f4dcae',
+        'setup.bat': 'e0e8cd3a69e31dd41bdf96526d5db266b1c0f452b59f2bfb9336a5de74aece21',
     },
 }
