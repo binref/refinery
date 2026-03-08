@@ -34,4 +34,4 @@ class TestA3X(TestUnitBase):
             self.assertEqual(len(value), 1)
             out[key], = value
         self.assertSetEqual(set(out), {'unicode-script.au3'})
-        self.assertContains(out['unicode-script.au3'], '''new ActiveXObject('WScript.Shell').Run'''.encode('utf-16')[2:])
+        self.assertContains(out['unicode-script.au3'], B"new ActiveXObject('WScript.Shell').Run")
