@@ -41,8 +41,9 @@ class RarMissingPassword(RarException):
     """
     Raised when a password is required but not provided.
     """
-    def __init__(self, name: str):
+    def __init__(self, name: str | None = None):
         super().__init__('Password required for extraction.')
+        self.name = name
 
 
 class RarInvalidPassword(RarException):
