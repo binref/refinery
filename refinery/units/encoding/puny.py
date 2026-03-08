@@ -4,7 +4,7 @@ from refinery.lib.types import Param
 from refinery.units import Arg, Unit
 
 
-class punycode(Unit):
+class puny(Unit):
     """
     Punycode encoding and decoding as defined in RFC 3492, commonly used for Internationalized
     Domain Names in Applications (IDNA, RFC 5891). Punycode represents Unicode characters using
@@ -23,8 +23,8 @@ class punycode(Unit):
 
     def process(self, data: bytearray):
         codec = 'punycode' if self.args.raw else 'idna'
-        return data.decode(codec).encode('utf-8')
+        return data.decode(codec).encode('latin1')
 
     def reverse(self, data: bytearray):
         codec = 'punycode' if self.args.raw else 'idna'
-        return data.decode('utf-8').encode(codec)
+        return data.decode('latin1').encode(codec)
