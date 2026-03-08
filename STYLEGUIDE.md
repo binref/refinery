@@ -22,6 +22,22 @@ First and foremost, all code should pass [flake8], with the following tests disa
 
 ## Rules and Paradigms
 
+### Type Hints
+
+The refinery code base uses modern type hints, i.e.:
+- `int | None` instead of `Optional[int]`,
+- `int | bool` instead of `Union[int, bool]`,
+- `list[bool]` instead of `List[bool]`.
+
+To facilitate this and ensure backwards compatibility with Python 3.8, we prefix all code with
+```
+from __future__ import annotations
+```
+In rare cases where a modern type hint would have to be resolved at runtime however,
+ it is permissible to import from `typing` and define types compatible with Python 3.8.
+On the other hand, this is very often avoidable by making such definitions only when `TYPE_CHECKING` is true,
+ since development happens using a modern Python environment.
+
 ### Comments
 
 Comments should be avoided wherever it is possible and used only when important information about the code cannot be communicated otherwise.
