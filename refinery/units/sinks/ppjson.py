@@ -11,6 +11,12 @@ class ppjson(JSONTableUnit):
     Expects JSON input data and outputs it in a neatly formatted manner.
     If the indentation is set to zero, the output is minified.
     """
+    @classmethod
+    def handles(cls, data) -> bool | None:
+        from refinery.lib.id import is_likely_json
+        if is_likely_json(data):
+            return True
+
     _TRAILING_COMMA = re.compile(BR',\s*(}|])')
 
     def json(self, data):

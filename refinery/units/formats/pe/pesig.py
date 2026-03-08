@@ -10,6 +10,12 @@ class pesig(Unit):
     Extracts the contents of the IMAGE_DIRECTORY_ENTRY_SECURITY entry of a PE file,
     i.e. the digital signatures in DER format.
     """
+    @classmethod
+    def handles(cls, data) -> bool | None:
+        from refinery.lib.id import is_likely_pe
+        if is_likely_pe(data):
+            return True
+
     def process(self, data: bytearray):
         from refinery.lib import lief
         view = memoryview(data)

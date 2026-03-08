@@ -9,6 +9,12 @@ class vsect(PathExtractorUnit):
     """
     Extract sections/segments from PE, ELF, and MachO executables.
     """
+    @classmethod
+    def handles(cls, data) -> bool | None:
+        from refinery.lib.id import get_executable_type
+        if get_executable_type(data) is not None:
+            return True
+
     def __init__(
         self, *paths,
         meta: Param[bool, Arg.Switch('-m', help=(

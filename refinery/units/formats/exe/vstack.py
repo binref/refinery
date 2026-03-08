@@ -398,6 +398,12 @@ class vstack(EmulatingUnit):
 
     In this pipeline, the eax register is set to `0x2000` before emulation begins.
     """
+    @classmethod
+    def handles(cls, data) -> bool | None:
+        from refinery.lib.id import get_executable_type
+        if get_executable_type(data) is not None:
+            return True
+
     def __init__(
         self,
         *address: Param[str, Arg.String(metavar='a[:end|::size]',

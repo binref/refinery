@@ -15,6 +15,10 @@ class vbapc(Unit):
     use VBA code stomping, i.e. the embedded macro source code is stomped and does not represent
     the p-code functionality that the document will actually execute.
     """
+    @classmethod
+    def handles(cls, data) -> bool:
+        return data[:4] == B'\xD0\xCF\x11\xE0'
+
     def __init__(self, raw: Param[bool, Arg.Switch('-r', help='Return disassembled p-code, do not try to decompile.')] = False):
         super().__init__(raw=raw)
 

@@ -19,6 +19,12 @@ class vmemref(Unit):
     section and file offset for the reference. It then returns all data from that section starting
     at the given offset.
     """
+    @classmethod
+    def handles(cls, data) -> bool | None:
+        from refinery.lib.id import get_executable_type
+        if get_executable_type(data) is not None:
+            return True
+
     def _memory_references(
         self,
         exe: Executable,

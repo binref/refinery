@@ -13,6 +13,11 @@ class dnds(JSONEncoderUnit):
     "BinaryFormatter". The output is a representation of the deserialized data in JSON format.
     """
 
+    @classmethod
+    def handles(cls, data) -> bool | None:
+        if len(data) >= 17 and data[0] == 0 and data[5:9] == b'\xFF\xFF\xFF\xFF':
+            return True
+
     def __init__(
         self,
         dereference: Param[bool, Arg.Switch('-r', '--keep-references', off=True,

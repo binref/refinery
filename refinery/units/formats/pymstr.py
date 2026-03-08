@@ -9,6 +9,12 @@ class pymstr(Unit):
     """
     Extract string constants from Python-Marshaled objects.
     """
+    @classmethod
+    def handles(cls, data) -> bool | None:
+        from refinery.lib.id import PycMagicPattern
+        if PycMagicPattern.fullmatch(data[:4]):
+            return True
+
     def __init__(
         self,
         buffers: Param[bool, Arg.Switch('-b', help='Dump byte strings.')] = False,

@@ -33,6 +33,11 @@ class dnopc(DotnetDisassemblerUnit):
     is useful for programmatic disassembly, while the `refinery.dnasm` unit outputs a human-readable
     representation.
     """
+    @classmethod
+    def handles(cls, data) -> bool | None:
+        from refinery.lib.id import is_likely_pe_dotnet
+        if is_likely_pe_dotnet(data):
+            return True
 
     def __init__(
         self,

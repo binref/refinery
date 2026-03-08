@@ -17,6 +17,12 @@ class pym(Unit):
     older Python version, you can use the `refinery.pyc` unit to then decompile the code, but
     for more recent versions a separate Python decompiler will be required.
     """
+    @classmethod
+    def handles(cls, data) -> bool | None:
+        from refinery.lib.id import PycMagicPattern
+        if PycMagicPattern.fullmatch(data[:4]):
+            return True
+
     def __init__(
         self,
         version: Param[str | None, Arg.String('-V', metavar='V',

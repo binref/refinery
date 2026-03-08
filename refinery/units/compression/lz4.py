@@ -23,6 +23,11 @@ class lz4(Unit):
     LZ4 block decompression. See also:
     https://github.com/lz4/lz4/blob/master/doc/lz4_Block_format.md#compressed-block-format
     """
+    @classmethod
+    def handles(cls, data) -> bool | None:
+        if data[:4] == B'\x04\x22\x4D\x18':
+            return True
+
     def _read_block(self, reader: LZ4Reader, output: io.BytesIO, ubound=None):
         entry = reader.tell()
         lastend = 0

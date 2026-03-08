@@ -21,6 +21,12 @@ class stego(Unit):
     the input image is grayscale, the color channels are ignored. Colored images are converted to
     RGBA mode.
     """
+    @classmethod
+    def handles(cls, data) -> bool | None:
+        from refinery.lib.id import get_image_format
+        if get_image_format(data) is not None:
+            return True
+
     def __init__(
         self,
         split: Param[bool, Arg.Switch('-m', help='Emit the individual rows or columns as separate outputs.')] = False,

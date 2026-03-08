@@ -10,6 +10,12 @@ class pecdb(Unit):
     set, this DLL when loaded into memory will usually be loaded at its header-defined base address,
     which can make debugging easier.
     """
+    @classmethod
+    def handles(cls, data) -> bool | None:
+        from refinery.lib.id import is_likely_pe
+        if is_likely_pe(data):
+            return True
+
     def process(self, data: bytearray):
         from refinery.lib.shared.pefile import pefile
         pe = pefile.PE(data=data, fast_load=True)

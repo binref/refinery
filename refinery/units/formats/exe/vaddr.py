@@ -13,6 +13,11 @@ class vaddr(Unit):
     would like to retain the original value, it is recommended to use the `refinery.put` unit first to create
     a copy of an already existing variable, and then convert the copy.
     """
+    @classmethod
+    def handles(cls, data) -> bool | None:
+        from refinery.lib.id import get_executable_type
+        if get_executable_type(data) is not None:
+            return True
 
     def __init__(
         self, *name: Param[str, Arg.String(help='The name of a metadata variable holding an integer.')],

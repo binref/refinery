@@ -8,6 +8,11 @@ class rtfc(Unit):
     Implements the RTF compression format. This compression algorithm is used, for example, to
     compress RTF data in Outlook messages.
     """
+    @classmethod
+    def handles(cls, data) -> bool | None:
+        if len(data) >= 12 and data[8:12] == b'LZFu':
+            return True
+
     @Unit.Requires('compressed_rtf', ['formats', 'office', 'default', 'extended'])
     def _rtfc():
         import compressed_rtf

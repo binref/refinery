@@ -12,6 +12,10 @@ class blz(Unit):
     BriefLZ compression and decompression. The compression algorithm uses a pure Python suffix tree
     implementation: It requires a lot of time & memory.
     """
+    @classmethod
+    def handles(cls, data) -> bool:
+        return data[:4] == B'\x62\x6C\x7A\x1A'
+
     def _begin(self, data):
         self._src = StructReader(memoryview(data))
         self._dst = MemoryFile(bytearray())

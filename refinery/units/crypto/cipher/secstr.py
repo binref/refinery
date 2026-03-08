@@ -16,6 +16,15 @@ class secstr(Unit):
     `ConvertFrom-SecureString` and `ConvertTo-SecureString`.
     """
 
+    @classmethod
+    def handles(cls, data) -> bool | None:
+        try:
+            raw = base64.b64decode(data[:64])
+        except Exception:
+            return None
+        if raw[:24] == cls._MAGIC:
+            return True
+
     # This is a magic header value used for PowerShell secure strings.
     _MAGIC = bytes((
         0xEF, 0xAE, 0x3D, 0xD9, 0xDD, 0x75, 0xD7, 0xAE, 0xF8, 0xDD, 0xFD, 0x38,

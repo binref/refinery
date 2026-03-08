@@ -30,6 +30,11 @@ class vsnip(Unit):
     """
     Extract data from PE, ELF, and MachO files based on virtual offsets.
     """
+    @classmethod
+    def handles(cls, data) -> bool | None:
+        from refinery.lib.id import get_executable_type
+        if get_executable_type(data) is not None:
+            return True
 
     def __init__(
         self, *addresses: Param[slice, Arg.Bounds(metavar='start:count:align', help=(

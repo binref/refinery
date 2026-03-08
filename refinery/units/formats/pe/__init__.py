@@ -92,3 +92,9 @@ class OverlayUnit(Unit, abstract=True):
             certificate=self.args.certificate,
             memdump=self.args.memdump
         )
+
+    @classmethod
+    def handles(cls, data) -> bool | None:
+        from refinery.lib.id import is_likely_pe
+        if is_likely_pe(data):
+            return True

@@ -67,6 +67,12 @@ class pcap(Unit):
     destination. When the `--merge` parameter is specified, the unit instead collects all bytes going forward
     and backwards, respectively, and emitting these as two chunks, for each TCP conversation that took place.
     """
+    _PCAP_MAGICS = {B'\xD4\xC3\xB2\xA1', B'\xA1\xB2\xC3\xD4', B'\x4D\x3C\xB2\xA1', B'\xA1\xB2\x3C\x4D'}
+
+    @classmethod
+    def handles(cls, data) -> bool | None:
+        if data[:4] in cls._PCAP_MAGICS:
+            return True
 
     def __init__(
         self,

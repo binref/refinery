@@ -10,6 +10,9 @@ class evtx(Unit):
     Extracts data from Windows Event Log files (EVTX). Each extracted log entry is returned as a single
     output chunk in XML format.
     """
+    @classmethod
+    def handles(cls, data) -> bool:
+        return data[:7] == B'ElfFile'
 
     def __init__(self, raw: Param[bool, Arg.Switch('-r', help='Extract raw event data rather than XML.')] = False):
         super().__init__(raw=raw)

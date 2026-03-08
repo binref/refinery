@@ -19,6 +19,12 @@ class docmeta(JSONTableUnit):
     """
     Extract metadata from Word Documents such as custom document properties.
     """
+    @classmethod
+    def handles(cls, data) -> bool | None:
+        from refinery.lib.id import is_likely_doc
+        if is_likely_doc(data):
+            return True
+
     def json(self, data: bytearray):
         def interpret(value: str | dict):
             if isinstance(value, dict):

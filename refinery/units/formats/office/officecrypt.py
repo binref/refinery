@@ -10,6 +10,11 @@ class officecrypt(Unit):
     A simple proxy for the `msoffcrypto` package to decrypt encrypted office documents. This can
     include Word, Excel, PowerPoint, and Access documents.
     """
+    @classmethod
+    def handles(cls, data) -> bool | None:
+        from refinery.lib.id import Fmt, get_microsoft_format
+        if get_microsoft_format(data) == Fmt.OFFICECRYPT:
+            return True
 
     def __init__(self, password: Param[buf, Arg.Binary(help=(
         'The document password. By default, the Excel default password "{default}" is used.'

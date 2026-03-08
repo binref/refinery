@@ -12,6 +12,10 @@ class sqlite(Unit):
     Extracts data from SQLite3 databases. Each row is returned as a single output chunk in JSON
     format. If no query is provided, the unit will extract all table metadata from the database.
     """
+    @classmethod
+    def handles(cls, data) -> bool:
+        return data[:16] == B'SQLite format 3\0'
+
     def __init__(
         self,
         query: Param[

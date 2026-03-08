@@ -46,6 +46,11 @@ class pcap_http(Unit):
     """
     Extracts HTTP payloads from packet capture (PCAP) files.
     """
+    @classmethod
+    def handles(cls, data) -> bool | None:
+        from refinery.units.formats.pcap import pcap
+        return pcap.handles(data)
+
     def process(self, data):
         http_parser = httpresponse()
         requests: list[_HTTP_Request] = []

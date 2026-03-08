@@ -10,6 +10,13 @@ class xlmdeobf(Unit):
     """
     Wrapper around XLMMacroDeobfuscator to decode obfuscated Excel v4.0 (XLM) macros.
     """
+    @classmethod
+    def handles(cls, data) -> bool | None:
+        from refinery.lib.id import Fmt, get_microsoft_format, get_office_xml_type
+        if get_microsoft_format(data) == Fmt.XLS:
+            return True
+        if get_office_xml_type(data) == Fmt.XLSX:
+            return True
 
     def __init__(
         self,

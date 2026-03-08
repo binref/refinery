@@ -19,6 +19,11 @@ class doctxt(Unit):
     """
     Extracts the text body from Word documents.
     """
+    @classmethod
+    def handles(cls, data) -> bool | None:
+        from refinery.lib.id import is_likely_doc
+        if is_likely_doc(data):
+            return True
 
     @Unit.Requires('olefile', ['formats', 'office', 'extended'])
     def _olefile():
