@@ -40,11 +40,25 @@ def rotl64(x: int, c: int):
     return ((x << c) | (x >> (0x40 - c))) & 0xFFFFFFFFFFFFFFFF
 
 
+def rotl48(x: int, c: int):
+    """
+    Rotate the 48-bit integer `x` by `c` positions to the left.
+    """
+    return ((x << c) | (x >> (0x30 - c))) & 0xFFFFFFFFFFFF
+
+
 def rotl32(x: int, c: int):
     """
     Rotate the 32-bit integer `x` by `c` positions to the left.
     """
     return ((x << c) | (x >> (0x20 - c))) & 0xFFFFFFFF
+
+
+def rotl24(x: int, c: int):
+    """
+    Rotate the 24-bit integer `x` by `c` positions to the left.
+    """
+    return ((x << c) | (x >> (0x18 - c))) & 0xFFFFFF
 
 
 def rotl16(x: int, c: int):
@@ -75,11 +89,25 @@ def rotr64(x: int, c: int):
     return (x << (0x40 - c) & 0xFFFFFFFFFFFFFFFF) | (x >> c)
 
 
+def rotr48(x: int, c: int):
+    """
+    Rotate the 48-bit integer `x` by `c` positions to the right.
+    """
+    return (x << (0x30 - c) & 0xFFFFFFFFFFFF) | (x >> c)
+
+
 def rotr32(x: int, c: int):
     """
     Rotate the 32-bit integer `x` by `c` positions to the right.
     """
     return (x << (0x20 - c) & 0xFFFFFFFF) | (x >> c)
+
+
+def rotr24(x: int, c: int):
+    """
+    Rotate the 24-bit integer `x` by `c` positions to the right.
+    """
+    return (x << (0x18 - c) & 0xFFFFFF) | (x >> c)
 
 
 def rotr16(x: int, c: int):
