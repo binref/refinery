@@ -7,7 +7,9 @@ This document is the style guide for all code in Binary Refinery.
 All refinery code must support **Python 3.8** and later versions.
 For example, this means that the `match` statement is currently not supported.
 
-## Flake8 Specification
+## Code Style
+
+### Flake8 Specification
 
 First and foremost, all code should pass [flake8], with the following tests disabled:
 
@@ -19,8 +21,6 @@ First and foremost, all code should pass [flake8], with the following tests disa
   - `E203` (colons should not have any space before them)
   - `E261` (at least two spaces before inline comment)
   - `W503` (line break occurred before a binary operator)
-
-## Rules and Paradigms
 
 ### Type Hints
 
@@ -111,5 +111,18 @@ data = {
 }
 ```
 This can make large dictionaries with somewhat tabular data easier to read in the code.
-  
+
+## Paradigms
+
+### Minimizing Copies
+
+All code in binary refinery aims to minimize the number of byte copy operations. To this end:
+
+- Make functions as flexible as possible when it comes to what they accept as input; 
+  allow `bytes | bytearray | memoryview` whenever possible and work on memory views whenever that is sufficient.
+- When binary buffers have to be sliced, a `memoryview` is the best choice since slicing it has no memory cost.
+- Building output should always be done in a `bytearray`, never by concatenating `bytes` objects.
+- Returning `bytearray` objects rather than `bytes` is always acceptable; the two types expose the same API.
+
+
 [flake8]: https://pypi.org/project/flake8/
