@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-
 from refinery.lib.dmg.arc import DiskImage, is_dmg
 from refinery.units.formats.archive import ArchiveUnit
 

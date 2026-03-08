@@ -7,9 +7,9 @@ from dataclasses import dataclass, field
 
 from refinery.lib.unrar.reader import BitInput
 from refinery.lib.unrar.unpack import (
-    RarUnpacker,
     LBits,
     LDecode,
+    RarUnpacker,
     SDBits,
     SDDecode,
 )

@@ -10,8 +10,8 @@ from datetime import datetime, timezone
 from enum import IntEnum
 from typing import Generator
 
-from refinery.lib.types import buf
 from refinery.lib.structures import StructReader
+from refinery.lib.types import buf
 
 _HFS_SIGNATURE_PLUS = b'H+'
 _HFS_SIGNATURE_X = b'HX'

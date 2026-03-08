@@ -10,8 +10,8 @@ from pathlib import Path
 from string import Formatter
 
 from refinery.lib.meta import metavars
-from refinery.lib.types import Param
 from refinery.lib.tools import exception_to_string
+from refinery.lib.types import Param
 from refinery.units import Arg, RefineryCriticalException, Unit
 
 

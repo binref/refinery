@@ -3,9 +3,9 @@ Pure-Python implementation of the SM3 cryptographic hash function as specified i
 """
 from __future__ import annotations
 
-from refinery.lib.crypto import rotl32
-
 import struct
+
+from refinery.lib.crypto import rotl32
 
 _IV = (
     0x7380166F,

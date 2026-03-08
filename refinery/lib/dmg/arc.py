@@ -3,8 +3,8 @@ DMG container parser: koly header, blkx tables, chunk decompression, and partiti
 """
 from __future__ import annotations
 
-import codecs
 import bz2
+import codecs
 import plistlib
 import struct
 import zlib
@@ -14,9 +14,9 @@ from datetime import datetime
 from enum import Enum
 from typing import Generator, NamedTuple
 
-from refinery.lib.types import buf
 from refinery.lib.fast.lzfse import lzfse_decompress
 from refinery.lib.structures import MemoryFile, Struct, StructReader
+from refinery.lib.types import buf
 
 
 class DiskImageFile(NamedTuple):

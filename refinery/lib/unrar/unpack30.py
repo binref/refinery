@@ -16,9 +16,9 @@ from refinery.lib.unrar.filters import (
 )
 from refinery.lib.unrar.reader import BitInput
 from refinery.lib.unrar.unpack import (
-    RarUnpacker,
     LBits,
     LDecode,
+    RarUnpacker,
     SDBits,
     SDDecode,
 )

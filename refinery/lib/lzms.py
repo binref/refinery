@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import struct as _struct
 
-from refinery.lib.types import buf
 from refinery.lib.decompression import (
     DECODE_TABLE_LENGTH_MASK,
     DECODE_TABLE_SYMBOL_SHIFT,
     make_huffman_decode_table,
 )
+from refinery.lib.types import buf
 
 LZMS_PROB_BITS                  = 6                    # noqa
 LZMS_PROB_DENOM                 = 1 << LZMS_PROB_BITS  # noqa
