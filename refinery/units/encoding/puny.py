@@ -23,8 +23,8 @@ class puny(Unit):
 
     def process(self, data: bytearray):
         codec = 'punycode' if self.args.raw else 'idna'
-        return data.decode(codec).encode('latin1')
+        return data.decode(codec).encode('utf8')
 
     def reverse(self, data: bytearray):
         codec = 'punycode' if self.args.raw else 'idna'
-        return data.decode('latin1').encode(codec)
+        return data.decode('utf8').encode(codec)
