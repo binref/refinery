@@ -79,6 +79,7 @@ MimeByExtension = {
     'xlsx'  : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     'txt'   : 'text/plain',
     'json'  : 'application/json',
+    'plist' : 'application/x-plist',
     'xml'   : 'application/xml',
     'html'  : 'text/html',
     'rtf'   : 'application/rtf',
@@ -356,6 +357,8 @@ class Fmt(Format, enum.Enum):
     CAB = (FC.Archive, 'cab')
     CPIO = (FC.Archive, 'cpio')
     ZPQ = (FC.Archive, 'zpq')
+
+    PLIST = (FC.Serialized, 'plist', 'PList', 'Apple Property List')
 
     S_JAV = (FC.Serialized, 'bin', 'Serialized/Java')
     S_DOT = (FC.Serialized, 'bin', 'Serialized/DotNet')
@@ -1206,6 +1209,8 @@ def get_serialization_format(data: buf):
     """
     Checks for known data serialization formats.
     """
+    if data[:6] == B'bplist':
+        return Fmt.PLIST
     if data[:4] == B'\xAC\xED\x00\x05':
         return Fmt.S_JAV
     if data[:17] == B'\0\01\0\0\0\xFF\xFF\xFF\xFF\x01\0\0\0\0\0\0\0':
@@ -1274,6 +1279,8 @@ def get_text_format(data: buf):
         # The following checks require a contiguous buffer for the regular expression searches.
         view = bytearray(view)
     if format := xml_or_html(view):
+        if format == Fmt.XML and buffer_contains(view[:500], BR'<!DOCTYPE plist'):
+            return Fmt.PLIST
         return format
     if is_likely_json(view):
         return Fmt.JSON
@@ -1337,4 +1344,16 @@ def is_likely_doc(data: buf):
         return True
     if get_office_xml_type(data) in (Fmt.DOCX, Fmt.ODT):
         return True
+    return False
+
+
+def is_likely_plist(data: buf):
+    """
+    Checks whether the input data is likely an Apple property list, either in binary or XML format.
+    """
+    if data[:6] == B'bplist':
+        return True
+    if view := ascii_view(data, window_size=0):
+        if xml_or_html(view) == Fmt.XML and buffer_contains(view[:500], BR'<!DOCTYPE plist'):
+            return True
     return False
