@@ -3,6 +3,7 @@ import pytest
 from ... import TestUnitBase
 
 
+@pytest.mark.cythonized
 class TestSetupFactoryUnpacker(TestUnitBase):
 
     def test_sf6(self):

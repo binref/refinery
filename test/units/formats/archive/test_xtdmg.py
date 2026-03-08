@@ -1,8 +1,11 @@
 import hashlib
 
+import pytest
+
 from ... import TestUnitBase
 
 
+@pytest.mark.cythonized
 class TestDMGExtractor(TestUnitBase):
 
     def test_real_world_01(self):

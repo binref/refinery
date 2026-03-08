@@ -1,6 +1,9 @@
+import pytest
+
 from .. import TestUnitBase
 
 
+@pytest.mark.cythonized
 class TestPKW(TestUnitBase):
 
     def test_simple_string_01(self):
