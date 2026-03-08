@@ -6,7 +6,8 @@ from refinery.units.formats import PathExtractorUnit, UnpackResult
 
 class xtchm(PathExtractorUnit, docs='{0}{p}{PathExtractorUnit}'):
     """
-    Extract files from CHM (Windows Help) files.
+    Extract files from CHM (Windows Help) files. Compiled HTML Help archives contain HTML, images,
+    and scripts used in Microsoft Help.
     """
     def unpack(self, data):
         chm = CHM.Parse(memoryview(data))

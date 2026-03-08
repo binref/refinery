@@ -12,7 +12,8 @@ from refinery.units import RefineryPartialResult, Unit
 
 class uuenc(Unit):
     """
-    Unit for uuencode.
+    Uuencode encoding and decoding. A legacy Unix-to-Unix encoding used for transferring binary data
+    over text channels, predating MIME.
     """
     def process(self, data):
         header = re.search(

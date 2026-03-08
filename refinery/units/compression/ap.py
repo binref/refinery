@@ -301,7 +301,8 @@ class decompressor(_bits_decompress):
 
 class aplib(Unit):
     """
-    APLib compression and decompression.
+    APLib compression and decompression. A lossless compression library
+    frequently used by packers and malware for executable compression.
     """
 
     def reverse(self, buf):

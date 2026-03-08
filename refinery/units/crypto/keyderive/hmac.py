@@ -5,7 +5,8 @@ from refinery.units.crypto.keyderive import KeyDerivation
 
 class hmac(KeyDerivation):
     """
-    HMAC based key derivation
+    HMAC based key derivation. Computes a keyed-hash message authentication code, commonly used for
+    message integrity and key derivation in cryptographic protocols.
     """
 
     def __init__(self, salt, hash='SHA1', size=None):

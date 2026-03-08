@@ -127,7 +127,8 @@ class Jpeg(Struct):
 
 class jpeg(PathExtractorUnit):
     """
-    Extract the raw segments from a JPG image.
+    Extract the raw segments from a JPG image. Parses JFIF/EXIF markers to recover embedded
+    thumbnails, metadata, and comment segments.
     """
     def unpack(self, data):
         jpg = Jpeg.Parse(data)

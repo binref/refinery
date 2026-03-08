@@ -10,7 +10,8 @@ from refinery.units import Arg, Unit
 
 class imgto(Unit):
     """
-    Convert an image to a given format.
+    Convert an image to a given format. Supports PNG, BMP, GIF, JPEG, and other formats handled by
+    the Pillow (PIL) imaging library.
     """
     def __init__(
         self,

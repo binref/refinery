@@ -12,7 +12,8 @@ from refinery.units import Arg, Unit
 
 class argon2(Unit):
     """
-    Implements Argon2-based key derivation.
+    Implements Argon2-based key derivation. A memory-hard password hashing and key derivation
+    function, winner of the Password Hashing Competition.
     """
     def __init__(
         self,

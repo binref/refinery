@@ -144,7 +144,8 @@ class RPA(Struct):
 
 class xtrpa(PathExtractorUnit):
     """
-    Extract files and metadata from RenPy Archives.
+    Extract files and metadata from RenPy Archives. Used to unpack game assets from visual novels
+    built with the Ren'Py engine.
     """
     def unpack(self, data):
         rpa = RPA.Parse(memoryview(data))

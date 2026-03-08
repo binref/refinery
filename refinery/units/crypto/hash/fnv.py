@@ -72,7 +72,8 @@ class FNVUnit(HashUnit, abstract=True):
 
 class fnv0(FNVUnit):
     """
-    The Fowler-Noll-Vo (FNV) hash version 0
+    The Fowler-Noll-Vo (FNV) hash version 0. A fast non-cryptographic hash function used in hash
+    tables and checksums.
     """
     def _algorithm(self, data) -> bytes:
         mask, size, prime, _ = self._spec()

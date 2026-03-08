@@ -6,7 +6,8 @@ from refinery.units import Unit
 
 class jvstr(Unit):
     """
-    Extract string constants from Java class files.
+    Extract string constants from Java class files. Parses the JVM constant pool to recover string
+    literals from compiled bytecode.
     """
     def process(self, data):
         jc = JvClassFile.Parse(data)

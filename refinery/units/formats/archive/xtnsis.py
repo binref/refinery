@@ -1284,7 +1284,8 @@ class NSArchive(Struct):
 
 class xtnsis(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
     """
-    Extract files from NSIS archives.
+    Extract files from NSIS archives. Nullsoft Scriptable Install System is a Windows installer
+    framework often used for software distribution.
     """
 
     @classmethod

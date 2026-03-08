@@ -8,5 +8,6 @@ from refinery.units.crypto.cipher import StandardBlockCipherUnit
 
 class cast(StandardBlockCipherUnit, cipher=PyCryptoFactoryWrapper(CAST)):
     """
-    CAST encryption and decryption.
+    CAST encryption and decryption. A symmetric block cipher (CAST-128) with a 64-bit block size,
+    used in PGP and OpenSSL.
     """

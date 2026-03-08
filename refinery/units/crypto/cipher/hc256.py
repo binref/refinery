@@ -74,7 +74,8 @@ class HC256(Iterator[int]):
 
 class hc256(StreamCipherUnit):
     """
-    HC-256 encryption and decryption.
+    HC-256 encryption and decryption. A software-efficient stream cipher with a 256-bit key, the
+    stronger sibling of HC-128 from the eSTREAM project.
     """
     key_size = {32}
 

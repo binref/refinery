@@ -7,7 +7,8 @@ from refinery.units.formats import PathExtractorUnit, UnpackResult
 
 class xtxs(PathExtractorUnit):
     """
-    Extract data from Microsoft Access Databases.
+    Extract data from Microsoft Access Databases. Parses .mdb and .accdb files to export tables and
+    records as structured data.
     """
 
     @PathExtractorUnit.Requires('access-parser', ['formats', 'office', 'extended'])

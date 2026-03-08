@@ -70,7 +70,8 @@ class ISSReader(StructReader[bytearray]):
 
 class xtiss(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
     """
-    Extracts files from Install Shield Setup files.
+    Extracts files from Install Shield Setup (ISS) files. A Windows installer format used for
+    commercial software distribution.
     """
     def unpack(self, data: bytearray):
         offset = max(data.rfind(magic) for magic in ISSReader.MAGIC)

@@ -6,7 +6,8 @@ from refinery.units import Unit
 
 class szdd(Unit):
     """
-    Extract files from SZDD archives.
+    Extract files from SZDD archives. A legacy Microsoft compression format used by early Windows
+    setup programs and the compress.exe utility.
     """
     def process(self, data):
         with StructReader(data) as archive:

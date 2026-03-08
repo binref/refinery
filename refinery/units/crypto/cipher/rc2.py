@@ -10,7 +10,8 @@ from refinery.units.crypto.cipher import CipherInterface, StandardBlockCipherUni
 
 class rc2(StandardBlockCipherUnit, cipher=PyCryptoFactoryWrapper(ARC2)):
     """
-    RC2 encryption and decryption.
+    RC2 encryption and decryption. A variable-key-size symmetric block cipher with a 64-bit block,
+    formerly used in S/MIME email encryption.
     """
 
     def __init__(

@@ -69,7 +69,7 @@ class TEAWithRounds(TEABase):
 
 class TEA(TEAWithRounds):
     """
-    The TEA cipher.
+    TEA encryption and decryption.
     """
     def tea_encrypt(self, key: Sequence[int], block: Sequence[int]):
         k0, k1, k2, k3 = key

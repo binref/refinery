@@ -10,7 +10,8 @@ from refinery.units.crypto.hash import HashUnit
 
 class ntlm(HashUnit):
     """
-    Returns the Windows NTLM hash of the input.
+    Returns the Windows NTLM hash of the input. An MD4-based password hash used in Windows
+    authentication and Active Directory credential storage.
     """
     def _algorithm(self, data) -> bytes:
         from Cryptodome.Hash import MD4

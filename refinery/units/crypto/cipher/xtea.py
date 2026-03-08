@@ -7,7 +7,7 @@ from refinery.units.crypto.cipher.tea import BlockCipherFactory, TEAUnit, TEAWit
 
 class XTEA(TEAWithRounds):
     """
-    The XTEA cipher.
+    XTEA encryption and decryption.
     """
     def tea_encrypt(self, key: Sequence[int], block: Sequence[int]) -> tuple[int, int]:
         carry = 0

@@ -89,7 +89,8 @@ class RabbitCipher:
 
 class rabbit(StreamCipherUnit):
     """
-    RABBIT encryption and decryption.
+    RABBIT encryption and decryption. A high-speed stream cipher with a 128-bit key, selected as an
+    eSTREAM portfolio cipher for software.
     """
     key_size = {16}
 

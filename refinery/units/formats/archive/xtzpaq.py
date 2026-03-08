@@ -1220,7 +1220,8 @@ class Decompressor:
 
 class xtzpaq(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
     """
-    Extract files from a ZPAQ archive.
+    Extract files from a ZPAQ archive. A journaling archiver with deduplication and very high
+    compression ratios for backups.
     """
 
     _MAGIC = B'7kSt\xA01\x83\xD3\x8C\xB2\x28\xB0\xD3zPQ'

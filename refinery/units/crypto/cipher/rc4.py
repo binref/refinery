@@ -11,7 +11,8 @@ ARC4.key_size = range(1, 257)
 
 class rc4(StandardCipherUnit, cipher=PyCryptoFactoryWrapper(ARC4)):
     """
-    RC4 encryption and decryption.
+    RC4 encryption and decryption. A widely used stream cipher with variable key length, common in
+    malware, legacy TLS/SSL, and WEP/WPA.
     """
     def __init__(
         self, key,

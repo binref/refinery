@@ -8,5 +8,6 @@ from refinery.units.crypto.cipher import StandardBlockCipherUnit
 
 class des3(StandardBlockCipherUnit, cipher=PyCryptoFactoryWrapper(DES3)):
     """
-    3-DES encryption and decryption.
+    3-DES (Triple DES) encryption and decryption. A symmetric block cipher that applies DES three
+    times with 112 or 168-bit keys, used in legacy financial and payment systems.
     """

@@ -4,7 +4,10 @@ from refinery.units.crypto.keyderive import Arg, KeyDerivation, multidecode
 
 
 class pbkdf1(KeyDerivation):
-    """PBKDF1 Key derivation"""
+    """
+    PBKDF1 key derivation as specified in RFC 2898. A password-based key derivation function using
+    iterated hashing, predecessor to PBKDF2.
+    """
 
     @Arg('salt', help='Salt for the derivation; default are 8 null bytes.')
     def __init__(self, size, salt=bytes(8), iter=1000, hash='SHA1'):

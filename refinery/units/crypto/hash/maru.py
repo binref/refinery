@@ -7,7 +7,8 @@ from refinery.units.crypto.hash import Arg, HashUnit
 
 class maru(HashUnit):
     """
-    Returns the 64bit maru hash of the input data.
+    Returns the 64bit maru hash of the input data. A custom hash algorithm used for API hashing in
+    position-independent shellcode.
     """
     def __init__(
         self,

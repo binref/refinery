@@ -17,7 +17,8 @@ from refinery.units.formats.archive.xtzip import xtzip
 
 class doctxt(Unit):
     """
-    Extracts the text body from Word documents.
+    Extracts the text body from Word documents. Handles both legacy .doc (OLE) and modern .docx
+    (OOXML) Microsoft Word file formats.
     """
     @classmethod
     def handles(cls, data) -> bool | None:

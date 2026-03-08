@@ -5,7 +5,8 @@ from refinery.units import Unit
 
 class escvb(Unit):
     """
-    Escapes and unescapes Visual Basic strings.
+    Escapes and unescapes Visual Basic strings. Handles doubled-quote escaping used in VBA, VBS, and
+    VB.NET string literals.
     """
     def process(self, data):
         if data[:1] == B'"' and data[-1:] == B'"':

@@ -18,7 +18,8 @@ _LARGER_ALPHABETS = {
 
 class base(Unit):
     """
-    Encodes and decodes integers in arbitrary base.
+    Encodes and decodes integers in arbitrary base. A generic binary-to-text encoding using a
+    user-defined alphabet of any size.
     """
     def __init__(
         self,

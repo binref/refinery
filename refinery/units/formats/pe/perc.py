@@ -73,7 +73,7 @@ def _mktbl(ids: list[tuple[int, int, int]]) -> dict[int, dict[int, int]]:
 
 class perc(PathExtractorUnit):
     """
-    Extract PE file resources.
+    Extract PE file resources, commonly stored in the .rsrc section.
     """
     def __init__(
         self, *paths,

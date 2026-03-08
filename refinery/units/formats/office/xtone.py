@@ -9,7 +9,8 @@ from refinery.units.formats import PathExtractorUnit, UnpackResult
 
 class xtone(PathExtractorUnit):
     """
-    Extract embedded files from OneNote documents.
+    Extract embedded files from Microsoft OneNote documents. Recovers file attachments from .one
+    notebooks, a common malware delivery vector.
     """
     @PathExtractorUnit.Requires('pyonenote', ['formats', 'office', 'extended'])
     def _pyOneNote():

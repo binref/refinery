@@ -10,7 +10,8 @@ from refinery.units.formats import Arg, PathExtractorUnit, UnpackResult
 
 class dnmr(PathExtractorUnit):
     """
-    Extracts subfiles from .NET managed resources.
+    Extracts subfiles from .NET managed resources. Parses serialized
+    ResourceManager streams embedded in .NET assemblies.
     """
     def __init__(
         self, *paths, list=False, join_path=False, drop_path=False, exact=False, fuzzy=0, regex=False, path=b'name',

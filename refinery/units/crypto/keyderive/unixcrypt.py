@@ -333,7 +333,8 @@ class UnixCrypt:
 
 class ucrypt(KeyDerivation):
     """
-    Implements the classic Unix crypt algorithm.
+    Implements the classic Unix crypt algorithm. A DES-based password hashing scheme used in
+    traditional Unix /etc/passwd files.
     """
     def __init__(
         self,

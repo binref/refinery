@@ -34,7 +34,8 @@ class CPIOEntry(Struct):
 
 class xtcpio(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
     """
-    Extract files from a CPIO archive.
+    Extract files from a CPIO archive. A Unix archive format used in RPM packages, Linux initramfs
+    images, and firmware updates.
     """
     def unpack(self, data):
         def cpio():
