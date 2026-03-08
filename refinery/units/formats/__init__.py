@@ -190,8 +190,6 @@ class PathExtractorUnit(Unit, abstract=True):
                 else:
                     return t
             paths = [check_pattern(p) for p in paths]
-        for path in paths:
-            self.log_debug('path:', path)
         return [
             PathPattern(
                 path,
