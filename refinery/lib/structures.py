@@ -138,7 +138,7 @@ class MemoryFileMethods(Generic[T, B]):
     # )
 
     _data: T
-    _name: str
+    _name: str | None
 
     _output: type[B]
     _cursor: int
@@ -196,10 +196,12 @@ class MemoryFileMethods(Generic[T, B]):
 
     @property
     def name(self):
-        return self._name
+        if (n := self._name) is not None:
+            return n
+        raise AttributeError
 
     @name.setter
-    def name(self, name: str):
+    def name(self, name: str | None):
         self._name = name
 
     @property

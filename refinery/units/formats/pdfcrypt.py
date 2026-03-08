@@ -38,11 +38,13 @@ class pdfcrypt(Unit):
 
     def process(self, data):
         with self._ingest(data) as pdf, MemoryFile() as out:
+            out.name = None
             pdf.save(out, encryption=self._mupdf.mupdf.PDF_ENCRYPT_NONE)
             return out.getvalue()
 
     def reverse(self, data):
         with self._ingest(data) as pdf, MemoryFile() as out:
+            out.name = None
             upwd = self.args.password
             opwd = upwd if not self.args.user else None
             pdf.save(out, encryption=self._mupdf.mupdf.PDF_ENCRYPT_AES_256, user_pw=upwd, owner_pw=opwd)
