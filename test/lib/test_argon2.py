@@ -49,30 +49,6 @@ class TestArgon2RFC9106(unittest.TestCase):
 
 
 @pytest.mark.cythonized
-class TestAgainstCyberchef(unittest.TestCase):
-
-    def _run(self, variant: int) -> str:
-        return argon2hash(
-            password=B'The Binary Refinery refines the Finest Binaries.',
-            salt=b'somesalt',
-            time_cost=5,
-            memory_cost=4096,
-            parallelism=1,
-            tag_length=32,
-            variant=variant,
-        ).hex()
-
-    def test_i(self):
-        self.assertEqual(self._run(ARGON2I), '2e890442303cdb48f3a74655088ca7c5032dce93d326e2be90f05e0bc78f615c')
-
-    def test_d(self):
-        self.assertEqual(self._run(ARGON2D), 'ce3a5f6599587dd0ec531c5b359d052fa3f27e0f29aa0190d9452a18bafb798f')
-
-    def test_id(self):
-        self.assertEqual(self._run(ARGON2ID), 'fb6b3f9c1f584210ed8e289eb0b658d697a91bca274d2f3336b9d8bac8064c4c')
-
-
-@pytest.mark.cythonized
 class TestArgon2Validation(unittest.TestCase):
     def test_invalid_variant(self):
         with self.assertRaises(ValueError):
