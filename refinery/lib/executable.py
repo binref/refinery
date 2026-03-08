@@ -33,6 +33,7 @@ if TYPE_CHECKING:
     from lief.MachO import Binary as MachOBinary
     from lief.MachO import FatBinary as MachOFatBinary
     from lief.PE import Binary as PEBinary
+    from smda.common import SmdaReport
 
     AnyLIEF = Union[
         MachOBinary,
@@ -254,12 +255,23 @@ class Symbol(NamedTuple):
             return F'sym_{self.address:08X}'
 
 
-class Sub(NamedTuple):
-    chunks: list[Range]
+class Instruction(NamedTuple):
+    address: int
+    data: bytes
+    mnemonic: str
+    immediates: tuple[int, ...]
 
-    @property
-    def address(self):
-        return self.chunks[0].lower
+
+class BasicBlock(NamedTuple):
+    location: Range
+    instructions: list[Instruction]
+
+
+class Sub(NamedTuple):
+    name: str
+    address: int
+    blocks: list[BasicBlock]
+    chunks: list[Range]
 
 
 class Segment(NamedTuple):
@@ -310,6 +322,7 @@ class Executable(ABC):
     _data: buf
     _head: AnyLIEF | None
     _base: int | None
+    _tree: SmdaReport | None
 
     blob: ClassVar[bool] = False
 
@@ -333,28 +346,63 @@ class Executable(ABC):
         self._data = data
         self._head = head
         self._base = base
+        self._tree = None
 
     def subroutines(self) -> Generator[Sub, None, None]:
         from refinery.lib.intervals import IntIntervalUnion
-        from refinery.lib.shared.smda import smda
-        from refinery.lib.tools import NoLogging
-        with NoLogging():
-            cfg = smda.Disassembler.SmdaConfig()
-            setattr(cfg, 'CALCULATE_SCC', False)
-            setattr(cfg, 'CALCULATE_HASHING', False)
-            setattr(cfg, 'CALCULATE_NESTING', False)
-            setattr(cfg, 'TIMEOUT', 600)
-            dsm = smda.Disassembler.Disassembler(cfg)
-            if not isinstance((_input := self._data), bytes):
-                _input = bytes(_input)
-            graph = dsm.disassembleUnmappedBuffer(_input)
-        for fn in graph.getFunctions():
-            blocks = IntIntervalUnion()
+        if (tree := self._tree) is None:
+            from refinery.lib.shared.smda import smda
+            from refinery.lib.tools import NoLogging
+            with NoLogging():
+                cfg = smda.Disassembler.SmdaConfig()
+                setattr(cfg, 'CALCULATE_SCC', False)
+                setattr(cfg, 'CALCULATE_HASHING', False)
+                setattr(cfg, 'CALCULATE_NESTING', False)
+                setattr(cfg, 'TIMEOUT', 600)
+                dsm = smda.Disassembler.Disassembler(cfg)
+                if not isinstance((_input := self._data), bytes):
+                    _input = bytes(_input)
+                self._tree = tree = dsm.disassembleUnmappedBuffer(_input)
+        for fn in tree.getFunctions():
+            chunks = IntIntervalUnion()
+            blocks: list[BasicBlock] = []
             for block in fn.getBlocks():
+                instructions: list[Instruction] = []
+                length = 0
                 assert isinstance(block.offset, int)
                 assert isinstance(block.length, int)
-                blocks.addi(block.offset, block.length)
-            yield Sub([Range(start, start + size) for start, size in blocks])
+                for si in block.getInstructions():
+                    assert isinstance(si.offset, int)
+                    assert isinstance(si.mnemonic, str)
+                    detailed = si.getDetailed()
+                    data: bytes = detailed.bytes
+                    immediates = []
+                    for op in detailed.operands:
+                        if op.type == 2:
+                            immediates.append(op.imm)
+                        elif op.type == 3:
+                            value = op.mem.disp
+                            if detailed.reg_name(op.mem.base) in ('rip', 'eip'):
+                                value += detailed.address + detailed.size
+                            immediates.append(value)
+                    length += len(data)
+                    instructions.append(Instruction(
+                        si.offset,
+                        data,
+                        si.mnemonic,
+                        tuple(immediates),
+                    ))
+                start = block.offset
+                end = start + length
+                chunks.addi(start, length)
+                blocks.append(BasicBlock(Range(start, end), instructions))
+            assert isinstance(fn.offset, int)
+            yield Sub(
+                fn.function_name,
+                fn.offset,
+                blocks,
+                [Range(start, start + size) for start, size in chunks]
+            )
 
     @property
     def head(self):
