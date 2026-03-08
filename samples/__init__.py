@@ -11,19 +11,15 @@ import urllib.error
 import urllib.request
 
 from refinery.units.crypto.cipher.aes import aes
+from refinery.lib.environment import environment
 
 
-_sample_path = pathlib.Path(__file__).absolute()
-while 'refinery' in _sample_path.parts:
-    p = _sample_path.parent
-    if p == _sample_path:
-        _sample_path = None
-        break
+if not (_sample_path := environment.storepath.value) or not _sample_path.is_dir():
+    for _ancestor in pathlib.Path(__file__).absolute().parents:
+        _sample_path = _ancestor / 'refinery-test-data'
+        if _sample_path.is_dir() and (_sample_path / '_encode.bat').exists():
+            break
     else:
-        _sample_path = p
-if _sample_path:
-    _sample_path /= 'refinery-test-data'
-    if not _sample_path.exists() or not (_sample_path / '_encode.bat').exists():
         _sample_path = None
 
 

@@ -4,11 +4,13 @@ variables. This module is also host to the logging configuration.
 """
 from __future__ import annotations
 
+import abc
 import logging
 import os
 
 from enum import IntEnum
-from typing import Generic, Optional, TypeVar
+from pathlib import Path
+from typing import Generic, TypeVar
 
 _T = TypeVar('_T')
 
@@ -105,7 +107,7 @@ def logger(name: str) -> logging.Logger:
     return logger
 
 
-class EnvironmentVariableSetting(Generic[_T]):
+class EnvironmentVariableSetting(abc.ABC, Generic[_T]):
     """
     Abstraction of an environment variable based setting.
     """
@@ -113,65 +115,73 @@ class EnvironmentVariableSetting(Generic[_T]):
     value: _T | None
 
     def __init__(self, name: str):
-        self.key = F'REFINERY_{name}'
-        self.value = self.read()
+        key = F'REFINERY_{name}'
+        try:
+            value = os.environ[key]
+        except KeyError:
+            value = None
+        else:
+            value = self.read(value)
+        self.key = key
+        self.value = value
 
-    def read(self) -> _T | None:
+    @abc.abstractmethod
+    def read(self, value: str) -> _T | None:
         return None
 
 
 class EVBool(EnvironmentVariableSetting[bool]):
     """
-    Boolean setting stored in an environment variable. Except for the strings `0`, `no`, `off`,
-    and `false`, every value is interpreted as `True`. If the variable does not exist, the value
-    is interpreted as `False`.
+    Boolean setting stored in an environment variable.
     """
-    def read(self):
-        value = os.environ.get(self.key, None)
-        if value is None:
-            return False
+    def read(self, value: str):
+        if value := value.lower().strip():
+            if value.isdigit():
+                return bool(int(value))
+            elif value in {'no', 'off', 'false', 'disable', 'disabled'}:
+                return False
+            elif value in {'yes', 'on', 'true', 'enable', 'enabled', 'active'}:
+                return True
+            else:
+                return None
         else:
-            value = value.lower().strip()
-        if not value:
             return False
-        if value.isdigit():
-            return bool(int(value))
-        return value not in {'no', 'off', 'false'}
+
+
+class EVPath(EnvironmentVariableSetting[Path]):
+    """
+    A system path stored in an environment variable.
+    """
+    def read(self, value: str):
+        return Path(value)
 
 
 class EVInt(EnvironmentVariableSetting[int]):
     """
-    An integer value stored in an environment variable. The variable is interpreted as a Python
-    integer literal. A non-existant variable is interpreted as zero.
+    An integer value stored in an environment variable.
     """
-    def read(self):
+    def read(self, value: str):
         try:
-            return int(os.environ[self.key], 0)
+            return int(value, 0)
         except (KeyError, ValueError):
-            return 0
+            return None
 
 
-class EVLog(EnvironmentVariableSetting[Optional[LogLevel]]):
+class EVLog(EnvironmentVariableSetting[LogLevel]):
     """
     A log level stored in an environment variable. This can be specified as either the name of the
     log level or its integer value.
     """
-    def read(self):
+    def read(self, value: str):
+        if value.isdigit():
+            return LogLevel.FromVerbosity(int(value))
         try:
-            loglevel = os.environ[self.key]
-        except KeyError:
-            return None
-        if loglevel.isdigit():
-            return LogLevel.FromVerbosity(int(loglevel))
-        try:
-            loglevel = LogLevel[loglevel]
+            return LogLevel[value]
         except KeyError:
             levels = ', '.join(ll.name for ll in LogLevel)
             logger(__name__).warning(
-                F'ignoring unknown verbosity "{loglevel!r}"; pick from: {levels}')
+                F'ignoring unknown verbosity "{value!r}"; pick from: {levels}')
             return None
-        else:
-            return loglevel
 
 
 class environment:
@@ -181,6 +191,7 @@ class environment:
     verbosity = EVLog('VERBOSITY')
     term_size = EVInt('TERM_SIZE')
     colorless = EVBool('COLORLESS')
+    storepath = EVPath('STOREPATH')
     disable_size_format = EVBool('DISABLE_SIZE_FORMAT')
     silence_ps1_warning = EVBool('SILENCE_PS1_WARNING')
     disable_ps1_bandaid = EVBool('DISABLE_PS1_BANDAID')

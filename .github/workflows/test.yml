@@ -13,6 +13,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       MALSHARE_API: ${{ secrets.MALSHARE_API }}
+      REFINERY_STOREPATH: ${{ github.workspace }}/refinery-test-data
     strategy:
       fail-fast: false
       matrix:
@@ -33,6 +34,11 @@ jobs:
           fetch-depth: 0
           ref: ${{ github.event.pull_request.head.ref }}
           repository: ${{ github.event.pull_request.head.repo.full_name }}
+      - name: Checkout Test Data
+        uses: actions/checkout@v4
+        with:
+          repository: binref/refinery-test-data
+          path: refinery-test-data
       - name: Install Dependencies
         uses: ./.github/actions/setup/
         with:
@@ -84,9 +90,15 @@ jobs:
       - audit
     env:
       MALSHARE_API: ${{ secrets.MALSHARE_API }}
+      REFINERY_STOREPATH: ${{ github.workspace }}/refinery-test-data
     steps:
     - name: Checkout
       uses: actions/checkout@v4
+    - name: Checkout Test Data
+      uses: actions/checkout@v4
+      with:
+        repository: binref/refinery-test-data
+        path: refinery-test-data
     - name: Install Dependencies
       uses: ./.github/actions/setup/
       with:
