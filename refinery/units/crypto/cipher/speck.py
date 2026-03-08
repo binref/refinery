@@ -10,21 +10,29 @@ from refinery.lib.crypto import (
     CipherMode,
 )
 from refinery.lib.speck import (
-    Speck6496KeySchedule,
-    Speck64128KeySchedule,
-    Speck128128KeySchedule,
-    Speck128192KeySchedule,
-    Speck128256KeySchedule,
     speck_decrypt32,
     speck_decrypt64,
     speck_encrypt32,
     speck_encrypt64,
+    speck_key_schedule_064_096,
+    speck_key_schedule_064_128,
+    speck_key_schedule_128_128,
+    speck_key_schedule_128_192,
+    speck_key_schedule_128_256,
 )
 from refinery.lib.types import Param
 from refinery.units.crypto.cipher import (
     Arg,
     StandardBlockCipherUnit,
 )
+
+_DISPATCH = {
+    (0x08, 0x0C): speck_key_schedule_064_096,
+    (0x08, 0x10): speck_key_schedule_064_128,
+    (0x10, 0x10): speck_key_schedule_128_128,
+    (0x10, 0x18): speck_key_schedule_128_192,
+    (0x10, 0x20): speck_key_schedule_128_256,
+}
 
 
 class Speck(BlockCipher):
@@ -51,36 +59,33 @@ class Speck(BlockCipher):
         key_length = len(key)
         rounds = self._ROUND_BY_BLOCK_AND_KEY_SIZE[block_size][key_length]
         self._rounds = rounds
-        if block_size == 16:
-            if key_length == 16:
-                self._round_keys = Speck128128KeySchedule(key)
-            elif key_length == 24:
-                self._round_keys = Speck128192KeySchedule(key)
-            elif key_length == 32:
-                self._round_keys = Speck128256KeySchedule(key)
-        elif block_size == 8:
-            if key_length == 12:
-                self._round_keys = Speck6496KeySchedule(key)
-            elif key_length == 16:
-                self._round_keys = Speck64128KeySchedule(key)
+        try:
+            schedule = _DISPATCH[block_size, key_length]
+        except KeyError:
+            possible_values = ', '.join(F'{b}/{n}' for b, n in _DISPATCH)
+            raise ValueError(
+                F'Invalid block size ({block_size}) and key length ({key_length}) combination. '
+                F'Choose from the following combinations: {possible_values}.')
+        else:
+            self._round_keys = schedule(key)
 
     def __init__(self, key: BufferType, mode: CipherMode | None, block_size: int = 16):
         self.block_size = block_size
         super().__init__(key, mode)
 
-    def block_decrypt(self, block) -> BufferType:
+    def block_decrypt(self, data) -> BufferType:
         block_size = self.block_size
         if block_size == 16:
-            return speck_decrypt64(block, self._round_keys, self._rounds)
+            return speck_decrypt64(data, self._round_keys, self._rounds)
         else:
-            return speck_decrypt32(block, self._round_keys, self._rounds)
+            return speck_decrypt32(data, self._round_keys, self._rounds)
 
-    def block_encrypt(self, block) -> BufferType:
+    def block_encrypt(self, data) -> BufferType:
         block_size = self.block_size
         if block_size == 16:
-            return speck_encrypt64(block, self._round_keys, self._rounds)
+            return speck_encrypt64(data, self._round_keys, self._rounds)
         else:
-            return speck_encrypt32(block, self._round_keys, self._rounds)
+            return speck_encrypt32(data, self._round_keys, self._rounds)
 
 
 class speck(StandardBlockCipherUnit, cipher=BlockCipherFactory(Speck)):
