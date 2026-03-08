@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import codecs
 import io
 import math
 import struct
@@ -741,15 +742,22 @@ class A3xRecord(Struct):
             a3x.log_info('decompress:', self.path)
             self.data = a3x_decompress(self.data, self.encryption_type.is_current)
             self.is_compressed = False
-        if not self.is_script():
-            yield self.data
+        if self.type == A3xType.UNICODE:
+            for line in codecs.decode(self.data, 'utf16').splitlines():
+                yield line.encode(a3x.codec)
             return
-        a3x.log_info('decompiler:', self.path)
-        for indent, line in a3x_decompile(self.data):
-            yield F'{indent * 4 * " "}{line}'.encode(a3x.codec)
+        if self.type == A3xType.SCRIPT:
+            a3x.log_info('decompiler:', self.path)
+            for indent, line in a3x_decompile(self.data):
+                yield F'{indent * 4 * " "}{line}'.encode(a3x.codec)
+            return
+        yield self.data
 
     def is_script(self):
-        return self.type == A3xType.SCRIPT
+        return self.type in (
+            A3xType.SCRIPT,
+            A3xType.UNICODE,
+        )
 
     @property
     def path(self):
