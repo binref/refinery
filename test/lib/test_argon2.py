@@ -11,68 +11,69 @@ from refinery.lib.fast.argon2 import (
 
 @pytest.mark.cythonized
 class TestArgon2RFC9106(unittest.TestCase):
-    """
-    RFC 9106 test vectors with the reference parameters.
-    """
-
-    PASSWORD = bytes([0x01] * 32)
-    SALT = bytes([0x02] * 16)
-    SECRET = bytes([0x03] * 8)
-    AD = bytes([0x04] * 12)
-
-    TIME_COST = 3
-    MEMORY_COST = 32
-    PARALLELISM = 4
-    TAG_LENGTH = 32
+    # RFC 9106 test vectors with the reference parameters.
 
     def _run(self, variant: int) -> bytes:
         return argon2hash(
-            password=self.PASSWORD,
-            salt=self.SALT,
-            time_cost=self.TIME_COST,
-            memory_cost=self.MEMORY_COST,
-            parallelism=self.PARALLELISM,
-            tag_length=self.TAG_LENGTH,
+            password=(B'\01' * 32),
+            salt=(B'\02' * 16),
+            time_cost=3,
+            memory_cost=32,
+            parallelism=4,
+            tag_length=32,
             variant=variant,
-            secret=self.SECRET,
-            associated_data=self.AD,
+            secret=(B'\03' * 8),
+            associated_data=(B'\04' * 12),
         )
 
     def test_argon2d(self):
         tag = self._run(ARGON2D)
         expected = bytes.fromhex(
-            '51 2b 39 1b 6f 11 62 97'
-            '53 71 d3 09 19 73 42 94'
-            'f8 68 e3 be 39 84 f3 c1'
-            'a1 3a 4d b9 fa be 4a cb'.replace(' ', '')
-        )
+            '51 2b 39 1b 6f 11 62 97 53 71 d3 09 19 73 42 94'
+            'f8 68 e3 be 39 84 f3 c1 a1 3a 4d b9 fa be 4a cb')
         self.assertEqual(tag, expected)
 
     def test_argon2i(self):
         tag = self._run(ARGON2I)
         expected = bytes.fromhex(
-            'c8 14 d9 d1 dc 7f 37 aa'
-            '13 f0 d7 7f 24 94 bd a1'
-            'c8 de 6b 01 6d d3 88 d2'
-            '99 52 a4 c4 67 2b 6c e8'.replace(' ', '')
-        )
+            'c8 14 d9 d1 dc 7f 37 aa 13 f0 d7 7f 24 94 bd a1'
+            'c8 de 6b 01 6d d3 88 d2 99 52 a4 c4 67 2b 6c e8')
         self.assertEqual(tag, expected)
 
     def test_argon2id(self):
         tag = self._run(ARGON2ID)
         expected = bytes.fromhex(
-            '0d 64 0d f5 8d 78 76 6c'
-            '08 c0 37 a3 4a 8b 53 c9'
-            'd0 1e f0 45 2d 75 b6 5e'
-            'b5 25 20 e9 6b 01 e6 59'.replace(' ', '')
-        )
+            '0d 64 0d f5 8d 78 76 6c 08 c0 37 a3 4a 8b 53 c9'
+            'd0 1e f0 45 2d 75 b6 5e b5 25 20 e9 6b 01 e6 59')
         self.assertEqual(tag, expected)
 
 
 @pytest.mark.cythonized
-class TestArgon2Validation(unittest.TestCase):
-    """Test parameter validation."""
+class TestAgainstCyberchef(unittest.TestCase):
 
+    def _run(self, variant: int) -> str:
+        return argon2hash(
+            password=B'The Binary Refinery refines the Finest Binaries.',
+            salt=b'somesalt',
+            time_cost=5,
+            memory_cost=4096,
+            parallelism=1,
+            tag_length=32,
+            variant=variant,
+        ).hex()
+
+    def test_i(self):
+        self.assertEqual(self._run(ARGON2I), '2e890442303cdb48f3a74655088ca7c5032dce93d326e2be90f05e0bc78f615c')
+
+    def test_d(self):
+        self.assertEqual(self._run(ARGON2D), 'ce3a5f6599587dd0ec531c5b359d052fa3f27e0f29aa0190d9452a18bafb798f')
+
+    def test_id(self):
+        self.assertEqual(self._run(ARGON2ID), 'fb6b3f9c1f584210ed8e289eb0b658d697a91bca274d2f3336b9d8bac8064c4c')
+
+
+@pytest.mark.cythonized
+class TestArgon2Validation(unittest.TestCase):
     def test_invalid_variant(self):
         with self.assertRaises(ValueError):
             argon2hash(b'pass', b'salt', 1, 32, 1, 32, variant=99)
