@@ -1,6 +1,8 @@
 ignore:
   - "refinery/lib/thirdparty"
+  - "refinery/units/obfuscation"
   - "refinery/lib/annotations.py"
+
 coverage:
   status:
     project:

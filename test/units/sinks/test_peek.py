@@ -213,3 +213,26 @@ class TestPeek(TestUnitBase):
                 prefix = 's:' * requires_prefix
                 self.load_pipeline(pfmt.format(value))()
                 self.assertIn(F'test = {prefix}{value}', stderr.getvalue())
+
+    def test_brief_mode(self):
+        peek = self.load(brief=True, gray=True)
+        with errbuf() as stderr:
+            peek(TESTBUFFER_BIN)
+            output = stderr.getvalue()
+        lines = [line for line in output.strip().splitlines() if line.strip()]
+        hex_lines = [line for line in lines if any(c in line for c in '0123456789ABCDEF')]
+        self.assertGreaterEqual(len(hex_lines), 1)
+
+    def test_decode_and_escape_conflict(self):
+        with self.assertRaises(ValueError):
+            self.load(decode=1, escape=True)
+
+    def test_meta_mode(self):
+        peek = self.load(meta=1, gray=True)
+        with errbuf() as stderr:
+            peek(TESTBUFFER_BIN)
+            output = stderr.getvalue()
+        self.assertTrue(
+            'entropy' in output.lower() or 'size' in output.lower() or 'magic' in output.lower(),
+            'metadata output should contain entropy, size, or magic information'
+        )

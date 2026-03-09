@@ -32,6 +32,7 @@ class TestIDLib(TestBase):
         data = B'H\0e\0l\0l\0o\0,\0\x20\0W\0r\0l\0d\0!\0\0\0'
         enc = idlib.guess_text_encoding(data)
         self.assertIsNotNone(enc)
+        assert enc is not None
         self.assertEqual(enc.step, 2)
 
     def test_all_pyc_magics(self):
@@ -109,3 +110,101 @@ class TestIDLib(TestBase):
             '5-(mB##YpvryhhjiU0rrOG}wSFu_BN00HU^{UrbZ`C^d9vBYQl0ssI200dcD'
         ))
         self.assertEqual(idlib.get_structured_data_type(data), idlib.Fmt.UTF08)
+
+    def test_elf_detection(self):
+        data = self.download_sample('c5ba314fbf02989af9e2b5edb48626aede10f2d4569095a542ed0f2033068117')
+        result = idlib.get_structured_data_type(data)
+        self.assertLessEqual(idlib.Fmt.ELF, result)
+
+    def test_zip_detection(self):
+        data = self.download_sample('e90b970c5e5ddf821d6f9f4d7d710d6dc01d59b517e8fb39da726803dc52b5ad')
+        result = idlib.get_structured_data_type(data)
+        self.assertLessEqual(idlib.Fmt.ZIP, result)
+
+    def test_pdf_detection(self):
+        data = self.download_sample('302c0d553c9e7f2561864d79022b780a53ec0a5927e8962d883b88dde249d044')
+        result = idlib.get_structured_data_type(data)
+        self.assertEqual(result, idlib.Fmt.PDF)
+
+    def test_pe_detection(self):
+        data = self.download_sample('ff4ef0ee0915af58ea1388f72730c63c746856a64760e17e4fcdfc559a8b4555')
+        result = idlib.get_structured_data_type(data)
+        self.assertEqual(result, idlib.Fmt.PE32GUI)
+
+    def test_macho_detection(self):
+        data = self.download_sample('6c121f2b2efa6592c2c22b29218157ec9e63f385e7a1d7425857d603ddef8c59')
+        result = idlib.get_structured_data_type(data)
+        self.assertEqual(result, idlib.Fmt.MACHO64BE)
+
+    def test_structured_data_json(self):
+        data = b'{"key": "value"}'
+        result = idlib.get_structured_data_type(data)
+        self.assertEqual(result, idlib.Fmt.JSON)
+
+    def test_structured_data_xml(self):
+        data = b'<?xml version="1.0"?><root/>'
+        result = idlib.get_structured_data_type(data)
+        self.assertEqual(result, idlib.Fmt.XML)
+
+    def test_fmt_extension_values(self):
+        self.assertEqual(idlib.Fmt.PE.extension, 'exe')
+        self.assertEqual(idlib.Fmt.ELF.extension, 'elf')
+        self.assertEqual(idlib.Fmt.MACHO.extension, 'macho')
+        self.assertEqual(idlib.Fmt.PDF.extension, 'pdf')
+        self.assertEqual(idlib.Fmt.PNG.extension, 'png')
+        self.assertEqual(idlib.Fmt.ZIP.extension, 'zip')
+        self.assertEqual(idlib.Fmt.JSON.extension, 'json')
+        self.assertEqual(idlib.Fmt.HTM.extension, 'html')
+        self.assertEqual(idlib.Fmt.GZIP.extension, 'gz')
+        self.assertEqual(idlib.Fmt.PE32DLL.extension, 'dll')
+        self.assertEqual(idlib.Fmt.PE32SYS.extension, 'sys')
+
+    def test_guess_text_encoding_ascii(self):
+        data = b'Hello, World! This is a plain ASCII text string for testing purposes.'
+        enc = idlib.guess_text_encoding(data)
+        self.assertIsNotNone(enc)
+        assert enc is not None
+        self.assertEqual(enc.step, 1)
+        self.assertEqual(enc.bom, 0)
+
+    def test_guess_text_encoding_utf16_bom(self):
+        data = b'\xFF\xFE' + 'Hello World'.encode('utf-16le')
+        enc = idlib.guess_text_encoding(data)
+        self.assertIsNotNone(enc)
+        assert enc is not None
+        self.assertEqual(enc.codec, 'utf-16le')
+        self.assertEqual(enc.bom, 2)
+        self.assertEqual(enc.step, 2)
+
+    def test_guess_text_encoding_utf8_bom(self):
+        data = b'\xEF\xBB\xBF' + b'Hello World, this is a longer text that ensures the encoding detection passes the ascii ratio threshold easily.'
+        enc = idlib.guess_text_encoding(data)
+        assert enc is not None
+        self.assertEqual(enc.codec, 'utf8')
+        self.assertEqual(enc.bom, 3)
+        self.assertEqual(enc.step, 1)
+
+    def test_structured_data_html_tag(self):
+        data = b'<html><head><title>Test</title></head><body>Hello</body></html>'
+        result = idlib.get_structured_data_type(data)
+        self.assertEqual(result, idlib.Fmt.HTM)
+
+    def test_structured_data_html_doctype(self):
+        data = b'<!DOCTYPE html>\n<html><body>Test</body></html>'
+        result = idlib.get_structured_data_type(data)
+        self.assertEqual(result, idlib.Fmt.HTM)
+
+    def test_structured_data_html_body_tag(self):
+        data = b'<body>Some content here with enough text to be identified</body>'
+        result = idlib.get_structured_data_type(data)
+        self.assertEqual(result, idlib.Fmt.HTM)
+
+    def test_structured_data_registry_text(self):
+        data = b'Windows Registry Editor Version 5.00\r\n\r\n[HKEY_LOCAL_MACHINE\\SOFTWARE\\Test]\r\n'
+        result = idlib.get_structured_data_type(data)
+        self.assertEqual(result, idlib.Fmt.REG_TEXT)
+
+    def test_structured_data_registry_hive(self):
+        data = b'regf' + b'\x00' * 60
+        result = idlib.get_structured_data_type(data)
+        self.assertEqual(result, idlib.Fmt.REG_HIVE)

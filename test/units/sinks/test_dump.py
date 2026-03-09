@@ -218,6 +218,28 @@ class TestDump(TestUnitBase):
             self.assertTrue(os.path.exists(p1))
             self.assertTrue(os.path.exists(p2))
 
+    def test_dump_formatted_filename(self):
+        data = b'HELLO'
+        sha = hashlib.sha256(data).hexdigest()
+        with tempfile.TemporaryDirectory() as root:
+            path = os.path.join(root, '{sha256}.bin')
+            dump = self.load(path)
+            dump(data)
+            expected = os.path.join(root, F'{sha}.bin')
+            self.assertTrue(os.path.exists(expected))
+            with open(expected, 'rb') as f:
+                self.assertEqual(f.read(), data)
+
+    def test_dump_tee_forwards_data(self):
+        with tempfile.TemporaryDirectory() as root:
+            path = os.path.join(root, 'out.bin')
+            dump = self.load(path, tee=True)
+            result = dump(b'REFINERY')
+            self.assertEqual(bytes(result), b'REFINERY')
+            self.assertTrue(os.path.exists(path))
+            with open(path, 'rb') as f:
+                self.assertEqual(f.read(), b'REFINERY')
+
     def test_automatic_naming(self):
         archive = bytes.fromhex(
             '50 4B 03 04 14 00 00 00 00 00 DB 98 57 50 00 00'  # PK..........WP..

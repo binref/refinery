@@ -1,3 +1,9 @@
+[run]
+omit =
+    refinery/lib/thirdparty/*
+    refinery/units/obfuscation/*
+    refinery/lib/annotations.py
+
 [report]
 exclude_also =
     if TYPE_CHECKING:

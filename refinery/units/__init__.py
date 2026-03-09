@@ -433,12 +433,12 @@ class Arg(Argument):
 
     @overload
     @staticmethod
-    def AsOption(value: type[None], cls: type[_E]) -> None:
+    def AsOption(value: None, cls: type[_E]) -> None:
         ...
 
     @overload
     @staticmethod
-    def AsOption(value: str | None | _E, cls: type[_E]) -> _E:
+    def AsOption(value: int | str | bool | _E, cls: type[_E]) -> _E:
         ...
 
     @staticmethod

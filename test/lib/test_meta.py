@@ -3,6 +3,7 @@ from typing import Iterable, List
 from refinery.lib.meta import metavars
 from refinery.lib.frame import Chunk
 from refinery.lib.loader import load_pipeline as L, load_detached as U
+from refinery.lib.meta import LazyMetaOracle
 from refinery.units import Unit
 
 from .. import TestBase
@@ -88,3 +89,217 @@ class TestMeta(TestBase):
         e2 = L('emit range:0x100 | pf {entropy!r}') | str
         self.assertEqual(e1, e2)
         self.assertEqual(e1, '100.00%')
+
+    def test_metavar_size(self):
+        data = Chunk(b'Hello World')
+        meta = metavars(data)
+        self.assertEqual(meta['size'], 11)
+
+    def test_metavar_md5(self):
+        import hashlib
+        data = Chunk(b'Hello World')
+        meta = metavars(data)
+        expected = hashlib.md5(b'Hello World').hexdigest()
+        self.assertEqual(meta['md5'], expected)
+
+    def test_metavar_sha256(self):
+        import hashlib
+        data = Chunk(b'Hello World')
+        meta = metavars(data)
+        expected = hashlib.sha256(b'Hello World').hexdigest()
+        self.assertEqual(meta['sha256'], expected)
+
+    def test_metavar_crc32(self):
+        import zlib
+        data = Chunk(b'Hello World')
+        meta = metavars(data)
+        expected_crc = F'{zlib.crc32(b"Hello World") & 0xFFFFFFFF:08X}'
+        crc_value = meta['crc32']
+        if isinstance(crc_value, (bytes, bytearray)):
+            crc_value = crc_value.decode('ascii')
+        self.assertEqual(crc_value.upper(), expected_crc.upper())
+
+    def test_format_bin_basic(self):
+        data = Chunk(b'test data')
+        meta = metavars(data)
+        result = meta.format_bin('{size}', 'utf8', data)
+        self.assertEqual(result, b'9')
+
+    def test_format_str_basic(self):
+        data = Chunk(b'test data')
+        meta = metavars(data)
+        result = meta.format_str('{size}', 'utf8', data)
+        self.assertEqual(result, '9')
+
+    def test_meta_pipeline_index(self):
+        pl = L('emit FOO BAR BAZ [| pf {index} ]')
+        results = [bytes(r) for r in pl]
+        self.assertEqual(results, [b'0', b'1', b'2'])
+
+    def test_meta_custom_variable_roundtrip(self):
+        pl = L('emit DATA [| put x hello | pf {x} ]')
+        self.assertEqual(pl(), b'hello')
+
+
+class TestLazyMetaOracle(TestBase):
+
+    def test_magic_variable_size(self):
+        oracle = LazyMetaOracle(b'Hello World')
+        self.assertEqual(oracle['size'], 11)
+
+    def test_magic_variable_size_empty(self):
+        oracle = LazyMetaOracle(b'')
+        self.assertEqual(oracle['size'], 0)
+
+    def test_magic_variable_entropy(self):
+        oracle = LazyMetaOracle(bytes(range(256)))
+        ent = oracle['entropy']
+        self.assertAlmostEqual(float(ent), 1.0, places=2)
+
+    def test_magic_variable_entropy_uniform(self):
+        oracle = LazyMetaOracle(b'\x00' * 100)
+        ent = oracle['entropy']
+        self.assertAlmostEqual(float(ent), 0.0, places=4)
+
+    def test_magic_variable_md5(self):
+        import hashlib
+        data = b'test data for md5'
+        oracle = LazyMetaOracle(data)
+        expected = hashlib.md5(data).hexdigest()
+        self.assertEqual(str(oracle['md5']), expected)
+
+    def test_magic_variable_sha256(self):
+        import hashlib
+        data = b'test data for sha256'
+        oracle = LazyMetaOracle(data)
+        expected = hashlib.sha256(data).hexdigest()
+        self.assertEqual(str(oracle['sha256']), expected)
+
+    def test_magic_variable_sha1(self):
+        import hashlib
+        data = b'test data for sha1'
+        oracle = LazyMetaOracle(data)
+        expected = hashlib.sha1(data).hexdigest()
+        self.assertEqual(str(oracle['sha1']), expected)
+
+    def test_magic_variable_crc32(self):
+        import zlib
+        data = b'test data for crc32'
+        oracle = LazyMetaOracle(data)
+        expected = (zlib.crc32(data) & 0xFFFFFFFF).to_bytes(4, 'big').hex()
+        self.assertEqual(str(oracle['crc32']), expected)
+
+    def test_magic_variable_ext(self):
+        oracle = LazyMetaOracle(b'\x89PNG\r\n\x1a\n' + b'\x00' * 100)
+        ext = str(oracle['ext'])
+        self.assertIsInstance(ext, str)
+
+    def test_magic_variable_mime(self):
+        oracle = LazyMetaOracle(b'\x89PNG\r\n\x1a\n' + b'\x00' * 100)
+        mime = str(oracle['mime'])
+        self.assertIsInstance(mime, str)
+
+    def test_format_str_with_size(self):
+        data = b'ABCDE'
+        oracle = LazyMetaOracle(data)
+        result = oracle.format_str('{size}', 'utf8', data)
+        self.assertEqual(result, '5')
+
+    def test_format_str_with_repr_size(self):
+        data = b'A' * 3210
+        oracle = LazyMetaOracle(data)
+        result = oracle.format_str('{size!r}', 'utf8', data)
+        self.assertIn('kB', result)
+
+    def test_format_str_with_md5(self):
+        import hashlib
+        data = b'hello'
+        oracle = LazyMetaOracle(data)
+        result = oracle.format_str('{md5}', 'utf8', data)
+        self.assertEqual(result, hashlib.md5(data).hexdigest())
+
+    def test_format_bin_returns_bytes(self):
+        data = b'test'
+        oracle = LazyMetaOracle(data)
+        result = oracle.format_bin('{size}', 'utf8', data)
+        self.assertIsInstance(result, (bytes, bytearray, memoryview))
+        self.assertEqual(bytes(result), b'4')
+
+    def test_format_bin_hex_literal(self):
+        oracle = LazyMetaOracle(b'')
+        result = oracle.format_bin('{48454C4C4F!h}', 'utf8')
+        self.assertEqual(bytes(result), b'HELLO')
+
+    def test_format_bin_repr_entropy(self):
+        data = bytes(range(256))
+        oracle = LazyMetaOracle(data)
+        result = oracle.format_bin('{entropy!r}', 'utf8', data)
+        self.assertIn(b'%', result)
+
+    def test_chunk_update_dict(self):
+        oracle = LazyMetaOracle(b'data')
+        oracle['foo'] = 'bar'
+        oracle.update({'baz': 'qux'})
+        self.assertEqual(str(oracle['baz']), 'qux')
+
+    def test_chunk_update_oracle(self):
+        oracle1 = LazyMetaOracle(b'data1')
+        oracle1['x'] = 'hello'
+        oracle2 = LazyMetaOracle(b'data2')
+        oracle2.update(oracle1)
+        self.assertEqual(str(oracle2['x']), 'hello')
+
+    def test_chunk_get_with_default(self):
+        oracle = LazyMetaOracle(b'data')
+        result = oracle.get('nonexistent', 'default_val')
+        self.assertEqual(result, 'default_val')
+
+    def test_chunk_get_existing(self):
+        oracle = LazyMetaOracle(b'data')
+        oracle['myvar'] = 'myval'
+        result = oracle.get('myvar')
+        self.assertIsNotNone(result)
+
+    def test_chunk_items_includes_index(self):
+        oracle = LazyMetaOracle(b'data')
+        oracle.index = 7
+        items_dict = dict(oracle.items())
+        self.assertIn('index', items_dict)
+        self.assertEqual(items_dict['index'], 7)
+
+    def test_chunk_discard(self):
+        oracle = LazyMetaOracle(b'data')
+        oracle['temp'] = 'value'
+        oracle.discard('temp')
+        with self.assertRaises(KeyError):
+            oracle['temp']
+
+    def test_chunk_discard_nonexistent(self):
+        oracle = LazyMetaOracle(b'data')
+        oracle.discard('nonexistent')
+
+    def test_serialize_empty_scope(self):
+        oracle = LazyMetaOracle(b'data')
+        oracle['x'] = 'val'
+        result = oracle.serialize(0)
+        self.assertEqual(result, {})
+
+    def test_serialize_with_scope(self):
+        oracle = LazyMetaOracle(b'data', scope=0)
+        oracle['x'] = 'val'
+        result = oracle.serialize(2)
+        self.assertIn('x', result)
+
+    def test_contains_derivation(self):
+        oracle = LazyMetaOracle(b'data')
+        self.assertIn('size', oracle)
+        self.assertIn('md5', oracle)
+        self.assertIn('index', oracle)
+        self.assertNotIn('nonexistent_var_xyz', oracle)
+
+    def test_len_counts_current_and_temp(self):
+        oracle = LazyMetaOracle(b'data')
+        initial_len = len(oracle)
+        oracle['var1'] = 'a'
+        oracle['var2'] = 'b'
+        self.assertEqual(len(oracle), initial_len + 2)

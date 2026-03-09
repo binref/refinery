@@ -417,14 +417,14 @@ def get_pe_type(data: buf):
     if data[nt:nt + 4] != B'PE\0\0':
         return None
     arch = data[nt + 4:nt + 6]
-    if arch == B'\x64\x86':
+    if arch == B'\x4C\x01':
         dll = Fmt.PE32DLL
         sub = (
             Fmt.PE32SYS,
             Fmt.PE32GUI,
             Fmt.PE32CUI,
         )
-    elif arch == B'\x4C\x01':
+    elif arch == B'\x64\x86':
         dll = Fmt.PE64DLL
         sub = (
             Fmt.PE64SYS,

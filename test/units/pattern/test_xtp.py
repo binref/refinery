@@ -225,3 +225,29 @@ class TestPatternExtractor(TestUnitBase):
     def test_big_ocet_ipv4_extraction_near_version(self):
         data = self.download_sample('5466ad49c055381bf00dc2b68297ac75f63cc17162dae7ee35e12c8cb4fa1a4b')
         self.assertEqual(data | self.load(filter=2) | str, '167''.99''.80''.104')
+
+    def test_ipv6_extraction(self):
+        data = b'Connect to 2001:0db8:85a3:0000:0000:8a2e:0370:7334 for info'
+        unit = self.load('ipv6')
+        hits = data | unit | []
+        self.assertTrue(len(hits) > 0)
+        self.assertIn(b'2001:0db8:85a3:0000:0000:8a2e:0370:7334', hits)
+
+    def test_extract_hostname_with_port(self):
+        data = b'\x00\x00evil.com:8080\x00\x00'
+        unit = self.load('hostname')
+        hits = data | unit | []
+        self.assertTrue(any(b'evil.com' in h for h in hits))
+
+    def test_url_with_path_and_query(self):
+        data = b'Visit http://evil.com/page?q=test&x=1 for details.'
+        unit = self.load('url')
+        hits = data | unit | []
+        self.assertEqual(len(hits), 1)
+        self.assertIn(b'http://evil.com/page?q=test&x=1', hits)
+
+    def test_no_false_positive_version(self):
+        data = b'Version 1.2.3.4 of the software is released.'
+        unit = self.load('ipv4', filter=2)
+        hits = data | unit | []
+        self.assertEqual(len(hits), 0)

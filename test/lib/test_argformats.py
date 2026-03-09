@@ -187,3 +187,97 @@ class TestArgumentFormats(TestBase):
     def test_rng(self):
         test = argformats.multibin('rng:200000')
         self.assertGreaterEqual(entropy(test), 0.99)
+
+    def test_hex_handler(self):
+        self.assertEqual(argformats.multibin('h:DEADBEEF'), bytes.fromhex('DEADBEEF'))
+
+    def test_string_handler(self):
+        self.assertEqual(argformats.multibin('s:hello'), b'hello')
+
+    def test_unicode_handler(self):
+        self.assertEqual(argformats.multibin('u:A'), b'A\x00')
+
+    def test_cycle_handler(self):
+        self.assertEqual(argformats.multibin('take[:8]:cycle:ABC'), b'ABCABCAB')
+
+    def test_url_encode(self):
+        self.assertEqual(argformats.multibin('q:hello%20world'), b'hello world')
+
+    def test_base64_handler(self):
+        self.assertEqual(argformats.multibin('b64:SGVsbG8='), b'Hello')
+
+    def test_be_int_to_bytes(self):
+        self.assertEqual(
+            argformats.multibin('be:e:0x5D000111'),
+            b'\x5D\x00\x01\x11')
+
+    def test_be_bytes_to_int_via_reduce(self):
+        result = argformats.DelayedArgument('be:h:DEADBEEF')()
+        self.assertEqual(result, 0xDEADBEEF)
+
+    def test_be_with_size(self):
+        self.assertEqual(
+            argformats.multibin('be[4]:e:0xFF'),
+            b'\x00\x00\x00\xFF')
+
+    def test_q_with_special_chars(self):
+        self.assertEqual(
+            argformats.multibin('q:foo%2Fbar%3Dbaz'),
+            b'foo/bar=baz')
+
+    def test_q_with_plus_not_decoded(self):
+        self.assertEqual(
+            argformats.multibin('q:foo+bar'),
+            b'foo+bar')
+
+    def test_q_with_percent_hex_bytes(self):
+        self.assertEqual(
+            argformats.multibin('q:%DE%AD%BE%EF'),
+            bytes.fromhex('DEADBEEF'))
+
+    def test_btoi_default_size(self):
+        result = argformats.DelayedArgument('reduce[S+B]:btoi:h:01000000020000000300000004000000')()
+        self.assertEqual(result, 1 + 2 + 3 + 4)
+
+    def test_btoi_explicit_size(self):
+        result = argformats.DelayedArgument('reduce[S+B]:btoi[2]:h:0100FF00')()
+        self.assertEqual(result, 0x01 + 0xFF)
+
+    def test_eval_tuple_expression(self):
+        result = argformats.multibin('itob:eval:(1,2,3)')
+        self.assertEqual(result, b'\x01\x02\x03')
+
+    def test_eval_list_expression(self):
+        result = argformats.multibin('itob:eval:[4,5,6]')
+        self.assertEqual(result, b'\x04\x05\x06')
+
+    def test_eval_arithmetic_expression(self):
+        result = argformats.multibin('itob:eval:(0x10+1,0x20+2,0x30+3)')
+        self.assertEqual(result, bytes([0x11, 0x22, 0x33]))
+
+    def test_cycle_single_byte(self):
+        self.assertEqual(
+            argformats.multibin('take[:5]:cycle:X'),
+            b'XXXXX')
+
+    def test_cycle_longer_pattern(self):
+        self.assertEqual(
+            argformats.multibin('take[:10]:cycle:ABCD'),
+            b'ABCDABCDAB')
+
+    def test_cycle_with_hex_input(self):
+        self.assertEqual(
+            argformats.multibin('take[:6]:cycle:h:FF00'),
+            bytes.fromhex('FF00FF00FF00'))
+
+    def test_dec_handler(self):
+        result = argformats.DelayedArgument('take[:5]:dec[8]:e:0x30')(B'')
+        self.assertEqual(result, bytes([0x30, 0x2F, 0x2E, 0x2D, 0x2C]))
+
+    def test_latin1_handler(self):
+        self.assertEqual(argformats.multibin('a:caf\xe9'), b'caf\xe9')
+
+    def test_bang_h_hex_encode(self):
+        self.assertEqual(
+            argformats.multibin('!h:h:DEADBEEF'),
+            b'DEADBEEF')

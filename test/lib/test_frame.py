@@ -1,6 +1,7 @@
+import copy
 import io
 
-from refinery.lib.frame import FrameUnpacker
+from refinery.lib.frame import Chunk, FrameUnpacker, generate_frame_header, MAGIC, MSIZE
 from refinery.lib.loader import load_detached as L, load_pipeline
 
 from .. import TestBase
@@ -172,3 +173,146 @@ class TestFraming(TestBase):
         self.assertEqual(0 | pipe | int, 0)
         pipe = self.load_pipeline('emit 0 1 2 3 4 5 [| put k index | max k | pf {k} ]')
         self.assertEqual(0 | pipe | int, 5)
+
+
+class TestFrameHeader(TestBase):
+
+    def test_generate_header_scope_0(self):
+        header = generate_frame_header(0)
+        self.assertEqual(len(header), MSIZE)
+        self.assertTrue(header.startswith(MAGIC))
+
+
+class TestChunk(TestBase):
+
+    def test_basic_construction(self):
+        c = Chunk(b'Hello')
+        self.assertEqual(bytes(c), b'Hello')
+        self.assertEqual(c.scope, 0)
+        self.assertTrue(c.visible)
+        self.assertEqual(c.path, [])
+
+    def test_empty_construction(self):
+        c = Chunk()
+        self.assertEqual(bytes(c), b'')
+
+    def test_chunk_with_path(self):
+        c = Chunk(b'Data', path=[0, 1, 2], view=[True, True, False])
+        self.assertEqual(c.scope, 3)
+        self.assertFalse(c.visible)
+        self.assertEqual(c.path, [0, 1, 2])
+        self.assertEqual(c.view, [True, True, False])
+
+    def test_chunk_visibility_setter(self):
+        c = Chunk(b'Data', path=[0], view=[True])
+        self.assertTrue(c.visible)
+        c.visible = False
+        self.assertFalse(c.visible)
+        self.assertEqual(c.view, [False])
+
+    def test_chunk_visibility_setter_unframed(self):
+        c = Chunk(b'Data')
+        self.assertTrue(c.visible)
+        with self.assertRaises(AttributeError):
+            c.visible = False
+
+    def test_chunk_wrap(self):
+        c = Chunk(b'Test')
+        self.assertIs(Chunk.Wrap(c), c)
+        c2 = Chunk.Wrap(b'Test')
+        self.assertIsInstance(c2, Chunk)
+        self.assertEqual(bytes(c2), b'Test')
+
+    def test_chunk_str_valid_utf8(self):
+        c = Chunk(b'Hello')
+        self.assertEqual(str(c), 'Hello')
+
+    def test_chunk_str_invalid_utf8(self):
+        c = Chunk(bytes(range(0x80, 0x90)))
+        result = str(c)
+        # should return hex since UTF8 decode fails
+        self.assertTrue(all(ch in '0123456789abcdef' for ch in result))
+
+    def test_chunk_hash(self):
+        c1 = Chunk(b'Data')
+        c2 = Chunk(b'Data')
+        self.assertEqual(hash(c1), hash(c2))
+
+    def test_chunk_getitem_string_key(self):
+        c = Chunk(b'Data')
+        c['mykey'] = 42
+        self.assertEqual(c['mykey'], 42)
+
+    def test_chunk_getitem_slice(self):
+        c = Chunk(b'Hello World')
+        self.assertEqual(c[0:5], bytearray(b'Hello'))
+
+    def test_chunk_setitem_string(self):
+        c = Chunk(b'Data')
+        c['var'] = 'value'
+        self.assertEqual(c['var'], 'value')
+
+    def test_chunk_setitem_bytes_slice(self):
+        c = Chunk(b'Hello World')
+        c[0:5] = b'Byeee'
+        self.assertEqual(bytes(c), b'Byeee World')
+
+    def test_chunk_copy(self):
+        c = Chunk(b'Hello', path=[0, 1], view=[True, True])
+        c['key'] = 'value'
+        c2 = c.copy()
+        self.assertEqual(bytes(c2), b'Hello')
+        self.assertEqual(c2.path, [0, 1])
+        self.assertEqual(c2.scope, 2)
+
+    def test_chunk_copy_no_data(self):
+        c = Chunk(b'Hello')
+        c2 = c.copy(data=False)
+        self.assertEqual(bytes(c2), b'')
+
+    def test_chunk_truncate(self):
+        c = Chunk(b'Data', path=[0, 1, 2], view=[True, True, False])
+        c.truncate(1)
+        self.assertEqual(c.scope, 1)
+        self.assertEqual(c.path, [0])
+        self.assertEqual(c.view, [True])
+
+    def test_chunk_repr(self):
+        c = Chunk(b'AB', path=[0, 1], view=[True, False])
+        r = repr(c)
+        self.assertIn('chunk', r)
+
+    def test_chunk_intersect(self):
+        c1 = Chunk(b'Data')
+        c1['a'] = 1
+        c1['b'] = 2
+        c2 = Chunk(b'Data')
+        c2['a'] = 1
+        c2['b'] = 999
+        c1.intersect(c2)
+        self.assertEqual(c1.meta.get('a'), 1)
+
+    def test_chunk_set_next_scope(self):
+        c = Chunk(b'Data')
+        c.set_next_scope(True)
+        self.assertEqual(c._fill_scope, True)
+
+    def test_chunk_scopable_depth_0(self):
+        c = Chunk(b'Data')
+        self.assertTrue(c.scopable)
+
+    def test_chunk_scopable_depth_2(self):
+        c = Chunk(b'Data', path=[0, 1], view=[True, True])
+        self.assertTrue(c.scopable)
+        c2 = Chunk(b'Data', path=[0, 1], view=[False, True])
+        self.assertFalse(c2.scopable)
+
+    def test_chunk_copy_is_dunder(self):
+        c = Chunk(b'Hello')
+        c2 = copy.copy(c)
+        self.assertIsInstance(c2, Chunk)
+        self.assertEqual(bytes(c2), b'Hello')
+
+    def test_view_path_length_mismatch(self):
+        with self.assertRaises(ValueError):
+            Chunk(b'Data', path=[0, 1], view=[True])

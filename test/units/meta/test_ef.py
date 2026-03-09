@@ -83,3 +83,61 @@ class TestFileReader(TestUnitBase):
                     fd.write('test')
             test = None | self.load(str(path.absolute()), tame=True) | str
         self.assertEqual(test, 'test')
+
+    def test_filter_by_file_size(self):
+        with tempfile.TemporaryDirectory() as root:
+            root = Path(root)
+            with temporary_chwd(root):
+                with (root / 'small.txt').open('wb') as fd:
+                    fd.write(b'tiny')
+                with (root / 'large.txt').open('wb') as fd:
+                    fd.write(b'A' * 100)
+                results = None | self.load('*.txt', wild=True, size=slice(10, None)) | [bytes]
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0], b'A' * 100)
+
+    def test_filter_by_size_excludes_large_files(self):
+        with tempfile.TemporaryDirectory() as root:
+            root = Path(root)
+            with temporary_chwd(root):
+                with (root / 'small.txt').open('wb') as fd:
+                    fd.write(b'hello')
+                with (root / 'big.txt').open('wb') as fd:
+                    fd.write(b'X' * 200)
+                results = None | self.load('*.txt', wild=True, size=slice(None, 10)) | [bytes]
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0], b'hello')
+
+    def test_read_file_in_chunks(self):
+        with tempfile.TemporaryDirectory() as root:
+            root = Path(root)
+            with temporary_chwd(root):
+                with (root / 'chunked.bin').open('wb') as fd:
+                    fd.write(b'AAABBBCCC')
+                results = None | self.load('chunked.bin', tame=True, read=3) | [bytes]
+        self.assertEqual(len(results), 3)
+        self.assertEqual(results[0], b'AAA')
+        self.assertEqual(results[1], b'BBB')
+        self.assertEqual(results[2], b'CCC')
+
+    def test_linewise_reading(self):
+        with tempfile.TemporaryDirectory() as root:
+            root = Path(root)
+            with temporary_chwd(root):
+                with (root / 'lines.txt').open('w') as fd:
+                    fd.write('alpha\nbeta\ngamma\n')
+                results = None | self.load('lines.txt', tame=True, linewise=True) | [str]
+        self.assertEqual(len(results), 3)
+        self.assertIn('alpha', results[0])
+        self.assertIn('beta', results[1])
+        self.assertIn('gamma', results[2])
+
+    def test_list_mode_returns_filename(self):
+        with tempfile.TemporaryDirectory() as root:
+            root = Path(root)
+            with temporary_chwd(root):
+                with (root / 'listed.dat').open('wb') as fd:
+                    fd.write(b'content')
+                results = None | self.load('listed.dat', tame=True, list=True) | [str]
+        self.assertEqual(len(results), 1)
+        self.assertIn('listed.dat', results[0])
