@@ -10,7 +10,8 @@ if TYPE_CHECKING:
     from xml.etree.ElementTree import Element
 
 from refinery.lib.frame import Chunk
-from refinery.lib.structures import MemoryFile, StructReader
+from refinery.lib.olefile import OleFile
+from refinery.lib.structures import StructReader
 from refinery.units.formats import Unit
 from refinery.units.formats.archive.xtzip import xtzip
 
@@ -25,11 +26,6 @@ class doctxt(Unit):
         from refinery.lib.id import is_likely_doc
         if is_likely_doc(data):
             return True
-
-    @Unit.Requires('olefile', ['formats', 'office', 'extended'])
-    def _olefile():
-        import olefile
-        return olefile
 
     def process(self, data: bytearray):
         extractors: dict[str, Callable[[bytearray], str]] = OrderedDict(
@@ -110,8 +106,7 @@ class doctxt(Unit):
             raise ValueError('found no text')
 
     def _extract_ole(self, data: bytearray) -> str:
-        stream = MemoryFile(data)
-        with self._olefile.OleFileIO(stream) as ole:
+        with OleFile(data) as ole:
             doc = ole.openstream('WordDocument').read()
             with StructReader(doc) as reader:
                 table_name = F'{(doc[11] >> 1) & 1}Table'

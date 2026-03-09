@@ -840,6 +840,7 @@ def ascii_view(
 def is_likely_eml(
     data: buf,
     window_size: int = 0x10000,
+    text_checked: bool = False,
 ):
     """
     Checks the input for common strings that occur as email headers. If at least two are found,
@@ -847,6 +848,8 @@ def is_likely_eml(
     """
     hits = 0
     view = memoryview(data)[:window_size]
+    if not text_checked and get_text_format(view) is None:
+        return False
     for marker in (
         b'\nReceived:\x20from',
         b'\nSubject:\x20',
@@ -1273,7 +1276,7 @@ def get_text_format(data: buf):
         return Fmt.VBE
     if buffer_contains(view[:200], BR'{\rtf'):
         return Fmt.RTF
-    if step == 1 and is_likely_eml(data):
+    if step == 1 and is_likely_eml(data, text_checked=True):
         return Fmt.EML
     if step > 1:
         # The following checks require a contiguous buffer for the regular expression searches.

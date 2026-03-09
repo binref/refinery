@@ -13,13 +13,10 @@ class rtfc(Unit):
         if len(data) >= 12 and data[8:12] == b'LZFu':
             return True
 
-    @Unit.Requires('compressed_rtf', ['formats', 'office', 'default', 'extended'])
-    def _rtfc():
-        import compressed_rtf
-        return compressed_rtf
-
     def process(self, data):
-        return self._rtfc.decompress(data)
+        from refinery.lib.rtfc import decompress
+        return decompress(data)
 
     def reverse(self, data):
-        return self._rtfc.compress(data)
+        from refinery.lib.rtfc import compress
+        return compress(data)

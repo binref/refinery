@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from refinery.lib.id import is_likely_doc
-from refinery.lib.structures import MemoryFile
+from refinery.lib.olefile import OleFile
 from refinery.lib.types import buf
 from refinery.units.formats import PathExtractorUnit, UnpackResult
 from refinery.units.formats.archive.xtzip import xtzip
@@ -25,31 +25,25 @@ class xtdoc(PathExtractorUnit):
     Extract files from an OLE document such as a Microsoft Word DOCX file.
     """
 
-    @PathExtractorUnit.Requires('olefile', ['formats', 'office', 'extended'])
-    def _olefile():
-        import olefile
-        return olefile
-
     def unpack(self, data: buf):
-        with MemoryFile(data) as stream:
-            try:
-                oledoc = self._olefile.OleFileIO(stream)
-            except OSError as error:
-                self.log_info(F'error, {error}, treating input as zip file')
-                yield from xtzip().unpack(data)
-                return
-            for item in oledoc.listdir():
-                if not item or not item[-1]:
-                    continue
+        try:
+            oledoc = OleFile(data)
+        except OSError as error:
+            self.log_info(F'error, {error}, treating input as zip file')
+            yield from xtzip().unpack(data)
+            return
+        for item in oledoc.listdir():
+            if not item or not item[-1]:
+                continue
+            path = '/'.join(item)
+            olestream = oledoc.openstream(path)
+            c0 = ord(item[-1][:1])
+            if c0 < 20:
+                item[-1] = F'[{c0:d}]{item[-1][1:]}'
                 path = '/'.join(item)
-                olestream = oledoc.openstream(path)
-                c0 = ord(item[-1][:1])
-                if c0 < 20:
-                    item[-1] = F'[{c0:d}]{item[-1][1:]}'
-                    path = '/'.join(item)
-                path = convert_msi_name(path)
-                self.log_debug('exploring:', path)
-                yield UnpackResult(path, olestream.read())
+            path = convert_msi_name(path)
+            self.log_debug('exploring:', path)
+            yield UnpackResult(path, olestream.read())
 
     @classmethod
     def handles(cls, data) -> bool | None:

@@ -4,18 +4,14 @@ import email.utils
 import re
 
 from email.parser import Parser
-from typing import TYPE_CHECKING, Iterable
+from typing import Iterable
 
 from refinery.lib import json
 from refinery.lib.id import is_likely_email
 from refinery.lib.mime import file_extension
-from refinery.lib.tools import NoLogging
 from refinery.lib.types import asbuffer, isbuffer
 from refinery.units.formats import PathExtractorUnit, UnpackResult
 from refinery.units.pattern.mimewords import mimewords
-
-if TYPE_CHECKING:
-    from extract_msg import Message
 
 CDFv2_MARKER = B'\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1'
 
@@ -59,63 +55,23 @@ class xtmail(PathExtractorUnit):
 
         yield UnpackResult('headers.json', lambda jsn=headers: json.dumps(jsn))
 
-    @PathExtractorUnit.Requires('extract-msg', ['formats', 'office', 'default', 'extended'])
-    def _extract_msg():
-        import extract_msg.enums
-        return extract_msg
-
     def _get_parts_outlook(self, data):
-        def ensure_bytes(data: bytes | str | None):
-            if data is None:
-                return B''
-            elif isinstance(data, str):
-                return data.encode(self.codec)
-            else:
-                return data
+        from refinery.lib.outlook import MsgFile
 
-        def make_message(name, msg: Message):
-            bodies = msg.detectedBodies
-            BT = self._extract_msg.enums.BodyTypes
-            if bodies & BT.HTML:
-                def htm(msg=msg):
-                    with NoLogging():
-                        try:
-                            return ensure_bytes(msg.htmlBody)
-                        except Exception:
-                            return B''
-                yield UnpackResult(F'{name}.htm', htm)
-            if bodies & BT.PLAIN:
-                def txt(msg=msg):
-                    with NoLogging():
-                        try:
-                            return ensure_bytes(msg.body)
-                        except Exception:
-                            return B''
-                yield UnpackResult(F'{name}.txt', txt)
-            if bodies & BT.RTF:
-                def rtf(msg=msg):
-                    with NoLogging():
-                        try:
-                            return ensure_bytes(msg.rtfBody)
-                        except Exception:
-                            return B''
-                yield UnpackResult(F'{name}.rtf', rtf)
+        def make_message(name, msg: MsgFile):
+            if msg.html_body is not None:
+                yield UnpackResult(F'{name}.htm', msg.html_body)
+            if msg.body is not None:
+                yield UnpackResult(F'{name}.txt', msg.body.encode(self.codec))
+            if msg.rtf_body is not None:
+                yield UnpackResult(F'{name}.rtf', msg.rtf_body)
 
-        msgcount = 0
+        msg = MsgFile(data)
+        header = dict(msg.header.items()) if msg.header else {}
 
-        with NoLogging():
-            class ForgivingMessage(self._extract_msg.Message):
-                """
-                If parsing the input bytes fails early, the "__open" private attribute may not
-                yet exist. This hack prevents an exception to occur in the destructor.
-                """
-                def __getattr__(self, key: str):
-                    if key.endswith('_open'):
-                        return False
-                    raise AttributeError(key)
-            msg = ForgivingMessage(bytes(data))
-
-        header = dict(msg.header)
+        mc = msg.message_class
+        if mc:
+            header['X-Message-Class'] = mc
 
         if x := msg.date:
             header['Date'] = email.utils.format_datetime(x)
@@ -127,7 +83,7 @@ class xtmail(PathExtractorUnit):
             header['Cc'] = x
         if x := msg.bcc:
             header['Bcc'] = x
-        if x := msg.messageId:
+        if x := msg.message_id:
             header['Message-Id'] = x
         if x := msg.subject:
             header['Subject'] = x
@@ -141,25 +97,51 @@ class xtmail(PathExtractorUnit):
         yield from self._get_headparts(header.items())
         yield from make_message('body', msg)
 
-        def attachments(msg):
-            for attachment in getattr(msg, 'attachments', ()):
-                yield attachment
-                if attachment.type == 'data':
-                    continue
-                yield from attachments(attachment.data)
+        item = {}
+        mc = msg.message_class or ''
+        if 'CONTACT' in mc:
+            item['name'] = msg.display_name
+            item['company'] = msg.company
+            item['title'] = msg.job_title
+            phone = {}
+            if hp := msg.home_phone:
+                phone.update(home=hp)
+            if bp := msg.business_phone:
+                phone.update(business=bp)
+            if mp := msg.mobile_phone:
+                phone.update(mobile=mp)
+            if phone:
+                item['phone'] = phone
+        elif 'APPOINTMENT' in mc or 'MEETING' in mc or 'SCHEDULE' in mc:
+            if x := msg.start_time:
+                item['start'] = x.isoformat(' ', 'seconds')
+            if x := msg.end_time:
+                item['end'] = x.isoformat(' ', 'seconds')
+            if x := msg.location:
+                item['location'] = x
+        if item:
+            yield UnpackResult(F'{mc.lower()}.json', json.dumps(item))
 
-        for attachment in attachments(msg):
-            at = attachment.type
-            if at is self._extract_msg.enums.AttachmentType.MSG:
+        msgcount = 0
+
+        def walk_attachments(msg: MsgFile):
+            for attachment in msg.attachments:
+                yield attachment
+                if isinstance(ad := attachment.data, MsgFile):
+                    yield from walk_attachments(ad)
+
+        for attachment in walk_attachments(msg):
+            if isinstance(ad := attachment.data, MsgFile):
                 msgcount += 1
-                yield from make_message(F'attachments/msg_{msgcount:d}', attachment.data)
+                yield from make_message(
+                    F'attachments/msg_{msgcount:d}', ad)
                 continue
             if not isbuffer(attachment.data):
-                self.log_warn(F'unknown attachment of type {at}, please report this!')
+                self.log_warn('unknown attachment type, please report this!')
                 continue
-            path = attachment.longFilename or attachment.shortFilename
+            path = attachment.long_filename or attachment.short_filename or 'unnamed'
             path = path.rstrip('\0')
-            yield UnpackResult(F'attachments/{path}', attachment.data)
+            yield UnpackResult(F'attachments/{path}', ad)
 
     @PathExtractorUnit.Requires('chardet', ['default', 'extended'])
     def _chardet():
