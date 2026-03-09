@@ -2,7 +2,8 @@ import hashlib
 
 import pytest
 
-from ... import TestUnitBase
+from test.units import TestUnitBase
+from test.units.compression import KADATH1, KADATH2
 
 
 @pytest.mark.cythonized
@@ -37,3 +38,36 @@ class TestDMGExtractor(TestUnitBase):
         ):
             self.assertIn(path, files)
         self.assertIn(b'Flare is a free ActionScript decompiler.', files['Flare/flare.html'])
+
+    def _test_artificial_sample(self, sha256hash: str):
+        data = self.download_sample(sha256hash)
+        results = data | self.load() | {'path': bytearray}
+        k1 = results['TestVol/kadath1.txt']
+        k2 = results['TestVol/kadath2.txt']
+        k1.append(0)
+        k2.append(0)
+        self.assertEqual(k1.decode('latin1'), KADATH1)
+        self.assertEqual(k2.decode('latin1'), KADATH2)
+
+    def test_sample_bz2(self):
+        self._test_artificial_sample('44e6d55b2364141dd1a79a3189147e1daa388a1b5f613ec08b9080799b3ba12c')
+
+    def test_sample_lzfse(self):
+        self._test_artificial_sample('06a764a6895f72f34fcddbb5002f63ed94241c67f2c3c6dd732583bc31bb83d3')
+
+    def test_sample_lzma(self):
+        self._test_artificial_sample('482bf764b9bce292cff93914bd831f0bb15b07f44fc668b8924c964a88f55ccd')
+
+    def test_sample_empty(self):
+        data = self.download_sample('8ca6b68d7799e25a47d0555b83d900219fa5623326e51c27665573e7e20f9956')
+        results = data | self.load() | []
+        self.assertListEqual(results, [])
+
+    def test_sample_zlib(self):
+        self._test_artificial_sample('0f6c189d7e6a17b29a1e281bbecc9f4b545d18e9ade28a19869083150378949a')
+
+    def test_sample_decmpfs(self):
+        self._test_artificial_sample('e7b1d7282c86af32e114e9cb4cafe6daa4833323b57e46d979e03682c719d16d')
+
+    def test_sample_front_koly(self):
+        self._test_artificial_sample('a2f3d66825746ab6f5421efd9dc55616818f2b581e6456fb3b8632516a2f8225')

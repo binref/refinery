@@ -340,19 +340,23 @@ class DiskImage:
             return bytes(sector_bytes), None
         src = self._view[offset:offset + length]
         if ct == _BLK_RAW:
-            return src, None
-        if ct == _BLK_ZLIB:
-            return zlib.decompress(src), None
-        if ct == _BLK_BZ2:
-            return bz2.decompress(src), None
-        if ct == _BLK_XZ:
+            result = bytes(src)
+        elif ct == _BLK_ZLIB:
+            result = zlib.decompress(src)
+        elif ct == _BLK_BZ2:
+            result = bz2.decompress(src)
+        elif ct == _BLK_XZ:
             import lzma
-            return lzma.decompress(src), None
-        if ct == _BLK_LZFSE:
-            return lzfse_decompress(src), None
-        if ct == _BLK_ADC:
-            return _adc_decompress(src), None
-        return b'', F'unknown block type 0x{ct:08X}, skipping {length} bytes'
+            result = lzma.decompress(src)
+        elif ct == _BLK_LZFSE:
+            result = lzfse_decompress(src)
+        elif ct == _BLK_ADC:
+            result = _adc_decompress(src)
+        else:
+            return b'', F'unknown block type 0x{ct:08X}, skipping {length} bytes'
+        if len(result) > sector_bytes:
+            result = result[:sector_bytes]
+        return result, None
 
     def _read_partition(
         self, table: BlkxTable, name: str, data_offset: int = 0,
