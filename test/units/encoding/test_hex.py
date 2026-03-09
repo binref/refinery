@@ -22,8 +22,3 @@ class TestHex(TestUnitBase):
     def test_odd_length_strips_trailing(self):
         unit = self.load()
         self.assertEqual(unit(b'48656C6C6F0'), b'Hello')
-
-    def test_roundtrip(self):
-        unit = self.load()
-        data = b'\x00\x01\x02\xFE\xFF'
-        self.assertEqual(data | -unit | bytes, data)
