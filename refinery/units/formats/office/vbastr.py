@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import codecs
+
+from refinery.lib.ole.forms import OleFormParsingError
+from refinery.lib.ole.vba import FileOpenError, VBAParser
 from refinery.lib.types import isbuffer
 from refinery.units.formats import PathExtractorUnit, UnpackResult
 
@@ -8,7 +12,7 @@ def _txt(value: bytes | str):
     if value is None:
         return None
     if not isinstance(value, str):
-        value = value.decode(vbastr.codec)
+        value = codecs.decode(value, vbastr.codec)
     return value
 
 
@@ -34,41 +38,38 @@ class vbastr(PathExtractorUnit):
     def handles(cls, data) -> bool:
         return data[:4] == B'\xD0\xCF\x11\xE0'
 
-    @PathExtractorUnit.Requires('oletools', ['formats', 'office'])
-    def _olevba():
-        from oletools import olevba
-        return olevba
-
     def unpack(self, value):
         try:
-            parser = self._olevba.VBA_Parser('.', data=bytes(value), relaxed=True)
-        except self._olevba.FileOpenError:
+            parser = VBAParser(bytes(value))
+        except FileOpenError:
             raise ValueError('Input data not recognized by VBA parser')
         try:
-            for path, name, vars in parser.extract_form_strings_extended():
-                if not vars:
+            for fv in parser.extract_form_strings_extended():
+                if not fv.variable:
                     continue
-                name = _txt(vars['name'])
+                name = _txt(fv.variable['name'])
                 for ext, key in {
                     'cap': 'caption',
                     'tip': 'control_tip_text',
                     'val': 'value',
                 }.items():
-                    value = _bin(vars.get(key))
+                    value = _bin(fv.variable.get(key))
                     if not value:
                         continue
-                    yield UnpackResult(F'{path!s}/{name!s}/{name}.{ext}', value)
-        except self._olevba.oleform.OleFormParsingError as error:
+                    yield UnpackResult(F'{fv.filename!s}/{name!s}/{name}.{ext}', value)
+        except OleFormParsingError as error:
             from collections import Counter
             self.log_debug(str(error))
             self.log_info('extended form extraction failed with error; falling back to simple method')
             form_strings = list(parser.extract_form_strings())
-            name_counter = Counter(name for _, name, _ in form_strings)
+            name_counter = Counter(fs.stream_path for fs in form_strings)
             dedup = Counter()
-            for path, name, string in form_strings:
-                if string is None:
+            for fs in form_strings:
+                if fs.value is None:
                     continue
-                if name_counter[name] > 1:
-                    dedup[name] += 1
-                    name = F'{name!s}.v{dedup[name]}'
-                yield UnpackResult(F'{path!s}/{name!s}.val', _bin(string))
+                if name_counter[fs.stream_path] > 1:
+                    dedup[fs.stream_path] += 1
+                    stream_name = F'{fs.stream_path!s}.v{dedup[fs.stream_path]}'
+                else:
+                    stream_name = fs.stream_path
+                yield UnpackResult(F'{fs.filename!s}/{stream_name!s}.val', _bin(fs.value))

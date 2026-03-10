@@ -60,7 +60,7 @@ class MsgAttachment:
         props_path = F'{prefix}/__properties_version1.0'
         self._props = parent._parse_properties(props_path, header_size=8)
 
-    def _stream(self, path: str) -> bytes | None:
+    def _stream(self, path: str) -> bytes | memoryview | None:
         full = F'{self._prefix}/{path}'
         if self._ole.exists(full):
             return self._ole.openstream(full).read()
@@ -70,7 +70,7 @@ class MsgAttachment:
         for suffix, codec in (('001F', 'utf-16-le'), ('001E', self._parent._ansi_codec)):
             data = self._stream(F'__substg1.0_{prop_id}{suffix}')
             if data is not None:
-                return data.decode(codec).rstrip('\0')
+                return codecs.decode(data, codec).rstrip('\0')
         return None
 
     @cached_property
@@ -94,7 +94,7 @@ class MsgAttachment:
         return self.attach_method == 6
 
     @cached_property
-    def data(self) -> bytes | MsgFile:
+    def data(self) -> bytes | memoryview | MsgFile:
         method = self.attach_method
         if method == 5:
             prefix = F'{self._prefix}/__substg1.0_3701000D'
@@ -123,7 +123,7 @@ class MsgAttachment:
 
 class MsgFile:
     def __init__(self, data: bytes | bytearray | memoryview):
-        from refinery.lib.olefile import OleFile
+        from refinery.lib.ole.file import OleFile
         from refinery.lib.structures import MemoryFile
         self._ole = OleFile(MemoryFile(data))
         self._prefix = ''
@@ -152,7 +152,7 @@ class MsgFile:
         self._ansi_codec = _codepage_to_codec(cp) if cp else 'cp1252'
         self._named_props = self._parse_named_properties()
 
-    def _read_stream(self, path: str) -> bytes | None:
+    def _read_stream(self, path: str) -> bytes | memoryview | None:
         if self._ole.exists(path):
             return self._ole.openstream(path).read()
         return None
@@ -164,12 +164,12 @@ class MsgFile:
             data = self._read_stream(F'{base}{suffix}')
             if data is not None:
                 try:
-                    return data.decode(codec).rstrip('\0')
+                    return codecs.decode(data, codec).rstrip('\0')
                 except (UnicodeDecodeError, LookupError):
                     continue
         return None
 
-    def _read_binary(self, prop_id: str) -> bytes | None:
+    def _read_binary(self, prop_id: str) -> bytes | memoryview | None:
         p = self._prefix
         path = F'{p}/__substg1.0_{prop_id}0102' if p else F'__substg1.0_{prop_id}0102'
         return self._read_stream(path)

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import codecs
+
 from collections import OrderedDict
 from io import StringIO
 from typing import TYPE_CHECKING, Callable
@@ -10,7 +12,7 @@ if TYPE_CHECKING:
     from xml.etree.ElementTree import Element
 
 from refinery.lib.frame import Chunk
-from refinery.lib.olefile import OleFile
+from refinery.lib.ole.file import OleFile
 from refinery.lib.structures import StructReader
 from refinery.units.formats import Unit
 from refinery.units.formats.archive.xtzip import xtzip
@@ -150,5 +152,5 @@ class doctxt(Unit):
                         encoding = 'utf16'
                         cb *= 2
                     raw = doc[fc : fc + cb]
-                    text.write(raw.decode(encoding).replace('\r', '\n'))
+                    text.write(codecs.decode(raw, encoding).replace('\r', '\n'))
             return text.getvalue()

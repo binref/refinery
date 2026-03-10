@@ -66,7 +66,7 @@ class VirtualFile:
         mapped[:] = view
         return mapped
 
-    def open(self, mode: str) -> MemoryFile:
+    def open(self, mode: str) -> MemoryFile[bytearray, bytes]:
         """
         Open the virtual file.
         """

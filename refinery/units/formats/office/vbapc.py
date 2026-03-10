@@ -1,10 +1,6 @@
 from __future__ import annotations
 
-import io
-
-from refinery.lib.tools import NoLogging
 from refinery.lib.types import Param
-from refinery.lib.vfs import VirtualFileSystem
 from refinery.units import Arg, Unit
 
 
@@ -22,25 +18,12 @@ class vbapc(Unit):
     def __init__(self, raw: Param[bool, Arg.Switch('-r', help='Return disassembled p-code, do not try to decompile.')] = False):
         super().__init__(raw=raw)
 
-    @Unit.Requires('oletools', ['formats', 'office', 'extended'])
-    def _pcodedmp():
-        with NoLogging(NoLogging.Mode.ALL):
-            import pcodedmp.pcodedmp
-            return pcodedmp.pcodedmp
-
     def process(self, data):
-        class args:
-            disasmOnly = True
-            verbose = False
-        with io.StringIO() as output:
-            with VirtualFileSystem() as vfs:
-                vf = vfs.new(data)
-                self._pcodedmp.processFile(vf, args, output)
-            code = output.getvalue()
-            if not self.args.raw:
-                from refinery.lib.thirdparty.pcode2code import Parser
-                parser = Parser(code)
-                parser.parseInput()
-                parser.processInput(False)
-                code = parser.getOutput()
-            return code.encode(self.codec)
+        from refinery.lib.ole.pcode import PCodeDisassembler
+        disassembler = PCodeDisassembler(bytes(data))
+        code = disassembler.disassemble()
+        if not self.args.raw:
+            from refinery.lib.ole.decompiler import PCodeParser
+            parser = PCodeParser(code)
+            code = parser.parse()
+        return code.encode(self.codec)

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from refinery.lib.id import is_likely_doc
-from refinery.lib.olefile import OleFile
+from refinery.lib.ole.file import OleFile
 from refinery.lib.types import buf
 from refinery.units.formats import PathExtractorUnit, UnpackResult
 from refinery.units.formats.archive.xtzip import xtzip
