@@ -40,8 +40,8 @@ On the other hand, this is very often avoidable by making such definitions only 
 
 ### Comments
 
-Comments should be avoided wherever it is possible and used only when important information about the code cannot be communicated otherwise.
-Prioritize expressive, well-structured code and comprehensive naming of variables and functions.
+Comments should be avoided wherever it is possible and used only when important information about the code cannot be communicated otherwise. Prioritize expressive, well-structured code and comprehensive naming of variables and functions. Especially undesired
+are plate comments that intend to separate a source file into sections or merely announce the code that will follow.
 
 ### Line Breaks
 
@@ -52,6 +52,8 @@ All code in refinery uses LF line breaks exclusively, never CR/LF.
 All lines should wrap at **100** characters.
 This is a hard limit for docstrings and comments, and a soft limit for code.
 The hard limit for code is at **140** characters to allow for occasional long lines.
+Note also that lines should **not** wrap at less than 100 lines, i.e. they should not wrap at 80 lines.
+They should wrap at exactly 100 characters.
 
 When a function call or definition becomes too long for the line width limit, it should be split like so:
 ```python
@@ -118,11 +120,35 @@ This can make large dictionaries with somewhat tabular data easier to read in th
 
 All code in binary refinery aims to minimize the number of byte copy operations. To this end:
 
-- Make functions as flexible as possible when it comes to what they accept as input; 
-  allow `bytes | bytearray | memoryview` whenever possible and work on memory views whenever that is sufficient.
+- Make functions as flexible as possible when it comes to what they accept as input;
+  Allow `memoryview` inputs wherever possible.
+  You can use `codecs.decode` to decode `memoryview` objects to strings,
+  and the `refinery.lib.id` module contains methods `buffer_offset` and `buffer_contains` 
+  which allow you to search within `memoryview` objects.
+- For the top-level entry points of an API, allow `bytes | bytearray | memoryview` as input 
+  and pass on `memoryview` objects to subroutines when possible.
 - When binary buffers have to be sliced, a `memoryview` is the best choice since slicing it has no memory cost.
 - Building output should always be done in a `bytearray`, never by concatenating `bytes` objects.
 - Returning `bytearray` objects rather than `bytes` is always acceptable; the two types expose the same API.
 
+### Structured Data
+
+Data transfer object should not be stored in Python dictionaries.
+It should use a `dataclass` or `NamedTuple` with clear type hints instead.
+Do not use opaque string or integer literal constants for what can be captured by an `Enum`. 
+
+### Format Strings and String Format
+
+All strings use single quotes, except for docstrings, which use three double quotes.
+When possible, strings should not be concatenated with string literals,
+ F-Strings should be used instead.
+For example, the code 
+```python
+message = 'Hello, ' + world + '\n'
+```
+should be replaced with:
+```python
+message = F'Hello, {world}\n'
+```
 
 [flake8]: https://pypi.org/project/flake8/
