@@ -116,13 +116,13 @@ class hl(Unit):
                     B = 'ansibrightblack'
                     styles = {
                         token.Comment     : B,
-                        token.Text        : R,
-                        token.Name        : R,
-                        token.Error       : W,
-                        token.Keyword     : W,
-                        token.String      : W,
-                        token.Operator    : C,
-                        token.Punctuation : C,
+                        token.Text        : W,
+                        token.Name        : W,
+                        token.Error       : R,
+                        token.Keyword     : R,
+                        token.Operator    : R,
+                        token.Punctuation : R,
+                        token.String      : C,
                         token.Number      : C,
                         token.Literal     : C,
                     }
