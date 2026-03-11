@@ -11,6 +11,7 @@ original GPL license.
 """
 from __future__ import annotations
 
+import re
 import struct
 
 from typing import Callable
@@ -2013,6 +2014,11 @@ class PCodeParser:
         """
         streams = self._parse_input()
         self._process_input(streams)
+        self._output = re.sub(
+            r'(End\s(?:Function|Sub|Property|Type|Enum))\n(?=\S)',
+            r'\1\n\n',
+            self._output,
+        )
         return self._output
 
     def _parse_input(
