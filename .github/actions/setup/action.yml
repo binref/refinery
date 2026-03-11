@@ -19,7 +19,7 @@ runs:
       shell: ${{ contains(inputs.os, 'windows') && 'cmd' || 'bash' }}
       run: |
         sudo apt-get update
-        sudo apt-get install xclip xvfb libzbar0
+        sudo apt-get install xclip xvfb
     - name: Undo Windows AutoCRLF in GIT
       if: ${{ contains(inputs.os, 'windows') }}
       shell: cmd
@@ -31,7 +31,7 @@ runs:
     - name: Install Dependencies (MacOS)
       if: ${{ contains(inputs.os, 'macos') }}
       shell: bash
-      run: brew install libmagic zbar
+      run: brew install libmagic
     - name: Install Dependencies
       shell: ${{ contains(inputs.os, 'windows') && 'cmd' || 'bash' }}
       run: |
