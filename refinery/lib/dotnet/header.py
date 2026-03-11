@@ -453,13 +453,107 @@ class MethodPtr(NamedTuple):
     Ref: UInt16
 
 
-class MethodDef(NamedTuple):
+class MethodCodeType(enum.IntEnum):
+    IL      = 0 # noqa
+    Native  = 1 # noqa
+    OPTIL   = 2 # noqa
+    Runtime = 3 # noqa
+
+
+class MethodImplFlags(FlagAccessMixin, enum.IntFlag):
+    Unmanaged               = 0x0004 # noqa
+    NoInlining              = 0x0008 # noqa
+    ForwardRef              = 0x0010 # noqa
+    Synchronized            = 0x0020 # noqa
+    NoOptimization          = 0x0040 # noqa
+    PreserveSig             = 0x0080 # noqa
+    AggressiveInlining      = 0x0100 # noqa
+    InternalCall            = 0x1000 # noqa
+
+
+class MethodFlags(FlagAccessMixin, enum.IntFlag):
+    Static                  = 0x0010 # noqa
+    Final                   = 0x0020 # noqa
+    Virtual                 = 0x0040 # noqa
+    HideBySig               = 0x0080 # noqa
+    NewSlot                 = 0x0100 # noqa
+    CheckAccessOnOverride   = 0x0200 # noqa
+    Abstract                = 0x0400 # noqa
+    SpecialName             = 0x0800 # noqa
+    PInvokeImpl             = 0x2000 # noqa
+    RTSpecialName           = 0x1000 # noqa
+    HasSecurity             = 0x4000 # noqa
+    RequireSecObject        = 0x8000 # noqa
+
+
+class MethodBodyInfo(Struct[memoryview]):
+    """
+    Represents a parsed .NET IL method body header (tiny or fat format). The `code` attribute
+    contains only the raw IL bytecode, excluding the header.
+    """
+    def __init__(self, reader: StructReader[memoryview]):
+        typeflag = reader.u8(peek=True)
+        if typeflag & 0b11 == 0b10:
+            reader.u8()
+            code_size = typeflag >> 2
+            self.fat = False
+            self.max_stack = 8
+            self.init_locals = False
+            self.more_sections = False
+            self.local_var_sig_tok = 0
+            self.code = reader.read(code_size)
+            return
+        if typeflag & 0b11 != 0b11:
+            raise ValueError(
+                F'Invalid method body header byte: 0x{typeflag:02X}')
+        flags_and_size = reader.u16()
+        header_size = (flags_and_size >> 12) * 4
+        flags = flags_and_size & 0xFFF
+        self.fat = True
+        self.init_locals = bool(flags & 0x10)
+        self.more_sections = bool(flags & 0x08)
+        self.max_stack = reader.u16()
+        code_size = reader.u32()
+        self.local_var_sig_tok = reader.u32()
+        reader.seekset(header_size)
+        self.code = reader.read(code_size)
+
+
+@dataclasses.dataclass(frozen=True)
+class MethodDef:
     RVA: UInt32
-    ImplFlags: UInt16
-    Flags: UInt16
+    _ImplFlags: UInt16
+    _Flags: UInt16
     Name: str
     Signature: bytes
     ParamList: Index[Param]
+
+    def __json__(self):
+        return {
+            'RVA': self.RVA,
+            'Name': self.Name,
+            'Signature': self.Signature,
+            'CodeType': self.CodeType,
+            'ImplFlags': self.ImplFlags,
+            'Flags': self.Flags,
+            'MemberAccess': self.MemberAccess,
+        }
+
+    @functools.cached_property
+    def CodeType(self) -> MethodCodeType:
+        return MethodCodeType(self._ImplFlags & 3)
+
+    @functools.cached_property
+    def ImplFlags(self) -> MethodImplFlags:
+        return MethodImplFlags(self._ImplFlags & ~3)
+
+    @functools.cached_property
+    def Flags(self) -> MethodFlags:
+        return MethodFlags(self._Flags & ~7)
+
+    @functools.cached_property
+    def MemberAccess(self) -> int:
+        return self._Flags & 7
 
 
 class ParamPtr(NamedTuple):
