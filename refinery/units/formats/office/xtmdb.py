@@ -7,7 +7,7 @@ from refinery.lib.access import AccessDatabase
 from refinery.units.formats import PathExtractorUnit, UnpackResult
 
 
-class xtxs(PathExtractorUnit):
+class xtmdb(PathExtractorUnit):
     """
     Extract data from Microsoft Access Databases. Parses .mdb and .accdb files to export tables and
     records as structured data.
