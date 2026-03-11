@@ -2097,11 +2097,7 @@ class PCodeParser:
     ) -> None:
         dc = self._decompiler
 
-        for stream, line_blocks in streams.items():
-            if stream:
-                self._queue_line(F'# DECOMPILED STREAM : {stream}', 0)
-
-            # count unindented function bodies
+        for line_blocks in streams.values():
             unindented = 0
             for oplines in line_blocks.values():
                 for line in oplines:

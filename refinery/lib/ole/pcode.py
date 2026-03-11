@@ -1408,9 +1408,41 @@ class PCodeDisassembler:
     """
 
     def __init__(self, data: bytes | bytearray | memoryview):
-        if isinstance(data, memoryview):
-            data = bytes(data)
         self._data = data
+
+    def iter_modules(self) -> Iterator[tuple[str, str]]:
+        """
+        Yield (module_path, pcodedmp_text) for each VBA module.
+        """
+        for ole_data in self._get_ole_streams():
+            ole = OleFile(ole_data)
+            yield from self._iter_project_modules(ole)
+
+    def _iter_project_modules(
+        self,
+        ole: OleFile,
+    ):
+        """
+        Iterate over VBA modules in an OLE file, yielding (module_path, pcodedmp_text) per module.
+        """
+        vba_projects = _find_vba_projects(ole)
+        if not vba_projects:
+            return
+        for vba_root, _, dir_path in vba_projects:
+            codec, code_modules, is_64bit = self._process_dir(ole, dir_path)
+            vba_project_path = vba_root + 'VBA/_VBA_PROJECT'
+            vba_project_data = self._process_vba_project(ole, vba_project_path)
+            identifiers = _get_identifiers(vba_project_data, codec)
+            for module in code_modules:
+                module_path = F'{vba_root}VBA/{module}'
+                try:
+                    module_data = ole.openstream(module_path).read()
+                except Exception:
+                    continue
+                output: list[str] = []
+                output.append(F'{module_path} - {len(module_data):d} bytes')
+                _pcode_dump(module_data, vba_project_data, identifiers, is_64bit, codec, output)
+                yield module_path, '\n'.join(output) + '\n'
 
     def disassemble(self) -> str:
         """
@@ -1423,7 +1455,7 @@ class PCodeDisassembler:
             self._process_project(ole, output)
         return '\n'.join(output) + '\n' if output else ''
 
-    def _get_ole_streams(self) -> list[bytes | bytearray]:
+    def _get_ole_streams(self) -> list[bytes | bytearray | memoryview]:
         """
         Extract OLE data from the input. If the input is already an OLE compound file, returns it
         directly. If it's a ZIP (OOXML), extracts all vbaProject.bin entries.
@@ -1435,7 +1467,7 @@ class PCodeDisassembler:
             from refinery.lib.structures import MemoryFile
             results: list[bytes | bytearray] = []
             try:
-                with zipfile.ZipFile(MemoryFile(self._data)) as zf:
+                with zipfile.ZipFile(MemoryFile(self._data, bytes)) as zf:
                     for name in zf.namelist():
                         if name.lower().endswith('vbaproject.bin'):
                             results.append(zf.read(name))
