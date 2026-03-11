@@ -731,6 +731,7 @@ Changes the format for the binary formatter used in `struct`, `rex`, `resub`, an
 - Logging now uses the Python `logging` module.
 
 ## Version 0.4.2 - bugfix release
+
 ## Version 0.4.1
 - Significantly improves unit loading time which had regressed due to the changes in 0.4.0.
 
@@ -745,6 +746,7 @@ Updates build system.
 ## Version 0.3.36 - bugfix release
 
 ## Version 0.3.35 - bugfix release
+
 ## Version 0.3.34
 - Fixes critical bug in deployment.
 - Adds the `msgpack` unit.
@@ -807,6 +809,7 @@ Updates build system.
 - The `drp` unit underwent major refactoring with the goal to improve both speed and quality of results. Two options were added to help control these new settings.
 
 ## Version 0.3.25 - bugfix release
+
 ## Version 0.3.24
 - Adds the `xtrtf` unit to extract embedded objects from RTF documents.
 - Adds the `officecrypt` unit to decode password-protected Office documents.
