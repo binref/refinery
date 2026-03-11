@@ -22,6 +22,8 @@ First and foremost, all code should pass [flake8], with the following tests disa
   - `E261` (at least two spaces before inline comment)
   - `W503` (line break occurred before a binary operator)
 
+We use `pyflakes` for checking compliance.
+
 ### Type Hints
 
 The refinery code base uses modern type hints, i.e.:
@@ -37,6 +39,9 @@ In rare cases where a modern type hint would have to be resolved at runtime howe
  it is permissible to import from `typing` and define types compatible with Python 3.8.
 On the other hand, this is very often avoidable by making such definitions only when `TYPE_CHECKING` is true,
  since development happens using a modern Python environment.
+
+The goal for refinery is to be fully typed.
+Use the `pyright` type checker for newly written code and ensure that it reports no problems.
 
 ### Comments
 
