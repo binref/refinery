@@ -8,6 +8,7 @@ from typing import NamedTuple
 
 from refinery.lib.dotnet import integer_from_ldc
 from refinery.lib.dotnet.header import DotNetHeader
+from refinery.lib.dotnet.signatures import FieldSig, SzArrayTypeSig, parse_signature
 from refinery.units.formats import PathExtractorUnit, UnpackResult
 from refinery.units.formats.pe.dotnet import CodePath
 
@@ -50,7 +51,7 @@ class dnfields(PathExtractorUnit):
             '^[us]?int.?16$' : 2,
             '^[us]?int.?32$' : 4,
             '^[us]?int.?64$' : 8,
-        }) -> tuple[str | None, FieldInfo]:
+        }) -> tuple[str | None, FieldInfo | None]:
             try:
                 info = icache[signature]
             except KeyError:
@@ -96,8 +97,54 @@ class dnfields(PathExtractorUnit):
                         info = FieldInfo(typename, count, size, match.start())
                     icache[signature] = info
                     return name, info
+            return None, None
+
+        def _guess_array_info(
+            t: int,
+            signature: bytes,
+            element_name: str,
+            element_size: int,
+            field_name: str | None = None,
+        ) -> tuple[str | None, FieldInfo | None]:
+            try:
+                info = icache[signature]
+            except KeyError:
+                info = None
             else:
-                return None, None
+                if field_name is not None:
+                    return field_name, info
+            pattern = (
+                BR'(\x20....|\x1F.|[\x17-\x1E])'    # ldc.i4  count
+                BR'\x8D...[\x01\x02]'                # newarr  col|row
+                BR'\x25'                             # dup
+                BR'\xD0\x%02x\x%02x\x%02x\x04'       # ldtoken t
+                BR'(?:.{0,12}?'                      # ...
+                BR'\x80(...)\x04)?' % (              # stsfld variable
+                    (t >> 0x00) & 0xFF,
+                    (t >> 0x08) & 0xFF,
+                    (t >> 0x10) & 0xFF
+                )
+            )
+            for match in re.finditer(pattern, memory, flags=re.DOTALL):
+                count_bytes, name = match.groups()
+                count = integer_from_ldc(count_bytes)
+                if name:
+                    try:
+                        name = struct.unpack('<L', B'%s\0' % name)
+                        name = name[0]
+                        name = tables[4][name - 1].Name
+                    except Exception as E:
+                        self.log_info(
+                            F'attempt to parse field name failed: {E!s}')
+                        name = None
+                if name is None:
+                    name = field_name
+                if info is None:
+                    info = FieldInfo(
+                        element_name, count, element_size, match.start())
+                icache[signature] = info
+                return name, info
+            return None, None
 
         iwidth = len(str(len(fields)))
         rwidth = max(len(F'{field.RVA:X}') for field in fields)
@@ -118,28 +165,28 @@ class dnfields(PathExtractorUnit):
             type = None
             signature = bytes(field.Signature)
             offset = header.pe.rva_to_offset(rv.RVA)
+            guess = None
 
-            if len(signature) == 2:
-                # Crude signature parser for non-array case. Reference:
-                # https://www.codeproject.com/Articles/42649/NET-File-Format-Signatures-Under-the-Hood-Part-1
-                # https://www.codeproject.com/Articles/42655/NET-file-format-Signatures-under-the-hood-Part-2
-                guess = {
-                    0x03: FieldInfo('Char',   1, 1, 0),  # noqa
-                    0x04: FieldInfo('SByte',  1, 1, 0),  # noqa
-                    0x05: FieldInfo('Byte',   1, 1, 0),  # noqa
-                    0x06: FieldInfo('Int16',  1, 2, 0),  # noqa
-                    0x07: FieldInfo('UInt16', 1, 2, 0),  # noqa
-                    0x08: FieldInfo('Int32',  1, 4, 0),  # noqa
-                    0x09: FieldInfo('UInt32', 1, 4, 0),  # noqa
-                    0x0A: FieldInfo('Int64',  1, 8, 0),  # noqa
-                    0x0B: FieldInfo('UInt64', 1, 8, 0),  # noqa
-                    0x0C: FieldInfo('Single', 1, 4, 0),  # noqa
-                    0x0D: FieldInfo('Double', 1, 8, 0),  # noqa
-                }.get(signature[1], None)
-            else:
-                fname, guess = _guess_field_info(_index, signature, fname)
+            try:
+                sig = parse_signature(signature)
+            except Exception:
+                sig = None
+
+            if isinstance(sig, FieldSig):
+                ftype = sig.field_type
+                if isinstance(ftype, SzArrayTypeSig):
+                    element = ftype.element
+                    if element.byte_size is not None and element.byte_size > 0:
+                        fname, guess = _guess_array_info(
+                            _index, signature,
+                            element.name, element.byte_size, fname)
+                elif ftype.byte_size is not None and ftype.byte_size > 0:
+                    guess = FieldInfo(ftype.name, 1, ftype.byte_size, 0)
 
             if guess is None:
+                fname, guess = _guess_field_info(_index, signature, fname)
+
+            if guess is None or fname is None:
                 self.log_warn(lambda: F'field {k:0{iwidth}d} with signature {field.Signature.hex()}: unable to guess type information')
                 continue
             if not fname.isprintable() or name_count[fname] > 1:
