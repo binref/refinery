@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-from refinery.lib.tools import NoLogging
-from refinery.lib.vfs import VirtualFileSystem
+from datetime import datetime
+from uuid import UUID
+
+from refinery.lib.access import AccessDatabase
 from refinery.units.formats import PathExtractorUnit, UnpackResult
 
 
@@ -10,21 +12,13 @@ class xtxs(PathExtractorUnit):
     Extract data from Microsoft Access Databases. Parses .mdb and .accdb files to export tables and
     records as structured data.
     """
-
-    @PathExtractorUnit.Requires('access-parser', ['formats', 'office', 'extended'])
-    def _access_parser():
-        import access_parser
-        return access_parser
-
     def unpack(self, data):
-
-        with VirtualFileSystem() as vfs:
-            file = vfs.new(data, 'accdb')
-            xsdb = self._access_parser.AccessParser(file.path)
-
-        for name in xsdb.catalog:
-            with NoLogging():
-                table = xsdb.parse_table(name)
+        db = AccessDatabase(data)
+        for name in db.catalog:
+            try:
+                table = db.parse_table(name)
+            except Exception:
+                continue
             if not table:
                 continue
             length = max(len(cells) for cells in table.values())
@@ -37,7 +31,9 @@ class xtxs(PathExtractorUnit):
                     if entry is None:
                         continue
 
-                    if isinstance(entry, (int, float)):
+                    if isinstance(entry, datetime):
+                        entry = entry.isoformat(' ', 'seconds')
+                    if isinstance(entry, (int, float, UUID)):
                         entry = str(entry)
                     if isinstance(entry, str):
                         entry = entry.encode(self.codec)
