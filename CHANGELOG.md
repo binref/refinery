@@ -5,6 +5,39 @@
 > If a release contains only bugfix, it is marked as a 'bugfix release'.
 > Otherwise, the changelog entries highlight only new or changed functionality.
 
+## Version 0.10.2
+- Adds the `xtsf` unit for extracting SetupFactory binaries.
+- Adds the `cbor` unit for parsing the CBOR format.
+- Adds the `asn1` unit for generic ASN.1 structure parsing.
+- The `argon2i` unit was renamed to `argon2` and supports all variants of Argon2 now.
+- Adds the `xtrar` unit for extracting RAR archives.
+- Adds the `xtdmg` unit for extracting DMG volumes.
+- Adds `carve-elf`, `carve-pdf`, 
+- Adds the `a3xs` unit for extracting only the script part of an AutoIt3 binary.
+- Adds the `sm3`, `aria`, `twofish`, `scrypt`, and `simon` cryptographic units.
+- Adds the `plist`, `puny`, and `qp` units for various common encodings.
+- Adds the `dsstore` unit for parsing MacOS' `.DS_Store` files.
+- The `mscf` unit now also supports LZMS.
+- Adds `dncode` unit for extracting the MSIL code from functions in a .NET assembly.
+- The `xtxs` unit was renamed to `xtmdb` and is now supported via `xt`.
+- The `lnk` unit now supports URL shortcuts much better.
+- The `xtvba` unit was renamed to `vbamc` to better align with `vbapc`.
+
+A large number of external dependencies was eliminated from the code base, replacing them with internal parsers.
+This includes:
+- `asn1crypto`
+- `LnkParse3`
+- `phpdeserialize`
+- `access-parser`
+- `libzbar`
+- `pycdlib`
+- `olefile`
+- `oletools`
+- `extract-msg`
+
+In most cases, this improves the support of those formats with one exception:
+The `qr` unit can no longer parse arbitrary bar codes but is restricted to QR codes.
+
 ## Version 0.10.1 - bugfix release
 
 ## Version 0.10.0
