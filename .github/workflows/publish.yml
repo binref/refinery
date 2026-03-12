@@ -9,6 +9,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       MALSHARE_API: ${{ secrets.MALSHARE_API }}
+      REFINERY_STOREPATH: ${{ github.workspace }}/refinery-test-data
     strategy:
       fail-fast: false
       matrix:
@@ -16,6 +17,11 @@ jobs:
         os: [windows-latest, macos-15-intel, ubuntu-latest]
     steps:
     - uses: actions/checkout@v4
+    - name: Checkout Test Data
+      uses: actions/checkout@v4
+      with:
+        repository: binref/refinery-test-data
+        path: refinery-test-data
     - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@v5
       with:
