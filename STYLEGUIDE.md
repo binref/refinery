@@ -136,11 +136,28 @@ All code in binary refinery aims to minimize the number of byte copy operations.
 - Building output should always be done in a `bytearray`, never by concatenating `bytes` objects.
 - Returning `bytearray` objects rather than `bytes` is always acceptable; the two types expose the same API.
 
+When accepting `bytes | bytearray | memoryview` but only requiring a `memoryview` internally,
+ cast your input to `memoryview` unconditionally at the start of your function:
+```python
+def _input_agnostic_function(data: bytes | bytearray | memoryview):
+    view = memoryview(data)
+    # work only with view
+```
+Never use the following pattern:
+```python
+  view = memoryview(data) if not isinstance(data, memoryview) else data
+```
+Producing a `memoryview` from an existing `memoryview` is cheap. 
+Doing it unconditionally helps the type checker and any human reader.
+
 ### Structured Data
 
 Data transfer object should not be stored in Python dictionaries.
 It should use a `dataclass` or `NamedTuple` with clear type hints instead.
 Do not use opaque string or integer literal constants for what can be captured by an `Enum`. 
+
+For parsing structured data, the standard interface is `Struct[memoryview]` from `refinery.lib.structures`.
+This should usually be preferred over manual parsing using offset calculations and the `struct` module.
 
 ### Format Strings and String Format
 
