@@ -130,7 +130,7 @@ _cms = compile_asn1("""
 
         EncapsulatedContentInfo ::= SEQUENCE {
             eContentType OBJECT IDENTIFIER,
-            eContent     [0] EXPLICIT OCTET STRING OPTIONAL
+            eContent     [0] EXPLICIT ANY OPTIONAL
         }
 
         IssuerAndSerialNumber ::= SEQUENCE {
@@ -224,6 +224,28 @@ _ec = compile_asn1("""
 
     END
 """)
+
+_spc = compile_asn1("""
+    SPC DEFINITIONS IMPLICIT TAGS ::= BEGIN
+        SpcString ::= CHOICE {
+            unicode [0] IMPLICIT BMPString,
+            ascii   [1] IMPLICIT IA5String
+        }
+        SpcSerializedObject ::= SEQUENCE {
+            classId        OCTET STRING,
+            serializedData OCTET STRING
+        }
+        SpcLink ::= CHOICE {
+            url      [0] IMPLICIT IA5String,
+            moniker  [1] IMPLICIT SpcSerializedObject,
+            file     [2] EXPLICIT SpcString
+        }
+        SpcSpOpusInfo ::= SEQUENCE {
+            programName [0] EXPLICIT SpcString OPTIONAL,
+            moreInfo    [1] EXPLICIT SpcLink OPTIONAL
+        }
+    END
+""", externals=_x509)
 
 _pkcs12 = compile_asn1("""
     PKCS12 DEFINITIONS IMPLICIT TAGS ::= BEGIN
@@ -443,6 +465,8 @@ _ldap = compile_asn1("""
 
     END
 """)
+
+SpcSpOpusInfo = _spc['SpcSpOpusInfo']
 
 Certificate = _x509['Certificate']
 CertificateList = _x509['CertificateList']

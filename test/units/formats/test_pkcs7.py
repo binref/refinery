@@ -11,7 +11,7 @@ class TestTarFileExtractor(TestUnitBase):
         unit = self.load()
         result = unit(self.SIGNATURE1)
         result = json.loads(result)
-        self.assertEqual(result['content']['signer_infos'][0]['unsigned_attrs'][1]['type'], 'microsoft_nested_signature')
+        self.assertEqual(result['content']['signerInfos'][0]['unsignedAttrs'][1]['type'], 'microsoftNestedSignature')
         self.assertTrue(all(isinstance(item, dict) for item in result['content']['certificates']),
             'failed parsing at least one certificate')
 

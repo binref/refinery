@@ -238,7 +238,7 @@ class pemeta(JSONTableUnit):
         def find_timestamps(entry) -> dict | None:
             if isinstance(entry, dict):
                 try:
-                    return {'Timestamp': _value(entry, 'signing_time')}
+                    return {'Timestamp': _value(entry, 'signingTime')}
                 except LookupError:
                     pass
                 for value in entry.values():
@@ -246,7 +246,7 @@ class pemeta(JSONTableUnit):
                     if result is None:
                         continue
                     with suppress(KeyError):
-                        result.setdefault('TimestampIssuer', entry['sid']['issuer']['common_name'])
+                        result.setdefault('TimestampIssuer', entry['sid']['issuer']['commonName'])
                     return result
             elif isinstance(entry, list):
                 for value in entry:
@@ -261,12 +261,12 @@ class pemeta(JSONTableUnit):
 
         try:
             certificates = signature['content']['certificates']
-            signer_infos = signature['content']['signer_infos']
+            signer_infos = signature['content']['signerInfos']
         except KeyError:
             return info
 
         try:
-            signer_serials = {info['sid']['serial_number']: info for info in signer_infos}
+            signer_serials = {info['sid']['serialNumber']: info for info in signer_infos}
         except KeyError:
             return info
 
@@ -274,8 +274,8 @@ class pemeta(JSONTableUnit):
 
         for certificate in certificates:
             with suppress(Exception):
-                crt = certificate['tbs_certificate']
-                serial = crt['serial_number']
+                crt = certificate['tbsCertificate']
+                serial = crt['serialNumber']
                 signer = signer_serials[serial]
 
                 if not isinstance(serial, int):
@@ -295,32 +295,40 @@ class pemeta(JSONTableUnit):
 
                 subject: dict = crt['subject']
                 location = [subject.get(t, '') for t in (
-                    'locality_name', 'state_or_province_name', 'country_name')]
+                    'localityName', 'stateOrProvinceName', 'countryName')]
                 cert_info = {}
-                cert_info.update(Subject=subject['common_name'])
+                cert_info.update(Subject=subject['commonName'])
                 with suppress(KeyError):
-                    cert_info.update(SubjectEmail=subject['email_address'])
+                    cert_info.update(SubjectEmail=subject['emailAddress'])
                 if any(location):
                     cert_info.update(SubjectLocation=', '.join(filter(None, location)))
                 with suppress(KeyError):
-                    cert_info.update(SubjectOrg=subject['organization_name'])
-                for attr in signer['signed_attrs']:
-                    if attr['type'] == 'authenticode_info':
+                    cert_info.update(SubjectOrg=subject['organizationName'])
+                for attr in signer['signedAttrs']:
+                    if attr['type'] != 'spcSpOpusInfo':
+                        continue
+                    try:
                         auth = _value(attr)
+                    except Exception:
+                        continue
+                    if not isinstance(auth, dict):
+                        continue
+                    with suppress(KeyError):
                         cert_info.update(ProgramName=auth['programName'])
+                    with suppress(KeyError):
                         cert_info.update(MoreInfo=auth['moreInfo'])
                 try:
-                    valid_since = crt['validity']['not_before']
-                    valid_until = crt['validity']['not_after']
+                    valid_since = crt['validity']['notBefore']
+                    valid_until = crt['validity']['notAfter']
                 except KeyError:
                     pass
                 else:
                     cert_info.update(ValidSince=valid_since, ValidUntil=valid_until)
                 cert_info.update(Serial=serial)
                 with suppress(KeyError):
-                    cert_info.update(Issuer=crt['issuer']['common_name'])
+                    cert_info.update(Issuer=crt['issuer']['commonName'])
                 with suppress(KeyError):
-                    cert_info.update(IssuerOrg=crt['issuer']['organization_name'])
+                    cert_info.update(IssuerOrg=crt['issuer']['organizationName'])
                 with suppress(KeyError):
                     cert_info.update(Fingerprint=certificate['fingerprint'])
                 signer_certificates.append(cert_info)

@@ -138,6 +138,7 @@ class ASN1Reader(StructReader[memoryview]):
         '1.2.840.113549.1.9.3'       : 'contentType',
         '1.2.840.113549.1.9.4'       : 'messageDigest',
         '1.2.840.113549.1.9.5'       : 'signingTime',
+        '1.2.840.113549.1.9.6'       : 'counterSignature',
         '1.2.840.113549.1.9.14'      : 'extensionRequest',
         '1.2.840.113549.1.9.15'      : 'smimeCapabilities',
         '1.2.840.113549.1.12.1.3'    : 'pbeWithSHAAnd3KeyTripleDES',
@@ -159,6 +160,8 @@ class ASN1Reader(StructReader[memoryview]):
         '0.9.2342.19200300.100.1.25' : 'domainComponent',
         '1.3.6.1.4.1.311.20.2.3'     : 'userPrincipalName',
         '1.3.6.1.4.1.311.60.2.1.3'   : 'jurisdictionCountry',
+        '1.3.6.1.4.1.311.2.1.12'     : 'spcSpOpusInfo',
+        '1.3.6.1.4.1.311.2.4.1'      : 'microsoftNestedSignature',
         '1.2.840.113549.2.7'         : 'hmacWithSHA1',
         '1.2.840.113549.2.9'         : 'hmacWithSHA256',
         '1.2.840.113549.2.10'        : 'hmacWithSHA384',
@@ -364,9 +367,27 @@ class ASN1Reader(StructReader[memoryview]):
         content = bytes(self.read_exactly(length)) if length > 0 else b''
         return self._decode_universal_primitive(tag_number, content)
 
+    def _skip_u16_padding(self):
+        if (zero := self.peek(2) == B'\0\0'):
+            self.skip(2)
+        return zero
+
     def _decode_constructed_children(self, length: int, element_schema: SchemaType) -> list[ASN1Value]:
+        if length < 0:
+            children: list[ASN1Value] = []
+            while True:
+                if self.remaining_bytes >= 2:
+                    if self._skip_u16_padding():
+                        break
+                child = self.decode_with_schema(element_schema)
+                if child is self._EOC:
+                    break
+                children.append(child)
+            if isinstance(element_schema, (SetOf, SeqOf)):
+                return [item for child in children for item in child]
+            return children
         end = self.tell() + length
-        children: list[ASN1Value] = []
+        children = []
         while self.tell() < end:
             children.append(self.decode_with_schema(element_schema))
         if isinstance(element_schema, (SetOf, SeqOf)):
@@ -374,7 +395,11 @@ class ASN1Reader(StructReader[memoryview]):
         return children
 
     def _decode_seq(self, schema: Seq, length: int) -> OrderedDict[str, ASN1Value]:
-        end = self.tell() + length
+        indefinite = length < 0
+        if indefinite:
+            end = self.tell() + self.remaining_bytes
+        else:
+            end = self.tell() + length
         result: OrderedDict[str, ASN1Value] = OrderedDict()
 
         for field in schema.fields:
@@ -386,6 +411,15 @@ class ASN1Reader(StructReader[memoryview]):
                 raise ASN1SchemaMismatch(
                     F'required field {field.name!r} missing: no more data')
 
+            if indefinite and self.remaining_bytes >= 2:
+                if self._skip_u16_padding():
+                    if field.optional:
+                        if field.default is not _MISSING:
+                            result[field.name] = field.default
+                        continue
+                    raise ASN1SchemaMismatch(
+                        F'required field {field.name!r} missing: end of contents')
+
             pos = self.tell()
             tag_class, constructed, tag_number = self._read_tag()
             fld_length = self._read_length()
@@ -396,6 +430,8 @@ class ASN1Reader(StructReader[memoryview]):
             if field.explicit is not None:
                 if tag_class == field.tag_class and tag_number == field.explicit and constructed:
                     value = self.decode_with_schema(field.type)
+                    if fld_length < 0 and self.remaining_bytes >= 2:
+                        self._skip_u16_padding()
                     matched = True
             elif field.implicit is not None:
                 if tag_class == field.tag_class and tag_number == field.implicit:
@@ -424,6 +460,9 @@ class ASN1Reader(StructReader[memoryview]):
                     F'required field {field.name!r}: expected tag mismatch')
 
             result[field.name] = value
+
+        if indefinite and self.remaining_bytes >= 2:
+            self._skip_u16_padding()
 
         return result
 
