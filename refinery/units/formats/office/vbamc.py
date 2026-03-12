@@ -5,9 +5,9 @@ from refinery.lib.ole.vba import FileOpenError, VBAParser
 from refinery.units.formats import PathExtractorUnit, UnpackResult
 
 
-class xtvba(PathExtractorUnit):
+class vbamc(PathExtractorUnit):
     """
-    Extract VBA macro code from Office documents.
+    Extract VBA macro code from Office documents such as Word and Excel.
     """
     def unpack(self, data):
         try:
@@ -17,7 +17,8 @@ class xtvba(PathExtractorUnit):
         for macro in parser.extract_all_macros():
             if not macro.stream_path:
                 continue
-            yield UnpackResult(macro.stream_path, macro.code.encode(self.codec))
+            if code := macro.code:
+                yield UnpackResult(macro.stream_path, code.encode(self.codec))
 
     @classmethod
     def handles(cls, data):

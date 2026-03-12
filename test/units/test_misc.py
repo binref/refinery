@@ -337,7 +337,7 @@ class TestScoping(TestUnitBase):
                      | xt custom
                      | xj0
                      | pop
-                ]| xtvba [
+                ]| vbamc [
                      | sep
                 ]| push [
                      | rex CustomDocumentProperties.((??string)) {1:escvb}

@@ -13,6 +13,7 @@ for path in pathlib.Path.cwd().glob('tutorials/notebooks/*.ipynb'):
     with path.open('r', encoding='utf8') as fd:
         notebook = json.load(fd)
     notebook['metadata']['kernelspec']['display_name'] = 'BinaryRefinery'
+    notebook['metadata']['language_info']['version'] = '3.13.0'
     for cell in notebook['cells']:
         if CK in cell:
             cell[CK] = ctr = ctr + 1

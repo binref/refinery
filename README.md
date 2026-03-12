@@ -306,7 +306,7 @@ emit 58ba30052d249805caae0107a0e2a5a3cb85f3000ba5479fafb7767e2a5a78f3 \
 Get the malicious VBA macros from a forgotten time when this was how it was done:
 ```
 emit ee103f8d64cd8fa884ff6a041db2f7aa403c502f54e26337c606044c2f205394 \
-  | xtvba
+  | vbamc
 ```
 And then extract the malicious downloader payload:
 ```

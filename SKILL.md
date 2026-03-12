@@ -470,7 +470,7 @@ Units `pf`, `dump`, and `run` support Python-style format strings with meta vari
 | `doctxt` | Extract text content from office documents. |
 | `officecrypt` | Decrypt password-protected Office documents. |
 | `xlxtr` | Extract data from Excel cells by range. `xlxtr 9.5:11.5 15.15` extracts cell ranges. |
-| `xtvba` | Extract VBA macro source code from Office documents. |
+| `vbamc` | Extract VBA macro source code from Office documents. |
 
 ### Archives
 
