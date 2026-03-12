@@ -976,7 +976,7 @@ def parse_headers(
     encrypted = False
     _hdr_key = None
 
-    view = memoryview(data) if not isinstance(data, memoryview) else data
+    view = memoryview(data)
 
     if fmt == RarFormat.RARFMT50:
         pos = SIZEOF_MARKHEAD5

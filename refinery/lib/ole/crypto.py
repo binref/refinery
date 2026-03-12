@@ -733,7 +733,7 @@ class OOXMLFile:
 
 
 def _parse_fib_base(data: bytes | bytearray | memoryview) -> FibBase:
-    mv = memoryview(data) if not isinstance(data, memoryview) else data
+    mv = memoryview(data)
     w_ident = unpack_from('<H', mv, 0)[0]
     n_fib = unpack_from('<H', mv, 2)[0]
     bits = unpack_from('<H', mv, 10)[0]

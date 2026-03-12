@@ -377,7 +377,7 @@ class ISO9660Archive:
         self._boot_catalog_location: int = 0
 
     def open(self, data: bytes | bytearray | memoryview) -> None:
-        self._data = memoryview(data) if not isinstance(data, memoryview) else data
+        self._data = memoryview(data)
 
         volume_descriptors: list[VolumeDescriptor] = []
         pos = START_POS

@@ -153,7 +153,7 @@ class UDFArchive:
         self._logical_volumes: list[LogicalVolumeDescriptor] = []
 
     def open(self, data: bytes | bytearray | memoryview) -> None:
-        self._data = memoryview(data) if not isinstance(data, memoryview) else data
+        self._data = memoryview(data)
 
         if not self._find_anchor():
             return
