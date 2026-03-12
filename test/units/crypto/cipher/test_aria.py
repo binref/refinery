@@ -1,6 +1,6 @@
 from ... import TestUnitBase
 
-from refinery.lib.aria import ARIA
+from refinery.lib.crypto.aria import ARIA
 from refinery.lib.crypto import ECB
 
 

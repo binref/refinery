@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from refinery.lib.murmur import (
+from refinery.lib.crypto.murmur import (
     v2_mmh32digest,
     v2_mmh32digestA,
     v2_mmh64digestA,

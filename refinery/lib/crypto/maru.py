@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import struct
 
-from refinery.lib.speck import (
+from refinery.lib.crypto.speck import (
     speck_encrypt32,
     speck_key_schedule_064_128,
 )

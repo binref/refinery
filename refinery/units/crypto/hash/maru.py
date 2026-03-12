@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from refinery.lib.maru import maru32digest
+from refinery.lib.crypto.maru import maru32digest
 from refinery.lib.types import Param
 from refinery.units.crypto.hash import Arg, HashUnit
 

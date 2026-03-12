@@ -1,5 +1,5 @@
 from ... import TestUnitBase
-from refinery.lib.maru import maru32
+from refinery.lib.crypto.maru import maru32
 
 
 class TestMaruHash(TestUnitBase):

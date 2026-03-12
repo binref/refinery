@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from refinery.lib.mscrypto import CRYPTOKEY
+from refinery.lib.crypto.mscrypto import CRYPTOKEY
 from refinery.units import Unit
 
 

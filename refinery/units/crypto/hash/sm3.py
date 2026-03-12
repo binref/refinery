@@ -14,5 +14,5 @@ class sm3(HashUnit):
     alongside `refinery.units.crypto.cipher.sm4`.
     """
     def _algorithm(self, data):
-        from refinery.lib.sm3 import sm3_digest
+        from refinery.lib.crypto.sm3 import sm3_digest
         return sm3_digest(data)

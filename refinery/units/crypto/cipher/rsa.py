@@ -10,7 +10,7 @@ from Cryptodome.Random import get_random_bytes
 from Cryptodome.Util import number
 
 from refinery.lib import xml
-from refinery.lib.mscrypto import BCRYPT_RSAKEY_BLOB, CRYPTOKEY, PRIVATEKEYBLOB, RSAPUBKEY
+from refinery.lib.crypto.mscrypto import BCRYPT_RSAKEY_BLOB, CRYPTOKEY, PRIVATEKEYBLOB, RSAPUBKEY
 from refinery.lib.tools import splitchunks
 from refinery.lib.types import Param, buf
 from refinery.units import Arg, RefineryPartialResult, Unit

@@ -7,7 +7,7 @@ from refinery.lib.crypto import (
     CipherInterface,
     CipherMode,
 )
-from refinery.lib.serpent import (
+from refinery.lib.crypto.serpent import (
     make_subkeys,
     serpent_decrypt,
     serpent_encrypt,

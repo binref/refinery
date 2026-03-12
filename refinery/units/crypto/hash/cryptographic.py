@@ -103,5 +103,5 @@ class ripemd128(HashUnit):
     Returns the RIPEMD-128 hash of the input data.
     """
     def _algorithm(self, data):
-        from refinery.lib.ripemd128 import ripemd128
+        from refinery.lib.crypto.ripemd128 import ripemd128
         return ripemd128(data)

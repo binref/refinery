@@ -9,7 +9,7 @@ from refinery.lib.crypto import (
     CipherInterface,
     CipherMode,
 )
-from refinery.lib.speck import (
+from refinery.lib.crypto.speck import (
     speck_decrypt32,
     speck_decrypt64,
     speck_encrypt32,

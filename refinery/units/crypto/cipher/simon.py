@@ -9,7 +9,7 @@ from refinery.lib.crypto import (
     CipherInterface,
     CipherMode,
 )
-from refinery.lib.simon import (
+from refinery.lib.crypto.simon import (
     simon_decrypt16,
     simon_decrypt24,
     simon_decrypt32,

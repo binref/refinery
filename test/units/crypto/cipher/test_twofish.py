@@ -1,6 +1,6 @@
 from ... import TestUnitBase
 
-from refinery.lib.twofish import Twofish
+from refinery.lib.crypto.twofish import Twofish
 from refinery.lib.crypto import ECB
 
 

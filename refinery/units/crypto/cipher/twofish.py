@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from refinery.lib.crypto import BlockCipherFactory
-from refinery.lib.twofish import Twofish
+from refinery.lib.crypto.twofish import Twofish
 from refinery.units.crypto.cipher import StandardBlockCipherUnit
 
 

@@ -44,7 +44,7 @@ class rsakey(Unit):
         return base64.b64encode(number.to_bytes(size, 'big'))
 
     def process(self, data):
-        from refinery.lib.mscrypto import ALGORITHMS, TYPES
+        from refinery.lib.crypto.mscrypto import ALGORITHMS, TYPES
         fmt, key = normalize_rsa_key(data, force_public=self.args.public)
         self.log_info(F'parsing input as {fmt.value} format')
         out = self.args.output
