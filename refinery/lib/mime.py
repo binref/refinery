@@ -6,7 +6,7 @@ from __future__ import annotations
 import functools
 
 from refinery.lib.id import get_pe_type, get_structured_data_type
-from refinery.lib.magic import magic, magicparse
+from refinery.lib.magic import magicparse
 
 FileTypeMap = {
     'application/x-setupscript': 'ini',
@@ -258,18 +258,17 @@ class FileMagicInfo:
         mime = 'application/octet-stream'
         blob = True
 
-        if magic is not None:
-            if not isinstance(data, bytes):
-                data = bytes(data)
-            mime = magicparse(data, mime=True)
-            mime = mime.split(';')[0].lower()
-            extension = FileTypeMap.get(mime, default)
-            description = magicparse(data).strip()
-            if description == 'Microsoft OOXML':
-                extension = 'docx'
-            elif extension == 'exe' and (t := get_pe_type(data)):
-                extension = t.extension
-            blob = description.lower() == 'data'
+        if not isinstance(data, bytes):
+            data = bytes(data)
+        mime = magicparse(data, mime=True)
+        mime = mime.split(';')[0].lower()
+        extension = FileTypeMap.get(mime, default)
+        description = magicparse(data).strip()
+        if description == 'Microsoft OOXML':
+            extension = 'docx'
+        elif extension == 'exe' and (t := get_pe_type(data)):
+            extension = t.extension
+        blob = description.lower() == 'data'
 
         check = get_structured_data_type(data)
 

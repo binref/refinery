@@ -1,32 +1,21 @@
 """
-A cross-platform interface to libmagic.
+A cross-platform interface for file type identification using pure-magic-rs.
 """
 from __future__ import annotations
 
-try:
-    from winmagic import magic
-except ModuleNotFoundError:
-    import os
-    if os.name == 'nt':
-        # Attempting to import magic on Windows without winmagic being
-        # installed may result in an uncontrolled crash.
-        magic = None
-    else:
-        try:
-            import magic
-        except ImportError:
-            magic = None
+from pure_magic_rs import MagicDb
+
+_db = MagicDb()
 
 
-def magicparse(data, *args, **kwargs) -> str:
-    if magic is not None:
-        if not isinstance(data, bytes):
-            data = bytes(data)
-        try:
-            return magic.Magic(*args, **kwargs).from_buffer(data)
-        except magic.MagicException:
-            pass
-    elif kwargs.get('mime', False) is True:
+def magicparse(data, mime=False) -> str:
+    if not isinstance(data, bytes):
+        data = bytes(data)
+    try:
+        result = _db.best_magic_buffer(data)
+        return result.mime_type if mime else result.message
+    except (ValueError, TypeError):
+        pass
+    if mime:
         return 'application/octet-stream'
-    else:
-        return 'data'
+    return 'data'

@@ -279,11 +279,6 @@ def get_config():
     ppcfg: dict[str, dict[str, list[str]]] = toml.load('pyproject.toml')
     requirements = ppcfg['build-system']['requires']
 
-    magic = 'python-magic'
-    if os.name == 'nt':
-        magic = F'{magic}-win64'
-    requirements.append(magic)
-
     extras = get_setup_extras(requirements)
     config = get_setup_common()
 

@@ -6,6 +6,7 @@ requires = [
     "lief>=0.17.0",
     "msgpack>=1.0.0",
     "pycryptodomex",
+    "pure-magic-rs",
     "setuptools",
     "toml",
     "wheel",
