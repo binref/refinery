@@ -426,7 +426,7 @@ class OleFile:
         self._dll_version = reader.u16()
         byte_order = reader.u16()
         if byte_order != 0xFFFE:
-            self._raise_defect(DEFECT_FATAL, F'Invalid byte order: {byte_order:#06x}')
+            self._raise_defect(DEFECT_INCORRECT, F'Invalid byte order: {byte_order:#06x}')
         sector_shift = reader.u16()
         self._sector_size = 1 << sector_shift
         mini_sector_shift = reader.u16()
