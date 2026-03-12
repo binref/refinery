@@ -19,3 +19,4 @@ __pycache__
 *.pyc
 mptest.errors
 .coverage
+coverage.json
