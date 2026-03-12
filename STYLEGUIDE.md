@@ -54,11 +54,11 @@ All code in refinery uses LF line breaks exclusively, never CR/LF.
 
 ### Line Length
 
-All lines should wrap at **100** characters.
+The line length for refinery code is **100** characters.
 This is a hard limit for docstrings and comments, and a soft limit for code.
-The hard limit for code is at **140** characters to allow for occasional long lines.
-Note also that lines should **not** wrap at less than 100 lines, i.e. they should not wrap at 80 lines.
-They should wrap at exactly 100 characters.
+Note also that lines should **not** wrap at less than 100 characters.
+Do not wrap at 80 characters.
+The hard limit for code is at **140** characters to allow occasional code lines that exceed 100 characters.
 
 When a function call or definition becomes too long for the line width limit, it should be split like so:
 ```python
