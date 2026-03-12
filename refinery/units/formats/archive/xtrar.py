@@ -93,4 +93,4 @@ class xtrar(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
 
     @classmethod
     def handles(cls, data) -> bool:
-        return detect_format(data) is not None
+        return cls._find_rar_file(data) is not None
