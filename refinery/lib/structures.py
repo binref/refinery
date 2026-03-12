@@ -1185,7 +1185,7 @@ class FlagAccessMixin:
 
     def __repr__(self):
         if not isinstance(self, enum.IntFlag):
-            raise RuntimeError
+            return repr(self)
         if name := self.name:
             return name
         return enum.IntFlag.__repr__(self)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from refinery.lib.dotnet.header import DotNetHeader, TypeDef, MethodBodyInfo, MethodCodeType
 from refinery.units.formats import PathExtractorUnit, UnpackResult
+from refinery.lib.patterns import checks
 
 
 class dncode(PathExtractorUnit):
@@ -29,8 +30,13 @@ class dncode(PathExtractorUnit):
                 if index < len(method_owners):
                     method_owners[index] = typedef
 
+        def sanitize(name: str) -> str:
+            if name.startswith('<') and name.endswith('>'):
+                name = F'[{name[1:-1]}]'
+            return name
+
         def printable(name: str) -> bool:
-            return name.replace('.', '').isidentifier()
+            return bool(name and checks.path_element_nospace.value.str.fullmatch(name))
 
         view = memoryview(data)
 
@@ -47,11 +53,11 @@ class dncode(PathExtractorUnit):
             except Exception:
                 self.log_warn(F'failed to parse method body at offset 0x{offset:08X} for method {method.Name}')
                 continue
-            if not printable(method_name := method.Name):
+            if not printable(method_name := sanitize(method.Name)):
                 method_name = F'method_{method.RVA:08X}'
-            if (owner := method_owners[index]) is not None:
-                namespace = owner.TypeNamespace
-                type_name = owner.TypeName
+            if owner := method_owners[index]:
+                namespace = sanitize(owner.TypeNamespace)
+                type_name = sanitize(owner.TypeName)
                 if not printable(type_name):
                     type_name = F'type{index}'
                 if not printable(namespace):

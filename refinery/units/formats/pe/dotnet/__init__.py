@@ -37,12 +37,17 @@ class CodePath:
         ranges = self.ranges
         tables = self.tables
         header = self.header
-        rva = header.pe.offset_to_virtual_address(offset) - header.pe.imagebase
+        rva = header.pe.offset_to_virtual_address(offset)
+        if not isinstance(rva, int):
+            raise RuntimeError(F'Unable to determine RVA of method at offset {offset:#x}.')
+        rva -= header.pe.imagebase
         method = min(tables.MethodDef, key=lambda m: (m.RVA > rva, rva - m.RVA))
         index = tables.MethodDef.index(method)
         method_name = method.Name
         if not printable(method_name):
             method_name = F'method_{method.RVA:08X}'
+        if method_name.startswith('.'):
+            method_name = F'[{method_name[1:]}]'
         for k, (methods, tr) in enumerate(zip(ranges, tables.TypeDef), 1):
             if index in methods:
                 namespace = tr.TypeNamespace
