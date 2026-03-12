@@ -1,38 +1,33 @@
 from __future__ import annotations
 
-from refinery.lib.structures import MemoryFile
-from refinery.lib.tools import NoLogging
+from refinery.lib.lnk import LnkFile
 from refinery.lib.types import Param
 from refinery.units.formats import Arg, JSONTableUnit
 
 
 class lnk(JSONTableUnit):
     """
-    Parse Windows Shortcuts (LNK files) and returns the parsed information in JSON format. This
-    unit is a thin wrapper around the LnkParse3 library.
+    Parse Windows Shortcuts (LNK files) and returns the parsed information in JSON format.
     """
 
-    @JSONTableUnit.Requires('LnkParse3>=1.4.0', ['formats', 'default', 'extended'])
-    def _LnkParse3():
-        import LnkParse3
-        return LnkParse3
-
     _PATHS = {
-        'data': ...,
-        'header': {'creation_time', 'accessed_time', 'modified_time', 'windowstyle'},
-        'link_info': {'local_base_path', 'location'},
+        'data'        : ...,
+        'target_path' : ...,
+        'header'      : {'creation_time', 'accessed_time', 'modified_time', 'show_command'},
+        'link_info'   : {'local_base_path', 'volume_id', 'common_network_relative_link'},
     }
 
     def __init__(
         self,
-        details: Param[bool, Arg('-d', help='Print all details; some properties are hidden by default.')] = False,
+        details: Param[bool, Arg('-d', help=(
+            'Print all details; some properties are hidden by default.'
+        ))] = False,
         tabular=False,
     ):
         super().__init__(tabular=tabular, details=details)
 
     def json(self, data):
-        with NoLogging():
-            parsed = self._LnkParse3.lnk_file(MemoryFile(data)).get_json()
+        parsed = LnkFile(data).__json__()
         if not self.args.details:
             paths = self._PATHS
             noise = [key for key in parsed if key not in paths]
