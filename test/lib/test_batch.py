@@ -185,6 +185,19 @@ class TestBatchParser(TestBase):
         self.assertEqual(t[2], '^"^BA^R=S"E"C^O^^^"N"D')
 
 
+class TestBatchState(TestBase):
+
+    def test_error_zero_is_falsy_int_but_truthy(self):
+        from refinery.lib.batch.state import ErrorZero
+        ez = ErrorZero.Val
+        self.assertEqual(int(ez), 0)
+        self.assertTrue(bool(ez))
+
+    def test_error_zero_str(self):
+        from refinery.lib.batch.state import ErrorZero
+        self.assertEqual(str(ErrorZero.Val), '0')
+
+
 class TestBatchEmulator(TestBase):
 
     def test_arithmetic_if(self):
@@ -1082,10 +1095,6 @@ class TestBatchUtil(TestBase):
         self.assertEqual(len(br), 4)
         self.assertListEqual(list(br), ['0', '3', '6', '9'])
 
-    def test_batchint_decimal(self):
-        from refinery.lib.batch.util import batchint
-        self.assertEqual(batchint('42'), 42)
-
     def test_batchint_hex(self):
         from refinery.lib.batch.util import batchint
         self.assertEqual(batchint('0x1F'), 31)
@@ -1156,6 +1165,9 @@ class TestBatchUtil(TestBase):
         trailing, result = uncaret('^a"^b"^c', ignore_quotes=False)
         self.assertFalse(trailing)
         self.assertEqual(result, 'a"^b"c')
+        trailing, result = uncaret('^&"^&"^|^')
+        self.assertTrue(trailing)
+        self.assertEqual(result, '&"^&"|^')
 
     def test_error_zero_bool_is_true(self):
         from refinery.lib.batch.state import ErrorZero
@@ -1176,3 +1188,76 @@ class TestBatchUtil(TestBase):
         from refinery.lib.batch.state import BatchState
         state = BatchState()
         self.assertEqual(state.envar('ERRORLEVEL'), '0')
+
+    def test_batchrange_basic(self):
+        from refinery.lib.batch.util import batchrange
+        r = batchrange(1, 1, 5)
+        self.assertEqual(list(r), ['1', '2', '3', '4', '5'])
+
+    def test_batchrange_step(self):
+        from refinery.lib.batch.util import batchrange
+        r = batchrange(0, 2, 8)
+        self.assertEqual(list(r), ['0', '2', '4', '6', '8'])
+
+    def test_batchrange_empty(self):
+        from refinery.lib.batch.util import batchrange
+        r = batchrange(10, 1, 5)
+        self.assertEqual(list(r), [])
+        self.assertEqual(len(r), 0)
+
+    def test_batchrange_zero_step(self):
+        from refinery.lib.batch.util import batchrange
+        r = batchrange(1, 0, 5)
+        self.assertEqual(len(r), 0)
+
+    def test_batchrange_negative_step(self):
+        from refinery.lib.batch.util import batchrange
+        r = batchrange(1, -1, 5)
+        self.assertEqual(len(r), 0)
+
+    def test_batchint_decimal(self):
+        from refinery.lib.batch.util import batchint
+        self.assertEqual(batchint('42'), 42)
+
+    def test_batchint_negative_hex(self):
+        from refinery.lib.batch.util import batchint
+        self.assertEqual(batchint('-0xFF'), -255)
+
+    def test_batchint_invalid_with_default(self):
+        from refinery.lib.batch.util import batchint
+        self.assertEqual(batchint('notanumber', 0), 0)
+
+    def test_batchint_invalid_raises(self):
+        from refinery.lib.batch.util import batchint
+        with self.assertRaises(ValueError):
+            batchint('notanumber')
+
+    def test_unquote_basic(self):
+        from refinery.lib.batch.util import unquote
+        self.assertEqual(unquote('"hello"'), 'hello')
+
+    def test_unquote_partial(self):
+        from refinery.lib.batch.util import unquote
+        self.assertEqual(unquote('"hello'), 'hello')
+
+    def test_uncaret_basic(self):
+        from refinery.lib.batch.util import uncaret
+        trailing, result = uncaret('^&^|^<^>', ignore_quotes=True)
+        self.assertFalse(trailing)
+        self.assertEqual(result, '&|<>')
+
+    def test_uncaret_trailing(self):
+        from refinery.lib.batch.util import uncaret
+        trailing, result = uncaret('hello^', ignore_quotes=True)
+        self.assertTrue(trailing)
+
+    def test_u16_string_to_memoryview(self):
+        from refinery.lib.batch.util import u16
+        result = u16('AB')
+        self.assertIsInstance(result, memoryview)
+
+    def test_u16_bytes_to_string(self):
+        from refinery.lib.batch.util import u16
+        data = 'Hello'.encode('utf-16le')
+        result = u16(data)
+        self.assertEqual(result, 'Hello')
