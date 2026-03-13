@@ -163,7 +163,6 @@ class xtsf(ArchiveUnit):
         raise ValueError('Unable to find Setup Factory signature in overlay.')
 
     def _unpack_sf7(self, reader: StructReader):
-        reader.seekrel(1)
         size = reader.u32()
         exe_data = reader.read_exactly(size)
         yield self._pack('irsetup.exe', None, lambda d=exe_data: _xor_special(d))
