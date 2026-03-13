@@ -38,6 +38,7 @@ CODEC_IA64         = b'\x03\x03\x04\x01'  # noqa
 CODEC_ARM          = b'\x03\x03\x05\x01'  # noqa
 CODEC_ARMT         = b'\x03\x03\x07\x01'  # noqa
 CODEC_ARM64        = b'\x0a'              # noqa
+CODEC_RISCV        = b'\x0b'              # noqa
 CODEC_SPARC        = b'\x03\x03\x08\x05'  # noqa
 CODEC_DEFLATE      = b'\x04\x01\x08'      # noqa
 CODEC_DEFLATE64    = b'\x04\x01\x09'      # noqa
@@ -331,6 +332,98 @@ def _filter_arm64(data: bytes | bytearray | memoryview, props: bytes) -> bytearr
     return buf
 
 
+def _filter_riscv(data: bytes | bytearray | memoryview, props: bytes) -> bytearray:
+    buf = bytearray(data)
+    ip = 0
+    if props and len(props) >= 4:
+        ip = int.from_bytes(props[:4], 'little')
+    M32 = 0xFFFFFFFF
+    size = len(buf) & ~1
+    if size <= 6:
+        return buf
+    limit = size - 6
+    pos = 0
+    while pos < limit:
+        b = buf[pos]
+        a = ((b ^ 0x10) + 1) & 0xFF
+        if a & 0x77:
+            b2 = buf[pos + 2]
+            a2 = ((b2 ^ 0x10) + 1) & 0xFF
+            pos += 4
+            if a2 & 0x77:
+                continue
+            pos -= 2
+            if pos >= limit:
+                break
+            a = a2
+            b = b2
+        pc = ip + pos
+        if (a & 8) == 0:
+            a = (((buf[pos] | (buf[pos + 1] << 8)) ^ 0x10) + 1) & 0xFFFF
+            a = (a - (0x100 - 0x7F)) & 0xFFFF
+            if a & 0xD80:
+                pos += 4
+                continue
+            a_old = (a + (0xEF - 0x7F)) & 0xFFF
+            v = (buf[pos + 3] << 1) | (buf[pos + 2] << 9) | ((a & 0xF000) << 5)
+            v = (v - pc) & M32
+            a = a_old
+            a |= (v << 11) & (1 << 31)
+            a |= (v << 20) & (0x3FF << 21)
+            a |= (v << 9) & (1 << 20)
+            a |= v & (0xFF << 12)
+            a &= M32
+            buf[pos + 0] = a & 0xFF
+            buf[pos + 1] = (a >> 8) & 0xFF
+            buf[pos + 2] = (a >> 16) & 0xFF
+            buf[pos + 3] = (a >> 24) & 0xFF
+            pos += 4
+        else:
+            v = (((buf[pos] | (buf[pos + 1] << 8)) ^ 0x10) + 1) & 0xFFFF
+            a = buf[pos] | (buf[pos + 1] << 8) | (buf[pos + 2] << 16) | (buf[pos + 3] << 24)
+            if (v & 0xE80) == 0:
+                r = a >> 27
+                check = ((v - (3 << 12) - (2 << 7) - 8) << 18) & M32
+                if check < (r & 0x1D):
+                    b32 = (buf[pos + 4] << 24) | (buf[pos + 5] << 16) | (buf[pos + 6] << 8) | buf[pos + 7]
+                    b32 = (b32 - pc) & M32
+                    v2 = a >> 12
+                    inst = (r << 7) + 0x17
+                    inst = (inst + ((b32 + 0x800) & 0xFFFFF000)) & M32
+                    fup = v2 | ((b32 << 20) & M32)
+                    fup &= M32
+                    buf[pos + 0] = inst & 0xFF
+                    buf[pos + 1] = (inst >> 8) & 0xFF
+                    buf[pos + 2] = (inst >> 16) & 0xFF
+                    buf[pos + 3] = (inst >> 24) & 0xFF
+                    buf[pos + 4] = fup & 0xFF
+                    buf[pos + 5] = (fup >> 8) & 0xFF
+                    buf[pos + 6] = (fup >> 16) & 0xFF
+                    buf[pos + 7] = (fup >> 24) & 0xFF
+                    pos += 8
+                else:
+                    pos += 4
+            else:
+                b32 = buf[pos + 4] | (buf[pos + 5] << 8) | (buf[pos + 6] << 16) | (buf[pos + 7] << 24)
+                check = (((b32 - 3) ^ (v << 8)) & 0xF8003) == 0
+                if not check:
+                    pos += 6
+                else:
+                    fup = (a & 0xFFFFF000) | ((b32 >> 20) & 0xFFF)
+                    inst = ((b32 << 12) & M32) | (0x17 + (2 << 7))
+                    inst &= M32
+                    buf[pos + 0] = inst & 0xFF
+                    buf[pos + 1] = (inst >> 8) & 0xFF
+                    buf[pos + 2] = (inst >> 16) & 0xFF
+                    buf[pos + 3] = (inst >> 24) & 0xFF
+                    buf[pos + 4] = fup & 0xFF
+                    buf[pos + 5] = (fup >> 8) & 0xFF
+                    buf[pos + 6] = (fup >> 16) & 0xFF
+                    buf[pos + 7] = (fup >> 24) & 0xFF
+                    pos += 8
+    return buf
+
+
 def _decrypt_aes256sha256(
     data: bytes | bytearray | memoryview,
     props: bytes,
@@ -380,6 +473,7 @@ SIMPLE_FILTERS = {
     CODEC_ARM     : _filter_arm,
     CODEC_ARMT    : _filter_armt,
     CODEC_ARM64   : _filter_arm64,
+    CODEC_RISCV   : _filter_riscv,
     CODEC_PPC     : _filter_ppc,
     CODEC_IA64    : _filter_ia64,
     CODEC_SPARC   : _filter_sparc,
