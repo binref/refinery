@@ -786,6 +786,8 @@ def guess_text_encoding(
         assert enc is not None
         return TextEncoding(enc, bom, lsb, step)
 
+    cc = _get_control_chars()
+
     for encoding in (enc and [enc] or ENCODINGS):
         try:
             decoded = codecs.decode(data, encoding)
@@ -793,7 +795,6 @@ def guess_text_encoding(
             continue
         threshold = int(maxbad * len(decoded))
         bad = 0
-        cc = _get_control_chars()
         for c in decoded:
             if ord(c) not in cc:
                 continue
