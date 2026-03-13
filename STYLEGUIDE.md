@@ -22,7 +22,11 @@ First and foremost, all code should pass [flake8], with the following tests disa
   - `E261` (at least two spaces before inline comment)
   - `W503` (line break occurred before a binary operator)
 
-We use `pyflakes` for checking compliance.
+We use `pyflakes` for checking compliance and run the following `isort` command to normalize imports
+inside the refinery code package (tests are not subject to this):
+```
+isort --py=38 refinery
+```
 
 ### Type Hints
 
