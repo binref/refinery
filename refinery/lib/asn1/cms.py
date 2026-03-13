@@ -7,7 +7,7 @@ from collections import OrderedDict
 from datetime import datetime, timezone
 
 from refinery.lib.asn1 import ASN1Reader
-from refinery.lib.asn1.defs import SignedContentInfo, ContentInfo, SpcSpOpusInfo
+from refinery.lib.asn1.defs import ContentInfo, SignedContentInfo, SpcSpOpusInfo
 from refinery.lib.structures import StructReader
 
 _TIME_VALUED_ATTRIBUTES = {'signingTime'}

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from refinery.lib.crypto.aria import ARIA
 from refinery.lib.crypto import BlockCipherFactory
+from refinery.lib.crypto.aria import ARIA
 from refinery.units.crypto.cipher import StandardBlockCipherUnit
 
 

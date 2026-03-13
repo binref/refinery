@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import codecs
+
 from dataclasses import dataclass, field
 
 from refinery.lib.lnk.idlist import LinkTargetIDList

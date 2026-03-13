@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from refinery.lib import json
-from refinery.lib.asn1.cms import parse_content_info, compute_certificate_fingerprints
+from refinery.lib.asn1.cms import compute_certificate_fingerprints, parse_content_info
 from refinery.units import Unit
 
 

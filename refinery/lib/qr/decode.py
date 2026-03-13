@@ -5,10 +5,10 @@ from refinery.lib.qr.tables import (
     ALIGNMENT_POSITIONS,
     ALPHANUMERIC_CHARSET,
     EC_PARAMETERS,
-    ECLevel,
     FORMAT_INFO_STRINGS,
     MASK_FUNCTIONS,
     VERSION_INFO_STRINGS,
+    ECLevel,
     char_count_bits,
     version_size,
 )

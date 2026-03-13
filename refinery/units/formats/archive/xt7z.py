@@ -6,9 +6,8 @@ from refinery.lib.id import buffer_offset, is_likely_pe
 from refinery.lib.un7z import (
     SIGNATURE,
     SzArchive,
+    SzCannotUnpack,
     SzCorruptArchive,
-    SzInvalidPassword,
-    SzPasswordRequired,
     SzUnsupportedMethod,
 )
 from refinery.units.formats.archive import ArchiveUnit
@@ -63,13 +62,9 @@ class xt7z(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
                             f.decompress(password=pwd)
                             break
                     problem = False
-                except SzPasswordRequired:
-                    problem = True
                 except SzUnsupportedMethod as E:
                     raise ValueError(str(E))
-                except SzInvalidPassword:
-                    problem = True
-                except SzCorruptArchive:
+                except SzCannotUnpack:
                     problem = True
                 except Exception:
                     if pwd is None:

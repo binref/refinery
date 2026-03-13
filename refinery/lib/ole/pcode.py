@@ -21,8 +21,8 @@ import codecs
 from struct import unpack_from
 from typing import NamedTuple
 
-from refinery.lib.ole.vba import _codepage_to_codec, _find_vba_projects, decompress_stream
 from refinery.lib.ole.file import OleFile
+from refinery.lib.ole.vba import _codepage_to_codec, _find_vba_projects, decompress_stream
 
 
 class Opcode(NamedTuple):
@@ -1459,6 +1459,7 @@ class PCodeDisassembler:
             return [self._data]
         if self._data[:2] == b'PK':
             import zipfile
+
             from refinery.lib.structures import MemoryFile
             results: list[bytes | bytearray] = []
             try:

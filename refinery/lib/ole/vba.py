@@ -11,9 +11,9 @@ from __future__ import annotations
 
 import base64
 import codecs
-import enum
 import email
 import email.feedparser
+import enum
 import math
 import re
 import struct
@@ -24,7 +24,8 @@ import zlib
 from io import BytesIO
 from typing import Generator, NamedTuple
 
-from refinery.lib.ole.file import MAGIC as OLE_MAGIC, OleFile, STGTY
+from refinery.lib.ole.file import MAGIC as OLE_MAGIC
+from refinery.lib.ole.file import STGTY, OleFile
 from refinery.lib.structures import Struct, StructReader
 
 MODULE_EXTENSION = 'bas'
@@ -939,8 +940,8 @@ class VBAParser:
         ole: OleFile,
     ) -> Generator[VBAFormVariable, None, None]:
         from refinery.lib.ole.forms import (
-            extract_OleFormVariables,
             OleFormParsingError,
+            extract_OleFormVariables,
         )
         forms = self._find_vba_forms(ole)
         for form_storage in forms:

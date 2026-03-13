@@ -7,7 +7,7 @@ import codecs
 import re
 import struct
 
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from email.parser import HeaderParser
 from functools import cached_property
 

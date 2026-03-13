@@ -11,8 +11,9 @@ from __future__ import annotations
 import struct
 
 from contextlib import contextmanager
-from enum import IntFlag, auto as A
-from typing import IO, Generator, TypeVar, TYPE_CHECKING
+from enum import IntFlag
+from enum import auto as A
+from typing import IO, TYPE_CHECKING, Generator, TypeVar
 
 from refinery.lib.structures import FlagAccessMixin
 

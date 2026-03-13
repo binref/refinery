@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-
 _PRIMITIVE_POLY = 0x11D
 
 EXP_TABLE = [0] * 256

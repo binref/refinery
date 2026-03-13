@@ -17,7 +17,7 @@ import struct
 
 from collections import defaultdict
 from datetime import datetime, timedelta
-from typing import NamedTuple, overload, Literal
+from typing import Literal, NamedTuple, overload
 from uuid import UUID
 
 from refinery.lib.structures import StructReader

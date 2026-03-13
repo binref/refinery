@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from refinery.lib.dotnet.header import DotNetHeader, TypeDef, MethodBodyInfo, MethodCodeType
-from refinery.units.formats import PathExtractorUnit, UnpackResult
+from refinery.lib.dotnet.header import DotNetHeader, MethodBodyInfo, MethodCodeType, TypeDef
 from refinery.lib.patterns import checks
+from refinery.units.formats import PathExtractorUnit, UnpackResult
 
 
 class dncode(PathExtractorUnit):
