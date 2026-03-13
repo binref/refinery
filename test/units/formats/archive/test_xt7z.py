@@ -187,6 +187,19 @@ class Test7zipFileExtractor(TestUnitBase):
         self.assertTrue(elf.startswith(b'\x7fELF'))
         self.assertEqual(len(elf), 1180)
 
+    def test_arm64_lzma2_archive(self):
+        data = base64.b64decode(
+            'N3q8ryccAAT3rJk6JQEAAAAAAABaAAAAAAAAAF12mbTgAycBHV0AP5FFhGg9iabaisyW0qLC1fpGXTDqec03OekZ8hDF60sU9uwf'
+            'g5Av/NmfgxPBYgkCCk31HB5WelVrwUBJ8HB88sf0w814XdTzJK4FiO8B0Vwi3f74+P2RlKMuRvYTR6l1tsJwQ96j7DhEXC+Xj+k'
+            'Hqx+Qo6uUraD/OZI1RUIf5WOpeo2Ul1G4D5mbRDmT0CE93Uv15IvWZeF3k42u/RZr4n+xasSfOqIz38IXUSIkI8DFhGLf2X5W75'
+            'Q8Cd+OPpwk3nh7cbbsVMJDmJUkN698jgrr19kw027oTDEIc48uXrx+3rWoia1GWIq8F/58V5AsPcp4FkvDwVADti7kBKKLLx2rM'
+            'CRERDTUORQDQPCvtvSRDs2QRJOURR44h4AAAAEEBgABCYElAAcLAQACISEBAAEKAQAMgyiDKAAICgGxfcZQAAAFARkEAAAAABEV'
+            'AGEAcgBtADYANAAuAGUAbABmAAAAFAoBANSkby/7stwBFQYBACAAAAAAAA=='
+        )
+        elf = bytes(data | self.load('arm64.elf'))
+        self.assertTrue(elf.startswith(b'\x7fELF'))
+        self.assertEqual(len(elf), 808)
+
     def test_armt_lzma2_archive(self):
         data = base64.b64decode(
             'N3q8ryccAARUoHhj/wEAAAAAAABaAAAAAAAAACyYlHbgBF8B910AP5FFhGg73t6mDyPw1CQZ4obAtK/pg9mVj8LWTfht6u/3ELYp'

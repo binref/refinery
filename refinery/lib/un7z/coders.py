@@ -37,6 +37,7 @@ CODEC_PPC          = b'\x03\x03\x02\x05'  # noqa
 CODEC_IA64         = b'\x03\x03\x04\x01'  # noqa
 CODEC_ARM          = b'\x03\x03\x05\x01'  # noqa
 CODEC_ARMT         = b'\x03\x03\x07\x01'  # noqa
+CODEC_ARM64        = b'\x0a'              # noqa
 CODEC_SPARC        = b'\x03\x03\x08\x05'  # noqa
 CODEC_DEFLATE      = b'\x04\x01\x08'      # noqa
 CODEC_DEFLATE64    = b'\x04\x01\x09'      # noqa
@@ -294,6 +295,42 @@ def _filter_sparc(data: bytes | bytearray | memoryview, props: bytes) -> bytearr
     return buf
 
 
+def _filter_arm64(data: bytes | bytearray | memoryview, props: bytes) -> bytearray:
+    buf = bytearray(data)
+    ip = 0
+    if props and len(props) >= 4:
+        ip = int.from_bytes(props[:4], 'little')
+    M32 = 0xFFFFFFFF
+    pos = 0
+    size = len(buf) & ~3
+    flag = 1 << 20
+    mask = (1 << 24) - (flag << 1)
+    while pos < size:
+        v = int.from_bytes(buf[pos:pos + 4], 'little')
+        pos += 4
+        pc = ip + pos
+        if ((v - 0x94000000) & 0xFC000000) == 0:
+            c = pc >> 2
+            v = (v - c) & M32
+            v &= 0x03FFFFFF
+            v |= 0x94000000
+            buf[pos - 4:pos] = v.to_bytes(4, 'little')
+            continue
+        if ((v - 0x90000000) & 0x9F000000) == 0:
+            t = v + flag
+            if t & mask:
+                continue
+            z = (v & 0xFFFFFFE0) | (v >> 26)
+            c = (pc >> (12 - 3)) & (M32 ^ 7)
+            z = (z - c) & M32
+            v = 0x90000000 | (v & 0x1F)
+            v |= z << 26
+            v |= (((z & ((flag << 1) - 1)) - flag) & 0x00FFFFE0)
+            v &= M32
+            buf[pos - 4:pos] = v.to_bytes(4, 'little')
+    return buf
+
+
 def _decrypt_aes256sha256(
     data: bytes | bytearray | memoryview,
     props: bytes,
@@ -342,6 +379,7 @@ SIMPLE_FILTERS = {
     CODEC_BCJ_X86 : _filter_bcj_x86,
     CODEC_ARM     : _filter_arm,
     CODEC_ARMT    : _filter_armt,
+    CODEC_ARM64   : _filter_arm64,
     CODEC_PPC     : _filter_ppc,
     CODEC_IA64    : _filter_ia64,
     CODEC_SPARC   : _filter_sparc,
