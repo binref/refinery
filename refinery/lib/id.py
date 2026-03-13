@@ -700,6 +700,7 @@ def _get_control_chars():
 
 
 _CONTROL_CHARS = set()
+_INVALID_BYTES = bytes(sorted(set(range(256)) - set(range(0x20, 0x80)) - {9, 10, 13}))
 
 
 class TextEncoding(NamedTuple):
@@ -722,12 +723,9 @@ def guess_text_encoding(
     each encoded character in bytes.
     """
     def ascii_count(v: memoryview):
-        count = 0
-        ascii = range(0x20, 0x80)
-        b = 0xFF
-        for b in v:
-            count += (b in ascii or b == 9 or b == 10 or b == 13)
-        if b == 0 and count > 0:
+        bv = bytes(v)
+        count = len(bv.translate(None, _INVALID_BYTES))
+        if bv and bv[-1] == 0 and count > 0:
             # accept a terminating null byte
             count += 1
         return count
