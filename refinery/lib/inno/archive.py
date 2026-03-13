@@ -287,13 +287,15 @@ _IS_AMBIGUOUS = {
     _I(6, 4,  1, 0, IVF.UTF_16): False, # noqa
     _I(6, 4,  2, 0, IVF.UTF_16): False, # noqa f80c9ea
     _I(6, 4,  3, 0, IVF.UTF_16): False, # noqa 
-    _I(6, 5,  0, 0, IVF.UTF_16): False, # noqa TODO
-    _I(6, 5,  1, 0, IVF.UTF_16): False, # noqa TODO 99c1859
-    _I(6, 5,  2, 0, IVF.UTF_16): False, # noqa TODO
-    _I(6, 5,  3, 0, IVF.UTF_16): False, # noqa TODO
-    _I(6, 5,  4, 0, IVF.UTF_16): False, # noqa TODO 9610981
-    _I(6, 6,  0, 0, IVF.UTF_16): False, # noqa TODO
-    _I(6, 6,  1, 0, IVF.UTF_16): False, # noqa TODO
+    _I(6, 5,  0, 0, IVF.UTF_16): False, # noqa
+    _I(6, 5,  1, 0, IVF.UTF_16): False, # noqa 99c1859
+    _I(6, 5,  2, 0, IVF.UTF_16): False, # noqa
+    _I(6, 5,  3, 0, IVF.UTF_16): False, # noqa
+    _I(6, 5,  4, 0, IVF.UTF_16): False, # noqa 9610981
+    _I(6, 6,  0, 0, IVF.UTF_16): False, # noqa
+    _I(6, 6,  1, 0, IVF.UTF_16): False, # noqa
+    _I(6, 7,  0, 0, IVF.UTF_16): False, # noqa
+    _I(6, 7,  1, 0, IVF.UTF_16): False, # noqa
 }
 
 _VERSIONS = sorted(_IS_AMBIGUOUS)
@@ -398,6 +400,8 @@ class Flags(enum.IntFlag):
     WizardBorderStyled          = enum.auto() # noqa
     WizardKeepAspectRatio       = enum.auto() # noqa
     WizardLightButtonsUnstyled  = enum.auto() # noqa
+    RedirectionGuard            = enum.auto() # noqa
+    WizardBevelsHidden          = enum.auto() # noqa
 
 
 class AutoBool(enum.IntEnum):
@@ -419,6 +423,12 @@ class WizardDarkStyle(enum.IntEnum):
     Light = 0
     Dark = 1
     Dynamic = 2
+
+
+class WizardLightControlStyling(enum.IntEnum):
+    All = 0
+    AllButButtons = 1
+    OnlyRequired = 2
 
 
 class StoredAlphaFormat(enum.IntEnum):
@@ -523,7 +533,10 @@ class StreamHeader(InnoStruct):
     def __init__(self, reader: StructReader[memoryview], version: InnoVersion):
         super().__init__(reader, version)
         self.HeaderCrc = reader.u32()
-        self.CompressedSize = size = reader.u32()
+        if version >= (6, 7, 0):
+            self.CompressedSize = size = reader.u64()
+        else:
+            self.CompressedSize = size = reader.u32()
         if version >= (4, 0, 9):
             self.StoredSize = self.CompressedSize
             if not reader.u8():
@@ -857,6 +870,12 @@ class SetupHeader(InnoStruct):
             self.SevenZipLibraryName = read_string()
         else:
             self.SevenZipLibraryName = None
+        if version >= (6, 7, 0):
+            self.UsePreviousAppDir = read_string()
+            self.UsePreviousGroup = read_string()
+            self.UsePreviousSetupType = read_string()
+            self.UsePreviousTasks = read_string()
+            self.UsePreviousUserInfo = read_string()
         if version >= (5, 2, 5):
             self._license = reader.read_length_prefixed_ascii()
             self.InfoHead = reader.read_length_prefixed_ascii()
@@ -963,16 +982,23 @@ class SetupHeader(InnoStruct):
         if version >= (6, 5, 2):
             self.LargeImageBackColor = reader.u32()
             self.SmallImageBackColor = reader.u32()
+        if version >= (6, 7, 0):
+            self.WizardBackColor = reader.u32()
         if version >= (6, 6, 0):
             self.LargeImageBackColorDynamicDark = reader.u32()
             self.SmallImageBackColorDynamicDark = reader.u32()
         else:
             self.LargeImageBackColorDynamicDark = None
             self.SmallImageBackColorDynamicDark = None
+        if version >= (6, 7, 0):
+            self.WizardBackColorDynamicDark = reader.u32()
         if version >= (6, 6, 1):
             self.WizardImageOpacity = reader.u8()
         else:
             self.WizardImageOpacity = 0
+        if version >= (6, 7, 0):
+            self.WizardBackImageOpacity = reader.u8()
+            self.WizardLightControlStyling = WizardLightControlStyling(reader.u8())
 
         if version >= (6, 5, 0):
             assert HeaderEncryption
@@ -1104,17 +1130,21 @@ class SetupHeader(InnoStruct):
         if version < (5, 3, 8):
             flags.append(Flags.CreateUninstallRegKey)
 
-        flags.append(Flags.UsePreviousAppDir)
+        if version < (6, 7, 0):
+            flags.append(Flags.UsePreviousAppDir)
         if version < (6, 4, 0):
             flags.append(Flags.BackColorHorizontal)
-        flags.append(Flags.UsePreviousGroup)
+        if version < (6, 7, 0):
+            flags.append(Flags.UsePreviousGroup)
         flags.append(Flags.UpdateUninstallLogAppName)
-        flags.append(Flags.UsePreviousSetupType)
+        if version < (6, 7, 0):
+            flags.append(Flags.UsePreviousSetupType)
         flags.append(Flags.DisableReadyMemo)
         flags.append(Flags.AlwaysShowComponentsList)
         flags.append(Flags.FlatComponentsList)
         flags.append(Flags.ShowComponentSizes)
-        flags.append(Flags.UsePreviousTasks)
+        if version < (6, 7, 0):
+            flags.append(Flags.UsePreviousTasks)
         flags.append(Flags.DisableReadyPage)
         flags.append(Flags.AlwaysShowDirOnReadyPage)
         flags.append(Flags.AlwaysShowGroupOnReadyPage)
@@ -1122,7 +1152,8 @@ class SetupHeader(InnoStruct):
             flags.append(Flags.BzipUsed)
         flags.append(Flags.AllowUNCPath)
         flags.append(Flags.UserInfoPage)
-        flags.append(Flags.UsePreviousUserInfo)
+        if version < (6, 7, 0):
+            flags.append(Flags.UsePreviousUserInfo)
         flags.append(Flags.UninstallRestartComputer)
         flags.append(Flags.RestartIfNeededByRun)
         flags.append(Flags.ShowTasksTreeLines)
@@ -1167,19 +1198,31 @@ class SetupHeader(InnoStruct):
             flags.append(Flags.WizardModern)
             flags.append(Flags.WizardBorderStyled)
             flags.append(Flags.WizardKeepAspectRatio)
-            flags.append(Flags.WizardLightButtonsUnstyled)
+            if version < (6, 7, 0):
+                flags.append(Flags.WizardLightButtonsUnstyled)
+        if version >= (6, 7, 0):
+            flags.append(Flags.RedirectionGuard)
+            flags.append(Flags.WizardBevelsHidden)
 
-        flagsize, _r = divmod(len(flags), 8)
-        flagsize += int(bool(_r))
-        bytecheck = bytes(reader.peek(flagsize + 1 + 4 + 1))
+        if version >= (6, 7, 0):
+            flag_offset = reader.tell()
+            for flag in flags:
+                if reader.read_bit():
+                    self.Flags |= flag
+            reader.byte_align()
+            reader.seekset(flag_offset + 8)
+        else:
+            flagsize, _r = divmod(len(flags), 8)
+            flagsize += int(bool(_r))
+            bytecheck = bytes(reader.peek(flagsize + 1 + 4 + 1))
 
-        if bytecheck[0] == 0:
-            if bytecheck[~0] != 0 or bytecheck[~3:~0] == B'\0\0\0':
-                reader.u8()
+            if bytecheck[0] == 0:
+                if bytecheck[~0] != 0 or bytecheck[~3:~0] == B'\0\0\0':
+                    reader.u8()
 
-        for flag in flags:
-            if reader.read_bit():
-                self.Flags |= flag
+            for flag in flags:
+                if reader.read_bit():
+                    self.Flags |= flag
 
         if version < (3, 0, 4):
             self.PrivilegesRequired = PrivilegesRequired.Admin if (
@@ -1209,10 +1252,11 @@ class SetupHeader(InnoStruct):
             self.InfoHead = _read_ascii(_infhead_len)
             self.InfoTail = _read_ascii(_inftail_len)
 
-        reader.byte_align()
+        if version < (6, 7, 0):
+            reader.byte_align()
 
-        if flagsize == 3:
-            reader.u8()
+            if flagsize == 3:
+                reader.u8()
 
     def get_license(self):
         return self._license
@@ -1583,7 +1627,9 @@ class SetupComponent(InnoStruct):
             self.Check = read_string()
         if version >= (4, 0, 0):
             self.ExtraDiskSpace = reader.u64()
-        if version >= (4, 0, 0) or version.isx and version >= (3, 0, 3):
+        if version >= (6, 7, 0):
+            self.Level = reader.u8()
+        elif version >= (4, 0, 0) or version.isx and version >= (3, 0, 3):
             self.Level = reader.u32()
         else:
             self.Level = 0
@@ -1624,7 +1670,9 @@ class SetupTask(InnoStruct):
             self.Languages = read_string()
         if version >= (4, 0, 0) or version.isx and version >= (1, 3, 24):
             self.Check = read_string()
-        if version >= (4, 0, 0) or version.isx and version >= (3, 0, 3):
+        if version >= (6, 7, 0):
+            self.Level = reader.u8()
+        elif version >= (4, 0, 0) or version.isx and version >= (3, 0, 3):
             self.Level = reader.u32()
         else:
             self.Level = 0
@@ -1915,7 +1963,12 @@ class SetupFile(InnoStruct):
 
         reader.byte_align()
 
-        if reader.tell() - flagstart == 3:
+        if version >= (6, 7, 0):
+            consumed = reader.tell() - flagstart
+            remaining = 8 - consumed
+            if remaining > 0:
+                reader.seekrel(remaining)
+        elif reader.tell() - flagstart == 3:
             reader.u8()
 
         self.Type = SetupFileType(reader.u8())
