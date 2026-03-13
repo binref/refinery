@@ -2104,6 +2104,18 @@
     "0001": {
       "ide": "CVTPGD"
     },
+    "8B8D": {
+      "ide": "VS2026 v18.3.2 build 35725"
+    },
+    "8B8B": {
+      "ide": "VS2026 v18.2.1 build 35723"
+    },
+    "8B8C": {
+      "ide": "VS2026 v18.3.0 Insiders [11429.125] build 35724"
+    },
+    "8B8A": {
+      "ide": "VS2026 v18.3.0 Insiders [11408.92] build 35722"
+    },
     "8B89": {
       "ide": "VS2026 v18.3.0 Insiders [11312.210] build 35721"
     },
@@ -2130,6 +2142,9 @@
     },
     "8AAF": {
       "ide": "VS2026 v18.0.0 Insiders build 35503"
+    },
+    "8997": {
+      "ide": "VS2022 v17.14.27 build 35223"
     },
     "8996": {
       "ide": "VS2022 v17.14.22 build 35222"
@@ -2559,6 +2574,12 @@
     },
     "23D8": {
       "ide": "Windows XP SP1 DDK build 9176 (*)"
+    },
+    "22AC": {
+      "ide": "VS6 SP4 PP Beta build 8876"
+    },
+    "1FCD": {
+      "ide": "VS6 Enterprise RC build 8141"
     }
   }
 }
