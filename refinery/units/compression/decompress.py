@@ -87,10 +87,9 @@ class _R(IntFlag):
 
 class decompress(Unit):
     """
-    Attempts all available decompression units against the input and returns
-    the output of the first successful one. If none succeeds, the data is
-    returned unaltered. The process is heavily biased against LZNT1 decompression
-    due to a large tendency for LZNT1 false positives.
+    Attempts all available decompression units against the input and returns the output of the
+    first successful one. If none succeeds, the data is returned unaltered. The process is
+    heavily biased against LZNT1 decompression due to a large tendency for LZNT1 false positives.
     """
     def __init__(
         self,
@@ -100,8 +99,8 @@ class decompress(Unit):
             'the result. This behavior can be disabled with this flag.')
         )] = True,
         tolerance: Param[int, Arg.Number('-t', help=(
-            'Maximum number of bytes to strip from the beginning of the data; '
-            'The default value is 12.')
+            'Maximum number of bytes to strip from the beginning of the data; The '
+            'default value is {default}.')
         )] = 12,
         max_ratio: Param[float, Arg.Double('-m', metavar='R', help=(
             'To determine whether a decompression algorithm was successful, the '
@@ -118,8 +117,8 @@ class decompress(Unit):
             'the default being 0:0x100. The reason for this is that small buffers '
             'can increase in size when compressed under many formats. Set this to :0 '
             'or use strict limits to disable this setting.')
-        )] = range(0, 0x101),
-        expand_factor: Param[float, Arg.Double('-k', help=(
+        )] = slice(0, 0x100),
+        expand_factor: Param[float, Arg.Double('-k', metavar='t', help=(
             'The number by which the maximum compression ratio is multiplied for '
             'small buffers. The default is {default}.'
         ))] = 1.75,
@@ -227,6 +226,8 @@ class decompress(Unit):
         if self.args.prepend:
             buffer = bytearray(1 + len(data))
             buffer[1:] = data
+        else:
+            buffer = None
 
         best_by_rating: dict[_R, Decompression] = {}
 
@@ -239,7 +240,7 @@ class decompress(Unit):
             magic = None
             if cutoff == 0 and prefix is None and not careful:
                 rating |= _R.NotMangled
-            if prefix is not None:
+            if prefix is not None and buffer:
                 buffer[0] = prefix
                 ingest = buffer
             is_handled = engine.handles(ingest)
