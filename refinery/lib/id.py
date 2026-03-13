@@ -12,7 +12,6 @@ import enum
 import re
 
 from typing import Callable, NamedTuple
-from unicodedata import category as unicode_category
 
 from refinery.lib.tools import entropy
 from refinery.lib.types import buf
@@ -691,6 +690,18 @@ def get_reg_export_type(data: buf):
         return Fmt.REG_TEXT
 
 
+def _get_control_chars():
+    if not _CONTROL_CHARS:
+        from unicodedata import category as uc
+        _CONTROL_CHARS.update(
+            cp for cp in range(0x10000) if uc(chr(cp)).startswith('C'))
+        _CONTROL_CHARS.difference_update(B'\040\n\r\t')
+    return _CONTROL_CHARS
+
+
+_CONTROL_CHARS = set()
+
+
 class TextEncoding(NamedTuple):
     codec: str
     bom: int = 0
@@ -782,10 +793,16 @@ def guess_text_encoding(
             decoded = codecs.decode(data, encoding)
         except UnicodeDecodeError:
             continue
+        threshold = int(maxbad * len(decoded))
+        bad = 0
+        cc = _get_control_chars()
+        for c in decoded:
+            if ord(c) not in cc:
+                continue
+            if (bad := bad + 1) > threshold:
+                break
         else:
-            bad = sum(1 for c in decoded if unicode_category(c).startswith('C') and c not in '\040\n\r\t')
-            if bad / len(decoded) <= maxbad:
-                return TextEncoding(encoding, bom, lsb, step)
+            return TextEncoding(encoding, bom, lsb, step)
 
 
 def xml_or_html(view: buf):
