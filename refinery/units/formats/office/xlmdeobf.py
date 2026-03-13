@@ -1,14 +1,13 @@
 from __future__ import annotations
 
-from refinery.lib.tools import NoLogging
 from refinery.lib.types import Param
-from refinery.lib.vfs import VirtualFileSystem
 from refinery.units.formats import Arg, Unit
 
 
 class xlmdeobf(Unit):
     """
-    Wrapper around XLMMacroDeobfuscator to decode obfuscated Excel v4.0 (XLM) macros.
+    Deobfuscates Excel v4.0 (XLM) macros from XLS, XLSM, and XLSB documents. Uses an inlined port
+    of XLMMacroDeobfuscator to emulate XLM macro formulas.
     """
     @classmethod
     def handles(cls, data) -> bool | None:
@@ -26,9 +25,6 @@ class xlmdeobf(Unit):
         sort_formulas: Param[bool, Arg.Switch(
             '-s', '--sort-formulas',
             help='Sort extracted formulas based on their cell address (implies -x).',
-        )] = False,
-        with_ms_excel: Param[bool, Arg.Switch(
-            '-X', '--with-ms-excel', help='Use MS Excel to process XLS files.'
         )] = False,
         day: Param[int, Arg.Number(
             '-d',
@@ -54,11 +50,6 @@ class xlmdeobf(Unit):
             help='Start interpretation from a specific cell address',
             metavar='CELL',
         )] = '',
-        password: Param[str, Arg.String(
-            '-p',
-            '--password',
-            help='Password to decrypt the protected document',
-        )] = '',
         output_level: Param[int, Arg.Number(
             '-o',
             '--output-level',
@@ -76,33 +67,83 @@ class xlmdeobf(Unit):
         extract_only = sort_formulas or extract_only
         self.superinit(super(), **vars())
 
-    @Unit.Requires('XLMMacroDeobfuscator', ['formats', 'office'])
-    def _process_file():
-        with NoLogging(NoLogging.Mode.ALL):
-            from XLMMacroDeobfuscator.configs import settings
-            settings.SILENT = True
-            from XLMMacroDeobfuscator.deobfuscator import process_file
-            return process_file
+    @staticmethod
+    def _show_cells(excel_doc, sorted_formulas=False):
+        from refinery.lib.thirdparty.xlm.model import EvalResult
+        macrosheets = excel_doc.get_macrosheets()
+        for name in macrosheets:
+            sheet = macrosheets[name]
+            yield sheet.name, sheet.type
+            if sorted_formulas:
+                formulas = []
+                for _, info in sheet.cells.items():
+                    if info.formula is not None:
+                        formulas.append((info, 'EXTRACTED', info.formula, '', info.value))
+                formulas.sort(key=lambda x: (x[0].column, int(x[0].row) if EvalResult.is_int(x[0].row) else x[0].row))
+                yield from formulas
+            else:
+                for _, info in sheet.cells.items():
+                    if info.formula is not None:
+                        yield info, 'EXTRACTED', info.formula, '', info.value
+            for _, info in sheet.cells.items():
+                if info.formula is None:
+                    yield info, 'EXTRACTED', str(info.formula), '', info.value
+
+    @staticmethod
+    def _format_output(step, format_str: str, with_indent=True):
+        cell_addr = step[0].get_local_address()
+        status = step[1]
+        formula = step[2]
+        indent = '\t' * step[3]
+        result = format_str
+        result = result.replace('[[CELL-ADDR]]', f'{cell_addr:10}')
+        result = result.replace('[[STATUS]]', f'{status.name:20}')
+        if with_indent:
+            formula = indent + formula
+        result = result.replace('[[INT-FORMULA]]', formula)
+        return result
 
     def process(self, data: bytearray):
-        with VirtualFileSystem() as vfs, NoLogging(NoLogging.Mode.ALL):
-            result = self._process_file(
-                file=vfs.new(data),
-                noninteractive=True,
-                return_deobfuscated=True,
-                extract_only=self.args.extract_only,
-                silent=True,
-                sort_formulas=self.args.sort_formulas,
-                defined_names=False,
-                with_ms_excel=self.args.with_ms_excel,
-                start_with_shell=False,
-                day=self.args.day,
-                output_formula_format=self.args.output_formula_format,
-                extract_formula_format=self.args.extract_formula_format,
-                no_indent=self.args.no_indent,
+        if data[:2] == B'\xD0\xCF':
+            from refinery.lib.thirdparty.xlm.wrappers import XLSWrapper
+            excel_doc = XLSWrapper(data)
+        elif data[:2] == B'\x50\x4B':
+            if b'workbook.bin' in data:
+                from refinery.lib.thirdparty.xlm.wrappers import XLSBWrapper
+                excel_doc = XLSBWrapper(data)
+            else:
+                from refinery.lib.thirdparty.xlm.wrappers import XLSMWrapper
+                excel_doc = XLSMWrapper(data)
+        else:
+            raise ValueError('Input file type is not supported (expected XLS, XLSM, or XLSB).')
+
+        if self.args.extract_only:
+            lines: list[str] = []
+            fmt: str = self.args.extract_formula_format
+            for item in self._show_cells(excel_doc, self.args.sort_formulas):
+                if len(item) == 2:
+                    lines.append(f'SHEET: {item[0]}, {item[1]}')
+                elif len(item) == 5:
+                    line = fmt
+                    line = line.replace('[[CELL-ADDR]]', item[0].get_local_address())
+                    line = line.replace('[[CELL-FORMULA]]', item[2])
+                    line = line.replace('[[CELL-VALUE]]', str(item[4]))
+                    lines.append(line)
+        else:
+            from refinery.lib.thirdparty.xlm.interpreter import XLMInterpreter
+            interpreter = XLMInterpreter(excel_doc, output_level=self.args.output_level)
+            if self.args.day > 0:
+                interpreter.day_of_month = self.args.day
+
+            fmt = self.args.output_formula_format
+            with_indent = not self.args.no_indent
+            lines = []
+            for step in interpreter.deobfuscate_macro(
+                interactive=False,
                 start_point=self.args.start_point,
-                password=self.args.password,
-                output_level=self.args.output_level,
                 timeout=self.args.timeout,
-            )
-        return '\n'.join(result).encode(self.codec)
+                silent_mode=True,
+            ):
+                lines.append(self._format_output(step, fmt, with_indent))
+
+        return '\n'.join(lines).encode(self.codec)
