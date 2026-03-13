@@ -1115,11 +1115,9 @@ def struct_to_json(
     if isinstance(o, tuple):
         o = o._asdict()
     if isinstance(o, dict):
-        for k, v in o.items():
-            o[k] = struct_to_json(v, codec)
+        return {k: struct_to_json(v, codec) for k, v in o.items()}
     elif isinstance(o, list):
-        for k, v in enumerate(o):
-            o[k] = struct_to_json(v, codec)
+        return [struct_to_json(v, codec) for v in o]
     elif isinstance(o, enum.IntFlag):
         return [option.name for option in o.__class__ if o & option == option]
     elif isinstance(o, enum.IntEnum):
