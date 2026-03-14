@@ -110,7 +110,7 @@ def _get_sf_version(data: buf) -> tuple[int, int]:
                     if vi < 0:
                         return (-1, -1)
                     v = re.match(rb'(\d+)\.(\d+)\.(\d+)\.(\d+)', manifest[ai + vi + 9:])
-                    if v and int(v[1]) == 9:
+                    if v and int(v[1]) in (9, 10):
                         return (int(v[1]), int(v[2]))
                     return (-1, -1)
                 if b'<description>Setup</description>' in manifest:
@@ -133,36 +133,44 @@ class xtsf(ArchiveUnit):
     """
     Extract files from Setup Factory installer executables (versions 4 through 9).
     """
-
     def unpack(self, data):
-        from refinery.lib.lief import load_pe_fast
-        from refinery.units.formats.pe import get_pe_size
-        pe = load_pe_fast(data)
-        overlay_offset = get_pe_size(pe)
-        overlay = memoryview(data)[overlay_offset:]
-        reader = StructReader(overlay)
-        if bytes(reader.peek(n := len(_SF8_MAGIC))) == _SF8_MAGIC:
-            reader.skip(n)
-            version = _get_sf_version(data)
-            if version[0] == -1:
-                self.log_warn('unable to determine SF version from PE; assuming version 8.0')
-                version = (8, 0)
-            self.log_info(F'parsing SF8, version {version}')
-            yield from self._unpack_sf8(reader, version)
-            return
-        if bytes(reader.peek(n := len(_SF7_MAGIC))) == _SF7_MAGIC:
-            self.log_info('parsing SF7')
-            reader.skip(n)
-            yield from self._unpack_sf7(reader)
-            return
-        if bytes(reader.peek(n := len(_SF6_MAGIC))) == _SF6_MAGIC:
-            self.log_info('parsing SF6')
-            reader.skip(n)
-            yield from self._unpack_sf6(reader)
-            return
-        raise ValueError('Unable to find Setup Factory signature in overlay.')
+        reader = StructReader(view := memoryview(data))
+        for name, signature, extractor in (
+            ('SF8', _SF8_MAGIC, self._unpack_sf8),
+            ('SF7', _SF7_MAGIC, self._unpack_sf7),
+            ('SF6', _SF6_MAGIC, self._unpack_sf6),
+        ):
+            pattern = re.compile(re.escape(signature))
+            matches = [m.start() for m in pattern.finditer(data)]
+            self.log_debug(F'found {len(matches)} matches for {name} signature')
+            if not matches:
+                continue
+            elif len(matches) == 1:
+                offset = matches[0]
+            else:
+                from refinery.units.formats.pe import get_pe_size
+                overlay_offset = get_pe_size(view)
+                try:
+                    offset = next(offset for offset in matches if offset >= overlay_offset)
+                except StopIteration:
+                    self.log_warn(F'Found {len(matches)} markers, all within the PE body. Picking the first one.')
+                    offset = matches[0]
+            reader.seekset(offset)
+            extracted_something = False
+            try:
+                for entry in extractor(reader):
+                    yield entry
+                    extracted_something = True
+            except BaseException:
+                if extracted_something:
+                    raise
+            if extracted_something:
+                return
+        raise ValueError('Unable to find Setup Factory embedded data.')
 
     def _unpack_sf7(self, reader: StructReader):
+        self.log_info('parsing SF7')
+        reader.skip(8)
         size = reader.u32()
         exe_data = reader.read_exactly(size)
         yield self._pack('irsetup.exe', None, lambda d=exe_data: _xor_special(d))
@@ -190,6 +198,8 @@ class xtsf(ArchiveUnit):
             yield from self._parse_script_v7(script_bytes, compression, reader)
 
     def _unpack_sf6(self, reader: StructReader):
+        self.log_info('parsing SF6')
+        reader.skip(7)
         num_files = reader.u8()
         script_data = None
         for _ in range(num_files):
@@ -313,8 +323,14 @@ class xtsf(ArchiveUnit):
     def _unpack_sf8(
         self,
         reader: StructReader[memoryview],
-        version: tuple[int, int]
     ):
+        reader.skip(16)
+        major, _ = version = _get_sf_version(reader.getbuffer())
+        if major == -1:
+            self.log_info(R'parsing SF8, unable to determine version - assuming 8.0')
+            version = (8, 0)
+        else:
+            self.log_info(F'parsing SF{major}')
         reader.seekrel(10)
         size = reader.i64()
         exe_data = reader.read_exactly(size)
@@ -406,6 +422,9 @@ class xtsf(ArchiveUnit):
             sd.seekrel(10)
             skip_val = sd.u16()
             sd.seekrel(skip_val * 2)
+            if version >= (10, 0):
+                skip_val = sd.u16()
+                sd.seekrel(skip_val * 2)
             _read_sf_string(sd)
             sd.seekrel(2)
             _read_sf_string(sd)
