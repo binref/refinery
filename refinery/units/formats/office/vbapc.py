@@ -25,12 +25,13 @@ class vbapc(PathExtractorUnit):
         super().__init__(*paths, raw=raw, **keywords)
 
     def unpack(self, data):
-        from refinery.lib.ole.pcode import PCodeDisassembler
+        from refinery.lib.ole.pcode import PCodeDisassembler, format_pcode_text
         disassembler = PCodeDisassembler(data)
-        for module_path, pcode_text in disassembler.iter_modules():
-            code = pcode_text
-            if not self.args.raw:
+        for module in disassembler.iter_modules():
+            if self.args.raw:
+                code = format_pcode_text(module.path, 0, module.lines)
+            else:
                 from refinery.lib.ole.decompiler import PCodeParser
-                parser = PCodeParser(code)
-                code = parser.parse()
-            yield UnpackResult(module_path, code.encode(self.codec))
+                parser = PCodeParser()
+                code = parser.decompile_module(module)
+            yield UnpackResult(module.path, code.encode(self.codec))

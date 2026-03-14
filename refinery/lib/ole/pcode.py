@@ -17,6 +17,7 @@ References:
 from __future__ import annotations
 
 import codecs
+import logging
 
 from struct import unpack_from
 from typing import NamedTuple
@@ -24,11 +25,29 @@ from typing import NamedTuple
 from refinery.lib.ole.file import OleFile
 from refinery.lib.ole.vba import _codepage_to_codec, _find_vba_projects, decompress_stream
 
+logger = logging.getLogger(__name__)
+
 
 class Opcode(NamedTuple):
     mnem: str
     args: list[str] = []
     varg: bool = False
+
+
+class PCodeLine(NamedTuple):
+    """
+    Structured representation of one line of disassembled p-code.
+    Each line contains a list of (mnemonic, [arg1, arg2, ...]) tuples.
+    """
+    opcodes: list[tuple[str, list[str]]]
+
+
+class PCodeModule(NamedTuple):
+    """
+    Structured representation of a disassembled VBA module.
+    """
+    path: str
+    lines: list[PCodeLine]
 
 
 # VBA7 opcodes; VBA3, VBA5 and VBA6 will be upconverted to these.
@@ -558,6 +577,12 @@ INTERNAL_NAMES: list[str] = [
     ':=',
 ]
 
+DIM_TYPES: list[str] = [
+    '', 'Null', 'Integer', 'Long', 'Single', 'Double', 'Currency',
+    'Date', 'String', 'Object', 'Error', 'Boolean', 'Variant', '',
+    'Decimal', '', '', 'Byte',
+]
+
 
 def _get_word(buffer: bytes | bytearray | memoryview, offset: int, endian: str) -> int:
     return unpack_from(endian + 'H', buffer, offset)[0]
@@ -703,108 +728,10 @@ def _get_name(
     return _get_id(object_id, identifiers, vba_ver, is_64bit)
 
 
-def _disasm_name(
-    word: int,
-    identifiers: list[str],
-    mnemonic: str,
-    op_type: int,
-    vba_ver: int,
-    is_64bit: bool,
-) -> str:
-    var_types = [
-        '', '?', '%', '&', '!', '#', '@', '?', '$', '?', '?', '?', '?', '?',
-    ]
-    var_name = _get_id(word, identifiers, vba_ver, is_64bit)
-    if op_type < len(var_types):
-        str_type = var_types[op_type]
-    else:
-        str_type = ''
-        if op_type == 32:
-            var_name = F'[{var_name}]'
-    if mnemonic == 'OnError':
-        str_type = ''
-        if op_type == 1:
-            var_name = '(Resume Next)'
-        elif op_type == 2:
-            var_name = '(GoTo 0)'
-    elif mnemonic == 'Resume':
-        str_type = ''
-        if op_type == 1:
-            var_name = '(Next)'
-        elif op_type != 0:
-            var_name = ''
-    return var_name + str_type + ' '
-
-
-def _disasm_imp(
-    object_table: bytes | bytearray | memoryview,
-    identifiers: list[str],
-    arg: str,
-    word: int,
-    mnemonic: str,
-    endian: str,
-    vba_ver: int,
-    is_64bit: bool,
-) -> str:
-    if mnemonic != 'Open':
-        if arg == 'imp_' and (len(object_table) >= word + 8):
-            return _get_name(object_table, identifiers, word + 6, endian, vba_ver, is_64bit)
-        else:
-            return F'{arg}{word:04X} '
-    access_mode = ['Read', 'Write', 'Read Write']
-    lock_mode = ['Read Write', 'Write', 'Read']
-    mode = word & 0x00FF
-    access = (word & 0x0F00) >> 8
-    lock = (word & 0xF000) >> 12
-    imp_name = '(For '
-    if mode & 0x01:
-        imp_name += 'Input'
-    elif mode & 0x02:
-        imp_name += 'Output'
-    elif mode & 0x04:
-        imp_name += 'Random'
-    elif mode & 0x08:
-        imp_name += 'Append'
-    elif mode == 0x20:
-        imp_name += 'Binary'
-    if access and (access <= len(access_mode)):
-        imp_name += F' Access {access_mode[access - 1]}'
-    if lock:
-        if lock & 0x04:
-            imp_name += ' Shared'
-        elif lock <= len(lock_mode):
-            imp_name += F' Lock {lock_mode[lock - 1]}'
-    imp_name += ')'
-    return imp_name
-
-
-def _disasm_rec(
-    indirect_table: bytes | bytearray | memoryview,
-    identifiers: list[str],
-    dword: int,
-    endian: str,
-    vba_ver: int,
-    is_64bit: bool,
-) -> str:
-    object_name = _get_name(indirect_table, identifiers, dword + 2, endian, vba_ver, is_64bit)
-    options = _get_word(indirect_table, dword + 18, endian)
-    if (options & 1) == 0:
-        object_name = F'(Private) {object_name}'
-    return object_name
-
-
 def _get_type_name(type_id: int) -> str:
-    dim_types = [
-        '', 'Null', 'Integer', 'Long', 'Single', 'Double', 'Currency',
-        'Date', 'String', 'Object', 'Error', 'Boolean', 'Variant', '',
-        'Decimal', '', '', 'Byte',
-    ]
     type_flags = type_id & 0xE0
     type_id &= ~0xE0
-    if type_id < len(dim_types):
-        type_name = dim_types[type_id]
-    else:
-        type_name = ''
+    type_name = DIM_TYPES[type_id] if type_id < len(DIM_TYPES) else ''
     if type_flags & 0x80:
         type_name += 'Ptr'
     return type_name
@@ -814,378 +741,417 @@ def _disasm_type(
     indirect_table: bytes | bytearray | memoryview,
     dword: int,
 ) -> str:
-    dim_types = [
-        '',
-        'Null',
-        'Integer',
-        'Long',
-        'Single',
-        'Double',
-        'Currency',
-        'Date',
-        'String',
-        'Object',
-        'Error',
-        'Boolean',
-        'Variant',
-        '',
-        'Decimal',
-        '',
-        '',
-        'Byte',
-    ]
     type_id = indirect_table[dword + 6]
-    if type_id < len(dim_types):
-        return dim_types[type_id]
+    if type_id < len(DIM_TYPES):
+        return DIM_TYPES[type_id]
     else:
         return F'type_{dword:08X}'
 
 
-def _disasm_object(
-    indirect_table: bytes | bytearray | memoryview,
-    object_table: bytes | bytearray | memoryview,
-    identifiers: list[str],
-    offset: int,
-    endian: str,
-    vba_ver: int,
-    is_64bit: bool,
-) -> str:
-    if is_64bit:
-        return ''
-    type_desc = _get_dword(indirect_table, offset, endian)
-    flags = _get_word(indirect_table, type_desc, endian)
-    if flags & 0x02:
-        return _disasm_type(indirect_table, type_desc)
-    word = _get_word(indirect_table, type_desc + 2, endian)
-    if word == 0:
-        return ''
-    offs = (word >> 2) * 10
-    if offs + 4 > len(object_table):
-        return ''
-    hl_name = _get_word(object_table, offs + 6, endian)
-    return _get_id(hl_name, identifiers, vba_ver, is_64bit)
+class DisassemblyContext:
+    """
+    Holds shared state for the disassembly of a single VBA module, eliminating repeated parameter
+    threading through every helper function.
+    """
 
+    def __init__(
+        self,
+        indirect_table: bytes | bytearray | memoryview,
+        object_table: bytes | bytearray | memoryview,
+        declaration_table: bytes | bytearray | memoryview,
+        identifiers: list[str],
+        endian: str,
+        vba_ver: int,
+        is_64bit: bool,
+        codec: str,
+    ):
+        self.indirect_table = indirect_table
+        self.object_table = object_table
+        self.declaration_table = declaration_table
+        self.identifiers = identifiers
+        self.endian = endian
+        self.vba_ver = vba_ver
+        self.is_64bit = is_64bit
+        self.codec = codec
 
-def _disasm_var(
-    indirect_table: bytes | bytearray | memoryview,
-    object_table: bytes | bytearray | memoryview,
-    identifiers: list[str],
-    dword: int,
-    endian: str,
-    vba_ver: int,
-    is_64bit: bool,
-) -> str:
-    b_flag1 = indirect_table[dword]
-    b_flag2 = indirect_table[dword + 1]
-    has_as = (b_flag1 & 0x20) != 0
-    has_new = (b_flag2 & 0x20) != 0
-    var_name = _get_name(indirect_table, identifiers, dword + 2, endian, vba_ver, is_64bit)
-    if has_new or has_as:
-        var_type = ''
-        if has_new:
-            var_type += 'New'
-            if has_as:
-                var_type += ' '
-        if has_as:
-            offs = 16 if is_64bit else 12
-            word = _get_word(indirect_table, dword + offs + 2, endian)
+    def disasm_name(self, word: int, mnemonic: str, op_type: int) -> str:
+        var_types = [
+            '', '?', '%', '&', '!', '#', '@', '?', '$', '?', '?', '?', '?', '?',
+        ]
+        var_name = _get_id(word, self.identifiers, self.vba_ver, self.is_64bit)
+        if op_type < len(var_types):
+            str_type = var_types[op_type]
+        else:
+            str_type = ''
+            if op_type == 32:
+                var_name = F'[{var_name}]'
+        if mnemonic == 'OnError':
+            str_type = ''
+            if op_type == 1:
+                var_name = '(Resume Next)'
+            elif op_type == 2:
+                var_name = '(GoTo 0)'
+        elif mnemonic == 'Resume':
+            str_type = ''
+            if op_type == 1:
+                var_name = '(Next)'
+            elif op_type != 0:
+                var_name = ''
+        return (var_name + str_type).rstrip()
+
+    def disasm_imp(self, arg: str, word: int, mnemonic: str) -> str:
+        if mnemonic != 'Open':
+            if arg == 'imp_' and (len(self.object_table) >= word + 8):
+                return _get_name(
+                    self.object_table, self.identifiers, word + 6,
+                    self.endian, self.vba_ver, self.is_64bit)
+            else:
+                return F'{arg}{word:04X}'
+        access_mode = ['Read', 'Write', 'Read Write']
+        lock_mode = ['Read Write', 'Write', 'Read']
+        mode = word & 0x00FF
+        access = (word & 0x0F00) >> 8
+        lock = (word & 0xF000) >> 12
+        imp_name = '(For '
+        if mode & 0x01:
+            imp_name += 'Input'
+        elif mode & 0x02:
+            imp_name += 'Output'
+        elif mode & 0x04:
+            imp_name += 'Random'
+        elif mode & 0x08:
+            imp_name += 'Append'
+        elif mode == 0x20:
+            imp_name += 'Binary'
+        if access and (access <= len(access_mode)):
+            imp_name += F' Access {access_mode[access - 1]}'
+        if lock:
+            if lock & 0x04:
+                imp_name += ' Shared'
+            elif lock <= len(lock_mode):
+                imp_name += F' Lock {lock_mode[lock - 1]}'
+        imp_name += ')'
+        return imp_name
+
+    def disasm_rec(self, dword: int) -> str:
+        object_name = _get_name(
+            self.indirect_table, self.identifiers, dword + 2,
+            self.endian, self.vba_ver, self.is_64bit)
+        options = _get_word(self.indirect_table, dword + 18, self.endian)
+        if (options & 1) == 0:
+            object_name = F'(Private) {object_name}'
+        return object_name
+
+    def disasm_object(self, offset: int) -> str:
+        if self.is_64bit:
+            type_desc = _get_dword(self.indirect_table, offset, self.endian)
+            if type_desc + 17 > len(self.indirect_table):
+                return ''
+            word = _get_word(self.indirect_table, type_desc + 12, self.endian)
             if word == 0xFFFF:
-                type_id = indirect_table[dword + offs]
+                type_id = self.indirect_table[type_desc + 16]
+                return _get_type_name(type_id)
+            return ''
+        type_desc = _get_dword(self.indirect_table, offset, self.endian)
+        flags = _get_word(self.indirect_table, type_desc, self.endian)
+        if flags & 0x02:
+            return _disasm_type(self.indirect_table, type_desc)
+        word = _get_word(self.indirect_table, type_desc + 2, self.endian)
+        if word == 0:
+            return ''
+        offs = (word >> 2) * 10
+        if offs + 4 > len(self.object_table):
+            return ''
+        hl_name = _get_word(self.object_table, offs + 6, self.endian)
+        return _get_id(hl_name, self.identifiers, self.vba_ver, self.is_64bit)
+
+    def disasm_var(self, dword: int) -> str:
+        b_flag1 = self.indirect_table[dword]
+        b_flag2 = self.indirect_table[dword + 1]
+        has_as = (b_flag1 & 0x20) != 0
+        has_new = (b_flag2 & 0x20) != 0
+        var_name = _get_name(
+            self.indirect_table, self.identifiers, dword + 2,
+            self.endian, self.vba_ver, self.is_64bit)
+        if has_new or has_as:
+            type_name = ''
+            if has_as:
+                offs = 16 if self.is_64bit else 12
+                word = _get_word(self.indirect_table, dword + offs + 2, self.endian)
+                if word == 0xFFFF:
+                    type_id = self.indirect_table[dword + offs]
+                    type_name = _get_type_name(type_id)
+                else:
+                    type_name = self.disasm_object(dword + offs)
+            var_type = ''
+            if has_as and len(type_name) > 0:
+                var_type += 'As '
+            if has_new:
+                var_type += 'New '
+            if has_as and len(type_name) > 0:
+                var_type += type_name
+            if len(var_type) > 0:
+                var_name += F' ({var_type.rstrip()})'
+        return var_name
+
+    def disasm_arg(self, arg_offset: int) -> str:
+        flags = _get_word(self.indirect_table, arg_offset, self.endian)
+        offs = 4 if self.is_64bit else 0
+        arg_name = _get_name(
+            self.indirect_table, self.identifiers, arg_offset + 2,
+            self.endian, self.vba_ver, self.is_64bit)
+        arg_type = _get_dword(self.indirect_table, arg_offset + offs + 12, self.endian)
+        arg_opts = _get_word(self.indirect_table, arg_offset + offs + 24, self.endian)
+        if arg_opts & 0x0004:
+            arg_name = F'ByVal {arg_name}'
+        if arg_opts & 0x0002:
+            arg_name = F'ByRef {arg_name}'
+        if arg_opts & 0x0200:
+            arg_name = F'Optional {arg_name}'
+        if flags & 0x0020:
+            arg_name += ' As '
+            arg_type_name = ''
+            if arg_type & 0xFFFF0000:
+                arg_type_id = arg_type & 0x000000FF
+                arg_type_name = _get_type_name(arg_type_id)
+            arg_name += arg_type_name
+        return arg_name
+
+    def disasm_func(self, dword: int, op_type: int) -> str:
+        func_decl = '('
+        flags = _get_word(self.indirect_table, dword, self.endian)
+        sub_name = _get_name(
+            self.indirect_table, self.identifiers, dword + 2,
+            self.endian, self.vba_ver, self.is_64bit)
+        offs2 = 4 if self.vba_ver > 5 else 0
+        if self.is_64bit:
+            offs2 += 16
+        arg_offset = _get_dword(self.indirect_table, dword + offs2 + 36, self.endian)
+        ret_type = _get_dword(self.indirect_table, dword + offs2 + 40, self.endian)
+        decl_offset = _get_word(self.indirect_table, dword + offs2 + 44, self.endian)
+        c_options = self.indirect_table[dword + offs2 + 54]
+        new_flags = self.indirect_table[dword + offs2 + 57]
+        has_declare = False
+        if self.vba_ver > 5:
+            if ((new_flags & 0x0002) == 0) and not self.is_64bit:
+                func_decl += 'Private '
+            if new_flags & 0x0004:
+                func_decl += 'Friend '
+        else:
+            if (flags & 0x0008) == 0:
+                func_decl += 'Private '
+        if op_type & 0x04:
+            func_decl += 'Public '
+        if flags & 0x0080:
+            func_decl += 'Static '
+        if (
+            (c_options & 0x90) == 0
+            and (decl_offset != 0xFFFF)
+            and not self.is_64bit
+        ):
+            has_declare = True
+            func_decl += 'Declare '
+        if self.vba_ver > 5:
+            if new_flags & 0x20:
+                func_decl += 'PtrSafe '
+        has_as = (flags & 0x0020) != 0
+        if flags & 0x1000:
+            if op_type in (2, 6):
+                func_decl += 'Function '
+            else:
+                func_decl += 'Sub '
+        elif flags & 0x2000:
+            func_decl += 'Property Get '
+        elif flags & 0x4000:
+            func_decl += 'Property Let '
+        elif flags & 0x8000:
+            func_decl += 'Property Set '
+        func_decl += sub_name
+        if has_declare:
+            lib_name = _get_name(
+                self.declaration_table, self.identifiers, decl_offset + 2,
+                self.endian, self.vba_ver, self.is_64bit)
+            func_decl += F' Lib "{lib_name}" '
+        arg_list: list[str] = []
+        while (
+            arg_offset != 0xFFFFFFFF
+            and arg_offset != 0
+            and arg_offset + 26 < len(self.indirect_table)
+        ):
+            arg_name = self.disasm_arg(arg_offset)
+            arg_list.append(arg_name)
+            arg_offset = _get_dword(self.indirect_table, arg_offset + 20, self.endian)
+        func_decl += F'({", ".join(arg_list)})'
+        if has_as:
+            func_decl += ' As '
+            type_name = ''
+            if (ret_type & 0xFFFF0000) == 0xFFFF0000:
+                type_id = ret_type & 0x000000FF
                 type_name = _get_type_name(type_id)
             else:
-                type_name = _disasm_object(
-                    indirect_table, object_table, identifiers,
-                    dword + offs, endian, vba_ver, is_64bit)
-            if len(type_name) > 0:
-                var_type += F'As {type_name}'
-        if len(var_type) > 0:
-            var_name += F' ({var_type})'
-    return var_name
+                type_name = _get_name(
+                    self.indirect_table, self.identifiers, ret_type + 6,
+                    self.endian, self.vba_ver, self.is_64bit)
+            func_decl += type_name
+        func_decl += ')'
+        return func_decl
 
-
-def _disasm_arg(
-    indirect_table: bytes | bytearray | memoryview,
-    identifiers: list[str],
-    arg_offset: int,
-    endian: str,
-    vba_ver: int,
-    is_64bit: bool,
-) -> str:
-    flags = _get_word(indirect_table, arg_offset, endian)
-    offs = 4 if is_64bit else 0
-    arg_name = _get_name(indirect_table, identifiers, arg_offset + 2, endian, vba_ver, is_64bit)
-    arg_type = _get_dword(indirect_table, arg_offset + offs + 12, endian)
-    arg_opts = _get_word(indirect_table, arg_offset + offs + 24, endian)
-    if arg_opts & 0x0004:
-        arg_name = F'ByVal {arg_name}'
-    if arg_opts & 0x0002:
-        arg_name = F'ByRef {arg_name}'
-    if arg_opts & 0x0200:
-        arg_name = F'Optional {arg_name}'
-    if flags & 0x0020:
-        arg_name += ' As '
-        arg_type_name = ''
-        if arg_type & 0xFFFF0000:
-            arg_type_id = arg_type & 0x000000FF
-            arg_type_name = _get_type_name(arg_type_id)
-        arg_name += arg_type_name
-    return arg_name
-
-
-def _disasm_func(
-    indirect_table: bytes | bytearray | memoryview,
-    declaration_table: bytes | bytearray | memoryview,
-    identifiers: list[str],
-    dword: int,
-    op_type: int,
-    endian: str,
-    vba_ver: int,
-    is_64bit: bool,
-) -> str:
-    func_decl = '('
-    flags = _get_word(indirect_table, dword, endian)
-    sub_name = _get_name(indirect_table, identifiers, dword + 2, endian, vba_ver, is_64bit)
-    offs2 = 4 if vba_ver > 5 else 0
-    if is_64bit:
-        offs2 += 16
-    arg_offset = _get_dword(indirect_table, dword + offs2 + 36, endian)
-    ret_type = _get_dword(indirect_table, dword + offs2 + 40, endian)
-    decl_offset = _get_word(indirect_table, dword + offs2 + 44, endian)
-    c_options = indirect_table[dword + offs2 + 54]
-    new_flags = indirect_table[dword + offs2 + 57]
-    has_declare = False
-    if vba_ver > 5:
-        if ((new_flags & 0x0002) == 0) and not is_64bit:
-            func_decl += 'Private '
-        if new_flags & 0x0004:
-            func_decl += 'Friend '
-    else:
-        if (flags & 0x0008) == 0:
-            func_decl += 'Private '
-    if op_type & 0x04:
-        func_decl += 'Public '
-    if flags & 0x0080:
-        func_decl += 'Static '
-    if (
-        (c_options & 0x90) == 0
-        and (decl_offset != 0xFFFF)
-        and not is_64bit
-    ):
-        has_declare = True
-        func_decl += 'Declare '
-    if vba_ver > 5:
-        if new_flags & 0x20:
-            func_decl += 'PtrSafe '
-    has_as = (flags & 0x0020) != 0
-    if flags & 0x1000:
-        if op_type in (2, 6):
-            func_decl += 'Function '
+    def disasm_var_arg(
+        self,
+        module_data: bytes | bytearray | memoryview,
+        offset: int,
+        w_length: int,
+        mnemonic: str,
+    ) -> list[str]:
+        substring = module_data[offset:offset + w_length]
+        length_str = F'0x{w_length:04X}'
+        if mnemonic in ('LitStr', 'QuoteRem', 'Rem', 'Reparse'):
+            quoted = F'"{codecs.decode(substring, self.codec, "replace")}"'
+            return [length_str, quoted]
+        elif mnemonic in ('OnGosub', 'OnGoto'):
+            offset1 = offset
+            names: list[str] = []
+            for _ in range(w_length // 2):
+                offset1, word = _get_var(module_data, offset1, self.endian, False)
+                names.append(_get_id(word, self.identifiers, self.vba_ver, self.is_64bit))
+            return [length_str, ', '.join(names)]
         else:
-            func_decl += 'Sub '
-    elif flags & 0x2000:
-        func_decl += 'Property Get '
-    elif flags & 0x4000:
-        func_decl += 'Property Let '
-    elif flags & 0x8000:
-        func_decl += 'Property Set '
-    func_decl += sub_name
-    if has_declare:
-        lib_name = _get_name(
-            declaration_table, identifiers, decl_offset + 2,
-            endian, vba_ver, is_64bit)
-        func_decl += F' Lib "{lib_name}" '
-    arg_list: list[str] = []
-    while (
-        arg_offset != 0xFFFFFFFF
-        and arg_offset != 0
-        and arg_offset + 26 < len(indirect_table)
-    ):
-        arg_name = _disasm_arg(
-            indirect_table, identifiers, arg_offset,
-            endian, vba_ver, is_64bit)
-        arg_list.append(arg_name)
-        arg_offset = _get_dword(indirect_table, arg_offset + 20, endian)
-    func_decl += F'({", ".join(arg_list)})'
-    if has_as:
-        func_decl += ' As '
-        type_name = ''
-        if (ret_type & 0xFFFF0000) == 0xFFFF0000:
-            type_id = ret_type & 0x000000FF
-            type_name = _get_type_name(type_id)
-        else:
-            type_name = _get_name(
-                indirect_table, identifiers, ret_type + 6,
-                endian, vba_ver, is_64bit)
-        func_decl += type_name
-    func_decl += ')'
-    return func_decl
+            hex_dump = ' '.join(F'{c:02X}' for c in substring)
+            return [length_str, hex_dump]
 
+    def dump_line(
+        self,
+        module_data: bytes | bytearray | memoryview,
+        line_start: int,
+        line_length: int,
+    ) -> list[tuple[str, list[str]]]:
+        """
+        Disassemble one p-code line into a list of (mnemonic, [arg, ...]) tuples.
+        """
+        var_types_long = [
+            'Var', '?', 'Int', 'Lng', 'Sng', 'Dbl', 'Cur', 'Date',
+            'Str', 'Obj', 'Err', 'Bool', 'Var',
+        ]
+        specials = ['False', 'True', 'Null', 'Empty']
+        options = [
+            'Base 0', 'Base 1', 'Compare Text', 'Compare Binary',
+            'Explicit', 'Private Module',
+        ]
 
-def _disasm_var_arg(
-    module_data: bytes | bytearray | memoryview,
-    identifiers: list[str],
-    offset: int,
-    w_length: int,
-    mnemonic: str,
-    endian: str,
-    vba_ver: int,
-    is_64bit: bool,
-    codec: str,
-) -> str:
-    substring = module_data[offset:offset + w_length]
-    var_arg_name = F'0x{w_length:04X} '
-    if mnemonic in ('LitStr', 'QuoteRem', 'Rem', 'Reparse'):
-        var_arg_name += F'"{codecs.decode(substring, codec, "replace")}"'
-    elif mnemonic in ('OnGosub', 'OnGoto'):
-        offset1 = offset
-        names: list[str] = []
-        for _ in range(w_length // 2):
-            offset1, word = _get_var(module_data, offset1, endian, False)
-            names.append(_get_id(word, identifiers, vba_ver, is_64bit))
-        var_arg_name += ', '.join(names) + ' '
-    else:
-        hex_dump = ' '.join(F'{c:02X}' for c in substring)
-        var_arg_name += hex_dump
-    return var_arg_name
-
-
-def _dump_line(
-    module_data: bytes | bytearray | memoryview,
-    line_start: int,
-    line_length: int,
-    endian: str,
-    vba_ver: int,
-    is_64bit: bool,
-    identifiers: list[str],
-    object_table: bytes | bytearray | memoryview,
-    indirect_table: bytes | bytearray | memoryview,
-    declaration_table: bytes | bytearray | memoryview,
-    line: int,
-    codec: str,
-    output: list[str],
-) -> None:
-    var_types_long = [
-        'Var', '?', 'Int', 'Lng', 'Sng', 'Dbl', 'Cur', 'Date',
-        'Str', 'Obj', 'Err', 'Bool', 'Var',
-    ]
-    specials = ['False', 'True', 'Null', 'Empty']
-    options = [
-        'Base 0', 'Base 1', 'Compare Text', 'Compare Binary',
-        'Explicit', 'Private Module',
-    ]
-
-    output.append(F'Line #{line:d}:')
-    if line_length <= 0:
-        return
-    offset = line_start
-    end_of_line = line_start + line_length
-    while offset < end_of_line:
-        offset, opcode = _get_var(module_data, offset, endian, False)
-        op_type = (opcode & ~0x03FF) >> 10
-        opcode &= 0x03FF
-        translated = _translate_opcode(opcode, vba_ver, is_64bit)
-        if translated not in OPCODES:
-            output.append(F'\tUnrecognized opcode 0x{opcode:04X} at offset 0x{offset:08X}.')
-            return
-        instruction = OPCODES[translated]
-        mnemonic = instruction.mnem
-        parts: list[str] = ['\t', F'{mnemonic} ']
-        if mnemonic in ('Coerce', 'CoerceVar', 'DefType'):
-            if op_type < len(var_types_long):
-                parts.append(F'({var_types_long[op_type]}) ')
-            elif op_type == 17:
-                parts.append('(Byte) ')
-            else:
-                parts.append(F'({op_type:d}) ')
-        elif mnemonic in ('Dim', 'DimImplicit', 'Type'):
-            dim_type: list[str] = []
-            if op_type & 0x04:
-                dim_type.append('Global')
-            elif op_type & 0x08:
-                dim_type.append('Public')
-            elif op_type & 0x10:
-                dim_type.append('Private')
-            elif op_type & 0x20:
-                dim_type.append('Static')
-            if (op_type & 0x01) and (mnemonic != 'Type'):
-                dim_type.append('Const')
-            if dim_type:
-                parts.append(F'({" ".join(dim_type)}) ')
-        elif mnemonic == 'LitVarSpecial':
-            parts.append(F'({specials[op_type]})')
-        elif mnemonic in ('ArgsCall', 'ArgsMemCall', 'ArgsMemCallWith'):
-            if op_type < 16:
-                parts.append('(Call) ')
-            else:
-                op_type -= 16
-        elif mnemonic == 'Option':
-            parts.append(F' ({options[op_type]})')
-        elif mnemonic in ('Redim', 'RedimAs'):
-            if op_type & 16:
-                parts.append('(Preserve) ')
-        for arg in instruction.args:
-            if arg == 'name':
-                offset, word = _get_var(module_data, offset, endian, False)
-                the_name = _disasm_name(word, identifiers, mnemonic, op_type, vba_ver, is_64bit)
-                parts.append(the_name)
-            elif arg in ('0x', 'imp_'):
-                offset, word = _get_var(module_data, offset, endian, False)
-                the_imp = _disasm_imp(
-                    object_table, identifiers, arg, word, mnemonic, endian, vba_ver, is_64bit)
-                parts.append(the_imp)
-            elif arg in ('func_', 'var_', 'rec_', 'type_', 'context_'):
-                offset, dword = _get_var(module_data, offset, endian, True)
-                if (
-                    arg == 'rec_'
-                    and len(indirect_table) >= dword + 20
-                ):
-                    the_rec = _disasm_rec(
-                        indirect_table, identifiers,
-                        dword, endian, vba_ver, is_64bit)
-                    parts.append(the_rec)
-                elif (
-                    arg == 'type_'
-                    and len(indirect_table) >= dword + 7
-                ):
-                    the_type = _disasm_type(indirect_table, dword)
-                    parts.append(F'(As {the_type})')
-                elif (
-                    arg == 'var_'
-                    and len(indirect_table) >= dword + 16
-                ):
-                    if op_type & 0x20:
-                        parts.append('(WithEvents) ')
-                    the_var = _disasm_var(
-                        indirect_table, object_table, identifiers,
-                        dword, endian, vba_ver, is_64bit)
-                    parts.append(the_var)
-                    if op_type & 0x10:
-                        word = _get_word(module_data, offset, endian)
-                        offset += 2
-                        parts.append(F' 0x{word:04X}')
-                elif (
-                    arg == 'func_'
-                    and len(indirect_table) >= dword + 61
-                ):
-                    the_func = _disasm_func(
-                        indirect_table, declaration_table, identifiers, dword, op_type,
-                        endian, vba_ver, is_64bit)
-                    parts.append(the_func)
+        result: list[tuple[str, list[str]]] = []
+        if line_length <= 0:
+            return result
+        offset = line_start
+        end_of_line = line_start + line_length
+        while offset < end_of_line:
+            offset, opcode = _get_var(module_data, offset, self.endian, False)
+            op_type = (opcode & ~0x03FF) >> 10
+            opcode &= 0x03FF
+            translated = _translate_opcode(opcode, self.vba_ver, self.is_64bit)
+            if translated not in OPCODES:
+                return result
+            instruction = OPCODES[translated]
+            mnemonic = instruction.mnem
+            parts: list[str] = []
+            if mnemonic in ('Coerce', 'CoerceVar', 'DefType'):
+                if op_type < len(var_types_long):
+                    parts.append(F'({var_types_long[op_type]})')
+                elif op_type == 17:
+                    parts.append('(Byte)')
                 else:
-                    parts.append(F'{arg}{dword:08X} ')
-                if is_64bit and (arg == 'context_'):
-                    offset, dword = _get_var(module_data, offset, endian, True)
-                    parts.append(F'{dword:08X} ')
-        if instruction.varg:
-            offset, w_length = _get_var(module_data, offset, endian, False)
-            the_var_arg = _disasm_var_arg(
-                module_data, identifiers, offset, w_length,
-                mnemonic, endian, vba_ver, is_64bit, codec)
-            parts.append(the_var_arg)
-            offset += w_length
-            if w_length & 1:
-                offset += 1
-        output.append(''.join(parts))
+                    parts.append(F'({op_type:d})')
+            elif mnemonic in ('Dim', 'DimImplicit', 'Type'):
+                dim_type: list[str] = []
+                if op_type & 0x04:
+                    dim_type.append('Global')
+                elif op_type & 0x08:
+                    dim_type.append('Public')
+                elif op_type & 0x10:
+                    dim_type.append('Private')
+                elif op_type & 0x20:
+                    dim_type.append('Static')
+                if (op_type & 0x01) and (mnemonic != 'Type'):
+                    dim_type.append('Const')
+                if dim_type:
+                    parts.append(F'({" ".join(dim_type)})')
+            elif mnemonic == 'LitVarSpecial':
+                parts.append(F'({specials[op_type]})')
+            elif mnemonic in ('ArgsCall', 'ArgsMemCall', 'ArgsMemCallWith'):
+                if op_type < 16:
+                    parts.append('(Call)')
+                else:
+                    op_type -= 16
+            elif mnemonic == 'Option':
+                parts.append(F'({options[op_type]})')
+            elif mnemonic in ('Redim', 'RedimAs'):
+                if op_type & 16:
+                    parts.append('(Preserve)')
+            for arg in instruction.args:
+                if arg == 'name':
+                    offset, word = _get_var(module_data, offset, self.endian, False)
+                    the_name = self.disasm_name(word, mnemonic, op_type)
+                    parts.append(the_name)
+                elif arg in ('0x', 'imp_'):
+                    offset, word = _get_var(module_data, offset, self.endian, False)
+                    the_imp = self.disasm_imp(arg, word, mnemonic)
+                    parts.append(the_imp)
+                elif arg in ('func_', 'var_', 'rec_', 'type_', 'context_'):
+                    offset, dword = _get_var(module_data, offset, self.endian, True)
+                    if (
+                        arg == 'rec_'
+                        and len(self.indirect_table) >= dword + 20
+                    ):
+                        parts.append(self.disasm_rec(dword))
+                    elif (
+                        arg == 'type_'
+                        and len(self.indirect_table) >= dword + 7
+                    ):
+                        the_type = _disasm_type(self.indirect_table, dword)
+                        parts.append(F'(As {the_type})')
+                    elif (
+                        arg == 'var_'
+                        and len(self.indirect_table) >= dword + 16
+                    ):
+                        if op_type & 0x20:
+                            parts.append('(WithEvents)')
+                        parts.append(self.disasm_var(dword))
+                        if op_type & 0x10:
+                            word = _get_word(module_data, offset, self.endian)
+                            offset += 2
+                            parts.append(F'0x{word:04X}')
+                    elif (
+                        arg == 'func_'
+                        and len(self.indirect_table) >= dword + 61
+                    ):
+                        parts.append(self.disasm_func(dword, op_type))
+                    else:
+                        parts.append(F'{arg}{dword:08X}')
+                    if self.is_64bit and (arg == 'context_'):
+                        offset, dword = _get_var(module_data, offset, self.endian, True)
+                        parts.append(F'{dword:08X}')
+            if instruction.varg:
+                offset, w_length = _get_var(module_data, offset, self.endian, False)
+                var_arg_parts = self.disasm_var_arg(
+                    module_data, offset, w_length, mnemonic)
+                parts.extend(var_arg_parts)
+                offset += w_length
+                if w_length & 1:
+                    offset += 1
+            result.append((mnemonic, parts))
+        return result
+
+
+# MS-OVBA specification offsets for module stream parsing
+_OFFSET_DW_LENGTH = 0x0005
+_OFFSET_VBA6_INDIRECT_START = 0x0011
+_OFFSET_VBA6_32_DECL_LENGTH = 0x003F
+_OFFSET_VBA6_32_DECL_DATA = 0x0043
+_OFFSET_VBA6_64_DECL_LENGTH = 0x0043
+_OFFSET_VBA6_64_DECL_DATA = 0x0047
+_OFFSET_VBA6_64_LINE_START = 0x0019
+_OFFSET_OBJECT_TABLE = 0x008A
+_OFFSET_PCODE_LINES = 0x003C
+_PCODE_MAGIC = 0xCAFE
 
 
 def _pcode_dump(
@@ -1194,11 +1160,11 @@ def _pcode_dump(
     identifiers: list[str],
     is_64bit: bool,
     codec: str,
-    output: list[str],
-) -> None:
+) -> list[PCodeLine]:
     """
-    Disassemble p-code from a VBA module stream.
+    Disassemble p-code from a VBA module stream. Returns structured PCodeLine objects.
     """
+    lines: list[PCodeLine] = []
     if _get_word(module_data, 2, '<') > 0xFF:
         endian = '>'
     else:
@@ -1212,26 +1178,28 @@ def _pcode_dump(
             else:
                 vba_ver = 6
             if is_64bit:
-                dw_length = _get_dword(module_data, 0x0043, endian)
-                declaration_table = module_data[0x0047:0x0047 + dw_length]
-                dw_length = _get_dword(module_data, 0x0011, endian)
+                dw_length = _get_dword(module_data, _OFFSET_VBA6_64_DECL_LENGTH, endian)
+                declaration_table = module_data[
+                    _OFFSET_VBA6_64_DECL_DATA:_OFFSET_VBA6_64_DECL_DATA + dw_length]
+                dw_length = _get_dword(module_data, _OFFSET_VBA6_INDIRECT_START, endian)
                 table_start = dw_length + 12
             else:
-                dw_length = _get_dword(module_data, 0x003F, endian)
-                declaration_table = module_data[0x0043:0x0043 + dw_length]
-                dw_length = _get_dword(module_data, 0x0011, endian)
+                dw_length = _get_dword(module_data, _OFFSET_VBA6_32_DECL_LENGTH, endian)
+                declaration_table = module_data[
+                    _OFFSET_VBA6_32_DECL_DATA:_OFFSET_VBA6_32_DECL_DATA + dw_length]
+                dw_length = _get_dword(module_data, _OFFSET_VBA6_INDIRECT_START, endian)
                 table_start = dw_length + 10
             dw_length = _get_dword(module_data, table_start, endian)
             table_start += 4
             indirect_table = module_data[
                 table_start:table_start + dw_length]
-            dw_length = _get_dword(module_data, 0x0005, endian)
-            dw_length2 = dw_length + 0x8A
+            dw_length = _get_dword(module_data, _OFFSET_DW_LENGTH, endian)
+            dw_length2 = dw_length + _OFFSET_OBJECT_TABLE
             dw_length = _get_dword(module_data, dw_length2, endian)
             dw_length2 += 4
             object_table = module_data[
                 dw_length2:dw_length2 + dw_length]
-            offset = 0x0019
+            offset = _OFFSET_VBA6_64_LINE_START
         else:
             vba_ver = 5
             offset = 11
@@ -1252,31 +1220,34 @@ def _pcode_dump(
             indirect_table = module_data[
                 table_start:table_start + dw_length]
             dw_length = _get_dword(module_data, offset, endian)
-            offs = dw_length + 0x008A
+            offs = dw_length + _OFFSET_OBJECT_TABLE
             dw_length = _get_dword(module_data, offs, endian)
             offs += 4
             object_table = module_data[offs:offs + dw_length]
             offset += 77
+
+        ctx = DisassemblyContext(
+            indirect_table, object_table, declaration_table,
+            identifiers, endian, vba_ver, is_64bit, codec)
+
         dw_length = _get_dword(module_data, offset, endian)
-        offset = dw_length + 0x003C
+        offset = dw_length + _OFFSET_PCODE_LINES
         offset, magic = _get_var(module_data, offset, endian, False)
-        if magic != 0xCAFE:
-            return
+        if magic != _PCODE_MAGIC:
+            return lines
         offset += 2
         offset, num_lines = _get_var(module_data, offset, endian, False)
         pcode_start = offset + num_lines * 12 + 10
-        for line_num in range(num_lines):
+        for _ in range(num_lines):
             offset += 4
             offset, line_length = _get_var(module_data, offset, endian, False)
             offset += 2
             offset, line_offset = _get_var(module_data, offset, endian, True)
-            _dump_line(
-                module_data, pcode_start + line_offset, line_length,
-                endian, vba_ver, is_64bit, identifiers,
-                object_table, indirect_table, declaration_table,
-                line_num, codec, output)
-    except Exception:
-        pass
+            opcodes = ctx.dump_line(module_data, pcode_start + line_offset, line_length)
+            lines.append(PCodeLine(opcodes))
+    except Exception as exc:
+        logger.warning(F'p-code disassembly error: {exc}')
+    return lines
 
 
 def _get_identifiers(
@@ -1386,20 +1357,39 @@ def _get_identifiers(
             if id_type & 0x80:
                 offset += 6
             if id_length:
-                ident = codecs.decode(vba_project_data[offset:offset + id_length], codec, 'replace')
+                ident = codecs.decode(
+                    vba_project_data[offset:offset + id_length], codec, 'replace')
                 identifiers.append(ident)
                 offset += id_length
             if not is_kwd:
                 offset += 4
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning(F'identifier extraction error: {exc}')
     return identifiers
+
+
+def format_pcode_text(
+    module_path: str,
+    module_data_size: int,
+    lines: list[PCodeLine],
+) -> str:
+    """
+    Render structured PCodeLine data into pcodedmp-compatible text output.
+    """
+    output: list[str] = []
+    output.append(F'{module_path} - {module_data_size:d} bytes')
+    for line_num, pcode_line in enumerate(lines):
+        output.append(F'Line #{line_num:d}:')
+        for mnemonic, args in pcode_line.opcodes:
+            text = F'\t{mnemonic} {" ".join(args)}'
+            output.append(text)
+    return '\n'.join(output) + '\n'
 
 
 class PCodeDisassembler:
     """
-    VBA p-code disassembler that produces pcodedmp-compatible text output. The output is suitable
-    for consumption by pcode2code for decompilation back to VBA source code.
+    VBA p-code disassembler that produces structured PCodeModule output. The output is suitable for
+    consumption by the decompiler for reconstruction to VBA source code.
     """
 
     def __init__(self, data: bytes | bytearray | memoryview):
@@ -1407,7 +1397,7 @@ class PCodeDisassembler:
 
     def iter_modules(self):
         """
-        Yield (module_path, pcodedmp_text) for each VBA module.
+        Yield PCodeModule objects for each VBA module.
         """
         for ole_data in self._get_ole_streams():
             ole = OleFile(ole_data)
@@ -1418,7 +1408,7 @@ class PCodeDisassembler:
         ole: OleFile,
     ):
         """
-        Iterate over VBA modules in an OLE file, yielding (module_path, pcodedmp_text) per module.
+        Iterate over VBA modules in an OLE file, yielding PCodeModule per module.
         """
         vba_projects = _find_vba_projects(ole)
         if not vba_projects:
@@ -1434,21 +1424,9 @@ class PCodeDisassembler:
                     module_data = ole.openstream(module_path).read()
                 except Exception:
                     continue
-                output: list[str] = []
-                output.append(F'{module_path} - {len(module_data):d} bytes')
-                _pcode_dump(module_data, vba_project_data, identifiers, is_64bit, codec, output)
-                yield module_path, '\n'.join(output) + '\n'
-
-    def disassemble(self) -> str:
-        """
-        Disassemble VBA p-code from the document and return pcodedmp-format text output. Supports
-        both OLE compound files and OOXML (ZIP) documents containing vbaProject.bin.
-        """
-        output: list[str] = []
-        for ole_data in self._get_ole_streams():
-            ole = OleFile(ole_data)
-            self._process_project(ole, output)
-        return '\n'.join(output) + '\n' if output else ''
+                lines = _pcode_dump(
+                    module_data, vba_project_data, identifiers, is_64bit, codec)
+                yield PCodeModule(module_path, lines)
 
     def _get_ole_streams(self) -> list[bytes | bytearray | memoryview]:
         """
@@ -1471,33 +1449,6 @@ class PCodeDisassembler:
                 pass
             return results
         return [self._data]
-
-    def _process_project(
-        self,
-        ole: OleFile,
-        output: list[str],
-    ) -> None:
-        """
-        Process all VBA projects found in the OLE file.
-        """
-        vba_projects = _find_vba_projects(ole)
-        if not vba_projects:
-            return
-        for vba_root, project_path, dir_path in vba_projects:
-            output.append('=' * 79)
-            codec, code_modules, is_64bit = self._process_dir(ole, dir_path)
-            vba_project_path = vba_root + 'VBA/_VBA_PROJECT'
-            vba_project_data = self._process_vba_project(ole, vba_project_path)
-            identifiers = _get_identifiers(vba_project_data, codec)
-            output.append('Module streams:')
-            for module in code_modules:
-                module_path = F'{vba_root}VBA/{module}'
-                try:
-                    module_data = ole.openstream(module_path).read()
-                except Exception:
-                    continue
-                output.append(F'{module_path} - {len(module_data):d} bytes')
-                _pcode_dump(module_data, vba_project_data, identifiers, is_64bit, codec, output)
 
     def _process_dir(
         self,
