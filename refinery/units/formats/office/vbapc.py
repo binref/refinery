@@ -34,4 +34,6 @@ class vbapc(PathExtractorUnit):
                 from refinery.lib.ole.decompiler import PCodeParser
                 parser = PCodeParser()
                 code = parser.decompile_module(module)
+            if not code.strip():
+                continue
             yield UnpackResult(module.path, code.encode(self.codec))

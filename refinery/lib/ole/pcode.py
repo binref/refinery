@@ -894,9 +894,12 @@ class DisassemblyContext:
                 var_name += F' ({var_type.rstrip()})'
         return var_name
 
-    def disasm_arg(self, arg_offset: int) -> str:
+    def disasm_arg(self, arg_offset: int) -> str | None:
         flags = _get_word(self.indirect_table, arg_offset, self.endian)
         offs = 4 if self.is_64bit else 0
+        name_word = _get_word(self.indirect_table, arg_offset + 2, self.endian)
+        if name_word == 0xFFFE:
+            return None
         arg_name = _get_name(
             self.indirect_table, self.identifiers, arg_offset + 2,
             self.endian, self.vba_ver, self.is_64bit)
@@ -929,25 +932,28 @@ class DisassemblyContext:
         arg_offset = _get_dword(self.indirect_table, dword + offs2 + 36, self.endian)
         ret_type = _get_dword(self.indirect_table, dword + offs2 + 40, self.endian)
         decl_offset = _get_word(self.indirect_table, dword + offs2 + 44, self.endian)
-        c_options = self.indirect_table[dword + offs2 + 54]
-        new_flags = self.indirect_table[dword + offs2 + 57]
+        c_options_offset = 60 if self.is_64bit else 54
+        c_options = self.indirect_table[dword + offs2 + c_options_offset]
+        new_flags_offset = 63 if self.is_64bit else 57
+        new_flags = self.indirect_table[dword + offs2 + new_flags_offset]
         has_declare = False
         if self.vba_ver > 5:
-            if ((new_flags & 0x0002) == 0) and not self.is_64bit:
+            if (new_flags & 0x0002) == 0:
                 func_decl += 'Private '
+            elif op_type & 0x04:
+                func_decl += 'Public '
             if new_flags & 0x0004:
                 func_decl += 'Friend '
         else:
             if (flags & 0x0008) == 0:
                 func_decl += 'Private '
-        if op_type & 0x04:
-            func_decl += 'Public '
+            elif op_type & 0x04:
+                func_decl += 'Public '
         if flags & 0x0080:
             func_decl += 'Static '
         if (
             (c_options & 0x90) == 0
             and (decl_offset != 0xFFFF)
-            and not self.is_64bit
         ):
             has_declare = True
             func_decl += 'Declare '
@@ -979,7 +985,8 @@ class DisassemblyContext:
             and arg_offset + 26 < len(self.indirect_table)
         ):
             arg_name = self.disasm_arg(arg_offset)
-            arg_list.append(arg_name)
+            if arg_name is not None:
+                arg_list.append(arg_name)
             arg_offset = _get_dword(self.indirect_table, arg_offset + 20, self.endian)
         func_decl += F'({", ".join(arg_list)})'
         if has_as:
@@ -1086,6 +1093,12 @@ class DisassemblyContext:
             elif mnemonic in ('Redim', 'RedimAs'):
                 if op_type & 16:
                     parts.append('(Preserve)')
+            elif mnemonic in (
+                'FnDir', 'FnFormat', 'FnStringVar', 'FnStringStr',
+            ):
+                parts.append(F'0x{op_type:04X}')
+            elif mnemonic == 'LitSmallI2':
+                parts.append(str(op_type))
             for arg in instruction.args:
                 if arg == 'name':
                     offset, word = _get_var(module_data, offset, self.endian, False)
@@ -1272,7 +1285,7 @@ def _get_identifiers(
             or (version == 0x4E)
         )
         non_unicode_name = (((version <= 0x59) and (version != 0x4E))
-            or (0x5F > version > 0x6B)
+            or (0x5F < version < 0x6B)
         )
         word = _get_word(vba_project_data, 5, '<')
         endian = '>' if word == 0x000E else '<'
