@@ -46,3 +46,4 @@ class xtmdb(PathExtractorUnit):
             return True
         if data[:19] == b'\0\01\0\0Standard Jet DB':
             return True
+        return False
