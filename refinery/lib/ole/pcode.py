@@ -773,6 +773,7 @@ class DisassemblyContext:
         self.vba_ver = vba_ver
         self.is_64bit = is_64bit
         self.codec = codec
+        self._linecont_pending = False
 
     def disasm_name(self, word: int, mnemonic: str, op_type: int) -> str:
         var_types = [
@@ -941,12 +942,18 @@ class DisassemblyContext:
     def disasm_func(self, dword: int, op_type: int) -> str:
         func_decl = '('
         flags = _get_word(self.indirect_table, dword, self.endian)
-        sub_name = _get_name(
-            self.indirect_table, self.identifiers, dword + 2,
-            self.endian, self.vba_ver, self.is_64bit)
+        name_word = _get_word(self.indirect_table, dword + 2, self.endian)
         offs2 = 4 if self.vba_ver > 5 else 0
         if self.is_64bit:
             offs2 += 16
+        if (
+            self._linecont_pending
+            and offs2 >= 4
+            and self.indirect_table[dword + 4:dword + 8] == b'\xFF\xFF\xFF\xFF'
+        ):
+            name_word += 2
+        self._linecont_pending = False
+        sub_name = _get_id(name_word, self.identifiers, self.vba_ver, self.is_64bit)
         arg_offset = _get_dword(self.indirect_table, dword + offs2 + 36, self.endian)
         ret_type = _get_dword(self.indirect_table, dword + offs2 + 40, self.endian)
         decl_offset = _get_word(self.indirect_table, dword + offs2 + 44, self.endian)
@@ -1051,6 +1058,7 @@ class DisassemblyContext:
         """
         Disassemble one p-code line into a list of (mnemonic, [arg, ...]) tuples.
         """
+        self._linecont_pending = False
         var_types_long = [
             'Var', '?', 'Int', 'Lng', 'Sng', 'Dbl', 'Cur', 'Date',
             'Str', 'Obj', 'Err', 'Bool', 'Var',
@@ -1167,6 +1175,8 @@ class DisassemblyContext:
                 if w_length & 1:
                     offset += 1
             result.append((mnemonic, parts))
+            if mnemonic == 'LineCont':
+                self._linecont_pending = True
         return result
 
 
