@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import codecs
 import logging
+import re
 
 from struct import unpack_from
 from typing import NamedTuple
@@ -581,7 +582,8 @@ INTERNAL_NAMES: list[str] = [
 DIM_TYPES: list[str] = [
     '', 'Null', 'Integer', 'Long', 'Single', 'Double', 'Currency',
     'Date', 'String', 'Object', 'Error', 'Boolean', 'Variant', '',
-    'Decimal', '', '', 'Byte',
+    'Decimal', '', '', 'Byte', '', '', 'LongLong', '', '', '',
+    'Any',
 ]
 
 
@@ -710,6 +712,10 @@ def _get_id(
             return identifiers[id_code]
         else:
             if vba_ver >= 7:
+                if id_code == 0xE9:
+                    return 'PtrSafe'
+                if id_code > 0xE9:
+                    id_code -= 1
                 if id_code >= 0xC3:
                     id_code -= 1
             return INTERNAL_NAMES[id_code]
@@ -734,6 +740,8 @@ def _get_type_name(type_id: int) -> str:
     type_id &= ~0xE0
     type_name = DIM_TYPES[type_id] if type_id < len(DIM_TYPES) else ''
     if type_flags & 0x80:
+        if type_name == 'LongLong':
+            type_name = 'Long'
         type_name += 'Ptr'
     return type_name
 
@@ -936,6 +944,58 @@ class DisassemblyContext:
             arg_name += arg_type_name
         return arg_name
 
+    def _declare64(self, decl_offset: int, func_name: str) -> tuple[str, str | None]:
+        """
+        Extract Lib and Alias names from a 64-bit Declare entry in the declaration table.
+        The 64-bit entry structure differs significantly from 32-bit: the lib name identifier
+        word is not at a fixed offset within the entry header. Instead, we extract the lib name
+        from VBA source text stored later in the declaration table, falling back to the binary
+        structure when source text is not available.
+        """
+        decl = self.declaration_table
+        decl_bytes = bytes(decl)
+        lib_name = None
+        alias_name = None
+        # Strategy 1: Extract from VBA source text in the declaration table.
+        # The source text may contain embedded null bytes, so strip them before matching.
+        text = decl_bytes.replace(b'\x00', b'').decode('ascii', errors='replace')
+        match = re.search(
+            rf'(?:Function|Sub)\s+{re.escape(func_name)}\b.*?Lib\s+"([^"]+)"', text)
+        if match:
+            lib_name = match.group(1)
+            after_lib = text[match.end():]
+            alias_match = re.match(r'\s*Alias\s*"([^"]+)"', after_lib)
+            if alias_match:
+                alias_name = alias_match.group(1)
+        # Strategy 2: Binary structure fallback. The alias string is at entry + 0x1C.
+        # After the alias null terminator, DWORD-align + 2 gives a lib identifier word.
+        if lib_name is None:
+            alias_start = decl_offset + 0x1C
+            if alias_start < len(decl):
+                alias_bytes_raw = bytes(decl[alias_start:])
+                null_pos = alias_bytes_raw.find(0)
+                if null_pos > 0 and all(32 <= b < 127 for b in alias_bytes_raw[:null_pos]):
+                    abs_null = alias_start + null_pos
+                    dword_aligned = (abs_null + 1 + 3) & ~3
+                    lib_word_offset = dword_aligned + 2
+                    if lib_word_offset + 2 <= len(decl):
+                        lib_word = _get_word(decl, lib_word_offset, self.endian)
+                        if lib_word != 0 and lib_word != 0xFFFF:
+                            lib_name = _get_id(lib_word, self.identifiers, self.vba_ver, self.is_64bit)
+        if lib_name is None:
+            lib_name = _get_name(
+                decl, self.identifiers, decl_offset + 2,
+                self.endian, self.vba_ver, self.is_64bit)
+        # Read alias from binary structure at entry + 0x1C if not found via source text.
+        if alias_name is None:
+            alias_start = decl_offset + 0x1C
+            if alias_start < len(decl):
+                alias_bytes_raw = bytes(decl[alias_start:])
+                null_pos = alias_bytes_raw.find(0)
+                if null_pos > 0:
+                    alias_name = alias_bytes_raw[:null_pos].decode(self.codec, errors='replace')
+        return lib_name, alias_name
+
     def disasm_func(self, dword: int, op_type: int) -> str:
         func_decl = '('
         flags = _get_word(self.indirect_table, dword, self.endian)
@@ -947,6 +1007,7 @@ class DisassemblyContext:
             self._linecont_pending
             and offs2 >= 4
             and self.indirect_table[dword + 4:dword + 8] == b'\xFF\xFF\xFF\xFF'
+            and (name_word >> 1) >= 0x100
         ):
             name_word += 2
         self._linecont_pending = False
@@ -996,18 +1057,22 @@ class DisassemblyContext:
             func_decl += 'Property Set '
         func_decl += sub_name
         if has_declare:
-            lib_name = _get_name(
-                self.declaration_table, self.identifiers, decl_offset + 2,
-                self.endian, self.vba_ver, self.is_64bit)
+            if self.is_64bit:
+                lib_name, alias_name = self._declare64(decl_offset, sub_name)
+            else:
+                lib_name = _get_name(
+                    self.declaration_table, self.identifiers, decl_offset + 2,
+                    self.endian, self.vba_ver, self.is_64bit)
+                alias_name = None
+                alias_offset = _get_word(self.declaration_table, decl_offset + 4, self.endian)
+                if alias_offset < len(self.declaration_table):
+                    alias_bytes = bytes(self.declaration_table[alias_offset:])
+                    null_pos = alias_bytes.find(0)
+                    if null_pos > 0:
+                        alias_name = alias_bytes[:null_pos].decode(self.codec, errors='replace')
             func_decl += F' Lib "{lib_name}"'
-            alias_offset = _get_word(self.declaration_table, decl_offset + 4, self.endian)
-            if alias_offset < len(self.declaration_table):
-                alias_bytes = bytes(self.declaration_table[alias_offset:])
-                null_pos = alias_bytes.find(0)
-                if null_pos > 0:
-                    alias_name = alias_bytes[:null_pos].decode(self.codec, errors='replace')
-                    if alias_name != sub_name:
-                        func_decl += F' Alias "{alias_name}"'
+            if alias_name and alias_name != sub_name:
+                func_decl += F' Alias "{alias_name}"'
             func_decl += ' '
         arg_list: list[str] = []
         while (
@@ -1023,12 +1088,15 @@ class DisassemblyContext:
         if has_as:
             func_decl += ' As '
             type_name = ''
+            is_array = False
             if (ret_type & 0xFFFF0000) == 0xFFFF0000:
                 type_id = ret_type & 0x000000FF
                 type_name = _get_type_name(type_id)
             else:
-                type_name, _ = self.disasm_object(dword + offs2 + 40)
+                type_name, is_array = self.disasm_object(dword + offs2 + 40)
             func_decl += type_name
+            if is_array:
+                func_decl += '()'
         func_decl += ')'
         return func_decl
 
