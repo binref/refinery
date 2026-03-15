@@ -48,6 +48,7 @@ class PCodeModule(NamedTuple):
     """
     path: str
     lines: list[PCodeLine]
+    identifiers_stripped: bool = False
 
 
 # VBA7 opcodes; VBA3, VBA5 and VBA6 will be upconverted to these.
@@ -1457,6 +1458,7 @@ class PCodeDisassembler:
             vba_project_path = vba_root + 'VBA/_VBA_PROJECT'
             vba_project_data = self._process_vba_project(ole, vba_project_path)
             identifiers = _get_identifiers(vba_project_data, codec)
+            identifiers_stripped = not identifiers
             for module in code_modules:
                 module_path = F'{vba_root}VBA/{module}'
                 try:
@@ -1465,7 +1467,7 @@ class PCodeDisassembler:
                     continue
                 lines = _pcode_dump(
                     module_data, vba_project_data, identifiers, is_64bit, codec)
-                yield PCodeModule(module_path, lines)
+                yield PCodeModule(module_path, lines, identifiers_stripped)
 
     def _get_ole_streams(self) -> list[bytes | bytearray | memoryview]:
         """
