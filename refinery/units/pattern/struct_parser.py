@@ -131,7 +131,6 @@ class struct(Unit):
                 break
 
             meta = metavars(data)
-            meta.ghost = True
             meta.index = index
 
             args = []
@@ -242,7 +241,7 @@ class struct(Unit):
 
                 for template in self.args.outputs:
                     used = set()
-                    outputs.append(meta.format(template, self.codec, [full, *args], symbols, True, used=used))
+                    outputs.append(meta.format(template, self.codec, [full, *args], symbols, used=used))
                     for key in used:
                         if key in previously_existing_variables:
                             continue

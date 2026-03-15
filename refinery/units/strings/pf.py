@@ -29,7 +29,6 @@ class pf(Unit):
             help='Separator to insert between format strings. The default is a space character.')] = ' ',
         multiplex: Param[bool, Arg.Switch('-m', group='SEP',
             help='Do not join the format strings along the separator, generate one output for each.')] = False,
-        binary: Param[bool, Arg.Switch('-b', help='Use the binary formatter instead of the string formatter.')] = False,
         unescape: Param[bool, Arg.Switch('-e', help='Interpret escape sequences in format strings.')] = False,
     ):
         def fixfmt(fmt: bytes | str):
@@ -43,20 +42,14 @@ class pf(Unit):
         _formats = [fixfmt(f) for f in formats]
         if not multiplex:
             _formats = [fixfmt(separator).join(_formats)]
-        super().__init__(formats=_formats, variable=variable, binary=binary)
+        super().__init__(formats=_formats, variable=variable)
 
     def process(self, data):
         meta = metavars(data)
-        meta.ghost = True
         args = [data]
         variable = self.args.variable
-        if self.args.binary:
-            formatter = partial(meta.format_bin, codec=self.codec, args=args)
-        else:
-            def formatter(spec):
-                return meta.format_str(spec, self.codec, args).encode(self.codec)
         for spec in self.args.formats:
-            result = formatter(spec)
+            result = meta.format_bin(spec, codec=self.codec, args=args, lenient=True)
             if variable is not None:
                 result = self.labelled(data, **{variable: result})
             yield result

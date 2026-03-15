@@ -182,7 +182,6 @@ class ef(Unit):
         meta = metavars(data)
         size = self.args.size
         size = size and bounds[size]
-        meta.ghost = True
         wild = (os.name == 'nt' or self.args.wild) and not self.args.tame
         root = self._absolute_path('.')
         paths = self._glob if wild else lambda mask: [self._absolute_path(mask)]

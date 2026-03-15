@@ -72,7 +72,7 @@ class rex(SingleRegexTransformUnit, PatternExtractor, docs=(
                     for key, value in list(symb.items()):
                         if value is None:
                             symb[key] = B''
-                    item = meta.format(_spec, self.codec, args, symb, True, True, used)
+                    item = meta.format(_spec, self.codec, args, symb, used=used)
                     assert not isinstance(item, str)
                     used.update(key for key, value in symb.items() if not value)
                     used.add(_FORWARD_VAR)

@@ -119,9 +119,7 @@ import os
 import re
 import string
 
-from io import StringIO
 from typing import TYPE_CHECKING, Any, Callable
-from urllib.parse import unquote_to_bytes
 
 from refinery.lib.environment import environment
 from refinery.lib.mime import get_cached_file_magic_info
@@ -262,17 +260,18 @@ class ByteStringWrapper(bytearray, CustomStringRepresentation):
         except AttributeError:
             pass
         try:
-            if not self or any(self[1::2]):
-                prefix = None
-            else:
+            pretty = None
+            prefix = None
+            if self and not any(self[1::2]):
                 try:
                     pretty = self.decode('utf-16le')
-                    prefix = 'u'
                 except UnicodeDecodeError:
-                    prefix = None
-            if prefix is None:
+                    pass
+                else:
+                    prefix = 'u'
+            if pretty is None:
                 pretty = self.string
-                prefix = self._CODECS[self.codec]
+                prefix = self._CODECS[c] if (c := self.codec) else None
         except AttributeError:
             pretty = None
         else:
@@ -408,8 +407,10 @@ class _LazyMetaMeta(type):
         return type.__new__(cls, name, bases, namespace)
 
 
-def _derivation(name, costly: bool = False, wrap: type = ByteStringWrapper) -> Callable[[_Derivation], _Derivation]:
-    def decorator(method: _Derivation) -> _Derivation:
+def _derivation(name, costly: bool = False, wrap: type = ByteStringWrapper) -> Callable[
+    [Callable[['LazyMetaOracle'], str | int | float]], _Derivation
+]:
+    def decorator(method) -> _Derivation:
         method.name = name
         method.costly = costly
         method.wrap = wrap
@@ -432,7 +433,6 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
     corresponding value on a chunk of binary input data.
     """
 
-    ghost: bool
     chunk: buf
     cache: dict[str, str | int | float]
     index: int | None
@@ -442,7 +442,6 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
     updated: dict[str, bool]
 
     def __init__(self, chunk: buf, scope: int = 1, seed: dict[str, list[tuple[bool, Any]]] | None = None):
-        self.ghost = False
         self.chunk = chunk
         self.cache = {}
         self.index = None
@@ -457,8 +456,8 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
                     raise TypeError(F'Encountered history item of type {typename(stack)}, this should be a list.')
                 if len(stack) != scope:
                     raise ValueError(F'History item had length {len(stack)}, but scope was specified as {scope}.')
-                for k, v in enumerate(stack):
-                    stack[k] = tuple(v)
+                for k, (x, y) in enumerate(stack):
+                    stack[k] = (x, y)
                 for is_link, value in reversed(stack):
                     while is_link:
                         is_link, value = stack[value]
@@ -578,7 +577,7 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
             if index < 0:
                 raise RuntimeError('computed a negative index for variable placement')
             try:
-                stack = serializable[key]
+                stack: list[tuple[bool, Any]] = serializable[key]
             except KeyError:
                 serializable[key] = stack = [(False, None)] * target_scope
             else:
@@ -619,7 +618,6 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
         yield from self.current.keys()
 
     def values(self):
-        yield self.index
         yield from (v for _, v in self.items())
 
     __iter__ = keys
@@ -632,20 +630,13 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
         symb: dict | None = None,
         used: set | None = None,
         escaped: bool = False,
+        lenient: bool = False,
     ) -> str:
         """
-        Formats the input expression like a normal Python format string expression. Certain refinery
-        metadata objects have special formatters for the `r`-transformation, as defined by wrapping
-        of type `refinery.lib.meta.CustomStringRepresentation`. The following representations are
-        defined:
-
-        - `entropy` and `ic` are formatted as a percentage.
-        - `sha1`, `sha256`, `sha512`, and `md5` are formatted as hex strings.
-        - `size` is formatted as a human-readable size with unit.
+        Formats the input expression and returns a string. This is a thin wrapper around
+        `refinery.lib.meta.LazyMetaOracle.format` that decodes the resulting bytes.
         """
-        ret = self.format(spec, codec, args, symb, binary=False, used=used, escaped=escaped)
-        assert isinstance(ret, str)
-        return ret
+        return self.format(spec, codec, args, symb, used=used, escaped=escaped, lenient=lenient).decode(codec)
 
     def format_bin(
         self,
@@ -655,47 +646,43 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
         symb: dict | None = None,
         used: set | None = None,
         escaped: bool = False,
-    ) -> buf:
+        lenient: bool = False,
+    ) -> bytearray:
         """
-        Formats the input expression using a Python F-string like expression. These strings contain
-        fields in the format `{expression!T:pipeline}`, where `T` is a transformation character and
-        the `pipeline` part is a sequence of `refinery.lib.argformats.multibin` handlers which are
-        parsed in reverse. For example, the expression `{v:b64:hex}` will first decode the contents
-        of `v` using `refinery.b64`, and then decode the result using `refinery.hex`.
-
-        The transformation character is only required when `expression` is a literal; it specifies
-        how to convert the literal to a binary string. The following transformations can be applied:
-
-        - `a`: literal is to be encoded using latin1
-        - `u`: literal is to be encoded using utf16
-        - `s`: literal is to be encoded using the default codec
-        - `q`: literal is a URL-encoded binary string
-        - `h`: literal is a hex-encoded binary string
-        - `e`: literal is an escaped ASCII string
+        Formats the input expression and returns bytes. This is a thin wrapper around
+        `refinery.lib.meta.LazyMetaOracle.format`.
         """
-        ret = self.format(spec, codec, args, symb, binary=True, used=used, escaped=escaped)
-        assert not isinstance(ret, str)
-        return ret
+        return self.format(spec, codec, args, symb, used=used, escaped=escaped, lenient=lenient)
 
     def format(
         self,
         spec    : str,
         codec   : str,
-        args    : list | tuple,
-        symb    : dict | None,
-        binary  : bool,
-        fixup   : bool = True,
+        args    : list | tuple = (),
+        symb    : dict | None = None,
         used    : set | None = None,
-        escaped : bool = False
-    ) -> str | buf:
+        escaped : bool = False,
+        lenient : bool = False,
+    ) -> bytearray:
         """
-        Formats a string using Python-like string fomatting syntax. The formatter for `binary`
-        mode is different; each formatting is documented in one of the following two proxy methods:
+        Formats a string using Python-like string formatting syntax and always returns bytes.
+        Format fields use the syntax `{field!format:suffix}`:
 
-        - `refinery.lib.meta.LazyMetaOracle.format_str`
-        - `refinery.lib.meta.LazyMetaOracle.format_bin`
+        - **field**: A Python expression evaluated against meta variables.
+        - **!format** (optional): One of `r`, `s`, `a`, `u`, `h`, `q`, `n`, `z`.
+        - **:suffix** (optional): A multibin pipeline applied to the seed value.
+
+        Modifier semantics:
+
+        - `!r`: Takes `repr()` of the resolved value.
+        - `!s`: Field is a UTF-8 string literal, not a variable.
+        - `!a`: Field is a latin1 string literal.
+        - `!u`: Field is a UTF-16LE string literal.
+        - `!h`: Field is a hex-encoded literal (shortcut for `!s:h`).
+        - `!q`: Field is a URL-encoded literal (shortcut for `!s:q`).
+        - `!n`: Field is an escape-sequence literal (shortcut for `!s:n`).
+        - `!z`: Field evaluates to integer N; returns N zero bytes.
         """
-        # prevents circular import:
         from refinery.lib.argformats import (
             Chunk,
             DelayedNumSeqArgument,
@@ -703,169 +690,169 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
             PythonExpression,
         )
 
-        symb = symb or {}
-
-        if used is None:
-            class dummy:
-                def add(self, _):
-                    pass
-            used = dummy()
-
-        if args is None:
-            args = ()
-        elif not isinstance(args, (list, tuple)):
-            args = list(args)
-
-        if fixup:
-            for (store, it) in (
-                (args, enumerate(args)),
-                (symb, symb.items()),
-            ):
-                for key, value in it:
-                    with contextlib.suppress(TypeError):
-                        if isinstance(value, CustomStringRepresentation):
-                            continue
-                        store[key] = ByteStringWrapper.Wrap(value, codec)
-
+        if symb is None:
+            symb = {}
         formatter = string.Formatter()
         autoindex = 0
+        stream = MemoryFile()
 
-        def putstr(s: str):
-            if isinstance(stream, MemoryFile):
-                stream.write(s.encode(codec))
-            else:
-                stream.write(s)
+        def _reconstruct():
+            r = F'{{{field}'
+            if conversion:
+                r = F'{r}!{conversion}'
+            if modifier:
+                r = F'{r}:{modifier}'
+            stream.write(F'{r}}}'.encode(codec))
 
-        if binary:
-            stream = MemoryFile()
-        else:
-            stream = StringIO()
+        def _write(v):
+            if isinstance(v, (bytes, bytearray, memoryview)):
+                return stream.write(v)
+            if not isinstance(v, str):
+                v = str(v)
+            return stream.write(v.encode(codec))
 
         with stream:
             for prefix, field, modifier, conversion in formatter.parse(spec):
-                def recover_placeholder():
-                    recovery = F'{{{field}'
-                    if conversion:
-                        recovery = F'{recovery}!{conversion}'
-                    if modifier:
-                        recovery = F'{recovery}:{modifier}'
-                    return F'{recovery}}}'
-
                 value = None
-
-                if conversion == 'a':
-                    converter = ascii
-                elif conversion == 's':
-                    converter = str
-                elif conversion == 'r':
-                    converter = repr
-                else:
-                    converter = None
 
                 if prefix:
                     if escaped:
                         prefix = prefix.encode('latin1').decode('unicode-escape')
-                    putstr(prefix)
+                    stream.write(prefix.encode(codec))
 
                 if field is None:
                     continue
 
                 if not field:
                     if not args:
-                        ph = recover_placeholder()
-                        if self.ghost:
-                            putstr(ph)
-                            continue
-                        raise LookupError(F'Spec contains placeholder {ph} but no positional arguments were given.')
+                        raise LookupError(
+                            'The format string contains a positional placeholder {} but no'
+                            ' positional arguments were given. Use {{ and }} for literal'
+                            ' braces.')
                     value = args[autoindex]
-                    used.add(autoindex)
+                    if used is not None:
+                        used.add(autoindex)
                     if autoindex < len(args) - 1:
                         autoindex += 1
 
                 if conversion:
                     conversion = conversion.lower()
-                    if conversion == 'h':
+                    if conversion == 's':
+                        value = field.encode('utf-8')
+                    elif conversion == 'a':
+                        value = field.encode('latin-1')
+                    elif conversion == 'u':
+                        value = field.encode('utf-16-le')
+                    elif conversion == 'h':
                         value = bytes.fromhex(field)
                     elif conversion == 'q':
+                        from urllib.parse import unquote_to_bytes
                         value = unquote_to_bytes(field)
-                    elif conversion == 'u':
-                        value = field.encode('utf-16le')
                     elif conversion == 'n':
-                        value = field.encode(codec).decode('unicode-escape').encode('latin1')
-                elif field in symb:
-                    value = symb[field]
-                    used.add(field)
+                        value = field.encode('latin-1').decode('unicode-escape').encode('latin-1')
+                    elif conversion == 'r':
+                        pass
+                    elif conversion == 'z':
+                        pass
+                    else:
+                        raise ValueError(
+                            F'Unknown format modifier !{conversion}; the supported modifiers'
+                            F' are: !r, !s, !a, !u, !h, !q, !n, !z.')
 
-                if value is None:
+                _literal = conversion in ('s', 'a', 'u', 'h', 'q', 'n')
+
+                if value is None and not _literal:
+                    if field in symb:
+                        value = symb[field]
+                        if used is not None:
+                            used.add(field)
+
+                if value is None and not _literal:
                     with contextlib.suppress(ValueError, IndexError):
                         index = int(field, 0)
                         value = args[index]
-                        used.add(index)
+                        if used is not None:
+                            used.add(index)
 
-                if value is None:
+                if value is None and not _literal:
                     with contextlib.suppress(KeyError):
                         value = self[field]
-                        used.add(field)
+                        if used is not None:
+                            used.add(field)
 
-                if value is None:
+                if value is None and not _literal:
                     try:
-                        field = self.format(field, codec, args, symb, False, False, used)
+                        field_resolved = self.format(field, codec, args, symb, used, escaped)
+                        field_resolved = field if field_resolved is None else field_resolved.decode(codec)
                     except Exception:
-                        pass
+                        field_resolved = field
                     try:
-                        expression = PythonExpression(field, *self, *symb)
+                        expression = PythonExpression(field_resolved, *self, *symb)
                         value = expression(self, **symb)
                     except ParserError:
-                        if self.ghost:
-                            putstr(recover_placeholder())
-                            continue
                         if modifier:
-                            value = field
+                            value = field_resolved
+                        elif lenient:
+                            _reconstruct()
+                            continue
                         else:
-                            raise KeyError
+                            raise KeyError(F'The expression "{field}" could not be resolved. Use {{{{ and }}}} for literal braces.')
                     except Exception:
                         value = B''
 
-                try:
-                    converted = ByteStringWrapper.Wrap(value, codec)
-                except TypeError:
-                    if converter:
-                        converted = converter(value)
-                    elif isinstance(value, CustomStringRepresentation):
-                        converted = str(value)
+                if conversion == 'z':
+                    if value is None:
+                        try:
+                            value = int(field)
+                        except (ValueError, TypeError):
+                            raise ValueError(F'The !z modifier requires an integer, got: {field}')
+                    elif not isinstance(value, int):
+                        try:
+                            value = int(value)
+                        except (ValueError, TypeError):
+                            raise ValueError(F'The !z modifier requires an integer, got: {value!r}')
+                    value = bytes(value)
+
+                if conversion == 'r' and value is not None:
+                    value = repr(value)
+
+                if value is None:
+                    if lenient:
+                        _reconstruct()
+                        continue
+                    raise KeyError(F'The expression "{field}" could not be resolved. Use {{{{ and }}}} for literal braces.')
+
+                if modifier:
+                    if not _literal:
+                        try:
+                            converted = ByteStringWrapper.Wrap(value, codec)
+                        except TypeError:
+                            if conversion == 'r':
+                                converted = value
+                            elif isinstance(value, CustomStringRepresentation):
+                                converted = str(value)
+                            else:
+                                converted = value
+                        if not isbuffer(converted):
+                            try:
+                                output = converted.__format__(modifier)
+                            except Exception:
+                                output = None
+                            if output is not None:
+                                _write(output)
+                                continue
                     else:
                         converted = value
-
-                if binary and isbuffer(converted):
-                    output = None
-                else:
-                    try:
-                        output = converted.__format__(modifier)
-                    except Exception:
-                        if not modifier:
-                            raise
-                        output = None
-
-                if modifier and output is None:
-                    modifier = modifier.strip()
-                    expression = self.format(modifier, codec, args, symb, True, False, used)
+                    modifier_resolved = modifier.strip()
+                    expression = self.format(
+                        modifier_resolved, codec, args, symb, used, escaped)
                     output = DelayedNumSeqArgument(
                         expression.decode(codec), reverse=True, seed=converted)
-                    output = output(Chunk(converted, meta=self))
+                    _write(output(Chunk(converted, meta=self)))
+                else:
+                    _write(value)
 
-                if output is None:
-                    output = converted
-
-                if not binary:
-                    if isinstance(output, (bytes, bytearray)):
-                        output = output.decode()
-                    elif not isinstance(output, str):
-                        output = str(output)
-                elif isinstance(output, str):
-                    output = output.encode()
-
-                stream.write(output)
-            return stream.getvalue()
+        return stream.getvalue()
 
     def knows(self, key):
         return (

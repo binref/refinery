@@ -17,7 +17,7 @@ class TestFormatter(TestUnitBase):
         self.assertEqual(result.decode(unit.codec), message)
 
     def test_linebreak_01(self):
-        self.assertEqual(B'XX' | self.load('{\\n:_}{}') | str, '{\\n:_}XX')
+        self.assertEqual(B'XX' | self.load('{{\\n:_}}{}') | str, '{\\n:_}XX')
 
     def test_linebreak_02(self):
         self.assertEqual(B'XX' | self.load('A\\nB\\n{}') | str, 'A\\nB\\nXX')

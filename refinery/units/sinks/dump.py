@@ -229,15 +229,8 @@ class dump(Unit):
                 else:
                     if _has_format(path):
                         meta = metavars(chunk)
-                        meta.ghost = True
                         meta.index = index
-                        new_path = meta.format_str(path, self.codec, [chunk])
-                        if new_path != path:
-                            path = new_path
-                        elif self.leniency < 1:
-                            raise ValueError(
-                                F'Could not resolve formatting in path "{path}"; '
-                                R'increase leniency to ignore this.')
+                        path = meta.format_str(path, self.codec, [chunk], lenient=self.leniency >= 1)
                     try:
                         self.stream = self._open(path)
                     except Exception as e:

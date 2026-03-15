@@ -53,7 +53,6 @@ class run(Unit):
             return shlex.join(commandline)
 
         meta = metavars(data)
-        meta.ghost = True
         used = set()
         commandline = [
             meta.format_str(cmd, self.codec, [data], None, used=used)
