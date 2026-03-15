@@ -22,7 +22,7 @@ from refinery.lib.structures import StructReader
 from ... import TestUnitBase
 
 
-class TestXtxs(TestUnitBase):
+class TestAccessExtractor(TestUnitBase):
 
     def _get_table_chunks(self, data, unit, table_name):
         chunks = {}
@@ -137,7 +137,7 @@ class TestXtxs(TestUnitBase):
         self.assertTrue(self.unit().handles(header))
 
     def test_handles_unknown(self):
-        self.assertIsNone(self.unit().handles(b'PK\x03\x04' + b'\0' * 100))
+        self.assertFalse(self.unit().handles(b'PK\x03\x04' + b'\0' * 100))
 
     def test_invalid_header(self):
         with self.assertRaises(ValueError):
