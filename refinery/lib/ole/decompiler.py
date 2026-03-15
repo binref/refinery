@@ -240,7 +240,7 @@ class VBADecompiler:
 
         if params:
             if params[0].startswith('(') and not is_call:
-                val += params[0]
+                val += '(' + params[0][1:-1]
                 end_val = ')'
             else:
                 val += F' {params[0]}'
@@ -459,7 +459,7 @@ class VBADecompiler:
         end_val = ''
         if params:
             if params[0].startswith('(') and not is_call:
-                val += params[0]
+                val += '(' + params[0][1:-1]
                 end_val = ')'
             else:
                 val += F' {params[0]}'
