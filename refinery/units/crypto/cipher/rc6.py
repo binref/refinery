@@ -117,8 +117,10 @@ class RC6(BlockCipher):
 class rc6(StandardBlockCipherUnit, cipher=BlockCipherFactory(RC6)):
     """
     RC6 encryption and decryption. The parameter defaults are the RC6 parameters that were chosen
-    for the AES candidacy. Only key sizes of 128, 192, and 256 bits are used for AES candidates, but
-    the unit will allow any key size up to 256 bits.
+    for the AES candidacy.
+
+    Only key sizes of 128, 192, and 256 bits are used for AES candidates, but the unit will allow
+    any key size up to 256 bits.
     """
     def __init__(
         self, key, *, iv=b'', padding=None, mode=None, raw=False, little_endian=False, segment_size=0,

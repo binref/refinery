@@ -53,11 +53,13 @@ class Serpent(BlockCipher):
 
 class serpent(StandardBlockCipherUnit, cipher=BlockCipherFactory(Serpent)):
     """
-    Serpent encryption and decryption. Some Serpent implementations read the bytes of each block
-    in one direction, some in the other. When decryption results with this unit do not yield the
-    expected result, try using the `--swap` (or `-s`) option to swap the bytes in each block.
-    Furthermore, it is sometimes necessary to swap the bytes of the input key, which can be done
-    by prefixing the input key by the multibin handler `snip[::-1]`.
+    Serpent encryption and decryption.
+
+    Some Serpent implementations read the bytes of each block in one direction, some in the other.
+    When decryption results with this unit do not yield the expected result, try using the `--swap`
+    (or `-s`) option to swap the bytes in each block. Furthermore, it is sometimes necessary to
+    swap the bytes of the input key, which can be done by prefixing the input key by the multibin
+    handler `snip[::-1]`.
     """
     def __init__(
         self, key, iv=b'', padding=None, mode=None, raw=False,

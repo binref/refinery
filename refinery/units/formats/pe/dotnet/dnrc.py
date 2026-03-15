@@ -6,9 +6,10 @@ from refinery.units.formats import PathExtractorUnit, UnpackResult
 
 class dnrc(PathExtractorUnit):
     """
-    Extracts all .NET resources whose name matches any of the given patterns
-    and outputs them. Use the `refinery.units.formats.pe.dotnet.dnmr` unit to
-    extract subfiles from managed .NET resources.
+    Extracts all .NET resources whose name matches any of the given patterns and outputs them.
+
+    Use the `refinery.units.formats.pe.dotnet.dnmr` unit to extract subfiles from managed .NET
+    resources.
     """
     def unpack(self, data):
         for resource in DotNetHeader(data).resources:

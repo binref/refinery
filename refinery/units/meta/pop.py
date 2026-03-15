@@ -67,8 +67,11 @@ class _popcount:
 
 class pop(Unit):
     """
-    In processing order, remove visible chunks from the current frame and store their contents in
-    the given meta variables on all chunks that remain. The first invisible chunk in the input
+    Consume one or more visible chunks in the frame and store them as meta variables. Invisible
+    chunks are made visible.
+
+    In processing order, remove visible chunks from the current frame and store their contents
+    in the given meta variables on all chunks that remain. The first invisible chunk in the input
     stream is consequently made visible again. If pop is used at the end of a frame, variables are
     made local to the parent frame. A pop instruction has the following format:
 

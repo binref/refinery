@@ -5,7 +5,7 @@ from refinery.units.blockwise import BinaryOperationWithAutoBlockAdjustment
 
 class add(BinaryOperationWithAutoBlockAdjustment):
     """
-    Add the given argument to each block.
+    Add a value to each byte, word, dword, or other integer block in the input.
     """
     @staticmethod
     def operate(a, b):

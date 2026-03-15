@@ -10,6 +10,8 @@ if TYPE_CHECKING:
 
 class rev(UnaryOperation):
     """
+    Reverse the bytes (or optionally blocks) of the input data.
+
     By default, this reverses the input string. For different block sizes, the blocks of the
     input data are output in reverse order. If the length of the input data is not a multiple
     of the block size, the data is truncated.

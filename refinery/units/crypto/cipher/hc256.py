@@ -74,14 +74,18 @@ class HC256(Iterator[int]):
 
 class hc256(StreamCipherUnit):
     """
-    HC-256 encryption and decryption. A software-efficient stream cipher with a 256-bit key, the
-    stronger sibling of HC-128 from the eSTREAM project.
+    HC-256 encryption and decryption.
+
+    A software-efficient stream cipher with a 256-bit key, the stronger sibling of HC-128 from the
+    eSTREAM project.
     """
     key_size = {32}
 
     def __init__(
         self, key,
-        iv: Param[buf, Arg(help='An initialization vector; the default is a sequence of 32 zero bytes.')] = bytes(32),
+        iv: Param[buf, Arg(
+            help='An initialization vector; the default is a sequence of 32 zero bytes.')
+        ] = bytes(32),
         discard=0, stateful=False,
     ):
         super().__init__(key=key, iv=iv, stateful=stateful, discard=discard)

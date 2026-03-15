@@ -26,6 +26,9 @@ from refinery.units.sinks import Arg, HexViewer
 
 class peek(HexViewer):
     """
+    Preview data as a hex dump on standard error; use this as the last unit in a pipeline for
+    testing.
+
     The unit extracts preview information of the input data and displays it on the standard error stream. If the standard
     output of this unit is connected by a pipe, the incoming data is forwarded. However, if the unit outputs to a terminal,
     the data is discarded instead.

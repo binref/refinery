@@ -74,8 +74,9 @@ class HC128:
 
 class hc128(StreamCipherUnit):
     """
-    HC-128 encryption and decryption. A software-efficient stream cipher with a 128-bit key,
-    selected as an eSTREAM portfolio cipher.
+    HC-128 encryption and decryption.
+    
+    A software-efficient stream cipher with a 128-bit key, selected as an eSTREAM portfolio cipher.
     """
     key_size = {32}
 

@@ -16,6 +16,7 @@ from refinery.units import Unit
 class innopwd(Unit):
     """
     This unit emulates an InnoSetup installer in an attempt to determine the installer password.
+
     This works only when the password is contained within the script, but several malware samples
     are known to use this technique.
     """

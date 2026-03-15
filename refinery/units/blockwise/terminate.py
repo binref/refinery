@@ -6,12 +6,14 @@ from refinery.units.blockwise import Arg, BlockTransformationBase
 
 class terminate(BlockTransformationBase):
     """
-    The unit reads data from the incoming chunk in blocks of any given size until the
-    sentinel value is encountered. The output of the unit is all data that was read,
-    excluding the sentinel. The default block size is one and the default sentinel value
-    is zero, which corresponds to reading a null-terminated string from the input.
-    If the sentinel value is not found anywhere in the incoming data, the complete input
-    is returned as output.
+    Split the input data at a termination sequence (null byte by default) and return only the first
+    half.
+
+    The unit reads data from the incoming chunk in blocks of any given size until the sentinel value
+    is encountered. The output of the unit is all data that was read, excluding the sentinel. The
+    default block size is one and the default sentinel value is zero, which corresponds to reading a
+    null-terminated string from the input. If the sentinel value is not found anywhere in the
+    incoming data, the complete input is returned as output.
     """
     def __init__(
         self,

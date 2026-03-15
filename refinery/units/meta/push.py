@@ -6,10 +6,12 @@ from refinery.units import Arg, Chunk, Unit
 
 class push(Unit):
     """
-    The unit inserts an additional chunk before each input chunk and moves the original data out of
-    scope. This chunk is considered the "original" data, while the one inserted in front of it is
-    used as an intermediate result. By default, this intermediate data is a copy of the input data.
-    For example:
+    Duplicate data inside a frame; the second copy is made invisible. Used with `refinery.pop`.
+
+    The unit inserts an additional chunk before each input chunk and moves the original data
+    out of scope. This chunk is considered the "original" data, while the one inserted in front
+    of it is used as an intermediate result. By default, this intermediate data is a copy of
+    the input data. For example:
 
         emit key=value | push [[| rex =(.*)$ {1} | pop v ]| repl var:v censored ]
 

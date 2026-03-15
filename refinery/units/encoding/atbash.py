@@ -5,9 +5,8 @@ from refinery.units import Unit
 
 class atbash(Unit):
     """
-    https://en.wikipedia.org/wiki/Atbash
-    Atbash encoding and decoding. Fairly useless in the 21st century, except
-    for picking out crypto nerds.
+    Atbash encoding and decoding. Fairly useless in the 21st century, except for picking out crypto
+    nerds.
     """
 
     def process(self, data: bytearray):

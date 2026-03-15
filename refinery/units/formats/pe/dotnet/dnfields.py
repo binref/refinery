@@ -15,18 +15,18 @@ from refinery.units.formats.pe.dotnet import CodePath
 
 class FieldInfo(NamedTuple):
     type: str
-    count: int
+    elements: int
     size: int
     offset: int
 
 
 class dnfields(PathExtractorUnit):
     """
-    This unit can extract data from constant field variables in classes of .NET
-    executables. Since the .NET header stores only the offset and not the size of
-    constant fields, heuristics are used to search for opcode sequences that load
-    the data and additional heuristics are used to guess the size of the data
-    type.
+    Extract data from constant field variables in classes of .NET executables.
+
+    Since the .NET header stores only the offset and not the size of constant fields, heuristics
+    are used to search for opcode sequences that load the data and additional heuristics are used
+    to guess the size of the data type.
     """
     @classmethod
     def handles(cls, data):
@@ -192,11 +192,11 @@ class dnfields(PathExtractorUnit):
             if not fname.isprintable() or name_count[fname] > 1:
                 fname = F'Field{k + 1:0{name_width}d}'
             type = guess.type.lower()
-            if guess.count > 1:
-                type += F'[{guess.count}]'
+            if guess.elements > 1:
+                type += F'[{guess.elements}]'
             self.log_debug(
-                F'field {k:0{iwidth}d}; token 0x{_index:06X}; RVA 0x{rv.RVA:04X}; count {guess.count}; type {guess.type}; name {fname}')
-            end = offset + guess.count * guess.size
+                F'field {k:0{iwidth}d}; token 0x{_index:06X}; RVA 0x{rv.RVA:04X}; count {guess.elements}; type {guess.type}; name {fname}')
+            end = offset + guess.elements * guess.size
             path = cpaths.method_path(guess.offset) if guess.offset else ''
             unpack.append(UnpackResult(F'{path}/{fname}', memory[offset:end], name=fname, type=type))
 

@@ -8,14 +8,15 @@ from refinery.units.blockwise import Arg, BlockTransformationBase
 
 class bitsnip(BlockTransformationBase):
     """
-    Pick a certain range of bits from each block of the input. The extracted ranges of bits are
-    concatenated. Leftover bits that do not form at least one full byte are discarded. Bits are
-    indexed from least significant at index 0 to most significant in each block. When the unit
-    operates in big endian mode, the internal bit buffer is shifted left in each step and new bits
-    are inserted as the least significant portion. Conversely, in default (little endian) mode,
-    newly extracted bits are added as the now most significant ones. After concatenating all bit
-    slices into a large integer, this integer is converted into a byte string according to the
-    given byte ordering.
+    Pick a certain range of bits from each block of the input.
+
+    The extracted ranges of bits are concatenated. Leftover bits that do not form at least one full
+    byte are discarded. Bits are indexed from least significant at index 0 to most significant in
+    each block. When the unit operates in big endian mode, the internal bit buffer is shifted left
+    in each step and new bits are inserted as the least significant portion. Conversely, in default
+    (little endian) mode, newly extracted bits are added as the now most significant ones. After
+    concatenating all bit slices into a large integer, this integer is converted into a byte string
+    according to the given byte ordering.
     """
     def __init__(
         self, slices: Param[list[slice], Arg(help=(

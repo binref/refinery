@@ -20,6 +20,8 @@ class FMode(IntEnum):
 
 class pack(BlockTransformationBase):
     """
+    Convert integer literals (potentially separated by other letters) to binary.
+
     Scans the input data for numeric constants and packs them into a binary format. This is useful
     to convert the textual representation of an array of numbers into its binary form. For example,
     `123,34,256,12,1,234` would be transformed into the byte sequence `7B22000C01EA`, where `256`

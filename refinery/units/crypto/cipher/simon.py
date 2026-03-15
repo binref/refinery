@@ -121,14 +121,15 @@ class Simon(BlockCipher):
 
 class simon(StandardBlockCipherUnit, cipher=BlockCipherFactory(Simon)):
     """
-    SIMON encryption and decryption. SIMON is a family of lightweight block ciphers designed by
-    the NSA, published in 2013 and optimized for hardware implementations. The cipher uses a
-    balanced Feistel network with a round function based on bitwise AND, circular left shifts,
-    and XOR. This unit supports all 10 SIMON variants: SIMON 32/64 (4-byte block), SIMON 48/72
-    and SIMON 48/96 (6-byte block), SIMON 64/96 and SIMON 64/128 (8-byte block), SIMON 96/96
-    and SIMON 96/144 (12-byte block), and SIMON 128/128, SIMON 128/192, SIMON 128/256 (16-byte
-    block). SIMON is often found in IoT devices and embedded systems. See also
-    `refinery.units.crypto.cipher.speck`.
+    SIMON encryption and decryption.
+
+    SIMON is a family of lightweight block ciphers designed by the NSA, published in 2013 and
+    optimized for hardware implementations. The cipher uses a balanced Feistel network with a round
+    function based on bitwise AND, circular left shifts, and XOR. This unit supports all 10 SIMON
+    variants: SIMON 32/64 (4-byte block), SIMON 48/72 and SIMON 48/96 (6-byte block), SIMON 64/96
+    and SIMON 64/128 (8-byte block), SIMON 96/96 and SIMON 96/144 (12-byte block), and SIMON
+    128/128, SIMON 128/192, SIMON 128/256 (16-byte block). SIMON is often found in IoT devices and
+    embedded systems. See also `refinery.units.crypto.cipher.speck`.
     """
     def __init__(
         self, key, iv=b'', padding=None, mode=None, raw=False,

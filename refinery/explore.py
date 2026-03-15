@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import io
 import re
+import textwrap
 
 import refinery
 import refinery.units
@@ -132,6 +133,11 @@ def explorer(keyword_color: str = '91', unit_color: str = '93'):
         action='store_false',
         help='Do not allow wildcards in search string'
     )
+    argp.add_argument(
+        '-b', '--brief',
+        action='store_true',
+        help='List units with a one-line description only.'
+    )
 
     args = argp.parse_args()
 
@@ -157,6 +163,40 @@ def explorer(keyword_color: str = '91', unit_color: str = '93'):
         return re.compile(kw)
 
     keywords = [pattern(k) for k in args.keywords]
+
+    if args.brief:
+        entries = []
+        for unit in get_all_entry_points():
+            name = unit.name
+            if not isinstance(unit, type):
+                continue
+            if not issubclass(unit, Unit):
+                continue
+            if not issubclass(unit, refinery.units.Entry):
+                continue
+            if unit is refinery.units.Entry:
+                continue
+            doc = documentation(unit)
+            if not doc:
+                continue
+            if name.startswith('deob-'):
+                continue
+            first_line = doc.split('\n\n', 1)[0].replace('\n', ' ').strip()
+            if not first_line.endswith('.'):
+                first_line += '.'
+            if keywords:
+                searchable = F'{name} {first_line}'.lower()
+                if not args.quantifier(k.search(searchable) for k in keywords):
+                    continue
+            entries.append((name, first_line))
+        if entries:
+            pad = max(len(name) for name, _ in entries) + 2
+            for name, desc in entries:
+                desc = '\n'.join(textwrap.wrap(desc, width - pad, subsequent_indent=" " * pad))
+                print(F'{name:<{pad}}{desc}')
+        else:
+            print('No matching unit was found.')
+        return
 
     for unit in get_all_entry_points():
         name = unit.name

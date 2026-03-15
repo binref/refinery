@@ -6,7 +6,8 @@ from refinery.units.meta import Arg, ConditionalUnit
 
 class iffc(ConditionalUnit, docs='{0}{p}{1}'):
     """
-    Filter incoming chunks depending on whether their size is within any of the given bounds.
+    Filter incoming chunks depending on whether their size is within any of the given bounds,
+    specified in Python slice syntax.
     """
     def __init__(
         self,

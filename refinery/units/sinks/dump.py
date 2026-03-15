@@ -46,9 +46,12 @@ def _has_format(check):
 
 class dump(Unit):
     """
-    Dump incoming data to files on disk. It is possible to specify filenames with format fields.
-    Any metadata field on an incoming chunk is available. Additionally, any field that can be
-    populated by the `refinery.cm` unit is also available. These include the following:
+    Write data to a file; supports format strings for dumping multiple chunks to file names based
+    on their metadata.
+
+    It is possible to specify filenames with format fields: Any metadata field on an incoming chunk
+    is available. Additionally, any field that can be populated by the `refinery.cm` unit is also
+    available. These include the following:
 
         {ext}    : Automatically guessed file extension
         {crc32}  : CRC32 checksum of the data
@@ -244,10 +247,7 @@ class dump(Unit):
 
 class d2p(dump):
     """
-    Stands for "dump to path"; this is a shortcut for the `refinery.dump` unit which is equivalent
-    to running:
-
-        dump {path}
+    Short for "dump to path"; a shortcut for the `refinery.dump` with the argument `{path}`.
 
     This will dump all chunk in the current frame to the path given by the `path` meta variable,
     which is cmmonly set by units like `refinery.xt`.

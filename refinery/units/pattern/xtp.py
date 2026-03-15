@@ -56,10 +56,12 @@ class LetterWeights(LetterWeight, Enum):
 
 class xtp(PatternExtractor):
     """
-    Extract Patterns: Uses regular expressions to extract indicators from the input data and
-    optionally filters these results heuristically. The unit is designed to extract indicators
-    such as domain names and IP addresses, see below for a complete list. To extract data
-    formats such as hex-encoded data, use `refinery.carve`.
+    Extract IOC patterns and interesting technical artifacts: URLs, IPs, emails, domains, etc.
+
+    Uses regular expressions to extract indicators from the input data and optionally filters these
+    results heuristically. The unit is designed to extract indicators such as domain names and IP
+    addresses, see below for a complete list. To extract data formats such as hex-encoded data, use
+    the unit `refinery.carve`.
     """
 
     def __init__(

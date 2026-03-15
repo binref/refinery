@@ -8,12 +8,13 @@ from refinery.units import Arg, Unit
 
 class scrypt(Unit):
     """
-    Implements scrypt-based key derivation as specified in RFC 7914. scrypt is a memory-hard
-    password-based key derivation function designed by Colin Percival. It is intentionally slow
-    and memory-intensive, making brute-force attacks expensive. The cost is controlled by three
-    parameters: N (CPU/memory cost, must be a power of 2), R (block size), and P (parallelism).
-    scrypt is used in cryptocurrency mining (Litecoin, Dogecoin), disk encryption tools, and
-    for password hashing.
+    Implements scrypt-based key derivation as specified in RFC 7914.
+
+    scrypt is a memory-hard password-based key derivation function designed by Colin Percival. It
+    is intentionally slow and memory-intensive, making brute-force attacks expensive. The cost is
+    controlled by three parameters: N (CPU/memory cost, must be a power of 2), R (block size), and
+    P (parallelism). scrypt is used in cryptocurrency mining (Litecoin, Dogecoin), disk encryption
+    tools, and for password hashing.
     """
 
     def __init__(

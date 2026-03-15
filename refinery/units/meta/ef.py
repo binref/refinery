@@ -22,6 +22,8 @@ _ERROR_IGNORES = {
 
 class ef(Unit):
     """
+    Emit files matching a glob pattern from disk.
+
     Short for "emit file". The unit reads files from disk and outputs them individually. Has the
     ability to read large files in chunks.
     """

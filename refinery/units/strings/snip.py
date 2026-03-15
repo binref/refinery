@@ -6,9 +6,11 @@ from refinery.units import Arg, Unit
 
 class snip(Unit):
     """
-    Snips the input data based on a Python slice expression. For example, the initialization
+    Extract data from input using Python slice syntax (e.g. `3:`, `1:5`, `::2`).
 
-        snip 0::1 1::1
+    For example, the initialization
+
+        snip 0::2 1::2
 
     would yield a unit that first extracts every byte at an even position and then, every byte at
     an odd position. In this case, multiple outputs are produced. This is a versatile tool that can

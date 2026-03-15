@@ -105,13 +105,16 @@ class GOST(BlockCipher):
 
 class gost(StandardBlockCipherUnit, cipher=BlockCipherFactory(GOST)):
     """
-    GOST encryption and decryption. A symmetric block cipher (GOST 28147-89) with a 64-bit block
-    size and 256-bit key, standardized by the Russian government.
+    GOST encryption and decryption.
+    
+    A symmetric block cipher (GOST 28147-89) with a 64-bit block size and 256-bit key, standardized
+    by the Russian government.
     """
     def __init__(
         self, key, iv=B'', padding=None, mode=None, raw=False,
-        swap: Param[bool, Arg.Switch('-s', help='Decode blocks as big endian rather than little endian.')] = False,
-        sbox: Param[str, Arg.Option('-x', choices=SBOX, help=(
+        swap: Param[bool, Arg.Switch('-s',
+            help='Decode blocks as big endian rather than little endian.')] = False,
+        sbox: Param[str | SBOX, Arg.Option('-x', choices=SBOX, help=(
             'Choose an SBOX. The default is {default}, which corresponds to the R-34.12.2015 standard. '
             'The other option is CBR, which is the SBOX used by the Central Bank of Russia.'
         ))] = SBOX.R34, **more

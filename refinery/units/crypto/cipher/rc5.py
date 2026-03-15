@@ -116,8 +116,9 @@ class RC5(BlockCipher):
 
 class rc5(StandardBlockCipherUnit, cipher=BlockCipherFactory(RC5)):
     """
-    RC5 encryption and decryption. A symmetric block cipher with variable block size, key size, and
-    round count, designed by Ron Rivest.
+    RC5 encryption and decryption.
+    
+    A symmetric block cipher with variable block size, key size, and round count, designed by Ron Rivest.
     """
     def __init__(
         self, key, *, iv=b'', padding=None, mode=None, raw=False, little_endian=False, segment_size=0,

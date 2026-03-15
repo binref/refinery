@@ -5,7 +5,7 @@ from refinery.units.blockwise import BinaryOperation
 
 class rotr(BinaryOperation):
     """
-    Rotate the bits of each block right.
+    Rotate bits of each byte, word, dword, or other integer block to the right.
     """
     def operate(self, value, shift):
         shift %= self.fbits

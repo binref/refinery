@@ -5,7 +5,7 @@ from refinery.units.blockwise import BinaryOperationWithAutoBlockAdjustment
 
 class sub(BinaryOperationWithAutoBlockAdjustment):
     """
-    Subtract the given argument from each block.
+    Subtract a value from each byte, word, dword, or other integer block in the input.
     """
     @staticmethod
     def operate(a, b):

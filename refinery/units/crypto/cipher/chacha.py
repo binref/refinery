@@ -38,19 +38,21 @@ class ChaChaCipher(LatinCipher):
 
 class chacha20(LatinCipherStandardUnit, cipher=PyCryptoFactoryWrapper(ChaCha20)):
     """
-    ChaCha20 and XChaCha20 encryption and decryption. For ChaCha20, the IV (nonce) must
-    be 8 or 12 bytes long; for XChaCha20, choose an IV which is 24 bytes long. Invoking
-    this unit for ChaCha20 is functionally equivalent to `refinery.chacha` with 20 rounds,
-    but this unit uses the PyCryptodome library C implementation rather than the pure
+    ChaCha20 and XChaCha20 encryption and decryption.
+
+    For ChaCha20, the IV (nonce) must be 8 or 12 bytes long; for XChaCha20, choose an IV which
+    is 24 bytes long. Invoking this unit for ChaCha20 is equivalent to `refinery.chacha` with 20
+    rounds, but this unit uses the PyCryptodome library C implementation rather than the pure
     Python implementation used by `refinery.chacha`.
     """
 
 
 class chacha20poly1305(LatinCipherStandardUnit, cipher=PyCryptoFactoryWrapper(ChaCha20_Poly1305)):
     """
-    ChaCha20-Poly1305 and XChaCha20-Poly1305 encryption and decryption. For the ChaCha20
-    variant, the nonce must be 8 or 12 bytes long; for XChaCha20, provide a 24 bytes nonce
-    instead.
+    ChaCha20-Poly1305 and XChaCha20-Poly1305 encryption and decryption.
+
+    For the ChaCha20 variant, the nonce must be 8 or 12 bytes long; for XChaCha20, provide a 24
+    bytes nonce instead.
     """
     def _get_cipher(self, reset_cache=False):
         cipher = super()._get_cipher(reset_cache)
@@ -60,9 +62,11 @@ class chacha20poly1305(LatinCipherStandardUnit, cipher=PyCryptoFactoryWrapper(Ch
 
 class chacha(LatinCipherUnit):
     """
-    ChaCha encryption and decryption. The nonce must be 8 bytes long as currently, only the
-    original Bernstein algorithm is implemented. When 64 bytes are provided as the key, this
-    data is interpreted as the initial state box and all other parameters are ignored.
+    ChaCha encryption and decryption.
+
+    The nonce must be 8 bytes long as currently, only the original Bernstein algorithm is
+    implemented. When 64 bytes are provided as the key, this data is interpreted as the initial
+    state box and all other parameters are ignored.
     """
     def keystream(self) -> Iterable[int]:
         key = self.args.key

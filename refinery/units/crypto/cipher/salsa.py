@@ -155,9 +155,10 @@ def LatinX(
 
 class salsa(LatinCipherUnit):
     """
-    Salsa encryption and decryption. The nonce must be 8 bytes long. When 64 bytes are provided
-    as the key, this data is interpreted as the initial state box and all other parameters are
-    ignored.
+    Salsa encryption and decryption.
+
+    The nonce must be 8 bytes long. When 64 bytes are provided as the key, this data is interpreted
+    as the initial state box and all other parameters are ignored.
     """
     def keystream(self) -> Iterable[int]:
         key = self.args.key
@@ -195,7 +196,9 @@ class xsalsa(LatinCipherUnit):
 
 class salsa20(LatinCipherStandardUnit, cipher=PyCryptoFactoryWrapper(Salsa20)):
     """
-    Salsa20 encryption and decryption. This unit is functionally equivalent to `refinery.salsa`
-    with 20 rounds, but it uses the PyCryptodome library C implementation rather than the pure
-    Python implementation used by `refinery.salsa`.
+    Salsa20 encryption and decryption.
+
+    This unit is functionally equivalent to `refinery.salsa` with 20 rounds, but it uses the
+    PyCryptodome library C implementation rather than the pure Python implementation used by
+    `refinery.salsa`.
     """

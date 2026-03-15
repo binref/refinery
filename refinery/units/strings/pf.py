@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from functools import partial
-
 from refinery.lib.meta import metavars
 from refinery.lib.types import Param, buf
 from refinery.units import Arg, Unit
@@ -9,8 +7,10 @@ from refinery.units import Arg, Unit
 
 class pf(Unit):
     """
-    Stands for "Print Format": Transform a given chunk by applying a format string operation. The
-    positional format string placeholder `{}` will be replaced by the incoming data, named
+    Print, format, and transform data using a format string expression.
+
+    Stands for "Print Format". The positional format string placeholder `{}` will be replaced
+    by the incoming data, named
     placeholders have to exist as meta variables in the current chunk. For example, the following
     pipeline can be used to print all files in a given directory with their corresponding SHA-256
     hash:
@@ -24,7 +24,7 @@ class pf(Unit):
     def __init__(
         self,
         *formats: Param[buf, Arg.Binary(help='Format strings.', metavar='format')],
-        variable: Param[str, Arg.String('-n', metavar='N', help='Store the formatted string in a meta variable.')] = None,
+        variable: Param[str, Arg.String('-n', metavar='N', help='Store the formatted string in a meta variable.')] = '',
         separator: Param[str, Arg.String('-s', group='SEP', metavar='S',
             help='Separator to insert between format strings. The default is a space character.')] = ' ',
         multiplex: Param[bool, Arg.Switch('-m', group='SEP',
@@ -50,6 +50,6 @@ class pf(Unit):
         variable = self.args.variable
         for spec in self.args.formats:
             result = meta.format_bin(spec, codec=self.codec, args=args, lenient=True)
-            if variable is not None:
+            if variable:
                 result = self.labelled(data, **{variable: result})
             yield result

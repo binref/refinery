@@ -6,8 +6,9 @@ from refinery.units import Arg, Unit
 
 class sep(Unit):
     """
-    Multiple inputs are joined along a specified separator. If any of the input
-    `refinery.lib.frame.Chunk`s is currently out of scope, `refinery.sep` turns
+    Insert a separator between chunks; the default separator is a line break.
+
+    If any of the input `refinery.lib.frame.Chunk`s is currently out of scope, `refinery.sep`
     makes them visible by default. This can be prevented by using the `-s` flag.
     """
 

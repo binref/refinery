@@ -5,8 +5,8 @@ from refinery.units.pattern import SingleRegexUnit
 
 class resplit(SingleRegexUnit):
     """
-    Splits the data at the given regular expression and returns the sequence of
-    chunks between the separators. By default, the input is split along line breaks.
+    Splits the data at the given regular expression and returns the sequence of chunks between
+    these separators. By default, the input is split along line breaks.
     """
 
     def __init__(

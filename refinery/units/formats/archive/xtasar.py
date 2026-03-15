@@ -29,7 +29,7 @@ class AsarHeader(Struct):
         self.base = reader.tell()
 
 
-class xtasar(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
+class xtasar(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
     """
     Extract files from Atom Shell Archives (ASAR). These are often used to bundle Electron application
     data and resources.

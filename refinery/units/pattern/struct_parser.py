@@ -20,10 +20,12 @@ _REST_MARKER = '#'
 
 class struct(Unit):
     """
-    Read structured data from the beginning of a chunk and store the extracted fields in chunk meta
-    variables. The structure format is specified in extended Python struct format, and all
-    remaining arguments to this unit are the names of the variables that receive the values from
-    this struct. The extended struct format supports all field types supported by Python, as well
+    Parse structured binary data into meta variables using a parsing language based on the Python
+    struct format.
+
+    The structure format is specified in extended Python struct format, and all remaining
+    arguments to this unit are the names of the variables that receive the values from this
+    struct. The extended struct format supports all field types supported by Python, as well
     as the following:
 
     - `a` for null-terminated ASCII strings,

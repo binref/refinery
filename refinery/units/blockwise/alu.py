@@ -24,8 +24,11 @@ class IndexCounter:
 
 class alu(ArithmeticUnit):
     """
-    The arithmetic-logical unit. It allows you to specify a custom Python expression where the following
-    variables are allowed:
+    General arithmetic-logic, blockwise operations on the input data. Useful for simple, homebrew
+    encoding and encryption schemes.
+
+    The unit allows you to specify a custom Python expression where the following variables can be
+    used:
 
     - the variable `A`: same as `V[0]`
     - the variable `B`: current block

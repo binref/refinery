@@ -1,7 +1,3 @@
-"""
-A simple tool to output binary data. Multiple arguments are output in framed
-format, see `refinery.lib.frame`.
-"""
 from __future__ import annotations
 
 import os
@@ -11,7 +7,10 @@ from refinery.units import Arg, Unit
 
 
 class emit(Unit):
-
+    """
+    Emit one or more chunk of literal data or file contents. Without argument, it outputs the
+    clipboard contents.
+    """
     def __init__(self, *data: Param[buf, Arg(help=(
         'Data to be emitted. If no argument is specified, data is retrieved from '
         'the clipboard. Multiple arguments are output in framed format.'

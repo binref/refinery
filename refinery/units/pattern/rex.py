@@ -13,8 +13,8 @@ class rex(SingleRegexTransformUnit, PatternExtractor, docs=(
     F' The unit also supports the format `{{{{{_FORWARD_VAR}}}}}` to represent the input data.'
 )):
     """
-    Short for Regular Expression eXtractor: A binary grep which can apply a transformation to each
-    match. Each match is an individual output.
+    Apply a regular expression and extract matches, optionally applying multibin suffix
+    transformations.
     """
     def __init__(
         self, regex,

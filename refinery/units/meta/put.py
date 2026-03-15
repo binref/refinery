@@ -9,8 +9,9 @@ from refinery.units import Arg, Chunk, Unit
 
 class put(Unit):
     """
-    Can be used to add a meta variable to the processed chunk. Note that meta variables
-    cease to exist outside a frame.
+    Store a value in a meta variable on the current chunk.
+
+    Note that meta variables cease to exist outside a frame.
     """
     def __init__(
         self,

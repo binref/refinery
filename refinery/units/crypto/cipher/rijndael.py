@@ -601,9 +601,10 @@ class Rijndael(BlockCipher):
 class rijndael(StandardBlockCipherUnit, cipher=BlockCipherFactory(Rijndael)):
     """
     Rijndael encryption and decryption. Note that there is also a `refinery.aes` unit which has
-    much better performance because it calls into the PyCryptodome library. You would have to
-    use this specific Rijndael unit only if Rijndael is used with a block size that is different
-    from 16 bytes, in which case it is equivalent to AES.
+    much better performance because it calls into the PyCryptodome library.
+
+    You would have to use this specific Rijndael unit only if Rijndael is used with a block size
+    that is different from 16 bytes, in which case it is equivalent to AES.
     """
     def __init__(
         self, key, iv=b'',

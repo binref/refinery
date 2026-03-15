@@ -36,9 +36,10 @@ class MODE(enum.IntEnum):
 class mscf(Unit):
     """
     The Microsoft Compression Format unit implements the format and algorithms used by the Microsoft
-    Compression API, supporting MSZIP, XPRESS (with and without Huffman table), and LZMS. This pure
-    Python implementation is very slow when compared to native code, so decompressing very large
-    inputs can take several minutes.
+    Compression API, supporting MSZIP, XPRESS, and LZMS.
+
+    This pure Python implementation is very slow when compared to native code, so decompressing very
+    large inputs can take several minutes.
     """
 
     _SIGNATURE = B'\x0A\x51\xE5\xC0'

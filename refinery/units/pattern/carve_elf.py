@@ -7,8 +7,10 @@ from refinery.units import Unit
 class carve_elf(Unit):
     """
     Extracts anything from the input data that looks like an ELF (Executable and Linkable Format)
-    file. The unit scans for the magic ELF signature and then parses the ELF header to compute the
-    file size from program headers, section headers, and segment file ranges.
+    file.
+
+    The unit scans for the magic ELF signature and then parses the ELF header to compute the file
+    size from program headers, section headers, and segment file ranges.
     """
     def process(self, data):
         cursor = 0

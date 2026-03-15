@@ -28,7 +28,8 @@ class MemoryArea:
 
 class vsnip(Unit):
     """
-    Extract data from PE, ELF, and MachO files based on virtual offsets.
+    Extract one or more data chunks from PE, ELF, and MachO executables based on their respective
+    virtual address.
     """
     @classmethod
     def handles(cls, data) -> bool | None:

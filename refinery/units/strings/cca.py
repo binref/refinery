@@ -6,6 +6,8 @@ from refinery.units import Arg, Unit
 
 class cca(Unit):
     """
+    Append a given binary string to the input data.
+
     Short for ConCatAppend: This unit concatenates the input data with its argument by
     appending the latter to the former. See also `refinery.ccp` for the unit that prepends
     instead.

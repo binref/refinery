@@ -88,8 +88,15 @@ class _R(IntFlag):
 class decompress(Unit):
     """
     Attempts all available decompression units against the input and returns the output of the
-    first successful one. If none succeeds, the data is returned unaltered. The process is
-    heavily biased against LZNT1 decompression due to a large tendency for LZNT1 false positives.
+    most successful one.
+
+    Success is defined in terms of several criteria: Whether decompression was successful, whether
+    it was necessary to modify the data, whether the output was nonempty, and whether the output
+    had a known file format. Compression ration heuristics are used to prune the search or serve as
+    tie breakers.
+
+    If no engine provides sufficient success, the data is returned unaltered. The unit is heavily
+    biased against LZNT1 decompression due to a large tendency for LZNT1 false positives.
     """
     def __init__(
         self,

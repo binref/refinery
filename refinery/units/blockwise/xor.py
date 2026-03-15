@@ -7,7 +7,7 @@ from refinery.units.blockwise import BinaryOperationWithAutoBlockAdjustment, Fas
 
 class xor(BinaryOperationWithAutoBlockAdjustment):
     """
-    Form the exclusive or of the input data with the given argument.
+    Compute the XOR of each byte, word, dword, or other integer block with a given value or string.
     """
     @staticmethod
     def operate(a, b):

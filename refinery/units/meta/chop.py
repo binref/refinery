@@ -7,7 +7,7 @@ from refinery.units import Arg, Unit
 
 class chop(Unit):
     """
-    Reinterprets the input as a sequence of equally sized chunks and outputs this sequence.
+    Split data into chunks of equal size.
     """
 
     def __init__(

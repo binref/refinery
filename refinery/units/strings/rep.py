@@ -8,9 +8,10 @@ from refinery.units import Arg, Unit
 
 class rep(Unit):
     """
-    Duplicates the given input a given number of times. It is also possible to specify
-    an iterable instead of a number, in which case the input will be replicated once for
-    each item in this iterable.
+    Duplicate the input data a given number of times.
+
+    It is also possible to specify an iterable instead of a number, in which case the input will
+    be replicated once for each item in this iterable.
     """
 
     def __init__(

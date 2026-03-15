@@ -11,8 +11,7 @@ from refinery.units.formats.pe.pemeta import pemeta
 
 class carve_pe(PathExtractorUnit):
     """
-    Extracts anything from the input data that looks like a Portable
-    Executable (PE) file.
+    Extracts anything from the input data that looks like a Portable Executable (PE) file.
     """
     def __init__(
         self, *paths, list=False, join_path=False, drop_path=False, path=b'name',
