@@ -239,8 +239,11 @@ class VBADecompiler:
         params.reverse()
 
         if params:
-            if params[0].startswith('(') and not is_call:
+            if len(params) == 1 and params[0].startswith('(') and not is_call:
                 val += '(' + params[0][1:-1]
+                end_val = ')'
+            elif is_call:
+                val += F'({params[0]}'
                 end_val = ')'
             else:
                 val += F' {params[0]}'
@@ -458,8 +461,11 @@ class VBADecompiler:
 
         end_val = ''
         if params:
-            if params[0].startswith('(') and not is_call:
+            if len(params) == 1 and params[0].startswith('(') and not is_call:
                 val += '(' + params[0][1:-1]
+                end_val = ')'
+            elif is_call:
+                val += F'({params[0]}'
                 end_val = ')'
             else:
                 val += F' {params[0]}'
@@ -1020,7 +1026,7 @@ class VBADecompiler:
             self._stack.push(F'#<date:{value}>#')
 
     def _op_litdefault(self) -> None:
-        pass
+        self._stack.push('')
 
     def _op_litdi2(self, value: str) -> None:
         self._stack.push(str(int(value, 16)))
@@ -1191,13 +1197,17 @@ class VBADecompiler:
         self._stack.push(val + ' '.join(args))
 
     def _op_open(self, *args: str) -> None:
+        rec_length = self._stack.pop()
         chan = self._stack.pop()
         mode = args[0][1:]
         for a in args[1:]:
             mode += F' {a}'
         mode = mode[:-1]
         filename = self._stack.pop()
-        self._stack.push(F'Open {filename} {mode} As {chan}')
+        val = F'Open {filename} {mode} As {chan}'
+        if rec_length:
+            val += F' Len = {rec_length}'
+        self._stack.push(val)
 
     def _op_option(self, *args: str) -> None:
         val = args[0][1:]
@@ -1669,7 +1679,7 @@ class PCodeParser:
                 bos_segments: list[list[str]] = []
                 for mnemonic, op_args in pcode_line.opcodes:
                     normalized = ' '.join(op_args).split()
-                    if mnemonic == 'BoS' and normalized and int(normalized[0], 16) == 0:
+                    if mnemonic == 'BoS' and self._stack.size() > 0:
                         segment: list[str] = []
                         while self._stack.size() > 0:
                             segment.append(self._stack.pop())

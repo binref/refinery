@@ -856,8 +856,6 @@ class DisassemblyContext:
             if flags & 0x02:
                 return _disasm_type(self.indirect_table, type_desc), is_array
             word = _get_word(self.indirect_table, type_desc + 2, self.endian)
-            if word == 0:
-                return '', False
             offs = (word >> 3) * 10
             if offs + 8 > len(self.object_table):
                 return '', False
@@ -869,8 +867,6 @@ class DisassemblyContext:
         if flags & 0x02:
             return _disasm_type(self.indirect_table, type_desc), is_array
         word = _get_word(self.indirect_table, type_desc + 2, self.endian)
-        if word == 0:
-            return '', False
         offs = (word >> 2) * 10
         if offs + 4 > len(self.object_table):
             return '', False
@@ -1003,7 +999,16 @@ class DisassemblyContext:
             lib_name = _get_name(
                 self.declaration_table, self.identifiers, decl_offset + 2,
                 self.endian, self.vba_ver, self.is_64bit)
-            func_decl += F' Lib "{lib_name}" '
+            func_decl += F' Lib "{lib_name}"'
+            alias_offset = _get_word(self.declaration_table, decl_offset + 4, self.endian)
+            if alias_offset < len(self.declaration_table):
+                alias_bytes = bytes(self.declaration_table[alias_offset:])
+                null_pos = alias_bytes.find(0)
+                if null_pos > 0:
+                    alias_name = alias_bytes[:null_pos].decode(self.codec, errors='replace')
+                    if alias_name != sub_name:
+                        func_decl += F' Alias "{alias_name}"'
+            func_decl += ' '
         arg_list: list[str] = []
         while (
             arg_offset != 0xFFFFFFFF
