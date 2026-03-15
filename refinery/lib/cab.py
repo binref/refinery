@@ -10,6 +10,7 @@ from enum import IntEnum, IntFlag
 from typing import Iterable, NamedTuple
 
 from refinery.lib import chunks
+from refinery.lib.seven.quantum import QuantumDecoder
 from refinery.lib.seven.lzx import LzxDecoder
 from refinery.lib.structures import Struct, StructReader
 
@@ -142,7 +143,9 @@ class CabFolder(Struct):
                 dst.extend(lzx.decompress(data, size))
                 lzx.keep_history = True
         elif cm == CabMethod.Quantum:
-            raise NotImplementedError('Quantum decompression is not yet implemented.')
+            qd = QuantumDecoder(self.method[1] & 0x1F)
+            for size, data in self.iter_block_data():
+                dst.extend(qd.decompress(data, size, keep_history=bool(dst)))
         else:
             raise ValueError(F'Unknown decompression method: {cm!r}')
         self.decompressed = dst
@@ -414,6 +417,8 @@ class Cabinet:
                         if block.computed_checksum is None:
                             continue
                         p = block.provided_checksum
+                        if p == 0:
+                            continue
                         c = block.computed_checksum
                         if p == c:
                             continue
