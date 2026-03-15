@@ -325,7 +325,7 @@ class SingleRegexTransformUnit(SingleRegexUnit, abstract=True):
 
         {match-group:handlers}
 
-    where `handlers` is an optional reverse multibin expression that is used to post-process the
-    binary data from the match. For example, `{2:hex:b64}` represents the base64-decoding of the
-    hex-decoding of the second match group.
+    where `handlers` is an optional multibin suffix that is used to post-process the binary data
+    from the match. For example, `{2:hex:zl:b64}` means: Take the second match group, hex-decode
+    it, decompress it using zl, and finally decode it using base64.
     """
