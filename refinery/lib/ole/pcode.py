@@ -801,12 +801,14 @@ class DisassemblyContext:
 
     def disasm_imp(self, arg: str, word: int, mnemonic: str) -> str:
         if mnemonic != 'Open':
-            if arg == 'imp_' and (len(self.object_table) >= word + 8):
-                return _get_name(
-                    self.object_table, self.identifiers, word + 6,
-                    self.endian, self.vba_ver, self.is_64bit)
-            else:
-                return F'{arg}{word:04X}'
+            if arg == 'imp_':
+                shift = 3 if self.is_64bit else 2
+                offs = (word >> shift) * 10
+                if offs + 8 <= len(self.object_table):
+                    return _get_name(
+                        self.object_table, self.identifiers, offs + 6,
+                        self.endian, self.vba_ver, self.is_64bit)
+            return F'{arg}{word:04X}'
         access_mode = ['Read', 'Write', 'Read Write']
         lock_mode = ['Read Write', 'Write', 'Read']
         mode = word & 0x00FF
@@ -842,28 +844,36 @@ class DisassemblyContext:
             object_name = F'(Private) {object_name}'
         return object_name
 
-    def disasm_object(self, offset: int) -> str:
+    def disasm_object(self, offset: int) -> tuple[str, bool]:
         if self.is_64bit:
             type_desc = _get_dword(self.indirect_table, offset, self.endian)
-            if type_desc + 17 > len(self.indirect_table):
-                return ''
-            word = _get_word(self.indirect_table, type_desc + 12, self.endian)
-            if word == 0xFFFF:
-                type_id = self.indirect_table[type_desc + 16]
-                return _get_type_name(type_id)
-            return ''
+            if type_desc + 4 > len(self.indirect_table):
+                return '', False
+            flags = _get_word(self.indirect_table, type_desc, self.endian)
+            is_array = bool(flags & 0x0800)
+            if flags & 0x02:
+                return _disasm_type(self.indirect_table, type_desc), is_array
+            word = _get_word(self.indirect_table, type_desc + 2, self.endian)
+            if word == 0:
+                return '', False
+            offs = (word >> 3) * 10
+            if offs + 8 > len(self.object_table):
+                return '', False
+            hl_name = _get_word(self.object_table, offs + 6, self.endian)
+            return _get_id(hl_name, self.identifiers, self.vba_ver, self.is_64bit), is_array
         type_desc = _get_dword(self.indirect_table, offset, self.endian)
         flags = _get_word(self.indirect_table, type_desc, self.endian)
+        is_array = bool(flags & 0x0800)
         if flags & 0x02:
-            return _disasm_type(self.indirect_table, type_desc)
+            return _disasm_type(self.indirect_table, type_desc), is_array
         word = _get_word(self.indirect_table, type_desc + 2, self.endian)
         if word == 0:
-            return ''
+            return '', False
         offs = (word >> 2) * 10
         if offs + 4 > len(self.object_table):
-            return ''
+            return '', False
         hl_name = _get_word(self.object_table, offs + 6, self.endian)
-        return _get_id(hl_name, self.identifiers, self.vba_ver, self.is_64bit)
+        return _get_id(hl_name, self.identifiers, self.vba_ver, self.is_64bit), is_array
 
     def disasm_var(self, dword: int) -> str:
         b_flag1 = self.indirect_table[dword]
@@ -873,6 +883,7 @@ class DisassemblyContext:
         var_name = _get_name(
             self.indirect_table, self.identifiers, dword + 2,
             self.endian, self.vba_ver, self.is_64bit)
+        is_array = False
         if has_new or has_as:
             type_name = ''
             if has_as:
@@ -882,7 +893,7 @@ class DisassemblyContext:
                     type_id = self.indirect_table[dword + offs]
                     type_name = _get_type_name(type_id)
                 else:
-                    type_name = self.disasm_object(dword + offs)
+                    type_name, is_array = self.disasm_object(dword + offs)
             var_type = ''
             if has_as and len(type_name) > 0:
                 var_type += 'As '
@@ -890,6 +901,8 @@ class DisassemblyContext:
                 var_type += 'New '
             if has_as and len(type_name) > 0:
                 var_type += type_name
+            if is_array:
+                var_name += '()'
             if len(var_type) > 0:
                 var_name += F' ({var_type.rstrip()})'
         return var_name
@@ -912,11 +925,16 @@ class DisassemblyContext:
         if arg_opts & 0x0200:
             arg_name = F'Optional {arg_name}'
         if flags & 0x0020:
-            arg_name += ' As '
             arg_type_name = ''
-            if arg_type & 0xFFFF0000:
+            is_array = False
+            if (arg_type & 0xFFFF0000) == 0xFFFF0000:
                 arg_type_id = arg_type & 0x000000FF
                 arg_type_name = _get_type_name(arg_type_id)
+            else:
+                arg_type_name, is_array = self.disasm_object(arg_offset + offs + 12)
+            if is_array:
+                arg_name += '()'
+            arg_name += ' As '
             arg_name += arg_type_name
         return arg_name
 
@@ -987,7 +1005,7 @@ class DisassemblyContext:
             arg_name = self.disasm_arg(arg_offset)
             if arg_name is not None:
                 arg_list.append(arg_name)
-            arg_offset = _get_dword(self.indirect_table, arg_offset + 20, self.endian)
+            arg_offset = _get_dword(self.indirect_table, arg_offset + (24 if self.is_64bit else 20), self.endian)
         func_decl += F'({", ".join(arg_list)})'
         if has_as:
             func_decl += ' As '
@@ -996,9 +1014,7 @@ class DisassemblyContext:
                 type_id = ret_type & 0x000000FF
                 type_name = _get_type_name(type_id)
             else:
-                type_name = _get_name(
-                    self.indirect_table, self.identifiers, ret_type + 6,
-                    self.endian, self.vba_ver, self.is_64bit)
+                type_name, _ = self.disasm_object(dword + offs2 + 40)
             func_decl += type_name
         func_decl += ')'
         return func_decl
