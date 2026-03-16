@@ -42,7 +42,7 @@ def lookahead(iterator: Iterable[_T]) -> Generator[tuple[bool, _T]]:
         yield last, item
 
 
-def get_terminal_size(default=0):
+def get_terminal_size(default=100):
     """
     Returns the size of the currently attached terminal. If the environment variable
     `REFINERY_TERM_SIZE` is set to an integer value, it takes prescedence. If the width of the
@@ -62,7 +62,7 @@ def get_terminal_size(default=0):
                 width = default
             else:
                 break
-    return default if width < 2 else width - 1
+    return default if width < 5 else width - 1
 
 
 def terminalfit(text: str, delta: int = 0, width: int = 0, parsep: str = '\n\n', **kw) -> str:

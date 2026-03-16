@@ -47,7 +47,6 @@ class HexDumpMetrics:
         width = self.max_width
         if not width:
             width = get_terminal_size()
-            width = width and width or 75
             self.max_width = width
         return width
 

@@ -449,7 +449,7 @@ class JSONTableUnit(Unit, abstract=True):
             import textwrap
             table = list(libjson.flattened(parsed))
             width = max(len(key) for key, _ in table)
-            tsize = get_terminal_size(80) - width - 4
+            tsize = get_terminal_size() - width - 4
             for key, value in table:
                 if isinstance(value, str):
                     value = value.strip()

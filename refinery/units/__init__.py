@@ -2181,7 +2181,7 @@ class Unit(UnitBase, abstract=True):
         message = ' '.join(transform(msg) for msg in messages)
         if clip:
             from refinery.lib.tools import get_terminal_size
-            length = get_terminal_size(75) - len(cls.name) - 27
+            length = get_terminal_size() - len(cls.name) - 27
             if len(message) > length:
                 message = message[:length] + "..."
         return message
