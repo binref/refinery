@@ -40,8 +40,6 @@ class TestFNV1(TestUnitBase):
         ]:
             if bits == 32:
                 unit = self.ldu(name, text=True)
-            elif bits < 1024:
-                unit = self.ldu(F'{name}x{bits}', text=True)
             else:
                 unit = self.ldu(name, bits=bits, text=True)
             test = B'Binary Refinery' | unit | str
