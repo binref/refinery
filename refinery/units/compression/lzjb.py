@@ -13,7 +13,9 @@ _LEMPEL_SIZE = 0x1000
 
 class lzjb(Unit):
     """
-    LZJB compression and decompression. This LZ-type compression is used in the ZFS file system.
+    LZJB compression and decompression.
+
+    This LZ-type compression is used in the ZFS file system.
     """
     def reverse(self, src):
         # https://web.archive.org/web/20100807223517/ ..

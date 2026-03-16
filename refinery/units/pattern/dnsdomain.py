@@ -12,8 +12,9 @@ def _lps(maxlen):
 
 class dnsdomain(PatternExtractorBase):
     """
-    Extracts domain names in the format as they appear in DNS requests. This
-    can be used as a quick and dirty way to extract domains from PCAP files,
+    Extracts domain names in the format as they appear in DNS requests.
+
+    This can be used as a quick and dirty way to extract domains from PCAP files,
     for example.
     """
 

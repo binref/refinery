@@ -6,9 +6,11 @@ from refinery.units import Unit
 
 class qr(Unit):
     """
-    Decode QR codes from images. This unit uses a pure-Python QR decoder that
-    supports standard QR codes (versions 1-40, all error correction levels and
-    encoding modes). The only external dependency is Pillow for image loading.
+    Decode QR codes from images.
+
+    This unit uses a pure-Python QR decoder that supports standard QR codes (versions 1-40,
+    all error correction levels and encoding modes). The only external dependency is Pillow
+    for image loading.
     """
     @classmethod
     def handles(cls, data) -> bool | None:

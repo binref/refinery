@@ -54,8 +54,10 @@ class JSONReader(StructReader):
 
 class xtnode(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
     """
-    Extracts and decompiles files from compiled Node.Js applications. Supports both nexe and pkg, two
-    utilities that are commonly used to generate stand-alone executables.
+    Extract and decompile files from compiled Node.js applications.
+
+    Supports both nexe and pkg, two utilities that are commonly used to generate
+    stand-alone executables.
     """
 
     _NEXE_SENTINEL = B'<nexe~~sentinel>'

@@ -7,11 +7,12 @@ from refinery.units.formats import JSONEncoderUnit
 
 class asn1(JSONEncoderUnit):
     """
-    Generic ASN.1 parser that converts BER/DER encoded structures to JSON. When the input matches
-    a known schema (X.509, CRL, CSR, PKCS#1, PKCS#7, PKCS#8, TSP), the output uses named fields.
-    Otherwise, raw TLV parsing is used: SEQUENCE and SET become lists, INTEGER becomes a number,
-    OBJECT IDENTIFIER becomes a resolved name string, and non-universal tags are represented as
-    objects with tag and value fields.
+    Parse ASN.1 (BER/DER) encoded structures and convert them to JSON.
+
+    When the input matches a known schema (X.509, CRL, CSR, PKCS#1, PKCS#7, PKCS#8, TSP), the
+    output uses named fields. Otherwise, raw TLV parsing is used: SEQUENCE and SET become
+    lists, INTEGER becomes a number, OBJECT IDENTIFIER becomes a resolved name string, and
+    non-universal tags are represented as objects with tag and value fields.
     """
     def process(self, data):
         mv = memoryview(data)

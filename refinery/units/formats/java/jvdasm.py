@@ -62,9 +62,10 @@ def _parse_descriptor(
 
 class jvdasm(PathExtractorUnit):
     """
-    Disassembles the JVM bytecode instructions of methods of classes defined in Java class
-    files. The unit is implemented as a path extractor and each path name corresponds to the
-    name of one method defined in the class file.
+    Disassemble JVM bytecode from Java class files.
+
+    The unit is implemented as a path extractor and each path name corresponds to the name
+    of one method defined in the class file.
     """
     _OPC_STRLEN = max(len(op.name) for op in opc)
 

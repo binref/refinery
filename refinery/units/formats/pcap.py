@@ -60,12 +60,15 @@ class Conversation:
 
 class pcap(Unit):
     """
-    Performs TCP stream reassembly from packet capture (PCAP) files. By default, the unit emits the parts of
-    each TCP conversation, attaching several pieces of metadata to each such output: Included are the source
-    and destination socket address as well as the variable `stream` which identifies the conversation which
-    it was part of. The chunks are returned in the order that the bytes were exchanged between source and
-    destination. When the `--merge` parameter is specified, the unit instead collects all bytes going forward
-    and backwards, respectively, and emitting these as two chunks, for each TCP conversation that took place.
+    TCP stream reassembly from packet capture (PCAP) files.
+
+    By default, the unit emits the parts of each TCP conversation, attaching several pieces of
+    metadata to each such output: Included are the source and destination socket address as
+    well as the variable `stream` which identifies the conversation which it was part of. The
+    chunks are returned in the order that the bytes were exchanged between source and
+    destination. When the `--merge` parameter is specified, the unit instead collects all bytes
+    going forward and backwards, respectively, and emitting these as two chunks, for each TCP
+    conversation that took place.
     """
     _PCAP_MAGICS = {B'\xD4\xC3\xB2\xA1', B'\xA1\xB2\xC3\xD4', B'\x4D\x3C\xB2\xA1', B'\xA1\xB2\x3C\x4D'}
 

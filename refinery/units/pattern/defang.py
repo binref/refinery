@@ -13,8 +13,10 @@ from refinery.units import Arg, Unit
 class defang(Unit):
     """
     Defangs all URL, domain and IPv4 address indicators in the input data by replacing the last dot
-    in the expression by `[.]`. For example, `127.0.0.1` will be replaced by `127.0.0[.]1`. For URL
-    indicators, the colon after the procol scheme is also wrapped in brackets.
+    in the expression by `[.]`.
+
+    For example, `127.0.0.1` will be replaced by `127.0.0[.]1`. For URL indicators, the colon after
+    the procol scheme is also wrapped in brackets.
     """
 
     _WHITELIST = [

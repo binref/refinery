@@ -137,10 +137,12 @@ class MSIStringData:
 
 class xtmsi(xtdoc):
     """
-    Extract files and metadata from Microsoft Installer (MSI) archives. The synthetic file {FN} contains
-    parsed MSI table information, similar to the output of the Orca tool. Binary streams are placed in a
-    virtual folder called "Binary", and extracted scripts from custom actions are separately extracted in
-    a virtual folder named "Action".
+    Extract files and metadata from Microsoft Installer (MSI) archives.
+
+    The synthetic file {FN} contains parsed MSI table information, similar to the output of
+    the Orca tool. Binary streams are placed in a virtual folder called "Binary", and
+    extracted scripts from custom actions are separately extracted in a virtual folder named
+    "Action".
     """
 
     _SYNTHETIC_STREAMS_FILENAME = 'MsiTables.json'

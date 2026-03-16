@@ -145,7 +145,9 @@ class HTMLTreeParser(HTMLParser):
 
 class xthtml(XMLToPathExtractorUnit):
     """
-    The unit processes an HTML document and extracts the contents of all elemnts in the DOM of the
+    Extract contents of HTML elements by tag hierarchy path.
+
+    The unit processes an HTML document and extracts the contents of all elements in the DOM of the
     given tag. The main purpose is to extract scripts from HTML documents.
     """
     def __init__(

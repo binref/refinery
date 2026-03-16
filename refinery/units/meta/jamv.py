@@ -6,8 +6,11 @@ from refinery.units import Arg, Chunk, Unit
 
 class jamv(Unit):
     """
-    Short for "Join as Meta Variables": It joins all chunks in the current frame into a single one
-    by storing the contents of each chunk as the contents of a meta variable in the output.
+    Join all chunks in the current frame by storing each as a meta variable.
+
+    Short for "Join as Meta Variables": It joins all chunks in the current frame into a
+    single one by storing the contents of each chunk as the contents of a meta variable in
+    the output.
     """
     def __init__(
         self,

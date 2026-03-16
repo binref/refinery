@@ -17,8 +17,10 @@ class T(enum.IntEnum):
 
 class imgtp(Unit):
     """
-    Perform a number of transpositions on an input image. The transformation string must be a
-    sequence composed of the letters H, V, and R. Each letter represents an operation:
+    Perform transpositions on an input image (rotate, flip, mirror).
+
+    The transformation string must be a sequence composed of the letters H, V, and R. Each
+    letter represents an operation:
 
     - R rotates the image to the left by 90 degrees.
     - V flips the image top to bottom (vertically).

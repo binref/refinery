@@ -370,7 +370,7 @@ class PyInstallerArchiveEpilogue(Struct):
         return result
 
 
-class xtpyi(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
+class xtpyi(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
     """
     Extracts and decompiles files from a Python Installer (aka PyInstaller) archive.
     """

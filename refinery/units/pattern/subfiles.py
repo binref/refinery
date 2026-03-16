@@ -18,9 +18,11 @@ from refinery.units.pattern.carve_zip import carve_zip
 
 class subfiles(Unit):
     """
+    Carve embedded files in various formats from the input data.
+
     Deploys carvers for various file formats against the input data and generates one output chunk
-    for each successfully carved subfile. The currently supported formats are:
-    ZIP, TAR, 7-Zip, PE-File, Windows Shortcuts (LNK files), PNG, JSON, and XML.
+    for each successfully carved subfile. The currently supported formats are: ZIP, TAR, 7-Zip, PE,
+    Windows Shortcuts (LNK files), PNG, JSON, and XML.
     """
 
     _MINLENGTH = {

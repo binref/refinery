@@ -52,8 +52,10 @@ class xtjson(PathExtractorUnit):
 
 class xj0(Unit):
     """
-    Extracts a single field from a JSON document at depth 0. By default, dictionaries are not
-    extracted. Nested lists and dictionaries are never extracted.
+    Extract a single field from a JSON document at depth 0.
+
+    By default, dictionaries are not extracted. Nested lists and dictionaries are never
+    extracted.
     """
     def __init__(
         self,
@@ -119,8 +121,9 @@ class xj0(Unit):
 
 class xjl(Unit):
     """
-    Returns all JSON elements from a JSON iterable as individual outputs. When reversed, the unit
-    collects all chunks in the frame and wraps them as a JSON list.
+    Extract all elements from a JSON iterable as individual outputs.
+
+    When reversed, the unit collects all chunks in the frame and wraps them as a JSON list.
     """
 
     def process(self, data):

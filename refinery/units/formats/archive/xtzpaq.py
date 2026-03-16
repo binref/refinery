@@ -1218,7 +1218,7 @@ class Decompressor:
         return checksum
 
 
-class xtzpaq(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
+class xtzpaq(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
     """
     Extract files from a ZPAQ archive. A journaling archiver with deduplication and very high
     compression ratios for backups.

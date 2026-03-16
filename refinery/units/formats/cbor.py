@@ -183,10 +183,11 @@ class CBORReader(StructReader[memoryview]):
 
 class cbor(JSONEncoderUnit):
     """
-    Parses CBOR (Concise Binary Object Representation) data and converts it to JSON. CBOR is a
-    binary data serialization format defined in RFC 8949. It supports integers, byte strings,
-    text strings, arrays, maps, tags, and simple values including booleans, null, and
-    floating-point numbers.
+    Parse CBOR data and convert it to JSON.
+
+    CBOR (Concise Binary Object Representation) is a binary data serialization format defined in
+    RFC 8949. It supports integers, byte strings, text strings, arrays, maps, tags, and simple
+    values including booleans, null, and floating-point numbers.
     """
     def process(self, data):
         reader = CBORReader(memoryview(data), bigendian=True)

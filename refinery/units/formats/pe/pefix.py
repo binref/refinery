@@ -55,7 +55,9 @@ class MachineType(int, Enum):
 
 class pefix(Unit):
     """
-    Take as input a buffer that represents a stripped PE file, i.e. magic numbers and other
+    Repair stripped PE files by reconstructing missing header data.
+
+    Takes as input a buffer that represents a stripped PE file, i.e. magic numbers and other
     relevant parts of the header have been stripped. The unit attempts to repair the damage
     and return something that can be parsed.
     """

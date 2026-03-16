@@ -385,14 +385,17 @@ def EmuFactory(base: ET) -> ET:
 
 class vstack(EmulatingUnit):
     """
-    The unit emulates instructions at a given address in the input executable (PE/ELF/MachO) and
-    extracts data patches that are written to memory during emulation. The unit can also be used
-    to emulate shellcode blobs, in which case it defaults to emulating 32bit x86 instructions.
+    Emulate instructions at a given address and extract memory patches.
 
-    Emulation is halted as soon as a certain number of instructions have not performed any memory
-    writes, or when an error occurs. By default, most registers are set to the current location in
-    the emulated stack. If you want to initialize some of them differently, the `-r` switch maes
-    the unit initialize register values from meta variables:
+    The unit emulates instructions at a given address in the input executable (PE/ELF/MachO)
+    and extracts data patches that are written to memory during emulation. The unit can also
+    be used to emulate shellcode blobs, in which case it defaults to emulating 32bit x86
+    instructions.
+
+    Emulation is halted as soon as a certain number of instructions have not performed any
+    memory writes, or when an error occurs. By default, most registers are set to the current
+    location in the emulated stack. If you want to initialize some of them differently, the
+    `-r` switch maes the unit initialize register values from meta variables:
 
         emit shellcode [| put eax 0x2000 | vstack -r ]
 

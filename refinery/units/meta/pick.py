@@ -143,8 +143,10 @@ class p3(pick):
 
 class b2f(pick):
     """
-    Short for "back to front". This unit is a shortcut for `refinery.pick` with argument `::-1`:
-    It will reorder the chunks in the current frame in reverse order.
+    Reorder chunks in the current frame in reverse order.
+
+    Short for "back to front". This unit is a shortcut for `refinery.pick` with argument
+    `::-1`: It will reorder the chunks in the current frame in reverse order.
     """
     def __init__(self):
         super().__init__(slice(None, None, -1))

@@ -27,9 +27,9 @@ class _ps:
     """
 
 
-class xtinno(ArchiveUnit, _ps, docs='{0} {PathExtractorUnit}{p}{_ps}'):
+class xtinno(ArchiveUnit, _ps, docs='{0}{p}{PathExtractorUnit}{p}{_ps}'):
     """
-    Extract files from InnoSetup archives:
+    Extract files from InnoSetup archives.
     """
     def unpack(self, data: bytearray):
         def post_process_json(doc):

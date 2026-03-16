@@ -10,9 +10,11 @@ from refinery.units import Arg, Chunk, Unit
 
 class urn(Unit):
     """
-    Treat the chunks in the current frame as items in an urn and produce every possible sequence
-    that could occur as a sequence of draws. For example, selecting both -k and -s is equivalent
-    to generating all possible permutations of these chunks.
+    Treat the chunks in the current frame as items in an urn and produce every possible
+    sequence that could occur as a sequence of draws.
+
+    For example, selecting both -k and -s is equivalent to generating all possible
+    permutations of these chunks.
     """
 
     def __init__(self,

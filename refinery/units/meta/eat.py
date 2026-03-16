@@ -7,9 +7,10 @@ from refinery.units import Arg, Chunk, Unit
 
 class eat(Unit):
     """
-    Consume a meta variable and replace the contents of the current chunk with it. If the variable
-    contains a string, it is encoded with the default codec. If the variable cannot be converted to
-    a byte string, the data is lost and an empty chunk is returned.
+    Consume a meta variable and replace the contents of the current chunk with it.
+
+    If the variable contains a string, it is encoded with the default codec. If the variable
+    cannot be converted to a byte string, the data is lost and an empty chunk is returned.
     """
     def __init__(
         self,

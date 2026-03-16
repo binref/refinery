@@ -8,10 +8,12 @@ from refinery.units import Arg, Unit
 
 class urlfix(Unit):
     """
-    Removes fragments, query strings, and parameters from input URLs. It also correctly escapes all
-    characters in the URL path component and normalizes the network location part to lowercase. Note
-    that URLs without a scheme will not be recognized as valid URLs; chunks that do not look like a
-    URL will be swallowed and not return any output.
+    Removes fragments, query strings, and parameters from input URLs.
+
+    It also correctly escapes all characters in the URL path component and normalizes the
+    network location part to lowercase. Note that URLs without a scheme will not be recognized
+    as valid URLs; chunks that do not look like a URL will be swallowed and not return any
+    output.
     """
     def __init__(
         self,

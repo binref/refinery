@@ -5,10 +5,12 @@ from refinery.units import Unit
 
 class pecdb(Unit):
     """
-    Short for "PE: Clear Dynamic Base"; this unit will clear the bit in the PE header that allows
-    for address space layout randomization. It will also set the integrity flag. With both bits
-    set, this DLL when loaded into memory will usually be loaded at its header-defined base address,
-    which can make debugging easier.
+    Clear the ASLR flag and set integrity in a PE header to fix the image base.
+
+    Short for "PE: Clear Dynamic Base"; this unit will clear the bit in the PE header that
+    allows for address space layout randomization. It will also set the integrity flag. With
+    both bits set, this DLL when loaded into memory will usually be loaded at its
+    header-defined base address, which can make debugging easier.
     """
     @classmethod
     def handles(cls, data) -> bool | None:

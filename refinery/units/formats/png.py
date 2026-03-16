@@ -11,8 +11,10 @@ from refinery.units.formats import PathExtractorUnit, UnpackResult
 
 class png(PathExtractorUnit):
     """
-    Extract raw data chunks from a PNG image. Parses the PNG chunk structure to recover
-    image data segments, text metadata, and ancillary chunks such as eXIf, iCCP, and tIME.
+    Extract raw data chunks from a PNG image.
+
+    Parses the PNG chunk structure to recover image data segments, text metadata, and
+    ancillary chunks such as eXIf, iCCP, and tIME.
     """
     def unpack(self, data):
         image = Png.Parse(memoryview(data))

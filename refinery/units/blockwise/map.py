@@ -9,8 +9,9 @@ from refinery.units.blockwise import Arg, BlockTransformation
 
 class map(BlockTransformation):
     """
-    Replace multiple characters by other characters simultaneously. For example, the following will
-    replace A by X, B by Y, and C by Z:
+    Replace multiple characters by other characters simultaneously.
+
+    For example, the following will replace A by X, B by Y, and C by Z:
 
         map ABC XYZ
 

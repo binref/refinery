@@ -13,10 +13,11 @@ class NopArgParser(ArgumentParserWithKeywordHooks):
 
 class nop(Unit):
     """
-    The unit generates the exact output that was received as input. All unknown arguments passed
-    to nop are completely ignored, which is different from the behavior of other units. As such,
-    nop can be used to comment out other units in longer refinery pipelines by simply prefixing a
-    command with nop.
+    The unit generates the exact output that was received as input.
+
+    All unknown arguments passed to nop are completely ignored, which is different from the
+    behavior of other units. As such, nop can be used to comment out other units in longer
+    refinery pipelines by simply prefixing a command with nop.
     """
     @classmethod
     def argparser(cls, **keywords):

@@ -11,8 +11,9 @@ if TYPE_CHECKING:
 
 class byteswap(UnaryOperation):
     """
-    Reverses the order of bytes in each block. Excess bytes that are not an integer multiple of the block
-    size are discarded.
+    Reverses the order of bytes in each block.
+
+    Excess bytes that are not an integer multiple of the block size are discarded.
     """
     def __init__(self, size: Param[int, Arg.Number(help='the block size in bytes; the default is {default}.')] = 4):
         super().__init__(blocksize=size, _truncate=2)

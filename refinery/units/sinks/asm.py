@@ -8,9 +8,11 @@ from refinery.units.sinks import Arg, HexDumpMetrics, hexdump
 
 class asm(opc):
     """
-    Disassembles the input data using capstone and produces a human-readable disassembly listing.
-    It internally uses the `refinery.opc` unit for this, which is an alternative option if you are
-    looking for more programmatic disassembly.
+    Disassembles the input data using capstone and produces a human-readable disassembly
+    listing.
+
+    It internally uses the `refinery.opc` unit for this, which is an alternative option if
+    you are looking for more programmatic disassembly.
     """
     def __init__(
         self, mode='x32', *, count=None, until=None,

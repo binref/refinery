@@ -14,10 +14,12 @@ if TYPE_CHECKING:
 
 class vmemref(Unit):
     """
-    The unit expects an executable as input (PE/ELF/MachO) and scans a function at a given virtual
-    address for memory references. For each memory reference, the unit looks up the corresponding
-    section and file offset for the reference. It then returns all data from that section starting
-    at the given offset.
+    Scan a function in an executable for memory references and extract referenced data.
+
+    The unit expects an executable as input (PE/ELF/MachO) and scans a function at a given
+    virtual address for memory references. For each memory reference, the unit looks up the
+    corresponding section and file offset for the reference. It then returns all data from
+    that section starting at the given offset.
     """
     @classmethod
     def handles(cls, data) -> bool | None:

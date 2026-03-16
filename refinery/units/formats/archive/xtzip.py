@@ -10,7 +10,7 @@ from refinery.units.formats.archive import ArchiveUnit, MultipleArchives
 from refinery.units.formats.pe import get_pe_size
 
 
-class xtzip(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
+class xtzip(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
     """
     Extract files from a Zip archive.
     """

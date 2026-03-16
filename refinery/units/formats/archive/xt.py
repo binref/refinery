@@ -6,8 +6,10 @@ from refinery.units.formats.archive import ArchiveUnit, MultipleArchives, PathEx
 
 class xt(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
     """
-    This unit generically extracts files from archives and container formats: Attempts to identify
-    the input and use the matching extractor from among the ones implemented in refinery.
+    Extract files from archives and container formats using automatic format detection.
+
+    Attempts to identify the input and use the matching extractor from among the ones
+    implemented in refinery.
     """
     @classmethod
     def handles(cls, data) -> bool | None:

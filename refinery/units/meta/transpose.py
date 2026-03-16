@@ -9,9 +9,11 @@ from refinery.units import Arg, Chunk, Unit
 class transpose(Unit):
     """
     Interprets the chunks in the current frame as rows of a matrix and yields the columns
-    of that matrix. When chunks are not of even length, the matrix is considered to have
-    empty entries in some positions. Optionally, a padding sequence can be provided to pad
-    all rows to the same length.
+    of that matrix.
+
+    When chunks are not of even length, the matrix is considered to have empty entries in
+    some positions. Optionally, a padding sequence can be provided to pad all rows to the
+    same length.
     """
     @Unit.Requires('numpy', ['speed', 'default', 'extended'])
     def _numpy():

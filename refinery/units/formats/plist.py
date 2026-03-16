@@ -7,11 +7,12 @@ from refinery.units.formats import JSONEncoderUnit
 
 class plist(JSONEncoderUnit):
     """
-    Parses Apple property list (plist) files and converts them to JSON. Property lists are a
-    serialization format used extensively in macOS, iOS, and other Apple platforms to store
-    configuration data, application preferences, and structured metadata. This unit supports both
-    the binary plist format `bplist00` and XML plist format. The reverse operation converts JSON
-    input back to binary plist format.
+    Parse Apple property list (plist) files and convert them to JSON.
+
+    Property lists are a serialization format used extensively in macOS, iOS, and other Apple
+    platforms to store configuration data, application preferences, and structured metadata.
+    This unit supports both the binary plist format `bplist00` and XML plist format. The
+    reverse operation converts JSON input back to binary plist format.
     """
     @classmethod
     def handles(cls, data) -> bool | None:

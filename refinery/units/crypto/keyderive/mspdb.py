@@ -5,8 +5,9 @@ from refinery.units.crypto.keyderive import KeyDerivation
 
 class mspdb(KeyDerivation):
     """
-    An implementation of the PasswordDeriveBytes routine available from the .NET
-    standard library. According to documentation, it is an extension of PBKDF1.
+    An implementation of the PasswordDeriveBytes routine available from the .NET standard library.
+
+    According to documentation, it is an extension of PBKDF1.
     """
     def __init__(self, size, salt, iter=100, hash='SHA1'):
         self.superinit(super(), **vars())

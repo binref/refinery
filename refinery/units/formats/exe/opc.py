@@ -14,9 +14,12 @@ _ARCHES = ['x16', 'x32', 'x64', 'ppc32', 'ppc64', 'mips32', 'mips64']
 
 class opc(Unit):
     """
-    Disassembles the input data using capstone and generates opcodes with metadata as output. This
-    is useful for programmatic disassembly, while the `refinery.asm` unit outputs a human-readable
-    representation. Internally, `refinery.asm` uses this unit and pretty-prints the output.
+    Disassemble the input data and output opcodes with metadata.
+
+    Uses capstone to disassemble machine code and generates opcodes with metadata as output.
+    This is useful for programmatic disassembly, while the `refinery.asm` unit outputs a
+    human-readable representation. Internally, `refinery.asm` uses this unit and
+    pretty-prints the output.
     """
     def __init__(
         self,

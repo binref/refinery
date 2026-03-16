@@ -5,11 +5,13 @@ from refinery.units import Unit
 
 class carve_pdf(Unit):
     """
-    Extracts anything from the input data that looks like a PDF document. The unit searches for
-    the `%PDF-` magic header and the corresponding `%%EOF` trailer to determine the boundaries
-    of each embedded PDF. This can be used to carve PDF files from disk images, memory dumps,
-    network captures, or compound documents where PDF content is embedded in a larger binary
-    stream. Multiple PDF documents embedded in a single input will each be extracted separately.
+    Extracts anything from the input data that looks like a PDF document.
+
+    The unit searches for the `%PDF-` magic header and the corresponding `%%EOF` trailer to
+    determine the boundaries of each embedded PDF. This can be used to carve PDF files from
+    disk images, memory dumps, network captures, or compound documents where PDF content is
+    embedded in a larger binary stream. Multiple PDF documents embedded in a single input will
+    each be extracted separately.
     """
     def process(self, data: bytearray):
         memory = memoryview(data)

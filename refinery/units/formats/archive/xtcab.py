@@ -7,8 +7,10 @@ from refinery.units.formats.archive import ArchiveUnit
 
 class xtcab(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
     """
-    Extract files from CAB (cabinet) archives. Multi-volume archives can be extracted if all
-    required disks are present as chunks within the current frame.
+    Extract files from CAB (cabinet) archives.
+
+    Multi-volume archives can be extracted if all required disks are present as chunks
+    within the current frame.
     """
     def unpack(self, data: Chunk):
         if (arc := data.temp) is None:

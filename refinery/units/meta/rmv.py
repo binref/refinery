@@ -7,9 +7,11 @@ from refinery.units import Arg, Chunk, Unit
 
 class rmv(Unit):
     """
-    Short for "ReMove Variable": Removes meta variables that were created in the current frame. If no
-    variable names are given, the unit removes all of them. Note that this can recover variables from
-    outer frames that were previously shadowed.
+    Remove meta variables from the current frame.
+
+    Short for "ReMove Variable": Removes meta variables that were created in the current
+    frame. If no variable names are given, the unit removes all of them. Note that this can
+    recover variables from outer frames that were previously shadowed.
     """
     def __init__(self, *names: Param[str, Arg.String(metavar='name', help='Name of a variable to be removed.')]):
         super().__init__(names=names)

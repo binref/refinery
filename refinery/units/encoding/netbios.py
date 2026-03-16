@@ -6,10 +6,10 @@ from refinery.units import Arg, Unit
 
 class netbios(Unit):
     """
-    Encodes and decodes strings using the same algorithm that is used for NetBIOS
-    labels. Each byte 0xUL is encoded as two bytes, which are the sum of 0xU and
-    0xL with an offset character, respectively. The default offset is the capital
-    letter A.
+    Encodes and decodes strings using the same algorithm that is used for NetBIOS labels.
+
+    Each byte 0xUL is encoded as two bytes, which are the sum of 0xU and 0xL with an offset
+    character, respectively. The default offset is the capital letter A.
     """
 
     def __init__(self, key: Param[buf, Arg(help="Provide a single letter to use as the offset.")] = B'A'):

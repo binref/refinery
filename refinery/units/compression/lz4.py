@@ -20,8 +20,7 @@ class LZ4Reader(StructReaderBits):
 
 class lz4(Unit):
     """
-    LZ4 block decompression. See also:
-    https://github.com/lz4/lz4/blob/master/doc/lz4_Block_format.md#compressed-block-format
+    LZ4 block decompression.
     """
     @classmethod
     def handles(cls, data) -> bool | None:

@@ -5,7 +5,7 @@ from refinery.lib.types import Param
 from refinery.units.formats.archive import ArchiveUnit, Arg
 
 
-class xtiso(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
+class xtiso(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
     """
     Extract files from a ISO archive.
     """

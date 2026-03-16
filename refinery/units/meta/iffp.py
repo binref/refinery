@@ -11,8 +11,9 @@ _PATTERNS = {
 
 class iffp(ConditionalUnit, docs='{0}{p}{1}'):
     """
-    Filter incoming chunks depending on whether it matches any of a given set of patterns. The
-    available patterns are the following: {}.
+    Filter incoming chunks depending on whether it matches any of a given set of patterns.
+
+    The available patterns are the following: {}.
     """
 
     def __init__(

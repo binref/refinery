@@ -9,17 +9,18 @@ from refinery.units.pattern import Arg, RegexUnit
 
 class loop(RegexUnit):
     """
-    Applies a given multibin suffix to the input chunk repeatedly. For example, the following
-    command would carve the largest base64-encoded buffer from the input, decode it, and then
-    decompress the result 20 times:
+    Applies a given multibin suffix to the input chunk repeatedly.
+
+    For example, the following command would carve the largest base64-encoded buffer from the
+    input, decode it, and then decompress the result 20 times:
 
         emit data | loop 20 csd[b64]:zl
 
-    Notably, the argument after the iterations is a suffix, which means that handlers are applied
-    from left to right (not from right to left). The loop is aborted and the previous result
-    returned if the newly computed result is empty. If the an error occurs while computing
-    the statements and the unit is lenient (i.e. the `-L` switch is set), the last known result
-    is returned.
+    Notably, the argument after the iterations is a suffix, which means that handlers are
+    applied from left to right (not from right to left). The loop is aborted and the previous
+    result returned if the newly computed result is empty. If the an error occurs while
+    computing the statements and the unit is lenient (i.e. the `-L` switch is set), the last
+    known result is returned.
     """
 
     def __init__(

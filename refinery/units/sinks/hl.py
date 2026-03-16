@@ -15,8 +15,9 @@ from refinery.units import Arg, Unit
 
 class hl(Unit):
     """
-    This unit uses the Pygments library for syntax highlighting. It expects plain text code as
-    input and outputs ANSI-colored text.
+    This unit uses the Pygments library for syntax highlighting.
+    
+    It expects plain text code as input and outputs ANSI-colored text.
     """
     _pygments_name_completion = {
         'vb'  : 'VisualBasic',

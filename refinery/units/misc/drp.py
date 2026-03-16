@@ -24,9 +24,10 @@ class stackdepth:
 
 class drp(Unit):
     """
-    Detect Repeating Patterns - detects the most prevalent repeating byte pattern
-    in a chunk of data. The unit computes a suffix tree which may require a lot of
-    memory for large buffers.
+    Detect Repeating Patterns - detects the most prevalent repeating byte pattern in a chunk
+    of data.
+
+    The unit computes a suffix tree which may require a lot of memory for large buffers.
     """
     def __init__(
         self,

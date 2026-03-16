@@ -7,7 +7,7 @@ from refinery.lib.structures import MemoryFile
 from refinery.units.formats.archive import ArchiveUnit
 
 
-class xttar(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
+class xttar(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
     """
     Extract files from a Tar archive.
     """

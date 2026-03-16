@@ -29,9 +29,11 @@ class DotnetDisassemblerUnit(Unit, abstract=True):
 
 class dnopc(DotnetDisassemblerUnit):
     """
-    Disassembles the input data as MSIL (.NET/C# bytecode) and generates opcodes with metadata as output. This
-    is useful for programmatic disassembly, while the `refinery.dnasm` unit outputs a human-readable
-    representation.
+    Disassemble MSIL bytecode and output opcodes with metadata.
+
+    Disassembles the input data as MSIL (.NET/C# bytecode) and generates opcodes with metadata as
+    output. This is useful for programmatic disassembly, while the `refinery.dnasm` unit outputs a
+    human-readable representation.
     """
     @classmethod
     def handles(cls, data) -> bool | None:

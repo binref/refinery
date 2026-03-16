@@ -11,9 +11,10 @@ from refinery.units import Arg, Unit
 
 class bat(Unit):
     """
-    Emulates the execution of a batch file. Each command line that would be executed is emitted
-    as an individual chunk. This can remove simple obfuscation based on expansion of environment
-    variables.
+    Emulate batch file execution and extract command lines.
+
+    Each command line that would be executed is emitted as an individual chunk. This can
+    remove simple obfuscation based on expansion of environment variables.
     """
     def __init__(
         self,

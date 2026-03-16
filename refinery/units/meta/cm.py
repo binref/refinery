@@ -9,8 +9,10 @@ _COMMON_PROPERTIES_LIST = ', '.join(LazyMetaOracle.derivations)
 
 class cm(Unit):
     """
-    The Common Meta variables unit populates the set of meta variables of the current chunk with commonly
-    used metadata. The unit has no effect outside a frame.
+    Populate the set of meta variables of the current chunk with commonly used metadata.
+
+    The Common Meta variables unit populates the set of meta variables of the current chunk
+    with commonly used metadata. The unit has no effect outside a frame.
     """
     def __init__(
         self,

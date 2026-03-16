@@ -10,9 +10,10 @@ from refinery.units import Arg, Unit
 
 class codebook(Unit):
     """
+    Encode or decode data by replacing words from a codebook with their index bytes or vice versa.
+
     Given a sequence of words (as a msgpack-encoded list of binary strings) the unit converts the
     occurrence of any of these words by a byte value representing the word's index in the sequence.
-
     The first word from the sequence that matches at a given offset will be used to determine this
     value. Any substrings that cannot be matched to a word in the sequence are skipped, assuming
     that they are separators.

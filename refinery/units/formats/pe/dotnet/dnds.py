@@ -9,8 +9,11 @@ from refinery.units.formats import JSONEncoderUnit
 
 class dnds(JSONEncoderUnit):
     """
-    Stands for "DotNet DeSerialize": Expects data that has been serialized using the .NET class
-    "BinaryFormatter". The output is a representation of the deserialized data in JSON format.
+    Deserialize .NET BinaryFormatter data and output as JSON.
+
+    Stands for "DotNet DeSerialize": Expects data that has been serialized using the .NET
+    class "BinaryFormatter". The output is a representation of the deserialized data in JSON
+    format.
     """
 
     @classmethod

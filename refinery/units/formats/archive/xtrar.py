@@ -18,11 +18,9 @@ from refinery.units import RefineryPartialResult
 from refinery.units.formats.archive import ArchiveUnit
 
 
-class xtrar(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
+class xtrar(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
     """
-    Extract files from a RAR archive. This unit supports all RAR format versions
-    including RAR4 and RAR5, with support for all compression algorithms, encryption,
-    and multi-volume archives.
+    Extract files from a RAR archive.
     """
     @staticmethod
     def _find_rar_file(data: buf):

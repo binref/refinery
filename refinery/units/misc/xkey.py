@@ -45,8 +45,11 @@ def _S(options: bytes):
 
 class xkey(Unit):
     """
-    The unit expects encrypted input which was encrypted byte-wise with a polyalphabetic key. For
-    both bit-wise and byte-wise addition, it can attempt do determine this key by three methods:
+    Recover the key used for byte-wise polyalphabetic encryption via XOR or ADD ciphers.
+
+    The unit expects encrypted input which was encrypted byte-wise with a polyalphabetic key.
+    For both bit-wise and byte-wise addition, it can attempt do determine this key by three
+    methods:
 
     1. Known plaintext cribs: The unit contains a library of file signatures that are expected to
        occur at specific offsets. It uses these to attempt a known-plaintext attack against the

@@ -10,9 +10,10 @@ from refinery.units import Arg, Unit
 
 class bruteforce(Unit):
     """
-    Generates all possible combinations of letters in a given alphabet. For each generated string,
-    one copy of each input chunk is generated and populated with a meta variable containing that
-    string. This can be used for simple brute forcing checks.
+    Generates all possible combinations of letters in a given alphabet.
+
+    For each generated string, one copy of each input chunk is generated and populated with a
+    meta variable containing that string. This can be used for simple brute forcing checks.
     """
     def __init__(
         self,

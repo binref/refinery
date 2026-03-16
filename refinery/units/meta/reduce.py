@@ -9,8 +9,11 @@ from refinery.units import Arg, Chunk, Unit
 
 class reduce(Unit):
     """
-    The reduce unit applies an arbitrary multibin suffix repeatedly to reduce a complete frame to a
-    single chunk. The first chunk in the frame serves as initialization.
+    Apply an arbitrary multibin suffix repeatedly to reduce a complete frame to a single
+    chunk.
+
+    The reduce unit applies an arbitrary multibin suffix repeatedly to reduce a complete
+    frame to a single chunk. The first chunk in the frame serves as initialization.
     """
 
     def __init__(self,

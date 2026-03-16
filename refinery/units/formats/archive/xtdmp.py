@@ -18,8 +18,10 @@ if TYPE_CHECKING:
 
 class xtdmp(ArchiveUnit):
     """
-    Extract modules and memory segments from Minidump files. All extracted PE modules are unmapped
-    by overwriting their section offsets with virtual section offsets.
+    Extract modules and memory segments from Minidump files.
+
+    All extracted PE modules are unmapped by overwriting their section offsets with
+    virtual section offsets.
     """
     @ArchiveUnit.Requires('minidump==0.0.24', ['formats', 'default', 'extended'])
     def _minidump():

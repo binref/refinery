@@ -7,9 +7,11 @@ from refinery.units import Arg, Unit
 
 class pdfcrypt(Unit):
     """
-    The unit removes password protection from a PDF document. If the document is encrypted, either
-    the correct user or owner password must be specified to decrypt it. When the unit is operated
-    in reverse, the output is encrypted using the AES-256 mode.
+    Remove password protection from PDF documents.
+
+    If the document is encrypted, either the correct user or owner password must be specified
+    to decrypt it. When the unit is operated in reverse, the output is encrypted using the
+    AES-256 mode.
     """
 
     @Unit.Requires('pymupdf', ['formats', 'default', 'extended'])

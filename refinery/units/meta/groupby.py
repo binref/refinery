@@ -10,9 +10,11 @@ from refinery.units import Arg, Chunk, Unit
 
 class groupby(Unit):
     """
-    Group incoming chunks by the contents of a meta variable. Note that the unit
-    blocks and cannot stream any output until the input frame is consumed: It has
-    to read every input chunk to make sure that all groupings are complete.
+    Group incoming chunks by the contents of a meta variable.
+
+    Note that the unit blocks and cannot stream any output until the input frame
+    is consumed: It has to read every input chunk to make sure that all groupings
+    are complete.
     """
     def __init__(self, name: Param[str, Arg.String(help='name of the meta variable')]):
         super().__init__(name=check_variable_name(name))

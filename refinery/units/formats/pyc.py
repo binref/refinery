@@ -9,8 +9,10 @@ from refinery.units.formats.archive import ArchiveUnit
 
 class pyc(ArchiveUnit):
     """
-    Decompiles Python bytecode (PYC) files back to source code. A known limitation is that it does
-    not work on recent Python versions, but anything below 3.9 should work.
+    Decompile Python bytecode (PYC) files back to source code.
+
+    A known limitation is that it does not work on recent Python versions, but anything
+    below 3.9 should work.
     """
     @classmethod
     def handles(cls, data) -> bool | None:

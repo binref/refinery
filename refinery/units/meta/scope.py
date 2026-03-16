@@ -13,6 +13,8 @@ from refinery.units.meta import FrameSlicer
 
 class scope(FrameSlicer):
     """
+    Restrict subsequent frame operations to selected indices only.
+
     After using `refinery.scope` within in a `refinery.lib.frame`, all the
     following operations will be applied only to the selected indices. All
     remaining chunks still exist, they are just not operated on. When the

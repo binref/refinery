@@ -46,9 +46,10 @@ def des_set_odd_parity(key: bytearray):
 
 class deskd(KeyDerivation):
     """
-    Stands for "DES Key Derivation". It implements the same functionality as `DES_string_to_key` in OpenSSL. It
-    converts a string to an 8 byte DES key with odd byte parity, per FIPS specification. This is not a modern
-    key derivation function.
+    DES key derivation, compatible with OpenSSL's `DES_string_to_key`.
+
+    Converts a string to an 8 byte DES key with odd byte parity, per FIPS specification. This is
+    not a modern key derivation function.
     """
     def __init__(self, size: Param[int, Arg(help='The number of bytes to generate, default is the maximum of 8.')] = 8):
         super().__init__(size=size, salt=None)

@@ -1282,7 +1282,7 @@ class NSArchive(Struct):
             return self.PartsReader(reader, decompressor, prefix_length)
 
 
-class xtnsis(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
+class xtnsis(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
     """
     Extract files from NSIS archives. Nullsoft Scriptable Install System is a Windows installer
     framework often used for software distribution.

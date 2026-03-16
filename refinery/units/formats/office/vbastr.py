@@ -28,11 +28,12 @@ def _bin(value):
 
 class vbastr(PathExtractorUnit):
     """
-    Extract VBA macro variables from Office documents. The items are extracted in a directory
-    hierarchy that specifies their corresponding OLE stream. The stem of their file name is the
-    same as the variable's name. The variable can define a caption, a control tip text, and a
-    value; the unit extracts these with the synthesized file extension "cap", "tip", and "val",
-    respectively.
+    Extract VBA macro variables from Office documents.
+
+    The items are extracted in a directory hierarchy that specifies their corresponding OLE
+    stream. The stem of their file name is the same as the variable's name. The variable
+    can define a caption, a control tip text, and a value; the unit extracts these with the
+    synthesized file extension "cap", "tip", and "val", respectively.
     """
     @classmethod
     def handles(cls, data) -> bool:

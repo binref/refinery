@@ -147,9 +147,11 @@ class LZO(Struct):
 
 class lzo(Unit):
     """
-    LZO decompression. The code works against simple test cases, but it is known to fail for
-    certain outputs produced by the lzop command-line tool when high compression ratio is
-    favoured (i.e. when the -9 switch is used).
+    LZO decompression.
+
+    The code works against simple test cases, but it is known to fail for certain outputs produced
+    by the lzop command-line tool when high compression ratio is favoured (i.e. when the -9 switch
+    is used).
     """
     def _decompress_stream(self, data: buf, LZOv1: bool = False) -> bytearray:
         """

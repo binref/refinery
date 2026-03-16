@@ -16,10 +16,11 @@ class PIXEL_PART(IntEnum):
 
 class stego(Unit):
     """
-    Decodes the RGBA (red/green/blue/alpha) values of the pixels of a given image file and outputs
-    these values as bytes. By default, the pixels are converted left to right, top to bottom. When
-    the input image is grayscale, the color channels are ignored. Colored images are converted to
-    RGBA mode.
+    Decode pixel values from an image and output them as raw bytes.
+
+    By default, the RGBA (red/green/blue/alpha) values of the pixels are converted left to
+    right, top to bottom. When the input image is grayscale, the color channels are ignored.
+    Colored images are converted to RGBA mode.
     """
     @classmethod
     def handles(cls, data) -> bool | None:

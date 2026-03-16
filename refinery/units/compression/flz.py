@@ -209,8 +209,10 @@ def _flz_decompress(input: memoryview, level: int):
 
 class flz(Unit):
     """
-    FastLZ (or FLZ for short) compression and decompression. This implementation was ported to
-    pure Python from the C reference and is therefore much slower.
+    FastLZ (or FLZ for short) compression and decompression.
+
+    This implementation was ported to pure Python from the C reference and is therefore much
+    slower.
     """
     def __init__(
         self,

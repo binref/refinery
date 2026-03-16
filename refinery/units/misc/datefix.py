@@ -47,10 +47,12 @@ _TIMEZONE_PATTERN = R'''(?x)(?:
 
 class datefix(Unit):
     """
-    Parses all kinds of date formats and unifies them into the same format. The unit expects the
-    input to be a numeric timestamp or a string that specifies a date & time. It then outputs a
-    unified representation of that timestamp, using ISO format by default. If you want to use this
-    to normalize date strings in a piece of text, use the following pattern:
+    Parses all kinds of date formats and unifies them into the same format.
+
+    The unit expects the input to be a numeric timestamp or a string that specifies a date &
+    time. It then outputs a unified representation of that timestamp, using ISO format by
+    default. If you want to use this to normalize date strings in a piece of text, use the
+    following pattern:
 
         emit ... | resub (??date) {0:datefix}
 

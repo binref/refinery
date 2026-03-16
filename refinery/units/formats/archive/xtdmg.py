@@ -4,7 +4,7 @@ from refinery.lib.dmg.arc import DiskImage, is_dmg
 from refinery.units.formats.archive import ArchiveUnit
 
 
-class xtdmg(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
+class xtdmg(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
     """
     Extract files from an Apple Disk Image (DMG) files with an HFS+ file system.
     """

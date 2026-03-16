@@ -9,8 +9,10 @@ from refinery.units import RefineryPartialResult, Unit
 
 class blz(Unit):
     """
-    BriefLZ compression and decompression. The compression algorithm uses a pure Python suffix tree
-    implementation: It requires a lot of time & memory.
+    BriefLZ compression and decompression.
+
+    The compression algorithm uses a pure Python suffix tree implementation: It requires a lot of
+    time & memory.
     """
     @classmethod
     def handles(cls, data) -> bool:

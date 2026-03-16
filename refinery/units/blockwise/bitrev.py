@@ -5,8 +5,10 @@ from refinery.units.blockwise import UnaryOperation
 
 class bitrev(UnaryOperation):
     """
-    Reverse the bits of every block. Any excess bytes at the end of the input that are not
-    an integer multiple of the block size are ignored.
+    Reverse the bits of every block.
+
+    Any excess bytes at the end of the input that are not an integer multiple of the block
+    size are ignored.
     """
     def operate(self, block, *args):
         raise RuntimeError('operate was called before the unit was initialized')

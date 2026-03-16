@@ -812,8 +812,7 @@ class A3xScript(Struct):
 
 class a3x(PathExtractorUnit):
     """
-    Extracts embedded resources from compiled AutoIt scripts and decompiles the embedded script
-    bytecode. The unit also works on compiled AutoIt executables.
+    Extract resources and decompile bytecode from compiled AutoIt scripts and executables.
     """
 
     def unpack(self, data: bytearray):

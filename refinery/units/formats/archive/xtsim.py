@@ -53,7 +53,7 @@ def longest_common_substring(string1: str, string2: str):
     ).size
 
 
-class xtsim(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
+class xtsim(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
     """
     Extract files from Smart Install Maker (SIM) executables.
     """

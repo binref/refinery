@@ -8,10 +8,13 @@ from refinery.units.misc.xkey import xkey
 
 class autoxor(xkey, docs='{0}{p}{1}'):
     """
+    Detect and decrypt polyalphabetic byte-wise encryption such as XOR or ADD ciphers using
+    frequency analysis and known plaintext attacks.
+
     Assumes input that was encrypted with a polyalphabetic block cipher, like XOR-ing each byte
     with successive bytes from a key or by subtracting the respective key byte value from each
-    input byte. It uses the `refinery.xkey` unit to attack the cipher and attempts to recover the
-    plaintext automatically.
+    input byte. It uses the `refinery.xkey` unit to attack the cipher and attempts to recover
+    the plaintext automatically.
     """
     def process(self, data: bytearray):
         fallback: tuple[str, bytes, bytearray] | None = None

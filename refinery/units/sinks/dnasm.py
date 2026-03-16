@@ -12,8 +12,10 @@ from refinery.units.sinks import Arg
 
 class dnasm(DotnetDisassemblerUnit):
     """
-    Disassembles the input data as MSIL (.NET/C# bytecode) and produces a human-readable disassembly listing. If you are
-    looking for a more programmatic disassembly, take a look at `refinery.dnopc`.
+    Disassembles the input data as MSIL (.NET/C# bytecode) and produces a human-readable
+    disassembly listing.
+
+    If you are looking for a more programmatic disassembly, take a look at `refinery.dnopc`.
     """
 
     def __init__(

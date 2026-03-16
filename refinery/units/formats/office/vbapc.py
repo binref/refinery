@@ -7,10 +7,12 @@ from refinery.units.formats import PathExtractorUnit, UnpackResult
 
 class vbapc(PathExtractorUnit):
     """
-    Extract VBA macro p-code from Office documents. By default, the unit also decompiles it. This
-    unit is specifically useful for macro documents that use VBA code stomping, i.e. the embedded
-    macro source code is stomped and does not represent the p-code functionality that the document
-    will actually execute.
+    Extract and decompile VBA macro p-code from Office documents.
+
+    This unit is specifically useful for macro documents that use VBA code stomping, i.e.
+    the embedded macro source code is stomped and does not represent the p-code
+    functionality that the document will actually execute. Use the -R flag to get raw
+    disassembled p-code instead of decompiled output.
     """
     @classmethod
     def handles(cls, data) -> bool:

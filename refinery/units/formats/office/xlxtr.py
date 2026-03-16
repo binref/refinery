@@ -286,13 +286,15 @@ class ExcelUnit(Unit, abstract=True):
 
 class xlxtr(ExcelUnit):
     """
-    Extract data from Microsoft Excel documents, both Legacy and new XML type documents. A sheet
-    reference is of the form `B1` or `1.2`, both specifying the first cell of the second column.
-    A cell range can be specified as `B1:C12`, or `1.2:C12`, or `1.2:12.3`. Finally, the unit will
-    always refer to the first sheet in the document and to change this, specify the sheet name or
-    index separated by a hashtag, i.e. `sheet#B1:C12` or `1#B1:C12`. Note that indices are
-    1-based. To get all elements of one sheet, use `sheet#`. The unit If parsing a sheet reference
-    fails, the script will assume that the given reference specifies a sheet.
+    Extract data from Microsoft Excel documents, both legacy and XML type.
+
+    A sheet reference is of the form `B1` or `1.2`, both specifying the first cell of the
+    second column. A cell range can be specified as `B1:C12`, or `1.2:C12`, or `1.2:12.3`.
+    Finally, the unit will always refer to the first sheet in the document and to change
+    this, specify the sheet name or index separated by a hashtag, i.e. `sheet#B1:C12` or
+    `1#B1:C12`. Note that indices are 1-based. To get all elements of one sheet, use
+    `sheet#`. If parsing a sheet reference fails, the script will assume that the given
+    reference specifies a sheet.
     """
     def __init__(
         self,

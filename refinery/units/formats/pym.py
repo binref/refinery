@@ -13,9 +13,10 @@ from refinery.units import Arg, Unit
 
 class pym(Unit):
     """
-    Converts Python-Marshaled code objects to the PYC (Python Bytecode) format. If it is an
-    older Python version, you can use the `refinery.pyc` unit to then decompile the code, but
-    for more recent versions a separate Python decompiler will be required.
+    Convert Python-Marshaled code objects to PYC format.
+
+    If it is an older Python version, you can use the `refinery.pyc` unit to then decompile
+    the code, but for more recent versions a separate Python decompiler will be required.
     """
     @classmethod
     def handles(cls, data) -> bool | None:

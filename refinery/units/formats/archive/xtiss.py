@@ -68,7 +68,7 @@ class ISSReader(StructReader[bytearray]):
         return name, _data
 
 
-class xtiss(ArchiveUnit, docs='{0}{s}{PathExtractorUnit}'):
+class xtiss(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
     """
     Extracts files from Install Shield Setup (ISS) files. A Windows installer format used for
     commercial software distribution.

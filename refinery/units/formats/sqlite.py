@@ -9,8 +9,10 @@ from refinery.units import Arg, Unit
 
 class sqlite(Unit):
     """
-    Extracts data from SQLite3 databases. Each row is returned as a single output chunk in JSON
-    format. If no query is provided, the unit will extract all table metadata from the database.
+    Extract data from SQLite3 databases.
+
+    Each row is returned as a single output chunk in JSON format. If no query is provided,
+    the unit will extract all table metadata from the database.
     """
     @classmethod
     def handles(cls, data) -> bool:

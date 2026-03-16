@@ -8,10 +8,12 @@ from refinery.units import Arg, Unit
 
 class vaddr(Unit):
     """
-    Converts a metadata variable holding a file offset to a virtual address. This unit only works when the
-    chunk body contains a PE, ELF, or MachO executable. The variable will be substituted in place. If you
-    would like to retain the original value, it is recommended to use the `refinery.put` unit first to create
-    a copy of an already existing variable, and then convert the copy.
+    Convert a file offset to a virtual address within PE, ELF, or MachO executables.
+
+    This unit converts a metadata variable holding a file offset to a virtual address. The variable
+    will be substituted in place. If you would like to retain the original value, it is recommended
+    to use the `refinery.put` unit first to create a copy of an already existing variable, and then
+    convert the copy.
     """
     @classmethod
     def handles(cls, data) -> bool | None:

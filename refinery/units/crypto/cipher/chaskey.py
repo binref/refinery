@@ -100,9 +100,10 @@ class Chaskey(BlockCipher):
 
 class chaskey(StandardBlockCipherUnit, cipher=BlockCipherFactory(Chaskey)):
     """
-    This implements a block cipher based on the Chaskey algorithm. No subkeys are computed and the
-    default Chaskey operation is performed on all blocks. Notably, the Donut framework uses Chaskey
-    with 16 rounds and in CTR mode.
+    Encrypt and decrypt using the Chaskey block cipher.
+
+    No subkeys are computed and the default Chaskey operation is performed on all blocks. Notably,
+    the Donut framework uses Chaskey with 16 rounds and in CTR mode.
     """
     def __init__(
         self, key, iv=b'', padding=None, mode=None, raw=False,

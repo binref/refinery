@@ -46,8 +46,10 @@ class _Fmt(str, Enum):
 
 class httprequest(Unit):
     """
-    Parses HTTP request data, as you would obtain from a packet dump. The unit extracts
-    POST data in any format; each uploaded file is emitted as a separate chunk.
+    Parse HTTP request data and extract POST content.
+
+    The input is HTTP request data as you would obtain from a packet dump. The unit extracts POST
+    data in any format; each uploaded file is emitted as a separate chunk.
     """
     def process(self, data: Chunk):
         def header(line: bytes):

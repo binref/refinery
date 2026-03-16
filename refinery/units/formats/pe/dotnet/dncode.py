@@ -7,10 +7,10 @@ from refinery.units.formats import PathExtractorUnit, UnpackResult
 
 class dncode(PathExtractorUnit):
     """
-    Extracts .NET IL (or Microsoft IL, MSIL) method bodies from a .NET PE file. Each method is
-    emitted as a separate chunk containing the raw CIL bytecode (without the method body header).
-    The output can be piped into `refinery.dnopc` for disassembly.
+    Extract .NET IL method bodies from a .NET PE file.
 
+    Each method is emitted as a separate chunk containing the raw CIL bytecode (without the
+    method body header). The output can be piped into `refinery.dnopc` for disassembly.
     Methods that are abstract, imported, or use non-IL implementation (native, runtime, OPTIL)
     are silently skipped.
     """

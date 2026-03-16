@@ -24,10 +24,11 @@ def regex(cls: type) -> re.Pattern:
 
 class hexload(HexViewer):
     """
-    Convert hex dumps back to the original data and vice versa. All options of this unit apply
-    to its reverse operation where binary data is converted to a readable hexdump format.
-    The default mode of the unit expects the input data to contain a readable hexdump and
-    converts it back to binary.
+    Convert hex dumps back to the original data and vice versa.
+
+    All options of this unit apply to its reverse operation where binary data is converted
+    to a readable hexdump format. The default mode of the unit expects the input data to
+    contain a readable hexdump and converts it back to binary.
     """
     @regex
     class _ENCODED_BYTES:

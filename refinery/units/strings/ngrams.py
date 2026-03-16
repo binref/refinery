@@ -7,9 +7,11 @@ from refinery.units import Arg, Unit
 
 class ngrams(Unit):
     """
-    Extract all n-grams from the input. The algorithm is naive, i.e. it simply iterates all n-grams
-    and deduplicates using a set data structure. The number n is taken from an arbitrary range given
-    as a Python slice expression.
+    Extract all n-grams from the input.
+
+    The algorithm is naive, i.e. it simply iterates all n-grams and deduplicates using a set
+    data structure. The number n is taken from an arbitrary range given as a Python slice
+    expression.
     """
     def __init__(
         self, size: Param[slice, Arg.Bounds(

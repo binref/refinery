@@ -7,14 +7,16 @@ from refinery.units import Arg, Unit
 
 class mvg(Unit):
     """
+    Move meta variables into the scope of the parent frame.
+
     Short for "Make Variable Global": This unit can move meta variables into the scope of the
     parent frame. If used at the end of a frame, the variables will be moved the scope of the
     frame that the pipeline will return to. Otherwise and if the --top switch is being used,
     variables will be moved to scope 0, i.e. to the topmost frame in the current tree.
 
-    Note that it is not possible to promote a variable to a parent frame if that variable does not
-    have the same value on all chunks in the current frame - such variables will always be removed
-    when the frame closes.
+    Note that it is not possible to promote a variable to a parent frame if that variable does
+    not have the same value on all chunks in the current frame - such variables will always be
+    removed when the frame closes.
     """
     def __init__(
         self,
