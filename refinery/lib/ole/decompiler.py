@@ -1034,7 +1034,10 @@ class VBADecompiler:
 
     def _op_litdi4(self, byte1: str, byte2: str) -> None:
         val = int(byte2 + byte1[2:], 16)
-        self._stack.push(str(val))
+        if val >= 0x80000000:
+            val -= 0x100000000
+        suffix = '&' if -32768 <= val <= 32767 else ''
+        self._stack.push(F'{val}{suffix}')
 
     def _op_litdi8(self, b1: str, b2: str, b3: str, b4: str) -> None:
         hexstr = b4[2:] + b3[2:] + b2[2:] + b1[2:]
@@ -1049,9 +1052,13 @@ class VBADecompiler:
 
     def _op_lithi4(self, byte1: str, byte2: str) -> None:
         val = byte2[2:] + byte1[2:]
+        ival = int(val, 16)
+        if ival >= 0x80000000:
+            ival -= 0x100000000
+        suffix = '&' if -32768 <= ival <= 32767 else ''
         while val.startswith('0') and len(val) > 1:
             val = val[1:]
-        self._stack.push(F'&H{val}')
+        self._stack.push(F'&H{val}{suffix}')
 
     def _op_lithi8(self, b1: str, b2: str, b3: str, b4: str) -> None:
         val = b4[2:] + b3[2:] + b2[2:] + b1[2:]
@@ -1069,7 +1076,10 @@ class VBADecompiler:
     def _op_litoi4(self, byte1: str, byte2: str) -> None:
         val = byte2[2:] + byte1[2:]
         v = int(val, 16)
-        self._stack.push(F'&O{oct(v)[2:]}')
+        if v >= 0x80000000:
+            v -= 0x100000000
+        suffix = '&' if -32768 <= v <= 32767 else ''
+        self._stack.push(F'&O{oct(v)[2:]}{suffix}')
 
     def _op_litoi8(self, b1: str, b2: str, b3: str, b4: str) -> None:
         val = b4[2:] + b3[2:] + b2[2:] + b1[2:]
