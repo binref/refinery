@@ -106,7 +106,7 @@ class GOST(BlockCipher):
 class gost(StandardBlockCipherUnit, cipher=BlockCipherFactory(GOST)):
     """
     GOST encryption and decryption.
-    
+
     A symmetric block cipher (GOST 28147-89) with a 64-bit block size and 256-bit key, standardized
     by the Russian government.
     """

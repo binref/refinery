@@ -7,7 +7,7 @@ from refinery.units import Arg, Unit
 class puny(Unit):
     """
     Punycode encoding and decoding as defined in RFC 3492.
- 
+
     Commonly used for Internationalized Domain Names in Applications (IDNA, RFC 5891). Punycode
     represents Unicode characters using only the ASCII character set, which is required for DNS
     labels. For example, the domain `münchen.de` becomes `xn--mnchen-3ya.de` in IDNA encoding. By

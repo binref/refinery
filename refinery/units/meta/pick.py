@@ -44,7 +44,7 @@ class _PickState:
 class pick(Unit):
     """
     Selects specific chunks from a frame using Python slice syntax.
-    
+
     For example, `pick 0 2:` will return all but the second ingested input (which has index `1`).
     """
     def __init__(self, *bounds: Param[slice, Arg.Bounds(nargs='*', default=[0])]):
