@@ -182,18 +182,20 @@ def explorer(keyword_color: str = '91', unit_color: str = '93'):
             if name.startswith('deob-'):
                 continue
             first_line = doc.split('\n\n', 1)[0].replace('\n', ' ').strip()
-            if not first_line.endswith('.'):
-                first_line += '.'
             if keywords:
                 searchable = F'{name} {first_line}'.lower()
                 if not args.quantifier(k.search(searchable) for k in keywords):
                     continue
             entries.append((name, first_line))
         if entries:
-            pad = max(len(name) for name, _ in entries) + 2
-            for name, desc in entries:
-                desc = '\n'.join(textwrap.wrap(desc, width - pad, subsequent_indent=" " * pad))
-                print(F'{name:<{pad}}{desc}')
+            pad = max(len(name) for name, _ in entries) + 1
+            for name, info in entries:
+                sep = ': '
+                gap = ' ' * (pad + len(sep))
+                info = '\n'.join(textwrap.wrap(info, width - pad, subsequent_indent=gap))
+                for kw in keywords:
+                    info = highlight(info, kw, keyword_color)
+                print(F'{name:>{pad}}{sep}{info}')
         else:
             print('No matching unit was found.')
         return
