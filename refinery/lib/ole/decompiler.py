@@ -1169,8 +1169,8 @@ class VBADecompiler:
         oldname = self._stack.pop()
         self._stack.push(F'Name {oldname} As {newname}')
 
-    def _op_new(self, var: str) -> None:
-        self._stack.push(F'New {var}')
+    def _op_new(self, var: str = '') -> None:
+        self._stack.push(F'New {var}' if var else 'New')
 
     def _op_next(self) -> None:
         self._stack.push('Next')

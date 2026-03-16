@@ -814,9 +814,10 @@ class DisassemblyContext:
                 shift = 3 if self.is_64bit else 2
                 offs = (word >> shift) * 10
                 if offs + 8 <= len(self.object_table):
-                    return _get_name(
-                        self.object_table, self.identifiers, offs + 6,
-                        self.endian, self.vba_ver, self.is_64bit)
+                    hl_name = _get_word(self.object_table, offs + 6, self.endian)
+                    if hl_name != 0:
+                        return _get_id(hl_name, self.identifiers, self.vba_ver, self.is_64bit)
+                    return ''
             return F'{arg}{word:04X}'
         access_mode = ['Read', 'Write', 'Read Write']
         lock_mode = ['Read Write', 'Write', 'Read']
@@ -867,6 +868,8 @@ class DisassemblyContext:
             if offs + 8 > len(self.object_table):
                 return '', False
             hl_name = _get_word(self.object_table, offs + 6, self.endian)
+            if hl_name == 0:
+                return '', is_array
             return _get_id(hl_name, self.identifiers, self.vba_ver, self.is_64bit), is_array
         type_desc = _get_dword(self.indirect_table, offset, self.endian)
         flags = _get_word(self.indirect_table, type_desc, self.endian)
@@ -878,6 +881,8 @@ class DisassemblyContext:
         if offs + 4 > len(self.object_table):
             return '', False
         hl_name = _get_word(self.object_table, offs + 6, self.endian)
+        if hl_name == 0:
+            return '', is_array
         return _get_id(hl_name, self.identifiers, self.vba_ver, self.is_64bit), is_array
 
     def disasm_var(self, dword: int) -> str:
@@ -994,9 +999,9 @@ class DisassemblyContext:
                         if lib_word != 0 and lib_word != 0xFFFF:
                             lib_name = _get_id(lib_word, self.identifiers, self.vba_ver, self.is_64bit)
         if lib_name is None:
-            lib_name = _get_name(
-                decl, self.identifiers, decl_offset + 2,
-                self.endian, self.vba_ver, self.is_64bit)
+            lib_word = _get_word(decl, decl_offset + 2, self.endian)
+            if lib_word != 0:
+                lib_name = _get_id(lib_word, self.identifiers, self.vba_ver, self.is_64bit)
         # Read alias from binary structure at entry + 0x1C if not found via source text.
         if alias_name is None:
             alias_start = decl_offset + 0x1C
