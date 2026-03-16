@@ -1,4 +1,5 @@
 import sys
+import contextlib
 
 from . import TestUnitBase
 from .compression import KADATH1, KADATH2
@@ -133,6 +134,52 @@ class TestMetaProperties(TestUnitBase):
     def test_multiple_calls(self):
         result = bytes(L('emit FOO BAR BAZ [') | L('rex . [') | L('pick 2 ]]'))
         self.assertEqual(result, B'ORZ')
+
+    @contextlib.contextmanager
+    def _patch_powershell_yes(self):
+        def _yes():
+            return True
+        from refinery.lib import powershell
+        is_powershell = powershell.is_powershell
+        powershell.is_powershell = _yes
+        yield True
+        powershell.is_powershell = is_powershell
+
+    def test_split_closing_brackets(self):
+        with self._patch_powershell_yes():
+            from refinery.units.meta.sep import sep
+            unit_single = sep.assemble(',', ']]')
+            unit_split = sep.assemble(',', ']', ']')
+            self.assertEqual(unit_single.args.nesting, unit_split.args.nesting)
+            self.assertEqual(unit_single.args.nesting, -2)
+
+    def test_split_closing_brackets_triple(self):
+        with self._patch_powershell_yes():
+            from refinery.units.meta.sep import sep
+            unit_single = sep.assemble(',', ']]]')
+            unit_split = sep.assemble(',', ']', ']', ']')
+            self.assertEqual(unit_single.args.nesting, unit_split.args.nesting)
+            self.assertEqual(unit_single.args.nesting, -3)
+
+    def test_split_closing_brackets_squeeze(self):
+        with self._patch_powershell_yes():
+            from refinery.units.meta.sep import sep
+            unit_single = sep.assemble(',', '[]]')
+            unit_split = sep.assemble(',', '[]', ']')
+            self.assertEqual(unit_single.args.nesting, unit_split.args.nesting)
+            self.assertEqual(unit_single.args.squeeze, unit_split.args.squeeze)
+            self.assertEqual(unit_single.args.nesting, -1)
+            self.assertTrue(unit_single.args.squeeze)
+
+    def test_split_closing_brackets_squeeze_fully_split(self):
+        with self._patch_powershell_yes():
+            from refinery.units.meta.sep import sep
+            unit_single = sep.assemble(',', '[]]')
+            unit_split = sep.assemble(',', '[', ']', ']')
+            self.assertEqual(unit_single.args.nesting, unit_split.args.nesting)
+            self.assertEqual(unit_single.args.squeeze, unit_split.args.squeeze)
+            self.assertEqual(unit_single.args.nesting, -1)
+            self.assertTrue(unit_single.args.squeeze)
 
     def test_loglevel_detached_in_code_01(self):
         unit = self.ldu('ccp', 'var:x')
