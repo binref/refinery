@@ -21,9 +21,9 @@
   Do **not** use other shell commands, do **not** use output redirection, and do **not** `cd` into the directory first.
   Only execute `python` with either inline code or the full path to your script.
   Handle everything else inside the script.
+- When making commits on the user's behalf, do not include a comment about AI co-authorship.
 
-
-## Test Coverage
+# Test Coverage
 
 When you develop a new piece of code, you should also write tests.
 The goal for test coverage is 95%, but this has very important caveats:
