@@ -8,7 +8,7 @@ from refinery.units import Arg, Unit
 
 class esc(Unit):
     """
-    Encodes and decodes common ASCII escape sequences.
+    Convert from and to C-like string literals using backslash escape sequences.
     """
     _ESCAPE = {
         0x07: BR'\a',

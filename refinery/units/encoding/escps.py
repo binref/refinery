@@ -8,7 +8,7 @@ from refinery.units import Unit
 
 class escps(Unit):
     """
-    Escapes and unescapes PowerShell (PS1) strings.
+    Convert from and to PowerShell (PS1) string literals using backtick escape sequences.
     """
     UNESCAPE = {
         '`0': '\0',
