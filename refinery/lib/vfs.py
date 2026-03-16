@@ -194,9 +194,11 @@ class VirtualFileSystem:
         def hook_exists(path):
             try:
                 with self._lock:
-                    return os.path.basename(path) in self._by_name
+                    if os.path.basename(path) in self._by_name:
+                        return True
             except BaseException:
-                return self._exists(path)
+                pass
+            return self._exists(path)
 
         self._builtins_open = builtins.open
         self._os_stat = os.stat
