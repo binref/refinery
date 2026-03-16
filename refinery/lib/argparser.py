@@ -140,19 +140,27 @@ class ArgumentParserWithKeywordHooks(ArgumentParser):
         self.order = []
         args = list(args)
         keywords = self.keywords
-        if args and args[~0] and isinstance(args[~0], str):
-            nestarg = args[~0]
+        k = len(args) - 1
+        if k >= 0 and (a := args[k]) and isinstance(a, str):
+            if k >= 1 and (b := args[k - 1]) and isinstance(b, str):
+                if not b.strip('[]'):
+                    from refinery.lib.powershell import is_powershell
+                    if is_powershell():
+                        k -= 1
+                        while k > 0 and isinstance(args[k - 1], str) and args[k - 1] and not args[k - 1].strip('[]'):
+                            k -= 1
+            nestarg = ''.join(args[k:])
             nesting = len(nestarg)
             if nestarg.startswith('[]'):
                 self.set_defaults(squeeze=True)
                 nestarg = nestarg[2:]
                 nesting = nesting - 2
             if nestarg == ']' * nesting:
+                del args[k:]
                 self.set_defaults(nesting=-nesting)
-                del args[~0:]
             elif nestarg == '[' * nesting:
+                del args[k:]
                 self.set_defaults(nesting=nesting)
-                del args[~0:]
         self.set_defaults(**self.keywords)
         try:
             parsed = self.parse_args(args=args, namespace=namespace)

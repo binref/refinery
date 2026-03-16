@@ -63,10 +63,12 @@ class MODULEENTRY32(ctypes.Structure):
     ]
 
 
-def get_parent_processes():
+def get_parent_processes(__cache: list[list[str]] = []):
     """
     Returns a list of file paths that identify the images of all our parent processes.
     """
+    if __cache:
+        return __cache[0]
     try:
         k32 = ctypes.windll.kernel32
     except AttributeError:
@@ -106,45 +108,77 @@ def get_parent_processes():
         k32.CloseHandle(snap)
     pid = os.getpid()
     loop_detection = set()
+    paths: list[str] = []
     while pid in processes:
         if pid in loop_detection:
             break
         loop_detection.add(pid)
         pid, path = processes[pid]
-        yield path
+        paths.append(path)
+    __cache.append(paths)
+    return paths
 
 
-def shell_supports_binref() -> bool:
+def is_powershell(__cache: list[bool] = []) -> bool:
+    """
+    Returns whether refinery currently runs under powershell.
+    """
+    if __cache:
+        return __cache[0]
+    result = False
+    if os.name == 'nt':
+        try:
+            for path in get_parent_processes():
+                stem = Path(path.lower()).stem
+                if stem in ('cmd', 'bash'):
+                    break
+                if stem in ('powershell', 'pwsh'):
+                    result = True
+                    break
+        except NotWindows:
+            pass
+    __cache.append(result)
+    return result
+
+
+def shell_supports_binref(__cache: list[bool] = []) -> bool:
     """
     This checks whether the current shell is known to support binary refinery natively. This
     requires full binary and streaming STDIN/STDOUT. PowerShell 7.4 does have this, so does
     the command interpreter. If the operating system is not Windows, the shell is assumed to
     be compatible.
     """
-    if os.name != 'nt':
-        return True
-    try:
-        for path in get_parent_processes():
-            path = Path(path.lower())
-            for part in path.parts:
-                if not part.startswith('microsoft.powershell'):
-                    continue
-                try:
-                    version = part.split('_')[1]
-                    version = tuple(map(int, version.split('.')))
-                except Exception:
-                    continue
-                if version[:2] >= (7, 4):
-                    return True
-            if path.stem == 'cmd':
-                return True
-            if path.stem == 'powershell':
-                return False
-            if path.stem == 'pwsh':
-                return False
-    except NotWindows:
-        pass
-    return True
+    if __cache:
+        return __cache[0]
+    result = True
+    pwsh74 = False
+    if os.name == 'nt':
+        try:
+            for path in get_parent_processes():
+                path = Path(path.lower())
+                stem = path.stem
+                if stem == 'cmd':
+                    break
+                for part in path.parts:
+                    if not part.startswith('microsoft.powershell'):
+                        continue
+                    try:
+                        version = part.split('_')[1]
+                        version = tuple(map(int, version.split('.')))
+                    except Exception:
+                        continue
+                    if version[:2] >= (7, 4):
+                        pwsh74 = True
+                        break
+                if pwsh74:
+                    break
+                elif stem in ('powershell', 'pwsh'):
+                    result = False
+                    break
+        except NotWindows:
+            pass
+    __cache.append(result)
+    return result
 
 
 class Ps1Wrapper:
