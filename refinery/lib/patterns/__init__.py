@@ -304,8 +304,8 @@ _pattern_ipv6 = (
 _pattern_serrated_socket = f'(?:{_pattern_serrated_ipv4}|{_pattern_serrated_domain})(?::\\d{{2,5}})'
 _pattern_defanged_socket = f'(?:{_pattern_defanged_ipv4}|{_pattern_defanged_domain})(?::\\d{{2,5}})'
 
-_pattern_serrated_hostname = _pattern_serrated_socket + '?'
-_pattern_defanged_hostname = _pattern_defanged_socket + '?'
+_pattern_serrated_host = _pattern_serrated_socket + '?'
+_pattern_defanged_host = _pattern_defanged_socket + '?'
 
 
 def _sized_pattern_integer(lower: int = 0, upper: int = 0):
@@ -429,8 +429,8 @@ _prefix_serrated_url = R'(([a-zA-Z]{2,20}:)?\/\/)' + _part_url_credentials
 _prefix_defanged_url = R'(([a-zA-Z]{2,20}(?:\[:\]|:))?\/\/)' + _part_url_credentials
 _suffix_combined_url = R'([/?#](?:[#/=:;$!?&.,\w\+\%\-\*\'~@()](?![a-zA-Z]{2,20}://))*)?'
 
-_pattern_serrated_url = F'{_prefix_serrated_url}({_pattern_serrated_hostname}){_suffix_combined_url}'
-_pattern_defanged_url = F'{_prefix_defanged_url}({_pattern_defanged_hostname}){_suffix_combined_url}'
+_pattern_serrated_url = F'{_prefix_serrated_url}({_pattern_serrated_host}){_suffix_combined_url}'
+_pattern_defanged_url = F'{_prefix_defanged_url}({_pattern_defanged_host}){_suffix_combined_url}'
 
 _pattern_email = fR'(?:[a-zA-Z0-9_\.\+\-]{{1,256}}?)@(?:{_pattern_serrated_domain})'
 _pattern_guid = R'(?:\b|\{)[0-9A-Fa-f]{8}(?:\-[0-9A-Fa-f]{4}){3}\-[0-9A-Fa-f]{12}(?:\}|\b)'
@@ -664,7 +664,7 @@ class indicators(_PatternEnum):
     "Hexadecimal strings of length 40"
     sha256 = alphabet('[0-9A-Fa-f]', lower=64, upper=64)
     "Hexadecimal strings of length 64"
-    hostname = pattern(_pattern_serrated_hostname)
+    host = pattern(_pattern_serrated_host)
     "Any domain name or IPv4 address, optionally followed by a colon and a port number."
     socket = pattern(_pattern_serrated_socket)
     "Any domain name or IPv4 address followed by a colon and a (port) number"
@@ -699,8 +699,8 @@ class defanged(_PatternEnum):
     An enumeration of patterns for defanged indicators. Used only by the reverse
     operation of `refinery.defang`.
     """
-    hostname = pattern(_pattern_defanged_hostname)
-    "A defanged `refinery.lib.patterns.indicators.hostname`."
+    host = pattern(_pattern_defanged_host)
+    "A defanged `refinery.lib.patterns.indicators.host`."
     url = pattern(_pattern_defanged_url)
     "A defanged `refinery.lib.patterns.indicators.url`."
 
