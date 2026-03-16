@@ -12,11 +12,9 @@ class url(Unit):
     """
     Decodes and encodes URL-encoding.
 
-    The unit preserves only alphanumeric characters and the following symbols when encoding:
-
-        \\ / _ . - ~
-
-    Every other character is escaped by hex-encoding it and prefixing it with a percent symbol.
+    The unit preserves only alphanumeric characters, backslash, slash, underscore, dots, dashes,
+    and the tilde character when encoding. Every other character is escaped by hex-encoding it and
+    prefixing it with a percent symbol.
     """
 
     def __init__(

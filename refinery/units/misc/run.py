@@ -18,12 +18,12 @@ class run(Unit):
 
     Data is processed by feeding it to the standard input of a process spawned from the given
     command line, and then reading the standard output of that process as the result of the
-    operation. The main purpose of this unit is to allow using the syntax from
-    `refinery.lib.frame` with other command line tools. By default, the unit streams the output
-    from the executed command as individual outputs, but the `buffer` option can be set to buffer
-    all output of a single execution. The format string expression `{}` or `{0}` can be used as
-    one of the arguments passed to the external command to represent the incoming data. In this
-    case, the data will not be sent to the standard input device of the new process.
+    operation. The main purpose of this unit is to allow using the syntax from `refinery.lib.frame`
+    with other command line tools. By default, the unit streams the output from the executed
+    command as individual outputs, but the `buffer` option can be set to buffer all output of a
+    single execution. The format string expression `{}` or `{0}` can be used as one of the
+    arguments passed to the external command to represent the incoming data. In this case, the data
+    will not be sent to the standard input device of the new process.
     """
 
     _JOIN_TIME = 2
