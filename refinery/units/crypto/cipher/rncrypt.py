@@ -46,6 +46,7 @@ from refinery.units import Unit
 class rncrypt(Unit):
     """
     Implements encryption and decryption using the RNCryptor specification.
+
     See also: https://github.com/RNCryptor
     """
     def __init__(self, password: bytearray):
