@@ -1,8 +1,8 @@
 """
 VBA p-code disassembler for Microsoft Office documents.
 
-This module is a port of pcodedmp by Vesselin Bontchev, originally available at
-https://github.com/bontchev/pcodedmp, adapted for the Binary Refinery project.
+This module is a port of pcodedmp by Vesselin Bontchev, adapted for the Binary Refinery project.
+Since then, many bugs have been fixed and improvements made.
 
 The original work is copyright (c) Vesselin Bontchev and licensed under GPL v3. The source code
 has been modified to fit the code requirements of this project.
@@ -20,13 +20,33 @@ import codecs
 import logging
 import re
 
-from struct import unpack_from
+import struct as _struct
+
 from typing import NamedTuple
 
 from refinery.lib.ole.file import OleFile
 from refinery.lib.ole.vba import _codepage_to_codec, _find_vba_projects, decompress_stream
 
 logger = logging.getLogger(__name__)
+
+_STRUCT_WORD: dict[str, _struct.Struct] = {
+    '<': _struct.Struct('<H'),
+    '>': _struct.Struct('>H'),
+}
+_STRUCT_DWORD: dict[str, _struct.Struct] = {
+    '<': _struct.Struct('<L'),
+    '>': _struct.Struct('>L'),
+}
+
+_VAR_TYPES_LONG: tuple[str, ...] = (
+    'Var', '?', 'Int', 'Lng', 'Sng', 'Dbl', 'Cur', 'Date',
+    'Str', 'Obj', 'Err', 'Bool', 'Var',
+)
+_SPECIALS: tuple[str, ...] = ('False', 'True', 'Null', 'Empty')
+_OPTIONS: tuple[str, ...] = (
+    'Base 0', 'Base 1', 'Compare Text', 'Compare Binary',
+    'Explicit', 'Private Module',
+)
 
 
 class Opcode(NamedTuple):
@@ -588,11 +608,11 @@ DIM_TYPES: list[str] = [
 
 
 def _get_word(buffer: bytes | bytearray | memoryview, offset: int, endian: str) -> int:
-    return unpack_from(endian + 'H', buffer, offset)[0]
+    return _STRUCT_WORD[endian].unpack_from(buffer, offset)[0]
 
 
 def _get_dword(buffer: bytes | bytearray | memoryview, offset: int, endian: str) -> int:
-    return unpack_from(endian + 'L', buffer, offset)[0]
+    return _STRUCT_DWORD[endian].unpack_from(buffer, offset)[0]
 
 
 def _skip_structure(
@@ -714,8 +734,8 @@ def _get_id(
                     return 'PtrSafe'
                 if id_code > 0xE9:
                     id_code -= 1
-                if id_code >= 0xC3:
-                    id_code -= 1
+            if vba_ver >= 6 and id_code >= 0xC3:
+                id_code -= 1
             return INTERNAL_NAMES[id_code]
     except (IndexError, KeyError):
         return F'id_{orig_code:04X}'
@@ -771,6 +791,7 @@ class DisassemblyContext:
         vba_ver: int,
         is_64bit: bool,
         codec: str,
+        version: int = 0,
     ):
         self.indirect_table = indirect_table
         self.object_table = object_table
@@ -780,6 +801,7 @@ class DisassemblyContext:
         self.vba_ver = vba_ver
         self.is_64bit = is_64bit
         self.codec = codec
+        self.version = version
         self._linecont_pending = False
         self._has_pa_bit = False
 
@@ -915,6 +937,16 @@ class DisassemblyContext:
                 var_name += '()'
             if len(var_type) > 0:
                 var_name += F' ({var_type.rstrip()})'
+        else:
+            offs = 16 if self.is_64bit else 12
+            if len(self.indirect_table) >= dword + offs + 4:
+                word = _get_word(self.indirect_table, dword + offs + 2, self.endian)
+                if word == 0xFFFF:
+                    _TYPE_SUFFIXES = {2: '%', 3: '&', 4: '!', 5: '#', 6: '@', 8: '$'}
+                    type_id = self.indirect_table[dword + offs]
+                    suffix = _TYPE_SUFFIXES.get(type_id)
+                    if suffix is not None:
+                        var_name += suffix
         return var_name
 
     def disasm_arg(self, arg_offset: int) -> str | None:
@@ -949,7 +981,13 @@ class DisassemblyContext:
                 arg_name += '()'
             arg_name += ' As '
             arg_name += arg_type_name
-        elif not (arg_type & 0xFFFF0000 == 0xFFFF0000):
+        elif (arg_type & 0xFFFF0000) == 0xFFFF0000:
+            _TYPE_SUFFIXES = {2: '%', 3: '&', 4: '!', 5: '#', 6: '@', 8: '$'}
+            arg_type_id = arg_type & 0x000000FF
+            suffix = _TYPE_SUFFIXES.get(arg_type_id)
+            if suffix is not None:
+                arg_name += suffix
+        else:
             try:
                 _type_name, is_array = self.disasm_object(arg_offset + offs + 12)  # noqa: F841
             except Exception:
@@ -983,10 +1021,12 @@ class DisassemblyContext:
             alias_match = re.match(r'\s*Alias\s*"([^"]+)"', after_lib)
             if alias_match:
                 alias_name = alias_match.group(1)
-        # Strategy 2: Binary structure fallback. The alias string is at entry + 0x1C.
-        # After the alias null terminator, DWORD-align + 2 gives a lib identifier word.
+        # Strategy 2: Binary structure fallback. The alias string offset depends on version:
+        # VBA7 version 0x0097 has 4 extra bytes of padding (alias at +0x20), later versions
+        # use the standard offset (+0x1C).
+        _alias_off = 0x20 if self.version <= 0x97 else 0x1C
         if lib_name is None:
-            alias_start = decl_offset + 0x1C
+            alias_start = decl_offset + _alias_off
             if alias_start < len(decl):
                 alias_bytes_raw = bytes(decl[alias_start:])
                 null_pos = alias_bytes_raw.find(0)
@@ -1002,9 +1042,9 @@ class DisassemblyContext:
             lib_word = _get_word(decl, decl_offset + 2, self.endian)
             if lib_word != 0:
                 lib_name = _get_id(lib_word, self.identifiers, self.vba_ver, self.is_64bit)
-        # Read alias from binary structure at entry + 0x1C if not found via source text.
+        # Read alias from binary structure if not found via source text.
         if alias_name is None:
-            alias_start = decl_offset + 0x1C
+            alias_start = decl_offset + _alias_off
             if alias_start < len(decl):
                 alias_bytes_raw = bytes(decl[alias_start:])
                 null_pos = alias_bytes_raw.find(0)
@@ -1031,9 +1071,9 @@ class DisassemblyContext:
         arg_offset = _get_dword(self.indirect_table, dword + offs2 + 36, self.endian)
         ret_type = _get_dword(self.indirect_table, dword + offs2 + 40, self.endian)
         decl_offset = _get_word(self.indirect_table, dword + offs2 + 44, self.endian)
-        c_options_offset = 60 if self.is_64bit else 54
+        c_options_offset = 60 if self.is_64bit and self.version > 0x97 else 54
         c_options = self.indirect_table[dword + offs2 + c_options_offset]
-        new_flags_offset = 63 if self.is_64bit else 57
+        new_flags_offset = 63 if self.is_64bit and self.version > 0x97 else 57
         new_flags = self.indirect_table[dword + offs2 + new_flags_offset]
         has_declare = False
         if self.vba_ver > 5:
@@ -1072,6 +1112,12 @@ class DisassemblyContext:
         elif flags & 0x8000:
             func_decl += 'Property Set '
         func_decl += sub_name
+        if not has_as and (ret_type & 0xFFFF0000) == 0xFFFF0000:
+            _TYPE_SUFFIXES = {2: '%', 3: '&', 4: '!', 5: '#', 6: '@', 8: '$'}
+            ret_type_id = ret_type & 0x000000FF
+            suffix = _TYPE_SUFFIXES.get(ret_type_id)
+            if suffix is not None:
+                func_decl += suffix
         if has_declare:
             if self.is_64bit:
                 lib_name, alias_name = self._declare64(decl_offset, sub_name)
@@ -1159,15 +1205,6 @@ class DisassemblyContext:
         Disassemble one p-code line into a list of (mnemonic, [arg, ...]) tuples.
         """
         self._linecont_pending = False
-        var_types_long = [
-            'Var', '?', 'Int', 'Lng', 'Sng', 'Dbl', 'Cur', 'Date',
-            'Str', 'Obj', 'Err', 'Bool', 'Var',
-        ]
-        specials = ['False', 'True', 'Null', 'Empty']
-        options = [
-            'Base 0', 'Base 1', 'Compare Text', 'Compare Binary',
-            'Explicit', 'Private Module',
-        ]
 
         result: list[tuple[str, list[str]]] = []
         if line_length <= 0:
@@ -1185,8 +1222,8 @@ class DisassemblyContext:
             mnemonic = instruction.mnem
             parts: list[str] = []
             if mnemonic in ('Coerce', 'CoerceVar', 'DefType'):
-                if op_type < len(var_types_long):
-                    parts.append(F'({var_types_long[op_type]})')
+                if op_type < len(_VAR_TYPES_LONG):
+                    parts.append(F'({_VAR_TYPES_LONG[op_type]})')
                 elif op_type == 17:
                     parts.append('(Byte)')
                 else:
@@ -1206,14 +1243,14 @@ class DisassemblyContext:
                 if dim_type:
                     parts.append(F'({" ".join(dim_type)})')
             elif mnemonic == 'LitVarSpecial':
-                parts.append(F'({specials[op_type]})')
+                parts.append(F'({_SPECIALS[op_type]})')
             elif mnemonic in ('ArgsCall', 'ArgsMemCall', 'ArgsMemCallWith'):
                 if op_type < 16:
                     parts.append('(Call)')
                 else:
                     op_type -= 16
             elif mnemonic == 'Option':
-                parts.append(F'({options[op_type]})')
+                parts.append(F'({_OPTIONS[op_type]})')
             elif mnemonic in ('Redim', 'RedimAs'):
                 if op_type & 16:
                     parts.append('(Preserve)')
@@ -1367,7 +1404,7 @@ def _pcode_dump(
 
         ctx = DisassemblyContext(
             indirect_table, object_table, declaration_table,
-            identifiers, endian, vba_ver, is_64bit, codec)
+            identifiers, endian, vba_ver, is_64bit, codec, version)
 
         dw_length = _get_dword(module_data, offset, endian)
         offset = dw_length + _OFFSET_PCODE_LINES

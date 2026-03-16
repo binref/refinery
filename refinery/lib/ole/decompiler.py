@@ -11,6 +11,7 @@ original GPL license.
 """
 from __future__ import annotations
 
+import io
 import logging
 import math
 import re
@@ -115,7 +116,7 @@ class VBADecompiler:
         self.indent_level: int = 0
         self.indent_increase_pending: bool = False
         self.has_bos: bool = False
-        self.one_line_if: bool = False
+        self.one_line_if: int = 0
         self.unindented: int = 0
         self._dispatch_overrides: dict[str, Callable] = {}
 
@@ -509,30 +510,37 @@ class VBADecompiler:
     def _op_memaddressof(self, var: str) -> None:
         self._stack.push(F'AddressOf {self._stack.pop()}.{var}')
 
+    def _push_case(self, clause: str) -> None:
+        if self._stack.size() > 0 and self._stack.top().startswith('Case '):
+            prev = self._stack.pop()
+            self._stack.push(F'{prev}, {clause}')
+        else:
+            self._stack.push(F'Case {clause}')
+
     def _op_case(self) -> None:
-        self._stack.push(F'Case {self._stack.pop()}')
+        self._push_case(self._stack.pop())
 
     def _op_caseto(self) -> None:
         upper = self._stack.pop()
-        self._stack.push(F'Case {self._stack.pop()} To {upper}')
+        self._push_case(F'{self._stack.pop()} To {upper}')
 
     def _op_casegt(self) -> None:
-        self._stack.push(F'Case Is > {self._stack.pop()}')
+        self._push_case(F'Is > {self._stack.pop()}')
 
     def _op_caselt(self) -> None:
-        self._stack.push(F'Case Is < {self._stack.pop()}')
+        self._push_case(F'Is < {self._stack.pop()}')
 
     def _op_casege(self) -> None:
-        self._stack.push(F'Case Is >= {self._stack.pop()}')
+        self._push_case(F'Is >= {self._stack.pop()}')
 
     def _op_casele(self) -> None:
-        self._stack.push(F'Case Is <= {self._stack.pop()}')
+        self._push_case(F'Is <= {self._stack.pop()}')
 
     def _op_casene(self) -> None:
-        self._stack.push(F'Case Is <> {self._stack.pop()}')
+        self._push_case(F'Is <> {self._stack.pop()}')
 
     def _op_caseeq(self) -> None:
-        self._stack.push(F'Case Is = {self._stack.pop()}')
+        self._push_case(F'Is = {self._stack.pop()}')
 
     def _op_caseelse(self) -> None:
         self._stack.push('Case Else')
@@ -664,8 +672,8 @@ class VBADecompiler:
         self.indent_level -= 1
 
     def _op_endif(self) -> None:
-        if self.one_line_if:
-            self.one_line_if = False
+        if self.one_line_if > 0:
+            self.one_line_if -= 1
         else:
             self._stack.push('End If')
             self.indent_level -= 1
@@ -930,7 +938,7 @@ class VBADecompiler:
 
     def _op_if(self, *args: str) -> None:
         self._stack.push(F'If {self._stack.pop()} Then')
-        self.one_line_if = True
+        self.one_line_if += 1
 
     def _op_ifblock(self) -> None:
         self._stack.push(F'If {self._stack.pop()} Then')
@@ -1607,35 +1615,33 @@ class PCodeParser:
     def __init__(self):
         self._stack = VBAStack()
         self._decompiler = VBADecompiler(self._stack)
-        self._output: str = ''
+        self._output = io.StringIO()
         self._output_queue: list[tuple[str, int, bool, bool]] = []
 
     def decompile_modules(self, modules: list[PCodeModule]) -> str:
         """
         Decompile a list of PCodeModule objects into VBA source code.
         """
-        self._output = ''
+        self._output = io.StringIO()
         for module in modules:
             self._process_structured(module.lines)
-        self._output = re.sub(
+        return re.sub(
             r'(End\s(?:Function|Sub|Property|Type|Enum))\n(?=\S)',
             r'\1\n\n',
-            self._output,
+            self._output.getvalue(),
         )
-        return self._output
 
     def decompile_module(self, module: PCodeModule) -> str:
         """
         Decompile a single PCodeModule into VBA source code.
         """
-        self._output = ''
+        self._output = io.StringIO()
         self._process_structured(module.lines)
-        self._output = re.sub(
+        return re.sub(
             r'(End\s(?:Function|Sub|Property|Type|Enum))\n(?=\S)',
             r'\1\n\n',
-            self._output,
+            self._output.getvalue(),
         )
-        return self._output
 
     def _queue_line(
         self,
@@ -1654,17 +1660,19 @@ class PCodeParser:
         has_end: bool = True,
         checking_queue: bool = False,
     ) -> None:
+        _write = self._output.write
         if not line.strip():
             return
         while not checking_queue and self._output_queue:
             entry = self._output_queue.pop()
             self._add_line(*entry, checking_queue=True)
         if print_linenum:
-            self._output += F'{linenum}: '
+            _write(F'{linenum}: ')
         if not has_end:
-            self._output += line
+            _write(line)
             return
-        self._output += line + '\n'
+        _write(line)
+        _write('\n')
 
     def _process_structured(
         self,
