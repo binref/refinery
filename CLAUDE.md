@@ -12,8 +12,8 @@
 
 # Development
 
-- Always run your tests using `pytest -n auto`, the development machine has a lot of CPU cores and running the
-  tests in parallel saves a lot of time.
+- Always run your tests using `pytest -n 6`, running the tests in parallel saves a lot of time.
+  Restricting to 6 workers ensures that not too much memory is used.
 - Use the `temp` subdirectory of the project root for creating temporary scripts and files.
   When generating samples for testing, create a subfolder in `temp` with an appropriate name and place your data in there.
 
