@@ -1211,6 +1211,7 @@ class SetupHeader(InnoStruct):
                     self.Flags |= flag
             reader.byte_align()
             reader.seekset(flag_offset + 8)
+            flagsize = 0
         else:
             flagsize, _r = divmod(len(flags), 8)
             flagsize += int(bool(_r))
