@@ -10,8 +10,17 @@ class TestIfExpr(TestUnitBase):
         pl = L('emit Marry had a little lamb.') [ self.load('index % 2 == 0') | L('sep " "') ]
         self.assertEqual(pl(), B'Marry a lamb.')
 
-    def test_filter_by_size(self):
+    def test_filter_by_size_01(self):
         pl = L('emit Tim Ada Jake Elisabeth James Meredith') [ self.load('size > 3') | L('sep') ]
+        self.assertEqual(pl(), B'\n'.join([
+            B'Jake',
+            B'Elisabeth',
+            B'James',
+            B'Meredith'
+        ]))
+
+    def test_filter_by_size_02(self):
+        pl = load_pipeline('emit Tim Ada Jake Elisabeth James Meredith [| iff size -gt 3 | sep ]')
         self.assertEqual(pl(), B'\n'.join([
             B'Jake',
             B'Elisabeth',
