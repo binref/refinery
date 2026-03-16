@@ -963,6 +963,7 @@ class VBADecompiler:
 
     def _op_label(self, arg: str) -> None:
         self._stack.push(F'{arg}:')
+        self.has_bos = True
 
     def _op_let(self, *args: str) -> None:
         self._stack.push('Let')

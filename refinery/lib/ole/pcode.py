@@ -707,8 +707,6 @@ def _get_id(
                 id_code -= 4
                 if is_64bit:
                     id_code -= 3
-                if id_code > 0xBE:
-                    id_code -= 1
             return identifiers[id_code]
         else:
             if vba_ver >= 7:
@@ -783,6 +781,7 @@ class DisassemblyContext:
         self.is_64bit = is_64bit
         self.codec = codec
         self._linecont_pending = False
+        self._has_pa_bit = False
 
     def disasm_name(self, word: int, mnemonic: str, op_type: int) -> str:
         var_types = [
@@ -924,6 +923,9 @@ class DisassemblyContext:
             self.endian, self.vba_ver, self.is_64bit)
         arg_type = _get_dword(self.indirect_table, arg_offset + offs + 12, self.endian)
         arg_opts = _get_word(self.indirect_table, arg_offset + offs + 24, self.endian)
+        is_paramarray = bool(arg_opts & 0x0001)
+        if is_paramarray:
+            self._has_pa_bit = True
         if arg_opts & 0x0004:
             arg_name = F'ByVal {arg_name}'
         if arg_opts & 0x0002:
@@ -942,6 +944,15 @@ class DisassemblyContext:
                 arg_name += '()'
             arg_name += ' As '
             arg_name += arg_type_name
+        elif not (arg_type & 0xFFFF0000 == 0xFFFF0000):
+            try:
+                _type_name, is_array = self.disasm_object(arg_offset + offs + 12)  # noqa: F841
+            except Exception:
+                is_array = False
+            if is_array:
+                arg_name += '()'
+        if is_paramarray:
+            arg_name = F'ParamArray {arg_name}'
         return arg_name
 
     def _declare64(self, decl_offset: int, func_name: str) -> tuple[str, str | None]:
@@ -1084,6 +1095,16 @@ class DisassemblyContext:
             if arg_name is not None:
                 arg_list.append(arg_name)
             arg_offset = _get_dword(self.indirect_table, arg_offset + (24 if self.is_64bit else 20), self.endian)
+        if arg_list and not self._has_pa_bit and not any(a.startswith('ParamArray ') for a in arg_list):
+            last = arg_list[-1]
+            _pa_candidate = (
+                last.endswith('() As Variant')
+                or (last.endswith('()') and ' As ' not in last)
+            )
+            _pa_no_modifiers = not any(
+                last.startswith(p) for p in ('ByVal ', 'ByRef ', 'Optional '))
+            if _pa_candidate and _pa_no_modifiers:
+                arg_list[-1] = F'ParamArray {last}'
         func_decl += F'({", ".join(arg_list)})'
         if has_as:
             func_decl += ' As '
