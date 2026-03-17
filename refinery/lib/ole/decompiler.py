@@ -1030,7 +1030,26 @@ class VBADecompiler:
         epoch = datetime(1899, 12, 30)
         try:
             dt = epoch + timedelta(days=value)
-            self._stack.push(F'#{dt.strftime("%m/%d/%Y")}#')
+            has_date = int(value) != 0
+            has_time = value != int(value)
+            parts = []
+            if has_date:
+                parts.append(F'{dt.month}/{dt.day}/{dt.year}')
+            if has_time:
+                hour = dt.hour
+                minute = dt.minute
+                second = dt.second
+                ampm = 'AM' if hour < 12 else 'PM'
+                hour12 = hour % 12 or 12
+                if second:
+                    parts.append(F'{hour12}:{minute:02d}:{second:02d} {ampm}')
+                elif minute:
+                    parts.append(F'{hour12}:{minute:02d} {ampm}')
+                else:
+                    parts.append(F'{hour12} {ampm}')
+            if not parts:
+                parts.append(F'{dt.month}/{dt.day}/{dt.year}')
+            self._stack.push(F'#{" ".join(parts)}#')
         except (OverflowError, ValueError, OSError):
             self._stack.push(F'#<date:{value}>#')
 
@@ -1094,13 +1113,28 @@ class VBADecompiler:
         v = int(val, 16)
         self._stack.push(F'&O{oct(v)[2:]}')
 
+    @staticmethod
+    def _format_float(value: float) -> str:
+        text = repr(value)
+        if 'e' not in text and 'E' not in text:
+            return text
+        av = abs(value)
+        sig = text.lstrip('-').split('e')[0].replace('.', '')
+        exp = int(text.split('e')[1])
+        sig_digits = len(sig.rstrip('0')) or 1
+        dec_places = max(sig_digits - exp - 1, 0) if av < 1 else 0
+        result = F'{value:.{max(dec_places, 1)}f}'
+        if '.' in result:
+            result = result.rstrip('0').rstrip('.')
+        return result
+
     def _op_litr4(self, byte1: str, byte2: str) -> None:
         hexstr = byte2[2:] + byte1[2:]
         value = struct.unpack('!f', bytes.fromhex(hexstr))[0]
         if value == int(value) and not (math.isinf(value) or math.isnan(value)):
             self._stack.push(F'{int(value)}!')
         else:
-            self._stack.push(str(value))
+            self._stack.push(self._format_float(value))
 
     def _op_litr8(
         self, b1: str, b2: str, b3: str, b4: str
@@ -1110,7 +1144,7 @@ class VBADecompiler:
         if value == int(value) and not (math.isinf(value) or math.isnan(value)):
             self._stack.push(F'{int(value)}#')
         else:
-            self._stack.push(str(value))
+            self._stack.push(self._format_float(value))
 
     def _op_litsmalli2(self, value: str) -> None:
         self._stack.push(value)

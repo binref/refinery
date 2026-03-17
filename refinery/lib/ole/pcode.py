@@ -890,7 +890,7 @@ class DisassemblyContext:
             if offs + 8 > len(self.object_table):
                 return '', False
             hl_name = _get_word(self.object_table, offs + 6, self.endian)
-            if hl_name == 0:
+            if hl_name == 0 or (hl_name >> 1) < 0x100:
                 return '', is_array
             return _get_id(hl_name, self.identifiers, self.vba_ver, self.is_64bit), is_array
         type_desc = _get_dword(self.indirect_table, offset, self.endian)
@@ -903,7 +903,7 @@ class DisassemblyContext:
         if offs + 4 > len(self.object_table):
             return '', False
         hl_name = _get_word(self.object_table, offs + 6, self.endian)
-        if hl_name == 0:
+        if hl_name == 0 or (hl_name >> 1) < 0x100:
             return '', is_array
         return _get_id(hl_name, self.identifiers, self.vba_ver, self.is_64bit), is_array
 
@@ -929,7 +929,7 @@ class DisassemblyContext:
             var_type = ''
             if has_as and len(type_name) > 0:
                 var_type += 'As '
-            if has_new:
+            if has_new and (not has_as or len(type_name) > 0):
                 var_type += 'New '
             if has_as and len(type_name) > 0:
                 var_type += type_name
@@ -986,8 +986,9 @@ class DisassemblyContext:
                 arg_type_name, is_array = self.disasm_object(arg_offset + offs + 12)
             if is_array:
                 arg_name += '()'
-            arg_name += ' As '
-            arg_name += arg_type_name
+            if arg_type_name:
+                arg_name += ' As '
+                arg_name += arg_type_name
         elif (arg_type & 0xFFFF0000) == 0xFFFF0000:
             _TYPE_SUFFIXES = {2: '%', 3: '&', 4: '!', 5: '#', 6: '@', 8: '$'}
             arg_type_id = arg_type & 0x000000FF
@@ -1045,6 +1046,8 @@ class DisassemblyContext:
         elif vt_tag == VT_BSTR:
             if value_dw + 4 <= len(ind):
                 str_len = _get_dword(ind, value_dw, self.endian)
+                if str_len == 0:
+                    return '""'
                 if 0 < str_len < 0x10000 and value_dw + 4 + str_len <= len(ind):
                     s = bytes(ind[value_dw + 4:value_dw + 4 + str_len]).decode(self.codec, errors='replace')
                     return F'"{s}"'
