@@ -947,6 +947,13 @@ class DisassemblyContext:
                     suffix = _TYPE_SUFFIXES.get(type_id)
                     if suffix is not None:
                         var_name += suffix
+                else:
+                    try:
+                        _, is_array = self.disasm_object(dword + offs)
+                    except Exception:
+                        is_array = False
+                    if is_array:
+                        var_name += '()'
         return var_name
 
     def disasm_arg(self, arg_offset: int) -> str | None:
@@ -994,9 +1001,58 @@ class DisassemblyContext:
                 is_array = False
             if is_array:
                 arg_name += '()'
+        if arg_opts & 0x0200:
+            default_tag_off = arg_offset + offs + 28
+            default_val_off = arg_offset + offs + 32
+            ind = self.indirect_table
+            if default_tag_off + 2 <= len(ind) and default_val_off + 4 <= len(ind):
+                vt_tag = _get_word(ind, default_tag_off, self.endian)
+                value_dw = _get_dword(ind, default_val_off, self.endian)
+                default_str = self._format_default_value(vt_tag, value_dw)
+                if default_str is not None:
+                    arg_name += F' = {default_str}'
         if is_paramarray:
             arg_name = F'ParamArray {arg_name}'
         return arg_name
+
+    def _format_default_value(self, vt_tag: int, value_dw: int) -> str | None:
+        VT_I2 = 2
+        VT_I4 = 3
+        VT_R4 = 4
+        VT_R8 = 5
+        VT_CY = 6
+        VT_BSTR = 8
+        VT_BOOL = 11
+        VT_UI1 = 17
+        ind = self.indirect_table
+        if vt_tag == 0:
+            return None
+        elif vt_tag == VT_I2:
+            val = value_dw & 0xFFFF
+            return str(val - 0x10000 if val > 0x7FFF else val)
+        elif vt_tag == VT_I4:
+            return str(value_dw - 0x100000000 if value_dw > 0x7FFFFFFF else value_dw)
+        elif vt_tag == VT_R4:
+            val = _struct.unpack('<f', _struct.pack('<I', value_dw))[0]
+            return str(int(val)) if val == int(val) and abs(val) < 1e15 else str(val)
+        elif vt_tag == VT_R8:
+            if value_dw + 8 <= len(ind):
+                val = _struct.unpack('<d', bytes(ind[value_dw:value_dw + 8]))[0]
+                return str(int(val)) if val == int(val) and abs(val) < 1e15 else str(val)
+        elif vt_tag == VT_CY:
+            val = value_dw / 10000
+            return str(int(val)) if val == int(val) else str(val)
+        elif vt_tag == VT_BSTR:
+            if value_dw + 4 <= len(ind):
+                str_len = _get_dword(ind, value_dw, self.endian)
+                if 0 < str_len < 0x10000 and value_dw + 4 + str_len <= len(ind):
+                    s = bytes(ind[value_dw + 4:value_dw + 4 + str_len]).decode(self.codec, errors='replace')
+                    return F'"{s}"'
+        elif vt_tag == VT_BOOL:
+            return 'True' if (value_dw & 0xFFFF) != 0 else 'False'
+        elif vt_tag == VT_UI1:
+            return str(value_dw & 0xFF)
+        return None
 
     def _declare64(self, decl_offset: int, func_name: str) -> tuple[str, str | None]:
         """
@@ -1025,6 +1081,14 @@ class DisassemblyContext:
         # VBA7 version 0x0097 has 4 extra bytes of padding (alias at +0x20), later versions
         # use the standard offset (+0x1C).
         _alias_off = 0x20 if self.version <= 0x97 else 0x1C
+        if lib_name is None and self.version > 0x97 and decl_offset >= 2:
+            # For VBA7 versions after 0x97 the lib identifier word for each entry is stored
+            # in the 2 bytes immediately preceding the entry header, placed there as trailing
+            # data of the previous entry. This does not apply to the very first entry
+            # (decl_offset == 0) or to versions <= 0x97 where the lib word sits at header +2.
+            lib_word = _get_word(decl, decl_offset - 2, self.endian)
+            if lib_word != 0 and lib_word != 0xFFFF:
+                lib_name = _get_id(lib_word, self.identifiers, self.vba_ver, self.is_64bit)
         if lib_name is None:
             alias_start = decl_offset + _alias_off
             if alias_start < len(decl):
