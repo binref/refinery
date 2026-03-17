@@ -93,6 +93,7 @@ def load_pe(
     to a config object and then invokes the LIEF parser. Everything is parsed by default. For speed
     over completeness, see `refinery.lib.lief.load_pe_fast`.
     """
+    _init()
     import lief.PE as PE
     with io.BytesIO(data) as stream:
         cfg = PE.ParserConfig()
@@ -132,6 +133,7 @@ def load_macho(data: buf):
     """
     Load a MachO file using LIEF.
     """
+    _init()
     import lief.MachO as MachO
     with io.BytesIO(data) as stream:
         config = MachO.ParserConfig()
@@ -147,6 +149,7 @@ def load_elf(data: buf):
     """
     Load an ELF file using LIEF.
     """
+    _init()
     import lief.ELF as ELF
     with io.BytesIO(data) as stream:
         config = ELF.ParserConfig()
