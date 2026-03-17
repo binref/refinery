@@ -1,9 +1,0 @@
-{
-  "name": "refinery",
-  "version": "0.0.1",
-  "author": {
-    "name": "binref"
-  },
-  "repository": "https://github.com/binref/refinery",
-  "license": "BSD-3-Clause"
-}
