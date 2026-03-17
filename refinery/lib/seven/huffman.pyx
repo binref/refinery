@@ -61,7 +61,7 @@ cdef class HuffmanDecoder:
         self._lens = array.array('I', bytes(lens_size * 4))
         self._symbols = array.array('I', bytes(symbols_size * 4))
 
-    def build(self, lens):
+    def build(self, uint8_t[::1] lens):
         cdef int num_bits_max = self.num_bits_max
         cdef int num_symbols = self.num_symbols
         cdef int num_table_bits = self.num_table_bits
@@ -152,7 +152,7 @@ cdef class HuffmanDecoder7b:
         self.num_symbols = num_symbols
         memset(self._lens, 0, 128)
 
-    def build(self, lens):
+    def build(self, uint8_t[::1] lens):
         cdef int num_symbols = self.num_symbols
         cdef int num_bits_max = 7
         cdef int num_pair_len_bits = 3
