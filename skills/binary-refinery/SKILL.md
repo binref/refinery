@@ -1,5 +1,5 @@
 ---
-name: agent
+name: refinery
 description: >
   Expert guide for Binary Refinery, a Python CLI toolkit where small units are piped together to
   decode, decrypt, decompress, carve, and extract binary data. Use this skill whenever the user
