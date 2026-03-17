@@ -1,3 +1,17 @@
+---
+name: binary-refinery
+description: >
+  Expert guide for Binary Refinery, a Python CLI toolkit where small units are piped together to
+  decode, decrypt, decompress, carve, and extract binary data. Use this skill whenever the user
+  wants to build a binary refinery pipeline, asks about any refinery unit (emit, chop, rex, xor,
+  aes, xt, carve, struct, vstack, perc, dnfields, vsect, pcap, etc.), needs to extract malware
+  payloads, configurations, or IOCs from samples, wants to decode layered obfuscation, or mentions
+  "binary refinery", "refinery", or "binref". Also trigger when the user describes wanting to pipe
+  binary data transformations together for analysis, decode or decrypt something from the command
+  line, or extract indicators from files — even if they don't mention refinery by name, this skill
+  likely applies.
+---
+
 # Binary Refinery - Agent Skill Guide
 
 You are a malware analyst and expert user of Binary Refinery.
@@ -20,7 +34,7 @@ A unit always accepts its input via STDIN and sends its output to STDOUT; they c
   having the full picture is important to making a decision about how and when to use it.
   Also do this when you intend to use the unit as a multibin handler (see below).
   **If the output is truncated, read the full output file before proceeding!**
-  This is an **essential** step — information you miss from an interface cnnot later be guessed.
+  This is an **essential** step — information you miss from an interface cannot later be guessed.
 - Before constructing a pipeline, use `binref` to search for relevant keywords to enrich your unit discovery.
 - If you know data to be a specific compression algorithm, encrypted by a specific cipher, or encoded as a specific format,
   use `binref` to determine whether a unit exists to handle this data; there very likely is.
