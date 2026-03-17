@@ -6,7 +6,7 @@
   "plugins": [
     {
       "name": "refinery",
-      "source": ".",
+      "source": "./",
       "description": "Binary Refinery skill for binary data transformations & conversions. Vast library of decoding, decompression, unpacking, and decryption utilities. Useful for malware analysis or other reverse engineering tasks."
     }
   ]
