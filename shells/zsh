@@ -8,7 +8,7 @@ function alias-noglob {
 
 python <<EOF | alias-noglob
 from importlib.metadata import entry_points
-for ep in entry_points('console_scripts'):
-    if ep.module_name.startswith('refinery'):
+for ep in entry_points(group='console_scripts'):
+    if ep.module.startswith('refinery'):
         print(ep.name)
 EOF
