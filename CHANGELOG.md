@@ -5,6 +5,22 @@
 > If a release contains only bugfix, it is marked as a 'bugfix release'.
 > Otherwise, the changelog entries highlight only new or changed functionality.
 
+## Version 0.10.3
+- The `xtsf` unit was extended with support for SetupFactory 10.
+- The `hostname` regex pattern was renamed to `host`.
+- The `py7zr` dependency was eliminated and refinery's 7zip unpacker now supports all archives.
+- The `png` unit was added for extracting PNG data chunks.
+- The `xlmdeobf` backend code was inlined as a third party module that ships with refinery,
+  while swapping out its recursive dependencies for what we already have:
+  This further trims refinery's dependency tree.
+- A `--brief` (`-b`) mode was added to the `binref` command.
+  This is primarily intended as a reference document to get an overview of all units.
+- This command together with a newly authored `SKILL.md` file are the first attempts to teach
+  language model based AI agents to use binary refinery.
+- Compatibility with PowerShell was increased:
+  Previously, complex framing syntax at the end of a unit would have to be quoted in PowerShell to work,
+  this is no longer the case.
+
 ## Version 0.10.2
 - Adds the `xtsf` unit for extracting SetupFactory binaries.
 - Adds the `cbor` unit for parsing the CBOR format.
