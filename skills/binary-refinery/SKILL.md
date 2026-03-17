@@ -1,5 +1,5 @@
 ---
-name: binary-refinery
+name: agent
 description: >
   Expert guide for Binary Refinery, a Python CLI toolkit where small units are piped together to
   decode, decrypt, decompress, carve, and extract binary data. Use this skill whenever the user
@@ -20,11 +20,11 @@ Binary Refinery is a collection of command-line tools for transforming binary da
 Each tool is called a **unit** and reads from stdin and writes to stdout.
 Units are combined into **pipelines** using the `|` pipe operator.
 A unit always accepts its input via STDIN and sends its output to STDOUT; they cannot be called by passing a file name as argument.
+All Binary Refinery units exist as shell commands; use them.
 
 ## Rules of Engagement
 
-- Do not use the `run` unit.
-- Do not write Python scripts or other programs, do not use other shell commands; use only binary refinery.
+- Try not to write Python scripts or other programs, refrain from using other shell commands; prioritize binary refinery units.
 - Any data extraction task can be achieved by a binary refinery pipeline.
 - **IMPORTANT.** At the beginning of each session, run `binref -b` to get a complete overview of all available units,
   **If the output is truncated, read the full output file before proceeding!**
