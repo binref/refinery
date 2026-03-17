@@ -19,8 +19,6 @@ jobs:
     name: check forward compatibility
     continue-on-error: true
     runs-on: ${{ inputs.system }}
-    env:
-      MALSHARE_API: ${{ secrets.MALSHARE_API }}
     steps:
       - name: Checkout Main Repository
         uses: actions/checkout@v5

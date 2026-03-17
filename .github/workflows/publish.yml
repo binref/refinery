@@ -8,7 +8,6 @@ jobs:
   test:
     runs-on: ${{ matrix.os }}
     env:
-      MALSHARE_API: ${{ secrets.MALSHARE_API }}
       REFINERY_STOREPATH: ${{ github.workspace }}/refinery-test-data
     strategy:
       fail-fast: false
