@@ -16,10 +16,12 @@
   Restricting to 6 workers ensures that not too much memory is used.
 - Use the `temp` subdirectory of the project root for creating temporary scripts and files.
   When generating samples for testing, create a subfolder in `temp` with an appropriate name and place your data in there.
-- **Important.** When testing or debugging, use only Python. Either run `python -c [code]` or `python [path]`
+- **Important.** The following rule is **essential**:
+  When running commands, use only Python. Either run `python -c [code]` or `python [path]`
   where `[path]` is the full path to your script.
-  Do **not** use other shell commands, do **not** use output redirection, and do **not** `cd` into the directory first.
-  Only execute `python` with either inline code or the full path to your script.
+  Do **not** run other shell commands, do **not** use output redirection, and do **not** use compound commands
+  where, e.g. you first run `cd` to change the working directory.
+  Only execute a single `python` command with either inline code or the full path to your script.
   Handle everything else inside the script.
 - When making commits on the user's behalf, do not include a comment about AI co-authorship.
 
