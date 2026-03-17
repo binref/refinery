@@ -5,6 +5,9 @@
 > If a release contains only bugfix, it is marked as a 'bugfix release'.
 > Otherwise, the changelog entries highlight only new or changed functionality.
 
+## Version 0.10.4
+This is a test release for enabling trusted publishing with PyPi.
+
 ## Version 0.10.3
 - The `xtsf` unit was extended with support for SetupFactory 10.
 - The `hostname` regex pattern was renamed to `host`.
