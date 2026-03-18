@@ -121,6 +121,18 @@ pip install -U git+git://github.com/binref/refinery.git
 ```
 Finally, if you are using [REMnux][remnux-main], you can use their [refinery docker container][remnux].
 
+## Claude Skill Installation
+
+If you want to teach your local malware analysis [Claude][] to use binary refinery:
+```
+/plugin marketplace add binref/refinery
+/plugin install refinery@binref
+```
+Then invoke your skill as follows:
+```
+/refinery:agent
+```
+
 ## Shell Support
 
 The following is a summary of how well various shell environments are currently supported:
@@ -138,12 +150,12 @@ If you are using a different shell and have some feedback to share, please [let 
 ## Heavyweight Dependencies
 
 There are some units that have rather heavy-weight dependencies.
-For example, [pcap][] is the only unit that requires a packet capture file parsing library.
+For example, [stego][] is a unit that requires the image parsing library `Pillow`.
 These libraries are not installed by default to keep the installation time for refinery at a reasonable level for first-time users.
 The corresponding units will tell you what to do when their dependency is missing:
 ```
-$ emit archive.7z | xt7z -l
-(13:37:00) failure in xt7z: dependency py7zr is missing; run pip install py7zr
+$ emit config.png | stego RG
+(13:37:00) failure in stego: dependency Pillow is missing; run pip install Pillow
 ```
 You can then install these missing dependencies manually.
 If you do not want to be bothered by missing dependencies and don't mind a long refinery installation, you can install the package as follows:
@@ -379,12 +391,13 @@ emit "Once upon a time, at the foot of a great mountain ..." ^
 [dump]: https://binref.github.io/#refinery.dump
 [emit]: https://binref.github.io/#refinery.emit
 [stego]: https://binref.github.io/#refinery.stego
-[pcap]: https://binref.github.io/#refinery.pcap
 [hex]: https://binref.github.io/#refinery.hex
 [zl]: https://binref.github.io/#refinery.zl
 [b64]: https://binref.github.io/#refinery.b64
 [carve]: https://binref.github.io/#refinery.carve
 [pack]: https://binref.github.io/#refinery.pack
+
+[Claude]: https://code.claude.com/docs/en/overview
 
 [jupyter]: https://jupyter.org/install
 [jupyter-vscode]: https://code.visualstudio.com/docs/datascience/jupyter-notebooks
