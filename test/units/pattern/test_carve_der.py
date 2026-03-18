@@ -9,7 +9,7 @@ class TestCarveDER(TestUnitBase):
         der = bytes.fromhex('3006020101020102')
         data = b'\x00\x00' + der + b'\x00\x00'
         results = data | unit | []
-        self.assertTrue(len(results) >= 1)
+        self.assertListEqual(results, [der])
 
     def test_no_der_found(self):
         unit = self.load()

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from refinery.lib.asn1.reader import ASN1Reader
 from refinery.units import Unit
 
 
@@ -12,34 +13,28 @@ class carve_der(Unit):
     ASN1 SEQUENCE. It will only consider the next 10KB of data at this offset, but it
     nevertheless remains a poor heuristic.
     """
-    @Unit.Requires('pyasn1', ['default', 'extended'])
-    def _pyasn1parsers():
-        from pyasn1.codec.der.decoder import decode
-        from pyasn1.codec.der.encoder import encode
-        return encode, decode
-
     def process(self, data: bytearray):
         cursor = 0
-        encode, decode = self._pyasn1parsers
+        mv = memoryview(data)
         while True:
             try:
                 pos = data.index(0x30, cursor)
             except Exception:
                 break
             else:
-                cursor += 1
+                cursor = pos + 1
             if pos + 1 < len(data) and data[pos + 1] == 0:
                 continue
+            chunk = mv[pos:pos + 10_000]
             try:
-                sequence = decode(bytes(data[pos:pos + 10_000]))
+                reader = ASN1Reader(chunk, bigendian=True)
+                result = reader.read_tlv()
             except Exception:
                 continue
-            if not (der := sequence[0]):
-                self.log_info(F'0x{pos:08X}: parser returned nothing')
+            if not isinstance(result, list) or len(result) < 2:
+                self.log_info(F'0x{pos:08X}: not a valid DER sequence')
                 continue
-            if len(der) < 2:
-                self.log_info(F'0x{pos:08X}: parser returned empty sequence')
-                continue
-            der = encode(der)
-            cursor = pos + len(der)
+            consumed = reader.tell()
+            der = bytes(chunk[:consumed])
+            cursor = pos + consumed
             yield self.labelled(der, offset=pos)
