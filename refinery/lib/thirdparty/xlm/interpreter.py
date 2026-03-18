@@ -21,8 +21,8 @@ import random
 import re
 import time
 
-from .model import Cell, Boundsheet, EvalResult, EvalStatus, XlApplicationInternational
-from .parser import Token, Tree, ParseError, XLMParser
+from .model import Boundsheet, Cell, EvalResult, EvalStatus, XlApplicationInternational
+from .parser import ParseError, Token, Tree, XLMParser
 
 
 def _strtobool(val):

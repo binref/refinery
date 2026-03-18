@@ -141,7 +141,7 @@ def dependency_accessor(name: str, dist: Collection[str] = (), info: str | None 
     excerpt from `refinery.units.compression.brotli.brotli`:
 
         class brotli(Unit):
-            @Unit.Requires('brotlipy', ['all'])
+            @Unit.Requires('brotli', ['all'])
             def _brotli():
                 import brotli
                 return brotli
