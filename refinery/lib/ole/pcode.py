@@ -19,7 +19,6 @@ from __future__ import annotations
 import codecs
 import logging
 import re
-
 import struct as _struct
 
 from typing import NamedTuple
@@ -769,10 +768,14 @@ def _disasm_type(
     dword: int,
 ) -> str:
     type_id = indirect_table[dword + 6]
-    if type_id < len(DIM_TYPES):
-        return DIM_TYPES[type_id]
-    else:
-        return F'type_{dword:08X}'
+    type_name = _get_type_name(type_id)
+    return type_name or F'type_{dword:08X}'
+
+
+_VALID_INTERNAL_TYPE_NAMES = frozenset({
+    'Boolean',
+    'Name',
+})
 
 
 class DisassemblyContext:
@@ -792,6 +795,8 @@ class DisassemblyContext:
         is_64bit: bool,
         codec: str,
         version: int = 0,
+        module_data: bytes | bytearray | memoryview | None = None,
+        external_types: dict[int, str] | None = None,
     ):
         self.indirect_table = indirect_table
         self.object_table = object_table
@@ -802,6 +807,8 @@ class DisassemblyContext:
         self.is_64bit = is_64bit
         self.codec = codec
         self.version = version
+        self.module_data = module_data
+        self.external_types: dict[int, str] = external_types or {}
         self._linecont_pending = False
         self._has_pa_bit = False
 
@@ -837,9 +844,12 @@ class DisassemblyContext:
                 offs = (word >> shift) * 10
                 if offs + 8 <= len(self.object_table):
                     hl_name = _get_word(self.object_table, offs + 6, self.endian)
-                    if hl_name != 0:
-                        return _get_id(hl_name, self.identifiers, self.vba_ver, self.is_64bit)
-                    return ''
+                    if hl_name == 0:
+                        return self.external_types.get(offs, '')
+                    name = _get_id(hl_name, self.identifiers, self.vba_ver, self.is_64bit)
+                    if (hl_name >> 1) < 0x100 and name not in _VALID_INTERNAL_TYPE_NAMES:
+                        return self.external_types.get(offs, '')
+                    return name
             return F'{arg}{word:04X}'
         access_mode = ['Read', 'Write', 'Read Write']
         lock_mode = ['Read Write', 'Write', 'Read']
@@ -874,7 +884,31 @@ class DisassemblyContext:
         options = _get_word(self.indirect_table, dword + 18, self.endian)
         if (options & 1) == 0:
             object_name = F'(Private) {object_name}'
+        else:
+            object_name = F'(Public) {object_name}'
         return object_name
+
+    def _resolve_udt_name(self, type_desc: int) -> str:
+        """Resolve a user-defined type (type_id=0x1D) from the object table.
+
+        The type descriptor at `type_desc` stores the object table reference word at
+        offset +8 (instead of the usual +2 for non-builtin types).
+        """
+        if type_desc + 10 > len(self.indirect_table):
+            return ''
+        word = _get_word(self.indirect_table, type_desc + 8, self.endian)
+        if self.is_64bit:
+            offs = (word >> 3) * 10
+            required = offs + 8
+        else:
+            offs = (word >> 2) * 10
+            required = offs + 4
+        if required > len(self.object_table):
+            return ''
+        hl_name = _get_word(self.object_table, offs + 6, self.endian)
+        if hl_name == 0:
+            return self.external_types.get(offs, '')
+        return _get_id(hl_name, self.identifiers, self.vba_ver, self.is_64bit)
 
     def disasm_object(self, offset: int) -> tuple[str, bool]:
         if self.is_64bit:
@@ -884,28 +918,48 @@ class DisassemblyContext:
             flags = _get_word(self.indirect_table, type_desc, self.endian)
             is_array = bool(flags & 0x0800)
             if flags & 0x02:
+                type_id = self.indirect_table[type_desc + 6]
+                if type_id == 0x1D:
+                    name = self._resolve_udt_name(type_desc)
+                    if name:
+                        return name, is_array
                 return _disasm_type(self.indirect_table, type_desc), is_array
             word = _get_word(self.indirect_table, type_desc + 2, self.endian)
             offs = (word >> 3) * 10
             if offs + 8 > len(self.object_table):
                 return '', False
             hl_name = _get_word(self.object_table, offs + 6, self.endian)
-            if hl_name == 0 or (hl_name >> 1) < 0x100:
-                return '', is_array
-            return _get_id(hl_name, self.identifiers, self.vba_ver, self.is_64bit), is_array
+            if hl_name == 0:
+                ext = self.external_types.get(offs)
+                return ext or '', is_array
+            name = _get_id(hl_name, self.identifiers, self.vba_ver, self.is_64bit)
+            if (hl_name >> 1) < 0x100 and name not in _VALID_INTERNAL_TYPE_NAMES:
+                ext = self.external_types.get(offs)
+                return ext or '', is_array
+            return name, is_array
         type_desc = _get_dword(self.indirect_table, offset, self.endian)
         flags = _get_word(self.indirect_table, type_desc, self.endian)
         is_array = bool(flags & 0x0800)
         if flags & 0x02:
+            type_id = self.indirect_table[type_desc + 6]
+            if type_id == 0x1D:
+                name = self._resolve_udt_name(type_desc)
+                if name:
+                    return name, is_array
             return _disasm_type(self.indirect_table, type_desc), is_array
         word = _get_word(self.indirect_table, type_desc + 2, self.endian)
         offs = (word >> 2) * 10
         if offs + 4 > len(self.object_table):
             return '', False
         hl_name = _get_word(self.object_table, offs + 6, self.endian)
-        if hl_name == 0 or (hl_name >> 1) < 0x100:
-            return '', is_array
-        return _get_id(hl_name, self.identifiers, self.vba_ver, self.is_64bit), is_array
+        if hl_name == 0:
+            ext = self.external_types.get(offs)
+            return ext or '', is_array
+        name = _get_id(hl_name, self.identifiers, self.vba_ver, self.is_64bit)
+        if (hl_name >> 1) < 0x100 and name not in _VALID_INTERNAL_TYPE_NAMES:
+            ext = self.external_types.get(offs)
+            return ext or '', is_array
+        return name, is_array
 
     def disasm_var(self, dword: int) -> str:
         b_flag1 = self.indirect_table[dword]
@@ -944,14 +998,24 @@ class DisassemblyContext:
                 if word == 0xFFFF:
                     _TYPE_SUFFIXES = {2: '%', 3: '&', 4: '!', 5: '#', 6: '@', 8: '$'}
                     type_id = self.indirect_table[dword + offs]
+                    if (type_id & 0x40) and (b_flag1 & 0x10):
+                        type_id &= ~0x40
                     suffix = _TYPE_SUFFIXES.get(type_id)
                     if suffix is not None:
                         var_name += suffix
                 else:
+                    _NAME_SUFFIXES = {
+                        'Integer': '%', 'Long': '&', 'Single': '!',
+                        'Double': '#', 'Currency': '@', 'String': '$',
+                    }
                     try:
-                        _, is_array = self.disasm_object(dword + offs)
+                        type_name, is_array = self.disasm_object(dword + offs)
                     except Exception:
+                        type_name = ''
                         is_array = False
+                    suffix = _NAME_SUFFIXES.get(type_name)
+                    if suffix is not None:
+                        var_name += suffix
                     if is_array:
                         var_name += '()'
         return var_name
@@ -982,6 +1046,8 @@ class DisassemblyContext:
             if (arg_type & 0xFFFF0000) == 0xFFFF0000:
                 arg_type_id = arg_type & 0x000000FF
                 arg_type_name = _get_type_name(arg_type_id)
+            elif self.is_64bit and arg_type < len(DIM_TYPES) and DIM_TYPES[arg_type]:
+                arg_type_name = _get_type_name(arg_type)
             else:
                 arg_type_name, is_array = self.disasm_object(arg_offset + offs + 12)
             if is_array:
@@ -993,6 +1059,11 @@ class DisassemblyContext:
             _TYPE_SUFFIXES = {2: '%', 3: '&', 4: '!', 5: '#', 6: '@', 8: '$'}
             arg_type_id = arg_type & 0x000000FF
             suffix = _TYPE_SUFFIXES.get(arg_type_id)
+            if suffix is not None:
+                arg_name += suffix
+        elif self.is_64bit and arg_type < len(DIM_TYPES) and DIM_TYPES[arg_type]:
+            _TYPE_SUFFIXES = {2: '%', 3: '&', 4: '!', 5: '#', 6: '@', 8: '$'}
+            suffix = _TYPE_SUFFIXES.get(arg_type)
             if suffix is not None:
                 arg_name += suffix
         else:
@@ -1056,6 +1127,68 @@ class DisassemblyContext:
         elif vt_tag == VT_UI1:
             return str(value_dw & 0xFF)
         return None
+
+    def _patch_64bit_defaults(self, arg_list: list[str], func_name: str) -> None:
+        """
+        For 64-bit modules, default values for Optional parameters are not stored in the
+        indirect table binary structure. Instead they appear encoded in the module data
+        using the byte sequence ``\\xfa\\x00\\xb9\\x00`` followed by a little-endian word
+        length and the string data. Multiple consecutive defaults for the same function
+        are chained with additional ``\\xb9\\x00`` markers. This method finds the default
+        value block nearest to the function name in the module data and patches the
+        arg_list entries accordingly.
+        """
+        md = self.module_data
+        if md is None:
+            return
+        raw = bytes(md)
+        need = sum(1 for a in arg_list if 'Optional ' in a and '=' not in a)
+        if need == 0:
+            return
+        # Collect all \xfa\x00\xb9\x00 blocks with their consecutive default strings
+        blocks: list[tuple[int, list[str]]] = []
+        pos = 0
+        while True:
+            idx = raw.find(b'\xfa\x00\xb9\x00', pos)
+            if idx < 0:
+                break
+            defaults: list[str] = []
+            cur = idx + 2
+            while cur + 4 <= len(raw) and raw[cur:cur + 2] == b'\xb9\x00':
+                str_len = _get_word(raw, cur + 2, '<')
+                if str_len <= 0 or str_len > 0x1000 or cur + 4 + str_len > len(raw):
+                    break
+                str_data = raw[cur + 4:cur + 4 + str_len]
+                if not all(32 <= b < 127 or b in (9, 10, 13) for b in str_data):
+                    break
+                defaults.append(str_data.decode(self.codec, errors='replace'))
+                cur = cur + 4 + str_len
+            if defaults:
+                blocks.append((idx, defaults))
+            pos = idx + 4
+        if not blocks:
+            return
+        # Find the function name in the raw module data to determine proximity
+        func_bytes = func_name.encode(self.codec, errors='replace')
+        func_pos = raw.find(func_bytes)
+        if func_pos >= 0:
+            # Pick the block closest to (and after) the function name
+            best = min(blocks, key=lambda b: abs(b[0] - func_pos))
+            defaults = best[1]
+        elif len(blocks) == 1:
+            defaults = blocks[0][1]
+        else:
+            return
+        # Assign defaults to Optional args without defaults, in reverse block order
+        defaults = list(reversed(defaults))
+        di = 0
+        for i, arg in enumerate(arg_list):
+            if 'Optional ' not in arg or '=' in arg:
+                continue
+            if di >= len(defaults):
+                break
+            arg_list[i] = F'{arg} = "{defaults[di]}"'
+            di += 1
 
     def _declare64(self, decl_offset: int, func_name: str) -> tuple[str, str | None]:
         """
@@ -1213,6 +1346,8 @@ class DisassemblyContext:
             if arg_name is not None:
                 arg_list.append(arg_name)
             arg_offset = _get_dword(self.indirect_table, arg_offset + (24 if self.is_64bit else 20), self.endian)
+        if self.is_64bit and any('Optional ' in a and '=' not in a for a in arg_list):
+            self._patch_64bit_defaults(arg_list, sub_name)
         if arg_list and not self._has_pa_bit and not any(a.startswith('ParamArray ') for a in arg_list):
             last = arg_list[-1]
             _pa_candidate = (
@@ -1225,7 +1360,6 @@ class DisassemblyContext:
                 arg_list[-1] = F'ParamArray {last}'
         func_decl += F'({", ".join(arg_list)})'
         if has_as:
-            func_decl += ' As '
             type_name = ''
             is_array = False
             if (ret_type & 0xFFFF0000) == 0xFFFF0000:
@@ -1233,9 +1367,11 @@ class DisassemblyContext:
                 type_name = _get_type_name(type_id)
             else:
                 type_name, is_array = self.disasm_object(dword + offs2 + 40)
-            func_decl += type_name
-            if is_array:
-                func_decl += '()'
+            if type_name:
+                func_decl += ' As '
+                func_decl += type_name
+                if is_array:
+                    func_decl += '()'
         func_decl += ')'
         return func_decl
 
@@ -1287,6 +1423,8 @@ class DisassemblyContext:
                 return result
             instruction = OPCODES[translated]
             mnemonic = instruction.mnem
+            if op_type == 8 and mnemonic in ('FnMid', 'FnMidB', 'FnCurDir', 'FnError', 'Mid', 'MidB'):
+                mnemonic += '$'
             parts: list[str] = []
             if mnemonic in ('Coerce', 'CoerceVar', 'DefType'):
                 if op_type < len(_VAR_TYPES_LONG):
@@ -1347,7 +1485,13 @@ class DisassemblyContext:
                         arg == 'type_'
                         and len(self.indirect_table) >= dword + 7
                     ):
-                        the_type = _disasm_type(self.indirect_table, dword)
+                        type_id = self.indirect_table[dword + 6]
+                        if type_id == 0x1D:
+                            the_type = self._resolve_udt_name(dword)
+                        else:
+                            the_type = ''
+                        if not the_type:
+                            the_type = _disasm_type(self.indirect_table, dword)
                         parts.append(F'(As {the_type})')
                     elif (
                         arg == 'var_'
@@ -1397,6 +1541,89 @@ _OFFSET_PCODE_LINES = 0x003C
 _PCODE_MAGIC = 0xCAFE
 
 
+def _parse_external_type_table(
+    module_data: bytes | bytearray | memoryview,
+    object_table: bytes | bytearray | memoryview,
+    ot_start_in_module: int,
+    endian: str,
+    identifiers: list[str],
+    vba_ver: int,
+    is_64bit: bool,
+) -> dict[int, str]:
+    """Parse the external type table that follows the object table in module_data.
+
+    For each external OT entry (hl_name == 0 or small internal name), the table
+    stores a record with id_codes for the library name and type name. The structure is:
+        +0: FFFF (separator)
+        +2: 0101 (flags)
+        +4: DWORD size of payload
+        +8: payload containing one or more 8-byte type pairs:
+            0200 <lib_id> <type_id> 0000
+    A single record may contain multiple type pairs packed in its payload.
+    """
+    result: dict[int, str] = {}
+    ot_len = len(object_table)
+    if ot_len == 0:
+        return result
+
+    external_ot_offsets: list[int] = []
+    extra_ot_offsets: list[int] = []
+    for ot_idx in range(ot_len // 10):
+        ot_offs = ot_idx * 10
+        hl_name = _get_word(object_table, ot_offs + 6, endian)
+        if hl_name == 0:
+            external_ot_offsets.append(ot_offs)
+        elif (hl_name >> 1) < 0x100:
+            try:
+                name = _get_id(hl_name, identifiers, vba_ver, is_64bit)
+            except Exception:
+                continue
+            if name not in _VALID_INTERNAL_TYPE_NAMES:
+                extra_ot_offsets.append(ot_offs)
+    external_ot_offsets.extend(extra_ot_offsets)
+
+    if not external_ot_offsets:
+        return result
+
+    pos = ot_start_in_module + ot_len
+    ot_iter = iter(external_ot_offsets)
+    try:
+        while pos + 8 <= len(module_data):
+            marker = _get_word(module_data, pos, endian)
+            if marker != 0xFFFF:
+                break
+            pos += 2
+            _flags = _get_word(module_data, pos, endian)
+            pos += 2
+            payload_size = _get_dword(module_data, pos, endian)
+            pos += 4
+            if payload_size < 6 or pos + payload_size > len(module_data):
+                break
+            payload_end = pos + payload_size
+            while pos + 8 <= payload_end:
+                _prefix = _get_word(module_data, pos, endian)
+                lib_id = _get_word(module_data, pos + 2, endian)
+                type_id = _get_word(module_data, pos + 4, endian)
+                pos += 8
+                ot_offs = next(ot_iter, None)
+                if ot_offs is None:
+                    break
+                try:
+                    lib_name = _get_id(lib_id, identifiers, vba_ver, is_64bit)
+                except Exception:
+                    continue
+                try:
+                    type_name = _get_id(type_id, identifiers, vba_ver, is_64bit)
+                except Exception:
+                    continue
+                if lib_name and type_name:
+                    result[ot_offs] = F'{lib_name}.{type_name}'
+            pos = payload_end
+    except Exception:
+        pass
+    return result
+
+
 def _pcode_dump(
     module_data: bytes | bytearray | memoryview,
     vba_project_data: bytes | bytearray | memoryview,
@@ -1442,6 +1669,7 @@ def _pcode_dump(
             dw_length2 += 4
             object_table = module_data[
                 dw_length2:dw_length2 + dw_length]
+            ot_module_start = dw_length2
             offset = _OFFSET_VBA6_64_LINE_START
         else:
             vba_ver = 5
@@ -1467,11 +1695,17 @@ def _pcode_dump(
             dw_length = _get_dword(module_data, offs, endian)
             offs += 4
             object_table = module_data[offs:offs + dw_length]
+            ot_module_start = offs
             offset += 77
 
+        external_types = _parse_external_type_table(
+            module_data, object_table, ot_module_start,
+            endian, identifiers, vba_ver, is_64bit,
+        )
         ctx = DisassemblyContext(
             indirect_table, object_table, declaration_table,
-            identifiers, endian, vba_ver, is_64bit, codec, version)
+            identifiers, endian, vba_ver, is_64bit, codec, version,
+            module_data=module_data, external_types=external_types)
 
         dw_length = _get_dword(module_data, offset, endian)
         offset = dw_length + _OFFSET_PCODE_LINES
