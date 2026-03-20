@@ -8,7 +8,7 @@ from libc.stdint cimport uint8_t, uint32_t, uint64_t
 from libc.stdlib cimport free, malloc, realloc
 from libc.string cimport memcpy
 
-from refinery.lib.fast._pkware_tables import _COPY_LENGTHS, _COPY_OFFSETS, _LITERALS
+from refinery.lib.fast.pkware_tables import _COPY_LENGTHS, _COPY_OFFSETS, _LITERALS
 
 # Maximum code lengths per table; peek tables are 2^N entries each.
 DEF LIT_BITS = 13
