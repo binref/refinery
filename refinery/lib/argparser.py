@@ -65,6 +65,22 @@ class LineWrapRawTextHelpFormatter(RawDescriptionHelpFormatter):
         return switches
 
 
+class HelpAction(Action):
+    """
+    A custom help action that calls the parser's custom print_help method during
+    parsing, before required arguments are validated. The `generics` parameter
+    controls whether the full help (including generic options) is displayed.
+    """
+
+    def __init__(self, option_strings, dest, default=0, generics=False, **kwargs):
+        super().__init__(option_strings=option_strings, dest=dest, default=default, nargs=0, **kwargs)
+        self.generics = generics
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        parser.print_help(generics=self.generics)
+        parser.exit(0)
+
+
 class ArgumentParserWithKeywordHooks(ArgumentParser):
     """
     The refinery argument parser remembers the order of arguments in the property `order`.

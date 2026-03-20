@@ -174,7 +174,7 @@ from typing import (
 )
 
 from refinery.lib.annotations import evaluate
-from refinery.lib.argparser import ArgparseError, ArgumentParserWithKeywordHooks
+from refinery.lib.argparser import ArgparseError, ArgumentParserWithKeywordHooks, HelpAction
 from refinery.lib.dependencies import dependency_accessor
 from refinery.lib.environment import Logger, LogLevel, environment, logger
 from refinery.lib.exceptions import (
@@ -2193,11 +2193,11 @@ class Unit(UnitBase, abstract=True):
         """
         base = argp.add_argument_group('generic options')
 
-        base.set_defaults(reverse=False, squeeze=False, iff=0, help=0)
+        base.set_defaults(reverse=False, squeeze=False, iff=0)
         help = base.add_mutually_exclusive_group()
-        help.add_argument('-h', '--help', action='store_const', dest='help', const=2,
-            help='Show this help message and exit. Specify twice to also show generic options.')
-        help.add_argument('-?', action='store_const', dest='help', const=1, help=SUPPRESS)
+        help.add_argument('-h', '--help', action=HelpAction, generics=True,
+            help='Show this help message and exit.')
+        help.add_argument('-?', action=HelpAction, generics=False, help=SUPPRESS)
 
         base.add_argument('-L', '--lenient', action='count', default=0,
             help='Increase the leniency, allowing partial results and ignoring more errors.')
@@ -2283,9 +2283,6 @@ class Unit(UnitBase, abstract=True):
         """
         argp = cls.argparser(**keywords)
         args = argp.parse_args_with_nesting(_args)
-        if (_h := args.help) > 0:
-            argp.print_help(generics=(_h > 1))
-            sys.exit(0)
 
         try:
             unit = autoinvoke(cls, args.__dict__)
