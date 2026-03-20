@@ -18,6 +18,52 @@ from refinery.lib.tools import documentation, get_terminal_size, normalize_to_di
 from refinery.units import ArgparseError, Unit
 
 
+_AGENT_DETAIL_LIST = [
+    'autoxor',
+    'base',
+    'chop',
+    'carve',
+    'decompress',
+    'dnds',
+    'dnfields',
+    'dnhdr',
+    'dnmr',
+    'dnrc',
+    'dnstr',
+    'dump',
+    'ef',
+    'emit',
+    'esc',
+    'group',
+    'map',
+    'mscdk',
+    'mspdb',
+    'pack',
+    'peek',
+    'perc',
+    'pestrip',
+    'pf',
+    'reduce',
+    'rep',
+    'resub',
+    'rex',
+    'snip',
+    'struct',
+    'vbamc',
+    'vbapc',
+    'vsect',
+    'vsnip',
+    'vstack',
+    'xlxtr',
+    'xt',
+    'xtp',
+    'qb',
+    'qf',
+    'qp',
+    'wshenc',
+]
+
+
 def highlight(text: str, expression: re.Pattern[str], color: str):
     """
     Uses ANSI color codes to highlight matches of the given regular `expression`
@@ -86,6 +132,8 @@ def explorer(keyword_color: str = '91', unit_color: str = '93'):
     argp = argparse.ArgumentParser(
         formatter_class=RawDescriptionHelpFormatter, description=headline)
 
+    mode = argp.add_argument_group('output formatting (choose only one)').add_mutually_exclusive_group()
+
     argp.add_argument(
         'keywords',
         metavar='keyword',
@@ -108,11 +156,6 @@ def explorer(keyword_color: str = '91', unit_color: str = '93'):
         help='Only show the currently installed version of binary refinery and exit.'
     )
     argp.add_argument(
-        '-a', '--all',
-        action='store_true',
-        help='Search full help output (not just unit descriptions).'
-    )
-    argp.add_argument(
         '-c', '--case-sensitive',
         action='store_true',
         help='Make the search case sensitive.'
@@ -133,10 +176,22 @@ def explorer(keyword_color: str = '91', unit_color: str = '93'):
         action='store_false',
         help='Do not allow wildcards in search string'
     )
-    argp.add_argument(
-        '-b', '--brief',
+    mode.add_argument(
+        '-a', '--all',
         action='store_true',
+        help='Search full help output (not just unit descriptions).'
+    )
+    mode.add_argument(
+        '-b', '--brief',
+        action='count',
+        default=0,
         help='List units with a one-line description only.'
+    )
+    mode.add_argument(
+        '-g', '--agent',
+        action='store_true',
+        dest='glossary',
+        help='Produce a unit overview for AI agents.'
     )
 
     args = argp.parse_args()
@@ -164,32 +219,53 @@ def explorer(keyword_color: str = '91', unit_color: str = '93'):
 
     keywords = [pattern(k) for k in args.keywords]
 
-    if args.brief:
-        entries = []
+    if (brief := args.brief) or args.glossary:
+        E = refinery.units.Entry
+        entries = {}
+        ciphers = {}
+        hashers = {}
+        blockop = {}
+
         for unit in get_all_entry_points():
             name = unit.name
             if not isinstance(unit, type):
                 continue
             if not issubclass(unit, Unit):
                 continue
-            if not issubclass(unit, refinery.units.Entry):
+            if not issubclass(unit, E):
                 continue
-            if unit is refinery.units.Entry:
+            if unit is E:
                 continue
             doc = documentation(unit)
             if not doc:
                 continue
             if name.startswith('deob-'):
                 continue
+            if name in ('p1', 'p2', 'p3', 'csb', 'csd', 'd2p'):
+                continue
             first_line = doc.split('\n\n', 1)[0].replace('\n', ' ').strip()
             if keywords:
                 searchable = F'{name} {first_line}'.lower()
                 if not args.quantifier(k.search(searchable) for k in keywords):
                     continue
-            entries.append((name, first_line))
-        if entries:
-            pad = max(len(name) for name, _ in entries) + 1
-            for name, info in entries:
+            for base in unit.mro():
+                if base.__name__ == 'CipherUnit':
+                    ciphers[name] = first_line
+                    break
+                if base.__name__ == 'HashUnit':
+                    hashers[name] = first_line
+                    break
+                if base.__name__ == 'ArithmeticUnit':
+                    blockop[name] = first_line
+                    break
+            entries[name] = first_line
+        if not entries:
+            print('No matching unit was found.')
+        elif brief > 1:
+            print(', '.join(entries))
+        elif brief > 0:
+            pad = max(len(name) for name in entries) + 1
+            for name, info in entries.items():
                 sep = ': '
                 gap = ' ' * (pad + len(sep))
                 info = '\n'.join(textwrap.wrap(info, width - pad, subsequent_indent=gap))
@@ -197,7 +273,22 @@ def explorer(keyword_color: str = '91', unit_color: str = '93'):
                     info = highlight(info, kw, keyword_color)
                 print(F'{name:>{pad}}{sep}{info}')
         else:
-            print('No matching unit was found.')
+            print('The following is a list of all refinery units:')
+            print(', '.join(entries))
+            print('\nThese units perform atomic operations on bytes, words, or by otherwise dividing the input:')
+            print(', '.join(blockop))
+            print('\nHere are the brief descriptions of some units:')
+            pad = max(len(name) for name in _AGENT_DETAIL_LIST) + 1
+            for name in _AGENT_DETAIL_LIST:
+                info = entries.pop(name)
+                sep = ': '
+                gap = ' ' * (pad + len(sep))
+                info = '\n'.join(textwrap.wrap(info, width - pad, subsequent_indent=gap))
+                for kw in keywords:
+                    info = highlight(info, kw, keyword_color)
+                print(F'{name:>{pad}}{sep}{info}')
+            print('\nUse the binref tool to look up what a unit does or to find units relevant to a task.'
+                ' Unit names are often abbreviations - always search by concept, not just by name.')
         return
 
     for unit in get_all_entry_points():

@@ -89,12 +89,17 @@ class RabbitCipher:
 
 class rabbit(StreamCipherUnit):
     """
-    RABBIT encryption and decryption. A high-speed stream cipher with a 128-bit key, selected as an
-    eSTREAM portfolio cipher for software.
+    RABBIT encryption and decryption.
+
+    A high-speed stream cipher with a 128-bit key, selected as an eSTREAM portfolio cipher for
+    software.
     """
     key_size = {16}
 
-    def __init__(self, key, discard=0, stateful=False, iv: Param[buf, Arg('-i', '--iv', help='Optional initialization vector.')] = B''):
+    def __init__(
+        self, key, discard=0, stateful=False,
+        iv: Param[buf, Arg('-i', '--iv', help='Optional initialization vector.')] = B''
+    ):
         super().__init__(key=key, iv=iv, stateful=stateful, discard=discard)
 
     def keystream(self) -> Iterable[int]:

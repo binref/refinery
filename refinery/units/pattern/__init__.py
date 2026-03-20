@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 
 from refinery.lib.patterns import formats, indicators
 from refinery.lib.types import INF, Callable, Iterable, Param, bounds, buf
+from refinery.lib.meta import STRING_FORMAT_HELP
 from refinery.units import Arg, Unit
 
 if TYPE_CHECKING:
@@ -320,12 +321,9 @@ class SingleRegexUnit(RegexUnit, abstract=True):
 class SingleRegexTransformUnit(SingleRegexUnit, abstract=True):
     """
     Besides the syntax `{k}` to insert the `k`-th match group, the unit supports processing the
-    contents of match groups with arbitrary refinery units and other multibin handlers. To do so,
-    use the following syntax:
-
-        {match-group:handlers}
-
-    where `handlers` is an optional multibin suffix that is used to post-process the binary data
-    from the match. For example, `{2:hex:zl:b64}` means: Take the second match group, hex-decode
-    it, decompress it using zl, and finally decode it using base64.
+    contents of match groups with arbitrary refinery units and other multibin handlers. %s
     """
+
+
+if __d := SingleRegexTransformUnit.__doc__:
+    SingleRegexTransformUnit.__doc__ = __d % STRING_FORMAT_HELP

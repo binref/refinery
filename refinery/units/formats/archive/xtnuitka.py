@@ -9,7 +9,7 @@ from refinery.units.formats import PathExtractorUnit, UnpackResult
 
 class xtnuitka(PathExtractorUnit):
     """
-    Extracts files packed by Nuitka using the --onefile option.
+    Extract files packed by Nuitka using the --onefile option.
     """
     _MAGIC = B'KA'
 

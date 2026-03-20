@@ -48,7 +48,7 @@ class QueueUnit(Unit, abstract=True):
 
 class qf(QueueUnit):
     """
-    Short for "queue front": Insert new chunks at the beginning of the current frame.
+    Insert new chunks at the beginning of the current frame.
     """
     def filter(self, chunks: Iterable[Chunk]):
         yield from self._queue(chunks, True)
@@ -56,7 +56,7 @@ class qf(QueueUnit):
 
 class qb(QueueUnit):
     """
-    Short for "queue back": Insert new chunks at the end of the current frame.
+    Insert new chunks at the end of the current frame.
     """
     def filter(self, chunks: Iterable[Chunk]):
         yield from self._queue(chunks, False)

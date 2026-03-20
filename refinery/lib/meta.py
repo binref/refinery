@@ -114,6 +114,7 @@ from __future__ import annotations
 import abc
 import codecs
 import contextlib
+import inspect
 import itertools
 import os
 import re
@@ -143,9 +144,9 @@ if TYPE_CHECKING:
 
 class CustomStringRepresentation(abc.ABC):
     """
-    This abstract class defines an interface for wrapper classes used in `refinery.lib.meta.LazyMetaOracleFactory`.
-    These classes have to implement a `str` and `repr` typecast that can be used for the conversion part of a
-    format string expression.
+    This abstract class defines an interface for wrapper classes used in
+    `refinery.lib.meta.LazyMetaOracleFactory`. These classes have to implement a `str` and `repr`
+    typecast that can be used for the conversion part of a format string expression.
     """
 
     @abc.abstractmethod
@@ -418,6 +419,29 @@ def _derivation(name, costly: bool = False, wrap: type = ByteStringWrapper) -> C
     return decorator
 
 
+STRING_FORMAT_HELP = inspect.cleandoc(
+    '''
+    The format definitions use the following syntax:
+
+        {field[!modifier]:handlers}
+
+    The `field` can specify an extracted meta variable, or the positional index of an extracted
+    value. The optional multibin suffix `handlers` is used to post-process the value of this field.
+    For example, `{2:hex:zl:b64}` means: Take the second match group, hex-decode it, decompress it
+    using zl, and finally decode it using base64. The optional modifier can be one of these:
+
+    - `!r`: Computes the Python `repr()` of the field before processing it.
+    - `!s`: Field is a UTF-8 string literal, not a variable.
+    - `!a`: Field is a latin1 string literal.
+    - `!u`: Field is a UTF-16LE string literal.
+    - `!h`: Field is a hex-encoded literal (shortcut for `!s:h`).
+    - `!q`: Field is a URL-encoded literal (shortcut for `!s:q`).
+    - `!n`: Field is an escape-sequence literal (shortcut for `!s:n`).
+    - `!z`: Field evaluates to integer N; returns N zero bytes.
+    '''
+)
+
+
 class LazyMetaOracle(metaclass=_LazyMetaMeta):
     """
     A dictionary that can be queried lazily for all potential options of the common meta variable
@@ -664,24 +688,9 @@ class LazyMetaOracle(metaclass=_LazyMetaMeta):
         escaped : bool = False,
         lenient : bool = False,
     ) -> bytearray:
-        """
+        F"""
         Formats a string using Python-like string formatting syntax and always returns bytes.
-        Format fields use the syntax `{field!format:suffix}`:
-
-        - **field**: A Python expression evaluated against meta variables.
-        - **!format** (optional): One of `r`, `s`, `a`, `u`, `h`, `q`, `n`, `z`.
-        - **:suffix** (optional): A multibin pipeline applied to the seed value.
-
-        Modifier semantics:
-
-        - `!r`: Takes `repr()` of the resolved value.
-        - `!s`: Field is a UTF-8 string literal, not a variable.
-        - `!a`: Field is a latin1 string literal.
-        - `!u`: Field is a UTF-16LE string literal.
-        - `!h`: Field is a hex-encoded literal (shortcut for `!s:h`).
-        - `!q`: Field is a URL-encoded literal (shortcut for `!s:q`).
-        - `!n`: Field is an escape-sequence literal (shortcut for `!s:n`).
-        - `!z`: Field evaluates to integer N; returns N zero bytes.
+        {STRING_FORMAT_HELP}
         """
         from refinery.lib.argformats import (
             Chunk,

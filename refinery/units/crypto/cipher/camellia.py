@@ -219,6 +219,8 @@ class Camellia(BlockCipher):
 
 class camellia(StandardBlockCipherUnit, cipher=BlockCipherFactory(Camellia)):
     """
-    Camellia encryption and decryption. A symmetric block cipher with 128-bit blocks and
-    128/192/256-bit keys, approved by ISO/IEC and used in TLS.
+    Camellia encryption and decryption.
+
+    A symmetric block cipher with 128-bit blocks and 128/192/256-bit keys, approved by ISO/IEC
+    and used in TLS.
     """

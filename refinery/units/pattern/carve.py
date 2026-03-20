@@ -12,9 +12,9 @@ _FORMATS = ', '.join(p.display for p in formats)
 
 class carve(PatternExtractor):
     """
-    Extracts data in particular formats from the input. This includes encoding formats like Base16
-    (Hex), Base64 (b64), Base85 (b85), but also string literals (str), printable strings, arrays,
-    alphanumeric sequences, uu-encoded data, hexdumps, and others.
+    Extracts and optionally decodes data in named formats from the input: Base16 (hex), Base64
+    (b64), Base85 (b85), but also string literals (str), arrays of integer literals (intarray),
+    and others.
     """
     def __init__(
         self, format: Param[str, Arg.String(metavar='format',

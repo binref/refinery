@@ -11,7 +11,7 @@ from refinery.units import Arg, RefineryPartialResult, Unit
 class lznt1(Unit):
     """
     LZNT1 compression and decompression. This compression algorithm is expected by the Win32 API
-    routine `RtlDecompressBuffer`, for example.
+    routine `RtlDecompressBuffer`.
     """
 
     def _decompress_chunk(self, chunk):

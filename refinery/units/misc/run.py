@@ -16,6 +16,9 @@ class run(Unit):
     """
     Turns any other shell command into a (frame-compatible) refinery unit.
 
+    Using this unit is only required when you require framing features (variables or multi-chunk
+    processing) for running an external program.
+
     Data is processed by feeding it to the standard input of a process spawned from the given
     command line, and then reading the standard output of that process as the result of the
     operation. The main purpose of this unit is to allow using the syntax from `refinery.lib.frame`

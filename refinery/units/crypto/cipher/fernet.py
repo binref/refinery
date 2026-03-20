@@ -13,8 +13,10 @@ from refinery.units.encoding.b64 import b64
 
 class fernet(Unit):
     """
-    Decrypt Fernet messages. Fernet is a symmetric authenticated encryption scheme from the Python
-    cryptography library, using AES-128-CBC with HMAC-SHA256.
+    Decrypt Fernet messages.
+
+    Fernet is a symmetric authenticated encryption scheme from the Python cryptography library,
+    using AES-128-CBC with HMAC-SHA256.
     """
     def __init__(self, key: Param[buf, Arg(help='A fernet key, either in base64 or raw binary.')]):
         super().__init__(key=key)

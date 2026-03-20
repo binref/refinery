@@ -7,14 +7,16 @@ from refinery.lib.types import Param
 from refinery.units import Arg, Chunk, Unit
 
 
-class min_(Unit):
+class min(Unit):
     """
-    Picks the minimum of all elements in the current `refinery.lib.frame`.
+    Picks the minimum of all chunks in the current `refinery.lib.frame` with respect to its content
+    or a meta variable.
     """
 
     def __init__(
         self,
-        key: Param[str, Arg.String('key', help='A meta variable expression to sort by instead of sorting the content.')] = None,
+        key: Param[str | None, Arg.String('key',
+            help='A meta variable expression to sort by instead of sorting the content.')] = None,
     ):
         super().__init__(key=key)
 

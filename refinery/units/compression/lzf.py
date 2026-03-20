@@ -36,7 +36,7 @@ class LZFHeader(Struct):
 
 class lzf(Unit):
     """
-    This unit implements LZF compression and decompression.
+    LZF compression and decompression.
     """
 
     def __init__(self, fast: Param[bool, Arg.Switch('-x', help='Enable fast compression mode.')] = False):

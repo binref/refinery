@@ -5,7 +5,7 @@ import re
 import string
 
 from refinery.lib.argformats import ParserError, PythonExpression, numseq
-from refinery.lib.meta import SizeInt, check_variable_name, metavars
+from refinery.lib.meta import SizeInt, check_variable_name, metavars, STRING_FORMAT_HELP
 from refinery.lib.structures import StreamDetour, StructReader
 from refinery.lib.types import Param
 from refinery.units import Arg, Chunk, Unit
@@ -23,10 +23,12 @@ class struct(Unit):
     Parse structured binary data into meta variables using a parsing language based on the Python
     struct format.
 
-    The structure format is specified in extended Python struct format, and all remaining
-    arguments to this unit are the names of the variables that receive the values from this
-    struct. The extended struct format supports all field types supported by Python, as well
-    as the following:
+    This unit uses two separate semantics based on format strings: One for parsing the input, and
+    another one for parsing the output.
+
+    (1) The input parsing format works as follows: A struct definition can include bare Python
+    struct parser letters like L for long integer or B for bytes, but also the following additional
+    format characters:
 
     - `a` for null-terminated ASCII strings,
     - `u` to read encoded, null-terminated UTF16 strings,
@@ -36,40 +38,34 @@ class struct(Unit):
 
     For example, the string `LLxxHaa` will read two unsigned 32bit integers, then skip two bytes,
     then read one unsigned 16bit integer, then two null-terminated ASCII strings. The unit defaults
-    to using native byte order with no alignment. The `spec` parameter may additionally contain
-    format expressions of the following form:
+    to using native byte order with no alignment.
+
+    To extract fields from the struct definition under a name, format specifications are inserted
+    into the struct definitions that look like this:
 
         {name[!alignment]:format}
 
     The `alignment` parameter is optional. It must be an expression that evaluates to an integer
-    value. The current data pointer is aligned to a multiple of this value before reading the field.
-    The `format` can either be an integer expression specifying a number of bytes to read, or any
-    format string. If `name` is specified for an extracted field, its value is made available as a
-    meta variable under the given name. For example, the expression `LLxxH{foo:a}{bar:a}` would be
+    value. If it is specified, the current data pointer is aligned to a multiple of this value
+    before reading the field. The `format` can either be an integer expression specifying a number
+    of bytes to read, or any of the aforementioned format strings. The extracted data is then
+    stored in the meta variable with the given name. For example, `LLxxH{foo:a}{bar:a}` would be
     parsed in the same way as the previous example, but the two ASCII strings would also be stored
     in meta variables under the names `foo` and `bar`, respectively. The `format` string of a named
     field is itself parsed as a foramt string expression, where all the previously parsed fields
     are already available. For example, `I{:{}}` reads a single 32-bit integer length prefix and
     then reads as many bytes as that prefix specifies.
 
-    A second format string expression is used to specify the output format. For example, the format
-    string `LLxxH{foo:a}{bar:a}` together with the output format `{foo}/{bar}` would parse data as
-    before, but the output body would be the concatnation of the field `foo`, a forward slash, and
-    the field `bar`. Variables used in the output expression are not included as meta variables. As
-    format fields in the output expression, one can also use `{1}`, `{2}` or `{-1}` to access
-    extracted fields by index. The value `{0}` represents the entire chunk of structured data. By
-    default, the output format `{%s}` is used, which represents either the last byte string field
-    that was extracted, or the entire chunk of structured data if none of the fields were extracted.
+    (2) Conversely, the standard refinery string formatting is used to specify the output. %s
 
-    Reverse `refinery.lib.argformats.multibin` expressions can be used to post-process the fields
-    included in any output format. For example, `{F:b64:zl}` will be the base64-decoded and inflate-
-    decompressed contents of the data that was read as field `F`.
-
-    Finally, it is possible to specify a byte alignment by using the syntax `{field!T:a:b:c}` where
-    the letter `T` is either a single digit specifying the alignment, or a single letter variable
-    that holds the byte alignment value in the current metadata. It is also possible to specify the
-    alignment as `0` which instructs the parser to only peek the contents of this field, i.e. the
-    read pointer is not advanced after reading it.
+    For example, the struct definition `LLxxH{foo:a}{bar:a}` with the output format `{foo}/{bar}`
+    would parse data as before, but the output body would be the concatnation of the field `foo`,
+    a forward slash, and the field `bar`. Variables used in the output expression are not included
+    as meta variables. As format fields in the output expression, one can also use `{1}`, `{2}` or
+    `{-1}` to access extracted fields by index. The value `{0}` represents the entire chunk of
+    structured data. By default, the output format `{%s}` is used, which represents either the last
+    byte string field that was extracted, or the entire chunk of structured data if none of the
+    fields were extracted.
     """
 
     def __init__(
@@ -271,4 +267,4 @@ class struct(Unit):
 
 
 if __d := struct.__doc__:
-    struct.__doc__ = __d % _REST_MARKER
+    struct.__doc__ = __d % (STRING_FORMAT_HELP, _REST_MARKER)

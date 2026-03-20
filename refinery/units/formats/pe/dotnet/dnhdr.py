@@ -9,8 +9,7 @@ from refinery.units.formats import JSONEncoderUnit
 
 class dnhdr(JSONEncoderUnit):
     """
-    Expects data that has been formatted with the `BinaryFormatter` class. The
-    output is a representation of the deserialized data in JSON format.
+    Parse header information of a .NET binary into JSON.
     """
     def __init__(
         self,
