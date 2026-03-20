@@ -351,6 +351,8 @@ class UnaryOperation(ArithmeticUnit, abstract=True):
 
 class BinaryOperation(ArithmeticUnit, abstract=True):
     def __init__(self, *argument, bigendian=False, blocksize=1):
+        if not argument:
+            raise ValueError('a binary operation requires at least one argument')
         super().__init__(*argument, bigendian=bigendian, blocksize=blocksize)
 
 
