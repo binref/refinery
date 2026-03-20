@@ -192,6 +192,7 @@ class VBADecompiler:
         self.has_bos: bool = False
         self.one_line_if: int = 0
         self.unindented: int = 0
+        self.has_structural_prefix: bool = False
         self._dispatch_overrides: dict[str, Callable] = {}
         self._dispatch_overrides['FnCurDir$'] = lambda: self._stack.push('CurDir$')
         self._dispatch_overrides['FnError$'] = lambda: self._stack.push('Error$')
@@ -745,17 +746,20 @@ class VBADecompiler:
         self._stack.push('Else')
         self.indent_level -= 1
         self.indent_increase_pending = True
+        self.has_structural_prefix = True
 
     def _op_elseifblock(self) -> None:
         self._stack.push(F'ElseIf {self._stack.pop()} Then')
         self.indent_level -= 1
         self.indent_increase_pending = True
+        self.has_structural_prefix = True
 
     def _op_elseiftypeblock(self, type_name: str) -> None:
         obj = self._stack.pop()
         self._stack.push(F'ElseIf TypeOf {obj} Is {type_name} Then')
         self.indent_level -= 1
         self.indent_increase_pending = True
+        self.has_structural_prefix = True
 
     def _op_end(self) -> None:
         self._stack.push('End')
@@ -1755,11 +1759,13 @@ class VBADecompiler:
         self._stack.push('#Else')
         self.indent_level -= 1
         self.indent_increase_pending = True
+        self.has_structural_prefix = True
 
     def _op_lbelseif(self) -> None:
         self._stack.push(F'#ElseIf {self._stack.pop()} Then')
         self.indent_level -= 1
         self.indent_increase_pending = True
+        self.has_structural_prefix = True
 
     def _op_lbendif(self) -> None:
         self._stack.push('#End If')
@@ -1918,6 +1924,7 @@ class PCodeParser:
                 continue
             try:
                 self._stack.clear()
+                dc.has_structural_prefix = False
                 bos_segments: list[list[str]] = []
                 for mnemonic, op_args in pcode_line.opcodes:
                     if mnemonic == 'BoS' and self._stack.size() > 0:
@@ -1953,9 +1960,19 @@ class PCodeParser:
                     dc.has_bos = False
                 else:
                     indent = dc.indent_level * '  '
-                    self._add_line(
-                        F'{indent}{self._stack.top()}',
-                        linenum, print_linenum)
+                    if dc.has_structural_prefix and self._stack.size() > 1:
+                        items = self._stack.drain()
+                        for item in items:
+                            self._add_line(
+                                F'{indent}{item}',
+                                linenum, print_linenum)
+                            if dc.indent_increase_pending:
+                                dc.apply_pending_indent()
+                                indent = dc.indent_level * '  '
+                    else:
+                        self._add_line(
+                            F'{indent}{self._stack.top()}',
+                            linenum, print_linenum)
 
             except PCodeDecompilerError as e:
                 self._add_line(
