@@ -148,7 +148,7 @@ import os
 import sys
 
 from abc import ABCMeta
-from argparse import ONE_OR_MORE, OPTIONAL, REMAINDER, ZERO_OR_MORE, ArgumentTypeError, Namespace
+from argparse import ONE_OR_MORE, OPTIONAL, REMAINDER, ZERO_OR_MORE, SUPPRESS, ArgumentTypeError, Namespace
 from collections import OrderedDict
 from enum import Enum
 from functools import partial, wraps
@@ -404,8 +404,7 @@ class Arg(Argument):
 
         try:
             help_string: str = self.kwargs['help']
-            self.kwargs.update(
-                help=help_string.format_map(formatting()))
+            self.kwargs.update(help=help_string.format_map(formatting()))
         except Exception:
             pass
 
@@ -2194,8 +2193,12 @@ class Unit(UnitBase, abstract=True):
         """
         base = argp.add_argument_group('generic options')
 
-        base.set_defaults(reverse=False, squeeze=False, iff=0)
-        base.add_argument('-h', '--help', action='help', help='Show this help message and exit.')
+        base.set_defaults(reverse=False, squeeze=False, iff=0, help=0)
+        help = base.add_mutually_exclusive_group()
+        help.add_argument('-h', '--help', action='store_const', dest='help', const=2,
+            help='Show this help message and exit. Specify twice to also show generic options.')
+        help.add_argument('-?', action='store_const', dest='help', const=1, help=SUPPRESS)
+
         base.add_argument('-L', '--lenient', action='count', default=0,
             help='Increase the leniency, allowing partial results and ignoring more errors.')
         base.add_argument('-Q', '--quiet', action='store_true', help='Disables all log output.')
@@ -2280,6 +2283,9 @@ class Unit(UnitBase, abstract=True):
         """
         argp = cls.argparser(**keywords)
         args = argp.parse_args_with_nesting(_args)
+        if (_h := args.help) > 0:
+            argp.print_help(generics=(_h > 1))
+            sys.exit(0)
 
         try:
             unit = autoinvoke(cls, args.__dict__)

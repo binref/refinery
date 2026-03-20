@@ -105,9 +105,24 @@ class ArgumentParserWithKeywordHooks(ArgumentParser):
         self.keywords = keywords
         self.order = []
 
-    def print_help(self, file: SupportsWrite[str] | None = None) -> None:
+    def print_help(self, file: SupportsWrite[str] | None = None, generics: bool = False) -> None:
         out = file or sys.stderr
-        super().print_help(file=out)
+        if generics:
+            super().print_help(file=out)
+        else:
+            formatter = self._get_formatter()
+            formatter.add_usage(self.usage, self._actions, self._mutually_exclusive_groups)
+            formatter.add_text(self.description)
+            for ag in self._action_groups:
+                if (title := ag.title) and title.startswith('generic'):
+                    continue
+                formatter.start_section(title)
+                formatter.add_text(ag.description)
+                formatter.add_arguments(ag._group_actions)
+                formatter.end_section()
+            formatter.add_text(self.epilog)
+            text = formatter.format_help()
+            self._print_message(text, out)
         if file is None:
             sys.stdout.close()
 
@@ -171,10 +186,7 @@ class ArgumentParserWithKeywordHooks(ArgumentParser):
         for name in keywords:
             param = getattr(parsed, name, None)
             if param != keywords[name]:
-                self.error(
-                    F'parameter "{name}" duplicated with conflicting '
-                    F'values {param} and {keywords[name]}'
-                )
+                self.error(F'parameter "{name}" duplicated with conflicting values {param} and {keywords[name]}')
         for name in vars(parsed):
             if name not in self.order:
                 self.order.append(name)
