@@ -1866,8 +1866,8 @@ def _get_identifiers(
             if id_length:
                 ident = codecs.decode(
                     vba_project_data[offset:offset + id_length], codec, 'replace')
-                identifiers.append(ident)
                 offset += id_length
+            identifiers.append(ident)
             if not is_kwd:
                 offset += 4
     except Exception as exc:
