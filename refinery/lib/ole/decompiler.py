@@ -17,7 +17,7 @@ import math
 import re
 import struct
 
-from typing import Callable
+from typing import Callable, ClassVar
 
 from refinery.lib.ole.pcode import (
     ArgInfo, CoerceType, DimScope, FuncInfo, OpcodeArg, PCodeLine, PCodeModule,
@@ -25,6 +25,11 @@ from refinery.lib.ole.pcode import (
 )
 
 logger = logging.getLogger(__name__)
+
+_SUFFIX_FOR_TYPE: dict[str, str] = {
+    'Integer': '%', 'Long': '&', 'Single': '!',
+    'Double': '#', 'Currency': '@', 'String': '$',
+}
 
 
 class PCodeDecompilerError(Exception):
@@ -136,6 +141,49 @@ class VBADecompiler:
     maps to a handler via a naming convention (_op_ + lowercase mnemonic) or the explicit override
     dictionary.
     """
+
+    USE_SUFFIX_NOTATION: ClassVar[bool | None] = None
+
+    @staticmethod
+    def _type_annotation(
+        type_ref: TypeRef | None, *, as_new: bool = False,
+    ) -> tuple[str, str]:
+        """Return (name_suffix, as_clause) for rendering a typed declaration.
+
+        This is the single control point for suffix-vs-As Type output format.
+
+        When USE_SUFFIX_NOTATION is None (default), the format is determined by the
+        TypeRef's from_suffix flag, which reflects whether the original VBA source used
+        suffix notation. Set USE_SUFFIX_NOTATION to True or False to force all
+        suffix-eligible types to one format.
+
+        Args:
+            type_ref: The type reference (may be None)
+            as_new: Whether to use 'As New' instead of 'As'
+
+        Returns:
+            name_suffix: Appended to the variable/arg/func name ('$', '%()' etc.)
+            as_clause: Added as a separate token ('As String', 'As New Foo', etc.)
+            Exactly one of these will be non-empty for typed declarations.
+        """
+        if type_ref is None or not type_ref.name:
+            if type_ref is not None and type_ref.is_array:
+                return '()', ''
+            return '', ''
+        flag = VBADecompiler.USE_SUFFIX_NOTATION
+        use_suffix = (
+            (flag is True or (flag is None and type_ref.from_suffix))
+            and type_ref.name in _SUFFIX_FOR_TYPE
+            and not as_new
+        )
+        if use_suffix:
+            sfx = _SUFFIX_FOR_TYPE[type_ref.name]
+            if type_ref.is_array:
+                return sfx + '()', ''
+            return sfx, ''
+        array = '()' if type_ref.is_array else ''
+        kw = 'As New' if as_new else 'As'
+        return array, F'{kw} {type_ref.name}'
 
     def __init__(self, stack: VBAStack):
         self._stack = stack
@@ -966,12 +1014,10 @@ class VBADecompiler:
             parts.append('ByVal')
         elif arg.is_byref:
             parts.append('ByRef')
-        name = arg.name
-        if arg.type is not None and arg.type.is_array:
-            name += '()'
-        parts.append(name)
-        if arg.type is not None and arg.type.name:
-            parts.append(F'As {arg.type.name}')
+        name_suffix, as_clause = VBADecompiler._type_annotation(arg.type)
+        parts.append(arg.name + name_suffix)
+        if as_clause:
+            parts.append(as_clause)
         if arg.default_value is not None:
             parts.append(F'= {arg.default_value}')
         return ' '.join(parts)
@@ -988,22 +1034,27 @@ class VBADecompiler:
         if func.is_static:
             parts.append('Static')
         parts.append(func.kind)
+        has_return_type = func.kind in ('Function', 'Property Get')
+        func_name = func.name
+        ret_suffix = ''
+        ret_as = ''
+        if has_return_type:
+            ret_suffix, ret_as = VBADecompiler._type_annotation(func.return_type)
+            if ret_suffix and not ret_suffix.startswith('('):
+                func_name += ret_suffix
+        arg_strs = [VBADecompiler._render_arg(a) for a in func.args]
         if func.is_declare and func.lib_name:
-            arg_strs = [VBADecompiler._render_arg(a) for a in func.args]
-            name_and_args = F'{func.name} Lib "{func.lib_name}"'
+            name_and_args = F'{func_name} Lib "{func.lib_name}"'
             if func.alias_name:
                 name_and_args += F' Alias "{func.alias_name}"'
             name_and_args += F'({", ".join(arg_strs)})'
         else:
-            arg_strs = [VBADecompiler._render_arg(a) for a in func.args]
-            name_and_args = F'{func.name}({", ".join(arg_strs)})'
+            name_and_args = F'{func_name}({", ".join(arg_strs)})'
         parts.append(name_and_args)
-        has_return_type = func.kind in ('Function', 'Property Get')
-        if has_return_type and func.return_type is not None and func.return_type.name:
-            ret = func.return_type.name
-            if func.return_type.is_array:
-                ret += '()'
-            parts.append(F'As {ret}')
+        if ret_as:
+            if ret_suffix:
+                ret_as += ret_suffix
+            parts.append(ret_as)
         return ' '.join(parts)
 
     def _op_funcdefn(self, func: FuncInfo) -> None:
@@ -1597,18 +1648,11 @@ class VBADecompiler:
             var = 'WithEvents '
         var += var_info.name
 
-        ending = ''
         as_type: TypeRef | None = type_ref or var_info.type
-        if as_type is not None and as_type.name:
-            type_str = as_type.name
-            if as_type.is_array:
-                var += '()'
-            if var_info.has_new:
-                ending = F' As New {type_str}'
-            else:
-                ending = F' As {type_str}'
-        elif as_type is not None and as_type.is_array:
-            var += '()'
+        name_suffix, as_clause = VBADecompiler._type_annotation(
+            as_type, as_new=var_info.has_new)
+        var += name_suffix
+        ending = F' {as_clause}' if as_clause else ''
 
         stacktop = self._stack.pop()
 

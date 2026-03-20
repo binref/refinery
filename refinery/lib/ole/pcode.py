@@ -21,6 +21,7 @@ import logging
 import re
 import struct as _struct
 
+from dataclasses import dataclass, field
 from typing import NamedTuple
 
 from refinery.lib.ole.file import OleFile
@@ -46,6 +47,10 @@ _OPTIONS: tuple[str, ...] = (
     'Base 0', 'Base 1', 'Compare Text', 'Compare Binary',
     'Explicit', 'Private Module',
 )
+_SUFFIX_TYPES: frozenset[str] = frozenset({
+    'Integer', 'Long', 'Single', 'Double', 'Currency', 'String',
+})
+_SUFFIX_TYPE_IDS: frozenset[int] = frozenset({2, 3, 4, 5, 6, 8})
 
 
 class Opcode(NamedTuple):
@@ -54,12 +59,66 @@ class Opcode(NamedTuple):
     varg: bool = False
 
 
+@dataclass
+class TypeRef:
+    name: str
+    is_array: bool = False
+    from_suffix: bool = False
+
+
+@dataclass
+class VarInfo:
+    name: str
+    type: TypeRef | None = None
+    has_new: bool = False
+    has_withevents: bool = False
+
+
+@dataclass
+class ArgInfo:
+    name: str
+    type: TypeRef | None = None
+    is_byval: bool = False
+    is_byref: bool = False
+    is_optional: bool = False
+    is_paramarray: bool = False
+    default_value: str | None = None
+
+
+@dataclass
+class FuncInfo:
+    scope: str
+    is_static: bool
+    kind: str
+    name: str
+    args: list[ArgInfo] = field(default_factory=list)
+    return_type: TypeRef | None = None
+    is_declare: bool = False
+    is_ptrsafe: bool = False
+    lib_name: str | None = None
+    alias_name: str | None = None
+
+
+@dataclass
+class DimScope:
+    keywords: list[str] = field(default_factory=list)
+
+
+@dataclass
+class CoerceType:
+    type_short: str
+
+
+@dataclass
+class RecordInfo:
+    text: str
+
+
+OpcodeArg = str | TypeRef | VarInfo | ArgInfo | FuncInfo | DimScope | CoerceType | RecordInfo
+
+
 class PCodeLine(NamedTuple):
-    """
-    Structured representation of one line of disassembled p-code.
-    Each line contains a list of (mnemonic, [arg1, arg2, ...]) tuples.
-    """
-    opcodes: list[tuple[str, list[str]]]
+    opcodes: list[tuple[str, list[OpcodeArg]]]
 
 
 class PCodeModule(NamedTuple):
@@ -961,7 +1020,7 @@ class DisassemblyContext:
             return ext or '', is_array
         return name, is_array
 
-    def disasm_var(self, dword: int) -> str:
+    def disasm_var(self, dword: int) -> VarInfo:
         b_flag1 = self.indirect_table[dword]
         b_flag2 = self.indirect_table[dword + 1]
         has_as = (b_flag1 & 0x20) != 0
@@ -969,9 +1028,10 @@ class DisassemblyContext:
         var_name = _get_name(
             self.indirect_table, self.identifiers, dword + 2,
             self.endian, self.vba_ver, self.is_64bit)
-        is_array = False
+        type_ref: TypeRef | None = None
         if has_new or has_as:
             type_name = ''
+            is_array = False
             if has_as:
                 offs = 16 if self.is_64bit else 12
                 word = _get_word(self.indirect_table, dword + offs + 2, self.endian)
@@ -980,47 +1040,33 @@ class DisassemblyContext:
                     type_name = _get_type_name(type_id)
                 else:
                     type_name, is_array = self.disasm_object(dword + offs)
-            var_type = ''
-            if has_as and len(type_name) > 0:
-                var_type += 'As '
-            if has_new and (not has_as or len(type_name) > 0):
-                var_type += 'New '
-            if has_as and len(type_name) > 0:
-                var_type += type_name
-            if is_array:
-                var_name += '()'
-            if len(var_type) > 0:
-                var_name += F' ({var_type.rstrip()})'
+            if type_name:
+                type_ref = TypeRef(type_name, is_array)
         else:
             offs = 16 if self.is_64bit else 12
             if len(self.indirect_table) >= dword + offs + 4:
                 word = _get_word(self.indirect_table, dword + offs + 2, self.endian)
                 if word == 0xFFFF:
-                    _TYPE_SUFFIXES = {2: '%', 3: '&', 4: '!', 5: '#', 6: '@', 8: '$'}
                     type_id = self.indirect_table[dword + offs]
                     if (type_id & 0x40) and (b_flag1 & 0x10):
                         type_id &= ~0x40
-                    suffix = _TYPE_SUFFIXES.get(type_id)
-                    if suffix is not None:
-                        var_name += suffix
+                    if type_id in _SUFFIX_TYPE_IDS:
+                        type_name = _get_type_name(type_id)
+                        if type_name:
+                            type_ref = TypeRef(type_name, from_suffix=True)
                 else:
-                    _NAME_SUFFIXES = {
-                        'Integer': '%', 'Long': '&', 'Single': '!',
-                        'Double': '#', 'Currency': '@', 'String': '$',
-                    }
                     try:
                         type_name, is_array = self.disasm_object(dword + offs)
                     except Exception:
                         type_name = ''
                         is_array = False
-                    suffix = _NAME_SUFFIXES.get(type_name)
-                    if suffix is not None:
-                        var_name += suffix
-                    if is_array:
+                    if type_name in _SUFFIX_TYPES:
+                        type_ref = TypeRef(type_name, is_array, from_suffix=True)
+                    elif is_array:
                         var_name += '()'
-        return var_name
+        return VarInfo(var_name, type_ref, has_new)
 
-    def disasm_arg(self, arg_offset: int) -> str | None:
+    def disasm_arg(self, arg_offset: int) -> ArgInfo | None:
         flags = _get_word(self.indirect_table, arg_offset, self.endian)
         offs = 4 if self.is_64bit else 0
         name_word = _get_word(self.indirect_table, arg_offset + 2, self.endian)
@@ -1034,12 +1080,10 @@ class DisassemblyContext:
         is_paramarray = bool(arg_opts & 0x0001)
         if is_paramarray:
             self._has_pa_bit = True
-        if arg_opts & 0x0004:
-            arg_name = F'ByVal {arg_name}'
-        if arg_opts & 0x0002:
-            arg_name = F'ByRef {arg_name}'
-        if arg_opts & 0x0200:
-            arg_name = F'Optional {arg_name}'
+        is_byval = bool(arg_opts & 0x0004)
+        is_byref = bool(arg_opts & 0x0002)
+        is_optional = bool(arg_opts & 0x0200)
+        type_ref: TypeRef | None = None
         if flags & 0x0020:
             arg_type_name = ''
             is_array = False
@@ -1050,42 +1094,42 @@ class DisassemblyContext:
                 arg_type_name = _get_type_name(arg_type)
             else:
                 arg_type_name, is_array = self.disasm_object(arg_offset + offs + 12)
-            if is_array:
-                arg_name += '()'
             if arg_type_name:
-                arg_name += ' As '
-                arg_name += arg_type_name
+                type_ref = TypeRef(arg_type_name, is_array)
         elif (arg_type & 0xFFFF0000) == 0xFFFF0000:
-            _TYPE_SUFFIXES = {2: '%', 3: '&', 4: '!', 5: '#', 6: '@', 8: '$'}
             arg_type_id = arg_type & 0x000000FF
-            suffix = _TYPE_SUFFIXES.get(arg_type_id)
-            if suffix is not None:
-                arg_name += suffix
+            if arg_type_id in _SUFFIX_TYPE_IDS:
+                type_name = _get_type_name(arg_type_id)
+                if type_name:
+                    type_ref = TypeRef(type_name, from_suffix=True)
         elif self.is_64bit and arg_type < len(DIM_TYPES) and DIM_TYPES[arg_type]:
-            _TYPE_SUFFIXES = {2: '%', 3: '&', 4: '!', 5: '#', 6: '@', 8: '$'}
-            suffix = _TYPE_SUFFIXES.get(arg_type)
-            if suffix is not None:
-                arg_name += suffix
+            if arg_type in _SUFFIX_TYPE_IDS:
+                type_name = _get_type_name(arg_type)
+                if type_name:
+                    type_ref = TypeRef(type_name, from_suffix=True)
         else:
             try:
-                _type_name, is_array = self.disasm_object(arg_offset + offs + 12)  # noqa: F841
+                type_name, is_array = self.disasm_object(arg_offset + offs + 12)
             except Exception:
+                type_name = ''
                 is_array = False
-            if is_array:
+            if type_name in _SUFFIX_TYPES:
+                type_ref = TypeRef(type_name, is_array, from_suffix=True)
+            elif is_array:
                 arg_name += '()'
-        if arg_opts & 0x0200:
+        default_value: str | None = None
+        if is_optional:
             default_tag_off = arg_offset + offs + 28
             default_val_off = arg_offset + offs + 32
             ind = self.indirect_table
             if default_tag_off + 2 <= len(ind) and default_val_off + 4 <= len(ind):
                 vt_tag = _get_word(ind, default_tag_off, self.endian)
                 value_dw = _get_dword(ind, default_val_off, self.endian)
-                default_str = self._format_default_value(vt_tag, value_dw)
-                if default_str is not None:
-                    arg_name += F' = {default_str}'
-        if is_paramarray:
-            arg_name = F'ParamArray {arg_name}'
-        return arg_name
+                default_value = self._format_default_value(vt_tag, value_dw)
+        return ArgInfo(
+            arg_name, type_ref, is_byval, is_byref,
+            is_optional, is_paramarray, default_value,
+        )
 
     def _format_default_value(self, vt_tag: int, value_dw: int) -> str | None:
         VT_I2 = 2
@@ -1128,24 +1172,14 @@ class DisassemblyContext:
             return str(value_dw & 0xFF)
         return None
 
-    def _patch_64bit_defaults(self, arg_list: list[str], func_name: str) -> None:
-        """
-        For 64-bit modules, default values for Optional parameters are not stored in the
-        indirect table binary structure. Instead they appear encoded in the module data
-        using the byte sequence ``\\xfa\\x00\\xb9\\x00`` followed by a little-endian word
-        length and the string data. Multiple consecutive defaults for the same function
-        are chained with additional ``\\xb9\\x00`` markers. This method finds the default
-        value block nearest to the function name in the module data and patches the
-        arg_list entries accordingly.
-        """
+    def _patch_64bit_defaults(self, arg_list: list[ArgInfo], func_name: str) -> None:
         md = self.module_data
         if md is None:
             return
         raw = bytes(md)
-        need = sum(1 for a in arg_list if 'Optional ' in a and '=' not in a)
+        need = sum(1 for a in arg_list if a.is_optional and a.default_value is None)
         if need == 0:
             return
-        # Collect all \xfa\x00\xb9\x00 blocks with their consecutive default strings
         blocks: list[tuple[int, list[str]]] = []
         pos = 0
         while True:
@@ -1168,26 +1202,23 @@ class DisassemblyContext:
             pos = idx + 4
         if not blocks:
             return
-        # Find the function name in the raw module data to determine proximity
         func_bytes = func_name.encode(self.codec, errors='replace')
         func_pos = raw.find(func_bytes)
         if func_pos >= 0:
-            # Pick the block closest to (and after) the function name
             best = min(blocks, key=lambda b: abs(b[0] - func_pos))
             defaults = best[1]
         elif len(blocks) == 1:
             defaults = blocks[0][1]
         else:
             return
-        # Assign defaults to Optional args without defaults, in reverse block order
         defaults = list(reversed(defaults))
         di = 0
-        for i, arg in enumerate(arg_list):
-            if 'Optional ' not in arg or '=' in arg:
+        for arg in arg_list:
+            if not arg.is_optional or arg.default_value is not None:
                 continue
             if di >= len(defaults):
                 break
-            arg_list[i] = F'{arg} = "{defaults[di]}"'
+            arg.default_value = F'"{defaults[di]}"'
             di += 1
 
     def _declare64(self, decl_offset: int, func_name: str) -> tuple[str, str | None]:
@@ -1252,20 +1283,12 @@ class DisassemblyContext:
                     alias_name = alias_bytes_raw[:null_pos].decode(self.codec, errors='replace')
         return lib_name, alias_name
 
-    def disasm_func(self, dword: int, op_type: int) -> str:
-        func_decl = '('
+    def disasm_func(self, dword: int, op_type: int) -> FuncInfo:
         flags = _get_word(self.indirect_table, dword, self.endian)
         name_word = _get_word(self.indirect_table, dword + 2, self.endian)
         offs2 = 4 if self.vba_ver > 5 else 0
         if self.is_64bit:
             offs2 += 16
-        if (
-            self._linecont_pending
-            and offs2 >= 4
-            and self.indirect_table[dword + 4:dword + 8] == b'\xFF\xFF\xFF\xFF'
-            and (name_word >> 1) >= 0x100
-        ):
-            name_word += 2
         self._linecont_pending = False
         sub_name = _get_id(name_word, self.identifiers, self.vba_ver, self.is_64bit)
         arg_offset = _get_dword(self.indirect_table, dword + offs2 + 36, self.endian)
@@ -1275,90 +1298,35 @@ class DisassemblyContext:
         c_options = self.indirect_table[dword + offs2 + c_options_offset]
         new_flags_offset = 63 if self.is_64bit and self.version > 0x97 else 57
         new_flags = self.indirect_table[dword + offs2 + new_flags_offset]
-        has_declare = False
+        scope = ''
+        is_friend = False
         if self.vba_ver > 5:
             if (new_flags & 0x0002) == 0:
-                func_decl += 'Private '
+                scope = 'Private'
             elif op_type & 0x04:
-                func_decl += 'Public '
+                scope = 'Public'
             if new_flags & 0x0004:
-                func_decl += 'Friend '
+                is_friend = True
         else:
             if (flags & 0x0008) == 0:
-                func_decl += 'Private '
+                scope = 'Private'
             elif op_type & 0x04:
-                func_decl += 'Public '
-        if flags & 0x0080:
-            func_decl += 'Static '
-        if (
-            (c_options & 0x90) == 0
-            and (decl_offset != 0xFFFF)
-        ):
-            has_declare = True
-            func_decl += 'Declare '
-        if self.vba_ver > 5:
-            if new_flags & 0x20:
-                func_decl += 'PtrSafe '
+                scope = 'Public'
+        is_static = bool(flags & 0x0080)
+        has_declare = (c_options & 0x90) == 0 and decl_offset != 0xFFFF
+        is_ptrsafe = bool(self.vba_ver > 5 and new_flags & 0x20)
         has_as = (flags & 0x0020) != 0
         if flags & 0x1000:
-            if op_type in (2, 6):
-                func_decl += 'Function '
-            else:
-                func_decl += 'Sub '
+            kind = 'Function' if op_type in (2, 6) else 'Sub'
         elif flags & 0x2000:
-            func_decl += 'Property Get '
+            kind = 'Property Get'
         elif flags & 0x4000:
-            func_decl += 'Property Let '
+            kind = 'Property Let'
         elif flags & 0x8000:
-            func_decl += 'Property Set '
-        func_decl += sub_name
-        if not has_as and (ret_type & 0xFFFF0000) == 0xFFFF0000:
-            _TYPE_SUFFIXES = {2: '%', 3: '&', 4: '!', 5: '#', 6: '@', 8: '$'}
-            ret_type_id = ret_type & 0x000000FF
-            suffix = _TYPE_SUFFIXES.get(ret_type_id)
-            if suffix is not None:
-                func_decl += suffix
-        if has_declare:
-            if self.is_64bit:
-                lib_name, alias_name = self._declare64(decl_offset, sub_name)
-            else:
-                lib_name = _get_name(
-                    self.declaration_table, self.identifiers, decl_offset + 2,
-                    self.endian, self.vba_ver, self.is_64bit)
-                alias_name = None
-                alias_offset = _get_word(self.declaration_table, decl_offset + 4, self.endian)
-                if alias_offset < len(self.declaration_table):
-                    alias_bytes = bytes(self.declaration_table[alias_offset:])
-                    null_pos = alias_bytes.find(0)
-                    if null_pos > 0:
-                        alias_name = alias_bytes[:null_pos].decode(self.codec, errors='replace')
-            func_decl += F' Lib "{lib_name}"'
-            if alias_name and alias_name != sub_name:
-                func_decl += F' Alias "{alias_name}"'
-            func_decl += ' '
-        arg_list: list[str] = []
-        while (
-            arg_offset != 0xFFFFFFFF
-            and arg_offset != 0
-            and arg_offset + 26 < len(self.indirect_table)
-        ):
-            arg_name = self.disasm_arg(arg_offset)
-            if arg_name is not None:
-                arg_list.append(arg_name)
-            arg_offset = _get_dword(self.indirect_table, arg_offset + (24 if self.is_64bit else 20), self.endian)
-        if self.is_64bit and any('Optional ' in a and '=' not in a for a in arg_list):
-            self._patch_64bit_defaults(arg_list, sub_name)
-        if arg_list and not self._has_pa_bit and not any(a.startswith('ParamArray ') for a in arg_list):
-            last = arg_list[-1]
-            _pa_candidate = (
-                last.endswith('() As Variant')
-                or (last.endswith('()') and ' As ' not in last)
-            )
-            _pa_no_modifiers = not any(
-                last.startswith(p) for p in ('ByVal ', 'ByRef ', 'Optional '))
-            if _pa_candidate and _pa_no_modifiers:
-                arg_list[-1] = F'ParamArray {last}'
-        func_decl += F'({", ".join(arg_list)})'
+            kind = 'Property Set'
+        else:
+            kind = 'Sub'
+        return_type: TypeRef | None = None
         if has_as:
             type_name = ''
             is_array = False
@@ -1368,12 +1336,73 @@ class DisassemblyContext:
             else:
                 type_name, is_array = self.disasm_object(dword + offs2 + 40)
             if type_name:
-                func_decl += ' As '
-                func_decl += type_name
-                if is_array:
-                    func_decl += '()'
-        func_decl += ')'
-        return func_decl
+                return_type = TypeRef(type_name, is_array)
+        elif (ret_type & 0xFFFF0000) == 0xFFFF0000:
+            ret_type_id = ret_type & 0x000000FF
+            if ret_type_id in _SUFFIX_TYPE_IDS:
+                type_name = _get_type_name(ret_type_id)
+                if type_name:
+                    return_type = TypeRef(type_name, from_suffix=True)
+        lib_name: str | None = None
+        alias_name: str | None = None
+        if has_declare:
+            if self.is_64bit:
+                lib_name, alias_name = self._declare64(decl_offset, sub_name)
+            else:
+                lib_name = _get_name(
+                    self.declaration_table, self.identifiers, decl_offset + 2,
+                    self.endian, self.vba_ver, self.is_64bit)
+                alias_offset = _get_word(
+                    self.declaration_table, decl_offset + 4, self.endian)
+                if alias_offset < len(self.declaration_table):
+                    alias_bytes = bytes(self.declaration_table[alias_offset:])
+                    null_pos = alias_bytes.find(0)
+                    if null_pos > 0:
+                        alias_name = alias_bytes[:null_pos].decode(
+                            self.codec, errors='replace')
+            if alias_name == sub_name:
+                alias_name = None
+        arg_list: list[ArgInfo] = []
+        while (
+            arg_offset != 0xFFFFFFFF
+            and arg_offset != 0
+            and arg_offset + 26 < len(self.indirect_table)
+        ):
+            arg = self.disasm_arg(arg_offset)
+            if arg is not None:
+                arg_list.append(arg)
+            arg_offset = _get_dword(
+                self.indirect_table,
+                arg_offset + (24 if self.is_64bit else 20),
+                self.endian,
+            )
+        if self.is_64bit and any(
+            a.is_optional and a.default_value is None for a in arg_list
+        ):
+            self._patch_64bit_defaults(arg_list, sub_name)
+        if (
+            arg_list
+            and not self._has_pa_bit
+            and not any(a.is_paramarray for a in arg_list)
+        ):
+            last = arg_list[-1]
+            _pa_candidate = (
+                last.type is not None
+                and last.type.is_array
+                and (last.type.name == 'Variant' or last.type.name == '')
+            ) or (
+                last.type is None
+                and last.name.endswith('()')
+            )
+            _pa_no_modifiers = not last.is_byval and not last.is_byref and not last.is_optional
+            if _pa_candidate and _pa_no_modifiers:
+                last.is_paramarray = True
+        if is_friend:
+            scope = 'Friend' if not scope else F'{scope} Friend'
+        return FuncInfo(
+            scope, is_static, kind, sub_name, arg_list,
+            return_type, has_declare, is_ptrsafe, lib_name, alias_name,
+        )
 
     def disasm_var_arg(
         self,
@@ -1403,13 +1432,13 @@ class DisassemblyContext:
         module_data: bytes | bytearray | memoryview,
         line_start: int,
         line_length: int,
-    ) -> list[tuple[str, list[str]]]:
+    ) -> list[tuple[str, list[OpcodeArg]]]:
         """
         Disassemble one p-code line into a list of (mnemonic, [arg, ...]) tuples.
         """
         self._linecont_pending = False
 
-        result: list[tuple[str, list[str]]] = []
+        result: list[tuple[str, list[OpcodeArg]]] = []
         if line_length <= 0:
             return result
         offset = line_start
@@ -1425,14 +1454,14 @@ class DisassemblyContext:
             mnemonic = instruction.mnem
             if op_type == 8 and mnemonic in ('FnMid', 'FnMidB', 'FnCurDir', 'FnError', 'Mid', 'MidB'):
                 mnemonic += '$'
-            parts: list[str] = []
+            parts: list[OpcodeArg] = []
             if mnemonic in ('Coerce', 'CoerceVar', 'DefType'):
                 if op_type < len(_VAR_TYPES_LONG):
-                    parts.append(F'({_VAR_TYPES_LONG[op_type]})')
+                    parts.append(CoerceType(_VAR_TYPES_LONG[op_type]))
                 elif op_type == 17:
-                    parts.append('(Byte)')
+                    parts.append(CoerceType('Byte'))
                 else:
-                    parts.append(F'({op_type:d})')
+                    parts.append(CoerceType(str(op_type)))
             elif mnemonic in ('Dim', 'DimImplicit', 'Type'):
                 dim_type: list[str] = []
                 if op_type & 0x04:
@@ -1446,16 +1475,16 @@ class DisassemblyContext:
                 if (op_type & 0x01) and (mnemonic != 'Type'):
                     dim_type.append('Const')
                 if dim_type:
-                    parts.append(F'({" ".join(dim_type)})')
+                    parts.append(DimScope(dim_type))
             elif mnemonic == 'LitVarSpecial':
-                parts.append(F'({_SPECIALS[op_type]})')
+                parts.append(_SPECIALS[op_type])
             elif mnemonic in ('ArgsCall', 'ArgsMemCall', 'ArgsMemCallWith'):
                 if op_type < 16:
                     parts.append('(Call)')
                 else:
                     op_type -= 16
             elif mnemonic == 'Option':
-                parts.append(F'({_OPTIONS[op_type]})')
+                parts.append(_OPTIONS[op_type])
             elif mnemonic in ('Redim', 'RedimAs'):
                 if op_type & 16:
                     parts.append('(Preserve)')
@@ -1480,7 +1509,7 @@ class DisassemblyContext:
                         arg == 'rec_'
                         and len(self.indirect_table) >= dword + 20
                     ):
-                        parts.append(self.disasm_rec(dword))
+                        parts.append(RecordInfo(self.disasm_rec(dword)))
                     elif (
                         arg == 'type_'
                         and len(self.indirect_table) >= dword + 7
@@ -1492,14 +1521,15 @@ class DisassemblyContext:
                             the_type = ''
                         if not the_type:
                             the_type = _disasm_type(self.indirect_table, dword)
-                        parts.append(F'(As {the_type})')
+                        parts.append(TypeRef(the_type))
                     elif (
                         arg == 'var_'
                         and len(self.indirect_table) >= dword + 16
                     ):
+                        var_info = self.disasm_var(dword)
                         if op_type & 0x20:
-                            parts.append('(WithEvents)')
-                        parts.append(self.disasm_var(dword))
+                            var_info.has_withevents = True
+                        parts.append(var_info)
                         if op_type & 0x10:
                             word = _get_word(module_data, offset, self.endian)
                             offset += 2
