@@ -20,9 +20,10 @@ from refinery.units import ArgparseError, Unit
 
 _AGENT_DETAIL_LIST = [
     'autoxor',
+    'asm',
     'base',
-    'chop',
     'carve',
+    'chop',
     'decompress',
     'dnds',
     'dnfields',
@@ -43,6 +44,9 @@ _AGENT_DETAIL_LIST = [
     'perc',
     'pestrip',
     'pf',
+    'qb',
+    'qf',
+    'qp',
     'reduce',
     'rep',
     'resub',
@@ -54,13 +58,10 @@ _AGENT_DETAIL_LIST = [
     'vsect',
     'vsnip',
     'vstack',
+    'wshenc',
     'xlxtr',
     'xt',
     'xtp',
-    'qb',
-    'qf',
-    'qp',
-    'wshenc',
 ]
 
 
