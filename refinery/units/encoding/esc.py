@@ -8,7 +8,8 @@ from refinery.units import Arg, Unit
 
 class esc(Unit):
     """
-    Convert from and to C-like string literals using backslash escape sequences.
+    Convert from and to C-like string literals using backslash escape sequences. By default,
+    enclosing quotes are removed when unescaping string literals.
     """
     _ESCAPE = {
         0x07: BR'\a',
