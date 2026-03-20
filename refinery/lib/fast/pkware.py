@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from refinery.lib.fast._pkware_tables import _COPY_LENGTHS, _COPY_OFFSETS, _LITERALS
+from refinery.lib.fast.pkware_tables import _COPY_LENGTHS, _COPY_OFFSETS, _LITERALS
 
 
 class PKWareError(Exception):
