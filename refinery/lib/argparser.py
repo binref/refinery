@@ -105,20 +105,16 @@ class ArgumentParserWithKeywordHooks(ArgumentParser):
         self.keywords = keywords
         self.order = []
 
-    def print_help(self, file: SupportsWrite[str] | None = None, level: int = 3) -> None:
+    def print_help(self, file: SupportsWrite[str] | None = None, generics: bool = False) -> None:
         out = file or sys.stderr
-        if level >= 3:
+        if generics:
             super().print_help(file=out)
         else:
             formatter = self._get_formatter()
-            if level == 1:
-                formatter.add_usage(self.usage, self._actions, self._mutually_exclusive_groups)
-                formatter.add_text(self.description)
+            formatter.add_usage(self.usage, self._actions, self._mutually_exclusive_groups)
+            formatter.add_text(self.description)
             for ag in self._action_groups:
-                is_generic = (title := ag.title) and title.startswith('generic')
-                if level == 1 and is_generic:
-                    continue
-                if level == 2 and not is_generic:
+                if (title := ag.title) and title.startswith('generic'):
                     continue
                 formatter.start_section(title)
                 formatter.add_text(ag.description)
