@@ -991,6 +991,11 @@ class DisassemblyContext:
             if hl_name == 0:
                 ext = self.external_types.get(offs)
                 return ext or '', is_array
+            if hl_name == 0xFFFF:
+                type_name = _get_type_name(self.indirect_table[type_desc + 6])
+                if not type_name and type_desc + 17 <= len(self.indirect_table):
+                    type_name = _get_type_name(self.indirect_table[type_desc + 16])
+                return type_name, is_array
             name = _get_id(hl_name, self.identifiers, self.vba_ver, self.is_64bit)
             if (hl_name >> 1) < 0x100 and name not in _VALID_INTERNAL_TYPE_NAMES:
                 ext = self.external_types.get(offs)
@@ -1274,7 +1279,7 @@ class DisassemblyContext:
             if lib_word != 0:
                 lib_name = _get_id(lib_word, self.identifiers, self.vba_ver, self.is_64bit)
         # Read alias from binary structure if not found via source text.
-        if alias_name is None:
+        if alias_name is None and not match:
             alias_start = decl_offset + _alias_off
             if alias_start < len(decl):
                 alias_bytes_raw = bytes(decl[alias_start:])
