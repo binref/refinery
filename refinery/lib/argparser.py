@@ -114,11 +114,12 @@ class ArgumentParserWithKeywordHooks(ArgumentParser):
             formatter.add_usage(self.usage, self._actions, self._mutually_exclusive_groups)
             formatter.add_text(self.description)
             for ag in self._action_groups:
-                if (title := ag.title) and title.startswith('generic'):
-                    continue
-                formatter.start_section(title)
+                formatter.start_section(ag.title)
                 formatter.add_text(ag.description)
-                formatter.add_arguments(ag._group_actions)
+                if ag.title and ag.title.startswith('generic'):
+                    formatter.add_text('[see usage; show descriptions with -h]')
+                else:
+                    formatter.add_arguments(ag._group_actions)
                 formatter.end_section()
             formatter.add_text(self.epilog)
             text = formatter.format_help()
