@@ -2195,9 +2195,9 @@ class Unit(UnitBase, abstract=True):
 
         base.set_defaults(reverse=False, squeeze=False, iff=0, help=0)
         help = base.add_mutually_exclusive_group()
-        help.add_argument('-h', '--help', action='store_const', dest='help', const=2,
+        help.add_argument('-h', '--help', action='store_const', dest='help', const=3,
             help='Show this help message and exit. Specify twice to also show generic options.')
-        help.add_argument('-?', action='store_const', dest='help', const=1, help=SUPPRESS)
+        help.add_argument('-?', action='count', dest='help', default=0, help=SUPPRESS)
 
         base.add_argument('-L', '--lenient', action='count', default=0,
             help='Increase the leniency, allowing partial results and ignoring more errors.')
@@ -2284,7 +2284,7 @@ class Unit(UnitBase, abstract=True):
         argp = cls.argparser(**keywords)
         args = argp.parse_args_with_nesting(_args)
         if (_h := args.help) > 0:
-            argp.print_help(generics=(_h > 1))
+            argp.print_help(level=_h)
             sys.exit(0)
 
         try:
