@@ -67,6 +67,11 @@ class TestXOR(TestUnitBase):
         self.assertEqual(xor(bytes(5)), bytes(range(2, 7)))
         self.assertEqual(xor(bytes(5)), bytes(range(2, 7)))
 
+    def test_no_argument_rejected(self):
+        from refinery.units.blockwise.xor import xor
+        with self.assertRaises(ValueError):
+            xor()
+
     def test_handler_inc_dec(self):
         xor = self.load('inc:dec:0xCC')
         self.assertEqual(xor(bytes(20)), B'\xCC' * 20)
