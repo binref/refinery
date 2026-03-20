@@ -311,6 +311,8 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
         return dst
 
     def process(self, data):
+        if not (argument := self.args.argument):
+            return data
         try:
             self.log_debug('attempting to process input using numpy method')
             result = self._fastblock(data)
@@ -324,9 +326,7 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
             self.log_debug('fast block method successful')
             return result
         size = len(data)
-        arguments = [
-            self._infinitize_argument(size, *self._argument_parse_hook(a))
-            for a in self.args.argument]
+        arguments = [self._infinitize_argument(size, *self._argument_parse_hook(a)) for a in argument]
         try:
             spread = iterspread(self.operate, self.chunk(data), *arguments, mask=self.fmask)
             out = self.unchunk(spread(self))
