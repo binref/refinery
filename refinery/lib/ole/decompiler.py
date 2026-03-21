@@ -43,65 +43,6 @@ _PROC_CLOSE = re.compile(
     re.IGNORECASE,
 )
 
-_IFDEF_HEAD = re.compile(r'^\s*#If\b', re.IGNORECASE)
-_IFDEF_ELSE = re.compile(r'^\s*#Else', re.IGNORECASE)
-_IFDEF_ENDS = re.compile(r'^\s*#End\s+If\b', re.IGNORECASE)
-
-
-def strip_orphan_end_statements(code: str) -> str:
-    """
-    Remove End Sub/Function/Property lines that have no matching opener. This can happen when the
-    VBA compiler emits duplicate EndFunc/EndSub opcodes (e.g. from conditional compilation blocks
-    where both branches contribute an End statement but only one Function declaration exists).
-    """
-    lines = code.split('\n')
-    depth = 0
-    orphan_indices: list[int] = []
-    for i, line in enumerate(lines):
-        if _PROC_OPEN.match(line):
-            depth += 1
-        if _PROC_CLOSE.match(line):
-            if depth <= 0:
-                orphan_indices.append(i)
-            else:
-                depth -= 1
-    if not orphan_indices:
-        return code
-    drop = set(orphan_indices)
-    return '\n'.join(line for i, line in enumerate(lines) if i not in drop)
-
-
-def strip_ifdef_duplicate_proc_defs(code: str) -> str:
-    """
-    Remove duplicate procedure definitions from #Else/#ElseIf branches of conditional
-    compilation blocks. When #If VBA7 Then / #Else both emit a FuncDefn (e.g. Sub Foo
-    with LongPtr vs Long params), the decompiler produces two proc-open lines but only
-    one End Sub. This pass drops proc-open lines from alternate branches that duplicate
-    ones already present in the #If branch, keeping the output balanced.
-    """
-    lines = code.split('\n')
-    ifdef_stack: list[tuple[int, int, bool]] = []
-    drop_indices: list[int] = []
-    for i, line in enumerate(lines):
-        if _IFDEF_HEAD.match(line):
-            ifdef_stack.append((0, 0, False))
-        elif _IFDEF_ELSE.match(line) and ifdef_stack:
-            if_count, _, _ = ifdef_stack[-1]
-            ifdef_stack[-1] = (if_count, 0, True)
-        elif _IFDEF_ENDS.match(line) and ifdef_stack:
-            ifdef_stack.pop()
-        elif _PROC_OPEN.match(line) and ifdef_stack:
-            if_count, dropped, in_alt = ifdef_stack[-1]
-            if in_alt and dropped < if_count:
-                drop_indices.append(i)
-                ifdef_stack[-1] = (if_count, dropped + 1, in_alt)
-            elif not in_alt:
-                ifdef_stack[-1] = (if_count + 1, dropped, in_alt)
-    if not drop_indices:
-        return code
-    drop = set(drop_indices)
-    return '\n'.join(line for i, line in enumerate(lines) if i not in drop)
-
 
 class PCodeDecompilerError(Exception):
     """
@@ -1982,8 +1923,6 @@ class PCodeParser:
 
     @staticmethod
     def _postprocess(result: str) -> str:
-        result = strip_orphan_end_statements(result)
-        result = strip_ifdef_duplicate_proc_defs(result)
         return re.sub(
             r'(End\s(?:Function|Sub|Property|Type|Enum))\n(?=\S)',
             r'\1\n\n',
@@ -2097,7 +2036,7 @@ class PCodeParser:
                             if dc.indent_increase_pending:
                                 dc.apply_pending_indent()
                                 indent = dc.indent_level * '  '
-                    else:
+                    elif self._stack.size() > 0:
                         self._add_line(
                             F'{indent}{self._stack.top()}',
                             linenum, print_linenum)
