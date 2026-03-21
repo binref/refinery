@@ -22,7 +22,7 @@ import re
 import struct as _struct
 
 from dataclasses import dataclass, field
-from typing import NamedTuple
+from typing import NamedTuple, TYPE_CHECKING
 
 from refinery.lib.ole.file import OleFile
 from refinery.lib.ole.vba import _codepage_to_codec, _find_vba_projects, decompress_stream
@@ -114,7 +114,10 @@ class RecordInfo:
     text: str
 
 
-OpcodeArg = str | TypeRef | VarInfo | ArgInfo | FuncInfo | DimScope | CoerceType | RecordInfo
+if TYPE_CHECKING:
+    OpcodeArg = str | TypeRef | VarInfo | ArgInfo | FuncInfo | DimScope | CoerceType | RecordInfo
+else:
+    OpcodeArg = str
 
 
 class PCodeLine(NamedTuple):
