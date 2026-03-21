@@ -10,7 +10,7 @@ class resplit(SingleRegexUnit):
     """
 
     def __init__(
-        self, regex=RB'\r?\n', multiline=False, ignorecase=False, count=0
+        self, regex=R'\r?\n', multiline=False, ignorecase=False, count=0
     ):
         super().__init__(regex=regex, multiline=multiline, ignorecase=ignorecase, count=count)
 
