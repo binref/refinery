@@ -191,7 +191,6 @@ class VBADecompiler:
         self.indent_increase_pending: bool = False
         self.has_bos: bool = False
         self.one_line_if: int = 0
-        self.unindented: int = 0
         self.has_structural_prefix: bool = False
         self._enum_lines: set[int] = set()
         self._current_line: int = 0
@@ -1831,9 +1830,7 @@ class VBADecompiler:
         """
         Called after a line is fully processed to apply any pending indent level change.
         """
-        if self.unindented > 0:
-            self.unindented -= 1
-        elif self.indent_increase_pending:
+        if self.indent_increase_pending:
             self.indent_level += 1
         self.indent_increase_pending = False
 
@@ -1915,7 +1912,6 @@ class PCodeParser:
 
         enum_type_lines: set[int] = set()
         _type_stack: list[int] = []
-        unindented = 0
         for i, pcode_line in enumerate(pcode_lines):
             for mnemonic, _args in pcode_line.opcodes:
                 if mnemonic == 'Type':
@@ -1924,12 +1920,7 @@ class PCodeParser:
                     enum_type_lines.add(_type_stack.pop())
                 elif mnemonic == 'EndType' and _type_stack:
                     _type_stack.pop()
-                if mnemonic == 'FuncDefn':
-                    unindented += 1
-                if mnemonic in ('EndFunc', 'EndSub'):
-                    unindented -= 1
         dc._enum_lines = enum_type_lines
-        dc.unindented = unindented
 
         for linenum, pcode_line in enumerate(pcode_lines):
             dc._current_line = linenum
@@ -1956,14 +1947,17 @@ class PCodeParser:
                         trailing.append(self._stack.pop())
                     trailing.reverse()
                     indent = dc.indent_level * '  '
-                    self._add_line(indent, linenum, print_linenum, False)
                     all_segments = list(bos_segments)
                     if trailing:
                         all_segments.append(trailing)
+                    first_part = True
                     for k, segment in enumerate(all_segments):
                         last_segment = k == len(all_segments) - 1
                         for j, part in enumerate(segment):
                             end_of_segment = j == len(segment) - 1
+                            if first_part:
+                                part = F'{indent}{part}'
+                                first_part = False
                             if last_segment and end_of_segment:
                                 self._add_line(part, linenum)
                             elif end_of_segment and not last_segment:
