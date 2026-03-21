@@ -31,6 +31,41 @@ _SUFFIX_FOR_TYPE: dict[str, str] = {
     'Double': '#', 'Currency': '@', 'String': '$',
 }
 
+_PROC_OPEN = re.compile(
+    r'^\s*(?:'
+    r'(?:(?:Public|Private|Friend)\s+)?'
+    r'(?:Static\s+)?'
+    r'(?:Sub|Function|Property\s+(?:Get|Let|Set)))\b',
+    re.IGNORECASE,
+)
+_PROC_CLOSE = re.compile(
+    r'^\s*End\s+(?:Sub|Function|Property)\b',
+    re.IGNORECASE,
+)
+
+
+def strip_orphan_end_statements(code: str) -> str:
+    """
+    Remove End Sub/Function/Property lines that have no matching opener. This can happen when the
+    VBA compiler emits duplicate EndFunc/EndSub opcodes (e.g. from conditional compilation blocks
+    where both branches contribute an End statement but only one Function declaration exists).
+    """
+    lines = code.split('\n')
+    depth = 0
+    orphan_indices: list[int] = []
+    for i, line in enumerate(lines):
+        if _PROC_OPEN.match(line):
+            depth += 1
+        if _PROC_CLOSE.match(line):
+            if depth <= 0:
+                orphan_indices.append(i)
+            else:
+                depth -= 1
+    if not orphan_indices:
+        return code
+    drop = set(orphan_indices)
+    return '\n'.join(line for i, line in enumerate(lines) if i not in drop)
+
 
 class PCodeDecompilerError(Exception):
     """
@@ -192,6 +227,7 @@ class VBADecompiler:
         self.has_bos: bool = False
         self.one_line_if: int = 0
         self.has_structural_prefix: bool = False
+        self._lbif_indent_stack: list[int] = []
         self._enum_lines: set[int] = set()
         self._current_line: int = 0
         self._dispatch_overrides: dict[str, Callable] = {}
@@ -770,7 +806,7 @@ class VBADecompiler:
 
     def _op_endfunc(self) -> None:
         self._stack.push('End Function')
-        self.indent_level -= 1
+        self.indent_level = max(self.indent_level - 1, 0)
 
     def _op_endif(self) -> None:
         if self.one_line_if > 0:
@@ -788,7 +824,7 @@ class VBADecompiler:
 
     def _op_endprop(self) -> None:
         self._stack.push('End Property')
-        self.indent_level -= 1
+        self.indent_level = max(self.indent_level - 1, 0)
 
     def _op_endselect(self) -> None:
         self._stack.push('End Select')
@@ -796,7 +832,7 @@ class VBADecompiler:
 
     def _op_endsub(self) -> None:
         self._stack.push('End Sub')
-        self.indent_level -= 1
+        self.indent_level = max(self.indent_level - 1, 0)
 
     def _op_endtype(self) -> None:
         self._stack.push('End Type')
@@ -1754,24 +1790,33 @@ class VBADecompiler:
         self._stack.push(F'#Const {var} = {self._stack.pop()}')
 
     def _op_lbif(self) -> None:
+        self._lbif_indent_stack.append(self.indent_level)
         self._stack.push(F'#If {self._stack.pop()} Then')
         self.indent_increase_pending = True
 
     def _op_lbelse(self) -> None:
         self._stack.push('#Else')
-        self.indent_level -= 1
+        if self._lbif_indent_stack:
+            self.indent_level = self._lbif_indent_stack[-1]
+        else:
+            self.indent_level -= 1
         self.indent_increase_pending = True
         self.has_structural_prefix = True
 
     def _op_lbelseif(self) -> None:
         self._stack.push(F'#ElseIf {self._stack.pop()} Then')
-        self.indent_level -= 1
+        if self._lbif_indent_stack:
+            self.indent_level = self._lbif_indent_stack[-1]
+        else:
+            self.indent_level -= 1
         self.indent_increase_pending = True
         self.has_structural_prefix = True
 
     def _op_lbendif(self) -> None:
         self._stack.push('#End If')
         self.indent_level -= 1
+        if self._lbif_indent_stack:
+            self._lbif_indent_stack.pop()
 
     def _op_lbmark(self) -> None:
         pass
@@ -1866,6 +1911,7 @@ class PCodeParser:
 
     @staticmethod
     def _postprocess(result: str) -> str:
+        result = strip_orphan_end_statements(result)
         return re.sub(
             r'(End\s(?:Function|Sub|Property|Type|Enum))\n(?=\S)',
             r'\1\n\n',

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from refinery.lib.id import buffer_contains
+from refinery.lib.ole.decompiler import strip_orphan_end_statements
 from refinery.lib.ole.vba import FileOpenError, VBAParser
 from refinery.units.formats import PathExtractorUnit, UnpackResult
 
@@ -18,6 +19,7 @@ class vbamc(PathExtractorUnit):
             if not macro.stream_path:
                 continue
             if code := macro.code:
+                code = strip_orphan_end_statements(code)
                 yield UnpackResult(macro.stream_path, code.encode(self.codec))
 
     @classmethod
