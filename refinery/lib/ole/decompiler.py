@@ -193,6 +193,8 @@ class VBADecompiler:
         self.one_line_if: int = 0
         self.unindented: int = 0
         self.has_structural_prefix: bool = False
+        self._enum_lines: set[int] = set()
+        self._current_line: int = 0
         self._dispatch_overrides: dict[str, Callable] = {}
         self._dispatch_overrides['FnCurDir$'] = lambda: self._stack.push('CurDir$')
         self._dispatch_overrides['FnError$'] = lambda: self._stack.push('Error$')
@@ -1625,12 +1627,13 @@ class VBADecompiler:
     def _op_type(self, *args: OpcodeArg) -> None:
         rec = args[0]
         text = rec.text if isinstance(rec, RecordInfo) else str(rec)
+        keyword = 'Enum' if self._current_line in self._enum_lines else 'Type'
         if text.startswith('(Private) '):
-            self._stack.push(F'Private Type {text[10:]}')
+            self._stack.push(F'Private {keyword} {text[10:]}')
         elif text.startswith('(Public) '):
-            self._stack.push(F'Public Type {text[9:]}')
+            self._stack.push(F'Public {keyword} {text[9:]}')
         else:
-            self._stack.push(F'Type {text}')
+            self._stack.push(F'{keyword} {text}')
         self.indent_increase_pending = True
 
     def _op_unlock(self) -> None:
@@ -1910,16 +1913,26 @@ class PCodeParser:
     ) -> None:
         dc = self._decompiler
 
+        enum_type_lines: set[int] = set()
+        _type_stack: list[int] = []
         unindented = 0
-        for pcode_line in pcode_lines:
+        for i, pcode_line in enumerate(pcode_lines):
             for mnemonic, _args in pcode_line.opcodes:
+                if mnemonic == 'Type':
+                    _type_stack.append(i)
+                elif mnemonic == 'EndEnum' and _type_stack:
+                    enum_type_lines.add(_type_stack.pop())
+                elif mnemonic == 'EndType' and _type_stack:
+                    _type_stack.pop()
                 if mnemonic == 'FuncDefn':
                     unindented += 1
                 if mnemonic in ('EndFunc', 'EndSub'):
                     unindented -= 1
+        dc._enum_lines = enum_type_lines
         dc.unindented = unindented
 
         for linenum, pcode_line in enumerate(pcode_lines):
+            dc._current_line = linenum
             if not pcode_line.opcodes:
                 continue
             try:
