@@ -1099,6 +1099,11 @@ class DisassemblyContext:
                 arg_type_name = _get_type_name(arg_type)
             else:
                 arg_type_name, is_array = self.disasm_object(arg_offset + offs + 12)
+                if arg_type_name.startswith('type_') and self.is_64bit:
+                    arg_type_id = arg_type & 0x000000FF
+                    if arg_type_id < len(DIM_TYPES) and DIM_TYPES[arg_type_id]:
+                        arg_type_name = _get_type_name(arg_type_id)
+                        is_array = False
             if arg_type_name:
                 type_ref = TypeRef(arg_type_name, is_array)
         elif (arg_type & 0xFFFF0000) == 0xFFFF0000:
@@ -1120,6 +1125,14 @@ class DisassemblyContext:
                 is_array = False
             if type_name in _SUFFIX_TYPES:
                 type_ref = TypeRef(type_name, is_array, from_suffix=True)
+            elif (not type_name or type_name.startswith('type_')) and self.is_64bit:
+                arg_type_id = arg_type & 0x000000FF
+                if arg_type_id < len(DIM_TYPES) and DIM_TYPES[arg_type_id]:
+                    type_name = _get_type_name(arg_type_id)
+                    if type_name in _SUFFIX_TYPES:
+                        type_ref = TypeRef(type_name, from_suffix=True)
+                elif is_array:
+                    arg_name += '()'
             elif is_array:
                 arg_name += '()'
         default_value: str | None = None
@@ -1226,7 +1239,7 @@ class DisassemblyContext:
             arg.default_value = F'"{defaults[di]}"'
             di += 1
 
-    def _declare64(self, decl_offset: int, func_name: str) -> tuple[str, str | None]:
+    def _declare64(self, decl_offset: int, func_name: str) -> tuple[str | None, str | None]:
         """
         Extract Lib and Alias names from a 64-bit Declare entry in the declaration table.
         The 64-bit entry structure differs significantly from 32-bit: the lib name identifier
@@ -1628,7 +1641,8 @@ def _parse_external_type_table(
             if marker != 0xFFFF:
                 break
             pos += 2
-            _flags = _get_word(module_data, pos, endian)
+            # currently unused:
+            # _flags = _get_word(module_data, pos, endian)
             pos += 2
             payload_size = _get_dword(module_data, pos, endian)
             pos += 4
@@ -1636,7 +1650,8 @@ def _parse_external_type_table(
                 break
             payload_end = pos + payload_size
             while pos + 8 <= payload_end:
-                _prefix = _get_word(module_data, pos, endian)
+                # currently unused:
+                # _prefix = _get_word(module_data, pos, endian)
                 lib_id = _get_word(module_data, pos + 2, endian)
                 type_id = _get_word(module_data, pos + 4, endian)
                 pos += 8
@@ -1893,7 +1908,7 @@ def format_pcode_text(
     for line_num, pcode_line in enumerate(lines):
         output.append(F'Line #{line_num:d}:')
         for mnemonic, args in pcode_line.opcodes:
-            text = F'\t{mnemonic} {" ".join(args)}'
+            text = F'\t{mnemonic} {" ".join(str(a) for a in args)}'
             output.append(text)
     return '\n'.join(output) + '\n'
 
@@ -1952,7 +1967,7 @@ class PCodeDisassembler:
             import zipfile
 
             from refinery.lib.structures import MemoryFile
-            results: list[bytes | bytearray] = []
+            results: list[bytes | bytearray | memoryview] = []
             try:
                 with zipfile.ZipFile(MemoryFile(self._data, bytes)) as zf:
                     for name in zf.namelist():
