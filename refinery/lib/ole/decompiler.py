@@ -1677,7 +1677,7 @@ class VBADecompiler:
         self._stack.push(F'Rem {quoted[1:-1]}')
 
     def _op_resume(self, *args: str) -> None:
-        if not args:
+        if not args or not args[0]:
             self._stack.push('Resume')
         elif args[0] == '(Next)':
             self._stack.push('Resume Next')

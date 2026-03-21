@@ -1524,11 +1524,13 @@ class DisassemblyContext:
                 if arg == 'name':
                     offset, word = _get_var(module_data, offset, self.endian, False)
                     the_name = self.disasm_name(word, mnemonic, op_type)
-                    parts.append(the_name)
+                    if the_name:
+                        parts.append(the_name)
                 elif arg in ('0x', 'imp_'):
                     offset, word = _get_var(module_data, offset, self.endian, False)
                     the_imp = self.disasm_imp(arg, word, mnemonic)
-                    parts.append(the_imp)
+                    if the_imp:
+                        parts.append(the_imp)
                 elif arg in ('func_', 'var_', 'rec_', 'type_', 'context_'):
                     offset, dword = _get_var(module_data, offset, self.endian, True)
                     if (
