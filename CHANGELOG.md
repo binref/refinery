@@ -5,6 +5,9 @@
 > If a release contains only bugfix, it is marked as a 'bugfix release'.
 > Otherwise, the changelog entries highlight only new or changed functionality.
 
+## Version 0.10.5
+The release contains the new `-g` switch in `binref` for AI agents.
+
 ## Version 0.10.4
 This is a test release for enabling trusted publishing with PyPi.
 
