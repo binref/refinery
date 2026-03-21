@@ -1019,6 +1019,11 @@ class DisassemblyContext:
         if hl_name == 0:
             ext = self.external_types.get(offs)
             return ext or '', is_array
+        if hl_name == 0xFFFF:
+            type_name = _get_type_name(self.indirect_table[type_desc + 6])
+            if not type_name and type_desc + 17 <= len(self.indirect_table):
+                type_name = _get_type_name(self.indirect_table[type_desc + 16])
+            return type_name, is_array
         name = _get_id(hl_name, self.identifiers, self.vba_ver, self.is_64bit)
         if (hl_name >> 1) < 0x100 and name not in _VALID_INTERNAL_TYPE_NAMES:
             ext = self.external_types.get(offs)
@@ -1075,7 +1080,7 @@ class DisassemblyContext:
         flags = _get_word(self.indirect_table, arg_offset, self.endian)
         offs = 4 if self.is_64bit else 0
         name_word = _get_word(self.indirect_table, arg_offset + 2, self.endian)
-        if name_word == 0xFFFE:
+        if name_word >= 0xFFFE:
             return None
         arg_name = _get_name(
             self.indirect_table, self.identifiers, arg_offset + 2,
