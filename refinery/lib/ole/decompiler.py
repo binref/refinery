@@ -146,6 +146,56 @@ _UNARY_FNS: dict[str, str] = {
     'FnMidB$': 'MidB$',
 }
 
+_VBA_CONTROL_CHARS = {
+    '\r\n' : 'vbCrLf',
+    '\r'   : 'vbCr',
+    '\n'   : 'vbLf',
+    '\0'   : 'vbNullChar',
+    '\t'   : 'vbTab',
+    '\b'   : 'vbBack',
+    '\f'   : 'vbFormFeed',
+    '\v'   : 'vbVerticalTab',
+}
+
+
+def vba_string_literal(value: str) -> str:
+    """
+    Convert a string into a valid VBA string literal, separating out control sequences as
+    separately concatenated parts.
+    """
+    concat: list[str] = []
+    buffer = io.StringIO()
+
+    def commit():
+        if not buffer:
+            return
+        concat.append(F'"{buffer.getvalue()}"')
+        buffer.seek(0)
+        buffer.truncate(0)
+
+    i = 0
+    n = len(value)
+
+    while i < n:
+        for seq, name in _VBA_CONTROL_CHARS.items():
+            if value[i:i + len(seq)] == seq:
+                commit()
+                concat.append(name)
+                i += len(seq)
+                break
+        else:
+            if (ch := value[i]) == '"':
+                ch = '""'
+            buffer.write(ch)
+            i += 1
+
+    commit()
+
+    if not concat:
+        return '""'
+
+    return ' & '.join(concat)
+
 
 class VBADecompiler:
     """
@@ -1048,7 +1098,10 @@ class VBADecompiler:
         if as_clause:
             parts.append(as_clause)
         if arg.default_value is not None:
-            parts.append(F'= {arg.default_value}')
+            dv = arg.default_value
+            if len(dv) >= 2 and dv[0] == '"' and dv[-1] == '"':
+                dv = vba_string_literal(dv[1:-1])
+            parts.append(F'= {dv}')
         return ' '.join(parts)
 
     @staticmethod
@@ -1368,8 +1421,7 @@ class VBADecompiler:
         val = ' '.join(args)
         if len(val) >= 2:
             val = val[1:-1]
-            val = val.replace('"', '""')
-            val = F'"{val}"'
+            val = vba_string_literal(val)
         self._stack.push(val)
 
     def _op_litvarspecial(self, var: str) -> None:
