@@ -214,24 +214,28 @@ def get_config():
         importlib.import_module(F'refinery.lib.shared.{name}')
 
     def get_setup_extras(requirements: list[str] | None = None):
-        all_optional: set[str] = set()
-        all_required: set[str] = set()
-        extras: dict[str, set[str]] = {'all': all_optional}
+        deps_by_level: dict[int, set[str]] = {}
         with refinery.__unit_loader__ as ldr:
             for executable in (
                 refinery.lib.shared.GlobalDependenciesDummy,
                 *ldr.cache.values()
             ):
                 if executable.optional_dependencies:
-                    for key, deps in executable.optional_dependencies.items():
-                        bucket = extras.setdefault(key, set())
+                    for level, deps in executable.optional_dependencies.items():
+                        bucket = deps_by_level.setdefault(level, set())
                         bucket.update(deps)
-                        all_optional.update(deps)
                 if executable.required_dependencies:
-                    all_required.update(executable.required_dependencies)
-        if requirements is not None:
-            requirements.extend(all_required)
-        return {k: list(v) for k, v in extras.items()}
+                    if requirements is not None:
+                        requirements.extend(executable.required_dependencies)
+        l1 = deps_by_level.get(1, set())
+        l2 = deps_by_level.get(2, set())
+        l3 = deps_by_level.get(3, set())
+        extras = {
+            'default': list(l1),
+            'extended': list(l1 | l2),
+            'all': list(l1 | l2 | l3),
+        }
+        return extras
 
     def get_setup_readme(filename: str | pathlib.Path | None = None):
         if filename is None:

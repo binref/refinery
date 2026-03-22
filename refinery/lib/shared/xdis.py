@@ -1,7 +1,7 @@
 from refinery.lib.shared import dependency
 
 
-@dependency('xdis', ['arc', 'python', 'extended'])
+@dependency('xdis', 2)
 def xdis():
     import sys
 

@@ -18,7 +18,7 @@ class qr(Unit):
         if get_image_format(data) is not None:
             return True
 
-    @Unit.Requires('Pillow', ['formats', 'extended', 'all'])
+    @Unit.Requires('Pillow', 1)
     def _image():
         from PIL import Image
         return Image

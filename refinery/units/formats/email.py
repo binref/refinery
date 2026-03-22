@@ -143,7 +143,7 @@ class xtmail(PathExtractorUnit):
             path = path.rstrip('\0')
             yield UnpackResult(F'attachments/{path}', ad)
 
-    @PathExtractorUnit.Requires('chardet', ['default', 'extended'])
+    @PathExtractorUnit.Requires('chardet', 1)
     def _chardet():
         import chardet
         return chardet

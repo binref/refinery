@@ -180,7 +180,7 @@ class dump(Unit):
         import pyperclip
         return pyperclip
 
-    @Unit.Requires('Pillow', ['formats'])
+    @Unit.Requires('Pillow', 2)
     def _image():
         from PIL import Image
         return Image

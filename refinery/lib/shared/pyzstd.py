@@ -1,7 +1,7 @@
 from refinery.lib.shared import dependency
 
 
-@dependency('pyzstd', ['arc', 'extended'])
+@dependency('pyzstd', 2)
 def pyzstd():
     import pyzstd
     return pyzstd

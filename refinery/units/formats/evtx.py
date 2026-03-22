@@ -17,7 +17,7 @@ class evtx(Unit):
     def __init__(self, raw: Param[bool, Arg.Switch('-r', help='Extract raw event data rather than XML.')] = False):
         super().__init__(raw=raw)
 
-    @Unit.Requires('python-evtx', ['formats'])
+    @Unit.Requires('python-evtx', 3)
     def _evtx():
         from Evtx.Evtx import Evtx
         return Evtx

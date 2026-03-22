@@ -1,7 +1,7 @@
 from refinery.lib.shared import dependency
 
 
-@dependency('smda<2.0', ['all'])
+@dependency('smda<2.0', 3)
 def smda():
     import datetime
     datetime.UTC = datetime.timezone.utc

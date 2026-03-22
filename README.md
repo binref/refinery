@@ -149,9 +149,9 @@ If you are using a different shell and have some feedback to share, please [let 
 
 ## Heavyweight Dependencies
 
-There are some units that have rather heavy-weight dependencies.
+There are some very situational units with (sometimes large) external dependencies.
 For example, [stego][] is a unit that requires the image parsing library `Pillow`.
-These libraries are not installed by default to keep the installation time for refinery at a reasonable level for first-time users.
+Some libraries are not installed by default to keep the installation time for refinery at a reasonable level for first-time users.
 The corresponding units will tell you what to do when their dependency is missing:
 ```
 $ emit config.png | stego RG
@@ -167,16 +167,11 @@ More precisely, there are the following extra categories available:
 
 |       Name | Included Dependencies                                             |
 |-----------:|:------------------------------------------------------------------|
-|      `all` | all dependencies for all refinery units                           |
-|      `arc` | all archiving-related dependencies (i.e. 7zip support)            |
 |  `default` | recommended selection of reasonable dependencies, author's choice |
-|  `display` | packages like `colorama`, `Pygments`, and `jsbeautifier`          |
-| `extended` | an extended selection, excluding only the most heavyweight ones   |
-|  `formats` | all dependencies related to parsing of various file formats       |
-|   `office` | subset of `formats`; all office-related parsing dependencies      |
-|   `python` | packages related to Python decompilation                          |
+| `extended` | an extended selection, excluding only the most obscure ones       |
+|      `all` | all dependencies for all refinery units                           |
 
-You can specify any combination of these to the installation to have some control over trading dependencies for capabilities.
+These are listed here in ascending order, i.e. `extended` will install everything that `default` would install.
 
 ## Bleeding Edge
 

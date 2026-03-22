@@ -23,7 +23,7 @@ class xtdmp(ArchiveUnit):
     All extracted PE modules are unmapped by overwriting their section offsets with
     virtual section offsets.
     """
-    @ArchiveUnit.Requires('minidump==0.0.24', ['formats', 'default', 'extended'])
+    @ArchiveUnit.Requires('minidump==0.0.24', 2)
     def _minidump():
         import minidump
         import minidump.minidumpfile

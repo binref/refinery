@@ -2,7 +2,7 @@ from refinery.lib.shared import dependency
 from refinery.lib.tools import NoLogging
 
 
-@dependency('unicorn>=2.0.1.post1', ['default', 'extended'])
+@dependency('unicorn>=2.0.1.post1', 1)
 def unicorn():
     with NoLogging():
         import unicorn

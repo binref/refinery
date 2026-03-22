@@ -1,7 +1,7 @@
 from refinery.lib.shared import dependency
 
 
-@dependency('orjson', ['speed', 'default', 'extended'])
+@dependency('orjson', 1)
 def orjson():
     import orjson
     return orjson

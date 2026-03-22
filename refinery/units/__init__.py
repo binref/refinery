@@ -159,7 +159,6 @@ from typing import (
     BinaryIO,
     Callable,
     ClassVar,
-    Collection,
     Generator,
     Iterable,
     Iterator,
@@ -1360,7 +1359,7 @@ class Unit(UnitBase, abstract=True):
     multiple inputs in a common format. For more details, see `refinery.lib.frame`.
     """
     required_dependencies: set[str] | None = None
-    optional_dependencies: dict[str, set[str]] | None = None
+    optional_dependencies: dict[int, set[str]] | None = None
 
     _buffer: buf
     _source: BinaryIO | None
@@ -1431,11 +1430,11 @@ class Unit(UnitBase, abstract=True):
         pass
 
     @staticmethod
-    def Requires(distribution: str, _buckets: Collection[str] = (), info: str | None = None):
+    def Requires(distribution: str, level: int = 0, info: str | None = None):
         """
         Proxy to `refinery.lib.dependencies.dependency_accessor`.
         """
-        return dependency_accessor(distribution, _buckets, info)
+        return dependency_accessor(distribution, level, info)
 
     @property
     def is_reversible(self) -> bool:

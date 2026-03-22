@@ -29,7 +29,7 @@ class ppjscript(Unit):
             keep_escapes=keep_escapes,
         )
 
-    @Unit.Requires('jsbeautifier', ['display', 'extended'])
+    @Unit.Requires('jsbeautifier', 2)
     def _jsb():
         import jsbeautifier
         import jsbeautifier.unpackers.javascriptobfuscator

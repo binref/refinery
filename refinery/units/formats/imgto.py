@@ -20,7 +20,7 @@ class imgto(Unit):
     ):
         super().__init__(format=format)
 
-    @Unit.Requires('Pillow', ['formats'])
+    @Unit.Requires('Pillow', 2)
     def _image():
         from PIL import Image
         return Image

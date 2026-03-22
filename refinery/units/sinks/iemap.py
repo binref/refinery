@@ -29,7 +29,7 @@ class iemap(Unit):
     ):
         super().__init__(label=' '.join(label), bgfill=bgfill, legend=legend, fgchar=fgchar)
 
-    @Unit.Requires('colorama', ['display', 'default', 'extended'])
+    @Unit.Requires('colorama', 1)
     def _colorama():
         import colorama
         return colorama

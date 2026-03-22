@@ -15,7 +15,7 @@ class transpose(Unit):
     some positions. Optionally, a padding sequence can be provided to pad all rows to the
     same length.
     """
-    @Unit.Requires('numpy', ['speed', 'default', 'extended'])
+    @Unit.Requires('numpy', 1)
     def _numpy():
         import numpy
         return numpy

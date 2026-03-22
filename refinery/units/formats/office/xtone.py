@@ -12,7 +12,7 @@ class xtone(PathExtractorUnit):
     Extract embedded files from Microsoft OneNote documents. Recovers file attachments from .one
     notebooks, a common malware delivery vector.
     """
-    @PathExtractorUnit.Requires('pyonenote', ['formats', 'office', 'extended'])
+    @PathExtractorUnit.Requires('pyonenote', 2)
     def _pyOneNote():
         import pyOneNote
         import pyOneNote.OneDocument

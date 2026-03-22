@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Callable, Collection, Generic, TypeVar, cast
+from typing import TYPE_CHECKING, Callable, Generic, TypeVar, cast
 
 from refinery.lib.exceptions import RefineryImportError, RefineryImportMissing
 
@@ -40,7 +40,7 @@ class LazyDependency(Generic[Mod]):
     _mod: Mod | None
     _imp: Callable[[], Mod]
     name: str
-    dist: Collection[str]
+    level: int
     info: str | None
 
     __slots__ = (
@@ -48,13 +48,13 @@ class LazyDependency(Generic[Mod]):
         '_imp',
         '_who',
         'name',
-        'dist',
+        'level',
         'info',
     )
 
-    def __init__(self, imp: Callable[[], Mod], name: str, dist: Collection[str], info: str | None):
+    def __init__(self, imp: Callable[[], Mod], name: str, level: int, info: str | None):
         self.name = name
-        self.dist = dist
+        self.level = level
         self.info = info
         self._imp = imp
         self._mod = None
@@ -65,18 +65,16 @@ class LazyDependency(Generic[Mod]):
             return None
         if unit in (units := self._who):
             return unit
-        if dist := self.dist:
+        if self.level > 0:
             optmap = unit.optional_dependencies
             if optmap is None:
                 unit.optional_dependencies = optmap = {}
-            buckets = [optmap.setdefault(name, set()) for name in dist]
+            bucket = optmap.setdefault(self.level, set())
         else:
             bucket = unit.required_dependencies
             if bucket is None:
                 unit.required_dependencies = bucket = set()
-            buckets = [bucket]
-        for bucket in buckets:
-            bucket.add(self.name)
+        bucket.add(self.name)
         units.add(unit)
         return unit
 
@@ -120,20 +118,20 @@ class DependencyAccessor(Generic[Mod]):
         self.dependency.register(unit)
 
 
-def dependency(name: str, dist: Collection[str] = (), info: str | None = None, local: bool = False):
+def dependency(name: str, level: int = 0, info: str | None = None):
     """
     A decorator to mark up an optional dependency. The decorated function can import the module
     and return the module object. The `name` argument of the decorator specifies the name of the
-    dependency, while `dist` specifies a sequence of extra buckets at which this dependency will
-    automatically be installed by the refinery setup. Functions that are decorated with this
-    method will turn into a `refinery.lib.dependencies.LazyDependency`.
+    dependency, while `level` specifies the installation tier (0=base, 1=default, 2=extended,
+    3=all). Functions that are decorated with this method will turn into a
+    `refinery.lib.dependencies.LazyDependency`.
     """
     def decorator(imp: Callable[[], Mod]):
-        return LazyDependency(imp, name, dist, info)
+        return LazyDependency(imp, name, level, info)
     return decorator
 
 
-def dependency_accessor(name: str, dist: Collection[str] = (), info: str | None = None):
+def dependency_accessor(name: str, level: int = 0, info: str | None = None):
     """
     The same description as for `refinery.lib.dependencies.dependency` applies here, except that
     this decorator is used to decorate static class methods which then turn into a property-like
@@ -141,7 +139,7 @@ def dependency_accessor(name: str, dist: Collection[str] = (), info: str | None 
     excerpt from `refinery.units.compression.brotli.brotli`:
 
         class brotli(Unit):
-            @Unit.Requires('brotli', ['all'])
+            @Unit.Requires('brotli', 3)
             def _brotli():
                 import brotli
                 return brotli
@@ -152,5 +150,5 @@ def dependency_accessor(name: str, dist: Collection[str] = (), info: str | None 
     The `brotli` dependency is installed only when refinery is installed with the `all` extra.
     """
     def decorator(imp: Callable[[], Mod]):
-        return DependencyAccessor(LazyDependency(imp, name, dist, info))
+        return DependencyAccessor(LazyDependency(imp, name, level, info))
     return decorator

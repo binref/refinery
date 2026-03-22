@@ -14,7 +14,7 @@ class pdfcrypt(Unit):
     AES-256 mode.
     """
 
-    @Unit.Requires('pymupdf', ['formats', 'default', 'extended'])
+    @Unit.Requires('pymupdf', 1)
     def _mupdf():
         import os
         for setting in ('PYMUPDF_MESSAGE', 'PYMUPDF_LOG'):

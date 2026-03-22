@@ -16,7 +16,7 @@ class imgdb(Unit):
     Provides access to the direct bytes of an image file. Each row of pixels is emitted as an
     individual chunk.
     """
-    @Unit.Requires('Pillow', ['formats'])
+    @Unit.Requires('Pillow', 2)
     def _image():
         from PIL import Image
         return Image

@@ -246,17 +246,17 @@ class Workbook:
 
 class ExcelUnit(Unit, abstract=True):
 
-    @Unit.Requires('xlrd2', ['formats', 'office', 'extended'])
+    @Unit.Requires('xlrd2', 2)
     def _xlrd():
         import xlrd2
         return xlrd2
 
-    @Unit.Requires('openpyxl', ['formats', 'office', 'extended'])
+    @Unit.Requires('openpyxl', 2)
     def _openpyxl():
         import openpyxl
         return openpyxl
 
-    @Unit.Requires('pyxlsb2', ['formats', 'office', 'extended'])
+    @Unit.Requires('pyxlsb2', 2)
     def _pyxlsb2():
         import pyxlsb2
         return pyxlsb2

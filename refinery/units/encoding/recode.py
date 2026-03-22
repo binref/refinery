@@ -41,7 +41,7 @@ class recode(Unit):
             encerr=Arg.AsOption(encerr or errors or 'STRICT', Handler).value
         )
 
-    @Unit.Requires('chardet', ['default', 'extended'])
+    @Unit.Requires('chardet', 1)
     def _chardet():
         import chardet
         return chardet

@@ -204,7 +204,7 @@ class ArithmeticUnit(BlockTransformation, abstract=True):
             tmp = tmp.astype(block.dtype)
         block[:] = tmp
 
-    @Unit.Requires('numpy', ['speed', 'default', 'extended'])
+    @Unit.Requires('numpy', 0)
     def _numpy():
         import numpy
         return numpy

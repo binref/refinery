@@ -56,7 +56,7 @@ class hl(Unit):
             gruvbox=gruvbox,
         )
 
-    @Unit.Requires('Pygments', ['display', 'extended'])
+    @Unit.Requires('Pygments', 3)
     def _pygments():
         import pygments
         import pygments.formatters

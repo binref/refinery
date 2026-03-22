@@ -31,12 +31,12 @@ class xtpdf(ArchiveUnit):
     #     import pypdf.generic
     #     return pypdf
 
-    @ArchiveUnit.Requires('pikepdf<=9.5', ['formats', 'default', 'extended'])
+    @ArchiveUnit.Requires('pikepdf<=9.5', 1)
     def _pikepdf():
         import pikepdf
         return pikepdf
 
-    @ArchiveUnit.Requires('pymupdf', ['formats', 'default', 'extended'])
+    @ArchiveUnit.Requires('pymupdf', 1)
     def _mupdf():
         import os
         for setting in ('PYMUPDF_MESSAGE', 'PYMUPDF_LOG'):
