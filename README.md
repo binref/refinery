@@ -147,7 +147,7 @@ The following is a summary of how well various shell environments are currently 
 
 If you are using a different shell and have some feedback to share, please [let me know](https://github.com/binref/refinery/discussions)!
 
-## Heavyweight Dependencies
+## Modular Dependencies
 
 There are some very situational units with (sometimes large) external dependencies.
 For example, [stego][] is a unit that requires the image parsing library `Pillow`.
