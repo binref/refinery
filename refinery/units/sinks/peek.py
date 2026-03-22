@@ -55,7 +55,7 @@ class peek(HexViewer):
         index: Param[bool, Arg.Switch('-i',
             help='Display the index of each chunk within the current frame.')] = False,
         stdout: Param[bool, Arg.Switch('-2',
-            help='Print the peek to STDOUT rather than STDERR; the input data is lost.')] = False,
+            help='Print the peek to STDOUT rather than STDERR; input data is not forwarded.')] = False,
         narrow=False, blocks=1, dense=False, expand=False, width=0
     ):
         if decode and escape:
