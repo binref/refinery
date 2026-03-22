@@ -167,7 +167,7 @@ def vba_string_literal(value: str) -> str:
     buffer = io.StringIO()
 
     def commit():
-        if not buffer:
+        if buffer.tell() <= 0:
             return
         concat.append(F'"{buffer.getvalue()}"')
         buffer.seek(0)
