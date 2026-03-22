@@ -122,7 +122,7 @@ class ZipCompressionMethod(enum.IntEnum):
 class ZipCrypto(Struct):
     CRC32Table: list[int] = []
 
-    def __init__(self, reader: StructReader, crc: int):
+    def __init__(self, reader: StructReader, crc: int, mtime: int = 0):
         if not (ct := self.CRC32Table):
             for c in range(256):
                 for _ in range(8):
@@ -131,6 +131,7 @@ class ZipCrypto(Struct):
                 ct.append(c)
         self.header = reader.read(12)
         self.crc = crc
+        self.mtime = mtime
         self._restart()
 
     def __buffer__(self, flags: int, /):
@@ -148,7 +149,12 @@ class ZipCrypto(Struct):
             return False
         self._restart()
         head = self._decrypt(password.encode('latin1'), self.header)
-        return head[11] == (self.crc >> 24) & 0xFF
+        check = head[11]
+        if check == (self.crc >> 24) & 0xFF:
+            return True
+        if check == (self.mtime >> 8) & 0xFF:
+            return True
+        return False
 
     def decrypt(self, password: str, data: buf):
         if not self.checkpwd(password):
@@ -528,7 +534,7 @@ class ZipFileRecord(Struct):
             if ae := (dir.ae if dir else None) or self.ae:
                 self.encryption = AExCrypto(reader, ae)
             else:
-                self.encryption = ZipCrypto(reader, self.crc32)
+                self.encryption = ZipCrypto(reader, self.crc32, self.mtime)
 
         skipped = len(self.encryption)
 
