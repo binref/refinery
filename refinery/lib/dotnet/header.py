@@ -1103,11 +1103,57 @@ class NetMetaDataTables(DotNetStruct):
                 row.append(Type(*args()))
 
     @overload
-    def __getitem__(self, k: int | str) -> list[NamedTuple]:
+    def __getitem__(self, k: Index[R]) -> R:
         ...
 
     @overload
-    def __getitem__(self, k: Index[R]) -> R:
+    def __getitem__(self, k: int | str) -> (
+          list[Module]   # noqa
+        | list[TypeRef]  # noqa
+        | list[TypeDef]
+        | list[FieldPtr]
+        | list[Field]
+        | list[MethodPtr]
+        | list[MethodDef]
+        | list[ParamPtr]
+        | list[Param]
+        | list[InterfaceImpl]
+        | list[MemberRef]
+        | list[Constant]
+        | list[CustomAttribute]
+        | list[FieldMarshal]
+        | list[Permission]
+        | list[ClassLayout]
+        | list[FieldLayout]
+        | list[StandAloneSig]
+        | list[EventMap]
+        | list[EventPtr]
+        | list[Event]
+        | list[PropertyMap]
+        | list[PropertyPtr]
+        | list[Property]
+        | list[MethodSemantics]
+        | list[MethodImpl]
+        | list[ModuleRef]
+        | list[TypeSpec]
+        | list[ImplMap]
+        | list[FieldRVA]
+        | list[ENCLog]
+        | list[ENCMap]
+        | list[Assembly]
+        | list[AssemblyProcessor]
+        | list[AssemblyOS]
+        | list[AssemblyRef]
+        | list[AssemblyRefProcessor]
+        | list[AssemblyRefOS]
+        | list[File]
+        | list[ExportedType]
+        | list[ManifestResource]
+        | list[NestedClass]
+        | list[GenericParam]
+        | list[MethodSpec]
+        | list[GenericParamConstraint]
+    ):
         ...
 
     def __getitem__(self, k):
