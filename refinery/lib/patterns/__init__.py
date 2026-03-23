@@ -689,6 +689,8 @@ class indicators(_PatternEnum):
     evar = pattern(_pattern_win_env_variable)
     "Windows environment variables, i.e. something like `%APPDATA%`"
 
+    hostname = host
+
     @classmethod
     def from_dashname(cls, key):
         return getattr(cls, normalize_to_identifier(key))
