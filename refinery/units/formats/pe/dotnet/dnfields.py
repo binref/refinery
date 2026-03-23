@@ -243,16 +243,17 @@ class dnfields(PathExtractorUnit):
                 offsets.append(match.start())
             if not values:
                 continue
-            if len(values) == 1:
-                value, offsets = values.popitem()
-                for offset in offsets:
-                    try:
-                        path = cpaths.method_path(offset)
-                    except Exception:
-                        continue
-                    else:
-                        unpack.append(UnpackResult(F'{path}/{name}', value, name=name, type='string'))
-                        break
+            if len(values) != 1:
+                continue
+            value, offsets = values.popitem()
+            for offset in offsets:
+                try:
+                    path = cpaths.method_path(offset)
+                except Exception:
+                    continue
+                else:
+                    unpack.append(UnpackResult(F'{path}/{name}', value, name=name, type='string'))
+                    break
 
         unpack.sort(key=lambda u: u.path)
         yield from unpack
