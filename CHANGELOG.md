@@ -5,6 +5,8 @@
 > If a release contains only bugfix, it is marked as a 'bugfix release'.
 > Otherwise, the changelog entries highlight only new or changed functionality.
 
+## Version 0.10.7 - bugfix release
+
 ## Version 0.10.6
 - The modular dependency system was simplified;
   there are now simply the options `default`, `extended`, and `all` on top of base refinery.
