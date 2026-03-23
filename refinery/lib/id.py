@@ -363,6 +363,17 @@ class Fmt(Format, enum.Enum):
     S_DOT = (FC.Serialized, 'bin', 'Serialized/DotNet')
     S_PHP = (FC.Serialized, 'bin', 'Serialized/PHP')
 
+    QUAR = (FC.Binary, 'bin', 'Quarantine')
+    QVSBX = (FC.Binary, 'bin', 'Quarantine/VSBX', 'TrendMicro VSBX Quarantine')
+    QKLQ = (FC.Binary, 'bin', 'Quarantine/KLQ', 'Kaspersky KLQ Quarantine')
+    QV3B = (FC.Binary, 'bin', 'Quarantine/V3B', 'AhnLab V3B Quarantine')
+    QAVAST = (FC.Binary, 'bin', 'Quarantine/AVAST', 'Avast/AVG Chest Quarantine')
+    QAVIRA = (FC.Binary, 'bin', 'Quarantine/AVIRA', 'Avira QUA Quarantine')
+    QCMC = (FC.Binary, 'bin', 'Quarantine/CMC', 'CMC Antivirus Quarantine')
+    QFORTI = (FC.Binary, 'bin', 'Quarantine/FORTICLIENT', 'FortiClient QUARF Quarantine')
+    QFPROT = (FC.Binary, 'bin', 'Quarantine/FPROT', 'F-Prot KSS Quarantine')
+    QMSDEF = (FC.Binary, 'bin', 'Quarantine/MSDEFENDER', 'Microsoft Defender Quarantine')
+
     APLIB = (FC.Compression, 'ap', 'apLib')
     BZ2 = (FC.Compression, 'bz2', 'BZIP')
     JCALG = (FC.Compression, 'bin', 'jcAlg')
@@ -1235,6 +1246,35 @@ def get_serialization_format(data: buf):
     if data[:17] == B'\0\01\0\0\0\xFF\xFF\xFF\xFF\x01\0\0\0\0\0\0\0':
         if data[17] in range(18) or data[17] in range(0x14, 0x17):
             return Fmt.S_DOT
+
+
+@_structural_check
+def get_quarantine_format(data: buf):
+    """
+    Checks whether the input data is a known antivirus quarantine format.
+    """
+    if len(data) < 8:
+        return None
+    if data[:16] == B'AhnLab Inc. 2006':
+        return Fmt.QV3B
+    if data[:8] == B'-chest- ':
+        return Fmt.QAVAST
+    if data[:11] == B'AntiVir Qua':
+        return Fmt.QAVIRA
+    if data[:23] == B'CMC Quarantined Malware':
+        return Fmt.QCMC
+    if data[:5] == B'QUARF':
+        return Fmt.QFORTI
+    if data[:4] == B'\xA9\xAC\xBD\xA7':
+        return Fmt.QVSBX
+    if data[:4] == B'KLQB':
+        return Fmt.QKLQ
+    if data[:3] == B'KSS':
+        return Fmt.QFPROT
+    if data[:2] == B'\xD3\x45':
+        return Fmt.QMSDEF
+    if data[:2] == B'\x0B\xAD':
+        return Fmt.QMSDEF
 
 
 @_structural_check
