@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import functools
 import re
 import struct
 
@@ -45,6 +46,10 @@ class dnfields(PathExtractorUnit):
         icache: dict[bytes, FieldInfo] = {}
         memory = memoryview(data)
 
+        @functools.lru_cache(maxsize=None)
+        def _memory_matches(pattern: bytes):
+            return list(re.finditer(pattern, memory, flags=re.DOTALL))
+
         def _guess_field_info(t: int, signature: bytes, field_name: str | None = None, sizemap: dict = {
             '^s?byte$'       : 1,
             '^s?char$'       : 2,
@@ -71,23 +76,26 @@ class dnfields(PathExtractorUnit):
                     (t >> 0x10) & 0xFF
                 )
             )
-            for match in re.finditer(pattern, memory, flags=re.DOTALL):
+            for match in _memory_matches(pattern):
                 if info is None:
                     count, j, r, name = match.groups()
                     count = integer_from_ldc(count)
                     j, r = struct.unpack('<LB', B'%s\0%s' % (j, r))
+                    r = int(r)
+                    j = int(j)
                     typename = tables[r][j - 1].TypeName
                 else:
+                    count = 0
                     name = match.group(4)
                     typename = info.type
                 for pattern, size in sizemap.items():
                     if not re.match(pattern, typename, flags=re.IGNORECASE):
                         continue
-                    if name:
+                    if name is not None:
                         try:
                             name = struct.unpack('<L', B'%s\0' % name)
-                            name = name[0]
-                            name = tables[4][name - 1].Name
+                            name = int(name[0])
+                            name = tables.Field[name - 1].Name
                         except Exception as E:
                             self.log_info(F'attempt to parse field name failed: {E!s}')
                             name = None
@@ -114,7 +122,7 @@ class dnfields(PathExtractorUnit):
                 if field_name is not None:
                     return field_name, info
             pattern = (
-                BR'(\x20....|\x1F.|[\x17-\x1E])'    # ldc.i4  count
+                BR'(\x20....|\x1F.|[\x17-\x1E])'     # ldc.i4  count
                 BR'\x8D...[\x01\x02]'                # newarr  col|row
                 BR'\x25'                             # dup
                 BR'\xD0\x%02x\x%02x\x%02x\x04'       # ldtoken t
@@ -125,14 +133,14 @@ class dnfields(PathExtractorUnit):
                     (t >> 0x10) & 0xFF
                 )
             )
-            for match in re.finditer(pattern, memory, flags=re.DOTALL):
+            for match in _memory_matches(pattern):
                 count_bytes, name = match.groups()
                 count = integer_from_ldc(count_bytes)
-                if name:
+                if name is not None:
                     try:
-                        name = struct.unpack('<L', B'%s\0' % name)
-                        name = name[0]
-                        name = tables[4][name - 1].Name
+                        nc = struct.unpack('<L', B'%s\0' % name)
+                        nc = int(nc[0])
+                        name = tables.Field[nc - 1].Name
                     except Exception as E:
                         self.log_info(
                             F'attempt to parse field name failed: {E!s}')
@@ -200,19 +208,28 @@ class dnfields(PathExtractorUnit):
             path = cpaths.method_path(guess.offset) if guess.offset else ''
             unpack.append(UnpackResult(F'{path}/{fname}', memory[offset:end], name=fname, type=type))
 
+        remaining_field_indices = list(remaining_field_indices)
+        token_pattern = B'|'.join(
+            (re.escape((i + 1).to_bytes(3, 'little')) for i in remaining_field_indices))
+        token_matches: dict[int, list[re.Match[bytes]]] = {}
+
+        for match in re.finditer((
+            BR'\x72(?P<token>...)\x70'          # ldstr
+            BR'(?:\x6F(?P<function>...)\x0A)?'  # call GetBytes
+            BR'\x80(?P<t>%s)\x04'               # stsfld
+        ) % token_pattern, memory, re.DOTALL):
+            i = int.from_bytes(match['t'], 'little') - 1
+            matches = token_matches.setdefault(i, [])
+            matches.append(match)
+
         for _index in remaining_field_indices:
             field = tables.Field[_index]
-            index = _index + 1
+            matches = [_index]
             name = field.Name
             if field.Flags.HasFieldRVA:
                 self.log_warn(F'field {name} has RVA flag set, but no RVA was found')
-            token = index.to_bytes(3, 'little')
-            values = {}
-            for match in re.finditer((
-                BR'\x72(?P<token>...)\x70'          # ldstr
-                BR'(?:\x6F(?P<function>...)\x0A)?'  # call GetBytes
-                BR'\x80%s\x04'                      # stsfld
-            ) % re.escape(token), data, re.DOTALL):
+            values: dict[bytes, list[int]] = {}
+            for match in token_matches.get(_index, ()):
                 md = match.groupdict()
                 fn_token = md.get('function')
                 fn_index = fn_token and int.from_bytes(fn_token, 'little') or None
@@ -222,13 +239,20 @@ class dnfields(PathExtractorUnit):
                         self.log_info(F'skipping string assignment passing through call to {fn_name}')
                         continue
                 k = int.from_bytes(md['token'], 'little')
-                values[match.start()] = header.meta.Streams.US[k].encode(self.codec)
+                offsets = values.setdefault(header.meta.Streams.US[k].encode(self.codec), [])
+                offsets.append(match.start())
             if not values:
                 continue
             if len(values) == 1:
-                offset, value = values.popitem()
-                path = cpaths.method_path(offset)
-                unpack.append(UnpackResult(F'{path}/{name}', value, name=name, type='string'))
+                value, offsets = values.popitem()
+                for offset in offsets:
+                    try:
+                        path = cpaths.method_path(offset)
+                    except Exception:
+                        continue
+                    else:
+                        unpack.append(UnpackResult(F'{path}/{name}', value, name=name, type='string'))
+                        break
 
         unpack.sort(key=lambda u: u.path)
         yield from unpack
