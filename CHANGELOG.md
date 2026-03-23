@@ -5,6 +5,12 @@
 > If a release contains only bugfix, it is marked as a 'bugfix release'.
 > Otherwise, the changelog entries highlight only new or changed functionality.
 
+## Version 0.10.6
+- The modular dependency system was simplified;
+  there are now simply the options `default`, `extended`, and `all` on top of base refinery.
+- The `unq` unit for restoring AV-quarantined files was added.
+  It currently has near zero test coverage and is based entirely on unquarantining lore.
+
 ## Version 0.10.5
 The release contains the new `-g` switch in `binref` for AI agents.
 
