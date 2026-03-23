@@ -123,15 +123,7 @@ Finally, if you are using [REMnux][remnux-main], you can use their [refinery doc
 
 ## Claude Skill Installation
 
-If you want to teach your local malware analysis [Claude][] to use binary refinery:
-```
-/plugin marketplace add binref/refinery
-/plugin install refinery@binref
-```
-Then invoke your skill as follows:
-```
-/refinery:agent
-```
+If you want to teach your local malware analysis [claude][] to use binary refinery, check out the [Binary Refinery Skill][agent].
 
 ## Shell Support
 
@@ -392,7 +384,8 @@ emit "Once upon a time, at the foot of a great mountain ..." ^
 [carve]: https://binref.github.io/#refinery.carve
 [pack]: https://binref.github.io/#refinery.pack
 
-[Claude]: https://code.claude.com/docs/en/overview
+[claude]: https://code.claude.com/docs/en/overview
+[agent]: https://github.com/binref/agent/
 
 [jupyter]: https://jupyter.org/install
 [jupyter-vscode]: https://code.visualstudio.com/docs/datascience/jupyter-notebooks
