@@ -10,7 +10,7 @@ import re
 from typing import TYPE_CHECKING, Callable, Iterator, overload
 
 from refinery.lib.patterns.tlds import tlds
-from refinery.lib.tools import normalize_to_display, normalize_to_identifier
+from refinery.lib.tools import normalize_to_identifier
 from refinery.lib.types import buf
 
 if TYPE_CHECKING:
