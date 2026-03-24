@@ -99,10 +99,11 @@ class pattern(PatternMethods):
     str_pattern: str
     bin_pattern: bytes
 
-    def __init__(self, pattern: str, flags: int = 0):
+    def __init__(self, pattern: str, flags: int = 0, description: str = ''):
         self.str_pattern = pattern
         self.bin_pattern = pattern.encode('ascii')
         self.flags = flags
+        self.description = description
 
     def __bytes__(self):
         return self.bin_pattern
@@ -243,8 +244,27 @@ class _PatternEnum(enum.Enum):
         raise AttributeError
 
     @property
-    def display(self):
-        return normalize_to_display(self.name)
+    def description(self):
+        return self.value.description
+
+    @classmethod
+    def make_table_with_shorts(cls, name: str):
+        alias = {p.name: name for name, p in cls.__members__.items() if name != p.name}
+        for p in cls:
+            if p.name.endswith('array'):
+                alias[p.name] = F'[{p.name[:-5]}]'
+        width = max(len(p.name) for p in cls) + 4
+        table = [
+            (name.upper(), 'SHORT', 'DESCRIPTION'), *(
+                (p.name, alias.get(p.name, ''), p.description) for p in cls)]
+        return '\n'.join((
+            F'{"":>8}{n:>{width}} {s:<5} {d}' for n, s, d in table))
+
+    @classmethod
+    def make_table(cls, name: str):
+        width = max(len(p.name) for p in cls) + 4
+        table = [(name.upper(), 'DESCRIPTION'), *((p.name, p.description) for p in cls)]
+        return '\n'.join((F'{"":>8}{n:>{width}} {d}' for n, d in table))
 
 
 _TLDS = R'(?i:{possible_tld})(?!(?:{dealbreakers}))'.format(
@@ -500,108 +520,114 @@ AnsiColor = pattern(R'\x1b\[(?:22|[34]\d|(?:9|10)[0-8]|0?[0-2])(?:;\d+){0,20}m')
 
 
 class checks(_PatternEnum):
-    json = pattern(_pattern_json)
-    "Data that consists of JSON-like tokens; cannot detect actual JSON data."
-    path_element_nospace = pattern(_pattern_pathpart_nospace)
-    "A string that can be a valid file system path component and contains no spaces."
+    json = pattern(_pattern_json,
+        description="Data that consists of JSON-like tokens; cannot detect actual JSON data.")
+    path_element_nospace = pattern(_pattern_pathpart_nospace,
+        description="A string that can be a valid file system path component and contains no spaces.")
 
 
 class formats(_PatternEnum):
     """
     An enumeration of patterns for certain formats.
     """
-    int = pattern(_pattern_integer)
-    "Integer expressions"
-    flt = pattern(_pattern_float)
-    "Floating point number expressions"
-    num = pattern(_pattern_number)
-    "Either an integer or a float"
-    str = pattern(_pattern_string)
-    "C syntax string literal"
-    cmdstr = pattern(_pattern_cmdstr)
-    "Windows command line escaped string literal"
-    ps1str = pattern(_pattern_ps1str, flags=re.DOTALL)
-    "PowerShell escaped string literal"
-    vbastr = pattern(_pattern_vbastr)
-    "VBS/VBA string literal"
-    vbaint = pattern(_pattern_vbaint)
-    "VBS/VBA integer literal"
-    printable = alphabet(R'[\s!-~]')
-    "Any sequence of printable characters"
-    urlquote = pattern(_pattern_urlenc)
-    "Any sequence of url-encoded characters, default char set"
-    urlhex = pattern(_pattern_urlhex)
-    "A hex-encoded buffer using URL escape sequences"
-    htmlesc = pattern(_pattern_htmlesc)
-    "A sequence of HTML-escape characters"
-    intarray = tokenize(_pattern_integer, sep=R'[;,]', bound='', unique_sep=True)
-    "Sequences of integers, separated by commas or semicolons"
-    strarray = tokenize(_pattern_string, sep=R'[;,]', bound='', unique_sep=True)
-    "Sequences of strings, separated by commas or semicolons"
-    numarray = tokenize(_pattern_number, sep=R'[;,]', bound='', unique_sep=True)
-    "Sequences of numbers, separated by commas or semicolons"
-    hexarray = tokenize(R'[0-9A-Fa-f]{2}', sep=R'[;,]', bound='', unique_sep=True)
-    "Arrays of hexadecimal strings, separated by commas or semicolons"
-    word = alphabet(R'\\w')
-    "Sequences of word characters"
-    letters = alphabet(R'[a-zA-Z]')
-    "Sequences of alphabetic characters"
-    wshenc = pattern(_pattern_wshenc)
-    "Encoded Windows Scripting Host Scripts (JS/VBS)"
-    alnum = alphabet(R'[a-zA-Z0-9]')
-    "Sequences of alpha-numeric characters"
-    b32 = pattern('[A-Z2-7]+|[a-z2-7+]')
-    "Base32 encoded strings"
-    b58 = alphabet(R'(?:[1-9A-HJ-NP-Za-km-z]')
-    "Base58 encoded strings"
-    b62 = alphabet(R'(?:[0-9A-Za-z]')
-    "Base62 encoded strings"
-    b64 = alphabet(R'(?:[0-9a-zA-Z\+/]{4})', suffix=R'(?:(?:[0-9a-zA-Z\+/]{2,3})={0,3})?', suffix_max=6, token_size=4)
-    "Base64 encoded strings"
-    b85 = alphabet(R'[-!+*()#-&^-~0-9;-Z]')
-    "Base85 encoded strings"
-    a85 = alphabet(R'[!-u]')
-    "Ascii85 encoded strings"
-    z85 = alphabet(R'[-0-9a-zA-Z.:+=^!/*?&<>()\[\]{}@%$#]')
-    "Z85 encoded strings"
-    b92 = pattern(_pattern_b92)
-    "Base92 encoded strings"
-    b64u = alphabet(R'[-\w]{4}', suffix=R'(?:[-\w]{2,3}={0,3})?', suffix_max=6)
-    "Base64 encoded strings using URL-safe alphabet"
-    hex = alphabet(R'[0-9a-fA-F]{2}', token_size=2)
-    "Hexadecimal strings"
-    b16 = alphabet(R'[0-9A-F]{2}', token_size=2)
-    "Uppercase hexadecimal strings"
-    b16s = tokenize(R'[0-9a-fA-F]+', R'\s*', bound='')
-    "Hexadecimal strings"
-    b64s = alphabet(R'[-\s\w\+/]', suffix=R'(?:={0,3})?', suffix_max=3)
-    "Base64 encoded strings, separated by whitespace"
-    b85s = alphabet(R'[-!+*()#-&^-~0-9;-Z\s]')
-    "Base85 encoded string, separated by whitespace"
-    a85s = alphabet(R'[!-u\s]')
-    "Ascii85 encoded string, separated by whitespace"
-    z85s = alphabet(R'[-\s0-9a-zA-Z.:+=^!/*?&<>()\[\]{}@%$#]')
-    "Z85 encoded string, separated by whitespace"
-    utf8 = pattern(_pattern_utf8)
-    "A sequence of bytes that can be decoded as UTF8."
-    hexdump = tokenize(_pattern_hexline, bound='', sep=R'\s*\n')
-    """
-    This pattern matches a typical hexdump output where hexadecimally encoded
-    bytes are followed by a string which contains dots or printable characters
-    from the dump. For example:
-
-        46 4F 4F 0A 42 41 52 0A  FOO.BAR.
-        F0 0B AA BA F0 0B        ......
-    """
-    uuenc = pattern(_pattern_uuencode)
-    "UUEncoded data"
+    integer = pattern(_pattern_integer,
+        description="any integer literal expression")
+    float = pattern(_pattern_float,
+        description="floating point literals")
+    number = pattern(_pattern_number,
+        description="either an integer or a float")
+    string = pattern(_pattern_string,
+        description="c-syntax string literal")
+    cmdstr = pattern(_pattern_cmdstr,
+        description="Windows command line escaped string literal")
+    ps1str = pattern(_pattern_ps1str, flags=re.DOTALL,
+        description="PowerShell escaped string literal")
+    vbastr = pattern(_pattern_vbastr,
+        description="VBS/VBA string literal")
+    vbaint = pattern(_pattern_vbaint,
+        description="VBS/VBA integer literal")
+    printable = alphabet(R'[\s!-~]',
+        description="printable strings (includes whitespace)")
+    urlquote = pattern(_pattern_urlenc,
+        description="url-encoded characters, default char set")
+    urlhex = pattern(_pattern_urlhex,
+        description="hex-encoded buffer using URL escape sequences")
+    htmlesc = pattern(_pattern_htmlesc,
+        description="sequence of HTML-escape characters")
+    intarray = tokenize(_pattern_integer, sep=R'[;,]', bound='', unique_sep=True,
+        description="integers separated by commas or semicolons")
+    strarray = tokenize(_pattern_string, sep=R'[;,]', bound='', unique_sep=True,
+        description="strings separated by commas or semicolons")
+    numarray = tokenize(_pattern_number, sep=R'[;,]', bound='', unique_sep=True,
+        description="numbers separated by commas or semicolons")
+    hexarray = tokenize(R'[0-9A-Fa-f]{2}', sep=R'[;,]', bound='', unique_sep=True,
+        description="hex sequences separated by commas or semicolons")
+    letters = alphabet(R'[a-zA-Z]',
+        description="alphabetic characters")
+    wshenc = pattern(_pattern_wshenc,
+        description="encoded Windows Scripting Host Scripts (JS/VBS)")
+    alnum = alphabet(R'[a-zA-Z0-9]',
+        description="alphanumeric characters")
+    base32 = pattern('[A-Z2-7]+|[a-z2-7+]',
+        description="Base32 encoded strings")
+    base58 = alphabet(R'(?:[1-9A-HJ-NP-Za-km-z]',
+        description="Base58 encoded strings")
+    base62 = alphabet(R'(?:[0-9A-Za-z]',
+        description="Base62 encoded strings")
+    base64 = alphabet(R'(?:[0-9a-zA-Z\+/]{4})', suffix=R'(?:(?:[0-9a-zA-Z\+/]{2,3})={0,3})?', suffix_max=6, token_size=4,
+        description="Base64 encoded strings")
+    base85 = alphabet(R'[-!+*()#-&^-~0-9;-Z]',
+        description="Base85 encoded strings")
+    ascii85 = alphabet(R'[!-u]',
+        description="Ascii85 encoded strings")
+    z85 = alphabet(R'[-0-9a-zA-Z.:+=^!/*?&<>()\[\]{}@%$#]',
+        description="Z85 encoded strings")
+    base92 = pattern(_pattern_b92,
+        description="Base92 encoded strings")
+    base64u = alphabet(R'[-\w]{4}', suffix=R'(?:[-\w]{2,3}={0,3})?', suffix_max=6,
+        description="Base64 encoded strings using URL-safe alphabet")
+    hex = alphabet(R'[0-9a-fA-F]{2}', token_size=2,
+        description="hexadecimal strings")
+    base16 = alphabet(R'[0-9A-F]{2}', token_size=2,
+        description="uppercase hexadecimal strings")
+    base16s = tokenize(R'[0-9a-fA-F]+', R'\s*', bound='',
+        description="hexadecimal strings")
+    base64s = alphabet(R'[-\s\w\+/]', suffix=R'(?:={0,3})?', suffix_max=3,
+        description="Base64 encoded strings, separated by whitespace")
+    base85s = alphabet(R'[-!+*()#-&^-~0-9;-Z\s]',
+        description="Base85 encoded string, separated by whitespace")
+    a85s = alphabet(R'[!-u\s]',
+        description="Ascii85 encoded string, separated by whitespace")
+    z85s = alphabet(R'[-\s0-9a-zA-Z.:+=^!/*?&<>()\[\]{}@%$#]',
+        description="Z85 encoded string, separated by whitespace")
+    utf8 = pattern(_pattern_utf8,
+        description="sequences of bytes that can be decoded as UTF8")
+    hexdump = tokenize(_pattern_hexline, bound='', sep=R'\s*\n',
+        description="typical hexdump output")
+    uuenc = pattern(_pattern_uuencode,
+        description="UUEncoded data")
 
     # shortcuts
-    float = flt
-    integer = int
-    number = num
-    string = str
+    flt = float
+    int = integer
+    num = number
+    str = string
+    b32 = base32
+    b58 = base58
+    b62 = base62
+    b64 = base64
+    b85 = base85
+    b92 = base92
+    a85 = ascii85
+    b16 = base16
+    b64u = base64u
+    b16s = base16s
+    b64s = base64s
+    b85s = base85s
     ps = printable
+    hd = hexdump
+    uq = urlquote
+    uh = urlhex
 
     @classmethod
     def from_dashname(cls, key: str):
@@ -646,48 +672,48 @@ class indicators(_PatternEnum):
     """
     An enumeration of patterns for indicators.
     """
-    domain = pattern(_pattern_serrated_domain)
-    "Domain names"
-    email = pattern(_pattern_email)
-    "Email addresses"
-    guid = pattern(_pattern_guid)
-    "Windows GUID strings"
-    date = pattern(_pattern_date)
-    "A date or timestamp value in a common format"
-    ipv4 = pattern(_pattern_serrated_ipv4)
-    "String representations of IPv4 addresses"
-    ipv6 = pattern(_pattern_ipv6)
-    "String representations of IPv6 addresses"
-    md5 = alphabet('[0-9A-Fa-f]', lower=32, upper=32)
-    "Hexadecimal strings of length 32"
-    sha1 = alphabet('[0-9A-Fa-f]', lower=40, upper=40)
-    "Hexadecimal strings of length 40"
-    sha256 = alphabet('[0-9A-Fa-f]', lower=64, upper=64)
-    "Hexadecimal strings of length 64"
-    host = pattern(_pattern_serrated_host)
-    "Any domain name or IPv4 address, optionally followed by a colon and a port number."
-    socket = pattern(_pattern_serrated_socket)
-    "Any domain name or IPv4 address followed by a colon and a (port) number"
-    subdomain = pattern(_pattern_subdomain)
-    "A domain which contains at least three parts, including the top level"
-    url = pattern(_pattern_serrated_url)
-    "Uniform resource locator addresses"
-    pem = pattern(_pattern_pem)
-    "A pattern matching PEM encoded cryptographic parameters"
-    path = pattern(_pattern_any_path)
-    "Windows and Linux path names"
-    winpath = pattern(_pattern_win_path)
-    "Windows path names"
-    nixpath = pattern(_pattern_nix_path)
-    "Posix path names"
-    fpath = pattern(_pattern_any_path_terse)
-    "Terser pattern for Windows and Linux path names"
-    winfpath = pattern(_pattern_win_path_terse)
-    "Terser pattern for Windows path names"
-    nixfpath = pattern(_pattern_nix_path_terse)
-    "Terser pattern for Posix path names"
-    evar = pattern(_pattern_win_env_variable)
-    "Windows environment variables, i.e. something like `%APPDATA%`"
+    date = pattern(_pattern_date,
+        description="date or timestamp value in a common format")
+    domain = pattern(_pattern_serrated_domain,
+        description="domain names")
+    email = pattern(_pattern_email,
+        description="email addresses")
+    guid = pattern(_pattern_guid,
+        description="Windows GUID")
+    ipv4 = pattern(_pattern_serrated_ipv4,
+        description="IPv4 address string")
+    ipv6 = pattern(_pattern_ipv6,
+        description="IPv6 address string")
+    host = pattern(_pattern_serrated_host,
+        description="domain or IPv4 optionally followed by colon and port")
+    socket = pattern(_pattern_serrated_socket,
+        description="domain or IPv4 followed by colon and port number")
+    url = pattern(_pattern_serrated_url,
+        description="uniform resource locator addresses")
+    md5 = alphabet('[0-9A-Fa-f]', lower=32, upper=32,
+        description="hex strings of length 32")
+    sha1 = alphabet('[0-9A-Fa-f]', lower=40, upper=40,
+        description="hex strings of length 40")
+    sha256 = alphabet('[0-9A-Fa-f]', lower=64, upper=64,
+        description="hex strings of length 64")
+    subdomain = pattern(_pattern_subdomain,
+        description="domain containing at least three parts including TLD")
+    pem = pattern(_pattern_pem,
+        description="PEM encoded cryptographic parameters")
+    path = pattern(_pattern_any_path,
+        description="Windows and Linux file paths")
+    winpath = pattern(_pattern_win_path,
+        description="file paths (Windows)")
+    nixpath = pattern(_pattern_nix_path,
+        description="file paths (Linux)")
+    tpath = pattern(_pattern_any_path_terse,
+        description="terser pattern for file paths")
+    wintpath = pattern(_pattern_win_path_terse,
+        description="terser file path pattern (Windows)")
+    nixtpath = pattern(_pattern_nix_path_terse,
+        description="terser file path pattern (Linux)")
+    evar = pattern(_pattern_win_env_variable,
+        description="Windows environment variable, i.e. %APPDATA%")
 
     hostname = host
 

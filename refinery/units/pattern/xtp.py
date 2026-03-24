@@ -7,11 +7,11 @@ from fnmatch import fnmatch
 from ipaddress import ip_address
 from pathlib import Path
 from string import ascii_letters
-from typing import AnyStr
 from urllib.parse import urlparse
 
 from refinery.lib.patterns import indicators
 from refinery.lib.types import Param
+from refinery.lib.tools import normalize_to_display
 from refinery.units import RefineryCriticalException
 from refinery.units.pattern import Arg, PatternExtractor, RefinedMatch
 
@@ -30,7 +30,7 @@ class LetterWeight:
         for letter in range(0x100):
             self._weights.setdefault(letter, 0)
 
-    def __call__(self, data: AnyStr) -> float:
+    def __call__(self, data: str | bytes) -> float:
         if isinstance(data, str):
             data = data.encode('latin1')
         return sum(self._weights[c] for c in data) / len(data) / max(self._weights.values())
@@ -60,8 +60,9 @@ class xtp(PatternExtractor):
 
     Uses regular expressions to extract indicators from the input data and optionally filters these
     results heuristically. The unit is designed to extract indicators such as domain names and IP
-    addresses, see below for a complete list. To extract data formats such as hex-encoded data, use
-    the unit `refinery.carve`.
+    addresses, see below for a complete list:\n\n{}
+
+    To extract data formats such as hex-encoded data, use the unit `refinery.carve` instead.
     """
 
     def __init__(
@@ -72,9 +73,8 @@ class xtp(PatternExtractor):
                 indicators.url.name,
                 indicators.email.name,
             ), help=(
-                'Choose the pattern to extract. The unit uses {{default}} by default. Use an '
-                'asterix character to select all available patterns. The available patterns '
-                'are: {}'.format(', '.join(p.display for p in indicators))
+                'Choose the pattern to extract. The unit uses {default} by default. Use an '
+                'asterix character to select all available patterns.'
             )
         )],
         filter: Param[int, Arg.Counts('-f', help=(
@@ -84,15 +84,23 @@ class xtp(PatternExtractor):
         )] = 0,
         min=1, max=0, len=0, stripspace=False, duplicates=False, longest=False, take=0
     ):
-        self.superinit(super(), **vars(), ascii=True, utf16=True)
+        super().__init__(
+            pattern=pattern,
+            min=min,
+            max=max,
+            len=len,
+            stripspace=stripspace,
+            duplicates=duplicates,
+            longest=longest,
+            take=take,
+            ascii=True,
+            utf16=True,
+        )
 
         patterns = {
-            p for name in pattern for p in indicators if fnmatch(p.display, name)
-        }
-        # if indicators.host in patterns:
-        #     patterns.remove(indicators.host)
-        #     patterns.add(indicators.ipv4)
-        #     patterns.add(indicators.domain)
+            p for name in pattern for pn, p in indicators.__members__.items()
+            if fnmatch(normalize_to_display(pn), name)}
+
         patterns = [F'(?P<{p.name}>{p.value})' for p in patterns]
         if not patterns:
             raise RefineryCriticalException('The given mask does not match any known indicator pattern.')
@@ -222,7 +230,7 @@ class xtp(PatternExtractor):
                 return False
         return True
 
-    def _check_match(self, data: memoryview | bytearray, pos: int, name: str, value: bytes):
+    def _check_match(self, data: memoryview | bytes | bytearray, pos: int, name: str, value: bytes):
         term = self._BRACKETING.get(data[pos - 1], None)
         text = value.decode(self.codec)
         if term:
@@ -231,7 +239,7 @@ class xtp(PatternExtractor):
                 value = value[:pos]
         if not self.args.filter:
             return value
-        if name == indicators.host.name:
+        if name in (indicators.host.name, indicators.hostname.name):
             if all(part.isdigit() for part in value.split(B'.')):
                 name = indicators.ipv4.name
             elif B'.' not in value:
@@ -269,6 +277,7 @@ class xtp(PatternExtractor):
             indicators.url.name,
             indicators.socket.name,
             indicators.host.name,
+            indicators.hostname.name,
             indicators.domain.name,
             indicators.subdomain.name
         }:
@@ -294,6 +303,7 @@ class xtp(PatternExtractor):
                         value = value[pos:]
                         break
             if name in {
+                indicators.hostname.name,
                 indicators.host.name,
                 indicators.domain.name,
                 indicators.subdomain.name
@@ -368,7 +378,7 @@ class xtp(PatternExtractor):
             try:
                 path = Path(path_string)
             except Exception as E:
-                self.log_debug(F'error parsing path "{path}": {E!s}')
+                self.log_debug(F'error parsing path "{path_string}": {E!s}')
                 return None
             path_likeness = sum(v for v, x in [
                 (1, path.suffix),
@@ -430,3 +440,7 @@ class xtp(PatternExtractor):
 
         transforms = [check]
         yield from self.matches_filtered(memoryview(data), self.args.pattern, *transforms)
+
+
+if __d := xtp.__doc__:
+    xtp.__doc__ = __d.format(indicators.make_table('PATTERN'))

@@ -235,7 +235,7 @@ class TestPatternExtractor(TestUnitBase):
 
     def test_extract_hostname_with_port(self):
         data = b'\x00\x00evil.com:8080\x00\x00'
-        unit = self.load('host')
+        unit = self.load('hostname')
         hits = data | unit | []
         self.assertTrue(any(b'evil.com' in h for h in hits))
 

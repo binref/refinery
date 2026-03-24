@@ -7,18 +7,15 @@ from refinery.lib.types import Param
 from refinery.units import Chunk
 from refinery.units.pattern import Arg, PatternExtractor
 
-_FORMATS = ', '.join(p.display for p in formats)
-
 
 class carve(PatternExtractor):
     """
-    Extracts and optionally decodes data in named formats from the input: Base16 (hex), Base64
-    (b64), Base85 (b85), but also string literals (str), arrays of integer literals (intarray),
-    and others.
+    Extracts and optionally decodes data in named formats from the input: base64, hex, string literals.
+
+    The complete list of supported formats is as follows:\n\n{}
     """
     def __init__(
-        self, format: Param[str, Arg.String(metavar='format',
-            help=F'Specify one of the following formats: {_FORMATS}')],
+        self, format: Param[str, Arg.String(metavar='format', help='Specify one of the available long or short format specifiers.')],
         unique: Param[bool, Arg.Switch('-q', help='Yield every match only once.')] = False,
         decode: Param[bool, Arg.Switch('-d', help='Automatically decode known patterns.')] = False,
         single: Param[bool, Arg.Switch('-s', help='Only get the biggest match; equivalent to -qlt1')] = False,
@@ -53,7 +50,7 @@ class carve(PatternExtractor):
         elif self.args.format == formats.int:
             from ..encoding.base import base
             decoder = base()
-        elif self.args.format in (formats.b16, formats.b16s, formats.hex):
+        elif self.args.format in (formats.base16, formats.base16s, formats.hex):
             from ..encoding.hex import hex
             decoder = hex()
         elif self.args.format == formats.hexdump:
@@ -68,16 +65,16 @@ class carve(PatternExtractor):
                 return msgpack.packb([
                     m[0] | esc | bytes for m in formats.str.value.finditer(data)]) or B''
             decoder = _decoder
-        elif self.args.format in (formats.b64, formats.b64s):
+        elif self.args.format in (formats.base64, formats.base64s):
             from ..encoding.b64 import b64
             decoder = b64()
-        elif self.args.format in (formats.b85, formats.b85s):
+        elif self.args.format in (formats.base85, formats.base85s):
             from ..encoding.b85 import b85
             decoder = b85()
-        elif self.args.format == formats.b64u:
+        elif self.args.format == formats.base64u:
             from ..encoding.b64 import b64
             decoder = b64(urlsafe=True)
-        elif self.args.format == formats.b32:
+        elif self.args.format == formats.base32:
             from ..encoding.b32 import b32
             decoder = b32()
         elif self.args.format == formats.ps1str:
@@ -124,10 +121,15 @@ class carve(PatternExtractor):
                     self.log_info(F'decoder failure: {E!s}')
 
 
+if __d := carve.__doc__:
+    carve.__doc__ = __d.format(formats.make_table_with_shorts('FORMAT'))
+
+
 class csd(carve):
     """
     Short for carve & decode; carves the single largest buffer of a given format from the input
-    and decodes it with the appropriate decoder.
+    and decodes it with the appropriate decoder. See the carve help for detailed information on
+    format specifiers.
     """
     def __init__(self, format, utf16=True, ascii=True, stripspace=False):
         super().__init__(
@@ -143,7 +145,7 @@ class csd(carve):
 class csb(carve):
     """
     Short for carve single buffer; carves the single largest buffer of a given format from the
-    input data and returns it.
+    input data and returns it. See the carve help for detailed information on format specifiers.
     """
     def __init__(self, format, utf16=True, ascii=True, stripspace=False):
         super().__init__(

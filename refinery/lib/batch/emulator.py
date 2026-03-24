@@ -1027,7 +1027,7 @@ class BatchEmulator:
         if handler is None:
             if self.state.exists_file(verb):
                 self.state.ec = 0
-            elif not indicators.winfpath.value.fullmatch(verb):
+            elif not indicators.wintpath.value.fullmatch(verb):
                 if '\uFFFD' in verb or not verb.isprintable():
                     self.state.ec = 9009
                     cmd.junk = True

@@ -385,8 +385,12 @@ class Arg(Argument):
                     if isinstance(default, (list, tuple, set)):
                         if not default:
                             return 'empty'
-                        elif len(default) == 1:
-                            default = next(iter(default))
+                        else:
+                            sentinel = next(iter(default))
+                            if len(default) == 1:
+                                return sentinel
+                            elif isinstance(sentinel, str):
+                                return '"{}"'.format(' '.join((str(x) for x in default)))
                     if isinstance(default, slice):
                         parts = [default.start or '', default.stop or '', default.step]
                         default = ':'.join(str(x) for x in parts if x is not None)
