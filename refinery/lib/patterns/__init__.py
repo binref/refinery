@@ -701,19 +701,19 @@ class indicators(_PatternEnum):
     pem = pattern(_pattern_pem,
         description="PEM encoded cryptographic parameters")
     path = pattern(_pattern_any_path,
-        description="Windows and Linux file paths")
-    winpath = pattern(_pattern_win_path,
-        description="file paths (Windows)")
+        description="any file path")
     nixpath = pattern(_pattern_nix_path,
         description="file paths (Linux)")
+    winpath = pattern(_pattern_win_path,
+        description="file paths (Windows)")
     tpath = pattern(_pattern_any_path_terse,
-        description="terser pattern for file paths")
-    wintpath = pattern(_pattern_win_path_terse,
-        description="terser file path pattern (Windows)")
+        description="file paths without whitespace")
     nixtpath = pattern(_pattern_nix_path_terse,
-        description="terser file path pattern (Linux)")
+        description="tpath for Linux")
+    wintpath = pattern(_pattern_win_path_terse,
+        description="tpath for Windows")
     evar = pattern(_pattern_win_env_variable,
-        description="Windows environment variable, i.e. %APPDATA%")
+        description="Windows environment variable, i.e. %AppData%")
 
     hostname = host
 
