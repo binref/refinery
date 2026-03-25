@@ -5,6 +5,9 @@
 > If a release contains only bugfix, it is marked as a 'bugfix release'.
 > Otherwise, the changelog entries highlight only new or changed functionality.
 
+## Version 0.10.9
+- Improved help text descriptions for `carve` and `xtp` exposing named patterns with description.
+
 ## Version 0.10.8 - bugfix release
 
 ## Version 0.10.7 - bugfix release
