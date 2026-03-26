@@ -5,6 +5,10 @@
 > If a release contains only bugfix, it is marked as a 'bugfix release'.
 > Otherwise, the changelog entries highlight only new or changed functionality.
 
+## Version 0.10.10
+- Improves `xtrar` performance by cythonizing parts of the code.
+- Fixes a regression where `xor file` would no longer read the contents of a file named `file` from disk.
+
 ## Version 0.10.9
 - Improved help text descriptions for `carve` and `xtp` exposing named patterns with description.
 
