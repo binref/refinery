@@ -39,15 +39,15 @@ class vsnip(Unit):
 
     def __init__(
         self, *addresses: Param[slice, Arg.Bounds(metavar='start:count:align', help=(
-            'Use Python slice syntax to describe an area of virtual memory to read. If a chunksize is '
+            'Use Python slice syntax to describe an area of virtual memory to read. If a align is '
             'specified, then the unit will always read a multiple of that number of bytes'))],
         bounded: Param[bool, Arg.Switch('-d', group='END', help=(
             'When this flag is specified, addresses are understood as start:end:align, i.e. the second '
             'part of the slice marks the end of the buffer to be extracted.'))] = False,
         ascii: Param[bool, Arg.Switch('-a', group='END',
-            help='Read ASCII strings; equivalent to -th:00')] = False,
+            help='Read ASCII strings; equivalent to -t=h:00')] = False,
         utf16: Param[bool, Arg.Switch('-u', group='END',
-            help='Read UTF16 strings; equivalent to -th:0000 (also sets chunksize to 2)')] = False,
+            help='Read UTF16 strings; equivalent to -t=h:0000 and setting align to 2')] = False,
         until: Param[buf, Arg.Binary('-t', group='END',
             help='Read until sequence {varname} is read.')] = B'',
         base: Param[int | None, Arg.Number('-b', metavar='ADDR',
