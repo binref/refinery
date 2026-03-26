@@ -75,6 +75,8 @@ EXTENSION_DICT = {
     'refinery.lib.seven.deflate'  : 'refinery/lib/seven/deflate.pyx',
     'refinery.lib.seven.huffman'  : 'refinery/lib/seven/huffman.pyx',
     'refinery.lib.seven.lzx'      : 'refinery/lib/seven/lzx.pyx',
+    'refinery.lib.unrar.unpack50' : 'refinery/lib/unrar/unpack50.pyx',
+    'refinery.lib.unrar.filters'  : 'refinery/lib/unrar/filters.pyx',
 }
 
 EXTENSION_LIST = [
