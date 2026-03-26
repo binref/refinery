@@ -1,7 +1,22 @@
 from .. import TestUnitBase
 
+import tempfile
+import os
+
+from test import temporary_chwd
+
 
 class TestXOR(TestUnitBase):
+
+    def test_file_as_argument(self):
+        with tempfile.TemporaryDirectory() as root:
+            with temporary_chwd(root):
+                path = os.path.join(root, 'bar')
+                with open(path, 'wb') as fd:
+                    fd.write(B'foo')
+                unit = self.load('bar')
+                test = b'\0\0\0' | unit | str
+        self.assertEqual(test, 'foo')
 
     def test_simple_xor(self):
         a = bytearray(300)
