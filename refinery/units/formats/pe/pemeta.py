@@ -8,6 +8,7 @@ from contextlib import suppress
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from enum import Enum
+from typing import cast
 
 from refinery.lib import lief
 from refinery.lib.dotnet.header import DotNetHeader
@@ -20,6 +21,10 @@ from refinery.lib.types import Param
 from refinery.units import Arg
 from refinery.units.formats import JSONTableUnit
 from refinery.units.formats.pe import get_pe_size
+
+_PE = lief.PE
+_PE_Hdr = _PE.Header
+_PE_Dbg = _PE.Debug
 
 
 def _FILETIME(value: int) -> datetime:
@@ -339,43 +344,41 @@ class pemeta(JSONTableUnit):
             info['Signer'] = signer_certificates
         return info
 
-    def _pe_characteristics(self, pe: lief.PE.Binary):
-        characteristics = {F'IMAGE_FILE_{flag.name}' for flag in lief.PE.Header.CHARACTERISTICS
+    def _pe_characteristics(self, pe: _PE.Binary):
+        characteristics = {F'IMAGE_FILE_{flag.name}' for flag in _PE_Hdr.CHARACTERISTICS
             if pe.header.characteristics & flag.value}
         if pe.header.characteristics & 0x40:
             # TODO: Missing from LIEF
             characteristics.add('IMAGE_FILE_16BIT_MACHINE')
         return characteristics
 
-    def _pe_address_width(self, pe: lief.PE.Binary, default=16) -> int:
+    def _pe_address_width(self, pe: _PE.Binary, default=16) -> int:
         # TODO: missing from LIEF
         IMAGE_FILE_16BIT_MACHINE = 0x40
+        MT = _PE_Hdr.MACHINE_TYPES
         if pe.header.characteristics & IMAGE_FILE_16BIT_MACHINE:
             return 4
-        elif pe.header.machine == lief.PE.Header.MACHINE_TYPES.I386:
+        elif pe.header.machine == MT.I386:
             return 8
-        elif pe.header.machine in (
-            lief.PE.Header.MACHINE_TYPES.AMD64,
-            lief.PE.Header.MACHINE_TYPES.IA64,
-        ):
+        elif pe.header.machine in (MT.AMD64, MT.IA64):
             return 16
         else:
             return default
 
-    def _vint(self, pe: lief.PE.Binary, value: int):
+    def _vint(self, pe: _PE.Binary, value: int):
         if not self.args.tabular:
             return value
         aw = self._pe_address_width(pe)
         return F'0x{value:0{aw}X}'
 
-    def parse_version(self, pe: lief.PE.Binary, data=None) -> dict | None:
+    def parse_version(self, pe: _PE.Binary, data=None) -> dict | None:
         """
         Extracts a JSON-serializable and human-readable dictionary with information about
         the version resource of an input PE file, if available.
         """
         version_info = {}
         rsrc = unwrap(pe.resources_manager)
-        if isinstance(rsrc, lief.lib.lief_errors) or not rsrc.has_version:
+        if isinstance(rsrc, lief.getlib().lief_errors) or not rsrc.has_version:
             return None
         version = rsrc.version[0]
 
@@ -394,8 +397,8 @@ class pemeta(JSONTableUnit):
                 Charset=self._CHARSET.get(icon.sublang, 'Unknown Charset'),
             )
 
-        def _code_pages(d: lief.PE.ResourceDirectory | lief.PE.ResourceData | lief.PE.ResourceNode):
-            if isinstance(d, lief.PE.ResourceData):
+        def _code_pages(d: _PE.ResourceDirectory | _PE.ResourceData | _PE.ResourceNode):
+            if isinstance(d, _PE.ResourceData):
                 yield d.code_page
                 return
             for child in d.childs:
@@ -446,12 +449,12 @@ class pemeta(JSONTableUnit):
 
         return version_info or None
 
-    def parse_exports(self, pe: lief.PE.Binary, data=None, include_addresses=False) -> list | None:
+    def parse_exports(self, pe: _PE.Binary, data=None, include_addresses=False) -> dict | None:
         base = pe.optional_header.imagebase
-        info = []
+        info = {}
         if not pe.has_exports:
             return None
-        for k, exp in enumerate(pe.get_export().entries):
+        for k, exp in enumerate(pe.get_export().entries, 1):
             name = exp.demangled_name
             if not name:
                 name = exp.name
@@ -462,10 +465,10 @@ class pemeta(JSONTableUnit):
             item = {
                 'Name': name, 'Address': self._vint(pe, exp.address + base)
             } if include_addresses else name
-            info.append(item)
+            info[k] = item
         return info
 
-    def parse_imports(self, pe: lief.PE.Binary, data=None, include_addresses=False):
+    def parse_imports(self, pe: _PE.Binary, data=None, include_addresses=False):
         info = {}
         for idd in itertools.chain(pe.imports, pe.delay_imports):
             dll = _STRING(idd.name)
@@ -479,7 +482,7 @@ class pemeta(JSONTableUnit):
                 ) if include_addresses else name)
         return info
 
-    def parse_header(self, pe: lief.PE.Binary, data=None) -> dict:
+    def parse_header(self, pe: _PE.Binary, data=None) -> dict:
         major = pe.optional_header.major_operating_system_version
         minor = pe.optional_header.minor_operating_system_version
         version = self._WINVER.get(major, {0: 'Unknown'})
@@ -539,7 +542,7 @@ class pemeta(JSONTableUnit):
         header_information['EntryPoint'] = self._vint(pe, pe.optional_header.addressof_entrypoint + base)
         return header_information
 
-    def parse_time_stamps(self, pe: lief.PE.Binary, raw_time_stamps: bool, more_detail: bool) -> dict:
+    def parse_time_stamps(self, pe: _PE.Binary, raw_time_stamps: bool, more_detail: bool) -> dict:
         """
         Extracts time stamps from the PE header (link time), as well as from the imports,
         exports, debug, and resource directory. The resource time stamp is also parsed as
@@ -585,13 +588,14 @@ class pemeta(JSONTableUnit):
             info.update(Export=dt(ts))
 
         if pe.has_resources and pe.resources.is_directory:
-            rsrc: lief.PE.ResourceDirectory = pe.resources
-            if res_timestamp := rsrc.time_date_stamp:
-                with suppress(ValueError):
-                    from refinery.lib.dt import dostime
-                    dos = dostime(res_timestamp)
-                    info.update(Delphi=dos)
-                    info.update(RsrcTS=dt(res_timestamp))
+            if isinstance(unwrap(rsrc := pe.resources), _PE.ResourceDirectory):
+                rsrc = cast(_PE.ResourceDirectory, rsrc)
+                if res_timestamp := rsrc.time_date_stamp:
+                    with suppress(ValueError):
+                        from refinery.lib.dt import dostime
+                        dos = dostime(res_timestamp)
+                        info.update(Delphi=dos)
+                        info.update(RsrcTS=dt(res_timestamp))
 
         def norm(value):
             if isinstance(value, list):
@@ -604,7 +608,7 @@ class pemeta(JSONTableUnit):
 
         return {key: norm(value) for key, value in info.items()}
 
-    def parse_dotnet(self, pe: lief.PE.Binary, data):
+    def parse_dotnet(self, pe: _PE.Binary, data):
         """
         Extracts a JSON-serializable and human-readable dictionary with information about
         the .NET metadata of an input PE file.
@@ -643,22 +647,20 @@ class pemeta(JSONTableUnit):
 
         return info
 
-    def parse_debug(self, pe: lief.PE.Binary, data=None):
+    def parse_debug(self, pe: _PE.Binary, data=None):
         result = []
         if not pe.has_debug:
             return None
         for entry in pe.debug:
-            if entry.type != lief.PE.Debug.TYPES.CODEVIEW:
+            if entry.type != _PE_Dbg.TYPES.CODEVIEW:
                 continue
-            try:
-                entry: lief.PE.CodeViewPDB
+            if isinstance(unwrap(entry), _PE.CodeViewPDB):
+                entry = cast(_PE.CodeViewPDB, entry)
                 result.append(dict(
                     PdbPath=_STRING(entry.filename),
                     PdbGUID=entry.guid,
                     PdbAge=entry.age,
                 ))
-            except AttributeError:
-                continue
         if len(result) == 1:
             result = result[0]
         return result
@@ -706,8 +708,8 @@ class pemeta(JSONTableUnit):
                 args = *args, True
             try:
                 info = resolver(*args)
-            except Exception as E:
-                self.log_info(F'failed to obtain {name}: {E!s}')
+            except Exception as error:
+                self.log_info(F'failed to obtain {name}: {error!s}')
                 continue
             if info:
                 result[name] = info

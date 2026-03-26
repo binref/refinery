@@ -25,6 +25,7 @@ __all__ = [
     'COFF',
     'AbstractBinary',
     'Relocation',
+    'getlib',
     'Header',
     'Symbol',
     'Section',
@@ -40,7 +41,10 @@ __pdoc__ = {_forward: False for _forward in __all__[:9]}
 _lib = None
 
 
-def _init():
+def getlib():
+    """
+    Return a module handle to the underlying LIEF library.
+    """
     global _lib
     if _lib is not None:
         return _lib
@@ -52,7 +56,7 @@ def _init():
 
 
 def __getattr__(name):
-    lib = _init()
+    lib = getlib()
     if name == 'lib':
         return lib
     if name == 'ELF':
@@ -93,7 +97,7 @@ def load_pe(
     to a config object and then invokes the LIEF parser. Everything is parsed by default. For speed
     over completeness, see `refinery.lib.lief.load_pe_fast`.
     """
-    _init()
+    getlib()
     import lief.PE as PE
     with io.BytesIO(data) as stream:
         cfg = PE.ParserConfig()
@@ -133,7 +137,7 @@ def load_macho(data: buf):
     """
     Load a MachO file using LIEF.
     """
-    _init()
+    getlib()
     import lief.MachO as MachO
     with io.BytesIO(data) as stream:
         config = MachO.ParserConfig()
@@ -149,7 +153,7 @@ def load_elf(data: buf):
     """
     Load an ELF file using LIEF.
     """
-    _init()
+    getlib()
     import lief.ELF as ELF
     with io.BytesIO(data) as stream:
         config = ELF.ParserConfig()
