@@ -5,6 +5,7 @@ Uses minimal RAR archives constructed from known byte sequences.
 """
 import base64
 import hashlib
+import pytest
 
 from .. import TestBase
 
@@ -34,6 +35,7 @@ class TestPBKDF2(TestBase):
         self.assertEqual(key, expected)
 
 
+@pytest.mark.cythonized
 class TestMultiVolumeArchive(TestBase):
     """
     Test a mutli-volume archive.

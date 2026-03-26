@@ -5,7 +5,6 @@ from ... import TestUnitBase
 from test.units.compression import KADATH1, KADATH2
 from refinery.lib.unrar import RarInvalidPassword, RarMissingPassword
 
-import unittest
 import pytest
 
 
@@ -285,6 +284,7 @@ TEST_JTR_RAR3 = {
 }
 
 
+@pytest.mark.cythonized
 class TestJohnTheRipperRAR(TestUnitBase):
 
     def _run_jtr_test(self, file: str, password: str, expected: dict[str, bytes], hash=None):
@@ -347,6 +347,7 @@ class TestJohnTheRipperRAR(TestUnitBase):
         self._run_jtr_test('rar5-fp0-password.rar', 'password', {'secret.txt': b'secret\n'})
 
 
+@pytest.mark.cythonized
 class TestMinimalArchives(TestUnitBase):
     def _run_test(self, name: str):
         sha256 = self.ldu('sha256', text=True)
@@ -435,6 +436,7 @@ REFINERY_ARCHIVES = {
 }
 
 
+@pytest.mark.cythonized
 class TestRarSamples(TestUnitBase):
 
     def _run(self, sample: str):
@@ -491,6 +493,7 @@ class TestRarSamples(TestUnitBase):
         })
 
 
+@pytest.mark.cythonized
 class TestRAR15(TestUnitBase):
     def test_sample_without_password(self):
         sha2 = self.ldu('sha256', text=True)
