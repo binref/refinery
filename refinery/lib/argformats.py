@@ -1396,7 +1396,7 @@ class DelayedArgument(LazyEvaluation):
     @handler.register('le')
     def le(self, arg: int | buf, size: str | None = None) -> int:
         """
-        The handler `be[size=0]:data` converts a binary input into the integer that it encodes in
+        The handler `le[size=0]:data` converts a binary input into the integer that it encodes in
         little endian format, and vice versa. The optional parameter `size` can be used to specify
         the number of bytes used for encoding integers. For byte string inputs, this parameter is
         used to truncate the input before conversion.
