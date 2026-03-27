@@ -2,6 +2,7 @@
 Implements extraction logic for anti-virus quarantine containers. Each handler function accepts a
 memoryview of the quarantine file and returns a `refinery.lib.unquarantine.QuarantineResult` on
 success or `None` on failure. The public entry point is `refinery.lib.unquarantine.unquarantine`.
+The main reference for this is [the DeXRAY script by HexaCorn](https://hexacorn.com/d/DeXRAY.pl).
 
 This library is largely untested. Acquiring test samples is difficult. If you have atest samples,
 please let me know.
