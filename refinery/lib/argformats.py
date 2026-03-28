@@ -1402,15 +1402,14 @@ class DelayedArgument(LazyEvaluation):
         integer sequence and assigned back to `S`. The starting value of `S` is given by `seed`,
         which has a default value of `0` and must also be given as a Python expression.
         """
-        seed = seed and PythonExpression.Lazy(seed)
-        reduction = PythonExpression.Lazy(reduction)
+        _seed = PythonExpression.Lazy(seed or '0')
+        _fold = PythonExpression.Lazy(reduction)
 
         def finalize(data: Chunk | None = None):
             def _reduction(S, B):
-                v = reduction(args, S=S, B=B)
-                return v
-            args = dict(metavars(data))
-            return reduce(_reduction, it, seed and seed(args) or 0)
+                return _fold(args, S=S, B=B)
+            args = {} if data is None else dict(metavars(data))
+            return reduce(_reduction, it, _seed(args))
 
         try:
             return finalize()
