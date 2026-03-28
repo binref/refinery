@@ -300,7 +300,7 @@ emit 4537fab9de768a668ab4e72ae2cce3169b7af2dd36a1723ddab09c04d31d61a5 \
 Extract payload from a shellcode loader and carve its c2:
 ```
 emit 58ba30052d249805caae0107a0e2a5a3cb85f3000ba5479fafb7767e2a5a78f3 \
-  | rex yara:50607080.* [| struct LL{s:L}{} | xor -B2 accu[s]:@msvc | xtp url ]
+  | rex yara:50607080.* [| struct LL{s:L}{} | xor -B2 rand[s]:msvc | xtp url ]
 ```
 Get the malicious VBA macros from a forgotten time when this was how it was done:
 ```

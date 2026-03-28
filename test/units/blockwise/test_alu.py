@@ -19,6 +19,12 @@ class TestALU(TestUnitBase):
         result = next(data | self.load('-P0', '(B+5)%255'))
         self.assertEqual(result, wish)
 
+    def test_lcg_reduction(self):
+        xor1 = self.ldu('alu', 'B@S', lcg='7:23')
+        xor2 = self.ldu('alu', 'B@S', lcg='7:23:256')
+        data = bytearray(48)
+        self.assertEqual(xor1(data), xor2(data))
+
     def test_index_starts_at_zero(self):
         unit = self.load("B+K")
         self.assertEqual(bytes(bytes(5) | unit), bytes(range(5)))

@@ -65,6 +65,10 @@ class alu(ArithmeticUnit):
         seed: Param[int | str, Arg.String('-s', help=(
             'Optional seed value for the state variable S. The default is zero. This can be an expression '
             'involving the variable N.'))] = 0,
+        skip: Param[int, Arg.Number('-k', help=(
+            'Optional skip value for the state machine. When specified, prologue and epilogue are exeucted '
+            'N times before operation on the input buffer begins: the expressions may not depend on block '
+            'values or indices.'))] = 0,
         prologue: Param[str, Arg.String('-p', metavar='E', help=(
             'Optional expression with which the state variable S is updated before a block is operated on.'))] = '',
         epilogue: Param[str, Arg.String('-e', metavar='E', group='EPI', help=(
@@ -102,6 +106,7 @@ class alu(ArithmeticUnit):
             blocksize=blocksize,
             precision=precision,
             seed=seed,
+            skip=skip,
             lcg=lcg,
             operator=self._parse_op(operator),
             prologue=self._parse_op(prologue, 'S'),
@@ -118,6 +123,7 @@ class alu(ArithmeticUnit):
     def process(self, data):
         context = dict(metavars(data))
         seed = self.args.seed
+        skip = self.args.skip
         fbits = self.fbits
         fmask = self.fmask
 
@@ -182,13 +188,6 @@ class alu(ArithmeticUnit):
             X=negate_bits,
             M=mask_to_bits,
         )
-        args = [
-            self._infinitize_argument(len(data), *self._argument_parse_hook(a))
-            for a in self.args.argument]
-        if args:
-            args = [next(iter(a)) for a in args]
-            context['A'] = args[0]
-            context['V'] = args
 
         if isinstance(seed, str):
             seed = PythonExpression(seed, 'IAMNVRLX', constants=context, mask=fmask)
@@ -197,6 +196,10 @@ class alu(ArithmeticUnit):
 
         self._index.init(self.fmask)
         context.update(S=seed)
+
+        for _ in range(skip):
+            context['S'] = eval(prologue, None, context)
+            context['S'] = eval(epilogue, None, context)
 
         def operate(block, index, *args):
             context.update(K=index, B=block, E=block, V=args)

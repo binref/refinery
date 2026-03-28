@@ -205,7 +205,7 @@ class TestPeek(TestUnitBase):
         pfmt = 'emit s: [| put test "s:{}" | peek -m ]'
         for value, requires_prefix in {
             'b64:b64:b64' : True,
-            'accu:@msvc'  : True,
+            'rand:msvc'   : True,
             'u[:!krz--dk' : False,
             'ftp://t.com' : False,
         }.items():

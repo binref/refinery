@@ -40,12 +40,6 @@ class TestXOR(TestUnitBase):
         test.reverse()
         self.assertEqual(test, b'Kernel32.dll')
 
-    def test_accu_reduction(self):
-        xor1 = self.ldu('xor', 'accu[12]:(A*7+23)')
-        xor2 = self.ldu('xor', 'accu[12]:(A*7+23)&0xFF')
-        data = bytearray(48)
-        self.assertEqual(xor1(data), xor2(data))
-
     def test_auto_block_01(self):
         self.assertEqual(bytes(5) | self.load('0xAABBCC') | bytes, B'\xCC\xBB\xAA\xCC\xBB')
         self.assertEqual(bytes(5) | self.load('0x00BBCC') | bytes, B'\xCC\xBB\xCC\xBB\xCC')
