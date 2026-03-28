@@ -108,7 +108,7 @@ import re
 from abc import ABC, abstractmethod
 from argparse import ArgumentTypeError
 from contextlib import suppress
-from functools import lru_cache, reduce, update_wrapper
+from functools import reduce, update_wrapper
 from pathlib import Path
 from typing import (
     TYPE_CHECKING,
