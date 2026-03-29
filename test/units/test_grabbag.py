@@ -17,8 +17,8 @@ class TestGrabBagExamples(TestBase):
             L('scope -n 3') | L('chop -t 5') [
                 L('sorted -a') | L('snip 2:') | L('sep')
             ]| L('pack 10') | L('alu --dec -sN B-S')
-        ]| L('carve -sd b64') | L('zl') | L('deob-ps1') \
-         | L('carve -sd b64') | L('zl') | L('deob-ps1') \
+        ]| L('carve -sd b64') | L('zl') | L('deob-ps1-ast') \
+         | L('carve -sd b64') | L('zl') | L('deob-ps1-ast') \
          | L('xtp -f domain')
 
         with BytesIO(data) as sample:
