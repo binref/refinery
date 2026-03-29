@@ -130,5 +130,8 @@ class TestPs1Synthesizer(TestBase):
     def test_roundtrip_chained_methods(self):
         self._round_trip('$s.Trim().ToLower().Replace("a", "b")')
 
+    def test_roundtrip_dotted_command_name(self):
+        self._round_trip('powershell.exe -windowstyle hidden "test"')
+
     def test_roundtrip_nested_index(self):
         self._round_trip('$a[0][1]')

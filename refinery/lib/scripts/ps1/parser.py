@@ -355,6 +355,23 @@ class Ps1Parser:
                 return Ps1CommandInvocation(offset=offset, invocation_operator=invocation_operator)
             return None
 
+        if isinstance(name_expr, Ps1StringLiteral) and not invocation_operator:
+            while self._at(Ps1TokenKind.DOT):
+                saved_pos = self._lexer.pos
+                saved_tok = self._current
+                self._advance()
+                if self._at(Ps1TokenKind.GENERIC_TOKEN) or self._current.kind.is_keyword:
+                    suffix = self._advance()
+                    name_expr = Ps1StringLiteral(
+                        offset=name_expr.offset,
+                        value=name_expr.value + '.' + suffix.value,
+                        raw=name_expr.raw + '.' + suffix.value,
+                    )
+                else:
+                    self._lexer.pos = saved_pos
+                    self._current = saved_tok
+                    break
+
         arguments: list[Ps1CommandArgument | Expression] = []
         self._lexer.mode = Ps1LexerMode.ARGUMENT
         while not self._is_pipeline_terminator():
