@@ -1,6 +1,3 @@
-"""
-AST-based PowerShell deobfuscator unit.
-"""
 from __future__ import annotations
 
 import re
@@ -11,13 +8,14 @@ from refinery.lib.scripts.ps1.synth import Ps1Synthesizer
 from refinery.units.obfuscation import IterativeDeobfuscator
 
 
-class deob_ps1_ast(IterativeDeobfuscator):
+class ppps(IterativeDeobfuscator):
     """
-    AST-based PowerShell deobfuscator. Parses the script into an abstract syntax tree,
-    applies simplifying transformations (constant folding, format string evaluation,
-    bracket removal, type cast simplification, string operations, case normalization,
-    invoke simplification, uncurly variables), and synthesizes clean output. Iterates
-    until stable.
+    AST-based PowerShell deobfuscator.
+
+    Parses the script into an abstract syntax tree, applies simplifying transformations (constant
+    folding, format string evaluation, bracket removal, type cast simplification, string
+    operations, case normalization, invoke simplification, uncurly variables), and synthesizes
+    clean output. Iterates until stable.
     """
 
     def deobfuscate(self, data: str) -> str:
