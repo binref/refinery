@@ -8,7 +8,7 @@ from refinery.lib.scripts.ps1.synth import Ps1Synthesizer
 from refinery.units.obfuscation import IterativeDeobfuscator
 
 
-class ppps(IterativeDeobfuscator):
+class ps1(IterativeDeobfuscator):
     """
     AST-based PowerShell deobfuscator.
 

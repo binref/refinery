@@ -8,7 +8,7 @@ from refinery.lib.scripts.vba.synth import VbaSynthesizer
 from refinery.units.obfuscation import IterativeDeobfuscator
 
 
-class ppvba(IterativeDeobfuscator):
+class vba(IterativeDeobfuscator):
     """
     AST-based VBA deobfuscator and pretty-printer.
 

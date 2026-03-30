@@ -8,7 +8,7 @@ from refinery.lib.scripts.js.synth import JsSynthesizer
 from refinery.units.obfuscation import IterativeDeobfuscator
 
 
-class ppjs(IterativeDeobfuscator):
+class js(IterativeDeobfuscator):
     """
     AST-based JavaScript deobfuscator and pretty-printer.
 
