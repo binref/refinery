@@ -9,7 +9,6 @@ import os
 from samples import SampleStore
 
 
-
 @contextlib.contextmanager
 def temporary_chwd(directory):
     old = os.getcwd()
