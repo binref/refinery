@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import re
 
-from refinery.lib.scripts.ps1.deobfuscation import Ps1Deobfuscator
+from refinery.lib.scripts.ps1.deobfuscation import (
+    Ps1SecureStringDecryptor,
+    Ps1Simplifications,
+    Ps1StringOperations,
+    Ps1TypeCasts,
+)
 from refinery.lib.scripts.ps1.parser import Ps1Parser
 from refinery.lib.scripts.ps1.synth import Ps1Synthesizer
 from refinery.units.obfuscation import IterativeDeobfuscator
@@ -24,7 +29,10 @@ class ps1(IterativeDeobfuscator):
         except Exception:
             return data
         try:
-            Ps1Deobfuscator().visit(ast)
+            Ps1Simplifications().visit(ast)
+            Ps1StringOperations().visit(ast)
+            Ps1TypeCasts().visit(ast)
+            Ps1SecureStringDecryptor().visit(ast)
         except Exception:
             return data
         try:
