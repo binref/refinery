@@ -70,6 +70,11 @@ class TestPowerShellASTDeobfuscator(TestUnitBase):
         result = self.load().process(data)
         self.assertIn(b'Hello Earth', result)
 
+    def test_chained_replace_operator(self):
+        data = b'"ABCDEF" -replace \'AB\',\'ab\' -replace \'CD\',\'cd\' -replace \'EF\',\'ef\''
+        result = self.load().process(data)
+        self.assertIn(b'abcdef', result)
+
     def test_uncurly_variable(self):
         data = b'${variable}'
         result = self.load().process(data)

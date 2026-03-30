@@ -482,7 +482,7 @@ class Ps1Parser:
         left = self._parse_additive_expression()
         if left is None:
             return None
-        if self._at(Ps1TokenKind.OPERATOR) and self._current.value in _COMPARISON_OPERATORS:
+        while self._at(Ps1TokenKind.OPERATOR) and self._current.value in _COMPARISON_OPERATORS:
             op = self._advance()
             self._skip_newlines()
             right = self._parse_additive_expression()
