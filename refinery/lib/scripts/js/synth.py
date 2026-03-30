@@ -82,10 +82,17 @@ _WORD_UNARY_OPS = frozenset({'typeof', 'void', 'delete'})
 
 class JsSynthesizer(Visitor):
 
-    def __init__(self, indent: str = '    '):
+    def __init__(
+        self,
+        indent: str = '  ',
+        unescape_strings: bool = False,
+        strip_comments: bool = False,
+    ):
         self._indent = indent
         self._depth = 0
         self._parts: list[str] = []
+        self._unescape_strings = unescape_strings
+        self._strip_comments = strip_comments
 
     def convert(self, node: Node) -> str:
         self._parts.clear()
@@ -100,11 +107,19 @@ class JsSynthesizer(Visitor):
         self._parts.append('\n')
         self._parts.append(self._indent * self._depth)
 
+    def _emit_leading_comments(self, node: Node):
+        if self._strip_comments or not node.leading_comments:
+            return
+        for comment in node.leading_comments:
+            self._write(comment)
+            self._newline()
+
     def _emit_block(self, body: list[Statement]):
         self._write('{')
         self._depth += 1
         for stmt in body:
             self._newline()
+            self._emit_leading_comments(stmt)
             self.visit(stmt)
         self._depth -= 1
         if body:
@@ -141,7 +156,18 @@ class JsSynthesizer(Visitor):
         self._write(node.raw)
 
     def visit_JsStringLiteral(self, node: JsStringLiteral):
-        self._write(node.raw)
+        if self._unescape_strings:
+            self._write(self._encode_string(node.value, node.raw))
+        else:
+            self._write(node.raw)
+
+    @staticmethod
+    def _encode_string(value: str, raw: str) -> str:
+        quote = raw[0] if raw and raw[0] in ('"', "'") else "'"
+        escaped = value.replace('\\', '\\\\').replace(quote, F'\\{quote}')
+        escaped = escaped.replace('\n', '\\n').replace('\r', '\\r')
+        escaped = escaped.replace('\t', '\\t').replace('\0', '\\0')
+        return F'{quote}{escaped}{quote}'
 
     def visit_JsRegExpLiteral(self, node: JsRegExpLiteral):
         self._write(node.raw)
@@ -801,4 +827,5 @@ class JsSynthesizer(Visitor):
         for i, stmt in enumerate(node.body):
             if i > 0:
                 self._newline()
+            self._emit_leading_comments(stmt)
             self.visit(stmt)

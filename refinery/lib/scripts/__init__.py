@@ -15,6 +15,7 @@ class Node:
     """
     offset: int = -1
     parent: Node | None = field(default=None, compare=False)
+    leading_comments: list[str] = field(default_factory=list, compare=False)
 
     def children(self) -> Generator[Node, None, None]:
         yield from ()

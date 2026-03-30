@@ -89,6 +89,7 @@ class JsParser:
         self._current: JsToken = JsToken(JsTokenKind.EOF, '', 0)
         self._preceded_by_newline: bool = False
         self._no_in: bool = False
+        self._pending_comments: list[str] = []
         self._advance()
 
     def _advance(self) -> JsToken:
@@ -100,11 +101,17 @@ class JsParser:
                 had_newline = True
                 continue
             if tok.kind == JsTokenKind.COMMENT:
+                self._pending_comments.append(tok.value)
                 continue
             break
         self._current = tok
         self._preceded_by_newline = had_newline
         return prev
+
+    def _drain_comments(self, node):
+        if self._pending_comments:
+            node.leading_comments.extend(self._pending_comments)
+            self._pending_comments.clear()
 
     def _peek(self) -> JsToken:
         return self._current
@@ -141,18 +148,23 @@ class JsParser:
         body: list[Statement] = []
         while not self._at(JsTokenKind.EOF):
             mark = self._current.offset
+            comments = list(self._pending_comments)
+            self._pending_comments.clear()
             try:
                 stmt = self._parse_statement()
             except Exception:
                 stmt = None
             if stmt is not None:
+                stmt.leading_comments.extend(comments)
                 body.append(stmt)
             elif self._current.offset == mark:
                 tok = self._advance()
-                body.append(JsExpressionStatement(
+                error = JsExpressionStatement(
                     offset=tok.offset,
                     expression=JsErrorNode(offset=tok.offset, text=tok.value),
-                ))
+                )
+                error.leading_comments.extend(comments)
+                body.append(error)
         return JsScript(body=body, offset=offset)
 
     def _parse_statement(self) -> Statement | None:
@@ -221,18 +233,23 @@ class JsParser:
         body: list[Statement] = []
         while not self._at(JsTokenKind.RBRACE, JsTokenKind.EOF):
             mark = self._current.offset
+            comments = list(self._pending_comments)
+            self._pending_comments.clear()
             try:
                 stmt = self._parse_statement()
             except Exception:
                 stmt = None
             if stmt is not None:
+                stmt.leading_comments.extend(comments)
                 body.append(stmt)
             elif self._current.offset == mark:
                 tok = self._advance()
-                body.append(JsExpressionStatement(
+                error = JsExpressionStatement(
                     offset=tok.offset,
                     expression=JsErrorNode(offset=tok.offset, text=tok.value),
-                ))
+                )
+                error.leading_comments.extend(comments)
+                body.append(error)
         self._expect(JsTokenKind.RBRACE)
         return JsBlockStatement(body=body, offset=offset)
 

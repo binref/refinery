@@ -70,7 +70,7 @@ from refinery.lib.scripts.vba.model import (
 
 class VbaSynthesizer(Visitor):
 
-    def __init__(self, indent: str = '    '):
+    def __init__(self, indent: str = '  '):
         self._indent = indent
         self._depth = 0
         self._parts: list[str] = []
