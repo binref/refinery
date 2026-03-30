@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from test import TestBase
 
-from refinery.lib.scripts.js.deobfuscation import JsDeobfuscator
+from refinery.lib.scripts.js.deobfuscation import deobfuscate
 from refinery.lib.scripts.js.parser import JsParser
 from refinery.lib.scripts.js.synth import JsSynthesizer
 
@@ -11,7 +11,7 @@ class TestJsDeobfuscator(TestBase):
 
     def _deobfuscate(self, source: str) -> str:
         ast = JsParser(source).parse()
-        JsDeobfuscator().visit(ast)
+        deobfuscate(ast)
         return JsSynthesizer().convert(ast)
 
     def test_string_concat_simple(self):
