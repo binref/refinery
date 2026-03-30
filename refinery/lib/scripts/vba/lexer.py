@@ -141,8 +141,12 @@ class VbaLexer:
         word = src[start:self.pos]
         suffix = ''
         if self.pos < length and src[self.pos] in '%&!#@$':
-            suffix = src[self.pos]
-            self.pos += 1
+            if src[self.pos] != '&' or (
+                self.pos + 1 >= length
+                or src[self.pos + 1] in '\r\n)],;:\x00'
+            ):
+                suffix = src[self.pos]
+                self.pos += 1
         kw = _KEYWORDS.get(word.lower())
         if kw is not None and not suffix:
             return VbaToken(kw, word, start)

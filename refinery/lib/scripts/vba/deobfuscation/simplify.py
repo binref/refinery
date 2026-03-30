@@ -334,6 +334,8 @@ class VbaSimplifications(Transformer):
     def _remove_dead_variables(self, module: VbaModule):
         assignments: dict[str, list[tuple[VbaLetStatement, list[Statement], int]]] = {}
         for body in self._body_lists(module):
+            if body is module.body:
+                continue
             for idx, stmt in enumerate(body):
                 if (
                     isinstance(stmt, VbaLetStatement)
