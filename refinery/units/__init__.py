@@ -148,7 +148,15 @@ import os
 import sys
 
 from abc import ABCMeta
-from argparse import ONE_OR_MORE, OPTIONAL, REMAINDER, ZERO_OR_MORE, SUPPRESS, ArgumentTypeError, Namespace
+from argparse import (
+    ONE_OR_MORE,
+    OPTIONAL,
+    REMAINDER,
+    SUPPRESS,
+    ZERO_OR_MORE,
+    ArgumentTypeError,
+    Namespace,
+)
 from collections import OrderedDict
 from enum import Enum
 from functools import partial, wraps

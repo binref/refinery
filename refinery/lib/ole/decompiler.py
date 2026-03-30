@@ -20,8 +20,16 @@ import struct
 from typing import Callable, ClassVar
 
 from refinery.lib.ole.pcode import (
-    ArgInfo, CoerceType, DimScope, FuncInfo, OpcodeArg, PCodeLine, PCodeModule,
-    RecordInfo, TypeRef, VarInfo,
+    ArgInfo,
+    CoerceType,
+    DimScope,
+    FuncInfo,
+    OpcodeArg,
+    PCodeLine,
+    PCodeModule,
+    RecordInfo,
+    TypeRef,
+    VarInfo,
 )
 
 logger = logging.getLogger(__name__)

@@ -10,8 +10,8 @@ from string import ascii_letters
 from urllib.parse import urlparse
 
 from refinery.lib.patterns import indicators
-from refinery.lib.types import Param
 from refinery.lib.tools import normalize_to_display
+from refinery.lib.types import Param
 from refinery.units import RefineryCriticalException
 from refinery.units.pattern import Arg, PatternExtractor, RefinedMatch
 

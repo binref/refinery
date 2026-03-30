@@ -7,11 +7,12 @@ RAR 5.0 decompression algorithm, Cython-optimized version.
 """
 cimport cython
 
-from libc.string cimport memcpy, memset
 from cpython.bytearray cimport PyByteArray_AS_STRING
+from libc.string cimport memcpy, memset
 
 from refinery.lib.unrar.filters import FilterType, UnpackFilter, apply_filter
 from refinery.lib.unrar.unpack import RarUnpacker
+
 
 cdef int NC = 306
 cdef int DC = 64

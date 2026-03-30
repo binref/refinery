@@ -9,9 +9,9 @@ from hashlib import blake2b
 from itertools import islice
 from typing import TYPE_CHECKING
 
+from refinery.lib.meta import STRING_FORMAT_HELP
 from refinery.lib.patterns import formats, indicators
 from refinery.lib.types import INF, Callable, Iterable, Param, bounds, buf
-from refinery.lib.meta import STRING_FORMAT_HELP
 from refinery.units import Arg, Unit
 
 if TYPE_CHECKING:

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from refinery.lib.types import Param
-from refinery.lib.unquarantine import unquarantine, Vendor
+from refinery.lib.unquarantine import Vendor, unquarantine
 from refinery.units import Arg, Unit
 
 

@@ -10,10 +10,11 @@ Cython-optimized version of filters.py.
 """
 cimport cython
 
-from libc.string cimport memset
 from cpython.bytearray cimport PyByteArray_AS_STRING
+from libc.string cimport memset
 
 import enum
+
 from dataclasses import dataclass
 
 

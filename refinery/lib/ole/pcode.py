@@ -22,7 +22,7 @@ import re
 import struct as _struct
 
 from dataclasses import dataclass, field
-from typing import NamedTuple, TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 from refinery.lib.ole.file import OleFile
 from refinery.lib.ole.vba import _codepage_to_codec, _find_vba_projects, decompress_stream

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from refinery.lib.scripts.js.lexer import JsLexer, _ESCAPE_MAP
+from refinery.lib.scripts.js.lexer import _ESCAPE_MAP, JsLexer
 from refinery.lib.scripts.js.model import (
     Expression,
     JsArrayExpression,

@@ -5,7 +5,7 @@ import re
 import string
 
 from refinery.lib.argformats import ParserError, PythonExpression, numseq
-from refinery.lib.meta import SizeInt, check_variable_name, metavars, STRING_FORMAT_HELP
+from refinery.lib.meta import STRING_FORMAT_HELP, SizeInt, check_variable_name, metavars
 from refinery.lib.structures import StreamDetour, StructReader
 from refinery.lib.types import Param
 from refinery.units import Arg, Chunk, Unit
