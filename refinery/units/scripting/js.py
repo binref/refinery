@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import re
-
 from refinery.lib.scripts.js.deobfuscation import deobfuscate
 from refinery.lib.scripts.js.parser import JsParser
 from refinery.lib.scripts.js.synth import JsSynthesizer
@@ -29,4 +27,4 @@ class js(IterativeDeobfuscator):
             result = JsSynthesizer().convert(ast)
         except Exception:
             return data
-        return re.sub(r'[\r\n]+', '\n', result)
+        return result

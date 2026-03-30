@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import re
-
 from refinery.lib.scripts.vba.deobfuscation import deobfuscate
 from refinery.lib.scripts.vba.parser import VbaParser
 from refinery.lib.scripts.vba.synth import VbaSynthesizer
@@ -31,4 +29,4 @@ class vba(IterativeDeobfuscator):
             result = VbaSynthesizer().convert(ast)
         except Exception:
             return data
-        return re.sub(r'[\r\n]+', '\n', result)
+        return result

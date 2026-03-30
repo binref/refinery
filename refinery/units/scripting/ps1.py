@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import re
-
 from refinery.lib.scripts.ps1.deobfuscation import deobfuscate
 from refinery.lib.scripts.ps1.parser import Ps1Parser
 from refinery.lib.scripts.ps1.synth import Ps1Synthesizer
@@ -31,4 +29,4 @@ class ps1(IterativeDeobfuscator):
             result = Ps1Synthesizer().convert(ast)
         except Exception:
             return data
-        return re.sub(r'[\r\n]+', '\n', result)
+        return result
