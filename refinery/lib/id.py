@@ -1214,6 +1214,7 @@ def get_media_format(data: buf):
         (Fmt.MKV, B'\x1A\x45\xDF\xA3'),
         (Fmt.SWF, B'CWS'),
         (Fmt.SWF, B'FWS'),
+        (Fmt.SWF, B'ZWS'),
         (Fmt.SIL, B'#!SILK\n'),
     ):
         if data[:len(signature)] == signature:
