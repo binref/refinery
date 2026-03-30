@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 
-from refinery.lib.scripts.js.deobfuscation import JsDeobfuscator
+from refinery.lib.scripts.js.deobfuscation import deobfuscate
 from refinery.lib.scripts.js.parser import JsParser
 from refinery.lib.scripts.js.synth import JsSynthesizer
 from refinery.units.scripting import IterativeDeobfuscator
@@ -22,7 +22,7 @@ class js(IterativeDeobfuscator):
         except Exception:
             return data
         try:
-            JsDeobfuscator().visit(ast)
+            deobfuscate(ast)
         except Exception:
             return data
         try:
