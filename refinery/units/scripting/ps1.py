@@ -10,7 +10,7 @@ from refinery.lib.scripts.ps1.deobfuscation import (
 )
 from refinery.lib.scripts.ps1.parser import Ps1Parser
 from refinery.lib.scripts.ps1.synth import Ps1Synthesizer
-from refinery.units.obfuscation import IterativeDeobfuscator
+from refinery.units.scripting import IterativeDeobfuscator
 
 
 class ps1(IterativeDeobfuscator):

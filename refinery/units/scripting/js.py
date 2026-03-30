@@ -5,7 +5,7 @@ import re
 from refinery.lib.scripts.js.deobfuscation import JsDeobfuscator
 from refinery.lib.scripts.js.parser import JsParser
 from refinery.lib.scripts.js.synth import JsSynthesizer
-from refinery.units.obfuscation import IterativeDeobfuscator
+from refinery.units.scripting import IterativeDeobfuscator
 
 
 class js(IterativeDeobfuscator):

@@ -5,7 +5,7 @@ import re
 from refinery.lib.scripts.vba.deobfuscation import VbaDeobfuscator
 from refinery.lib.scripts.vba.parser import VbaParser
 from refinery.lib.scripts.vba.synth import VbaSynthesizer
-from refinery.units.obfuscation import IterativeDeobfuscator
+from refinery.units.scripting import IterativeDeobfuscator
 
 
 class vba(IterativeDeobfuscator):
