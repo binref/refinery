@@ -17,7 +17,6 @@ from refinery.lib.loader import get_all_entry_points
 from refinery.lib.tools import documentation, get_terminal_size, normalize_to_display, terminalfit
 from refinery.units import ArgparseError, Unit
 
-
 _AGENT_DETAIL_LIST = [
     'autoxor',
     'asm',
@@ -236,8 +235,6 @@ def explorer(keyword_color: str = '91', unit_color: str = '93'):
                 continue
             doc = documentation(unit)
             if not doc:
-                continue
-            if name.startswith('deob-'):
                 continue
             if name in ('p1', 'p2', 'p3', 'csb', 'csd', 'd2p'):
                 continue
