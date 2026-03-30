@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 
-from refinery.lib.scripts.vba.deobfuscation import VbaDeobfuscator
+from refinery.lib.scripts.vba.deobfuscation import VbaSimplifications
 from refinery.lib.scripts.vba.parser import VbaParser
 from refinery.lib.scripts.vba.synth import VbaSynthesizer
 from refinery.units.scripting import IterativeDeobfuscator
@@ -24,7 +24,7 @@ class vba(IterativeDeobfuscator):
         except Exception:
             return data
         try:
-            VbaDeobfuscator().deobfuscate(ast)
+            VbaSimplifications().deobfuscate(ast)
         except Exception:
             return data
         try:

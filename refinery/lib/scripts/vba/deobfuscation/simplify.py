@@ -1,3 +1,6 @@
+"""
+VBA expression simplification and constant folding transforms.
+"""
 from __future__ import annotations
 
 import copy
@@ -166,7 +169,7 @@ def _try_string_function(node: VbaCallExpression) -> str | None:
     return None
 
 
-class VbaDeobfuscator(Transformer):
+class VbaSimplifications(Transformer):
 
     def visit_VbaBinaryExpression(self, node: VbaBinaryExpression):
         self.generic_visit(node)
@@ -277,7 +280,11 @@ class VbaDeobfuscator(Transformer):
         candidates: dict[str, list[tuple[Expression, list[Statement], int]]] = {}
         for body in self._body_lists(module):
             for idx, stmt in enumerate(body):
-                if isinstance(stmt, VbaConstDeclaration) and _is_literal(stmt.value):
+                if (
+                    isinstance(stmt, VbaConstDeclaration)
+                    and stmt.value is not None
+                    and _is_literal(stmt.value)
+                ):
                     key = stmt.name.lower()
                     candidates.setdefault(key, []).append((stmt.value, body, idx))
                 elif (
