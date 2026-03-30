@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from test import TestBase
 
-from refinery.lib.scripts.vba.deobfuscation import VbaDeobfuscator
+from refinery.lib.scripts.vba.deobfuscation import VbaSimplifications
 from refinery.lib.scripts.vba.parser import VbaParser
 from refinery.lib.scripts.vba.synth import VbaSynthesizer
 
@@ -11,12 +11,12 @@ class TestVbaDeobfuscation(TestBase):
 
     def _fold(self, source: str) -> str:
         ast = VbaParser(source).parse()
-        VbaDeobfuscator().visit(ast)
+        VbaSimplifications().visit(ast)
         return VbaSynthesizer().convert(ast)
 
     def _deobfuscate(self, source: str) -> str:
         ast = VbaParser(source).parse()
-        VbaDeobfuscator().deobfuscate(ast)
+        VbaSimplifications().deobfuscate(ast)
         return VbaSynthesizer().convert(ast)
 
     def test_string_concat_ampersand(self):
@@ -193,3 +193,28 @@ class TestVbaDeobfuscation(TestBase):
         result = self._deobfuscate(code)
         self.assertIn('x = Foo()', result)
         self.assertNotIn('y =', result)
+
+    def test_xor_operator(self):
+        result = self._deobfuscate('CLng((0 Xor 0))')
+        self.assertEqual(result, 'CLng((0 Xor 0))')
+
+    def test_remove_comments(self):
+        result = self._deobfuscate('''
+            ' Test
+            b = a
+            ' Test''')
+        self.assertIn('b = a', result)
+        self.assertNotIn("' Test", result)
+
+    def test_regression_matchgroup(self):
+        result = self._deobfuscate(r'''
+            const a = "\3"
+            b = a
+        ''')
+        self.assertIn(r'b = "\3"', result)
+
+    def test_regression_overeager_removal(self):
+        data = 'a.Close\nb = z.function(x)\n'
+        result = self._deobfuscate(data)
+        self.assertIn('a.Close', result)
+        self.assertIn('b = z.function(x)', result)
