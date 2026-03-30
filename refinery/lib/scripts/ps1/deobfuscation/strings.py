@@ -181,6 +181,12 @@ class Ps1StringOperations(Transformer):
         right_str = _string_value(node.right) if node.right else None
         if left_str is not None and right_str is not None:
             return _make_string_literal(left_str + right_str)
+        if right_str is not None and isinstance(node.left, Ps1BinaryExpression):
+            if node.left.operator == '+':
+                inner_right_str = _string_value(node.left.right) if node.left.right else None
+                if inner_right_str is not None:
+                    node.left.right = _make_string_literal(inner_right_str + right_str)
+                    return node.left
         return None
 
     def _handle_binary_replace(

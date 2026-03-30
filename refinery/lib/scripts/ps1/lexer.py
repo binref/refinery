@@ -480,16 +480,33 @@ class Ps1Lexer:
                             self.mode = mode_hint
                         continue
 
-            if c.isalpha() or c == '_':
-                m = re.match(r'[a-zA-Z_][a-zA-Z0-9_-]*', src[self.pos:])
-                if m:
-                    word = m.group()
-                    self.pos += len(word)
-                    kw = _KEYWORDS.get(word.lower())
-                    if kw is not None:
-                        mode_hint = yield Ps1Token(kw, word, start)
+            if c.isalpha() or c == '_' or c == '`':
+                word = []
+                if c == '`' and self.pos + 1 < length:
+                    self.pos += 1
+                    word.append(src[self.pos])
+                    self.pos += 1
+                else:
+                    word.append(c)
+                    self.pos += 1
+                while self.pos < length:
+                    ch = src[self.pos]
+                    if ch == '`' and self.pos + 1 < length:
+                        self.pos += 1
+                        word.append(src[self.pos])
+                        self.pos += 1
+                    elif ch.isalnum() or ch in '_-':
+                        word.append(ch)
+                        self.pos += 1
                     else:
-                        mode_hint = yield Ps1Token(Ps1TokenKind.GENERIC_TOKEN, word, start)
+                        break
+                identifier = ''.join(word)
+                if identifier:
+                    kw = _KEYWORDS.get(identifier.lower())
+                    if kw is not None:
+                        mode_hint = yield Ps1Token(kw, identifier, start)
+                    else:
+                        mode_hint = yield Ps1Token(Ps1TokenKind.GENERIC_TOKEN, identifier, start)
                     if mode_hint is not None:
                         self.mode = mode_hint
                     continue
