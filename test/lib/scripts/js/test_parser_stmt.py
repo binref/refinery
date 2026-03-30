@@ -317,7 +317,31 @@ class TestJsParserStatements(TestBase):
                     has_error = True
             if isinstance(stmt, JsVariableDeclaration):
                 has_var = True
-        self.assertTrue(has_error or has_var)
+        self.assertTrue(has_error)
+        self.assertTrue(has_var)
+
+    def test_error_recovery_between_valid_statements(self):
+        script = self._parse_all('var a = 1; ### var b = 2;')
+        declarations = [s for s in script.body if isinstance(s, JsVariableDeclaration)]
+        errors = [s for s in script.body if isinstance(s, JsExpressionStatement) and isinstance(s.expression, JsErrorNode)]
+        self.assertEqual(len(declarations), 2)
+        self.assertGreater(len(errors), 0)
+
+    def test_error_recovery_inside_block(self):
+        script = self._parse_all('function f() { var a = 1; @@@ var b = 2; }')
+        self.assertIsInstance(script.body[0], JsFunctionDeclaration)
+        block = script.body[0].body
+        declarations = [s for s in block.body if isinstance(s, JsVariableDeclaration)]
+        errors = [s for s in block.body if isinstance(s, JsExpressionStatement) and isinstance(s.expression, JsErrorNode)]
+        self.assertEqual(len(declarations), 2)
+        self.assertGreater(len(errors), 0)
+
+    def test_error_recovery_all_garbage(self):
+        script = self._parse_all('@@@')
+        self.assertGreater(len(script.body), 0)
+        for stmt in script.body:
+            self.assertIsInstance(stmt, JsExpressionStatement)
+            self.assertIsInstance(stmt.expression, JsErrorNode)
 
     def test_for_empty_parts(self):
         stmt = self._parse_stmt('for (;;) { }')

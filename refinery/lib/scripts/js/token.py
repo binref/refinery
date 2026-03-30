@@ -123,6 +123,7 @@ class JsTokenKind(enum.Enum):
 
     NEWLINE         = 'newline'          # noqa
     COMMENT         = 'comment'          # noqa
+    ERROR           = 'error'            # noqa
     EOF             = 'eof'              # noqa
 
     @property

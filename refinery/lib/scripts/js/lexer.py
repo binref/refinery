@@ -528,4 +528,4 @@ class JsLexer:
 
             self.pos += 1
             prev_allows_regex = True
-            yield JsToken(JsTokenKind.IDENTIFIER, c, start)
+            yield JsToken(JsTokenKind.ERROR, c, start)

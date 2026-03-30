@@ -140,11 +140,20 @@ class JsParser:
         offset = self._current.offset
         body: list[Statement] = []
         while not self._at(JsTokenKind.EOF):
-            stmt = self._parse_statement()
+            mark = self._current.offset
+            try:
+                stmt = self._parse_statement()
+            except Exception:
+                stmt = None
             if stmt is not None:
                 body.append(stmt)
-        result = JsScript(body=body, offset=offset)
-        return result
+            elif self._current.offset == mark:
+                tok = self._advance()
+                body.append(JsExpressionStatement(
+                    offset=tok.offset,
+                    expression=JsErrorNode(offset=tok.offset, text=tok.value),
+                ))
+        return JsScript(body=body, offset=offset)
 
     def _parse_statement(self) -> Statement | None:
         offset = self._current.offset
@@ -211,9 +220,19 @@ class JsParser:
         self._expect(JsTokenKind.LBRACE)
         body: list[Statement] = []
         while not self._at(JsTokenKind.RBRACE, JsTokenKind.EOF):
-            stmt = self._parse_statement()
+            mark = self._current.offset
+            try:
+                stmt = self._parse_statement()
+            except Exception:
+                stmt = None
             if stmt is not None:
                 body.append(stmt)
+            elif self._current.offset == mark:
+                tok = self._advance()
+                body.append(JsExpressionStatement(
+                    offset=tok.offset,
+                    expression=JsErrorNode(offset=tok.offset, text=tok.value),
+                ))
         self._expect(JsTokenKind.RBRACE)
         return JsBlockStatement(body=body, offset=offset)
 
