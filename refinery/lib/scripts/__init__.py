@@ -1,6 +1,6 @@
 """
 Minimal unified AST base for script parsers. Provides abstract node types shared
-across language-specific parsers (PowerShell, JavaScript, AutoIt, Lua).
+across language-specific parsers.
 """
 from __future__ import annotations
 
