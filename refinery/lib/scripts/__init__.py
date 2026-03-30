@@ -125,6 +125,17 @@ class Transformer(Visitor):
                         result = item if replacement is None else replacement
                         result.parent = node
                         new_list.append(result)
+                    elif isinstance(item, tuple):
+                        new_tuple = []
+                        for elem in item:
+                            if isinstance(elem, Node):
+                                replacement = self.visit(elem)
+                                result = elem if replacement is None else replacement
+                                result.parent = node
+                                new_tuple.append(result)
+                            else:
+                                new_tuple.append(elem)
+                        new_list.append(tuple(new_tuple))
                     else:
                         new_list.append(item)
                 setattr(node, attr_name, new_list)
