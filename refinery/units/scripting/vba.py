@@ -17,16 +17,6 @@ class vba(IterativeDeobfuscator):
     """
 
     def deobfuscate(self, data: str) -> str:
-        try:
-            ast = VbaParser(data).parse()
-        except Exception:
-            return data
-        try:
-            deobfuscate(ast)
-        except Exception:
-            return data
-        try:
-            result = VbaSynthesizer().convert(ast)
-        except Exception:
-            return data
-        return result
+        ast = VbaParser(data).parse()
+        deobfuscate(ast)
+        return VbaSynthesizer().convert(ast)

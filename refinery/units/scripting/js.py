@@ -15,16 +15,6 @@ class js(IterativeDeobfuscator):
     """
 
     def deobfuscate(self, data: str) -> str:
-        try:
-            ast = JsParser(data).parse()
-        except Exception:
-            return data
-        try:
-            deobfuscate(ast)
-        except Exception:
-            return data
-        try:
-            result = JsSynthesizer().convert(ast)
-        except Exception:
-            return data
-        return result
+        ast = JsParser(data).parse()
+        deobfuscate(ast)
+        return JsSynthesizer().convert(ast)

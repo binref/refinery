@@ -17,16 +17,6 @@ class ps1(IterativeDeobfuscator):
     """
 
     def deobfuscate(self, data: str) -> str:
-        try:
-            ast = Ps1Parser(data).parse()
-        except Exception:
-            return data
-        try:
-            deobfuscate(ast)
-        except Exception:
-            return data
-        try:
-            result = Ps1Synthesizer().convert(ast)
-        except Exception:
-            return data
-        return result
+        ast = Ps1Parser(data).parse()
+        deobfuscate(ast)
+        return Ps1Synthesizer().convert(ast)
