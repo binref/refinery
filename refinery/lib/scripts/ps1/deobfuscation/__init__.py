@@ -5,10 +5,15 @@ from refinery.lib.scripts.ps1.deobfuscation.securestring import Ps1SecureStringD
 from refinery.lib.scripts.ps1.deobfuscation.simplify import Ps1Simplifications
 from refinery.lib.scripts.ps1.deobfuscation.strings import Ps1StringOperations
 from refinery.lib.scripts.ps1.deobfuscation.typecast import Ps1TypeCasts
+from refinery.lib.scripts.ps1.model import Ps1Script
 
-__all__ = [
-    'Ps1SecureStringDecryptor',
-    'Ps1Simplifications',
-    'Ps1StringOperations',
-    'Ps1TypeCasts',
-]
+
+def deobfuscate(ast: Ps1Script):
+    """
+    Apply all available deobfuscators to the input.
+    """
+    Ps1Simplifications().visit(ast)
+    Ps1StringOperations().visit(ast)
+    Ps1TypeCasts().visit(ast)
+    Ps1SecureStringDecryptor().visit(ast)
+    return ast
