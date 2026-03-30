@@ -84,9 +84,13 @@ class Ps1StringOperations(Transformer):
             name = node.member.value
             if _SIMPLE_IDENT.match(name):
                 node.member = name
+                self.mark_changed()
         member_name = node.member if isinstance(node.member, str) else None
         if member_name is not None:
-            node.member = _case_normalize_name(member_name)
+            normalized = _case_normalize_name(member_name)
+            if normalized != member_name:
+                node.member = normalized
+                self.mark_changed()
             member_name = node.member
         if member_name is not None and member_name.lower() == 'replace':
             if len(node.arguments) == 2:

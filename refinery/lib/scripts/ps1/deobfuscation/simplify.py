@@ -26,6 +26,7 @@ class Ps1Simplifications(Transformer):
         self.generic_visit(node)
         if node.braced and _SIMPLE_IDENT.match(node.name):
             node.braced = False
+            self.mark_changed()
         return None
 
     def visit_Ps1ParenExpression(self, node: Ps1ParenExpression):
@@ -41,13 +42,18 @@ class Ps1Simplifications(Transformer):
             name = node.member.value
             if _SIMPLE_IDENT.match(name):
                 node.member = _case_normalize_name(name)
+                self.mark_changed()
                 return None
         if isinstance(node.member, str):
-            node.member = _case_normalize_name(node.member)
+            normalized = _case_normalize_name(node.member)
+            if normalized != node.member:
+                node.member = normalized
+                self.mark_changed()
         return None
 
     def visit_Ps1CommandInvocation(self, node: Ps1CommandInvocation):
         self.generic_visit(node)
+        old_name = node.name
         if isinstance(node.name, Ps1ParenExpression) and node.name.expression is not None:
             inner = node.name.expression
             if isinstance(inner, Ps1StringLiteral):
@@ -64,12 +70,17 @@ class Ps1Simplifications(Transformer):
                         elif isinstance(arg, Ps1ParenExpression):
                             if isinstance(arg.expression, Ps1StringLiteral):
                                 node.name = arg.expression
+        if node.name is not old_name:
+            self.mark_changed()
         if node.name and isinstance(node.name, Ps1StringLiteral):
-            node.name = Ps1StringLiteral(
-                offset=node.name.offset,
-                value=_case_normalize_name(node.name.value),
-                raw=_case_normalize_name(node.name.value),
-            )
+            new_value = _case_normalize_name(node.name.value)
+            if new_value != node.name.value or new_value != node.name.raw:
+                node.name = Ps1StringLiteral(
+                    offset=node.name.offset,
+                    value=new_value,
+                    raw=new_value,
+                )
+                self.mark_changed()
         if node.invocation_operator in ('&', '.'):
             if isinstance(node.name, Ps1StringLiteral):
                 name_val = node.name.value
@@ -80,6 +91,7 @@ class Ps1Simplifications(Transformer):
                         raw=name_val,
                     )
                     node.invocation_operator = ''
+                    self.mark_changed()
         return None
 
     @staticmethod

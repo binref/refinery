@@ -105,8 +105,15 @@ class Visitor:
 class Transformer(Visitor):
     """
     In-place tree rewriter. Each visit method may return a replacement node
-    or None to keep the original.
+    or None to keep the original. Tracks whether any transformation was applied
+    via the `changed` flag.
     """
+
+    def __init__(self):
+        self.changed = False
+
+    def mark_changed(self):
+        self.changed = True
 
     def generic_visit(self, node: Node):
         for attr_name in list(vars(node)):
@@ -118,6 +125,7 @@ class Transformer(Visitor):
                 if replacement is not None:
                     replacement.parent = node
                     setattr(node, attr_name, replacement)
+                    self.mark_changed()
             elif isinstance(value, list):
                 new_list = []
                 for item in value:
@@ -126,6 +134,8 @@ class Transformer(Visitor):
                         result = item if replacement is None else replacement
                         result.parent = node
                         new_list.append(result)
+                        if replacement is not None:
+                            self.mark_changed()
                     elif isinstance(item, tuple):
                         new_tuple = []
                         for elem in item:
@@ -134,6 +144,8 @@ class Transformer(Visitor):
                                 result = elem if replacement is None else replacement
                                 result.parent = node
                                 new_tuple.append(result)
+                                if replacement is not None:
+                                    self.mark_changed()
                             else:
                                 new_tuple.append(elem)
                         new_list.append(tuple(new_tuple))

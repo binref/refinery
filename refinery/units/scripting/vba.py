@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from refinery.lib.scripts.vba.deobfuscation import deobfuscate
+from refinery.lib.scripts.vba.model import VbaModule
 from refinery.lib.scripts.vba.parser import VbaParser
 from refinery.lib.scripts.vba.synth import VbaSynthesizer
 from refinery.units.scripting import IterativeDeobfuscator
@@ -16,7 +17,10 @@ class vba(IterativeDeobfuscator):
     documents.
     """
 
-    def deobfuscate(self, data: str) -> str:
-        ast = VbaParser(data).parse()
-        deobfuscate(ast)
+    def parse(self, data: str) -> VbaModule:
+        return VbaParser(data).parse()
+
+    transform = staticmethod(deobfuscate)
+
+    def synthesize(self, ast: VbaModule) -> str:
         return VbaSynthesizer().convert(ast)

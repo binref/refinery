@@ -276,7 +276,7 @@ class VbaSimplifications(Transformer):
                 if isinstance(value, list) and value and isinstance(value[0], Statement):
                     yield value
 
-    def _inline_constants(self, module: VbaModule):
+    def _inline_constants(self, module: VbaModule) -> bool:
         candidates: dict[str, list[tuple[Expression, list[Statement], int]]] = {}
         for body in self._body_lists(module):
             for idx, stmt in enumerate(body):
@@ -297,7 +297,7 @@ class VbaSimplifications(Transformer):
                     candidates.setdefault(key, []).append((stmt.value, body, idx))
         candidates = {k: v for k, v in candidates.items() if len(v) == 1}
         if not candidates:
-            return
+            return False
         reads: dict[str, list[VbaIdentifier]] = {}
         for node in module.walk():
             if not isinstance(node, VbaIdentifier):
@@ -330,8 +330,9 @@ class VbaSimplifications(Transformer):
             removals.append((body, idx))
         for body, idx in sorted(removals, key=lambda t: t[1], reverse=True):
             del body[idx]
+        return bool(removals)
 
-    def _remove_dead_variables(self, module: VbaModule):
+    def _remove_dead_variables(self, module: VbaModule) -> bool:
         assignments: dict[str, list[tuple[VbaLetStatement, list[Statement], int]]] = {}
         for body in self._body_lists(module):
             if body is module.body:
@@ -365,9 +366,15 @@ class VbaSimplifications(Transformer):
                     removals.append((body, idx))
         for body, idx in sorted(removals, key=lambda t: t[1], reverse=True):
             del body[idx]
+        return bool(removals)
 
-    def deobfuscate(self, module: VbaModule):
+    def deobfuscate(self, module: VbaModule) -> bool:
+        self.changed = False
         self.visit(module)
-        self._inline_constants(module)
+        changed = self.changed
+        changed |= self._inline_constants(module)
+        self.changed = False
         self.visit(module)
-        self._remove_dead_variables(module)
+        changed |= self.changed
+        changed |= self._remove_dead_variables(module)
+        return changed

@@ -3,10 +3,11 @@ AST-to-source synthesizer for PowerShell.
 """
 from __future__ import annotations
 
+import io
+
 from refinery.lib.scripts import Block, Node, Visitor
 from refinery.lib.scripts.ps1.model import (
     Expression,
-    Ps1AccessKind,
     Ps1ArrayExpression,
     Ps1ArrayLiteral,
     Ps1AssignmentExpression,
@@ -67,20 +68,21 @@ class Ps1Synthesizer(Visitor):
     def __init__(self, indent: str = '  '):
         self._indent = indent
         self._depth = 0
-        self._parts: list[str] = []
+        self._parts = io.StringIO()
 
     def convert(self, node: Node) -> str:
-        self._parts.clear()
+        self._parts.seek(0)
+        self._parts.truncate(0)
         self._depth = 0
         self.visit(node)
-        return ''.join(self._parts)
+        return self._parts.getvalue()
 
     def _write(self, text: str):
-        self._parts.append(text)
+        self._parts.write(text)
 
     def _newline(self):
-        self._parts.append('\n')
-        self._parts.append(self._indent * self._depth)
+        self._parts.write('\n')
+        self._parts.write(self._indent * self._depth)
 
     def _emit_block(self, block: Block):
         self._write('{')
@@ -310,15 +312,15 @@ class Ps1Synthesizer(Visitor):
             items: list[str] = []
             for arg in node.positional_args:
                 old_parts = self._parts
-                self._parts = []
+                self._parts = io.StringIO()
                 self.visit(arg)
-                items.append(''.join(self._parts))
+                items.append(self._parts.getvalue())
                 self._parts = old_parts
             for key, val in node.named_args:
                 old_parts = self._parts
-                self._parts = []
+                self._parts = io.StringIO()
                 self.visit(val)
-                v = ''.join(self._parts)
+                v = self._parts.getvalue()
                 self._parts = old_parts
                 items.append(F'{key}={v}')
             self._write(', '.join(items))

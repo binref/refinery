@@ -114,4 +114,5 @@ class Ps1SecureStringDecryptor(Transformer):
             new_element.parent = node
             replacement.parent = new_element
             node.elements = node.elements[:k] + [new_element] + node.elements[k + 2:]
+            self.mark_changed()
         return None

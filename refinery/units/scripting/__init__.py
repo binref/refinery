@@ -1,10 +1,9 @@
 from __future__ import annotations
 
 import abc
+import codecs
 
-from zlib import crc32
-
-from refinery.lib.decorators import unicoded
+from refinery.lib.scripts import Node
 from refinery.lib.types import Param, buf
 from refinery.units import Arg, Chunk, RefineryPartialResult, Unit
 
@@ -17,44 +16,41 @@ class AutoDeobfuscationTimeout(RefineryPartialResult):
         )
 
 
-class Deobfuscator(Unit, abstract=True):
-
-    def __init__(self):
-        super().__init__()
-
-    @unicoded
-    def process(self, data: str) -> str:
-        return self.deobfuscate(data)
-
-    @abc.abstractmethod
-    def deobfuscate(self, data: str) -> str:
-        return data
-
-
-class IterativeDeobfuscator(Deobfuscator, abstract=True):
+class IterativeDeobfuscator(Unit, abstract=True):
 
     def __init__(
         self,
-        timeout: Param[int, Arg(
-            '-t', help='Maximum number of iterations; the default is 100.')] = 100,
+        timeout: Param[int, Arg.Number(
+            '-t', help='Maximum number of iterations; the default is {default}.')] = 100,
     ):
-        if timeout < 1:
-            raise ValueError('The timeout must be at least 1.')
-        super().__init__()
-        self.args.timeout = timeout
+        super().__init__(timeout=timeout)
+
+    @abc.abstractmethod
+    def parse(self, data: str) -> Node:
+        ...
+
+    @abc.abstractmethod
+    def transform(self, ast: Node) -> bool:
+        ...
+
+    @abc.abstractmethod
+    def synthesize(self, ast: Node) -> str:
+        ...
 
     def process(self, data: Chunk) -> buf:
-        previous = crc32(data)
+        text = codecs.decode(data, self.codec, errors='surrogateescape')
+        ast = self.parse(text)
         for _ in range(self.args.timeout):
             try:
-                data[:] = super().process(data)
+                if not self.transform(ast):
+                    break
             except KeyboardInterrupt:
+                result = self.synthesize(ast)
                 raise RefineryPartialResult(
-                    'Returning partially deobfuscated data', partial=data)
-            checksum = crc32(data)
-            if checksum == previous:
-                break
-            previous = checksum
+                    'Returning partially deobfuscated data',
+                    partial=codecs.encode(result, self.codec, errors='surrogateescape'))
         else:
-            raise AutoDeobfuscationTimeout(data)
-        return data
+            result = self.synthesize(ast)
+            raise AutoDeobfuscationTimeout(
+                codecs.encode(result, self.codec, errors='surrogateescape'))
+        return codecs.encode(self.synthesize(ast), self.codec, errors='surrogateescape')

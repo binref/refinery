@@ -92,6 +92,7 @@ class JsSimplifications(Transformer):
             if prop_str is not None and _is_valid_identifier(prop_str):
                 node.computed = False
                 node.property = JsIdentifier(name=prop_str)
+                self.mark_changed()
                 return None
         return None
 

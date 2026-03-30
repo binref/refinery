@@ -8,12 +8,16 @@ from refinery.lib.scripts.ps1.deobfuscation.typecast import Ps1TypeCasts
 from refinery.lib.scripts.ps1.model import Ps1Script
 
 
-def deobfuscate(ast: Ps1Script):
+def deobfuscate(ast: Ps1Script) -> bool:
     """
     Apply all available deobfuscators to the input.
     """
-    Ps1Simplifications().visit(ast)
-    Ps1StringOperations().visit(ast)
-    Ps1TypeCasts().visit(ast)
-    Ps1SecureStringDecryptor().visit(ast)
-    return ast
+    transformers = [
+        Ps1Simplifications(),
+        Ps1StringOperations(),
+        Ps1TypeCasts(),
+        Ps1SecureStringDecryptor(),
+    ]
+    for t in transformers:
+        t.visit(ast)
+    return any(t.changed for t in transformers)
