@@ -210,6 +210,15 @@ class Ps1Parser:
         while self._current.kind in (Ps1TokenKind.NEWLINE, Ps1TokenKind.COMMENT):
             self._advance()
 
+    def _skip_separators(self):
+        while self._current.kind in (
+            Ps1TokenKind.COMMA,
+            Ps1TokenKind.COMMENT,
+            Ps1TokenKind.NEWLINE,
+            Ps1TokenKind.SEMICOLON,
+        ):
+            self._advance()
+
     def _is_statement_terminator(self) -> bool:
         return self._current.kind in _STATEMENT_TERMINATORS
 
@@ -1180,8 +1189,7 @@ class Ps1Parser:
         body = self._parse_block()
         clauses.append((cond, body))
 
-        while self._at(Ps1TokenKind.NEWLINE):
-            self._advance()
+        self._skip_separators()
         while self._at(Ps1TokenKind.ELSEIF):
             self._advance()
             self._skip_newlines()
@@ -1193,8 +1201,7 @@ class Ps1Parser:
             self._skip_newlines()
             body = self._parse_block()
             clauses.append((cond, body))
-            while self._at(Ps1TokenKind.NEWLINE):
-                self._advance()
+            self._skip_separators()
 
         else_block = None
         if self._at(Ps1TokenKind.ELSE):
@@ -1222,7 +1229,7 @@ class Ps1Parser:
         self._expect(Ps1TokenKind.DO)
         self._skip_newlines()
         body = self._parse_block()
-        self._skip_newlines()
+        self._skip_separators()
         if self._at(Ps1TokenKind.WHILE):
             self._advance()
             self._skip_newlines()
@@ -1333,7 +1340,7 @@ class Ps1Parser:
         self._skip_newlines()
         clauses: list[tuple[Expression | None, Block]] = []
         while not self._at(Ps1TokenKind.RBRACE, Ps1TokenKind.EOF):
-            self._skip_newlines()
+            self._skip_separators()
             if self._at(Ps1TokenKind.RBRACE):
                 break
             if self._at(Ps1TokenKind.GENERIC_TOKEN) and self._current.value.lower() == 'default':
@@ -1347,7 +1354,7 @@ class Ps1Parser:
                 self._skip_newlines()
                 block = self._parse_block()
                 clauses.append((cond, block))
-            self._skip_newlines()
+            self._skip_separators()
         self._expect(Ps1TokenKind.RBRACE)
         return Ps1SwitchStatement(offset=offset, value=value, clauses=clauses, **flags)
 
@@ -1356,7 +1363,7 @@ class Ps1Parser:
         self._expect(Ps1TokenKind.TRY)
         self._skip_newlines()
         try_block = self._parse_block()
-        self._skip_newlines()
+        self._skip_separators()
         catch_clauses: list[Ps1CatchClause] = []
         while self._at(Ps1TokenKind.CATCH):
             self._advance()
@@ -1370,7 +1377,7 @@ class Ps1Parser:
             body = self._parse_block()
             catch_clauses.append(Ps1CatchClause(
                 offset=body.offset, types=types, body=body))
-            self._skip_newlines()
+            self._skip_separators()
         finally_block = None
         if self._at(Ps1TokenKind.FINALLY):
             self._advance()
