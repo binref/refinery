@@ -513,3 +513,56 @@ class TestPs1FunctionEvaluator(TestPs1):
         )
         result = self._deobfuscate(data)
         self.assertIn('HELLO', result)
+
+    def test_new_object_byte_array(self):
+        data = (
+            "Function F ([Int]$n){"
+            "$a = New-Object byte[] $n;"
+            "$r = '';"
+            "For($i=0; $i -lt $n; $i+=1){$r = $r + $a[$i]};"
+            "$r;}"
+            "$x = F 3\n"
+            "Write-Output $x"
+        )
+        result = self._deobfuscate(data)
+        self.assertIn('000', result)
+
+    def test_convert_tobyte_static(self):
+        data = (
+            "Function F ([String]$s){"
+            "$r = [convert]::ToByte($s, 16);"
+            "$r;}"
+            "$x = F 'FF'\n"
+            "Write-Output $x"
+        )
+        result = self._deobfuscate(data)
+        self.assertIn('255', result)
+
+    def test_encoding_getstring(self):
+        data = (
+            "Function F {"
+            "$a = New-Object byte[] 3;"
+            "$a[0] = 72; $a[1] = 105; $a[2] = 33;"
+            "[System.Text.Encoding]::ASCII.GetString($a);}"
+            "$x = F\n"
+            "Write-Output $x"
+        )
+        result = self._deobfuscate(data)
+        self.assertIn('Hi!', result)
+
+    def test_hex_xor_decode_function(self):
+        data = (
+            "Function F ([String]$s){\n"
+            "$a = New-Object byte[] ($s.Length / 2)\n"
+            "For($i=0; $i -lt $s.Length; $i+=2){\n"
+            "$a[$i/2] = [convert]::ToByte($s.Substring($i, 2), 16)\n"
+            "$a[$i/2] = ($a[$i/2] -bxor 128)\n"
+            "}\n"
+            "[String][System.Text.Encoding]::ASCII.GetString($a)\n"
+            "}\n"
+            "$x = F 'C8E5ECECEF'\n"
+            "Write-Output $x\n"
+        )
+        result = self._deobfuscate(data)
+        self.assertIn('Hello', result)
+        self.assertNotIn('function', result.lower())

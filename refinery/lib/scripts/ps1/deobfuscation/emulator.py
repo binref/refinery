@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import re
 
+from typing import Optional, Union
+
 from refinery.lib.scripts import Block, Transformer
 from refinery.lib.scripts.ps1.deobfuscation._helpers import (
     _make_string_literal,
@@ -40,12 +42,13 @@ from refinery.lib.scripts.ps1.model import (
     Ps1Script,
     Ps1ScriptBlock,
     Ps1StringLiteral,
+    Ps1TypeExpression,
     Ps1UnaryExpression,
     Ps1Variable,
     Ps1WhileLoop,
 )
 
-_Value = str | int | float | bool | list | None
+_Value = Optional[Union[str, int, float, bool, list]]
 
 
 class _Ps1InterpreterError(Exception):
@@ -237,7 +240,36 @@ class _Ps1Interpreter:
             if expr.redirections:
                 raise _Ps1InterpreterError
             return self._eval(expr.expression)
+        if isinstance(expr, Ps1CommandInvocation):
+            return self._eval_command(expr)
         raise _Ps1InterpreterError
+
+    def _eval_command(self, node: Ps1CommandInvocation) -> _Value:
+        if not isinstance(node.name, Ps1StringLiteral):
+            raise _Ps1InterpreterError
+        cmd = node.name.value.lower().replace('-', '')
+        if cmd != 'newobject':
+            raise _Ps1InterpreterError
+        positional: list[_Value] = []
+        for arg in node.arguments:
+            if isinstance(arg, Ps1CommandArgument):
+                if arg.kind != Ps1CommandArgumentKind.POSITIONAL:
+                    continue
+                expr = arg.value
+            elif isinstance(arg, Expression):
+                expr = arg
+            else:
+                raise _Ps1InterpreterError
+            positional.append(self._eval(expr) if expr is not None else None)
+        if len(positional) != 2:
+            raise _Ps1InterpreterError
+        type_name = positional[0]
+        if not isinstance(type_name, str) or not type_name.lower().endswith('[]'):
+            raise _Ps1InterpreterError
+        size = self._to_int(positional[1])
+        if size < 0 or size > self.max_string_length:
+            raise _Ps1InterpreterError
+        return [0] * size
 
     def _eval_variable(self, node: Ps1Variable) -> _Value:
         if node.scope not in (Ps1ScopeModifier.NONE, Ps1ScopeModifier.LOCAL):
@@ -252,6 +284,8 @@ class _Ps1Interpreter:
         return self._env.get(name)
 
     def _eval_assignment(self, node: Ps1AssignmentExpression) -> _Value:
+        if isinstance(node.target, Ps1IndexExpression):
+            return self._eval_index_assignment(node)
         if not isinstance(node.target, Ps1Variable):
             raise _Ps1InterpreterError
         if node.target.scope not in (Ps1ScopeModifier.NONE, Ps1ScopeModifier.LOCAL):
@@ -273,6 +307,28 @@ class _Ps1Interpreter:
         else:
             raise _Ps1InterpreterError
         return self._env[key]
+
+    def _eval_index_assignment(self, node: Ps1AssignmentExpression) -> _Value:
+        target = node.target
+        if not isinstance(target, Ps1IndexExpression):
+            raise _Ps1InterpreterError
+        if not isinstance(target.object, Ps1Variable):
+            raise _Ps1InterpreterError
+        if target.object.scope not in (Ps1ScopeModifier.NONE, Ps1ScopeModifier.LOCAL):
+            raise _Ps1InterpreterError
+        if node.operator != '=':
+            raise _Ps1InterpreterError
+        key = target.object.name.lower()
+        lst = self._env.get(key)
+        if not isinstance(lst, list):
+            raise _Ps1InterpreterError
+        idx = self._to_int(self._eval(target.index))
+        value = self._eval(node.value)
+        try:
+            lst[idx] = value
+        except IndexError:
+            raise _Ps1InterpreterError
+        return value
 
     def _eval_binary(self, node: Ps1BinaryExpression) -> _Value:
         op = node.operator.lower()
@@ -376,9 +432,24 @@ class _Ps1Interpreter:
             return None
         return None
 
+    _ENCODING_MAP = {
+        'ascii'            : 'ascii',
+        'utf8'             : 'utf-8',
+        'unicode'          : 'utf-16-le',
+        'bigendianunicode' : 'utf-16-be',
+        'default'          : 'latin-1',
+    }
+
+    _CONVERT_TYPES = frozenset({'convert', 'system.convert'})
+
+    _ENCODING_TYPES = frozenset({'system.text.encoding', 'text.encoding'})
+
     def _eval_invoke_member(self, node: Ps1InvokeMember) -> _Value:
         if node.access == Ps1AccessKind.STATIC:
-            raise _Ps1InterpreterError
+            return self._eval_static_invoke(node)
+        enc = self._try_encoding_chain(node)
+        if enc is not None:
+            return enc
         obj = self._eval(node.object)
         member = node.member if isinstance(node.member, str) else None
         if member is None:
@@ -393,6 +464,86 @@ class _Ps1Interpreter:
         if isinstance(obj, list):
             return self._invoke_list_method(obj, name, args)
         raise _Ps1InterpreterError
+
+    def _eval_static_invoke(self, node: Ps1InvokeMember) -> _Value:
+        if not isinstance(node.object, Ps1TypeExpression):
+            raise _Ps1InterpreterError
+        type_name = node.object.name.lower().replace(' ', '')
+        member = node.member if isinstance(node.member, str) else None
+        if member is None:
+            if isinstance(node.member, Ps1StringLiteral):
+                member = node.member.value
+            else:
+                raise _Ps1InterpreterError
+        name = member.lower()
+        args = [self._eval(a) for a in node.arguments]
+        if type_name in self._CONVERT_TYPES:
+            return self._invoke_convert(name, args)
+        if type_name in self._ENCODING_TYPES:
+            return self._invoke_encoding(name, args)
+        raise _Ps1InterpreterError
+
+    def _invoke_convert(self, method: str, args: list[_Value]) -> _Value:
+        try:
+            if method == 'tobyte' and len(args) == 2:
+                return int(self._to_str(args[0]), self._to_int(args[1])) & 0xFF
+            if method == 'toint16' and len(args) == 2:
+                v = int(self._to_str(args[0]), self._to_int(args[1]))
+                if v >= 0x8000:
+                    v -= 0x10000
+                return v
+            if method == 'toint32' and len(args) == 2:
+                v = int(self._to_str(args[0]), self._to_int(args[1]))
+                if v >= 0x80000000:
+                    v -= 0x100000000
+                return v
+            if method == 'toint64' and len(args) == 2:
+                return int(self._to_str(args[0]), self._to_int(args[1]))
+            if method == 'tochar' and len(args) == 1:
+                return chr(self._to_int(args[0]))
+            if method == 'tostring' and len(args) == 1:
+                return self._to_str(args[0])
+        except (ValueError, OverflowError, TypeError):
+            raise _Ps1InterpreterError
+        raise _Ps1InterpreterError
+
+    def _invoke_encoding(self, method: str, args: list[_Value]) -> _Value:
+        encoding = self._ENCODING_MAP.get(method)
+        if encoding is None or len(args) != 1:
+            raise _Ps1InterpreterError
+        return self._decode_byte_list(args[0], encoding)
+
+    def _try_encoding_chain(self, node: Ps1InvokeMember) -> _Value | None:
+        member = node.member if isinstance(node.member, str) else None
+        if member is None or member.lower() != 'getstring':
+            return None
+        obj = node.object
+        if not isinstance(obj, Ps1MemberAccess):
+            return None
+        if obj.access != Ps1AccessKind.STATIC:
+            return None
+        if not isinstance(obj.object, Ps1TypeExpression):
+            return None
+        type_name = obj.object.name.lower().replace(' ', '')
+        if type_name not in self._ENCODING_TYPES:
+            return None
+        enc_name = obj.member if isinstance(obj.member, str) else None
+        if enc_name is None:
+            return None
+        encoding = self._ENCODING_MAP.get(enc_name.lower(), enc_name.lower())
+        if len(node.arguments) != 1:
+            raise _Ps1InterpreterError
+        arg = self._eval(node.arguments[0])
+        return self._decode_byte_list(arg, encoding)
+
+    def _decode_byte_list(self, value: _Value, encoding: str) -> str:
+        if not isinstance(value, list):
+            raise _Ps1InterpreterError
+        try:
+            raw = bytearray(int(b) for b in value)
+            return raw.decode(encoding)
+        except (ValueError, OverflowError, UnicodeDecodeError, LookupError):
+            raise _Ps1InterpreterError
 
     def _invoke_string_method(
         self, s: str, method: str, args: list[_Value],
@@ -500,6 +651,8 @@ class _Ps1Interpreter:
             if isinstance(val, str):
                 return list(val)
             raise _Ps1InterpreterError
+        if tn == 'byte':
+            return self._to_int(val) & 0xFF
         raise _Ps1InterpreterError
 
     def _add(self, left: _Value, right: _Value) -> _Value:
