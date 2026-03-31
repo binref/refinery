@@ -12,28 +12,28 @@ from refinery.lib.scripts import Block, Expression, Node, Statement
 
 
 class Ps1ScopeModifier(enum.Enum):
-    NONE     = ''
-    GLOBAL   = 'global'
-    LOCAL    = 'local'
-    SCRIPT   = 'script'
-    PRIVATE  = 'private'
-    USING    = 'using'
-    ENV      = 'env'
-    VARIABLE = 'variable'
-    FUNCTION = 'function'
-    ALIAS    = 'alias'
-    DRIVE    = 'drive'
+    NONE     = ''          # noqa
+    GLOBAL   = 'global'    # noqa
+    LOCAL    = 'local'     # noqa
+    SCRIPT   = 'script'    # noqa
+    PRIVATE  = 'private'   # noqa
+    USING    = 'using'     # noqa
+    ENV      = 'env'       # noqa
+    VARIABLE = 'variable'  # noqa
+    FUNCTION = 'function'  # noqa
+    ALIAS    = 'alias'     # noqa
+    DRIVE    = 'drive'     # noqa
 
 
 class Ps1CommandArgumentKind(enum.Enum):
     POSITIONAL = 'positional'
-    NAMED      = 'named'
-    SWITCH     = 'switch'
+    NAMED = 'named'
+    SWITCH = 'switch'
 
 
 class Ps1AccessKind(enum.Enum):
     INSTANCE = '.'
-    STATIC   = '::'
+    STATIC = '::'
 
 
 @dataclass(repr=False)

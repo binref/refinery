@@ -6,92 +6,92 @@ from dataclasses import dataclass
 
 
 class Ps1TokenKind(enum.Enum):
-    INTEGER          = 'integer'
-    REAL             = 'real'
-    STRING_VERBATIM  = 'sq-string'
-    STRING_EXPAND    = 'dq-string'
-    HSTRING_VERBATIM = 'sq-hstring'
-    HSTRING_EXPAND   = 'dq-hstring'
+    INTEGER          = 'integer'         # noqa
+    REAL             = 'real'            # noqa
+    STRING_VERBATIM  = 'sq-string'       # noqa
+    STRING_EXPAND    = 'dq-string'       # noqa
+    HSTRING_VERBATIM = 'sq-hstring'      # noqa
+    HSTRING_EXPAND   = 'dq-hstring'      # noqa
 
-    VARIABLE         = 'variable'
-    SPLAT_VARIABLE   = 'splat-variable'
-    LABEL            = 'label'
+    VARIABLE         = 'variable'        # noqa
+    SPLAT_VARIABLE   = 'splat-variable'  # noqa
+    LABEL            = 'label'           # noqa
 
-    PLUS             = '+'
-    DASH             = '-'
-    STAR             = '*'
-    SLASH            = '/'
-    PERCENT          = '%'
-    DOT              = '.'
-    DOTDOT           = '..'
-    COMMA            = ','
-    SEMICOLON        = ';'
-    INCREMENT        = '++'
-    DECREMENT        = '--'
-    EXCLAIM          = '!'
-    DOUBLE_COLON     = '::'
-    DOUBLE_AMPERSAND = '&&'
-    DOUBLE_PIPE      = '||'
+    PLUS             = '+'               # noqa
+    DASH             = '-'               # noqa
+    STAR             = '*'               # noqa
+    SLASH            = '/'               # noqa
+    PERCENT          = '%'               # noqa
+    DOT              = '.'               # noqa
+    DOTDOT           = '..'              # noqa
+    COMMA            = ','               # noqa
+    SEMICOLON        = ';'               # noqa
+    INCREMENT        = '++'              # noqa
+    DECREMENT        = '--'              # noqa
+    EXCLAIM          = '!'               # noqa
+    DOUBLE_COLON     = '::'              # noqa
+    DOUBLE_AMPERSAND = '&&'              # noqa
+    DOUBLE_PIPE      = '||'              # noqa
 
-    EQUALS           = '='
-    PLUS_ASSIGN      = '+='
-    DASH_ASSIGN      = '-='
-    STAR_ASSIGN      = '*='
-    SLASH_ASSIGN     = '/='
-    PERCENT_ASSIGN   = '%='
+    EQUALS           = '='               # noqa
+    PLUS_ASSIGN      = '+='              # noqa
+    DASH_ASSIGN      = '-='              # noqa
+    STAR_ASSIGN      = '*='              # noqa
+    SLASH_ASSIGN     = '/='              # noqa
+    PERCENT_ASSIGN   = '%='              # noqa
 
-    OPERATOR         = 'operator'
-    PARAMETER        = 'parameter'
-    GENERIC_TOKEN    = 'generic-token'
+    OPERATOR         = 'operator'        # noqa
+    PARAMETER        = 'parameter'       # noqa
+    GENERIC_TOKEN    = 'generic-token'   # noqa
 
-    LPAREN           = '('
-    RPAREN           = ')'
-    LBRACE           = '{'
-    RBRACE           = '}'
-    LBRACKET         = '['
-    RBRACKET         = ']'
-    AT_LPAREN        = '@('
-    AT_LBRACE        = '@{'
-    DOLLAR_LPAREN    = '$('
+    LPAREN           = '('               # noqa
+    RPAREN           = ')'               # noqa
+    LBRACE           = '{'               # noqa
+    RBRACE           = '}'               # noqa
+    LBRACKET         = '['               # noqa
+    RBRACKET         = ']'               # noqa
+    AT_LPAREN        = '@('              # noqa
+    AT_LBRACE        = '@{'              # noqa
+    DOLLAR_LPAREN    = '$('              # noqa
 
-    PIPE             = '|'
-    AMPERSAND        = '&'
-    REDIRECTION      = 'redirection'
+    PIPE             = '|'               # noqa
+    AMPERSAND        = '&'               # noqa
+    REDIRECTION      = 'redirection'     # noqa
 
-    IF               = 'if'
-    ELSEIF           = 'elseif'
-    ELSE             = 'else'
-    SWITCH           = 'switch'
-    WHILE            = 'while'
-    FOR              = 'for'
-    FOREACH          = 'foreach'
-    DO               = 'do'
-    UNTIL            = 'until'
-    FUNCTION         = 'function'
-    FILTER           = 'filter'
-    RETURN           = 'return'
-    BREAK            = 'break'
-    CONTINUE         = 'continue'
-    THROW            = 'throw'
-    EXIT             = 'exit'
-    TRY              = 'try'
-    CATCH            = 'catch'
-    FINALLY          = 'finally'
-    TRAP             = 'trap'
-    DATA             = 'data'
-    BEGIN            = 'begin'
-    PROCESS          = 'process'
-    END              = 'end'
-    PARAM            = 'param'
-    IN               = 'in'
-    CLASS            = 'class'
-    USING            = 'using'
-    ENUM             = 'enum'
-    DYNAMICPARAM     = 'dynamicparam'
+    IF               = 'if'              # noqa
+    ELSEIF           = 'elseif'          # noqa
+    ELSE             = 'else'            # noqa
+    SWITCH           = 'switch'          # noqa
+    WHILE            = 'while'           # noqa
+    FOR              = 'for'             # noqa
+    FOREACH          = 'foreach'         # noqa
+    DO               = 'do'              # noqa
+    UNTIL            = 'until'           # noqa
+    FUNCTION         = 'function'        # noqa
+    FILTER           = 'filter'          # noqa
+    RETURN           = 'return'          # noqa
+    BREAK            = 'break'           # noqa
+    CONTINUE         = 'continue'        # noqa
+    THROW            = 'throw'           # noqa
+    EXIT             = 'exit'            # noqa
+    TRY              = 'try'             # noqa
+    CATCH            = 'catch'           # noqa
+    FINALLY          = 'finally'         # noqa
+    TRAP             = 'trap'            # noqa
+    DATA             = 'data'            # noqa
+    BEGIN            = 'begin'           # noqa
+    PROCESS          = 'process'         # noqa
+    END              = 'end'             # noqa
+    PARAM            = 'param'           # noqa
+    IN               = 'in'              # noqa
+    CLASS            = 'class'           # noqa
+    USING            = 'using'           # noqa
+    ENUM             = 'enum'            # noqa
+    DYNAMICPARAM     = 'dynamicparam'    # noqa
 
-    NEWLINE          = 'newline'
-    COMMENT          = 'comment'
-    EOF              = 'eof'
+    NEWLINE          = 'newline'         # noqa
+    COMMENT          = 'comment'         # noqa
+    EOF              = 'eof'             # noqa
 
     @property
     def is_keyword(self):

@@ -129,6 +129,7 @@ class Ps1Parser:
         self._lexer = Ps1Lexer(source)
         self._gen = self._lexer.tokenize()
         self._current: Ps1Token = Ps1Token(Ps1TokenKind.EOF, '', 0)
+        self._disable_comma = False
         self._advance()
 
     def _advance(self, mode_hint: Ps1LexerMode | None = None) -> Ps1Token:
@@ -521,11 +522,16 @@ class Ps1Parser:
 
     def _parse_argument_expression(self) -> Expression | None:
         """
-        Parse a single method argument expression. Stops before consuming
-        commas which delimit method arguments. Parses at the unary level,
-        which is just above the array literal (comma) level.
+        Parse a single method argument expression. Uses the full expression
+        grammar but disables the comma operator so that commas delimit
+        arguments rather than forming array literals.
         """
-        return self._parse_unary_expression()
+        old = self._disable_comma
+        self._disable_comma = True
+        try:
+            return self._parse_expression()
+        finally:
+            self._disable_comma = old
 
     def _parse_format_expression(self) -> Expression | None:
         left = self._parse_range_expression()
@@ -556,7 +562,7 @@ class Ps1Parser:
         first = self._parse_unary_expression()
         if first is None:
             return None
-        if not self._at(Ps1TokenKind.COMMA):
+        if self._disable_comma or not self._at(Ps1TokenKind.COMMA):
             return first
         elements = [first]
         while self._eat(Ps1TokenKind.COMMA):
@@ -1476,7 +1482,12 @@ class Ps1Parser:
         default = None
         if self._eat(Ps1TokenKind.EQUALS):
             self._skip_newlines()
-            default = self._parse_expression()
+            old = self._disable_comma
+            self._disable_comma = True
+            try:
+                default = self._parse_expression()
+            finally:
+                self._disable_comma = old
         return Ps1ParameterDeclaration(
             offset=offset, variable=var, attributes=attrs, default_value=default)
 
@@ -1496,31 +1507,36 @@ class Ps1Parser:
             self._skip_newlines()
             positional: list[Expression] = []
             named: list[tuple[str, Expression]] = []
-            while not self._at(Ps1TokenKind.RPAREN, Ps1TokenKind.EOF):
-                self._skip_newlines()
-                if self._at(Ps1TokenKind.RPAREN):
-                    break
-                if (self._at(Ps1TokenKind.GENERIC_TOKEN)
-                        and self.source[self._current.offset:].find('=') > 0):
-                    saved = self._current
-                    saved_pos = self._lexer.pos
-                    key_tok = self._advance()
-                    if self._eat(Ps1TokenKind.EQUALS):
-                        self._skip_newlines()
-                        val = self._parse_expression()
-                        if val is not None:
-                            named.append((key_tok.value, val))
+            old = self._disable_comma
+            self._disable_comma = True
+            try:
+                while not self._at(Ps1TokenKind.RPAREN, Ps1TokenKind.EOF):
+                    self._skip_newlines()
+                    if self._at(Ps1TokenKind.RPAREN):
+                        break
+                    if (self._at(Ps1TokenKind.GENERIC_TOKEN)
+                            and self.source[self._current.offset:].find('=') > 0):
+                        saved = self._current
+                        saved_pos = self._lexer.pos
+                        key_tok = self._advance()
+                        if self._eat(Ps1TokenKind.EQUALS):
                             self._skip_newlines()
-                            self._eat(Ps1TokenKind.COMMA)
-                            continue
-                    self._current = saved
-                    self._lexer.pos = saved_pos
-                expr = self._parse_expression()
-                if expr is not None:
-                    positional.append(expr)
-                self._skip_newlines()
-                if not self._eat(Ps1TokenKind.COMMA):
-                    break
+                            val = self._parse_expression()
+                            if val is not None:
+                                named.append((key_tok.value, val))
+                                self._skip_newlines()
+                                self._eat(Ps1TokenKind.COMMA)
+                                continue
+                        self._current = saved
+                        self._lexer.pos = saved_pos
+                    expr = self._parse_expression()
+                    if expr is not None:
+                        positional.append(expr)
+                    self._skip_newlines()
+                    if not self._eat(Ps1TokenKind.COMMA):
+                        break
+            finally:
+                self._disable_comma = old
             self._expect(Ps1TokenKind.RPAREN)
             self._skip_newlines()
             self._expect(Ps1TokenKind.RBRACKET)
