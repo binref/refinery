@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import abc
 import codecs
+import sys
 
 from refinery.lib.scripts import Node
 from refinery.lib.types import Param, buf
@@ -38,6 +39,14 @@ class IterativeDeobfuscator(Unit, abstract=True):
         ...
 
     def process(self, data: Chunk) -> buf:
+        old_limit = sys.getrecursionlimit()
+        sys.setrecursionlimit(max(old_limit, 10000))
+        try:
+            return self._process(data)
+        finally:
+            sys.setrecursionlimit(old_limit)
+
+    def _process(self, data: Chunk) -> buf:
         text = codecs.decode(data, self.codec, errors='surrogateescape')
         ast = self.parse(text)
         for _ in range(self.args.timeout):

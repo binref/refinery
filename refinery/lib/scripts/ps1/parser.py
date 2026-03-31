@@ -123,6 +123,11 @@ _COMPARISON_OPERATORS = frozenset({
     '-split',
 })
 
+_BINARY_PRECEDENCE: dict[str, int] = {}
+_BINARY_PRECEDENCE.update(dict.fromkeys(('-and', '-or', '-xor'), 10))
+_BINARY_PRECEDENCE.update(dict.fromkeys(('-band', '-bor', '-bxor'), 20))
+_BINARY_PRECEDENCE.update(dict.fromkeys(_COMPARISON_OPERATORS, 30))
+
 _EXPRESSION_START_KINDS = frozenset({
     Ps1TokenKind.INTEGER,
     Ps1TokenKind.REAL,
@@ -504,117 +509,39 @@ class Ps1Parser:
         return None
 
     def _parse_expression(self) -> Expression | None:
-        return self._parse_logical_expression()
+        return self._parse_binary_expression(0)
 
-    def _parse_logical_expression(self) -> Expression | None:
-        left = self._parse_bitwise_expression()
-        if left is None:
-            return None
-        while self._at(Ps1TokenKind.OPERATOR) and self._current.value in ('-and', '-or', '-xor'):
-            op = self._advance()
-            self._skip_newlines()
-            right = self._parse_bitwise_expression()
-            if right is None:
-                break
-            left = Ps1BinaryExpression(
-                offset=left.offset, left=left, operator=op.value, right=right)
-        return left
+    def _current_binary_precedence(self) -> int | None:
+        if self._current.kind == Ps1TokenKind.DOTDOT:
+            return 70
+        if self._current.kind in (Ps1TokenKind.STAR, Ps1TokenKind.SLASH, Ps1TokenKind.PERCENT):
+            return 50
+        if self._current.kind in (Ps1TokenKind.PLUS, Ps1TokenKind.DASH):
+            return 40
+        if self._current.kind == Ps1TokenKind.OPERATOR:
+            v = self._current.value
+            if v == '-f':
+                return 60
+            return _BINARY_PRECEDENCE.get(v)
+        return None
 
-    def _parse_bitwise_expression(self) -> Expression | None:
-        left = self._parse_comparison_expression()
-        if left is None:
-            return None
-        while self._at(Ps1TokenKind.OPERATOR) and self._current.value in (
-            '-band', '-bor', '-bxor'
-        ):
-            op = self._advance()
-            self._skip_newlines()
-            right = self._parse_comparison_expression()
-            if right is None:
-                break
-            left = Ps1BinaryExpression(
-                offset=left.offset, left=left, operator=op.value, right=right)
-        return left
-
-    def _parse_comparison_expression(self) -> Expression | None:
-        left = self._parse_additive_expression()
-        if left is None:
-            return None
-        while self._at(Ps1TokenKind.OPERATOR) and self._current.value in _COMPARISON_OPERATORS:
-            op = self._advance()
-            self._skip_newlines()
-            right = self._parse_additive_expression()
-            if right is not None:
-                left = Ps1BinaryExpression(
-                    offset=left.offset, left=left, operator=op.value, right=right)
-        return left
-
-    def _parse_additive_expression(self) -> Expression | None:
-        left = self._parse_multiplicative_expression()
-        if left is None:
-            return None
-        while self._at(Ps1TokenKind.PLUS, Ps1TokenKind.DASH):
-            op = self._advance()
-            self._skip_newlines()
-            right = self._parse_multiplicative_expression()
-            if right is None:
-                break
-            left = Ps1BinaryExpression(
-                offset=left.offset, left=left, operator=op.value, right=right)
-        return left
-
-    def _parse_multiplicative_expression(self) -> Expression | None:
-        left = self._parse_format_expression()
-        if left is None:
-            return None
-        while self._at(Ps1TokenKind.STAR, Ps1TokenKind.SLASH, Ps1TokenKind.PERCENT):
-            op = self._advance()
-            self._skip_newlines()
-            right = self._parse_format_expression()
-            if right is None:
-                break
-            left = Ps1BinaryExpression(
-                offset=left.offset, left=left, operator=op.value, right=right)
-        return left
-
-    def _parse_argument_expression(self) -> Expression | None:
-        """
-        Parse a single method argument expression. Uses the full expression
-        grammar but disables the comma operator so that commas delimit
-        arguments rather than forming array literals.
-        """
-        old = self._disable_comma
-        self._disable_comma = True
-        try:
-            return self._parse_expression()
-        finally:
-            self._disable_comma = old
-
-    def _parse_format_expression(self) -> Expression | None:
-        left = self._parse_range_expression()
-        if left is None:
-            return None
-        while self._at(Ps1TokenKind.OPERATOR) and self._current.value == '-f':
-            op = self._advance()
-            self._skip_newlines()
-            right = self._parse_range_expression()
-            if right is None:
-                break
-            left = Ps1BinaryExpression(
-                offset=left.offset, left=left, operator=op.value, right=right)
-        return left
-
-    def _parse_range_expression(self) -> Expression | None:
+    def _parse_binary_expression(self, min_prec: int) -> Expression | None:
         left = self._parse_array_literal_expression()
         if left is None:
             return None
-        while self._at(Ps1TokenKind.DOTDOT):
-            self._advance()
+        while True:
+            prec = self._current_binary_precedence()
+            if prec is None or prec < min_prec:
+                break
+            op = self._advance()
             self._skip_newlines()
-            right = self._parse_array_literal_expression()
+            right = self._parse_binary_expression(prec + 1)
             if right is None:
                 break
-            left = Ps1RangeExpression(offset=left.offset, start=left, end=right)
+            if op.kind == Ps1TokenKind.DOTDOT:
+                left = Ps1RangeExpression(offset=left.offset, start=left, end=right)
+            else:
+                left = Ps1BinaryExpression(offset=left.offset, left=left, operator=op.value, right=right)
         return left
 
     def _parse_array_literal_expression(self) -> Expression | None:
@@ -633,6 +560,19 @@ class Ps1Parser:
         if len(elements) == 1:
             return elements[0]
         return Ps1ArrayLiteral(offset=first.offset, elements=elements)
+
+    def _parse_argument_expression(self) -> Expression | None:
+        """
+        Parse a single method argument expression. Uses the full expression
+        grammar but disables the comma operator so that commas delimit
+        arguments rather than forming array literals.
+        """
+        old = self._disable_comma
+        self._disable_comma = True
+        try:
+            return self._parse_expression()
+        finally:
+            self._disable_comma = old
 
     def _parse_unary_expression(self) -> Expression | None:
         tok = self._peek()

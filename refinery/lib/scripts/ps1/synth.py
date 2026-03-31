@@ -132,11 +132,17 @@ class Ps1Synthesizer(Visitor):
         self._write(node.raw)
 
     def visit_Ps1BinaryExpression(self, node: Ps1BinaryExpression):
-        if node.left:
-            self.visit(node.left)
-        self._write(F' {node.operator} ')
-        if node.right:
-            self.visit(node.right)
+        spine: list[tuple[str, Expression | None]] = []
+        current: Expression | None = node
+        while isinstance(current, Ps1BinaryExpression):
+            spine.append((current.operator, current.right))
+            current = current.left
+        if current:
+            self.visit(current)
+        for operator, right in reversed(spine):
+            self._write(F' {operator} ')
+            if right:
+                self.visit(right)
 
     def visit_Ps1UnaryExpression(self, node: Ps1UnaryExpression):
         if node.prefix:
