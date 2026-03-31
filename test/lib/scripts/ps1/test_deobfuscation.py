@@ -149,9 +149,23 @@ class TestPs1Deobfuscator(TestPs1):
         self.assertNotIn('gcm', result)
 
     def test_useless_string_cast(self):
-        result = self._deobfuscate('''.replAce(("M0I"),[strIng]"'")''')
+        result = self._deobfuscate('''$snug.replAce(("M0I"),[strIng]"'")''')
         self.assertIn("'", result)
         self.assertNotIn('[strIng]', result)
+
+    def test_method_argument_binary_expressions(self):
+        result = self._deobfuscate(
+            "$x=$a.GetType('Sys'+'tem.Int32');"
+            "$y=$b.Replace('#','');"
+            "$z=$c.Foo('A'+'B','C'+'D')"
+        )
+        self.assertIn("GetType('System.Int32')", result)
+        self.assertIn("Replace('#', '')", result)
+        self.assertIn("Foo('AB', 'CD')", result)
+
+    def test_param_block(self):
+        result = self._deobfuscate('param($qu, $sec=0, $iv=0)')
+        self.assertIn('param($qu, $sec = 0, $iv = 0)', result)
 
 
 class TestPS1BracketRemoval(TestPs1):

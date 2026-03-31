@@ -968,7 +968,12 @@ class Ps1Parser:
         offset = self._current.offset
         self._expect(Ps1TokenKind.LPAREN)
         self._skip_newlines()
-        expr = self._parse_pipeline_expression()
+        old = self._disable_comma
+        self._disable_comma = False
+        try:
+            expr = self._parse_pipeline_expression()
+        finally:
+            self._disable_comma = old
         self._skip_newlines()
         self._expect(Ps1TokenKind.RPAREN)
         return Ps1ParenExpression(offset=offset, expression=expr)
@@ -978,7 +983,12 @@ class Ps1Parser:
         self._expect(Ps1TokenKind.DOLLAR_LPAREN)
         self._skip_newlines()
         self._lexer.push_mode(Ps1LexerMode.EXPRESSION)
-        stmts = self._parse_statement_list(until=Ps1TokenKind.RPAREN)
+        old = self._disable_comma
+        self._disable_comma = False
+        try:
+            stmts = self._parse_statement_list(until=Ps1TokenKind.RPAREN)
+        finally:
+            self._disable_comma = old
         self._skip_newlines()
         self._expect(Ps1TokenKind.RPAREN)
         self._lexer.pop_mode()
@@ -989,7 +999,12 @@ class Ps1Parser:
         self._expect(Ps1TokenKind.AT_LPAREN)
         self._skip_newlines()
         self._lexer.push_mode(Ps1LexerMode.EXPRESSION)
-        stmts = self._parse_statement_list(until=Ps1TokenKind.RPAREN)
+        old = self._disable_comma
+        self._disable_comma = False
+        try:
+            stmts = self._parse_statement_list(until=Ps1TokenKind.RPAREN)
+        finally:
+            self._disable_comma = old
         self._skip_newlines()
         self._expect(Ps1TokenKind.RPAREN)
         self._lexer.pop_mode()
