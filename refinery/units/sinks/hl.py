@@ -20,6 +20,8 @@ class hl(Unit):
     It expects plain text code as input and outputs ANSI-colored text.
     """
     _pygments_name_completion = {
+        'js'  : 'JavaScript',
+        'py'  : 'Python',
         'vb'  : 'VisualBasic',
         'vba' : 'VisualBasic',
         'vbs' : 'VisualBasic',
