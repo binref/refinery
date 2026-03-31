@@ -288,11 +288,11 @@ class TestPS1Regressions(TestPs1):
 
     def test_shl_operator(self):
         result = self._deobfuscate('$x = 1 -shl 2')
-        self.assertIn('1 -shl 2', result)
+        self.assertIn('1 -shl 2', result.lower())
 
     def test_shr_operator(self):
         result = self._deobfuscate('$x = 1 -shr 3')
-        self.assertIn('1 -shr 3', result)
+        self.assertIn('1 -shr 3', result.lower())
 
     def test_format_expression_chained(self):
         result = self._deobfuscate('$x = "{0}" -f "a" -f "b"')

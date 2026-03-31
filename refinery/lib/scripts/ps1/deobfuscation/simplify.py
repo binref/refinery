@@ -9,13 +9,18 @@ from refinery.lib.scripts.ps1.deobfuscation._helpers import (
     _case_normalize_name,
 )
 from refinery.lib.scripts.ps1.model import (
+    Ps1BinaryExpression,
+    Ps1CastExpression,
     Ps1CommandArgument,
+    Ps1CommandArgumentKind,
     Ps1CommandInvocation,
     Ps1IntegerLiteral,
     Ps1MemberAccess,
     Ps1ParenExpression,
     Ps1RealLiteral,
     Ps1StringLiteral,
+    Ps1TypeExpression,
+    Ps1UnaryExpression,
     Ps1Variable,
 )
 
@@ -50,6 +55,52 @@ class Ps1Simplifications(Transformer):
                 node.member = normalized
                 self.mark_changed()
         return None
+
+    def visit_Ps1BinaryExpression(self, node: Ps1BinaryExpression):
+        self.generic_visit(node)
+        normalized = _case_normalize_name(node.operator)
+        if normalized != node.operator:
+            node.operator = normalized
+            self.mark_changed()
+        return None
+
+    def visit_Ps1UnaryExpression(self, node: Ps1UnaryExpression):
+        self.generic_visit(node)
+        normalized = _case_normalize_name(node.operator)
+        if normalized != node.operator:
+            node.operator = normalized
+            self.mark_changed()
+        return None
+
+    def visit_Ps1CommandArgument(self, node: Ps1CommandArgument):
+        self.generic_visit(node)
+        if node.kind in (Ps1CommandArgumentKind.SWITCH, Ps1CommandArgumentKind.NAMED):
+            normalized = _case_normalize_name(node.name)
+            if normalized != node.name:
+                node.name = normalized
+                self.mark_changed()
+        return None
+
+    def visit_Ps1TypeExpression(self, node: Ps1TypeExpression):
+        node.name = self._normalize_type_name(node.name)
+        return None
+
+    def visit_Ps1CastExpression(self, node: Ps1CastExpression):
+        self.generic_visit(node)
+        node.type_name = self._normalize_type_name(node.type_name)
+        return None
+
+    def _normalize_type_name(self, name: str) -> str:
+        stripped = name
+        prefix = ''
+        if stripped.lower().startswith('system.'):
+            prefix = stripped[:7]
+            stripped = stripped[7:]
+        normalized = _case_normalize_name(stripped)
+        if normalized != stripped:
+            self.mark_changed()
+            return prefix + normalized
+        return name
 
     def visit_Ps1CommandInvocation(self, node: Ps1CommandInvocation):
         self.generic_visit(node)
