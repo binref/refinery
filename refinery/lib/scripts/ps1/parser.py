@@ -228,10 +228,18 @@ class Ps1Parser:
         process_block = None
         end_block = None
         dynamicparam_block = None
-        if self._at(Ps1TokenKind.BEGIN, Ps1TokenKind.PROCESS, Ps1TokenKind.END,
-                     Ps1TokenKind.DYNAMICPARAM):
-            while self._at(Ps1TokenKind.BEGIN, Ps1TokenKind.PROCESS, Ps1TokenKind.END,
-                           Ps1TokenKind.DYNAMICPARAM):
+        if self._at(
+            Ps1TokenKind.BEGIN,
+            Ps1TokenKind.PROCESS,
+            Ps1TokenKind.END,
+            Ps1TokenKind.DYNAMICPARAM,
+        ):
+            while self._at(
+                Ps1TokenKind.BEGIN,
+                Ps1TokenKind.PROCESS,
+                Ps1TokenKind.END,
+                Ps1TokenKind.DYNAMICPARAM,
+            ):
                 kw = self._advance()
                 self._skip_newlines()
                 block = self._parse_block()
@@ -935,8 +943,8 @@ class Ps1Parser:
             c = text[i]
             if c == '`' and i + 1 < length:
                 nc = text[i + 1]
-                from refinery.lib.scripts.ps1.lexer import _BACKTICK_ESCAPE
-                result.append(_BACKTICK_ESCAPE.get(nc, nc))
+                from refinery.lib.scripts.ps1.lexer import BACKTICK_ESCAPE
+                result.append(BACKTICK_ESCAPE.get(nc, nc))
                 i += 2
             elif c == '"' and i + 1 < length and text[i + 1] == '"':
                 result.append('"')
@@ -1483,10 +1491,18 @@ class Ps1Parser:
         process_block = None
         end_block = None
         dynamicparam_block = None
-        if self._at(Ps1TokenKind.BEGIN, Ps1TokenKind.PROCESS, Ps1TokenKind.END,
-                     Ps1TokenKind.DYNAMICPARAM):
-            while self._at(Ps1TokenKind.BEGIN, Ps1TokenKind.PROCESS, Ps1TokenKind.END,
-                           Ps1TokenKind.DYNAMICPARAM):
+        if self._at(
+            Ps1TokenKind.BEGIN,
+            Ps1TokenKind.PROCESS,
+            Ps1TokenKind.END,
+            Ps1TokenKind.DYNAMICPARAM,
+        ):
+            while self._at(
+                Ps1TokenKind.BEGIN,
+                Ps1TokenKind.PROCESS,
+                Ps1TokenKind.END,
+                Ps1TokenKind.DYNAMICPARAM,
+            ):
                 kw = self._advance()
                 self._skip_newlines()
                 block = self._parse_block()

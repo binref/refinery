@@ -27,8 +27,10 @@ from refinery.lib.scripts.ps1.model import (
     Ps1IntegerLiteral,
     Ps1InvokeMember,
     Ps1MemberAccess,
+    Ps1ParenExpression,
     Ps1StringLiteral,
     Ps1TypeExpression,
+    Ps1UnaryExpression,
 )
 
 _ENCODING_MAP = {
@@ -76,7 +78,30 @@ def _is_static_encoding_chain(node: Ps1InvokeMember) -> tuple[str, bool] | None:
     return encoding_name, True
 
 
+def _unwrap_to_array_literal(node: Expression) -> Ps1ArrayLiteral | None:
+    """
+    Unwrap parentheses to find an inner Ps1ArrayLiteral.
+    """
+    while isinstance(node, Ps1ParenExpression) and node.expression is not None:
+        node = node.expression
+    if isinstance(node, Ps1ArrayLiteral):
+        return node
+    return None
+
+
 class Ps1StringOperations(Transformer):
+
+    def visit_Ps1UnaryExpression(self, node: Ps1UnaryExpression):
+        self.generic_visit(node)
+        if node.operator.lower() != '-join' or node.operand is None:
+            return None
+        array = _unwrap_to_array_literal(node.operand)
+        if array is None:
+            return None
+        args = _collect_string_arguments(array)
+        if args is None:
+            return None
+        return _make_string_literal(''.join(args))
 
     def visit_Ps1InvokeMember(self, node: Ps1InvokeMember):
         self.generic_visit(node)
@@ -160,6 +185,8 @@ class Ps1StringOperations(Transformer):
             return self._handle_format(node)
         if op == '+':
             return self._handle_concat(node)
+        if op == '-join':
+            return self._handle_binary_join(node)
         if op in ('-replace', '-creplace', '-ireplace'):
             return self._handle_binary_replace(node, op)
         return None
@@ -192,6 +219,18 @@ class Ps1StringOperations(Transformer):
                     node.left.right = _make_string_literal(inner_right_str + right_str)
                     return node.left
         return None
+
+    def _handle_binary_join(self, node: Ps1BinaryExpression) -> Expression | None:
+        separator = _string_value(node.right) if node.right else None
+        if separator is None or node.left is None:
+            return None
+        array = _unwrap_to_array_literal(node.left)
+        if array is None:
+            return None
+        args = _collect_string_arguments(array)
+        if args is None:
+            return None
+        return _make_string_literal(separator.join(args))
 
     def _handle_binary_replace(
         self, node: Ps1BinaryExpression, op: str,

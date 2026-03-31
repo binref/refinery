@@ -1,6 +1,7 @@
 """
 PowerShell AST deobfuscation transforms.
 """
+from refinery.lib.scripts.ps1.deobfuscation.constants import Ps1ConstantInlining
 from refinery.lib.scripts.ps1.deobfuscation.securestring import Ps1SecureStringDecryptor
 from refinery.lib.scripts.ps1.deobfuscation.simplify import Ps1Simplifications
 from refinery.lib.scripts.ps1.deobfuscation.strings import Ps1StringOperations
@@ -14,6 +15,7 @@ def deobfuscate(ast: Ps1Script) -> bool:
     """
     transformers = [
         Ps1Simplifications(),
+        Ps1ConstantInlining(),
         Ps1StringOperations(),
         Ps1TypeCasts(),
         Ps1SecureStringDecryptor(),

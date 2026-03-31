@@ -11,10 +11,10 @@ from refinery.lib.scripts.ps1.token import _KEYWORDS, Ps1Token, Ps1TokenKind
 
 class Ps1LexerMode(enum.Enum):
     EXPRESSION = 'expression'
-    ARGUMENT   = 'argument'
+    ARGUMENT = 'argument'
 
 
-_BACKTICK_ESCAPE = {
+BACKTICK_ESCAPE = {
     '0' : '\0',
     'a' : '\a',
     'b' : '\b',
@@ -64,24 +64,73 @@ _ONE_CHAR_OPS: dict[str, Ps1TokenKind] = {
     '=' : Ps1TokenKind.EQUALS,
 }
 
-_DASH_OPERATORS: dict[str, str] = {}
-for _name in (
-    'and', 'or', 'xor', 'not', 'band', 'bor', 'bxor', 'bnot', 'shl', 'shr',
-    'eq', 'ne', 'gt', 'ge', 'lt', 'le',
-    'ceq', 'cne', 'cgt', 'cge', 'clt', 'cle',
-    'ieq', 'ine', 'igt', 'ige', 'ilt', 'ile',
-    'like', 'notlike', 'clike', 'cnotlike', 'ilike', 'inotlike',
-    'match', 'notmatch', 'cmatch', 'cnotmatch', 'imatch', 'inotmatch',
-    'replace', 'creplace', 'ireplace',
-    'contains', 'notcontains', 'ccontains', 'cnotcontains', 'icontains', 'inotcontains',
-    'in', 'notin', 'cin', 'cnotin', 'iin', 'inotin',
-    'split', 'csplit', 'isplit',
-    'join',
-    'is', 'isnot', 'as',
-    'f',
-):
-    _DASH_OPERATORS[_name] = F'-{_name}'
-del _name
+_DASH_OPERATORS: dict[str, str] = {
+    _name: F'-{_name}' for _name in (
+        'and',
+        'as',
+        'band',
+        'bnot',
+        'bor',
+        'bxor',
+        'ccontains',
+        'ceq',
+        'cge',
+        'cgt',
+        'cin',
+        'cle',
+        'clike',
+        'clt',
+        'cmatch',
+        'cne',
+        'cnotcontains',
+        'cnotin',
+        'cnotlike',
+        'cnotmatch',
+        'contains',
+        'creplace',
+        'csplit',
+        'eq',
+        'f',
+        'ge',
+        'gt',
+        'icontains',
+        'ieq',
+        'ige',
+        'igt',
+        'iin',
+        'ile',
+        'ilike',
+        'ilt',
+        'imatch',
+        'in',
+        'ine',
+        'inotcontains',
+        'inotin',
+        'inotlike',
+        'inotmatch',
+        'ireplace',
+        'is',
+        'isnot',
+        'isplit',
+        'join',
+        'le',
+        'like',
+        'lt',
+        'match',
+        'ne',
+        'not',
+        'notcontains',
+        'notin',
+        'notlike',
+        'notmatch',
+        'or',
+        'replace',
+        'shl',
+        'shr',
+        'split',
+        'xor',
+    )
+}
 
 _REDIRECTION_PATTERN = re.compile(
     r'(?:[1-6*])?(?:>>|>&[12]|>)',

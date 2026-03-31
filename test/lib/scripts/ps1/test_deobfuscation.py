@@ -32,16 +32,6 @@ class TestPs1Deobfuscator(TestPs1):
         result = self._deobfuscate(data)
         self.assertIn('gcm', result)
 
-    def test_concat_basic(self):
-        data = "'foo' + 'bar'"
-        result = self._deobfuscate(data)
-        self.assertIn('foobar', result)
-
-    def test_concat_double_quotes(self):
-        data = '"hel" + "lo"'
-        result = self._deobfuscate(data)
-        self.assertIn('hello', result)
-
     def test_bracket_removal_string(self):
         data = '("hello")'
         result = self._deobfuscate(data)
@@ -73,21 +63,6 @@ class TestPs1Deobfuscator(TestPs1):
         data = '[char[]](72,101,108,108,111)'
         result = self._deobfuscate(data)
         self.assertIn('Hello', result)
-
-    def test_string_replace_method(self):
-        data = '"haystack".Replace("hay","needle")'
-        result = self._deobfuscate(data)
-        self.assertIn('needlestack', result)
-
-    def test_string_replace_operator(self):
-        data = '"Hello World" -replace "World","Earth"'
-        result = self._deobfuscate(data)
-        self.assertIn('Hello Earth', result)
-
-    def test_chained_replace_operator(self):
-        data = '"ABCDEF" -replace \'AB\',\'ab\' -replace \'CD\',\'cd\' -replace \'EF\',\'ef\''
-        result = self._deobfuscate(data)
-        self.assertIn('abcdef', result)
 
     def test_uncurly_variable(self):
         data = '${variable}'
@@ -195,7 +170,17 @@ class TestPS1BracketRemoval(TestPs1):
         self.assertIn('31337', result)
 
 
-class TestPS1Concat(TestPs1):
+class TestPS1StringConcatenations(TestPs1):
+
+    def test_concat_basic(self):
+        data = "'foo' + 'bar'"
+        result = self._deobfuscate(data)
+        self.assertIn('foobar', result)
+
+    def test_concat_double_quotes(self):
+        data = '"hel" + "lo"'
+        result = self._deobfuscate(data)
+        self.assertIn('hello', result)
 
     def test_uneven(self):
         result = self._deobfuscate("'T'+'b'+'c'")
@@ -214,17 +199,9 @@ class TestPS1Concat(TestPs1):
         self.assertIn("'bla ' + '\\foo'", result)
         self.assertIn('barbaz', result)
 
-    def test_real_world_01(self):
-        data = '''-RepLaCe"UVL",""""-CrePLAcE "MQo","``" -RepLaCe ("0"+"N"+"R"),"'"-CrePLAcE'eV5',"`$"-CrePLAcE  '31V',"|")'''
-        result = self._deobfuscate(data)
-        self.assertIn('0NR', result)
-
     def test_variable_substitution(self):
         result = self._deobfuscate('''$y = "$y"+'$z';''')
         self.assertIn('$z', result)
-
-
-class TestPS1FormatString(TestPs1):
 
     def test_split_format_string(self):
         result = self._deobfuscate(R'''"{0}$SEP{1}"-f 'Hello',"World"''')
@@ -257,14 +234,34 @@ class TestPS1FormatString(TestPs1):
 
 class TestPS1StringReplace(TestPs1):
 
-    def test_trivial(self):
-        result = self._deobfuscate('''"Hello World".replace('l', "FOO")''')
-        self.assertIn('HeFOOFOOo WorFOOd', result)
-
     def test_real_world_01(self):
+        data = '''-RepLaCe"UVL",""""-CrePLAcE "MQo","``" -RepLaCe ("0"+"N"+"R"),"'"-CrePLAcE'eV5',"`$"-CrePLAcE  '31V',"|")'''
+        result = self._deobfuscate(data)
+        self.assertIn('0NR', result)
+
+    def test_real_world_02(self):
         result = self._deobfuscate(
             '''"UVL0NR"-RepLaCe"UVL",""""-RepLaCe "0NR","'"-CrePLAcE  '31V',"|"))''')
         self.assertIn("'", result)
+
+    def test_string_replace_method(self):
+        data = '"haystack".Replace("hay","needle")'
+        result = self._deobfuscate(data)
+        self.assertIn('needlestack', result)
+
+    def test_string_replace_operator(self):
+        data = '"Hello World" -replace "World","Earth"'
+        result = self._deobfuscate(data)
+        self.assertIn('Hello Earth', result)
+
+    def test_chained_replace_operator(self):
+        data = '"ABCDEF" -replace \'AB\',\'ab\' -replace \'CD\',\'cd\' -replace \'EF\',\'ef\''
+        result = self._deobfuscate(data)
+        self.assertIn('abcdef', result)
+
+    def test_trivial(self):
+        result = self._deobfuscate('''"Hello World".replace('l', "FOO")''')
+        self.assertIn('HeFOOFOOo WorFOOd', result)
 
     def test_variable_substitution_01(self):
         result = self._deobfuscate(
@@ -301,3 +298,91 @@ class TestPS1Regressions(TestPs1):
     def test_range_expression_chained(self):
         result = self._deobfuscate('$x = 1..5..2')
         self.assertIn('1..5..2', result)
+
+
+class TestPs1ConstantInlining(TestPs1):
+
+    def test_scalar_string_inlining(self):
+        result = self._deobfuscate("$x = 'hello'; Write-Output $x")
+        self.assertIn("'hello'", result)
+        self.assertNotIn('$x', result)
+
+    def test_scalar_integer_inlining(self):
+        result = self._deobfuscate('$x = 42; Write-Output $x')
+        self.assertIn('42', result)
+        self.assertNotIn('$x', result)
+
+    def test_array_index_inlining(self):
+        result = self._deobfuscate("$a = @('foo','bar','baz'); Write-Output $a[1]")
+        self.assertIn("'bar'", result)
+        self.assertNotIn('$a', result)
+
+    def test_array_multiple_indices(self):
+        result = self._deobfuscate(
+            "$a = @('X','Y','Z'); $r = $a[0] + $a[2]")
+        self.assertIn('XZ', result)
+        self.assertNotIn('$a', result)
+
+    def test_double_assignment_not_inlined(self):
+        result = self._deobfuscate("$x = 'a'; $x = 'b'; Write-Output $x")
+        self.assertIn('$x', result)
+
+    def test_compound_assignment_disqualifies(self):
+        result = self._deobfuscate("$x = 'a'; $x += 'b'; Write-Output $x")
+        self.assertIn('$x', result)
+
+    def test_variable_index_skipped(self):
+        result = self._deobfuscate("$a = @('x','y'); Write-Output $a[$i]")
+        self.assertIn('$a', result)
+        self.assertIn('$i', result)
+
+    def test_try_body_skipped(self):
+        result = self._deobfuscate(
+            "$x = 'val'; try { Write-Output $x } catch { }")
+        self.assertIn('$x', result)
+
+    def test_catch_body_inlined(self):
+        result = self._deobfuscate(
+            "$x = 'val'; try { foo } catch { Write-Output $x }")
+        self.assertIn("'val'", result)
+
+    def test_foreach_variable_not_candidate(self):
+        result = self._deobfuscate(
+            "foreach ($item in @('a','b')) { Write-Output $item }")
+        self.assertIn('$item', result)
+
+    def test_param_variable_not_candidate(self):
+        result = self._deobfuscate(
+            "param($x); Write-Output $x")
+        self.assertIn('$x', result)
+
+    def test_assignment_removed_when_all_refs_substituted(self):
+        result = self._deobfuscate("$x = 'hello'; Write-Output $x")
+        self.assertNotIn("$x = 'hello'", result)
+        self.assertNotIn('$x', result)
+
+    def test_assignment_kept_when_some_refs_remain(self):
+        result = self._deobfuscate(
+            "$a = @('x','y'); Write-Output $a[0]; Write-Output $a[$i]")
+        self.assertIn('$a', result)
+        self.assertIn("'x'", result)
+        self.assertIn('$i', result)
+
+    def test_case_insensitive_matching(self):
+        result = self._deobfuscate("$Foo = 'bar'; Write-Output $foo")
+        self.assertIn("'bar'", result)
+        self.assertNotIn('$foo', result)
+        self.assertNotIn('$Foo', result)
+
+    def test_scoped_variable_not_inlined(self):
+        result = self._deobfuscate("$script:x = 'val'; Write-Output $script:x")
+        self.assertIn('$script:x', result)
+
+    def test_increment_not_inlined(self):
+        result = self._deobfuscate("$i = 0; $i++; Write-Output $i")
+        self.assertIn('$i', result)
+        self.assertNotIn('0++', result)
+
+    def test_nonconst_value_not_inlined(self):
+        result = self._deobfuscate("$x = Get-Date; Write-Output $x")
+        self.assertIn('$x', result)
