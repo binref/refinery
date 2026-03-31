@@ -4,6 +4,7 @@ Shared utilities for PowerShell deobfuscation transforms.
 from __future__ import annotations
 
 import re
+import io
 
 from refinery.lib.scripts.ps1.model import (
     Expression,
@@ -52,8 +53,13 @@ def _string_value(node: Expression) -> str | None:
     if isinstance(node, Ps1StringLiteral):
         return node.value
     if isinstance(node, Ps1ExpandableString):
-        if all(isinstance(p, Ps1StringLiteral) for p in node.parts):
-            return ''.join(p.value for p in node.parts)
+        out = io.StringIO()
+        for p in node.parts:
+            if not isinstance(p, Ps1StringLiteral):
+                break
+            out.write(p.value)
+        else:
+            return out.getvalue()
     return None
 
 

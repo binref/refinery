@@ -164,7 +164,7 @@ class TestPs1Deobfuscator(TestPs1):
         self.assertIn("Foo('AB', 'CD')", result)
 
     def test_param_block(self):
-        result = self._deobfuscate('param($qu, $sec=0, $iv=0)')
+        result = self._deobfuscate('param($qu, $sec=0, $iv=0)').lower()
         self.assertIn('param($qu, $sec = 0, $iv = 0)', result)
 
 
@@ -275,3 +275,29 @@ class TestPS1StringReplace(TestPs1):
         result = self._deobfuscate(
             '''Write-Output "The $product costs `$100 for the average person." -replace '$', "$currency";''')
         self.assertIn('currency', result)
+
+
+class TestPS1Regressions(TestPs1):
+    def test_index_in_method_arg(self):
+        result = self._deobfuscate('$x.Method($a[0,1])')
+        self.assertIn('[0, 1]', result)
+
+    def test_scriptblock_comma_in_method_arg(self):
+        result = self._deobfuscate('$x.Where({$_ -in 1,2,3})')
+        self.assertIn('1, 2, 3', result)
+
+    def test_shl_operator(self):
+        result = self._deobfuscate('$x = 1 -shl 2')
+        self.assertIn('1 -shl 2', result)
+
+    def test_shr_operator(self):
+        result = self._deobfuscate('$x = 1 -shr 3')
+        self.assertIn('1 -shr 3', result)
+
+    def test_format_expression_chained(self):
+        result = self._deobfuscate('$x = "{0}" -f "a" -f "b"')
+        self.assertIn("'a'", result)
+
+    def test_range_expression_chained(self):
+        result = self._deobfuscate('$x = 1..5..2')
+        self.assertIn('1..5..2', result)

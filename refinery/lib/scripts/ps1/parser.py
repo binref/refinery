@@ -67,18 +67,60 @@ from refinery.lib.scripts.ps1.model import (
 from refinery.lib.scripts.ps1.token import Ps1Token, Ps1TokenKind
 
 _COMPARISON_OPERATORS = frozenset({
-    '-eq', '-ne', '-gt', '-ge', '-lt', '-le',
-    '-ceq', '-cne', '-cgt', '-cge', '-clt', '-cle',
-    '-ieq', '-ine', '-igt', '-ige', '-ilt', '-ile',
-    '-like', '-notlike', '-clike', '-cnotlike', '-ilike', '-inotlike',
-    '-match', '-notmatch', '-cmatch', '-cnotmatch', '-imatch', '-inotmatch',
-    '-replace', '-creplace', '-ireplace',
-    '-contains', '-notcontains', '-ccontains', '-cnotcontains',
-    '-icontains', '-inotcontains',
-    '-in', '-notin', '-cin', '-cnotin', '-iin', '-inotin',
-    '-split', '-csplit', '-isplit',
+    '-as',
+    '-ccontains',
+    '-ceq',
+    '-cge',
+    '-cgt',
+    '-cin',
+    '-cle',
+    '-clike',
+    '-clt',
+    '-cmatch',
+    '-cne',
+    '-cnotcontains',
+    '-cnotin',
+    '-cnotlike',
+    '-cnotmatch',
+    '-contains',
+    '-creplace',
+    '-csplit',
+    '-eq',
+    '-ge',
+    '-gt',
+    '-icontains',
+    '-ieq',
+    '-ige',
+    '-igt',
+    '-iin',
+    '-ile',
+    '-ilike',
+    '-ilt',
+    '-imatch',
+    '-in',
+    '-ine',
+    '-inotcontains',
+    '-inotin',
+    '-inotlike',
+    '-inotmatch',
+    '-ireplace',
+    '-is',
+    '-isnot',
+    '-isplit',
     '-join',
-    '-is', '-isnot', '-as',
+    '-le',
+    '-like',
+    '-lt',
+    '-match',
+    '-ne',
+    '-notcontains',
+    '-notin',
+    '-notlike',
+    '-notmatch',
+    '-replace',
+    '-shl',
+    '-shr',
+    '-split',
 })
 
 _EXPRESSION_START_KINDS = frozenset({
@@ -537,25 +579,27 @@ class Ps1Parser:
         left = self._parse_range_expression()
         if left is None:
             return None
-        if self._at(Ps1TokenKind.OPERATOR) and self._current.value == '-f':
+        while self._at(Ps1TokenKind.OPERATOR) and self._current.value == '-f':
             op = self._advance()
             self._skip_newlines()
             right = self._parse_range_expression()
-            if right is not None:
-                left = Ps1BinaryExpression(
-                    offset=left.offset, left=left, operator=op.value, right=right)
+            if right is None:
+                break
+            left = Ps1BinaryExpression(
+                offset=left.offset, left=left, operator=op.value, right=right)
         return left
 
     def _parse_range_expression(self) -> Expression | None:
         left = self._parse_array_literal_expression()
         if left is None:
             return None
-        if self._at(Ps1TokenKind.DOTDOT):
+        while self._at(Ps1TokenKind.DOTDOT):
             self._advance()
             self._skip_newlines()
             right = self._parse_array_literal_expression()
-            if right is not None:
-                left = Ps1RangeExpression(offset=left.offset, start=left, end=right)
+            if right is None:
+                break
+            left = Ps1RangeExpression(offset=left.offset, start=left, end=right)
         return left
 
     def _parse_array_literal_expression(self) -> Expression | None:
@@ -1053,44 +1097,57 @@ class Ps1Parser:
         offset = self._current.offset
         self._expect(Ps1TokenKind.LBRACE)
         self._skip_newlines()
-        param_block = None
-        if self._at(Ps1TokenKind.PARAM):
-            param_block = self._parse_param_block()
-            self._skip_newlines()
-        begin_block = None
-        process_block = None
-        end_block = None
-        dynamicparam_block = None
-        if self._at(Ps1TokenKind.BEGIN, Ps1TokenKind.PROCESS, Ps1TokenKind.END,
-                     Ps1TokenKind.DYNAMICPARAM):
-            while self._at(Ps1TokenKind.BEGIN, Ps1TokenKind.PROCESS, Ps1TokenKind.END,
-                           Ps1TokenKind.DYNAMICPARAM):
-                kw = self._advance()
+        old = self._disable_comma
+        self._disable_comma = False
+        try:
+            param_block = None
+            if self._at(Ps1TokenKind.PARAM):
+                param_block = self._parse_param_block()
                 self._skip_newlines()
-                block = self._parse_block()
-                if kw.kind == Ps1TokenKind.BEGIN:
-                    begin_block = block
-                elif kw.kind == Ps1TokenKind.PROCESS:
-                    process_block = block
-                elif kw.kind == Ps1TokenKind.END:
-                    end_block = block
-                elif kw.kind == Ps1TokenKind.DYNAMICPARAM:
-                    dynamicparam_block = block
+            begin_block = None
+            process_block = None
+            end_block = None
+            dynamicparam_block = None
+            if self._at(
+                Ps1TokenKind.BEGIN,
+                Ps1TokenKind.PROCESS,
+                Ps1TokenKind.END,
+                Ps1TokenKind.DYNAMICPARAM,
+            ):
+                while self._at(
+                    Ps1TokenKind.BEGIN,
+                    Ps1TokenKind.PROCESS,
+                    Ps1TokenKind.END,
+                    Ps1TokenKind.DYNAMICPARAM,
+                ):
+                    kw = self._advance()
+                    self._skip_newlines()
+                    block = self._parse_block()
+                    if kw.kind == Ps1TokenKind.BEGIN:
+                        begin_block = block
+                    elif kw.kind == Ps1TokenKind.PROCESS:
+                        process_block = block
+                    elif kw.kind == Ps1TokenKind.END:
+                        end_block = block
+                    elif kw.kind == Ps1TokenKind.DYNAMICPARAM:
+                        dynamicparam_block = block
+                    self._skip_newlines()
                 self._skip_newlines()
+                self._expect(Ps1TokenKind.RBRACE)
+                return Ps1ScriptBlock(
+                    offset=offset,
+                    param_block=param_block,
+                    begin_block=begin_block,
+                    process_block=process_block,
+                    end_block=end_block,
+                    dynamicparam_block=dynamicparam_block,
+                )
+            body = self._parse_statement_list(until=Ps1TokenKind.RBRACE)
             self._skip_newlines()
             self._expect(Ps1TokenKind.RBRACE)
-            return Ps1ScriptBlock(
-                offset=offset,
-                param_block=param_block,
-                begin_block=begin_block,
-                process_block=process_block,
-                end_block=end_block,
-                dynamicparam_block=dynamicparam_block,
-            )
-        body = self._parse_statement_list(until=Ps1TokenKind.RBRACE)
-        self._skip_newlines()
-        self._expect(Ps1TokenKind.RBRACE)
-        return Ps1ScriptBlock(offset=offset, param_block=param_block, body=body)
+            return Ps1ScriptBlock(offset=offset, param_block=param_block, body=body)
+        finally:
+            self._disable_comma = old
 
     def _parse_member_access(self, obj: Expression) -> Expression:
         access_tok = self._advance()
@@ -1143,7 +1200,12 @@ class Ps1Parser:
     def _parse_index_expression(self, obj: Expression) -> Expression:
         self._advance()
         self._skip_newlines()
-        index = self._parse_expression()
+        old = self._disable_comma
+        self._disable_comma = False
+        try:
+            index = self._parse_expression()
+        finally:
+            self._disable_comma = old
         self._skip_newlines()
         self._expect(Ps1TokenKind.RBRACKET)
         return Ps1IndexExpression(offset=obj.offset, object=obj, index=index)
