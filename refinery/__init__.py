@@ -48,7 +48,6 @@ finally:
 
 from refinery.units import Arg, Unit
 
-
 _T = TypeVar('_T')
 
 

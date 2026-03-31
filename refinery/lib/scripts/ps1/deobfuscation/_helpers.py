@@ -3,8 +3,8 @@ Shared utilities for PowerShell deobfuscation transforms.
 """
 from __future__ import annotations
 
-import re
 import io
+import re
 
 from refinery.lib.scripts.ps1.model import (
     Expression,
