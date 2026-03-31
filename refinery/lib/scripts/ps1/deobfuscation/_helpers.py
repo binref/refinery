@@ -46,6 +46,10 @@ _KNOWN_NAMES = {name.lower(): name for name in [
     'Void',
 ]}
 
+KEYWORD_SPELLING: dict[str, str] = {
+    'param': 'Param',
+}
+
 _SIMPLE_IDENT = re.compile(r'^[a-zA-Z_]\w*$')
 
 

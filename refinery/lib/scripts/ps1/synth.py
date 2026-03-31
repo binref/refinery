@@ -6,6 +6,7 @@ from __future__ import annotations
 import io
 
 from refinery.lib.scripts import Block, Node, Visitor
+from refinery.lib.scripts.ps1.deobfuscation._helpers import KEYWORD_SPELLING
 from refinery.lib.scripts.ps1.model import (
     Expression,
     Ps1ArrayExpression,
@@ -340,7 +341,8 @@ class Ps1Synthesizer(Visitor):
         for attr in node.attributes:
             self.visit(attr)
             self._newline()
-        self._write('param(')
+        self._write(KEYWORD_SPELLING.get('param', 'param'))
+        self._write('(')
         for i, param in enumerate(node.parameters):
             if i > 0:
                 self._write(', ')

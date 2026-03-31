@@ -164,8 +164,8 @@ class TestPs1Deobfuscator(TestPs1):
         self.assertIn("Foo('AB', 'CD')", result)
 
     def test_param_block(self):
-        result = self._deobfuscate('param($qu, $sec=0, $iv=0)').lower()
-        self.assertIn('param($qu, $sec = 0, $iv = 0)', result)
+        result = self._deobfuscate('param($qu, $sec=0, $iv=0)')
+        self.assertIn('Param($qu, $sec = 0, $iv = 0)', result)
 
 
 class TestPS1BracketRemoval(TestPs1):
