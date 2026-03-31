@@ -26,76 +26,54 @@ class _HashExe(Executable):
     def _algorithm(cls, data: buf):
         return cls._build_hash(data).digest()
 
-    def __new__(cls, name: str, bases, namespace: dict, export: str = '', kernel: str = ''):
-        if kernel:
-            namespace.update(__doc__=_doc(kernel), _algorithm=cls._algorithm)
-        export = export or name
-        exe = Executable.__new__(cls, export, bases, namespace)
-        setattr(exe, '__qualname__', export)
+    def __new__(cls, name: str, bases, namespace: dict, kernel: str = ''):
+        kernel = kernel or name
+        namespace.update(__doc__=_doc(kernel), _algorithm=cls._algorithm)
+        exe = Executable.__new__(cls, name, bases, namespace)
+        setattr(exe, '__qualname__', name)
         return exe
 
 
 class _CDome(_HashExe):
-    def __init__(cls, _, bases, nmspc: dict, export: str = '', kernel: str = '', **kw):
-        super().__init__(export, bases, nmspc, **kw)
-        if kernel and export:
+    def __init__(cls, name: str, bases, nmspc: dict, kernel: str = '', **kw):
+        kernel = kernel or name.upper()
+
+        super().__init__(name, bases, nmspc, **kw)
+
+        def _build_hash(data: buf) -> _Hash:
             hash = __import__(F'Cryptodome.Hash.{kernel}')
             for t in ('Hash', kernel, 'new'):
                 hash = getattr(hash, t)
-            cls._build_hash = hash
+            return hash(data)
+
+        cls._build_hash = staticmethod(_build_hash)
 
 
 class _PyLib(_HashExe):
-    def __init__(cls, _, bases, nmspc: dict, export: str = '', kernel: str = '', **kw):
-        super().__init__(export, bases, nmspc, **kw)
+    def __init__(cls, name: str, bases, nmspc: dict, kernel: str = '', **kw):
+        kernel = kernel or name
+        super().__init__(name, bases, nmspc, **kw)
         cls._build_hash = getattr(hashlib, kernel)
 
 
-__all__ = [      # noqa
-    'ripemd128', # type: ignore
-    'ripemd160', # type: ignore
-    'md2',       # type: ignore
-    'md4',       # type: ignore
-    'keccak',    # type: ignore
-    'md5',       # type: ignore
-    'sha1',      # type: ignore
-    'sha224',    # type: ignore
-    'sha256',    # type: ignore
-    'sha384',    # type: ignore
-    'sha512',    # type: ignore
-    'blake2b',   # type: ignore
-    'blake2s',   # type: ignore
-    'sha3_224',  # type: ignore
-    'sha3_256',  # type: ignore
-    'sha3_384',  # type: ignore
-    'sha3_512',  # type: ignore
-    'shake128',  # type: ignore
-    'shake256',  # type: ignore
-]
-
-_K = {
-    'ripemd128': 'RIPEMD128',
-    'ripemd160': 'RIPEMD160',
-    'md2': 'MD2',
-    'md4': 'MD4',
-    'shake128': 'shake_128',
-    'shake256': 'shake_256',
-}
-
-_G = globals()
-
-
-for h in __all__[1:5]:
-    class H(HashUnit, metaclass=_CDome, export=h, kernel=_K.get(h, h)):
-        ...
-    _G[h] = H
-    del H
-
-for h in __all__[5:]:
-    class H(HashUnit, metaclass=_PyLib, export=h, kernel=_K.get(h, h)):
-        ...
-    _G[h] = H
-    del H
+class ripemd160 (HashUnit, metaclass=_CDome)                     : ...  # noqa
+class md2       (HashUnit, metaclass=_CDome)                     : ...  # noqa
+class md4       (HashUnit, metaclass=_CDome)                     : ...  # noqa
+class keccak    (HashUnit, metaclass=_CDome, kernel='keccak')    : ...  # noqa
+class md5       (HashUnit, metaclass=_PyLib)                     : ...  # noqa
+class sha1      (HashUnit, metaclass=_PyLib)                     : ...  # noqa
+class sha224    (HashUnit, metaclass=_PyLib)                     : ...  # noqa
+class sha256    (HashUnit, metaclass=_PyLib)                     : ...  # noqa
+class sha384    (HashUnit, metaclass=_PyLib)                     : ...  # noqa
+class sha512    (HashUnit, metaclass=_PyLib)                     : ...  # noqa
+class blake2b   (HashUnit, metaclass=_PyLib)                     : ...  # noqa
+class blake2s   (HashUnit, metaclass=_PyLib)                     : ...  # noqa
+class sha3_224  (HashUnit, metaclass=_PyLib)                     : ...  # noqa
+class sha3_256  (HashUnit, metaclass=_PyLib)                     : ...  # noqa
+class sha3_384  (HashUnit, metaclass=_PyLib)                     : ...  # noqa
+class sha3_512  (HashUnit, metaclass=_PyLib)                     : ...  # noqa
+class shake128  (HashUnit, metaclass=_PyLib, kernel='shake_128') : ...  # noqa
+class shake256  (HashUnit, metaclass=_PyLib, kernel='shake_256') : ...  # noqa
 
 
 class ripemd128(HashUnit):

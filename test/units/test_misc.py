@@ -358,14 +358,6 @@ class TestScoping(TestUnitBase):
         pl = PL('emit F [| put x XX [| push OO | pop x ]| cca var:x ]')
         self.assertEqual(pl(), B'FOO')
 
-    def test_cache_reload(self):
-        import refinery
-        from refinery.units.encoding.hex import hex
-        with refinery.__unit_loader__:
-            self.assertFalse(refinery.__unit_loader__.reloading)
-            refinery.__unit_loader__.reload()
-        self.assertIs(refinery.hex, hex)
-
     def test_nesting_for_code_chunk_to_pipeline(self):
         from refinery.units import Chunk
         for scope in range(4):

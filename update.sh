@@ -14,8 +14,6 @@ source "$venv/bin/activate"
 
 python -m pip install --upgrade pip
 
-rm ./refinery/data/units.pkl
-
 git pull --rebase --autostash
 pip uninstall -y binary-refinery
 pip install --use-pep517 -U -e .[all]

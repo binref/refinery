@@ -16,10 +16,9 @@ from __future__ import annotations
 
 from functools import WRAPPER_ASSIGNMENTS, wraps
 
-from refinery import __unit_loader__
+from refinery.__unit__ import UNITS
 
-with __unit_loader__:
-    __all__ = sorted(__unit_loader__.units, key=lambda x: x.lower())
+__all__ = list(UNITS)
 
 
 __WRAP_UPDATE = ()
@@ -32,8 +31,8 @@ class __pdoc3__:
 
 
 def __getattr__(name):
-    with __unit_loader__:
-        unit = __unit_loader__.resolve(name)
+    import refinery
+    unit = refinery.load(name)
 
     if unit is None:
         raise AttributeError(name)
