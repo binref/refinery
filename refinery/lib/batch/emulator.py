@@ -860,7 +860,9 @@ class BatchEmulator:
         state.codec = codec
         state.echo = not quiet
         shell = self.spawn(command, state, std)
-        yield from shell.trace()
+        for child in shell.trace():
+            if not self.cfg.skip_call:
+                yield child
 
     @_command('ARP')
     @_command('AT')
