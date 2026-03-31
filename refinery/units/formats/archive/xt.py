@@ -39,6 +39,7 @@ class xt(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
         from refinery.units.formats.archive.xtasar import xtasar      ; yield xtasar    # noqa
         from refinery.units.formats.office.xtrtf import xtrtf         ; yield xtrtf     # noqa
         from refinery.units.formats.pdf import xtpdf                  ; yield xtpdf     # noqa
+        from refinery.units.formats.swf import swf                     ; yield swf       # noqa
         from refinery.units.formats.winreg import winreg              ; yield winreg    # noqa
         from refinery.units.formats.archive.xtgz import xtgz          ; yield xtgz      # noqa
         from refinery.units.formats.archive.xtcpio import xtcpio      ; yield xtcpio    # noqa
