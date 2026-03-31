@@ -6,6 +6,7 @@ from refinery.lib.scripts.ps1.deobfuscation.securestring import Ps1SecureStringD
 from refinery.lib.scripts.ps1.deobfuscation.simplify import Ps1Simplifications
 from refinery.lib.scripts.ps1.deobfuscation.folding import Ps1ConstantFolding
 from refinery.lib.scripts.ps1.deobfuscation.typecast import Ps1TypeCasts
+from refinery.lib.scripts.ps1.deobfuscation.emulator import Ps1FunctionEvaluator
 from refinery.lib.scripts.ps1.model import Ps1Script
 
 
@@ -17,6 +18,7 @@ def deobfuscate(ast: Ps1Script) -> bool:
         Ps1Simplifications(),
         Ps1ConstantInlining(),
         Ps1ConstantFolding(),
+        Ps1FunctionEvaluator(),
         Ps1TypeCasts(),
         Ps1SecureStringDecryptor(),
     ]

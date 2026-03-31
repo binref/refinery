@@ -403,3 +403,113 @@ class TestPs1ConstantInlining(TestPs1):
     def test_nonconst_value_not_inlined(self):
         result = self._deobfuscate("$x = Get-Date; Write-Output $x")
         self.assertIn('$x', result)
+
+
+class TestPs1FunctionEvaluator(TestPs1):
+
+    def test_stride_extraction(self):
+        data = (
+            "Function F ([String]$s){"
+            "For($i=1; $i -lt $s.Length-1; $i+=2)"
+            "{$r=$r+$s.Substring($i, 1)};$r;}"
+            "$x = F 'HaEbLcLdOeX'"
+            "\nWrite-Output $x"
+        )
+        result = self._deobfuscate(data)
+        self.assertIn('abcde', result)
+        self.assertNotIn('function', result.lower())
+
+    def test_multiple_call_sites(self):
+        data = (
+            "Function D ([String]$s){"
+            "For($i=1; $i -lt $s.Length-1; $i+=2)"
+            "{$r=$r+$s.Substring($i, 1)};$r;}"
+            "$a = D 'XaYbZcX'\n"
+            "$b = D 'P1Q2R3X'\n"
+            "Write-Output $a\nWrite-Output $b"
+        )
+        result = self._deobfuscate(data)
+        self.assertIn('abc', result)
+        self.assertIn('123', result)
+        self.assertNotIn('function', result.lower())
+
+    def test_nonconstant_arg_preserved(self):
+        data = (
+            "Function D ([String]$s){"
+            "For($i=1; $i -lt $s.Length-1; $i+=2)"
+            "{$r=$r+$s.Substring($i, 1)};$r;}"
+            "$y = D $input"
+        )
+        result = self._deobfuscate(data)
+        self.assertIn('$input', result)
+        self.assertIn('function', result.lower())
+
+    def test_while_loop_variant(self):
+        data = (
+            "Function W ([String]$s){"
+            "$i=0; $r=''; "
+            "While($i -lt $s.Length){$r=$r+$s.Substring($i, 1); $i+=2};"
+            "$r;}"
+            "$x = W 'HEeLlLlOo'\nWrite-Output $x"
+        )
+        result = self._deobfuscate(data)
+        self.assertIn('Hello', result)
+
+    def test_foreach_tochararray(self):
+        data = (
+            "Function R ([String]$s){"
+            "$a = $s.ToCharArray(); $r = '';"
+            "ForEach($c in $a){$r = $c + $r};"
+            "$r;}"
+            "$x = R 'olleH'\nWrite-Output $x"
+        )
+        result = self._deobfuscate(data)
+        self.assertIn('Hello', result)
+
+    def test_if_inside_function(self):
+        data = (
+            "Function C ([String]$s){"
+            "$r = '';"
+            "For($i=0; $i -lt $s.Length; $i+=1){"
+            "If ($i % 2 -eq 0){$r = $r + $s.Substring($i, 1)}"
+            "}; $r;}"
+            "$x = C 'HxExLxLxO'\nWrite-Output $x"
+        )
+        result = self._deobfuscate(data)
+        self.assertIn('HELLO', result)
+
+    def test_function_definition_kept_when_not_all_resolved(self):
+        data = (
+            "Function D ([String]$s){"
+            "For($i=1; $i -lt $s.Length-1; $i+=2)"
+            "{$r=$r+$s.Substring($i, 1)};$r;}"
+            "$a = D 'XaYbX'\n"
+            "$b = D $var"
+        )
+        result = self._deobfuscate(data)
+        self.assertIn('ab', result)
+        self.assertIn('function', result.lower())
+
+    def test_return_statement(self):
+        data = (
+            "Function R ([String]$s){"
+            "$r = '';"
+            "For($i=0; $i -lt $s.Length; $i+=2){"
+            "$r = $r + $s.Substring($i, 1)"
+            "}; return $r;}"
+            "$x = R 'HxExLxLxOx'\nWrite-Output $x"
+        )
+        result = self._deobfuscate(data)
+        self.assertIn('HELLO', result)
+
+    def test_do_while_loop(self):
+        data = (
+            "Function D ([String]$s){"
+            "$i = 0; $r = '';"
+            "Do{$r = $r + $s.Substring($i, 1); $i += 2}"
+            "While($i -lt $s.Length);"
+            "$r;}"
+            "$x = D 'HxExLxLxOx'\nWrite-Output $x"
+        )
+        result = self._deobfuscate(data)
+        self.assertIn('HELLO', result)
