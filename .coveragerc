@@ -1,7 +1,6 @@
 [run]
 omit =
     refinery/lib/thirdparty/*
-    refinery/units/obfuscation/*
     refinery/lib/annotations.py
 
 [report]
