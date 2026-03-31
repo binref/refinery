@@ -304,6 +304,10 @@ class TestPS1Regressions(TestPs1):
         result = self._deobfuscate('$x = 1 -shr 3')
         self.assertIn('1 -shr 3', result.lower())
 
+    def test_exit_negative_literal(self):
+        result = self._deobfuscate('exit -65536')
+        self.assertIn(' -65536', result)
+
     def test_format_expression_chained(self):
         result = self._deobfuscate('$x = "{0}" -f "a" -f "b"')
         self.assertIn("'a'", result)

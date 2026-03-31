@@ -141,7 +141,7 @@ class Ps1Synthesizer(Visitor):
     def visit_Ps1UnaryExpression(self, node: Ps1UnaryExpression):
         if node.prefix:
             self._write(node.operator)
-            if node.operator.startswith('-'):
+            if node.operator.startswith('-') and len(node.operator) > 1:
                 self._write(' ')
             if node.operand:
                 self.visit(node.operand)
