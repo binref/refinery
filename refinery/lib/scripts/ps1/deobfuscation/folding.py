@@ -1,5 +1,5 @@
 """
-PowerShell string evaluation transforms.
+PowerShell constant folding transforms.
 """
 from __future__ import annotations
 
@@ -89,7 +89,7 @@ def _unwrap_to_array_literal(node: Expression) -> Ps1ArrayLiteral | None:
     return None
 
 
-class Ps1StringOperations(Transformer):
+class Ps1ConstantFolding(Transformer):
 
     def visit_Ps1UnaryExpression(self, node: Ps1UnaryExpression):
         self.generic_visit(node)
@@ -178,18 +178,49 @@ class Ps1StringOperations(Transformer):
                     return _make_string_literal(decoded)
         return None
 
+    _ARITHMETIC_OPS = {
+        '+' : int.__add__,
+        '-' : int.__sub__,
+        '*' : int.__mul__,
+        '/' : int.__floordiv__,
+        '%' : int.__mod__,
+        '-band': int.__and__,
+        '-bor' : int.__or__,
+        '-bxor': int.__xor__,
+    }
+
     def visit_Ps1BinaryExpression(self, node: Ps1BinaryExpression):
         self.generic_visit(node)
         op = node.operator.lower()
         if op == '-f':
             return self._handle_format(node)
         if op == '+':
-            return self._handle_concat(node)
+            return self._handle_concat(node) or self._handle_arithmetic(node, op)
         if op == '-join':
             return self._handle_binary_join(node)
         if op in ('-replace', '-creplace', '-ireplace'):
             return self._handle_binary_replace(node, op)
-        return None
+        return self._handle_arithmetic(node, op)
+
+    @staticmethod
+    def _unwrap_integer(node: Expression | None) -> Ps1IntegerLiteral | None:
+        while isinstance(node, Ps1ParenExpression):
+            node = node.expression
+        return node if isinstance(node, Ps1IntegerLiteral) else None
+
+    def _handle_arithmetic(self, node: Ps1BinaryExpression, op: str) -> Expression | None:
+        left = self._unwrap_integer(node.left)
+        right = self._unwrap_integer(node.right)
+        if left is None or right is None:
+            return None
+        fn = self._ARITHMETIC_OPS.get(op)
+        if fn is None:
+            return None
+        try:
+            result = fn(left.value, right.value)
+        except (ZeroDivisionError, ValueError, OverflowError):
+            return None
+        return Ps1IntegerLiteral(value=result, raw=str(result))
 
     def _handle_format(self, node: Ps1BinaryExpression) -> Expression | None:
         fmt_str = _string_value(node.left) if node.left else None

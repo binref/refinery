@@ -142,6 +142,19 @@ class TestPs1Deobfuscator(TestPs1):
         result = self._deobfuscate('param($qu, $sec=0, $iv=0)')
         self.assertIn('Param($qu, $sec = 0, $iv = 0)', result)
 
+    def test_arithmetic_constant_folding(self):
+        result = self._deobfuscate(
+            '$foo=36665-36663\n'
+            '$bar=345-BXor21\n'
+            '$baz=744-BAND(3254-1221)*99-BXor743\n'
+        ).lower()
+        self.assertNotIn('36665', result)
+        self.assertIn('$foo = 2', result)
+        self.assertNotIn('bxor', result)
+        self.assertIn('$bar = 332', result)
+        self.assertNotIn('band', result)
+        self.assertIn('$baz = 199', result)
+
 
 class TestPS1BracketRemoval(TestPs1):
 
