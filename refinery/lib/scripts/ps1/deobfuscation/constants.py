@@ -204,7 +204,7 @@ class Ps1ConstantInlining(Transformer):
                     handled_vars.add(id(var))
                 continue
 
-            #Simple variable reference: $x
+            # Simple variable reference: $x
             if isinstance(node, Ps1Variable) and node.scope == Ps1ScopeModifier.NONE:
                 if id(node) in handled_vars:
                     continue
