@@ -316,6 +316,14 @@ class TestPS1Regressions(TestPs1):
         result = self._deobfuscate('$x = 1..5..2')
         self.assertIn('1..5..2', result)
 
+    def test_dash_operator_as_parameter_in_command(self):
+        code = '$x = ((gwmi win32_process -F ProcessId=${PID}).CommandLine) -split [char]34'
+        result = self._deobfuscate(code)
+        self.assertIn('-split', result.lower())
+        self.assertIn('.commandline', result.lower())
+        for line in result.strip().splitlines():
+            self.assertNotEqual(line.strip(), ')')
+
 
 class TestPs1ConstantInlining(TestPs1):
 
@@ -403,6 +411,11 @@ class TestPs1ConstantInlining(TestPs1):
     def test_nonconst_value_not_inlined(self):
         result = self._deobfuscate("$x = Get-Date; Write-Output $x")
         self.assertIn('$x', result)
+
+    def test_zero_ref_constant_not_pruned(self):
+        result = self._deobfuscate("$url = 'http://evil.com'; Write-Host done")
+        self.assertIn('$url', result)
+        self.assertIn('http://evil.com', result)
 
 
 class TestPs1FunctionEvaluator(TestPs1):
@@ -566,3 +579,43 @@ class TestPs1FunctionEvaluator(TestPs1):
         result = self._deobfuscate(data)
         self.assertIn('Hello', result)
         self.assertNotIn('function', result.lower())
+
+
+class TestPs1IexInlining(TestPs1):
+
+    def test_iex_single_statement(self):
+        result = self._deobfuscate("IEX 'Write-Host hello'")
+        self.assertIn('Write-Host', result)
+        self.assertNotIn('IEX', result.upper().split('WRITE')[0])
+
+    def test_iex_multi_statement(self):
+        result = self._deobfuscate("IEX '$a = 1; $b = 2'")
+        self.assertIn('$a = 1', result)
+        self.assertIn('$b = 2', result)
+        self.assertNotIn('IEX', result)
+
+    def test_iex_variable_not_inlined(self):
+        result = self._deobfuscate('IEX $var')
+        self.assertIn('IEX', result)
+        self.assertIn('$var', result)
+
+    def test_iex_after_constant_inlining(self):
+        result = self._deobfuscate("$x = 'Write-Host hi'; IEX $x")
+        self.assertIn('Write-Host', result)
+        self.assertNotIn('IEX', result)
+        self.assertNotIn('$x', result)
+
+    def test_iex_inside_function_body(self):
+        data = (
+            "function F {\n"
+            "IEX '$y = 42'\n"
+            "}\n"
+        )
+        result = self._deobfuscate(data)
+        self.assertIn('$y = 42', result)
+        self.assertNotIn('IEX', result)
+
+    def test_invoke_expression_long_form(self):
+        result = self._deobfuscate("Invoke-Expression 'Write-Host hello'")
+        self.assertIn('Write-Host', result)
+        self.assertNotIn('Invoke-Expression', result)

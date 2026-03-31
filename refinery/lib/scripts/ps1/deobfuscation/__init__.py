@@ -4,6 +4,7 @@ PowerShell AST deobfuscation transforms.
 from refinery.lib.scripts.ps1.deobfuscation.constants import Ps1ConstantInlining
 from refinery.lib.scripts.ps1.deobfuscation.emulator import Ps1FunctionEvaluator
 from refinery.lib.scripts.ps1.deobfuscation.folding import Ps1ConstantFolding
+from refinery.lib.scripts.ps1.deobfuscation.iexinline import Ps1IexInlining
 from refinery.lib.scripts.ps1.deobfuscation.securestring import Ps1SecureStringDecryptor
 from refinery.lib.scripts.ps1.deobfuscation.simplify import Ps1Simplifications
 from refinery.lib.scripts.ps1.deobfuscation.typecast import Ps1TypeCasts
@@ -21,6 +22,7 @@ def deobfuscate(ast: Ps1Script) -> bool:
         Ps1FunctionEvaluator(),
         Ps1TypeCasts(),
         Ps1SecureStringDecryptor(),
+        Ps1IexInlining(),
     ]
     for t in transformers:
         t.visit(ast)

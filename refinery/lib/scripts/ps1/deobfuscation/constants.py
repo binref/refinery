@@ -70,9 +70,10 @@ def _inside_try_body(node: Node) -> bool:
 
 class Ps1ConstantInlining(Transformer):
 
-    def __init__(self, max_inline_length: int = 64):
+    def __init__(self, max_inline_length: int = 64, min_inlines_to_prune: int | None = 1):
         super().__init__()
         self.max_inline_length = max_inline_length
+        self.min_inlines_to_prune = min_inlines_to_prune
 
     def visit(self, node: Node):
         # Phase 1: collect candidates, then phase 2: substitute.
@@ -80,8 +81,8 @@ class Ps1ConstantInlining(Transformer):
         candidates = self._collect_candidates(node)
         if not candidates:
             return None
-        remaining = self._substitute(node, candidates)
-        self._remove_dead_assignments(candidates, remaining)
+        remaining, inlined = self._substitute(node, candidates)
+        self._remove_dead_assignments(candidates, remaining, inlined)
         return None
 
     def _collect_candidates(self, root: Node) -> dict[str, tuple[Ps1AssignmentExpression, Node]]:
@@ -135,15 +136,17 @@ class Ps1ConstantInlining(Transformer):
         self,
         root: Node,
         candidates: dict[str, tuple[Ps1AssignmentExpression, Node]],
-    ) -> dict[str, int]:
+    ) -> tuple[dict[str, int], dict[str, int]]:
         """
         Inline constant values. Returns:
 
-            {lower_name: remaining_ref_count}
+            (remaining, inlined)
 
-        for references that could not be substituted.
+        where remaining maps lower_name to count of references that could not be substituted, and
+        inlined maps lower_name to count of successful substitutions.
         """
         remaining: dict[str, int] = {}
+        inlined: dict[str, int] = {}
 
         # Pre-count references to decide whether inlining would bloat the code.
         # Variables referenced more than once with long values are kept as-is.
@@ -201,6 +204,7 @@ class Ps1ConstantInlining(Transformer):
                     replacement = copy.deepcopy(elements[idx])
                     self._replace_in_parent(node, replacement)
                     self.mark_changed()
+                    inlined[key] = inlined.get(key, 0) + 1
                     handled_vars.add(id(var))
                 continue
 
@@ -224,8 +228,9 @@ class Ps1ConstantInlining(Transformer):
                 replacement = copy.deepcopy(const_value)
                 self._replace_in_parent(node, replacement)
                 self.mark_changed()
+                inlined[key] = inlined.get(key, 0) + 1
 
-        return remaining
+        return remaining, inlined
 
     @staticmethod
     def _replace_in_parent(old: Node, new: Node):
@@ -257,9 +262,12 @@ class Ps1ConstantInlining(Transformer):
         self,
         candidates: dict[str, tuple[Ps1AssignmentExpression, Node]],
         remaining: dict[str, int],
+        inlined: dict[str, int],
     ):
         for key, (assign_node, _) in candidates.items():
             if remaining.get(key, 0) > 0:
+                continue
+            if self.min_inlines_to_prune is not None and inlined.get(key, 0) < self.min_inlines_to_prune:
                 continue
             # Find the enclosing statement to remove
             stmt = self._find_removable_statement(assign_node)

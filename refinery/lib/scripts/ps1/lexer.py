@@ -487,12 +487,6 @@ class Ps1Lexer:
                             self.mode = mode_hint
                         continue
                 elif self.mode == Ps1LexerMode.ARGUMENT:
-                    op = self._try_dash_operator()
-                    if op:
-                        mode_hint = yield op
-                        if mode_hint is not None:
-                            self.mode = mode_hint
-                        continue
                     param = self._try_parameter()
                     if param:
                         mode_hint = yield param

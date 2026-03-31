@@ -454,6 +454,13 @@ class Ps1Parser:
                     ))
             elif self._at(Ps1TokenKind.REDIRECTION):
                 break
+            elif self._at(Ps1TokenKind.OPERATOR):
+                tok = self._advance()
+                arguments.append(Ps1CommandArgument(
+                    offset=tok.offset,
+                    kind=Ps1CommandArgumentKind.SWITCH,
+                    name=tok.value,
+                ))
             else:
                 val = self._parse_argument_value()
                 if val is None:
