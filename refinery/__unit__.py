@@ -353,6 +353,7 @@ UNITS = {
     'xtw'                                        : 'refinery.units.pattern.xtw',
     'js'                                         : 'refinery.units.scripting.js',
     'ps1'                                        : 'refinery.units.scripting.ps1',
+    'ps1arg'                                     : 'refinery.units.scripting.ps1arg',
     'vba'                                        : 'refinery.units.scripting.vba',
     'asm'                                        : 'refinery.units.sinks.asm',
     'dnasm'                                      : 'refinery.units.sinks.dnasm',
