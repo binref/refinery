@@ -25,12 +25,65 @@ from refinery.lib.scripts.ps1.model import (
 )
 
 
+def _strip_backtick_escapes(name: str) -> str:
+    """Remove backtick escapes from a PowerShell braced variable name.
+
+    In braced variable names, a backtick is always a no-op escape: the
+    backtick is dropped and the next character is kept literally. This
+    differs from string contexts where backtick sequences like ``n`` or
+    ``t`` have special meaning.
+    """
+    result: list[str] = []
+    i = 0
+    while i < len(name):
+        if name[i] == '`' and i + 1 < len(name):
+            result.append(name[i + 1])
+            i += 2
+            continue
+        result.append(name[i])
+        i += 1
+    return ''.join(result)
+
+
+def _decode_raw_member_name(raw_inner: str) -> str:
+    """Re-decode an expandable string's inner text treating all backtick
+    escapes as no-ops. This recovers the intended identifier when backtick
+    escapes like ``e`` (normally ESC) or ``t`` (normally TAB) are used
+    purely for obfuscation in member names.
+    """
+    result: list[str] = []
+    i = 0
+    while i < len(raw_inner):
+        if raw_inner[i] == '`' and i + 1 < len(raw_inner):
+            result.append(raw_inner[i + 1])
+            i += 2
+            continue
+        result.append(raw_inner[i])
+        i += 1
+    return ''.join(result)
+
+
+_KNOWN_VARIABLE_NAMES = {name.lower(): name for name in [
+    'True',
+    'False',
+    'Null',
+    'ExecutionContext',
+]}
+
+
 class Ps1Simplifications(Transformer):
 
     def visit_Ps1Variable(self, node: Ps1Variable):
         self.generic_visit(node)
+        if '`' in node.name:
+            node.name = _strip_backtick_escapes(node.name)
+            self.mark_changed()
         if node.braced and _SIMPLE_IDENT.match(node.name):
             node.braced = False
+            self.mark_changed()
+        canonical = _KNOWN_VARIABLE_NAMES.get(node.name.lower())
+        if canonical is not None and canonical != node.name:
+            node.name = canonical
             self.mark_changed()
         return None
 
@@ -45,6 +98,12 @@ class Ps1Simplifications(Transformer):
         self.generic_visit(node)
         if isinstance(node.member, Ps1StringLiteral):
             name = node.member.value
+            # When an expandable string is used as a member name, backtick
+            # escapes like `e (→ ESC) and `t (→ TAB) are decode artifacts;
+            # the intent is always the literal character. Re-decode from raw
+            # treating all backticks as no-op escapes to recover the name.
+            if node.member.raw and node.member.raw[0] == '"' and '`' in node.member.raw:
+                name = _decode_raw_member_name(node.member.raw[1:-1])
             if _SIMPLE_IDENT.match(name):
                 node.member = _case_normalize_name(name)
                 self.mark_changed()

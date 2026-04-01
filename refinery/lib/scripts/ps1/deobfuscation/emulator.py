@@ -561,6 +561,8 @@ class _Ps1Interpreter:
                 old = self._to_str(args[0])
                 new = self._to_str(args[1])
                 return s.replace(old, new)
+            if method == 'tostring' and not args:
+                return s
             if method == 'tolower' and not args:
                 return s.lower()
             if method == 'toupper' and not args:
@@ -575,7 +577,10 @@ class _Ps1Interpreter:
                 return list(s)
             if method == 'split' and len(args) == 1:
                 sep = self._to_str(args[0])
-                return s.split(sep)
+                if not sep:
+                    return [s]
+                pattern = '[' + re.escape(sep) + ']'
+                return re.split(pattern, s)
             if method == 'indexof' and len(args) == 1:
                 sub = self._to_str(args[0])
                 return s.find(sub)
@@ -704,6 +709,10 @@ class _Ps1Interpreter:
             left = 0
         if right is None:
             right = 0
+        if isinstance(left, str):
+            left = _Ps1Interpreter._to_int(left)
+        if isinstance(right, str):
+            right = _Ps1Interpreter._to_int(right)
         if isinstance(left, int) and isinstance(right, int):
             return op(left, right)
         raise _Ps1InterpreterError
@@ -760,7 +769,7 @@ class _Ps1Interpreter:
             return int(value)
         if isinstance(value, str):
             try:
-                return int(value)
+                return int(value, 0)
             except ValueError:
                 raise _Ps1InterpreterError
         if value is None:
@@ -940,3 +949,89 @@ class Ps1FunctionEvaluator(Transformer):
             if funcdef in body:
                 body.remove(funcdef)
                 self.mark_changed()
+
+
+_FOREACH_ALIASES = frozenset({'%', 'foreach', 'foreach-object'})
+
+
+class Ps1ForEachPipeline(Transformer):
+    """
+    Evaluate pipelines of the form ``<constant-array> | %{ <scriptblock> }``
+    by executing the scriptblock for each element and replacing the pipeline
+    with the computed result.
+    """
+
+    def visit_Ps1Pipeline(self, node: Ps1Pipeline):
+        self.generic_visit(node)
+        if len(node.elements) != 2:
+            return None
+        src_elem = node.elements[0]
+        cmd_elem = node.elements[1]
+        if not isinstance(src_elem, Ps1PipelineElement) or src_elem.redirections:
+            return None
+        if not isinstance(cmd_elem, Ps1PipelineElement) or cmd_elem.redirections:
+            return None
+        items = self._get_constant_array(src_elem.expression)
+        if items is None:
+            return None
+        script_block = self._get_foreach_scriptblock(cmd_elem.expression)
+        if script_block is None:
+            return None
+        results: list[_Value] = []
+        interpreter = _Ps1Interpreter()
+        for item in items:
+            try:
+                result = interpreter.execute(script_block, {'_': item})
+            except _Ps1InterpreterError:
+                return None
+            results.append(result)
+        return self._results_to_node(results)
+
+    @staticmethod
+    def _get_constant_array(expr: Expression | None) -> list[_Value] | None:
+        if not isinstance(expr, Ps1ArrayLiteral):
+            return None
+        values: list[_Value] = []
+        for elem in expr.elements:
+            sv = _string_value(elem)
+            if sv is not None:
+                values.append(sv)
+                continue
+            if isinstance(elem, Ps1IntegerLiteral):
+                values.append(elem.value)
+                continue
+            return None
+        return values
+
+    @staticmethod
+    def _get_foreach_scriptblock(
+        expr: Expression | None,
+    ) -> Ps1ScriptBlock | None:
+        if not isinstance(expr, Ps1CommandInvocation):
+            return None
+        if not isinstance(expr.name, Ps1StringLiteral):
+            return None
+        if expr.name.value.lower() not in _FOREACH_ALIASES:
+            return None
+        if len(expr.arguments) != 1:
+            return None
+        arg = expr.arguments[0]
+        if isinstance(arg, Ps1CommandArgument):
+            if arg.kind != Ps1CommandArgumentKind.POSITIONAL:
+                return None
+            arg = arg.value
+        if isinstance(arg, Ps1ScriptBlock):
+            return arg
+        return None
+
+    @staticmethod
+    def _results_to_node(results: list[_Value]) -> Expression | None:
+        if all(isinstance(r, str) for r in results):
+            return _make_string_literal(''.join(str(r) for r in results))
+        if all(isinstance(r, int) and not isinstance(r, bool) for r in results):
+            elements: list[Expression] = [
+                Ps1IntegerLiteral(value=int(v), raw=str(v))
+                for v in results
+            ]
+            return Ps1ArrayLiteral(elements=elements)
+        return None

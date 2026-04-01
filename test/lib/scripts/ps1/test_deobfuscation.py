@@ -155,6 +155,66 @@ class TestPs1Deobfuscator(TestPs1):
         self.assertNotIn('band', result)
         self.assertIn('$baz = 199', result)
 
+    def test_preference_variable_indexing(self):
+        result = self._deobfuscate("Write-Output ($VerbosePreference[0] + $VerbosePreference[1])")
+        self.assertNotIn('VerbosePreference', result)
+
+    def test_preference_variable_not_substituted_when_assigned(self):
+        result = self._deobfuscate("$VerbosePreference = 'Custom'\nWrite-Output $VerbosePreference[1]")
+        self.assertIn("$VerbosePreference", result)
+
+    def test_tostring_multiindex_join(self):
+        data = "& ('SilentlyContinue'.ToString()[1, 3] + 'x' -Join '')"
+        result = self._deobfuscate(data)
+        self.assertIn('iex', result.lower())
+
+    def test_split_constant_string(self):
+        result = self._deobfuscate("'aXbYcZd'.Split('XYZ')")
+        self.assertIn("'a'", result)
+        self.assertIn("'b'", result)
+        self.assertIn("'c'", result)
+        self.assertIn("'d'", result)
+
+    def test_join_scalar_string_is_noop(self):
+        result = self._deobfuscate("-Join 'hello'")
+        self.assertNotIn('-Join', result)
+        self.assertNotIn('-join', result)
+        self.assertIn('hello', result)
+
+    def test_binary_split_single(self):
+        result = self._deobfuscate("'aXbXc' -Split 'X'")
+        self.assertIn("'a'", result)
+        self.assertIn("'b'", result)
+        self.assertIn("'c'", result)
+
+    def test_binary_split_chained(self):
+        result = self._deobfuscate("'aXbYc' -Split 'X' -Split 'Y'")
+        self.assertIn("'a'", result)
+        self.assertIn("'b'", result)
+        self.assertIn("'c'", result)
+
+    def test_backtick_removal_in_variable(self):
+        result = self._deobfuscate('${ex`ecu`tion}')
+        self.assertNotIn('`', result)
+        self.assertNotIn('{', result)
+        self.assertEqual(result.strip(), '$execution')
+
+    def test_backtick_variable_with_known_name(self):
+        result = self._deobfuscate('${eXeC`uTi`oNCon`tEXt}')
+        self.assertNotIn('`', result)
+        self.assertNotIn('{', result)
+        self.assertEqual(result.strip(), '$ExecutionContext')
+
+    def test_normalize_true_false(self):
+        result = self._deobfuscate('$tRUe, $fAlSE')
+        self.assertIn('$True', result)
+        self.assertIn('$False', result)
+
+    def test_backtick_member_access(self):
+        result = self._deobfuscate('$x."me`Th`od"')
+        self.assertNotIn('`', result)
+        self.assertIn('.Method', result)
+
 
 class TestPS1BracketRemoval(TestPs1):
 
@@ -619,3 +679,11 @@ class TestPs1IexInlining(TestPs1):
         result = self._deobfuscate("Invoke-Expression 'Write-Host hello'")
         self.assertIn('Write-Host', result)
         self.assertNotIn('Invoke-Expression', result)
+
+
+class TestPs1ForEachPipeline(TestPs1):
+
+    def test_foreach_pipeline_char_convert(self):
+        data = "'72z101z108z108z111'.Split('z') | %{ ([Char]([Convert]::ToInt16(($_.ToString()), 10))) }"
+        result = self._deobfuscate(data)
+        self.assertIn('Hello', result)

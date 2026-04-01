@@ -6,6 +6,7 @@ from __future__ import annotations
 import copy
 
 from refinery.lib.scripts import Node, Transformer
+from refinery.lib.scripts.ps1.deobfuscation._helpers import _make_string_literal
 from refinery.lib.scripts.ps1.model import (
     Ps1ArrayExpression,
     Ps1ArrayLiteral,
@@ -26,6 +27,20 @@ from refinery.lib.scripts.ps1.model import (
 )
 
 _CONSTANT_TYPES = (Ps1StringLiteral, Ps1IntegerLiteral, Ps1RealLiteral)
+
+_PS1_DEFAULT_VARIABLES: dict[str, str] = {
+    key.lower(): value for key, value in {
+        'ConfirmPreference'     : r'High',
+        'DebugPreference'       : r'SilentlyContinue',
+        'ErrorActionPreference' : r'Continue',
+        'InformationPreference' : r'SilentlyContinue',
+        'ProgressPreference'    : r'Continue',
+        'PSHome'                : r'C:\Windows\System32\WindowsPowerShell\v1.0',
+        'ShellID'               : r'Microsoft.PowerShell',
+        'VerbosePreference'     : r'SilentlyContinue',
+        'WarningPreference'     : r'Continue',
+    }.items()
+}
 
 
 def _is_constant(node: Node) -> bool:
@@ -85,7 +100,7 @@ class Ps1ConstantInlining(Transformer):
         self._remove_dead_assignments(candidates, remaining, inlined)
         return None
 
-    def _collect_candidates(self, root: Node) -> dict[str, tuple[Ps1AssignmentExpression, Node]]:
+    def _collect_candidates(self, root: Node) -> dict[str, tuple[Ps1AssignmentExpression | None, Node]]:
         """
         Returns:
 
@@ -94,7 +109,7 @@ class Ps1ConstantInlining(Transformer):
         for variables assigned exactly once via assignment to a constant expression.
         """
         assign_counts: dict[str, int] = {}
-        assignments: dict[str, tuple[Ps1AssignmentExpression, Node]] = {}
+        assignments: dict[str, tuple[Ps1AssignmentExpression | None, Node]] = {}
 
         for node in root.walk():
             # Explicit assignment: $x = VALUE
@@ -127,15 +142,20 @@ class Ps1ConstantInlining(Transformer):
                     key = node.variable.name.lower()
                     assign_counts[key] = assign_counts.get(key, 0) + 1
 
-        return {
+        result = {
             key: val for key, val in assignments.items()
             if assign_counts.get(key, 0) == 1
+            and key not in _PS1_DEFAULT_VARIABLES
         }
+        for key, value in _PS1_DEFAULT_VARIABLES.items():
+            if assign_counts.get(key, 0) == 0:
+                result[key] = (None, _make_string_literal(value))
+        return result
 
     def _substitute(
         self,
         root: Node,
-        candidates: dict[str, tuple[Ps1AssignmentExpression, Node]],
+        candidates: dict[str, tuple[Ps1AssignmentExpression | None, Node]],
     ) -> tuple[dict[str, int], dict[str, int]]:
         """
         Inline constant values. Returns:
@@ -162,8 +182,10 @@ class Ps1ConstantInlining(Transformer):
                 key = node.name.lower()
                 if key in candidates:
                     ref_counts[key] = ref_counts.get(key, 0) + 1
-        for key, (_, const_value) in candidates.items():
-            use_count = ref_counts.get(key, 0) - 1  # subtract assignment target
+        for key, (assign_node, const_value) in candidates.items():
+            use_count = ref_counts.get(key, 0)
+            if assign_node is not None:
+                use_count -= 1
             if use_count > 1 and isinstance(const_value, Ps1StringLiteral):
                 if len(const_value.raw) > self.max_inline_length:
                     remaining[key] = use_count
@@ -180,15 +202,10 @@ class Ps1ConstantInlining(Transformer):
                     if info is None:
                         continue
                     assign_node, const_value = info
-                    if node is assign_node.target:
+                    if assign_node is not None and node is assign_node.target:
                         handled_vars.add(id(var))
                         continue
                     if _inside_try_body(node):
-                        remaining[key] = remaining.get(key, 0) + 1
-                        handled_vars.add(id(var))
-                        continue
-                    array = _get_array_literal(const_value)
-                    if array is None:
                         remaining[key] = remaining.get(key, 0) + 1
                         handled_vars.add(id(var))
                         continue
@@ -197,6 +214,22 @@ class Ps1ConstantInlining(Transformer):
                         handled_vars.add(id(var))
                         continue
                     idx = node.index.value
+                    if isinstance(const_value, Ps1StringLiteral):
+                        s = const_value.value
+                        if idx < 0 or idx >= len(s):
+                            remaining[key] = remaining.get(key, 0) + 1
+                            continue
+                        replacement = _make_string_literal(s[idx])
+                        self._replace_in_parent(node, replacement)
+                        self.mark_changed()
+                        inlined[key] = inlined.get(key, 0) + 1
+                        handled_vars.add(id(var))
+                        continue
+                    array = _get_array_literal(const_value)
+                    if array is None:
+                        remaining[key] = remaining.get(key, 0) + 1
+                        handled_vars.add(id(var))
+                        continue
                     elements = array.elements
                     if idx < 0 or idx >= len(elements):
                         remaining[key] = remaining.get(key, 0) + 1
@@ -220,8 +253,9 @@ class Ps1ConstantInlining(Transformer):
                     continue
                 assign_node, const_value = info
                 # Don't replace the assignment target itself
-                if node.parent is assign_node and node is assign_node.target:
-                    continue
+                if assign_node is not None and node.parent is assign_node:
+                    if node is assign_node.target:
+                        continue
                 if _inside_try_body(node):
                     remaining[key] = remaining.get(key, 0) + 1
                     continue
@@ -260,16 +294,17 @@ class Ps1ConstantInlining(Transformer):
 
     def _remove_dead_assignments(
         self,
-        candidates: dict[str, tuple[Ps1AssignmentExpression, Node]],
+        candidates: dict[str, tuple[Ps1AssignmentExpression | None, Node]],
         remaining: dict[str, int],
         inlined: dict[str, int],
     ):
         for key, (assign_node, _) in candidates.items():
+            if assign_node is None:
+                continue
             if remaining.get(key, 0) > 0:
                 continue
             if self.min_inlines_to_prune is not None and inlined.get(key, 0) < self.min_inlines_to_prune:
                 continue
-            # Find the enclosing statement to remove
             stmt = self._find_removable_statement(assign_node)
             if stmt is None:
                 continue

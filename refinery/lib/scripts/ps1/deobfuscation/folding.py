@@ -24,6 +24,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1ArrayLiteral,
     Ps1BinaryExpression,
     Ps1ExpressionStatement,
+    Ps1IndexExpression,
     Ps1IntegerLiteral,
     Ps1InvokeMember,
     Ps1MemberAccess,
@@ -95,6 +96,10 @@ class Ps1ConstantFolding(Transformer):
         self.generic_visit(node)
         if node.operator.lower() != '-join' or node.operand is None:
             return None
+        # -Join on a scalar string is a no-op in PowerShell.
+        scalar = _string_value(node.operand)
+        if scalar is not None:
+            return _make_string_literal(scalar)
         array = _unwrap_to_array_literal(node.operand)
         if array is None:
             return None
@@ -102,6 +107,31 @@ class Ps1ConstantFolding(Transformer):
         if args is None:
             return None
         return _make_string_literal(''.join(args))
+
+    def visit_Ps1IndexExpression(self, node: Ps1IndexExpression):
+        self.generic_visit(node)
+        obj_str = _string_value(node.object) if node.object else None
+        if obj_str is None or node.index is None:
+            return None
+        if isinstance(node.index, Ps1IntegerLiteral):
+            idx = node.index.value
+            if 0 <= idx < len(obj_str):
+                return _make_string_literal(obj_str[idx])
+            return None
+        array = _unwrap_to_array_literal(node.index)
+        if array is None and isinstance(node.index, Ps1ArrayLiteral):
+            array = node.index
+        if array is not None:
+            chars: list[Expression] = []
+            for elem in array.elements:
+                if not isinstance(elem, Ps1IntegerLiteral):
+                    return None
+                idx = elem.value
+                if idx < 0 or idx >= len(obj_str):
+                    return None
+                chars.append(_make_string_literal(obj_str[idx]))
+            return Ps1ArrayLiteral(elements=chars)
+        return None
 
     def visit_Ps1InvokeMember(self, node: Ps1InvokeMember):
         self.generic_visit(node)
@@ -117,6 +147,11 @@ class Ps1ConstantFolding(Transformer):
                 node.member = normalized
                 self.mark_changed()
             member_name = node.member
+        if member_name is not None and member_name.lower() == 'tostring':
+            if len(node.arguments) == 0:
+                obj_str = _string_value(node.object) if node.object else None
+                if obj_str is not None:
+                    return _make_string_literal(obj_str)
         if member_name is not None and member_name.lower() == 'replace':
             if len(node.arguments) == 2:
                 obj_str = _string_value(node.object) if node.object else None
@@ -125,6 +160,15 @@ class Ps1ConstantFolding(Transformer):
                 if obj_str is not None and needle_str is not None and insert_str is not None:
                     result = obj_str.replace(needle_str, insert_str)
                     return _make_string_literal(result)
+        if member_name is not None and member_name.lower() == 'split':
+            if len(node.arguments) == 1:
+                obj_str = _string_value(node.object) if node.object else None
+                sep_str = _string_value(node.arguments[0])
+                if obj_str is not None and sep_str is not None and sep_str:
+                    pattern = '[' + re.escape(sep_str) + ']'
+                    parts = re.split(pattern, obj_str)
+                    elements: list[Expression] = [_make_string_literal(p) for p in parts]
+                    return Ps1ArrayLiteral(elements=elements)
         if member_name is not None and member_name.lower() == 'invoke':
             if isinstance(node.object, Ps1MemberAccess):
                 return Ps1InvokeMember(
@@ -200,6 +244,8 @@ class Ps1ConstantFolding(Transformer):
             return self._handle_binary_join(node)
         if op in ('-replace', '-creplace', '-ireplace'):
             return self._handle_binary_replace(node, op)
+        if op in ('-split', '-csplit', '-isplit'):
+            return self._handle_binary_split(node, op)
         return self._handle_arithmetic(node, op)
 
     @staticmethod
@@ -249,13 +295,23 @@ class Ps1ConstantFolding(Transformer):
                 if inner_right_str is not None:
                     node.left.right = _make_string_literal(inner_right_str + right_str)
                     return node.left
+        if right_str is not None and isinstance(node.left, Ps1ArrayLiteral):
+            elements = list(node.left.elements)
+            elements.append(_make_string_literal(right_str))
+            return Ps1ArrayLiteral(elements=elements)
         return None
 
     def _handle_binary_join(self, node: Ps1BinaryExpression) -> Expression | None:
         separator = _string_value(node.right) if node.right else None
         if separator is None or node.left is None:
             return None
+        # Binary -Join on a scalar string is a no-op.
+        scalar = _string_value(node.left)
+        if scalar is not None:
+            return _make_string_literal(scalar)
         array = _unwrap_to_array_literal(node.left)
+        if array is None and isinstance(node.left, Ps1ArrayLiteral):
+            array = node.left
         if array is None:
             return None
         args = _collect_string_arguments(array)
@@ -282,3 +338,35 @@ class Ps1ConstantFolding(Transformer):
         except re.error:
             return None
         return _make_string_literal(result)
+
+    def _handle_binary_split(
+        self, node: Ps1BinaryExpression, op: str,
+    ) -> Expression | None:
+        if node.right is None or node.left is None:
+            return None
+        pattern_str = _string_value(node.right)
+        if pattern_str is None:
+            return None
+        flags = re.IGNORECASE if op != '-csplit' else 0
+        # Collect input strings: either a single string or an array of strings.
+        left_str = _string_value(node.left)
+        if left_str is not None:
+            inputs = [left_str]
+        else:
+            array = _unwrap_to_array_literal(node.left)
+            if array is None and isinstance(node.left, Ps1ArrayLiteral):
+                array = node.left
+            if array is None:
+                return None
+            inputs_opt = _collect_string_arguments(array)
+            if inputs_opt is None:
+                return None
+            inputs = inputs_opt
+        try:
+            parts: list[str] = []
+            for s in inputs:
+                parts.extend(re.split(pattern_str, s, flags=flags))
+        except re.error:
+            return None
+        elements: list[Expression] = [_make_string_literal(p) for p in parts]
+        return Ps1ArrayLiteral(elements=elements)
