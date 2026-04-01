@@ -15,6 +15,8 @@ from refinery.lib.scripts.vba.model import (
     VbaCallExpression,
     VbaConstDeclaration,
     VbaFloatLiteral,
+    VbaForEachStatement,
+    VbaForStatement,
     VbaIdentifier,
     VbaIntegerLiteral,
     VbaLetStatement,
@@ -295,7 +297,12 @@ class VbaSimplifications(Transformer):
                 ):
                     key = stmt.target.name.lower()
                     candidates.setdefault(key, []).append((stmt.value, body, idx))
-        candidates = {k: v for k, v in candidates.items() if len(v) == 1}
+        loop_variables: set[str] = set()
+        for node in module.walk():
+            if isinstance(node, (VbaForStatement, VbaForEachStatement)):
+                if isinstance(node.variable, VbaIdentifier):
+                    loop_variables.add(node.variable.name.lower())
+        candidates = {k: v for k, v in candidates.items() if len(v) == 1 and k not in loop_variables}
         if not candidates:
             return False
         reads: dict[str, list[VbaIdentifier]] = {}
@@ -306,6 +313,8 @@ class VbaSimplifications(Transformer):
             if isinstance(parent, VbaLetStatement) and parent.target is node:
                 continue
             if isinstance(parent, VbaConstDeclaration):
+                continue
+            if isinstance(parent, (VbaForStatement, VbaForEachStatement)) and parent.variable is node:
                 continue
             key = node.name.lower()
             if key in candidates:

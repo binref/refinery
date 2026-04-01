@@ -23,3 +23,16 @@ class TestVBAASTDeobfuscator(TestUnitBase):
             '''impairingsgutta = Replace("ADs@j|P3FODBs@j|P3F.Sts@j|P3Fs@j|P3Fs@j|P3Fream", "s@j|P3F", "")'''
         ) | self.load() | str
         self.assertIn('ADODB.Stream', result)
+
+    def test_for_loop_variable_not_inlined(self):
+        data = (
+            'Function test()\n'
+            'k = 0\n'
+            'For k = 0 To 10\n'
+            'x = x + k\n'
+            'Next k\n'
+            'End Function'
+        )
+        result = data | self.load() | str
+        self.assertIn('For k =', result)
+        self.assertNotIn('For 0', result)
