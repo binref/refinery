@@ -412,6 +412,9 @@ class Ps1Parser:
             name_expr = self._parse_paren_expression()
         elif self._at(Ps1TokenKind.STRING_EXPAND, Ps1TokenKind.STRING_VERBATIM):
             name_expr = self._parse_string()
+        elif self._at(Ps1TokenKind.PERCENT):
+            tok = self._advance()
+            name_expr = Ps1StringLiteral(offset=tok.offset, value=tok.value, raw=tok.value)
         elif self._current.kind.is_keyword:
             tok = self._advance()
             name_expr = Ps1StringLiteral(offset=tok.offset, value=tok.value, raw=tok.value)
