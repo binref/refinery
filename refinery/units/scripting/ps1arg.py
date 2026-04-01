@@ -68,6 +68,7 @@ _PS_EXECUTABLE_NAMES = frozenset({
 
 _PARAM_WITH_NEXT_ARG = {
     'executionpolicy',
+    'ep',
     'windowstyle',
     'configurationname',
     'custompipename',
@@ -84,6 +85,7 @@ _KNOWN_SWITCHES = {
     'encodedcommand'    : 'e',
     'file'              : 'f',
     'executionpolicy'   : 'ex',
+    'ep'                : 'ep',
     'windowstyle'       : 'w',
     'noprofile'         : 'nop',
     'noninteractive'    : 'noni',
@@ -157,6 +159,7 @@ class ps1arg(Unit):
                 i += 1
                 continue
             switch = _match_switch(arg)
+            self.log_info(switch)
             if switch == 'command':
                 i += 1
                 result = ' '.join(argv[i:])
