@@ -25,6 +25,15 @@
   Handle everything else inside the script.
 - When making commits on the user's behalf, do not include a comment about AI co-authorship.
 
+# Bug Fixing
+
+When fixing bugs, always prioritize overall code quality and architecture:
+
+- Never choose a quick or simple fix that is overly focused on the specific bug.
+- Always take the time to identify root issues.
+- Make structural changes by refactoring code if this allows you to fix bugs in a cleaner way.
+- When a bug has been identified and understood, always write a small, targeted regression test for it.
+
 # Test Coverage
 
 When you develop a new piece of code, you should also write tests.
