@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from test import TestBase
 
-from refinery.lib.scripts.vba.deobfuscation import VbaSimplifications
+from refinery.lib.scripts.vba.deobfuscation import VbaSimplifications, deobfuscate
 from refinery.lib.scripts.vba.parser import VbaParser
 from refinery.lib.scripts.vba.synth import VbaSynthesizer
 
@@ -17,6 +17,13 @@ class TestVbaDeobfuscation(TestBase):
     def _deobfuscate(self, source: str) -> str:
         ast = VbaParser(source).parse()
         VbaSimplifications().deobfuscate(ast)
+        return VbaSynthesizer().convert(ast)
+
+    def _full_deobfuscate(self, source: str, max_rounds: int = 20) -> str:
+        ast = VbaParser(source).parse()
+        for _ in range(max_rounds):
+            if not deobfuscate(ast):
+                break
         return VbaSynthesizer().convert(ast)
 
     def test_string_concat_ampersand(self):
@@ -233,3 +240,82 @@ class TestVbaDeobfuscation(TestBase):
         result = self._deobfuscate(code)
         self.assertIn('melb = dtiss', result)
         self.assertNotIn('melb = "cellvalue"', result)
+
+    def test_emulator_simple_return(self):
+        code = (
+            'Function F()\n'
+            '  F = "hello"\n'
+            'End Function\n'
+            'Sub T()\n'
+            '  x = F()\n'
+            '  G x\n'
+            'End Sub'
+        )
+        result = self._full_deobfuscate(code)
+        self.assertIn('"hello"', result)
+        self.assertNotIn('Function F()', result)
+
+    def test_emulator_self_referential_return(self):
+        code = (
+            'Function dtiss()\n'
+            '  dtiss = "cellvalue"\n'
+            '  dtiss = dtiss + "if"\n'
+            'End Function\n'
+            'Sub T()\n'
+            '  melb = dtiss\n'
+            '  F melb\n'
+            'End Sub'
+        )
+        result = self._full_deobfuscate(code)
+        self.assertIn('"cellvalueif"', result)
+
+    def test_emulator_with_params(self):
+        code = (
+            'Function XorKey(s As String, k As Integer) As String\n'
+            '  XorKey = s & Chr(k)\n'
+            'End Function\n'
+            'Sub T()\n'
+            '  x = XorKey("AB", 67)\n'
+            '  G x\n'
+            'End Sub'
+        )
+        result = self._full_deobfuscate(code)
+        self.assertIn('"ABC"', result)
+
+    def test_emulator_nonconstant_arg_preserved(self):
+        code = (
+            'Function F(x)\n'
+            '  F = x & "!"\n'
+            'End Function\n'
+            'Sub T()\n'
+            '  G F(y)\n'
+            'End Sub'
+        )
+        result = self._full_deobfuscate(code)
+        self.assertIn('F(y)', result)
+
+    def test_emulator_loop(self):
+        code = (
+            'Function Build()\n'
+            '  For i = 1 To 3\n'
+            '    Build = Build & "x"\n'
+            '  Next\n'
+            'End Function\n'
+            'Sub T()\n'
+            '  G Build()\n'
+            'End Sub'
+        )
+        result = self._full_deobfuscate(code)
+        self.assertIn('"xxx"', result)
+
+    def test_emulator_impure_not_inlined(self):
+        code = (
+            'Function F()\n'
+            '  F = Application.Name\n'
+            'End Function\n'
+            'Sub T()\n'
+            '  G F()\n'
+            'End Sub'
+        )
+        result = self._full_deobfuscate(code)
+        self.assertIn('F()', result)

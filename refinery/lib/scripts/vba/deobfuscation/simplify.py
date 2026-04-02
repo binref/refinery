@@ -17,11 +17,13 @@ from refinery.lib.scripts.vba.model import (
     VbaFloatLiteral,
     VbaForEachStatement,
     VbaForStatement,
+    VbaFunctionDeclaration,
     VbaIdentifier,
     VbaIntegerLiteral,
     VbaLetStatement,
     VbaModule,
     VbaParenExpression,
+    VbaPropertyDeclaration,
     VbaStringLiteral,
     VbaUnaryExpression,
 )
@@ -301,11 +303,15 @@ class VbaSimplifications(Transformer):
                     if _is_literal(stmt.value):
                         candidates.setdefault(key, []).append((stmt.value, body, idx))
         loop_variables: set[str] = set()
+        function_names: set[str] = set()
         for node in module.walk():
             if isinstance(node, (VbaForStatement, VbaForEachStatement)):
                 if isinstance(node.variable, VbaIdentifier):
                     loop_variables.add(node.variable.name.lower())
-        candidates = {k: v for k, v in candidates.items() if len(v) == 1 and k not in loop_variables and assignment_counts.get(k, 0) == 1}
+            if isinstance(node, (VbaFunctionDeclaration, VbaPropertyDeclaration)):
+                if node.name:
+                    function_names.add(node.name.lower())
+        candidates = {k: v for k, v in candidates.items() if len(v) == 1 and k not in loop_variables and k not in function_names and assignment_counts.get(k, 0) == 1}
         if not candidates:
             return False
         reads: dict[str, list[VbaIdentifier]] = {}
