@@ -512,6 +512,25 @@ class Ps1Parser:
         self._lexer.mode = Ps1LexerMode.EXPRESSION
         if self._at(Ps1TokenKind.GENERIC_TOKEN):
             tok = self._advance()
+            result = Ps1StringLiteral(offset=tok.offset, value=tok.value, raw=tok.value)
+            while self._at(Ps1TokenKind.DOT):
+                saved_pos = self._lexer.pos
+                saved_tok = self._current
+                self._advance()
+                if self._at(Ps1TokenKind.GENERIC_TOKEN) or self._current.kind.is_keyword:
+                    suffix = self._advance()
+                    result = Ps1StringLiteral(
+                        offset=result.offset,
+                        value=result.value + '.' + suffix.value,
+                        raw=result.raw + '.' + suffix.value,
+                    )
+                else:
+                    self._lexer.pos = saved_pos
+                    self._current = saved_tok
+                    break
+            return result
+        if self._at(Ps1TokenKind.GENERIC_TOKEN):
+            tok = self._advance()
             return Ps1StringLiteral(offset=tok.offset, value=tok.value, raw=tok.value)
         if self._current.kind in _EXPRESSION_START_KINDS:
             return self._parse_unary_expression()

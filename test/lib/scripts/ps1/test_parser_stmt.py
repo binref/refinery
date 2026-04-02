@@ -5,6 +5,8 @@ from test import TestBase
 from refinery.lib.scripts.ps1.parser import Ps1Parser
 from refinery.lib.scripts.ps1.model import (
     Ps1BreakStatement,
+    Ps1CommandArgument,
+    Ps1CommandArgumentKind,
     Ps1CommandInvocation,
     Ps1ContinueStatement,
     Ps1DataSection,
@@ -19,6 +21,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1Pipeline,
     Ps1ReturnStatement,
     Ps1Script,
+    Ps1StringLiteral,
     Ps1SwitchStatement,
     Ps1ThrowStatement,
     Ps1TrapStatement,
@@ -216,3 +219,27 @@ class TestPs1ParserStatements(TestBase):
         cmd = stmt.expression
         self.assertIsInstance(cmd, Ps1CommandInvocation)
         self.assertTrue(len(cmd.arguments) >= 1)
+
+    def test_dotted_argument_after_paren_command_name(self):
+        stmt = self._parse_stmt(".('New-Object') System.IO.StreamReader")
+        self.assertIsInstance(stmt, Ps1ExpressionStatement)
+        cmd = stmt.expression
+        self.assertIsInstance(cmd, Ps1CommandInvocation)
+        self.assertEqual(len(cmd.arguments), 1)
+        arg = cmd.arguments[0]
+        self.assertIsInstance(arg, Ps1CommandArgument)
+        self.assertEqual(arg.kind, Ps1CommandArgumentKind.POSITIONAL)
+        self.assertIsInstance(arg.value, Ps1StringLiteral)
+        self.assertEqual(arg.value.value, 'System.IO.StreamReader')
+
+    def test_dotted_argument_bare_command(self):
+        stmt = self._parse_stmt('New-Object System.IO.MemoryStream')
+        self.assertIsInstance(stmt, Ps1ExpressionStatement)
+        cmd = stmt.expression
+        self.assertIsInstance(cmd, Ps1CommandInvocation)
+        self.assertEqual(len(cmd.arguments), 1)
+        arg = cmd.arguments[0]
+        self.assertIsInstance(arg, Ps1CommandArgument)
+        self.assertEqual(arg.kind, Ps1CommandArgumentKind.POSITIONAL)
+        self.assertIsInstance(arg.value, Ps1StringLiteral)
+        self.assertEqual(arg.value.value, 'System.IO.MemoryStream')
