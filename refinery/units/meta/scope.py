@@ -15,19 +15,17 @@ class scope(FrameSlicer):
     """
     Restrict subsequent frame operations to selected indices only.
 
-    After using `refinery.scope` within in a `refinery.lib.frame`, all the
-    following operations will be applied only to the selected indices. All
-    remaining chunks still exist, they are just not operated on. When the
-    frame closes or the frame is being rescoped by a second application of
-    this unit, they become visible again.
+    After using `refinery.scope` within in a `refinery.lib.frame`, all the following operations
+    will be applied only to the selected indices. All remaining chunks still exist, they are just
+    not operated on. When the frame closes or the frame is being rescoped by a second application
+    of this unit, they become visible again.
     """
     def __init__(self, *slice, visible: Param[bool, Arg.Switch('-n', '--not', off=True, help=(
         'Hide the given chunks instead of making them the only ones visible.'))] = True
     ):
         super().__init__(*slice, visible=visible)
-        # Sort any slices with negative arguments to the back so we check
-        # them last. This delays potential consumption of the chunks iterator
-        # as much as possible.
+        # Sort any slices with negative arguments to the back so we check them last. This delays
+        # potential consumption of the chunks iterator as much as possible.
         self.args.slice.sort(
             key=lambda s: (s.start or 0, s.stop or 0), reverse=True)
 
