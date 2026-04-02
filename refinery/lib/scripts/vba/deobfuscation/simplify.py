@@ -280,6 +280,7 @@ class VbaSimplifications(Transformer):
 
     def _inline_constants(self, module: VbaModule) -> bool:
         candidates: dict[str, list[tuple[Expression, list[Statement], int]]] = {}
+        assignment_counts: dict[str, int] = {}
         for body in self._body_lists(module):
             for idx, stmt in enumerate(body):
                 if (
@@ -289,20 +290,22 @@ class VbaSimplifications(Transformer):
                 ):
                     key = stmt.name.lower()
                     candidates.setdefault(key, []).append((stmt.value, body, idx))
+                    assignment_counts[key] = assignment_counts.get(key, 0) + 1
                 elif (
                     isinstance(stmt, VbaLetStatement)
                     and isinstance(stmt.target, VbaIdentifier)
                     and stmt.value is not None
-                    and _is_literal(stmt.value)
                 ):
                     key = stmt.target.name.lower()
-                    candidates.setdefault(key, []).append((stmt.value, body, idx))
+                    assignment_counts[key] = assignment_counts.get(key, 0) + 1
+                    if _is_literal(stmt.value):
+                        candidates.setdefault(key, []).append((stmt.value, body, idx))
         loop_variables: set[str] = set()
         for node in module.walk():
             if isinstance(node, (VbaForStatement, VbaForEachStatement)):
                 if isinstance(node.variable, VbaIdentifier):
                     loop_variables.add(node.variable.name.lower())
-        candidates = {k: v for k, v in candidates.items() if len(v) == 1 and k not in loop_variables}
+        candidates = {k: v for k, v in candidates.items() if len(v) == 1 and k not in loop_variables and assignment_counts.get(k, 0) == 1}
         if not candidates:
             return False
         reads: dict[str, list[VbaIdentifier]] = {}

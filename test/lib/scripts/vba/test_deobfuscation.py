@@ -218,3 +218,18 @@ class TestVbaDeobfuscation(TestBase):
         result = self._deobfuscate(data)
         self.assertIn('a.Close', result)
         self.assertIn('b = z.function(x)', result)
+
+    def test_regression_multi_assign_no_inline(self):
+        code = (
+            'Function dtiss()\n'
+            '  dtiss = "cellvalue"\n'
+            '  dtiss = dtiss + "if"\n'
+            'End Function\n'
+            'Sub T()\n'
+            '  melb = dtiss\n'
+            '  F melb\n'
+            'End Sub'
+        )
+        result = self._deobfuscate(code)
+        self.assertIn('melb = dtiss', result)
+        self.assertNotIn('melb = "cellvalue"', result)
