@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import codecs
 import enum
 import functools
 import io
@@ -13,7 +14,7 @@ import defusedxml
 
 from refinery.lib.structures import MemoryFile
 from refinery.lib.tools import NoLogging
-from refinery.lib.types import Param
+from refinery.lib.types import buf, Param
 from refinery.units import Arg, Unit
 
 if TYPE_CHECKING:
@@ -298,17 +299,12 @@ class xlxtr(ExcelUnit):
     """
     def __init__(
         self,
-        *references: Param[SheetReference, Arg(
-            metavar='reference',
-            type=SheetReference,
-            help=(
-                'A sheet reference to be extracted. '
-                'If no sheet references are given, the unit lists all sheet names.'
-            )
-        )]
+        *references: Param[buf, Arg(metavar='reference', help=(
+            'A sheet reference to be extracted. '
+            'If no sheet references are given, the unit lists all sheet names.'))]
     ):
         if not references:
-            references = SheetReference('*'),
+            references = b'*',
         super().__init__(references=references)
 
     def process(self, data):
@@ -318,8 +314,8 @@ class xlxtr(ExcelUnit):
             raise
         except Exception as E:
             raise ValueError('Input not recognized as Excel document.') from E
-        for ref in self.args.references:
-            ref: SheetReference
+        references = [SheetReference(codecs.decode(r, self.codec)) for r in self.args.references]
+        for ref in references:
             for k, name in enumerate(wb.sheets()):
                 if not ref.match(k, name):
                     continue
