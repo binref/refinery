@@ -66,6 +66,16 @@ _PS_EXECUTABLE_NAMES = frozenset({
     'pwsh.exe',
 })
 
+_WMIC_EXECUTABLE_NAMES = frozenset({
+    'wmic',
+    'wmic.exe',
+})
+
+_CMD_EXECUTABLE_NAMES = frozenset({
+    'cmd',
+    'cmd.exe',
+})
+
 _PARAM_WITH_NEXT_ARG = {
     'executionpolicy',
     'ep',
@@ -125,32 +135,97 @@ def _match_switch(key: str) -> str | None:
     return None
 
 
-class ps1arg(Unit):
+def _executable_name(token: str) -> str:
+    return os.path.basename(token.strip("'")).lower()
+
+
+def _strip_outer_quotes(text: str) -> str:
+    text = text.strip()
+    if len(text) < 2 or text[0] != '"':
+        return text
+    k = len(text) - 1
+    if text[k] != '"':
+        return text
+    bs = 0
+    j = k - 1
+    while j >= 0 and text[j] == '\\':
+        bs += 1
+        j -= 1
+    if bs % 2 == 0:
+        return text[1:k]
+    return text
+
+
+_RE_WMIC_CREATE = re.compile(
+    r"(?i)"
+    r"(?:\S+[\\/])?"
+    r"'?wmic(?:\.exe)?'?"
+    r"\s+(?:/\S+\s+)*"
+    r"(?:'?path'?\s+)?"
+    r"'?process'?\s+"
+    r"'?call'?\s+"
+    r"'?create'?\s*"
+)
+
+_RE_CMD_RUN = re.compile(
+    r"(?i)"
+    r"(?:\S+[\\/])?"
+    r"cmd(?:\.exe)?"
+    r"(?:\s+/[adqsuefv](?::\w+)?)*"
+    r"\s+/[ck]\s+"
+)
+
+
+class cmdarg(Unit):
     """
-    Extracts PowerShell code from a powershell.exe command line.
+    Extracts and unescapes arguments passed to wmic, cmd, or powershell commands.
 
-    Parses command lines like the following and extracts the actual PowerShell code:
+    The following types of command invocations are currently supported:
 
-    - powershell.exe -nop -w 1 -enc BASE64
-    - powershell.exe -command "& { ... }"
+    - `wmic process call create "COMMAND"`
+    - `cmd /c "COMMAND"`
+    - `cmd /k "COMMAND"`
+    - `powershell -EncodedCommand COMMAND`
+    - `powershell -Command COMMAND`
 
-    The unit handles CRT argument-level escaping (backslash-double-quote for literal quotes) and
-    base64-encoded commands. This is useful for analyzing malware samples that contain the full
-    command line for powershell.exe, including CRT-level quote escaping that is not valid inside
-    PowerShell itself.
+    Layers are peeled until the innermost recognizable payload is reached. This is useful
+    for extracting PowerShell code from obfuscated batch files and WMI-based launchers.
     """
 
     def process(self, data: bytearray):
         text = codecs.decode(data, self.codec, errors='surrogateescape')
-        argv = _split_argv(text)
-        if not argv:
-            raise ValueError('empty command line')
-        i = 0
-        name = os.path.basename(argv[0]).lower()
+        for _ in range(10):
+            text = text.strip()
+            if not text:
+                raise ValueError('empty command line')
+            if result := self._dispatch(text):
+                text = result
+                self.log_info(F'unwrapped a layer, continuing with: {result}', clip=True)
+                continue
+            return codecs.encode(text, self.codec, errors='surrogateescape')
+        raise ValueError('command chain exceeds maximum nesting depth')
+
+    def _dispatch(self, text: str) -> str | None:
+        first = text.split()[0]
+        name = _executable_name(first)
         if name in _PS_EXECUTABLE_NAMES or re.fullmatch(
-            r'(?i)(?:.*[\\/])?(?:powershell|pwsh)(?:\.exe)?', argv[0]
+            r'(?i)(?:.*[\\/])?(?:powershell|pwsh)(?:\.exe)?', first
         ):
-            i = 1
+            return self._extract_powershell(_split_argv(text), skip_executable=True)
+        if name in _WMIC_EXECUTABLE_NAMES or re.fullmatch(
+            r'(?i)(?:.*[\\/])?wmic(?:\.exe)?', first
+        ):
+            return self._extract_wmic(text)
+        if name in _CMD_EXECUTABLE_NAMES or re.fullmatch(
+            r'(?i)(?:.*[\\/])?cmd(?:\.exe)?', first
+        ):
+            return self._extract_cmd(text)
+        if first.startswith(('-', '/')):
+            return self._extract_powershell(_split_argv(text), skip_executable=False)
+        return None
+
+    def _extract_powershell(self, argv: list[str], skip_executable: bool) -> str:
+        i = 1 if skip_executable else 0
         command_args: list[str] = []
         while i < len(argv):
             arg = argv[i]
@@ -161,10 +236,7 @@ class ps1arg(Unit):
             switch = _match_switch(arg)
             self.log_info(switch)
             if switch == 'command':
-                i += 1
-                result = ' '.join(argv[i:])
-                return codecs.encode(
-                    result, self.codec, errors='surrogateescape')
+                return ' '.join(argv[i + 1:])
             if switch == 'encodedcommand':
                 i += 1
                 if i >= len(argv):
@@ -172,9 +244,10 @@ class ps1arg(Unit):
                 blob = argv[i]
                 blob += '=' * (-len(blob) % 4)
                 raw = base64.b64decode(blob)
-                return codecs.decode(raw, 'utf-16-le').encode(self.codec)
+                return codecs.decode(raw, 'utf-16-le')
             if switch == 'file':
-                raise ValueError('-File parameter found; code is in a file, not in the command line')
+                raise ValueError(
+                    '-File parameter found; code is in a file, not in the command line')
             if switch is not None and switch in _PARAM_WITH_NEXT_ARG:
                 i += 2
                 continue
@@ -184,8 +257,17 @@ class ps1arg(Unit):
             command_args.append(arg)
             i += 1
         if command_args:
-            result = ' '.join(command_args)
-            return codecs.encode(
-                result, self.codec, errors='surrogateescape')
-        raise ValueError(
-            'no PowerShell code found in command line')
+            return ' '.join(command_args)
+        raise ValueError('no PowerShell code found in command line')
+
+    def _extract_wmic(self, text: str) -> str:
+        match = _RE_WMIC_CREATE.match(text)
+        if not match:
+            raise ValueError('not a recognized WMIC process create command')
+        return _strip_outer_quotes(text[match.end():])
+
+    def _extract_cmd(self, text: str) -> str:
+        match = _RE_CMD_RUN.match(text)
+        if not match:
+            raise ValueError('CMD command line missing /c or /k switch')
+        return _strip_outer_quotes(text[match.end():])

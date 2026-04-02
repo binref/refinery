@@ -354,9 +354,9 @@ from refinery.units.pattern.subfiles import subfiles as subfiles
 from refinery.units.pattern.urlguards import urlguards as urlguards
 from refinery.units.pattern.xtp import xtp as xtp
 from refinery.units.pattern.xtw import xtw as xtw
+from refinery.units.scripting.cmdarg import cmdarg as cmdarg
 from refinery.units.scripting.js import js as js
 from refinery.units.scripting.ps1 import ps1 as ps1
-from refinery.units.scripting.ps1arg import ps1arg as ps1arg
 from refinery.units.scripting.vba import vba as vba
 from refinery.units.sinks.asm import asm as asm
 from refinery.units.sinks.dnasm import dnasm as dnasm
