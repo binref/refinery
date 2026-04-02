@@ -311,6 +311,8 @@ UNITS = {
     'reduce'                                     : 'refinery.units.meta.reduce',
     'rmv'                                        : 'refinery.units.meta.rmv',
     'scope'                                      : 'refinery.units.meta.scope',
+    'sbc'                                        : 'refinery.units.meta.sep',
+    'sbs'                                        : 'refinery.units.meta.sep',
     'sep'                                        : 'refinery.units.meta.sep',
     'sorted'                                     : 'refinery.units.meta.sorted',
     'swap'                                       : 'refinery.units.meta.swap',

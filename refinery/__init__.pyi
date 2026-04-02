@@ -312,6 +312,8 @@ from refinery.units.meta.queue import qf as qf
 from refinery.units.meta.reduce import reduce as reduce
 from refinery.units.meta.rmv import rmv as rmv
 from refinery.units.meta.scope import scope as scope
+from refinery.units.meta.sep import sbc as sbc
+from refinery.units.meta.sep import sbs as sbs
 from refinery.units.meta.sep import sep as sep
 from refinery.units.meta.sorted import sorted as sorted
 from refinery.units.meta.swap import swap as swap

@@ -39,3 +39,19 @@ class sep(Unit):
         yield data
         if self.separate:
             yield self.args.separator
+
+
+class sbs(sep):
+    """
+    Separate all chunks By a single Space character.
+    """
+    def __init__(self):
+        super().__init__(B' ', False)
+
+
+class sbc(sep):
+    """
+    Separate all chunks By a single Comma character.
+    """
+    def __init__(self):
+        super().__init__(B',', False)
