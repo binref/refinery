@@ -138,6 +138,16 @@ class Ps1Simplifications(Transformer):
             if normalized != node.name:
                 node.name = normalized
                 self.mark_changed()
+        if node.kind == Ps1CommandArgumentKind.POSITIONAL and isinstance(node.value, Ps1StringLiteral):
+            if '.' in node.value.value:
+                normalized = self._normalize_type_name(node.value.value)
+                if normalized != node.value.value:
+                    node.value = Ps1StringLiteral(
+                        offset=node.value.offset,
+                        value=normalized,
+                        raw=normalized,
+                    )
+                    self.mark_changed()
         return None
 
     def visit_Ps1TypeExpression(self, node: Ps1TypeExpression):
@@ -150,16 +160,10 @@ class Ps1Simplifications(Transformer):
         return None
 
     def _normalize_type_name(self, name: str) -> str:
-        stripped = name
-        prefix = ''
-        if stripped.lower().startswith('system.'):
-            prefix = stripped[:7]
-            stripped = stripped[7:]
-        normalized = _case_normalize_name(stripped)
-        if normalized != stripped:
+        normalized = _case_normalize_name(name)
+        if normalized != name:
             self.mark_changed()
-            return prefix + normalized
-        return name
+        return normalized
 
     def visit_Ps1CommandInvocation(self, node: Ps1CommandInvocation):
         self.generic_visit(node)

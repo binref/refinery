@@ -341,6 +341,8 @@ _KNOWN_NAMES = {name.lower(): name for name in [
     'Security.Principal.WindowsPrincipal',
     'Security.SecureString',
     'ServiceProcess.ServiceController',
+    'IO.Compression.DeflateStream',
+    'IO.MemoryStream',
     'Text.ASCIIEncoding',
     'Text.Encoding',
     'Text.RegularExpressions.Regex',
@@ -508,6 +510,7 @@ _KNOWN_NAMES = {name.lower(): name for name in [
     'WriteByte',
     'WriteLine',
     # properties
+    'ASCII',
     'Address',
     'Assembly',
     'BaseObject',
@@ -573,6 +576,11 @@ _KNOWN_NAMES = {name.lower(): name for name in [
     'Value',
     'Values',
 ]}
+
+for _name in list(_KNOWN_NAMES.values()):
+    if '.' in _name:
+        _full = F'System.{_name}'
+        _KNOWN_NAMES[_full.lower()] = _full
 
 KEYWORD_SPELLING: dict[str, str] = {
     'param': 'Param',
