@@ -680,6 +680,23 @@ class TestPs1IexInlining(TestPs1):
         self.assertIn('Write-Host', result)
         self.assertNotIn('Invoke-Expression', result)
 
+    def test_iex_piped_string(self):
+        result = self._deobfuscate("'Write-Host hello' | IEX")
+        self.assertIn('Write-Host', result)
+        self.assertNotIn('IEX', result)
+        self.assertNotIn('|', result)
+
+    def test_iex_piped_variable_not_inlined(self):
+        result = self._deobfuscate('$var | IEX')
+        self.assertIn('IEX', result)
+        self.assertIn('$var', result)
+
+    def test_invoke_expression_piped_long_form(self):
+        result = self._deobfuscate("'Write-Host hello' | Invoke-Expression")
+        self.assertIn('Write-Host', result)
+        self.assertNotIn('Invoke-Expression', result)
+        self.assertNotIn('|', result)
+
 
 class TestPs1ForEachPipeline(TestPs1):
 

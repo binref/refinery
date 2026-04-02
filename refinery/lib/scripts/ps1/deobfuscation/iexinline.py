@@ -10,6 +10,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1CommandArgumentKind,
     Ps1CommandInvocation,
     Ps1ExpressionStatement,
+    Ps1Pipeline,
     Ps1Script,
     Ps1ScriptBlock,
     Ps1StringLiteral,
@@ -20,7 +21,8 @@ _IEX_NAMES = frozenset({'iex', 'invoke-expression'})
 
 class Ps1IexInlining(Transformer):
     """
-    Replace ``IEX 'constant string'`` with the parsed statements from that string.
+    Replace ``IEX 'constant string'`` and ``'constant string' | IEX``
+    with the parsed statements from that string.
     """
 
     def visit(self, node):
@@ -31,6 +33,8 @@ class Ps1IexInlining(Transformer):
             i = 0
             while i < len(body):
                 code = self._try_extract_iex_string(body[i])
+                if code is None:
+                    code = self._try_extract_piped_iex_string(body[i])
                 if code is None:
                     i += 1
                     continue
@@ -50,6 +54,16 @@ class Ps1IexInlining(Transformer):
         if isinstance(node, (Ps1Script, Block, Ps1ScriptBlock)):
             return node.body
         return None
+
+    @staticmethod
+    def _is_bare_iex(cmd) -> bool:
+        if not isinstance(cmd, Ps1CommandInvocation):
+            return False
+        if not isinstance(cmd.name, Ps1StringLiteral):
+            return False
+        if cmd.name.value.lower() not in _IEX_NAMES:
+            return False
+        return len(cmd.arguments) == 0
 
     @staticmethod
     def _try_extract_iex_string(stmt) -> str | None:
@@ -74,6 +88,25 @@ class Ps1IexInlining(Transformer):
         if val is None:
             return None
         return _string_value(val)
+
+    @classmethod
+    def _try_extract_piped_iex_string(cls, stmt) -> str | None:
+        if not isinstance(stmt, Ps1ExpressionStatement):
+            return None
+        pipeline = stmt.expression
+        if not isinstance(pipeline, Ps1Pipeline):
+            return None
+        if len(pipeline.elements) < 2:
+            return None
+        last = pipeline.elements[-1]
+        if not cls._is_bare_iex(last.expression):
+            return None
+        if len(pipeline.elements) != 2:
+            return None
+        source = pipeline.elements[0].expression
+        if source is None:
+            return None
+        return _string_value(source)
 
     @staticmethod
     def _try_parse(code: str) -> list | None:
