@@ -961,6 +961,8 @@ class Ps1ForEachPipeline(Transformer):
     with the computed result.
     """
 
+    _BUILTIN_VARS = frozenset({'_', 'true', 'false', 'null'})
+
     def visit_Ps1Pipeline(self, node: Ps1Pipeline):
         self.generic_visit(node)
         if len(node.elements) != 2:
@@ -977,6 +979,8 @@ class Ps1ForEachPipeline(Transformer):
         script_block = self._get_foreach_scriptblock(cmd_elem.expression)
         if script_block is None:
             return None
+        if self._has_free_variables(script_block):
+            return None
         results: list[_Value] = []
         interpreter = _Ps1Interpreter()
         for item in items:
@@ -986,6 +990,16 @@ class Ps1ForEachPipeline(Transformer):
                 return None
             results.append(result)
         return self._results_to_node(results)
+
+    @staticmethod
+    def _has_free_variables(script_block: Ps1ScriptBlock) -> bool:
+        for node in script_block.walk():
+            if isinstance(node, Ps1Variable):
+                if node.scope not in (Ps1ScopeModifier.NONE, Ps1ScopeModifier.LOCAL):
+                    return True
+                if node.name.lower() not in Ps1ForEachPipeline._BUILTIN_VARS:
+                    return True
+        return False
 
     @staticmethod
     def _get_constant_array(expr: Expression | None) -> list[_Value] | None:

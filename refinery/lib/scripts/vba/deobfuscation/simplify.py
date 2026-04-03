@@ -311,7 +311,13 @@ class VbaSimplifications(Transformer):
             if isinstance(node, (VbaFunctionDeclaration, VbaPropertyDeclaration)):
                 if node.name:
                     function_names.add(node.name.lower())
-        candidates = {k: v for k, v in candidates.items() if len(v) == 1 and k not in loop_variables and k not in function_names and assignment_counts.get(k, 0) == 1}
+        candidates = {
+            k: v for k, v in candidates.items()
+            if len(v) == 1
+            and k not in loop_variables
+            and k not in function_names
+            and assignment_counts.get(k, 0) == 1
+        }
         if not candidates:
             return False
         reads: dict[str, list[VbaIdentifier]] = {}

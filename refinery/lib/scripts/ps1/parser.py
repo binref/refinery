@@ -219,6 +219,40 @@ class Ps1Parser:
         ):
             self._advance()
 
+    def _might_be_param_block(self) -> bool:
+        if self._at(Ps1TokenKind.PARAM):
+            return True
+        if not self._at(Ps1TokenKind.LBRACKET):
+            return False
+        src = self.source
+        pos = self._current.offset
+        end = len(src)
+        while pos < end and src[pos] == '[':
+            depth = 1
+            pos += 1
+            while pos < end and depth > 0:
+                ch = src[pos]
+                if ch == '[':
+                    depth += 1
+                elif ch == ']':
+                    depth -= 1
+                elif ch == "'" and depth > 0:
+                    pos += 1
+                    while pos < end and src[pos] != "'":
+                        pos += 1
+                elif ch == '"' and depth > 0:
+                    pos += 1
+                    while pos < end and src[pos] != '"':
+                        if src[pos] == '`':
+                            pos += 1
+                        pos += 1
+                pos += 1
+            while pos < end and src[pos] in ' \t\r\n':
+                pos += 1
+        return src[pos:pos + 5].lower().startswith('param') and (
+            pos + 5 >= end or not src[pos + 5].isalnum() and src[pos + 5] != '_'
+        )
+
     def _is_statement_terminator(self) -> bool:
         return self._current.kind in _STATEMENT_TERMINATORS
 
@@ -235,7 +269,7 @@ class Ps1Parser:
         offset = self._current.offset
         self._skip_newlines()
         param_block = None
-        if self._at(Ps1TokenKind.PARAM):
+        if self._might_be_param_block():
             param_block = self._parse_param_block()
             self._skip_newlines()
         begin_block = None
@@ -423,6 +457,11 @@ class Ps1Parser:
                 return Ps1CommandInvocation(offset=offset, invocation_operator=invocation_operator)
             return None
 
+        self._lexer.mode = Ps1LexerMode.ARGUMENT
+        if self._current.offset >= 0:
+            self._lexer.pos = self._current.offset
+            self._advance()
+
         if isinstance(name_expr, Ps1StringLiteral) and not invocation_operator:
             while self._at(Ps1TokenKind.DOT):
                 saved_pos = self._lexer.pos
@@ -444,6 +483,11 @@ class Ps1Parser:
         self._lexer.mode = Ps1LexerMode.ARGUMENT
         while not self._is_pipeline_terminator():
             self._lexer.mode = Ps1LexerMode.ARGUMENT
+            if self._current.offset >= 0 and self._at(Ps1TokenKind.DASH):
+                self._lexer.pos = self._current.offset
+                self._advance()
+            if self._is_pipeline_terminator():
+                break
             if self._at(Ps1TokenKind.PARAMETER):
                 tok = self._advance()
                 name = tok.value
@@ -932,13 +976,31 @@ class Ps1Parser:
                 i += 1
         return ''.join(result)
 
+    @staticmethod
+    def _strip_backtick_noop(name: str) -> str:
+        result: list[str] = []
+        i = 0
+        while i < len(name):
+            if name[i] == '`' and i + 1 < len(name):
+                result.append(name[i + 1])
+                i += 2
+                continue
+            result.append(name[i])
+            i += 1
+        return ''.join(result)
+
     def _make_variable_from_text(self, text: str) -> Ps1Variable:
         name = text
         splatted = name.startswith('@')
         if name.startswith('$') or name.startswith('@'):
             name = name[1:]
-        scope = Ps1ScopeModifier.NONE
         braced = False
+        if name.startswith('{') and name.endswith('}'):
+            braced = True
+            name = name[1:-1]
+        if '`' in name:
+            name = self._strip_backtick_noop(name)
+        scope = Ps1ScopeModifier.NONE
         if ':' in name:
             prefix, rest = name.split(':', 1)
             prefix_lower = prefix.lower()
@@ -947,7 +1009,7 @@ class Ps1Parser:
             except ValueError:
                 scope = Ps1ScopeModifier.DRIVE
             name = rest
-        if name.startswith('{') and name.endswith('}'):
+        if not braced and name.startswith('{') and name.endswith('}'):
             braced = True
             name = name[1:-1]
         return Ps1Variable(offset=-1, name=name, scope=scope, braced=braced, splatted=splatted)
@@ -1087,7 +1149,7 @@ class Ps1Parser:
         self._disable_comma = False
         try:
             param_block = None
-            if self._at(Ps1TokenKind.PARAM):
+            if self._might_be_param_block():
                 param_block = self._parse_param_block()
                 self._skip_newlines()
             begin_block = None
@@ -1460,7 +1522,7 @@ class Ps1Parser:
         offset = self._current.offset
         self._skip_newlines()
         param_block = None
-        if self._at(Ps1TokenKind.PARAM):
+        if self._might_be_param_block():
             param_block = self._parse_param_block()
             self._skip_newlines()
         begin_block = None

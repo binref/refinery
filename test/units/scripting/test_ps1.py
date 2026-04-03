@@ -154,3 +154,49 @@ class TestPowerShellASTDeobfuscator(TestUnitBase):
         self.assertTrue(test.lower().startswith(
             "if ((get-wmiobject win32_operatingsystem).osarchitecture -match 'ビ')"))
         self.assertIn("'https:""/""/paterdonga"".com/uploads/HelpPaneS'", test)
+
+    def test_braced_variable_with_scope(self):
+        data = b'${env:ComputerName}'
+        result = data | self.load() | str
+        self.assertIn('$env:ComputerName', result)
+        self.assertNotIn('$drive:', result)
+
+    def test_param_block_with_attributes(self):
+        data = b'function F { [CmdletBinding()] param($x) $x }'
+        result = data | self.load() | str
+        self.assertIn('param', result.lower())
+        self.assertIn('CmdletBinding', result)
+
+    def test_command_arguments_after_expression_name(self):
+        data = b"&('Get-WmiObject') -Class Win32_processor"
+        result = data | self.load() | str
+        self.assertIn('Get-WmiObject', result)
+        self.assertIn('-Class', result)
+        self.assertIn('Win32_processor', result)
+
+    def test_real_world_05(self):
+        data = (
+            b"function Ge {\n"
+            b"[CmdletBinding()]\n"
+            b"param (\n"
+            b"[parameter(ValueFromPipeline=${t`RUE}, ValueFromPipelineByPropertyName=${tR`UE})]\n"
+            b"[Alias(('nam'+'e'))]\n"
+            b"${f`Rk}=${en`V:`CompuT`ERN`A`Me}\n"
+            b")\n"
+            b"${An`Tivi`RU`SPr`oD`UCT} = .('gwm'+'i') -Namespace root\\securitycenter2 "
+            b"-Class AntiVirusProduct -ComputerName ${F`Rk}\n"
+            b"}\n"
+        )
+        result = data | self.load() | str
+        self.assertIn('$env:', result)
+        self.assertNotIn('$drive:', result)
+        self.assertIn('-Class', result)
+        self.assertIn('-Namespace', result)
+        self.assertIn('root\\securitycenter2', result)
+        self.assertNotIn('-\n', result)
+
+    def test_foreach_with_external_variable(self):
+        data = b"'65,66,67'.Split(',') | %{ [Char]([Int]$_ -bxor $key) }"
+        result = data | self.load() | str
+        self.assertIn('-BXor', result.replace('-bxor', '-BXor'))
+        self.assertIn('$key', result)
