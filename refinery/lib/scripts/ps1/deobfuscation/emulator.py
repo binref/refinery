@@ -332,6 +332,11 @@ class _Ps1Interpreter:
 
     def _eval_binary(self, node: Ps1BinaryExpression) -> _Value:
         op = node.operator.lower()
+        if op == '-as':
+            if not isinstance(node.right, Ps1TypeExpression):
+                raise _Ps1InterpreterError
+            left = self._eval(node.left)
+            return self._apply_type_cast(node.right.name, left)
         left = self._eval(node.left)
         right = self._eval(node.right)
         if op == '+':
@@ -639,8 +644,11 @@ class _Ps1Interpreter:
         raise _Ps1InterpreterError
 
     def _eval_cast(self, node: Ps1CastExpression) -> _Value:
-        tn = node.type_name.lower().replace(' ', '')
         val = self._eval(node.operand)
+        return self._apply_type_cast(node.type_name, val)
+
+    def _apply_type_cast(self, type_name: str, val: _Value) -> _Value:
+        tn = type_name.lower().replace(' ', '')
         if tn == 'string':
             return self._to_str(val)
         if tn in ('int', 'int32', 'int64'):

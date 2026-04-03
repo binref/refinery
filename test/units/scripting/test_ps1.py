@@ -53,6 +53,14 @@ class TestPs1RealWorldSmall(TestUnitBase):
         self.assertIn('-BXor', result.replace('-bxor', '-BXor'))
         self.assertIn('$key', result)
 
+    def test_foreach_as_cast(self):
+        data = (
+            b"'55r152r157r151r116r50r40' -Split 'r' "
+            b"| ForEach-Object { [Convert]::ToInt16($_.ToString(), 8) -As [Char] }"
+        )
+        result = data | self.load() | str
+        self.assertIn('-joiN( ', result)
+
     def test_set_alias_inlining(self):
         data = b"sal myAlias New-Object; myAlias Net.WebClient"
         result = data | self.load() | str
