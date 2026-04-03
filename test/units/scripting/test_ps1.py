@@ -200,3 +200,24 @@ class TestPowerShellASTDeobfuscator(TestUnitBase):
         result = data | self.load() | str
         self.assertIn('-BXor', result.replace('-bxor', '-BXor'))
         self.assertIn('$key', result)
+
+    def test_set_alias_inlining(self):
+        data = b"sal myAlias New-Object; myAlias Net.WebClient"
+        result = data | self.load() | str
+        self.assertIn('New-Object Net.WebClient', result)
+
+    def test_set_alias_with_named_params(self):
+        data = b"Set-Alias -Name foo -Value Invoke-Expression; foo 'Write-Host hello'"
+        result = data | self.load() | str
+        self.assertIn('Write-Host', result)
+        self.assertIn('hello', result)
+
+    def test_string_join_static(self):
+        data = b"[String]::Join('', @('Hello', ' ', 'World'))"
+        result = data | self.load() | str
+        self.assertIn('Hello World', result)
+
+    def test_alias_survives_iex_inlining(self):
+        data = b"sal x Invoke-Expression; x '[String]::Join('''', @(''Write'', ''-Host''))'"
+        result = data | self.load() | str
+        self.assertIn('Write-Host', result)

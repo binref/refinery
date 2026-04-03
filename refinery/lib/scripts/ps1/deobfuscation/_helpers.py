@@ -582,6 +582,11 @@ for _name in list(_KNOWN_NAMES.values()):
         _full = F'System.{_name}'
         _KNOWN_NAMES[_full.lower()] = _full
 
+# Built-in PowerShell aliases for cmdlets
+_KNOWN_NAMES['sal'] = 'Set-Alias'
+_KNOWN_NAMES['nal'] = 'New-Alias'
+_KNOWN_NAMES['iex'] = 'Invoke-Expression'
+
 KEYWORD_SPELLING: dict[str, str] = {
     'param': 'Param',
 }

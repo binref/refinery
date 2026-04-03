@@ -50,6 +50,11 @@ _SYSTEM_TEXT_ENCODING_NAMES = frozenset({
     'text.encoding',
 })
 
+_STRING_TYPE_NAMES = frozenset({
+    'string',
+    'system.string',
+})
+
 
 def _is_static_convert_call(node: Ps1InvokeMember) -> bool:
     if node.access != Ps1AccessKind.STATIC:
@@ -81,12 +86,16 @@ def _is_static_encoding_chain(node: Ps1InvokeMember) -> tuple[str, bool] | None:
 
 def _unwrap_to_array_literal(node: Expression) -> Ps1ArrayLiteral | None:
     """
-    Unwrap parentheses to find an inner Ps1ArrayLiteral.
+    Unwrap parentheses and array expressions to find an inner Ps1ArrayLiteral.
     """
     while isinstance(node, Ps1ParenExpression) and node.expression is not None:
         node = node.expression
     if isinstance(node, Ps1ArrayLiteral):
         return node
+    if isinstance(node, Ps1ArrayExpression) and len(node.body) == 1:
+        stmt = node.body[0]
+        if isinstance(stmt, Ps1ExpressionStatement) and isinstance(stmt.expression, Ps1ArrayLiteral):
+            return stmt.expression
     return None
 
 
@@ -220,6 +229,23 @@ class Ps1ConstantFolding(Transformer):
                     except Exception:
                         return None
                     return _make_string_literal(decoded)
+        if (node.access == Ps1AccessKind.STATIC
+                and isinstance(node.object, Ps1TypeExpression)
+                and node.object.name.lower().replace(' ', '') in _STRING_TYPE_NAMES
+                and member_name is not None
+                and member_name.lower() == 'join'
+                and len(node.arguments) == 2):
+            separator = _string_value(node.arguments[0])
+            if separator is not None:
+                second = node.arguments[1]
+                scalar = _string_value(second)
+                if scalar is not None:
+                    return _make_string_literal(scalar)
+                array = _unwrap_to_array_literal(second)
+                if array is not None:
+                    args = _collect_string_arguments(array)
+                    if args is not None:
+                        return _make_string_literal(separator.join(args))
         return None
 
     _ARITHMETIC_OPS = {
