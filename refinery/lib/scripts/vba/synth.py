@@ -72,6 +72,14 @@ from refinery.lib.scripts.vba.model import (
 
 class VbaSynthesizer(Visitor):
 
+    _BLOCK_TYPES = (
+        VbaSubDeclaration,
+        VbaFunctionDeclaration,
+        VbaPropertyDeclaration,
+        VbaTypeDefinition,
+        VbaEnumDefinition,
+    )
+
     def __init__(self, indent: str = '  '):
         self._indent = indent
         self._depth = 0
@@ -212,10 +220,31 @@ class VbaSynthesizer(Visitor):
         self._write(')')
 
     def visit_VbaModule(self, node: VbaModule):
+        prev_group = None
         for i, stmt in enumerate(node.body):
+            group = self._stmt_group(stmt)
             if i > 0:
+                if group != prev_group or group == 'block':
+                    self._write('\n')
                 self._newline()
             self.visit(stmt)
+            prev_group = group
+
+    @classmethod
+    def _stmt_group(cls, stmt: Statement) -> str:
+        if isinstance(stmt, cls._BLOCK_TYPES):
+            return 'block'
+        if isinstance(stmt, VbaDeclareStatement):
+            return 'declare'
+        if isinstance(stmt, VbaOptionStatement):
+            return 'option'
+        if isinstance(stmt, (VbaVariableDeclaration, VbaConstDeclaration)):
+            return 'variable'
+        if isinstance(stmt, VbaEventDeclaration):
+            return 'event'
+        if isinstance(stmt, VbaImplementsStatement):
+            return 'implements'
+        return 'other'
 
     def visit_VbaOptionStatement(self, node: VbaOptionStatement):
         self._write(F'Option {node.keyword}')

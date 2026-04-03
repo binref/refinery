@@ -36,3 +36,19 @@ class TestVBAASTDeobfuscator(TestUnitBase):
         result = data | self.load() | str
         self.assertIn('For k =', result)
         self.assertNotIn('For 0', result)
+
+    def test_blank_lines_between_toplevel_blocks(self):
+        data = (
+            'Attribute VB_Name = "Module1"\n'
+            'Dim x As Long\n'
+            'Sub Foo()\n'
+            'x = 1\n'
+            'End Sub\n'
+            'Function Bar() As Long\n'
+            'Bar = x\n'
+            'End Function'
+        )
+        result = data | self.load() | str
+        self.assertIn('Module1"\n\nDim', result)
+        self.assertIn('Long\n\nSub', result)
+        self.assertIn('End Sub\n\nFunction', result)
