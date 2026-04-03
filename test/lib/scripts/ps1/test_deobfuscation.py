@@ -656,7 +656,7 @@ class TestPs1IexInlining(TestPs1):
 
     def test_iex_variable_not_inlined(self):
         result = self._deobfuscate('IEX $var')
-        self.assertIn('IEX', result)
+        self.assertIn('Invoke-Expression', result)
         self.assertIn('$var', result)
 
     def test_iex_after_constant_inlining(self):
@@ -688,7 +688,7 @@ class TestPs1IexInlining(TestPs1):
 
     def test_iex_piped_variable_not_inlined(self):
         result = self._deobfuscate('$var | IEX')
-        self.assertIn('IEX', result)
+        self.assertIn('Invoke-Expression', result)
         self.assertIn('$var', result)
 
     def test_invoke_expression_piped_long_form(self):
