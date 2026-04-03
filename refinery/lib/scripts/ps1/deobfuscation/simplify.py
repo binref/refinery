@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from refinery.lib.scripts import Transformer
 from refinery.lib.scripts.ps1.deobfuscation._helpers import (
-    _SIMPLE_IDENT,
+    SIMPLE_IDENTIFIER,
     _case_normalize_name,
 )
 from refinery.lib.scripts.ps1.model import (
@@ -78,7 +78,7 @@ class Ps1Simplifications(Transformer):
         if '`' in node.name:
             node.name = _strip_backtick_escapes(node.name)
             self.mark_changed()
-        if node.braced and _SIMPLE_IDENT.match(node.name):
+        if node.braced and SIMPLE_IDENTIFIER.match(node.name):
             node.braced = False
             self.mark_changed()
         canonical = _KNOWN_VARIABLE_NAMES.get(node.name.lower())
@@ -104,7 +104,7 @@ class Ps1Simplifications(Transformer):
             # treating all backticks as no-op escapes to recover the name.
             if node.member.raw and node.member.raw[0] == '"' and '`' in node.member.raw:
                 name = _decode_raw_member_name(node.member.raw[1:-1])
-            if _SIMPLE_IDENT.match(name):
+            if SIMPLE_IDENTIFIER.match(name):
                 node.member = _case_normalize_name(name)
                 self.mark_changed()
                 return None
@@ -198,7 +198,7 @@ class Ps1Simplifications(Transformer):
         if node.invocation_operator in ('&', '.'):
             if isinstance(node.name, Ps1StringLiteral):
                 name_val = node.name.value
-                if _SIMPLE_IDENT.match(name_val) or '-' in name_val:
+                if SIMPLE_IDENTIFIER.match(name_val) or '-' in name_val:
                     node.name = Ps1StringLiteral(
                         offset=node.name.offset,
                         value=name_val,

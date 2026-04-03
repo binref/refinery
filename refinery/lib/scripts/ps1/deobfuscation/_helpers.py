@@ -591,7 +591,7 @@ KEYWORD_SPELLING: dict[str, str] = {
     'param': 'Param',
 }
 
-_SIMPLE_IDENT = re.compile(r'^[a-zA-Z_]\w*$')
+SIMPLE_IDENTIFIER = re.compile(r'^[a-zA-Z_]\w*$')
 
 
 def _string_value(node: Expression) -> str | None:

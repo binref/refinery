@@ -9,7 +9,7 @@ import re
 
 from refinery.lib.scripts import Transformer
 from refinery.lib.scripts.ps1.deobfuscation._helpers import (
-    _SIMPLE_IDENT,
+    SIMPLE_IDENTIFIER,
     _case_normalize_name,
     _collect_int_arguments,
     _collect_string_arguments,
@@ -146,7 +146,7 @@ class Ps1ConstantFolding(Transformer):
         self.generic_visit(node)
         if isinstance(node.member, Ps1StringLiteral):
             name = node.member.value
-            if _SIMPLE_IDENT.match(name):
+            if SIMPLE_IDENTIFIER.match(name):
                 node.member = name
                 self.mark_changed()
         member_name = node.member if isinstance(node.member, str) else None

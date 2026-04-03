@@ -17,7 +17,7 @@ from refinery.lib.scripts.js.model import (
 )
 from refinery.lib.scripts.js.token import FUTURE_RESERVED, KEYWORDS
 
-_SIMPLE_IDENT = re.compile(r'^[a-zA-Z_$][a-zA-Z_$0-9]*$')
+SIMPLE_IDENTIFIER = re.compile(r'^[a-zA-Z_$][a-zA-Z_$0-9]*$')
 
 _JS_RESERVED = frozenset(set(KEYWORDS) | FUTURE_RESERVED | {'undefined'})
 
@@ -72,4 +72,4 @@ def _is_literal(node: Expression) -> bool:
 
 
 def _is_valid_identifier(name: str) -> bool:
-    return bool(_SIMPLE_IDENT.match(name)) and name not in _JS_RESERVED
+    return bool(SIMPLE_IDENTIFIER.match(name)) and name not in _JS_RESERVED
