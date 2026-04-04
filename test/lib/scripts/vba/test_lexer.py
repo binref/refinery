@@ -156,6 +156,30 @@ class TestVbaLexer(TestBase):
         newlines = [k for k, _ in tokens if k == VbaTokenKind.NEWLINE]
         self.assertEqual(len(newlines), 1)
 
+    def test_line_continuation_trailing_spaces(self):
+        tokens = self._tokens('x = 1 + _  \n2')
+        kinds = [k for k, _ in tokens]
+        self.assertNotIn(VbaTokenKind.NEWLINE, kinds)
+        self.assertEqual(kinds, [
+            VbaTokenKind.IDENTIFIER,
+            VbaTokenKind.EQ,
+            VbaTokenKind.INTEGER,
+            VbaTokenKind.PLUS,
+            VbaTokenKind.INTEGER,
+        ])
+
+    def test_line_continuation_trailing_tab(self):
+        tokens = self._tokens('x = 1 + _\t\n2')
+        kinds = [k for k, _ in tokens]
+        self.assertNotIn(VbaTokenKind.NEWLINE, kinds)
+        self.assertEqual(kinds, [
+            VbaTokenKind.IDENTIFIER,
+            VbaTokenKind.EQ,
+            VbaTokenKind.INTEGER,
+            VbaTokenKind.PLUS,
+            VbaTokenKind.INTEGER,
+        ])
+
     def test_empty_string(self):
         tokens = self._tokens('""')
         self.assertEqual(tokens, [(VbaTokenKind.STRING, '""')])

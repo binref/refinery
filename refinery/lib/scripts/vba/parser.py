@@ -310,8 +310,6 @@ class VbaParser:
         offset = self._current.offset
         if self._current.value.lower() in ('dim', 'global', 'withevents'):
             self._advance()
-        elif self._current.value.lower() == 'withevents':
-            self._advance()
         declarators: list[VbaVariableDeclarator] = []
         declarators.append(self._parse_variable_declarator())
         while self._eat(VbaTokenKind.COMMA):

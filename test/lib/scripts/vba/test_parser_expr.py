@@ -239,3 +239,12 @@ class TestVbaParserExpressions(TestBase):
         self.assertEqual(expr.operator, '^')
         assert isinstance(expr.right, VbaBinaryExpression)
         self.assertEqual(expr.right.operator, '^')
+
+    def test_line_continuation_with_trailing_whitespace(self):
+        expr = self._parse_expr('1 + _  \n  2')
+        assert isinstance(expr, VbaBinaryExpression)
+        self.assertEqual(expr.operator, '+')
+        assert isinstance(expr.left, VbaIntegerLiteral)
+        self.assertEqual(expr.left.value, 1)
+        assert isinstance(expr.right, VbaIntegerLiteral)
+        self.assertEqual(expr.right.value, 2)

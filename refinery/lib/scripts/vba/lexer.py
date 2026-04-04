@@ -25,28 +25,6 @@ class VbaLexer:
             self.pos += 1
         return self.pos > start
 
-    def _skip_line_continuation(self) -> bool:
-        src = self.source
-        length = len(src)
-        p = self.pos
-        while p < length and src[p] in ' \t':
-            p += 1
-        if p < length and src[p] == '_':
-            after = p + 1
-            if after >= length:
-                self.pos = after
-                return True
-            if src[after] == '\r':
-                after += 1
-                if after < length and src[after] == '\n':
-                    after += 1
-                self.pos = after
-                return True
-            if src[after] == '\n':
-                self.pos = after + 1
-                return True
-        return False
-
     def _read_string(self) -> str:
         start = self.pos
         src = self.source
@@ -174,13 +152,17 @@ class VbaLexer:
             start = self.pos
             c = src[self.pos]
 
-            if c == '_' and self.pos + 1 < length and src[self.pos + 1] in '\r\n':
-                self.pos += 1
-                if self.pos < length and src[self.pos] == '\r':
-                    self.pos += 1
-                if self.pos < length and src[self.pos] == '\n':
-                    self.pos += 1
-                continue
+            if c == '_':
+                p = self.pos + 1
+                while p < length and src[p] in ' \t':
+                    p += 1
+                if p >= length or src[p] in '\r\n':
+                    self.pos = p
+                    if self.pos < length and src[self.pos] == '\r':
+                        self.pos += 1
+                    if self.pos < length and src[self.pos] == '\n':
+                        self.pos += 1
+                    continue
 
             if c == '\r' or c == '\n':
                 if c == '\r' and self.pos + 1 < length and src[self.pos + 1] == '\n':
