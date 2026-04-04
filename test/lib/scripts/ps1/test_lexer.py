@@ -268,6 +268,33 @@ class TestPs1Lexer(TestBase):
         self.assertEqual(tokens[0][0], Ps1TokenKind.HSTRING_EXPAND)
         self.assertEqual(tokens[0][1], src)
 
+    def test_stream_redirection_2_to_null(self):
+        tokens = self._tokens('2>$null')
+        self.assertEqual(tokens[0], (Ps1TokenKind.REDIRECTION, '2>'))
+        self.assertEqual(tokens[1], (Ps1TokenKind.VARIABLE, '$null'))
+
+    def test_stream_redirection_2_append(self):
+        tokens = self._tokens('2>>file.txt')
+        self.assertEqual(tokens[0], (Ps1TokenKind.REDIRECTION, '2>>'))
+
+    def test_stream_redirection_2_merge(self):
+        tokens = self._tokens('2>&1')
+        self.assertEqual(tokens[0], (Ps1TokenKind.REDIRECTION, '2>&1'))
+
+    def test_stream_redirection_star(self):
+        tokens = self._tokens('*>$null')
+        self.assertEqual(tokens[0], (Ps1TokenKind.REDIRECTION, '*>'))
+        self.assertEqual(tokens[1], (Ps1TokenKind.VARIABLE, '$null'))
+
+    def test_stream_redirection_3_merge(self):
+        tokens = self._tokens('3>&2')
+        self.assertEqual(tokens[0], (Ps1TokenKind.REDIRECTION, '3>&2'))
+
+    def test_digit_not_stream_redirection(self):
+        tokens = self._tokens('9>file')
+        self.assertEqual(tokens[0], (Ps1TokenKind.INTEGER, '9'))
+        self.assertEqual(tokens[1], (Ps1TokenKind.REDIRECTION, '>'))
+
     def test_backtick_line_continuation(self):
         tokens = self._tokens('$x +`\n$y')
         kinds = [t[0] for t in tokens]

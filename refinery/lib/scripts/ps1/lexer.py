@@ -530,6 +530,14 @@ class Ps1Lexer:
                     self.mode = mode_hint
                 continue
 
+            if c in '123456' and self.pos + 1 < length and src[self.pos + 1] == '>':
+                redir = self._try_redirection()
+                if redir:
+                    mode_hint = yield redir
+                    if mode_hint is not None:
+                        self.mode = mode_hint
+                    continue
+
             if c.isdigit() or (c == '.' and self.pos + 1 < length and src[self.pos + 1].isdigit()):
                 token = self._read_number()
                 if token:
