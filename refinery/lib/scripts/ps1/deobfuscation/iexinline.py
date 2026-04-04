@@ -26,10 +26,12 @@ from refinery.lib.scripts.ps1.model import (
     Ps1MemberAccess,
     Ps1ParenExpression,
     Ps1Pipeline,
+    Ps1PipelineElement,
     Ps1Script,
     Ps1ScriptBlock,
     Ps1StringLiteral,
     Ps1TypeExpression,
+    Ps1Variable,
 )
 
 _IEX_NAMES = frozenset({'iex', 'invoke-expression'})
@@ -111,7 +113,10 @@ def _resolve_encoding(expr: Expression) -> str | None:
     return _ENCODING_MAP.get(expr.member.lower())
 
 
-def _try_evaluate(expr: Expression) -> str | bytes | None:
+def _try_evaluate(
+    expr: Expression,
+    bindings: dict[str, str | bytes] | None = None,
+) -> str | bytes | None:
     """
     Recursively evaluate a .NET expression chain to ``str`` or ``bytes``.
 
@@ -121,18 +126,26 @@ def _try_evaluate(expr: Expression) -> str | bytes | None:
     → ``New-Object DeflateStream/GZipStream(stream, Decompress)``
     → ``New-Object StreamReader(stream, encoding)``
     → ``.ReadToEnd()``
+
+    Also handles pipelines of the form ``expr | %{ body } | %{ body }`` where
+    each ForEach-Object stage receives the previous result via ``$_``.
     """
     if isinstance(expr, Ps1StringLiteral):
         return expr.value
 
     if isinstance(expr, Ps1ParenExpression) and expr.expression is not None:
-        return _try_evaluate(expr.expression)
+        return _try_evaluate(expr.expression, bindings)
+
+    if isinstance(expr, Ps1Variable):
+        if bindings and expr.name.lower() in bindings:
+            return bindings[expr.name.lower()]
+        return None
 
     # String concatenation via +
     if isinstance(expr, Ps1BinaryExpression) and expr.operator == '+':
         if expr.left is not None and expr.right is not None:
-            left = _try_evaluate(expr.left)
-            right = _try_evaluate(expr.right)
+            left = _try_evaluate(expr.left, bindings)
+            right = _try_evaluate(expr.right, bindings)
             if isinstance(left, str) and isinstance(right, str):
                 return left + right
 
@@ -157,13 +170,13 @@ def _try_evaluate(expr: Expression) -> str | bytes | None:
                 and expr.member.lower() == 'readtoend'
                 and len(expr.arguments) == 0
                 and expr.object is not None):
-            return _try_evaluate(expr.object)
+            return _try_evaluate(expr.object, bindings)
 
     # [IO.MemoryStream] cast — pass through bytes
     if isinstance(expr, Ps1CastExpression) and expr.operand is not None:
         tn = _normalize_type_name(expr.type_name)
         if tn == 'io.memorystream':
-            return _try_evaluate(expr.operand)
+            return _try_evaluate(expr.operand, bindings)
 
     # New-Object IO.Compression.DeflateStream(data, Decompress)
     # New-Object IO.Compression.GZipStream(data, Decompress)
@@ -176,7 +189,7 @@ def _try_evaluate(expr: Expression) -> str | bytes | None:
         tn = _normalize_type_name(type_name)
 
         if tn == 'io.compression.deflatestream' and len(ctor_args) >= 1:
-            data = _try_evaluate(ctor_args[0])
+            data = _try_evaluate(ctor_args[0], bindings)
             if isinstance(data, bytes):
                 try:
                     return zlib.decompress(data, -15)
@@ -184,7 +197,7 @@ def _try_evaluate(expr: Expression) -> str | bytes | None:
                     return None
 
         if tn == 'io.compression.gzipstream' and len(ctor_args) >= 1:
-            data = _try_evaluate(ctor_args[0])
+            data = _try_evaluate(ctor_args[0], bindings)
             if isinstance(data, bytes):
                 try:
                     return gzip.decompress(data)
@@ -192,7 +205,7 @@ def _try_evaluate(expr: Expression) -> str | bytes | None:
                     return None
 
         if tn == 'io.streamreader' and len(ctor_args) >= 1:
-            data = _try_evaluate(ctor_args[0])
+            data = _try_evaluate(ctor_args[0], bindings)
             if not isinstance(data, bytes):
                 return None
             codec = 'utf-8'
@@ -205,7 +218,77 @@ def _try_evaluate(expr: Expression) -> str | bytes | None:
             except Exception:
                 return None
 
+    if isinstance(expr, Ps1Pipeline):
+        return _try_evaluate_pipeline(expr, bindings)
+
     return None
+
+
+_FOREACH_ALIASES = frozenset({'%', 'foreach', 'foreach-object'})
+
+
+def _extract_foreach_scriptblock(expr: Expression) -> Ps1ScriptBlock | None:
+    """Extract the scriptblock from a ``%{ ... }`` / ``ForEach-Object { ... }`` command."""
+    if not isinstance(expr, Ps1CommandInvocation):
+        return None
+    if not isinstance(expr.name, Ps1StringLiteral):
+        return None
+    if expr.name.value.lower() not in _FOREACH_ALIASES:
+        return None
+    if len(expr.arguments) != 1:
+        return None
+    arg = expr.arguments[0]
+    if isinstance(arg, Ps1CommandArgument):
+        if arg.kind != Ps1CommandArgumentKind.POSITIONAL:
+            return None
+        arg = arg.value
+    if isinstance(arg, Ps1ScriptBlock):
+        return arg
+    return None
+
+
+def _try_evaluate_pipeline(
+    node: Ps1Pipeline,
+    bindings: dict[str, str | bytes] | None = None,
+) -> str | bytes | None:
+    """
+    Evaluate a pipeline ``expr | %{ body } | %{ body }`` by threading the result
+    of each stage into the next via ``$_`` bindings.
+    """
+    if not node.elements:
+        return None
+    first = node.elements[0]
+    if not isinstance(first, Ps1PipelineElement):
+        return None
+    if first.expression is None:
+        return None
+    value = _try_evaluate(first.expression, bindings)
+    if value is None:
+        return None
+    for elem in node.elements[1:]:
+        if not isinstance(elem, Ps1PipelineElement):
+            return None
+        if elem.expression is None:
+            return None
+        script_block = _extract_foreach_scriptblock(elem.expression)
+        if script_block is None:
+            return None
+        if len(script_block.body) != 1:
+            return None
+        stmt = script_block.body[0]
+        if isinstance(stmt, Ps1ExpressionStatement):
+            inner_expr = stmt.expression
+        elif isinstance(stmt, Expression):
+            inner_expr = stmt
+        else:
+            return None
+        if inner_expr is None:
+            return None
+        stage_bindings: dict[str, str | bytes] = {**(bindings or {}), '_': value}
+        value = _try_evaluate(inner_expr, stage_bindings)
+        if value is None:
+            return None
+    return value
 
 
 def _resolve_to_string(expr: Expression) -> str | None:

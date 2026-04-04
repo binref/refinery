@@ -697,6 +697,22 @@ class TestPs1IexInlining(TestPs1):
         self.assertNotIn('Invoke-Expression', result)
         self.assertNotIn('|', result)
 
+    def test_iex_piped_deflate_pipeline(self):
+        # Base64-encoded raw deflate of "Write-Host hello"
+        b64 = 'Cy/KLEnV9cgvLlHISM3JyQcA'
+        data = (
+            "(New-Object IO.Compression.DeflateStream("
+            f"[IO.MemoryStream][Convert]::FromBase64String('{b64}'),"
+            " [IO.Compression.CompressionMode]::Decompress)"
+            " | %{ New-Object System.IO.StreamReader($_, [Text.Encoding]::ASCII) }"
+            " | %{ $_.ReadToEnd() })"
+            " | Invoke-Expression"
+        )
+        result = self._deobfuscate(data)
+        self.assertIn('Write-Host', result)
+        self.assertNotIn('Invoke-Expression', result)
+        self.assertNotIn('FromBase64String', result)
+
 
 class TestPs1ForEachPipeline(TestPs1):
 
