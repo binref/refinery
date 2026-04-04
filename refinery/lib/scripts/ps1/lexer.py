@@ -145,7 +145,7 @@ _INTEGER_PATTERN = re.compile(
 _REAL_PATTERN = re.compile(
     r'(?:[0-9]*\.[0-9]+|[0-9]+\.)(?:[eE][+-]?[0-9]+)?'
     r'|[0-9]+[eE][+-]?[0-9]+'
-    r'|[0-9]+(?:\.[0-9]+)?[dDkKmMgGtTpP][bB]?',
+    r'|[0-9]+(?:\.[0-9]+)?(?:[dD]|[kKmMgGtTpP][bB])',
 )
 
 _VARIABLE_PATTERN = re.compile(

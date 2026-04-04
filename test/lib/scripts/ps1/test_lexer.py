@@ -241,6 +241,19 @@ class TestPs1Lexer(TestBase):
         self.assertEqual(tokens[0][0], Ps1TokenKind.STRING_EXPAND)
         self.assertEqual(tokens[0][1], src)
 
+    def test_multiplier_suffix_requires_b(self):
+        for suffix in ('kb', 'mb', 'gb', 'tb', 'pb', 'KB', 'MB', 'GB', 'TB', 'PB'):
+            tokens = self._tokens(F'5{suffix}')
+            self.assertEqual(tokens[0][0], Ps1TokenKind.REAL, F'5{suffix} should be REAL')
+        tokens = self._tokens('5d')
+        self.assertEqual(tokens[0][0], Ps1TokenKind.REAL, '5d should be REAL')
+        for letter in ('k', 'm', 'g', 't', 'p', 'K', 'M', 'G', 'T', 'P'):
+            tokens = self._tokens(F'5{letter}')
+            self.assertNotEqual(
+                tokens[0][0], Ps1TokenKind.REAL,
+                F'5{letter} should NOT be REAL (multiplier requires trailing b)',
+            )
+
     def test_backtick_line_continuation(self):
         tokens = self._tokens('$x +`\n$y')
         kinds = [t[0] for t in tokens]
