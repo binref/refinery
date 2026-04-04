@@ -98,6 +98,11 @@ class TestVbaSynthesizer(TestBase):
         result = self._roundtrip(code)
         self.assertIn('On Error GoTo Handler', result)
 
+    def test_on_error_goto_minus_1(self):
+        code = 'Sub T()\nOn Error GoTo -1\nEnd Sub'
+        result = self._roundtrip(code)
+        self.assertIn('On Error GoTo -1', result)
+
     def test_option_explicit(self):
         result = self._roundtrip('Option Explicit')
         self.assertIn('Option Explicit', result)

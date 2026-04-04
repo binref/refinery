@@ -301,6 +301,14 @@ class TestVbaParserStatements(TestBase):
         assert isinstance(stmt, VbaOnErrorStatement)
         self.assertEqual(stmt.label, '0')
 
+    def test_on_error_goto_minus_1(self):
+        code = 'Sub T()\nOn Error GoTo -1\nEnd Sub'
+        ast = self._parse(code)
+        stmt = ast.body[0].body[0]
+        assert isinstance(stmt, VbaOnErrorStatement)
+        self.assertEqual(stmt.action, VbaOnErrorAction.GOTO)
+        self.assertEqual(stmt.label, '-1')
+
     def test_exit_sub(self):
         code = 'Sub T()\nExit Sub\nEnd Sub'
         ast = self._parse(code)

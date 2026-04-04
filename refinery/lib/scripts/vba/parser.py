@@ -965,7 +965,11 @@ class VbaParser:
                     action=VbaOnErrorAction.RESUME, offset=offset)
             if self._at(VbaTokenKind.GOTO):
                 self._advance()
-                label = self._current.value
+                if self._at(VbaTokenKind.MINUS):
+                    self._advance()
+                    label = '-' + self._current.value
+                else:
+                    label = self._current.value
                 self._advance()
                 return VbaOnErrorStatement(
                     action=VbaOnErrorAction.GOTO, label=label, offset=offset)
