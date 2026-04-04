@@ -241,9 +241,51 @@ class Ps1Lexer:
         src = self.source
         length = len(src)
         self.pos += 1
+        depth = 0
         while self.pos < length:
             c = src[self.pos]
             if c == '`' and self.pos + 1 < length:
+                self.pos += 2
+                continue
+            if depth > 0:
+                if c == '(':
+                    depth += 1
+                    self.pos += 1
+                    continue
+                if c == ')':
+                    depth -= 1
+                    self.pos += 1
+                    continue
+                if c == "'":
+                    self.pos += 1
+                    while self.pos < length:
+                        if src[self.pos] == "'":
+                            self.pos += 1
+                            if self.pos < length and src[self.pos] == "'":
+                                self.pos += 1
+                                continue
+                            break
+                        self.pos += 1
+                    continue
+                if c == '"':
+                    self.pos += 1
+                    while self.pos < length:
+                        sc = src[self.pos]
+                        if sc == '`' and self.pos + 1 < length:
+                            self.pos += 2
+                            continue
+                        if sc == '"':
+                            self.pos += 1
+                            if self.pos < length and src[self.pos] == '"':
+                                self.pos += 1
+                                continue
+                            break
+                        self.pos += 1
+                    continue
+                self.pos += 1
+                continue
+            if c == '$' and self.pos + 1 < length and src[self.pos + 1] == '(':
+                depth += 1
                 self.pos += 2
                 continue
             if c == '"':

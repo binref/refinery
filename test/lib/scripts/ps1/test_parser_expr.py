@@ -237,3 +237,9 @@ class TestPs1ParserExpressions(TestBase):
         expr = self._parse_expr('$a[0][1]')
         self.assertIsInstance(expr, Ps1IndexExpression)
         self.assertIsInstance(expr.object, Ps1IndexExpression)
+
+    def test_expandable_string_nested_dq_in_subexpr(self):
+        expr = self._parse_expr('"value: $($x.ToString("N2"))"')
+        self.assertIsInstance(expr, Ps1ExpandableString)
+        has_subexpr = any(isinstance(p, Ps1SubExpression) for p in expr.parts)
+        self.assertTrue(has_subexpr)

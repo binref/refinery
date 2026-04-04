@@ -220,6 +220,27 @@ class TestPs1Lexer(TestBase):
         tokens = self._tokens('!$x')
         self.assertEqual(tokens[0], (Ps1TokenKind.EXCLAIM, '!'))
 
+    def test_expandable_string_with_nested_subexpression_quotes(self):
+        src = '"result: $($x.ToString("N2"))"'
+        tokens = self._tokens(src)
+        self.assertEqual(len(tokens), 1)
+        self.assertEqual(tokens[0][0], Ps1TokenKind.STRING_EXPAND)
+        self.assertEqual(tokens[0][1], src)
+
+    def test_expandable_string_nested_parens_in_subexpr(self):
+        src = '"val: $((1+2))"'
+        tokens = self._tokens(src)
+        self.assertEqual(len(tokens), 1)
+        self.assertEqual(tokens[0][0], Ps1TokenKind.STRING_EXPAND)
+        self.assertEqual(tokens[0][1], src)
+
+    def test_expandable_string_nested_sq_in_subexpr(self):
+        src = '''"val: $($h['key'])"'''
+        tokens = self._tokens(src)
+        self.assertEqual(len(tokens), 1)
+        self.assertEqual(tokens[0][0], Ps1TokenKind.STRING_EXPAND)
+        self.assertEqual(tokens[0][1], src)
+
     def test_backtick_line_continuation(self):
         tokens = self._tokens('$x +`\n$y')
         kinds = [t[0] for t in tokens]
