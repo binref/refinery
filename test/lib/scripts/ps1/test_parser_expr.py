@@ -238,6 +238,23 @@ class TestPs1ParserExpressions(TestBase):
         self.assertIsInstance(expr, Ps1IndexExpression)
         self.assertIsInstance(expr.object, Ps1IndexExpression)
 
+    def test_unary_prefix_operators_allow_newline_before_operand(self):
+        cases = {
+            '-' : (' -\n    $y', '-'),
+            '+' : (' +\n    $y', '+'),
+            '!' : (' !\n    $y', '!'),
+            '++': ('++\n    $y', '++'),
+            '--': ('--\n    $y', '--'),
+        }
+        for label, (src, op) in cases.items():
+            with self.subTest(operator=label):
+                expr = self._parse_expr(src)
+                self.assertIsInstance(expr, Ps1UnaryExpression)
+                self.assertEqual(expr.operator, op)
+                self.assertTrue(expr.prefix)
+                self.assertIsInstance(expr.operand, Ps1Variable)
+                self.assertEqual(expr.operand.name, 'y')
+
     def test_expandable_string_nested_dq_in_subexpr(self):
         expr = self._parse_expr('"value: $($x.ToString("N2"))"')
         self.assertIsInstance(expr, Ps1ExpandableString)

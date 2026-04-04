@@ -668,12 +668,14 @@ class Ps1Parser:
 
         if tok.kind in (Ps1TokenKind.INCREMENT, Ps1TokenKind.DECREMENT):
             op = self._advance()
+            self._skip_newlines()
             operand = self._parse_unary_expression()
             return Ps1UnaryExpression(
                 offset=tok.offset, operator=op.value, operand=operand, prefix=True)
 
         if tok.kind == Ps1TokenKind.EXCLAIM:
             self._advance()
+            self._skip_newlines()
             operand = self._parse_unary_expression()
             return Ps1UnaryExpression(
                 offset=tok.offset, operator='!', operand=operand, prefix=True)
@@ -691,6 +693,7 @@ class Ps1Parser:
                 if op_test:
                     return self._parse_primary_expression()
             op = self._advance()
+            self._skip_newlines()
             operand = self._parse_unary_expression()
             return Ps1UnaryExpression(
                 offset=tok.offset, operator=op.value, operand=operand, prefix=True)
