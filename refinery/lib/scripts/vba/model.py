@@ -226,6 +226,21 @@ class VbaParenExpression(Expression):
 
 
 @dataclass(repr=False)
+class VbaRangeExpression(Expression):
+    start: Expression | None = None
+    end: Expression | None = None
+
+    def __post_init__(self):
+        self._adopt(self.start, self.end)
+
+    def children(self) -> Generator[Node, None, None]:
+        if self.start is not None:
+            yield self.start
+        if self.end is not None:
+            yield self.end
+
+
+@dataclass(repr=False)
 class VbaModule(Script):
     pass
 

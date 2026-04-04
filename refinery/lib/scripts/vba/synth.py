@@ -51,6 +51,7 @@ from refinery.lib.scripts.vba.model import (
     VbaParenExpression,
     VbaPropertyDeclaration,
     VbaRaiseEventStatement,
+    VbaRangeExpression,
     VbaRedimStatement,
     VbaResumeStatement,
     VbaReturnStatement,
@@ -218,6 +219,13 @@ class VbaSynthesizer(Visitor):
         if node.expression:
             self.visit(node.expression)
         self._write(')')
+
+    def visit_VbaRangeExpression(self, node: VbaRangeExpression):
+        if node.start:
+            self.visit(node.start)
+        self._write(' To ')
+        if node.end:
+            self.visit(node.end)
 
     def visit_VbaModule(self, node: VbaModule):
         prev_group = None

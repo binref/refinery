@@ -48,6 +48,7 @@ from refinery.lib.scripts.vba.model import (
     VbaParameter,
     VbaParenExpression,
     VbaPropertyDeclaration,
+    VbaRangeExpression,
     VbaRaiseEventStatement,
     VbaRedimStatement,
     VbaResumeStatement,
@@ -253,7 +254,7 @@ class VbaParser:
             if self._at(VbaTokenKind.LPAREN):
                 self._advance()
                 if not self._at(VbaTokenKind.RPAREN):
-                    bounds = self._parse_expression_list()
+                    bounds = self._parse_bounds_list()
                 self._expect(VbaTokenKind.RPAREN)
             type_name = ''
             if self._eat(VbaTokenKind.AS):
@@ -329,7 +330,7 @@ class VbaParser:
             is_array = True
             self._advance()
             if not self._at(VbaTokenKind.RPAREN):
-                bounds = self._parse_expression_list()
+                bounds = self._parse_bounds_list()
             self._expect(VbaTokenKind.RPAREN)
         type_name = ''
         is_new = False
@@ -1059,6 +1060,20 @@ class VbaParser:
         while self._eat(VbaTokenKind.COMMA):
             exprs.append(self._parse_expression())
         return exprs
+
+    def _parse_bounds_list(self) -> list[Expression]:
+        bounds: list[Expression] = []
+        bounds.append(self._parse_bound_expression())
+        while self._eat(VbaTokenKind.COMMA):
+            bounds.append(self._parse_bound_expression())
+        return bounds
+
+    def _parse_bound_expression(self) -> Expression:
+        expr = self._parse_expression()
+        if self._eat(VbaTokenKind.TO):
+            upper = self._parse_expression()
+            expr = VbaRangeExpression(start=expr, end=upper, offset=expr.offset)
+        return expr
 
     def _parse_expression(self) -> Expression:
         return self._parse_imp_expression()

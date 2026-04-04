@@ -52,3 +52,23 @@ class TestVBAASTDeobfuscator(TestUnitBase):
         self.assertIn('Module1"\n\nDim', result)
         self.assertIn('Long\n\nSub', result)
         self.assertIn('End Sub\n\nFunction', result)
+
+    def test_redim_with_to_range_bounds(self):
+        data = (
+            'Sub Test()\n'
+            'Dim a() As Byte\n'
+            'ReDim a(LBound(x) To UBound(x))\n'
+            'End Sub'
+        )
+        result = data | self.load() | str
+        self.assertNotIn(')', result.split('ReDim')[0].split('\n')[-1])
+        self.assertIn('ReDim a(LBound(x) To UBound(x))', result)
+
+    def test_redim_multidimensional_to_range(self):
+        data = (
+            'Sub Test()\n'
+            'ReDim arr(0 To 10, 1 To 5)\n'
+            'End Sub'
+        )
+        result = data | self.load() | str
+        self.assertIn('ReDim arr(0 To 10, 1 To 5)', result)
