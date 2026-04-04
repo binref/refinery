@@ -1287,7 +1287,7 @@ class Ps1Parser:
         body = self._parse_block()
         clauses.append((cond, body))
 
-        self._skip_separators()
+        self._skip_newlines()
         while self._at(Ps1TokenKind.ELSEIF):
             self._advance()
             self._skip_newlines()
@@ -1299,7 +1299,7 @@ class Ps1Parser:
             self._skip_newlines()
             body = self._parse_block()
             clauses.append((cond, body))
-            self._skip_separators()
+            self._skip_newlines()
 
         else_block = None
         if self._at(Ps1TokenKind.ELSE):
@@ -1327,7 +1327,7 @@ class Ps1Parser:
         self._expect(Ps1TokenKind.DO)
         self._skip_newlines()
         body = self._parse_block()
-        self._skip_separators()
+        self._skip_newlines()
         if self._at(Ps1TokenKind.WHILE):
             self._advance()
             self._skip_newlines()
@@ -1461,7 +1461,7 @@ class Ps1Parser:
         self._expect(Ps1TokenKind.TRY)
         self._skip_newlines()
         try_block = self._parse_block()
-        self._skip_separators()
+        self._skip_newlines()
         catch_clauses: list[Ps1CatchClause] = []
         while self._at(Ps1TokenKind.CATCH):
             self._advance()
@@ -1475,7 +1475,7 @@ class Ps1Parser:
             body = self._parse_block()
             catch_clauses.append(Ps1CatchClause(
                 offset=body.offset, types=types, body=body))
-            self._skip_separators()
+            self._skip_newlines()
         finally_block = None
         if self._at(Ps1TokenKind.FINALLY):
             self._advance()

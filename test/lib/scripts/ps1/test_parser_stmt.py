@@ -4,6 +4,7 @@ from test import TestBase
 
 from refinery.lib.scripts.ps1.parser import Ps1Parser
 from refinery.lib.scripts.ps1.model import (
+    Ps1ArrayLiteral,
     Ps1BreakStatement,
     Ps1CommandArgument,
     Ps1CommandArgumentKind,
@@ -243,3 +244,12 @@ class TestPs1ParserStatements(TestBase):
         self.assertEqual(arg.kind, Ps1CommandArgumentKind.POSITIONAL)
         self.assertIsInstance(arg.value, Ps1StringLiteral)
         self.assertEqual(arg.value.value, 'System.IO.MemoryStream')
+
+    def test_unary_comma_after_if_not_consumed(self):
+        p = Ps1Parser('if ($true) { 1 }\n,2')
+        script = p.parse()
+        self.assertEqual(len(script.body), 2)
+        self.assertIsInstance(script.body[0], Ps1IfStatement)
+        second = script.body[1]
+        self.assertIsInstance(second, Ps1ExpressionStatement)
+        self.assertIsInstance(second.expression, Ps1ArrayLiteral)
