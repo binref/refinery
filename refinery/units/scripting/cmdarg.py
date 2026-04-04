@@ -156,24 +156,22 @@ def _strip_outer_quotes(text: str) -> str:
     return text
 
 
-_RE_WMIC_CREATE = re.compile(
-    r"(?i)"
-    r"(?:\S+[\\/])?"
-    r"""["']?wmic(?:\.exe)?["']?"""
-    r"\s+(?:/\S+\s+)*"
-    r"""(?:["']?path["']?\s+)?"""
-    r"""["']?process["']?\s+"""
-    r"""["']?call["']?\s+"""
-    r"""["']?create["']?\s*"""
-)
+_RE_WMIC_CREATE = re.compile(r"""(?ix)
+    (?:\S+[\\/])?
+       (?P<quote0>["']?) wmic(?:\.exe)? (?P=quote0)\s+
+    (?:/\S+\s+)*
+    (?:(?P<quote1>["']?) path           (?P=quote1)\s+)?
+       (?P<quote2>["']?) process        (?P=quote2)\s+
+       (?P<quote3>["']?) call           (?P=quote3)\s+
+       (?P<quote4>["']?) create         (?P=quote4)\s*
+""")
 
-_RE_CMD_RUN = re.compile(
-    r"(?i)"
-    r"(?:\S+[\\/])?"
-    r"cmd(?:\.exe)?"
-    r"(?:\s+/[adqsuefv](?::\w+)?)*"
-    r"\s+/[ck]\s+"
-)
+_RE_CMD_RUN = re.compile(r"""(?ix)
+    (?:\S+[\\/])?
+       cmd(?:\.exe)?
+    (?:\s+/[adqsuefv](?::\w+)?)*
+       \s+/[ck]\s+
+""")
 
 
 class cmdarg(Unit):
