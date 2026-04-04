@@ -1226,18 +1226,18 @@ class VbaParser:
         return left
 
     def _parse_multiplicative_expression(self) -> Expression:
-        left = self._parse_exponentiation_expression()
+        left = self._parse_unary_expression()
         while self._at(VbaTokenKind.STAR, VbaTokenKind.SLASH):
             op = self._advance().value
-            right = self._parse_exponentiation_expression()
+            right = self._parse_unary_expression()
             left = VbaBinaryExpression(
                 left=left, operator=op, right=right, offset=left.offset)
         return left
 
     def _parse_exponentiation_expression(self) -> Expression:
-        left = self._parse_unary_expression()
+        left = self._parse_postfix_expression()
         while self._eat(VbaTokenKind.CARET):
-            right = self._parse_unary_expression()
+            right = self._parse_postfix_expression()
             left = VbaBinaryExpression(
                 left=left, operator='^', right=right, offset=left.offset)
         return left
@@ -1251,7 +1251,7 @@ class VbaParser:
         if self._at(VbaTokenKind.PLUS):
             self._advance()
             return self._parse_unary_expression()
-        return self._parse_postfix_expression()
+        return self._parse_exponentiation_expression()
 
     def _parse_postfix_expression(self) -> Expression:
         expr = self._parse_primary_expression()

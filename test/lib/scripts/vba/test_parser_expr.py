@@ -240,6 +240,17 @@ class TestVbaParserExpressions(TestBase):
         assert isinstance(expr.left, VbaBinaryExpression)
         self.assertEqual(expr.left.operator, '^')
 
+    def test_exponentiation_binds_tighter_than_unary_negation(self):
+        expr = self._parse_expr('-2 ^ 2')
+        assert isinstance(expr, VbaUnaryExpression)
+        self.assertEqual(expr.operator, '-')
+        assert isinstance(expr.operand, VbaBinaryExpression)
+        self.assertEqual(expr.operand.operator, '^')
+        assert isinstance(expr.operand.left, VbaIntegerLiteral)
+        self.assertEqual(expr.operand.left.value, 2)
+        assert isinstance(expr.operand.right, VbaIntegerLiteral)
+        self.assertEqual(expr.operand.right.value, 2)
+
     def test_line_continuation_with_trailing_whitespace(self):
         expr = self._parse_expr('1 + _  \n  2')
         assert isinstance(expr, VbaBinaryExpression)
