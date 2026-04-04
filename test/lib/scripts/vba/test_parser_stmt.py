@@ -24,6 +24,7 @@ from refinery.lib.scripts.vba.model import (
     VbaIntegerLiteral,
     VbaLabelStatement,
     VbaLetStatement,
+    VbaMemberAccess,
     VbaOnErrorStatement,
     VbaOptionStatement,
     VbaPropertyDeclaration,
@@ -34,6 +35,7 @@ from refinery.lib.scripts.vba.model import (
     VbaSelectCaseStatement,
     VbaSetStatement,
     VbaStopStatement,
+    VbaStringLiteral,
     VbaSubDeclaration,
     VbaTypeDefinition,
     VbaVariableDeclaration,
@@ -501,3 +503,17 @@ class TestVbaParserStatements(TestBase):
         assert isinstance(stmt, VbaIfStatement)
         self.assertEqual(len(stmt.else_body), 1)
         assert isinstance(stmt.else_body[0], VbaEndStatement)
+
+    def test_with_dot_member_assignment(self):
+        code = 'Sub T()\nWith obj\n.Name = "test"\nEnd With\nEnd Sub'
+        ast = self._parse(code)
+        with_stmt = ast.body[0].body[0]
+        assert isinstance(with_stmt, VbaWithStatement)
+        self.assertEqual(len(with_stmt.body), 1)
+        stmt = with_stmt.body[0]
+        assert isinstance(stmt, VbaLetStatement)
+        assert isinstance(stmt.target, VbaMemberAccess)
+        self.assertIsNone(stmt.target.object)
+        self.assertEqual(stmt.target.member, 'Name')
+        assert isinstance(stmt.value, VbaStringLiteral)
+        self.assertEqual(stmt.value.value, 'test')

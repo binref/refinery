@@ -1364,6 +1364,12 @@ class VbaParser:
             self._expect(VbaTokenKind.RPAREN)
             return VbaParenExpression(expression=inner, offset=offset)
 
+        if self._at(VbaTokenKind.DOT):
+            self._advance()
+            member = self._current.value
+            self._advance()
+            return VbaMemberAccess(object=None, member=member, offset=offset)
+
         if self._at(VbaTokenKind.IDENTIFIER) or self._current.kind.is_keyword:
             name = tok.value
             self._advance()
