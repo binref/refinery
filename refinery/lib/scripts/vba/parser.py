@@ -840,9 +840,9 @@ class VbaParser:
             return VbaCaseClause(is_else=True, body=body, offset=offset)
 
         tests: list[Expression] = []
-        tests.append(self._parse_expression())
+        tests.append(self._parse_bound_expression())
         while self._eat(VbaTokenKind.COMMA):
-            tests.append(self._parse_expression())
+            tests.append(self._parse_bound_expression())
         self._eat_eos()
         body = []
         while not self._at(VbaTokenKind.EOF):

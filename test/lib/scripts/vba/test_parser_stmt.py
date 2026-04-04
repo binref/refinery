@@ -18,11 +18,13 @@ from refinery.lib.scripts.vba.model import (
     VbaGotoStatement,
     VbaGosubStatement,
     VbaIfStatement,
+    VbaIntegerLiteral,
     VbaLabelStatement,
     VbaLetStatement,
     VbaOnErrorStatement,
     VbaOptionStatement,
     VbaPropertyDeclaration,
+    VbaRangeExpression,
     VbaRedimStatement,
     VbaResumeStatement,
     VbaReturnStatement,
@@ -407,6 +409,29 @@ class TestVbaParserStatements(TestBase):
         param = ast.body[0].params[0]
         self.assertTrue(param.is_optional)
         self.assertIsNotNone(param.default)
+
+    def test_select_case_range(self):
+        code = 'Sub T()\nSelect Case x\nCase 1 To 10\ny = "range"\nEnd Select\nEnd Sub'
+        ast = self._parse(code)
+        sel = ast.body[0].body[0]
+        assert isinstance(sel, VbaSelectCaseStatement)
+        self.assertEqual(len(sel.cases), 1)
+        test_expr = sel.cases[0].tests[0]
+        assert isinstance(test_expr, VbaRangeExpression)
+        assert isinstance(test_expr.start, VbaIntegerLiteral)
+        assert isinstance(test_expr.end, VbaIntegerLiteral)
+        self.assertEqual(test_expr.start.value, 1)
+        self.assertEqual(test_expr.end.value, 10)
+
+    def test_select_case_multiple_ranges(self):
+        code = 'Sub T()\nSelect Case x\nCase 1 To 5, 10 To 20\ny = "range"\nEnd Select\nEnd Sub'
+        ast = self._parse(code)
+        sel = ast.body[0].body[0]
+        assert isinstance(sel, VbaSelectCaseStatement)
+        self.assertEqual(len(sel.cases), 1)
+        self.assertEqual(len(sel.cases[0].tests), 2)
+        for test_expr in sel.cases[0].tests:
+            assert isinstance(test_expr, VbaRangeExpression)
 
     def test_if_else_with_standalone_end(self):
         code = 'If x Then\ny = 1\nElse\nEnd\nEnd If'
