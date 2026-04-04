@@ -524,11 +524,6 @@ class VbaParser:
         if kind == VbaTokenKind.INTEGER:
             label_val = self._current.value
             self._advance()
-            if self._at(VbaTokenKind.NEWLINE, VbaTokenKind.COLON, VbaTokenKind.EOF):
-                return VbaLabelStatement(label=label_val, offset=offset)
-            stmt = self._parse_statement()
-            if stmt is not None:
-                return stmt
             return VbaLabelStatement(label=label_val, offset=offset)
 
         if kind == VbaTokenKind.IDENTIFIER and not kind.is_keyword:

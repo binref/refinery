@@ -566,6 +566,15 @@ class TestVbaParserStatements(TestBase):
         assert isinstance(stmt, VbaPropertyDeclaration)
         self.assertEqual(stmt.kind, VbaPropertyKind.GET)
 
+    def test_line_number_label_with_statement(self):
+        code = 'Sub T()\n10 x = 1\nEnd Sub'
+        ast = self._parse(code)
+        body = ast.body[0].body
+        self.assertEqual(len(body), 2)
+        assert isinstance(body[0], VbaLabelStatement)
+        self.assertEqual(body[0].label, '10')
+        assert isinstance(body[1], VbaLetStatement)
+
     def test_static_dim_in_body_lowercase(self):
         code = 'Sub T()\nstatic x As Long\nEnd Sub'
         ast = self._parse(code)
