@@ -220,6 +220,30 @@ class TestPs1ParserExpressions(TestBase):
         self.assertIsInstance(expr, Ps1HashLiteral)
         self.assertEqual(len(expr.pairs), 2)
 
+    def test_hash_literal_paren_key(self):
+        expr = self._parse_expr('@{ (1+2) = "three" }')
+        self.assertIsInstance(expr, Ps1HashLiteral)
+        self.assertEqual(len(expr.pairs), 1)
+        self.assertIsInstance(expr.pairs[0][0], Ps1ParenExpression)
+
+    def test_hash_literal_negative_integer_key(self):
+        expr = self._parse_expr('@{ -1 = "neg" }')
+        self.assertIsInstance(expr, Ps1HashLiteral)
+        self.assertEqual(len(expr.pairs), 1)
+        self.assertIsInstance(expr.pairs[0][0], Ps1UnaryExpression)
+
+    def test_hash_literal_real_key(self):
+        expr = self._parse_expr('@{ 3.14 = "pi" }')
+        self.assertIsInstance(expr, Ps1HashLiteral)
+        self.assertEqual(len(expr.pairs), 1)
+        self.assertIsInstance(expr.pairs[0][0], Ps1RealLiteral)
+
+    def test_hash_literal_subexpression_key(self):
+        expr = self._parse_expr('@{ $("key") = "val" }')
+        self.assertIsInstance(expr, Ps1HashLiteral)
+        self.assertEqual(len(expr.pairs), 1)
+        self.assertIsInstance(expr.pairs[0][0], Ps1SubExpression)
+
     def test_script_block(self):
         expr = self._parse_expr('{ $x + 1 }')
         self.assertIsInstance(expr, Ps1ScriptBlock)

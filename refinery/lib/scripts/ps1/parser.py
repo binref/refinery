@@ -1116,6 +1116,22 @@ class Ps1Parser:
         self._lexer.pop_mode()
         return Ps1ArrayExpression(offset=offset, body=stmts)
 
+    def _parse_label_or_key(self) -> Expression | None:
+        if self._at(Ps1TokenKind.GENERIC_TOKEN):
+            tok = self._advance()
+            return Ps1StringLiteral(offset=tok.offset, value=tok.value, raw=tok.value)
+        if self._current.kind.is_keyword:
+            tok = self._advance()
+            return Ps1StringLiteral(offset=tok.offset, value=tok.value, raw=tok.value)
+        if self._is_statement_terminator():
+            return None
+        old = self._disable_comma
+        try:
+            self._disable_comma = True
+            return self._parse_unary_expression()
+        finally:
+            self._disable_comma = old
+
     def _parse_hash_literal(self) -> Ps1HashLiteral:
         offset = self._current.offset
         self._expect(Ps1TokenKind.AT_LBRACE)
@@ -1125,22 +1141,9 @@ class Ps1Parser:
             self._skip_newlines()
             if self._at(Ps1TokenKind.RBRACE):
                 break
-            key: Expression
-            if self._at(Ps1TokenKind.GENERIC_TOKEN):
-                tok = self._advance()
-                key = Ps1StringLiteral(offset=tok.offset, value=tok.value, raw=tok.value)
-            elif self._at(Ps1TokenKind.STRING_VERBATIM, Ps1TokenKind.STRING_EXPAND):
-                key = self._parse_string()
-            elif self._at(Ps1TokenKind.VARIABLE):
-                key = self._parse_variable()
-            elif self._at(Ps1TokenKind.INTEGER):
-                key = self._parse_integer()
-            elif self._current.kind.is_keyword:
-                tok = self._advance()
-                key = Ps1StringLiteral(offset=tok.offset, value=tok.value, raw=tok.value)
-            else:
-                self._advance()
-                continue
+            key = self._parse_label_or_key()
+            if key is None:
+                break
             self._skip_newlines()
             self._expect(Ps1TokenKind.EQUALS)
             self._skip_newlines()
@@ -1711,20 +1714,16 @@ class Ps1Parser:
         offset = self._current.offset
         self._expect(Ps1TokenKind.BREAK)
         label = None
-        if not self._is_statement_terminator() and self._at(
-            Ps1TokenKind.GENERIC_TOKEN, Ps1TokenKind.VARIABLE, Ps1TokenKind.INTEGER
-        ):
-            label = self._parse_primary_atom()
+        if not self._is_statement_terminator():
+            label = self._parse_label_or_key()
         return Ps1BreakStatement(offset=offset, label=label)
 
     def _parse_continue(self) -> Ps1ContinueStatement:
         offset = self._current.offset
         self._expect(Ps1TokenKind.CONTINUE)
         label = None
-        if not self._is_statement_terminator() and self._at(
-            Ps1TokenKind.GENERIC_TOKEN, Ps1TokenKind.VARIABLE, Ps1TokenKind.INTEGER
-        ):
-            label = self._parse_primary_atom()
+        if not self._is_statement_terminator():
+            label = self._parse_label_or_key()
         return Ps1ContinueStatement(offset=offset, label=label)
 
     def _parse_exit(self) -> Ps1ExitStatement:
