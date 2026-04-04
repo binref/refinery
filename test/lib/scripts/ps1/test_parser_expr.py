@@ -296,6 +296,16 @@ class TestPs1ParserExpressions(TestBase):
         self.assertIsInstance(expr, Ps1RealLiteral)
         self.assertAlmostEqual(expr.value, 255 * 1024 ** 3)
 
+    def test_type_literal_followed_by_comma_is_not_cast(self):
+        # [int],1 should be an array of a type expression and an integer, not a cast.
+        expr = self._parse_expr('[int], 1')
+        self.assertIsInstance(expr, Ps1ArrayLiteral)
+        self.assertEqual(len(expr.elements), 2)
+        self.assertIsInstance(expr.elements[0], Ps1TypeExpression)
+        self.assertEqual(expr.elements[0].name, 'int')
+        self.assertIsInstance(expr.elements[1], Ps1IntegerLiteral)
+        self.assertEqual(expr.elements[1].value, 1)
+
     def test_expandable_string_nested_dq_in_subexpr(self):
         expr = self._parse_expr('"value: $($x.ToString("N2"))"')
         self.assertIsInstance(expr, Ps1ExpandableString)

@@ -707,9 +707,9 @@ class Ps1Parser:
             if type_expr is not None:
                 if self._at(Ps1TokenKind.DOUBLE_COLON):
                     return self._parse_primary_postfix(type_expr)
-                if self._current.kind in _EXPRESSION_START_KINDS or self._at(
+                if (self._current.kind in _EXPRESSION_START_KINDS or self._at(
                     Ps1TokenKind.LBRACKET
-                ):
+                )) and not self._at(Ps1TokenKind.COMMA):
                     operand = self._parse_unary_expression()
                     return Ps1CastExpression(
                         offset=tok.offset, type_name=type_expr.name, operand=operand)
