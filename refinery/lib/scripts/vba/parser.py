@@ -1226,12 +1226,12 @@ class VbaParser:
         return left
 
     def _parse_exponentiation_expression(self) -> Expression:
-        base = self._parse_unary_expression()
-        if self._eat(VbaTokenKind.CARET):
-            exp = self._parse_exponentiation_expression()
-            return VbaBinaryExpression(
-                left=base, operator='^', right=exp, offset=base.offset)
-        return base
+        left = self._parse_unary_expression()
+        while self._eat(VbaTokenKind.CARET):
+            right = self._parse_unary_expression()
+            left = VbaBinaryExpression(
+                left=left, operator='^', right=right, offset=left.offset)
+        return left
 
     def _parse_unary_expression(self) -> Expression:
         if self._at(VbaTokenKind.MINUS):

@@ -233,12 +233,12 @@ class TestVbaParserExpressions(TestBase):
         assert isinstance(expr, VbaCallExpression)
         self.assertEqual(len(expr.arguments), 3)
 
-    def test_exponentiation_right_associative(self):
+    def test_exponentiation_left_associative(self):
         expr = self._parse_expr('2 ^ 3 ^ 4')
         assert isinstance(expr, VbaBinaryExpression)
         self.assertEqual(expr.operator, '^')
-        assert isinstance(expr.right, VbaBinaryExpression)
-        self.assertEqual(expr.right.operator, '^')
+        assert isinstance(expr.left, VbaBinaryExpression)
+        self.assertEqual(expr.left.operator, '^')
 
     def test_line_continuation_with_trailing_whitespace(self):
         expr = self._parse_expr('1 + _  \n  2')
