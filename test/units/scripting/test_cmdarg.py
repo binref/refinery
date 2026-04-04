@@ -153,6 +153,14 @@ class TestCmdArg(TestUnitBase):
         result = data | self.load() | str
         self.assertIn('"$x=1;$y=2"', result)
 
+    def test_wmic_double_quoted_keywords(self):
+        data = (
+            b"wmIC  'ProcESS'  \"Call\"  crEatE"
+            b'   "powershell -Command whoami"'
+        )
+        result = data | self.load() | str
+        self.assertEqual(result, 'whoami')
+
     def test_wmic_char44_comma_pattern(self):
         data = (
             b"WmiC 'PrOcesS' call 'CrEaTe'"

@@ -159,12 +159,12 @@ def _strip_outer_quotes(text: str) -> str:
 _RE_WMIC_CREATE = re.compile(
     r"(?i)"
     r"(?:\S+[\\/])?"
-    r"'?wmic(?:\.exe)?'?"
+    r"""["']?wmic(?:\.exe)?["']?"""
     r"\s+(?:/\S+\s+)*"
-    r"(?:'?path'?\s+)?"
-    r"'?process'?\s+"
-    r"'?call'?\s+"
-    r"'?create'?\s*"
+    r"""(?:["']?path["']?\s+)?"""
+    r"""["']?process["']?\s+"""
+    r"""["']?call["']?\s+"""
+    r"""["']?create["']?\s*"""
 )
 
 _RE_CMD_RUN = re.compile(
