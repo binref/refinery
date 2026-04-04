@@ -156,6 +156,18 @@ class TestPs1ParserExpressions(TestBase):
         self.assertEqual(expr.operator, '++')
         self.assertFalse(expr.prefix)
 
+    def test_unary_csplit(self):
+        expr = self._parse_expr('-csplit "hello world"')
+        self.assertIsInstance(expr, Ps1UnaryExpression)
+        self.assertEqual(expr.operator, '-csplit')
+        self.assertTrue(expr.prefix)
+
+    def test_unary_isplit(self):
+        expr = self._parse_expr('-isplit "hello world"')
+        self.assertIsInstance(expr, Ps1UnaryExpression)
+        self.assertEqual(expr.operator, '-isplit')
+        self.assertTrue(expr.prefix)
+
     def test_cast_expression(self):
         expr = self._parse_expr('[int]$x')
         self.assertIsInstance(expr, Ps1CastExpression)

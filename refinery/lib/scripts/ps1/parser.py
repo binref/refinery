@@ -682,7 +682,7 @@ class Ps1Parser:
             return Ps1UnaryExpression(
                 offset=tok.offset, operator='!', operand=operand, prefix=True)
 
-        if tok.kind == Ps1TokenKind.OPERATOR and tok.value in ('-not', '-bnot', '-split', '-join'):
+        if tok.kind == Ps1TokenKind.OPERATOR and tok.value in ('-not', '-bnot', '-split', '-csplit', '-isplit', '-join'):
             op = self._advance()
             self._skip_newlines()
             operand = self._parse_unary_expression()
