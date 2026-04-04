@@ -37,6 +37,8 @@ from refinery.lib.scripts.vba.model import (
     VbaIntegerLiteral,
     VbaLabelStatement,
     VbaLetStatement,
+    VbaLoopConditionPosition,
+    VbaLoopConditionType,
     VbaMeExpression,
     VbaMemberAccess,
     VbaModule,
@@ -727,17 +729,17 @@ class VbaParser:
         self._advance()
 
         condition: Expression | None = None
-        condition_type = ''
-        condition_position = ''
+        condition_type: VbaLoopConditionType | None = None
+        condition_position: VbaLoopConditionPosition | None = None
 
         if self._at(VbaTokenKind.WHILE):
-            condition_type = 'While'
-            condition_position = 'pre'
+            condition_type = VbaLoopConditionType.WHILE
+            condition_position = VbaLoopConditionPosition.PRE
             self._advance()
             condition = self._parse_expression()
         elif self._at(VbaTokenKind.UNTIL):
-            condition_type = 'Until'
-            condition_position = 'pre'
+            condition_type = VbaLoopConditionType.UNTIL
+            condition_position = VbaLoopConditionPosition.PRE
             self._advance()
             condition = self._parse_expression()
 
@@ -748,13 +750,13 @@ class VbaParser:
             if self._at(VbaTokenKind.LOOP):
                 self._advance()
                 if self._at(VbaTokenKind.WHILE):
-                    condition_type = 'While'
-                    condition_position = 'post'
+                    condition_type = VbaLoopConditionType.WHILE
+                    condition_position = VbaLoopConditionPosition.POST
                     self._advance()
                     condition = self._parse_expression()
                 elif self._at(VbaTokenKind.UNTIL):
-                    condition_type = 'Until'
-                    condition_position = 'post'
+                    condition_type = VbaLoopConditionType.UNTIL
+                    condition_position = VbaLoopConditionPosition.POST
                     self._advance()
                     condition = self._parse_expression()
                 break

@@ -1,9 +1,21 @@
 from __future__ import annotations
 
+import enum
+
 from dataclasses import dataclass, field
 from typing import Generator
 
 from refinery.lib.scripts import Expression, Node, Script, Statement
+
+
+class VbaLoopConditionType(enum.Enum):
+    WHILE = 'While'
+    UNTIL = 'Until'
+
+
+class VbaLoopConditionPosition(enum.Enum):
+    PRE = 'pre'
+    POST = 'post'
 
 
 @dataclass(repr=False)
@@ -580,8 +592,8 @@ class VbaForEachStatement(Statement):
 @dataclass(repr=False)
 class VbaDoLoopStatement(Statement):
     condition: Expression | None = None
-    condition_type: str = ''
-    condition_position: str = ''
+    condition_type: VbaLoopConditionType | None = None
+    condition_position: VbaLoopConditionPosition | None = None
     body: list[Statement] = field(default_factory=list)
 
     def __post_init__(self):

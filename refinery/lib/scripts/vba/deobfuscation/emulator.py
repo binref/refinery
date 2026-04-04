@@ -22,6 +22,8 @@ from refinery.lib.scripts.vba.model import (
     VbaIfStatement,
     VbaIntegerLiteral,
     VbaLetStatement,
+    VbaLoopConditionPosition,
+    VbaLoopConditionType,
     VbaModule,
     VbaParenExpression,
     VbaStringLiteral,
@@ -136,8 +138,8 @@ class _VbaInterpreter:
             counter = counter + step
 
     def _exec_do_loop(self, stmt: VbaDoLoopStatement):
-        check_before = stmt.condition_position.lower() == 'before'
-        is_until = stmt.condition_type.lower() == 'until'
+        check_before = stmt.condition_position is VbaLoopConditionPosition.PRE
+        is_until = stmt.condition_type is VbaLoopConditionType.UNTIL
         while True:
             self._tick()
             if check_before and stmt.condition is not None:

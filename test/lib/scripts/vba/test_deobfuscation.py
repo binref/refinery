@@ -319,3 +319,35 @@ class TestVbaDeobfuscation(TestBase):
         )
         result = self._full_deobfuscate(code)
         self.assertIn('F()', result)
+
+    def test_emulator_do_while_false_skips_body(self):
+        code = (
+            'Function F()\n'
+            '  F = "before"\n'
+            '  Do While False\n'
+            '    F = "inside"\n'
+            '  Loop\n'
+            'End Function\n'
+            'Sub T()\n'
+            '  G F()\n'
+            'End Sub'
+        )
+        result = self._full_deobfuscate(code)
+        self.assertIn('"before"', result)
+        self.assertNotIn('"inside"', result)
+
+    def test_emulator_do_until_true_skips_body(self):
+        code = (
+            'Function F()\n'
+            '  F = "before"\n'
+            '  Do Until True\n'
+            '    F = "inside"\n'
+            '  Loop\n'
+            'End Function\n'
+            'Sub T()\n'
+            '  G F()\n'
+            'End Sub'
+        )
+        result = self._full_deobfuscate(code)
+        self.assertIn('"before"', result)
+        self.assertNotIn('"inside"', result)

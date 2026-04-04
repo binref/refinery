@@ -39,6 +39,7 @@ from refinery.lib.scripts.vba.model import (
     VbaIntegerLiteral,
     VbaLabelStatement,
     VbaLetStatement,
+    VbaLoopConditionPosition,
     VbaMeExpression,
     VbaMemberAccess,
     VbaModule,
@@ -498,14 +499,14 @@ class VbaSynthesizer(Visitor):
 
     def visit_VbaDoLoopStatement(self, node: VbaDoLoopStatement):
         self._write('Do')
-        if node.condition_position == 'pre' and node.condition:
-            self._write(F' {node.condition_type} ')
+        if node.condition_position is VbaLoopConditionPosition.PRE and node.condition_type and node.condition:
+            self._write(F' {node.condition_type.value} ')
             self.visit(node.condition)
         self._emit_body(node.body)
         self._newline()
         self._write('Loop')
-        if node.condition_position == 'post' and node.condition:
-            self._write(F' {node.condition_type} ')
+        if node.condition_position is VbaLoopConditionPosition.POST and node.condition_type and node.condition:
+            self._write(F' {node.condition_type.value} ')
             self.visit(node.condition)
 
     def visit_VbaWhileStatement(self, node: VbaWhileStatement):

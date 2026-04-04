@@ -24,6 +24,8 @@ from refinery.lib.scripts.vba.model import (
     VbaIntegerLiteral,
     VbaLabelStatement,
     VbaLetStatement,
+    VbaLoopConditionPosition,
+    VbaLoopConditionType,
     VbaMemberAccess,
     VbaOnErrorStatement,
     VbaOptionStatement,
@@ -188,16 +190,16 @@ class TestVbaParserStatements(TestBase):
         ast = self._parse(code)
         do_stmt = ast.body[0].body[0]
         assert isinstance(do_stmt, VbaDoLoopStatement)
-        self.assertEqual(do_stmt.condition_type, 'While')
-        self.assertEqual(do_stmt.condition_position, 'pre')
+        self.assertEqual(do_stmt.condition_type, VbaLoopConditionType.WHILE)
+        self.assertEqual(do_stmt.condition_position, VbaLoopConditionPosition.PRE)
 
     def test_do_until_post(self):
         code = 'Sub T()\nDo\nx = x + 1\nLoop Until x > 10\nEnd Sub'
         ast = self._parse(code)
         do_stmt = ast.body[0].body[0]
         assert isinstance(do_stmt, VbaDoLoopStatement)
-        self.assertEqual(do_stmt.condition_type, 'Until')
-        self.assertEqual(do_stmt.condition_position, 'post')
+        self.assertEqual(do_stmt.condition_type, VbaLoopConditionType.UNTIL)
+        self.assertEqual(do_stmt.condition_position, VbaLoopConditionPosition.POST)
 
     def test_do_loop_infinite(self):
         code = 'Sub T()\nDo\nx = x + 1\nLoop\nEnd Sub'
