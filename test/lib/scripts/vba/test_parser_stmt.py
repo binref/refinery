@@ -532,3 +532,43 @@ class TestVbaParserStatements(TestBase):
         self.assertEqual(stmt.target.member, 'Name')
         assert isinstance(stmt.value, VbaStringLiteral)
         self.assertEqual(stmt.value.value, 'test')
+
+    def test_exit_sub_lowercase(self):
+        code = 'Sub T()\nexit sub\nEnd Sub'
+        ast = self._parse(code)
+        stmt = ast.body[0].body[0]
+        assert isinstance(stmt, VbaExitStatement)
+        self.assertEqual(stmt.kind, VbaExitKind.SUB)
+
+    def test_exit_function_uppercase(self):
+        code = 'Function T() As Long\nEXIT FUNCTION\nEnd Function'
+        ast = self._parse(code)
+        stmt = ast.body[0].body[0]
+        assert isinstance(stmt, VbaExitStatement)
+        self.assertEqual(stmt.kind, VbaExitKind.FUNCTION)
+
+    def test_dim_lowercase(self):
+        ast = self._parse('dim x As Long')
+        stmt = ast.body[0]
+        assert isinstance(stmt, VbaVariableDeclaration)
+        self.assertEqual(stmt.scope, VbaScopeModifier.DIM)
+        self.assertEqual(stmt.declarators[0].name, 'x')
+
+    def test_public_sub_lowercase(self):
+        ast = self._parse('public Sub Foo()\nEnd Sub')
+        stmt = ast.body[0]
+        assert isinstance(stmt, VbaSubDeclaration)
+        self.assertEqual(stmt.scope, VbaScopeModifier.PUBLIC)
+
+    def test_property_get_lowercase(self):
+        ast = self._parse('Property get Foo() As Long\nEnd Property')
+        stmt = ast.body[0]
+        assert isinstance(stmt, VbaPropertyDeclaration)
+        self.assertEqual(stmt.kind, VbaPropertyKind.GET)
+
+    def test_static_dim_in_body_lowercase(self):
+        code = 'Sub T()\nstatic x As Long\nEnd Sub'
+        ast = self._parse(code)
+        stmt = ast.body[0].body[0]
+        assert isinstance(stmt, VbaVariableDeclaration)
+        self.assertEqual(stmt.scope, VbaScopeModifier.STATIC)

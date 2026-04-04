@@ -161,7 +161,7 @@ class VbaParser:
         scope = VbaScopeModifier.NONE
         is_static = False
         if kw in ('public', 'private'):
-            scope = VbaScopeModifier(self._current.value)
+            scope = VbaScopeModifier(self._current.value.capitalize())
             self._advance()
             kw = self._current.value.lower()
         if kw == 'static':
@@ -184,7 +184,7 @@ class VbaParser:
         if kw == 'const':
             return self._parse_const_declaration(scope)
         if kw in ('dim', 'global'):
-            dim_scope = scope if scope is not VbaScopeModifier.NONE else VbaScopeModifier(self._current.value)
+            dim_scope = scope if scope is not VbaScopeModifier.NONE else VbaScopeModifier(self._current.value.capitalize())
             return self._parse_variable_declaration(dim_scope)
         if kw == 'event':
             return self._parse_event_declaration(scope)
@@ -412,7 +412,7 @@ class VbaParser:
     ) -> VbaPropertyDeclaration:
         offset = self._current.offset
         self._advance()
-        kind = VbaPropertyKind(self._current.value)
+        kind = VbaPropertyKind(self._current.value.capitalize())
         self._advance()
         name = self._current.value
         self._advance()
@@ -558,7 +558,7 @@ class VbaParser:
         if kw == 'call':
             return self._parse_call_statement()
         if kw == 'dim' or kw == 'static':
-            return self._parse_variable_declaration(VbaScopeModifier(self._current.value))
+            return self._parse_variable_declaration(VbaScopeModifier(self._current.value.capitalize()))
         if kw == 'redim':
             return self._parse_redim_statement()
         if kw == 'const':
@@ -978,7 +978,7 @@ class VbaParser:
     def _parse_exit_statement(self) -> VbaExitStatement:
         offset = self._current.offset
         self._advance()
-        kind = VbaExitKind(self._current.value)
+        kind = VbaExitKind(self._current.value.capitalize())
         self._advance()
         return VbaExitStatement(kind=kind, offset=offset)
 
