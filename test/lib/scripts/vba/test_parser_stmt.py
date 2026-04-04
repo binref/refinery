@@ -407,3 +407,11 @@ class TestVbaParserStatements(TestBase):
         param = ast.body[0].params[0]
         self.assertTrue(param.is_optional)
         self.assertIsNotNone(param.default)
+
+    def test_if_else_with_standalone_end(self):
+        code = 'If x Then\ny = 1\nElse\nEnd\nEnd If'
+        ast = self._parse(code)
+        stmt = ast.body[0]
+        assert isinstance(stmt, VbaIfStatement)
+        self.assertEqual(len(stmt.else_body), 1)
+        assert isinstance(stmt.else_body[0], VbaEndStatement)

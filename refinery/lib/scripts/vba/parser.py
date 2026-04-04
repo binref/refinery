@@ -596,15 +596,11 @@ class VbaParser:
         body: list[Statement] = []
         elseif_clauses: list[VbaElseIfClause] = []
         else_body: list[Statement] = []
+        found_else = False
 
         while not self._at(VbaTokenKind.EOF):
-            if self._at(VbaTokenKind.END):
-                saved = self._current
-                self._advance()
-                if self._current.value.lower() == 'if':
-                    self._advance()
-                    break
-                self._current = saved
+            if self._eat_end('if'):
+                break
             if self._at(VbaTokenKind.ELSEIF):
                 ei_offset = self._current.offset
                 self._advance()
@@ -617,6 +613,7 @@ class VbaParser:
             if self._at(VbaTokenKind.ELSE):
                 self._advance()
                 self._eat_eos()
+                found_else = True
                 break
             stmt = self._parse_statement()
             if stmt is not None:
@@ -626,15 +623,10 @@ class VbaParser:
                     body.append(stmt)
             self._eat_eos()
 
-        if self._current.value.lower() not in ('end', ''):
+        if found_else:
             while not self._at(VbaTokenKind.EOF):
-                if self._at(VbaTokenKind.END):
-                    saved = self._current
-                    self._advance()
-                    if self._current.value.lower() == 'if':
-                        self._advance()
-                        break
-                    self._current = saved
+                if self._eat_end('if'):
+                    break
                 stmt = self._parse_statement()
                 if stmt is not None:
                     else_body.append(stmt)
