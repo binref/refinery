@@ -389,6 +389,12 @@ class Ps1Lexer:
         if m:
             start = self.pos
             self.pos = m.end()
+            if (self.pos + 1 < len(src)
+                    and src[self.pos].lower() in 'kmgtp'
+                    and src[self.pos + 1].lower() == 'b'):
+                text = src[start:self.pos + 2]
+                self.pos += 2
+                return Ps1Token(Ps1TokenKind.REAL, text, start)
             return Ps1Token(Ps1TokenKind.INTEGER, m.group(), start)
         return None
 

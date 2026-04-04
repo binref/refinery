@@ -281,6 +281,21 @@ class TestPs1ParserExpressions(TestBase):
         for arg in expr.arguments:
             self.assertNotIsInstance(arg, Ps1ArrayLiteral)
 
+    def test_hex_literal_with_multiplier_suffix(self):
+        expr = self._parse_expr('0x10kb')
+        self.assertIsInstance(expr, Ps1RealLiteral)
+        self.assertAlmostEqual(expr.value, 16 * 1024)
+
+    def test_binary_literal_with_multiplier_suffix(self):
+        expr = self._parse_expr('0b1010mb')
+        self.assertIsInstance(expr, Ps1RealLiteral)
+        self.assertAlmostEqual(expr.value, 10 * 1024 ** 2)
+
+    def test_hex_literal_with_gb_suffix(self):
+        expr = self._parse_expr('0xFFgb')
+        self.assertIsInstance(expr, Ps1RealLiteral)
+        self.assertAlmostEqual(expr.value, 255 * 1024 ** 3)
+
     def test_expandable_string_nested_dq_in_subexpr(self):
         expr = self._parse_expr('"value: $($x.ToString("N2"))"')
         self.assertIsInstance(expr, Ps1ExpandableString)

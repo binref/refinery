@@ -271,6 +271,24 @@ class TestPs1Lexer(TestBase):
         tokens = self._tokens('1e3mb')
         self.assertEqual(tokens, [(Ps1TokenKind.REAL, '1e3mb')])
 
+    def test_hex_integer_with_multiplier_suffix(self):
+        for suffix in ('kb', 'mb', 'gb', 'tb', 'pb', 'KB', 'MB', 'GB', 'TB', 'PB'):
+            src = F'0x10{suffix}'
+            tokens = self._tokens(src)
+            self.assertEqual(
+                tokens, [(Ps1TokenKind.REAL, src)],
+                F'{src} should be a single REAL token',
+            )
+
+    def test_binary_integer_with_multiplier_suffix(self):
+        for suffix in ('kb', 'mb', 'gb', 'tb', 'pb', 'KB', 'MB', 'GB', 'TB', 'PB'):
+            src = F'0b1010{suffix}'
+            tokens = self._tokens(src)
+            self.assertEqual(
+                tokens, [(Ps1TokenKind.REAL, src)],
+                F'{src} should be a single REAL token',
+            )
+
     def test_expandable_here_string_with_subexpression(self):
         src = '@"\n$($x.ToString())\n"@'
         tokens = self._tokens(src)

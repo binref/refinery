@@ -852,9 +852,12 @@ class Ps1Parser:
             if text.lower().endswith(suffix):
                 text = text[:-len(suffix)]
                 try:
-                    value = float(text) * mult
-                except ValueError:
-                    pass
+                    value = float(int(text, 0)) * mult
+                except (ValueError, OverflowError):
+                    try:
+                        value = float(text) * mult
+                    except ValueError:
+                        pass
                 break
         else:
             for suffix in ('d', 'D'):
