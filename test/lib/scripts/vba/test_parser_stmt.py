@@ -12,6 +12,7 @@ from refinery.lib.scripts.vba.model import (
     VbaEndStatement,
     VbaEnumDefinition,
     VbaErrorNode,
+    VbaExitKind,
     VbaExitStatement,
     VbaExpressionStatement,
     VbaForEachStatement,
@@ -27,13 +28,17 @@ from refinery.lib.scripts.vba.model import (
     VbaLoopConditionPosition,
     VbaLoopConditionType,
     VbaMemberAccess,
+    VbaOnErrorAction,
     VbaOnErrorStatement,
     VbaOptionStatement,
+    VbaParameterPassing,
     VbaPropertyDeclaration,
+    VbaPropertyKind,
     VbaRangeExpression,
     VbaRedimStatement,
     VbaResumeStatement,
     VbaReturnStatement,
+    VbaScopeModifier,
     VbaSelectCaseStatement,
     VbaSetStatement,
     VbaStopStatement,
@@ -111,7 +116,7 @@ class TestVbaParserStatements(TestBase):
         assert isinstance(stmt, VbaSubDeclaration)
         self.assertEqual(len(stmt.params), 1)
         self.assertEqual(stmt.params[0].name, 'name')
-        self.assertEqual(stmt.params[0].passing, 'ByVal')
+        self.assertEqual(stmt.params[0].passing, VbaParameterPassing.BY_VAL)
         self.assertEqual(stmt.params[0].type_name, 'String')
 
     def test_function_with_return_type(self):
@@ -126,7 +131,7 @@ class TestVbaParserStatements(TestBase):
         ast = self._parse('Property Get Name() As String\nName = "test"\nEnd Property')
         stmt = ast.body[0]
         assert isinstance(stmt, VbaPropertyDeclaration)
-        self.assertEqual(stmt.kind, 'Get')
+        self.assertEqual(stmt.kind, VbaPropertyKind.GET)
         self.assertEqual(stmt.name, 'Name')
         self.assertEqual(stmt.return_type, 'String')
 
@@ -134,7 +139,7 @@ class TestVbaParserStatements(TestBase):
         ast = self._parse('Property Let Name(ByVal v As String)\nm_name = v\nEnd Property')
         stmt = ast.body[0]
         assert isinstance(stmt, VbaPropertyDeclaration)
-        self.assertEqual(stmt.kind, 'Let')
+        self.assertEqual(stmt.kind, VbaPropertyKind.LET)
 
     def test_if_block(self):
         code = 'Sub T()\nIf x > 0 Then\ny = 1\nEnd If\nEnd Sub'
@@ -279,14 +284,14 @@ class TestVbaParserStatements(TestBase):
         ast = self._parse(code)
         stmt = ast.body[0].body[0]
         assert isinstance(stmt, VbaOnErrorStatement)
-        self.assertEqual(stmt.action, 'ResumeNext')
+        self.assertEqual(stmt.action, VbaOnErrorAction.RESUME_NEXT)
 
     def test_on_error_goto(self):
         code = 'Sub T()\nOn Error GoTo Handler\nEnd Sub'
         ast = self._parse(code)
         stmt = ast.body[0].body[0]
         assert isinstance(stmt, VbaOnErrorStatement)
-        self.assertEqual(stmt.action, 'GoTo')
+        self.assertEqual(stmt.action, VbaOnErrorAction.GOTO)
         self.assertEqual(stmt.label, 'Handler')
 
     def test_on_error_goto_0(self):
@@ -301,14 +306,14 @@ class TestVbaParserStatements(TestBase):
         ast = self._parse(code)
         stmt = ast.body[0].body[0]
         assert isinstance(stmt, VbaExitStatement)
-        self.assertEqual(stmt.kind, 'Sub')
+        self.assertEqual(stmt.kind, VbaExitKind.SUB)
 
     def test_exit_function(self):
         code = 'Function T() As Long\nExit Function\nEnd Function'
         ast = self._parse(code)
         stmt = ast.body[0].body[0]
         assert isinstance(stmt, VbaExitStatement)
-        self.assertEqual(stmt.kind, 'Function')
+        self.assertEqual(stmt.kind, VbaExitKind.FUNCTION)
 
     def test_exit_for(self):
         code = 'Sub T()\nFor i = 1 To 10\nExit For\nNext\nEnd Sub'
@@ -317,7 +322,7 @@ class TestVbaParserStatements(TestBase):
         assert isinstance(for_stmt, VbaForStatement)
         exit_stmt = for_stmt.body[0]
         assert isinstance(exit_stmt, VbaExitStatement)
-        self.assertEqual(exit_stmt.kind, 'For')
+        self.assertEqual(exit_stmt.kind, VbaExitKind.FOR)
 
     def test_return_statement(self):
         code = 'Sub T()\nReturn\nEnd Sub'
@@ -396,13 +401,13 @@ class TestVbaParserStatements(TestBase):
         ast = self._parse('Public Sub Test()\nEnd Sub')
         stmt = ast.body[0]
         assert isinstance(stmt, VbaSubDeclaration)
-        self.assertEqual(stmt.scope, 'Public')
+        self.assertEqual(stmt.scope, VbaScopeModifier.PUBLIC)
 
     def test_private_function(self):
         ast = self._parse('Private Function Foo() As Long\nEnd Function')
         stmt = ast.body[0]
         assert isinstance(stmt, VbaFunctionDeclaration)
-        self.assertEqual(stmt.scope, 'Private')
+        self.assertEqual(stmt.scope, VbaScopeModifier.PRIVATE)
 
     def test_static_sub(self):
         ast = self._parse('Static Sub Test()\nEnd Sub')

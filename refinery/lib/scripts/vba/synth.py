@@ -46,9 +46,11 @@ from refinery.lib.scripts.vba.model import (
     VbaNewExpression,
     VbaNothingLiteral,
     VbaNullLiteral,
+    VbaOnErrorAction,
     VbaOnErrorStatement,
     VbaOptionStatement,
     VbaParameter,
+    VbaParameterPassing,
     VbaParenExpression,
     VbaPropertyDeclaration,
     VbaRaiseEventStatement,
@@ -56,6 +58,7 @@ from refinery.lib.scripts.vba.model import (
     VbaRedimStatement,
     VbaResumeStatement,
     VbaReturnStatement,
+    VbaScopeModifier,
     VbaSelectCaseStatement,
     VbaSetStatement,
     VbaStopStatement,
@@ -261,8 +264,8 @@ class VbaSynthesizer(Visitor):
             self._write(F' {node.value}')
 
     def visit_VbaDeclareStatement(self, node: VbaDeclareStatement):
-        if node.scope:
-            self._write(F'{node.scope} ')
+        if node.scope is not VbaScopeModifier.NONE:
+            self._write(F'{node.scope.value} ')
         kind = 'Function' if node.is_function else 'Sub'
         self._write(F'Declare {kind} {node.name}')
         if node.lib:
@@ -274,8 +277,8 @@ class VbaSynthesizer(Visitor):
             self._write(F' As {node.return_type}')
 
     def visit_VbaTypeDefinition(self, node: VbaTypeDefinition):
-        if node.scope:
-            self._write(F'{node.scope} ')
+        if node.scope is not VbaScopeModifier.NONE:
+            self._write(F'{node.scope.value} ')
         self._write(F'Type {node.name}')
         self._depth += 1
         for m in node.members:
@@ -292,8 +295,8 @@ class VbaSynthesizer(Visitor):
         self._write('End Type')
 
     def visit_VbaEnumDefinition(self, node: VbaEnumDefinition):
-        if node.scope:
-            self._write(F'{node.scope} ')
+        if node.scope is not VbaScopeModifier.NONE:
+            self._write(F'{node.scope.value} ')
         self._write(F'Enum {node.name}')
         self._depth += 1
         for m in node.members:
@@ -310,8 +313,8 @@ class VbaSynthesizer(Visitor):
             self.visit(node.value)
 
     def visit_VbaConstDeclaration(self, node: VbaConstDeclaration):
-        if node.scope:
-            self._write(F'{node.scope} ')
+        if node.scope is not VbaScopeModifier.NONE:
+            self._write(F'{node.scope.value} ')
         self._write(F'Const {node.name}')
         if node.type_name:
             self._write(F' As {node.type_name}')
@@ -320,7 +323,7 @@ class VbaSynthesizer(Visitor):
             self.visit(node.value)
 
     def visit_VbaVariableDeclaration(self, node: VbaVariableDeclaration):
-        self._write(F'{node.scope} ')
+        self._write(F'{node.scope.value} ')
         for i, d in enumerate(node.declarators):
             if i > 0:
                 self._write(', ')
@@ -339,16 +342,16 @@ class VbaSynthesizer(Visitor):
                 self._write(F' As {node.type_name}')
 
     def visit_VbaEventDeclaration(self, node: VbaEventDeclaration):
-        if node.scope:
-            self._write(F'{node.scope} ')
+        if node.scope is not VbaScopeModifier.NONE:
+            self._write(F'{node.scope.value} ')
         self._write(F'Event {node.name}')
         self._emit_params(node.params)
 
     def visit_VbaParameter(self, node: VbaParameter):
         if node.is_optional:
             self._write('Optional ')
-        if node.passing:
-            self._write(F'{node.passing} ')
+        if node.passing is not VbaParameterPassing.NONE:
+            self._write(F'{node.passing.value} ')
         if node.is_paramarray:
             self._write('ParamArray ')
         self._write(node.name)
@@ -361,8 +364,8 @@ class VbaSynthesizer(Visitor):
             self.visit(node.default)
 
     def visit_VbaSubDeclaration(self, node: VbaSubDeclaration):
-        if node.scope:
-            self._write(F'{node.scope} ')
+        if node.scope is not VbaScopeModifier.NONE:
+            self._write(F'{node.scope.value} ')
         if node.is_static:
             self._write('Static ')
         self._write(F'Sub {node.name}')
@@ -372,8 +375,8 @@ class VbaSynthesizer(Visitor):
         self._write('End Sub')
 
     def visit_VbaFunctionDeclaration(self, node: VbaFunctionDeclaration):
-        if node.scope:
-            self._write(F'{node.scope} ')
+        if node.scope is not VbaScopeModifier.NONE:
+            self._write(F'{node.scope.value} ')
         if node.is_static:
             self._write('Static ')
         self._write(F'Function {node.name}')
@@ -385,11 +388,11 @@ class VbaSynthesizer(Visitor):
         self._write('End Function')
 
     def visit_VbaPropertyDeclaration(self, node: VbaPropertyDeclaration):
-        if node.scope:
-            self._write(F'{node.scope} ')
+        if node.scope is not VbaScopeModifier.NONE:
+            self._write(F'{node.scope.value} ')
         if node.is_static:
             self._write('Static ')
-        self._write(F'Property {node.kind} {node.name}')
+        self._write(F'Property {node.kind.value} {node.name}')
         self._emit_params(node.params)
         if node.return_type:
             self._write(F' As {node.return_type}')
@@ -552,15 +555,15 @@ class VbaSynthesizer(Visitor):
         self._write(F'GoSub {node.label}')
 
     def visit_VbaOnErrorStatement(self, node: VbaOnErrorStatement):
-        if node.action == 'ResumeNext':
+        if node.action is VbaOnErrorAction.RESUME_NEXT:
             self._write('On Error Resume Next')
-        elif node.action == 'GoTo':
+        elif node.action is VbaOnErrorAction.GOTO:
             self._write(F'On Error GoTo {node.label}')
         else:
             self._write('On Error')
 
     def visit_VbaExitStatement(self, node: VbaExitStatement):
-        self._write(F'Exit {node.kind}')
+        self._write(F'Exit {node.kind.value}')
 
     def visit_VbaReturnStatement(self, node: VbaReturnStatement):
         self._write('Return')

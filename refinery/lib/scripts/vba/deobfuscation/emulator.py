@@ -13,6 +13,7 @@ from refinery.lib.scripts.vba.model import (
     VbaConstDeclaration,
     VbaDebugPrintStatement,
     VbaDoLoopStatement,
+    VbaExitKind,
     VbaExitStatement,
     VbaExpressionStatement,
     VbaFloatLiteral,
@@ -81,7 +82,7 @@ class _VbaInterpreter:
         if isinstance(stmt, VbaDoLoopStatement):
             return self._exec_do_loop(stmt)
         if isinstance(stmt, VbaExitStatement):
-            if stmt.kind.lower() == 'function':
+            if stmt.kind is VbaExitKind.FUNCTION:
                 raise _ExitFunctionSignal
             raise _VbaInterpreterError
         if isinstance(stmt, VbaExpressionStatement):

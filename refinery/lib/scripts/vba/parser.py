@@ -45,16 +45,20 @@ from refinery.lib.scripts.vba.model import (
     VbaNewExpression,
     VbaNothingLiteral,
     VbaNullLiteral,
+    VbaOnErrorAction,
     VbaOnErrorStatement,
     VbaOptionStatement,
     VbaParameter,
+    VbaParameterPassing,
     VbaParenExpression,
     VbaPropertyDeclaration,
+    VbaPropertyKind,
     VbaRangeExpression,
     VbaRaiseEventStatement,
     VbaRedimStatement,
     VbaResumeStatement,
     VbaReturnStatement,
+    VbaScopeModifier,
     VbaSelectCaseStatement,
     VbaSetStatement,
     VbaStopStatement,
@@ -67,6 +71,7 @@ from refinery.lib.scripts.vba.model import (
     VbaVariableDeclarator,
     VbaWhileStatement,
     VbaWithStatement,
+    VbaExitKind,
 )
 from refinery.lib.scripts.vba.token import VbaToken, VbaTokenKind
 
@@ -153,10 +158,10 @@ class VbaParser:
         if kw == 'option':
             return self._parse_option_statement()
 
-        scope = ''
+        scope = VbaScopeModifier.NONE
         is_static = False
         if kw in ('public', 'private'):
-            scope = self._current.value
+            scope = VbaScopeModifier(self._current.value)
             self._advance()
             kw = self._current.value.lower()
         if kw == 'static':
@@ -179,15 +184,17 @@ class VbaParser:
         if kw == 'const':
             return self._parse_const_declaration(scope)
         if kw in ('dim', 'global'):
-            return self._parse_variable_declaration(scope or self._current.value)
+            dim_scope = scope if scope is not VbaScopeModifier.NONE else VbaScopeModifier(self._current.value)
+            return self._parse_variable_declaration(dim_scope)
         if kw == 'event':
             return self._parse_event_declaration(scope)
         if kw == 'implements':
             return self._parse_implements_statement()
-        if scope and not is_static:
+        if scope is not VbaScopeModifier.NONE and not is_static:
             return self._parse_variable_declaration(scope)
         if kw == 'withevents':
-            return self._parse_variable_declaration(scope or 'Private')
+            we_scope = scope if scope is not VbaScopeModifier.NONE else VbaScopeModifier.PRIVATE
+            return self._parse_variable_declaration(we_scope)
 
         return self._parse_statement()
 
@@ -203,7 +210,7 @@ class VbaParser:
         self._eat_eos()
         return VbaOptionStatement(keyword=keyword, value=value, offset=offset)
 
-    def _parse_declare_statement(self, scope: str) -> VbaDeclareStatement:
+    def _parse_declare_statement(self, scope: VbaScopeModifier) -> VbaDeclareStatement:
         offset = self._current.offset
         self._advance()
         if self._current.value.lower() == 'ptrsafe':
@@ -235,7 +242,7 @@ class VbaParser:
             return_type=return_type, offset=offset,
         )
 
-    def _parse_type_definition(self, scope: str) -> VbaTypeDefinition:
+    def _parse_type_definition(self, scope: VbaScopeModifier) -> VbaTypeDefinition:
         offset = self._current.offset
         self._advance()
         name = self._current.value
@@ -267,7 +274,7 @@ class VbaParser:
         self._eat_eos()
         return VbaTypeDefinition(scope=scope, name=name, members=members, offset=offset)
 
-    def _parse_enum_definition(self, scope: str) -> VbaEnumDefinition:
+    def _parse_enum_definition(self, scope: VbaScopeModifier) -> VbaEnumDefinition:
         offset = self._current.offset
         self._advance()
         name = self._current.value
@@ -292,7 +299,7 @@ class VbaParser:
         self._eat_eos()
         return VbaEnumDefinition(scope=scope, name=name, members=members, offset=offset)
 
-    def _parse_const_declaration(self, scope: str) -> VbaConstDeclaration:
+    def _parse_const_declaration(self, scope: VbaScopeModifier) -> VbaConstDeclaration:
         offset = self._current.offset
         self._advance()
         name = self._current.value
@@ -308,7 +315,7 @@ class VbaParser:
             value=value, offset=offset,
         )
 
-    def _parse_variable_declaration(self, scope: str) -> VbaVariableDeclaration:
+    def _parse_variable_declaration(self, scope: VbaScopeModifier) -> VbaVariableDeclaration:
         offset = self._current.offset
         if self._current.value.lower() in ('dim', 'global', 'withevents'):
             self._advance()
@@ -343,7 +350,7 @@ class VbaParser:
             bounds=bounds, is_new=is_new, offset=offset,
         )
 
-    def _parse_event_declaration(self, scope: str) -> VbaEventDeclaration:
+    def _parse_event_declaration(self, scope: VbaScopeModifier) -> VbaEventDeclaration:
         offset = self._current.offset
         self._advance()
         name = self._current.value
@@ -363,7 +370,7 @@ class VbaParser:
         return VbaImplementsStatement(name=name, offset=offset)
 
     def _parse_sub_declaration(
-        self, scope: str, is_static: bool,
+        self, scope: VbaScopeModifier, is_static: bool,
     ) -> VbaSubDeclaration:
         offset = self._current.offset
         self._advance()
@@ -380,7 +387,7 @@ class VbaParser:
         )
 
     def _parse_function_declaration(
-        self, scope: str, is_static: bool,
+        self, scope: VbaScopeModifier, is_static: bool,
     ) -> VbaFunctionDeclaration:
         offset = self._current.offset
         self._advance()
@@ -401,11 +408,11 @@ class VbaParser:
         )
 
     def _parse_property_declaration(
-        self, scope: str, is_static: bool,
+        self, scope: VbaScopeModifier, is_static: bool,
     ) -> VbaPropertyDeclaration:
         offset = self._current.offset
         self._advance()
-        kind = self._current.value
+        kind = VbaPropertyKind(self._current.value)
         self._advance()
         name = self._current.value
         self._advance()
@@ -437,16 +444,16 @@ class VbaParser:
         offset = self._current.offset
         is_optional = False
         is_paramarray = False
-        passing = ''
+        passing = VbaParameterPassing.NONE
 
         if self._current.value.lower() == 'optional':
             is_optional = True
             self._advance()
         if self._at(VbaTokenKind.BYVAL):
-            passing = 'ByVal'
+            passing = VbaParameterPassing.BY_VAL
             self._advance()
         elif self._at(VbaTokenKind.BYREF):
-            passing = 'ByRef'
+            passing = VbaParameterPassing.BY_REF
             self._advance()
         if self._current.value.lower() == 'paramarray':
             is_paramarray = True
@@ -551,11 +558,11 @@ class VbaParser:
         if kw == 'call':
             return self._parse_call_statement()
         if kw == 'dim' or kw == 'static':
-            return self._parse_variable_declaration(self._current.value)
+            return self._parse_variable_declaration(VbaScopeModifier(self._current.value))
         if kw == 'redim':
             return self._parse_redim_statement()
         if kw == 'const':
-            return self._parse_const_declaration('')
+            return self._parse_const_declaration(VbaScopeModifier.NONE)
         if kw == 'goto':
             return self._parse_goto_statement()
         if kw == 'gosub':
@@ -953,21 +960,21 @@ class VbaParser:
                 if self._current.value.lower() == 'next':
                     self._advance()
                     return VbaOnErrorStatement(
-                        action='ResumeNext', offset=offset)
+                        action=VbaOnErrorAction.RESUME_NEXT, offset=offset)
                 return VbaOnErrorStatement(
-                    action='Resume', offset=offset)
+                    action=VbaOnErrorAction.RESUME, offset=offset)
             if self._at(VbaTokenKind.GOTO):
                 self._advance()
                 label = self._current.value
                 self._advance()
                 return VbaOnErrorStatement(
-                    action='GoTo', label=label, offset=offset)
-        return VbaOnErrorStatement(action='', offset=offset)
+                    action=VbaOnErrorAction.GOTO, label=label, offset=offset)
+        return VbaOnErrorStatement(action=VbaOnErrorAction.NONE, offset=offset)
 
     def _parse_exit_statement(self) -> VbaExitStatement:
         offset = self._current.offset
         self._advance()
-        kind = self._current.value
+        kind = VbaExitKind(self._current.value)
         self._advance()
         return VbaExitStatement(kind=kind, offset=offset)
 

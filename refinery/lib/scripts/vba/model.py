@@ -18,6 +18,42 @@ class VbaLoopConditionPosition(enum.Enum):
     POST = 'post'
 
 
+class VbaScopeModifier(enum.Enum):
+    NONE    = ''        # noqa
+    PUBLIC  = 'Public'  # noqa
+    PRIVATE = 'Private' # noqa
+    DIM     = 'Dim'     # noqa
+    GLOBAL  = 'Global'  # noqa
+    STATIC  = 'Static'  # noqa
+
+
+class VbaPropertyKind(enum.Enum):
+    GET = 'Get'
+    LET = 'Let'
+    SET = 'Set'
+
+
+class VbaExitKind(enum.Enum):
+    SUB      = 'Sub'      # noqa
+    FUNCTION = 'Function' # noqa
+    DO       = 'Do'       # noqa
+    FOR      = 'For'      # noqa
+    PROPERTY = 'Property' # noqa
+
+
+class VbaOnErrorAction(enum.Enum):
+    NONE        = ''           # noqa
+    GOTO        = 'GoTo'      # noqa
+    RESUME      = 'Resume'    # noqa
+    RESUME_NEXT = 'ResumeNext' # noqa
+
+
+class VbaParameterPassing(enum.Enum):
+    NONE   = ''      # noqa
+    BY_VAL = 'ByVal' # noqa
+    BY_REF = 'ByRef' # noqa
+
+
 @dataclass(repr=False)
 class VbaErrorNode(Node):
     text: str = ''
@@ -268,7 +304,7 @@ class VbaOptionStatement(Statement):
 
 @dataclass(repr=False)
 class VbaDeclareStatement(Statement):
-    scope: str = ''
+    scope: VbaScopeModifier = VbaScopeModifier.NONE
     name: str = ''
     lib: str = ''
     alias: str = ''
@@ -286,7 +322,7 @@ class VbaDeclareStatement(Statement):
 
 @dataclass(repr=False)
 class VbaTypeDefinition(Statement):
-    scope: str = ''
+    scope: VbaScopeModifier = VbaScopeModifier.NONE
     name: str = ''
     members: list[VbaVariableDeclarator] = field(default_factory=list)
 
@@ -299,7 +335,7 @@ class VbaTypeDefinition(Statement):
 
 @dataclass(repr=False)
 class VbaEnumDefinition(Statement):
-    scope: str = ''
+    scope: VbaScopeModifier = VbaScopeModifier.NONE
     name: str = ''
     members: list[VbaEnumMember] = field(default_factory=list)
 
@@ -325,7 +361,7 @@ class VbaEnumMember(Node):
 
 @dataclass(repr=False)
 class VbaConstDeclaration(Statement):
-    scope: str = ''
+    scope: VbaScopeModifier = VbaScopeModifier.NONE
     name: str = ''
     type_name: str = ''
     value: Expression | None = None
@@ -355,7 +391,7 @@ class VbaVariableDeclarator(Node):
 
 @dataclass(repr=False)
 class VbaVariableDeclaration(Statement):
-    scope: str = ''
+    scope: VbaScopeModifier = VbaScopeModifier.NONE
     declarators: list[VbaVariableDeclarator] = field(default_factory=list)
 
     def __post_init__(self):
@@ -367,7 +403,7 @@ class VbaVariableDeclaration(Statement):
 
 @dataclass(repr=False)
 class VbaEventDeclaration(Statement):
-    scope: str = ''
+    scope: VbaScopeModifier = VbaScopeModifier.NONE
     name: str = ''
     params: list[VbaParameter] = field(default_factory=list)
 
@@ -381,7 +417,7 @@ class VbaEventDeclaration(Statement):
 @dataclass(repr=False)
 class VbaParameter(Node):
     name: str = ''
-    passing: str = ''
+    passing: VbaParameterPassing = VbaParameterPassing.NONE
     type_name: str = ''
     is_optional: bool = False
     is_paramarray: bool = False
@@ -398,7 +434,7 @@ class VbaParameter(Node):
 
 @dataclass(repr=False)
 class VbaSubDeclaration(Statement):
-    scope: str = ''
+    scope: VbaScopeModifier = VbaScopeModifier.NONE
     name: str = ''
     params: list[VbaParameter] = field(default_factory=list)
     body: list[Statement] = field(default_factory=list)
@@ -414,7 +450,7 @@ class VbaSubDeclaration(Statement):
 
 @dataclass(repr=False)
 class VbaFunctionDeclaration(Statement):
-    scope: str = ''
+    scope: VbaScopeModifier = VbaScopeModifier.NONE
     name: str = ''
     params: list[VbaParameter] = field(default_factory=list)
     return_type: str = ''
@@ -431,8 +467,8 @@ class VbaFunctionDeclaration(Statement):
 
 @dataclass(repr=False)
 class VbaPropertyDeclaration(Statement):
-    scope: str = ''
-    kind: str = ''
+    scope: VbaScopeModifier = VbaScopeModifier.NONE
+    kind: VbaPropertyKind = VbaPropertyKind.GET
     name: str = ''
     params: list[VbaParameter] = field(default_factory=list)
     return_type: str = ''
@@ -679,7 +715,7 @@ class VbaGosubStatement(Statement):
 
 @dataclass(repr=False)
 class VbaOnErrorStatement(Statement):
-    action: str = ''
+    action: VbaOnErrorAction = VbaOnErrorAction.NONE
     label: str = ''
 
     def children(self) -> Generator[Node, None, None]:
@@ -688,7 +724,7 @@ class VbaOnErrorStatement(Statement):
 
 @dataclass(repr=False)
 class VbaExitStatement(Statement):
-    kind: str = ''
+    kind: VbaExitKind = VbaExitKind.SUB
 
     def children(self) -> Generator[Node, None, None]:
         yield from ()
