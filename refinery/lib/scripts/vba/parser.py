@@ -840,9 +840,9 @@ class VbaParser:
             return VbaCaseClause(is_else=True, body=body, offset=offset)
 
         tests: list[Expression] = []
-        tests.append(self._parse_bound_expression())
+        tests.append(self._parse_case_test())
         while self._eat(VbaTokenKind.COMMA):
-            tests.append(self._parse_bound_expression())
+            tests.append(self._parse_case_test())
         self._eat_eos()
         body = []
         while not self._at(VbaTokenKind.EOF):
@@ -1059,6 +1059,57 @@ class VbaParser:
         while self._eat(VbaTokenKind.COMMA):
             bounds.append(self._parse_bound_expression())
         return bounds
+
+    _COMPARISON_OPS = frozenset({
+        VbaTokenKind.EQ,
+        VbaTokenKind.NEQ,
+        VbaTokenKind.LT,
+        VbaTokenKind.GT,
+        VbaTokenKind.LTE,
+        VbaTokenKind.GTE,
+    })
+
+    def _parse_case_test(self) -> Expression:
+        offset = self._current.offset
+        if self._at(VbaTokenKind.IS):
+            self._advance()
+            if self._at(*self._COMPARISON_OPS):
+                op = self._advance().value
+                right = self._parse_expression()
+                return VbaBinaryExpression(
+                    left=VbaIdentifier(name='Is', offset=offset),
+                    operator=op, right=right, offset=offset,
+                )
+            return self._reparse_is_as_expression(offset)
+        if self._at(*self._COMPARISON_OPS):
+            op = self._advance().value
+            right = self._parse_expression()
+            return VbaBinaryExpression(
+                left=VbaIdentifier(name='Is', offset=offset),
+                operator=op, right=right, offset=offset,
+            )
+        return self._parse_bound_expression()
+
+    def _reparse_is_as_expression(self, offset: int) -> Expression:
+        expr: Expression = VbaIdentifier(name='Is', offset=offset)
+        while True:
+            if self._eat(VbaTokenKind.DOT):
+                member = self._current.value
+                self._advance()
+                expr = VbaMemberAccess(object=expr, member=member, offset=offset)
+            elif self._at(VbaTokenKind.LPAREN):
+                self._advance()
+                args: list[Expression | None] = []
+                if not self._at(VbaTokenKind.RPAREN):
+                    args = self._parse_call_argument_list()
+                self._expect(VbaTokenKind.RPAREN)
+                expr = VbaCallExpression(callee=expr, arguments=args, offset=offset)
+            else:
+                break
+        if self._eat(VbaTokenKind.TO):
+            upper = self._parse_expression()
+            return VbaRangeExpression(start=expr, end=upper, offset=offset)
+        return expr
 
     def _parse_bound_expression(self) -> Expression:
         expr = self._parse_expression()

@@ -4,12 +4,14 @@ from test import TestBase
 
 from refinery.lib.scripts.vba.parser import VbaParser
 from refinery.lib.scripts.vba.model import (
+    VbaBinaryExpression,
     VbaCallStatement,
     VbaConstDeclaration,
     VbaDeclareStatement,
     VbaDoLoopStatement,
     VbaEndStatement,
     VbaEnumDefinition,
+    VbaErrorNode,
     VbaExitStatement,
     VbaExpressionStatement,
     VbaForEachStatement,
@@ -17,6 +19,7 @@ from refinery.lib.scripts.vba.model import (
     VbaFunctionDeclaration,
     VbaGotoStatement,
     VbaGosubStatement,
+    VbaIdentifier,
     VbaIfStatement,
     VbaIntegerLiteral,
     VbaLabelStatement,
@@ -432,6 +435,64 @@ class TestVbaParserStatements(TestBase):
         self.assertEqual(len(sel.cases[0].tests), 2)
         for test_expr in sel.cases[0].tests:
             assert isinstance(test_expr, VbaRangeExpression)
+
+    def test_select_case_comparison_bare_operator(self):
+        code = 'Sub T()\nSelect Case x\nCase > 5\ny = "big"\nEnd Select\nEnd Sub'
+        ast = self._parse(code)
+        sel = ast.body[0].body[0]
+        assert isinstance(sel, VbaSelectCaseStatement)
+        self.assertEqual(len(sel.cases), 1)
+        test_expr = sel.cases[0].tests[0]
+        assert not isinstance(test_expr, VbaErrorNode), \
+            'Case > 5 must not produce an error node'
+        assert isinstance(test_expr, VbaBinaryExpression)
+        self.assertEqual(test_expr.operator, '>')
+        assert isinstance(test_expr.left, VbaIdentifier)
+        self.assertEqual(test_expr.left.name.lower(), 'is')
+        assert isinstance(test_expr.right, VbaIntegerLiteral)
+        self.assertEqual(test_expr.right.value, 5)
+
+    def test_select_case_comparison_with_is(self):
+        code = 'Sub T()\nSelect Case x\nCase Is >= 10\ny = "big"\nEnd Select\nEnd Sub'
+        ast = self._parse(code)
+        sel = ast.body[0].body[0]
+        assert isinstance(sel, VbaSelectCaseStatement)
+        test_expr = sel.cases[0].tests[0]
+        assert isinstance(test_expr, VbaBinaryExpression)
+        self.assertEqual(test_expr.operator, '>=')
+        assert isinstance(test_expr.left, VbaIdentifier)
+        self.assertEqual(test_expr.left.name.lower(), 'is')
+        assert isinstance(test_expr.right, VbaIntegerLiteral)
+        self.assertEqual(test_expr.right.value, 10)
+
+    def test_select_case_comparison_equality(self):
+        code = 'Sub T()\nSelect Case x\nCase Is = 3\ny = "three"\nEnd Select\nEnd Sub'
+        ast = self._parse(code)
+        sel = ast.body[0].body[0]
+        assert isinstance(sel, VbaSelectCaseStatement)
+        test_expr = sel.cases[0].tests[0]
+        assert isinstance(test_expr, VbaBinaryExpression)
+        self.assertEqual(test_expr.operator, '=')
+        assert isinstance(test_expr.left, VbaIdentifier)
+        assert isinstance(test_expr.right, VbaIntegerLiteral)
+        self.assertEqual(test_expr.right.value, 3)
+
+    def test_select_case_multiple_comparisons(self):
+        code = 'Sub T()\nSelect Case x\nCase < 0, >= 100\ny = "out"\nEnd Select\nEnd Sub'
+        ast = self._parse(code)
+        sel = ast.body[0].body[0]
+        assert isinstance(sel, VbaSelectCaseStatement)
+        self.assertEqual(len(sel.cases[0].tests), 2)
+        t0 = sel.cases[0].tests[0]
+        assert isinstance(t0, VbaBinaryExpression)
+        self.assertEqual(t0.operator, '<')
+        assert isinstance(t0.right, VbaIntegerLiteral)
+        self.assertEqual(t0.right.value, 0)
+        t1 = sel.cases[0].tests[1]
+        assert isinstance(t1, VbaBinaryExpression)
+        self.assertEqual(t1.operator, '>=')
+        assert isinstance(t1.right, VbaIntegerLiteral)
+        self.assertEqual(t1.right.value, 100)
 
     def test_if_else_with_standalone_end(self):
         code = 'If x Then\ny = 1\nElse\nEnd\nEnd If'
