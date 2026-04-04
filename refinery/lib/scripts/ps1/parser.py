@@ -659,6 +659,8 @@ class Ps1Parser:
         tok = self._peek()
 
         if tok.kind == Ps1TokenKind.COMMA:
+            if self._disable_comma:
+                return None
             self._advance()
             self._skip_newlines()
             operand = self._parse_unary_expression()

@@ -255,6 +255,32 @@ class TestPs1ParserExpressions(TestBase):
                 self.assertIsInstance(expr.operand, Ps1Variable)
                 self.assertEqual(expr.operand.name, 'y')
 
+    def test_unary_comma_disabled_in_method_args(self):
+        expr = self._parse_expr('$obj.Method($a, $b)')
+        self.assertIsInstance(expr, Ps1InvokeMember)
+        self.assertEqual(len(expr.arguments), 2)
+        self.assertIsInstance(expr.arguments[0], Ps1Variable)
+        self.assertIsInstance(expr.arguments[1], Ps1Variable)
+
+    def test_unary_comma_not_parsed_in_method_args(self):
+        # In the reference parser (Parser.cs:7094-7097), when _disableCommaOperator is set,
+        # UnaryExpressionRule returns null for a leading comma.  In a method argument context
+        # this means the comma should not be parsed as a unary array-wrap operator.  Instead,
+        # the expression parser should return None, leaving the comma unconsumed.
+        p = Ps1Parser('$obj.Method(,$a)')
+        script = p.parse()
+        self.assertIsInstance(script, Ps1Script)
+        stmt = script.body[0]
+        self.assertIsInstance(stmt, Ps1ExpressionStatement)
+        expr = stmt.expression
+        self.assertIsInstance(expr, Ps1InvokeMember)
+        # With the comma disabled the parser must not consume the leading comma as a unary
+        # operator.  The first call to ExpressionRule returns None, so the arguments list should
+        # be empty or the comma should be left as an error rather than silently wrapping $a in
+        # an array.
+        for arg in expr.arguments:
+            self.assertNotIsInstance(arg, Ps1ArrayLiteral)
+
     def test_expandable_string_nested_dq_in_subexpr(self):
         expr = self._parse_expr('"value: $($x.ToString("N2"))"')
         self.assertIsInstance(expr, Ps1ExpandableString)
