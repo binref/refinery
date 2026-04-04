@@ -180,6 +180,10 @@ class TestVbaLexer(TestBase):
             VbaTokenKind.INTEGER,
         ])
 
+    def test_ampersand_type_suffix_before_space(self):
+        tokens = self._tokens('x& = 42')
+        self.assertEqual(tokens[0], (VbaTokenKind.IDENTIFIER, 'x&'))
+
     def test_empty_string(self):
         tokens = self._tokens('""')
         self.assertEqual(tokens, [(VbaTokenKind.STRING, '""')])

@@ -121,7 +121,7 @@ class VbaLexer:
         if self.pos < length and src[self.pos] in '%&!#@$':
             if src[self.pos] != '&' or (
                 self.pos + 1 >= length
-                or src[self.pos + 1] in '\r\n)],;:\x00'
+                or src[self.pos + 1] in ' \t\r\n)],;:\x00'
             ):
                 suffix = src[self.pos]
                 self.pos += 1
