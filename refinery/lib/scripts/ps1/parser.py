@@ -457,6 +457,9 @@ class Ps1Parser:
                 return Ps1CommandInvocation(offset=offset, invocation_operator=invocation_operator)
             return None
 
+        if invocation_operator and name_expr is not None:
+            name_expr = self._parse_primary_postfix(name_expr)
+
         self._lexer.mode = Ps1LexerMode.ARGUMENT
         if self._current.offset >= 0:
             self._lexer.pos = self._current.offset
@@ -579,6 +582,9 @@ class Ps1Parser:
         if self._current.kind in _EXPRESSION_START_KINDS:
             return self._parse_unary_expression()
         if self._at(Ps1TokenKind.GENERIC_TOKEN):
+            tok = self._advance()
+            return Ps1StringLiteral(offset=tok.offset, value=tok.value, raw=tok.value)
+        if self._at(Ps1TokenKind.STAR, Ps1TokenKind.SLASH, Ps1TokenKind.PERCENT):
             tok = self._advance()
             return Ps1StringLiteral(offset=tok.offset, value=tok.value, raw=tok.value)
         return None

@@ -135,3 +135,13 @@ class TestPs1Synthesizer(TestBase):
 
     def test_roundtrip_nested_index(self):
         self._round_trip('$a[0][1]')
+
+    def test_roundtrip_star_argument(self):
+        self._round_trip('Get-Culture | fl -Property * | Out-String -Stream')
+
+    def test_roundtrip_command_arg_star_simple(self):
+        self._round_trip('cmd -Prop *')
+
+    def test_roundtrip_member_chain_after_invocation(self):
+        self._round_trip(
+            '(. (Get-Item Variable:E).Value.InVoke("x") Net.WebClient)')
