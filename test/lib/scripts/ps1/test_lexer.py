@@ -254,6 +254,23 @@ class TestPs1Lexer(TestBase):
                 F'5{letter} should NOT be REAL (multiplier requires trailing b)',
             )
 
+    def test_real_with_decimal_point_and_multiplier_suffix(self):
+        for suffix in ('kb', 'mb', 'gb', 'tb', 'pb', 'KB', 'MB', 'GB', 'TB', 'PB'):
+            src = F'1.5{suffix}'
+            tokens = self._tokens(src)
+            self.assertEqual(
+                tokens, [(Ps1TokenKind.REAL, src)],
+                F'{src} should be a single REAL token',
+            )
+        tokens = self._tokens('2.0d')
+        self.assertEqual(tokens, [(Ps1TokenKind.REAL, '2.0d')])
+
+    def test_real_scientific_with_multiplier_suffix(self):
+        tokens = self._tokens('1.5e2kb')
+        self.assertEqual(tokens, [(Ps1TokenKind.REAL, '1.5e2kb')])
+        tokens = self._tokens('1e3mb')
+        self.assertEqual(tokens, [(Ps1TokenKind.REAL, '1e3mb')])
+
     def test_expandable_here_string_with_subexpression(self):
         src = '@"\n$($x.ToString())\n"@'
         tokens = self._tokens(src)

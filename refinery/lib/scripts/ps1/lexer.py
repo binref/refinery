@@ -143,8 +143,10 @@ _INTEGER_PATTERN = re.compile(
 )
 
 _REAL_PATTERN = re.compile(
+    r'(?:'
     r'(?:[0-9]*\.[0-9]+|[0-9]+\.)(?:[eE][+-]?[0-9]+)?'
     r'|[0-9]+[eE][+-]?[0-9]+'
+    r')(?:[dD]|[kKmMgGtTpP][bB])?'
     r'|[0-9]+(?:\.[0-9]+)?(?:[dD]|[kKmMgGtTpP][bB])',
 )
 
