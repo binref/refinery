@@ -21,7 +21,6 @@ from refinery.lib.scripts.ps1.model import (
     Ps1CommandArgument,
     Ps1CommandArgumentKind,
     Ps1CommandInvocation,
-    Ps1ExpandableString,
     Ps1ExpressionStatement,
     Ps1InvokeMember,
     Ps1MemberAccess,
@@ -209,60 +208,6 @@ def _try_evaluate(expr: Expression) -> str | bytes | None:
     return None
 
 
-def _flatten_string_concat(expr: Expression) -> list[Expression] | None:
-    """Flatten a binary ``+`` chain into its leaf operands."""
-    while isinstance(expr, Ps1ParenExpression) and expr.expression is not None:
-        expr = expr.expression
-    if isinstance(expr, Ps1BinaryExpression) and expr.operator == '+':
-        if expr.left is None or expr.right is None:
-            return None
-        left = _flatten_string_concat(expr.left)
-        right = _flatten_string_concat(expr.right)
-        if left is None or right is None:
-            return None
-        return left + right
-    return [expr]
-
-
-def _try_resolve_concat_lenient(expr: Expression) -> str | None:
-    """
-    Try to resolve a string concatenation chain where some parts are
-    expandable strings with non-evaluable subexpressions.
-
-    In obfuscated PowerShell, this commonly appears as::
-
-        "$( Set-Variable 'ofs' '' )" + 'actual code' + "$( Set-Variable 'ofs' ' ')"
-
-    The subexpressions set the Output Field Separator as a side effect and
-    contribute only whitespace to the result.  For these expandable strings
-    we extract just the literal text fragments.
-    """
-    parts = _flatten_string_concat(expr)
-    if parts is None or len(parts) < 2:
-        return None
-
-    result: list[str] = []
-    for part in parts:
-        s = _string_value(part)
-        if s is not None:
-            result.append(s)
-            continue
-        ev = _try_evaluate(part)
-        if isinstance(ev, str):
-            result.append(ev)
-            continue
-        if isinstance(part, Ps1ExpandableString):
-            literals = []
-            for p in part.parts:
-                if isinstance(p, Ps1StringLiteral):
-                    literals.append(p.value)
-            result.append(''.join(literals))
-            continue
-        return None
-
-    return ''.join(result)
-
-
 def _resolve_to_string(expr: Expression) -> str | None:
     """Try to resolve an expression to a string: first as a literal, then via evaluation."""
     s = _string_value(expr)
@@ -271,7 +216,7 @@ def _resolve_to_string(expr: Expression) -> str | None:
     result = _try_evaluate(expr)
     if isinstance(result, str):
         return result
-    return _try_resolve_concat_lenient(expr)
+    return None
 
 
 class Ps1IexInlining(Transformer):

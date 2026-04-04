@@ -140,6 +140,20 @@ class TestPs1RealWorldSmall(TestUnitBase):
         self.assertIn('Write-Host', result)
         self.assertIn('hello', result)
         self.assertNotIn('Invoke-Expression', result)
+        self.assertTrue(result.count('Set-Variable') == 2)
+
+    def test_expandable_string_void_subexpr_hoisted(self):
+        data = b""""$( Set-Variable 'OFS' '' )" + 'Write-Host hello' + "$( Set-Variable 'OFS' ' ' )" | Invoke-Expression"""
+        result = data | self.load() | str
+        self.assertIn("Set-Variable 'OFS'", result)
+        self.assertIn('Write-Host', result)
+        self.assertIn('hello', result)
+        self.assertNotIn('Invoke-Expression', result)
+
+    def test_expandable_string_value_subexpr_kept(self):
+        data = b'''"prefix$( 1 + 2 )suffix"'''
+        result = data | self.load() | str
+        self.assertIn('$( 1 + 2 )', result)
 
 
 class TestPs1RealWorldLarge(TestUnitBase):
