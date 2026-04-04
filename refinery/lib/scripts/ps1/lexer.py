@@ -236,57 +236,70 @@ class Ps1Lexer:
             self.pos += 1
         return src[start:self.pos]
 
-    def _read_expandable_string(self) -> str:
-        start = self.pos
+    def _skip_subexpression_content(self):
         src = self.source
         length = len(src)
-        self.pos += 1
-        depth = 0
+        depth = 1
         while self.pos < length:
             c = src[self.pos]
             if c == '`' and self.pos + 1 < length:
                 self.pos += 2
                 continue
-            if depth > 0:
-                if c == '(':
-                    depth += 1
-                    self.pos += 1
-                    continue
-                if c == ')':
-                    depth -= 1
-                    self.pos += 1
-                    continue
-                if c == "'":
-                    self.pos += 1
-                    while self.pos < length:
-                        if src[self.pos] == "'":
-                            self.pos += 1
-                            if self.pos < length and src[self.pos] == "'":
-                                self.pos += 1
-                                continue
-                            break
-                        self.pos += 1
-                    continue
-                if c == '"':
-                    self.pos += 1
-                    while self.pos < length:
-                        sc = src[self.pos]
-                        if sc == '`' and self.pos + 1 < length:
-                            self.pos += 2
-                            continue
-                        if sc == '"':
-                            self.pos += 1
-                            if self.pos < length and src[self.pos] == '"':
-                                self.pos += 1
-                                continue
-                            break
-                        self.pos += 1
-                    continue
+            if c == '(':
+                depth += 1
                 self.pos += 1
                 continue
-            if c == '$' and self.pos + 1 < length and src[self.pos + 1] == '(':
-                depth += 1
+            if c == ')':
+                depth -= 1
+                self.pos += 1
+                if depth == 0:
+                    return
+                continue
+            if c == "'":
+                self.pos += 1
+                while self.pos < length:
+                    if src[self.pos] == "'":
+                        self.pos += 1
+                        if self.pos < length and src[self.pos] == "'":
+                            self.pos += 1
+                            continue
+                        break
+                    self.pos += 1
+                continue
+            if c == '"':
+                self.pos += 1
+                while self.pos < length:
+                    sc = src[self.pos]
+                    if sc == '`' and self.pos + 1 < length:
+                        self.pos += 2
+                        continue
+                    if sc == '$' and self.pos + 1 < length and src[self.pos + 1] == '(':
+                        self.pos += 2
+                        self._skip_subexpression_content()
+                        continue
+                    if sc == '"':
+                        self.pos += 1
+                        if self.pos < length and src[self.pos] == '"':
+                            self.pos += 1
+                            continue
+                        break
+                    self.pos += 1
+                continue
+            self.pos += 1
+
+    def _read_expandable_string(self) -> str:
+        start = self.pos
+        src = self.source
+        length = len(src)
+        self.pos += 1
+        while self.pos < length:
+            c = src[self.pos]
+            if c == '`' and self.pos + 1 < length:
                 self.pos += 2
+                continue
+            if c == '$' and self.pos + 1 < length and src[self.pos + 1] == '(':
+                self.pos += 2
+                self._skip_subexpression_content()
                 continue
             if c == '"':
                 self.pos += 1
@@ -327,15 +340,20 @@ class Ps1Lexer:
         if self.pos < length and src[self.pos] == '\n':
             self.pos += 1
         while self.pos < length:
-            if src[self.pos] == '\n' or (
-                src[self.pos] == '\r' and self.pos + 1 < length and src[self.pos + 1] == '\n'
+            c = src[self.pos]
+            if c == '\n' or (
+                c == '\r' and self.pos + 1 < length and src[self.pos + 1] == '\n'
             ):
-                nl_end = self.pos + 1 if src[self.pos] == '\n' else self.pos + 2
+                nl_end = self.pos + 1 if c == '\n' else self.pos + 2
                 if nl_end < length and src[nl_end:nl_end + 2] == '"@':
                     self.pos = nl_end + 2
                     return src[start:self.pos]
-            if src[self.pos] == '`' and self.pos + 1 < length:
+            if c == '`' and self.pos + 1 < length:
                 self.pos += 2
+                continue
+            if c == '$' and self.pos + 1 < length and src[self.pos + 1] == '(':
+                self.pos += 2
+                self._skip_subexpression_content()
                 continue
             self.pos += 1
         return src[start:self.pos]

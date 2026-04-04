@@ -254,6 +254,20 @@ class TestPs1Lexer(TestBase):
                 F'5{letter} should NOT be REAL (multiplier requires trailing b)',
             )
 
+    def test_expandable_here_string_with_subexpression(self):
+        src = '@"\n$($x.ToString())\n"@'
+        tokens = self._tokens(src)
+        self.assertEqual(len(tokens), 1)
+        self.assertEqual(tokens[0][0], Ps1TokenKind.HSTRING_EXPAND)
+        self.assertEqual(tokens[0][1], src)
+
+    def test_expandable_here_string_with_nested_here_string(self):
+        src = '@"\n$(@"\ninner\n"@)\n"@'
+        tokens = self._tokens(src)
+        self.assertEqual(len(tokens), 1)
+        self.assertEqual(tokens[0][0], Ps1TokenKind.HSTRING_EXPAND)
+        self.assertEqual(tokens[0][1], src)
+
     def test_backtick_line_continuation(self):
         tokens = self._tokens('$x +`\n$y')
         kinds = [t[0] for t in tokens]
