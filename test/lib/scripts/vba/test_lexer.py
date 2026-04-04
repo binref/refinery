@@ -184,6 +184,21 @@ class TestVbaLexer(TestBase):
         tokens = self._tokens('x& = 42')
         self.assertEqual(tokens[0], (VbaTokenKind.IDENTIFIER, 'x&'))
 
+    def test_ampersand_suffix_before_lparen(self):
+        tokens = self._tokens('x&(1)')
+        self.assertEqual(tokens[0], (VbaTokenKind.IDENTIFIER, 'x&'))
+        self.assertEqual(tokens[1][0], VbaTokenKind.LPAREN)
+
+    def test_ampersand_suffix_before_dot(self):
+        tokens = self._tokens('x&.Value')
+        self.assertEqual(tokens[0], (VbaTokenKind.IDENTIFIER, 'x&'))
+        self.assertEqual(tokens[1][0], VbaTokenKind.DOT)
+
+    def test_ampersand_suffix_before_bang(self):
+        tokens = self._tokens('x&!Key')
+        self.assertEqual(tokens[0], (VbaTokenKind.IDENTIFIER, 'x&'))
+        self.assertEqual(tokens[1][0], VbaTokenKind.BANG)
+
     def test_empty_string(self):
         tokens = self._tokens('""')
         self.assertEqual(tokens, [(VbaTokenKind.STRING, '""')])
