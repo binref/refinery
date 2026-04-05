@@ -575,6 +575,43 @@ class TestVbaParserStatements(TestBase):
         self.assertEqual(body[0].label, '10')
         assert isinstance(body[1], VbaLetStatement)
 
+    def test_single_line_if_implicit_goto_then(self):
+        code = 'Sub T()\nIf x Then 100\n100 x = 1\nEnd Sub'
+        ast = self._parse(code)
+        if_stmt = ast.body[0].body[0]
+        assert isinstance(if_stmt, VbaIfStatement)
+        self.assertTrue(if_stmt.single_line)
+        self.assertEqual(len(if_stmt.body), 1)
+        goto_stmt = if_stmt.body[0]
+        assert isinstance(goto_stmt, VbaGotoStatement), \
+            f'expected VbaGotoStatement but got {type(goto_stmt).__name__}'
+        self.assertEqual(goto_stmt.label, '100')
+
+    def test_single_line_if_implicit_goto_else(self):
+        code = 'Sub T()\nIf x Then y = 1 Else 200\n200 z = 2\nEnd Sub'
+        ast = self._parse(code)
+        if_stmt = ast.body[0].body[0]
+        assert isinstance(if_stmt, VbaIfStatement)
+        self.assertTrue(if_stmt.single_line)
+        self.assertEqual(len(if_stmt.else_body), 1)
+        goto_stmt = if_stmt.else_body[0]
+        assert isinstance(goto_stmt, VbaGotoStatement), \
+            f'expected VbaGotoStatement but got {type(goto_stmt).__name__}'
+        self.assertEqual(goto_stmt.label, '200')
+
+    def test_single_line_if_implicit_goto_with_continuation(self):
+        code = 'Sub T()\nIf x Then 100: y = 1\nEnd Sub'
+        ast = self._parse(code)
+        if_stmt = ast.body[0].body[0]
+        assert isinstance(if_stmt, VbaIfStatement)
+        self.assertTrue(if_stmt.single_line)
+        self.assertEqual(len(if_stmt.body), 2)
+        goto_stmt = if_stmt.body[0]
+        assert isinstance(goto_stmt, VbaGotoStatement), \
+            f'expected VbaGotoStatement but got {type(goto_stmt).__name__}'
+        self.assertEqual(goto_stmt.label, '100')
+        assert isinstance(if_stmt.body[1], VbaLetStatement)
+
     def test_static_dim_in_body_lowercase(self):
         code = 'Sub T()\nstatic x As Long\nEnd Sub'
         ast = self._parse(code)

@@ -83,6 +83,7 @@ class VbaParser:
         self._source = source
         self._tokens = self._lexer.tokenize()
         self._current: VbaToken = VbaToken(VbaTokenKind.EOF, '', 0)
+        self._in_single_line_if = False
         self._advance()
 
     def _advance(self) -> VbaToken:
@@ -524,6 +525,8 @@ class VbaParser:
         if kind == VbaTokenKind.INTEGER:
             label_val = self._current.value
             self._advance()
+            if self._in_single_line_if:
+                return VbaGotoStatement(label=label_val, offset=offset)
             return VbaLabelStatement(label=label_val, offset=offset)
 
         if kind == VbaTokenKind.IDENTIFIER and not kind.is_keyword:
@@ -643,30 +646,35 @@ class VbaParser:
     def _parse_single_line_if(
         self, condition: Expression, offset: int,
     ) -> VbaIfStatement:
-        body: list[Statement] = []
-        else_body: list[Statement] = []
-        while not self._at(
-            VbaTokenKind.NEWLINE, VbaTokenKind.EOF,
-            VbaTokenKind.ELSE,
-        ):
-            if self._at(VbaTokenKind.COLON):
-                self._advance()
-                continue
-            stmt = self._parse_statement()
-            if stmt is not None:
-                body.append(stmt)
-        if self._eat(VbaTokenKind.ELSE):
-            while not self._at(VbaTokenKind.NEWLINE, VbaTokenKind.EOF):
+        saved = self._in_single_line_if
+        self._in_single_line_if = True
+        try:
+            body: list[Statement] = []
+            else_body: list[Statement] = []
+            while not self._at(
+                VbaTokenKind.NEWLINE, VbaTokenKind.EOF,
+                VbaTokenKind.ELSE,
+            ):
                 if self._at(VbaTokenKind.COLON):
                     self._advance()
                     continue
                 stmt = self._parse_statement()
                 if stmt is not None:
-                    else_body.append(stmt)
-        return VbaIfStatement(
-            condition=condition, body=body,
-            else_body=else_body, single_line=True, offset=offset,
-        )
+                    body.append(stmt)
+            if self._eat(VbaTokenKind.ELSE):
+                while not self._at(VbaTokenKind.NEWLINE, VbaTokenKind.EOF):
+                    if self._at(VbaTokenKind.COLON):
+                        self._advance()
+                        continue
+                    stmt = self._parse_statement()
+                    if stmt is not None:
+                        else_body.append(stmt)
+            return VbaIfStatement(
+                condition=condition, body=body,
+                else_body=else_body, single_line=True, offset=offset,
+            )
+        finally:
+            self._in_single_line_if = saved
 
     def _parse_for_statement(self) -> Statement:
         offset = self._current.offset
