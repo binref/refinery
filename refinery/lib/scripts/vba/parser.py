@@ -1357,10 +1357,11 @@ class VbaParser:
         return left
 
     def _parse_not_expression(self) -> Expression:
-        if self._eat(VbaTokenKind.NOT):
+        tok = self._eat(VbaTokenKind.NOT)
+        if tok:
             operand = self._parse_not_expression()
             return VbaUnaryExpression(
-                operator='Not', operand=operand, offset=operand.offset)
+                operator='Not', operand=operand, offset=tok.offset)
         return self._parse_comparison_expression()
 
     def _parse_comparison_expression(self) -> Expression:

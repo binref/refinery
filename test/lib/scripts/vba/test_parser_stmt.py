@@ -52,6 +52,7 @@ from refinery.lib.scripts.vba.model import (
     VbaStringLiteral,
     VbaSubDeclaration,
     VbaTypeDefinition,
+    VbaUnaryExpression,
     VbaVariableDeclaration,
     VbaVariableDeclarator,
     VbaWhileStatement,
@@ -1163,3 +1164,15 @@ class TestVbaParserStatements(TestBase):
         self.assertEqual(len(if_stmt.elseif_clauses), 1,
             '"Else If" must produce an ElseIfClause, not a nested If inside else_body')
         self.assertEqual(len(if_stmt.else_body), 0)
+
+    def test_not_expression_offset(self):
+        code = 'Sub T()\nx = Not y\nEnd Sub'
+        ast = self._parse(code)
+        sub = ast.body[0]
+        assert isinstance(sub, VbaSubDeclaration)
+        stmt = sub.body[0]
+        assert isinstance(stmt, VbaLetStatement)
+        assert isinstance(stmt.value, VbaUnaryExpression)
+        self.assertEqual(stmt.value.operator, 'Not')
+        self.assertEqual(stmt.value.offset, code.index('Not'),
+            'Not expression offset must point at the Not keyword, not the operand')
