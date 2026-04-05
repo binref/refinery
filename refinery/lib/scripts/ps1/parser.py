@@ -697,10 +697,6 @@ class Ps1Parser:
                 offset=tok.offset, operator=op.value, operand=operand, prefix=True)
 
         if tok.kind in (Ps1TokenKind.PLUS, Ps1TokenKind.DASH):
-            if tok.kind == Ps1TokenKind.DASH:
-                op_test = self._try_lookahead_dash_operator()
-                if op_test:
-                    return self._parse_primary_expression()
             op = self._advance()
             self._skip_newlines()
             operand = self._parse_unary_expression()
@@ -724,28 +720,6 @@ class Ps1Parser:
             self._current = saved_tok
 
         return self._parse_primary_expression()
-
-    def _try_lookahead_dash_operator(self) -> bool:
-        src = self.source
-        pos = self._current.offset + 1
-        m = re.match(r'[a-zA-Z]+', src[pos:])
-        if m:
-            word = m.group().lower()
-            if word in ('not', 'bnot', 'split', 'join',
-                        'and', 'or', 'xor', 'band', 'bor', 'bxor',
-                        'shl', 'shr', 'f',
-                        'eq', 'ne', 'gt', 'ge', 'lt', 'le',
-                        'ceq', 'cne', 'cgt', 'cge', 'clt', 'cle',
-                        'ieq', 'ine', 'igt', 'ige', 'ilt', 'ile',
-                        'like', 'notlike', 'clike', 'cnotlike', 'ilike', 'inotlike',
-                        'match', 'notmatch', 'cmatch', 'cnotmatch', 'imatch', 'inotmatch',
-                        'replace', 'creplace', 'ireplace',
-                        'contains', 'notcontains', 'ccontains', 'cnotcontains',
-                        'icontains', 'inotcontains',
-                        'in', 'notin', 'cin', 'cnotin', 'iin', 'inotin',
-                        'is', 'isnot', 'as'):
-                return True
-        return False
 
     def _try_parse_type_literal(self) -> Ps1TypeExpression | None:
         if not self._at(Ps1TokenKind.LBRACKET):
