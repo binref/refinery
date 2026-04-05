@@ -385,31 +385,32 @@ class Arg(Argument):
         class formatting(dict):
             arg = self
 
+            def __pretty(self, default: bytes | int | str | slice):
+                if isinstance(default, (list, tuple, set)):
+                    if not default:
+                        return 'empty'
+                    sentinel = next(iter(default))
+                    if len(default) == 1:
+                        return self.__pretty(sentinel)
+                    elif isinstance(sentinel, str):
+                        return '"{}"'.format(' '.join((self.__pretty(x) for x in default)))
+                if isinstance(default, slice):
+                    parts = [default.start or '', default.stop or '', default.step or '']
+                    default = ':'.join(str(x) for x in parts if x is not None)
+                if isinstance(default, int):
+                    return default
+                if isinstance(default, str) or not isbuffer(default):
+                    return default
+                default = bytes(default)
+                if default.isalnum():
+                    return default.decode('latin-1')
+                return F'H:{default.hex()}'
+
             def __missing__(self, key):
                 if key == 'choices':
                     return ', '.join(self.arg.kwargs['choices'])
                 if key == 'default':
-                    default: bytes | int | str | slice = self.arg.kwargs['default']
-                    if isinstance(default, (list, tuple, set)):
-                        if not default:
-                            return 'empty'
-                        else:
-                            sentinel = next(iter(default))
-                            if len(default) == 1:
-                                return sentinel
-                            elif isinstance(sentinel, str):
-                                return '"{}"'.format(' '.join((str(x) for x in default)))
-                    if isinstance(default, slice):
-                        parts = [default.start or '', default.stop or '', default.step]
-                        default = ':'.join(str(x) for x in parts if x is not None)
-                    if isinstance(default, int):
-                        return default
-                    if isinstance(default, str) or not isbuffer(default):
-                        return default
-                    default = bytes(default)
-                    if default.isalnum():
-                        return default.decode('latin-1')
-                    return F'H:{default.hex()}'
+                    return self.__pretty(self.arg.kwargs['default'])
                 if key == 'varname':
                     return self.arg.kwargs.get('metavar', self.arg.destination)
 
@@ -618,7 +619,9 @@ class Arg(Argument):
         def parser(t: str):
             return sliceobj(t, intok=intok)
         if help is None:
-            help = 'Specify start:end:step in Python slice syntax.'
+            help = (
+                'Specify start:end:step in Python slice syntax; all parts can be omitted - start defaults to 0, '
+                'end defaults to none (unlimited), and step defaults to 1.')
             if default is not cls.omit:
                 help = F'{help} The default is {{default}}.'
         return cls(*args, group=group, help=help, default=default, nargs=nargs, dest=dest, type=parser, metavar=metavar)
