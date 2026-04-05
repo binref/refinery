@@ -557,6 +557,13 @@ class Ps1Synthesizer(Visitor):
         self._write('data ')
         if node.name:
             self._write(F'{node.name} ')
+        if node.commands:
+            self._write('-SupportedCommand ')
+            for i, cmd in enumerate(node.commands):
+                if i > 0:
+                    self._write(', ')
+                self.visit(cmd)
+            self._write(' ')
         if node.body:
             self._emit_block(node.body)
 

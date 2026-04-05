@@ -197,6 +197,20 @@ class TestPs1ParserStatements(TestBase):
         self.assertIsInstance(stmt, Ps1DataSection)
         self.assertEqual(stmt.name, 'mydata')
 
+    def test_data_section_supported_command(self):
+        stmt = self._parse_stmt(
+            'data myData -SupportedCommand ConvertFrom-StringData { "a=1" }')
+        self.assertIsInstance(stmt, Ps1DataSection)
+        self.assertEqual(stmt.name, 'myData')
+        self.assertEqual(len(stmt.commands), 1)
+        self.assertIsNotNone(stmt.body)
+
+    def test_data_section_supported_command_list(self):
+        stmt = self._parse_stmt(
+            'data myData -SupportedCommand ConvertFrom-StringData, Get-Date { "a=1" }')
+        self.assertIsInstance(stmt, Ps1DataSection)
+        self.assertEqual(len(stmt.commands), 2)
+
     def test_command_invocation(self):
         stmt = self._parse_stmt('Write-Host "hello"')
         self.assertIsInstance(stmt, Ps1ExpressionStatement)

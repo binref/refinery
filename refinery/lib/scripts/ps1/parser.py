@@ -1780,7 +1780,22 @@ class Ps1Parser:
         self._skip_newlines()
         name = ''
         if self._at(Ps1TokenKind.GENERIC_TOKEN):
-            name = self._advance().value
+            name = self._advance(Ps1LexerMode.ARGUMENT).value
             self._skip_newlines()
+        commands: list[Expression] = []
+        if self._at(Ps1TokenKind.PARAMETER):
+            param = self._current.value.lower().lstrip('-').rstrip(':')
+            self._advance()
+            self._skip_newlines()
+            if param == 'supportedcommand':
+                while True:
+                    self._skip_newlines()
+                    arg = self._parse_argument_value()
+                    if arg is None:
+                        break
+                    commands.append(arg)
+                    if not self._eat(Ps1TokenKind.COMMA):
+                        break
+        self._lexer.mode = Ps1LexerMode.EXPRESSION
         body = self._parse_block()
-        return Ps1DataSection(offset=offset, name=name, body=body)
+        return Ps1DataSection(offset=offset, name=name, commands=commands, body=body)

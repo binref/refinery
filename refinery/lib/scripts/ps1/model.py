@@ -733,12 +733,16 @@ class Ps1ExitStatement(Statement):
 @dataclass(repr=False)
 class Ps1DataSection(Statement):
     name: str = ''
+    commands: list[Expression] = field(default_factory=list)
     body: Block | None = None
 
     def __post_init__(self):
+        for cmd in self.commands:
+            self._adopt(cmd)
         self._adopt(self.body)
 
     def children(self) -> Generator[Node, None, None]:
+        yield from self.commands
         if self.body is not None:
             yield self.body
 
