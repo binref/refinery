@@ -19,12 +19,12 @@ class VbaLoopConditionPosition(enum.Enum):
 
 
 class VbaScopeModifier(enum.Enum):
-    NONE    = ''        # noqa
-    PUBLIC  = 'Public'  # noqa
-    PRIVATE = 'Private' # noqa
-    DIM     = 'Dim'     # noqa
-    GLOBAL  = 'Global'  # noqa
-    STATIC  = 'Static'  # noqa
+    NONE = ''
+    PUBLIC = 'Public'
+    PRIVATE = 'Private'
+    DIM = 'Dim'
+    GLOBAL = 'Global'
+    STATIC = 'Static'
 
 
 class VbaPropertyKind(enum.Enum):
@@ -34,29 +34,29 @@ class VbaPropertyKind(enum.Enum):
 
 
 class VbaExitKind(enum.Enum):
-    SUB      = 'Sub'      # noqa
-    FUNCTION = 'Function' # noqa
-    DO       = 'Do'       # noqa
-    FOR      = 'For'      # noqa
-    PROPERTY = 'Property' # noqa
+    SUB = 'Sub'
+    FUNCTION = 'Function'
+    DO = 'Do'
+    FOR = 'For'
+    PROPERTY = 'Property'
 
 
 class VbaOnErrorAction(enum.Enum):
-    NONE        = ''           # noqa
-    GOTO        = 'GoTo'      # noqa
-    RESUME      = 'Resume'    # noqa
-    RESUME_NEXT = 'ResumeNext' # noqa
+    NONE = ''
+    GOTO = 'GoTo'
+    RESUME = 'Resume'
+    RESUME_NEXT = 'ResumeNext'
 
 
 class VbaOnBranchKind(enum.Enum):
-    GOTO  = 'GoTo'  # noqa
-    GOSUB = 'GoSub' # noqa
+    GOTO = 'GoTo'
+    GOSUB = 'GoSub'
 
 
 class VbaParameterPassing(enum.Enum):
-    NONE   = ''      # noqa
-    BY_VAL = 'ByVal' # noqa
-    BY_REF = 'ByRef' # noqa
+    NONE = ''
+    BY_VAL = 'ByVal'
+    BY_REF = 'ByRef'
 
 
 @dataclass(repr=False)
