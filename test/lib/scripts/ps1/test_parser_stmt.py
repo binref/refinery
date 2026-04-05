@@ -19,6 +19,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1ForLoop,
     Ps1FunctionDefinition,
     Ps1IfStatement,
+    Ps1IntegerLiteral,
     Ps1Pipeline,
     Ps1ReturnStatement,
     Ps1Script,
@@ -27,6 +28,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1ThrowStatement,
     Ps1TrapStatement,
     Ps1TryCatchFinally,
+    Ps1Variable,
     Ps1WhileLoop,
 )
 
@@ -452,3 +454,47 @@ class TestPs1ParserStatements(TestBase):
         self.assertEqual(cmd.arguments[0].kind, Ps1CommandArgumentKind.POSITIONAL)
         self.assertIsInstance(cmd.arguments[0].value, Ps1StringLiteral)
         self.assertEqual(cmd.arguments[0].value.value, '*.txt')
+
+    def test_comma_separated_command_arguments_form_array(self):
+        """Write-Host 1,2,3 should produce a single array argument, not three."""
+        stmt = self._parse_stmt('Write-Host 1,2,3')
+        self.assertIsInstance(stmt, Ps1ExpressionStatement)
+        cmd = stmt.expression
+        self.assertIsInstance(cmd, Ps1CommandInvocation)
+        self.assertEqual(len(cmd.arguments), 1)
+        arg = cmd.arguments[0]
+        self.assertIsInstance(arg, Ps1CommandArgument)
+        self.assertEqual(arg.kind, Ps1CommandArgumentKind.POSITIONAL)
+        self.assertIsInstance(arg.value, Ps1ArrayLiteral)
+        self.assertEqual(len(arg.value.elements), 3)
+        self.assertIsInstance(arg.value.elements[0], Ps1IntegerLiteral)
+        self.assertEqual(arg.value.elements[0].value, 1)
+        self.assertEqual(arg.value.elements[1].value, 2)
+        self.assertEqual(arg.value.elements[2].value, 3)
+
+    def test_comma_separated_mixed_arguments(self):
+        """Comma-delimited array followed by separate positional argument."""
+        stmt = self._parse_stmt('Write-Host 1,2 -Separator "x"')
+        self.assertIsInstance(stmt, Ps1ExpressionStatement)
+        cmd = stmt.expression
+        self.assertIsInstance(cmd, Ps1CommandInvocation)
+        first_arg = cmd.arguments[0]
+        self.assertIsInstance(first_arg, Ps1CommandArgument)
+        self.assertEqual(first_arg.kind, Ps1CommandArgumentKind.POSITIONAL)
+        self.assertIsInstance(first_arg.value, Ps1ArrayLiteral)
+        self.assertEqual(len(first_arg.value.elements), 2)
+
+    def test_comma_separated_variables(self):
+        """$a,$b,$c should form a single array argument."""
+        stmt = self._parse_stmt('Write-Output $a,$b,$c')
+        self.assertIsInstance(stmt, Ps1ExpressionStatement)
+        cmd = stmt.expression
+        self.assertIsInstance(cmd, Ps1CommandInvocation)
+        self.assertEqual(len(cmd.arguments), 1)
+        arg = cmd.arguments[0]
+        self.assertIsInstance(arg, Ps1CommandArgument)
+        self.assertEqual(arg.kind, Ps1CommandArgumentKind.POSITIONAL)
+        self.assertIsInstance(arg.value, Ps1ArrayLiteral)
+        self.assertEqual(len(arg.value.elements), 3)
+        for elem in arg.value.elements:
+            self.assertIsInstance(elem, Ps1Variable)

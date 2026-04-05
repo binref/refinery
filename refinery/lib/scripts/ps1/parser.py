@@ -563,6 +563,27 @@ class Ps1Parser:
         )
 
     def _parse_argument_value(self) -> Expression | None:
+        # Reference: GetCommandArgument (Parser.cs:6295-6442).  After parsing a
+        # single argument value, check for a comma.  A comma-separated list of
+        # values forms a single ArrayLiteral argument, e.g. Write-Host 1,2,3
+        # yields one positional argument @(1,2,3), not three arguments.
+        first = self._parse_single_argument_value()
+        if first is None:
+            return None
+        if not self._at(Ps1TokenKind.COMMA):
+            return first
+        elements = [first]
+        while self._eat(Ps1TokenKind.COMMA):
+            self._skip_newlines()
+            elem = self._parse_single_argument_value()
+            if elem is None:
+                break
+            elements.append(elem)
+        if len(elements) == 1:
+            return elements[0]
+        return Ps1ArrayLiteral(offset=first.offset, elements=elements)
+
+    def _parse_single_argument_value(self) -> Expression | None:
         self._lexer.mode = Ps1LexerMode.EXPRESSION
         if self._at(Ps1TokenKind.GENERIC_TOKEN):
             tok = self._advance()
@@ -583,14 +604,8 @@ class Ps1Parser:
                     self._current = saved_tok
                     break
             return result
-        if self._at(Ps1TokenKind.GENERIC_TOKEN):
-            tok = self._advance()
-            return Ps1StringLiteral(offset=tok.offset, value=tok.value, raw=tok.value)
         if self._current.kind in _EXPRESSION_START_KINDS:
             return self._parse_unary_expression()
-        if self._at(Ps1TokenKind.GENERIC_TOKEN):
-            tok = self._advance()
-            return Ps1StringLiteral(offset=tok.offset, value=tok.value, raw=tok.value)
         if self._at(Ps1TokenKind.STAR, Ps1TokenKind.SLASH, Ps1TokenKind.PERCENT):
             tok = self._advance()
             return Ps1StringLiteral(offset=tok.offset, value=tok.value, raw=tok.value)
@@ -1764,7 +1779,7 @@ class Ps1Parser:
             if param == 'supportedcommand':
                 while True:
                     self._skip_newlines()
-                    arg = self._parse_argument_value()
+                    arg = self._parse_single_argument_value()
                     if arg is None:
                         break
                     commands.append(arg)
