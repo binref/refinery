@@ -153,7 +153,7 @@ _REAL_PATTERN = re.compile(
 _VARIABLE_PATTERN = re.compile(
     r'(?:(?:global|local|script|private|using|env|variable|function|alias|drive)'
     r':)?'
-    r'(?:\{[^}]+\}|[a-zA-Z_][a-zA-Z0-9_?]*)'
+    r'(?:\{[^}]+\}|[a-zA-Z0-9_][a-zA-Z0-9_?]*)'
     r'|[$?^]',
     re.IGNORECASE,
 )

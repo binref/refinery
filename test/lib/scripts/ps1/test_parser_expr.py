@@ -367,6 +367,19 @@ class TestPs1ParserExpressions(TestBase):
             isinstance(p, Ps1StringLiteral) and 'x' in p.value for p in expr.parts)
         self.assertTrue(has_literal_x, 'should contain literal x after $$')
 
+    def test_digit_variable_standalone(self):
+        for src, expected_name in [('$0', '0'), ('$1', '1'), ('$1foo', '1foo')]:
+            with self.subTest(src=src):
+                expr = self._parse_expr(src)
+                self.assertIsInstance(expr, Ps1Variable)
+                self.assertEqual(expr.name, expected_name)
+
+    def test_digit_variable_in_expandable_string(self):
+        expr = self._parse_expr('"text $1 end"')
+        self.assertIsInstance(expr, Ps1ExpandableString)
+        has_var = any(isinstance(p, Ps1Variable) and p.name == '1' for p in expr.parts)
+        self.assertTrue(has_var, 'should contain variable $1 (name=1)')
+
     def test_expandable_string_special_var_question_stops(self):
         expr = self._parse_expr('"$?x"')
         self.assertIsInstance(expr, Ps1ExpandableString)
