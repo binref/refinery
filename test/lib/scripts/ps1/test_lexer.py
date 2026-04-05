@@ -553,6 +553,12 @@ class TestPs1Lexer(TestBase):
         self.assertEqual(len(tokens), 1)
         self.assertEqual(tokens[0], (Ps1TokenKind.GENERIC_TOKEN, '*[a-z]*'))
 
+    def test_hyphenated_parameter_name(self):
+        """In argument mode, -no-pager is a single parameter token."""
+        tokens = self._tokens('-no-pager', mode=Ps1LexerMode.ARGUMENT)
+        self.assertEqual(len(tokens), 1)
+        self.assertEqual(tokens[0], (Ps1TokenKind.PARAMETER, '-no-pager'))
+
     def test_double_colon_not_label(self):
         tokens = self._tokens('[System.IO]::Path')
         kinds = [t[0] for t in tokens]

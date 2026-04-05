@@ -174,6 +174,11 @@ _VARIABLE_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+# Reference: ScanParameter (tokenizer.cs:3185-3218).  Characters that
+# terminate a parameter name.  Quotes are handled separately because they
+# convert the token to a generic token in the reference implementation.
+_PARAM_STOP = frozenset(' \t\r\n{}();,|&.[')
+
 
 @dataclass
 class Ps1Lexer:
@@ -456,16 +461,33 @@ class Ps1Lexer:
         return None
 
     def _try_parameter(self) -> Ps1Token | None:
+        # Reference: ScanParameter (tokenizer.cs:3185).  The first character
+        # after the dash must be a letter, underscore, or '?'.  After that,
+        # every character that is not a stop character is absorbed into the
+        # parameter name.  A trailing colon is consumed as the "argument
+        # required" flag.  In the reference, embedded quotes convert the
+        # whole thing to a generic token; we simplify by just stopping.
         src = self.source
+        length = len(src)
         start = self.pos
-        self.pos += 1
-        m = re.match(r'[a-zA-Z_?][a-zA-Z0-9_?]*', src[self.pos:])
-        if not m:
+        self.pos += 1  # skip the dash
+        if self.pos >= length:
             self.pos = start
             return None
-        self.pos += m.end()
-        after = src[self.pos:self.pos + 1]
-        if after == ':':
+        c = src[self.pos]
+        if not (c.isalpha() or c == '_' or c == '?'):
+            self.pos = start
+            return None
+        self.pos += 1
+        while self.pos < length:
+            c = src[self.pos]
+            if c in _PARAM_STOP or c.isspace():
+                break
+            if c in SINGLE_QUOTES or c in DOUBLE_QUOTES:
+                break
+            if c == ':':
+                self.pos += 1
+                break
             self.pos += 1
         return Ps1Token(Ps1TokenKind.PARAMETER, src[start:self.pos], start)
 
