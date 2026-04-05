@@ -618,7 +618,26 @@ class VbaParser:
         if kind == VbaTokenKind.IDENTIFIER and self._current.value.lower() in ('lset', 'rset'):
             return self._parse_let_statement()
 
+        if kw == 'open':
+            return self._skip_to_eos()
+
+        if kw == 'line':
+            peek = self._source[self._current.offset + len(self._current.value):].lstrip(' \t')
+            if peek.lower().startswith('input'):
+                return self._skip_to_eos()
+
         return self._parse_implicit_call_or_assignment()
+
+    def _skip_to_eos(self) -> VbaExpressionStatement:
+        offset = self._current.offset
+        start = offset
+        while not self._at(VbaTokenKind.NEWLINE, VbaTokenKind.COLON, VbaTokenKind.EOF):
+            self._advance()
+        raw = self._source[start:self._current.offset]
+        return VbaExpressionStatement(
+            expression=VbaIdentifier(name=raw.strip(), offset=offset),
+            offset=offset,
+        )
 
     def _parse_if_statement(self) -> VbaIfStatement:
         offset = self._current.offset
@@ -914,11 +933,12 @@ class VbaParser:
 
     def _parse_let_statement(self) -> VbaLetStatement:
         offset = self._current.offset
+        keyword = self._current.value
         self._advance()
         target = self._parse_postfix_expression()
         self._expect(VbaTokenKind.EQ)
         value = self._parse_expression()
-        return VbaLetStatement(target=target, value=value, explicit=True, offset=offset)
+        return VbaLetStatement(target=target, value=value, explicit=True, keyword=keyword, offset=offset)
 
     def _parse_call_statement(self) -> VbaCallStatement:
         offset = self._current.offset

@@ -186,3 +186,35 @@ class TestVbaSynthesizer(TestBase):
         code = 'Type MyType\nname As String * 50\nEnd Type'
         result = self._roundtrip(code)
         self.assertIn('As String * 50', result)
+
+    def test_lset_roundtrip(self):
+        # LSet must survive the round-trip as LSet, not become Let.
+        code = 'Sub T()\nLSet a = b\nEnd Sub'
+        result = self._roundtrip(code)
+        self.assertIn('LSet a = b', result,
+            'LSet must round-trip as LSet, not as Let')
+
+    def test_rset_roundtrip(self):
+        # RSet must survive the round-trip as RSet, not become Let.
+        code = 'Sub T()\nRSet a = b\nEnd Sub'
+        result = self._roundtrip(code)
+        self.assertIn('RSet a = b', result,
+            'RSet must round-trip as RSet, not as Let')
+
+    def test_open_statement_roundtrip(self):
+        # The Open statement must not be misparsed as a For loop.
+        # Before the fix, "For Input" triggered the For-loop parser and subsequent
+        # statements were lost into a loop body.
+        code = 'Sub T()\nOpen "file.txt" For Input As #1\nx = 1\nEnd Sub'
+        result = self._roundtrip(code)
+        self.assertIn('x = 1', result,
+            'Statement following Open must not be swallowed by a misparsed For loop')
+        self.assertNotIn('Next', result,
+            'Open statement must not produce a For/Next loop')
+
+    def test_line_input_roundtrip(self):
+        # Line Input must round-trip as a single unit and not lose the variable.
+        code = 'Sub T()\nLine Input #1, a\nEnd Sub'
+        result = self._roundtrip(code)
+        self.assertIn('Line Input', result,
+            'Line Input must appear in the synthesized output as a unit')

@@ -448,6 +448,8 @@ class TestVbaParserStatements(TestBase):
         self.assertEqual(stmt.target.name, 'x')
         assert isinstance(stmt.value, VbaIdentifier)
         self.assertEqual(stmt.value.name, 'y')
+        self.assertEqual(stmt.keyword.lower(), 'lset',
+            'LSet keyword must be preserved in the AST node')
 
     def test_rset_statement(self):
         code = 'Sub T()\nRSet a = b\nEnd Sub'
@@ -459,6 +461,19 @@ class TestVbaParserStatements(TestBase):
         self.assertEqual(stmt.target.name, 'a')
         assert isinstance(stmt.value, VbaIdentifier)
         self.assertEqual(stmt.value.name, 'b')
+        self.assertEqual(stmt.keyword.lower(), 'rset',
+            'RSet keyword must be preserved in the AST node')
+
+    def test_lset_keyword_distinct_from_let(self):
+        # LSet and Let must produce different keyword values; previously both produced 'Let'
+        ast_lset = self._parse('Sub T()\nLSet x = y\nEnd Sub')
+        ast_let = self._parse('Sub T()\nLet x = y\nEnd Sub')
+        stmt_lset = ast_lset.body[0].body[0]
+        stmt_let = ast_let.body[0].body[0]
+        assert isinstance(stmt_lset, VbaLetStatement)
+        assert isinstance(stmt_let, VbaLetStatement)
+        self.assertNotEqual(stmt_lset.keyword.lower(), stmt_let.keyword.lower(),
+            'LSet and Let must have distinct keyword values in the AST')
 
     def test_return_statement(self):
         code = 'Sub T()\nReturn\nEnd Sub'
@@ -1021,3 +1036,29 @@ class TestVbaParserStatements(TestBase):
         self.assertEqual(stmt.arguments[0].name, 'Prompt')
         assert isinstance(stmt.arguments[1], VbaNamedArgument)
         self.assertEqual(stmt.arguments[1].name, 'Title')
+
+    def test_open_statement_does_not_steal_subsequent_body(self):
+        # Previously, the For keyword inside "Open f For Input As #1" triggered
+        # the For-loop parser, which consumed subsequent statements as loop body.
+        code = 'Sub T()\nOpen "f.txt" For Input As #1\nx = 1\nEnd Sub'
+        ast = self._parse(code)
+        sub = ast.body[0]
+        assert isinstance(sub, VbaSubDeclaration)
+        # The sub must contain exactly two statements: the Open line and x = 1.
+        # Before the fix the For-loop swallowed x = 1 and End Sub, leaving one statement.
+        self.assertEqual(len(sub.body), 2,
+            'Open statement must not cause the For-loop parser to consume subsequent statements')
+        assert isinstance(sub.body[1], VbaLetStatement), \
+            f'second statement should be x = 1, got {type(sub.body[1]).__name__}'
+
+    def test_line_input_is_single_statement(self):
+        # Previously "Line Input #1, a" was split: "Line" became a bare expression
+        # statement and "Input #1, a" a second statement, with the variable lost
+        # to a date-literal tokenisation of "#1, a".
+        code = 'Sub T()\nLine Input #1, a\nx = 1\nEnd Sub'
+        ast = self._parse(code)
+        sub = ast.body[0]
+        assert isinstance(sub, VbaSubDeclaration)
+        # Must be exactly two statements; before the fix there were three (Line / Input / x=1).
+        self.assertEqual(len(sub.body), 2,
+            'Line Input must be parsed as a single statement, not split across two')

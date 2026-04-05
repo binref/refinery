@@ -441,7 +441,8 @@ class VbaSynthesizer(Visitor):
 
     def visit_VbaLetStatement(self, node: VbaLetStatement):
         if node.explicit:
-            self._write('Let ')
+            kw = node.keyword if node.keyword else 'Let'
+            self._write(F'{kw} ')
         if node.target:
             self.visit(node.target)
         self._write(' = ')

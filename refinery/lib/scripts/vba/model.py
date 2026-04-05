@@ -569,6 +569,7 @@ class VbaLetStatement(Statement):
     target: Expression | None = None
     value: Expression | None = None
     explicit: bool = False
+    keyword: str = ''
 
     def __post_init__(self):
         self._adopt(self.target, self.value)
