@@ -211,7 +211,7 @@ class VbaLexer:
                 yield tok
                 continue
 
-            if c.isdigit():
+            if c.isdigit() or (c == '.' and self.pos + 1 < length and src[self.pos + 1].isdigit()):
                 tok = self._read_number()
                 last_was_newline = False
                 yield tok

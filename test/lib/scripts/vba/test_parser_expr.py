@@ -57,6 +57,18 @@ class TestVbaParserExpressions(TestBase):
         assert isinstance(expr, VbaFloatLiteral)
         self.assertAlmostEqual(expr.value, 3.14)
 
+    def test_float_literal_leading_dot(self):
+        expr = self._parse_expr('.5')
+        assert isinstance(expr, VbaFloatLiteral)
+        self.assertAlmostEqual(expr.value, 0.5)
+
+    def test_float_literal_leading_dot_in_expression(self):
+        expr = self._parse_expr('1 + .5')
+        assert isinstance(expr, VbaBinaryExpression)
+        self.assertEqual(expr.operator, '+')
+        assert isinstance(expr.right, VbaFloatLiteral)
+        self.assertAlmostEqual(expr.right.value, 0.5)
+
     def test_string_literal(self):
         expr = self._parse_expr('"Hello"')
         assert isinstance(expr, VbaStringLiteral)
