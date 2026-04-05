@@ -163,6 +163,11 @@ class TestVbaSynthesizer(TestBase):
         result = self._roundtrip(code)
         self.assertIn('GoTo Cleanup', result)
 
+    def test_goto_two_word_roundtrip(self):
+        code = 'Sub T()\nGo To done\ndone:\nEnd Sub'
+        result = self._roundtrip(code)
+        self.assertIn('GoTo', result)
+
     def test_resume(self):
         code = 'Sub T()\nResume Next\nEnd Sub'
         result = self._roundtrip(code)

@@ -408,6 +408,31 @@ class TestVbaParserStatements(TestBase):
         self.assertEqual(stmt.action, VbaOnErrorAction.GOTO)
         self.assertEqual(stmt.label, 'Handler')
 
+    def test_goto_two_word_form(self):
+        code = 'Sub T()\nGo To done\ndone:\nEnd Sub'
+        ast = self._parse(code)
+        sub = ast.body[0]
+        stmt = sub.body[0]
+        assert isinstance(stmt, VbaGotoStatement)
+        self.assertEqual(stmt.label, 'done')
+
+    def test_gosub_two_word_form(self):
+        code = 'Sub T()\nGo Sub done\ndone:\nEnd Sub'
+        ast = self._parse(code)
+        sub = ast.body[0]
+        stmt = sub.body[0]
+        assert isinstance(stmt, VbaGosubStatement)
+        self.assertEqual(stmt.label, 'done')
+
+    def test_on_error_goto_two_word_form(self):
+        code = 'Sub T()\nOn Error Go To 0\nEnd Sub'
+        ast = self._parse(code)
+        sub = ast.body[0]
+        stmt = sub.body[0]
+        assert isinstance(stmt, VbaOnErrorStatement)
+        self.assertEqual(stmt.action, VbaOnErrorAction.GOTO)
+        self.assertEqual(stmt.label, '0')
+
     def test_exit_sub(self):
         code = 'Sub T()\nExit Sub\nEnd Sub'
         ast = self._parse(code)

@@ -149,6 +149,38 @@ class VbaParser:
             return True
         return False
 
+    def _eat_go_token(self, keyword: str) -> bool:
+        fused = VbaTokenKind.GOTO if keyword == 'to' else VbaTokenKind.GOSUB
+        if self._at(fused):
+            self._advance()
+            return True
+        if (self._at(VbaTokenKind.IDENTIFIER)
+                and self._current.value.lower() == 'go'):
+            self._advance()
+            target = VbaTokenKind.TO if keyword == 'to' else VbaTokenKind.SUB
+            if self._at(target):
+                self._advance()
+                return True
+        return False
+
+    def _eat_go_branch(self) -> str:
+        if self._at(VbaTokenKind.GOTO):
+            self._advance()
+            return 'goto'
+        if self._at(VbaTokenKind.GOSUB):
+            self._advance()
+            return 'gosub'
+        if (self._at(VbaTokenKind.IDENTIFIER)
+                and self._current.value.lower() == 'go'):
+            self._advance()
+            if self._at(VbaTokenKind.TO):
+                self._advance()
+                return 'goto'
+            if self._at(VbaTokenKind.SUB):
+                self._advance()
+                return 'gosub'
+        return ''
+
     def parse(self) -> VbaModule:
         return self._parse_module()
 
@@ -618,6 +650,19 @@ class VbaParser:
         if kind == VbaTokenKind.IDENTIFIER and self._current.value.lower() in ('lset', 'rset'):
             return self._parse_let_statement()
 
+        if kind == VbaTokenKind.IDENTIFIER and self._current.value.lower() == 'go':
+            self._advance()
+            if self._at(VbaTokenKind.TO):
+                self._advance()
+                label = self._current.value
+                self._advance()
+                return VbaGotoStatement(label=label, offset=offset)
+            if self._at(VbaTokenKind.SUB):
+                self._advance()
+                label = self._current.value
+                self._advance()
+                return VbaGosubStatement(label=label, offset=offset)
+
         if kw == 'open':
             return self._skip_to_eos()
 
@@ -1049,8 +1094,7 @@ class VbaParser:
                         action=VbaOnErrorAction.RESUME_NEXT, offset=offset)
                 return VbaOnErrorStatement(
                     action=VbaOnErrorAction.RESUME, offset=offset)
-            if self._at(VbaTokenKind.GOTO):
-                self._advance()
+            if self._eat_go_token('to'):
                 if self._at(VbaTokenKind.MINUS):
                     self._advance()
                     label = '-' + self._current.value
@@ -1061,13 +1105,13 @@ class VbaParser:
                     action=VbaOnErrorAction.GOTO, label=label, offset=offset)
             return VbaOnErrorStatement(action=VbaOnErrorAction.NONE, offset=offset)
         expr = self._parse_expression()
-        if self._at(VbaTokenKind.GOTO):
+        branch = self._eat_go_branch()
+        if branch == 'goto':
             kind = VbaOnBranchKind.GOTO
-        elif self._at(VbaTokenKind.GOSUB):
+        elif branch == 'gosub':
             kind = VbaOnBranchKind.GOSUB
         else:
             return VbaOnErrorStatement(action=VbaOnErrorAction.NONE, offset=offset)
-        self._advance()
         labels = [self._current.value]
         self._advance()
         while self._eat(VbaTokenKind.COMMA):
