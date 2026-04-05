@@ -328,6 +328,16 @@ class TestPs1Lexer(TestBase):
         tokens = self._tokens('3>&2', mode=Ps1LexerMode.ARGUMENT)
         self.assertEqual(tokens[0], (Ps1TokenKind.REDIRECTION, '3>&2'))
 
+    def test_bare_merge_redirection_allows_stream_1(self):
+        tokens = self._tokens('>&1', mode=Ps1LexerMode.ARGUMENT)
+        self.assertEqual(tokens[0], (Ps1TokenKind.REDIRECTION, '>&1'))
+
+    def test_bare_merge_redirection_rejects_stream_2(self):
+        tokens = self._tokens('>&2', mode=Ps1LexerMode.ARGUMENT)
+        # bare >&2 without leading digit is invalid per the reference;
+        # should lex as plain > followed by & and 2
+        self.assertEqual(tokens[0], (Ps1TokenKind.REDIRECTION, '>'))
+
     def test_digit_not_stream_redirection(self):
         tokens = self._tokens('9>file')
         self.assertEqual(tokens[0], (Ps1TokenKind.INTEGER, '9'))

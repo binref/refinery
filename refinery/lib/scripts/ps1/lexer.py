@@ -148,7 +148,9 @@ _DASH_OPERATORS: dict[str, str] = {
 }
 
 _REDIRECTION_PATTERN = re.compile(
-    r'(?:[1-6*])?(?:>>|>&[12]|>)|<',
+    r'[1-6*](?:>>|>&[12]|>)'  # explicit stream: 2>&1, 2>>, 2>
+    r'|>>|>&1|>'              # bare: >>, >&1, >
+    r'|<',                    # input
 )
 
 _INTEGER_PATTERN = re.compile(
