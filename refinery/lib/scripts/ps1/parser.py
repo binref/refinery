@@ -1546,7 +1546,7 @@ class Ps1Parser:
 
     def _parse_function_definition(self) -> Ps1FunctionDefinition:
         offset = self._current.offset
-        kw = self._advance()
+        kw = self._advance(Ps1LexerMode.ARGUMENT)
         is_filter = kw.kind == Ps1TokenKind.FILTER
         self._skip_newlines()
         name = ''
@@ -1556,6 +1556,7 @@ class Ps1Parser:
             name = self._advance().value
         elif self._at(Ps1TokenKind.VARIABLE):
             name = self._advance().value
+        self._lexer.mode = Ps1LexerMode.EXPRESSION
         self._skip_newlines()
         if self._at(Ps1TokenKind.LPAREN):
             self._advance()

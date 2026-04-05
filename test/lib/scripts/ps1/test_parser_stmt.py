@@ -152,6 +152,16 @@ class TestPs1ParserStatements(TestBase):
         self.assertIsInstance(stmt, Ps1FunctionDefinition)
         self.assertTrue(stmt.is_filter)
 
+    def test_function_scope_qualified_name(self):
+        stmt = self._parse_stmt('function global:MyFunc { return 1 }')
+        self.assertIsInstance(stmt, Ps1FunctionDefinition)
+        self.assertEqual(stmt.name, 'global:MyFunc')
+
+    def test_function_script_scope(self):
+        stmt = self._parse_stmt('function script:Initialize { }')
+        self.assertIsInstance(stmt, Ps1FunctionDefinition)
+        self.assertEqual(stmt.name, 'script:Initialize')
+
     def test_return_statement(self):
         stmt = self._parse_stmt('return 42')
         self.assertIsInstance(stmt, Ps1ReturnStatement)
