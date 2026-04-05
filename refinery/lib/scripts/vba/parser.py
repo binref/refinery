@@ -239,6 +239,9 @@ class VbaParser:
             we_scope = scope if scope is not VbaScopeModifier.NONE else VbaScopeModifier.PRIVATE
             return self._parse_variable_declaration(we_scope)
 
+        if kw == 'attribute':
+            return self._skip_to_eos()
+
         return self._parse_statement()
 
     def _parse_option_statement(self) -> VbaOptionStatement:

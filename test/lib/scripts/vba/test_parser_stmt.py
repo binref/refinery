@@ -747,6 +747,13 @@ class TestVbaParserStatements(TestBase):
         self.assertEqual(len(stmt.arguments), 2)
         self.assertEqual(stmt.separators, [','])
 
+    def test_attribute_does_not_corrupt_following_code(self):
+        code = 'Attribute VB_Name = "Module1"\nSub T()\nx = 1\nEnd Sub'
+        ast = self._parse(code)
+        sub = [n for n in ast.body if isinstance(n, VbaSubDeclaration)]
+        self.assertEqual(len(sub), 1)
+        self.assertEqual(len(sub[0].body), 1)
+
     def test_if_else_with_standalone_end(self):
         code = 'If x Then\ny = 1\nElse\nEnd\nEnd If'
         ast = self._parse(code)

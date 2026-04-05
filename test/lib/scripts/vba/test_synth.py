@@ -196,6 +196,11 @@ class TestVbaSynthesizer(TestBase):
         result = self._roundtrip('Dim s As String * 20')
         self.assertIn('As String * 20', result)
 
+    def test_attribute_roundtrip(self):
+        code = 'Attribute VB_Name = "Module1"\nSub T()\nx = 1\nEnd Sub'
+        result = self._roundtrip(code)
+        self.assertIn('Sub T()', result)
+
     def test_type_member_fixed_length_string(self):
         code = 'Type MyType\nname As String * 50\nEnd Type'
         result = self._roundtrip(code)
