@@ -4,6 +4,7 @@ from test import TestBase
 
 from refinery.lib.scripts.ps1.parser import Ps1Parser
 from refinery.lib.scripts.ps1.model import (
+    Ps1AccessKind,
     Ps1ArrayLiteral,
     Ps1AssignmentExpression,
     Ps1BinaryExpression,
@@ -423,3 +424,26 @@ class TestPs1ParserExpressions(TestBase):
         expr = self._parse_expr('@"\rline one\rline two\r"@')
         self.assertIsInstance(expr, Ps1HereString)
         self.assertEqual(expr.value, 'line one\rline two')
+
+    def test_member_access_newline_after_dot(self):
+        expr = self._parse_expr('$obj.\n    Length')
+        self.assertIsInstance(expr, Ps1MemberAccess)
+        self.assertEqual(expr.member, 'Length')
+
+    def test_method_call_newline_after_dot(self):
+        expr = self._parse_expr('$obj.\n    Method()')
+        self.assertIsInstance(expr, Ps1InvokeMember)
+        self.assertEqual(expr.member, 'Method')
+
+    def test_static_access_newline_after_double_colon(self):
+        expr = self._parse_expr('[int]::\n    MaxValue')
+        self.assertIsInstance(expr, Ps1MemberAccess)
+        self.assertEqual(expr.member, 'MaxValue')
+        self.assertEqual(expr.access, Ps1AccessKind.STATIC)
+
+    def test_chained_fluent_member_access(self):
+        expr = self._parse_expr('$s.\n    Trim().\n    ToLower()')
+        self.assertIsInstance(expr, Ps1InvokeMember)
+        self.assertEqual(expr.member, 'ToLower')
+        self.assertIsInstance(expr.object, Ps1InvokeMember)
+        self.assertEqual(expr.object.member, 'Trim')

@@ -1231,6 +1231,7 @@ class Ps1Parser:
             if access_tok.kind == Ps1TokenKind.DOUBLE_COLON
             else Ps1AccessKind.INSTANCE
         )
+        self._skip_newlines()
 
         member: str | Expression
         if self._at(Ps1TokenKind.GENERIC_TOKEN):
