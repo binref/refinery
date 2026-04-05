@@ -115,6 +115,14 @@ class TestVbaSynthesizer(TestBase):
         result = self._roundtrip('Dim x As Long')
         self.assertIn('Dim x As Long', result)
 
+    def test_dim_withevents(self):
+        result = self._roundtrip('Dim WithEvents obj As SomeClass')
+        self.assertIn('WithEvents obj As SomeClass', result)
+
+    def test_private_withevents(self):
+        result = self._roundtrip('Private WithEvents m_App As Application')
+        self.assertIn('WithEvents m_App As Application', result)
+
     def test_type_definition(self):
         code = 'Type MyType\nx As Long\ny As String\nEnd Type'
         result = self._roundtrip(code)

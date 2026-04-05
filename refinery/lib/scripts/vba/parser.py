@@ -325,7 +325,7 @@ class VbaParser:
 
     def _parse_variable_declaration(self, scope: VbaScopeModifier) -> VbaVariableDeclaration:
         offset = self._current.offset
-        if self._current.value.lower() in ('dim', 'global', 'withevents', 'static'):
+        if self._current.value.lower() in ('dim', 'global', 'static'):
             self._advance()
         declarators: list[VbaVariableDeclarator] = []
         declarators.append(self._parse_variable_declarator())
@@ -337,6 +337,7 @@ class VbaParser:
 
     def _parse_variable_declarator(self) -> VbaVariableDeclarator:
         offset = self._current.offset
+        with_events = bool(self._eat(VbaTokenKind.WITHEVENTS))
         name = self._current.value
         self._advance()
         bounds: list[Expression] = []
@@ -355,7 +356,7 @@ class VbaParser:
             type_name = self._parse_type_name()
         return VbaVariableDeclarator(
             name=name, type_name=type_name, is_array=is_array,
-            bounds=bounds, is_new=is_new, offset=offset,
+            bounds=bounds, is_new=is_new, with_events=with_events, offset=offset,
         )
 
     def _parse_event_declaration(self, scope: VbaScopeModifier) -> VbaEventDeclaration:

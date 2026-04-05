@@ -339,6 +339,8 @@ class VbaSynthesizer(Visitor):
             self.visit(d)
 
     def visit_VbaVariableDeclarator(self, node: VbaVariableDeclarator):
+        if node.with_events:
+            self._write('WithEvents ')
         self._write(node.name)
         if node.is_array or node.bounds:
             self._write('(')

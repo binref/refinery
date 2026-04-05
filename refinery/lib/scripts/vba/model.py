@@ -397,6 +397,7 @@ class VbaVariableDeclarator(Node):
     is_array: bool = False
     bounds: list[Expression] = field(default_factory=list)
     is_new: bool = False
+    with_events: bool = False
 
     def __post_init__(self):
         self._adopt(*self.bounds)

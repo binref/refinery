@@ -49,6 +49,7 @@ from refinery.lib.scripts.vba.model import (
     VbaSubDeclaration,
     VbaTypeDefinition,
     VbaVariableDeclaration,
+    VbaVariableDeclarator,
     VbaWhileStatement,
     VbaWithStatement,
 )
@@ -98,6 +99,28 @@ class TestVbaParserStatements(TestBase):
         stmt = ast.body[0]
         assert isinstance(stmt, VbaVariableDeclaration)
         self.assertEqual(len(stmt.declarators), 2)
+
+    def test_dim_withevents(self):
+        ast = self._parse('Dim WithEvents obj As SomeClass')
+        stmt = ast.body[0]
+        assert isinstance(stmt, VbaVariableDeclaration)
+        self.assertEqual(len(stmt.declarators), 1)
+        d = stmt.declarators[0]
+        assert isinstance(d, VbaVariableDeclarator)
+        self.assertEqual(d.name, 'obj')
+        self.assertEqual(d.type_name, 'SomeClass')
+        self.assertTrue(d.with_events)
+
+    def test_private_withevents(self):
+        ast = self._parse('Private WithEvents m_App As Application')
+        stmt = ast.body[0]
+        assert isinstance(stmt, VbaVariableDeclaration)
+        self.assertEqual(stmt.scope, VbaScopeModifier.PRIVATE)
+        d = stmt.declarators[0]
+        assert isinstance(d, VbaVariableDeclarator)
+        self.assertEqual(d.name, 'm_App')
+        self.assertEqual(d.type_name, 'Application')
+        self.assertTrue(d.with_events)
 
     def test_const_declaration(self):
         ast = self._parse('Const PI As Double = 3.14')
