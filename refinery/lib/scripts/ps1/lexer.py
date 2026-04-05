@@ -468,12 +468,6 @@ class Ps1Lexer:
         return None
 
     def _try_parameter(self) -> Ps1Token | None:
-        # Reference: ScanParameter (tokenizer.cs:3185).  The first character
-        # after the dash must be a letter, underscore, or '?'.  After that,
-        # every character that is not a stop character is absorbed into the
-        # parameter name.  A trailing colon is consumed as the "argument
-        # required" flag.  In the reference, embedded quotes convert the
-        # whole thing to a generic token; we simplify by just stopping.
         src = self.source
         length = len(src)
         start = self.pos
@@ -491,7 +485,10 @@ class Ps1Lexer:
             if c in _PARAM_STOP or c.isspace():
                 break
             if c in SINGLE_QUOTES or c in DOUBLE_QUOTES:
-                break
+                # Embedded quotes turn the parameter into a generic token,
+                # e.g. -fil'e' is a single token whose value is -file.
+                self.pos = start
+                return self._read_generic_token()
             if c == ':':
                 self.pos += 1
                 break
@@ -603,7 +600,7 @@ class Ps1Lexer:
             # NOT force a new token are part of a generic token (e.g.
             # "..\..\file.exe", "--no-pager") and must be scanned as a single
             # generic token instead of the operator.
-            if c2 in ('..', '--', '++') and self.mode == Ps1LexerMode.ARGUMENT:
+            if c2 in ('..', '--', '++', '::') and self.mode == Ps1LexerMode.ARGUMENT:
                 after = self.pos + 2
                 if after < length and src[after] not in ' \t\r\n|&;,{}()':
                     token = self._read_generic_token()

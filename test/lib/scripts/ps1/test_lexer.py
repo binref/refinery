@@ -599,6 +599,18 @@ class TestPs1Lexer(TestBase):
         tokens = self._tokens('$var foo', mode=Ps1LexerMode.ARGUMENT)
         self.assertEqual(tokens[0], (Ps1TokenKind.VARIABLE, '$var'))
 
+    def test_parameter_with_embedded_quote_becomes_generic_token(self):
+        """A parameter with an embedded quote rescans as a generic token."""
+        tokens = self._tokens("-fil'e'", mode=Ps1LexerMode.ARGUMENT)
+        self.assertEqual(len(tokens), 1)
+        self.assertEqual(tokens[0], (Ps1TokenKind.GENERIC_TOKEN, "-fil'e'"))
+
+    def test_double_colon_generic_token_in_argument_mode(self):
+        """:: followed by non-terminator in argument mode is a generic token."""
+        tokens = self._tokens('::path', mode=Ps1LexerMode.ARGUMENT)
+        self.assertEqual(len(tokens), 1)
+        self.assertEqual(tokens[0], (Ps1TokenKind.GENERIC_TOKEN, '::path'))
+
     def test_double_colon_not_label(self):
         tokens = self._tokens('[System.IO]::Path')
         kinds = [t[0] for t in tokens]
