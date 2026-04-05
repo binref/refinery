@@ -686,13 +686,19 @@ class Ps1Lexer:
                 continue
 
             if self.mode == Ps1LexerMode.ARGUMENT:
-                if c == '.' and self.pos + 1 < length and src[self.pos + 1] in '\\/':
-                    token = self._read_generic_token()
-                    if token.value:
-                        mode_hint = yield token
-                        if mode_hint is not None:
-                            self.mode = mode_hint
-                        continue
+                # Reference: ScanDot (tokenizer.cs:4392-4395). In command mode,
+                # a dot followed by a character that does not force a new token
+                # and is not $, ", or ' starts a generic token (e.g. .gitignore,
+                # .\\path, .NET).  The $/"/' exclusions preserve dot-sourcing.
+                if c == '.' and self.pos + 1 < length:
+                    nc = src[self.pos + 1]
+                    if nc not in ' \t\r\n|&;,{}()[]$' and nc not in SINGLE_QUOTES and nc not in DOUBLE_QUOTES:
+                        token = self._read_generic_token()
+                        if token.value:
+                            mode_hint = yield token
+                            if mode_hint is not None:
+                                self.mode = mode_hint
+                            continue
 
             if c in _ONE_CHAR_OPS or c in DASHES:
                 self.pos += 1

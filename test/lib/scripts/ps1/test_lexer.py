@@ -508,6 +508,22 @@ class TestPs1Lexer(TestBase):
         self.assertEqual(len(tokens), 1)
         self.assertEqual(tokens[0], (Ps1TokenKind.GENERIC_TOKEN, '++count'))
 
+    def test_dot_letter_generic_token_in_argument_mode(self):
+        """In argument mode, .gitignore is a single generic token."""
+        tokens = self._tokens('.gitignore', mode=Ps1LexerMode.ARGUMENT)
+        self.assertEqual(len(tokens), 1)
+        self.assertEqual(tokens[0], (Ps1TokenKind.GENERIC_TOKEN, '.gitignore'))
+
+    def test_dot_source_variable_not_generic(self):
+        """Dot followed by $ is NOT a generic token (it's dot-sourcing)."""
+        tokens = self._tokens('. $script', mode=Ps1LexerMode.ARGUMENT)
+        self.assertEqual(tokens[0], (Ps1TokenKind.DOT, '.'))
+
+    def test_dot_source_string_not_generic(self):
+        """Dot followed by a quote is NOT a generic token (it's dot-sourcing)."""
+        tokens = self._tokens(". 'script.ps1'", mode=Ps1LexerMode.ARGUMENT)
+        self.assertEqual(tokens[0], (Ps1TokenKind.DOT, '.'))
+
     def test_double_colon_not_label(self):
         tokens = self._tokens('[System.IO]::Path')
         kinds = [t[0] for t in tokens]

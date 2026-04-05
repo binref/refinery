@@ -427,3 +427,17 @@ class TestPs1ParserStatements(TestBase):
         self.assertEqual(cmd.arguments[1].kind, Ps1CommandArgumentKind.POSITIONAL)
         self.assertIsInstance(cmd.arguments[1].value, Ps1StringLiteral)
         self.assertEqual(cmd.arguments[1].value.value, 'log')
+
+    def test_dotfile_command_argument(self):
+        """Copy-Item .gitignore dest should parse .gitignore as a positional argument."""
+        stmt = self._parse_stmt('Copy-Item .gitignore dest')
+        self.assertIsInstance(stmt, Ps1ExpressionStatement)
+        cmd = stmt.expression
+        self.assertIsInstance(cmd, Ps1CommandInvocation)
+        self.assertEqual(len(cmd.arguments), 2)
+        self.assertEqual(cmd.arguments[0].kind, Ps1CommandArgumentKind.POSITIONAL)
+        self.assertIsInstance(cmd.arguments[0].value, Ps1StringLiteral)
+        self.assertEqual(cmd.arguments[0].value.value, '.gitignore')
+        self.assertEqual(cmd.arguments[1].kind, Ps1CommandArgumentKind.POSITIONAL)
+        self.assertIsInstance(cmd.arguments[1].value, Ps1StringLiteral)
+        self.assertEqual(cmd.arguments[1].value.value, 'dest')
