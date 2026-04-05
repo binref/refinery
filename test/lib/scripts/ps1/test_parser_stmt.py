@@ -179,7 +179,7 @@ class TestPs1ParserStatements(TestBase):
         stmt = self._parse_stmt('break')
         self.assertIsInstance(stmt, Ps1BreakStatement)
 
-    def test_break_with_label(self):
+    def test_break_with_bare_label(self):
         stmt = self._parse_stmt('break outer')
         self.assertIsInstance(stmt, Ps1BreakStatement)
         self.assertIsNotNone(stmt.label)
@@ -441,3 +441,14 @@ class TestPs1ParserStatements(TestBase):
         self.assertEqual(cmd.arguments[1].kind, Ps1CommandArgumentKind.POSITIONAL)
         self.assertIsInstance(cmd.arguments[1].value, Ps1StringLiteral)
         self.assertEqual(cmd.arguments[1].value.value, 'dest')
+
+    def test_wildcard_command_argument(self):
+        """Get-ChildItem *.txt should parse *.txt as a single positional argument."""
+        stmt = self._parse_stmt('Get-ChildItem *.txt')
+        self.assertIsInstance(stmt, Ps1ExpressionStatement)
+        cmd = stmt.expression
+        self.assertIsInstance(cmd, Ps1CommandInvocation)
+        self.assertEqual(len(cmd.arguments), 1)
+        self.assertEqual(cmd.arguments[0].kind, Ps1CommandArgumentKind.POSITIONAL)
+        self.assertIsInstance(cmd.arguments[0].value, Ps1StringLiteral)
+        self.assertEqual(cmd.arguments[0].value.value, '*.txt')

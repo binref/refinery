@@ -524,6 +524,29 @@ class TestPs1Lexer(TestBase):
         tokens = self._tokens(". 'script.ps1'", mode=Ps1LexerMode.ARGUMENT)
         self.assertEqual(tokens[0], (Ps1TokenKind.DOT, '.'))
 
+    def test_star_wildcard_in_argument_mode(self):
+        """In argument mode, *.txt is a single generic token."""
+        tokens = self._tokens('*.txt', mode=Ps1LexerMode.ARGUMENT)
+        self.assertEqual(len(tokens), 1)
+        self.assertEqual(tokens[0], (Ps1TokenKind.GENERIC_TOKEN, '*.txt'))
+
+    def test_slash_path_in_argument_mode(self):
+        """In argument mode, /etc/hosts is a single generic token."""
+        tokens = self._tokens('/etc/hosts', mode=Ps1LexerMode.ARGUMENT)
+        self.assertEqual(len(tokens), 1)
+        self.assertEqual(tokens[0], (Ps1TokenKind.GENERIC_TOKEN, '/etc/hosts'))
+
+    def test_star_standalone_in_argument_mode(self):
+        """When * is followed by whitespace in argument mode, it is still STAR."""
+        tokens = self._tokens('* foo', mode=Ps1LexerMode.ARGUMENT)
+        self.assertEqual(tokens[0], (Ps1TokenKind.STAR, '*'))
+
+    def test_star_in_expression_mode(self):
+        """In expression mode, * is always STAR."""
+        tokens = self._tokens('2 * 3')
+        stars = [t for t in tokens if t[0] == Ps1TokenKind.STAR]
+        self.assertEqual(len(stars), 1)
+
     def test_double_colon_not_label(self):
         tokens = self._tokens('[System.IO]::Path')
         kinds = [t[0] for t in tokens]

@@ -23,6 +23,7 @@
   where, e.g. you first run `cd` to change the working directory.
   Handle everything you need to do inside the script.
 - When making commits on the user's behalf, do not include a comment about AI co-authorship.
+- When asked to commit changes to git, only use one-line commit messages.
 
 # Bug Fixing
 

@@ -700,6 +700,19 @@ class Ps1Lexer:
                                 self.mode = mode_hint
                             continue
 
+            # Reference: CheckOperatorInCommandMode (tokenizer.cs:3340-3348).
+            # In command/argument mode, arithmetic operators followed by a
+            # character that does NOT force a new token are part of a generic
+            # token (e.g. "*.txt", "/etc/hosts") instead of an operator.
+            if self.mode == Ps1LexerMode.ARGUMENT and c in '*/%=!+':
+                if self.pos + 1 < length and src[self.pos + 1] not in ' \t\r\n|&;,{}()[]':
+                    token = self._read_generic_token()
+                    if token.value:
+                        mode_hint = yield token
+                        if mode_hint is not None:
+                            self.mode = mode_hint
+                        continue
+
             if c in _ONE_CHAR_OPS or c in DASHES:
                 self.pos += 1
                 kind = _ONE_CHAR_OPS.get(c) or Ps1TokenKind.DASH
