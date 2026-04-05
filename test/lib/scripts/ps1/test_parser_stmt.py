@@ -306,3 +306,13 @@ class TestPs1ParserStatements(TestBase):
         stmt = self._parse_stmt('while ($true) { break }')
         self.assertIsInstance(stmt, Ps1WhileLoop)
         self.assertIsNone(stmt.label)
+
+    def test_dot_source_relative_path(self):
+        stmt = self._parse_stmt(r'. .\script.ps1')
+        self.assertIsInstance(stmt, Ps1ExpressionStatement)
+        cmd = stmt.expression
+        self.assertIsInstance(cmd, Ps1CommandInvocation)
+        self.assertEqual(cmd.invocation_operator, '.')
+        self.assertIsNotNone(cmd.name)
+        self.assertIsInstance(cmd.name, Ps1StringLiteral)
+        self.assertEqual(cmd.name.value, r'.\script.ps1')

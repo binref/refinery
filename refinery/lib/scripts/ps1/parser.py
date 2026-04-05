@@ -437,7 +437,7 @@ class Ps1Parser:
         offset = self._current.offset
         invocation_operator = ''
         if self._at(Ps1TokenKind.AMPERSAND, Ps1TokenKind.DOT):
-            invocation_operator = self._advance().value
+            invocation_operator = self._advance(Ps1LexerMode.ARGUMENT).value
             self._skip_newlines()
 
         self._lexer.mode = Ps1LexerMode.ARGUMENT

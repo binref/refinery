@@ -611,6 +611,15 @@ class Ps1Lexer:
                     self.mode = mode_hint
                 continue
 
+            if self.mode == Ps1LexerMode.ARGUMENT:
+                if c == '.' and self.pos + 1 < length and src[self.pos + 1] in '\\/':
+                    token = self._read_generic_token()
+                    if token.value:
+                        mode_hint = yield token
+                        if mode_hint is not None:
+                            self.mode = mode_hint
+                        continue
+
             if c in _ONE_CHAR_OPS:
                 self.pos += 1
                 kind = _ONE_CHAR_OPS[c]
