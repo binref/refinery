@@ -4,6 +4,7 @@ from test import TestBase
 
 from refinery.lib.scripts.vba.parser import VbaParser
 from refinery.lib.scripts.vba.model import (
+    VbaBangAccess,
     VbaBinaryExpression,
     VbaBooleanLiteral,
     VbaCallExpression,
@@ -22,6 +23,7 @@ from refinery.lib.scripts.vba.model import (
     VbaTypeOfIsExpression,
     VbaUnaryExpression,
     VbaLetStatement,
+    VbaVariableDeclaration,
 )
 
 
@@ -276,6 +278,35 @@ class TestVbaParserExpressions(TestBase):
         self.assertEqual(expr.operator, '^')
         assert isinstance(expr.right, VbaIntegerLiteral)
         self.assertEqual(expr.right.value, 2)
+
+    def test_bang_access(self):
+        code = 'Sub T()\nx = rs!FieldName\nEnd Sub'
+        ast = VbaParser(code).parse()
+        sub = ast.body[0]
+        stmt = sub.body[0]
+        assert isinstance(stmt, VbaLetStatement)
+        expr = stmt.value
+        assert isinstance(expr, VbaBangAccess)
+        self.assertEqual(expr.member, 'FieldName')
+
+    def test_bang_access_chained(self):
+        code = 'Sub T()\nx = rs!Field.Value\nEnd Sub'
+        ast = VbaParser(code).parse()
+        sub = ast.body[0]
+        stmt = sub.body[0]
+        assert isinstance(stmt, VbaLetStatement)
+        expr = stmt.value
+        assert isinstance(expr, VbaMemberAccess)
+        self.assertEqual(expr.member, 'Value')
+        assert isinstance(expr.object, VbaBangAccess)
+        self.assertEqual(expr.object.member, 'Field')
+
+    def test_type_suffix_bang_still_works(self):
+        code = 'Sub T()\nDim x!\nEnd Sub'
+        ast = VbaParser(code).parse()
+        sub = ast.body[0]
+        assert isinstance(sub.body[0], VbaVariableDeclaration)
+        self.assertEqual(sub.body[0].declarators[0].name, 'x!')
 
     def test_line_continuation_with_trailing_whitespace(self):
         expr = self._parse_expr('1 + _  \n  2')

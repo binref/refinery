@@ -119,11 +119,20 @@ class VbaLexer:
         word = src[start:self.pos]
         suffix = ''
         if self.pos < length and src[self.pos] in '%&!#@$':
-            if src[self.pos] != '&' or (
+            c_suffix = src[self.pos]
+            consume = True
+            if c_suffix == '&' and not (
                 self.pos + 1 >= length
                 or src[self.pos + 1] in ' \t\r\n)],;:\x00(.!'
             ):
-                suffix = src[self.pos]
+                consume = False
+            elif c_suffix == '!' and (
+                self.pos + 1 < length
+                and (src[self.pos + 1].isalpha() or src[self.pos + 1] == '_')
+            ):
+                consume = False
+            if consume:
+                suffix = c_suffix
                 self.pos += 1
         kw = _KEYWORDS.get(word.lower())
         if kw is not None and not suffix:
