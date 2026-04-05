@@ -375,13 +375,15 @@ class Ps1Lexer:
         if m:
             text = m.group()
             end = m.end()
-            if text.endswith('.') and end < len(src) and src[end] == '.':
-                text = text[:-1]
-                end -= 1
-                if text and text.replace('_', '').isdigit():
-                    start = self.pos
-                    self.pos = end
-                    return Ps1Token(Ps1TokenKind.INTEGER, text, start)
+            if text.endswith('.') and end < len(src):
+                nc = src[end]
+                if nc == '.' or nc.isalpha() or nc in '_$@{':
+                    text = text[:-1]
+                    end -= 1
+                    if text and text.replace('_', '').isdigit():
+                        start = self.pos
+                        self.pos = end
+                        return Ps1Token(Ps1TokenKind.INTEGER, text, start)
             start = self.pos
             self.pos = end
             return Ps1Token(Ps1TokenKind.REAL, text, start)

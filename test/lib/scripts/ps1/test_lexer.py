@@ -358,6 +358,35 @@ class TestPs1Lexer(TestBase):
         self.assertEqual(tokens[0], (Ps1TokenKind.VARIABLE, '$x'))
         self.assertEqual(tokens[1], (Ps1TokenKind.DOUBLE_COLON, '::'))
 
+    def test_integer_dot_identifier_not_consumed_as_real(self):
+        tokens = self._tokens('7.ToString')
+        self.assertEqual(tokens[0], (Ps1TokenKind.INTEGER, '7'))
+        self.assertEqual(tokens[1], (Ps1TokenKind.DOT, '.'))
+        self.assertEqual(tokens[2], (Ps1TokenKind.GENERIC_TOKEN, 'ToString'))
+
+    def test_integer_dot_variable_not_consumed_as_real(self):
+        tokens = self._tokens('7.$method')
+        self.assertEqual(tokens[0], (Ps1TokenKind.INTEGER, '7'))
+        self.assertEqual(tokens[1], (Ps1TokenKind.DOT, '.'))
+        self.assertEqual(tokens[2], (Ps1TokenKind.VARIABLE, '$method'))
+
+    def test_trailing_dot_number_preserved_before_whitespace(self):
+        tokens = self._tokens('7. ')
+        self.assertEqual(tokens[0], (Ps1TokenKind.REAL, '7.'))
+
+    def test_trailing_dot_number_preserved_at_eof(self):
+        tokens = self._tokens('7.')
+        self.assertEqual(tokens[0], (Ps1TokenKind.REAL, '7.'))
+
+    def test_trailing_dot_number_preserved_before_operator(self):
+        tokens = self._tokens('7.+ 3')
+        self.assertEqual(tokens[0], (Ps1TokenKind.REAL, '7.'))
+        self.assertEqual(tokens[1], (Ps1TokenKind.PLUS, '+'))
+
+    def test_real_with_digits_after_dot_unchanged(self):
+        tokens = self._tokens('7.5')
+        self.assertEqual(tokens[0], (Ps1TokenKind.REAL, '7.5'))
+
     def test_backtick_line_continuation(self):
         tokens = self._tokens('$x +`\n$y')
         kinds = [t[0] for t in tokens]
