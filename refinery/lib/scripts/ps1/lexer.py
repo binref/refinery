@@ -600,7 +600,7 @@ class Ps1Lexer:
             # NOT force a new token are part of a generic token (e.g.
             # "..\..\file.exe", "--no-pager") and must be scanned as a single
             # generic token instead of the operator.
-            if c2 in ('..', '--', '++', '::') and self.mode == Ps1LexerMode.ARGUMENT:
+            if c2 in ('..', '--', '++', '::', '+=', '-=', '*=', '/=', '%=') and self.mode == Ps1LexerMode.ARGUMENT:
                 after = self.pos + 2
                 if after < length and src[after] not in ' \t\r\n|&;,{}()':
                     token = self._read_generic_token()

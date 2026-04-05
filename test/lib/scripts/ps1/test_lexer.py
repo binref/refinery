@@ -611,6 +611,28 @@ class TestPs1Lexer(TestBase):
         self.assertEqual(len(tokens), 1)
         self.assertEqual(tokens[0], (Ps1TokenKind.GENERIC_TOKEN, '::path'))
 
+    def test_compound_assignment_generic_token_in_argument_mode(self):
+        """Compound assignment operators followed by non-terminator in argument mode are generic tokens."""
+        for op in ('+=', '-=', '*=', '/=', '%='):
+            with self.subTest(op=op):
+                tokens = self._tokens(f'{op}value', mode=Ps1LexerMode.ARGUMENT)
+                self.assertEqual(len(tokens), 1)
+                self.assertEqual(tokens[0], (Ps1TokenKind.GENERIC_TOKEN, f'{op}value'))
+
+    def test_compound_assignment_operator_with_space_in_argument_mode(self):
+        """Compound assignment operators followed by space in argument mode remain operators."""
+        expected = {
+            '+=': Ps1TokenKind.PLUS_ASSIGN,
+            '-=': Ps1TokenKind.DASH_ASSIGN,
+            '*=': Ps1TokenKind.STAR_ASSIGN,
+            '/=': Ps1TokenKind.SLASH_ASSIGN,
+            '%=': Ps1TokenKind.PERCENT_ASSIGN,
+        }
+        for op, kind in expected.items():
+            with self.subTest(op=op):
+                tokens = self._tokens(f'{op} value', mode=Ps1LexerMode.ARGUMENT)
+                self.assertEqual(tokens[0], (kind, op))
+
     def test_double_colon_not_label(self):
         tokens = self._tokens('[System.IO]::Path')
         kinds = [t[0] for t in tokens]
