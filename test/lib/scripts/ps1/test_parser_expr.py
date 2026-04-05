@@ -342,6 +342,16 @@ class TestPs1ParserExpressions(TestBase):
         self.assertIsInstance(expr.elements[1], Ps1IntegerLiteral)
         self.assertEqual(expr.elements[1].value, 1)
 
+    def test_integer_with_long_suffix_and_multiplier(self):
+        expr = self._parse_expr('10lkb')
+        self.assertIsInstance(expr, Ps1RealLiteral)
+        self.assertAlmostEqual(expr.value, 10 * 1024)
+
+    def test_hex_integer_with_long_suffix_and_multiplier(self):
+        expr = self._parse_expr('0xAlgb')
+        self.assertIsInstance(expr, Ps1RealLiteral)
+        self.assertAlmostEqual(expr.value, 10 * 1024 ** 3)
+
     def test_expandable_string_nested_dq_in_subexpr(self):
         expr = self._parse_expr('"value: $($x.ToString("N2"))"')
         self.assertIsInstance(expr, Ps1ExpandableString)

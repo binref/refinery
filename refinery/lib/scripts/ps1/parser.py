@@ -850,7 +850,7 @@ class Ps1Parser:
         value = 0.0
         for suffix, mult in multipliers.items():
             if text.lower().endswith(suffix):
-                text = text[:-len(suffix)]
+                text = text[:-len(suffix)].rstrip('lL')
                 try:
                     value = float(int(text, 0)) * mult
                 except (ValueError, OverflowError):
