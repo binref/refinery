@@ -32,7 +32,8 @@ class defu(IterativeDeobfuscator):
 
     Attempts to parse the input as JavaScript, PowerShell, and VBA, then selects the language
     whose parser produces the fewest error nodes and applies the corresponding deobfuscation
-    pipeline.
+    pipeline. The deobfuscation is executed iteratively until the output does not change any
+    more; running the unit twice does not change the output.
     """
 
     _backend: _Backend

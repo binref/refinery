@@ -12,7 +12,8 @@ class js(IterativeDeobfuscator):
     AST-based JavaScript deobfuscator and pretty-printer.
 
     Parses the script into an abstract syntax tree, applies simplifying transformations, and
-    synthesizes clean output.
+    synthesizes clean output. This deobfuscator iterates until stable; running it twice does
+    not change the output.
     """
 
     def parse(self, data: str) -> JsScript:

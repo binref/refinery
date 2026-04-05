@@ -11,10 +11,10 @@ class vba(IterativeDeobfuscator):
     """
     AST-based VBA deobfuscator and pretty-printer.
 
-    Parses the VBA code into an abstract syntax tree, applies simplifying transformations, and
-    synthesizes clean output. Deobfuscating transformations are iterated until the output does not
-    change any more: This unit targets the deobfuscation of malicious VBA macros in Office
-    documents.
+    This unit targets the deobfuscation of malicious VBA macros in Office documents. It parses the
+    VBA code into an abstract syntax tree, applies simplifying transformations, and synthesizes
+    clean output. Deobfuscating transformations are iterated until the output does not change any
+    more: Running the unit twice does not change the output.
     """
 
     def parse(self, data: str) -> VbaModule:

@@ -14,7 +14,7 @@ class ps1(IterativeDeobfuscator):
     Parses the script into an abstract syntax tree, applies simplifying transformations (constant
     folding, format string evaluation, bracket removal, type cast simplification, string
     operations, case normalization, invoke simplification, uncurly variables), and synthesizes
-    clean output. Iterates until stable.
+    clean output. Iterates until stable; running this twice does not change the output.
     """
 
     def parse(self, data: str) -> Ps1Script:
