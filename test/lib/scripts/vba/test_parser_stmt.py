@@ -22,6 +22,7 @@ from refinery.lib.scripts.vba.model import (
     VbaGotoStatement,
     VbaGosubStatement,
     VbaIdentifier,
+    VbaImplementsStatement,
     VbaIfStatement,
     VbaIntegerLiteral,
     VbaLabelStatement,
@@ -811,3 +812,21 @@ class TestVbaParserStatements(TestBase):
         assert isinstance(stmt, VbaSubDeclaration)
         self.assertEqual(len(stmt.params), 1)
         self.assertEqual(stmt.params[0].type_name, 'String * 10')
+
+    def test_implements_simple_name(self):
+        ast = self._parse('Implements IFoo')
+        stmt = ast.body[0]
+        assert isinstance(stmt, VbaImplementsStatement)
+        self.assertEqual(stmt.name, 'IFoo')
+
+    def test_implements_dotted_name(self):
+        ast = self._parse('Implements SomeLib.IFoo')
+        stmt = ast.body[0]
+        assert isinstance(stmt, VbaImplementsStatement)
+        self.assertEqual(stmt.name, 'SomeLib.IFoo')
+
+    def test_implements_deeply_qualified_name(self):
+        ast = self._parse('Implements Project.Module.IBar')
+        stmt = ast.body[0]
+        assert isinstance(stmt, VbaImplementsStatement)
+        self.assertEqual(stmt.name, 'Project.Module.IBar')

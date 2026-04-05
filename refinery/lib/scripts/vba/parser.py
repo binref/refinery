@@ -373,8 +373,7 @@ class VbaParser:
     def _parse_implements_statement(self) -> VbaImplementsStatement:
         offset = self._current.offset
         self._advance()
-        name = self._current.value
-        self._advance()
+        name = self._parse_type_name()
         self._eat_eos()
         return VbaImplementsStatement(name=name, offset=offset)
 
