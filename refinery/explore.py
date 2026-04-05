@@ -18,8 +18,8 @@ from refinery.lib.tools import documentation, get_terminal_size, normalize_to_di
 from refinery.units import ArgparseError, Unit
 
 _AGENT_DETAIL_LIST = [
-    'autoxor',
     'asm',
+    'autoxor',
     'base',
     'carve',
     'chop',
@@ -51,6 +51,7 @@ _AGENT_DETAIL_LIST = [
     'rep',
     'resub',
     'rex',
+    'scope',
     'snip',
     'struct',
     'vbamc',
