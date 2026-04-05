@@ -829,6 +829,16 @@ class TestVbaParserStatements(TestBase):
         self.assertTrue(if_stmt.single_line)
         self.assertEqual(len(if_stmt.body), 1)
 
+    def test_block_if_with_colon_after_then(self):
+        code = 'Sub T()\nIf x Then :\ny = 1\nEnd If\nEnd Sub'
+        ast = self._parse(code)
+        sub = ast.body[0]
+        assert isinstance(sub, VbaSubDeclaration)
+        if_stmt = sub.body[0]
+        assert isinstance(if_stmt, VbaIfStatement)
+        self.assertFalse(if_stmt.single_line)
+        self.assertEqual(len(if_stmt.body), 1)
+
     def test_single_line_if_colon_multiple_stmts(self):
         code = 'Sub T()\nIf x Then: a = 1: b = 2\nEnd Sub'
         ast = self._parse(code)

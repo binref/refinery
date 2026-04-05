@@ -645,6 +645,9 @@ class VbaParser:
         condition = self._parse_expression()
         self._expect(VbaTokenKind.THEN)
 
+        while self._at(VbaTokenKind.COLON):
+            self._advance()
+
         if not self._at(VbaTokenKind.NEWLINE, VbaTokenKind.EOF):
             return self._parse_single_line_if(condition, offset)
 
