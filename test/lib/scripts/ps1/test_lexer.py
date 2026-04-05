@@ -463,6 +463,29 @@ class TestPs1Lexer(TestBase):
         redir_token = next(t for t in tokens if t[0] == Ps1TokenKind.REDIRECTION)
         self.assertEqual(redir_token[1], '2>')
 
+    def test_dotdot_path_in_argument_mode(self):
+        """In argument mode, ..\\..\\file.exe is a single generic token, not range operators."""
+        tokens = self._tokens('..\\..\\file.exe', mode=Ps1LexerMode.ARGUMENT)
+        self.assertEqual(len(tokens), 1)
+        self.assertEqual(tokens[0], (Ps1TokenKind.GENERIC_TOKEN, '..\\..\\file.exe'))
+
+    def test_dotdot_forward_slash_path_in_argument_mode(self):
+        """Forward-slash relative paths also work."""
+        tokens = self._tokens('../../file.txt', mode=Ps1LexerMode.ARGUMENT)
+        self.assertEqual(len(tokens), 1)
+        self.assertEqual(tokens[0], (Ps1TokenKind.GENERIC_TOKEN, '../../file.txt'))
+
+    def test_dotdot_range_in_expression_mode(self):
+        """In expression mode, .. is still the range operator."""
+        tokens = self._tokens('1..10')
+        self.assertEqual(tokens[1], (Ps1TokenKind.DOTDOT, '..'))
+
+    def test_dotdot_range_with_whitespace_in_argument_mode(self):
+        """When .. is followed by whitespace in argument mode, it is still DOTDOT."""
+        tokens = self._tokens('1 .. 10', mode=Ps1LexerMode.ARGUMENT)
+        dotdots = [t for t in tokens if t[0] == Ps1TokenKind.DOTDOT]
+        self.assertEqual(len(dotdots), 1)
+
     def test_double_colon_not_label(self):
         tokens = self._tokens('[System.IO]::Path')
         kinds = [t[0] for t in tokens]

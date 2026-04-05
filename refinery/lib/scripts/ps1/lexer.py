@@ -578,6 +578,20 @@ class Ps1Lexer:
                         self.mode = mode_hint
                     continue
 
+            # Reference: tokenizer.cs:4370-4381.  In command/argument mode,
+            # ".." followed by a character that does NOT force a new token is
+            # part of a path (e.g. "..\..\file.exe") and must be scanned as a
+            # single generic token instead of the range operator.
+            if c2 == '..' and self.mode == Ps1LexerMode.ARGUMENT:
+                after = self.pos + 2
+                if after < length and src[after] not in ' \t\r\n|&;,{}()[]':
+                    token = self._read_generic_token()
+                    if token.value:
+                        mode_hint = yield token
+                        if mode_hint is not None:
+                            self.mode = mode_hint
+                        continue
+
             if c2 in _TWO_CHAR_OPS:
                 self.pos += 2
                 kind = _TWO_CHAR_OPS[c2]
