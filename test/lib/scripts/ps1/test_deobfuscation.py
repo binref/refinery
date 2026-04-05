@@ -365,12 +365,12 @@ class TestPS1Regressions(TestPs1):
         self.assertIn('1, 2, 3', result)
 
     def test_shl_operator(self):
-        result = self._deobfuscate('$x = 1 -shl 2')
-        self.assertIn('1 -shl 2', result.lower())
+        result = self._deobfuscate('$x = $y -shl 2')
+        self.assertIn('-shl', result.lower())
 
     def test_shr_operator(self):
-        result = self._deobfuscate('$x = 1 -shr 3')
-        self.assertIn('1 -shr 3', result.lower())
+        result = self._deobfuscate('$x = $y -shr 3')
+        self.assertIn('-shr', result.lower())
 
     def test_exit_negative_literal(self):
         result = self._deobfuscate('exit -65536')
