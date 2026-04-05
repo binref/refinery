@@ -661,6 +661,14 @@ class Ps1Lexer:
                             self.mode = mode_hint
                         continue
 
+            # NOTE: Hyphens are included in identifiers here even though the reference PowerShell
+            # tokenizer excludes them in expression mode. This is intentional: Our parser reaches
+            # this code path from both expression and non-expression contexts (e.g. function names
+            # like Get-Data, command names like Write-Host). Since PowerShell does not allow bare
+            # identifiers as expression operands anyway ($x + abc is a parse error in real PS),
+            # there is no practical scenario where a hyphen-suffixed identifier like "abc-band"
+            # would mask a dash-operator in valid PowerShell code.
+
             if c.isalpha() or c == '_' or c == '`':
                 word = []
                 if c == '`' and self.pos + 1 < length:
