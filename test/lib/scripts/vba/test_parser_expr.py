@@ -251,6 +251,32 @@ class TestVbaParserExpressions(TestBase):
         assert isinstance(expr.operand.right, VbaIntegerLiteral)
         self.assertEqual(expr.operand.right.value, 2)
 
+    def test_exponentiation_with_negative_exponent(self):
+        code = 'Sub T()\ny = x ^ -2\nEnd Sub'
+        ast = VbaParser(code).parse()
+        sub = ast.body[0]
+        stmt = sub.body[0]
+        assert isinstance(stmt, VbaLetStatement)
+        expr = stmt.value
+        assert isinstance(expr, VbaBinaryExpression)
+        self.assertEqual(expr.operator, '^')
+        assert isinstance(expr.right, VbaUnaryExpression)
+        self.assertEqual(expr.right.operator, '-')
+        assert isinstance(expr.right.operand, VbaIntegerLiteral)
+        self.assertEqual(expr.right.operand.value, 2)
+
+    def test_exponentiation_with_positive_exponent(self):
+        code = 'Sub T()\ny = x ^ +2\nEnd Sub'
+        ast = VbaParser(code).parse()
+        sub = ast.body[0]
+        stmt = sub.body[0]
+        assert isinstance(stmt, VbaLetStatement)
+        expr = stmt.value
+        assert isinstance(expr, VbaBinaryExpression)
+        self.assertEqual(expr.operator, '^')
+        assert isinstance(expr.right, VbaIntegerLiteral)
+        self.assertEqual(expr.right.value, 2)
+
     def test_line_continuation_with_trailing_whitespace(self):
         expr = self._parse_expr('1 + _  \n  2')
         assert isinstance(expr, VbaBinaryExpression)
