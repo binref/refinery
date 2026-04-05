@@ -470,10 +470,14 @@ class Ps1Synthesizer(Visitor):
             self._write('-CaseSensitive ')
         if node.file:
             self._write('-File ')
-        self._write('(')
-        if node.value:
-            self.visit(node.value)
-        self._write(') {')
+            if node.value:
+                self.visit(node.value)
+            self._write(' {')
+        else:
+            self._write('(')
+            if node.value:
+                self.visit(node.value)
+            self._write(') {')
         self._depth += 1
         for cond, body in node.clauses:
             self._newline()

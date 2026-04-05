@@ -105,6 +105,20 @@ class TestPs1ParserStatements(TestBase):
         self.assertIsInstance(stmt, Ps1SwitchStatement)
         self.assertTrue(stmt.regex)
 
+    def test_switch_file_flag_bare_path(self):
+        stmt = self._parse_stmt('switch -File $path { "a" { 1 } }')
+        self.assertIsInstance(stmt, Ps1SwitchStatement)
+        self.assertTrue(stmt.file)
+        self.assertIsNotNone(stmt.value)
+        self.assertEqual(len(stmt.clauses), 1)
+
+    def test_switch_file_flag_string_path(self):
+        stmt = self._parse_stmt(r'switch -File C:\log.txt { "error" { 1 } }')
+        self.assertIsInstance(stmt, Ps1SwitchStatement)
+        self.assertTrue(stmt.file)
+        self.assertIsNotNone(stmt.value)
+        self.assertEqual(len(stmt.clauses), 1)
+
     def test_try_catch(self):
         stmt = self._parse_stmt('try { Get-Item } catch { Write-Error $_ }')
         self.assertIsInstance(stmt, Ps1TryCatchFinally)

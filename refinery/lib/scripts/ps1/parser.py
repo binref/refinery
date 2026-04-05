@@ -1464,12 +1464,17 @@ class Ps1Parser:
                 flags['case_sensitive'] = True
             elif p == 'file':
                 flags['file'] = True
-        self._expect(Ps1TokenKind.LPAREN)
-        self._skip_newlines()
-        value = self._parse_pipeline_expression()
-        self._skip_newlines()
-        self._expect(Ps1TokenKind.RPAREN)
-        self._skip_newlines()
+        if flags['file']:
+            self._lexer.mode = Ps1LexerMode.ARGUMENT
+            value = self._parse_argument_value()
+            self._skip_newlines()
+        else:
+            self._expect(Ps1TokenKind.LPAREN)
+            self._skip_newlines()
+            value = self._parse_pipeline_expression()
+            self._skip_newlines()
+            self._expect(Ps1TokenKind.RPAREN)
+            self._skip_newlines()
         self._expect(Ps1TokenKind.LBRACE)
         self._skip_newlines()
         clauses: list[tuple[Expression | None, Block]] = []
