@@ -303,9 +303,14 @@ class Ps1ConstantFolding(Transformer):
             return None
         try:
             def replacer(m: re.Match) -> str:
+                full = m.group(0)
+                if full == '{{':
+                    return '{'
+                if full == '}}':
+                    return '}'
                 idx = int(m.group(1))
                 return args[idx]
-            result = re.sub(r'\{(\d+)\}', replacer, fmt_str)
+            result = re.sub(r'\{\{|\}\}|\{(\d+)\}', replacer, fmt_str)
         except (IndexError, ValueError):
             return None
         return _make_string_literal(result)

@@ -304,6 +304,14 @@ class TestPS1StringConcatenations(TestPs1):
         )
         self.assertIn('invoke-expression', result)
 
+    def test_format_string_escaped_braces(self):
+        result = self._deobfuscate('"{0} {{literal}}" -f "test"')
+        self.assertIn('test {literal}', result)
+
+    def test_format_string_only_escaped_braces(self):
+        result = self._deobfuscate('"{{hello}}" -f "unused"')
+        self.assertEqual(result, "'{hello}'")
+
 
 class TestPS1StringReplace(TestPs1):
 
