@@ -12,6 +12,7 @@ from refinery.lib.scripts.vba.model import (
     VbaCallStatement,
     VbaCaseClause,
     VbaConstDeclaration,
+    VbaConstDeclarator,
     VbaDateLiteral,
     VbaDebugPrintStatement,
     VbaDeclareStatement,
@@ -316,7 +317,14 @@ class VbaSynthesizer(Visitor):
     def visit_VbaConstDeclaration(self, node: VbaConstDeclaration):
         if node.scope is not VbaScopeModifier.NONE:
             self._write(F'{node.scope.value} ')
-        self._write(F'Const {node.name}')
+        self._write('Const ')
+        for i, d in enumerate(node.declarators):
+            if i > 0:
+                self._write(', ')
+            self.visit(d)
+
+    def visit_VbaConstDeclarator(self, node: VbaConstDeclarator):
+        self._write(node.name)
         if node.type_name:
             self._write(F' As {node.type_name}')
         self._write(' = ')

@@ -14,6 +14,7 @@ from refinery.lib.scripts.vba.model import (
     VbaBooleanLiteral,
     VbaCallExpression,
     VbaConstDeclaration,
+    VbaConstDeclarator,
     VbaFloatLiteral,
     VbaForEachStatement,
     VbaForStatement,
@@ -285,14 +286,12 @@ class VbaSimplifications(Transformer):
         assignment_counts: dict[str, int] = {}
         for body in self._body_lists(module):
             for idx, stmt in enumerate(body):
-                if (
-                    isinstance(stmt, VbaConstDeclaration)
-                    and stmt.value is not None
-                    and _is_literal(stmt.value)
-                ):
-                    key = stmt.name.lower()
-                    candidates.setdefault(key, []).append((stmt.value, body, idx))
-                    assignment_counts[key] = assignment_counts.get(key, 0) + 1
+                if isinstance(stmt, VbaConstDeclaration):
+                    for d in stmt.declarators:
+                        if d.value is not None and _is_literal(d.value):
+                            key = d.name.lower()
+                            candidates.setdefault(key, []).append((d.value, body, idx))
+                            assignment_counts[key] = assignment_counts.get(key, 0) + 1
                 elif (
                     isinstance(stmt, VbaLetStatement)
                     and isinstance(stmt.target, VbaIdentifier)
@@ -327,7 +326,7 @@ class VbaSimplifications(Transformer):
             parent = node.parent
             if isinstance(parent, VbaLetStatement) and parent.target is node:
                 continue
-            if isinstance(parent, VbaConstDeclaration):
+            if isinstance(parent, (VbaConstDeclaration, VbaConstDeclarator)):
                 continue
             if isinstance(parent, (VbaForStatement, VbaForEachStatement)) and parent.variable is node:
                 continue

@@ -7,6 +7,7 @@ from refinery.lib.scripts.vba.model import (
     VbaBinaryExpression,
     VbaCallStatement,
     VbaConstDeclaration,
+    VbaConstDeclarator,
     VbaDeclareStatement,
     VbaDoLoopStatement,
     VbaEndStatement,
@@ -102,8 +103,23 @@ class TestVbaParserStatements(TestBase):
         ast = self._parse('Const PI As Double = 3.14')
         stmt = ast.body[0]
         assert isinstance(stmt, VbaConstDeclaration)
-        self.assertEqual(stmt.name, 'PI')
-        self.assertEqual(stmt.type_name, 'Double')
+        self.assertEqual(len(stmt.declarators), 1)
+        d = stmt.declarators[0]
+        assert isinstance(d, VbaConstDeclarator)
+        self.assertEqual(d.name, 'PI')
+        self.assertEqual(d.type_name, 'Double')
+
+    def test_const_declaration_multi(self):
+        ast = self._parse('Const A = 1, B As Long = 2, C = 3')
+        stmt = ast.body[0]
+        assert isinstance(stmt, VbaConstDeclaration)
+        self.assertEqual(len(stmt.declarators), 3)
+        self.assertEqual(stmt.declarators[0].name, 'A')
+        self.assertEqual(stmt.declarators[0].type_name, '')
+        self.assertEqual(stmt.declarators[1].name, 'B')
+        self.assertEqual(stmt.declarators[1].type_name, 'Long')
+        self.assertEqual(stmt.declarators[2].name, 'C')
+        self.assertEqual(stmt.declarators[2].type_name, '')
 
     def test_sub_empty(self):
         ast = self._parse('Sub Test()\nEnd Sub')

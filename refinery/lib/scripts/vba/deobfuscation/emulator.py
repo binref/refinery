@@ -101,9 +101,10 @@ class _VbaInterpreter:
         self._env[key] = value
 
     def _exec_const(self, stmt: VbaConstDeclaration):
-        key = stmt.name.lower()
-        value = self._eval(stmt.value)
-        self._env[key] = value
+        for d in stmt.declarators:
+            key = d.name.lower()
+            value = self._eval(d.value)
+            self._env[key] = value
 
     def _exec_if(self, stmt: VbaIfStatement):
         cond = self._eval(stmt.condition)

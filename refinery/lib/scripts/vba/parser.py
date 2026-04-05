@@ -11,6 +11,7 @@ from refinery.lib.scripts.vba.model import (
     VbaCallStatement,
     VbaCaseClause,
     VbaConstDeclaration,
+    VbaConstDeclarator,
     VbaDateLiteral,
     VbaDebugPrintStatement,
     VbaDeclareStatement,
@@ -302,9 +303,8 @@ class VbaParser:
         self._eat_eos()
         return VbaEnumDefinition(scope=scope, name=name, members=members, offset=offset)
 
-    def _parse_const_declaration(self, scope: VbaScopeModifier) -> VbaConstDeclaration:
+    def _parse_const_declarator(self) -> VbaConstDeclarator:
         offset = self._current.offset
-        self._advance()
         name = self._current.value
         self._advance()
         type_name = ''
@@ -312,11 +312,16 @@ class VbaParser:
             type_name = self._parse_type_name()
         self._expect(VbaTokenKind.EQ)
         value = self._parse_expression()
+        return VbaConstDeclarator(name=name, type_name=type_name, value=value, offset=offset)
+
+    def _parse_const_declaration(self, scope: VbaScopeModifier) -> VbaConstDeclaration:
+        offset = self._current.offset
+        self._advance()
+        declarators = [self._parse_const_declarator()]
+        while self._eat(VbaTokenKind.COMMA):
+            declarators.append(self._parse_const_declarator())
         self._eat_eos()
-        return VbaConstDeclaration(
-            scope=scope, name=name, type_name=type_name,
-            value=value, offset=offset,
-        )
+        return VbaConstDeclaration(scope=scope, declarators=declarators, offset=offset)
 
     def _parse_variable_declaration(self, scope: VbaScopeModifier) -> VbaVariableDeclaration:
         offset = self._current.offset

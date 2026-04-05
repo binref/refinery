@@ -365,8 +365,7 @@ class VbaEnumMember(Node):
 
 
 @dataclass(repr=False)
-class VbaConstDeclaration(Statement):
-    scope: VbaScopeModifier = VbaScopeModifier.NONE
+class VbaConstDeclarator(Node):
     name: str = ''
     type_name: str = ''
     value: Expression | None = None
@@ -377,6 +376,18 @@ class VbaConstDeclaration(Statement):
     def children(self) -> Generator[Node, None, None]:
         if self.value is not None:
             yield self.value
+
+
+@dataclass(repr=False)
+class VbaConstDeclaration(Statement):
+    scope: VbaScopeModifier = VbaScopeModifier.NONE
+    declarators: list[VbaConstDeclarator] = field(default_factory=list)
+
+    def __post_init__(self):
+        self._adopt(*self.declarators)
+
+    def children(self) -> Generator[Node, None, None]:
+        yield from self.declarators
 
 
 @dataclass(repr=False)
