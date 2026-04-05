@@ -26,6 +26,21 @@ BACKTICK_ESCAPE = {
     'v' : '\v',
 }
 
+SINGLE_QUOTES = frozenset("'\u2018\u2019\u201A\u201B")
+DOUBLE_QUOTES = frozenset('"\u201C\u201D\u201E')
+DASHES = frozenset('-\u2013\u2014\u2015')
+WHITESPACE = frozenset(' \t\u00A0\u0085')
+
+NORMALIZE_QUOTES = str.maketrans({
+    '\u2018': "'",
+    '\u2019': "'",
+    '\u201A': "'",
+    '\u201B': "'",
+    '\u201C': '"',
+    '\u201D': '"',
+    '\u201E': '"',
+})
+
 _TWO_CHAR_OPS: dict[str, Ps1TokenKind] = {
     '+=' : Ps1TokenKind.PLUS_ASSIGN,
     '-=' : Ps1TokenKind.DASH_ASSIGN,
@@ -191,7 +206,7 @@ class Ps1Lexer:
         length = len(src)
         while self.pos < length:
             c = src[self.pos]
-            if c in ' \t':
+            if c in WHITESPACE:
                 self.pos += 1
             elif c == '`' and self.pos + 1 < length and src[self.pos + 1] == '\n':
                 self.pos += 2
@@ -229,9 +244,9 @@ class Ps1Lexer:
         self.pos += 1
         while self.pos < length:
             c = src[self.pos]
-            if c == "'":
+            if c in SINGLE_QUOTES:
                 self.pos += 1
-                if self.pos < length and src[self.pos] == "'":
+                if self.pos < length and src[self.pos] in SINGLE_QUOTES:
                     self.pos += 1
                     continue
                 return src[start:self.pos]
@@ -259,8 +274,8 @@ class Ps1Lexer:
                 continue
             if c == '@' and self.pos + 1 < length:
                 nc = src[self.pos + 1]
-                if nc in "'\"" and self.pos + 2 < length and src[self.pos + 2] in '\r\n':
-                    footer = nc + '@'
+                if (nc in SINGLE_QUOTES or nc in DOUBLE_QUOTES) and self.pos + 2 < length and src[self.pos + 2] in '\r\n':
+                    quote_set = SINGLE_QUOTES if nc in SINGLE_QUOTES else DOUBLE_QUOTES
                     self.pos += 2
                     if self.pos < length and src[self.pos] == '\r':
                         self.pos += 1
@@ -272,24 +287,24 @@ class Ps1Lexer:
                                 self.pos += 2
                             else:
                                 self.pos += 1
-                            if self.pos + 1 < length and src[self.pos:self.pos + 2] == footer:
+                            if self.pos + 1 < length and src[self.pos] in quote_set and src[self.pos + 1] == '@':
                                 self.pos += 2
                                 break
                         else:
                             self.pos += 1
                     continue
-            if c == "'":
+            if c in SINGLE_QUOTES:
                 self.pos += 1
                 while self.pos < length:
-                    if src[self.pos] == "'":
+                    if src[self.pos] in SINGLE_QUOTES:
                         self.pos += 1
-                        if self.pos < length and src[self.pos] == "'":
+                        if self.pos < length and src[self.pos] in SINGLE_QUOTES:
                             self.pos += 1
                             continue
                         break
                     self.pos += 1
                 continue
-            if c == '"':
+            if c in DOUBLE_QUOTES:
                 self.pos += 1
                 while self.pos < length:
                     sc = src[self.pos]
@@ -300,9 +315,9 @@ class Ps1Lexer:
                         self.pos += 2
                         self._skip_subexpression_content()
                         continue
-                    if sc == '"':
+                    if sc in DOUBLE_QUOTES:
                         self.pos += 1
-                        if self.pos < length and src[self.pos] == '"':
+                        if self.pos < length and src[self.pos] in DOUBLE_QUOTES:
                             self.pos += 1
                             continue
                         break
@@ -324,9 +339,9 @@ class Ps1Lexer:
                 self.pos += 2
                 self._skip_subexpression_content()
                 continue
-            if c == '"':
+            if c in DOUBLE_QUOTES:
                 self.pos += 1
-                if self.pos < length and src[self.pos] == '"':
+                if self.pos < length and src[self.pos] in DOUBLE_QUOTES:
                     self.pos += 1
                     continue
                 return src[start:self.pos]
@@ -348,7 +363,7 @@ class Ps1Lexer:
                     nl_end = self.pos + 2
                 else:
                     nl_end = self.pos + 1
-                if nl_end < length and src[nl_end:nl_end + 2] == "'@":
+                if nl_end + 1 < length and src[nl_end] in SINGLE_QUOTES and src[nl_end + 1] == '@':
                     self.pos = nl_end + 2
                     return src[start:self.pos]
             self.pos += 1
@@ -370,7 +385,7 @@ class Ps1Lexer:
                     nl_end = self.pos + 2
                 else:
                     nl_end = self.pos + 1
-                if nl_end < length and src[nl_end:nl_end + 2] == '"@':
+                if nl_end + 1 < length and src[nl_end] in DOUBLE_QUOTES and src[nl_end + 1] == '@':
                     self.pos = nl_end + 2
                     return src[start:self.pos]
             if c == '`' and self.pos + 1 < length:
@@ -469,7 +484,7 @@ class Ps1Lexer:
             if c == '`' and self.pos + 1 < length:
                 self.pos += 2
                 continue
-            if c in ' \t\r\n|&;,{}()' or (c == '"') or (c == "'"):
+            if c in ' \t\r\n|&;,{}()' or c in SINGLE_QUOTES or c in DOUBLE_QUOTES:
                 break
             if c == '$' or c == '@':
                 break
@@ -489,6 +504,10 @@ class Ps1Lexer:
             start = self.pos
             c = src[self.pos]
             c2 = src[self.pos:self.pos + 2]
+            if len(c2) == 2:
+                d0 = '-' if c2[0] in DASHES else c2[0]
+                d1 = '-' if c2[1] in DASHES else c2[1]
+                c2 = d0 + d1
 
             if c == '\r' and self.pos + 1 < length and src[self.pos + 1] == '\n':
                 self.pos += 2
@@ -518,13 +537,13 @@ class Ps1Lexer:
 
             if c == '@' and self.pos + 1 < length:
                 nc = src[self.pos + 1]
-                if nc == "'":
+                if nc in SINGLE_QUOTES:
                     text = self._read_verbatim_here_string()
                     mode_hint = yield Ps1Token(Ps1TokenKind.HSTRING_VERBATIM, text, start)
                     if mode_hint is not None:
                         self.mode = mode_hint
                     continue
-                if nc == '"':
+                if nc in DOUBLE_QUOTES:
                     text = self._read_expandable_here_string()
                     mode_hint = yield Ps1Token(Ps1TokenKind.HSTRING_EXPAND, text, start)
                     if mode_hint is not None:
@@ -559,13 +578,13 @@ class Ps1Lexer:
                         self.mode = mode_hint
                     continue
 
-            if c == "'":
+            if c in SINGLE_QUOTES:
                 text = self._read_verbatim_string()
                 mode_hint = yield Ps1Token(Ps1TokenKind.STRING_VERBATIM, text, start)
                 if mode_hint is not None:
                     self.mode = mode_hint
                 continue
-            if c == '"':
+            if c in DOUBLE_QUOTES:
                 text = self._read_expandable_string()
                 mode_hint = yield Ps1Token(Ps1TokenKind.STRING_EXPAND, text, start)
                 if mode_hint is not None:
@@ -588,7 +607,7 @@ class Ps1Lexer:
                         self.mode = mode_hint
                     continue
 
-            if c == '-':
+            if c in DASHES:
                 if self.mode == Ps1LexerMode.EXPRESSION:
                     op = self._try_dash_operator()
                     if op:
@@ -620,9 +639,9 @@ class Ps1Lexer:
                             self.mode = mode_hint
                         continue
 
-            if c in _ONE_CHAR_OPS:
+            if c in _ONE_CHAR_OPS or c in DASHES:
                 self.pos += 1
-                kind = _ONE_CHAR_OPS[c]
+                kind = _ONE_CHAR_OPS.get(c) or Ps1TokenKind.DASH
                 mode_hint = yield Ps1Token(kind, c, start)
                 if mode_hint is not None:
                     self.mode = mode_hint

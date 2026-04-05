@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from test import TestBase
 
+import itertools
+
 from refinery.lib.scripts.ps1.parser import Ps1Parser
 from refinery.lib.scripts.ps1.model import (
     Ps1AccessKind,
@@ -64,9 +66,13 @@ class TestPs1ParserExpressions(TestBase):
         self.assertEqual(expr.value, 'hello')
 
     def test_string_literal_expandable_no_vars(self):
-        expr = self._parse_expr('"hello"')
-        self.assertIsInstance(expr, Ps1StringLiteral)
-        self.assertEqual(expr.value, 'hello')
+        for oq, cq in itertools.chain(
+            itertools.product("""'‘’‚‛""", repeat=2),
+            itertools.product('''"“”„''', repeat=2),
+        ):
+            expr = self._parse_expr(F'{oq}hello{cq}')
+            self.assertIsInstance(expr, Ps1StringLiteral)
+            self.assertEqual(expr.value, 'hello')
 
     def test_expandable_string_with_variable(self):
         expr = self._parse_expr('"hello $name"')
@@ -457,3 +463,44 @@ class TestPs1ParserExpressions(TestBase):
         self.assertEqual(expr.member, 'ToLower')
         self.assertIsInstance(expr.object, Ps1InvokeMember)
         self.assertEqual(expr.object.member, 'Trim')
+
+    def test_unicode_dash_operators(self):
+        for dash in '\u2013\u2014\u2015':
+            with self.subTest(dash=F'U+{ord(dash):04X}'):
+                expr = self._parse_expr(F'$x {dash}eq 1')
+                self.assertIsInstance(expr, Ps1BinaryExpression)
+                self.assertEqual(expr.operator, '-eq')
+
+    def test_unicode_double_quote_expandable_with_variable(self):
+        for oq, cq in itertools.product('\u201C\u201D\u201E', repeat=2):
+            with self.subTest(oq=F'U+{ord(oq):04X}', cq=F'U+{ord(cq):04X}'):
+                expr = self._parse_expr(F'{oq}hello $name{cq}')
+                self.assertIsInstance(expr, Ps1ExpandableString)
+                self.assertTrue(len(expr.parts) >= 2)
+
+    def test_unicode_single_quote_escape(self):
+        for q in '\u2018\u2019\u201A\u201B':
+            with self.subTest(q=F'U+{ord(q):04X}'):
+                expr = self._parse_expr(F"{q}it{q}{q}s here{q}")
+                self.assertIsInstance(expr, Ps1StringLiteral)
+                self.assertEqual(expr.value, "it's here")
+
+    def test_unicode_double_quote_escape(self):
+        for q in '\u201C\u201D\u201E':
+            with self.subTest(q=F'U+{ord(q):04X}'):
+                expr = self._parse_expr(F'{q}say {q}{q}hi{q}{q}{q}')
+                self.assertIsInstance(expr, Ps1StringLiteral)
+                self.assertEqual(expr.value, 'say "hi"')
+
+    def test_unicode_whitespace(self):
+        # no-break space (U+00A0) should act as whitespace between tokens
+        expr = self._parse_expr('1\u00A0+\u00A02')
+        self.assertIsInstance(expr, Ps1BinaryExpression)
+        self.assertEqual(expr.operator, '+')
+
+    def test_unicode_decrement_operator(self):
+        for d1, d2 in itertools.product('\u2013\u2014\u2015', repeat=2):
+            with self.subTest(d1=F'U+{ord(d1):04X}', d2=F'U+{ord(d2):04X}'):
+                expr = self._parse_expr(F'{d1}{d2}$x')
+                self.assertIsInstance(expr, Ps1UnaryExpression)
+                self.assertEqual(expr.operator, '--')

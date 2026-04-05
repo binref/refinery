@@ -7,7 +7,7 @@ from __future__ import annotations
 import re
 
 from refinery.lib.scripts import Block
-from refinery.lib.scripts.ps1.lexer import Ps1Lexer, Ps1LexerMode
+from refinery.lib.scripts.ps1.lexer import DOUBLE_QUOTES, NORMALIZE_QUOTES, SINGLE_QUOTES, WHITESPACE, Ps1Lexer, Ps1LexerMode
 from refinery.lib.scripts.ps1.model import (
     Expression,
     Ps1AccessKind,
@@ -237,18 +237,18 @@ class Ps1Parser:
                     depth += 1
                 elif ch == ']':
                     depth -= 1
-                elif ch == "'" and depth > 0:
+                elif ch in SINGLE_QUOTES and depth > 0:
                     pos += 1
-                    while pos < end and src[pos] != "'":
+                    while pos < end and src[pos] not in SINGLE_QUOTES:
                         pos += 1
-                elif ch == '"' and depth > 0:
+                elif ch in DOUBLE_QUOTES and depth > 0:
                     pos += 1
-                    while pos < end and src[pos] != '"':
+                    while pos < end and src[pos] not in DOUBLE_QUOTES:
                         if src[pos] == '`':
                             pos += 1
                         pos += 1
                 pos += 1
-            while pos < end and src[pos] in ' \t\r\n':
+            while pos < end and (src[pos] in WHITESPACE or src[pos] in '\r\n'):
                 pos += 1
         return src[pos:pos + 5].lower().startswith('param') and (
             pos + 5 >= end or not src[pos + 5].isalnum() and src[pos + 5] != '_'
@@ -879,13 +879,10 @@ class Ps1Parser:
 
     def _parse_string(self) -> Expression:
         tok = self._advance()
+        raw = tok.value.translate(NORMALIZE_QUOTES)
         if tok.kind == Ps1TokenKind.STRING_VERBATIM:
-            content = tok.value[1:-1].replace("''", "'")
-            return Ps1StringLiteral(offset=tok.offset, value=content, raw=tok.value)
-        return self._parse_expandable_string_contents(tok)
-
-    def _parse_expandable_string_contents(self, tok: Ps1Token) -> Expression:
-        raw = tok.value
+            content = self._unescape_verbatim_string(tok.value[1:-1])
+            return Ps1StringLiteral(offset=tok.offset, value=content, raw=raw)
         inner = raw[1:-1]
         parts = self._split_expandable_string(inner)
         if len(parts) == 1 and isinstance(parts[0], Ps1StringLiteral):
@@ -914,7 +911,7 @@ class Ps1Parser:
                 pos += 2
                 continue
 
-            if c == '"' and pos + 1 < length and text[pos + 1] == '"':
+            if c in DOUBLE_QUOTES and pos + 1 < length and text[pos + 1] in DOUBLE_QUOTES:
                 buf.append('""')
                 pos += 2
                 continue
@@ -927,26 +924,26 @@ class Ps1Parser:
                     pos += 2
                     while pos < length and depth > 0:
                         sc = text[pos]
-                        if sc == "'" :
+                        if sc in SINGLE_QUOTES:
                             pos += 1
                             while pos < length:
-                                if text[pos] == "'":
+                                if text[pos] in SINGLE_QUOTES:
                                     pos += 1
-                                    if pos < length and text[pos] == "'":
+                                    if pos < length and text[pos] in SINGLE_QUOTES:
                                         pos += 1
                                         continue
                                     break
                                 pos += 1
                             continue
-                        if sc == '"':
+                        if sc in DOUBLE_QUOTES:
                             pos += 1
                             while pos < length:
                                 if text[pos] == '`' and pos + 1 < length:
                                     pos += 2
                                     continue
-                                if text[pos] == '"':
+                                if text[pos] in DOUBLE_QUOTES:
                                     pos += 1
-                                    if pos < length and text[pos] == '"':
+                                    if pos < length and text[pos] in DOUBLE_QUOTES:
                                         pos += 1
                                         continue
                                     break
@@ -989,8 +986,23 @@ class Ps1Parser:
                 from refinery.lib.scripts.ps1.lexer import BACKTICK_ESCAPE
                 result.append(BACKTICK_ESCAPE.get(nc, nc))
                 i += 2
-            elif c == '"' and i + 1 < length and text[i + 1] == '"':
+            elif c in DOUBLE_QUOTES and i + 1 < length and text[i + 1] in DOUBLE_QUOTES:
                 result.append('"')
+                i += 2
+            else:
+                result.append(c)
+                i += 1
+        return ''.join(result)
+
+    @staticmethod
+    def _unescape_verbatim_string(text: str) -> str:
+        result: list[str] = []
+        i = 0
+        length = len(text)
+        while i < length:
+            c = text[i]
+            if c in SINGLE_QUOTES and i + 1 < length and text[i + 1] in SINGLE_QUOTES:
+                result.append("'")
                 i += 2
             else:
                 result.append(c)
@@ -1037,7 +1049,7 @@ class Ps1Parser:
 
     def _parse_here_string(self) -> Expression:
         tok = self._advance()
-        raw = tok.value
+        raw = tok.value.translate(NORMALIZE_QUOTES)
         if tok.kind == Ps1TokenKind.HSTRING_VERBATIM:
             q = "@'"
             inner = raw[len(q):]
