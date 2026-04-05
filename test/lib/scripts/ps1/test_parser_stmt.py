@@ -291,6 +291,17 @@ class TestPs1ParserStatements(TestBase):
         self.assertIsNotNone(stmt.label)
         self.assertEqual(stmt.label.value, ':loop')
 
+    def test_catch_comma_separated_types(self):
+        stmt = self._parse_stmt(
+            'try { $x } catch [System.IO.IOException],'
+            ' [System.UnauthorizedAccessException] { "err" }')
+        self.assertIsInstance(stmt, Ps1TryCatchFinally)
+        self.assertEqual(len(stmt.catch_clauses), 1)
+        self.assertEqual(stmt.catch_clauses[0].types, [
+            'System.IO.IOException',
+            'System.UnauthorizedAccessException',
+        ])
+
     def test_while_without_label(self):
         stmt = self._parse_stmt('while ($true) { break }')
         self.assertIsInstance(stmt, Ps1WhileLoop)

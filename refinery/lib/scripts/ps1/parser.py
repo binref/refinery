@@ -1485,6 +1485,9 @@ class Ps1Parser:
                 if te:
                     types.append(te.name)
                 self._skip_newlines()
+                if not self._eat(Ps1TokenKind.COMMA):
+                    break
+                self._skip_newlines()
             body = self._parse_block()
             catch_clauses.append(Ps1CatchClause(
                 offset=body.offset, types=types, body=body))
