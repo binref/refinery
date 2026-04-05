@@ -588,6 +588,9 @@ class VbaParser:
         if kw == 'debug':
             return self._parse_debug_print_statement()
 
+        if kind == VbaTokenKind.IDENTIFIER and self._current.value.lower() in ('lset', 'rset'):
+            return self._parse_let_statement()
+
         return self._parse_implicit_call_or_assignment()
 
     def _parse_if_statement(self) -> VbaIfStatement:
@@ -995,10 +998,13 @@ class VbaParser:
         return VbaOnBranchStatement(
             expression=expr, kind=kind, labels=labels, offset=offset)
 
-    def _parse_exit_statement(self) -> VbaExitStatement:
+    def _parse_exit_statement(self) -> Statement:
         offset = self._current.offset
         self._advance()
-        kind = VbaExitKind(self._current.value.capitalize())
+        try:
+            kind = VbaExitKind(self._current.value.capitalize())
+        except ValueError:
+            return VbaErrorNode(offset=offset)
         self._advance()
         return VbaExitStatement(kind=kind, offset=offset)
 

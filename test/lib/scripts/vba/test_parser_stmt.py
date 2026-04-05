@@ -365,6 +365,35 @@ class TestVbaParserStatements(TestBase):
         assert isinstance(exit_stmt, VbaExitStatement)
         self.assertEqual(exit_stmt.kind, VbaExitKind.FOR)
 
+    def test_exit_unknown_keyword(self):
+        code = 'Sub T()\nExit While\nEnd Sub'
+        ast = self._parse(code)
+        stmt = ast.body[0].body[0]
+        assert isinstance(stmt, VbaErrorNode), \
+            f'expected VbaErrorNode but got {type(stmt).__name__}'
+
+    def test_lset_statement(self):
+        code = 'Sub T()\nLSet x = y\nEnd Sub'
+        ast = self._parse(code)
+        stmt = ast.body[0].body[0]
+        assert isinstance(stmt, VbaLetStatement), \
+            f'expected VbaLetStatement but got {type(stmt).__name__}'
+        assert isinstance(stmt.target, VbaIdentifier)
+        self.assertEqual(stmt.target.name, 'x')
+        assert isinstance(stmt.value, VbaIdentifier)
+        self.assertEqual(stmt.value.name, 'y')
+
+    def test_rset_statement(self):
+        code = 'Sub T()\nRSet a = b\nEnd Sub'
+        ast = self._parse(code)
+        stmt = ast.body[0].body[0]
+        assert isinstance(stmt, VbaLetStatement), \
+            f'expected VbaLetStatement but got {type(stmt).__name__}'
+        assert isinstance(stmt.target, VbaIdentifier)
+        self.assertEqual(stmt.target.name, 'a')
+        assert isinstance(stmt.value, VbaIdentifier)
+        self.assertEqual(stmt.value.name, 'b')
+
     def test_return_statement(self):
         code = 'Sub T()\nReturn\nEnd Sub'
         ast = self._parse(code)
