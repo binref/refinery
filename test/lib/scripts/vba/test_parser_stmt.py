@@ -9,6 +9,7 @@ from refinery.lib.scripts.vba.model import (
     VbaConstDeclaration,
     VbaConstDeclarator,
     VbaDeclareStatement,
+    VbaDebugPrintStatement,
     VbaDoLoopStatement,
     VbaEndStatement,
     VbaEnumDefinition,
@@ -192,6 +193,17 @@ class TestVbaParserStatements(TestBase):
         assert isinstance(if_stmt, VbaIfStatement)
         self.assertFalse(if_stmt.single_line)
 
+    def test_if_endif_merged(self):
+        code = 'Sub T()\nIf x > 0 Then\ny = 1\nEndIf\nEnd Sub'
+        ast = self._parse(code)
+        sub = ast.body[0]
+        assert isinstance(sub, VbaSubDeclaration)
+        if_stmt = sub.body[0]
+        assert isinstance(if_stmt, VbaIfStatement)
+        self.assertFalse(if_stmt.single_line)
+        self.assertEqual(len(if_stmt.body), 1)
+        self.assertEqual(len(sub.body), 1)
+
     def test_if_else(self):
         code = 'Sub T()\nIf x > 0 Then\ny = 1\nElse\ny = 0\nEnd If\nEnd Sub'
         ast = self._parse(code)
@@ -231,6 +243,18 @@ class TestVbaParserStatements(TestBase):
         ast = self._parse(code)
         foreach = ast.body[0].body[0]
         assert isinstance(foreach, VbaForEachStatement)
+
+    def test_for_next_comma_list(self):
+        code = 'Sub T()\nFor i = 1 To 3\nFor j = 1 To 3\nDebug.Print j\nNext j, i\nEnd Sub'
+        ast = self._parse(code)
+        sub = ast.body[0]
+        assert isinstance(sub, VbaSubDeclaration)
+        self.assertEqual(len(sub.body), 1)
+        outer = sub.body[0]
+        assert isinstance(outer, VbaForStatement)
+        self.assertEqual(len(outer.body), 1)
+        inner = outer.body[0]
+        assert isinstance(inner, VbaForStatement)
 
     def test_do_while_pre(self):
         code = 'Sub T()\nDo While x > 0\nx = x - 1\nLoop\nEnd Sub'
@@ -507,6 +531,40 @@ class TestVbaParserStatements(TestBase):
         assert isinstance(stmt, VbaRedimStatement)
         self.assertTrue(stmt.preserve)
 
+    def test_redim_member_access(self):
+        code = 'Sub T()\nReDim obj.arr(10)\nEnd Sub'
+        ast = self._parse(code)
+        stmt = ast.body[0].body[0]
+        assert isinstance(stmt, VbaRedimStatement)
+        self.assertFalse(stmt.preserve)
+        self.assertEqual(stmt.declarators[0].name, 'obj.arr')
+        self.assertTrue(stmt.declarators[0].is_array)
+
+    def test_redim_me_member_access(self):
+        code = 'Sub T()\nReDim Me.data(5)\nEnd Sub'
+        ast = self._parse(code)
+        stmt = ast.body[0].body[0]
+        assert isinstance(stmt, VbaRedimStatement)
+        self.assertEqual(stmt.declarators[0].name, 'Me.data')
+        self.assertTrue(stmt.declarators[0].is_array)
+
+    def test_redim_with_expression(self):
+        code = 'Sub T()\nReDim .items(20)\nEnd Sub'
+        ast = self._parse(code)
+        stmt = ast.body[0].body[0]
+        assert isinstance(stmt, VbaRedimStatement)
+        self.assertEqual(stmt.declarators[0].name, '.items')
+        self.assertTrue(stmt.declarators[0].is_array)
+
+    def test_redim_preserve_member_access(self):
+        code = 'Sub T()\nReDim Preserve obj.arr(n + 1)\nEnd Sub'
+        ast = self._parse(code)
+        stmt = ast.body[0].body[0]
+        assert isinstance(stmt, VbaRedimStatement)
+        self.assertTrue(stmt.preserve)
+        self.assertEqual(stmt.declarators[0].name, 'obj.arr')
+        self.assertTrue(stmt.declarators[0].is_array)
+
     def test_public_sub(self):
         ast = self._parse('Public Sub Test()\nEnd Sub')
         stmt = ast.body[0]
@@ -531,6 +589,22 @@ class TestVbaParserStatements(TestBase):
         param = ast.body[0].params[0]
         self.assertTrue(param.is_optional)
         self.assertIsNotNone(param.default)
+
+    def test_param_byval_optional(self):
+        code = 'Sub T(ByVal Optional x As Long = 0)\nEnd Sub'
+        ast = self._parse(code)
+        param = ast.body[0].params[0]
+        self.assertTrue(param.is_optional)
+        self.assertEqual(param.passing, VbaParameterPassing.BY_VAL)
+        self.assertEqual(param.name, 'x')
+
+    def test_param_byref_optional(self):
+        code = 'Sub T(ByRef Optional y As String)\nEnd Sub'
+        ast = self._parse(code)
+        param = ast.body[0].params[0]
+        self.assertTrue(param.is_optional)
+        self.assertEqual(param.passing, VbaParameterPassing.BY_REF)
+        self.assertEqual(param.name, 'y')
 
     def test_select_case_range(self):
         code = 'Sub T()\nSelect Case x\nCase 1 To 10\ny = "range"\nEnd Select\nEnd Sub'
@@ -830,3 +904,33 @@ class TestVbaParserStatements(TestBase):
         stmt = ast.body[0]
         assert isinstance(stmt, VbaImplementsStatement)
         self.assertEqual(stmt.name, 'Project.Module.IBar')
+
+    def test_debug_assert(self):
+        code = 'Sub T()\nDebug.Assert x > 0\nEnd Sub'
+        ast = self._parse(code)
+        sub = ast.body[0]
+        assert isinstance(sub, VbaSubDeclaration)
+        self.assertEqual(len(sub.body), 1)
+        stmt = sub.body[0]
+        assert isinstance(stmt, VbaDebugPrintStatement)
+        self.assertEqual(stmt.method, 'Assert')
+        self.assertEqual(len(stmt.arguments), 1)
+
+    def test_dim_shared(self):
+        code = 'Sub T()\nDim Shared x As Long\nEnd Sub'
+        ast = self._parse(code)
+        sub = ast.body[0]
+        assert isinstance(sub, VbaSubDeclaration)
+        self.assertEqual(len(sub.body), 1)
+        stmt = sub.body[0]
+        assert isinstance(stmt, VbaVariableDeclaration)
+        self.assertEqual(stmt.declarators[0].name, 'x')
+        self.assertEqual(stmt.declarators[0].type_name, 'Long')
+
+    def test_friend_sub(self):
+        code = 'Friend Sub MySub()\nEnd Sub'
+        ast = self._parse(code)
+        sub = ast.body[0]
+        assert isinstance(sub, VbaSubDeclaration)
+        self.assertEqual(sub.name, 'MySub')
+        self.assertEqual(sub.scope, VbaScopeModifier.FRIEND)

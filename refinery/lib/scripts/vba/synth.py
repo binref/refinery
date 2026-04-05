@@ -615,7 +615,7 @@ class VbaSynthesizer(Visitor):
         self._write('End')
 
     def visit_VbaDebugPrintStatement(self, node: VbaDebugPrintStatement):
-        self._write('Debug.Print')
+        self._write(F'Debug.{node.method}')
         if node.arguments:
             self._write(' ')
             for i, arg in enumerate(node.arguments):

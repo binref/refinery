@@ -22,6 +22,7 @@ class VbaScopeModifier(enum.Enum):
     NONE = ''
     PUBLIC = 'Public'
     PRIVATE = 'Private'
+    FRIEND = 'Friend'
     DIM = 'Dim'
     GLOBAL = 'Global'
     STATIC = 'Static'
@@ -820,6 +821,7 @@ class VbaEndStatement(Statement):
 
 @dataclass(repr=False)
 class VbaDebugPrintStatement(Statement):
+    method: str = 'Print'
     arguments: list[Expression] = field(default_factory=list)
 
     def __post_init__(self):

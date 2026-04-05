@@ -87,6 +87,7 @@ class VbaParser:
         self._tokens = self._lexer.tokenize()
         self._current: VbaToken = VbaToken(VbaTokenKind.EOF, '', 0)
         self._in_single_line_if = False
+        self._pending_next: int = 0
         self._advance()
 
     def _advance(self) -> VbaToken:
@@ -140,6 +141,10 @@ class VbaParser:
                 self._advance()
                 return True
             self._current = saved
+        if (self._at(VbaTokenKind.IDENTIFIER)
+                and self._current.value.lower() == 'end' + keyword):
+            self._advance()
+            return True
         return False
 
     def parse(self) -> VbaModule:
@@ -164,7 +169,7 @@ class VbaParser:
 
         scope = VbaScopeModifier.NONE
         is_static = False
-        if kw in ('public', 'private'):
+        if kw in ('public', 'private', 'friend'):
             scope = VbaScopeModifier(self._current.value.capitalize())
             self._advance()
             kw = self._current.value.lower()
@@ -327,6 +332,8 @@ class VbaParser:
         offset = self._current.offset
         if self._current.value.lower() in ('dim', 'global', 'static'):
             self._advance()
+        if self._current.value.lower() == 'shared':
+            self._advance()
         declarators: list[VbaVariableDeclarator] = []
         declarators.append(self._parse_variable_declarator())
         while self._eat(VbaTokenKind.COMMA):
@@ -454,15 +461,18 @@ class VbaParser:
         is_paramarray = False
         passing = VbaParameterPassing.NONE
 
-        if self._current.value.lower() == 'optional':
-            is_optional = True
-            self._advance()
-        if self._at(VbaTokenKind.BYVAL):
-            passing = VbaParameterPassing.BY_VAL
-            self._advance()
-        elif self._at(VbaTokenKind.BYREF):
-            passing = VbaParameterPassing.BY_REF
-            self._advance()
+        while True:
+            if self._current.value.lower() == 'optional':
+                is_optional = True
+                self._advance()
+            elif self._at(VbaTokenKind.BYVAL):
+                passing = VbaParameterPassing.BY_VAL
+                self._advance()
+            elif self._at(VbaTokenKind.BYREF):
+                passing = VbaParameterPassing.BY_REF
+                self._advance()
+            else:
+                break
         if self._current.value.lower() == 'paramarray':
             is_paramarray = True
             self._advance()
@@ -505,6 +515,7 @@ class VbaParser:
         return name
 
     def _parse_block_until(self, end_keyword: str) -> list[Statement]:
+        merged = 'end' + end_keyword
         body: list[Statement] = []
         while not self._at(VbaTokenKind.EOF):
             self._eat_eos()
@@ -520,6 +531,10 @@ class VbaParser:
                     return body
                 self._current = saved
                 self._current.offset = saved_offset
+            elif (self._at(VbaTokenKind.IDENTIFIER)
+                    and self._current.value.lower() == merged):
+                self._advance()
+                return body
             stmt = self._parse_statement()
             if stmt is not None:
                 body.append(stmt)
@@ -691,6 +706,34 @@ class VbaParser:
         finally:
             self._in_single_line_if = saved
 
+    def _consume_next_variable(self):
+        if not self._at(
+            VbaTokenKind.NEWLINE, VbaTokenKind.COLON, VbaTokenKind.EOF,
+        ):
+            self._parse_expression()
+        while self._eat(VbaTokenKind.COMMA):
+            self._pending_next += 1
+
+    def _parse_for_body(self) -> list[Statement]:
+        self._eat_eos()
+        body: list[Statement] = []
+        while not self._at(VbaTokenKind.EOF):
+            self._eat_eos()
+            if self._pending_next > 0:
+                self._pending_next -= 1
+                self._consume_next_variable()
+                break
+            if self._at(VbaTokenKind.NEXT):
+                self._advance()
+                self._consume_next_variable()
+                break
+            if self._at(VbaTokenKind.EOF):
+                break
+            stmt = self._parse_statement()
+            if stmt is not None:
+                body.append(stmt)
+        return body
+
     def _parse_for_statement(self) -> Statement:
         offset = self._current.offset
         self._advance()
@@ -699,22 +742,7 @@ class VbaParser:
             variable = self._parse_postfix_expression()
             self._expect(VbaTokenKind.IN)
             collection = self._parse_expression()
-            self._eat_eos()
-            body: list[Statement] = []
-            while not self._at(VbaTokenKind.EOF):
-                self._eat_eos()
-                if self._at(VbaTokenKind.NEXT):
-                    self._advance()
-                    if not self._at(
-                        VbaTokenKind.NEWLINE, VbaTokenKind.COLON, VbaTokenKind.EOF,
-                    ):
-                        self._parse_expression()
-                    break
-                if self._at(VbaTokenKind.EOF):
-                    break
-                stmt = self._parse_statement()
-                if stmt is not None:
-                    body.append(stmt)
+            body = self._parse_for_body()
             return VbaForEachStatement(
                 variable=variable, collection=collection,
                 body=body, offset=offset,
@@ -728,22 +756,7 @@ class VbaParser:
         step: Expression | None = None
         if self._eat(VbaTokenKind.STEP):
             step = self._parse_expression()
-        self._eat_eos()
-        body = []
-        while not self._at(VbaTokenKind.EOF):
-            self._eat_eos()
-            if self._at(VbaTokenKind.NEXT):
-                self._advance()
-                if not self._at(
-                    VbaTokenKind.NEWLINE, VbaTokenKind.COLON, VbaTokenKind.EOF,
-                ):
-                    self._parse_expression()
-                break
-            if self._at(VbaTokenKind.EOF):
-                break
-            stmt = self._parse_statement()
-            if stmt is not None:
-                body.append(stmt)
+        body = self._parse_for_body()
         return VbaForStatement(
             variable=variable, start=start, end=end,
             step=step, body=body, offset=offset,
@@ -925,11 +938,42 @@ class VbaParser:
             preserve = True
             self._advance()
         declarators: list[VbaVariableDeclarator] = []
-        declarators.append(self._parse_variable_declarator())
+        declarators.append(self._parse_redim_declarator())
         while self._eat(VbaTokenKind.COMMA):
-            declarators.append(self._parse_variable_declarator())
+            declarators.append(self._parse_redim_declarator())
         return VbaRedimStatement(
             preserve=preserve, declarators=declarators, offset=offset)
+
+    def _parse_redim_declarator(self) -> VbaVariableDeclarator:
+        offset = self._current.offset
+        parts: list[str] = []
+        if self._at(VbaTokenKind.DOT):
+            parts.append('')
+            self._advance()
+            parts.append(self._current.value)
+            self._advance()
+        else:
+            parts.append(self._current.value)
+            self._advance()
+        while self._eat(VbaTokenKind.DOT):
+            parts.append(self._current.value)
+            self._advance()
+        name = '.'.join(parts)
+        bounds: list[Expression] = []
+        is_array = False
+        if self._at(VbaTokenKind.LPAREN):
+            is_array = True
+            self._advance()
+            if not self._at(VbaTokenKind.RPAREN):
+                bounds = self._parse_bounds_list()
+            self._expect(VbaTokenKind.RPAREN)
+        type_name = ''
+        if self._eat(VbaTokenKind.AS):
+            type_name = self._parse_type_name()
+        return VbaVariableDeclarator(
+            name=name, type_name=type_name, is_array=is_array,
+            bounds=bounds, offset=offset,
+        )
 
     def _parse_erase_statement(self) -> VbaEraseStatement:
         offset = self._current.offset
@@ -1039,12 +1083,12 @@ class VbaParser:
         offset = self._current.offset
         self._advance()
         self._eat(VbaTokenKind.DOT)
-        if self._current.value.lower() == 'print':
-            self._advance()
+        method = self._current.value
+        self._advance()
         arguments: list[Expression] = []
         if not self._at(VbaTokenKind.NEWLINE, VbaTokenKind.COLON, VbaTokenKind.EOF):
             arguments = self._parse_print_argument_list()
-        return VbaDebugPrintStatement(arguments=arguments, offset=offset)
+        return VbaDebugPrintStatement(method=method, arguments=arguments, offset=offset)
 
     def _parse_print_argument_list(self) -> list[Expression]:
         args: list[Expression] = []
