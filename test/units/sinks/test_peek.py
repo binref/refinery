@@ -236,3 +236,9 @@ class TestPeek(TestUnitBase):
             'entropy' in output.lower() or 'size' in output.lower() or 'magic' in output.lower(),
             'metadata output should contain entropy, size, or magic information'
         )
+
+    def test_stdout_variant(self):
+        test = 0 | self.load_pipeline('emit AA BB [| peek -2 ]') | [str]
+        self.assertEqual(len(test), 2)
+        self.assertTrue(test[0].endswith('\n'))
+        self.assertTrue(test[1].endswith('\n'))

@@ -88,13 +88,17 @@ class peek(HexViewer):
         return colorama
 
     def process(self, data):
-        colorize = not self.args.gray and not self.args.stdout
+        use_stdout = self.args.stdout
+        colorize = not self.args.gray and not use_stdout
         lines = self._peeklines(data, colorize)
 
-        if self.args.stdout:
+        if use_stdout:
+            output = bytearray()
+            codec = self.codec
             for line in lines:
-                yield line.encode(self.codec)
-            return
+                output.extend(line.encode(codec))
+                output.append(10)
+            return output
 
         stderr = sys.stderr
 
@@ -115,7 +119,7 @@ class peek(HexViewer):
             raise
         if not self.isatty():
             self.log_info('forwarding input to next unit')
-            yield data
+            return data
 
     def _peekmeta(self, linewidth, sep, meta: LazyMetaOracle, peek=None) -> Generator[str]:
         if not meta and not peek:
