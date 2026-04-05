@@ -7,6 +7,7 @@ from refinery.lib.scripts.vba.model import (
     VbaBangAccess,
     VbaBinaryExpression,
     VbaBooleanLiteral,
+    VbaByValArgument,
     VbaCallExpression,
     VbaCallStatement,
     VbaCaseClause,
@@ -1132,10 +1133,18 @@ class VbaParser:
                 args.append(None)
                 self._advance()
                 continue
-            args.append(self._parse_expression())
+            args.append(self._parse_argument_expression())
             if not self._eat(VbaTokenKind.COMMA):
                 break
         return args
+
+    def _parse_argument_expression(self) -> Expression:
+        if self._at(VbaTokenKind.BYVAL):
+            offset = self._current.offset
+            self._advance()
+            return VbaByValArgument(
+                expression=self._parse_expression(), offset=offset)
+        return self._parse_expression()
 
     def _parse_expression_list(self) -> list[Expression]:
         exprs: list[Expression] = []
@@ -1371,7 +1380,7 @@ class VbaParser:
                 args.append(None)
                 self._advance()
                 continue
-            args.append(self._parse_expression())
+            args.append(self._parse_argument_expression())
             if not self._eat(VbaTokenKind.COMMA):
                 break
         return args

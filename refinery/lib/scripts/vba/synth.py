@@ -8,6 +8,7 @@ from refinery.lib.scripts.vba.model import (
     VbaBangAccess,
     VbaBinaryExpression,
     VbaBooleanLiteral,
+    VbaByValArgument,
     VbaCallExpression,
     VbaCallStatement,
     VbaCaseClause,
@@ -182,6 +183,11 @@ class VbaSynthesizer(Visitor):
             self._write(' ')
         if node.operand:
             self.visit(node.operand)
+
+    def visit_VbaByValArgument(self, node: VbaByValArgument):
+        self._write('ByVal ')
+        if node.expression:
+            self.visit(node.expression)
 
     def visit_VbaCallExpression(self, node: VbaCallExpression):
         if node.callee:

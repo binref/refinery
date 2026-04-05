@@ -5,6 +5,7 @@ from test import TestBase
 from refinery.lib.scripts.vba.parser import VbaParser
 from refinery.lib.scripts.vba.model import (
     VbaBinaryExpression,
+    VbaByValArgument,
     VbaCallStatement,
     VbaConstDeclaration,
     VbaConstDeclarator,
@@ -934,3 +935,47 @@ class TestVbaParserStatements(TestBase):
         assert isinstance(sub, VbaSubDeclaration)
         self.assertEqual(sub.name, 'MySub')
         self.assertEqual(sub.scope, VbaScopeModifier.FRIEND)
+
+    def test_byval_in_call_argument(self):
+        code = 'Sub T()\nCall Foo(ByVal x)\nEnd Sub'
+        ast = self._parse(code)
+        sub = ast.body[0]
+        assert isinstance(sub, VbaSubDeclaration)
+        self.assertEqual(len(sub.body), 1)
+        stmt = sub.body[0]
+        assert isinstance(stmt, VbaCallStatement)
+        from refinery.lib.scripts.vba.model import VbaCallExpression
+        assert isinstance(stmt.callee, VbaCallExpression)
+        self.assertEqual(len(stmt.callee.arguments), 1)
+        arg = stmt.callee.arguments[0]
+        assert isinstance(arg, VbaByValArgument)
+        assert isinstance(arg.expression, VbaIdentifier)
+        self.assertEqual(arg.expression.name, 'x')
+
+    def test_byval_in_parenthesized_call(self):
+        code = 'Sub T()\nx = Foo(ByVal y)\nEnd Sub'
+        ast = self._parse(code)
+        sub = ast.body[0]
+        assert isinstance(sub, VbaSubDeclaration)
+        stmt = sub.body[0]
+        assert isinstance(stmt, VbaLetStatement)
+        from refinery.lib.scripts.vba.model import VbaCallExpression
+        assert isinstance(stmt.value, VbaCallExpression)
+        self.assertEqual(len(stmt.value.arguments), 1)
+        arg = stmt.value.arguments[0]
+        assert isinstance(arg, VbaByValArgument)
+        assert isinstance(arg.expression, VbaIdentifier)
+        self.assertEqual(arg.expression.name, 'y')
+
+    def test_byval_in_implicit_call(self):
+        code = 'Sub T()\nFoo ByVal x\nEnd Sub'
+        ast = self._parse(code)
+        sub = ast.body[0]
+        assert isinstance(sub, VbaSubDeclaration)
+        stmt = sub.body[0]
+        assert isinstance(stmt, VbaExpressionStatement)
+        self.assertEqual(len(stmt.arguments), 1)
+        arg = stmt.arguments[0]
+        assert isinstance(arg, VbaByValArgument)
+        assert isinstance(arg.expression, VbaIdentifier)
+        self.assertEqual(arg.expression.name, 'x')

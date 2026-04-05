@@ -183,6 +183,18 @@ class VbaUnaryExpression(Expression):
 
 
 @dataclass(repr=False)
+class VbaByValArgument(Expression):
+    expression: Expression | None = None
+
+    def __post_init__(self):
+        self._adopt(self.expression)
+
+    def children(self) -> Generator[Node, None, None]:
+        if self.expression is not None:
+            yield self.expression
+
+
+@dataclass(repr=False)
 class VbaCallExpression(Expression):
     callee: Expression | None = None
     arguments: list[Expression | None] = field(default_factory=list)
