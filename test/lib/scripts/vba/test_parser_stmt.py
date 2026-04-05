@@ -1176,3 +1176,13 @@ class TestVbaParserStatements(TestBase):
         self.assertEqual(stmt.value.operator, 'Not')
         self.assertEqual(stmt.value.offset, code.index('Not'),
             'Not expression offset must point at the Not keyword, not the operand')
+
+    def test_go_as_variable_name(self):
+        code = 'Sub T()\ngo = 1\nEnd Sub'
+        ast = self._parse(code)
+        sub = ast.body[0]
+        assert isinstance(sub, VbaSubDeclaration)
+        self.assertEqual(len(sub.body), 1,
+            '"go" used as a variable name must not be silently consumed')
+        stmt = sub.body[0]
+        assert isinstance(stmt, VbaLetStatement)

@@ -654,13 +654,16 @@ class VbaParser:
             return self._parse_let_statement()
 
         if kind == VbaTokenKind.IDENTIFIER and self._current.value.lower() == 'go':
-            self._advance()
-            if self._at(VbaTokenKind.TO):
+            after = self._source[self._current.offset + len(self._current.value):].lstrip(' \t')
+            word = after.split()[0].lower() if after.split() else ''
+            if word == 'to':
+                self._advance()
                 self._advance()
                 label = self._current.value
                 self._advance()
                 return VbaGotoStatement(label=label, offset=offset)
-            if self._at(VbaTokenKind.SUB):
+            if word == 'sub':
+                self._advance()
                 self._advance()
                 label = self._current.value
                 self._advance()
