@@ -417,7 +417,9 @@ class TestPs1ParserStatements(TestBase):
         self.assertEqual(cmd.name.value, r'.\script.ps1')
 
     def test_native_command_double_dash_argument(self):
-        """git --no-pager log should parse --no-pager as a single positional argument."""
+        """
+        git --no-pager log should parse --no-pager as a single positional argument.
+        """
         stmt = self._parse_stmt('git --no-pager log')
         self.assertIsInstance(stmt, Ps1ExpressionStatement)
         cmd = stmt.expression
@@ -431,7 +433,9 @@ class TestPs1ParserStatements(TestBase):
         self.assertEqual(cmd.arguments[1].value.value, 'log')
 
     def test_dotfile_command_argument(self):
-        """Copy-Item .gitignore dest should parse .gitignore as a positional argument."""
+        """
+        Copy-Item .gitignore dest should parse .gitignore as a positional argument.
+        """
         stmt = self._parse_stmt('Copy-Item .gitignore dest')
         self.assertIsInstance(stmt, Ps1ExpressionStatement)
         cmd = stmt.expression
@@ -445,7 +449,9 @@ class TestPs1ParserStatements(TestBase):
         self.assertEqual(cmd.arguments[1].value.value, 'dest')
 
     def test_wildcard_command_argument(self):
-        """Get-ChildItem *.txt should parse *.txt as a single positional argument."""
+        """
+        Get-ChildItem *.txt should parse *.txt as a single positional argument.
+        """
         stmt = self._parse_stmt('Get-ChildItem *.txt')
         self.assertIsInstance(stmt, Ps1ExpressionStatement)
         cmd = stmt.expression
@@ -456,7 +462,9 @@ class TestPs1ParserStatements(TestBase):
         self.assertEqual(cmd.arguments[0].value.value, '*.txt')
 
     def test_comma_separated_command_arguments_form_array(self):
-        """Write-Host 1,2,3 should produce a single array argument, not three."""
+        """
+        Write-Host 1,2,3 should produce a single array argument, not three.
+        """
         stmt = self._parse_stmt('Write-Host 1,2,3')
         self.assertIsInstance(stmt, Ps1ExpressionStatement)
         cmd = stmt.expression
@@ -473,7 +481,9 @@ class TestPs1ParserStatements(TestBase):
         self.assertEqual(arg.value.elements[2].value, 3)
 
     def test_comma_separated_mixed_arguments(self):
-        """Comma-delimited array followed by separate positional argument."""
+        """
+        Comma-delimited array followed by separate positional argument.
+        """
         stmt = self._parse_stmt('Write-Host 1,2 -Separator "x"')
         self.assertIsInstance(stmt, Ps1ExpressionStatement)
         cmd = stmt.expression
@@ -485,7 +495,9 @@ class TestPs1ParserStatements(TestBase):
         self.assertEqual(len(first_arg.value.elements), 2)
 
     def test_comma_separated_variables(self):
-        """$a,$b,$c should form a single array argument."""
+        """
+        $a,$b,$c should form a single array argument.
+        """
         stmt = self._parse_stmt('Write-Output $a,$b,$c')
         self.assertIsInstance(stmt, Ps1ExpressionStatement)
         cmd = stmt.expression

@@ -133,7 +133,7 @@ class TestPs1Lexer(TestBase):
             ('/=', Ps1TokenKind.SLASH_ASSIGN),
             ('%=', Ps1TokenKind.PERCENT_ASSIGN),
         ]:
-            tokens = self._tokens(f'$x {op_str} 1')
+            tokens = self._tokens(F'$x {op_str} 1')
             self.assertEqual(tokens[1][0], kind)
 
     def test_increment_decrement(self):
@@ -168,13 +168,15 @@ class TestPs1Lexer(TestBase):
         self.assertEqual(tokens[1], (Ps1TokenKind.PIPE, '|'))
 
     def test_keywords(self):
-        for kw in ['if', 'elseif', 'else', 'while', 'for', 'foreach', 'do',
-                    'switch', 'function', 'return', 'try', 'catch', 'finally',
-                    'throw', 'trap', 'break', 'continue', 'exit', 'param',
-                    'begin', 'process', 'end', 'in', 'filter', 'data', 'class',
-                    'using', 'until', 'enum', 'dynamicparam']:
+        for kw in [
+            'if', 'elseif', 'else', 'while', 'for', 'foreach', 'do',
+            'switch', 'function', 'return', 'try', 'catch', 'finally',
+            'throw', 'trap', 'break', 'continue', 'exit', 'param',
+            'begin', 'process', 'end', 'in', 'filter', 'data', 'class',
+            'using', 'until', 'enum', 'dynamicparam',
+        ]:
             tokens = self._tokens(kw)
-            self.assertTrue(tokens[0][0].is_keyword, f'{kw} not recognized as keyword')
+            self.assertTrue(tokens[0][0].is_keyword, F'{kw} not recognized as keyword')
 
     def test_comment_line(self):
         tokens = self._tokens('$x # a comment')
@@ -334,8 +336,7 @@ class TestPs1Lexer(TestBase):
 
     def test_bare_merge_redirection_rejects_stream_2(self):
         tokens = self._tokens('>&2', mode=Ps1LexerMode.ARGUMENT)
-        # bare >&2 without leading digit is invalid per the reference;
-        # should lex as plain > followed by & and 2
+        # bare >&2 is invalid; should lex as > followed by & and 2
         self.assertEqual(tokens[0], (Ps1TokenKind.REDIRECTION, '>'))
 
     def test_digit_not_stream_redirection(self):
@@ -464,163 +465,219 @@ class TestPs1Lexer(TestBase):
         self.assertEqual(redir_token[1], '2>')
 
     def test_dotdot_path_in_argument_mode(self):
-        """In argument mode, ..\\..\\file.exe is a single generic token, not range operators."""
+        """
+        In argument mode, ..\\..\\file.exe is a single generic token, not range operators.
+        """
         tokens = self._tokens('..\\..\\file.exe', mode=Ps1LexerMode.ARGUMENT)
         self.assertEqual(len(tokens), 1)
         self.assertEqual(tokens[0], (Ps1TokenKind.GENERIC_TOKEN, '..\\..\\file.exe'))
 
     def test_dotdot_forward_slash_path_in_argument_mode(self):
-        """Forward-slash relative paths also work."""
+        """
+        Forward-slash relative paths also work.
+        """
         tokens = self._tokens('../../file.txt', mode=Ps1LexerMode.ARGUMENT)
         self.assertEqual(len(tokens), 1)
         self.assertEqual(tokens[0], (Ps1TokenKind.GENERIC_TOKEN, '../../file.txt'))
 
     def test_dotdot_range_in_expression_mode(self):
-        """In expression mode, .. is still the range operator."""
+        """
+        In expression mode, .. is still the range operator.
+        """
         tokens = self._tokens('1..10')
         self.assertEqual(tokens[1], (Ps1TokenKind.DOTDOT, '..'))
 
     def test_dotdot_range_with_whitespace_in_argument_mode(self):
-        """When .. is followed by whitespace in argument mode, it is still DOTDOT."""
+        """
+        When .. is followed by whitespace in argument mode, it is still DOTDOT.
+        """
         tokens = self._tokens('1 .. 10', mode=Ps1LexerMode.ARGUMENT)
         dotdots = [t for t in tokens if t[0] == Ps1TokenKind.DOTDOT]
         self.assertEqual(len(dotdots), 1)
 
     def test_dashdash_argument_in_argument_mode(self):
-        """In argument mode, --no-pager is a single generic token, not DECREMENT + tokens."""
+        """
+        In argument mode, --no-pager is a single generic token, not DECREMENT + tokens.
+        """
         tokens = self._tokens('--no-pager', mode=Ps1LexerMode.ARGUMENT)
         self.assertEqual(len(tokens), 1)
         self.assertEqual(tokens[0], (Ps1TokenKind.GENERIC_TOKEN, '--no-pager'))
 
     def test_dashdash_standalone_in_argument_mode(self):
-        """When -- is followed by whitespace in argument mode, it is still DECREMENT."""
+        """
+        When -- is followed by whitespace in argument mode, it is still DECREMENT.
+        """
         tokens = self._tokens('-- foo', mode=Ps1LexerMode.ARGUMENT)
         self.assertEqual(tokens[0], (Ps1TokenKind.DECREMENT, '--'))
 
     def test_dashdash_in_expression_mode(self):
-        """In expression mode, -- is always DECREMENT."""
+        """
+        In expression mode, -- is always DECREMENT.
+        """
         tokens = self._tokens('--$x')
         self.assertEqual(tokens[0], (Ps1TokenKind.DECREMENT, '--'))
 
     def test_plusplus_argument_in_argument_mode(self):
-        """In argument mode, ++count is a single generic token, not INCREMENT + tokens."""
+        """
+        In argument mode, ++count is a single generic token, not INCREMENT + tokens.
+        """
         tokens = self._tokens('++count', mode=Ps1LexerMode.ARGUMENT)
         self.assertEqual(len(tokens), 1)
         self.assertEqual(tokens[0], (Ps1TokenKind.GENERIC_TOKEN, '++count'))
 
     def test_dot_letter_generic_token_in_argument_mode(self):
-        """In argument mode, .gitignore is a single generic token."""
+        """
+        In argument mode, .gitignore is a single generic token.
+        """
         tokens = self._tokens('.gitignore', mode=Ps1LexerMode.ARGUMENT)
         self.assertEqual(len(tokens), 1)
         self.assertEqual(tokens[0], (Ps1TokenKind.GENERIC_TOKEN, '.gitignore'))
 
     def test_dot_source_variable_not_generic(self):
-        """Dot followed by $ is NOT a generic token (it's dot-sourcing)."""
+        """
+        Dot followed by $ is NOT a generic token (it's dot-sourcing).
+        """
         tokens = self._tokens('. $script', mode=Ps1LexerMode.ARGUMENT)
         self.assertEqual(tokens[0], (Ps1TokenKind.DOT, '.'))
 
     def test_dot_source_string_not_generic(self):
-        """Dot followed by a quote is NOT a generic token (it's dot-sourcing)."""
+        """
+        Dot followed by a quote is NOT a generic token (it's dot-sourcing).
+        """
         tokens = self._tokens(". 'script.ps1'", mode=Ps1LexerMode.ARGUMENT)
         self.assertEqual(tokens[0], (Ps1TokenKind.DOT, '.'))
 
     def test_star_wildcard_in_argument_mode(self):
-        """In argument mode, *.txt is a single generic token."""
+        """
+        In argument mode, *.txt is a single generic token.
+        """
         tokens = self._tokens('*.txt', mode=Ps1LexerMode.ARGUMENT)
         self.assertEqual(len(tokens), 1)
         self.assertEqual(tokens[0], (Ps1TokenKind.GENERIC_TOKEN, '*.txt'))
 
     def test_slash_path_in_argument_mode(self):
-        """In argument mode, /etc/hosts is a single generic token."""
+        """
+        In argument mode, /etc/hosts is a single generic token.
+        """
         tokens = self._tokens('/etc/hosts', mode=Ps1LexerMode.ARGUMENT)
         self.assertEqual(len(tokens), 1)
         self.assertEqual(tokens[0], (Ps1TokenKind.GENERIC_TOKEN, '/etc/hosts'))
 
     def test_star_standalone_in_argument_mode(self):
-        """When * is followed by whitespace in argument mode, it is still STAR."""
+        """
+        When * is followed by whitespace in argument mode, it is still STAR.
+        """
         tokens = self._tokens('* foo', mode=Ps1LexerMode.ARGUMENT)
         self.assertEqual(tokens[0], (Ps1TokenKind.STAR, '*'))
 
     def test_star_in_expression_mode(self):
-        """In expression mode, * is always STAR."""
+        """
+        In expression mode, * is always STAR.
+        """
         tokens = self._tokens('2 * 3')
         stars = [t for t in tokens if t[0] == Ps1TokenKind.STAR]
         self.assertEqual(len(stars), 1)
 
     def test_star_bracket_glob_in_argument_mode(self):
-        """In argument mode, *[a-z]* is a single generic token (glob pattern)."""
+        """
+        In argument mode, *[a-z]* is a single generic token (glob pattern).
+        """
         tokens = self._tokens('*[a-z]*', mode=Ps1LexerMode.ARGUMENT)
         self.assertEqual(len(tokens), 1)
         self.assertEqual(tokens[0], (Ps1TokenKind.GENERIC_TOKEN, '*[a-z]*'))
 
     def test_hyphenated_parameter_name(self):
-        """In argument mode, -no-pager is a single parameter token."""
+        """
+        In argument mode, -no-pager is a single parameter token.
+        """
         tokens = self._tokens('-no-pager', mode=Ps1LexerMode.ARGUMENT)
         self.assertEqual(len(tokens), 1)
         self.assertEqual(tokens[0], (Ps1TokenKind.PARAMETER, '-no-pager'))
 
     def test_number_followed_by_variable_in_argument_mode(self):
-        """In argument mode, 123$var is a single generic token (string interpolation)."""
+        """
+        In argument mode, 123$var is a single generic token (string interpolation).
+        """
         tokens = self._tokens('123$var', mode=Ps1LexerMode.ARGUMENT)
         self.assertEqual(len(tokens), 1)
         self.assertEqual(tokens[0], (Ps1TokenKind.GENERIC_TOKEN, '123$var'))
 
     def test_at_sign_mid_generic_token_in_argument_mode(self):
-        """@ in the middle of a generic token is absorbed as a plain character."""
+        """
+        @ in the middle of a generic token is absorbed as a plain character.
+        """
         tokens = self._tokens('path/@/file', mode=Ps1LexerMode.ARGUMENT)
         self.assertEqual(len(tokens), 1)
         self.assertEqual(tokens[0], (Ps1TokenKind.GENERIC_TOKEN, 'path/@/file'))
 
     def test_variable_slash_path_in_argument_mode(self):
-        """$dir/file in argument mode is a single generic token."""
+        """
+        $dir/file in argument mode is a single generic token.
+        """
         tokens = self._tokens('$dir/file.txt', mode=Ps1LexerMode.ARGUMENT)
         self.assertEqual(len(tokens), 1)
         self.assertEqual(tokens[0], (Ps1TokenKind.GENERIC_TOKEN, '$dir/file.txt'))
 
     def test_variable_backslash_path_in_argument_mode(self):
-        """$env:TEMP\\file in argument mode is a single generic token."""
+        """
+        $env:TEMP\\file in argument mode is a single generic token.
+        """
         tokens = self._tokens('$env:TEMP\\file', mode=Ps1LexerMode.ARGUMENT)
         self.assertEqual(len(tokens), 1)
         self.assertEqual(tokens[0], (Ps1TokenKind.GENERIC_TOKEN, '$env:TEMP\\file'))
 
     def test_variable_dash_suffix_in_argument_mode(self):
-        """$var-suffix in argument mode is a single generic token, not variable + parameter."""
+        """
+        $var-suffix in argument mode is a single generic token, not variable + parameter.
+        """
         tokens = self._tokens('$var-suffix', mode=Ps1LexerMode.ARGUMENT)
         self.assertEqual(len(tokens), 1)
         self.assertEqual(tokens[0], (Ps1TokenKind.GENERIC_TOKEN, '$var-suffix'))
 
     def test_variable_dot_remains_variable_in_argument_mode(self):
-        """$var.prop in argument mode keeps $var as VARIABLE (dot is member access)."""
+        """
+        $var.prop in argument mode keeps $var as VARIABLE (dot is member access).
+        """
         tokens = self._tokens('$var.prop', mode=Ps1LexerMode.ARGUMENT)
         self.assertEqual(tokens[0], (Ps1TokenKind.VARIABLE, '$var'))
 
     def test_variable_space_remains_variable_in_argument_mode(self):
-        """$var followed by space keeps it as VARIABLE."""
+        """
+        $var followed by space keeps it as VARIABLE.
+        """
         tokens = self._tokens('$var foo', mode=Ps1LexerMode.ARGUMENT)
         self.assertEqual(tokens[0], (Ps1TokenKind.VARIABLE, '$var'))
 
     def test_parameter_with_embedded_quote_becomes_generic_token(self):
-        """A parameter with an embedded quote rescans as a generic token."""
+        """
+        A parameter with an embedded quote rescans as a generic token.
+        """
         tokens = self._tokens("-fil'e'", mode=Ps1LexerMode.ARGUMENT)
         self.assertEqual(len(tokens), 1)
         self.assertEqual(tokens[0], (Ps1TokenKind.GENERIC_TOKEN, "-fil'e'"))
 
     def test_double_colon_generic_token_in_argument_mode(self):
-        """:: followed by non-terminator in argument mode is a generic token."""
+        """
+        :: followed by non-terminator in argument mode is a generic token.
+        """
         tokens = self._tokens('::path', mode=Ps1LexerMode.ARGUMENT)
         self.assertEqual(len(tokens), 1)
         self.assertEqual(tokens[0], (Ps1TokenKind.GENERIC_TOKEN, '::path'))
 
     def test_compound_assignment_generic_token_in_argument_mode(self):
-        """Compound assignment operators followed by non-terminator in argument mode are generic tokens."""
+        """
+        Compound assignment operators followed by non-terminator in argument mode are generic tokens.
+        """
         for op in ('+=', '-=', '*=', '/=', '%='):
             with self.subTest(op=op):
-                tokens = self._tokens(f'{op}value', mode=Ps1LexerMode.ARGUMENT)
+                tokens = self._tokens(F'{op}value', mode=Ps1LexerMode.ARGUMENT)
                 self.assertEqual(len(tokens), 1)
-                self.assertEqual(tokens[0], (Ps1TokenKind.GENERIC_TOKEN, f'{op}value'))
+                self.assertEqual(tokens[0], (Ps1TokenKind.GENERIC_TOKEN, F'{op}value'))
 
     def test_compound_assignment_operator_with_space_in_argument_mode(self):
-        """Compound assignment operators followed by space in argument mode remain operators."""
+        """
+        Compound assignment operators followed by space in argument mode remain operators.
+        """
         expected = {
             '+=': Ps1TokenKind.PLUS_ASSIGN,
             '-=': Ps1TokenKind.DASH_ASSIGN,
@@ -630,7 +687,7 @@ class TestPs1Lexer(TestBase):
         }
         for op, kind in expected.items():
             with self.subTest(op=op):
-                tokens = self._tokens(f'{op} value', mode=Ps1LexerMode.ARGUMENT)
+                tokens = self._tokens(F'{op} value', mode=Ps1LexerMode.ARGUMENT)
                 self.assertEqual(tokens[0], (kind, op))
 
     def test_double_colon_not_label(self):

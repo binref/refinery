@@ -563,10 +563,6 @@ class Ps1Parser:
         )
 
     def _parse_argument_value(self) -> Expression | None:
-        # Reference: GetCommandArgument (Parser.cs:6295-6442).  After parsing a
-        # single argument value, check for a comma.  A comma-separated list of
-        # values forms a single ArrayLiteral argument, e.g. Write-Host 1,2,3
-        # yields one positional argument @(1,2,3), not three arguments.
         first = self._parse_single_argument_value()
         if first is None:
             return None
@@ -1691,8 +1687,10 @@ class Ps1Parser:
                     self._skip_newlines()
                     if self._at(Ps1TokenKind.RPAREN):
                         break
-                    if (self._at(Ps1TokenKind.GENERIC_TOKEN)
-                            and self.source[self._current.offset:].find('=') > 0):
+                    if (
+                        self._at(Ps1TokenKind.GENERIC_TOKEN)
+                        and self.source[self._current.offset:].find('=') > 0
+                    ):
                         saved = self._current
                         saved_pos = self._lexer.pos
                         key_tok = self._advance()

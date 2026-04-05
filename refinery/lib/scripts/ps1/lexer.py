@@ -147,9 +147,6 @@ _DASH_OPERATORS: dict[str, str] = {
     )
 }
 
-# Reference: CharTraits.cs — ForceStartNewToken characters.  These characters
-# unconditionally start a new token, terminating any generic token or number
-# currently being scanned.
 _FORCE_START_NEW_TOKEN = frozenset(' \t\r\n|&;,{}()')
 
 _VARIABLE_STOPS_NO_RESCAN = frozenset('.[=')
@@ -181,10 +178,7 @@ _VARIABLE_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
-# Reference: ScanParameter (tokenizer.cs:3185-3218).  Characters that
-# terminate a parameter name.  Quotes are handled separately because they
-# convert the token to a generic token in the reference implementation.
-_PARAM_STOP = frozenset(' \t\r\n{}();,|&.[')
+_PARAMETER_TERMINATORS = frozenset(' \t\r\n{}();,|&.[')
 
 
 @dataclass
@@ -443,9 +437,11 @@ class Ps1Lexer:
         if m:
             start = self.pos
             self.pos = m.end()
-            if (self.pos + 1 < len(src)
-                    and src[self.pos].lower() in 'kmgtp'
-                    and src[self.pos + 1].lower() == 'b'):
+            if (
+                self.pos + 1 < len(src)
+                and src[self.pos].lower() in 'kmgtp'
+                and src[self.pos + 1].lower() == 'b'
+            ):
                 text = src[start:self.pos + 2]
                 self.pos += 2
                 return Ps1Token(Ps1TokenKind.REAL, text, start)
@@ -471,7 +467,7 @@ class Ps1Lexer:
         src = self.source
         length = len(src)
         start = self.pos
-        self.pos += 1  # skip the dash
+        self.pos += 1
         if self.pos >= length:
             self.pos = start
             return None
@@ -482,11 +478,9 @@ class Ps1Lexer:
         self.pos += 1
         while self.pos < length:
             c = src[self.pos]
-            if c in _PARAM_STOP or c.isspace():
+            if c in _PARAMETER_TERMINATORS or c.isspace():
                 break
             if c in SINGLE_QUOTES or c in DOUBLE_QUOTES:
-                # Embedded quotes turn the parameter into a generic token,
-                # e.g. -fil'e' is a single token whose value is -file.
                 self.pos = start
                 return self._read_generic_token()
             if c == ':':
@@ -504,11 +498,6 @@ class Ps1Lexer:
         return None
 
     def _read_generic_token(self) -> Ps1Token:
-        # Reference: ScanGenericToken (tokenizer.cs:3382).
-        # A generic token absorbs embedded single-quoted strings, double-quoted
-        # strings, $variable references and $() sub-expressions.  This is how
-        # PowerShell treats obfuscated names like  N'ew-Ob'ject  as a single
-        # command token whose value is  New-Object.
         start = self.pos
         src = self.source
         length = len(src)
@@ -594,12 +583,6 @@ class Ps1Lexer:
                         self.mode = mode_hint
                     continue
 
-            # Reference: tokenizer.cs:4370-4381 (for ..) and 3350-3361
-            # (CheckOperatorInCommandMode for -- and ++).  In command/argument
-            # mode, these two-char operators followed by a character that does
-            # NOT force a new token are part of a generic token (e.g.
-            # "..\..\file.exe", "--no-pager") and must be scanned as a single
-            # generic token instead of the operator.
             if c2 in ('..', '--', '++', '::', '+=', '-=', '*=', '/=', '%=') and self.mode == Ps1LexerMode.ARGUMENT:
                 after = self.pos + 2
                 if after < length and src[after] not in ' \t\r\n|&;,{}()':
@@ -671,12 +654,6 @@ class Ps1Lexer:
                     if self.mode == Ps1LexerMode.ARGUMENT and self.pos < length and (
                         src[self.pos] not in _FORCE_START_NEW_TOKEN
                     ):
-                        # In argument mode, a number followed by a character
-                        # that does not force a new token is part of a larger
-                        # generic token (e.g. "7zip.exe", "123$var").
-                        # The reference tokenizer rejects the number via a
-                        # ForceStartNewToken check (tokenizer.cs:4137) and
-                        # falls back to ScanGenericToken.
                         self.pos = start
                         token = self._read_generic_token()
                     mode_hint = yield token
@@ -708,10 +685,6 @@ class Ps1Lexer:
                 continue
 
             if self.mode == Ps1LexerMode.ARGUMENT:
-                # Reference: ScanDot (tokenizer.cs:4392-4395). In command mode,
-                # a dot followed by a character that does not force a new token
-                # and is not $, ", or ' starts a generic token (e.g. .gitignore,
-                # .\\path, .NET).  The $/"/' exclusions preserve dot-sourcing.
                 if c == '.' and self.pos + 1 < length:
                     nc = src[self.pos + 1]
                     if nc not in ' \t\r\n|&;,{}()$' and nc not in SINGLE_QUOTES and nc not in DOUBLE_QUOTES:
@@ -722,10 +695,6 @@ class Ps1Lexer:
                                 self.mode = mode_hint
                             continue
 
-            # Reference: CheckOperatorInCommandMode (tokenizer.cs:3340-3348).
-            # In command/argument mode, arithmetic operators followed by a
-            # character that does NOT force a new token are part of a generic
-            # token (e.g. "*.txt", "/etc/hosts") instead of an operator.
             if self.mode == Ps1LexerMode.ARGUMENT and c in '*/%=!+':
                 if self.pos + 1 < length and src[self.pos + 1] not in ' \t\r\n|&;,{}()':
                     token = self._read_generic_token()
@@ -757,13 +726,8 @@ class Ps1Lexer:
                             self.mode = mode_hint
                         continue
 
-            # NOTE: Hyphens are included in identifiers here even though the reference PowerShell
-            # tokenizer excludes them in expression mode. This is intentional: Our parser reaches
-            # this code path from both expression and non-expression contexts (e.g. function names
-            # like Get-Data, command names like Write-Host). Since PowerShell does not allow bare
-            # identifiers as expression operands anyway ($x + abc is a parse error in real PS),
-            # there is no practical scenario where a hyphen-suffixed identifier like "abc-band"
-            # would mask a dash-operator in valid PowerShell code.
+            # Hyphens are included in identifiers because PowerShell command and function
+            # names commonly contain them, and bare identifiers cannot be expression operands.
 
             if c.isalpha() or c == '_' or c == '`':
                 word = []
@@ -785,11 +749,6 @@ class Ps1Lexer:
                         self.pos += 1
                     else:
                         break
-                # If the next character is a quote or dollar sign with no
-                # intervening whitespace, this is a generic token with embedded
-                # quoted strings or variable references (e.g. N'ew-Ob'ject).
-                # Reset to start and delegate to _read_generic_token which
-                # handles the full absorption logic.
                 if self.pos < length and (
                     src[self.pos] in SINGLE_QUOTES
                     or src[self.pos] in DOUBLE_QUOTES

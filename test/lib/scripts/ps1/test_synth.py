@@ -18,7 +18,7 @@ class TestPs1Synthesizer(TestBase):
         out1 = synth.convert(ast1)
         ast2 = Ps1Parser(out1).parse()
         out2 = synth.convert(ast2)
-        self.assertEqual(out1, out2, f'Round-trip failed:\nInput: {source!r}\nFirst: {out1!r}\nSecond: {out2!r}')
+        self.assertEqual(out1, out2, F'Round-trip failed:\nInput: {source!r}\nFirst: {out1!r}\nSecond: {out2!r}')
         return out1
 
     def test_roundtrip_assignment(self):

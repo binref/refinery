@@ -229,12 +229,14 @@ class Ps1ConstantFolding(Transformer):
                     except Exception:
                         return None
                     return _make_string_literal(decoded)
-        if (node.access == Ps1AccessKind.STATIC
-                and isinstance(node.object, Ps1TypeExpression)
-                and node.object.name.lower().replace(' ', '') in _STRING_TYPE_NAMES
-                and member_name is not None
-                and member_name.lower() == 'join'
-                and len(node.arguments) == 2):
+        if (
+            node.access == Ps1AccessKind.STATIC
+            and isinstance(node.object, Ps1TypeExpression)
+            and node.object.name.lower().replace(' ', '') in _STRING_TYPE_NAMES
+            and member_name is not None
+            and member_name.lower() == 'join'
+            and len(node.arguments) == 2
+        ):
             separator = _string_value(node.arguments[0])
             if separator is not None:
                 second = node.arguments[1]

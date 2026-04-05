@@ -5,7 +5,10 @@ from __future__ import annotations
 
 import re
 
-from typing import Optional, Union
+from typing import TYPE_CHECKING, Union
+
+if TYPE_CHECKING:
+    from typing import TypeAlias
 
 from refinery.lib.scripts import Block, Transformer
 from refinery.lib.scripts.ps1.deobfuscation._helpers import (
@@ -49,7 +52,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1WhileLoop,
 )
 
-_Value = Optional[Union[str, int, float, bool, list]]
+_Value: TypeAlias = Union[str, int, float, bool, list, None]
 
 
 class _Ps1InterpreterError(Exception):

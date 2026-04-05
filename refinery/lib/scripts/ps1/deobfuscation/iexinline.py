@@ -48,7 +48,9 @@ _ENCODING_MAP = {
 
 
 def _normalize_type_name(name: str) -> str:
-    """Lower-case and strip leading ``System.`` prefix from a .NET type name."""
+    """
+    Lower-case and strip leading ``System.`` prefix from a .NET type name.
+    """
     result = name.lower().replace(' ', '')
     if result.startswith('system.'):
         result = result[7:]
@@ -151,12 +153,14 @@ def _try_evaluate(
 
     # [Convert]::FromBase64String('...')
     if isinstance(expr, Ps1InvokeMember):
-        if (expr.access == Ps1AccessKind.STATIC
-                and isinstance(expr.object, Ps1TypeExpression)
-                and _normalize_type_name(expr.object.name) == 'convert'
-                and isinstance(expr.member, str)
-                and expr.member.lower() == 'frombase64string'
-                and len(expr.arguments) == 1):
+        if (
+            expr.access == Ps1AccessKind.STATIC
+            and isinstance(expr.object, Ps1TypeExpression)
+            and _normalize_type_name(expr.object.name) == 'convert'
+            and isinstance(expr.member, str)
+            and expr.member.lower() == 'frombase64string'
+            and len(expr.arguments) == 1
+        ):
             sv = _string_value(expr.arguments[0])
             if sv is not None:
                 try:
@@ -165,11 +169,13 @@ def _try_evaluate(
                     return None
 
         # .ReadToEnd() — pass through string result from inner expression
-        if (expr.access == Ps1AccessKind.INSTANCE
-                and isinstance(expr.member, str)
-                and expr.member.lower() == 'readtoend'
-                and len(expr.arguments) == 0
-                and expr.object is not None):
+        if (
+            expr.access == Ps1AccessKind.INSTANCE
+            and isinstance(expr.member, str)
+            and expr.member.lower() == 'readtoend'
+            and len(expr.arguments) == 0
+            and expr.object is not None
+        ):
             return _try_evaluate(expr.object, bindings)
 
     # [IO.MemoryStream] cast — pass through bytes
@@ -228,7 +234,9 @@ _FOREACH_ALIASES = frozenset({'%', 'foreach', 'foreach-object'})
 
 
 def _extract_foreach_scriptblock(expr: Expression) -> Ps1ScriptBlock | None:
-    """Extract the scriptblock from a ``%{ ... }`` / ``ForEach-Object { ... }`` command."""
+    """
+    Extract the scriptblock from a ``%{ ... }`` / ``ForEach-Object { ... }`` command.
+    """
     if not isinstance(expr, Ps1CommandInvocation):
         return None
     if not isinstance(expr.name, Ps1StringLiteral):
@@ -292,7 +300,9 @@ def _try_evaluate_pipeline(
 
 
 def _resolve_to_string(expr: Expression) -> str | None:
-    """Try to resolve an expression to a string: first as a literal, then via evaluation."""
+    """
+    Try to resolve an expression to a string: first as a literal, then via evaluation.
+    """
     s = _string_value(expr)
     if s is not None:
         return s

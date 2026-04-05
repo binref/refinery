@@ -710,7 +710,7 @@ class TestPs1IexInlining(TestPs1):
         b64 = 'Cy/KLEnV9cgvLlHISM3JyQcA'
         data = (
             "(New-Object IO.Compression.DeflateStream("
-            f"[IO.MemoryStream][Convert]::FromBase64String('{b64}'),"
+            F"[IO.MemoryStream][Convert]::FromBase64String('{b64}'),"
             " [IO.Compression.CompressionMode]::Decompress)"
             " | %{ New-Object System.IO.StreamReader($_, [Text.Encoding]::ASCII) }"
             " | %{ $_.ReadToEnd() })"

@@ -56,7 +56,9 @@ def _is_constant(node: Node) -> bool:
 
 
 def _unwrap_array_expression(node: Ps1ArrayExpression) -> Ps1ArrayLiteral | None:
-    """Unwrap ``@(e1, e2, ...)`` to its inner ``Ps1ArrayLiteral`` if possible."""
+    """
+    Unwrap ``@(e1, e2, ...)`` to its inner ``Ps1ArrayLiteral`` if possible.
+    """
     if len(node.body) == 1:
         stmt = node.body[0]
         if isinstance(stmt, Ps1ExpressionStatement) and isinstance(stmt.expression, Ps1ArrayLiteral):
@@ -65,7 +67,9 @@ def _unwrap_array_expression(node: Ps1ArrayExpression) -> Ps1ArrayLiteral | None
 
 
 def _get_array_literal(node: Node) -> Ps1ArrayLiteral | None:
-    """Return the indexable Ps1ArrayLiteral from either a bare literal or @(...)."""
+    """
+    Return the indexable Ps1ArrayLiteral from either a bare literal or @(...).
+    """
     if isinstance(node, Ps1ArrayLiteral):
         return node
     if isinstance(node, Ps1ArrayExpression):

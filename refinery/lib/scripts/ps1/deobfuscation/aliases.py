@@ -128,7 +128,9 @@ class Ps1AliasInlining(Transformer):
         self,
         aliases: dict[str, tuple[Ps1CommandInvocation, str]],
     ):
-        """Normalize the target command name inside alias definition arguments."""
+        """
+        Normalize the target command name inside alias definition arguments.
+        """
         for _key, (defn_node, target_name) in aliases.items():
             normalized = _case_normalize_name(target_name)
             if normalized == target_name:
@@ -150,7 +152,9 @@ class Ps1AliasInlining(Transformer):
         root: Node,
         aliases: dict[str, tuple[Ps1CommandInvocation, str]],
     ):
-        """Replace aliased command names with their targets."""
+        """
+        Replace aliased command names with their targets.
+        """
         for node in list(root.walk()):
             if not isinstance(node, Ps1CommandInvocation):
                 continue
