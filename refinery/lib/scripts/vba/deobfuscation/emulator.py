@@ -3,7 +3,10 @@ Evaluate user-defined VBA functions called with constant arguments.
 """
 from __future__ import annotations
 
-from typing import Any, Callable, Optional, Union
+from typing import TYPE_CHECKING, Any, Callable
+
+if TYPE_CHECKING:
+    from typing import TypeAlias
 
 from refinery.lib.scripts import Expression, Transformer
 from refinery.lib.scripts.vba.model import (
@@ -32,7 +35,7 @@ from refinery.lib.scripts.vba.model import (
     VbaVariableDeclaration,
 )
 
-_Value = Optional[Union[str, int, float, bool]]
+_Value: TypeAlias = str | int | float | bool | None
 
 
 class _VbaInterpreterError(Exception):
@@ -277,7 +280,8 @@ class _VbaInterpreter:
         'cbool'     : lambda v: bool(v),
         'abs'       : lambda v: abs(v),
         'sgn'       : lambda v: (1 if v > 0 else (-1 if v < 0 else 0)),
-        'int'       : lambda v: int(float(v)) if float(v) >= 0 else int(float(v)) - (1 if float(v) != int(float(v)) else 0),
+        'int'       : lambda v: int(float(v)) if float(v) >= 0 else int(
+                          float(v)) - (1 if float(v) != int(float(v)) else 0),
         'fix'       : lambda v: int(float(v)),
         'hex'       : lambda v: format(int(v), 'X'),
         'hex$'      : lambda v: format(int(v), 'X'),

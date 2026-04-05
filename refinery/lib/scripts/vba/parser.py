@@ -143,8 +143,10 @@ class VbaParser:
                 self._advance()
                 return True
             self._current = saved
-        if (self._at(VbaTokenKind.IDENTIFIER)
-                and self._current.value.lower() == 'end' + keyword):
+        if (
+            self._at(VbaTokenKind.IDENTIFIER)
+            and self._current.value.lower() == F'end{keyword}'
+        ):
             self._advance()
             return True
         return False
@@ -154,8 +156,10 @@ class VbaParser:
         if self._at(fused):
             self._advance()
             return True
-        if (self._at(VbaTokenKind.IDENTIFIER)
-                and self._current.value.lower() == 'go'):
+        if (
+            self._at(VbaTokenKind.IDENTIFIER)
+            and self._current.value.lower() == 'go'
+        ):
             self._advance()
             target = VbaTokenKind.TO if keyword == 'to' else VbaTokenKind.SUB
             if self._at(target):
@@ -170,8 +174,10 @@ class VbaParser:
         if self._at(VbaTokenKind.GOSUB):
             self._advance()
             return 'gosub'
-        if (self._at(VbaTokenKind.IDENTIFIER)
-                and self._current.value.lower() == 'go'):
+        if (
+            self._at(VbaTokenKind.IDENTIFIER)
+            and self._current.value.lower() == 'go'
+        ):
             self._advance()
             if self._at(VbaTokenKind.TO):
                 self._advance()
@@ -227,7 +233,8 @@ class VbaParser:
         if kw == 'const':
             return self._parse_const_declaration(scope)
         if kw in ('dim', 'global'):
-            dim_scope = scope if scope is not VbaScopeModifier.NONE else VbaScopeModifier(self._current.value.capitalize())
+            dim_scope = scope if scope is not VbaScopeModifier.NONE else VbaScopeModifier(
+                self._current.value.capitalize())
             return self._parse_variable_declaration(dim_scope)
         if kw == 'event':
             return self._parse_event_declaration(scope)
@@ -554,7 +561,7 @@ class VbaParser:
         return name
 
     def _parse_block_until(self, end_keyword: str) -> list[Statement]:
-        merged = 'end' + end_keyword
+        merged = F'end{end_keyword}'
         body: list[Statement] = []
         while not self._at(VbaTokenKind.EOF):
             self._eat_eos()
@@ -570,8 +577,10 @@ class VbaParser:
                     return body
                 self._current = saved
                 self._current.offset = saved_offset
-            elif (self._at(VbaTokenKind.IDENTIFIER)
-                    and self._current.value.lower() == merged):
+            elif (
+                self._at(VbaTokenKind.IDENTIFIER)
+                and self._current.value.lower() == merged
+            ):
                 self._advance()
                 return body
             stmt = self._parse_statement()
@@ -622,7 +631,8 @@ class VbaParser:
         if kw == 'call':
             return self._parse_call_statement()
         if kw == 'dim' or kw == 'static':
-            return self._parse_variable_declaration(VbaScopeModifier(self._current.value.capitalize()))
+            return self._parse_variable_declaration(
+                VbaScopeModifier(self._current.value.capitalize()))
         if kw == 'redim':
             return self._parse_redim_statement()
         if kw == 'const':
@@ -952,7 +962,8 @@ class VbaParser:
                 if self._at(VbaTokenKind.CASE):
                     break
                 if self._at(VbaTokenKind.END):
-                    after = self._source[self._current.offset + len(self._current.value):].lstrip(' \t')
+                    end = self._current.offset + len(self._current.value)
+                    after = self._source[end:].lstrip(' \t')
                     if after[:6].lower() == 'select' and not after[6:7].isalnum():
                         break
                 if self._at(VbaTokenKind.IDENTIFIER) and self._current.value.lower() == 'endselect':
@@ -1006,7 +1017,8 @@ class VbaParser:
         target = self._parse_postfix_expression()
         self._expect(VbaTokenKind.EQ)
         value = self._parse_expression()
-        return VbaLetStatement(target=target, value=value, explicit=True, keyword=keyword, offset=offset)
+        return VbaLetStatement(
+            target=target, value=value, explicit=True, keyword=keyword, offset=offset)
 
     def _parse_call_statement(self) -> VbaCallStatement:
         offset = self._current.offset
@@ -1118,7 +1130,7 @@ class VbaParser:
             if self._eat_go_token('to'):
                 if self._at(VbaTokenKind.MINUS):
                     self._advance()
-                    label = '-' + self._current.value
+                    label = F'-{self._current.value}'
                 else:
                     label = self._current.value
                 self._advance()
@@ -1179,7 +1191,8 @@ class VbaParser:
         separators: list[str] = []
         if not self._at(VbaTokenKind.NEWLINE, VbaTokenKind.COLON, VbaTokenKind.EOF):
             arguments, separators = self._parse_print_argument_list()
-        return VbaDebugPrintStatement(method=method, arguments=arguments, separators=separators, offset=offset)
+        return VbaDebugPrintStatement(
+            method=method, arguments=arguments, separators=separators, offset=offset)
 
     def _parse_print_argument_list(self) -> tuple[list[Expression], list[str]]:
         args: list[Expression] = []

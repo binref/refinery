@@ -328,7 +328,10 @@ class VbaSimplifications(Transformer):
                 continue
             if isinstance(parent, (VbaConstDeclaration, VbaConstDeclarator)):
                 continue
-            if isinstance(parent, (VbaForStatement, VbaForEachStatement)) and parent.variable is node:
+            if (
+                isinstance(parent, (VbaForStatement, VbaForEachStatement))
+                and parent.variable is node
+            ):
                 continue
             key = node.name.lower()
             if key in candidates:
