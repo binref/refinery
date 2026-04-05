@@ -24,6 +24,7 @@ _AGENT_DETAIL_LIST = [
     'carve',
     'chop',
     'decompress',
+    'defu',
     'dnds',
     'dnfields',
     'dnhdr',

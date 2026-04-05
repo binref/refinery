@@ -354,6 +354,7 @@ UNITS = {
     'xtp'                                        : 'refinery.units.pattern.xtp',
     'xtw'                                        : 'refinery.units.pattern.xtw',
     'cmdarg'                                     : 'refinery.units.scripting.cmdarg',
+    'defu'                                       : 'refinery.units.scripting.deobfuscate',
     'js'                                         : 'refinery.units.scripting.js',
     'ps1'                                        : 'refinery.units.scripting.ps1',
     'vba'                                        : 'refinery.units.scripting.vba',
