@@ -152,6 +152,8 @@ _DASH_OPERATORS: dict[str, str] = {
 # currently being scanned.
 _FORCE_START_NEW_TOKEN = frozenset(' \t\r\n|&;,{}()')
 
+_VARIABLE_STOPS_NO_RESCAN = frozenset('.[=')
+
 _REDIRECTION_PATTERN = re.compile(
     r'[1-6*](?:>>|>&[12]|>)'  # explicit stream: 2>&1, 2>>, 2>
     r'|>>|>&1|>'              # bare: >>, >&1, >
@@ -634,6 +636,11 @@ class Ps1Lexer:
                     pass
                 elif nc and (nc.isalnum() or nc in '_?{$^'):
                     token = self._read_variable(c)
+                    if self.mode == Ps1LexerMode.ARGUMENT and self.pos < length:
+                        fc = src[self.pos]
+                        if fc not in _FORCE_START_NEW_TOKEN and fc not in _VARIABLE_STOPS_NO_RESCAN:
+                            self.pos = start
+                            token = self._read_generic_token()
                     mode_hint = yield token
                     if mode_hint is not None:
                         self.mode = mode_hint

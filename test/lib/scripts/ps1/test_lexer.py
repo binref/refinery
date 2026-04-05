@@ -571,6 +571,34 @@ class TestPs1Lexer(TestBase):
         self.assertEqual(len(tokens), 1)
         self.assertEqual(tokens[0], (Ps1TokenKind.GENERIC_TOKEN, 'path/@/file'))
 
+    def test_variable_slash_path_in_argument_mode(self):
+        """$dir/file in argument mode is a single generic token."""
+        tokens = self._tokens('$dir/file.txt', mode=Ps1LexerMode.ARGUMENT)
+        self.assertEqual(len(tokens), 1)
+        self.assertEqual(tokens[0], (Ps1TokenKind.GENERIC_TOKEN, '$dir/file.txt'))
+
+    def test_variable_backslash_path_in_argument_mode(self):
+        """$env:TEMP\\file in argument mode is a single generic token."""
+        tokens = self._tokens('$env:TEMP\\file', mode=Ps1LexerMode.ARGUMENT)
+        self.assertEqual(len(tokens), 1)
+        self.assertEqual(tokens[0], (Ps1TokenKind.GENERIC_TOKEN, '$env:TEMP\\file'))
+
+    def test_variable_dash_suffix_in_argument_mode(self):
+        """$var-suffix in argument mode is a single generic token, not variable + parameter."""
+        tokens = self._tokens('$var-suffix', mode=Ps1LexerMode.ARGUMENT)
+        self.assertEqual(len(tokens), 1)
+        self.assertEqual(tokens[0], (Ps1TokenKind.GENERIC_TOKEN, '$var-suffix'))
+
+    def test_variable_dot_remains_variable_in_argument_mode(self):
+        """$var.prop in argument mode keeps $var as VARIABLE (dot is member access)."""
+        tokens = self._tokens('$var.prop', mode=Ps1LexerMode.ARGUMENT)
+        self.assertEqual(tokens[0], (Ps1TokenKind.VARIABLE, '$var'))
+
+    def test_variable_space_remains_variable_in_argument_mode(self):
+        """$var followed by space keeps it as VARIABLE."""
+        tokens = self._tokens('$var foo', mode=Ps1LexerMode.ARGUMENT)
+        self.assertEqual(tokens[0], (Ps1TokenKind.VARIABLE, '$var'))
+
     def test_double_colon_not_label(self):
         tokens = self._tokens('[System.IO]::Path')
         kinds = [t[0] for t in tokens]
