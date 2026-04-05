@@ -48,6 +48,11 @@ class VbaOnErrorAction(enum.Enum):
     RESUME_NEXT = 'ResumeNext' # noqa
 
 
+class VbaOnBranchKind(enum.Enum):
+    GOTO  = 'GoTo'  # noqa
+    GOSUB = 'GoSub' # noqa
+
+
 class VbaParameterPassing(enum.Enum):
     NONE   = ''      # noqa
     BY_VAL = 'ByVal' # noqa
@@ -720,6 +725,16 @@ class VbaOnErrorStatement(Statement):
 
     def children(self) -> Generator[Node, None, None]:
         yield from ()
+
+
+@dataclass(repr=False)
+class VbaOnBranchStatement(Statement):
+    expression: Expression = field(default_factory=lambda: VbaIntegerLiteral(value=0))
+    kind: VbaOnBranchKind = VbaOnBranchKind.GOTO
+    labels: list[str] = field(default_factory=list)
+
+    def children(self) -> Generator[Node, None, None]:
+        yield self.expression
 
 
 @dataclass(repr=False)

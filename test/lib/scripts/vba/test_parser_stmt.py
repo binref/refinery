@@ -28,6 +28,8 @@ from refinery.lib.scripts.vba.model import (
     VbaLoopConditionPosition,
     VbaLoopConditionType,
     VbaMemberAccess,
+    VbaOnBranchKind,
+    VbaOnBranchStatement,
     VbaOnErrorAction,
     VbaOnErrorStatement,
     VbaOptionStatement,
@@ -308,6 +310,37 @@ class TestVbaParserStatements(TestBase):
         assert isinstance(stmt, VbaOnErrorStatement)
         self.assertEqual(stmt.action, VbaOnErrorAction.GOTO)
         self.assertEqual(stmt.label, '-1')
+
+    def test_on_goto_statement(self):
+        code = 'Sub T()\nOn x GoTo 100, 200, 300\nEnd Sub'
+        ast = self._parse(code)
+        stmt = ast.body[0].body[0]
+        assert isinstance(stmt, VbaOnBranchStatement), \
+            f'expected VbaOnBranchStatement but got {type(stmt).__name__}'
+        self.assertEqual(stmt.kind, VbaOnBranchKind.GOTO)
+        assert isinstance(stmt.expression, VbaIdentifier)
+        self.assertEqual(stmt.expression.name, 'x')
+        self.assertEqual(stmt.labels, ['100', '200', '300'])
+
+    def test_on_gosub_statement(self):
+        code = 'Sub T()\nOn n GoSub Label1, Label2\nEnd Sub'
+        ast = self._parse(code)
+        stmt = ast.body[0].body[0]
+        assert isinstance(stmt, VbaOnBranchStatement), \
+            f'expected VbaOnBranchStatement but got {type(stmt).__name__}'
+        self.assertEqual(stmt.kind, VbaOnBranchKind.GOSUB)
+        assert isinstance(stmt.expression, VbaIdentifier)
+        self.assertEqual(stmt.expression.name, 'n')
+        self.assertEqual(stmt.labels, ['Label1', 'Label2'])
+
+    def test_on_error_not_broken_by_on_goto(self):
+        code = 'Sub T()\nOn Error GoTo Handler\nEnd Sub'
+        ast = self._parse(code)
+        stmt = ast.body[0].body[0]
+        assert isinstance(stmt, VbaOnErrorStatement), \
+            f'expected VbaOnErrorStatement but got {type(stmt).__name__}'
+        self.assertEqual(stmt.action, VbaOnErrorAction.GOTO)
+        self.assertEqual(stmt.label, 'Handler')
 
     def test_exit_sub(self):
         code = 'Sub T()\nExit Sub\nEnd Sub'

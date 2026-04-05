@@ -46,6 +46,7 @@ from refinery.lib.scripts.vba.model import (
     VbaNewExpression,
     VbaNothingLiteral,
     VbaNullLiteral,
+    VbaOnBranchStatement,
     VbaOnErrorAction,
     VbaOnErrorStatement,
     VbaOptionStatement,
@@ -561,6 +562,12 @@ class VbaSynthesizer(Visitor):
             self._write(F'On Error GoTo {node.label}')
         else:
             self._write('On Error')
+
+    def visit_VbaOnBranchStatement(self, node: VbaOnBranchStatement):
+        self._write('On ')
+        self.visit(node.expression)
+        labels = ', '.join(node.labels)
+        self._write(F' {node.kind.value} {labels}')
 
     def visit_VbaExitStatement(self, node: VbaExitStatement):
         self._write(F'Exit {node.kind.value}')

@@ -45,6 +45,8 @@ from refinery.lib.scripts.vba.model import (
     VbaNewExpression,
     VbaNothingLiteral,
     VbaNullLiteral,
+    VbaOnBranchKind,
+    VbaOnBranchStatement,
     VbaOnErrorAction,
     VbaOnErrorStatement,
     VbaOptionStatement,
@@ -976,7 +978,22 @@ class VbaParser:
                 self._advance()
                 return VbaOnErrorStatement(
                     action=VbaOnErrorAction.GOTO, label=label, offset=offset)
-        return VbaOnErrorStatement(action=VbaOnErrorAction.NONE, offset=offset)
+            return VbaOnErrorStatement(action=VbaOnErrorAction.NONE, offset=offset)
+        expr = self._parse_expression()
+        if self._at(VbaTokenKind.GOTO):
+            kind = VbaOnBranchKind.GOTO
+        elif self._at(VbaTokenKind.GOSUB):
+            kind = VbaOnBranchKind.GOSUB
+        else:
+            return VbaOnErrorStatement(action=VbaOnErrorAction.NONE, offset=offset)
+        self._advance()
+        labels = [self._current.value]
+        self._advance()
+        while self._eat(VbaTokenKind.COMMA):
+            labels.append(self._current.value)
+            self._advance()
+        return VbaOnBranchStatement(
+            expression=expr, kind=kind, labels=labels, offset=offset)
 
     def _parse_exit_statement(self) -> VbaExitStatement:
         offset = self._current.offset
