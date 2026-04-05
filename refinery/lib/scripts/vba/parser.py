@@ -325,7 +325,7 @@ class VbaParser:
 
     def _parse_variable_declaration(self, scope: VbaScopeModifier) -> VbaVariableDeclaration:
         offset = self._current.offset
-        if self._current.value.lower() in ('dim', 'global', 'withevents'):
+        if self._current.value.lower() in ('dim', 'global', 'withevents', 'static'):
             self._advance()
         declarators: list[VbaVariableDeclarator] = []
         declarators.append(self._parse_variable_declarator())

@@ -693,9 +693,15 @@ class TestVbaParserStatements(TestBase):
     def test_static_dim_in_body_lowercase(self):
         code = 'Sub T()\nstatic x As Long\nEnd Sub'
         ast = self._parse(code)
-        stmt = ast.body[0].body[0]
+        sub = ast.body[0]
+        assert isinstance(sub, VbaSubDeclaration)
+        self.assertEqual(len(sub.body), 1)
+        stmt = sub.body[0]
         assert isinstance(stmt, VbaVariableDeclaration)
         self.assertEqual(stmt.scope, VbaScopeModifier.STATIC)
+        self.assertEqual(len(stmt.declarators), 1)
+        self.assertEqual(stmt.declarators[0].name, 'x')
+        self.assertEqual(stmt.declarators[0].type_name, 'Long')
 
     def test_single_line_if_colon_after_then(self):
         code = 'Sub T()\nIf True Then: MsgBox "hi"\nEnd Sub'
