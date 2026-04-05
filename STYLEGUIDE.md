@@ -123,6 +123,31 @@ data = {
 ```
 This can make large dictionaries with somewhat tabular data easier to read in the code.
 
+### Multi-Line Conditions
+
+For multi-line conditions, always use this pattern:
+```python
+if (
+  condition1
+  and condition2
+  and condition3
+):
+  ...
+```
+To summarize:
+
+1. A parenthesis opens directly after the control-flow statement (`if`, `elif`, `while`).
+2. Conditions are indented exactly one level and lead with the logical operator.
+3. The end of the condition is only the closing parenthesis and a colon, not indented.
+
+Do **not** use this style:
+```python
+if (condition1
+    and condition2):
+  ...
+```
+where separate lines of the condition are indented further than one level. 
+
 ## Paradigms
 
 ### Minimizing Copies
