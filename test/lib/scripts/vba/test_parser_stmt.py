@@ -680,3 +680,24 @@ class TestVbaParserStatements(TestBase):
         stmt = ast.body[0].body[0]
         assert isinstance(stmt, VbaVariableDeclaration)
         self.assertEqual(stmt.scope, VbaScopeModifier.STATIC)
+
+    def test_single_line_if_colon_after_then(self):
+        code = 'Sub T()\nIf True Then: MsgBox "hi"\nEnd Sub'
+        ast = self._parse(code)
+        sub = ast.body[0]
+        assert isinstance(sub, VbaSubDeclaration)
+        self.assertEqual(sub.name, 'T')
+        if_stmt = sub.body[0]
+        assert isinstance(if_stmt, VbaIfStatement)
+        self.assertTrue(if_stmt.single_line)
+        self.assertEqual(len(if_stmt.body), 1)
+
+    def test_single_line_if_colon_multiple_stmts(self):
+        code = 'Sub T()\nIf x Then: a = 1: b = 2\nEnd Sub'
+        ast = self._parse(code)
+        sub = ast.body[0]
+        assert isinstance(sub, VbaSubDeclaration)
+        if_stmt = sub.body[0]
+        assert isinstance(if_stmt, VbaIfStatement)
+        self.assertTrue(if_stmt.single_line)
+        self.assertEqual(len(if_stmt.body), 2)
