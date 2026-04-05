@@ -849,6 +849,7 @@ class VbaEndStatement(Statement):
 class VbaDebugPrintStatement(Statement):
     method: str = 'Print'
     arguments: list[Expression] = field(default_factory=list)
+    separators: list[str] = field(default_factory=list)
 
     def __post_init__(self):
         self._adopt(*self.arguments)

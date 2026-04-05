@@ -1110,19 +1110,23 @@ class VbaParser:
         method = self._current.value
         self._advance()
         arguments: list[Expression] = []
+        separators: list[str] = []
         if not self._at(VbaTokenKind.NEWLINE, VbaTokenKind.COLON, VbaTokenKind.EOF):
-            arguments = self._parse_print_argument_list()
-        return VbaDebugPrintStatement(method=method, arguments=arguments, offset=offset)
+            arguments, separators = self._parse_print_argument_list()
+        return VbaDebugPrintStatement(method=method, arguments=arguments, separators=separators, offset=offset)
 
-    def _parse_print_argument_list(self) -> list[Expression]:
+    def _parse_print_argument_list(self) -> tuple[list[Expression], list[str]]:
         args: list[Expression] = []
+        separators: list[str] = []
         args.append(self._parse_expression())
         while self._at(VbaTokenKind.SEMICOLON, VbaTokenKind.COMMA):
+            sep = ';' if self._at(VbaTokenKind.SEMICOLON) else ','
+            separators.append(sep)
             self._advance()
             if self._at(VbaTokenKind.NEWLINE, VbaTokenKind.COLON, VbaTokenKind.EOF):
                 break
             args.append(self._parse_expression())
-        return args
+        return args, separators
 
     def _parse_implicit_call_or_assignment(self) -> Statement:
         offset = self._current.offset

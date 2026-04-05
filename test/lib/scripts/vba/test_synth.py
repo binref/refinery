@@ -178,6 +178,15 @@ class TestVbaSynthesizer(TestBase):
         result = self._roundtrip(code)
         self.assertIn('Debug.Print', result)
 
+    def test_debug_print_comma_roundtrip(self):
+        self._roundtrip('Sub T()\nDebug.Print "a", "b"\nEnd Sub')
+
+    def test_debug_print_semicolon_roundtrip(self):
+        self._roundtrip('Sub T()\nDebug.Print "a"; "b"\nEnd Sub')
+
+    def test_debug_print_mixed_separators_roundtrip(self):
+        self._roundtrip('Sub T()\nDebug.Print "a", "b"; "c"\nEnd Sub')
+
     def test_dim_fixed_length_string(self):
         result = self._roundtrip('Dim s As String * 20')
         self.assertIn('As String * 20', result)

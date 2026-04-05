@@ -713,6 +713,15 @@ class TestVbaParserStatements(TestBase):
         self.assertEqual(len(stmt.cases), 1)
         self.assertEqual(len(stmt.cases[0].body), 1)
 
+    def test_debug_print_comma_separator(self):
+        code = 'Sub T()\nDebug.Print "a", "b"\nEnd Sub'
+        ast = self._parse(code)
+        sub = ast.body[0]
+        stmt = sub.body[0]
+        assert isinstance(stmt, VbaDebugPrintStatement)
+        self.assertEqual(len(stmt.arguments), 2)
+        self.assertEqual(stmt.separators, [','])
+
     def test_if_else_with_standalone_end(self):
         code = 'If x Then\ny = 1\nElse\nEnd\nEnd If'
         ast = self._parse(code)

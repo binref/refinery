@@ -633,8 +633,11 @@ class VbaSynthesizer(Visitor):
             self._write(' ')
             for i, arg in enumerate(node.arguments):
                 if i > 0:
-                    self._write('; ')
+                    sep = node.separators[i - 1] if i - 1 < len(node.separators) else ';'
+                    self._write(F'{sep} ')
                 self.visit(arg)
+            if len(node.separators) >= len(node.arguments):
+                self._write(node.separators[-1])
 
     def visit_VbaResumeStatement(self, node: VbaResumeStatement):
         self._write('Resume')
