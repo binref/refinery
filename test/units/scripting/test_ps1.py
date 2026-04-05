@@ -430,3 +430,28 @@ class TestPs1RealWorldLarge(TestUnitBase):
             '''Invoke-Expression ([System.Text.Encoding]::UTf8.GetString($O[0..194379]))''',
         ))
         self.assertIn(goal, test)
+
+    def test_cast_wrapped_array_pipeline(self):
+        data = (
+            b"[String]([Char[]] (72,101,108,108,111) | "
+            b"ForEach-Object { [Char]($_ -BXor 0) })"
+        )
+        result = data | self.load() | str
+        self.assertIn('Hello', result)
+
+    def test_char_array_xor_pipeline(self):
+        # XOR each byte with 0x2B, then cast to string
+        # 'Test' = chr(0x54^0x2B), chr(0x65^0x2B), chr(0x73^0x2B), chr(0x74^0x2B)
+        # = chr(127), chr(78), chr(88), chr(95)
+        data = (
+            b"[String]([Char[]] (127,78,88,95) | "
+            b"% { [Char]($_ -BXor 0x2B) })"
+        )
+        result = data | self.load() | str
+        self.assertIn('Test', result)
+
+    def test_shift_operations(self):
+        data = b"$x = 1 -Shl 4; $y = 256 -Shr 3"
+        result = data | self.load() | str
+        self.assertIn('16', result)
+        self.assertIn('32', result)

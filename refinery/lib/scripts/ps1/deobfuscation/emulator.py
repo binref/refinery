@@ -15,6 +15,7 @@ from refinery.lib.scripts.ps1.deobfuscation._helpers import (
 from refinery.lib.scripts.ps1.model import (
     Expression,
     Ps1AccessKind,
+    Ps1ArrayExpression,
     Ps1ArrayLiteral,
     Ps1AssignmentExpression,
     Ps1BinaryExpression,
@@ -355,6 +356,18 @@ class _Ps1Interpreter:
             return self._int_op(left, right, int.__or__)
         if op == '-bxor':
             return self._int_op(left, right, int.__xor__)
+        if op == '-shl':
+            return self._int_op(left, right, int.__lshift__)
+        if op == '-shr':
+            return self._int_op(left, right, int.__rshift__)
+        if op in ('-and', '-or', '-xor'):
+            lb = self._truthy(left)
+            rb = self._truthy(right)
+            if op == '-and':
+                return lb and rb
+            if op == '-or':
+                return lb or rb
+            return lb != rb
         if op == '-lt':
             return self._compare(left, right, lambda a, b: a < b)
         if op == '-le':
@@ -382,7 +395,7 @@ class _Ps1Interpreter:
             new_val = current + delta
             self._env[key] = new_val
             return current if not node.prefix else new_val
-        if op.lower() == '-not':
+        if op.lower() == '-not' or op == '!':
             return not self._truthy(self._eval(node.operand))
         if op.lower() == '-bnot':
             val = self._eval(node.operand)
@@ -650,6 +663,8 @@ class _Ps1Interpreter:
     def _apply_type_cast(self, type_name: str, val: _Value) -> _Value:
         tn = type_name.lower().replace(' ', '')
         if tn == 'string':
+            if isinstance(val, list):
+                return ' '.join(self._to_str(item) for item in val)
             return self._to_str(val)
         if tn in ('int', 'int32', 'int64'):
             return self._to_int(val)
@@ -1011,6 +1026,14 @@ class Ps1ForEachPipeline(Transformer):
 
     @staticmethod
     def _get_constant_array(expr: Expression | None) -> list[_Value] | None:
+        while isinstance(expr, Ps1CastExpression):
+            expr = expr.operand
+        while isinstance(expr, Ps1ParenExpression) and expr.expression is not None:
+            expr = expr.expression
+        if isinstance(expr, Ps1ArrayExpression) and len(expr.body) == 1:
+            stmt = expr.body[0]
+            if isinstance(stmt, Ps1ExpressionStatement) and isinstance(stmt.expression, Ps1ArrayLiteral):
+                expr = stmt.expression
         if not isinstance(expr, Ps1ArrayLiteral):
             return None
         values: list[_Value] = []
@@ -1056,4 +1079,10 @@ class Ps1ForEachPipeline(Transformer):
                 for v in results
             ]
             return Ps1ArrayLiteral(elements=elements)
+        if all(isinstance(r, (str, int)) and not isinstance(r, bool) for r in results):
+            try:
+                parts = [chr(r) if isinstance(r, int) else r for r in results]
+                return _make_string_literal(''.join(parts))
+            except (ValueError, OverflowError):
+                pass
         return None

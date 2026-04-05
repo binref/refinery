@@ -8,6 +8,7 @@ import string
 from refinery.lib.scripts import Transformer
 from refinery.lib.scripts.ps1.deobfuscation._helpers import (
     _collect_int_arguments,
+    _collect_string_arguments,
     _make_string_literal,
     _string_value,
     _unwrap_paren_to_array,
@@ -26,6 +27,12 @@ class Ps1TypeCasts(Transformer):
         if tn in ('string', 'char[]'):
             if node.operand and _string_value(node.operand) is not None:
                 return node.operand
+        if tn == 'string':
+            if node.operand is not None:
+                inner = _unwrap_paren_to_array(node.operand)
+                parts = _collect_string_arguments(inner)
+                if parts is not None and len(parts) > 1:
+                    return _make_string_literal(' '.join(parts))
         if tn == 'char':
             if isinstance(node.operand, Ps1IntegerLiteral):
                 try:

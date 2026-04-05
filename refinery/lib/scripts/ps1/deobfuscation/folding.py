@@ -257,6 +257,8 @@ class Ps1ConstantFolding(Transformer):
         '-band': int.__and__,
         '-bor' : int.__or__,
         '-bxor': int.__xor__,
+        '-shl' : int.__lshift__,
+        '-shr' : int.__rshift__,
     }
 
     def visit_Ps1BinaryExpression(self, node: Ps1BinaryExpression):
