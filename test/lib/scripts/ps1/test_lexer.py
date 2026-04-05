@@ -486,6 +486,28 @@ class TestPs1Lexer(TestBase):
         dotdots = [t for t in tokens if t[0] == Ps1TokenKind.DOTDOT]
         self.assertEqual(len(dotdots), 1)
 
+    def test_dashdash_argument_in_argument_mode(self):
+        """In argument mode, --no-pager is a single generic token, not DECREMENT + tokens."""
+        tokens = self._tokens('--no-pager', mode=Ps1LexerMode.ARGUMENT)
+        self.assertEqual(len(tokens), 1)
+        self.assertEqual(tokens[0], (Ps1TokenKind.GENERIC_TOKEN, '--no-pager'))
+
+    def test_dashdash_standalone_in_argument_mode(self):
+        """When -- is followed by whitespace in argument mode, it is still DECREMENT."""
+        tokens = self._tokens('-- foo', mode=Ps1LexerMode.ARGUMENT)
+        self.assertEqual(tokens[0], (Ps1TokenKind.DECREMENT, '--'))
+
+    def test_dashdash_in_expression_mode(self):
+        """In expression mode, -- is always DECREMENT."""
+        tokens = self._tokens('--$x')
+        self.assertEqual(tokens[0], (Ps1TokenKind.DECREMENT, '--'))
+
+    def test_plusplus_argument_in_argument_mode(self):
+        """In argument mode, ++count is a single generic token, not INCREMENT + tokens."""
+        tokens = self._tokens('++count', mode=Ps1LexerMode.ARGUMENT)
+        self.assertEqual(len(tokens), 1)
+        self.assertEqual(tokens[0], (Ps1TokenKind.GENERIC_TOKEN, '++count'))
+
     def test_double_colon_not_label(self):
         tokens = self._tokens('[System.IO]::Path')
         kinds = [t[0] for t in tokens]

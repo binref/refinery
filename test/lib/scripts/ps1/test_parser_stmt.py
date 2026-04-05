@@ -413,3 +413,17 @@ class TestPs1ParserStatements(TestBase):
         self.assertIsNotNone(cmd.name)
         self.assertIsInstance(cmd.name, Ps1StringLiteral)
         self.assertEqual(cmd.name.value, r'.\script.ps1')
+
+    def test_native_command_double_dash_argument(self):
+        """git --no-pager log should parse --no-pager as a single positional argument."""
+        stmt = self._parse_stmt('git --no-pager log')
+        self.assertIsInstance(stmt, Ps1ExpressionStatement)
+        cmd = stmt.expression
+        self.assertIsInstance(cmd, Ps1CommandInvocation)
+        self.assertEqual(len(cmd.arguments), 2)
+        self.assertEqual(cmd.arguments[0].kind, Ps1CommandArgumentKind.POSITIONAL)
+        self.assertIsInstance(cmd.arguments[0].value, Ps1StringLiteral)
+        self.assertEqual(cmd.arguments[0].value.value, '--no-pager')
+        self.assertEqual(cmd.arguments[1].kind, Ps1CommandArgumentKind.POSITIONAL)
+        self.assertIsInstance(cmd.arguments[1].value, Ps1StringLiteral)
+        self.assertEqual(cmd.arguments[1].value.value, 'log')
