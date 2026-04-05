@@ -303,6 +303,7 @@ class VbaParser:
                     self._advance()
                     break
                 self._current = saved
+            m_offset = self._current.offset
             m_name = self._current.value
             self._advance()
             bounds: list[Expression] = []
@@ -315,7 +316,7 @@ class VbaParser:
             if self._eat(VbaTokenKind.AS):
                 type_name = self._parse_type_name()
             members.append(VbaVariableDeclarator(
-                name=m_name, type_name=type_name, bounds=bounds, offset=self._current.offset))
+                name=m_name, type_name=type_name, bounds=bounds, offset=m_offset))
             self._eat_eos()
         self._eat_eos()
         return VbaTypeDefinition(scope=scope, name=name, members=members, offset=offset)
@@ -335,12 +336,13 @@ class VbaParser:
                     self._advance()
                     break
                 self._current = saved
+            m_offset = self._current.offset
             m_name = self._current.value
             self._advance()
             value: Expression | None = None
             if self._eat(VbaTokenKind.EQ):
                 value = self._parse_expression()
-            members.append(VbaEnumMember(name=m_name, value=value, offset=self._current.offset))
+            members.append(VbaEnumMember(name=m_name, value=value, offset=m_offset))
             self._eat_eos()
         self._eat_eos()
         return VbaEnumDefinition(scope=scope, name=name, members=members, offset=offset)

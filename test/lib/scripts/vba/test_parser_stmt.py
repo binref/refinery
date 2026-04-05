@@ -1186,3 +1186,19 @@ class TestVbaParserStatements(TestBase):
             '"go" used as a variable name must not be silently consumed')
         stmt = sub.body[0]
         assert isinstance(stmt, VbaLetStatement)
+
+    def test_type_member_offset(self):
+        code = 'Type MyType\nx As Long\nEnd Type'
+        ast = self._parse(code)
+        td = ast.body[0]
+        assert isinstance(td, VbaTypeDefinition)
+        self.assertEqual(td.members[0].offset, code.index('x'),
+            'Type member offset must point at the member name')
+
+    def test_enum_member_offset(self):
+        code = 'Enum Colors\nRed = 1\nEnd Enum'
+        ast = self._parse(code)
+        ed = ast.body[0]
+        assert isinstance(ed, VbaEnumDefinition)
+        self.assertEqual(ed.members[0].offset, code.index('Red'),
+            'Enum member offset must point at the member name')
