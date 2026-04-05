@@ -147,6 +147,11 @@ _DASH_OPERATORS: dict[str, str] = {
     )
 }
 
+# Reference: CharTraits.cs — ForceStartNewToken characters.  These characters
+# unconditionally start a new token, terminating any generic token or number
+# currently being scanned.
+_FORCE_START_NEW_TOKEN = frozenset(' \t\r\n|&;,{}()')
+
 _REDIRECTION_PATTERN = re.compile(
     r'[1-6*](?:>>|>&[12]|>)'  # explicit stream: 2>&1, 2>>, 2>
     r'|>>|>&1|>'              # bare: >>, >&1, >
@@ -542,7 +547,7 @@ class Ps1Lexer:
                         self.pos = m.end()
                         continue
                 break
-            if c in ' \t\r\n|&;,{}()':
+            if c in _FORCE_START_NEW_TOKEN:
                 break
             self.pos += 1
         return Ps1Token(Ps1TokenKind.GENERIC_TOKEN, src[start:self.pos], start)
@@ -670,10 +675,11 @@ class Ps1Lexer:
                 token = self._read_number()
                 if token:
                     if self.mode == Ps1LexerMode.ARGUMENT and self.pos < length and (
-                        src[self.pos].isalpha() or src[self.pos] == '_'
+                        src[self.pos] not in _FORCE_START_NEW_TOKEN
                     ):
-                        # In argument mode, a number followed by a letter is
-                        # part of a larger generic token (e.g., "7zip.exe").
+                        # In argument mode, a number followed by a character
+                        # that does not force a new token is part of a larger
+                        # generic token (e.g. "7zip.exe", "123$var").
                         # The reference tokenizer rejects the number via a
                         # ForceStartNewToken check (tokenizer.cs:4137) and
                         # falls back to ScanGenericToken.

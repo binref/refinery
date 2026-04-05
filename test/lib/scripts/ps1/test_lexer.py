@@ -559,6 +559,12 @@ class TestPs1Lexer(TestBase):
         self.assertEqual(len(tokens), 1)
         self.assertEqual(tokens[0], (Ps1TokenKind.PARAMETER, '-no-pager'))
 
+    def test_number_followed_by_variable_in_argument_mode(self):
+        """In argument mode, 123$var is a single generic token (string interpolation)."""
+        tokens = self._tokens('123$var', mode=Ps1LexerMode.ARGUMENT)
+        self.assertEqual(len(tokens), 1)
+        self.assertEqual(tokens[0], (Ps1TokenKind.GENERIC_TOKEN, '123$var'))
+
     def test_double_colon_not_label(self):
         tokens = self._tokens('[System.IO]::Path')
         kinds = [t[0] for t in tokens]
