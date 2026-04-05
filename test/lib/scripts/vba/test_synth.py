@@ -237,3 +237,15 @@ class TestVbaSynthesizer(TestBase):
         result = self._roundtrip(code)
         self.assertIn('Line Input', result,
             'Line Input must appear in the synthesized output as a unit')
+
+    def test_conditional_compilation_roundtrip(self):
+        code = 'Sub T()\n#If VBA7 Then\nx = 1\n#Else\nx = 2\n#End If\nEnd Sub'
+        result = self._roundtrip(code)
+        self.assertIn('Sub T()', result)
+        self.assertIn('x = 1', result)
+        self.assertIn('x = 2', result)
+        # Directive lines must not appear in output
+        self.assertNotIn('#If', result,
+            'Conditional compilation directives must not appear in synthesized output')
+        self.assertNotIn('#Else', result)
+        self.assertNotIn('#End', result)

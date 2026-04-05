@@ -1122,3 +1122,17 @@ class TestVbaParserStatements(TestBase):
         # Must be exactly two statements; before the fix there were three (Line / Input / x=1).
         self.assertEqual(len(sub.body), 2,
             'Line Input must be parsed as a single statement, not split across two')
+
+    def test_conditional_compilation_does_not_corrupt_following_code(self):
+        # Conditional compilation directives (#If, #Else, #End If, #Const) start
+        # with '#' followed by a keyword.  The lexer must not feed these into
+        # _read_date_literal(), which would produce a malformed DATE_LITERAL token
+        # and desynchronize the parser.
+        code = 'Sub T()\n#If VBA7 Then\nx = 1\n#Else\nx = 2\n#End If\nEnd Sub'
+        ast = self._parse(code)
+        sub = ast.body[0]
+        assert isinstance(sub, VbaSubDeclaration)
+        # The directive lines should be silently discarded; only x = 1 and x = 2
+        # should remain as statements in the Sub body.
+        self.assertEqual(len(sub.body), 2,
+            'Conditional compilation directives must be discarded, not emitted as expression statements')

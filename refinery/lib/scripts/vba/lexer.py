@@ -195,6 +195,15 @@ class VbaLexer:
                 continue
 
             if c == '#':
+                if last_was_newline and self.pos + 1 < length and src[self.pos + 1].isalpha():
+                    peek = self.pos + 1
+                    while peek < length and src[peek].isalpha():
+                        peek += 1
+                    word = src[self.pos + 1:peek].lower()
+                    if word in ('if', 'elseif', 'else', 'end', 'const'):
+                        while self.pos < length and src[self.pos] not in '\r\n':
+                            self.pos += 1
+                        continue
                 if self.pos + 1 < length and not src[self.pos + 1].isspace():
                     text = self._read_date_literal()
                     last_was_newline = False
