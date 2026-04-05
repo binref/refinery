@@ -723,9 +723,9 @@ class VbaParser:
                     condition=ei_cond, body=[], offset=ei_offset))
                 continue
             if self._at(VbaTokenKind.ELSE):
+                ei_offset = self._current.offset
                 self._advance()
                 if self._at(VbaTokenKind.IF):
-                    ei_offset = self._current.offset
                     self._advance()
                     ei_cond = self._parse_expression()
                     self._expect(VbaTokenKind.THEN)

@@ -25,6 +25,7 @@ from refinery.lib.scripts.vba.model import (
     VbaGosubStatement,
     VbaIdentifier,
     VbaImplementsStatement,
+    VbaElseIfClause,
     VbaIfStatement,
     VbaIntegerLiteral,
     VbaLabelStatement,
@@ -1202,3 +1203,14 @@ class TestVbaParserStatements(TestBase):
         assert isinstance(ed, VbaEnumDefinition)
         self.assertEqual(ed.members[0].offset, code.index('Red'),
             'Enum member offset must point at the member name')
+
+    def test_else_if_two_word_offset(self):
+        code = 'If a Then\nx = 1\nElse If b Then\ny = 2\nEnd If'
+        ast = self._parse(code)
+        stmt = ast.body[0]
+        assert isinstance(stmt, VbaIfStatement)
+        self.assertEqual(len(stmt.elseif_clauses), 1)
+        clause = stmt.elseif_clauses[0]
+        assert isinstance(clause, VbaElseIfClause)
+        self.assertEqual(clause.offset, code.index('Else If'),
+            'Two-word Else If clause offset must point at Else, not If')
