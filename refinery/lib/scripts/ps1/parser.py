@@ -1171,9 +1171,8 @@ class Ps1Parser:
             if value is None:
                 value = Ps1StringLiteral(offset=self._current.offset, value='', raw='')
             pairs.append((key, value))
-            self._skip_newlines()
-            self._eat(Ps1TokenKind.SEMICOLON)
-            self._eat(Ps1TokenKind.NEWLINE)
+            while self._current.kind in (Ps1TokenKind.NEWLINE, Ps1TokenKind.SEMICOLON):
+                self._advance()
         self._skip_newlines()
         self._expect(Ps1TokenKind.RBRACE)
         return Ps1HashLiteral(offset=offset, pairs=pairs)
