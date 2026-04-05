@@ -128,7 +128,7 @@ class VbaLexer:
                 consume = False
             elif c_suffix == '!' and (
                 self.pos + 1 < length
-                and (src[self.pos + 1].isalpha() or src[self.pos + 1] == '_')
+                and (src[self.pos + 1].isalpha() or src[self.pos + 1] in '_[')
             ):
                 consume = False
             if consume:

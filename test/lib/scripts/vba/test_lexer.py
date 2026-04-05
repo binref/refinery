@@ -240,3 +240,11 @@ class TestVbaLexer(TestBase):
     def test_bracket_identifier_unclosed(self):
         tokens = self._tokens('[Foo')
         self.assertEqual(tokens, [(VbaTokenKind.IDENTIFIER, '[Foo')])
+
+    def test_bang_before_bracket_identifier(self):
+        tokens = self._tokens('rs![First Name]')
+        self.assertEqual(tokens, [
+            (VbaTokenKind.IDENTIFIER, 'rs'),
+            (VbaTokenKind.BANG, '!'),
+            (VbaTokenKind.IDENTIFIER, '[First Name]'),
+        ])
