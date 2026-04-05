@@ -441,6 +441,16 @@ class TestPs1ParserExpressions(TestBase):
         self.assertEqual(expr.member, 'MaxValue')
         self.assertEqual(expr.access, Ps1AccessKind.STATIC)
 
+    def test_cast_with_unary_not_operator(self):
+        expr = self._parse_expr('[int]-not $false')
+        self.assertIsInstance(expr, Ps1CastExpression)
+        self.assertEqual(expr.type_name, 'int')
+        self.assertIsInstance(expr.operand, Ps1UnaryExpression)
+        self.assertEqual(expr.operand.operator, '-not')
+        self.assertTrue(expr.operand.prefix)
+        self.assertIsInstance(expr.operand.operand, Ps1Variable)
+        self.assertEqual(expr.operand.operand.name, 'false')
+
     def test_chained_fluent_member_access(self):
         expr = self._parse_expr('$s.\n    Trim().\n    ToLower()')
         self.assertIsInstance(expr, Ps1InvokeMember)
