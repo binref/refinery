@@ -547,6 +547,12 @@ class TestPs1Lexer(TestBase):
         stars = [t for t in tokens if t[0] == Ps1TokenKind.STAR]
         self.assertEqual(len(stars), 1)
 
+    def test_star_bracket_glob_in_argument_mode(self):
+        """In argument mode, *[a-z]* is a single generic token (glob pattern)."""
+        tokens = self._tokens('*[a-z]*', mode=Ps1LexerMode.ARGUMENT)
+        self.assertEqual(len(tokens), 1)
+        self.assertEqual(tokens[0], (Ps1TokenKind.GENERIC_TOKEN, '*[a-z]*'))
+
     def test_double_colon_not_label(self):
         tokens = self._tokens('[System.IO]::Path')
         kinds = [t[0] for t in tokens]

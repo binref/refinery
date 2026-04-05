@@ -586,7 +586,7 @@ class Ps1Lexer:
             # generic token instead of the operator.
             if c2 in ('..', '--', '++') and self.mode == Ps1LexerMode.ARGUMENT:
                 after = self.pos + 2
-                if after < length and src[after] not in ' \t\r\n|&;,{}()[]':
+                if after < length and src[after] not in ' \t\r\n|&;,{}()':
                     token = self._read_generic_token()
                     if token.value:
                         mode_hint = yield token
@@ -692,7 +692,7 @@ class Ps1Lexer:
                 # .\\path, .NET).  The $/"/' exclusions preserve dot-sourcing.
                 if c == '.' and self.pos + 1 < length:
                     nc = src[self.pos + 1]
-                    if nc not in ' \t\r\n|&;,{}()[]$' and nc not in SINGLE_QUOTES and nc not in DOUBLE_QUOTES:
+                    if nc not in ' \t\r\n|&;,{}()$' and nc not in SINGLE_QUOTES and nc not in DOUBLE_QUOTES:
                         token = self._read_generic_token()
                         if token.value:
                             mode_hint = yield token
@@ -705,7 +705,7 @@ class Ps1Lexer:
             # character that does NOT force a new token are part of a generic
             # token (e.g. "*.txt", "/etc/hosts") instead of an operator.
             if self.mode == Ps1LexerMode.ARGUMENT and c in '*/%=!+':
-                if self.pos + 1 < length and src[self.pos + 1] not in ' \t\r\n|&;,{}()[]':
+                if self.pos + 1 < length and src[self.pos + 1] not in ' \t\r\n|&;,{}()':
                     token = self._read_generic_token()
                     if token.value:
                         mode_hint = yield token
