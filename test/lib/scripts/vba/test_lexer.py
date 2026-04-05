@@ -202,3 +202,17 @@ class TestVbaLexer(TestBase):
     def test_empty_string(self):
         tokens = self._tokens('""')
         self.assertEqual(tokens, [(VbaTokenKind.STRING, '""')])
+
+    def test_cc_endif_fused_is_skipped(self):
+        tokens = self._tokens('x = 1\n#EndIf\ny = 2')
+        kinds = [k for k, _ in tokens]
+        self.assertNotIn(VbaTokenKind.DATE_LITERAL, kinds)
+        self.assertEqual(kinds, [
+            VbaTokenKind.IDENTIFIER,
+            VbaTokenKind.EQ,
+            VbaTokenKind.INTEGER,
+            VbaTokenKind.NEWLINE,
+            VbaTokenKind.IDENTIFIER,
+            VbaTokenKind.EQ,
+            VbaTokenKind.INTEGER,
+        ])

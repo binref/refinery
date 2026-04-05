@@ -200,7 +200,7 @@ class VbaLexer:
                     while peek < length and src[peek].isalpha():
                         peek += 1
                     word = src[self.pos + 1:peek].lower()
-                    if word in ('if', 'elseif', 'else', 'end', 'const'):
+                    if word in ('if', 'elseif', 'else', 'end', 'endif', 'const'):
                         while self.pos < length and src[self.pos] not in '\r\n':
                             self.pos += 1
                         continue
