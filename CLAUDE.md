@@ -3,6 +3,42 @@
 - Read [README](README.md) to understand the project goal and design.
 - Read the [STYLEGUIDE](STYLEGUIDE.md) and make sure that all written code is compliant with it.
 
+## Style Rules That Differ From PEP 8
+
+The following rules contradict common Python conventions. Check them explicitly:
+
+- **DO NOT** use lowercase `f'...'` for f-strings. Use uppercase: `F'...'`.
+- **DO NOT** write single-line docstrings like `"""text"""`. Always use:
+  ```python
+  """
+  text
+  """
+  ```
+- **DO NOT** align continuation lines to the opening bracket:
+  ```python
+  # WRONG:
+  x = function(arg1,
+               arg2)
+  for k in [1, 2,
+            3, 4]:
+  ```
+  Use one-level indentation with closing bracket on its own line.
+- **DO NOT** put conditions on the same line as `if (`:
+  ```python
+  # WRONG:
+  if (condition1
+          and condition2):
+
+  # RIGHT:
+  if (
+      condition1
+      and condition2
+  ):
+  ```
+- **DO NOT** use double quotes for strings. Single quotes only (except docstrings).
+- **DO NOT** use `Optional`, `Union`, or `List` from `typing` in annotations. Use `X | None`, `X | Y`, `list[X]`.
+- **DO NOT** write comments unless the information absolutely cannot be communicated by naming or structure. Never write comments that reference external source code.
+
 # Rules of Engagement
 
 - Many test samples and test data in binary refinery contain malware.

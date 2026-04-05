@@ -87,6 +87,12 @@ In other words, each positional and keyword argument as well as the closing pare
 Indentation is increased by one for the arguments, the closing parenthesis is not indented.
 The same rule applies to other comma-separated list, tuple, or set literals.
 
+Do **not** use bracket-aligned indentation like this:
+```python
+for kw in ['if', 'elseif', 'else',
+           'while', 'for', 'foreach']:
+```
+
 The following style is only permitted for function calls, and only if the line is broken exactly once:
 ```python
 result = function_call(argument_1, argument_2, argument_3,
@@ -193,6 +199,7 @@ This should usually be preferred over manual parsing using offset calculations a
 All strings use single quotes, except for docstrings, which use three double quotes.
 When possible, strings should not be concatenated with string literals,
  F-Strings should be used instead.
+Note that f-strings use an uppercase `F` prefix, not lowercase `f`.
 For example, the code 
 ```python
 message = 'Hello, ' + world + '\n'
