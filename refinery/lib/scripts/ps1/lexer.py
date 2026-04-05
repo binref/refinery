@@ -602,6 +602,16 @@ class Ps1Lexer:
             if c.isdigit() or (c == '.' and self.pos + 1 < length and src[self.pos + 1].isdigit()):
                 token = self._read_number()
                 if token:
+                    if self.mode == Ps1LexerMode.ARGUMENT and self.pos < length and (
+                        src[self.pos].isalpha() or src[self.pos] == '_'
+                    ):
+                        # In argument mode, a number followed by a letter is
+                        # part of a larger generic token (e.g., "7zip.exe").
+                        # The reference tokenizer rejects the number via a
+                        # ForceStartNewToken check (tokenizer.cs:4137) and
+                        # falls back to ScanGenericToken.
+                        self.pos = start
+                        token = self._read_generic_token()
                     mode_hint = yield token
                     if mode_hint is not None:
                         self.mode = mode_hint

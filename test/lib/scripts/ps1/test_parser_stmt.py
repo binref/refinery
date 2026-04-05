@@ -224,6 +224,18 @@ class TestPs1ParserStatements(TestBase):
         self.assertIsNotNone(stmt.body.process_block)
         self.assertIsNotNone(stmt.body.end_block)
 
+    def test_digit_starting_command_argument(self):
+        stmt = self._parse_stmt('Get-Process 7z')
+        self.assertIsInstance(stmt, Ps1ExpressionStatement)
+        cmd = stmt.expression
+        self.assertIsInstance(cmd, Ps1CommandInvocation)
+        self.assertEqual(len(cmd.arguments), 1)
+        arg = cmd.arguments[0]
+        self.assertIsInstance(arg, Ps1CommandArgument)
+        self.assertEqual(arg.kind, Ps1CommandArgumentKind.POSITIONAL)
+        self.assertIsInstance(arg.value, Ps1StringLiteral)
+        self.assertEqual(arg.value.value, '7z')
+
     def test_command_with_switch_parameter(self):
         stmt = self._parse_stmt('Get-ChildItem -Recurse')
         self.assertIsInstance(stmt, Ps1ExpressionStatement)
