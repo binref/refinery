@@ -345,6 +345,19 @@ class TestPs1Lexer(TestBase):
         self.assertEqual(tokens[0], (Ps1TokenKind.VARIABLE, '$^'))
         self.assertEqual(tokens[1], (Ps1TokenKind.GENERIC_TOKEN, 'foo'))
 
+    def test_drive_qualified_variable(self):
+        tokens = self._tokens('$HKLM:Software')
+        self.assertEqual(tokens, [(Ps1TokenKind.VARIABLE, '$HKLM:Software')])
+
+    def test_drive_qualified_variable_cert(self):
+        tokens = self._tokens('$cert:CurrentUser')
+        self.assertEqual(tokens, [(Ps1TokenKind.VARIABLE, '$cert:CurrentUser')])
+
+    def test_drive_qualified_does_not_consume_double_colon(self):
+        tokens = self._tokens('$x::StaticMember')
+        self.assertEqual(tokens[0], (Ps1TokenKind.VARIABLE, '$x'))
+        self.assertEqual(tokens[1], (Ps1TokenKind.DOUBLE_COLON, '::'))
+
     def test_backtick_line_continuation(self):
         tokens = self._tokens('$x +`\n$y')
         kinds = [t[0] for t in tokens]

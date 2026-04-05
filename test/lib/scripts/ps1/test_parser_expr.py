@@ -8,6 +8,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1AssignmentExpression,
     Ps1BinaryExpression,
     Ps1CastExpression,
+    Ps1ScopeModifier,
     Ps1ExpandableString,
     Ps1HashLiteral,
     Ps1IndexExpression,
@@ -85,6 +86,12 @@ class TestPs1ParserExpressions(TestBase):
         expr = self._parse_expr('$env:PATH')
         self.assertIsInstance(expr, Ps1Variable)
         self.assertEqual(expr.name, 'PATH')
+
+    def test_variable_drive_qualified(self):
+        expr = self._parse_expr('$HKLM:Software')
+        self.assertIsInstance(expr, Ps1Variable)
+        self.assertEqual(expr.scope, Ps1ScopeModifier.DRIVE)
+        self.assertEqual(expr.name, 'Software')
 
     def test_addition(self):
         expr = self._parse_expr('1 + 2')
