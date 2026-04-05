@@ -330,6 +330,21 @@ class TestPs1Lexer(TestBase):
         self.assertEqual(tokens[0], (Ps1TokenKind.INTEGER, '9'))
         self.assertEqual(tokens[1], (Ps1TokenKind.REDIRECTION, '>'))
 
+    def test_special_variable_dollar_does_not_consume_trailing(self):
+        tokens = self._tokens('$$foo')
+        self.assertEqual(tokens[0], (Ps1TokenKind.VARIABLE, '$$'))
+        self.assertEqual(tokens[1], (Ps1TokenKind.GENERIC_TOKEN, 'foo'))
+
+    def test_special_variable_question_does_not_consume_trailing(self):
+        tokens = self._tokens('$?foo')
+        self.assertEqual(tokens[0], (Ps1TokenKind.VARIABLE, '$?'))
+        self.assertEqual(tokens[1], (Ps1TokenKind.GENERIC_TOKEN, 'foo'))
+
+    def test_special_variable_caret_does_not_consume_trailing(self):
+        tokens = self._tokens('$^foo')
+        self.assertEqual(tokens[0], (Ps1TokenKind.VARIABLE, '$^'))
+        self.assertEqual(tokens[1], (Ps1TokenKind.GENERIC_TOKEN, 'foo'))
+
     def test_backtick_line_continuation(self):
         tokens = self._tokens('$x +`\n$y')
         kinds = [t[0] for t in tokens]

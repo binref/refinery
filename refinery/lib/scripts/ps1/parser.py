@@ -163,7 +163,8 @@ _STATEMENT_TERMINATORS = frozenset({
 _VARIABLE_FRAG = re.compile(
     r'\$(?:'
     r'(?:(?:global|local|script|private|using|env|variable|function|alias|drive):)?'
-    r'(?:\{[^}]+\}|[a-zA-Z0-9_?$^][a-zA-Z0-9_?]*)'
+    r'(?:\{[^}]+\}|[a-zA-Z_][a-zA-Z0-9_?]*)'
+    r'|[$?^]'
     r')',
     re.IGNORECASE,
 )

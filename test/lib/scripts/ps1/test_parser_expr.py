@@ -357,3 +357,21 @@ class TestPs1ParserExpressions(TestBase):
         self.assertIsInstance(expr, Ps1ExpandableString)
         has_subexpr = any(isinstance(p, Ps1SubExpression) for p in expr.parts)
         self.assertTrue(has_subexpr)
+
+    def test_expandable_string_special_var_dollar_stops(self):
+        expr = self._parse_expr('"$$x"')
+        self.assertIsInstance(expr, Ps1ExpandableString)
+        has_var = any(isinstance(p, Ps1Variable) and p.name == '$' for p in expr.parts)
+        self.assertTrue(has_var, 'should contain variable $$ (name=$)')
+        has_literal_x = any(
+            isinstance(p, Ps1StringLiteral) and 'x' in p.value for p in expr.parts)
+        self.assertTrue(has_literal_x, 'should contain literal x after $$')
+
+    def test_expandable_string_special_var_question_stops(self):
+        expr = self._parse_expr('"$?x"')
+        self.assertIsInstance(expr, Ps1ExpandableString)
+        has_var = any(isinstance(p, Ps1Variable) and p.name == '?' for p in expr.parts)
+        self.assertTrue(has_var, 'should contain variable $? (name=?)')
+        has_literal_x = any(
+            isinstance(p, Ps1StringLiteral) and 'x' in p.value for p in expr.parts)
+        self.assertTrue(has_literal_x, 'should contain literal x after $?')
