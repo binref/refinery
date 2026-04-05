@@ -216,3 +216,27 @@ class TestVbaLexer(TestBase):
             VbaTokenKind.EQ,
             VbaTokenKind.INTEGER,
         ])
+
+    def test_bracket_identifier_simple(self):
+        tokens = self._tokens('[MyVar]')
+        self.assertEqual(tokens, [(VbaTokenKind.IDENTIFIER, '[MyVar]')])
+
+    def test_bracket_identifier_with_spaces(self):
+        tokens = self._tokens('[My Variable]')
+        self.assertEqual(tokens, [(VbaTokenKind.IDENTIFIER, '[My Variable]')])
+
+    def test_bracket_identifier_reserved_word(self):
+        tokens = self._tokens('[End]')
+        self.assertEqual(tokens, [(VbaTokenKind.IDENTIFIER, '[End]')])
+
+    def test_bracket_identifier_in_expression(self):
+        kinds = self._token_kinds('x = [A1]')
+        self.assertEqual(kinds, [
+            VbaTokenKind.IDENTIFIER,
+            VbaTokenKind.EQ,
+            VbaTokenKind.IDENTIFIER,
+        ])
+
+    def test_bracket_identifier_unclosed(self):
+        tokens = self._tokens('[Foo')
+        self.assertEqual(tokens, [(VbaTokenKind.IDENTIFIER, '[Foo')])

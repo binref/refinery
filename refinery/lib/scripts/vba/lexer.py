@@ -139,6 +139,21 @@ class VbaLexer:
             return VbaToken(kw, word, start)
         return VbaToken(VbaTokenKind.IDENTIFIER, word + suffix, start)
 
+    def _read_bracket_identifier(self) -> str:
+        start = self.pos
+        src = self.source
+        length = len(src)
+        self.pos += 1
+        while self.pos < length:
+            c = src[self.pos]
+            if c == ']':
+                self.pos += 1
+                return src[start:self.pos]
+            if c in '\r\n':
+                return src[start:self.pos]
+            self.pos += 1
+        return src[start:self.pos]
+
     def _read_comment(self) -> str:
         start = self.pos
         src = self.source
@@ -241,6 +256,12 @@ class VbaLexer:
                     continue
                 last_was_newline = False
                 yield tok
+                continue
+
+            if c == '[':
+                text = self._read_bracket_identifier()
+                last_was_newline = False
+                yield VbaToken(VbaTokenKind.IDENTIFIER, text, start)
                 continue
 
             c2 = src[self.pos:self.pos + 2]
