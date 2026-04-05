@@ -1,6 +1,8 @@
 """
 VBA AST deobfuscation transforms.
 """
+from __future__ import annotations
+
 from refinery.lib.scripts.vba.deobfuscation.emulator import VbaFunctionEvaluator
 from refinery.lib.scripts.vba.deobfuscation.simplify import VbaSimplifications
 from refinery.lib.scripts.vba.model import VbaModule
