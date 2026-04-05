@@ -1136,3 +1136,15 @@ class TestVbaParserStatements(TestBase):
         # should remain as statements in the Sub body.
         self.assertEqual(len(sub.body), 2,
             'Conditional compilation directives must be discarded, not emitted as expression statements')
+
+    def test_else_if_two_word_form(self):
+        # "Else If" (two words) must produce ElseIfClause, not nested If inside else_body.
+        code = 'Sub T()\nIf x = 1 Then\ny = 1\nElse If x = 2 Then\ny = 2\nEnd If\nEnd Sub'
+        ast = self._parse(code)
+        sub = ast.body[0]
+        assert isinstance(sub, VbaSubDeclaration)
+        if_stmt = sub.body[0]
+        assert isinstance(if_stmt, VbaIfStatement)
+        self.assertEqual(len(if_stmt.elseif_clauses), 1,
+            '"Else If" must produce an ElseIfClause, not a nested If inside else_body')
+        self.assertEqual(len(if_stmt.else_body), 0)

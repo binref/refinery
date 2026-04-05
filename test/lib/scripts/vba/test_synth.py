@@ -249,3 +249,9 @@ class TestVbaSynthesizer(TestBase):
             'Conditional compilation directives must not appear in synthesized output')
         self.assertNotIn('#Else', result)
         self.assertNotIn('#End', result)
+
+    def test_else_if_two_word_roundtrip(self):
+        code = 'Sub T()\nIf x = 1 Then\ny = 1\nElse If x = 2 Then\ny = 2\nEnd If\nEnd Sub'
+        result = self._roundtrip(code)
+        self.assertIn('ElseIf', result,
+            '"Else If" must round-trip as ElseIf')

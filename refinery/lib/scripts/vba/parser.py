@@ -719,6 +719,15 @@ class VbaParser:
                 continue
             if self._at(VbaTokenKind.ELSE):
                 self._advance()
+                if self._at(VbaTokenKind.IF):
+                    ei_offset = self._current.offset
+                    self._advance()
+                    ei_cond = self._parse_expression()
+                    self._expect(VbaTokenKind.THEN)
+                    self._eat_eos()
+                    elseif_clauses.append(VbaElseIfClause(
+                        condition=ei_cond, body=[], offset=ei_offset))
+                    continue
                 self._eat_eos()
                 found_else = True
                 break
