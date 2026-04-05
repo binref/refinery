@@ -1422,6 +1422,18 @@ class Ps1Parser:
         return Ps1ForEachLoop(
             offset=offset, variable=var, iterable=iterable, body=body, parallel=parallel, label=label)
 
+    def _parse_switch_clause_condition(self) -> Expression | None:
+        """
+        Parse a switch clause condition. The reference PowerShell parser uses
+        GetSingleCommandArgument(SwitchCondition) here, which tokenizes in
+        command mode and treats keyword tokens as bare-word string literals.
+        """
+        if self._current.kind.is_keyword:
+            tok = self._advance()
+            return Ps1StringLiteral(offset=tok.offset, value=tok.value, raw=tok.value)
+        self._lexer.mode = Ps1LexerMode.EXPRESSION
+        return self._parse_expression()
+
     def _parse_switch(self, label: str | None = None) -> Ps1SwitchStatement:
         offset = self._current.offset
         self._expect(Ps1TokenKind.SWITCH)
@@ -1472,8 +1484,7 @@ class Ps1Parser:
                 block = self._parse_block()
                 clauses.append((None, block))
             else:
-                self._lexer.mode = Ps1LexerMode.EXPRESSION
-                cond = self._parse_expression()
+                cond = self._parse_switch_clause_condition()
                 self._skip_newlines()
                 block = self._parse_block()
                 clauses.append((cond, block))

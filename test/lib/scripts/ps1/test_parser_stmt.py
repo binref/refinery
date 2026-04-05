@@ -90,6 +90,16 @@ class TestPs1ParserStatements(TestBase):
         self.assertEqual(len(stmt.clauses), 3)
         self.assertIsNone(stmt.clauses[2][0])
 
+    def test_switch_keyword_as_clause_condition(self):
+        stmt = self._parse_stmt(
+            'switch ($x) { return { "matched" } default { "other" } }')
+        self.assertIsInstance(stmt, Ps1SwitchStatement)
+        self.assertEqual(len(stmt.clauses), 2)
+        cond, _ = stmt.clauses[0]
+        self.assertIsInstance(cond, Ps1StringLiteral)
+        self.assertEqual(cond.value, 'return')
+        self.assertIsNone(stmt.clauses[1][0])
+
     def test_switch_with_flags(self):
         stmt = self._parse_stmt('switch -Regex ($input) { "a*" { "matched" } }')
         self.assertIsInstance(stmt, Ps1SwitchStatement)
