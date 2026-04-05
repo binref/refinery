@@ -723,3 +723,38 @@ class TestVbaParserStatements(TestBase):
         assert isinstance(if_stmt, VbaIfStatement)
         self.assertTrue(if_stmt.single_line)
         self.assertEqual(len(if_stmt.body), 2)
+
+    def test_nested_single_line_if_else_association(self):
+        code = 'Sub T()\nIf a Then If b Then c = 1 Else d = 2 Else e = 3\nEnd Sub'
+        ast = self._parse(code)
+        outer = ast.body[0].body[0]
+        assert isinstance(outer, VbaIfStatement)
+        self.assertTrue(outer.single_line)
+        self.assertEqual(len(outer.body), 1)
+        inner = outer.body[0]
+        assert isinstance(inner, VbaIfStatement), \
+            f'expected nested VbaIfStatement but got {type(inner).__name__}'
+        self.assertTrue(inner.single_line)
+        self.assertEqual(len(inner.body), 1)
+        assert isinstance(inner.body[0], VbaLetStatement)
+        self.assertEqual(inner.body[0].target.name, 'c')
+        self.assertEqual(len(inner.else_body), 1)
+        assert isinstance(inner.else_body[0], VbaLetStatement)
+        self.assertEqual(inner.else_body[0].target.name, 'd')
+        self.assertEqual(len(outer.else_body), 1, 'outer Else branch must contain one statement')
+        assert isinstance(outer.else_body[0], VbaLetStatement)
+        self.assertEqual(outer.else_body[0].target.name, 'e')
+
+    def test_triple_nested_single_line_if(self):
+        code = 'Sub T()\nIf a Then If b Then If c Then x = 1 Else y = 2 Else z = 3 Else w = 4\nEnd Sub'
+        ast = self._parse(code)
+        outer = ast.body[0].body[0]
+        assert isinstance(outer, VbaIfStatement)
+        mid = outer.body[0]
+        assert isinstance(mid, VbaIfStatement)
+        inner = mid.body[0]
+        assert isinstance(inner, VbaIfStatement)
+        self.assertEqual(inner.else_body[0].target.name, 'y')
+        self.assertEqual(mid.else_body[0].target.name, 'z')
+        self.assertEqual(len(outer.else_body), 1, 'outermost Else must contain one statement')
+        self.assertEqual(outer.else_body[0].target.name, 'w')

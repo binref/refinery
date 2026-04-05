@@ -672,7 +672,7 @@ class VbaParser:
                 if stmt is not None:
                     body.append(stmt)
             if self._eat(VbaTokenKind.ELSE):
-                while not self._at(VbaTokenKind.NEWLINE, VbaTokenKind.EOF):
+                while not self._at(VbaTokenKind.NEWLINE, VbaTokenKind.EOF, VbaTokenKind.ELSE):
                     if self._at(VbaTokenKind.COLON):
                         self._advance()
                         continue
