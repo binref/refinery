@@ -459,9 +459,12 @@ class TestVbaParserStatements(TestBase):
     def test_exit_unknown_keyword(self):
         code = 'Sub T()\nExit While\nEnd Sub'
         ast = self._parse(code)
-        stmt = ast.body[0].body[0]
-        assert isinstance(stmt, VbaErrorNode), \
-            f'expected VbaErrorNode but got {type(stmt).__name__}'
+        sub = ast.body[0]
+        assert isinstance(sub, VbaSubDeclaration)
+        self.assertEqual(len(sub.body), 1,
+            'Exit with unknown keyword must produce exactly one error node, '
+            'not cascade into a spurious While statement')
+        assert isinstance(sub.body[0], VbaErrorNode)
 
     def test_lset_statement(self):
         code = 'Sub T()\nLSet x = y\nEnd Sub'

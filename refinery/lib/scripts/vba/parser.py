@@ -1138,6 +1138,7 @@ class VbaParser:
         try:
             kind = VbaExitKind(self._current.value.capitalize())
         except ValueError:
+            self._advance()
             return VbaErrorNode(offset=offset)
         self._advance()
         return VbaExitStatement(kind=kind, offset=offset)
