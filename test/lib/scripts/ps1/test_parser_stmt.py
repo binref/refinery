@@ -359,6 +359,13 @@ class TestPs1ParserStatements(TestBase):
         self.assertIsInstance(cmd, Ps1CommandInvocation)
         self.assertEqual(len(cmd.arguments), 1)
 
+    def test_command_with_inline_block_comment(self):
+        stmt = self._parse_stmt('Write-Host <# pick greeting #> "hello"')
+        self.assertIsInstance(stmt, Ps1ExpressionStatement)
+        cmd = stmt.expression
+        self.assertIsInstance(cmd, Ps1CommandInvocation)
+        self.assertEqual(len(cmd.arguments), 1)
+
     def test_dot_source_relative_path(self):
         stmt = self._parse_stmt(r'. .\script.ps1')
         self.assertIsInstance(stmt, Ps1ExpressionStatement)

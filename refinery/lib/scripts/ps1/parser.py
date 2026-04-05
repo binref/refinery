@@ -208,13 +208,12 @@ class Ps1Parser:
         return Ps1Token(kind, '', self._current.offset)
 
     def _skip_newlines(self):
-        while self._current.kind in (Ps1TokenKind.NEWLINE, Ps1TokenKind.COMMENT):
+        while self._current.kind == Ps1TokenKind.NEWLINE:
             self._advance()
 
     def _skip_separators(self):
         while self._current.kind in (
             Ps1TokenKind.COMMA,
-            Ps1TokenKind.COMMENT,
             Ps1TokenKind.NEWLINE,
             Ps1TokenKind.SEMICOLON,
         ):

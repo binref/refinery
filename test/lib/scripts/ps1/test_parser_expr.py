@@ -504,3 +504,13 @@ class TestPs1ParserExpressions(TestBase):
                 expr = self._parse_expr(F'{d1}{d2}$x')
                 self.assertIsInstance(expr, Ps1UnaryExpression)
                 self.assertEqual(expr.operator, '--')
+
+    def test_inline_block_comment_before_operator(self):
+        expr = self._parse_expr('1 <# comment #> + 2')
+        self.assertIsInstance(expr, Ps1BinaryExpression)
+        self.assertEqual(expr.operator, '+')
+
+    def test_inline_block_comment_after_operator(self):
+        expr = self._parse_expr('1 + <# comment #> 2')
+        self.assertIsInstance(expr, Ps1BinaryExpression)
+        self.assertEqual(expr.operator, '+')

@@ -555,16 +555,10 @@ class Ps1Lexer:
                 continue
 
             if c2 == '<#':
-                text = self._read_block_comment()
-                mode_hint = yield Ps1Token(Ps1TokenKind.COMMENT, text, start)
-                if mode_hint is not None:
-                    self.mode = mode_hint
+                self._read_block_comment()
                 continue
             if c == '#':
-                text = self._read_line_comment()
-                mode_hint = yield Ps1Token(Ps1TokenKind.COMMENT, text, start)
-                if mode_hint is not None:
-                    self.mode = mode_hint
+                self._read_line_comment()
                 continue
 
             if c == '@' and self.pos + 1 < length:
