@@ -947,7 +947,9 @@ class VbaParser:
                 if self._at(VbaTokenKind.CASE):
                     break
                 if self._at(VbaTokenKind.END):
-                    break
+                    after = self._source[self._current.offset + len(self._current.value):].lstrip(' \t')
+                    if after[:6].lower() == 'select' and not after[6:7].isalnum():
+                        break
                 if self._at(VbaTokenKind.IDENTIFIER) and self._current.value.lower() == 'endselect':
                     break
                 stmt = self._parse_statement()
@@ -966,7 +968,9 @@ class VbaParser:
             if self._at(VbaTokenKind.CASE):
                 break
             if self._at(VbaTokenKind.END):
-                break
+                after = self._source[self._current.offset + len(self._current.value):].lstrip(' \t')
+                if after[:6].lower() == 'select' and not after[6:7].isalnum():
+                    break
             if self._at(VbaTokenKind.IDENTIFIER) and self._current.value.lower() == 'endselect':
                 break
             stmt = self._parse_statement()

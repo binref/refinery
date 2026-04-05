@@ -255,3 +255,10 @@ class TestVbaSynthesizer(TestBase):
         result = self._roundtrip(code)
         self.assertIn('ElseIf', result,
             '"Else If" must round-trip as ElseIf')
+
+    def test_end_in_select_case_roundtrip(self):
+        code = 'Sub T()\nSelect Case x\nCase 1\nEnd\nEnd Select\nEnd Sub'
+        result = self._roundtrip(code)
+        lines = [l.strip() for l in result.splitlines() if l.strip()]
+        self.assertIn('End', lines,
+            'standalone End statement must survive round-trip inside Select Case')

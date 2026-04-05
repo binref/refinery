@@ -741,6 +741,18 @@ class TestVbaParserStatements(TestBase):
         self.assertEqual(len(stmt.cases), 1)
         self.assertEqual(len(stmt.cases[0].body), 1)
 
+    def test_end_statement_in_case_clause(self):
+        code = 'Sub T()\nSelect Case x\nCase 1\nEnd\nEnd Select\nEnd Sub'
+        ast = self._parse(code)
+        sub = ast.body[0]
+        assert isinstance(sub, VbaSubDeclaration)
+        select = sub.body[0]
+        assert isinstance(select, VbaSelectCaseStatement)
+        self.assertEqual(len(select.cases), 1)
+        self.assertEqual(len(select.cases[0].body), 1,
+            'standalone End statement must not be silently dropped before End Select')
+        assert isinstance(select.cases[0].body[0], VbaEndStatement)
+
     def test_debug_print_comma_separator(self):
         code = 'Sub T()\nDebug.Print "a", "b"\nEnd Sub'
         ast = self._parse(code)
