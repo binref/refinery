@@ -104,6 +104,7 @@ class VbaTokenKind(enum.Enum):
     AMPERSAND      = '&'           # noqa
     EQ             = '='           # noqa
     NEQ            = '<>'          # noqa
+    ASSIGN         = ':='          # noqa
     LT             = '<'           # noqa
     GT             = '>'           # noqa
     LTE            = '<='          # noqa

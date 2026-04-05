@@ -32,6 +32,7 @@ from refinery.lib.scripts.vba.model import (
     VbaLoopConditionPosition,
     VbaLoopConditionType,
     VbaMemberAccess,
+    VbaNamedArgument,
     VbaOnBranchKind,
     VbaOnBranchStatement,
     VbaOnErrorAction,
@@ -979,3 +980,44 @@ class TestVbaParserStatements(TestBase):
         assert isinstance(arg, VbaByValArgument)
         assert isinstance(arg.expression, VbaIdentifier)
         self.assertEqual(arg.expression.name, 'x')
+
+    def test_named_argument_in_call(self):
+        code = 'Sub T()\nFoo bar:=42\nEnd Sub'
+        ast = self._parse(code)
+        sub = ast.body[0]
+        assert isinstance(sub, VbaSubDeclaration)
+        stmt = sub.body[0]
+        assert isinstance(stmt, VbaExpressionStatement)
+        self.assertEqual(len(stmt.arguments), 1)
+        arg = stmt.arguments[0]
+        assert isinstance(arg, VbaNamedArgument)
+        self.assertEqual(arg.name, 'bar')
+        assert isinstance(arg.expression, VbaIntegerLiteral)
+        self.assertEqual(arg.expression.value, 42)
+
+    def test_named_argument_in_parenthesized_call(self):
+        code = 'Sub T()\nx = Foo(bar:=42)\nEnd Sub'
+        ast = self._parse(code)
+        sub = ast.body[0]
+        assert isinstance(sub, VbaSubDeclaration)
+        stmt = sub.body[0]
+        assert isinstance(stmt, VbaLetStatement)
+        from refinery.lib.scripts.vba.model import VbaCallExpression
+        assert isinstance(stmt.value, VbaCallExpression)
+        self.assertEqual(len(stmt.value.arguments), 1)
+        arg = stmt.value.arguments[0]
+        assert isinstance(arg, VbaNamedArgument)
+        self.assertEqual(arg.name, 'bar')
+
+    def test_multiple_named_arguments(self):
+        code = 'Sub T()\nMsgBox Prompt:="Hello", Title:="Test"\nEnd Sub'
+        ast = self._parse(code)
+        sub = ast.body[0]
+        assert isinstance(sub, VbaSubDeclaration)
+        stmt = sub.body[0]
+        assert isinstance(stmt, VbaExpressionStatement)
+        self.assertEqual(len(stmt.arguments), 2)
+        assert isinstance(stmt.arguments[0], VbaNamedArgument)
+        self.assertEqual(stmt.arguments[0].name, 'Prompt')
+        assert isinstance(stmt.arguments[1], VbaNamedArgument)
+        self.assertEqual(stmt.arguments[1].name, 'Title')

@@ -45,6 +45,7 @@ from refinery.lib.scripts.vba.model import (
     VbaMeExpression,
     VbaMemberAccess,
     VbaModule,
+    VbaNamedArgument,
     VbaNewExpression,
     VbaNothingLiteral,
     VbaNullLiteral,
@@ -186,6 +187,11 @@ class VbaSynthesizer(Visitor):
 
     def visit_VbaByValArgument(self, node: VbaByValArgument):
         self._write('ByVal ')
+        if node.expression:
+            self.visit(node.expression)
+
+    def visit_VbaNamedArgument(self, node: VbaNamedArgument):
+        self._write(F'{node.name}:=')
         if node.expression:
             self.visit(node.expression)
 

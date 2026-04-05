@@ -44,6 +44,7 @@ from refinery.lib.scripts.vba.model import (
     VbaMeExpression,
     VbaMemberAccess,
     VbaModule,
+    VbaNamedArgument,
     VbaNewExpression,
     VbaNothingLiteral,
     VbaNullLiteral,
@@ -1144,7 +1145,14 @@ class VbaParser:
             self._advance()
             return VbaByValArgument(
                 expression=self._parse_expression(), offset=offset)
-        return self._parse_expression()
+        expr = self._parse_expression()
+        if self._at(VbaTokenKind.ASSIGN):
+            self._advance()
+            name = expr.name if isinstance(expr, VbaIdentifier) else ''
+            value = self._parse_expression()
+            return VbaNamedArgument(
+                name=name, expression=value, offset=expr.offset)
+        return expr
 
     def _parse_expression_list(self) -> list[Expression]:
         exprs: list[Expression] = []

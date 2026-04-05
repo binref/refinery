@@ -244,7 +244,7 @@ class VbaLexer:
             if c2 == ':=':
                 self.pos += 2
                 last_was_newline = False
-                yield VbaToken(VbaTokenKind.EQ, ':=', start)
+                yield VbaToken(VbaTokenKind.ASSIGN, ':=', start)
                 continue
 
             _ONE_CHAR_OPS: dict[str, VbaTokenKind] = {
