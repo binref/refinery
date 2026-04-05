@@ -329,6 +329,36 @@ class TestPs1ParserStatements(TestBase):
         self.assertIsInstance(stmt, Ps1WhileLoop)
         self.assertIsNone(stmt.label)
 
+    def test_command_name_with_embedded_single_quotes(self):
+        stmt = self._parse_stmt("N'ew-Ob'ject System.Net.WebClient")
+        self.assertIsInstance(stmt, Ps1ExpressionStatement)
+        cmd = stmt.expression
+        self.assertIsInstance(cmd, Ps1CommandInvocation)
+        self.assertIsInstance(cmd.name, Ps1StringLiteral)
+        self.assertIn('ew-Ob', cmd.name.value)
+        self.assertEqual(len(cmd.arguments), 1)
+        arg = cmd.arguments[0]
+        self.assertIsInstance(arg, Ps1CommandArgument)
+        self.assertEqual(arg.kind, Ps1CommandArgumentKind.POSITIONAL)
+        self.assertIsInstance(arg.value, Ps1StringLiteral)
+        self.assertEqual(arg.value.value, 'System.Net.WebClient')
+
+    def test_command_name_with_embedded_double_quotes(self):
+        stmt = self._parse_stmt('N"ew-Ob"ject System.Net.WebClient')
+        self.assertIsInstance(stmt, Ps1ExpressionStatement)
+        cmd = stmt.expression
+        self.assertIsInstance(cmd, Ps1CommandInvocation)
+        self.assertIsInstance(cmd.name, Ps1StringLiteral)
+        self.assertIn('ew-Ob', cmd.name.value)
+        self.assertEqual(len(cmd.arguments), 1)
+
+    def test_argument_with_embedded_variable(self):
+        stmt = self._parse_stmt('Write-Host prefix$var')
+        self.assertIsInstance(stmt, Ps1ExpressionStatement)
+        cmd = stmt.expression
+        self.assertIsInstance(cmd, Ps1CommandInvocation)
+        self.assertEqual(len(cmd.arguments), 1)
+
     def test_dot_source_relative_path(self):
         stmt = self._parse_stmt(r'. .\script.ps1')
         self.assertIsInstance(stmt, Ps1ExpressionStatement)

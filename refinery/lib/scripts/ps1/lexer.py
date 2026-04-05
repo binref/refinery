@@ -476,6 +476,11 @@ class Ps1Lexer:
         return None
 
     def _read_generic_token(self) -> Ps1Token:
+        # Reference: ScanGenericToken (tokenizer.cs:3382).
+        # A generic token absorbs embedded single-quoted strings, double-quoted
+        # strings, $variable references and $() sub-expressions.  This is how
+        # PowerShell treats obfuscated names like  N'ew-Ob'ject  as a single
+        # command token whose value is  New-Object.
         start = self.pos
         src = self.source
         length = len(src)
@@ -484,9 +489,36 @@ class Ps1Lexer:
             if c == '`' and self.pos + 1 < length:
                 self.pos += 2
                 continue
-            if c in ' \t\r\n|&;,{}()' or c in SINGLE_QUOTES or c in DOUBLE_QUOTES:
+            if c in SINGLE_QUOTES:
+                self._read_verbatim_string()
+                continue
+            if c in DOUBLE_QUOTES:
+                self._read_expandable_string()
+                continue
+            if c == '$' and self.pos + 1 < length:
+                nc = src[self.pos + 1]
+                if nc == '(':
+                    self.pos += 2
+                    self._skip_subexpression_content()
+                    continue
+                if nc.isalnum() or nc in '_?{$^':
+                    m = _VARIABLE_PATTERN.match(src, self.pos + 1)
+                    if m:
+                        self.pos = m.end()
+                        continue
+                self.pos += 1
+                continue
+            if c == '@' and self.pos + 1 < length:
+                nc = src[self.pos + 1]
+                if nc in '({' or nc in SINGLE_QUOTES or nc in DOUBLE_QUOTES:
+                    break
+                if nc.isalnum() or nc in '_?':
+                    m = _VARIABLE_PATTERN.match(src, self.pos + 1)
+                    if m:
+                        self.pos = m.end()
+                        continue
                 break
-            if c == '$' or c == '@':
+            if c in ' \t\r\n|&;,{}()':
                 break
             self.pos += 1
         return Ps1Token(Ps1TokenKind.GENERIC_TOKEN, src[start:self.pos], start)
@@ -699,6 +731,23 @@ class Ps1Lexer:
                         self.pos += 1
                     else:
                         break
+                # If the next character is a quote or dollar sign with no
+                # intervening whitespace, this is a generic token with embedded
+                # quoted strings or variable references (e.g. N'ew-Ob'ject).
+                # Reset to start and delegate to _read_generic_token which
+                # handles the full absorption logic.
+                if self.pos < length and (
+                    src[self.pos] in SINGLE_QUOTES
+                    or src[self.pos] in DOUBLE_QUOTES
+                    or src[self.pos] == '$'
+                ):
+                    self.pos = start
+                    token = self._read_generic_token()
+                    if token.value:
+                        mode_hint = yield token
+                        if mode_hint is not None:
+                            self.mode = mode_hint
+                        continue
                 identifier = ''.join(word)
                 if identifier:
                     kw = _KEYWORDS.get(identifier.lower())
