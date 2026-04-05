@@ -781,3 +781,33 @@ class TestVbaParserStatements(TestBase):
         self.assertEqual(mid.else_body[0].target.name, 'z')
         self.assertEqual(len(outer.else_body), 1, 'outermost Else must contain one statement')
         self.assertEqual(outer.else_body[0].target.name, 'w')
+
+    def test_dim_fixed_length_string_integer(self):
+        ast = self._parse('Dim s As String * 20')
+        self.assertEqual(len(ast.body), 1)
+        stmt = ast.body[0]
+        assert isinstance(stmt, VbaVariableDeclaration)
+        self.assertEqual(len(stmt.declarators), 1)
+        self.assertEqual(stmt.declarators[0].name, 's')
+        self.assertEqual(stmt.declarators[0].type_name, 'String * 20')
+
+    def test_dim_fixed_length_string_constant(self):
+        ast = self._parse('Dim s As String * MAX_LEN')
+        stmt = ast.body[0]
+        assert isinstance(stmt, VbaVariableDeclaration)
+        self.assertEqual(stmt.declarators[0].type_name, 'String * MAX_LEN')
+
+    def test_type_member_fixed_length_string(self):
+        ast = self._parse('Type MyType\nname As String * 50\nEnd Type')
+        stmt = ast.body[0]
+        assert isinstance(stmt, VbaTypeDefinition)
+        self.assertEqual(len(stmt.members), 1)
+        self.assertEqual(stmt.members[0].name, 'name')
+        self.assertEqual(stmt.members[0].type_name, 'String * 50')
+
+    def test_param_fixed_length_string(self):
+        ast = self._parse('Sub Test(s As String * 10)\nEnd Sub')
+        stmt = ast.body[0]
+        assert isinstance(stmt, VbaSubDeclaration)
+        self.assertEqual(len(stmt.params), 1)
+        self.assertEqual(stmt.params[0].type_name, 'String * 10')

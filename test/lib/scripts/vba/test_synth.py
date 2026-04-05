@@ -177,3 +177,12 @@ class TestVbaSynthesizer(TestBase):
         code = 'Sub T()\nDebug.Print "hello"\nEnd Sub'
         result = self._roundtrip(code)
         self.assertIn('Debug.Print', result)
+
+    def test_dim_fixed_length_string(self):
+        result = self._roundtrip('Dim s As String * 20')
+        self.assertIn('As String * 20', result)
+
+    def test_type_member_fixed_length_string(self):
+        code = 'Type MyType\nname As String * 50\nEnd Type'
+        result = self._roundtrip(code)
+        self.assertIn('As String * 50', result)

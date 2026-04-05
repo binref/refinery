@@ -498,7 +498,12 @@ class VbaParser:
         while self._eat(VbaTokenKind.DOT):
             parts.append(self._current.value)
             self._advance()
-        return '.'.join(parts)
+        name = '.'.join(parts)
+        if name.lower() == 'string' and self._eat(VbaTokenKind.STAR):
+            length = self._current.value
+            self._advance()
+            return F'{name} * {length}'
+        return name
 
     def _parse_block_until(self, end_keyword: str) -> list[Statement]:
         body: list[Statement] = []
