@@ -1038,6 +1038,7 @@ class Ps1Parser:
             end_marker = "'@"
             if inner.endswith(end_marker):
                 inner = inner[:-len(end_marker)]
+            inner = inner.lstrip(' \t')
             if inner.startswith('\r\n'):
                 inner = inner[2:]
             elif inner.startswith('\n'):
@@ -1053,6 +1054,7 @@ class Ps1Parser:
         end_marker = '"@'
         if inner.endswith(end_marker):
             inner = inner[:-len(end_marker)]
+        inner = inner.lstrip(' \t')
         if inner.startswith('\r\n'):
             inner = inner[2:]
         elif inner.startswith('\n'):

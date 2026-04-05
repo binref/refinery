@@ -11,6 +11,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1ScopeModifier,
     Ps1ExpandableString,
     Ps1HashLiteral,
+    Ps1HereString,
     Ps1IndexExpression,
     Ps1IntegerLiteral,
     Ps1InvokeMember,
@@ -395,3 +396,20 @@ class TestPs1ParserExpressions(TestBase):
         has_literal_x = any(
             isinstance(p, Ps1StringLiteral) and 'x' in p.value for p in expr.parts)
         self.assertTrue(has_literal_x, 'should contain literal x after $?')
+
+    def test_here_string_verbatim_whitespace_after_header(self):
+        # PowerShell allows whitespace (spaces/tabs) between the @' header and the newline.
+        # The whitespace must not become part of the string content.
+        expr = self._parse_expr("@'   \nline one\nline two\n'@")
+        self.assertIsInstance(expr, Ps1HereString)
+        self.assertEqual(expr.value, 'line one\nline two')
+
+    def test_here_string_expandable_whitespace_after_header(self):
+        expr = self._parse_expr('@"   \nline one\nline two\n"@')
+        self.assertIsInstance(expr, Ps1HereString)
+        self.assertEqual(expr.value, 'line one\nline two')
+
+    def test_here_string_verbatim_tab_after_header(self):
+        expr = self._parse_expr("@'\t\ntext\n'@")
+        self.assertIsInstance(expr, Ps1HereString)
+        self.assertEqual(expr.value, 'text')
