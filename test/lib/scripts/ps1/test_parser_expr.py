@@ -413,3 +413,13 @@ class TestPs1ParserExpressions(TestBase):
         expr = self._parse_expr("@'\t\ntext\n'@")
         self.assertIsInstance(expr, Ps1HereString)
         self.assertEqual(expr.value, 'text')
+
+    def test_here_string_verbatim_bare_cr_line_endings(self):
+        expr = self._parse_expr("@'\rline one\rline two\r'@")
+        self.assertIsInstance(expr, Ps1HereString)
+        self.assertEqual(expr.value, 'line one\rline two')
+
+    def test_here_string_expandable_bare_cr_line_endings(self):
+        expr = self._parse_expr('@"\rline one\rline two\r"@')
+        self.assertIsInstance(expr, Ps1HereString)
+        self.assertEqual(expr.value, 'line one\rline two')

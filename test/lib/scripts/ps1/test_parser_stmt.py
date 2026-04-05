@@ -253,3 +253,45 @@ class TestPs1ParserStatements(TestBase):
         second = script.body[1]
         self.assertIsInstance(second, Ps1ExpressionStatement)
         self.assertIsInstance(second.expression, Ps1ArrayLiteral)
+
+    def test_labeled_while(self):
+        stmt = self._parse_stmt(':outer while ($true) { break :outer }')
+        self.assertIsInstance(stmt, Ps1WhileLoop)
+        self.assertEqual(stmt.label, ':outer')
+
+    def test_labeled_foreach(self):
+        stmt = self._parse_stmt(':loop foreach ($x in $y) { continue :loop }')
+        self.assertIsInstance(stmt, Ps1ForEachLoop)
+        self.assertEqual(stmt.label, ':loop')
+
+    def test_labeled_for(self):
+        stmt = self._parse_stmt(':myloop for ($i = 0; $i -lt 10; $i++) { break :myloop }')
+        self.assertIsInstance(stmt, Ps1ForLoop)
+        self.assertEqual(stmt.label, ':myloop')
+
+    def test_labeled_do_while(self):
+        stmt = self._parse_stmt(':repeat do { $x++ } while ($x -lt 5)')
+        self.assertIsInstance(stmt, Ps1DoWhileLoop)
+        self.assertEqual(stmt.label, ':repeat')
+
+    def test_labeled_switch(self):
+        stmt = self._parse_stmt(':sw switch ($x) { 1 { "one" } }')
+        self.assertIsInstance(stmt, Ps1SwitchStatement)
+        self.assertEqual(stmt.label, ':sw')
+
+    def test_break_with_label(self):
+        stmt = self._parse_stmt('break :outer')
+        self.assertIsInstance(stmt, Ps1BreakStatement)
+        self.assertIsNotNone(stmt.label)
+        self.assertEqual(stmt.label.value, ':outer')
+
+    def test_continue_with_label(self):
+        stmt = self._parse_stmt('continue :loop')
+        self.assertIsInstance(stmt, Ps1ContinueStatement)
+        self.assertIsNotNone(stmt.label)
+        self.assertEqual(stmt.label.value, ':loop')
+
+    def test_while_without_label(self):
+        stmt = self._parse_stmt('while ($true) { break }')
+        self.assertIsInstance(stmt, Ps1WhileLoop)
+        self.assertIsNone(stmt.label)

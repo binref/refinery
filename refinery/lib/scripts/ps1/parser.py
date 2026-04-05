@@ -349,18 +349,25 @@ class Ps1Parser:
         tok = self._peek()
         kind = tok.kind
 
+        label = None
+        if kind == Ps1TokenKind.LABEL:
+            label = tok.value
+            self._advance()
+            self._skip_newlines()
+            kind = self._peek().kind
+
         if kind == Ps1TokenKind.IF:
             return self._parse_if()
         if kind == Ps1TokenKind.WHILE:
-            return self._parse_while()
+            return self._parse_while(label)
         if kind == Ps1TokenKind.DO:
-            return self._parse_do()
+            return self._parse_do(label)
         if kind == Ps1TokenKind.FOR:
-            return self._parse_for()
+            return self._parse_for(label)
         if kind == Ps1TokenKind.FOREACH:
-            return self._parse_foreach()
+            return self._parse_foreach(label)
         if kind == Ps1TokenKind.SWITCH:
-            return self._parse_switch()
+            return self._parse_switch(label)
         if kind == Ps1TokenKind.TRY:
             return self._parse_try()
         if kind == Ps1TokenKind.TRAP:
@@ -1041,11 +1048,11 @@ class Ps1Parser:
             inner = inner.lstrip(' \t')
             if inner.startswith('\r\n'):
                 inner = inner[2:]
-            elif inner.startswith('\n'):
+            elif inner.startswith(('\n', '\r')):
                 inner = inner[1:]
             if inner.endswith('\r\n'):
                 inner = inner[:-2]
-            elif inner.endswith('\n'):
+            elif inner.endswith(('\n', '\r')):
                 inner = inner[:-1]
             return Ps1HereString(
                 offset=tok.offset, value=inner, raw=raw, expandable=False)
@@ -1057,11 +1064,11 @@ class Ps1Parser:
         inner = inner.lstrip(' \t')
         if inner.startswith('\r\n'):
             inner = inner[2:]
-        elif inner.startswith('\n'):
+        elif inner.startswith(('\n', '\r')):
             inner = inner[1:]
         if inner.endswith('\r\n'):
             inner = inner[:-2]
-        elif inner.endswith('\n'):
+        elif inner.endswith(('\n', '\r')):
             inner = inner[:-1]
         parts = self._split_expandable_string(inner)
         if len(parts) == 1 and isinstance(parts[0], Ps1StringLiteral):
@@ -1120,7 +1127,7 @@ class Ps1Parser:
         return Ps1ArrayExpression(offset=offset, body=stmts)
 
     def _parse_label_or_key(self) -> Expression | None:
-        if self._at(Ps1TokenKind.GENERIC_TOKEN):
+        if self._at(Ps1TokenKind.GENERIC_TOKEN, Ps1TokenKind.LABEL):
             tok = self._advance()
             return Ps1StringLiteral(offset=tok.offset, value=tok.value, raw=tok.value)
         if self._current.kind.is_keyword:
@@ -1315,7 +1322,7 @@ class Ps1Parser:
 
         return Ps1IfStatement(offset=offset, clauses=clauses, else_block=else_block)
 
-    def _parse_while(self) -> Ps1WhileLoop:
+    def _parse_while(self, label: str | None = None) -> Ps1WhileLoop:
         offset = self._current.offset
         self._expect(Ps1TokenKind.WHILE)
         self._skip_newlines()
@@ -1326,9 +1333,9 @@ class Ps1Parser:
         self._expect(Ps1TokenKind.RPAREN)
         self._skip_newlines()
         body = self._parse_block()
-        return Ps1WhileLoop(offset=offset, condition=cond, body=body)
+        return Ps1WhileLoop(offset=offset, condition=cond, body=body, label=label)
 
-    def _parse_do(self) -> Statement:
+    def _parse_do(self, label: str | None = None) -> Statement:
         offset = self._current.offset
         self._expect(Ps1TokenKind.DO)
         self._skip_newlines()
@@ -1342,7 +1349,7 @@ class Ps1Parser:
             cond = self._parse_pipeline_expression()
             self._skip_newlines()
             self._expect(Ps1TokenKind.RPAREN)
-            return Ps1DoWhileLoop(offset=offset, condition=cond, body=body)
+            return Ps1DoWhileLoop(offset=offset, condition=cond, body=body, label=label)
         elif self._at(Ps1TokenKind.UNTIL):
             self._advance()
             self._skip_newlines()
@@ -1351,10 +1358,10 @@ class Ps1Parser:
             cond = self._parse_pipeline_expression()
             self._skip_newlines()
             self._expect(Ps1TokenKind.RPAREN)
-            return Ps1DoUntilLoop(offset=offset, condition=cond, body=body)
-        return Ps1DoWhileLoop(offset=offset, body=body)
+            return Ps1DoUntilLoop(offset=offset, condition=cond, body=body, label=label)
+        return Ps1DoWhileLoop(offset=offset, body=body, label=label)
 
-    def _parse_for(self) -> Ps1ForLoop:
+    def _parse_for(self, label: str | None = None) -> Ps1ForLoop:
         offset = self._current.offset
         self._expect(Ps1TokenKind.FOR)
         self._skip_newlines()
@@ -1378,9 +1385,9 @@ class Ps1Parser:
         self._skip_newlines()
         body = self._parse_block()
         return Ps1ForLoop(
-            offset=offset, initializer=init, condition=cond, iterator=iter_expr, body=body)
+            offset=offset, initializer=init, condition=cond, iterator=iter_expr, body=body, label=label)
 
-    def _parse_foreach(self) -> Ps1ForEachLoop:
+    def _parse_foreach(self, label: str | None = None) -> Ps1ForEachLoop:
         offset = self._current.offset
         self._expect(Ps1TokenKind.FOREACH)
         self._skip_newlines()
@@ -1401,9 +1408,9 @@ class Ps1Parser:
         self._skip_newlines()
         body = self._parse_block()
         return Ps1ForEachLoop(
-            offset=offset, variable=var, iterable=iterable, body=body, parallel=parallel)
+            offset=offset, variable=var, iterable=iterable, body=body, parallel=parallel, label=label)
 
-    def _parse_switch(self) -> Ps1SwitchStatement:
+    def _parse_switch(self, label: str | None = None) -> Ps1SwitchStatement:
         offset = self._current.offset
         self._expect(Ps1TokenKind.SWITCH)
         self._skip_newlines()
@@ -1460,7 +1467,7 @@ class Ps1Parser:
                 clauses.append((cond, block))
             self._skip_separators()
         self._expect(Ps1TokenKind.RBRACE)
-        return Ps1SwitchStatement(offset=offset, value=value, clauses=clauses, **flags)
+        return Ps1SwitchStatement(offset=offset, value=value, clauses=clauses, label=label, **flags)
 
     def _parse_try(self) -> Ps1TryCatchFinally:
         offset = self._current.offset

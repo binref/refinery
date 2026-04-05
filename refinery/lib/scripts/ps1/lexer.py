@@ -133,7 +133,7 @@ _DASH_OPERATORS: dict[str, str] = {
 }
 
 _REDIRECTION_PATTERN = re.compile(
-    r'(?:[1-6*])?(?:>>|>&[12]|>)',
+    r'(?:[1-6*])?(?:>>|>&[12]|>)|<',
 )
 
 _INTEGER_PATTERN = re.compile(
@@ -257,6 +257,27 @@ class Ps1Lexer:
                 if depth == 0:
                     return
                 continue
+            if c == '@' and self.pos + 1 < length:
+                nc = src[self.pos + 1]
+                if nc in "'\"" and self.pos + 2 < length and src[self.pos + 2] in '\r\n':
+                    footer = nc + '@'
+                    self.pos += 2
+                    if self.pos < length and src[self.pos] == '\r':
+                        self.pos += 1
+                    if self.pos < length and src[self.pos] == '\n':
+                        self.pos += 1
+                    while self.pos < length:
+                        if src[self.pos] in '\r\n':
+                            if src[self.pos] == '\r' and self.pos + 1 < length and src[self.pos + 1] == '\n':
+                                self.pos += 2
+                            else:
+                                self.pos += 1
+                            if self.pos + 1 < length and src[self.pos:self.pos + 2] == footer:
+                                self.pos += 2
+                                break
+                        else:
+                            self.pos += 1
+                    continue
             if c == "'":
                 self.pos += 1
                 while self.pos < length:
@@ -322,10 +343,11 @@ class Ps1Lexer:
         if self.pos < length and src[self.pos] == '\n':
             self.pos += 1
         while self.pos < length:
-            if src[self.pos] == '\n' or (
-                src[self.pos] == '\r' and self.pos + 1 < length and src[self.pos + 1] == '\n'
-            ):
-                nl_end = self.pos + 1 if src[self.pos] == '\n' else self.pos + 2
+            if src[self.pos] in '\r\n':
+                if src[self.pos] == '\r' and self.pos + 1 < length and src[self.pos + 1] == '\n':
+                    nl_end = self.pos + 2
+                else:
+                    nl_end = self.pos + 1
                 if nl_end < length and src[nl_end:nl_end + 2] == "'@":
                     self.pos = nl_end + 2
                     return src[start:self.pos]
@@ -343,10 +365,11 @@ class Ps1Lexer:
             self.pos += 1
         while self.pos < length:
             c = src[self.pos]
-            if c == '\n' or (
-                c == '\r' and self.pos + 1 < length and src[self.pos + 1] == '\n'
-            ):
-                nl_end = self.pos + 1 if c == '\n' else self.pos + 2
+            if c in '\r\n':
+                if c == '\r' and self.pos + 1 < length and src[self.pos + 1] == '\n':
+                    nl_end = self.pos + 2
+                else:
+                    nl_end = self.pos + 1
                 if nl_end < length and src[nl_end:nl_end + 2] == '"@':
                     self.pos = nl_end + 2
                     return src[start:self.pos]
@@ -419,7 +442,7 @@ class Ps1Lexer:
         src = self.source
         start = self.pos
         self.pos += 1
-        m = re.match(r'[a-zA-Z_][a-zA-Z0-9_]*', src[self.pos:])
+        m = re.match(r'[a-zA-Z_?][a-zA-Z0-9_?]*', src[self.pos:])
         if not m:
             self.pos = start
             return None
@@ -512,6 +535,15 @@ class Ps1Lexer:
                 self.pos += 2
                 kind = _TWO_CHAR_OPS[c2]
                 mode_hint = yield Ps1Token(kind, c2, start)
+                if mode_hint is not None:
+                    self.mode = mode_hint
+                continue
+
+            if c == ':' and self.pos + 1 < length and (src[self.pos + 1].isalpha() or src[self.pos + 1] == '_'):
+                self.pos += 1
+                while self.pos < length and (src[self.pos].isalnum() or src[self.pos] == '_'):
+                    self.pos += 1
+                mode_hint = yield Ps1Token(Ps1TokenKind.LABEL, src[start:self.pos], start)
                 if mode_hint is not None:
                     self.mode = mode_hint
                 continue

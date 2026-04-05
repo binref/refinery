@@ -502,6 +502,7 @@ class Ps1IfStatement(Statement):
 class Ps1WhileLoop(Statement):
     condition: Expression | None = None
     body: Block | None = None
+    label: str | None = None
 
     def __post_init__(self):
         self._adopt(self.condition, self.body)
@@ -517,6 +518,7 @@ class Ps1WhileLoop(Statement):
 class Ps1DoWhileLoop(Statement):
     condition: Expression | None = None
     body: Block | None = None
+    label: str | None = None
 
     def __post_init__(self):
         self._adopt(self.condition, self.body)
@@ -532,6 +534,7 @@ class Ps1DoWhileLoop(Statement):
 class Ps1DoUntilLoop(Statement):
     condition: Expression | None = None
     body: Block | None = None
+    label: str | None = None
 
     def __post_init__(self):
         self._adopt(self.condition, self.body)
@@ -549,6 +552,7 @@ class Ps1ForLoop(Statement):
     condition: Expression | None = None
     iterator: Expression | None = None
     body: Block | None = None
+    label: str | None = None
 
     def __post_init__(self):
         self._adopt(self.initializer, self.condition, self.iterator, self.body)
@@ -570,6 +574,7 @@ class Ps1ForEachLoop(Statement):
     iterable: Expression | None = None
     body: Block | None = None
     parallel: bool = False
+    label: str | None = None
 
     def __post_init__(self):
         self._adopt(self.variable, self.iterable, self.body)
@@ -592,6 +597,7 @@ class Ps1SwitchStatement(Statement):
     exact: bool = False
     case_sensitive: bool = False
     file: bool = False
+    label: str | None = None
 
     def __post_init__(self):
         self._adopt(self.value)

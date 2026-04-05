@@ -393,6 +393,8 @@ class Ps1Synthesizer(Visitor):
             self._emit_block(node.else_block)
 
     def visit_Ps1WhileLoop(self, node: Ps1WhileLoop):
+        if node.label:
+            self._write(F'{node.label} ')
         self._write('while (')
         if node.condition:
             self.visit(node.condition)
@@ -401,6 +403,8 @@ class Ps1Synthesizer(Visitor):
             self._emit_block(node.body)
 
     def visit_Ps1DoWhileLoop(self, node: Ps1DoWhileLoop):
+        if node.label:
+            self._write(F'{node.label} ')
         self._write('do ')
         if node.body:
             self._emit_block(node.body)
@@ -410,6 +414,8 @@ class Ps1Synthesizer(Visitor):
         self._write(')')
 
     def visit_Ps1DoUntilLoop(self, node: Ps1DoUntilLoop):
+        if node.label:
+            self._write(F'{node.label} ')
         self._write('do ')
         if node.body:
             self._emit_block(node.body)
@@ -419,6 +425,8 @@ class Ps1Synthesizer(Visitor):
         self._write(')')
 
     def visit_Ps1ForLoop(self, node: Ps1ForLoop):
+        if node.label:
+            self._write(F'{node.label} ')
         self._write('for (')
         if node.initializer:
             self.visit(node.initializer)
@@ -433,6 +441,8 @@ class Ps1Synthesizer(Visitor):
             self._emit_block(node.body)
 
     def visit_Ps1ForEachLoop(self, node: Ps1ForEachLoop):
+        if node.label:
+            self._write(F'{node.label} ')
         self._write('foreach ')
         if node.parallel:
             self._write('-Parallel ')
@@ -447,6 +457,8 @@ class Ps1Synthesizer(Visitor):
             self._emit_block(node.body)
 
     def visit_Ps1SwitchStatement(self, node: Ps1SwitchStatement):
+        if node.label:
+            self._write(F'{node.label} ')
         self._write('switch ')
         if node.regex:
             self._write('-Regex ')

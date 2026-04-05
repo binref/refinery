@@ -2,14 +2,15 @@ from __future__ import annotations
 
 from test import TestBase
 
-from refinery.lib.scripts.ps1.lexer import Ps1Lexer
+from refinery.lib.scripts.ps1.lexer import Ps1Lexer, Ps1LexerMode
 from refinery.lib.scripts.ps1.token import Ps1TokenKind
 
 
 class TestPs1Lexer(TestBase):
 
-    def _tokens(self, source: str) -> list[tuple[Ps1TokenKind, str]]:
+    def _tokens(self, source: str, mode: Ps1LexerMode = Ps1LexerMode.EXPRESSION) -> list[tuple[Ps1TokenKind, str]]:
         lexer = Ps1Lexer(source)
+        lexer.mode = mode
         gen = lexer.tokenize()
         result = []
         tok = next(gen)
@@ -391,3 +392,51 @@ class TestPs1Lexer(TestBase):
         tokens = self._tokens('$x +`\n$y')
         kinds = [t[0] for t in tokens]
         self.assertNotIn(Ps1TokenKind.NEWLINE, kinds)
+
+    def test_parameter_question_mark(self):
+        tokens = self._tokens('-?', mode=Ps1LexerMode.ARGUMENT)
+        self.assertEqual(tokens, [(Ps1TokenKind.PARAMETER, '-?')])
+
+    def test_here_string_verbatim_bare_cr(self):
+        src = "@'\rline one\rline two\r'@"
+        tokens = self._tokens(src)
+        self.assertEqual(len(tokens), 1)
+        self.assertEqual(tokens[0][0], Ps1TokenKind.HSTRING_VERBATIM)
+
+    def test_here_string_expandable_bare_cr(self):
+        src = '@"\rline one\rline two\r"@'
+        tokens = self._tokens(src)
+        self.assertEqual(len(tokens), 1)
+        self.assertEqual(tokens[0][0], Ps1TokenKind.HSTRING_EXPAND)
+
+    def test_input_redirection(self):
+        tokens = self._tokens('Get-Content < file.txt', mode=Ps1LexerMode.ARGUMENT)
+        kinds = [t[0] for t in tokens]
+        self.assertIn(Ps1TokenKind.REDIRECTION, kinds)
+        redir = next(t for t in tokens if t[0] == Ps1TokenKind.REDIRECTION)
+        self.assertEqual(redir[1], '<')
+
+    def test_input_redirection_does_not_break_block_comment(self):
+        tokens = self._tokens('<# comment #> $x')
+        kinds = [t[0] for t in tokens]
+        self.assertIn(Ps1TokenKind.COMMENT, kinds)
+        self.assertNotIn(Ps1TokenKind.REDIRECTION, kinds)
+
+    def test_expandable_string_subexpr_with_here_string_containing_apostrophe_and_paren(self):
+        src = "\"text $(@'\nit's ) here\n'@) suffix\""
+        tokens = self._tokens(src)
+        self.assertEqual(len(tokens), 1)
+        self.assertEqual(tokens[0][0], Ps1TokenKind.STRING_EXPAND)
+        self.assertIn('suffix', tokens[0][1])
+
+    def test_label_token(self):
+        tokens = self._tokens(':outer while ($true) { break :outer }')
+        self.assertEqual(tokens[0], (Ps1TokenKind.LABEL, ':outer'))
+        label_tokens = [t for t in tokens if t[0] == Ps1TokenKind.LABEL]
+        self.assertEqual(len(label_tokens), 2)
+
+    def test_double_colon_not_label(self):
+        tokens = self._tokens('[System.IO]::Path')
+        kinds = [t[0] for t in tokens]
+        self.assertNotIn(Ps1TokenKind.LABEL, kinds)
+        self.assertIn(Ps1TokenKind.DOUBLE_COLON, kinds)
