@@ -537,16 +537,6 @@ class Ps1Lexer:
                         continue
                 self.pos += 1
                 continue
-            if c == '@' and self.pos + 1 < length:
-                nc = src[self.pos + 1]
-                if nc in '({' or nc in SINGLE_QUOTES or nc in DOUBLE_QUOTES:
-                    break
-                if nc.isalnum() or nc in '_?':
-                    m = _VARIABLE_PATTERN.match(src, self.pos + 1)
-                    if m:
-                        self.pos = m.end()
-                        continue
-                break
             if c in _FORCE_START_NEW_TOKEN:
                 break
             self.pos += 1

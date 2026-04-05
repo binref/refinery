@@ -565,6 +565,12 @@ class TestPs1Lexer(TestBase):
         self.assertEqual(len(tokens), 1)
         self.assertEqual(tokens[0], (Ps1TokenKind.GENERIC_TOKEN, '123$var'))
 
+    def test_at_sign_mid_generic_token_in_argument_mode(self):
+        """@ in the middle of a generic token is absorbed as a plain character."""
+        tokens = self._tokens('path/@/file', mode=Ps1LexerMode.ARGUMENT)
+        self.assertEqual(len(tokens), 1)
+        self.assertEqual(tokens[0], (Ps1TokenKind.GENERIC_TOKEN, 'path/@/file'))
+
     def test_double_colon_not_label(self):
         tokens = self._tokens('[System.IO]::Path')
         kinds = [t[0] for t in tokens]
