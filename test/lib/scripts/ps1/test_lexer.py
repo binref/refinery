@@ -307,16 +307,16 @@ class TestPs1Lexer(TestBase):
         self.assertEqual(tokens[0][1], src)
 
     def test_stream_redirection_2_to_null(self):
-        tokens = self._tokens('2>$null')
+        tokens = self._tokens('2>$null', mode=Ps1LexerMode.ARGUMENT)
         self.assertEqual(tokens[0], (Ps1TokenKind.REDIRECTION, '2>'))
         self.assertEqual(tokens[1], (Ps1TokenKind.VARIABLE, '$null'))
 
     def test_stream_redirection_2_append(self):
-        tokens = self._tokens('2>>file.txt')
+        tokens = self._tokens('2>>file.txt', mode=Ps1LexerMode.ARGUMENT)
         self.assertEqual(tokens[0], (Ps1TokenKind.REDIRECTION, '2>>'))
 
     def test_stream_redirection_2_merge(self):
-        tokens = self._tokens('2>&1')
+        tokens = self._tokens('2>&1', mode=Ps1LexerMode.ARGUMENT)
         self.assertEqual(tokens[0], (Ps1TokenKind.REDIRECTION, '2>&1'))
 
     def test_stream_redirection_star(self):
@@ -325,7 +325,7 @@ class TestPs1Lexer(TestBase):
         self.assertEqual(tokens[1], (Ps1TokenKind.VARIABLE, '$null'))
 
     def test_stream_redirection_3_merge(self):
-        tokens = self._tokens('3>&2')
+        tokens = self._tokens('3>&2', mode=Ps1LexerMode.ARGUMENT)
         self.assertEqual(tokens[0], (Ps1TokenKind.REDIRECTION, '3>&2'))
 
     def test_digit_not_stream_redirection(self):
@@ -437,6 +437,21 @@ class TestPs1Lexer(TestBase):
         self.assertEqual(tokens[0], (Ps1TokenKind.LABEL, ':outer'))
         label_tokens = [t for t in tokens if t[0] == Ps1TokenKind.LABEL]
         self.assertEqual(len(label_tokens), 2)
+
+    def test_numbered_redirection_suppressed_in_expression_mode(self):
+        tokens = self._tokens('$x + 1>$null')
+        kinds = [t[0] for t in tokens]
+        idx = kinds.index(Ps1TokenKind.INTEGER)
+        self.assertEqual(tokens[idx][1], '1')
+        redir_token = next(t for t in tokens if t[0] == Ps1TokenKind.REDIRECTION)
+        self.assertEqual(redir_token[1], '>')
+
+    def test_numbered_redirection_in_argument_mode(self):
+        tokens = self._tokens('Write-Error fail 2>$null', mode=Ps1LexerMode.ARGUMENT)
+        kinds = [t[0] for t in tokens]
+        self.assertIn(Ps1TokenKind.REDIRECTION, kinds)
+        redir_token = next(t for t in tokens if t[0] == Ps1TokenKind.REDIRECTION)
+        self.assertEqual(redir_token[1], '2>')
 
     def test_double_colon_not_label(self):
         tokens = self._tokens('[System.IO]::Path')
