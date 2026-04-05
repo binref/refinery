@@ -862,13 +862,8 @@ class VbaParser:
         cases: list[VbaCaseClause] = []
         while not self._at(VbaTokenKind.EOF):
             self._eat_eos()
-            if self._at(VbaTokenKind.END):
-                saved = self._current
-                self._advance()
-                if self._current.value.lower() == 'select':
-                    self._advance()
-                    break
-                self._current = saved
+            if self._eat_end('select'):
+                break
             if self._at(VbaTokenKind.CASE):
                 cases.append(self._parse_case_clause())
             elif self._at(VbaTokenKind.EOF):
@@ -896,6 +891,8 @@ class VbaParser:
                     break
                 if self._at(VbaTokenKind.END):
                     break
+                if self._at(VbaTokenKind.IDENTIFIER) and self._current.value.lower() == 'endselect':
+                    break
                 stmt = self._parse_statement()
                 if stmt is not None:
                     body.append(stmt)
@@ -912,6 +909,8 @@ class VbaParser:
             if self._at(VbaTokenKind.CASE):
                 break
             if self._at(VbaTokenKind.END):
+                break
+            if self._at(VbaTokenKind.IDENTIFIER) and self._current.value.lower() == 'endselect':
                 break
             stmt = self._parse_statement()
             if stmt is not None:

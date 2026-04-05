@@ -704,6 +704,15 @@ class TestVbaParserStatements(TestBase):
         assert isinstance(t1.right, VbaIntegerLiteral)
         self.assertEqual(t1.right.value, 100)
 
+    def test_select_case_fused_endselect(self):
+        code = 'Sub T()\nSelect Case x\nCase 1\ny = 1\nEndSelect\nEnd Sub'
+        ast = self._parse(code)
+        sub = ast.body[0]
+        stmt = sub.body[0]
+        assert isinstance(stmt, VbaSelectCaseStatement)
+        self.assertEqual(len(stmt.cases), 1)
+        self.assertEqual(len(stmt.cases[0].body), 1)
+
     def test_if_else_with_standalone_end(self):
         code = 'If x Then\ny = 1\nElse\nEnd\nEnd If'
         ast = self._parse(code)
