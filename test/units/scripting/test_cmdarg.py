@@ -172,3 +172,29 @@ class TestCmdArg(TestUnitBase):
         self.assertIn('"hello"', result)
         self.assertIn('([ChAr]44).TOStRing()', result)
         self.assertIn('"world"', result)
+
+    def test_comspec_start_powershell(self):
+        b64 = 'VwByAGkAdABlAC0ASABvAHMAdAAgAGgAZQBsAGwAbwA='
+        cmdline = F'%COMSPEC% /b /c start /b /min powershell.exe -nop -w hidden -noni -enc {b64}'
+        result = cmdline.encode() | self.load() | str
+        self.assertEqual(result, 'Write-Host hello')
+
+    def test_start_strips_switches(self):
+        data = b'start /b /min powershell.exe -Command whoami'
+        result = data | self.load() | str
+        self.assertEqual(result, 'whoami')
+
+    def test_cmd_unknown_switch_before_c(self):
+        data = b'cmd /b /c echo hello'
+        result = data | self.load() | str
+        self.assertEqual(result, 'echo hello')
+
+    def test_start_with_d_switch(self):
+        data = b'start /d C:\\Windows /b powershell.exe -Command whoami'
+        result = data | self.load() | str
+        self.assertEqual(result, 'whoami')
+
+    def test_start_with_title(self):
+        data = b'start "My Window" powershell.exe -Command whoami'
+        result = data | self.load() | str
+        self.assertEqual(result, 'whoami')

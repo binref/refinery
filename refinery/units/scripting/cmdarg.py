@@ -72,8 +72,19 @@ _WMIC_EXECUTABLE_NAMES = frozenset({
 })
 
 _CMD_EXECUTABLE_NAMES = frozenset({
+    '%comspec%',
     'cmd',
     'cmd.exe',
+})
+
+_START_EXECUTABLE_NAMES = frozenset({
+    'start',
+})
+
+_START_SWITCHES_WITH_ARG = frozenset({
+    'd',
+    'node',
+    'affinity',
 })
 
 _PARAM_WITH_NEXT_ARG = {
@@ -167,22 +178,23 @@ _RE_WMIC_CREATE = re.compile(r"""(?ix)
 """)
 
 _RE_CMD_RUN = re.compile(r"""(?ix)
-    (?:\S+[\\/])?
-       cmd(?:\.exe)?
-    (?:\s+/[adqsuefv](?::\w+)?)*
+    (?:%comspec%|(?:\S+[\\/])?
+       cmd(?:\.exe)?)
+    (?:\s+/[a-z](?::\w+)?)*
        \s+/[ck]\s+
 """)
 
 
 class cmdarg(Unit):
     """
-    Extracts and unescapes arguments passed to wmic, cmd, or powershell commands.
+    Extracts and unescapes arguments passed to wmic, cmd, start, or powershell commands.
 
     The following types of command invocations are currently supported:
 
     - `wmic process call create "COMMAND"`
     - `cmd /c "COMMAND"`
     - `cmd /k "COMMAND"`
+    - `start [/b] [/min] [/max] [/wait] COMMAND`
     - `powershell -EncodedCommand COMMAND`
     - `powershell -Command COMMAND`
 
@@ -218,6 +230,8 @@ class cmdarg(Unit):
             r'(?i)(?:.*[\\/])?cmd(?:\.exe)?', first
         ):
             return self._extract_cmd(text)
+        if name in _START_EXECUTABLE_NAMES:
+            return self._extract_start(_split_argv(text))
         if first.startswith(('-', '/')):
             return self._extract_powershell(_split_argv(text), skip_executable=False)
         return None
@@ -269,3 +283,22 @@ class cmdarg(Unit):
         if not match:
             raise ValueError('CMD command line missing /c or /k switch')
         return _strip_outer_quotes(text[match.end():])
+
+    def _extract_start(self, argv: list[str]) -> str:
+        i = 1
+        while i < len(argv):
+            arg = argv[i]
+            if not arg:
+                i += 1
+                continue
+            if arg.startswith('/'):
+                if arg[1:].lower() in _START_SWITCHES_WITH_ARG:
+                    i += 2
+                    continue
+                i += 1
+                continue
+            if ' ' in arg:
+                i += 1
+                continue
+            return ' '.join(argv[i:])
+        raise ValueError('no command found after start')
