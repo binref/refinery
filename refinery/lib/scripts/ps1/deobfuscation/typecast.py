@@ -68,4 +68,8 @@ class Ps1TypeCasts(Transformer):
                     except (ValueError, UnicodeDecodeError, OverflowError):
                         return None
                     return _make_string_literal(result)
+        if tn == 'type':
+            sv = _string_value(node.operand) if node.operand else None
+            if sv is not None:
+                return Ps1TypeExpression(offset=node.offset, name=sv)
         return None

@@ -19,17 +19,19 @@ from refinery.lib.scripts.ps1.model import (
     Ps1IndexExpression,
     Ps1IntegerLiteral,
     Ps1ParameterDeclaration,
+    Ps1ParenExpression,
     Ps1Pipeline,
     Ps1PipelineElement,
     Ps1RealLiteral,
     Ps1ScopeModifier,
     Ps1StringLiteral,
     Ps1TryCatchFinally,
+    Ps1TypeExpression,
     Ps1UnaryExpression,
     Ps1Variable,
 )
 
-_CONSTANT_TYPES = (Ps1StringLiteral, Ps1IntegerLiteral, Ps1RealLiteral)
+_CONSTANT_TYPES = (Ps1StringLiteral, Ps1IntegerLiteral, Ps1RealLiteral, Ps1TypeExpression)
 
 _PS1_DEFAULT_VARIABLES: dict[str, str] = {
     key.lower(): value for key, value in {
@@ -98,6 +100,8 @@ _PS1_KNOWN_VARIABLES: dict[str, str] = {
 
 
 def _is_constant(node: Node) -> bool:
+    while isinstance(node, Ps1ParenExpression) and node.expression is not None:
+        node = node.expression
     if isinstance(node, _CONSTANT_TYPES):
         return True
     if isinstance(node, Ps1ArrayLiteral):
@@ -177,7 +181,10 @@ class Ps1ConstantInlining(Transformer):
                     key = target.name.lower()
                     if node.operator == '=' and node.value is not None and _is_constant(node.value):
                         assign_counts[key] = assign_counts.get(key, 0) + 1
-                        assignments[key] = (node, node.value)
+                        value = node.value
+                        while isinstance(value, Ps1ParenExpression) and value.expression is not None:
+                            value = value.expression
+                        assignments[key] = (node, value)
                     else:
                         # Compound assignment or non-constant value
                         assign_counts[key] = assign_counts.get(key, 0) + 1

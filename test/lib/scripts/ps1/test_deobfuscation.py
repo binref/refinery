@@ -69,6 +69,18 @@ class TestPs1Deobfuscator(TestPs1):
         self.assertIn("'-'", result)
         self.assertNotIn('-As', result)
 
+    def test_type_cast_string_to_type_expression(self):
+        result = self._deobfuscate("[Type]'Convert'")
+        self.assertIn('[Convert]', result)
+        self.assertNotIn("'Convert'", result)
+
+    def test_type_variable_inlined(self):
+        result = self._deobfuscate(
+            "$x = [Type]'Convert'; $x::FromBase64String('dGVzdA==')"
+        )
+        self.assertIn('[Convert]', result)
+        self.assertNotIn("'Convert'", result)
+
     def test_uncurly_variable(self):
         data = '${variable}'
         result = self._deobfuscate(data)
