@@ -7,6 +7,7 @@ from __future__ import annotations
 import re
 
 from refinery.lib.scripts import Block
+from refinery.lib.scripts.ps1.deobfuscation._helpers import _strip_backtick_noop
 from refinery.lib.scripts.ps1.lexer import DOUBLE_QUOTES, NORMALIZE_QUOTES, SINGLE_QUOTES, WHITESPACE, Ps1Lexer, Ps1LexerMode
 from refinery.lib.scripts.ps1.model import (
     Expression,
@@ -272,34 +273,9 @@ class Ps1Parser:
         if self._might_be_param_block():
             param_block = self._parse_param_block()
             self._skip_newlines()
-        begin_block = None
-        process_block = None
-        end_block = None
-        dynamicparam_block = None
-        if self._at(
-            Ps1TokenKind.BEGIN,
-            Ps1TokenKind.PROCESS,
-            Ps1TokenKind.END,
-            Ps1TokenKind.DYNAMICPARAM,
-        ):
-            while self._at(
-                Ps1TokenKind.BEGIN,
-                Ps1TokenKind.PROCESS,
-                Ps1TokenKind.END,
-                Ps1TokenKind.DYNAMICPARAM,
-            ):
-                kw = self._advance()
-                self._skip_newlines()
-                block = self._parse_block()
-                if kw.kind == Ps1TokenKind.BEGIN:
-                    begin_block = block
-                elif kw.kind == Ps1TokenKind.PROCESS:
-                    process_block = block
-                elif kw.kind == Ps1TokenKind.END:
-                    end_block = block
-                elif kw.kind == Ps1TokenKind.DYNAMICPARAM:
-                    dynamicparam_block = block
-                self._skip_newlines()
+        named = self._try_parse_named_blocks()
+        if named is not None:
+            begin_block, process_block, end_block, dynamicparam_block = named
             return Ps1Script(
                 offset=offset,
                 param_block=param_block,
@@ -310,6 +286,40 @@ class Ps1Parser:
             )
         body = self._parse_statement_list()
         return Ps1Script(offset=offset, param_block=param_block, body=body)
+
+    def _try_parse_named_blocks(
+        self,
+    ) -> tuple[Block | None, Block | None, Block | None, Block | None] | None:
+        if not self._at(
+            Ps1TokenKind.BEGIN,
+            Ps1TokenKind.PROCESS,
+            Ps1TokenKind.END,
+            Ps1TokenKind.DYNAMICPARAM,
+        ):
+            return None
+        begin_block = None
+        process_block = None
+        end_block = None
+        dynamicparam_block = None
+        while self._at(
+            Ps1TokenKind.BEGIN,
+            Ps1TokenKind.PROCESS,
+            Ps1TokenKind.END,
+            Ps1TokenKind.DYNAMICPARAM,
+        ):
+            kw = self._advance()
+            self._skip_newlines()
+            block = self._parse_block()
+            if kw.kind == Ps1TokenKind.BEGIN:
+                begin_block = block
+            elif kw.kind == Ps1TokenKind.PROCESS:
+                process_block = block
+            elif kw.kind == Ps1TokenKind.END:
+                end_block = block
+            elif kw.kind == Ps1TokenKind.DYNAMICPARAM:
+                dynamicparam_block = block
+            self._skip_newlines()
+        return begin_block, process_block, end_block, dynamicparam_block
 
     def _parse_block(self) -> Block:
         offset = self._current.offset
@@ -993,19 +1003,6 @@ class Ps1Parser:
                 i += 1
         return ''.join(result)
 
-    @staticmethod
-    def _strip_backtick_noop(name: str) -> str:
-        result: list[str] = []
-        i = 0
-        while i < len(name):
-            if name[i] == '`' and i + 1 < len(name):
-                result.append(name[i + 1])
-                i += 2
-                continue
-            result.append(name[i])
-            i += 1
-        return ''.join(result)
-
     def _make_variable_from_text(self, text: str) -> Ps1Variable:
         name = text
         splatted = name.startswith('@')
@@ -1016,7 +1013,7 @@ class Ps1Parser:
             braced = True
             name = name[1:-1]
         if '`' in name:
-            name = self._strip_backtick_noop(name)
+            name = _strip_backtick_noop(name)
         scope = Ps1ScopeModifier.NONE
         if ':' in name:
             prefix, rest = name.split(':', 1)
@@ -1035,27 +1032,21 @@ class Ps1Parser:
         tok = self._advance()
         raw = tok.value.translate(NORMALIZE_QUOTES)
         if tok.kind == Ps1TokenKind.HSTRING_VERBATIM:
-            q = "@'"
-            inner = raw[len(q):]
-            end_marker = "'@"
-            if inner.endswith(end_marker):
-                inner = inner[:-len(end_marker)]
-            inner = inner.lstrip(' \t')
-            if inner.startswith('\r\n'):
-                inner = inner[2:]
-            elif inner.startswith(('\n', '\r')):
-                inner = inner[1:]
-            if inner.endswith('\r\n'):
-                inner = inner[:-2]
-            elif inner.endswith(('\n', '\r')):
-                inner = inner[:-1]
+            inner = self._strip_here_string(raw, "@'", "'@")
             return Ps1HereString(
                 offset=tok.offset, value=inner, raw=raw, expandable=False)
-        q = '@"'
-        inner = raw[len(q):]
-        end_marker = '"@'
-        if inner.endswith(end_marker):
-            inner = inner[:-len(end_marker)]
+        inner = self._strip_here_string(raw, '@"', '"@')
+        parts = self._split_expandable_string(inner)
+        if len(parts) == 1 and isinstance(parts[0], Ps1StringLiteral):
+            return Ps1HereString(
+                offset=tok.offset, value=parts[0].value, raw=raw, expandable=True)
+        return Ps1ExpandableHereString(offset=tok.offset, parts=parts, raw=raw)
+
+    @staticmethod
+    def _strip_here_string(raw: str, open_delim: str, close_delim: str) -> str:
+        inner = raw[len(open_delim):]
+        if inner.endswith(close_delim):
+            inner = inner[:-len(close_delim)]
         inner = inner.lstrip(' \t')
         if inner.startswith('\r\n'):
             inner = inner[2:]
@@ -1065,11 +1056,7 @@ class Ps1Parser:
             inner = inner[:-2]
         elif inner.endswith(('\n', '\r')):
             inner = inner[:-1]
-        parts = self._split_expandable_string(inner)
-        if len(parts) == 1 and isinstance(parts[0], Ps1StringLiteral):
-            return Ps1HereString(
-                offset=tok.offset, value=parts[0].value, raw=raw, expandable=True)
-        return Ps1ExpandableHereString(offset=tok.offset, parts=parts, raw=raw)
+        return inner
 
     def _parse_variable(self) -> Ps1Variable:
         tok = self._advance()
@@ -1173,34 +1160,9 @@ class Ps1Parser:
             if self._might_be_param_block():
                 param_block = self._parse_param_block()
                 self._skip_newlines()
-            begin_block = None
-            process_block = None
-            end_block = None
-            dynamicparam_block = None
-            if self._at(
-                Ps1TokenKind.BEGIN,
-                Ps1TokenKind.PROCESS,
-                Ps1TokenKind.END,
-                Ps1TokenKind.DYNAMICPARAM,
-            ):
-                while self._at(
-                    Ps1TokenKind.BEGIN,
-                    Ps1TokenKind.PROCESS,
-                    Ps1TokenKind.END,
-                    Ps1TokenKind.DYNAMICPARAM,
-                ):
-                    kw = self._advance()
-                    self._skip_newlines()
-                    block = self._parse_block()
-                    if kw.kind == Ps1TokenKind.BEGIN:
-                        begin_block = block
-                    elif kw.kind == Ps1TokenKind.PROCESS:
-                        process_block = block
-                    elif kw.kind == Ps1TokenKind.END:
-                        end_block = block
-                    elif kw.kind == Ps1TokenKind.DYNAMICPARAM:
-                        dynamicparam_block = block
-                    self._skip_newlines()
+            named = self._try_parse_named_blocks()
+            if named is not None:
+                begin_block, process_block, end_block, dynamicparam_block = named
                 self._skip_newlines()
                 self._expect(Ps1TokenKind.RBRACE)
                 return Ps1ScriptBlock(
@@ -1567,34 +1529,9 @@ class Ps1Parser:
         if self._might_be_param_block():
             param_block = self._parse_param_block()
             self._skip_newlines()
-        begin_block = None
-        process_block = None
-        end_block = None
-        dynamicparam_block = None
-        if self._at(
-            Ps1TokenKind.BEGIN,
-            Ps1TokenKind.PROCESS,
-            Ps1TokenKind.END,
-            Ps1TokenKind.DYNAMICPARAM,
-        ):
-            while self._at(
-                Ps1TokenKind.BEGIN,
-                Ps1TokenKind.PROCESS,
-                Ps1TokenKind.END,
-                Ps1TokenKind.DYNAMICPARAM,
-            ):
-                kw = self._advance()
-                self._skip_newlines()
-                block = self._parse_block()
-                if kw.kind == Ps1TokenKind.BEGIN:
-                    begin_block = block
-                elif kw.kind == Ps1TokenKind.PROCESS:
-                    process_block = block
-                elif kw.kind == Ps1TokenKind.END:
-                    end_block = block
-                elif kw.kind == Ps1TokenKind.DYNAMICPARAM:
-                    dynamicparam_block = block
-                self._skip_newlines()
+        named = self._try_parse_named_blocks()
+        if named is not None:
+            begin_block, process_block, end_block, dynamicparam_block = named
             if expect_close:
                 self._expect(Ps1TokenKind.RBRACE)
             return Ps1ScriptBlock(

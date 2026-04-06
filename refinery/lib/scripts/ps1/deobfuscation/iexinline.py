@@ -2,7 +2,7 @@
 Inline constant IEX (Invoke-Expression) calls by parsing the string argument.
 
 When the IEX argument is not a plain string literal but a .NET expression chain
-(e.g. base64-decode → decompress → stream-read), the evaluator attempts to
+(e.g. base64-decode -> decompress -> stream-read), the evaluator attempts to
 resolve it to a string value at deobfuscation time.
 """
 from __future__ import annotations
@@ -11,8 +11,14 @@ import base64
 import gzip
 import zlib
 
-from refinery.lib.scripts import Block, Expression, Transformer
-from refinery.lib.scripts.ps1.deobfuscation._helpers import _string_value
+from refinery.lib.scripts import Expression, Transformer
+from refinery.lib.scripts.ps1.deobfuscation._helpers import (
+    _ENCODING_MAP,
+    _extract_foreach_scriptblock,
+    _get_body,
+    _normalize_dotnet_type_name,
+    _string_value,
+)
 from refinery.lib.scripts.ps1.model import (
     Ps1AccessKind,
     Ps1ArrayLiteral,
@@ -27,34 +33,12 @@ from refinery.lib.scripts.ps1.model import (
     Ps1ParenExpression,
     Ps1Pipeline,
     Ps1PipelineElement,
-    Ps1Script,
-    Ps1ScriptBlock,
     Ps1StringLiteral,
     Ps1TypeExpression,
     Ps1Variable,
 )
 
 _IEX_NAMES = frozenset({'iex', 'invoke-expression'})
-
-_ENCODING_MAP = {
-    'ascii'            : 'ascii',
-    'bigendianunicode' : 'utf-16-be',
-    'default'          : 'latin-1',
-    'unicode'          : 'utf-16-le',
-    'utf7'             : 'utf-7',
-    'utf8'             : 'utf-8',
-    'utf32'            : 'utf-32-le',
-}
-
-
-def _normalize_type_name(name: str) -> str:
-    """
-    Lower-case and strip leading ``System.`` prefix from a .NET type name.
-    """
-    result = name.lower().replace(' ', '')
-    if result.startswith('system.'):
-        result = result[7:]
-    return result
 
 
 def _extract_new_object_args(cmd: Ps1CommandInvocation) -> tuple[str, list[Expression]] | None:
@@ -83,7 +67,6 @@ def _extract_new_object_args(cmd: Ps1CommandInvocation) -> tuple[str, list[Expre
     if not isinstance(type_name_expr, Ps1StringLiteral):
         return None
     type_name = type_name_expr.value
-    # Constructor args come as a single Ps1ParenExpression wrapping a Ps1ArrayLiteral
     ctor_args: list[Expression] = []
     if len(positional) >= 2:
         second = positional[1]
@@ -108,7 +91,7 @@ def _resolve_encoding(expr: Expression) -> str | None:
         return None
     if not isinstance(expr.object, Ps1TypeExpression):
         return None
-    if _normalize_type_name(expr.object.name) != 'text.encoding':
+    if _normalize_dotnet_type_name(expr.object.name) != 'text.encoding':
         return None
     if not isinstance(expr.member, str):
         return None
@@ -124,10 +107,10 @@ def _try_evaluate(
 
     Handles the pattern:
     ``[Convert]::FromBase64String(literal)``
-    → ``[IO.MemoryStream]`` cast
-    → ``New-Object DeflateStream/GZipStream(stream, Decompress)``
-    → ``New-Object StreamReader(stream, encoding)``
-    → ``.ReadToEnd()``
+    -> ``[IO.MemoryStream]`` cast
+    -> ``New-Object DeflateStream/GZipStream(stream, Decompress)``
+    -> ``New-Object StreamReader(stream, encoding)``
+    -> ``.ReadToEnd()``
 
     Also handles pipelines of the form ``expr | %{ body } | %{ body }`` where
     each ForEach-Object stage receives the previous result via ``$_``.
@@ -143,7 +126,6 @@ def _try_evaluate(
             return bindings[expr.name.lower()]
         return None
 
-    # String concatenation via +
     if isinstance(expr, Ps1BinaryExpression) and expr.operator == '+':
         if expr.left is not None and expr.right is not None:
             left = _try_evaluate(expr.left, bindings)
@@ -151,12 +133,11 @@ def _try_evaluate(
             if isinstance(left, str) and isinstance(right, str):
                 return left + right
 
-    # [Convert]::FromBase64String('...')
     if isinstance(expr, Ps1InvokeMember):
         if (
             expr.access == Ps1AccessKind.STATIC
             and isinstance(expr.object, Ps1TypeExpression)
-            and _normalize_type_name(expr.object.name) == 'convert'
+            and _normalize_dotnet_type_name(expr.object.name) == 'convert'
             and isinstance(expr.member, str)
             and expr.member.lower() == 'frombase64string'
             and len(expr.arguments) == 1
@@ -168,7 +149,6 @@ def _try_evaluate(
                 except Exception:
                     return None
 
-        # .ReadToEnd() — pass through string result from inner expression
         if (
             expr.access == Ps1AccessKind.INSTANCE
             and isinstance(expr.member, str)
@@ -178,21 +158,17 @@ def _try_evaluate(
         ):
             return _try_evaluate(expr.object, bindings)
 
-    # [IO.MemoryStream] cast — pass through bytes
     if isinstance(expr, Ps1CastExpression) and expr.operand is not None:
-        tn = _normalize_type_name(expr.type_name)
+        tn = _normalize_dotnet_type_name(expr.type_name)
         if tn == 'io.memorystream':
             return _try_evaluate(expr.operand, bindings)
 
-    # New-Object IO.Compression.DeflateStream(data, Decompress)
-    # New-Object IO.Compression.GZipStream(data, Decompress)
-    # New-Object System.IO.StreamReader(stream, encoding)
     if isinstance(expr, Ps1CommandInvocation):
         result = _extract_new_object_args(expr)
         if result is None:
             return None
         type_name, ctor_args = result
-        tn = _normalize_type_name(type_name)
+        tn = _normalize_dotnet_type_name(type_name)
 
         if tn == 'io.compression.deflatestream' and len(ctor_args) >= 1:
             data = _try_evaluate(ctor_args[0], bindings)
@@ -227,31 +203,6 @@ def _try_evaluate(
     if isinstance(expr, Ps1Pipeline):
         return _try_evaluate_pipeline(expr, bindings)
 
-    return None
-
-
-_FOREACH_ALIASES = frozenset({'%', 'foreach', 'foreach-object'})
-
-
-def _extract_foreach_scriptblock(expr: Expression) -> Ps1ScriptBlock | None:
-    """
-    Extract the scriptblock from a ``%{ ... }`` / ``ForEach-Object { ... }`` command.
-    """
-    if not isinstance(expr, Ps1CommandInvocation):
-        return None
-    if not isinstance(expr.name, Ps1StringLiteral):
-        return None
-    if expr.name.value.lower() not in _FOREACH_ALIASES:
-        return None
-    if len(expr.arguments) != 1:
-        return None
-    arg = expr.arguments[0]
-    if isinstance(arg, Ps1CommandArgument):
-        if arg.kind != Ps1CommandArgumentKind.POSITIONAL:
-            return None
-        arg = arg.value
-    if isinstance(arg, Ps1ScriptBlock):
-        return arg
     return None
 
 
@@ -320,7 +271,7 @@ class Ps1IexInlining(Transformer):
 
     def visit(self, node):
         for container in list(node.walk()):
-            body = self._get_body(container)
+            body = _get_body(container)
             if body is None:
                 continue
             i = 0
@@ -340,12 +291,6 @@ class Ps1IexInlining(Transformer):
                 body[i:i + 1] = parsed
                 self.mark_changed()
                 i += len(parsed)
-        return None
-
-    @staticmethod
-    def _get_body(node) -> list | None:
-        if isinstance(node, (Ps1Script, Block, Ps1ScriptBlock)):
-            return node.body
         return None
 
     @staticmethod

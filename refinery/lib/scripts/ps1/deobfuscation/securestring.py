@@ -4,7 +4,10 @@ PowerShell SecureString decryption transformer.
 from __future__ import annotations
 
 from refinery.lib.scripts import Transformer
-from refinery.lib.scripts.ps1.deobfuscation._helpers import _make_string_literal
+from refinery.lib.scripts.ps1.deobfuscation._helpers import (
+    _get_command_name,
+    _make_string_literal,
+)
 from refinery.lib.scripts.ps1.model import (
     Ps1ArrayLiteral,
     Ps1CommandArgument,
@@ -17,13 +20,6 @@ from refinery.lib.scripts.ps1.model import (
     Ps1RangeExpression,
     Ps1StringLiteral,
 )
-
-
-def _get_command_name(node: Ps1CommandInvocation) -> str | None:
-    name = node.name
-    if isinstance(name, Ps1StringLiteral):
-        return name.value
-    return None
 
 
 def _collect_key_bytes(node) -> bytes | None:

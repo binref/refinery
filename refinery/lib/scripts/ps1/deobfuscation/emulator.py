@@ -12,6 +12,9 @@ if TYPE_CHECKING:
 
 from refinery.lib.scripts import Block, Transformer
 from refinery.lib.scripts.ps1.deobfuscation._helpers import (
+    _ENCODING_MAP,
+    _extract_foreach_scriptblock,
+    _get_command_name,
     _make_string_literal,
     _string_value,
 )
@@ -453,14 +456,6 @@ class _Ps1Interpreter:
             return None
         return None
 
-    _ENCODING_MAP = {
-        'ascii'            : 'ascii',
-        'utf8'             : 'utf-8',
-        'unicode'          : 'utf-16-le',
-        'bigendianunicode' : 'utf-16-be',
-        'default'          : 'latin-1',
-    }
-
     _CONVERT_TYPES = frozenset({'convert', 'system.convert'})
 
     _ENCODING_TYPES = frozenset({'system.text.encoding', 'text.encoding'})
@@ -529,7 +524,7 @@ class _Ps1Interpreter:
         raise _Ps1InterpreterError
 
     def _invoke_encoding(self, method: str, args: list[_Value]) -> _Value:
-        encoding = self._ENCODING_MAP.get(method)
+        encoding = _ENCODING_MAP.get(method)
         if encoding is None or len(args) != 1:
             raise _Ps1InterpreterError
         return self._decode_byte_list(args[0], encoding)
@@ -551,7 +546,7 @@ class _Ps1Interpreter:
         enc_name = obj.member if isinstance(obj.member, str) else None
         if enc_name is None:
             return None
-        encoding = self._ENCODING_MAP.get(enc_name.lower(), enc_name.lower())
+        encoding = _ENCODING_MAP.get(enc_name.lower(), enc_name.lower())
         if len(node.arguments) != 1:
             raise _Ps1InterpreterError
         arg = self._eval(node.arguments[0])
@@ -853,7 +848,7 @@ class Ps1FunctionEvaluator(Transformer):
 
     def visit_Ps1CommandInvocation(self, node: Ps1CommandInvocation):
         self.generic_visit(node)
-        name_str = self._get_command_name(node)
+        name_str = _get_command_name(node)
         if name_str is None:
             return None
         key = name_str.lower()
@@ -882,12 +877,6 @@ class Ps1FunctionEvaluator(Transformer):
             return None
         self._replaced_counts[key] = self._replaced_counts.get(key, 0) + 1
         return replacement
-
-    @staticmethod
-    def _get_command_name(node: Ps1CommandInvocation) -> str | None:
-        if isinstance(node.name, Ps1StringLiteral):
-            return node.name.value
-        return None
 
     @staticmethod
     def _extract_constant_args(node: Ps1CommandInvocation) -> list[_Value] | None:
@@ -977,9 +966,6 @@ class Ps1FunctionEvaluator(Transformer):
                 self.mark_changed()
 
 
-_FOREACH_ALIASES = frozenset({'%', 'foreach', 'foreach-object'})
-
-
 class Ps1ForEachPipeline(Transformer):
     """
     Evaluate pipelines of the form ``<constant-array> | %{ <scriptblock> }``
@@ -1002,7 +988,7 @@ class Ps1ForEachPipeline(Transformer):
         items = self._get_constant_array(src_elem.expression)
         if items is None:
             return None
-        script_block = self._get_foreach_scriptblock(cmd_elem.expression)
+        script_block = _extract_foreach_scriptblock(cmd_elem.expression)
         if script_block is None:
             return None
         if self._has_free_variables(script_block):
@@ -1050,27 +1036,6 @@ class Ps1ForEachPipeline(Transformer):
                 continue
             return None
         return values
-
-    @staticmethod
-    def _get_foreach_scriptblock(
-        expr: Expression | None,
-    ) -> Ps1ScriptBlock | None:
-        if not isinstance(expr, Ps1CommandInvocation):
-            return None
-        if not isinstance(expr.name, Ps1StringLiteral):
-            return None
-        if expr.name.value.lower() not in _FOREACH_ALIASES:
-            return None
-        if len(expr.arguments) != 1:
-            return None
-        arg = expr.arguments[0]
-        if isinstance(arg, Ps1CommandArgument):
-            if arg.kind != Ps1CommandArgumentKind.POSITIONAL:
-                return None
-            arg = arg.value
-        if isinstance(arg, Ps1ScriptBlock):
-            return arg
-        return None
 
     @staticmethod
     def _results_to_node(results: list[_Value]) -> Expression | None:

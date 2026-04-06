@@ -10,10 +10,13 @@ inserted AFTER the parent statement to preserve execution order.
 """
 from __future__ import annotations
 
-from refinery.lib.scripts import Transformer
-from refinery.lib.scripts.ps1.deobfuscation._helpers import _make_string_literal
+from refinery.lib.scripts import Block, Transformer
+from refinery.lib.scripts.ps1.deobfuscation._helpers import (
+    _get_body,
+    _make_string_literal,
+    _replace_in_parent,
+)
 from refinery.lib.scripts.ps1.model import (
-    Block,
     Ps1AssignmentExpression,
     Ps1BinaryExpression,
     Ps1CommandInvocation,
@@ -34,7 +37,7 @@ class Ps1ExpandableStringHoist(Transformer):
 
     def visit(self, node):
         for container in list(node.walk()):
-            body = self._get_body(container)
+            body = _get_body(container)
             if body is None:
                 continue
             i = 0
@@ -50,12 +53,6 @@ class Ps1ExpandableStringHoist(Transformer):
                     self.mark_changed()
                     i += len(before) + len(after)
                 i += 1
-        return None
-
-    @staticmethod
-    def _get_body(node) -> list | None:
-        if isinstance(node, (Ps1Script, Block, Ps1ScriptBlock)):
-            return node.body
         return None
 
     @staticmethod
@@ -119,25 +116,5 @@ class Ps1ExpandableStringHoist(Transformer):
             else:
                 after.extend(collected)
             replacement = _make_string_literal(''.join(text_parts))
-            self._replace_in_parent(node, replacement)
+            _replace_in_parent(node, replacement)
         return before, after
-
-    @staticmethod
-    def _replace_in_parent(old, new):
-        parent = old.parent
-        if parent is None:
-            return
-        for attr_name in vars(parent):
-            if attr_name in ('parent', 'offset'):
-                continue
-            value = getattr(parent, attr_name)
-            if value is old:
-                new.parent = parent
-                setattr(parent, attr_name, new)
-                return
-            if isinstance(value, list):
-                for i, item in enumerate(value):
-                    if item is old:
-                        new.parent = parent
-                        value[i] = new
-                        return

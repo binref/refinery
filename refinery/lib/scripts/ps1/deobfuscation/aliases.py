@@ -6,6 +6,7 @@ from __future__ import annotations
 from refinery.lib.scripts import Node, Transformer
 from refinery.lib.scripts.ps1.deobfuscation._helpers import (
     _case_normalize_name,
+    _get_command_name,
     _string_value,
 )
 from refinery.lib.scripts.ps1.model import (
@@ -89,12 +90,6 @@ class Ps1AliasInlining(Transformer):
         self._substitute(node, aliases)
         return None
 
-    @staticmethod
-    def _get_command_name(cmd: Ps1CommandInvocation) -> str | None:
-        if isinstance(cmd.name, Ps1StringLiteral):
-            return cmd.name.value
-        return None
-
     def _collect_aliases(self, root: Node) -> dict[str, tuple[Ps1CommandInvocation, str]]:
         """
         Collect alias definitions.
@@ -108,7 +103,7 @@ class Ps1AliasInlining(Transformer):
         for node in root.walk():
             if not isinstance(node, Ps1CommandInvocation):
                 continue
-            name = self._get_command_name(node)
+            name = _get_command_name(node)
             if name is None or name.lower() not in _ALIAS_COMMANDS:
                 continue
             result = _extract_alias_definition(node)
@@ -158,7 +153,7 @@ class Ps1AliasInlining(Transformer):
         for node in list(root.walk()):
             if not isinstance(node, Ps1CommandInvocation):
                 continue
-            name = self._get_command_name(node)
+            name = _get_command_name(node)
             if name is None:
                 continue
             key = name.lower()

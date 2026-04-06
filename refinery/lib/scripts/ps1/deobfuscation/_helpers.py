@@ -6,12 +6,18 @@ from __future__ import annotations
 import io
 import re
 
+from refinery.lib.scripts import Block, Node
 from refinery.lib.scripts.ps1.model import (
     Expression,
     Ps1ArrayLiteral,
+    Ps1CommandArgument,
+    Ps1CommandArgumentKind,
+    Ps1CommandInvocation,
     Ps1ExpandableString,
     Ps1IntegerLiteral,
     Ps1ParenExpression,
+    Ps1Script,
+    Ps1ScriptBlock,
     Ps1StringLiteral,
 )
 
@@ -660,3 +666,93 @@ def _case_normalize_name(name: str) -> str:
     if canonical is not None:
         return canonical
     return name
+
+
+def _strip_backtick_noop(name: str) -> str:
+    result: list[str] = []
+    i = 0
+    while i < len(name):
+        if name[i] == '`' and i + 1 < len(name):
+            result.append(name[i + 1])
+            i += 2
+            continue
+        result.append(name[i])
+        i += 1
+    return ''.join(result)
+
+
+def _get_command_name(cmd: Ps1CommandInvocation) -> str | None:
+    if isinstance(cmd.name, Ps1StringLiteral):
+        return cmd.name.value
+    return None
+
+
+def _get_body(node) -> list | None:
+    if isinstance(node, (Ps1Script, Block, Ps1ScriptBlock)):
+        return node.body
+    return None
+
+
+def _replace_in_parent(old: Node, new: Node):
+    parent = old.parent
+    if parent is None:
+        return
+    new.parent = parent
+    for attr_name in vars(parent):
+        if attr_name in ('parent', 'offset'):
+            continue
+        value = getattr(parent, attr_name)
+        if value is old:
+            setattr(parent, attr_name, new)
+            return
+        if isinstance(value, list):
+            for i, item in enumerate(value):
+                if item is old:
+                    value[i] = new
+                    return
+                if isinstance(item, tuple):
+                    lst = list(item)
+                    for j, elem in enumerate(lst):
+                        if elem is old:
+                            lst[j] = new
+                            value[i] = tuple(lst)
+                            return
+
+
+_FOREACH_ALIASES = frozenset({'%', 'foreach', 'foreach-object'})
+
+_ENCODING_MAP = {
+    'ascii'            : 'ascii',
+    'bigendianunicode' : 'utf-16-be',
+    'default'          : 'latin-1',
+    'unicode'          : 'utf-16-le',
+    'utf7'             : 'utf-7',
+    'utf8'             : 'utf-8',
+    'utf32'            : 'utf-32-le',
+}
+
+
+def _normalize_dotnet_type_name(name: str) -> str:
+    result = name.lower().replace(' ', '')
+    if result.startswith('system.'):
+        result = result[7:]
+    return result
+
+
+def _extract_foreach_scriptblock(expr: Expression) -> Ps1ScriptBlock | None:
+    if not isinstance(expr, Ps1CommandInvocation):
+        return None
+    if not isinstance(expr.name, Ps1StringLiteral):
+        return None
+    if expr.name.value.lower() not in _FOREACH_ALIASES:
+        return None
+    if len(expr.arguments) != 1:
+        return None
+    arg = expr.arguments[0]
+    if isinstance(arg, Ps1CommandArgument):
+        if arg.kind != Ps1CommandArgumentKind.POSITIONAL:
+            return None
+        arg = arg.value
+    if isinstance(arg, Ps1ScriptBlock):
+        return arg
+    return None

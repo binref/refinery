@@ -6,7 +6,10 @@ from __future__ import annotations
 import copy
 
 from refinery.lib.scripts import Node, Transformer
-from refinery.lib.scripts.ps1.deobfuscation._helpers import _make_string_literal
+from refinery.lib.scripts.ps1.deobfuscation._helpers import (
+    _make_string_literal,
+    _replace_in_parent,
+)
 from refinery.lib.scripts.ps1.model import (
     Ps1ArrayExpression,
     Ps1ArrayLiteral,
@@ -224,7 +227,7 @@ class Ps1ConstantInlining(Transformer):
                             remaining[key] = remaining.get(key, 0) + 1
                             continue
                         replacement = _make_string_literal(s[idx])
-                        self._replace_in_parent(node, replacement)
+                        _replace_in_parent(node, replacement)
                         self.mark_changed()
                         inlined[key] = inlined.get(key, 0) + 1
                         handled_vars.add(id(var))
@@ -239,7 +242,7 @@ class Ps1ConstantInlining(Transformer):
                         remaining[key] = remaining.get(key, 0) + 1
                         continue
                     replacement = copy.deepcopy(elements[idx])
-                    self._replace_in_parent(node, replacement)
+                    _replace_in_parent(node, replacement)
                     self.mark_changed()
                     inlined[key] = inlined.get(key, 0) + 1
                     handled_vars.add(id(var))
@@ -264,37 +267,11 @@ class Ps1ConstantInlining(Transformer):
                     remaining[key] = remaining.get(key, 0) + 1
                     continue
                 replacement = copy.deepcopy(const_value)
-                self._replace_in_parent(node, replacement)
+                _replace_in_parent(node, replacement)
                 self.mark_changed()
                 inlined[key] = inlined.get(key, 0) + 1
 
         return remaining, inlined
-
-    @staticmethod
-    def _replace_in_parent(old: Node, new: Node):
-        parent = old.parent
-        if parent is None:
-            return
-        new.parent = parent
-        for attr_name in vars(parent):
-            if attr_name in ('parent', 'offset'):
-                continue
-            value = getattr(parent, attr_name)
-            if value is old:
-                setattr(parent, attr_name, new)
-                return
-            if isinstance(value, list):
-                for i, item in enumerate(value):
-                    if item is old:
-                        value[i] = new
-                        return
-                    if isinstance(item, tuple):
-                        lst = list(item)
-                        for j, elem in enumerate(lst):
-                            if elem is old:
-                                lst[j] = new
-                                value[i] = tuple(lst)
-                                return
 
     def _remove_dead_assignments(
         self,
