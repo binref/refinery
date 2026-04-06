@@ -31,7 +31,6 @@ from refinery.lib.scripts.ps1.model import (
     Ps1InvokeMember,
     Ps1MemberAccess,
     Ps1ParenExpression,
-    Ps1ScopeModifier,
     Ps1StringLiteral,
     Ps1TypeExpression,
     Ps1UnaryExpression,
