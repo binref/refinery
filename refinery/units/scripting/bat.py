@@ -3,8 +3,8 @@ from __future__ import annotations
 import codecs
 import uuid
 
-from refinery.lib.batch import BatchEmulator, BatchState
-from refinery.lib.batch.emulator import BatchEmulatorConfig
+from refinery.lib.scripts.bat import BatchEmulator, BatchState
+from refinery.lib.scripts.bat.emulator import BatchEmulatorConfig
 from refinery.lib.types import Param, buf
 from refinery.units import Arg, Unit
 

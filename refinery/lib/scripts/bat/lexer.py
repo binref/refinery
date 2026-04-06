@@ -11,7 +11,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Callable, ClassVar, Generator
 
-from refinery.lib.batch.const import (
+from refinery.lib.scripts.bat.const import (
     AMPERSAND,
     ANGLE_CLOSE,
     ANGLE_OPEN,
@@ -36,7 +36,7 @@ from refinery.lib.batch.const import (
     WHITESPACE,
     ZERO,
 )
-from refinery.lib.batch.model import (
+from refinery.lib.scripts.bat.model import (
     ArgVar,
     ArgVarFlags,
     Ctrl,
@@ -49,8 +49,8 @@ from refinery.lib.batch.model import (
     UnexpectedToken,
     Word,
 )
-from refinery.lib.batch.state import BatchState
-from refinery.lib.batch.util import batchint, u16, uncaret, unquote
+from refinery.lib.scripts.bat.state import BatchState
+from refinery.lib.scripts.bat.util import batchint, u16, uncaret, unquote
 from refinery.lib.types import buf
 
 

@@ -10,8 +10,10 @@ from enum import Enum
 from io import StringIO
 from typing import Callable, ClassVar, Generator, Iterable, TypeVar
 
-from refinery.lib.batch.help import HelpOutput
-from refinery.lib.batch.model import (
+from refinery.lib.deobfuscation import cautious_parse, names_in_expression
+from refinery.lib.patterns import indicators
+from refinery.lib.scripts.bat.help import HelpOutput
+from refinery.lib.scripts.bat.model import (
     AbortExecution,
     ArgVarFlags,
     AstCondition,
@@ -36,12 +38,10 @@ from refinery.lib.batch.model import (
     InvalidLabel,
     MissingVariable,
 )
-from refinery.lib.batch.parser import BatchParser
-from refinery.lib.batch.state import BatchState, ErrorZero
-from refinery.lib.batch.synth import SynCommand, SynNodeBase, synthesize
-from refinery.lib.batch.util import batchint, uncaret, unquote
-from refinery.lib.deobfuscation import cautious_parse, names_in_expression
-from refinery.lib.patterns import indicators
+from refinery.lib.scripts.bat.parser import BatchParser
+from refinery.lib.scripts.bat.state import BatchState, ErrorZero
+from refinery.lib.scripts.bat.synth import SynCommand, SynNodeBase, synthesize
+from refinery.lib.scripts.bat.util import batchint, uncaret, unquote
 from refinery.lib.types import buf
 
 _T = TypeVar('_T')

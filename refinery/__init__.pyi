@@ -192,7 +192,6 @@ from refinery.units.formats.archive.xttar import xttar as xttar
 from refinery.units.formats.archive.xtzip import xtzip as xtzip
 from refinery.units.formats.archive.xtzpaq import xtzpaq as xtzpaq
 from refinery.units.formats.asn1 import asn1 as asn1
-from refinery.units.formats.bat import bat as bat
 from refinery.units.formats.cbor import cbor as cbor
 from refinery.units.formats.csv import csv as csv
 from refinery.units.formats.deserialize_php import dsphp as dsphp
@@ -354,6 +353,7 @@ from refinery.units.pattern.subfiles import subfiles as subfiles
 from refinery.units.pattern.urlguards import urlguards as urlguards
 from refinery.units.pattern.xtp import xtp as xtp
 from refinery.units.pattern.xtw import xtw as xtw
+from refinery.units.scripting.bat import bat as bat
 from refinery.units.scripting.cmdarg import cmdarg as cmdarg
 from refinery.units.scripting.deobfuscate import defu as defu
 from refinery.units.scripting.js import js as js

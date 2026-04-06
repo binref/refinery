@@ -5,8 +5,8 @@ from __future__ import annotations
 
 from refinery.lib.scripts import Node, Transformer
 from refinery.lib.scripts.ps1.deobfuscation._helpers import (
-    SIMPLE_IDENTIFIER,
     _KNOWN_ALIAS,
+    SIMPLE_IDENTIFIER,
     _case_normalize_name,
     _strip_backtick_noop,
 )
@@ -30,6 +30,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1UnaryExpression,
     Ps1Variable,
 )
+from refinery.lib.scripts.win32const import DEFAULT_ENVIRONMENT_TEMPLATE
 
 _KNOWN_VARIABLE_NAMES = {name.lower(): name for name in [
     'True',
@@ -38,34 +39,9 @@ _KNOWN_VARIABLE_NAMES = {name.lower(): name for name in [
     'ExecutionContext',
 ]}
 
-_KNOWN_ENV_NAMES = {name.lower(): name for name in [
-    'AllUsersProfile',
-    'AppData',
-    'CommonProgramFiles',
-    'CommonProgramFiles(x86)',
-    'CommonProgramW6432',
-    'ComputerName',
-    'ComSpec',
-    'HomeDrive',
-    'HomePath',
-    'LocalAppData',
-    'LogonServer',
-    'Path',
-    'PathExt',
-    'ProgramData',
-    'ProgramFiles',
-    'ProgramFiles(x86)',
-    'ProgramW6432',
-    'Public',
-    'SystemDrive',
-    'SystemRoot',
-    'Temp',
-    'Tmp',
-    'UserDomain',
-    'UserName',
-    'UserProfile',
-    'WinDir',
-]}
+_KNOWN_ENV_NAMES: dict[str, str] = {
+    name.lower(): name for name in DEFAULT_ENVIRONMENT_TEMPLATE
+}
 
 
 class Ps1Simplifications(Transformer):

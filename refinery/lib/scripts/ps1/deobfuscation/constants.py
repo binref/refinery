@@ -30,6 +30,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1UnaryExpression,
     Ps1Variable,
 )
+from refinery.lib.scripts.win32const import DEFAULT_ENVIRONMENT_TEMPLATE
 
 _CONSTANT_TYPES = (Ps1StringLiteral, Ps1IntegerLiteral, Ps1RealLiteral, Ps1TypeExpression)
 
@@ -55,10 +56,12 @@ _PS1_DEFAULT_VARIABLES: dict[str, str] = {
     }.items()
 }
 
-_PS1_ENV_CONSTANTS: dict[str, str] = {
-    key.lower(): value for key, value in {
-        'ComSpec': r'C:\Windows\System32\cmd.exe',
-    }.items()
+_PS1_ENV_CONSTANTS = {
+    lower_key: value
+    for key, value in DEFAULT_ENVIRONMENT_TEMPLATE.items()
+    if not (lower_key := key.lower()).startswith(('path', 'processor'))
+    and '{u}' not in value
+    and '{h}' not in value
 }
 
 _PS1_KNOWN_VARIABLES: dict[str, str] = {

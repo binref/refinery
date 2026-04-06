@@ -23,8 +23,8 @@ from refinery.lib.scripts.ps1.model import (
     Ps1IndexExpression,
     Ps1IntegerLiteral,
     Ps1MemberAccess,
-    Ps1ParenExpression,
     Ps1ParameterDeclaration,
+    Ps1ParenExpression,
     Ps1Pipeline,
     Ps1PipelineElement,
     Ps1ScopeModifier,
@@ -33,7 +33,6 @@ from refinery.lib.scripts.ps1.model import (
     Ps1UnaryExpression,
     Ps1Variable,
 )
-
 
 _TYPE_MEMBERS: dict[str, list[str]] = {
     'system.array': [

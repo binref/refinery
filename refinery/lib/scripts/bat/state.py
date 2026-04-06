@@ -7,8 +7,9 @@ from enum import Enum
 from random import randrange, seed
 from uuid import uuid4
 
-from refinery.lib.batch.model import MissingVariable
 from refinery.lib.dt import date_from_timestamp, isodate
+from refinery.lib.scripts.bat.model import MissingVariable
+from refinery.lib.scripts.win32const import make_win32_environment
 
 
 class ErrorZero(int, Enum):
@@ -25,55 +26,6 @@ class ErrorZero(int, Enum):
 
 class RetainVariable(str, Enum):
     Val = ''
-
-
-_DEFAULT_ENVIRONMENT = {
-    'ALLUSERSPROFILE'           : r'C:\ProgramData',
-    'APPDATA'                   : r'C:\Users\{u}\AppData\Roaming',
-    'CommonProgramFiles'        : r'C:\Program Files\Common Files',
-    'CommonProgramFiles(x86)'   : r'C:\Program Files (x86)\Common Files',
-    'CommonProgramW6432'        : r'C:\Program Files\Common Files',
-    'COMPUTERNAME'              : r'{h}',
-    'ComSpec'                   : r'C:\WINDOWS\system32\cmd.exe',
-    'DriverData'                : r'C:\Windows\System32\Drivers\DriverData',
-    'HOMEDRIVE'                 : r'C:',
-    'HOMEPATH'                  : r'\Users\{u}',
-    'LOCALAPPDATA'              : r'C:\Users\{u}\AppData\Local',
-    'LOGONSERVER'               : r'\\{h}',
-    'NUMBER_OF_PROCESSORS'      : r'16',
-    'OneDrive'                  : r'C:\Users\{u}\OneDrive',
-    'OS'                        : r'Windows_NT',
-    'PATHEXT'                   : r'.COM;.EXE;.BAT;.CMD;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC',
-    'PROCESSOR_ARCHITECTURE'    : r'AMD64',
-    'PROCESSOR_IDENTIFIER'      : r'Intel64 Family 6 Model 158 Stepping 10, GenuineIntel',
-    'PROCESSOR_LEVEL'           : r'6',
-    'PROCESSOR_REVISION'        : r'99ff',
-    'ProgramData'               : r'C:\ProgramData',
-    'ProgramW6432'              : r'C:\Program Files',
-    'ProgramFiles'              : r'C:\Program Files',
-    'ProgramFiles(x86)'         : r'C:\Program Files (x86)',
-    'PUBLIC'                    : r'C:\Users\Public',
-    'SESSIONNAME'               : r'Console',
-    'SystemDrive'               : r'C:',
-    'SystemRoot'                : r'C:\WINDOWS',
-    'TEMP'                      : r'C:\Users\{u}\AppData\Local\Temp',
-    'TMP'                       : r'C:\Users\{u}\AppData\Local\Temp',
-    'USERDOMAIN'                : r'{h}',
-    'USERDOMAIN_ROAMINGPROFILE' : r'{h}',
-    'USERNAME'                  : r'{u}',
-    'USERPROFILE'               : r'C:\Users\{u}',
-    'WINDIR'                    : r'C:\WINDOWS',
-    'PATH': ';'.join(
-        [
-            r'C:\Windows',
-            r'C:\Windows\System32',
-            r'C:\Windows\System32\Wbem',
-            r'C:\Windows\System32\WindowsPowerShell\v1.0\\',
-            r'C:\Windows\System32\OpenSSH\\',
-            r'C:\Program Files\dotnet\\',
-        ]
-    ),
-}
 
 
 class BatchState:
@@ -111,11 +63,8 @@ class BatchState:
         environment = environment or {}
         if hostname is None:
             hostname = str(uuid4())
-        for key, value in _DEFAULT_ENVIRONMENT.items():
-            environment.setdefault(
-                key.upper(),
-                value.format(h=hostname, u=username)
-            )
+        for key, value in make_win32_environment(username, hostname).items():
+            environment.setdefault(key.upper(), value)
         if isinstance(now, str):
             now = isodate(now)
         if isinstance(now, (int, float)):

@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from functools import cached_property
 from typing import Generic, TypeVar, Union
 
-from refinery.lib.batch.util import batchrange
+from refinery.lib.scripts.bat.util import batchrange
 from refinery.lib.structures import FlagAccessMixin
 
 IntOrStr = TypeVar('IntOrStr', int, str)
@@ -201,7 +201,7 @@ class AstNode:
 
     def __repr__(self):
         try:
-            synth = sys.modules['refinery.lib.batch.synth']
+            synth = sys.modules['refinery.lib.scripts.bat.synth']
         except KeyError:
             return super().__repr__()
         else:

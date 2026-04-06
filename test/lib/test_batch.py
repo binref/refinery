@@ -1,8 +1,9 @@
 from inspect import getdoc
 
-from refinery.lib.batch import BatchEmulator, BatchLexer, BatchParser, BatchState
-from refinery.lib.batch.synth import SynCommand
-from refinery.lib.batch.model import AstGroup, AstPipeline, AstSequence, InvalidLabel, EmulatorException, Redirect, RedirectIO
+from refinery.lib.scripts.bat import BatchEmulator, BatchLexer, BatchParser, BatchState
+from refinery.lib.scripts.bat.synth import SynCommand
+from refinery.lib.scripts.bat.model import AstGroup, AstPipeline, AstSequence, InvalidLabel, EmulatorException, Redirect, RedirectIO
+from refinery.lib.scripts.bat.util import batchrange, batchint, u16, unquote, uncaret
 
 from .. import TestBase
 
@@ -188,13 +189,13 @@ class TestBatchParser(TestBase):
 class TestBatchState(TestBase):
 
     def test_error_zero_is_falsy_int_but_truthy(self):
-        from refinery.lib.batch.state import ErrorZero
+        from refinery.lib.scripts.bat.state import ErrorZero
         ez = ErrorZero.Val
         self.assertEqual(int(ez), 0)
         self.assertTrue(bool(ez))
 
     def test_error_zero_str(self):
-        from refinery.lib.batch.state import ErrorZero
+        from refinery.lib.scripts.bat.state import ErrorZero
         self.assertEqual(str(ErrorZero.Val), '0')
 
 
@@ -1064,104 +1065,84 @@ class TestBatchEmulator(TestBase):
 class TestBatchUtil(TestBase):
 
     def test_batchrange_length_zero_when_inc_zero(self):
-        from refinery.lib.batch.util import batchrange
         br = batchrange(0, 0, 10)
         self.assertEqual(len(br), 0)
 
     def test_batchrange_length_zero_when_inc_negative(self):
-        from refinery.lib.batch.util import batchrange
         br = batchrange(0, -1, 10)
         self.assertEqual(len(br), 0)
 
     def test_batchrange_length_zero_when_max_less_than_min(self):
-        from refinery.lib.batch.util import batchrange
         br = batchrange(10, 1, 5)
         self.assertEqual(len(br), 0)
 
     def test_batchrange_normal_iteration(self):
-        from refinery.lib.batch.util import batchrange
         br = batchrange(1, 2, 7)
         self.assertListEqual(list(br), ['1', '3', '5', '7'])
 
     def test_batchrange_single_element(self):
-        from refinery.lib.batch.util import batchrange
         br = batchrange(5, 1, 5)
         self.assertListEqual(list(br), ['5'])
         self.assertEqual(len(br), 1)
 
     def test_batchrange_length_normal(self):
-        from refinery.lib.batch.util import batchrange
         br = batchrange(0, 3, 10)
         self.assertEqual(len(br), 4)
         self.assertListEqual(list(br), ['0', '3', '6', '9'])
 
     def test_batchint_hex(self):
-        from refinery.lib.batch.util import batchint
         self.assertEqual(batchint('0x1F'), 31)
         self.assertEqual(batchint('0X10'), 16)
 
     def test_batchint_octal(self):
-        from refinery.lib.batch.util import batchint
         self.assertEqual(batchint('010'), 8)
 
     def test_batchint_negative(self):
-        from refinery.lib.batch.util import batchint
         self.assertEqual(batchint('-5'), -5)
         self.assertEqual(batchint('-0x10'), -16)
         self.assertEqual(batchint('-010'), -8)
 
     def test_batchint_default_on_error(self):
-        from refinery.lib.batch.util import batchint
         self.assertEqual(batchint('notanumber', 99), 99)
 
     def test_batchint_raises_without_default(self):
-        from refinery.lib.batch.util import batchint
         with self.assertRaises(ValueError):
             batchint('notanumber')
 
     def test_u16_str_to_memoryview(self):
-        from refinery.lib.batch.util import u16
         result = u16('AB')
         self.assertIsInstance(result, memoryview)
         self.assertEqual(result.format, 'H')
 
     def test_u16_roundtrip(self):
-        from refinery.lib.batch.util import u16
         original = 'Hello'
         encoded = u16(original)
         decoded = u16(encoded)
         self.assertEqual(decoded, original)
 
     def test_unquote_removes_surrounding_quotes(self):
-        from refinery.lib.batch.util import unquote
         self.assertEqual(unquote('"hello"'), 'hello')
 
     def test_unquote_nested_quotes(self):
-        from refinery.lib.batch.util import unquote
         self.assertEqual(unquote('"he"llo"'), 'hello')
 
     def test_unquote_no_quotes(self):
-        from refinery.lib.batch.util import unquote
         self.assertEqual(unquote('hello'), 'hello')
 
     def test_unquote_unclosed_quote(self):
-        from refinery.lib.batch.util import unquote
         self.assertEqual(unquote('"hello'), 'hello')
 
     def test_uncaret_basic_escaping(self):
-        from refinery.lib.batch.util import uncaret
         trailing, result = uncaret('^a^b', ignore_quotes=True)
         self.assertFalse(trailing)
         self.assertEqual(result, 'ab')
 
     def test_uncaret_trailing_caret(self):
-        from refinery.lib.batch.util import uncaret
         trailing, result = uncaret('test^', ignore_quotes=True)
         self.assertTrue(trailing)
         self.assertEqual(result, 'test^')
 
     def test_uncaret_with_quotes(self):
-        from refinery.lib.batch.util import uncaret
         trailing, result = uncaret('^a"^b"^c', ignore_quotes=False)
         self.assertFalse(trailing)
         self.assertEqual(result, 'a"^b"c')
@@ -1170,94 +1151,79 @@ class TestBatchUtil(TestBase):
         self.assertEqual(result, '&"^&"|^')
 
     def test_error_zero_bool_is_true(self):
-        from refinery.lib.batch.state import ErrorZero
+        from refinery.lib.scripts.bat.state import ErrorZero
         ez = ErrorZero.Val
         self.assertTrue(bool(ez))
 
     def test_error_zero_str_is_zero(self):
-        from refinery.lib.batch.state import ErrorZero
+        from refinery.lib.scripts.bat.state import ErrorZero
         ez = ErrorZero.Val
         self.assertEqual(str(ez), '0')
 
     def test_error_zero_int_value_is_zero(self):
-        from refinery.lib.batch.state import ErrorZero
+        from refinery.lib.scripts.bat.state import ErrorZero
         ez = ErrorZero.Val
         self.assertEqual(int(ez), 0)
 
     def test_batchstate_errorlevel_default(self):
-        from refinery.lib.batch.state import BatchState
+        from refinery.lib.scripts.bat.state import BatchState
         state = BatchState()
         self.assertEqual(state.envar('ERRORLEVEL'), '0')
 
     def test_batchrange_basic(self):
-        from refinery.lib.batch.util import batchrange
         r = batchrange(1, 1, 5)
         self.assertEqual(list(r), ['1', '2', '3', '4', '5'])
 
     def test_batchrange_step(self):
-        from refinery.lib.batch.util import batchrange
         r = batchrange(0, 2, 8)
         self.assertEqual(list(r), ['0', '2', '4', '6', '8'])
 
     def test_batchrange_empty(self):
-        from refinery.lib.batch.util import batchrange
         r = batchrange(10, 1, 5)
         self.assertEqual(list(r), [])
         self.assertEqual(len(r), 0)
 
     def test_batchrange_zero_step(self):
-        from refinery.lib.batch.util import batchrange
         r = batchrange(1, 0, 5)
         self.assertEqual(len(r), 0)
 
     def test_batchrange_negative_step(self):
-        from refinery.lib.batch.util import batchrange
         r = batchrange(1, -1, 5)
         self.assertEqual(len(r), 0)
 
     def test_batchint_decimal(self):
-        from refinery.lib.batch.util import batchint
         self.assertEqual(batchint('42'), 42)
 
     def test_batchint_negative_hex(self):
-        from refinery.lib.batch.util import batchint
         self.assertEqual(batchint('-0xFF'), -255)
 
     def test_batchint_invalid_with_default(self):
-        from refinery.lib.batch.util import batchint
         self.assertEqual(batchint('notanumber', 0), 0)
 
     def test_batchint_invalid_raises(self):
-        from refinery.lib.batch.util import batchint
         with self.assertRaises(ValueError):
             batchint('notanumber')
 
     def test_unquote_basic(self):
-        from refinery.lib.batch.util import unquote
         self.assertEqual(unquote('"hello"'), 'hello')
 
     def test_unquote_partial(self):
-        from refinery.lib.batch.util import unquote
         self.assertEqual(unquote('"hello'), 'hello')
 
     def test_uncaret_basic(self):
-        from refinery.lib.batch.util import uncaret
         trailing, result = uncaret('^&^|^<^>', ignore_quotes=True)
         self.assertFalse(trailing)
         self.assertEqual(result, '&|<>')
 
     def test_uncaret_trailing(self):
-        from refinery.lib.batch.util import uncaret
         trailing, result = uncaret('hello^', ignore_quotes=True)
         self.assertTrue(trailing)
 
     def test_u16_string_to_memoryview(self):
-        from refinery.lib.batch.util import u16
         result = u16('AB')
         self.assertIsInstance(result, memoryview)
 
     def test_u16_bytes_to_string(self):
-        from refinery.lib.batch.util import u16
         data = 'Hello'.encode('utf-16le')
         result = u16(data)
         self.assertEqual(result, 'Hello')

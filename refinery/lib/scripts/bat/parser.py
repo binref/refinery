@@ -5,8 +5,8 @@ import re
 
 from collections import deque
 
-from refinery.lib.batch.lexer import BatchLexer
-from refinery.lib.batch.model import (
+from refinery.lib.scripts.bat.lexer import BatchLexer
+from refinery.lib.scripts.bat.model import (
     AstCommand,
     AstCondition,
     AstConditionalStatement,
@@ -30,8 +30,8 @@ from refinery.lib.batch.model import (
     UnexpectedToken,
     Word,
 )
-from refinery.lib.batch.state import BatchState
-from refinery.lib.batch.util import batchint, batchrange, unquote
+from refinery.lib.scripts.bat.state import BatchState
+from refinery.lib.scripts.bat.util import batchint, batchrange, unquote
 from refinery.lib.types import buf
 
 

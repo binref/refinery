@@ -685,7 +685,7 @@ class TestPs1ConstantInlining(TestPs1):
     def test_env_comspec_inlined(self):
         result = self._deobfuscate("$x = $env:ComSpec[4]")
         self.assertNotIn('ComSpec', result)
-        self.assertIn("'i'", result)
+        self.assertIn("'I'", result)
 
 
 class TestPs1FunctionEvaluator(TestPs1):

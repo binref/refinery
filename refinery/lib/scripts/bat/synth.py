@@ -7,7 +7,7 @@ import itertools
 
 from typing import Generic, TypeVar, overload
 
-from refinery.lib.batch.model import (
+from refinery.lib.scripts.bat.model import (
     AstCommand,
     AstFor,
     AstForOptions,
@@ -20,7 +20,7 @@ from refinery.lib.batch.model import (
     AstSequence,
     AstStatement,
 )
-from refinery.lib.batch.util import enquote, unquote
+from refinery.lib.scripts.bat.util import enquote, unquote
 
 _A = TypeVar('_A', bound=AstNode)
 
