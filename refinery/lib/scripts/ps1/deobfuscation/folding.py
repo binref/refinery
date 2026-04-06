@@ -9,8 +9,8 @@ import re
 
 from refinery.lib.scripts import Transformer
 from refinery.lib.scripts.ps1.deobfuscation._helpers import (
-    SIMPLE_IDENTIFIER,
     _ENCODING_MAP,
+    SIMPLE_IDENTIFIER,
     _case_normalize_name,
     _collect_int_arguments,
     _collect_string_arguments,

@@ -25,6 +25,7 @@ from refinery.lib.scripts.vba.model import (
     VbaEraseStatement,
     VbaErrorNode,
     VbaEventDeclaration,
+    VbaExitKind,
     VbaExitStatement,
     VbaExpressionStatement,
     VbaFloatLiteral,
@@ -58,8 +59,8 @@ from refinery.lib.scripts.vba.model import (
     VbaParenExpression,
     VbaPropertyDeclaration,
     VbaPropertyKind,
-    VbaRangeExpression,
     VbaRaiseEventStatement,
+    VbaRangeExpression,
     VbaRedimStatement,
     VbaResumeStatement,
     VbaReturnStatement,
@@ -76,7 +77,6 @@ from refinery.lib.scripts.vba.model import (
     VbaVariableDeclarator,
     VbaWhileStatement,
     VbaWithStatement,
-    VbaExitKind,
 )
 from refinery.lib.scripts.vba.token import VbaToken, VbaTokenKind
 

@@ -3,8 +3,7 @@ PowerShell AST deobfuscation transforms.
 """
 from refinery.lib.scripts.ps1.deobfuscation.aliases import Ps1AliasInlining
 from refinery.lib.scripts.ps1.deobfuscation.constants import Ps1ConstantInlining
-from refinery.lib.scripts.ps1.deobfuscation.emulator import Ps1ForEachPipeline
-from refinery.lib.scripts.ps1.deobfuscation.emulator import Ps1FunctionEvaluator
+from refinery.lib.scripts.ps1.deobfuscation.emulator import Ps1ForEachPipeline, Ps1FunctionEvaluator
 from refinery.lib.scripts.ps1.deobfuscation.expandable import Ps1ExpandableStringHoist
 from refinery.lib.scripts.ps1.deobfuscation.folding import Ps1ConstantFolding
 from refinery.lib.scripts.ps1.deobfuscation.iexinline import Ps1IexInlining

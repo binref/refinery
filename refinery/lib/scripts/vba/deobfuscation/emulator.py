@@ -7,9 +7,9 @@ from typing import Any, Callable
 
 from refinery.lib.scripts import Transformer
 from refinery.lib.scripts.vba.deobfuscation._helpers import (
-    _Value,
     _is_literal,
     _literal_value,
+    _Value,
     _value_to_node,
 )
 from refinery.lib.scripts.vba.model import (

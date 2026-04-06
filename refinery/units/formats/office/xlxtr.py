@@ -14,7 +14,7 @@ import defusedxml
 
 from refinery.lib.structures import MemoryFile
 from refinery.lib.tools import NoLogging
-from refinery.lib.types import buf, Param
+from refinery.lib.types import Param, buf
 from refinery.units import Arg, Unit
 
 if TYPE_CHECKING:

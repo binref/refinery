@@ -8,7 +8,14 @@ import re
 
 from refinery.lib.scripts import Block
 from refinery.lib.scripts.ps1.deobfuscation._helpers import _strip_backtick_noop
-from refinery.lib.scripts.ps1.lexer import DOUBLE_QUOTES, NORMALIZE_QUOTES, SINGLE_QUOTES, WHITESPACE, Ps1Lexer, Ps1LexerMode
+from refinery.lib.scripts.ps1.lexer import (
+    DOUBLE_QUOTES,
+    NORMALIZE_QUOTES,
+    SINGLE_QUOTES,
+    WHITESPACE,
+    Ps1Lexer,
+    Ps1LexerMode,
+)
 from refinery.lib.scripts.ps1.model import (
     Expression,
     Ps1AccessKind,
