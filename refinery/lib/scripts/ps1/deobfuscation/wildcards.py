@@ -14,7 +14,7 @@ import re
 from fnmatch import translate as fnmatch_translate
 from typing import Iterable
 
-from refinery.lib.scripts import Transformer
+from refinery.lib.scripts import Node, Transformer
 from refinery.lib.scripts.ps1.deobfuscation._helpers import (
     _KNOWN_NAMES,
     _get_command_name,
@@ -24,10 +24,12 @@ from refinery.lib.scripts.ps1.deobfuscation._helpers import (
 from refinery.lib.scripts.ps1.deobfuscation.constants import _PS1_KNOWN_VARIABLES
 from refinery.lib.scripts.ps1.deobfuscation.typenames import (
     _TYPE_MEMBERS,
+    collect_variable_types,
     resolve_expression_type,
 )
 from refinery.lib.scripts.ps1.model import (
     Expression,
+    Ps1AssignmentExpression,
     Ps1BinaryExpression,
     Ps1CommandArgument,
     Ps1CommandArgumentKind,
@@ -46,6 +48,8 @@ from refinery.lib.scripts.ps1.model import (
 
 _GET_ITEM_COMMANDS = frozenset({'get-item', 'gi'})
 _GET_VARIABLE_COMMANDS = frozenset({'get-variable', 'gv'})
+_SET_ITEM_COMMANDS = frozenset({'set-item', 'si'})
+_SET_VARIABLE_COMMANDS = frozenset({'set-variable', 'sv', 'set'})
 _WHERE_OBJECT_ALIASES = frozenset({'?', 'where', 'where-object'})
 _LIKE_OPERATORS = frozenset({'-like', '-ilike', '-clike'})
 
@@ -109,6 +113,7 @@ def _is_psobject_member_access(
 
 def _determine_where_object_candidates(
     elements: list,
+    variable_types: dict[str, str] | None = None,
 ) -> Iterable[str] | None:
     """
     Examine the pipeline elements preceding Where-Object to determine which
@@ -119,6 +124,16 @@ def _determine_where_object_candidates(
         if not isinstance(elem, Ps1PipelineElement):
             continue
         expr = elem.expression
+        while isinstance(expr, Ps1ParenExpression) and expr.expression is not None:
+            inner = expr.expression
+            if isinstance(inner, Ps1Pipeline):
+                result = _determine_where_object_candidates(
+                    inner.elements, variable_types,
+                )
+                if result is not None:
+                    return result
+                break
+            expr = inner
 
         if isinstance(expr, Ps1CommandInvocation):
             cmd_name = _get_command_name(expr)
@@ -127,15 +142,17 @@ def _determine_where_object_candidates(
                 if cmd_lower in _GET_COMMAND_ALIASES:
                     return _known_cmdlets()
                 if cmd_lower in _GET_MEMBER_ALIASES:
-                    return _candidates_from_get_member(elements, elem)
+                    return _candidates_from_get_member(
+                        elements, elem, variable_types,
+                    )
 
         if isinstance(expr, Ps1MemberAccess):
             pso = _is_psobject_member_access(expr, 'methods')
             if pso is not None:
-                return _candidates_from_type(pso.object)
+                return _candidates_from_type(pso.object, variable_types)
             pso = _is_psobject_member_access(expr, 'properties')
             if pso is not None:
-                return _candidates_from_type(pso.object)
+                return _candidates_from_type(pso.object, variable_types)
 
     return None
 
@@ -143,6 +160,7 @@ def _determine_where_object_candidates(
 def _candidates_from_get_member(
     elements: list,
     gm_element: Ps1PipelineElement,
+    variable_types: dict[str, str] | None = None,
 ) -> list[str] | None:
     """
     For a pipeline like `expr | Get-Member | Where-Object ...`, resolve
@@ -158,15 +176,16 @@ def _candidates_from_get_member(
     prev = elements[idx - 1]
     if not isinstance(prev, Ps1PipelineElement):
         return None
-    return _candidates_from_type(prev.expression)
+    return _candidates_from_type(prev.expression, variable_types)
 
 
 def _candidates_from_type(
     expr: Expression | None,
+    variable_types: dict[str, str] | None = None,
 ) -> list[str] | None:
     if expr is None:
         return None
-    type_name = resolve_expression_type(expr)
+    type_name = resolve_expression_type(expr, variable_types)
     if type_name is None:
         return None
     return _TYPE_MEMBERS.get(type_name)
@@ -182,6 +201,86 @@ def _extract_first_positional_string(
         elif isinstance(arg, Expression):
             return _string_value(arg)
     return None
+
+
+def _extract_positional_args(
+    cmd: Ps1CommandInvocation,
+) -> list[Expression]:
+    """
+    Collect all positional argument values from a command invocation.
+    """
+    result: list[Expression] = []
+    for arg in cmd.arguments:
+        if isinstance(arg, Ps1CommandArgument):
+            if arg.kind == Ps1CommandArgumentKind.POSITIONAL and arg.value is not None:
+                result.append(arg.value)
+        elif isinstance(arg, Expression):
+            result.append(arg)
+    return result
+
+
+def _extract_named_value(
+    cmd: Ps1CommandInvocation,
+    param_name: str,
+) -> Expression | None:
+    """
+    Extract the value of a named parameter (case-insensitive prefix match).
+    """
+    param_lower = param_name.lower()
+    for arg in cmd.arguments:
+        if not isinstance(arg, Ps1CommandArgument):
+            continue
+        if arg.kind != Ps1CommandArgumentKind.NAMED:
+            continue
+        if arg.name.lower().startswith(param_lower) and arg.value is not None:
+            return arg.value
+    return None
+
+
+def _concat_expressions(exprs: list[Expression]) -> Expression:
+    """
+    Build a left-associative `+` chain from a list of expressions.
+    """
+    result = exprs[0]
+    for expr in exprs[1:]:
+        result = Ps1BinaryExpression(
+            offset=expr.offset,
+            left=result,
+            operator='+',
+            right=expr,
+        )
+    return result
+
+
+def _has_switch(cmd: Ps1CommandInvocation, prefix: str) -> bool:
+    """
+    Check if a command has a switch parameter whose name starts with prefix.
+    """
+    prefix_lower = prefix.lower()
+    for arg in cmd.arguments:
+        if not isinstance(arg, Ps1CommandArgument):
+            continue
+        if arg.kind != Ps1CommandArgumentKind.SWITCH:
+            continue
+        if arg.name.lower().startswith(prefix_lower):
+            return True
+    return False
+
+
+def _resolve_variable_name(
+    pattern: str,
+) -> str | None:
+    """
+    Resolve a variable name pattern (possibly wildcard) to a canonical name.
+    Returns the resolved name, or the pattern itself for non-wildcard names.
+    """
+    if _is_wildcard(pattern):
+        return _wildcard_match_unique(pattern, _PS1_KNOWN_VARIABLES.values())
+    pattern_lower = pattern.lower()
+    return next(
+        (v for v in _PS1_KNOWN_VARIABLES.values() if v.lower() == pattern_lower),
+        pattern,
+    )
 
 
 def _extract_where_object_wildcard(
@@ -243,6 +342,15 @@ def _extract_where_object_wildcard(
 
 class Ps1WildcardResolution(Transformer):
 
+    def __init__(self):
+        super().__init__()
+        self._variable_types: dict[str, str] | None = None
+
+    def visit(self, node: Node):
+        if self._variable_types is None:
+            self._variable_types = collect_variable_types(node)
+        return super().visit(node)
+
     def visit_Ps1MemberAccess(self, node: Ps1MemberAccess):
         self.generic_visit(node)
         replacement = self._try_resolve_variable_value(node)
@@ -260,6 +368,16 @@ class Ps1WildcardResolution(Transformer):
     def visit_Ps1Pipeline(self, node: Ps1Pipeline):
         self.generic_visit(node)
         replacement = self._try_resolve_where_object_wildcard(node)
+        if replacement is not None:
+            return replacement
+        return None
+
+    def visit_Ps1CommandInvocation(self, node: Ps1CommandInvocation):
+        self.generic_visit(node)
+        replacement = self._try_resolve_get_variable_value_only(node)
+        if replacement is not None:
+            return replacement
+        replacement = self._try_resolve_set_variable(node)
         if replacement is not None:
             return replacement
         return None
@@ -297,16 +415,34 @@ class Ps1WildcardResolution(Transformer):
             if not arg_value.lower().startswith(prefix):
                 return None
             pattern = arg_value[len(prefix):]
+            pattern = pattern.lstrip('/\\')
         else:
             pattern = arg_value
-        if _is_wildcard(pattern):
-            resolved = _wildcard_match_unique(pattern, _PS1_KNOWN_VARIABLES.values())
-        else:
-            pattern_lower = pattern.lower()
-            resolved = next(
-                (v for v in _PS1_KNOWN_VARIABLES.values() if v.lower() == pattern_lower),
-                pattern,
-            )
+        resolved = _resolve_variable_name(pattern)
+        if resolved is None:
+            return None
+        return Ps1Variable(
+            offset=node.offset,
+            name=resolved,
+            scope=Ps1ScopeModifier.NONE,
+        )
+
+    def _try_resolve_get_variable_value_only(
+        self,
+        node: Ps1CommandInvocation,
+    ) -> Expression | None:
+        """
+        Resolve Get-Variable X -ValueOnly to $X.
+        """
+        cmd_name = _get_command_name(node)
+        if cmd_name is None or cmd_name.lower() not in _GET_VARIABLE_COMMANDS:
+            return None
+        if not _has_switch(node, '-valueo'):
+            return None
+        arg_value = _extract_first_positional_string(node)
+        if arg_value is None:
+            return None
+        resolved = _resolve_variable_name(arg_value)
         if resolved is None:
             return None
         return Ps1Variable(
@@ -362,10 +498,104 @@ class Ps1WildcardResolution(Transformer):
         if pattern is None or not _is_wildcard(pattern):
             return None
         preceding = node.elements[:-1]
-        candidates = _determine_where_object_candidates(preceding)
+        candidates = _determine_where_object_candidates(
+            preceding, self._variable_types,
+        )
         if candidates is None:
             return None
         resolved = _wildcard_match_unique(pattern, candidates)
         if resolved is None:
             return None
         return _make_string_literal(resolved)
+
+    def _try_resolve_set_variable(
+        self,
+        node: Ps1CommandInvocation,
+    ) -> Expression | None:
+        """
+        Resolve Set-Item Variable:X value or Set-Variable X value to $X = value.
+        """
+        cmd_name = _get_command_name(node)
+        if cmd_name is None:
+            return None
+        cmd_lower = cmd_name.lower()
+        if cmd_lower in _SET_ITEM_COMMANDS:
+            return self._handle_set_item_variable(node)
+        if cmd_lower in _SET_VARIABLE_COMMANDS:
+            return self._handle_set_variable(node)
+        return None
+
+    def _handle_set_item_variable(
+        self,
+        node: Ps1CommandInvocation,
+    ) -> Expression | None:
+        """
+        Set-Item Variable:/X val1 val2 → $X = val1 + val2
+        """
+        positionals = _extract_positional_args(node)
+        if len(positionals) < 2:
+            return None
+        path_str = _string_value(positionals[0])
+        if path_str is None:
+            return None
+        prefix = 'variable:'
+        if not path_str.lower().startswith(prefix):
+            return None
+        var_name = path_str[len(prefix):].lstrip('/\\')
+        resolved = _resolve_variable_name(var_name)
+        if resolved is None:
+            return None
+        values = positionals[1:]
+        return self._build_assignment(node.offset, resolved, values)
+
+    def _handle_set_variable(
+        self,
+        node: Ps1CommandInvocation,
+    ) -> Expression | None:
+        """
+        Set-Variable X val or Set-Variable -Name X -Value val → $X = val
+        """
+        named_value = _extract_named_value(node, '-value')
+        positionals = _extract_positional_args(node)
+        name_expr = _extract_named_value(node, '-name')
+        if name_expr is not None:
+            var_name = _string_value(name_expr)
+        elif positionals:
+            var_name = _string_value(positionals[0])
+            positionals = positionals[1:]
+        else:
+            return None
+        if var_name is None:
+            return None
+        resolved = _resolve_variable_name(var_name)
+        if resolved is None:
+            return None
+        if named_value is not None:
+            values = [named_value]
+        elif positionals:
+            values = positionals
+        else:
+            return None
+        return self._build_assignment(node.offset, resolved, values)
+
+    @staticmethod
+    def _build_assignment(
+        offset: int,
+        var_name: str,
+        values: list[Expression],
+    ) -> Ps1AssignmentExpression:
+        target = Ps1Variable(
+            offset=offset,
+            name=var_name,
+            scope=Ps1ScopeModifier.NONE,
+        )
+        if len(values) == 1:
+            value = values[0]
+        else:
+            value = _concat_expressions(values)
+        return Ps1AssignmentExpression(
+            offset=offset,
+            target=target,
+            operator='=',
+            value=value,
+        )

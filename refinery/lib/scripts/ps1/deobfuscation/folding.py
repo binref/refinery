@@ -24,15 +24,18 @@ from refinery.lib.scripts.ps1.model import (
     Ps1ArrayExpression,
     Ps1ArrayLiteral,
     Ps1BinaryExpression,
+    Ps1ExpandableString,
     Ps1ExpressionStatement,
     Ps1IndexExpression,
     Ps1IntegerLiteral,
     Ps1InvokeMember,
     Ps1MemberAccess,
     Ps1ParenExpression,
+    Ps1ScopeModifier,
     Ps1StringLiteral,
     Ps1TypeExpression,
     Ps1UnaryExpression,
+    Ps1Variable,
 )
 
 _SYSTEM_CONVERT_NAMES = frozenset({
@@ -91,6 +94,45 @@ def _unwrap_to_array_literal(node: Expression) -> Ps1ArrayLiteral | None:
         if isinstance(stmt, Ps1ExpressionStatement) and isinstance(stmt.expression, Ps1ArrayLiteral):
             return stmt.expression
     return None
+
+
+def _escape_for_expandable(text: str) -> str:
+    """
+    Escape characters that are special inside double-quoted strings.
+    """
+    return text.replace('`', '``').replace('$', '`$')
+
+
+def _variable_raw(var: Ps1Variable) -> str:
+    """
+    Produce the braced variable reference for use inside an expandable string.
+    """
+    prefix = '@' if var.splatted else '$'
+    scope = var.scope.value
+    if scope:
+        return F'{prefix}{{{scope}:{var.name}}}'
+    return F'{prefix}{{{var.name}}}'
+
+
+def _variable_string_to_expandable(
+    var: Ps1Variable,
+    text: str,
+    *,
+    var_first: bool,
+) -> Ps1ExpandableString:
+    """
+    Fold `$var + 'text'` or `'text' + $var` into a `Ps1ExpandableString`.
+    """
+    escaped = _escape_for_expandable(text)
+    var_raw = _variable_raw(var)
+    text_part = Ps1StringLiteral(value=text, raw=F"'{text}'")
+    if var_first:
+        raw = F'"{var_raw}{escaped}"'
+        parts = [var, text_part]
+    else:
+        raw = F'"{escaped}{var_raw}"'
+        parts = [text_part, var]
+    return Ps1ExpandableString(parts=parts, raw=raw)
 
 
 class Ps1ConstantFolding(Transformer):
@@ -328,6 +370,16 @@ class Ps1ConstantFolding(Transformer):
             elements = list(node.left.elements)
             elements.append(_make_string_literal(right_str))
             return Ps1ArrayLiteral(elements=elements)
+        is_inner_concat = (
+            isinstance(node.parent, Ps1BinaryExpression)
+            and node.parent.operator == '+'
+            and node.parent.left is node
+        )
+        if not is_inner_concat:
+            if isinstance(node.left, Ps1Variable) and right_str is not None:
+                return _variable_string_to_expandable(node.left, right_str, var_first=True)
+            if isinstance(node.right, Ps1Variable) and left_str is not None:
+                return _variable_string_to_expandable(node.right, left_str, var_first=False)
         return None
 
     def _handle_binary_join(self, node: Ps1BinaryExpression) -> Expression | None:
