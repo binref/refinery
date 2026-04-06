@@ -1,7 +1,8 @@
 """
-Inline constant IEX (Invoke-Expression) calls by parsing the string argument.
+Inline constant IEX (Invoke-Expression) and [scriptblock]::Create() calls
+by parsing the string argument.
 
-When the IEX argument is not a plain string literal but a .NET expression chain
+When the argument is not a plain string literal but a .NET expression chain
 (e.g. base64-decode -> decompress -> stream-read), the evaluator attempts to
 resolve it to a string value at deobfuscation time.
 """
@@ -42,10 +43,38 @@ from refinery.lib.scripts.ps1.model import (
 
 _IEX_NAMES = frozenset({'iex', 'invoke-expression'})
 
+_INVOKE_METHODS = frozenset({'invoke', 'invokereturnasis'})
+
+
+_SCRIPTBLOCK_TYPE_NAMES = frozenset({
+    'scriptblock',
+    'management.automation.scriptblock',
+})
+
+
+def _try_extract_scriptblock_create_arg(expr: Expression) -> Expression | None:
+    """
+    If `expr` is `[scriptblock]::Create(arg)`, return the single argument.
+    """
+    if not isinstance(expr, Ps1InvokeMember):
+        return None
+    if expr.access != Ps1AccessKind.STATIC:
+        return None
+    if not isinstance(expr.object, Ps1TypeExpression):
+        return None
+    tn = _normalize_dotnet_type_name(expr.object.name)
+    if tn not in _SCRIPTBLOCK_TYPE_NAMES:
+        return None
+    if not isinstance(expr.member, str) or expr.member.lower() != 'create':
+        return None
+    if len(expr.arguments) != 1:
+        return None
+    return expr.arguments[0]
+
 
 def _try_evaluate_byte_array(elements: list) -> bytes | None:
     """
-    Convert a list of ``Ps1IntegerLiteral`` elements to ``bytes``.
+    Convert a list of `Ps1IntegerLiteral` elements to `bytes`.
     """
     values = []
     for elem in elements:
@@ -60,9 +89,9 @@ def _try_evaluate_byte_array(elements: list) -> bytes | None:
 
 def _extract_new_object_args(cmd: Ps1CommandInvocation) -> tuple[str, list[Expression]] | None:
     """
-    Extract type name and constructor arguments from a ``New-Object`` invocation.
+    Extract type name and constructor arguments from a `New-Object` invocation.
 
-    Returns ``(type_name, [arg_expressions])`` or ``None``.
+    Returns `(type_name, [arg_expressions])` or `None`.
     """
     if not isinstance(cmd.name, Ps1StringLiteral):
         return None
@@ -100,7 +129,7 @@ def _extract_new_object_args(cmd: Ps1CommandInvocation) -> tuple[str, list[Expre
 
 def _resolve_encoding(expr: Expression) -> str | None:
     """
-    Resolve ``[Text.Encoding]::ASCII`` and similar to a Python codec name.
+    Resolve `[Text.Encoding]::ASCII` and similar to a Python codec name.
     """
     if not isinstance(expr, Ps1MemberAccess):
         return None
@@ -120,17 +149,18 @@ def _try_evaluate(
     bindings: dict[str, str | bytes] | None = None,
 ) -> str | bytes | None:
     """
-    Recursively evaluate a .NET expression chain to ``str`` or ``bytes``.
+    Recursively evaluate a .NET expression chain to `str` or `bytes`. Handles the pattern:
+        [Convert]::FromBase64String(literal)
+        -> [IO.MemoryStream]
+        -> New-Object DeflateStream/GZipStream(stream, Decompress)
+        -> New-Object StreamReader(stream, encoding)
+        -> .ReadToEnd()
 
-    Handles the pattern:
-    ``[Convert]::FromBase64String(literal)``
-    -> ``[IO.MemoryStream]`` cast
-    -> ``New-Object DeflateStream/GZipStream(stream, Decompress)``
-    -> ``New-Object StreamReader(stream, encoding)``
-    -> ``.ReadToEnd()``
+    Also handles pipelines of the form
 
-    Also handles pipelines of the form ``expr | %{ body } | %{ body }`` where
-    each ForEach-Object stage receives the previous result via ``$_``.
+        expr | %{ body } | %{ body }
+    
+    where the `ForEach-Object` stage receives the previous result via `$_`.
     """
     if isinstance(expr, Ps1StringLiteral):
         return expr.value
@@ -198,6 +228,9 @@ def _try_evaluate(
         type_name, ctor_args = result
         tn = _normalize_dotnet_type_name(type_name)
 
+        if tn == 'io.memorystream' and len(ctor_args) >= 1:
+            return _try_evaluate(ctor_args[0], bindings)
+
         if tn == 'io.compression.deflatestream' and len(ctor_args) >= 1:
             data = _try_evaluate(ctor_args[0], bindings)
             if isinstance(data, bytes):
@@ -239,8 +272,8 @@ def _try_evaluate_pipeline(
     bindings: dict[str, str | bytes] | None = None,
 ) -> str | bytes | None:
     """
-    Evaluate a pipeline ``expr | %{ body } | %{ body }`` by threading the result
-    of each stage into the next via ``$_`` bindings.
+    Evaluate a pipeline `expr | %{ body } | %{ body }` by threading the result of each stage into
+    the next via `$_` bindings.
     """
     if not node.elements:
         return None
@@ -291,10 +324,40 @@ def _resolve_to_string(expr: Expression) -> str | None:
     return None
 
 
+def _try_extract_scriptblock_create_from_statement(expr: Expression) -> Expression | None:
+    """
+    Given a top-level expression, check whether it is one of:
+
+    - `&([scriptblock]::Create(arg))`
+    - `[scriptblock]::Create(arg).Invoke()`
+    - `[scriptblock]::Create(arg).InvokeReturnAsIs()`
+
+    Returns the `Create` argument expression, or `None`.
+    """
+    if isinstance(expr, Ps1CommandInvocation) and expr.invocation_operator == '&':
+        name = expr.name
+        if isinstance(name, Ps1ParenExpression):
+            name = name.expression
+        if name is not None:
+            return _try_extract_scriptblock_create_arg(name)
+    if isinstance(expr, Ps1InvokeMember):
+        if (
+            expr.access == Ps1AccessKind.INSTANCE
+            and isinstance(expr.member, str)
+            and expr.member.lower() in _INVOKE_METHODS
+            and expr.object is not None
+        ):
+            return _try_extract_scriptblock_create_arg(expr.object)
+    return None
+
+
 class Ps1IexInlining(Transformer):
     """
-    Replace ``IEX 'constant string'`` and ``'constant string' | IEX``
-    with the parsed statements from that string.
+    Replaces the following patterns with the parsed statements from the reflectively loaded code:
+
+    -`'CODE' | Invoke-Expression`
+    - `Invoke-Expression 'CODE'`
+    - `[scriptblock]::Create('CODE')`
     """
 
     def visit(self, node):
@@ -313,6 +376,8 @@ class Ps1IexInlining(Transformer):
                 if code is None:
                     code = self._try_extract_piped_iex_string(body[i])
                 if code is None:
+                    code = self._try_extract_scriptblock_create_string(body[i])
+                if code is None:
                     i += 1
                     continue
                 parsed = self._try_parse(code)
@@ -326,49 +391,83 @@ class Ps1IexInlining(Transformer):
                 i += len(parsed)
 
     def _inline_expressions(self, node):
-        for cmd in list(node.walk()):
-            if not isinstance(cmd, Ps1CommandInvocation):
+        for expr in list(node.walk()):
+            if isinstance(expr, Ps1CommandInvocation):
+                if isinstance(expr.parent, Ps1ExpressionStatement):
+                    continue
+                replacement = self._try_inline_expression(expr)
+            elif isinstance(expr, Ps1InvokeMember):
+                if isinstance(expr.parent, Ps1ExpressionStatement):
+                    continue
+                replacement = self._try_inline_scriptblock_create_expression(expr)
+            else:
                 continue
-            if isinstance(cmd.parent, Ps1ExpressionStatement):
-                continue
-            replacement = self._try_inline_expression(cmd)
             if replacement is None:
                 continue
-            parent = cmd.parent
+            parent = expr.parent
             for attr_name in vars(parent):
                 if attr_name.startswith('_') or attr_name in ('parent', 'offset'):
                     continue
                 value = getattr(parent, attr_name)
-                if value is cmd:
+                if value is expr:
                     replacement.parent = parent
                     setattr(parent, attr_name, replacement)
                     self.mark_changed()
                     break
                 if isinstance(value, list):
                     for idx, item in enumerate(value):
-                        if item is cmd:
+                        if item is expr:
                             replacement.parent = parent
                             value[idx] = replacement
                             self.mark_changed()
                             break
 
     def _try_inline_expression(self, node: Ps1CommandInvocation) -> Expression | None:
-        if not isinstance(node.name, Ps1StringLiteral):
-            return None
-        if node.name.value.lower() not in _IEX_NAMES:
-            return None
-        if len(node.arguments) != 1:
-            return None
-        arg = node.arguments[0]
-        if isinstance(arg, Ps1CommandArgument):
-            if arg.kind != Ps1CommandArgumentKind.POSITIONAL:
-                return None
-            val = arg.value
+        sb_arg = _try_extract_scriptblock_create_from_statement(node)
+        if sb_arg is not None:
+            code = _resolve_to_string(sb_arg)
         else:
-            val = arg
-        if val is None:
+            if not isinstance(node.name, Ps1StringLiteral):
+                return None
+            if node.name.value.lower() not in _IEX_NAMES:
+                return None
+            if len(node.arguments) != 1:
+                return None
+            arg = node.arguments[0]
+            if isinstance(arg, Ps1CommandArgument):
+                if arg.kind != Ps1CommandArgumentKind.POSITIONAL:
+                    return None
+                val = arg.value
+            else:
+                val = arg
+            if val is None:
+                return None
+            code = _resolve_to_string(val)
+        if code is None:
             return None
-        code = _resolve_to_string(val)
+        parsed = self._try_parse(code)
+        if parsed is None or len(parsed) != 1:
+            return None
+        stmt = parsed[0]
+        if not isinstance(stmt, Ps1ExpressionStatement) or stmt.expression is None:
+            return None
+        return stmt.expression
+
+    def _try_inline_scriptblock_create_expression(self, node: Ps1InvokeMember) -> Expression | None:
+        """
+        Handle `[scriptblock]::Create(expr).Invoke()` in expression position.
+        """
+        if (
+            node.access != Ps1AccessKind.INSTANCE
+            or not isinstance(node.member, str)
+            or node.member.lower() not in _INVOKE_METHODS
+            or node.object is None
+        ):
+            return None
+        sb_arg = _try_extract_scriptblock_create_arg(node.object)
+        if sb_arg is None:
+            return None
+        code = _resolve_to_string(sb_arg)
         if code is None:
             return None
         parsed = self._try_parse(code)
@@ -431,6 +530,22 @@ class Ps1IexInlining(Transformer):
         if source is None:
             return None
         return _resolve_to_string(source)
+
+    @staticmethod
+    def _try_extract_scriptblock_create_string(stmt) -> str | None:
+        """
+        Match `&([scriptblock]::Create(expr))` and `[scriptblock]::Create(expr).Invoke()` at the
+        statement level.
+        """
+        if not isinstance(stmt, Ps1ExpressionStatement):
+            return None
+        expr = stmt.expression
+        if expr is None:
+            return None
+        sb_arg = _try_extract_scriptblock_create_from_statement(expr)
+        if sb_arg is None:
+            return None
+        return _resolve_to_string(sb_arg)
 
     @staticmethod
     def _try_parse(code: str) -> list | None:

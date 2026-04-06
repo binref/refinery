@@ -959,6 +959,70 @@ class TestPs1IexInlining(TestPs1):
         self.assertNotIn('IEX', result)
         self.assertNotIn('DeflateStream', result)
 
+    def test_scriptblock_create_ampersand(self):
+        result = self._deobfuscate("&([scriptblock]::Create('Write-Host hello'))")
+        self.assertIn('Write-Host', result)
+        self.assertNotIn('scriptblock', result.lower())
+
+    def test_scriptblock_create_invoke(self):
+        result = self._deobfuscate("[scriptblock]::Create('Write-Host hello').Invoke()")
+        self.assertIn('Write-Host', result)
+        self.assertNotIn('scriptblock', result.lower())
+
+    def test_scriptblock_create_fqn(self):
+        result = self._deobfuscate(
+            "&([System.Management.Automation.ScriptBlock]::Create('Write-Host hello'))"
+        )
+        self.assertIn('Write-Host', result)
+        self.assertNotIn('ScriptBlock', result)
+
+    def test_scriptblock_create_deflate(self):
+        b64 = 'Cy/KLEnV9cgvLlHISM3JyQcA'
+        data = (
+            "&([scriptblock]::Create("
+            "(New-Object IO.StreamReader("
+            "(New-Object IO.Compression.DeflateStream("
+            F"[IO.MemoryStream][Convert]::FromBase64String('{b64}'),"
+            " [IO.Compression.CompressionMode]::Decompress)),"
+            " [Text.Encoding]::ASCII)).ReadToEnd()))"
+        )
+        result = self._deobfuscate(data)
+        self.assertIn('Write-Host', result)
+        self.assertNotIn('scriptblock', result.lower())
+        self.assertNotIn('FromBase64String', result)
+
+    def test_scriptblock_create_gzip_new_object_memorystream(self):
+        b64 = 'H4sIAP7802kC/wsvyixJ1fXILy5RyEjNyckHAA2QLxEQAAAA'
+        data = (
+            "&([scriptblock]::Create("
+            "(New-Object IO.StreamReader("
+            "(New-Object IO.Compression.GzipStream("
+            "(New-Object IO.MemoryStream(,"
+            F"[Convert]::FromBase64String('{b64}'))),"
+            " [IO.Compression.CompressionMode]::Decompress)))"
+            ".ReadToEnd()))"
+        )
+        result = self._deobfuscate(data)
+        self.assertIn('Write-Host', result)
+        self.assertNotIn('scriptblock', result.lower())
+        self.assertNotIn('FromBase64String', result)
+
+    def test_scriptblock_create_variable_not_inlined(self):
+        result = self._deobfuscate('&([scriptblock]::Create($var))')
+        self.assertIn('scriptblock', result.lower())
+        self.assertIn('$var', result)
+
+    def test_scriptblock_create_multi_statement(self):
+        result = self._deobfuscate("&([scriptblock]::Create('$a = 1; $b = 2'))")
+        self.assertIn('$a = 1', result)
+        self.assertIn('$b = 2', result)
+        self.assertNotIn('scriptblock', result.lower())
+
+    def test_scriptblock_create_invoke_return_as_is(self):
+        result = self._deobfuscate("[scriptblock]::Create('Write-Host hello').InvokeReturnAsIs()")
+        self.assertIn('Write-Host', result)
+        self.assertNotIn('scriptblock', result.lower())
+
 
 class TestPs1ForEachPipeline(TestPs1):
 
