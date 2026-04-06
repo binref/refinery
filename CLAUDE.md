@@ -54,10 +54,11 @@ The following rules contradict common Python conventions. Check them explicitly:
   When generating samples for testing, create a subfolder in `temp` with an appropriate name and place your data in there.
 - **Important.** The following rule is **essential**:
   When running commands, use only Python.
-  Run only `python [path]` where `[path]` is the full path to your (temporary) script.
-  Do **not** run other shell commands, do **not** use output redirection, and do **not** use compound commands
-  where, e.g. you first run `cd` to change the working directory.
-  Handle everything you need to do inside the script.
+  Write a script to disk first, then run `python [path]` where `[path]` is the full path to the script.
+  **NEVER** use `python -c`, `python -m`, or inline Python commands.
+  **NEVER** use shell commands, output redirection, pipes, or compound commands (e.g. `cd && ...`).
+  The reason: `python -c` triggers interactive permission prompts, while scripts on disk can be pre-approved.
+  Handle everything you need to do inside the script, including directory changes and file I/O.
 - When making commits on the user's behalf, do not include a comment about AI co-authorship.
 - When asked to commit changes to git, only use one-line commit messages.
 
