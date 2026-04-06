@@ -459,12 +459,12 @@ class TestPS1Regressions(TestPs1):
 
     def test_binary_expression_in_command_argument(self):
         result = self._deobfuscate("Set-Item Variable:x ($env:temp + '\\foo.exe')")
-        self.assertIn('${env:temp}', result)
+        self.assertIn('${env:Temp}', result)
         self.assertIn('\\foo.exe', result)
 
     def test_variable_string_concat_becomes_expandable(self):
         result = self._deobfuscate("$env:temp + '\\foo.exe'")
-        self.assertIn('"${env:temp}\\foo.exe"', result)
+        self.assertIn('"${env:Temp}\\foo.exe"', result)
 
 
 class TestPs1VariableDriveResolution(TestPs1):
@@ -500,11 +500,11 @@ class TestPs1VariableDriveResolution(TestPs1):
 
     def test_set_item_variable_multi_value(self):
         result = self._deobfuscate(
-            "Set-Item Variable:/G7E $env:temp '\\NGLClient.exe'"
+            "Set-Item Variable:/G7E $env:Temp '\\NGLClient.exe'"
         )
         self.assertIn('$G7E', result)
         self.assertIn('=', result)
-        self.assertIn('env:temp', result)
+        self.assertIn('env:Temp', result)
         self.assertIn('NGLClient', result)
 
     def test_set_variable_becomes_assignment(self):
@@ -1037,6 +1037,21 @@ class TestPs1ParserModeRescan(TestPs1):
         )
         self.assertIn('Max', result)
         self.assertIn('Arg', result)
+
+
+class TestPs1NameNormalization(TestPs1):
+
+    def test_wmi_class_name_normalized(self):
+        result = self._deobfuscate(
+            'Get-WmiObject wIn32_oPErATinGsYsteM'
+        )
+        self.assertIn('Win32_OperatingSystem', result)
+        self.assertNotIn('wIn32_oPErATinGsYsteM', result)
+
+    def test_env_variable_name_normalized(self):
+        result = self._deobfuscate('${env:aPpdatA}')
+        self.assertIn('AppData', result)
+        self.assertNotIn('aPpdatA', result)
 
 
 class TestPs1SubExpressionSimplification(TestPs1):

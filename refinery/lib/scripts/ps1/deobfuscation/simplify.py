@@ -23,6 +23,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1MemberAccess,
     Ps1ParenExpression,
     Ps1RealLiteral,
+    Ps1ScopeModifier,
     Ps1StringLiteral,
     Ps1SubExpression,
     Ps1TypeExpression,
@@ -35,6 +36,35 @@ _KNOWN_VARIABLE_NAMES = {name.lower(): name for name in [
     'False',
     'Null',
     'ExecutionContext',
+]}
+
+_KNOWN_ENV_NAMES = {name.lower(): name for name in [
+    'AllUsersProfile',
+    'AppData',
+    'CommonProgramFiles',
+    'CommonProgramFiles(x86)',
+    'CommonProgramW6432',
+    'ComputerName',
+    'ComSpec',
+    'HomeDrive',
+    'HomePath',
+    'LocalAppData',
+    'LogonServer',
+    'Path',
+    'PathExt',
+    'ProgramData',
+    'ProgramFiles',
+    'ProgramFiles(x86)',
+    'ProgramW6432',
+    'Public',
+    'SystemDrive',
+    'SystemRoot',
+    'Temp',
+    'Tmp',
+    'UserDomain',
+    'UserName',
+    'UserProfile',
+    'WinDir',
 ]}
 
 
@@ -71,6 +101,11 @@ class Ps1Simplifications(Transformer):
         if canonical is not None and canonical != node.name:
             node.name = canonical
             self.mark_changed()
+        if node.scope == Ps1ScopeModifier.ENV:
+            canonical = _KNOWN_ENV_NAMES.get(node.name.lower())
+            if canonical is not None and canonical != node.name:
+                node.name = canonical
+                self.mark_changed()
         return None
 
     def visit_Ps1FunctionDefinition(self, node: Ps1FunctionDefinition):
@@ -140,15 +175,18 @@ class Ps1Simplifications(Transformer):
                 node.name = normalized
                 self.mark_changed()
         if node.kind == Ps1CommandArgumentKind.POSITIONAL and isinstance(node.value, Ps1StringLiteral):
-            if '.' in node.value.value:
-                normalized = self._normalize_type_name(node.value.value)
-                if normalized != node.value.value:
-                    node.value = Ps1StringLiteral(
-                        offset=node.value.offset,
-                        value=normalized,
-                        raw=normalized,
-                    )
-                    self.mark_changed()
+            value = node.value.value
+            if '.' in value:
+                normalized = self._normalize_type_name(value)
+            else:
+                normalized = _case_normalize_name(value)
+            if normalized != value:
+                node.value = Ps1StringLiteral(
+                    offset=node.value.offset,
+                    value=normalized,
+                    raw=normalized,
+                )
+                self.mark_changed()
         return None
 
     def visit_Ps1TypeExpression(self, node: Ps1TypeExpression):

