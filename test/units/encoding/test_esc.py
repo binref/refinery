@@ -19,10 +19,9 @@ class TestEscaping(TestUnitBase):
         self.assertEqual(result, BR'"binary\n\a\t..\"refinery\"!"')
 
     def test_quoted_string_04(self):
-        unit = esc(quoted=True)
         data = RB'"r\x65\x66\x69\x6ee\x72\x79'
         goal = B'"r\x65\x66\x69\x6ee\x72\x79'
-        self.assertEqual(bytes(data | unit), goal)
+        self.assertEqual(bytes(data | esc), goal)
 
     def test_inversion_simple(self):
         unit = self.load()
@@ -118,3 +117,18 @@ class TestEscaping(TestUnitBase):
         data = B'FOO\x005BAR'
         test = data | -self.load() | self.load() | bytes
         self.assertEqual(test, data)
+
+    def test_raw_strings(self):
+        data = rB'''r"C:\Program\Access"'''
+        test = data | self.load() | str
+        self.assertEqual(test, r'C:\Program\Access')
+
+    def test_raw_multiline_strings(self):
+        data = B'''r"""C:\\Program\\Foo\nC:\\Program\\Bar"""'''
+        test = data | self.load() | str
+        self.assertEqual(test, 'C:\\Program\\Foo\nC:\\Program\\Bar')
+
+    def test_multiline_strings(self):
+        data = B'''"""C:\\nProgram\\nFoo\nC:\\rProgram\\aBar"""'''
+        test = data | self.load() | str
+        self.assertEqual(test, 'C:\nProgram\nFoo\nC:\rProgram\aBar')

@@ -404,17 +404,25 @@ _pattern_date = '|'.join(
 def _sized_pattern_string(lower: int = 0, upper: int = 0):
     ml = _sized_suffix((lower - 6) // 1, (upper - 6))
     sl = _sized_suffix((lower - 2) // 2, (upper - 2))
+    str_dq_r = FR'[rR]"[^\r\n]{sl}"'
+    str_sq_r = FR"[rR]'[^\r\n]{sl}'"
     str_dq = FR'"(?:[^"\\\r\n]|\\[^\r\n]){sl}"'
     str_sq = FR"'(?:[^'\\\r\n]|\\[^\r\n]){sl}'"
     str_js = FR'`(?:[^`\\]|\\.){sl}`'
-    str_mul_dq = FR'"""(?:.(?!""")){ml}"""'
-    str_mul_sq = FR"'''(?:.(?!''')){ml}'''"
+    str_mul_dq_r = FR'[rR]""".{ml}?"""'
+    str_mul_sq_r = FR"[rR]'''.{ml}?'''"
+    str_mul_dq = FR'"""(?:[^\\]|\\.){ml}?"""'
+    str_mul_sq = FR"'''(?:[^\\]|\\.){ml}?'''"
     return '(?:{})'.format('|'.join((
+        str_mul_dq_r,
+        str_mul_sq_r,
+        str_mul_dq,
+        str_mul_sq,
+        str_dq_r,
+        str_sq_r,
         str_dq,
         str_sq,
         str_js,
-        str_mul_dq,
-        str_mul_sq,
     )))
 
 

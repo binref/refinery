@@ -56,19 +56,31 @@ class esc(Unit):
 
     def process(self, data):
         data = memoryview(data)
+        rawstring = False
 
-        if self.args.quoted:
-            quote = data[0]
-            if data[-1] != quote:
-                self.log_info('string is not correctly quoted')
-            else:
-                data = data[1:-1]
-        elif not self.args.unquoted:
-            quote = data[:1]
-            strip = data[1:-1]
-            if data[-1:] == quote and not re.search(br'(?<!\\)' + re.escape(quote), strip):
+        if not data:
+            return data
+
+        if data[0] in b'rR' and len(data) > 1:
+            rawstring = True
+
+        if (_q := data[rawstring:rawstring + 3]) in (b'"""', B"'''"):
+            quote = _q
+        else:
+            quote = _q[:1]
+
+        quote_len = len(quote)
+
+        if data[-quote_len:] == quote:
+            if not self.args.unquoted:
                 self.log_info('removing automatically detected quotes')
-                data = strip
+                strip = data[rawstring + quote_len:-quote_len]
+                if rawstring:
+                    return strip
+                elif not re.search(br'(?<!\\)' + re.escape(quote), strip):
+                    data = strip
+        elif self.args.quoted:
+            raise ValueError('string is not correctly quoted')
 
         def unescape(match: re.Match[bytes]):
             c = match[1]
