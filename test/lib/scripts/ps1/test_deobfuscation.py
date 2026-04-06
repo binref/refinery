@@ -234,6 +234,11 @@ class TestPs1Deobfuscator(TestPs1):
         self.assertNotIn('`', result)
         self.assertIn('.Method', result)
 
+    def test_backtick_function_name_stripped(self):
+        result = self._deobfuscate("function tR`iomE { Param($x); return $x }")
+        self.assertNotIn('`', result)
+        self.assertIn('function tRiomE', result)
+
     def test_cast_wrapped_array_pipeline(self):
         result = self._deobfuscate(
             "[String]([Char[]] (72,101,108,108,111) | "
@@ -517,6 +522,21 @@ class TestPs1VariableDriveResolution(TestPs1):
     def test_get_variable_value_only_abbreviated(self):
         result = self._deobfuscate('Get-Variable Cf -ValueO')
         self.assertEqual(result.strip(), '$Cf')
+
+    def test_get_variable_value_abbreviated_short(self):
+        for switch in ('-V', '-Va', '-Val', '-Valu', '-Value', '-ValueO', '-ValueOn', '-ValueOnl', '-ValueOnly'):
+            with self.subTest(switch=switch):
+                result = self._deobfuscate(F'Get-Variable Cf {switch}')
+                self.assertEqual(result.strip(), '$Cf')
+
+    def test_get_childitem_variable_drive_resolved(self):
+        result = self._deobfuscate("(Get-ChildItem 'Variable:ExecutionContext').Value")
+        self.assertEqual(result.strip(), '$ExecutionContext')
+
+    def test_gci_variable_drive_resolved(self):
+        result = self._deobfuscate("(gci 'Variable:X').Value")
+        self.assertIn('$X', result)
+        self.assertNotIn('gci', result)
 
     def test_get_variable_value_only_member_access(self):
         result = self._deobfuscate(
@@ -939,3 +959,37 @@ class TestPs1WildcardResolution(TestPs1):
         result = self._deobfuscate("$obj | ? { $_.Name -ilike '*ts' }")
         self.assertNotIn('Exists', result)
         self.assertIn("'*ts'", result)
+
+
+class TestPs1ParserModeRescan(TestPs1):
+
+    def test_paren_command_static_member_resolved(self):
+        result = self._deobfuscate(
+            '$Y = [Net.SecurityProtocolType];'
+            ' [Net.ServicePointManager]::SecurityProtocol = (Get-Variable Y -ValueOnly)::Tls'
+        )
+        self.assertIn('::Tls', result)
+        self.assertIn('SecurityProtocolType', result)
+        self.assertNotIn('Get-Variable', result)
+
+    def test_paren_command_invoke_member_resolved(self):
+        result = self._deobfuscate(
+            '$X = [Convert];'
+            ' (Get-Variable X -ValueOnly)::FromBase64String("AAAA")'
+        )
+        self.assertIn('::FromBase64String', result)
+        self.assertIn('Convert', result)
+        self.assertNotIn('Get-Variable', result)
+
+    def test_member_name_case_normalization(self):
+        result = self._deobfuscate(
+            '[Net.ServicePointManager]::sEcUrItYpRoToCoL'
+        )
+        self.assertIn('SecurityProtocol', result)
+        self.assertNotIn('sEcUrItYpRoToCoL', result)
+
+    def test_member_name_default_credentials(self):
+        result = self._deobfuscate(
+            '[Net.CredentialCache]::dEfAuLtCrEdEnTiAlS'
+        )
+        self.assertIn('DefaultCredentials', result)

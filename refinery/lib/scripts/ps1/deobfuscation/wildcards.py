@@ -46,7 +46,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1Variable,
 )
 
-_GET_ITEM_COMMANDS = frozenset({'get-item', 'gi'})
+_GET_ITEM_COMMANDS = frozenset({'get-item', 'gi', 'get-childitem', 'gci'})
 _GET_VARIABLE_COMMANDS = frozenset({'get-variable', 'gv'})
 _SET_ITEM_COMMANDS = frozenset({'set-item', 'si'})
 _SET_VARIABLE_COMMANDS = frozenset({'set-variable', 'sv', 'set'})
@@ -252,17 +252,19 @@ def _concat_expressions(exprs: list[Expression]) -> Expression:
     return result
 
 
-def _has_switch(cmd: Ps1CommandInvocation, prefix: str) -> bool:
+def _has_valueonly_switch(cmd: Ps1CommandInvocation) -> bool:
     """
-    Check if a command has a switch parameter whose name starts with prefix.
+    Check if a command has a switch that is any unambiguous abbreviation of
+    ``-ValueOnly``.  PowerShell allows ``-V``, ``-Val``, ``-Value``, etc.
     """
-    prefix_lower = prefix.lower()
+    full = '-valueonly'
     for arg in cmd.arguments:
         if not isinstance(arg, Ps1CommandArgument):
             continue
         if arg.kind != Ps1CommandArgumentKind.SWITCH:
             continue
-        if arg.name.lower().startswith(prefix_lower):
+        name = arg.name.lower()
+        if full.startswith(name) and name.startswith('-v'):
             return True
     return False
 
@@ -437,7 +439,7 @@ class Ps1WildcardResolution(Transformer):
         cmd_name = _get_command_name(node)
         if cmd_name is None or cmd_name.lower() not in _GET_VARIABLE_COMMANDS:
             return None
-        if not _has_switch(node, '-valueo'):
+        if not _has_valueonly_switch(node):
             return None
         arg_value = _extract_first_positional_string(node)
         if arg_value is None:

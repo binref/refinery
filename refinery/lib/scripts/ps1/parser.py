@@ -215,6 +215,16 @@ class Ps1Parser:
             return self._advance()
         return Ps1Token(kind, '', self._current.offset)
 
+    def _rescan_current(self):
+        """
+        Re-tokenize the current token under the active lexer mode. Used after
+        mode changes (e.g. ``pop_mode``) to ensure the lookahead token matches
+        the new mode.
+        """
+        if self._current.offset >= 0:
+            self._lexer.pos = self._current.offset
+            self._advance()
+
     def _skip_newlines(self):
         while self._current.kind == Ps1TokenKind.NEWLINE:
             self._advance()
@@ -484,9 +494,7 @@ class Ps1Parser:
             name_expr = self._parse_primary_postfix(name_expr)
 
         self._lexer.mode = Ps1LexerMode.ARGUMENT
-        if self._current.offset >= 0:
-            self._lexer.pos = self._current.offset
-            self._advance()
+        self._rescan_current()
 
         if isinstance(name_expr, Ps1StringLiteral) and not invocation_operator:
             while self._at(Ps1TokenKind.DOT):
@@ -1084,6 +1092,7 @@ class Ps1Parser:
         self._skip_newlines()
         self._expect(Ps1TokenKind.RPAREN)
         self._lexer.pop_mode()
+        self._rescan_current()
         return Ps1ParenExpression(offset=offset, expression=expr)
 
     def _parse_sub_expression(self) -> Ps1SubExpression:
@@ -1100,6 +1109,7 @@ class Ps1Parser:
         self._skip_newlines()
         self._expect(Ps1TokenKind.RPAREN)
         self._lexer.pop_mode()
+        self._rescan_current()
         return Ps1SubExpression(offset=offset, body=stmts)
 
     def _parse_array_expression(self) -> Ps1ArrayExpression:
@@ -1116,6 +1126,7 @@ class Ps1Parser:
         self._skip_newlines()
         self._expect(Ps1TokenKind.RPAREN)
         self._lexer.pop_mode()
+        self._rescan_current()
         return Ps1ArrayExpression(offset=offset, body=stmts)
 
     def _parse_label_or_key(self) -> Expression | None:

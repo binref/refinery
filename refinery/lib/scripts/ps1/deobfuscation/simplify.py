@@ -70,6 +70,13 @@ class Ps1Simplifications(Transformer):
             self.mark_changed()
         return None
 
+    def visit_Ps1FunctionDefinition(self, node: Ps1FunctionDefinition):
+        self.generic_visit(node)
+        if '`' in node.name:
+            node.name = _strip_backtick_noop(node.name)
+            self.mark_changed()
+        return None
+
     def visit_Ps1ParenExpression(self, node: Ps1ParenExpression):
         self.generic_visit(node)
         inner = node.expression

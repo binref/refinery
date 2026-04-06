@@ -517,3 +517,23 @@ class TestPs1ParserExpressions(TestBase):
         expr = self._parse_expr('1 + <# comment #> 2')
         self.assertIsInstance(expr, Ps1BinaryExpression)
         self.assertEqual(expr.operator, '+')
+
+    def test_paren_command_static_member_access(self):
+        expr = self._parse_expr('(Get-Variable Y -ValueOnly)::Tls')
+        self.assertIsInstance(expr, Ps1MemberAccess)
+        self.assertEqual(expr.access, Ps1AccessKind.STATIC)
+        self.assertIsInstance(expr.object, Ps1ParenExpression)
+        self.assertEqual(expr.member, 'Tls')
+
+    def test_paren_command_instance_member_access(self):
+        expr = self._parse_expr('(Get-Item Variable:X).Value')
+        self.assertIsInstance(expr, Ps1MemberAccess)
+        self.assertEqual(expr.access, Ps1AccessKind.INSTANCE)
+        self.assertIsInstance(expr.object, Ps1ParenExpression)
+        self.assertEqual(expr.member, 'Value')
+
+    def test_paren_command_static_string_member(self):
+        expr = self._parse_expr("(Get-Variable Y -ValueOnly)::\"T`Ls\"")
+        self.assertIsInstance(expr, Ps1MemberAccess)
+        self.assertEqual(expr.access, Ps1AccessKind.STATIC)
+        self.assertIsInstance(expr.member, Ps1StringLiteral)
