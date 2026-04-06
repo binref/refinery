@@ -1034,6 +1034,13 @@ class Ps1ForEachPipeline(Transformer):
             if isinstance(elem, Ps1IntegerLiteral):
                 values.append(elem.value)
                 continue
+            if (
+                isinstance(elem, Ps1UnaryExpression)
+                and elem.operator == '-'
+                and isinstance(elem.operand, Ps1IntegerLiteral)
+            ):
+                values.append(-elem.operand.value)
+                continue
             return None
         return values
 

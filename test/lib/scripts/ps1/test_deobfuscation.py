@@ -1031,6 +1031,18 @@ class TestPs1ForEachPipeline(TestPs1):
         result = self._deobfuscate(data)
         self.assertIn('Hello', result)
 
+    def test_foreach_pipeline_negative_integers(self):
+        data = "((-83,-71,-65,-75,-107,-70,-75,-64,-110,-83,-75,-72,-79,-80) | %{ [char]($_ + 180) }) -join ''"
+        result = self._deobfuscate(data)
+        self.assertIn('amsiInitFailed', result)
+
+    def test_foreach_pipeline_mixed_sign_integers(self):
+        data = "(-4, 1, -17) | %{ [char]($_ + 104) }"
+        result = self._deobfuscate(data)
+        self.assertIn('d', result)
+        self.assertIn('i', result)
+        self.assertIn('W', result)
+
 
 class TestPs1WildcardResolution(TestPs1):
 
