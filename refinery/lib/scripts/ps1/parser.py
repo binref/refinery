@@ -510,7 +510,10 @@ class Ps1Parser:
         self._lexer.mode = Ps1LexerMode.ARGUMENT
         while not self._is_pipeline_terminator():
             self._lexer.mode = Ps1LexerMode.ARGUMENT
-            if self._current.offset >= 0 and self._at(Ps1TokenKind.DASH):
+            if self._current.offset >= 0 and self._at(
+                Ps1TokenKind.DASH,
+                Ps1TokenKind.VARIABLE,
+            ):
                 self._lexer.pos = self._current.offset
                 self._advance()
             if self._is_pipeline_terminator():

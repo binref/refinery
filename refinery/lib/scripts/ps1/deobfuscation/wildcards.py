@@ -9,7 +9,10 @@ Handles three categories of wildcard obfuscation commonly used in malware:
 """
 from __future__ import annotations
 
-from fnmatch import fnmatch
+import re
+
+from fnmatch import translate as fnmatch_translate
+from typing import Iterable
 
 from refinery.lib.scripts import Transformer
 from refinery.lib.scripts.ps1.deobfuscation._helpers import (
@@ -19,6 +22,10 @@ from refinery.lib.scripts.ps1.deobfuscation._helpers import (
     _string_value,
 )
 from refinery.lib.scripts.ps1.deobfuscation.constants import _PS1_KNOWN_VARIABLES
+from refinery.lib.scripts.ps1.deobfuscation.typenames import (
+    _TYPE_MEMBERS,
+    resolve_expression_type,
+)
 from refinery.lib.scripts.ps1.model import (
     Expression,
     Ps1BinaryExpression,
@@ -28,6 +35,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1ExpressionStatement,
     Ps1InvokeMember,
     Ps1MemberAccess,
+    Ps1ParenExpression,
     Ps1Pipeline,
     Ps1PipelineElement,
     Ps1ScriptBlock,
@@ -48,28 +56,120 @@ def _is_wildcard(pattern: str) -> bool:
 
 def _wildcard_match_unique(
     pattern: str,
-    candidates: dict[str, str],
+    candidates: Iterable[str],
 ) -> str | None:
     """
-    Match a wildcard pattern against a dictionary of {lower_name: canonical_name}.
-    Returns the canonical name if exactly one candidate matches, else None.
+    Match a wildcard pattern case-insensitively against canonical names.
+    Returns the name if exactly one candidate matches, else None.
     """
-    matches = [
-        canonical
-        for lower, canonical in candidates.items()
-        if fnmatch(lower, pattern.lower())
-    ]
+    regex = re.compile(fnmatch_translate(pattern), re.IGNORECASE)
+    matches = [name for name in candidates if regex.match(name)]
     if len(matches) == 1:
         return matches[0]
     return None
 
 
-def _known_cmdlets() -> dict[str, str]:
-    return {
-        lower: canonical
-        for lower, canonical in _KNOWN_NAMES.items()
-        if '-' in canonical
-    }
+_GET_COMMAND_ALIASES = frozenset({'get-command', 'gcm'})
+_GET_MEMBER_ALIASES = frozenset({'get-member', 'gm'})
+
+
+def _known_cmdlets() -> list[str]:
+    return [name for name in _KNOWN_NAMES.values() if '-' in name]
+
+
+def _get_member_name(member: str | Expression) -> str | None:
+    if isinstance(member, str):
+        return member
+    if isinstance(member, Ps1StringLiteral):
+        return member.value
+    return None
+
+
+def _is_psobject_member_access(
+    expr: Expression,
+    leaf_name: str,
+) -> Ps1MemberAccess | None:
+    """
+    Check if expr is of the form `<something>.PSObject.<leaf_name>` and return
+    the inner `<something>.PSObject` member access, or None.
+    """
+    if not isinstance(expr, Ps1MemberAccess):
+        return None
+    name = _get_member_name(expr.member)
+    if name is None or name.lower() != leaf_name:
+        return None
+    inner = expr.object
+    if not isinstance(inner, Ps1MemberAccess):
+        return None
+    ps_name = _get_member_name(inner.member)
+    if ps_name is None or ps_name.lower() != 'psobject':
+        return None
+    return inner
+
+
+def _determine_where_object_candidates(
+    elements: list,
+) -> Iterable[str] | None:
+    """
+    Examine the pipeline elements preceding Where-Object to determine which
+    candidates the wildcard should match against. Returns canonical names to
+    match against, or None if the source is unrecognized.
+    """
+    for elem in elements:
+        if not isinstance(elem, Ps1PipelineElement):
+            continue
+        expr = elem.expression
+
+        if isinstance(expr, Ps1CommandInvocation):
+            cmd_name = _get_command_name(expr)
+            if cmd_name is not None:
+                cmd_lower = cmd_name.lower()
+                if cmd_lower in _GET_COMMAND_ALIASES:
+                    return _known_cmdlets()
+                if cmd_lower in _GET_MEMBER_ALIASES:
+                    return _candidates_from_get_member(elements, elem)
+
+        if isinstance(expr, Ps1MemberAccess):
+            pso = _is_psobject_member_access(expr, 'methods')
+            if pso is not None:
+                return _candidates_from_type(pso.object)
+            pso = _is_psobject_member_access(expr, 'properties')
+            if pso is not None:
+                return _candidates_from_type(pso.object)
+
+    return None
+
+
+def _candidates_from_get_member(
+    elements: list,
+    gm_element: Ps1PipelineElement,
+) -> list[str] | None:
+    """
+    For a pipeline like `expr | Get-Member | Where-Object ...`, resolve
+    the type of the expression piped into Get-Member.
+    """
+    idx = None
+    for i, elem in enumerate(elements):
+        if elem is gm_element:
+            idx = i
+            break
+    if idx is None or idx == 0:
+        return None
+    prev = elements[idx - 1]
+    if not isinstance(prev, Ps1PipelineElement):
+        return None
+    return _candidates_from_type(prev.expression)
+
+
+def _candidates_from_type(
+    expr: Expression | None,
+) -> list[str] | None:
+    if expr is None:
+        return None
+    type_name = resolve_expression_type(expr)
+    if type_name is None:
+        return None
+    return _TYPE_MEMBERS.get(type_name)
 
 
 def _extract_first_positional_string(
@@ -143,9 +243,9 @@ def _extract_where_object_wildcard(
 
 class Ps1WildcardResolution(Transformer):
 
-    def visit_Ps1CommandInvocation(self, node: Ps1CommandInvocation):
+    def visit_Ps1MemberAccess(self, node: Ps1MemberAccess):
         self.generic_visit(node)
-        replacement = self._try_resolve_variable_drive(node)
+        replacement = self._try_resolve_variable_value(node)
         if replacement is not None:
             return replacement
         return None
@@ -164,17 +264,32 @@ class Ps1WildcardResolution(Transformer):
             return replacement
         return None
 
-    def _try_resolve_variable_drive(
+    def _try_resolve_variable_value(
         self,
-        cmd: Ps1CommandInvocation,
+        node: Ps1MemberAccess,
     ) -> Expression | None:
-        name = _get_command_name(cmd)
+        """
+        Resolve (Get-Item Variable:X).Value or (Get-Variable X).Value to $X.
+
+        Get-Item Variable:X returns a PSVariable wrapper object. Only when
+        .Value is accessed do we get the actual variable value, which is
+        semantically equivalent to $X.
+        """
+        member_name = _get_member_name(node.member)
+        if member_name is None or member_name.lower() != 'value':
+            return None
+        inner = node.object
+        while isinstance(inner, Ps1ParenExpression) and inner.expression is not None:
+            inner = inner.expression
+        if not isinstance(inner, Ps1CommandInvocation):
+            return None
+        name = _get_command_name(inner)
         if name is None:
             return None
         name_lower = name.lower()
         if name_lower not in _GET_ITEM_COMMANDS and name_lower not in _GET_VARIABLE_COMMANDS:
             return None
-        arg_value = _extract_first_positional_string(cmd)
+        arg_value = _extract_first_positional_string(inner)
         if arg_value is None:
             return None
         if name_lower in _GET_ITEM_COMMANDS:
@@ -184,13 +299,18 @@ class Ps1WildcardResolution(Transformer):
             pattern = arg_value[len(prefix):]
         else:
             pattern = arg_value
-        if not _is_wildcard(pattern):
-            return None
-        resolved = _wildcard_match_unique(pattern, _PS1_KNOWN_VARIABLES)
+        if _is_wildcard(pattern):
+            resolved = _wildcard_match_unique(pattern, _PS1_KNOWN_VARIABLES.values())
+        else:
+            pattern_lower = pattern.lower()
+            resolved = next(
+                (v for v in _PS1_KNOWN_VARIABLES.values() if v.lower() == pattern_lower),
+                pattern,
+            )
         if resolved is None:
             return None
         return Ps1Variable(
-            offset=cmd.offset,
+            offset=node.offset,
             name=resolved,
             scope=Ps1ScopeModifier.NONE,
         )
@@ -241,7 +361,11 @@ class Ps1WildcardResolution(Transformer):
         pattern = _extract_where_object_wildcard(cmd)
         if pattern is None or not _is_wildcard(pattern):
             return None
-        resolved = _wildcard_match_unique(pattern, _KNOWN_NAMES)
+        preceding = node.elements[:-1]
+        candidates = _determine_where_object_candidates(preceding)
+        if candidates is None:
+            return None
+        resolved = _wildcard_match_unique(pattern, candidates)
         if resolved is None:
             return None
         return _make_string_literal(resolved)

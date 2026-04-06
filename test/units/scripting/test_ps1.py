@@ -460,7 +460,7 @@ class TestPs1RealWorldLarge(TestUnitBase):
 class TestPs1WildcardResolution(TestUnitBase):
 
     def test_wildcard_variable_get_item(self):
-        data = b"Get-Item Variable:E*t"
+        data = b"(Get-Item Variable:E*t).Value"
         result = data | self.load() | str
         self.assertIn('$ExecutionContext', result)
         self.assertNotIn('Variable:', result)
@@ -482,6 +482,17 @@ class TestPs1WildcardResolution(TestUnitBase):
         self.assertIn('New-Object', result)
 
     def test_wildcard_member_filter(self):
-        data = b"$obj | ? { $_.Name -ilike 'ReadT*d' }"
+        data = b"[IO.StreamReader] | Get-Member | ? { $_.Name -ilike 'ReadT*d' }"
         result = data | self.load() | str
         self.assertIn('ReadToEnd', result)
+
+    def test_wildcard_where_get_command(self):
+        data = b"Get-Command | ? { $_.Name -ilike '*w-*ct' }"
+        result = data | self.load() | str
+        self.assertIn('New-Object', result)
+
+    def test_wildcard_where_unknown_source(self):
+        data = b"$obj | ? { $_.Name -ilike '*ts' }"
+        result = data | self.load() | str
+        self.assertNotIn('Exists', result)
+        self.assertIn("'*ts'", result)

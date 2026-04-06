@@ -393,8 +393,9 @@ class TestPS1Regressions(TestPs1):
             self.assertNotEqual(line.strip(), ')')
 
     def test_pipeline_index_member_access(self):
-        result = self._deobfuscate('($x.Value|Get-Member)[6].Name')
-        self.assertIn('[6].Name', result)
+        result = self._deobfuscate('($ExecutionContext | Get-Member)[6].Name')
+        self.assertIn('InvokeCommand', result)
+        self.assertNotIn('[6]', result)
 
     def test_user_function_not_aliased(self):
         data = (
@@ -410,6 +411,66 @@ class TestPS1Regressions(TestPs1):
     def test_user_function_not_case_normalized_to_alias(self):
         result = self._deobfuscate("Function gc { 'test' }\ngc")
         self.assertNotIn('Get-Content', result)
+
+    def test_where_object_wildcard_not_over_resolved(self):
+        data = "$obj.PSObject.Methods | ? { $_.Name -ilike '*ts' }"
+        result = self._deobfuscate(data)
+        self.assertNotIn('Exists', result)
+        self.assertIn("'*ts'", result)
+
+    def test_binary_expression_in_command_argument(self):
+        result = self._deobfuscate("Set-Item Variable:x ($env:temp + '\\foo.exe')")
+        self.assertIn('+', result)
+        self.assertIn('(', result)
+
+    def test_variable_adjacent_string_in_command_argument(self):
+        result = self._deobfuscate("Set-Item Variable:x $env:temp'\\foo.exe'")
+        self.assertNotIn("$env:temp '", result)
+        self.assertIn("$env:temp'", result)
+
+
+class TestPs1VariableDriveResolution(TestPs1):
+
+    def test_get_item_variable_value_resolved(self):
+        result = self._deobfuscate("(Get-Item 'Variable:E*t').Value.InvokeCommand")
+        self.assertEqual(result.strip(), '$ExecutionContext.InvokeCommand')
+
+    def test_get_variable_value_resolved(self):
+        result = self._deobfuscate('(Get-Variable ExecutionContext).Value')
+        self.assertEqual(result.strip(), '$ExecutionContext')
+
+    def test_get_item_variable_without_value_preserved(self):
+        result = self._deobfuscate("(Get-Item 'Variable:E*t')")
+        self.assertNotIn('$ExecutionContext', result)
+
+    def test_member_alias_resolved(self):
+        result = self._deobfuscate('$x | Member')
+        self.assertIn('Get-Member', result)
+
+    def test_variable_alias_resolved(self):
+        result = self._deobfuscate('Variable ExecutionContext')
+        self.assertIn('Get-Variable', result)
+
+
+class TestPs1TypeSystemSimplifications(TestPs1):
+
+    def test_get_member_index_name_resolved(self):
+        result = self._deobfuscate('($ExecutionContext | Get-Member)[6].Name')
+        self.assertIn('InvokeCommand', result)
+        self.assertNotIn('[6]', result)
+
+    def test_get_member_index_unknown_type_preserved(self):
+        result = self._deobfuscate('($unknown | Get-Member)[6].Name')
+        self.assertIn('[6].Name', result)
+
+    def test_get_member_index_out_of_range_preserved(self):
+        result = self._deobfuscate('($ExecutionContext | Get-Member)[999].Name')
+        self.assertIn('[999].Name', result)
+
+    def test_name_on_string_literal_stripped(self):
+        result = self._deobfuscate("$x.('GetCmdlets'.Name)('*w-*ct')")
+        self.assertNotIn('.Name', result)
+        self.assertIn('GetCmdlets', result)
 
 
 class TestPs1ConstantInlining(TestPs1):

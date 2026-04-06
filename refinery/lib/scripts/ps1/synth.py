@@ -212,10 +212,18 @@ class Ps1Synthesizer(Visitor):
         elif node.kind == Ps1CommandArgumentKind.NAMED:
             self._write(F'{node.name}:')
             if node.value:
-                self.visit(node.value)
+                self._emit_argument_value(node.value)
         elif node.kind == Ps1CommandArgumentKind.POSITIONAL:
             if node.value:
-                self.visit(node.value)
+                self._emit_argument_value(node.value)
+
+    def _emit_argument_value(self, value: Expression):
+        if isinstance(value, Ps1BinaryExpression):
+            self._write('(')
+            self.visit(value)
+            self._write(')')
+        else:
+            self.visit(value)
 
     def visit_Ps1CallExpression(self, node):
         if node.callee:
