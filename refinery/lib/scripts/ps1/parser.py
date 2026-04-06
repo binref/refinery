@@ -1073,6 +1073,7 @@ class Ps1Parser:
         offset = self._current.offset
         self._expect(Ps1TokenKind.LPAREN)
         self._skip_newlines()
+        self._lexer.push_mode(Ps1LexerMode.EXPRESSION)
         old = self._disable_comma
         self._disable_comma = False
         try:
@@ -1081,6 +1082,7 @@ class Ps1Parser:
             self._disable_comma = old
         self._skip_newlines()
         self._expect(Ps1TokenKind.RPAREN)
+        self._lexer.pop_mode()
         return Ps1ParenExpression(offset=offset, expression=expr)
 
     def _parse_sub_expression(self) -> Ps1SubExpression:

@@ -392,6 +392,10 @@ class TestPS1Regressions(TestPs1):
         for line in result.strip().splitlines():
             self.assertNotEqual(line.strip(), ')')
 
+    def test_pipeline_index_member_access(self):
+        result = self._deobfuscate('($x.Value|Get-Member)[6].Name')
+        self.assertIn('[6].Name', result)
+
 
 class TestPs1ConstantInlining(TestPs1):
 
