@@ -455,3 +455,33 @@ class TestPs1RealWorldLarge(TestUnitBase):
         result = data | self.load() | str
         self.assertIn('16', result)
         self.assertIn('32', result)
+
+
+class TestPs1WildcardResolution(TestUnitBase):
+
+    def test_wildcard_variable_get_item(self):
+        data = b"Get-Item Variable:E*t"
+        result = data | self.load() | str
+        self.assertIn('$ExecutionContext', result)
+        self.assertNotIn('Variable:', result)
+
+    def test_wildcard_variable_ambiguous(self):
+        data = b"Get-Item Variable:P*"
+        result = data | self.load() | str
+        self.assertIn('Variable:P*', result)
+
+    def test_wildcard_cmdlet_getcmdlets(self):
+        data = b"$x.GetCmdlets('*w-*ct')"
+        result = data | self.load() | str
+        self.assertIn('New-Object', result)
+        self.assertNotIn('GetCmdlets', result)
+
+    def test_wildcard_cmdlet_invoke(self):
+        data = b"$x.Invoke('*w-*ct')"
+        result = data | self.load() | str
+        self.assertIn('New-Object', result)
+
+    def test_wildcard_member_filter(self):
+        data = b"$obj | ? { $_.Name -ilike 'ReadT*d' }"
+        result = data | self.load() | str
+        self.assertIn('ReadToEnd', result)
