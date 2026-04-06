@@ -270,6 +270,11 @@ class Ps1IexInlining(Transformer):
     """
 
     def visit(self, node):
+        self._inline_statements(node)
+        self._inline_expressions(node)
+        return None
+
+    def _inline_statements(self, node):
         for container in list(node.walk()):
             body = _get_body(container)
             if body is None:
@@ -291,7 +296,60 @@ class Ps1IexInlining(Transformer):
                 body[i:i + 1] = parsed
                 self.mark_changed()
                 i += len(parsed)
-        return None
+
+    def _inline_expressions(self, node):
+        for cmd in list(node.walk()):
+            if not isinstance(cmd, Ps1CommandInvocation):
+                continue
+            if isinstance(cmd.parent, Ps1ExpressionStatement):
+                continue
+            replacement = self._try_inline_expression(cmd)
+            if replacement is None:
+                continue
+            parent = cmd.parent
+            for attr_name in vars(parent):
+                if attr_name.startswith('_') or attr_name in ('parent', 'offset'):
+                    continue
+                value = getattr(parent, attr_name)
+                if value is cmd:
+                    replacement.parent = parent
+                    setattr(parent, attr_name, replacement)
+                    self.mark_changed()
+                    break
+                if isinstance(value, list):
+                    for idx, item in enumerate(value):
+                        if item is cmd:
+                            replacement.parent = parent
+                            value[idx] = replacement
+                            self.mark_changed()
+                            break
+
+    def _try_inline_expression(self, node: Ps1CommandInvocation) -> Expression | None:
+        if not isinstance(node.name, Ps1StringLiteral):
+            return None
+        if node.name.value.lower() not in _IEX_NAMES:
+            return None
+        if len(node.arguments) != 1:
+            return None
+        arg = node.arguments[0]
+        if isinstance(arg, Ps1CommandArgument):
+            if arg.kind != Ps1CommandArgumentKind.POSITIONAL:
+                return None
+            val = arg.value
+        else:
+            val = arg
+        if val is None:
+            return None
+        code = _resolve_to_string(val)
+        if code is None:
+            return None
+        parsed = self._try_parse(code)
+        if parsed is None or len(parsed) != 1:
+            return None
+        stmt = parsed[0]
+        if not isinstance(stmt, Ps1ExpressionStatement) or stmt.expression is None:
+            return None
+        return stmt.expression
 
     @staticmethod
     def _is_bare_iex(cmd) -> bool:

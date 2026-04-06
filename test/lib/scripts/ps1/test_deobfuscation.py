@@ -918,6 +918,15 @@ class TestPs1IexInlining(TestPs1):
         self.assertNotIn('Invoke-Expression', result)
         self.assertNotIn('FromBase64String', result)
 
+    def test_iex_expression_position_inlined(self):
+        result = self._deobfuscate("$x = Invoke-Expression \"'hello'\"")
+        self.assertIn("$x = 'hello'", result)
+        self.assertNotIn('Invoke-Expression', result)
+
+    def test_iex_expression_multi_statement_not_inlined(self):
+        result = self._deobfuscate("$x = Invoke-Expression \"'a'; 'b'\"")
+        self.assertIn('Invoke-Expression', result)
+
 
 class TestPs1ForEachPipeline(TestPs1):
 
@@ -993,3 +1002,22 @@ class TestPs1ParserModeRescan(TestPs1):
             '[Net.CredentialCache]::dEfAuLtCrEdEnTiAlS'
         )
         self.assertIn('DefaultCredentials', result)
+
+
+class TestPs1SubExpressionSimplification(TestPs1):
+
+    def test_subexpression_scalar_simplified(self):
+        result = self._deobfuscate("$('hello')")
+        self.assertEqual(result.strip(), "'hello'")
+
+    def test_replace_on_subexpression(self):
+        result = self._deobfuscate("$('hello world').Replace('world', 'there')")
+        self.assertIn('hello there', result)
+        self.assertNotIn('$(', result)
+
+    def test_chained_replace_across_subexpression(self):
+        result = self._deobfuscate(
+            "$('aXb'.Replace('X', 'Y')).Replace('Y', 'Z')"
+        )
+        self.assertNotIn('aXb', result)
+        self.assertIn('aYb', result)

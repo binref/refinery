@@ -16,12 +16,15 @@ from refinery.lib.scripts.ps1.model import (
     Ps1CommandArgument,
     Ps1CommandArgumentKind,
     Ps1CommandInvocation,
+    Ps1ExpandableString,
+    Ps1ExpressionStatement,
     Ps1FunctionDefinition,
     Ps1IntegerLiteral,
     Ps1MemberAccess,
     Ps1ParenExpression,
     Ps1RealLiteral,
     Ps1StringLiteral,
+    Ps1SubExpression,
     Ps1TypeExpression,
     Ps1UnaryExpression,
     Ps1Variable,
@@ -82,6 +85,18 @@ class Ps1Simplifications(Transformer):
         inner = node.expression
         if isinstance(inner, (Ps1StringLiteral, Ps1IntegerLiteral, Ps1RealLiteral)):
             return inner
+        return None
+
+    def visit_Ps1SubExpression(self, node: Ps1SubExpression):
+        self.generic_visit(node)
+        if isinstance(node.parent, Ps1ExpandableString):
+            return None
+        if len(node.body) == 1:
+            stmt = node.body[0]
+            if isinstance(stmt, Ps1ExpressionStatement):
+                inner = stmt.expression
+                if isinstance(inner, (Ps1Variable, Ps1StringLiteral, Ps1IntegerLiteral, Ps1RealLiteral)):
+                    return inner
         return None
 
     def visit_Ps1MemberAccess(self, node: Ps1MemberAccess):
