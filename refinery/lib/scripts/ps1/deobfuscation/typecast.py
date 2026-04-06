@@ -14,12 +14,27 @@ from refinery.lib.scripts.ps1.deobfuscation._helpers import (
     _unwrap_paren_to_array,
 )
 from refinery.lib.scripts.ps1.model import (
+    Ps1BinaryExpression,
     Ps1CastExpression,
     Ps1IntegerLiteral,
+    Ps1TypeExpression,
 )
 
 
 class Ps1TypeCasts(Transformer):
+
+    def visit_Ps1BinaryExpression(self, node: Ps1BinaryExpression):
+        self.generic_visit(node)
+        if node.operator.lower() != '-as':
+            return None
+        if not isinstance(node.right, Ps1TypeExpression):
+            return None
+        cast = Ps1CastExpression(
+            offset=node.offset,
+            type_name=node.right.name,
+            operand=node.left,
+        )
+        return self.visit_Ps1CastExpression(cast)
 
     def visit_Ps1CastExpression(self, node: Ps1CastExpression):
         self.generic_visit(node)

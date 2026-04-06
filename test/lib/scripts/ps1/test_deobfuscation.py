@@ -64,6 +64,11 @@ class TestPs1Deobfuscator(TestPs1):
         result = self._deobfuscate(data)
         self.assertIn('Hello', result)
 
+    def test_as_char_cast(self):
+        result = self._deobfuscate('(45 -As [Char])')
+        self.assertIn("'-'", result)
+        self.assertNotIn('-As', result)
+
     def test_uncurly_variable(self):
         data = '${variable}'
         result = self._deobfuscate(data)
