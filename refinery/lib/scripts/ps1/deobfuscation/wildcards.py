@@ -466,18 +466,23 @@ class Ps1WildcardResolution(Transformer):
             return None
         member_lower = member_name.lower()
         is_getcmdlets = member_lower in ('getcmdlets', 'getcmdlet')
+        is_getcommand = member_lower in ('getcommandname', 'getcommand')
         is_invoke = member_lower == 'invoke'
-        if not is_getcmdlets and not is_invoke:
+        if not is_getcmdlets and not is_getcommand and not is_invoke:
             return None
-        if len(node.arguments) != 1:
+        if len(node.arguments) < 1:
             return None
         pattern = _string_value(node.arguments[0])
-        if pattern is None or not _is_wildcard(pattern):
+        if pattern is None:
             return None
         if is_invoke and '-' not in pattern:
             return None
         cmdlets = _known_cmdlets()
-        resolved = _wildcard_match_unique(pattern, cmdlets)
+        if _is_wildcard(pattern):
+            resolved = _wildcard_match_unique(pattern, cmdlets)
+        else:
+            resolved = next(
+                (c for c in cmdlets if c.lower() == pattern.lower()), None)
         if resolved is None:
             return None
         return _make_string_literal(resolved)

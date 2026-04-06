@@ -26,6 +26,7 @@ _KNOWN_ALIAS = {
     'cat'     : 'Get-Content',
     'cd'      : 'Set-Location',
     'chdir'   : 'Set-Location',
+    'childitem': 'Get-ChildItem',
     'clc'     : 'Clear-Content',
     'clear'   : 'Clear-Host',
     'clhy'    : 'Clear-History',

@@ -969,6 +969,34 @@ class TestPs1WildcardResolution(TestPs1):
         self.assertNotIn('Exists', result)
         self.assertIn("'*ts'", result)
 
+    def test_getcommandname_wildcard_resolved(self):
+        result = self._deobfuscate(
+            "$ExecutionContext.InvokeCommand.GetCommandName('*w-*ct', $True, $True)"
+        )
+        self.assertIn('New-Object', result)
+        self.assertNotIn('GetCommandName', result)
+
+    def test_getcommand_wildcard_resolved(self):
+        result = self._deobfuscate(
+            "$ExecutionContext.InvokeCommand.GetCommand('*w-*ct', 'All')"
+        )
+        self.assertIn('New-Object', result)
+        self.assertNotIn('GetCommand', result)
+
+    def test_getcommand_exact_name_resolved(self):
+        result = self._deobfuscate(
+            "$ExecutionContext.InvokeCommand.GetCommand('New-Object', 'Cmdlet')"
+        )
+        self.assertIn('New-Object', result)
+        self.assertNotIn('GetCommand', result)
+
+    def test_childitem_variable_resolved(self):
+        result = self._deobfuscate(
+            "$Y = 'hello'; (ChildItem Variable:\\Y).Value"
+        )
+        self.assertNotIn('ChildItem', result)
+        self.assertNotIn('Variable:', result)
+
 
 class TestPs1ParserModeRescan(TestPs1):
 
@@ -1002,6 +1030,13 @@ class TestPs1ParserModeRescan(TestPs1):
             '[Net.CredentialCache]::dEfAuLtCrEdEnTiAlS'
         )
         self.assertIn('DefaultCredentials', result)
+
+    def test_invocation_operator_type_literal_in_method_args(self):
+        result = self._deobfuscate(
+            '(. $a."B"($c."D"($x,$y,$z),[int]::Max) Arg); $z=1'
+        )
+        self.assertIn('Max', result)
+        self.assertIn('Arg', result)
 
 
 class TestPs1SubExpressionSimplification(TestPs1):

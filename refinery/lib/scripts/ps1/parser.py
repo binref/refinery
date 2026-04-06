@@ -491,6 +491,8 @@ class Ps1Parser:
             return None
 
         if invocation_operator and name_expr is not None:
+            self._lexer.mode = Ps1LexerMode.EXPRESSION
+            self._rescan_current()
             name_expr = self._parse_primary_postfix(name_expr)
 
         self._lexer.mode = Ps1LexerMode.ARGUMENT
