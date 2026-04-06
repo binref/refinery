@@ -103,7 +103,8 @@ class TestPs1Deobfuscator(TestPs1):
     def test_command_invocation_dot(self):
         data = ". ('Set-Variable') foo 42"
         result = self._deobfuscate(data)
-        self.assertIn('Set-Variable', result)
+        self.assertIn('$foo', result)
+        self.assertIn('42', result)
 
     def test_b64convert(self):
         data = '[System.Convert]::FromBase64String("AQID")'
@@ -120,7 +121,8 @@ class TestPs1Deobfuscator(TestPs1):
     def test_gcm_unwrap(self):
         data = "& (gcm 'Set-Variable') foo 42"
         result = self._deobfuscate(data)
-        self.assertIn('Set-Variable', result)
+        self.assertIn('$foo', result)
+        self.assertIn('42', result)
         self.assertNotIn('gcm', result)
 
     def test_useless_string_cast(self):
@@ -214,6 +216,21 @@ class TestPs1Deobfuscator(TestPs1):
         result = self._deobfuscate('$x."me`Th`od"')
         self.assertNotIn('`', result)
         self.assertIn('.Method', result)
+
+    def test_cast_wrapped_array_pipeline(self):
+        result = self._deobfuscate(
+            "[String]([Char[]] (72,101,108,108,111) | "
+            "ForEach-Object { [Char]($_ -BXor 0) })")
+        self.assertIn('Hello', result)
+
+    def test_char_array_xor_pipeline(self):
+        result = self._deobfuscate("[String]([Char[]] (127,78,88,95) | % { [Char]($_ -BXor 0x2B) })")
+        self.assertIn('Test', result)
+
+    def test_shift_operations(self):
+        result = self._deobfuscate("$x = 1 -Shl 4; $y = 256 -Shr 3")
+        self.assertIn('16', result)
+        self.assertIn('32', result)
 
 
 class TestPS1BracketRemoval(TestPs1):
@@ -420,13 +437,12 @@ class TestPS1Regressions(TestPs1):
 
     def test_binary_expression_in_command_argument(self):
         result = self._deobfuscate("Set-Item Variable:x ($env:temp + '\\foo.exe')")
-        self.assertIn('+', result)
-        self.assertIn('(', result)
+        self.assertIn('${env:temp}', result)
+        self.assertIn('\\foo.exe', result)
 
-    def test_variable_adjacent_string_in_command_argument(self):
-        result = self._deobfuscate("Set-Item Variable:x $env:temp'\\foo.exe'")
-        self.assertNotIn("$env:temp '", result)
-        self.assertIn("$env:temp'", result)
+    def test_variable_string_concat_becomes_expandable(self):
+        result = self._deobfuscate("$env:temp + '\\foo.exe'")
+        self.assertIn('"${env:temp}\\foo.exe"', result)
 
 
 class TestPs1VariableDriveResolution(TestPs1):
@@ -450,6 +466,70 @@ class TestPs1VariableDriveResolution(TestPs1):
     def test_variable_alias_resolved(self):
         result = self._deobfuscate('Variable ExecutionContext')
         self.assertIn('Get-Variable', result)
+
+    def test_variable_drive_path_separator_stripped(self):
+        result = self._deobfuscate('(Get-Item Variable:/hb).Value')
+        self.assertIn('$hb', result)
+        self.assertNotIn('/', result)
+
+    def test_set_item_variable_becomes_assignment(self):
+        result = self._deobfuscate("Set-Item Variable:/G7E 'hello'")
+        self.assertEqual(result.strip(), "$G7E = 'hello'")
+
+    def test_set_item_variable_multi_value(self):
+        result = self._deobfuscate(
+            "Set-Item Variable:/G7E $env:temp '\\NGLClient.exe'"
+        )
+        self.assertIn('$G7E', result)
+        self.assertIn('=', result)
+        self.assertIn('env:temp', result)
+        self.assertIn('NGLClient', result)
+
+    def test_set_variable_becomes_assignment(self):
+        result = self._deobfuscate("Set-Variable foo 42")
+        self.assertEqual(result.strip(), '$foo = 42')
+
+    def test_set_variable_named_params(self):
+        result = self._deobfuscate("Set-Variable -Name foo -Value 'bar'")
+        self.assertEqual(result.strip(), "$foo = 'bar'")
+
+    def test_get_variable_value_only_resolved(self):
+        result = self._deobfuscate('Get-Variable ExecutionContext -ValueOnly')
+        self.assertEqual(result.strip(), '$ExecutionContext')
+
+    def test_get_variable_value_only_abbreviated(self):
+        result = self._deobfuscate('Get-Variable Cf -ValueO')
+        self.assertEqual(result.strip(), '$Cf')
+
+    def test_get_variable_value_only_member_access(self):
+        result = self._deobfuscate(
+            '(Get-Variable ExecutionContext -ValueOnly).InvokeCommand'
+        )
+        self.assertIn('$ExecutionContext', result)
+        self.assertIn('InvokeCommand', result)
+        self.assertNotIn('Get-Variable', result)
+
+    def test_where_object_wildcard_paren_wrapped_pipeline(self):
+        result = self._deobfuscate(
+            '((New-Object Net.WebClient) | Get-Member) | ? { $_.Name -ilike \'Do*e\' }'
+        )
+        self.assertIn('DownloadFile', result)
+        self.assertNotIn('Do*e', result)
+
+    def test_new_object_type_resolution_in_pipeline(self):
+        result = self._deobfuscate(
+            '(New-Object Net.WebClient | Get-Member)[6].Name'
+        )
+        self.assertNotIn('[6].Name', result)
+
+    def test_where_object_wildcard_variable_type_inferred(self):
+        code = (
+            "$x = New-Object Net.WebClient;"
+            " ($x | Get-Member) | ? { $_.Name -ilike 'Do*e' }"
+        )
+        result = self._deobfuscate(code)
+        self.assertIn('DownloadFile', result)
+        self.assertNotIn('Do*e', result)
 
 
 class TestPs1TypeSystemSimplifications(TestPs1):
@@ -808,3 +888,37 @@ class TestPs1ForEachPipeline(TestPs1):
         data = "'72z101z108z108z111'.Split('z') | %{ ([Char]([Convert]::ToInt16(($_.ToString()), 10))) }"
         result = self._deobfuscate(data)
         self.assertIn('Hello', result)
+
+
+class TestPs1WildcardResolution(TestPs1):
+
+    def test_wildcard_variable_get_item(self):
+        result = self._deobfuscate("(Get-Item Variable:E*t).Value")
+        self.assertIn('$ExecutionContext', result)
+        self.assertNotIn('Variable:', result)
+
+    def test_wildcard_variable_ambiguous(self):
+        result = self._deobfuscate("Get-Item Variable:P*")
+        self.assertIn('Variable:P*', result)
+
+    def test_wildcard_cmdlet_getcmdlets(self):
+        result = self._deobfuscate("$x.GetCmdlets('*w-*ct')")
+        self.assertIn('New-Object', result)
+        self.assertNotIn('GetCmdlets', result)
+
+    def test_wildcard_cmdlet_invoke(self):
+        result = self._deobfuscate("$x.Invoke('*w-*ct')")
+        self.assertIn('New-Object', result)
+
+    def test_wildcard_member_filter(self):
+        result = self._deobfuscate("[IO.StreamReader] | Get-Member | ? { $_.Name -ilike 'ReadT*d' }")
+        self.assertIn('ReadToEnd', result)
+
+    def test_wildcard_where_get_command(self):
+        result = self._deobfuscate("Get-Command | ? { $_.Name -ilike '*w-*ct' }")
+        self.assertIn('New-Object', result)
+
+    def test_wildcard_where_unknown_source(self):
+        result = self._deobfuscate("$obj | ? { $_.Name -ilike '*ts' }")
+        self.assertNotIn('Exists', result)
+        self.assertIn("'*ts'", result)
