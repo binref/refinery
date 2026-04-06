@@ -653,7 +653,6 @@ for _name in list(_KNOWN_NAMES.values()):
         _KNOWN_NAMES[_full.lower()] = _full
 
 for _a, _n in _KNOWN_ALIAS.items():
-    _KNOWN_NAMES[_a.lower()] = _n
     _KNOWN_NAMES[_n.lower()] = _n
 
 KEYWORD_SPELLING: dict[str, str] = {

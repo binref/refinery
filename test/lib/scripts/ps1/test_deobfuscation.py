@@ -396,6 +396,21 @@ class TestPS1Regressions(TestPs1):
         result = self._deobfuscate('($x.Value|Get-Member)[6].Name')
         self.assertIn('[6].Name', result)
 
+    def test_user_function_not_aliased(self):
+        data = (
+            "Function R ([String]$s){"
+            "$r = '';"
+            "ForEach($c in $s.ToCharArray()){$r = $c + $r};"
+            "$r;}"
+            "$x = R 'olleH'\nWrite-Output $x"
+        )
+        result = self._deobfuscate(data)
+        self.assertNotIn('Invoke-History', result)
+
+    def test_user_function_not_case_normalized_to_alias(self):
+        result = self._deobfuscate("Function gc { 'test' }\ngc")
+        self.assertNotIn('Get-Content', result)
+
 
 class TestPs1ConstantInlining(TestPs1):
 

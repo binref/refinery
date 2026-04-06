@@ -6,6 +6,7 @@ from __future__ import annotations
 from refinery.lib.scripts import Node, Transformer
 from refinery.lib.scripts.ps1.deobfuscation._helpers import (
     SIMPLE_IDENTIFIER,
+    _KNOWN_ALIAS,
     _case_normalize_name,
     _strip_backtick_noop,
 )
@@ -165,8 +166,13 @@ class Ps1Simplifications(Transformer):
         if node.name is not old_name:
             self.mark_changed()
         if node.name and isinstance(node.name, Ps1StringLiteral):
-            if node.name.value.lower() not in self._local_functions:
-                new_value = _case_normalize_name(node.name.value)
+            name_lower = node.name.value.lower()
+            if name_lower not in self._local_functions:
+                alias_target = _KNOWN_ALIAS.get(name_lower)
+                if alias_target is not None:
+                    new_value = alias_target
+                else:
+                    new_value = _case_normalize_name(node.name.value)
                 if new_value != node.name.value or new_value != node.name.raw:
                     node.name = Ps1StringLiteral(
                         offset=node.name.offset,
@@ -192,6 +198,7 @@ class Ps1Simplifications(Transformer):
         name = cmd.name
         if isinstance(name, Ps1StringLiteral):
             return name.value
-        if hasattr(name, 'raw') and isinstance(getattr(name, 'raw', None), str):
-            return name.raw
+        raw = getattr(name, 'raw', None)
+        if isinstance(raw, str):
+            return raw
         return None
