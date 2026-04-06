@@ -682,6 +682,11 @@ class TestPs1ConstantInlining(TestPs1):
         self.assertIn('$url', result)
         self.assertIn('http://evil.com', result)
 
+    def test_env_comspec_inlined(self):
+        result = self._deobfuscate("$x = $env:ComSpec[4]")
+        self.assertNotIn('ComSpec', result)
+        self.assertIn("'i'", result)
+
 
 class TestPs1FunctionEvaluator(TestPs1):
 
@@ -926,6 +931,33 @@ class TestPs1IexInlining(TestPs1):
     def test_iex_expression_multi_statement_not_inlined(self):
         result = self._deobfuscate("$x = Invoke-Expression \"'a'; 'b'\"")
         self.assertIn('Invoke-Expression', result)
+
+    def test_iex_via_env_comspec_indexing(self):
+        data = "& ($env:ComSpec[4,26,25] -Join '') 'Write-Host hello'"
+        result = self._deobfuscate(data)
+        self.assertIn('Write-Host', result)
+        self.assertNotIn('ComSpec', result)
+
+    def test_iex_piped_via_env_comspec(self):
+        data = "'Write-Host hello' | & ($env:ComSpec[4,26,25] -Join '')"
+        result = self._deobfuscate(data)
+        self.assertNotIn('ComSpec', result)
+        self.assertIn('iex', result.lower())
+
+    def test_iex_deflate_byte_array(self):
+        data = (
+            "(New-Object IO.StreamReader("
+            "(New-Object IO.Compression.DeflateStream("
+            "[IO.MemoryStream]@("
+            "0x0B, 0x2F, 0xCA, 0x2C, 0x49, 0xD5, 0xF5, 0xC8,"
+            " 0x2F, 0x2E, 0x51, 0xC8, 0x48, 0xCD, 0xC9, 0xC9, 0x07, 0x00),"
+            " [IO.Compression.CompressionMode]::Decompress)),"
+            " [Text.Encoding]::ASCII)).ReadToEnd() | IEX"
+        )
+        result = self._deobfuscate(data)
+        self.assertIn('Write-Host', result)
+        self.assertNotIn('IEX', result)
+        self.assertNotIn('DeflateStream', result)
 
 
 class TestPs1ForEachPipeline(TestPs1):

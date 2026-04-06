@@ -55,6 +55,12 @@ _PS1_DEFAULT_VARIABLES: dict[str, str] = {
     }.items()
 }
 
+_PS1_ENV_CONSTANTS: dict[str, str] = {
+    key.lower(): value for key, value in {
+        'ComSpec': r'C:\Windows\System32\cmd.exe',
+    }.items()
+}
+
 _PS1_KNOWN_VARIABLES: dict[str, str] = {
     name.lower(): name for name in [
         'ConfirmPreference',
@@ -97,6 +103,18 @@ _PS1_KNOWN_VARIABLES: dict[str, str] = {
         'WhatIfPreference',
     ]
 }
+
+
+def _candidate_key(var: Ps1Variable) -> str | None:
+    """
+    Return the candidate lookup key for a variable, or ``None`` if it is not
+    eligible for constant inlining.
+    """
+    if var.scope == Ps1ScopeModifier.NONE:
+        return var.name.lower()
+    if var.scope == Ps1ScopeModifier.ENV:
+        return F'env:{var.name.lower()}'
+    return None
 
 
 def _is_constant(node: Node) -> bool:
@@ -177,8 +195,10 @@ class Ps1ConstantInlining(Transformer):
             # Explicit assignment: $x = VALUE
             if isinstance(node, Ps1AssignmentExpression):
                 target = node.target
-                if isinstance(target, Ps1Variable) and target.scope == Ps1ScopeModifier.NONE:
-                    key = target.name.lower()
+                if isinstance(target, Ps1Variable):
+                    key = _candidate_key(target)
+                    if key is None:
+                        continue
                     if node.operator == '=' and node.value is not None and _is_constant(node.value):
                         assign_counts[key] = assign_counts.get(key, 0) + 1
                         value = node.value
@@ -191,21 +211,24 @@ class Ps1ConstantInlining(Transformer):
 
             # Implicit assignments
             elif isinstance(node, Ps1ForEachLoop):
-                if isinstance(node.variable, Ps1Variable) and node.variable.scope == Ps1ScopeModifier.NONE:
-                    key = node.variable.name.lower()
-                    assign_counts[key] = assign_counts.get(key, 0) + 1
+                if isinstance(node.variable, Ps1Variable):
+                    key = _candidate_key(node.variable)
+                    if key is not None:
+                        assign_counts[key] = assign_counts.get(key, 0) + 1
 
             elif isinstance(node, Ps1UnaryExpression):
                 if node.operator in ('++', '--'):
                     operand = node.operand
-                    if isinstance(operand, Ps1Variable) and operand.scope == Ps1ScopeModifier.NONE:
-                        key = operand.name.lower()
-                        assign_counts[key] = assign_counts.get(key, 0) + 1
+                    if isinstance(operand, Ps1Variable):
+                        key = _candidate_key(operand)
+                        if key is not None:
+                            assign_counts[key] = assign_counts.get(key, 0) + 1
 
             elif isinstance(node, Ps1ParameterDeclaration):
-                if isinstance(node.variable, Ps1Variable) and node.variable.scope == Ps1ScopeModifier.NONE:
-                    key = node.variable.name.lower()
-                    assign_counts[key] = assign_counts.get(key, 0) + 1
+                if isinstance(node.variable, Ps1Variable):
+                    key = _candidate_key(node.variable)
+                    if key is not None:
+                        assign_counts[key] = assign_counts.get(key, 0) + 1
 
         result = {
             key: val for key, val in assignments.items()
@@ -215,6 +238,10 @@ class Ps1ConstantInlining(Transformer):
         for key, value in _PS1_DEFAULT_VARIABLES.items():
             if assign_counts.get(key, 0) == 0:
                 result[key] = (None, _make_string_literal(value))
+        for key, value in _PS1_ENV_CONSTANTS.items():
+            env_key = F'env:{key}'
+            if assign_counts.get(env_key, 0) == 0:
+                result[env_key] = (None, _make_string_literal(value))
         return result
 
     def _substitute(
@@ -239,13 +266,13 @@ class Ps1ConstantInlining(Transformer):
         for node in root.walk():
             if isinstance(node, Ps1IndexExpression):
                 var = node.object
-                if isinstance(var, Ps1Variable) and var.scope == Ps1ScopeModifier.NONE:
-                    key = var.name.lower()
-                    if key in candidates:
+                if isinstance(var, Ps1Variable):
+                    key = _candidate_key(var)
+                    if key is not None and key in candidates:
                         ref_counts[key] = ref_counts.get(key, 0) + 1
-            elif isinstance(node, Ps1Variable) and node.scope == Ps1ScopeModifier.NONE:
-                key = node.name.lower()
-                if key in candidates:
+            elif isinstance(node, Ps1Variable):
+                key = _candidate_key(node)
+                if key is not None and key in candidates:
                     ref_counts[key] = ref_counts.get(key, 0) + 1
         for key, (assign_node, const_value) in candidates.items():
             use_count = ref_counts.get(key, 0)
@@ -261,8 +288,10 @@ class Ps1ConstantInlining(Transformer):
             # Indexed access: $x[2]
             if isinstance(node, Ps1IndexExpression):
                 var = node.object
-                if isinstance(var, Ps1Variable) and var.scope == Ps1ScopeModifier.NONE:
-                    key = var.name.lower()
+                if isinstance(var, Ps1Variable):
+                    key = _candidate_key(var)
+                    if key is None:
+                        continue
                     info = candidates.get(key)
                     if info is None:
                         continue
@@ -275,8 +304,16 @@ class Ps1ConstantInlining(Transformer):
                         handled_vars.add(id(var))
                         continue
                     if not isinstance(node.index, Ps1IntegerLiteral):
-                        remaining[key] = remaining.get(key, 0) + 1
-                        handled_vars.add(id(var))
+                        if isinstance(const_value, Ps1StringLiteral):
+                            replacement = copy.deepcopy(const_value)
+                            replacement.parent = node
+                            node.object = replacement
+                            self.mark_changed()
+                            inlined[key] = inlined.get(key, 0) + 1
+                            handled_vars.add(id(var))
+                        else:
+                            remaining[key] = remaining.get(key, 0) + 1
+                            handled_vars.add(id(var))
                         continue
                     idx = node.index.value
                     if isinstance(const_value, Ps1StringLiteral):
@@ -307,10 +344,12 @@ class Ps1ConstantInlining(Transformer):
                 continue
 
             # Simple variable reference: $x
-            if isinstance(node, Ps1Variable) and node.scope == Ps1ScopeModifier.NONE:
+            if isinstance(node, Ps1Variable):
                 if id(node) in handled_vars:
                     continue
-                key = node.name.lower()
+                key = _candidate_key(node)
+                if key is None:
+                    continue
                 info = candidates.get(key)
                 if info is None:
                     continue

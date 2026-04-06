@@ -21,6 +21,7 @@ from refinery.lib.scripts.ps1.deobfuscation._helpers import (
 )
 from refinery.lib.scripts.ps1.model import (
     Ps1AccessKind,
+    Ps1ArrayExpression,
     Ps1ArrayLiteral,
     Ps1BinaryExpression,
     Ps1CastExpression,
@@ -28,6 +29,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1CommandArgumentKind,
     Ps1CommandInvocation,
     Ps1ExpressionStatement,
+    Ps1IntegerLiteral,
     Ps1InvokeMember,
     Ps1MemberAccess,
     Ps1ParenExpression,
@@ -39,6 +41,21 @@ from refinery.lib.scripts.ps1.model import (
 )
 
 _IEX_NAMES = frozenset({'iex', 'invoke-expression'})
+
+
+def _try_evaluate_byte_array(elements: list) -> bytes | None:
+    """
+    Convert a list of ``Ps1IntegerLiteral`` elements to ``bytes``.
+    """
+    values = []
+    for elem in elements:
+        if not isinstance(elem, Ps1IntegerLiteral):
+            return None
+        values.append(elem.value)
+    try:
+        return bytes(bytearray(values))
+    except (ValueError, OverflowError):
+        return None
 
 
 def _extract_new_object_args(cmd: Ps1CommandInvocation) -> tuple[str, list[Expression]] | None:
@@ -124,6 +141,17 @@ def _try_evaluate(
     if isinstance(expr, Ps1Variable):
         if bindings and expr.name.lower() in bindings:
             return bindings[expr.name.lower()]
+        return None
+
+    if isinstance(expr, Ps1ArrayLiteral):
+        return _try_evaluate_byte_array(expr.elements)
+
+    if isinstance(expr, Ps1ArrayExpression):
+        if len(expr.body) == 1:
+            stmt = expr.body[0]
+            inner = stmt.expression if isinstance(stmt, Ps1ExpressionStatement) else None
+            if isinstance(inner, Ps1ArrayLiteral):
+                return _try_evaluate_byte_array(inner.elements)
         return None
 
     if isinstance(expr, Ps1BinaryExpression) and expr.operator == '+':
