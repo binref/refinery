@@ -3,7 +3,7 @@ PowerShell syntax normalization transforms.
 """
 from __future__ import annotations
 
-from refinery.lib.scripts import Transformer
+from refinery.lib.scripts import Node, Transformer
 from refinery.lib.scripts.ps1.deobfuscation._helpers import (
     SIMPLE_IDENTIFIER,
     _case_normalize_name,
@@ -15,6 +15,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1CommandArgument,
     Ps1CommandArgumentKind,
     Ps1CommandInvocation,
+    Ps1FunctionDefinition,
     Ps1IntegerLiteral,
     Ps1MemberAccess,
     Ps1ParenExpression,
@@ -34,6 +35,25 @@ _KNOWN_VARIABLE_NAMES = {name.lower(): name for name in [
 
 
 class Ps1Simplifications(Transformer):
+
+    def __init__(self):
+        super().__init__()
+        self._local_functions: set[str] = set()
+        self._entry = False
+
+    def visit(self, node: Node):
+        if self._entry:
+            return super().visit(node)
+        self._entry = True
+        try:
+            self._local_functions = {
+                n.name.lower()
+                for n in node.walk()
+                if isinstance(n, Ps1FunctionDefinition) and n.name
+            }
+            return super().visit(node)
+        finally:
+            self._entry = False
 
     def visit_Ps1Variable(self, node: Ps1Variable):
         self.generic_visit(node)
@@ -145,14 +165,15 @@ class Ps1Simplifications(Transformer):
         if node.name is not old_name:
             self.mark_changed()
         if node.name and isinstance(node.name, Ps1StringLiteral):
-            new_value = _case_normalize_name(node.name.value)
-            if new_value != node.name.value or new_value != node.name.raw:
-                node.name = Ps1StringLiteral(
-                    offset=node.name.offset,
-                    value=new_value,
-                    raw=new_value,
-                )
-                self.mark_changed()
+            if node.name.value.lower() not in self._local_functions:
+                new_value = _case_normalize_name(node.name.value)
+                if new_value != node.name.value or new_value != node.name.raw:
+                    node.name = Ps1StringLiteral(
+                        offset=node.name.offset,
+                        value=new_value,
+                        raw=new_value,
+                    )
+                    self.mark_changed()
         if node.invocation_operator in ('&', '.'):
             if isinstance(node.name, Ps1StringLiteral):
                 name_val = node.name.value
