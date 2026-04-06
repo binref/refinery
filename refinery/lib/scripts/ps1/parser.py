@@ -339,12 +339,11 @@ class Ps1Parser:
     def _parse_statement_list(self, until: Ps1TokenKind | None = None) -> list[Statement]:
         stmts: list[Statement] = []
         while not self._at(Ps1TokenKind.EOF):
-            self._skip_newlines()
+            while self._at(Ps1TokenKind.NEWLINE, Ps1TokenKind.SEMICOLON):
+                self._advance()
             if until is not None and self._at(until):
                 break
             if self._at(Ps1TokenKind.EOF):
-                break
-            if until is not None and self._at(until):
                 break
             mark = self._current.offset
             stmt = self._parse_statement()

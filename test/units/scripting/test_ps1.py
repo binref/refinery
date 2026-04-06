@@ -155,6 +155,13 @@ class TestPs1RealWorldSmall(TestUnitBase):
         result = data | self.load() | str
         self.assertIn('$( 1 + 2 )', result)
 
+    def test_semicolons_are_statement_separators(self):
+        data = b'; Get-Item foo ;; Get-Item bar ;'
+        result = data | self.load() | str
+        self.assertNotIn(';', result)
+        self.assertIn('Get-Item foo', result)
+        self.assertIn('Get-Item bar', result)
+
 
 class TestPs1RealWorldLarge(TestUnitBase):
 
