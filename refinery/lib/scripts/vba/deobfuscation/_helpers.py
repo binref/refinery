@@ -3,7 +3,7 @@ Shared utilities for VBA deobfuscation transforms.
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Union, Optional
 
 if TYPE_CHECKING:
     from typing import TypeAlias
@@ -16,7 +16,7 @@ from refinery.lib.scripts.vba.model import (
     VbaStringLiteral,
 )
 
-_Value: TypeAlias = str | int | float | bool | None
+_Value: TypeAlias = Optional[Union[str, int, float, bool]]
 
 
 def _make_string_literal(value: str) -> VbaStringLiteral:
