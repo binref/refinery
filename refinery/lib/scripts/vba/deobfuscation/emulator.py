@@ -3,12 +3,15 @@ Evaluate user-defined VBA functions called with constant arguments.
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Callable
+from typing import Any, Callable
 
-if TYPE_CHECKING:
-    from typing import TypeAlias
-
-from refinery.lib.scripts import Expression, Transformer
+from refinery.lib.scripts import Transformer
+from refinery.lib.scripts.vba.deobfuscation._helpers import (
+    _Value,
+    _is_literal,
+    _literal_value,
+    _value_to_node,
+)
 from refinery.lib.scripts.vba.model import (
     VbaBinaryExpression,
     VbaBooleanLiteral,
@@ -35,8 +38,6 @@ from refinery.lib.scripts.vba.model import (
     VbaVariableDeclaration,
 )
 
-_Value: TypeAlias = str | int | float | bool | None
-
 
 class _VbaInterpreterError(Exception):
     pass
@@ -44,6 +45,14 @@ class _VbaInterpreterError(Exception):
 
 class _ExitFunctionSignal(Exception):
     pass
+
+
+def _cast_to_int(value):
+    as_flt = float(value)
+    as_int = int(as_flt)
+    if as_flt < 0 and as_flt != int(as_flt):
+        as_int -= 1
+    return as_int
 
 
 class _VbaInterpreter:
@@ -251,9 +260,7 @@ class _VbaInterpreter:
             return ~self._to_int(val)
         raise _VbaInterpreterError
 
-    _BUILTINS_0 = frozenset()
-
-    _BUILTINS_1: dict[str, Callable[[Any], _Value]] = {
+    _BUILTINS: dict[str, Callable[[Any], _Value]] = {
         'chr'       : lambda v: chr(int(v)),
         'chrw'      : lambda v: chr(int(v)),
         'chr$'      : lambda v: chr(int(v)),
@@ -280,8 +287,7 @@ class _VbaInterpreter:
         'cbool'     : lambda v: bool(v),
         'abs'       : lambda v: abs(v),
         'sgn'       : lambda v: (1 if v > 0 else (-1 if v < 0 else 0)),
-        'int'       : lambda v: int(float(v)) if float(v) >= 0 else int(
-                          float(v)) - (1 if float(v) != int(float(v)) else 0),
+        'int'       : _cast_to_int,
         'fix'       : lambda v: int(float(v)),
         'hex'       : lambda v: format(int(v), 'X'),
         'hex$'      : lambda v: format(int(v), 'X'),
@@ -297,7 +303,7 @@ class _VbaInterpreter:
             raise _VbaInterpreterError
         name = node.callee.name.lower()
         args = [self._eval(a) for a in node.arguments if a is not None]
-        handler = self._BUILTINS_1.get(name)
+        handler = self._BUILTINS.get(name)
         if handler is not None and len(args) == 1:
             try:
                 return handler(args[0])
@@ -456,45 +462,6 @@ class _VbaInterpreter:
         if isinstance(value, str):
             return len(value) > 0
         return True
-
-
-def _is_literal(node: Expression) -> bool:
-    return isinstance(node, (
-        VbaStringLiteral, VbaIntegerLiteral, VbaFloatLiteral, VbaBooleanLiteral,
-    ))
-
-
-def _literal_value(node: Expression) -> _Value:
-    if isinstance(node, VbaStringLiteral):
-        return node.value
-    if isinstance(node, VbaIntegerLiteral):
-        return node.value
-    if isinstance(node, VbaFloatLiteral):
-        return node.value
-    if isinstance(node, VbaBooleanLiteral):
-        return node.value
-    return None
-
-
-def _make_string_literal(value: str) -> VbaStringLiteral:
-    escaped = value.replace('"', '""')
-    raw = F'"{escaped}"'
-    return VbaStringLiteral(value=value, raw=raw)
-
-
-def _make_integer_literal(value: int) -> VbaIntegerLiteral:
-    return VbaIntegerLiteral(value=value, raw=str(value))
-
-
-def _value_to_node(value: _Value) -> Expression | None:
-    if isinstance(value, str):
-        return _make_string_literal(value)
-    if isinstance(value, int) and not isinstance(value, bool):
-        return _make_integer_literal(value)
-    if isinstance(value, float):
-        if value == int(value) and abs(value) < 2 ** 53:
-            return _make_integer_literal(int(value))
-    return None
 
 
 class VbaFunctionEvaluator(Transformer):

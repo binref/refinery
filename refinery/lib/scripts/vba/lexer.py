@@ -5,6 +5,26 @@ from typing import Generator
 
 from refinery.lib.scripts.vba.token import _KEYWORDS, VbaToken, VbaTokenKind
 
+_ONE_CHAR_OPS: dict[str, VbaTokenKind] = {
+    '+' : VbaTokenKind.PLUS,
+    '-' : VbaTokenKind.MINUS,
+    '*' : VbaTokenKind.STAR,
+    '/' : VbaTokenKind.SLASH,
+    '\\': VbaTokenKind.BACKSLASH,
+    '^' : VbaTokenKind.CARET,
+    '&' : VbaTokenKind.AMPERSAND,
+    '=' : VbaTokenKind.EQ,
+    '<' : VbaTokenKind.LT,
+    '>' : VbaTokenKind.GT,
+    '.' : VbaTokenKind.DOT,
+    '!' : VbaTokenKind.BANG,
+    '(' : VbaTokenKind.LPAREN,
+    ')' : VbaTokenKind.RPAREN,
+    ',' : VbaTokenKind.COMMA,
+    ';' : VbaTokenKind.SEMICOLON,
+    ':' : VbaTokenKind.COLON,
+}
+
 
 @dataclass
 class VbaLexer:
@@ -285,26 +305,6 @@ class VbaLexer:
                 last_was_newline = False
                 yield VbaToken(VbaTokenKind.ASSIGN, ':=', start)
                 continue
-
-            _ONE_CHAR_OPS: dict[str, VbaTokenKind] = {
-                '+' : VbaTokenKind.PLUS,
-                '-' : VbaTokenKind.MINUS,
-                '*' : VbaTokenKind.STAR,
-                '/' : VbaTokenKind.SLASH,
-                '\\': VbaTokenKind.BACKSLASH,
-                '^' : VbaTokenKind.CARET,
-                '&' : VbaTokenKind.AMPERSAND,
-                '=' : VbaTokenKind.EQ,
-                '<' : VbaTokenKind.LT,
-                '>' : VbaTokenKind.GT,
-                '.' : VbaTokenKind.DOT,
-                '!' : VbaTokenKind.BANG,
-                '(' : VbaTokenKind.LPAREN,
-                ')' : VbaTokenKind.RPAREN,
-                ',' : VbaTokenKind.COMMA,
-                ';' : VbaTokenKind.SEMICOLON,
-                ':' : VbaTokenKind.COLON,
-            }
 
             op_kind = _ONE_CHAR_OPS.get(c)
             if op_kind is not None:

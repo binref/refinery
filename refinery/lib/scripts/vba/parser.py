@@ -950,27 +950,35 @@ class VbaParser:
         return VbaSelectCaseStatement(
             expression=expr, cases=cases, offset=offset)
 
+    def _parse_case_body(self) -> list[Statement]:
+        body: list[Statement] = []
+        while not self._at(VbaTokenKind.EOF):
+            self._eat_eos()
+            if self._at(VbaTokenKind.CASE):
+                break
+            if self._at(VbaTokenKind.END):
+                after = self._source[
+                    self._current.offset + len(self._current.value):
+                ].lstrip(' \t')
+                if after[:6].lower() == 'select' and not after[6:7].isalnum():
+                    break
+            if (
+                self._at(VbaTokenKind.IDENTIFIER)
+                and self._current.value.lower() == 'endselect'
+            ):
+                break
+            stmt = self._parse_statement()
+            if stmt is not None:
+                body.append(stmt)
+        return body
+
     def _parse_case_clause(self) -> VbaCaseClause:
         offset = self._current.offset
         self._advance()
         if self._current.value.lower() == 'else':
             self._advance()
             self._eat_eos()
-            body: list[Statement] = []
-            while not self._at(VbaTokenKind.EOF):
-                self._eat_eos()
-                if self._at(VbaTokenKind.CASE):
-                    break
-                if self._at(VbaTokenKind.END):
-                    end = self._current.offset + len(self._current.value)
-                    after = self._source[end:].lstrip(' \t')
-                    if after[:6].lower() == 'select' and not after[6:7].isalnum():
-                        break
-                if self._at(VbaTokenKind.IDENTIFIER) and self._current.value.lower() == 'endselect':
-                    break
-                stmt = self._parse_statement()
-                if stmt is not None:
-                    body.append(stmt)
+            body = self._parse_case_body()
             return VbaCaseClause(is_else=True, body=body, offset=offset)
 
         tests: list[Expression] = []
@@ -978,20 +986,7 @@ class VbaParser:
         while self._eat(VbaTokenKind.COMMA):
             tests.append(self._parse_case_test())
         self._eat_eos()
-        body = []
-        while not self._at(VbaTokenKind.EOF):
-            self._eat_eos()
-            if self._at(VbaTokenKind.CASE):
-                break
-            if self._at(VbaTokenKind.END):
-                after = self._source[self._current.offset + len(self._current.value):].lstrip(' \t')
-                if after[:6].lower() == 'select' and not after[6:7].isalnum():
-                    break
-            if self._at(VbaTokenKind.IDENTIFIER) and self._current.value.lower() == 'endselect':
-                break
-            stmt = self._parse_statement()
-            if stmt is not None:
-                body.append(stmt)
+        body = self._parse_case_body()
         return VbaCaseClause(tests=tests, body=body, offset=offset)
 
     def _parse_with_statement(self) -> VbaWithStatement:

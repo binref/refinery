@@ -9,23 +9,28 @@ import operator
 from typing import Callable
 
 from refinery.lib.scripts import Expression, Statement, Transformer
+from refinery.lib.scripts.vba.deobfuscation._helpers import (
+    _is_literal,
+    _make_integer_literal,
+    _make_numeric_literal,
+    _make_string_literal,
+    _numeric_value,
+    _string_value,
+)
 from refinery.lib.scripts.vba.model import (
     VbaBinaryExpression,
     VbaBooleanLiteral,
     VbaCallExpression,
     VbaConstDeclaration,
     VbaConstDeclarator,
-    VbaFloatLiteral,
     VbaForEachStatement,
     VbaForStatement,
     VbaFunctionDeclaration,
     VbaIdentifier,
-    VbaIntegerLiteral,
     VbaLetStatement,
     VbaModule,
     VbaParenExpression,
     VbaPropertyDeclaration,
-    VbaStringLiteral,
     VbaUnaryExpression,
 )
 
@@ -40,49 +45,6 @@ _INTEGER_OPS: dict[str, Callable] = {
     '\\' : lambda a, b: int(a) // int(b),
     'Mod': lambda a, b: int(a) % int(b),
 }
-
-
-def _string_value(node: Expression) -> str | None:
-    if isinstance(node, VbaStringLiteral):
-        return node.value
-    return None
-
-
-def _make_string_literal(value: str) -> VbaStringLiteral:
-    escaped = value.replace('"', '""')
-    raw = F'"{escaped}"'
-    return VbaStringLiteral(value=value, raw=raw)
-
-
-def _numeric_value(node: Expression) -> int | float | None:
-    if isinstance(node, VbaIntegerLiteral):
-        return node.value
-    if isinstance(node, VbaFloatLiteral):
-        return node.value
-    return None
-
-
-def _make_integer_literal(value: int) -> VbaIntegerLiteral:
-    return VbaIntegerLiteral(value=value, raw=str(value))
-
-
-def _make_float_literal(value: float) -> VbaFloatLiteral:
-    return VbaFloatLiteral(value=value, raw=str(value))
-
-
-def _make_numeric_literal(value: int | float) -> VbaIntegerLiteral | VbaFloatLiteral:
-    if isinstance(value, float):
-        if value == int(value) and abs(value) < 2 ** 53:
-            return _make_integer_literal(int(value))
-        return _make_float_literal(value)
-    return _make_integer_literal(value)
-
-
-def _is_literal(node: Expression) -> bool:
-    return isinstance(node, (
-        VbaStringLiteral, VbaIntegerLiteral, VbaFloatLiteral,
-        VbaBooleanLiteral,
-    ))
 
 
 def _is_chr_call(node: VbaCallExpression) -> int | None:
