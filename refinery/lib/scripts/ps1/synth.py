@@ -123,7 +123,26 @@ class Ps1Synthesizer(Visitor):
         self._write(node.raw)
 
     def visit_Ps1ExpandableString(self, node: Ps1ExpandableString):
-        self._write(node.raw)
+        self._write('"')
+        for part in node.parts:
+            if isinstance(part, Ps1StringLiteral):
+                self._write(self._escape_for_dq(part.value))
+            elif isinstance(part, Ps1Variable):
+                self._emit_variable_in_dq(part)
+            else:
+                self.visit(part)
+        self._write('"')
+
+    def _emit_variable_in_dq(self, node: Ps1Variable):
+        prefix = '@' if node.splatted else '$'
+        scope_str = ''
+        if node.scope != Ps1ScopeModifier.NONE:
+            scope_str = F'{node.scope.value}:'
+        self._write(F'{prefix}{{{scope_str}{node.name}}}')
+
+    @staticmethod
+    def _escape_for_dq(value: str) -> str:
+        return value.replace('`', '``').replace('"', '""').replace('$', '`$')
 
     def visit_Ps1HereString(self, node: Ps1HereString):
         self._write(node.raw)

@@ -8,6 +8,8 @@ from refinery.lib.scripts.ps1.deobfuscation._helpers import (
     _KNOWN_ALIAS,
     SIMPLE_IDENTIFIER,
     _case_normalize_name,
+    _make_string_literal,
+    _string_value,
     _strip_backtick_noop,
 )
 from refinery.lib.scripts.ps1.model import (
@@ -109,6 +111,23 @@ class Ps1Simplifications(Transformer):
                 if isinstance(inner, (Ps1Variable, Ps1StringLiteral, Ps1IntegerLiteral, Ps1RealLiteral)):
                     return inner
         return None
+
+    def visit_Ps1ExpandableString(self, node: Ps1ExpandableString):
+        self.generic_visit(node)
+        parts: list[str] = []
+        for p in node.parts:
+            if isinstance(p, Ps1StringLiteral):
+                parts.append(p.value)
+                continue
+            if isinstance(p, Ps1SubExpression) and len(p.body) == 1:
+                stmt = p.body[0]
+                if isinstance(stmt, Ps1ExpressionStatement) and stmt.expression is not None:
+                    sv = _string_value(stmt.expression)
+                    if sv is not None:
+                        parts.append(sv)
+                        continue
+            return None
+        return _make_string_literal(''.join(parts))
 
     def visit_Ps1MemberAccess(self, node: Ps1MemberAccess):
         self.generic_visit(node)

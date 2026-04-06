@@ -14,11 +14,13 @@ from refinery.lib.scripts.ps1.model import (
     Ps1CommandArgumentKind,
     Ps1CommandInvocation,
     Ps1ExpandableString,
+    Ps1ExpressionStatement,
     Ps1IntegerLiteral,
     Ps1ParenExpression,
     Ps1Script,
     Ps1ScriptBlock,
     Ps1StringLiteral,
+    Ps1SubExpression,
 )
 
 _KNOWN_ALIAS = {
@@ -709,6 +711,10 @@ def _string_value(node: Expression) -> str | None:
             out.write(p.value)
         else:
             return out.getvalue()
+    if isinstance(node, Ps1SubExpression) and len(node.body) == 1:
+        stmt = node.body[0]
+        if isinstance(stmt, Ps1ExpressionStatement) and stmt.expression is not None:
+            return _string_value(stmt.expression)
     return None
 
 
@@ -786,7 +792,7 @@ def _get_command_name(cmd: Ps1CommandInvocation) -> str | None:
 
 
 def _get_body(node) -> list | None:
-    if isinstance(node, (Ps1Script, Block, Ps1ScriptBlock)):
+    if isinstance(node, (Ps1Script, Block, Ps1ScriptBlock, Ps1SubExpression)):
         return node.body
     return None
 

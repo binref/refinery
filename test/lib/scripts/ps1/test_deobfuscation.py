@@ -14,6 +14,13 @@ class TestPs1(TestBase):
         deobfuscate(ast)
         return Ps1Synthesizer().convert(ast)
 
+    def _deobfuscate_iterative(self, source: str, iterations: int = 100) -> str:
+        ast = Ps1Parser(source).parse()
+        for _ in range(iterations):
+            if not deobfuscate(ast):
+                break
+        return Ps1Synthesizer().convert(ast)
+
 
 class TestPs1Deobfuscator(TestPs1):
 
@@ -1023,6 +1030,11 @@ class TestPs1IexInlining(TestPs1):
         self.assertIn('Write-Host', result)
         self.assertNotIn('scriptblock', result.lower())
 
+    def test_iex_inside_subexpression(self):
+        result = self._deobfuscate_iterative("$('\"hello\"' | Invoke-Expression)")
+        self.assertIn('hello', result)
+        self.assertNotIn('Invoke-Expression', result)
+
 
 class TestPs1ForEachPipeline(TestPs1):
 
@@ -1178,4 +1190,30 @@ class TestPs1SubExpressionSimplification(TestPs1):
             "$('aXb'.Replace('X', 'Y')).Replace('Y', 'Z')"
         )
         self.assertNotIn('aXb', result)
-        self.assertIn('aYb', result)
+        self.assertIn('aZb', result)
+
+
+class TestPs1ExpandableStringFolding(TestPs1):
+
+    def test_expandable_constant_subexpr(self):
+        result = self._deobfuscate("\"\"\"$('hello')\"\"\"")
+        self.assertIn('"hello"', result)
+        self.assertNotIn('$(', result)
+
+    def test_expandable_pipeline_chain(self):
+        result = self._deobfuscate_iterative(
+            "\"\"\"$($((312,348,348)|%{[char]($_/3)})-join'')\"\"\"")
+        self.assertIn('"htt"', result)
+        self.assertNotIn('$(', result)
+
+    def test_expandable_variable_not_folded(self):
+        result = self._deobfuscate("\"\"\"$($x)\"\"\"")
+        self.assertIn('$(', result)
+
+    def test_expandable_full_chain_with_iex(self):
+        result = self._deobfuscate_iterative(
+            "$(\"\"\"$($((312,348,348)|%{[char]($_/3)})-join'')\"\"\")"
+            " | Invoke-Expression")
+        self.assertIn('htt', result)
+        self.assertNotIn('Invoke-Expression', result)
+        self.assertNotIn('$(', result)
