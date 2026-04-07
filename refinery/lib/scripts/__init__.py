@@ -21,11 +21,12 @@ class Node:
         yield from ()
 
     def walk(self) -> Generator[Node, None, None]:
-        stack = [self]
+        stack: list[Node] = [self]
         while stack:
             node = stack.pop()
             yield node
-            stack.extend(reversed(list(node.children())))
+            for child in node.children():
+                stack.append(child)
 
     def _adopt(self, *nodes: Node | None):
         for node in nodes:
