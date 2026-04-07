@@ -1168,6 +1168,12 @@ class TestPs1ParserModeRescan(TestPs1):
         self.assertIn('Max', result)
         self.assertIn('Arg', result)
 
+    def test_dotted_command_name(self):
+        result = self._deobfuscate(
+            'deVICEcREdEnTiaLDEPlOYmENt.eXe ; Write-Host hello'
+        )
+        self.assertIn('deVICEcREdEnTiaLDEPlOYmENt.eXe', result)
+
 
 class TestPs1NameNormalization(TestPs1):
 

@@ -465,7 +465,6 @@ class Ps1Parser:
             invocation_operator = self._advance(Ps1LexerMode.ARGUMENT).value
             self._skip_newlines()
 
-        self._lexer.mode = Ps1LexerMode.ARGUMENT
         name_expr: Expression | None = None
 
         if self._at(Ps1TokenKind.GENERIC_TOKEN):
@@ -495,9 +494,6 @@ class Ps1Parser:
             self._rescan_current()
             name_expr = self._parse_primary_postfix(name_expr)
 
-        self._lexer.mode = Ps1LexerMode.ARGUMENT
-        self._rescan_current()
-
         if isinstance(name_expr, Ps1StringLiteral) and not invocation_operator:
             while self._at(Ps1TokenKind.DOT):
                 saved_pos = self._lexer.pos
@@ -515,8 +511,10 @@ class Ps1Parser:
                     self._current = saved_tok
                     break
 
-        arguments: list[Ps1CommandArgument | Expression] = []
         self._lexer.mode = Ps1LexerMode.ARGUMENT
+        self._rescan_current()
+
+        arguments: list[Ps1CommandArgument | Expression] = []
         while not self._is_pipeline_terminator():
             self._lexer.mode = Ps1LexerMode.ARGUMENT
             if self._current.offset >= 0 and self._at(
