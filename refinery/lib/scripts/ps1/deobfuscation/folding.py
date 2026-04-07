@@ -298,6 +298,15 @@ class Ps1ConstantFolding(Transformer):
         '-shr' : int.__rshift__,
     }
 
+    _COMPARISON_OPS = {
+        '-eq': int.__eq__,
+        '-ne': int.__ne__,
+        '-lt': int.__lt__,
+        '-le': int.__le__,
+        '-gt': int.__gt__,
+        '-ge': int.__ge__,
+    }
+
     def visit_Ps1BinaryExpression(self, node: Ps1BinaryExpression):
         self.generic_visit(node)
         op = node.operator.lower()
@@ -311,13 +320,21 @@ class Ps1ConstantFolding(Transformer):
             return self._handle_binary_replace(node, op)
         if op in ('-split', '-csplit', '-isplit'):
             return self._handle_binary_split(node, op)
-        return self._handle_arithmetic(node, op)
+        return self._handle_comparison(node, op) or self._handle_arithmetic(node, op)
 
     @staticmethod
     def _unwrap_integer(node: Expression | None) -> Ps1IntegerLiteral | None:
         while isinstance(node, Ps1ParenExpression):
             node = node.expression
-        return node if isinstance(node, Ps1IntegerLiteral) else None
+        if isinstance(node, Ps1IntegerLiteral):
+            return node
+        if isinstance(node, Ps1UnaryExpression) and node.operator == '-':
+            inner = node.operand
+            while isinstance(inner, Ps1ParenExpression):
+                inner = inner.expression
+            if isinstance(inner, Ps1IntegerLiteral):
+                return Ps1IntegerLiteral(value=-inner.value, raw=str(-inner.value))
+        return None
 
     def _handle_arithmetic(self, node: Ps1BinaryExpression, op: str) -> Expression | None:
         left = self._unwrap_integer(node.left)
@@ -332,6 +349,17 @@ class Ps1ConstantFolding(Transformer):
         except (ZeroDivisionError, ValueError, OverflowError):
             return None
         return Ps1IntegerLiteral(value=result, raw=str(result))
+
+    def _handle_comparison(self, node: Ps1BinaryExpression, op: str) -> Expression | None:
+        left = self._unwrap_integer(node.left)
+        right = self._unwrap_integer(node.right)
+        if left is None or right is None:
+            return None
+        fn = self._COMPARISON_OPS.get(op)
+        if fn is None:
+            return None
+        result = fn(left.value, right.value)
+        return Ps1Variable(name='True' if result else 'False')
 
     def _handle_format(self, node: Ps1BinaryExpression) -> Expression | None:
         fmt_str = _string_value(node.left) if node.left else None

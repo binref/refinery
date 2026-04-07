@@ -1257,3 +1257,34 @@ class TestPs1ExpandableStringFolding(TestPs1):
         self.assertIn('htt', result)
         self.assertNotIn('Invoke-Expression', result)
         self.assertNotIn('$(', result)
+
+
+class TestPs1ComparisonFolding(TestPs1):
+
+    def test_eq_true(self):
+        result = self._deobfuscate('(3 -eq 3)')
+        self.assertIn('$True', result)
+
+    def test_eq_false(self):
+        result = self._deobfuscate('(3 -eq 4)')
+        self.assertIn('$False', result)
+
+    def test_lt_true(self):
+        result = self._deobfuscate('(1 -lt 2)')
+        self.assertIn('$True', result)
+
+    def test_ge_false(self):
+        result = self._deobfuscate('(-296 -ge 44)')
+        self.assertIn('$False', result)
+
+    def test_le_negative(self):
+        result = self._deobfuscate('(81 -le -230)')
+        self.assertIn('$False', result)
+
+    def test_parenthesized_operands(self):
+        result = self._deobfuscate('((5) -gt (3))')
+        self.assertIn('$True', result)
+
+    def test_non_constant_unchanged(self):
+        result = self._deobfuscate('($x -eq 3)')
+        self.assertIn('-Eq', result)
