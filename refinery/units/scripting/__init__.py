@@ -47,19 +47,18 @@ class IterativeDeobfuscator(Unit, abstract=True):
             sys.setrecursionlimit(old_limit)
 
     def _process(self, data: Chunk) -> buf:
-        text = codecs.decode(data, self.codec, errors='surrogateescape')
-        ast = self.parse(text)
-        for _ in range(self.args.timeout):
-            try:
-                if not self.transform(ast):
-                    break
-            except KeyboardInterrupt:
-                result = self.synthesize(ast)
-                raise RefineryPartialResult(
-                    'Returning partially deobfuscated data',
-                    partial=codecs.encode(result, self.codec, errors='surrogateescape'))
+        def _result():
+            return codecs.encode(
+                self.synthesize(ast), self.codec, errors='surrogateescape')
+
+        self.log_info('parsing input data')
+        txt = codecs.decode(data, self.codec, errors='surrogateescape')
+        ast = self.parse(txt)
+
+        for k in range(self.args.timeout):
+            self.log_info(F'starting round {k}')
+            if self.transform(ast):
+                continue
+            return _result()
         else:
-            result = self.synthesize(ast)
-            raise AutoDeobfuscationTimeout(
-                codecs.encode(result, self.codec, errors='surrogateescape'))
-        return codecs.encode(self.synthesize(ast), self.codec, errors='surrogateescape')
+            raise AutoDeobfuscationTimeout(_result())
