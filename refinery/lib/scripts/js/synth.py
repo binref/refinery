@@ -90,6 +90,7 @@ class JsSynthesizer(Visitor):
         unescape_strings: bool = False,
         strip_comments: bool = False,
     ):
+        super().__init__()
         self._indent = indent
         self._depth = 0
         self._parts = io.StringIO()

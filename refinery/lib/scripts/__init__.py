@@ -5,7 +5,7 @@ across language-specific parsers.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Generator
+from typing import Generator, Callable
 
 
 @dataclass(repr=False)
@@ -92,9 +92,16 @@ class Visitor:
     unhandled nodes fall through to generic_visit.
     """
 
+    def __init__(self):
+        self._dispatch: dict[type[Node], Callable[[Node], None]] = {}
+
     def visit(self, node: Node):
-        name = F'visit_{type(node).__name__}'
-        handler = getattr(self, name, self.generic_visit)
+        t = type(node)
+        try:
+            handler = self._dispatch[t]
+        except KeyError:
+            handler = getattr(self, F'visit_{t.__name__}', self.generic_visit)
+            self._dispatch[t] = handler
         return handler(node)
 
     def generic_visit(self, node: Node):

@@ -67,6 +67,7 @@ from refinery.lib.scripts.ps1.model import (
 class Ps1Synthesizer(Visitor):
 
     def __init__(self, indent: str = '  '):
+        super().__init__()
         self._indent = indent
         self._depth = 0
         self._parts = io.StringIO()
