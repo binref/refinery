@@ -10,6 +10,7 @@ if True:
 
 from refinery.lib.id import get_text_format
 from refinery.lib.meta import metavars
+from refinery.lib.scripts.guess import guess_language
 from refinery.lib.types import Param
 from refinery.units import Arg, Unit
 
@@ -85,6 +86,8 @@ class hl(Unit):
         else:
             guesses = []
             meta = metavars(data)
+            if format := guess_language(data):
+                guesses.append(format)
             if format := get_text_format(data):
                 guesses.append(format.extension)
             guesses.append(str(meta['ext']))
