@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pathlib
+import typing
 
 import colorama
 
@@ -11,6 +12,10 @@ from refinery.lib.id import get_text_format
 from refinery.lib.meta import metavars
 from refinery.lib.types import Param
 from refinery.units import Arg, Unit
+
+if typing.TYPE_CHECKING:
+    from io import TextIOBase
+    from pygments.token import _TokenType as TokenType
 
 
 class hl(Unit):
@@ -61,9 +66,9 @@ class hl(Unit):
     @Unit.Requires('Pygments', 3)
     def _pygments():
         import pygments
+        import pygments.formatter
         import pygments.formatters
         import pygments.lexers
-        import pygments.style
         import pygments.token
         return pygments
 
@@ -72,7 +77,6 @@ class hl(Unit):
 
     def process(self, data):
         lib = self._pygments
-        token = lib.token
         language: str = self.args.language
 
         if language:
@@ -109,28 +113,70 @@ class hl(Unit):
             tf = lib.formatters.TerminalFormatter(bg='light')
         elif self.args.dark:
             tf = lib.formatters.TerminalFormatter(bg='dark')
+        elif (style := self.args.style):
+            tf = t256(colorscheme=style)
         else:
-            if not (style := self.args.style):
-                class _style(lib.style.Style):
-                    background_color = 'default'
-                    R = 'ansibrightred'
-                    C = 'ansibrightcyan'
-                    W = 'ansiwhite'
-                    B = 'ansibrightblack'
-                    styles = {
-                        token.Comment     : B,
-                        token.Text        : W,
-                        token.Name        : W,
-                        token.Error       : R,
-                        token.Keyword     : R,
-                        token.Operator    : R,
-                        token.Punctuation : R,
-                        token.String      : C,
-                        token.Number      : C,
-                        token.Literal     : C,
-                    }
-                style = _style
-            tf = t256(style=style)
+            FG = colorama.Fore
+            ST = colorama.Style
+            t = lib.token
+
+            R = FG.LIGHTRED_EX
+            C = FG.CYAN
+            W = FG.WHITE
+            B = FG.LIGHTBLACK_EX
+
+            ANSI_MAP = {
+                # Base layer
+                t.Text             : W,
+                # Comments (background noise)
+                t.Comment          : B,
+                t.Comment.Preproc  : B,
+                # Structure (dominant visual signal)
+                t.Keyword          : R + ST.BRIGHT,
+                t.Keyword.Constant : R,
+                t.Keyword.Type     : R,
+                t.Operator         : R,
+                t.Operator.Word    : R,
+                # Names (keep calm and readable)
+                t.Name             : W,
+                t.Name.Variable    : W,
+                t.Name.Function    : W,
+                # Rare highlight (just enough contrast)
+                t.Name.Class       : W + ST.BRIGHT,
+                # Keep palette tight (no extra hues)
+                t.Name.Namespace   : B,
+                t.Name.Attribute   : B,
+                t.Name.Property    : B,
+                # Structural accents
+                t.Name.Builtin     : R,
+                t.Name.Decorator   : R,
+                t.Name.Tag         : R,
+                # Data (controlled green usage)
+                t.String           : C,
+                t.String.Doc       : C,
+                t.String.Escape    : C,
+                t.String.Interpol  : C,
+                t.Number           : C,
+                t.Literal          : C,
+                t.Name.Constant    : C,
+                # Background structure
+                t.Punctuation      : B,
+                # Errors (high visibility)
+                t.Error            : R + ST.BRIGHT,
+            }
+
+            class ColoramaFormatter(lib.formatter.Formatter):
+                def format(self, tokensource: list[tuple[TokenType, str]], outfile: TextIOBase):
+                    for tt, value in tokensource:
+                        cc = None
+                        while tt and cc is None:
+                            cc = ANSI_MAP.get(tt)
+                            tt = tt.parent
+                        outfile.write(cc or FG.WHITE)
+                        outfile.write(value)
+                        outfile.write(ST.RESET_ALL)
+
+            tf = ColoramaFormatter()
 
         out = lib.highlight(data, lexer, tf)
         out = F'{out}{colorama.Style.RESET_ALL}'
