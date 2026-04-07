@@ -1627,11 +1627,21 @@ class Ps1Parser:
         self._expect(Ps1TokenKind.LBRACKET)
         self._skip_newlines()
         name_parts: list[str] = []
-        while not self._at(
-            Ps1TokenKind.RBRACKET, Ps1TokenKind.LPAREN, Ps1TokenKind.EOF
-        ):
-            name_parts.append(self._current.value)
-            self._advance()
+        depth = 0
+        while not self._at(Ps1TokenKind.LPAREN, Ps1TokenKind.EOF):
+            if self._at(Ps1TokenKind.LBRACKET):
+                depth += 1
+                name_parts.append('[')
+                self._advance()
+            elif self._at(Ps1TokenKind.RBRACKET):
+                if depth == 0:
+                    break
+                depth -= 1
+                name_parts.append(']')
+                self._advance()
+            else:
+                name_parts.append(self._current.value)
+                self._advance()
         name = ''.join(name_parts).strip()
         if self._at(Ps1TokenKind.LPAREN):
             self._advance()

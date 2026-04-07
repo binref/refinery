@@ -1174,6 +1174,13 @@ class TestPs1ParserModeRescan(TestPs1):
         )
         self.assertIn('deVICEcREdEnTiaLDEPlOYmENt.eXe', result)
 
+    def test_array_type_in_param_block(self):
+        result = self._deobfuscate(
+            'function f { Param([byte[]]$x, [string]$y) ; $x }'
+        )
+        self.assertIn('[byte[]]', result)
+        self.assertIn('String', result)
+
 
 class TestPs1NameNormalization(TestPs1):
 
