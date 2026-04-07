@@ -118,6 +118,7 @@ class Transformer(Visitor):
     """
 
     def __init__(self):
+        super().__init__()
         self.changed = False
 
     def mark_changed(self):
