@@ -40,12 +40,6 @@ class defu(IterativeDeobfuscator):
 
     @classmethod
     def _backends(cls):
-        from refinery.lib.scripts.js.deobfuscation import deobfuscate as js_deobfuscate
-        from refinery.lib.scripts.js.model import JsErrorNode
-        from refinery.lib.scripts.js.parser import JsParser
-        from refinery.lib.scripts.js.synth import JsSynthesizer
-        yield _Backend('js', JsParser, js_deobfuscate, JsSynthesizer, JsErrorNode)
-
         from refinery.lib.scripts.ps1.deobfuscation import deobfuscate as ps1_deobfuscate
         from refinery.lib.scripts.ps1.model import Ps1ErrorNode
         from refinery.lib.scripts.ps1.parser import Ps1Parser
@@ -57,6 +51,12 @@ class defu(IterativeDeobfuscator):
         from refinery.lib.scripts.vba.parser import VbaParser
         from refinery.lib.scripts.vba.synth import VbaSynthesizer
         yield _Backend('vba', VbaParser, vba_deobfuscate, VbaSynthesizer, VbaErrorNode)
+
+        from refinery.lib.scripts.js.deobfuscation import deobfuscate as js_deobfuscate
+        from refinery.lib.scripts.js.model import JsErrorNode
+        from refinery.lib.scripts.js.parser import JsParser
+        from refinery.lib.scripts.js.synth import JsSynthesizer
+        yield _Backend('js', JsParser, js_deobfuscate, JsSynthesizer, JsErrorNode)
 
     def parse(self, data: str) -> Node:
         best_ast: Node | None = None
