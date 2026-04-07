@@ -143,18 +143,6 @@ class TestPs1RealWorldSmall(TestUnitBase):
         self.assertIn('hello', result)
         self.assertNotIn('Invoke-Expression', result)
 
-    def test_expandable_string_value_subexpr_kept(self):
-        data = b'''"prefix$( 1 + 2 )suffix"'''
-        result = data | self.load() | str
-        self.assertIn('$( 1 + 2 )', result)
-
-    def test_semicolons_are_statement_separators(self):
-        data = b'; Get-Item foo ;; Get-Item bar ;'
-        result = data | self.load() | str
-        self.assertNotIn(';', result)
-        self.assertIn('Get-Item foo', result)
-        self.assertIn('Get-Item bar', result)
-
 
 class TestPs1RealWorldLarge(TestUnitBase):
 

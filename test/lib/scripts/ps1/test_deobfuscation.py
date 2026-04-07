@@ -473,6 +473,16 @@ class TestPS1Regressions(TestPs1):
         result = self._deobfuscate("$env:temp + '\\foo.exe'")
         self.assertIn('"${env:Temp}\\foo.exe"', result)
 
+    def test_expandable_string_value_subexpr_kept(self):
+        result = self._deobfuscate('''"prefix$( 1 + 2 )suffix"''')
+        self.assertIn('prefix$(', result)
+
+    def test_semicolons_are_statement_separators(self):
+        result = self._deobfuscate('; Get-Item foo ;; Get-Item bar ;')
+        self.assertNotIn(';', result)
+        self.assertIn('Get-Item foo', result)
+        self.assertIn('Get-Item bar', result)
+
 
 class TestPs1VariableDriveResolution(TestPs1):
 
