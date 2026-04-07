@@ -3,6 +3,7 @@ PowerShell AST deobfuscation transforms.
 """
 from refinery.lib.scripts.ps1.deobfuscation.aliases import Ps1AliasInlining
 from refinery.lib.scripts.ps1.deobfuscation.constants import Ps1ConstantInlining
+from refinery.lib.scripts.ps1.deobfuscation.deadcode import Ps1DeadCodeElimination
 from refinery.lib.scripts.ps1.deobfuscation.emulator import Ps1ForEachPipeline, Ps1FunctionEvaluator
 from refinery.lib.scripts.ps1.deobfuscation.expandable import Ps1ExpandableStringHoist
 from refinery.lib.scripts.ps1.deobfuscation.folding import Ps1ConstantFolding
@@ -27,6 +28,7 @@ def deobfuscate(ast: Ps1Script) -> bool:
         Ps1ConstantInlining(),
         Ps1ExpandableStringHoist(),
         Ps1ConstantFolding(),
+        Ps1DeadCodeElimination(),
         Ps1ForEachPipeline(),
         Ps1FunctionEvaluator(),
         Ps1TypeCasts(),

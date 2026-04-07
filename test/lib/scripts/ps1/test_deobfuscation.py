@@ -1288,3 +1288,106 @@ class TestPs1ComparisonFolding(TestPs1):
     def test_non_constant_unchanged(self):
         result = self._deobfuscate('($x -eq 3)')
         self.assertIn('-Eq', result)
+
+
+class TestPs1DeadCodeElimination(TestPs1):
+
+    def test_while_false_removed(self):
+        result = self._deobfuscate("while ($False) { Write-Host 'dead' }; Write-Host 'live'")
+        self.assertNotIn('dead', result)
+        self.assertIn('live', result)
+
+    def test_if_true_keeps_then(self):
+        result = self._deobfuscate("if ($True) { Write-Host 'yes' } else { Write-Host 'no' }")
+        self.assertIn('yes', result)
+        self.assertNotIn("'no'", result)
+
+    def test_if_false_keeps_else(self):
+        result = self._deobfuscate("if ($False) { Write-Host 'a' } else { Write-Host 'b' }")
+        self.assertNotIn("'a'", result)
+        self.assertIn('b', result)
+
+    def test_if_false_then_true_elseif(self):
+        result = self._deobfuscate("if ($False) {} elseif ($True) { Write-Host 'second' }")
+        self.assertIn('second', result)
+
+    def test_all_false_keeps_else(self):
+        result = self._deobfuscate("if ($False) {} elseif ($False) {} else { Write-Host 'else' }")
+        self.assertIn('else', result)
+
+    def test_non_static_stops_pruning(self):
+        result = self._deobfuscate("if ($False) {} elseif ($x) { Write-Host 'kept' }")
+        self.assertNotIn('$False', result)
+        self.assertIn('$x', result)
+        self.assertIn('kept', result)
+
+    def test_switch_constant_match(self):
+        result = self._deobfuscate("switch (5) { 3 { 'a' } 5 { 'b' } default { 'c' } }")
+        self.assertIn('b', result)
+        self.assertNotIn("'a'", result)
+        self.assertNotIn("'c'", result)
+
+    def test_switch_constant_default(self):
+        result = self._deobfuscate("switch (99) { 1 { 'a' } default { 'd' } }")
+        self.assertIn('d', result)
+        self.assertNotIn("'a'", result)
+
+    def test_switch_constant_no_match(self):
+        result = self._deobfuscate("switch (99) { 1 { 'a' } 2 { 'b' } }")
+        self.assertNotIn("'a'", result)
+        self.assertNotIn("'b'", result)
+
+    def test_do_while_false_executes_once(self):
+        result = self._deobfuscate("do { Write-Host 'once' } while ($False)")
+        self.assertIn('once', result)
+        self.assertNotIn('while', result.lower())
+
+    def test_if_false_no_else_removed(self):
+        result = self._deobfuscate("if ($False) { Write-Host 'dead' }")
+        self.assertNotIn('dead', result)
+
+    def test_if_true_empty_then(self):
+        result = self._deobfuscate("if ($True) {} else { Write-Host 'dead' }")
+        self.assertNotIn('dead', result)
+
+    def test_if_nonzero_integer_truthy(self):
+        result = self._deobfuscate("if (99) { Write-Host 'yes' } else { Write-Host 'no' }")
+        self.assertIn('yes', result)
+        self.assertNotIn("'no'", result)
+
+    def test_if_zero_integer_falsy(self):
+        result = self._deobfuscate("if (0) { Write-Host 'dead' } else { Write-Host 'live' }")
+        self.assertNotIn('dead', result)
+        self.assertIn('live', result)
+
+    def test_while_zero_removed(self):
+        result = self._deobfuscate("while (0) { Write-Host 'dead' }; Write-Host 'live'")
+        self.assertNotIn('dead', result)
+        self.assertIn('live', result)
+
+    def test_if_nonempty_string_truthy(self):
+        result = self._deobfuscate("if ('x') { Write-Host 'yes' }")
+        self.assertIn('yes', result)
+        self.assertNotIn('if', result.lower().split('write')[0])
+
+    def test_if_empty_string_falsy(self):
+        result = self._deobfuscate("if ('') { Write-Host 'dead' }")
+        self.assertNotIn('dead', result)
+
+    def test_if_negative_integer_truthy(self):
+        result = self._deobfuscate("if (-12) { Write-Host 'yes' }")
+        self.assertIn('yes', result)
+        self.assertNotIn('-12', result)
+
+    def test_if_null_falsy(self):
+        result = self._deobfuscate("if ($Null) { Write-Host 'dead' }")
+        self.assertNotIn('dead', result)
+
+    def test_if_zero_real_falsy(self):
+        result = self._deobfuscate("if (0.0) { Write-Host 'dead' }")
+        self.assertNotIn('dead', result)
+
+    def test_if_nonzero_real_truthy(self):
+        result = self._deobfuscate("if (3.14) { Write-Host 'yes' }")
+        self.assertIn('yes', result)
+        self.assertNotIn('3.14', result)
