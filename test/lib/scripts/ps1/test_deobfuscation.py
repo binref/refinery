@@ -638,6 +638,23 @@ class TestPs1ConstantInlining(TestPs1):
         result = self._deobfuscate("$x = 'a'; $x += 'b'; Write-Output $x")
         self.assertIn('$x', result)
 
+    def test_same_value_multiple_assignments_inlined(self):
+        result = self._deobfuscate(
+            "$x = 'hello'; Write-Host $x; $x = 'hello'; Write-Host $x")
+        self.assertNotIn('$x', result)
+        self.assertEqual(result.count("'hello'"), 2)
+
+    def test_same_value_integer_multiple_assignments_folded(self):
+        result = self._deobfuscate_iterative(
+            '$x = 150; $y = ($x + 1); $x = 150; $z = ($x + 2)')
+        self.assertNotIn('$x', result)
+        self.assertIn('151', result)
+        self.assertIn('152', result)
+
+    def test_mixed_constant_and_nonconst_not_inlined(self):
+        result = self._deobfuscate("$x = 'a'; $x = $y; Write-Output $x")
+        self.assertIn('$x', result)
+
     def test_variable_index_skipped(self):
         result = self._deobfuscate("$a = @('x','y'); Write-Output $a[$i]")
         self.assertIn('$a', result)
