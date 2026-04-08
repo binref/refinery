@@ -22,7 +22,7 @@ class IterativeDeobfuscator(Unit, abstract=True):
     def __init__(
         self,
         timeout: Param[int, Arg.Number(
-            '-t', help='Maximum number of iterations; the default is {default}.')] = 100,
+            '-t', help='Maximum number of iterations; the default is {default}.')] = 500,
     ):
         super().__init__(timeout=timeout)
 
@@ -31,7 +31,7 @@ class IterativeDeobfuscator(Unit, abstract=True):
         ...
 
     @abc.abstractmethod
-    def transform(self, ast: Node) -> bool:
+    def transform(self, ast: Node) -> int:
         ...
 
     @abc.abstractmethod

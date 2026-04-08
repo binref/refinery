@@ -1,6 +1,7 @@
 """
 PowerShell AST deobfuscation transforms.
 """
+from refinery.lib.scripts.pipeline import DeobfuscationPipeline, TransformerGroup
 from refinery.lib.scripts.ps1.deobfuscation.aliases import Ps1AliasInlining
 from refinery.lib.scripts.ps1.deobfuscation.constants import Ps1ConstantInlining
 from refinery.lib.scripts.ps1.deobfuscation.deadcode import Ps1DeadCodeElimination
@@ -15,28 +16,44 @@ from refinery.lib.scripts.ps1.deobfuscation.typenames import Ps1TypeSystemSimpli
 from refinery.lib.scripts.ps1.deobfuscation.wildcards import Ps1WildcardResolution
 from refinery.lib.scripts.ps1.model import Ps1Script
 
+_pipeline = DeobfuscationPipeline(
+    groups=[
+        TransformerGroup(
+            'normalize',
+            Ps1Simplifications,
+            Ps1AliasInlining,
+            Ps1WildcardResolution,
+            Ps1TypeSystemSimplifications,
+        ),
+        TransformerGroup(
+            'fold',
+            Ps1ConstantFolding,
+            Ps1DeadCodeElimination,
+            Ps1ConstantInlining,
+            Ps1ExpandableStringHoist,
+        ),
+        TransformerGroup(
+            'evaluate',
+            Ps1ForEachPipeline,
+            Ps1FunctionEvaluator,
+        ),
+        TransformerGroup(
+            'finalize',
+            Ps1TypeCasts,
+            Ps1SecureStringDecryptor,
+            Ps1IexInlining,
+        ),
+    ],
+    dependencies={
+        'fold': {'normalize'},
+        'evaluate': {'fold'},
+        'finalize': {'evaluate'},
+    },
+)
 
-def deobfuscate(ast: Ps1Script) -> bool:
+
+def deobfuscate(ast: Ps1Script, max_steps: int = 0) -> int:
     """
     Apply all available deobfuscators to the input.
     """
-    transformers = [
-        Ps1Simplifications(),
-        Ps1AliasInlining(),
-        Ps1WildcardResolution(),
-        Ps1TypeSystemSimplifications(),
-        Ps1ConstantFolding(),
-        Ps1DeadCodeElimination(),
-        Ps1ConstantInlining(),
-        Ps1ExpandableStringHoist(),
-        Ps1ConstantFolding(),
-        Ps1DeadCodeElimination(),
-        Ps1ForEachPipeline(),
-        Ps1FunctionEvaluator(),
-        Ps1TypeCasts(),
-        Ps1SecureStringDecryptor(),
-        Ps1IexInlining(),
-    ]
-    for t in transformers:
-        t.visit(ast)
-    return any(t.changed for t in transformers)
+    return _pipeline.run(ast, max_steps=max_steps)

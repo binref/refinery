@@ -21,7 +21,7 @@ from refinery.units.scripting import IterativeDeobfuscator
 class _Backend(NamedTuple):
     name: str
     parser: type[JsParser] | type[Ps1Parser] | type[VbaParser]
-    deobfuscate: Callable[..., bool]
+    deobfuscate: Callable[..., int]
     synthesizer: type[JsSynthesizer] | type[Ps1Synthesizer] | type[VbaSynthesizer]
     error: type[JsErrorNode] | type[Ps1ErrorNode] | type[VbaErrorNode]
 
@@ -81,7 +81,7 @@ class defu(IterativeDeobfuscator):
         self.log_info(F'using {best_backend.name} with {best_errors / len(data) * 100:.2f}% errors')
         return best_ast
 
-    def transform(self, ast: Node) -> bool:
+    def transform(self, ast: Node) -> int:
         return self._backend.deobfuscate(ast)
 
     def synthesize(self, ast: Node) -> str:

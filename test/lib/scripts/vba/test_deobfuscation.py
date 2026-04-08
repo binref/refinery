@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from test import TestBase
 
-from refinery.lib.scripts.vba.deobfuscation import VbaSimplifications, deobfuscate
+from refinery.lib.scripts.vba.deobfuscation import deobfuscate
+from refinery.lib.scripts.vba.deobfuscation.simplify import VbaSimplifications
 from refinery.lib.scripts.vba.parser import VbaParser
 from refinery.lib.scripts.vba.synth import VbaSynthesizer
 
@@ -16,7 +17,7 @@ class TestVbaDeobfuscation(TestBase):
 
     def _deobfuscate(self, source: str) -> str:
         ast = VbaParser(source).parse()
-        VbaSimplifications().deobfuscate(ast)
+        deobfuscate(ast)
         return VbaSynthesizer().convert(ast)
 
     def _full_deobfuscate(self, source: str, max_rounds: int = 20) -> str:
@@ -180,10 +181,11 @@ class TestVbaDeobfuscation(TestBase):
         self.assertNotIn('y =', result)
 
     def test_constant_multi_assign(self):
-        code = 'Sub T()\ny = 1\ny = 2\nx = y\nEnd Sub'
+        code = 'Sub T()\ny = 1\ny = 2\nx = y\nF x\nEnd Sub'
         result = self._deobfuscate(code)
-        self.assertIn('y = 1', result)
-        self.assertIn('y = 2', result)
+        self.assertNotIn('x = 1', result)
+        self.assertNotIn('x = 2', result)
+        self.assertIn('x = y', result)
 
     def test_dead_variable_removal(self):
         code = 'Sub T()\nx = 1\nEnd Sub'
@@ -238,8 +240,8 @@ class TestVbaDeobfuscation(TestBase):
             'End Sub'
         )
         result = self._deobfuscate(code)
-        self.assertIn('melb = dtiss', result)
         self.assertNotIn('melb = "cellvalue"', result)
+        self.assertIn('cellvalueif', result)
 
     def test_emulator_simple_return(self):
         code = (

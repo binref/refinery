@@ -8,11 +8,12 @@ from typing import TYPE_CHECKING, Union, Optional
 if TYPE_CHECKING:
     from typing import TypeAlias
 
-from refinery.lib.scripts import Expression
+from refinery.lib.scripts import Expression, Statement
 from refinery.lib.scripts.vba.model import (
     VbaBooleanLiteral,
     VbaFloatLiteral,
     VbaIntegerLiteral,
+    VbaModule,
     VbaStringLiteral,
 )
 
@@ -82,3 +83,16 @@ def _value_to_node(value: _Value) -> Expression | None:
     if isinstance(value, float):
         return _make_numeric_literal(value)
     return None
+
+
+def _body_lists(module: VbaModule):
+    """
+    Yield every statement-list body reachable from the module.
+    """
+    for node in module.walk():
+        for attr_name in vars(node):
+            if attr_name in ('parent', 'offset'):
+                continue
+            value = getattr(node, attr_name)
+            if isinstance(value, list) and value and isinstance(value[0], Statement):
+                yield value

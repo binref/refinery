@@ -159,7 +159,7 @@ def _try_evaluate(
     Also handles pipelines of the form
 
         expr | %{ body } | %{ body }
-    
+
     where the `ForEach-Object` stage receives the previous result via `$_`.
     """
     if isinstance(expr, Ps1StringLiteral):

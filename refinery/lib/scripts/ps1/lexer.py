@@ -749,18 +749,19 @@ class Ps1Lexer:
                         self.pos += 1
                     else:
                         break
-                if self.pos < length and (
-                    src[self.pos] in SINGLE_QUOTES
-                    or src[self.pos] in DOUBLE_QUOTES
-                    or src[self.pos] == '$'
-                ):
-                    self.pos = start
-                    token = self._read_generic_token()
-                    if token.value:
-                        mode_hint = yield token
-                        if mode_hint is not None:
-                            self.mode = mode_hint
-                        continue
+                if self.pos < length and src[self.pos] not in _FORCE_START_NEW_TOKEN:
+                    if self.mode == Ps1LexerMode.ARGUMENT or (
+                        src[self.pos] in SINGLE_QUOTES
+                        or src[self.pos] in DOUBLE_QUOTES
+                        or src[self.pos] == '$'
+                    ):
+                        self.pos = start
+                        token = self._read_generic_token()
+                        if token.value:
+                            mode_hint = yield token
+                            if mode_hint is not None:
+                                self.mode = mode_hint
+                            continue
                 identifier = ''.join(word)
                 if identifier:
                     kw = _KEYWORDS.get(identifier.lower())

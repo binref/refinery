@@ -192,7 +192,7 @@ class TestPs1Deobfuscator(TestPs1):
     def test_tostring_multiindex_join(self):
         data = "& ('SilentlyContinue'.ToString()[1, 3] + 'x' -Join '')"
         result = self._deobfuscate(data)
-        self.assertIn('iex', result.lower())
+        self.assertIn('invoke-expression', result.lower())
 
     def test_split_constant_string(self):
         result = self._deobfuscate("'aXbYcZd'.Split('XYZ')")
@@ -604,7 +604,7 @@ class TestPs1TypeSystemSimplifications(TestPs1):
     def test_name_on_string_literal_stripped(self):
         result = self._deobfuscate("$x.('GetCmdlets'.Name)('*w-*ct')")
         self.assertNotIn('.Name', result)
-        self.assertIn('GetCmdlets', result)
+        self.assertIn('New-Object', result)
 
 
 class TestPs1ConstantInlining(TestPs1):
@@ -976,7 +976,8 @@ class TestPs1IexInlining(TestPs1):
         data = "'Write-Host hello' | & ($env:ComSpec[4,26,25] -Join '')"
         result = self._deobfuscate(data)
         self.assertNotIn('ComSpec', result)
-        self.assertIn('iex', result.lower())
+        self.assertIn('Write-Host', result)
+        self.assertIn('hello', result)
 
     def test_iex_deflate_byte_array(self):
         data = (

@@ -496,6 +496,8 @@ class Ps1Parser:
 
         if isinstance(name_expr, Ps1StringLiteral) and not invocation_operator:
             while self._at(Ps1TokenKind.DOT):
+                if self._current.offset > name_expr.offset + len(name_expr.raw):
+                    break
                 saved_pos = self._lexer.pos
                 saved_tok = self._current
                 self._advance()
