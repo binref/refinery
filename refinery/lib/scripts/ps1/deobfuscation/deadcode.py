@@ -6,6 +6,8 @@ from __future__ import annotations
 from refinery.lib.scripts import Node, Statement, Transformer
 from refinery.lib.scripts.ps1.deobfuscation._helpers import _get_body
 from refinery.lib.scripts.ps1.model import (
+    Ps1AssignmentExpression,
+    Ps1BinaryExpression,
     Ps1DoUntilLoop,
     Ps1DoWhileLoop,
     Ps1ExpressionStatement,
@@ -14,6 +16,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1IntegerLiteral,
     Ps1ParenExpression,
     Ps1RealLiteral,
+    Ps1ScopeModifier,
     Ps1StringLiteral,
     Ps1SwitchStatement,
     Ps1UnaryExpression,
@@ -47,6 +50,86 @@ def _is_truthy(node) -> bool | None:
     if isinstance(node, Ps1UnaryExpression) and node.operator == '-':
         return _is_truthy(node.operand)
     return None
+
+
+def _unwrap_integer(node) -> int | None:
+    """
+    Extract a plain integer value from a constant expression, or return None.
+    """
+    while isinstance(node, Ps1ParenExpression):
+        node = node.expression
+    if isinstance(node, Ps1IntegerLiteral):
+        return node.value
+    if (
+        isinstance(node, Ps1Variable)
+        and node.scope == Ps1ScopeModifier.NONE
+        and node.name.lower() == 'null'
+    ):
+        return 0
+    if isinstance(node, Ps1UnaryExpression) and node.operator == '-':
+        inner = node.operand
+        while isinstance(inner, Ps1ParenExpression):
+            inner = inner.expression
+        if isinstance(inner, Ps1IntegerLiteral):
+            return -inner.value
+    return None
+
+
+_COMPARISON_OPS = {
+    '-eq': int.__eq__,
+    '-ne': int.__ne__,
+    '-lt': int.__lt__,
+    '-le': int.__le__,
+    '-gt': int.__gt__,
+    '-ge': int.__ge__,
+}
+
+
+def _evaluate_for_condition(node: Ps1ForLoop) -> bool | None:
+    """
+    Try to evaluate a for-loop condition at loop entry by substituting the initial value of the
+    loop variable into the comparison. Returns the boolean result, or None if the pattern does not
+    match.
+    """
+    init = node.initializer
+    cond = node.condition
+    if not isinstance(init, Ps1AssignmentExpression) or init.operator != '=':
+        return None
+    if not isinstance(init.target, Ps1Variable):
+        return None
+    init_val = _unwrap_integer(init.value)
+    if init_val is None:
+        return None
+    if not isinstance(cond, Ps1BinaryExpression):
+        return None
+    op_fn = _COMPARISON_OPS.get(cond.operator.lower())
+    if op_fn is None:
+        return None
+    var_name = init.target.name.lower()
+    var_scope = init.target.scope
+    left_val = _resolve_side(cond.left, var_name, var_scope, init_val)
+    right_val = _resolve_side(cond.right, var_name, var_scope, init_val)
+    if left_val is None or right_val is None:
+        return None
+    return bool(op_fn(left_val, right_val))
+
+
+def _resolve_side(
+    node, var_name: str, var_scope: Ps1ScopeModifier, init_val: int,
+) -> int | None:
+    """
+    Resolve one side of a for-loop condition to an integer: if the node is the loop variable,
+    return the initial value; if it is a constant integer, return that; otherwise return None.
+    """
+    while isinstance(node, Ps1ParenExpression):
+        node = node.expression
+    if (
+        isinstance(node, Ps1Variable)
+        and node.name.lower() == var_name
+        and node.scope == var_scope
+    ):
+        return init_val
+    return _unwrap_integer(node)
 
 
 class Ps1DeadCodeElimination(Transformer):
@@ -115,7 +198,10 @@ class Ps1DeadCodeElimination(Transformer):
 
     @staticmethod
     def _prune_for(node: Ps1ForLoop) -> list[Statement] | None:
-        if _is_truthy(node.condition) is not False:
+        truth = _evaluate_for_condition(node)
+        if truth is None:
+            truth = _is_truthy(node.condition)
+        if truth is not False:
             return None
         result: list[Statement] = []
         if node.initializer is not None:

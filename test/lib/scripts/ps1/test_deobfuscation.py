@@ -1393,6 +1393,24 @@ class TestPs1DeadCodeElimination(TestPs1):
         self.assertIn('yes', result)
         self.assertNotIn('3.14', result)
 
+    def test_dead_for_loop_false_eq(self):
+        result = self._deobfuscate(
+            "for($x=175;$x-Eq437;$x++){Write-Host 'hi'}")
+        self.assertIn('$x', result)
+        self.assertIn('175', result)
+        self.assertNotIn('for', result.lower())
+        self.assertNotIn('Write-Host', result)
+
+    def test_dead_for_loop_true_condition(self):
+        result = self._deobfuscate(
+            "for($x=10;$x-Eq10;$x++){Write-Host 'hi'}")
+        self.assertIn('for', result.lower())
+
+    def test_dead_for_loop_no_initializer(self):
+        result = self._deobfuscate(
+            "for(;$False;){Write-Host 'hi'}")
+        self.assertNotIn('Write-Host', result)
+
 
 class TestPs1CharIntFolding(TestPs1):
 
