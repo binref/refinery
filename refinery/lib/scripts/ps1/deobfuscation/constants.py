@@ -13,6 +13,8 @@ from refinery.lib.scripts.ps1.model import (
     Ps1ArrayExpression,
     Ps1ArrayLiteral,
     Ps1AssignmentExpression,
+    Ps1BinaryExpression,
+    Ps1CastExpression,
     Ps1ExpressionStatement,
     Ps1ForEachLoop,
     Ps1IndexExpression,
@@ -63,6 +65,43 @@ _PS1_ENV_CONSTANTS = {
     and '{h}' not in value
 }
 
+_PS1_AUTOMATIC_VARIABLES = frozenset({
+    '_',
+    'args',
+    'error',
+    'event',
+    'eventargs',
+    'eventsubscriber',
+    'executioncontext',
+    'false',
+    'foreach',
+    'home',
+    'host',
+    'input',
+    'lastexitcode',
+    'matches',
+    'myinvocation',
+    'nestedpromptlevel',
+    'null',
+    'ofs',
+    'pid',
+    'profile',
+    'psboundparameters',
+    'pscmdlet',
+    'pscommandpath',
+    'psitem',
+    'psscriptroot',
+    'psversiontable',
+    'pwd',
+    'sender',
+    'sourceargs',
+    'sourceeventargs',
+    'stacktrace',
+    'switch',
+    'this',
+    'true',
+})
+
 _PS1_KNOWN_VARIABLES: dict[str, str] = {
     name.lower(): name for name in [
         'ConfirmPreference',
@@ -105,6 +144,36 @@ _PS1_KNOWN_VARIABLES: dict[str, str] = {
         'WhatIfPreference',
     ]
 }
+
+
+def _collect_mutated_variables(root: Node) -> set[str]:
+    """
+    Return the set of variable keys that are written to anywhere in the AST. This includes
+    assignment targets, ForEach loop variables, ++/-- operands, and parameter declarations.
+    """
+    mutated: set[str] = set()
+    for node in root.walk():
+        if isinstance(node, Ps1AssignmentExpression):
+            if isinstance(node.target, Ps1Variable):
+                key = _candidate_key(node.target)
+                if key is not None:
+                    mutated.add(key)
+        elif isinstance(node, Ps1ForEachLoop):
+            if isinstance(node.variable, Ps1Variable):
+                key = _candidate_key(node.variable)
+                if key is not None:
+                    mutated.add(key)
+        elif isinstance(node, Ps1UnaryExpression):
+            if node.operator in ('++', '--') and isinstance(node.operand, Ps1Variable):
+                key = _candidate_key(node.operand)
+                if key is not None:
+                    mutated.add(key)
+        elif isinstance(node, Ps1ParameterDeclaration):
+            if isinstance(node.variable, Ps1Variable):
+                key = _candidate_key(node.variable)
+                if key is not None:
+                    mutated.add(key)
+    return mutated
 
 
 def _candidate_key(var: Ps1Variable) -> str | None:
@@ -548,3 +617,65 @@ class Ps1ConstantInlining(Transformer):
             # cursor is the statement to remove from parent's body list
             return cursor
         return None
+
+
+class Ps1NullVariableInlining(Transformer):
+    """
+    Replace references to never-assigned variables with `$Null`. Only operates on variables that
+    appear in expression contexts where null coercion enables further simplification (arithmetic,
+    comparison, cast, assignment value).
+    """
+
+    enabled: bool = False
+
+    @staticmethod
+    def _is_null_eligible(ref: Ps1Variable) -> bool:
+        cursor = ref
+        while cursor.parent is not None:
+            parent = cursor.parent
+            if isinstance(parent, Ps1BinaryExpression):
+                return True
+            if isinstance(parent, Ps1UnaryExpression):
+                return True
+            if isinstance(parent, Ps1CastExpression):
+                return True
+            if isinstance(parent, Ps1AssignmentExpression) and cursor is parent.value:
+                return True
+            if isinstance(parent, (Ps1ParenExpression, Ps1ArrayLiteral)):
+                cursor = parent
+                continue
+            if hasattr(parent, 'condition') and cursor is parent.condition:
+                return True
+            if hasattr(parent, 'clauses'):
+                for cond, _body in parent.clauses:
+                    if cursor is cond:
+                        return True
+            return False
+        return False
+
+    def visit(self, node: Node):
+        if not Ps1NullVariableInlining.enabled:
+            return
+        mutated = _collect_mutated_variables(node)
+        for ref in list(node.walk()):
+            if not isinstance(ref, Ps1Variable):
+                continue
+            key = _candidate_key(ref)
+            if key is None:
+                continue
+            if key in mutated:
+                continue
+            if key in _PS1_KNOWN_VARIABLES:
+                continue
+            if key in _PS1_DEFAULT_VARIABLES:
+                continue
+            if key in _PS1_AUTOMATIC_VARIABLES:
+                continue
+            if key.startswith('env:'):
+                continue
+            if isinstance(ref.parent, Ps1AssignmentExpression) and ref is ref.parent.target:
+                continue
+            if not self._is_null_eligible(ref):
+                continue
+            _replace_in_parent(ref, Ps1Variable(name='Null'))
+            self.mark_changed()

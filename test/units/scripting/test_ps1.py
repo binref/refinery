@@ -49,7 +49,7 @@ class TestPs1RealWorldSmall(TestUnitBase):
         self.assertIn('Win32_Processor', result)
 
     def test_foreach_with_external_variable(self):
-        data = b"'65,66,67'.Split(',') | %{ [Char]([Int]$_ -bxor $key) }"
+        data = b"$key = $env:K\n'65,66,67'.Split(',') | %{ [Char]([Int]$_ -bxor $key) }"
         result = data | self.load() | str
         self.assertIn('-BXor', result.replace('-bxor', '-BXor'))
         self.assertIn('$key', result)

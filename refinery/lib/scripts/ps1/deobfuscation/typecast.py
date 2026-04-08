@@ -18,8 +18,10 @@ from refinery.lib.scripts.ps1.model import (
     Ps1CastExpression,
     Ps1IntegerLiteral,
     Ps1ParenExpression,
+    Ps1ScopeModifier,
     Ps1TypeExpression,
     Ps1UnaryExpression,
+    Ps1Variable,
 )
 
 _INTEGER_TYPE_NAMES = frozenset({
@@ -46,6 +48,12 @@ def _unwrap_integer(node) -> int | None:
         node = node.expression
     if isinstance(node, Ps1IntegerLiteral):
         return node.value
+    if (
+        isinstance(node, Ps1Variable)
+        and node.scope == Ps1ScopeModifier.NONE
+        and node.name.lower() == 'null'
+    ):
+        return 0
     if isinstance(node, Ps1UnaryExpression) and node.operator == '-':
         inner = node.operand
         while isinstance(inner, Ps1ParenExpression):
@@ -83,11 +91,14 @@ class Ps1TypeCasts(Transformer):
                 if parts is not None and len(parts) > 1:
                     return _make_string_literal(' '.join(parts))
         if tn in _INTEGER_TYPE_NAMES:
-            if _unwrap_integer(node.operand) is not None:
-                return node.operand
+            value = _unwrap_integer(node.operand)
+            if value is not None:
+                return Ps1IntegerLiteral(value=value, raw=str(value))
         if tn == 'char':
             value = _unwrap_integer(node.operand)
             if value is not None:
+                if value == 0:
+                    return _make_string_literal('')
                 try:
                     ch = chr(value)
                 except (ValueError, OverflowError):

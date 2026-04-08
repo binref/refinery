@@ -7,9 +7,10 @@ import base64
 import codecs
 import re
 
-from refinery.lib.scripts import Transformer
+from refinery.lib.scripts import Node, Transformer
 from refinery.lib.scripts.ps1.deobfuscation._helpers import (
     _ENCODING_MAP,
+    _KNOWN_ALIAS,
     SIMPLE_IDENTIFIER,
     _case_normalize_name,
     _collect_int_arguments,
@@ -24,13 +25,16 @@ from refinery.lib.scripts.ps1.model import (
     Ps1ArrayExpression,
     Ps1ArrayLiteral,
     Ps1BinaryExpression,
+    Ps1CommandInvocation,
     Ps1ExpandableString,
     Ps1ExpressionStatement,
+    Ps1FunctionDefinition,
     Ps1IndexExpression,
     Ps1IntegerLiteral,
     Ps1InvokeMember,
     Ps1MemberAccess,
     Ps1ParenExpression,
+    Ps1ScopeModifier,
     Ps1StringLiteral,
     Ps1TypeExpression,
     Ps1UnaryExpression,
@@ -135,6 +139,39 @@ def _variable_string_to_expandable(
 
 
 class Ps1ConstantFolding(Transformer):
+
+    def visit_Ps1CommandInvocation(self, node: Ps1CommandInvocation):
+        self.generic_visit(node)
+        if isinstance(node.name, Ps1StringLiteral):
+            name_lower = node.name.value.lower()
+            target = _KNOWN_ALIAS.get(name_lower)
+            if target is not None and target != node.name.value:
+                if not self._has_function_definition(node, name_lower):
+                    node.name = Ps1StringLiteral(
+                        offset=node.name.offset,
+                        value=target,
+                        raw=target,
+                    )
+                    node.name.parent = node
+                    self.mark_changed()
+        return None
+
+    @staticmethod
+    def _has_function_definition(node: Node, name_lower: str) -> bool:
+        cursor = node.parent
+        while cursor is not None:
+            if isinstance(cursor, Ps1FunctionDefinition):
+                if cursor.name and cursor.name.lower() == name_lower:
+                    return True
+            cursor = cursor.parent
+        root = node
+        while root.parent is not None:
+            root = root.parent
+        for n in root.walk():
+            if isinstance(n, Ps1FunctionDefinition) and n.name:
+                if n.name.lower() == name_lower:
+                    return True
+        return False
 
     def visit_Ps1UnaryExpression(self, node: Ps1UnaryExpression):
         self.generic_visit(node)
@@ -328,6 +365,12 @@ class Ps1ConstantFolding(Transformer):
             node = node.expression
         if isinstance(node, Ps1IntegerLiteral):
             return node
+        if (
+            isinstance(node, Ps1Variable)
+            and node.scope == Ps1ScopeModifier.NONE
+            and node.name.lower() == 'null'
+        ):
+            return Ps1IntegerLiteral(value=0, raw='0')
         if isinstance(node, Ps1UnaryExpression) and node.operator == '-':
             inner = node.operand
             while isinstance(inner, Ps1ParenExpression):

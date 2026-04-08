@@ -32,16 +32,22 @@ class TransformerGroup:
         counter.
         """
         changed = False
+        active = set(range(len(self.transformers)))
         while True:
             round_changed = False
-            for cls in self.transformers:
+            for i, cls in enumerate(self.transformers):
+                if i not in active:
+                    continue
                 t = cls()
                 t.visit(ast)
                 if t.changed:
                     steps += 1
                     round_changed = True
+                    active = set(range(len(self.transformers)))
                     if max_steps and steps >= max_steps:
                         raise DeobfuscationTimeout
+                else:
+                    active.discard(i)
             if not round_changed:
                 break
             changed = True
@@ -53,18 +59,20 @@ class DeobfuscationPipeline:
     Scheduler that runs transformer groups respecting a dependency DAG.
 
     Groups are run in declaration order, skipping any whose dependencies are not yet stable. When a
-    group makes changes, all other groups are invalidated. The pipeline terminates when every group
-    is stable.
+    group makes changes, all other groups are invalidated unless a selective invalidation set is
+    configured for that group. The pipeline terminates when every group is stable.
     """
 
     def __init__(
         self,
         groups: list[TransformerGroup],
         dependencies: dict[str, set[str]] | None = None,
+        invalidates: dict[str, set[str]] | None = None,
     ):
         self._groups = {g.name: g for g in groups}
         self._order = [g.name for g in groups]
         self._deps = dependencies or {}
+        self._invalidates = invalidates or {}
         all_names = set(self._order)
         for name, deps in self._deps.items():
             if name not in all_names:
@@ -73,6 +81,13 @@ class DeobfuscationPipeline:
             if unknown:
                 raise ValueError(
                     F'group {name!r} depends on unknown groups: {unknown}')
+        for name, targets in self._invalidates.items():
+            if name not in all_names:
+                raise ValueError(F'unknown group in invalidates: {name!r}')
+            unknown = targets - all_names
+            if unknown:
+                raise ValueError(
+                    F'group {name!r} invalidates unknown groups: {unknown}')
 
     def run(self, ast: Node, max_steps: int = 0) -> int:
         """
@@ -93,7 +108,11 @@ class DeobfuscationPipeline:
                 changed, steps = group.run(ast, steps, max_steps)
                 stable.add(name)
                 if changed:
-                    stable = {name}
+                    targets = self._invalidates.get(name)
+                    if targets is None:
+                        stable = {name}
+                    else:
+                        stable -= targets
                     progress = True
                     break
                 progress = True

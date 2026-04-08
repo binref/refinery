@@ -411,11 +411,11 @@ class TestPS1Regressions(TestPs1):
         self.assertIn('1, 2, 3', result)
 
     def test_shl_operator(self):
-        result = self._deobfuscate('$x = $y -shl 2')
+        result = self._deobfuscate('$y = $env:V\n$x = $y -shl 2')
         self.assertIn('-shl', result.lower())
 
     def test_shr_operator(self):
-        result = self._deobfuscate('$x = $y -shr 3')
+        result = self._deobfuscate('$y = $env:V\n$x = $y -shr 3')
         self.assertIn('-shr', result.lower())
 
     def test_exit_negative_literal(self):
@@ -1287,7 +1287,7 @@ class TestPs1ComparisonFolding(TestPs1):
         self.assertIn('$True', result)
 
     def test_non_constant_unchanged(self):
-        result = self._deobfuscate('($x -eq 3)')
+        result = self._deobfuscate('$x = $env:V\n($x -eq 3)')
         self.assertIn('-Eq', result)
 
 
@@ -1317,7 +1317,7 @@ class TestPs1DeadCodeElimination(TestPs1):
         self.assertIn('else', result)
 
     def test_non_static_stops_pruning(self):
-        result = self._deobfuscate("if ($False) {} elseif ($x) { Write-Host 'kept' }")
+        result = self._deobfuscate("$x = $env:V\nif ($False) {} elseif ($x) { Write-Host 'kept' }")
         self.assertNotIn('$False', result)
         self.assertIn('$x', result)
         self.assertIn('kept', result)
@@ -1424,9 +1424,7 @@ class TestPs1CharIntFolding(TestPs1):
     def test_char_int_partial_with_variable(self):
         result = self._deobfuscate_iterative(
             '([Char][int]83 + [Char][int]$x + [Char][int]112)')
-        self.assertIn("'S'", result)
-        self.assertIn("'p'", result)
-        self.assertIn('$x', result)
+        self.assertIn('Sp', result)
 
 
 class TestPs1DeadBranchInlining(TestPs1):
@@ -1469,5 +1467,73 @@ class TestPs1DeadBranchInlining(TestPs1):
             '$b = $a - 700\n'
             '$c = [Char][int]$b'
         )
-        self.assertNotIn('[Char][int]-', result)
-        self.assertNotIn('[Char]-', result)
+        self.assertNotIn('$y', result)
+        self.assertNotIn('$a', result)
+        self.assertIn('-700', result)
+
+
+class TestPs1NullVariableInlining(TestPs1):
+
+    def test_null_arithmetic(self):
+        result = self._deobfuscate_iterative(
+            '$x = 5 + $unset\n'
+            'Write-Host $x'
+        )
+        self.assertIn('5', result)
+        self.assertNotIn('$unset', result)
+
+    def test_null_if_branch_elimination(self):
+        result = self._deobfuscate_iterative(
+            'if ($undefined) {\n'
+            "    Write-Host 'dead'\n"
+            '} else {\n'
+            "    Write-Host 'live'\n"
+            '}'
+        )
+        self.assertIn('live', result)
+        self.assertNotIn('dead', result)
+
+    def test_null_complex_arithmetic(self):
+        result = self._deobfuscate_iterative(
+            '$x = (10 - $a + 3)\n'
+            'Write-Host $x'
+        )
+        self.assertIn('13', result)
+        self.assertNotIn('$a', result)
+
+    def test_no_inlining_for_assigned_variable(self):
+        result = self._deobfuscate_iterative(
+            '$y = 5\n'
+            '$x = $y + 1\n'
+            'Write-Host $x'
+        )
+        self.assertIn('6', result)
+
+    def test_no_inlining_for_known_variable(self):
+        result = self._deobfuscate_iterative(
+            'Write-Host $Host'
+        )
+        self.assertIn('$Host', result)
+
+    def test_no_inlining_for_automatic_variable(self):
+        result = self._deobfuscate_iterative(
+            '$_ | Write-Host'
+        )
+        self.assertIn('$_', result)
+
+    def test_no_inlining_for_parameter_variable(self):
+        result = self._deobfuscate_iterative(
+            'function f {\n'
+            '    Param($x)\n'
+            '    $x + 1\n'
+            '}'
+        )
+        self.assertIn('$x', result)
+
+    def test_no_inlining_for_foreach_variable(self):
+        result = self._deobfuscate_iterative(
+            'foreach ($item in @(1, 2, 3)) {\n'
+            '    $item\n'
+            '}'
+        )
+        self.assertIn('$item', result)
