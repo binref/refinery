@@ -1391,3 +1391,38 @@ class TestPs1DeadCodeElimination(TestPs1):
         result = self._deobfuscate("if (3.14) { Write-Host 'yes' }")
         self.assertIn('yes', result)
         self.assertNotIn('3.14', result)
+
+
+class TestPs1CharIntFolding(TestPs1):
+
+    def test_char_int_literal(self):
+        result = self._deobfuscate('[Char][int]83')
+        self.assertEqual(result.strip(), "'S'")
+
+    def test_char_literal_regression(self):
+        result = self._deobfuscate('[Char]65')
+        self.assertEqual(result.strip(), "'A'")
+
+    def test_char_int_concat(self):
+        result = self._deobfuscate_iterative('([Char][int]72 + [Char][int]105)')
+        self.assertEqual(result.strip(), "'Hi'")
+
+    def test_char_int_negative_not_folded(self):
+        result = self._deobfuscate('[Char][int](-65)')
+        self.assertNotIn("'", result)
+
+    def test_int_identity_cast_stripped(self):
+        result = self._deobfuscate('[int]42')
+        self.assertEqual(result.strip(), '42')
+
+    def test_char_int_multi_concat(self):
+        result = self._deobfuscate_iterative(
+            '([Char][int]83 + [Char][int]116 + [Char][int]111 + [Char][int]112)')
+        self.assertEqual(result.strip(), "'Stop'")
+
+    def test_char_int_partial_with_variable(self):
+        result = self._deobfuscate_iterative(
+            '([Char][int]83 + [Char][int]$x + [Char][int]112)')
+        self.assertIn("'S'", result)
+        self.assertIn("'p'", result)
+        self.assertIn('$x', result)

@@ -17,8 +17,42 @@ from refinery.lib.scripts.ps1.model import (
     Ps1BinaryExpression,
     Ps1CastExpression,
     Ps1IntegerLiteral,
+    Ps1ParenExpression,
     Ps1TypeExpression,
+    Ps1UnaryExpression,
 )
+
+_INTEGER_TYPE_NAMES = frozenset({
+    'byte',
+    'int',
+    'int16',
+    'int32',
+    'int64',
+    'long',
+    'sbyte',
+    'short',
+    'uint16',
+    'uint32',
+    'uint64',
+    'ushort',
+})
+
+
+def _unwrap_integer(node) -> int | None:
+    """
+    Peel parentheses and unary negation to extract an integer value, or return None.
+    """
+    while isinstance(node, Ps1ParenExpression):
+        node = node.expression
+    if isinstance(node, Ps1IntegerLiteral):
+        return node.value
+    if isinstance(node, Ps1UnaryExpression) and node.operator == '-':
+        inner = node.operand
+        while isinstance(inner, Ps1ParenExpression):
+            inner = inner.expression
+        if isinstance(inner, Ps1IntegerLiteral):
+            return -inner.value
+    return None
 
 
 class Ps1TypeCasts(Transformer):
@@ -48,10 +82,14 @@ class Ps1TypeCasts(Transformer):
                 parts = _collect_string_arguments(inner)
                 if parts is not None and len(parts) > 1:
                     return _make_string_literal(' '.join(parts))
+        if tn in _INTEGER_TYPE_NAMES:
+            if _unwrap_integer(node.operand) is not None:
+                return node.operand
         if tn == 'char':
-            if isinstance(node.operand, Ps1IntegerLiteral):
+            value = _unwrap_integer(node.operand)
+            if value is not None:
                 try:
-                    ch = chr(node.operand.value)
+                    ch = chr(value)
                 except (ValueError, OverflowError):
                     return None
                 return _make_string_literal(ch)
