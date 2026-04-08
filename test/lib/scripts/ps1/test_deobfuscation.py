@@ -1426,3 +1426,47 @@ class TestPs1CharIntFolding(TestPs1):
         self.assertIn("'S'", result)
         self.assertIn("'p'", result)
         self.assertIn('$x', result)
+
+
+class TestPs1DeadBranchInlining(TestPs1):
+
+    def test_conditional_only_variable_not_inlined(self):
+        result = self._deobfuscate_iterative(
+            '$x = 1\n'
+            'if (0 -GE 1) { $x = 999 }\n'
+            'Write-Host $x'
+        )
+        self.assertIn('1', result)
+        self.assertNotIn('999', result)
+
+    def test_dead_branch_arithmetic_not_evaluated(self):
+        result = self._deobfuscate_iterative(
+            'if (0 -GT 1) { $a = 500 }\n'
+            '$b = $a - 200\n'
+            '$c = [Char][int]$b'
+        )
+        self.assertNotIn('[Char][int]-', result)
+
+    def test_unconditional_assignment_still_inlined(self):
+        result = self._deobfuscate_iterative(
+            '$x = 42\n'
+            'if (1 -GT 0) { $x = 42 }\n'
+            'Write-Host $x'
+        )
+        self.assertIn('42', result)
+
+    def test_conditional_only_not_inlined_nonconstant_condition(self):
+        result = self._deobfuscate_iterative(
+            'if ($env:OS -eq "Windows_NT") { $x = 42 }\n'
+            'Write-Host $x'
+        )
+        self.assertIn('$x', result)
+
+    def test_char_cast_no_negative(self):
+        result = self._deobfuscate_iterative(
+            'if ($y -GE 100) { $a = 500 }\n'
+            '$b = $a - 700\n'
+            '$c = [Char][int]$b'
+        )
+        self.assertNotIn('[Char][int]-', result)
+        self.assertNotIn('[Char]-', result)

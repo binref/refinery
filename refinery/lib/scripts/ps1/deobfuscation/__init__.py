@@ -25,6 +25,8 @@ def deobfuscate(ast: Ps1Script) -> bool:
         Ps1AliasInlining(),
         Ps1WildcardResolution(),
         Ps1TypeSystemSimplifications(),
+        Ps1ConstantFolding(),
+        Ps1DeadCodeElimination(),
         Ps1ConstantInlining(),
         Ps1ExpandableStringHoist(),
         Ps1ConstantFolding(),

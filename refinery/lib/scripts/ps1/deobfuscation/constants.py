@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from refinery.lib.scripts import Expression, Node, Transformer
 from refinery.lib.scripts.ps1.deobfuscation._helpers import (
+    _get_body,
     _make_string_literal,
     _replace_in_parent,
 )
@@ -218,6 +219,39 @@ def _inside_try_body(node: Node) -> bool:
     return False
 
 
+def _find_body_entry(node: Node) -> tuple[list, int] | None:
+    cursor = node
+    while cursor.parent is not None:
+        parent = cursor.parent
+        body = _get_body(parent)
+        if body is not None:
+            for idx, entry in enumerate(body):
+                if entry is cursor:
+                    return (body, idx)
+        cursor = parent
+    return None
+
+
+def _is_dominated_by(node: Node, scope_entries: list[tuple[list, int]]) -> bool:
+    cursor = node
+    reached_root = False
+    while cursor.parent is not None:
+        parent = cursor.parent
+        body = _get_body(parent)
+        if body is not None:
+            reached_root = True
+            for idx, entry in enumerate(body):
+                if entry is cursor:
+                    for assign_body, assign_idx in scope_entries:
+                        if assign_body is body and assign_idx <= idx:
+                            return True
+                    break
+            cursor = parent
+            continue
+        cursor = parent
+    return not reached_root
+
+
 class Ps1ConstantInlining(Transformer):
 
     def __init__(self, max_inline_length: int = 64, min_inlines_to_prune: int | None = 1):
@@ -226,31 +260,36 @@ class Ps1ConstantInlining(Transformer):
         self.min_inlines_to_prune = min_inlines_to_prune
 
     def visit(self, node: Node):
-        # Phase 1: collect candidates, then phase 2: substitute.
-        # Only the top-level call triggers the two-phase approach.
-        candidates = self._collect_candidates(node)
+        candidates, scope_entries = self._collect_candidates(node)
         if not candidates:
             return None
-        remaining, inlined = self._substitute(node, candidates)
+        remaining, inlined = self._substitute(node, candidates, scope_entries)
         self._remove_dead_assignments(candidates, remaining, inlined)
         return None
 
-    def _collect_candidates(self, root: Node) -> dict[str, tuple[list[Ps1AssignmentExpression], Node]]:
+    def _collect_candidates(
+        self,
+        root: Node,
+    ) -> tuple[dict[str, tuple[list[Ps1AssignmentExpression], Node]], dict[str, list[tuple[list, int]]]]:
         """
         Returns:
 
-            {lower_name: ([assignment_nodes], constant_value)}
+            (candidates, scope_entries)
 
-        for variables whose every assignment is to the same constant value.
+        where candidates maps lower_name to ([assignment_nodes], constant_value) for variables whose
+        every assignment is to the same constant value, and scope_entries maps lower_name to a list
+        of (body_list, index) tuples locating each assignment in its enclosing body.
         """
         rejected: set[str] = set()
         candidates: dict[str, tuple[list[Ps1AssignmentExpression], Node]] = {}
         value_keys: dict[str, tuple] = {}
+        scope_entries: dict[str, list[tuple[list, int]]] = {}
 
         def _reject(k: str):
             rejected.add(k)
             candidates.pop(k, None)
             value_keys.pop(k, None)
+            scope_entries.pop(k, None)
 
         for node in root.walk():
             if isinstance(node, Ps1AssignmentExpression):
@@ -277,6 +316,9 @@ class Ps1ConstantInlining(Transformer):
                                     existing[0].append(node)
                                 else:
                                     candidates[key] = ([node], value)
+                                entry = _find_body_entry(node)
+                                if entry is not None:
+                                    scope_entries.setdefault(key, []).append(entry)
                     else:
                         _reject(key)
 
@@ -304,6 +346,10 @@ class Ps1ConstantInlining(Transformer):
             key: val for key, val in candidates.items()
             if key not in _PS1_DEFAULT_VARIABLES
         }
+        result_scope = {
+            key: entries for key, entries in scope_entries.items()
+            if key in result
+        }
         for key, value in _PS1_DEFAULT_VARIABLES.items():
             if key not in rejected and key not in candidates:
                 result[key] = ([], _make_string_literal(value))
@@ -311,12 +357,13 @@ class Ps1ConstantInlining(Transformer):
             env_key = F'env:{key}'
             if env_key not in rejected and env_key not in candidates:
                 result[env_key] = ([], _make_string_literal(value))
-        return result
+        return result, result_scope
 
     def _substitute(
         self,
         root: Node,
         candidates: dict[str, tuple[list[Ps1AssignmentExpression], Node]],
+        scope_entries: dict[str, list[tuple[list, int]]],
     ) -> tuple[dict[str, int], dict[str, int]]:
         """
         Inline constant values. Returns:
@@ -373,6 +420,11 @@ class Ps1ConstantInlining(Transformer):
                         handled_vars.add(id(var))
                         continue
                     if _inside_try_body(node):
+                        remaining[key] = remaining.get(key, 0) + 1
+                        handled_vars.add(id(var))
+                        continue
+                    entries = scope_entries.get(key)
+                    if entries is not None and not _is_dominated_by(node, entries):
                         remaining[key] = remaining.get(key, 0) + 1
                         handled_vars.add(id(var))
                         continue
@@ -436,6 +488,10 @@ class Ps1ConstantInlining(Transformer):
                 ):
                     continue
                 if _inside_try_body(node):
+                    remaining[key] = remaining.get(key, 0) + 1
+                    continue
+                entries = scope_entries.get(key)
+                if entries is not None and not _is_dominated_by(node, entries):
                     remaining[key] = remaining.get(key, 0) + 1
                     continue
                 replacement = _clone_constant(const_value)

