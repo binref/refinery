@@ -146,6 +146,18 @@ _PS1_KNOWN_VARIABLES: dict[str, str] = {
 }
 
 
+def _assignment_target_variable(target) -> Ps1Variable | None:
+    """
+    Extract the variable from an assignment target, unwrapping any type constraint casts.
+    Handles both ``$x = expr`` and ``[Type]$x = expr``.
+    """
+    while isinstance(target, Ps1CastExpression):
+        target = target.operand
+    if isinstance(target, Ps1Variable):
+        return target
+    return None
+
+
 def _collect_mutated_variables(root: Node) -> set[str]:
     """
     Return the set of variable keys that are written to anywhere in the AST. This includes
@@ -154,8 +166,9 @@ def _collect_mutated_variables(root: Node) -> set[str]:
     mutated: set[str] = set()
     for node in root.walk():
         if isinstance(node, Ps1AssignmentExpression):
-            if isinstance(node.target, Ps1Variable):
-                key = _candidate_key(node.target)
+            var = _assignment_target_variable(node.target)
+            if var is not None:
+                key = _candidate_key(var)
                 if key is not None:
                     mutated.add(key)
         elif isinstance(node, Ps1ForEachLoop):
@@ -372,8 +385,8 @@ class Ps1ConstantInlining(Transformer):
 
         for node in root.walk():
             if isinstance(node, Ps1AssignmentExpression):
-                target = node.target
-                if isinstance(target, Ps1Variable):
+                target = _assignment_target_variable(node.target)
+                if target is not None:
                     key = _candidate_key(target)
                     if key is None or key in rejected:
                         continue
@@ -560,10 +573,13 @@ class Ps1ConstantInlining(Transformer):
                 if key in remaining:
                     continue
                 assign_nodes, const_value = info
+                parent = node.parent
+                while isinstance(parent, Ps1CastExpression):
+                    parent = parent.parent
                 if (
-                    id(node.parent) in assign_node_ids
-                    and isinstance(node.parent, Ps1AssignmentExpression)
-                    and node is node.parent.target
+                    id(parent) in assign_node_ids
+                    and isinstance(parent, Ps1AssignmentExpression)
+                    and _assignment_target_variable(parent.target) is node
                 ):
                     continue
                 if _inside_try_body(node):
@@ -683,7 +699,10 @@ class Ps1NullVariableInlining(Transformer):
                 continue
             if key.startswith('env:'):
                 continue
-            if isinstance(ref.parent, Ps1AssignmentExpression) and ref is ref.parent.target:
+            parent = ref.parent
+            while isinstance(parent, Ps1CastExpression):
+                parent = parent.parent
+            if isinstance(parent, Ps1AssignmentExpression) and _assignment_target_variable(parent.target) is ref:
                 continue
             if not self._is_null_eligible(ref):
                 continue

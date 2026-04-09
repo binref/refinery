@@ -1647,3 +1647,11 @@ class TestPs1NullVariableInlining(TestPs1):
             '}'
         )
         self.assertIn('$item', result)
+
+    def test_no_inlining_for_typed_assignment(self):
+        result = self._deobfuscate_iterative(
+            '[Byte[]]$data = Get-Content -Encoding Byte "test.bin"\n'
+            'Write-Host $data.Length'
+        )
+        self.assertNotIn('$Null', result)
+        self.assertIn('$data', result)
