@@ -1503,6 +1503,45 @@ class TestPs1DeadCodeElimination(TestPs1):
         )
         self.assertNotIn('[Char]-', result.lower())
 
+    def test_bare_integer_statements_pruned(self):
+        result = self._deobfuscate_iterative(
+            '$x = Get-Process\n'
+            '42\n'
+            'Write-Host $x\n'
+            '(-7)\n'
+        )
+        self.assertNotIn('42', result)
+        self.assertNotIn('-7', result)
+        self.assertIn('Get-Process', result)
+
+    def test_bare_integer_only_script_preserved(self):
+        result = self._deobfuscate('42')
+        self.assertIn('42', result)
+
+    def test_string_statement_preserved(self):
+        result = self._deobfuscate_iterative(
+            '$x = Get-Process\n'
+            "'hello'\n"
+            'Write-Host $x\n'
+        )
+        self.assertIn('hello', result)
+
+    def test_constant_in_switch_case_pruned(self):
+        result = self._deobfuscate_iterative(
+            'switch ($action) {\n'
+            '  1 { 99 }\n'
+            '  2 { Write-Host "ok" }\n'
+            '}\n'
+        )
+        self.assertNotIn('99', result)
+        self.assertIn('Write-Host', result)
+
+    def test_constant_in_subexpression_preserved(self):
+        result = self._deobfuscate('"prefix$( 1 + 2 )suffix"')
+        self.assertIn('prefix', result)
+        self.assertIn('suffix', result)
+        self.assertNotIn('prefix""suffix', result.replace(' ', ''))
+
 
 class TestPs1CharIntFolding(TestPs1):
 

@@ -19,7 +19,9 @@ from refinery.lib.scripts.ps1.model import (
     Ps1ParenExpression,
     Ps1RealLiteral,
     Ps1ScopeModifier,
+    Ps1Script,
     Ps1StringLiteral,
+    Ps1SubExpression,
     Ps1SwitchStatement,
     Ps1UnaryExpression,
     Ps1Variable,
@@ -151,6 +153,24 @@ def _body_breaks_unconditionally(body: list[Statement]) -> bool:
     return True
 
 
+def _is_pure_constant(node) -> bool:
+    """
+    Return True when an expression is a side-effect-free constant that can be removed as a
+    standalone statement. Only matches numeric literals and the built-in constants `$Null`,
+    `$True`, and `$False` — string literals are excluded because they may represent intentional
+    pipeline output.
+    """
+    if isinstance(node, (Ps1IntegerLiteral, Ps1RealLiteral)):
+        return True
+    if isinstance(node, Ps1Variable) and node.scope == Ps1ScopeModifier.NONE:
+        return node.name.lower() in ('null', 'true', 'false')
+    if isinstance(node, Ps1ParenExpression):
+        return _is_pure_constant(node.expression)
+    if isinstance(node, Ps1UnaryExpression) and node.operator in ('+', '-'):
+        return _is_pure_constant(node.operand)
+    return False
+
+
 class Ps1DeadCodeElimination(Transformer):
     """
     Remove unreachable code guarded by constant boolean conditions and resolve switch statements
@@ -159,10 +179,12 @@ class Ps1DeadCodeElimination(Transformer):
 
     def visit(self, node: Node):
         for parent in list(node.walk()):
+            if isinstance(parent, Ps1SubExpression):
+                continue
             body = _get_body(parent)
             if body is None:
                 continue
-            new_body = self._prune_body(body)
+            new_body = self._prune_body(body, isinstance(parent, Ps1Script))
             if new_body is not body:
                 body.clear()
                 body.extend(new_body)
@@ -170,10 +192,23 @@ class Ps1DeadCodeElimination(Transformer):
                     stmt.parent = parent
                 self.mark_changed()
 
-    def _prune_body(self, body: list[Statement]) -> list[Statement]:
+    def _prune_body(
+        self, body: list[Statement], is_script_level: bool = False,
+    ) -> list[Statement]:
         result: list[Statement] = []
         changed = False
+        prune_constants = not is_script_level or any(
+            not (isinstance(s, Ps1ExpressionStatement) and _is_pure_constant(s.expression))
+            for s in body
+        )
         for stmt in body:
+            if (
+                prune_constants
+                and isinstance(stmt, Ps1ExpressionStatement)
+                and _is_pure_constant(stmt.expression)
+            ):
+                changed = True
+                continue
             replacement = self._try_prune(stmt)
             if replacement is not None:
                 result.extend(replacement)
