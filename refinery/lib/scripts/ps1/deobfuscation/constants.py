@@ -203,6 +203,10 @@ def _constant_value_key(node: Node) -> tuple | None:
         return ('str', node.value)
     if isinstance(node, Ps1TypeExpression):
         return ('type', node.name)
+    if isinstance(node, Ps1Variable) and node.scope == Ps1ScopeModifier.NONE:
+        lower = node.name.lower()
+        if lower in ('null', 'true', 'false'):
+            return ('var', lower)
     if isinstance(node, Ps1ArrayLiteral):
         keys = []
         for e in node.elements:
@@ -223,6 +227,9 @@ def _is_constant(node: Node) -> bool:
         node = node.expression
     if isinstance(node, _CONSTANT_TYPES):
         return True
+    if isinstance(node, Ps1Variable) and node.scope == Ps1ScopeModifier.NONE:
+        if node.name.lower() in ('null', 'true', 'false'):
+            return True
     if isinstance(node, Ps1ArrayLiteral):
         return all(_is_constant(e) for e in node.elements)
     if isinstance(node, Ps1ArrayExpression):
@@ -269,6 +276,9 @@ def _clone_constant(node: Node) -> Expression:
         return Ps1StringLiteral(value=node.value, raw=node.raw)
     if isinstance(node, Ps1TypeExpression):
         return Ps1TypeExpression(name=node.name)
+    if isinstance(node, Ps1Variable) and node.scope == Ps1ScopeModifier.NONE:
+        if node.name.lower() in ('null', 'true', 'false'):
+            return Ps1Variable(name=node.name)
     if isinstance(node, Ps1ArrayLiteral):
         return Ps1ArrayLiteral(elements=[_clone_constant(e) for e in node.elements])
     if isinstance(node, Ps1ArrayExpression):

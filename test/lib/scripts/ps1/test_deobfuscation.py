@@ -721,6 +721,19 @@ class TestPs1ConstantInlining(TestPs1):
         self.assertNotIn('ComSpec', result)
         self.assertIn("'I'", result)
 
+    def test_null_variable_inlined(self):
+        result = self._deobfuscate_iterative(
+            '$x = $Null; Write-Host (5 + $x)')
+        self.assertIn('5', result)
+        self.assertNotIn('$x', result)
+
+    def test_null_assigned_variable_folds(self):
+        result = self._deobfuscate_iterative(
+            '$x = $Null; $y = 10 - $x; Write-Host $y')
+        self.assertIn('10', result)
+        self.assertNotIn('$x', result)
+        self.assertNotIn('$y', result)
+
 
 class TestPs1FunctionEvaluator(TestPs1):
 
