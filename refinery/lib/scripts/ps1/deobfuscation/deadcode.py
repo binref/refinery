@@ -3,11 +3,13 @@ Eliminate dead code from PowerShell scripts after constant folding.
 """
 from __future__ import annotations
 
-from refinery.lib.scripts import Node, Statement, Transformer
+from refinery.lib.scripts import Block, Node, Statement, Transformer
 from refinery.lib.scripts.ps1.deobfuscation._helpers import _get_body
 from refinery.lib.scripts.ps1.model import (
     Ps1AssignmentExpression,
     Ps1BinaryExpression,
+    Ps1BreakStatement,
+    Ps1ContinueStatement,
     Ps1DoUntilLoop,
     Ps1DoWhileLoop,
     Ps1ExpressionStatement,
@@ -132,6 +134,23 @@ def _resolve_side(
     return _unwrap_integer(node)
 
 
+def _body_breaks_unconditionally(body: list[Statement]) -> bool:
+    """
+    Return True if the last statement in the body is an unlabeled break and the body contains no
+    continue statements at any nesting depth. Such a loop body executes exactly once.
+    """
+    if not body:
+        return False
+    last = body[-1]
+    if not isinstance(last, Ps1BreakStatement) or last.label is not None:
+        return False
+    for stmt in body[:-1]:
+        for node in stmt.walk():
+            if isinstance(node, Ps1ContinueStatement):
+                return False
+    return True
+
+
 class Ps1DeadCodeElimination(Transformer):
     """
     Remove unreachable code guarded by constant boolean conditions and resolve switch statements
@@ -180,20 +199,32 @@ class Ps1DeadCodeElimination(Transformer):
 
     @staticmethod
     def _prune_while(node: Ps1WhileLoop) -> list[Statement] | None:
-        if _is_truthy(node.condition) is False:
+        truth = _is_truthy(node.condition)
+        if truth is False:
             return []
+        if node.body is not None and _body_breaks_unconditionally(node.body.body):
+            body = list(node.body.body[:-1])
+            if truth is True or node.condition is None:
+                return body
+            return [Ps1IfStatement(clauses=[(node.condition, Block(body=body))])]
         return None
 
     @staticmethod
     def _prune_do_while(node: Ps1DoWhileLoop) -> list[Statement] | None:
-        if _is_truthy(node.condition) is False and node.body is not None:
-            return list(node.body.body)
+        if node.body is not None:
+            if _is_truthy(node.condition) is False:
+                return list(node.body.body)
+            if _body_breaks_unconditionally(node.body.body):
+                return list(node.body.body[:-1])
         return None
 
     @staticmethod
     def _prune_do_until(node: Ps1DoUntilLoop) -> list[Statement] | None:
-        if _is_truthy(node.condition) is True and node.body is not None:
-            return list(node.body.body)
+        if node.body is not None:
+            if _is_truthy(node.condition) is True:
+                return list(node.body.body)
+            if _body_breaks_unconditionally(node.body.body):
+                return list(node.body.body[:-1])
         return None
 
     @staticmethod
@@ -201,12 +232,22 @@ class Ps1DeadCodeElimination(Transformer):
         truth = _evaluate_for_condition(node)
         if truth is None:
             truth = _is_truthy(node.condition)
-        if truth is not False:
-            return None
-        result: list[Statement] = []
-        if node.initializer is not None:
-            result.append(Ps1ExpressionStatement(expression=node.initializer))
-        return result
+        if truth is False:
+            result: list[Statement] = []
+            if node.initializer is not None:
+                result.append(Ps1ExpressionStatement(expression=node.initializer))
+            return result
+        if node.body is not None and _body_breaks_unconditionally(node.body.body):
+            result = []
+            if node.initializer is not None:
+                result.append(Ps1ExpressionStatement(expression=node.initializer))
+            body = list(node.body.body[:-1])
+            if truth is True or node.condition is None:
+                result.extend(body)
+            else:
+                result.append(Ps1IfStatement(clauses=[(node.condition, Block(body=body))]))
+            return result
+        return None
 
     @staticmethod
     def _prune_if(node: Ps1IfStatement) -> list[Statement] | None:

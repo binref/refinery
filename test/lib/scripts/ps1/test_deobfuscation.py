@@ -1424,6 +1424,85 @@ class TestPs1DeadCodeElimination(TestPs1):
             "for(;$False;){Write-Host 'hi'}")
         self.assertNotIn('Write-Host', result)
 
+    def test_for_break_unrolled(self):
+        result = self._deobfuscate(
+            "for($i=0;$i -lt 10;$i++){$x = 1; $y = 2; break}")
+        self.assertNotIn('for', result.lower())
+        self.assertNotIn('break', result.lower())
+        self.assertIn('$x', result)
+        self.assertIn('$y', result)
+        self.assertIn('$i', result)
+
+    def test_for_break_labeled_preserved(self):
+        result = self._deobfuscate(
+            ":outer for($i=0;$i -lt 5;$i++){$x = 1; break :outer}")
+        self.assertIn('for', result.lower())
+
+    def test_for_break_with_continue_preserved(self):
+        result = self._deobfuscate(
+            "for($i=0;$i -lt 5;$i++){if($i -eq 3){continue}; $x = 1; break}")
+        self.assertIn('for', result.lower())
+
+    def test_for_break_not_last_preserved(self):
+        result = self._deobfuscate(
+            "for($i=0;$i -lt 5;$i++){break; $x = 1}")
+        self.assertIn('for', result.lower())
+
+    def test_for_break_only(self):
+        result = self._deobfuscate(
+            "for($i=0;$i -lt 5;$i++){break}")
+        self.assertNotIn('for', result.lower())
+        self.assertIn('$i', result)
+
+    def test_while_break_unrolled(self):
+        result = self._deobfuscate(
+            "while($True){$x = 42; break}")
+        self.assertNotIn('while', result.lower())
+        self.assertNotIn('break', result.lower())
+        self.assertIn('42', result)
+
+    def test_do_while_break_unrolled(self):
+        result = self._deobfuscate(
+            "do{$x = 42; break}while($True)")
+        self.assertNotIn('do', result.lower())
+        self.assertNotIn('break', result.lower())
+        self.assertIn('42', result)
+
+    def test_do_until_break_unrolled(self):
+        result = self._deobfuscate(
+            "do{$x = 42; break}until($False)")
+        self.assertNotIn('until', result.lower())
+        self.assertNotIn('break', result.lower())
+        self.assertIn('42', result)
+
+    def test_while_break_false_condition_removed(self):
+        result = self._deobfuscate_iterative(
+            "while($False){$x = 42; break}")
+        self.assertNotIn('42', result)
+
+    def test_while_break_unknown_condition_guarded(self):
+        result = self._deobfuscate(
+            "while(Get-Random){$x = 42; break}")
+        self.assertNotIn('while', result.lower())
+        self.assertNotIn('break', result.lower())
+        self.assertIn('if', result.lower())
+        self.assertIn('42', result)
+
+    def test_for_break_false_condition_preserves_init(self):
+        result = self._deobfuscate_iterative(
+            "for($i=0; $False; $i++){$x = 42; break}")
+        self.assertNotIn('42', result)
+        self.assertIn('$i', result)
+
+    def test_while_dead_loop_no_incorrect_inline(self):
+        result = self._deobfuscate_iterative(
+            '$a = 10\n'
+            'while((-9 + $a) -GE (44)) { $b = $a; break }\n'
+            '$c = $b - 200\n'
+            '$d = [Char][int]$c'
+        )
+        self.assertNotIn('[Char]-', result.lower())
+
 
 class TestPs1CharIntFolding(TestPs1):
 
