@@ -145,6 +145,7 @@ from refinery.units.encoding.b85 import b85 as b85
 from refinery.units.encoding.b92 import b92 as b92
 from refinery.units.encoding.b65536 import b65536 as b65536
 from refinery.units.encoding.base import base as base
+from refinery.units.encoding.bigint import bigint as bigint
 from refinery.units.encoding.cp1252 import cp1252 as cp1252
 from refinery.units.encoding.esc import esc as esc
 from refinery.units.encoding.escps import escps as escps

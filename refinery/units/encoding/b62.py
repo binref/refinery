@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from refinery.units.encoding.base import base
+from refinery.units.encoding.bigint import bigint
 
 
-class b62(base):
+class b62(bigint):
     """
     Base62 encoding and decoding.
     """

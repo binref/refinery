@@ -9,7 +9,7 @@ from typing import Iterable
 from refinery.lib.patterns import formats
 from refinery.lib.types import Param
 from refinery.units.blockwise import Arg, BlockTransformationBase
-from refinery.units.encoding.base import base as BaseUnit
+from refinery.units.encoding.bigint import bigint as BaseUnit
 
 
 class FMode(IntEnum):

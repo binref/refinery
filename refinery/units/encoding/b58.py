@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from refinery.units.encoding.base import base
+from refinery.units.encoding.bigint import bigint
 
 
-class b58(base):
+class b58(bigint):
     """
     Base58 encoding and decoding. It is famously used as an encoding in Bitcoin addresses
     because the alphabet omits digits and letters that look similar.

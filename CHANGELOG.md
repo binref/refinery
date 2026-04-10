@@ -5,6 +5,9 @@
 > If a release contains only bugfix, it is marked as a 'bugfix release'.
 > Otherwise, the changelog entries highlight only new or changed functionality.
 
+## Version 0.10.11
+- The `base` unit is now purely block-based (RFC 4648 style). Big-integer encoding has been split into a new `bigint` unit.
+
 ## Version 0.10.10
 - Improves `xtrar` performance by cythonizing parts of the code.
 - Fixes a regression where `xor file` would no longer read the contents of a file named `file` from disk.

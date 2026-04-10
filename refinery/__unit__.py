@@ -144,6 +144,7 @@ UNITS = {
     'b92'                                        : 'refinery.units.encoding.b92',
     'b65536'                                     : 'refinery.units.encoding.b65536',
     'base'                                       : 'refinery.units.encoding.base',
+    'bigint'                                     : 'refinery.units.encoding.bigint',
     'cp1252'                                     : 'refinery.units.encoding.cp1252',
     'esc'                                        : 'refinery.units.encoding.esc',
     'escps'                                      : 'refinery.units.encoding.escps',
