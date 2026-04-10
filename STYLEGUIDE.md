@@ -117,6 +117,37 @@ The docstrings for refinery units should be written with keyword search in mind.
 A short paragraph at the beginning should give a quick overview of what the unit does,
 followed by a lengthy explanation including the possible keywords that would help users discover it.
 
+For generating documentation, we use pdoc3.
+You can include references to other functions or classes in the project by using their full module path in backticks.
+For example:
+```python
+def parse_foo_header(data: bytes):
+  """
+  Uses `refinery.lib.structures.StructReader` to parse the FOO header.
+  """
+```
+
+When referencing code elements or showcasing code in a docstring, the following rules apply:
+- Inline code fragments should not exceed 25 characters in length.
+- Inline code fragments are placed in **single** backticks. Do not use more unless you have to encode a backtick.
+- Code that spans multiple lines or exceeds 25 characters is indented by 4 space characters.
+
+An example for a larger code reference in a docstring:
+```python
+def parse_foo_header(data: bytes):
+  """
+  Uses `refinery.lib.structures.StructReader` to parse the FOO header. The header has the following
+  structure:
+
+    [ VERSION ]
+    [ FOOTYPE ]
+    [  CODEC  ]
+    [ CONTENT ]
+  
+  Each of these items is a 32-bit unsigned integer.
+  """
+```
+
 ### Dictionaries
 
 When typing large dictionaries, the omission of `E203` is to allow you to write them like so:

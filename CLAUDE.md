@@ -7,6 +7,7 @@
 
 The following rules contradict common Python conventions. Check them explicitly:
 
+- **DO NOT** wrap at 80 characters! Comments and docstrings wrap at 100 characters, for example.
 - **DO NOT** use lowercase `f'...'` for f-strings. Use uppercase: `F'...'`.
 - **DO NOT** write single-line docstrings like `"""text"""`. Always use:
   ```python
