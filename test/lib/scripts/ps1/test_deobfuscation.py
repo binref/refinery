@@ -1076,6 +1076,22 @@ class TestPs1IexInlining(TestPs1):
         self.assertIn('hello', result)
         self.assertNotIn('Invoke-Expression', result)
 
+    def test_iex_piped_inside_assignment(self):
+        result = self._deobfuscate("$x = 'Write-Host hello' | Invoke-Expression")
+        self.assertIn('Write-Host', result)
+        self.assertNotIn('Invoke-Expression', result)
+        self.assertNotIn('|', result)
+
+    def test_multiline_string_emitted_as_here_string(self):
+        from refinery.lib.scripts.ps1.deobfuscation._helpers import _make_string_literal
+        from refinery.lib.scripts.ps1.model import Ps1HereString, Ps1StringLiteral
+        node = _make_string_literal('line1\nline2')
+        self.assertIsInstance(node, Ps1HereString)
+        self.assertEqual(node.value, 'line1\nline2')
+        self.assertIn("@'\n", node.raw)
+        node2 = _make_string_literal('no newlines')
+        self.assertIsInstance(node2, Ps1StringLiteral)
+
 
 class TestPs1ForEachPipeline(TestPs1):
 
@@ -1095,6 +1111,42 @@ class TestPs1ForEachPipeline(TestPs1):
         self.assertIn('d', result)
         self.assertIn('i', result)
         self.assertIn('W', result)
+
+    def test_foreach_pipeline_expandable_string_hex_decode(self):
+        data = "'46 75 6E' -split ' ' | %{[char][byte]\"0x$_\"}"
+        result = self._deobfuscate(data)
+        self.assertIn('Fun', result)
+
+    def test_foreach_pipeline_expandable_string_with_subexpr(self):
+        data = "@('A','B','C') | %{\"item: $( $_ )\"}"
+        result = self._deobfuscate(data)
+        self.assertIn('item: A', result)
+
+    def test_foreach_pipeline_split_join_chain(self):
+        data = (
+            "$s = '48 65 6C 6C 6F'\n"
+            "$r = $s -split ' ' | ForEach-Object {[char][byte]\"0x$_\"}\n"
+            "$r -join ''"
+        )
+        result = self._deobfuscate_iterative(data)
+        self.assertIn('Hello', result)
+
+    def test_foreach_pipeline_replace_operator(self):
+        data = "@('Hello','World') | %{$_ -replace 'o','0'}"
+        result = self._deobfuscate(data)
+        self.assertIn('Hell0', result)
+        self.assertIn('W0rld', result)
+
+    def test_foreach_pipeline_array_expression(self):
+        data = "@(65,66,67) | %{[char]$_}"
+        result = self._deobfuscate(data)
+        self.assertIn('A', result)
+        self.assertIn('B', result)
+
+    def test_foreach_pipeline_string_join_static(self):
+        data = "[String]::Join(',', @('a','b','c'))"
+        result = self._deobfuscate(data)
+        self.assertIn('a,b,c', result)
 
 
 class TestPs1WildcardResolution(TestPs1):

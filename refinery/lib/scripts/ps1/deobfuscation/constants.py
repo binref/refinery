@@ -17,6 +17,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1CastExpression,
     Ps1ExpressionStatement,
     Ps1ForEachLoop,
+    Ps1HereString,
     Ps1IndexExpression,
     Ps1IntegerLiteral,
     Ps1ParameterDeclaration,
@@ -33,7 +34,7 @@ from refinery.lib.scripts.ps1.model import (
 )
 from refinery.lib.scripts.win32const import DEFAULT_ENVIRONMENT_TEMPLATE
 
-_CONSTANT_TYPES = (Ps1StringLiteral, Ps1IntegerLiteral, Ps1RealLiteral, Ps1TypeExpression)
+_CONSTANT_TYPES = (Ps1StringLiteral, Ps1HereString, Ps1IntegerLiteral, Ps1RealLiteral, Ps1TypeExpression)
 
 _PS1_DEFAULT_VARIABLES: dict[str, str] = {
     key.lower(): value for key, value in {
@@ -214,6 +215,8 @@ def _constant_value_key(node: Node) -> tuple | None:
         return ('real', node.value)
     if isinstance(node, Ps1StringLiteral):
         return ('str', node.value)
+    if isinstance(node, Ps1HereString):
+        return ('str', node.value)
     if isinstance(node, Ps1TypeExpression):
         return ('type', node.name)
     if isinstance(node, Ps1Variable) and node.scope == Ps1ScopeModifier.NONE:
@@ -287,6 +290,8 @@ def _clone_constant(node: Node) -> Expression:
         return Ps1RealLiteral(value=node.value, raw=node.raw)
     if isinstance(node, Ps1StringLiteral):
         return Ps1StringLiteral(value=node.value, raw=node.raw)
+    if isinstance(node, Ps1HereString):
+        return Ps1HereString(value=node.value, raw=node.raw)
     if isinstance(node, Ps1TypeExpression):
         return Ps1TypeExpression(name=node.name)
     if isinstance(node, Ps1Variable) and node.scope == Ps1ScopeModifier.NONE:
@@ -485,7 +490,7 @@ class Ps1ConstantInlining(Transformer):
         for key, (assign_nodes, const_value) in candidates.items():
             use_count = ref_counts.get(key, 0)
             use_count -= len(assign_nodes)
-            if use_count > 1 and isinstance(const_value, Ps1StringLiteral):
+            if use_count > 1 and isinstance(const_value, (Ps1StringLiteral, Ps1HereString)):
                 if len(const_value.raw) > self.max_inline_length:
                     remaining[key] = use_count
 

@@ -15,6 +15,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1CommandInvocation,
     Ps1ExpandableString,
     Ps1ExpressionStatement,
+    Ps1HereString,
     Ps1IntegerLiteral,
     Ps1ParenExpression,
     Ps1Script,
@@ -703,6 +704,8 @@ SIMPLE_IDENTIFIER = re.compile(r'^[a-zA-Z_]\w*$')
 def _string_value(node: Expression) -> str | None:
     if isinstance(node, Ps1StringLiteral):
         return node.value
+    if isinstance(node, Ps1HereString):
+        return node.value
     if isinstance(node, Ps1ExpandableString):
         out = io.StringIO()
         for p in node.parts:
@@ -718,7 +721,10 @@ def _string_value(node: Expression) -> str | None:
     return None
 
 
-def _make_string_literal(value: str) -> Ps1StringLiteral:
+def _make_string_literal(value: str) -> Ps1StringLiteral | Ps1HereString:
+    if '\n' in value:
+        raw = F"@'\n{value}\n'@"
+        return Ps1HereString(value=value, raw=raw)
     if "'" not in value:
         raw = F"'{value}'"
     elif '"' not in value and '$' not in value and '`' not in value:

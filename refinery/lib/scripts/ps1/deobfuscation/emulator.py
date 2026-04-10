@@ -25,16 +25,21 @@ from refinery.lib.scripts.ps1.model import (
     Ps1ArrayLiteral,
     Ps1AssignmentExpression,
     Ps1BinaryExpression,
+    Ps1BreakStatement,
     Ps1CastExpression,
     Ps1CommandArgument,
     Ps1CommandArgumentKind,
     Ps1CommandInvocation,
+    Ps1ContinueStatement,
     Ps1DoUntilLoop,
     Ps1DoWhileLoop,
+    Ps1ExpandableHereString,
+    Ps1ExpandableString,
     Ps1ExpressionStatement,
     Ps1ForEachLoop,
     Ps1ForLoop,
     Ps1FunctionDefinition,
+    Ps1HereString,
     Ps1IfStatement,
     Ps1IndexExpression,
     Ps1IntegerLiteral,
@@ -49,6 +54,8 @@ from refinery.lib.scripts.ps1.model import (
     Ps1Script,
     Ps1ScriptBlock,
     Ps1StringLiteral,
+    Ps1SubExpression,
+    Ps1SwitchStatement,
     Ps1TypeExpression,
     Ps1UnaryExpression,
     Ps1Variable,
@@ -65,6 +72,14 @@ class _Ps1InterpreterError(Exception):
 class _ReturnSignal(Exception):
     def __init__(self, value: _Value):
         self.value = value
+
+
+class _BreakSignal(Exception):
+    pass
+
+
+class _ContinueSignal(Exception):
+    pass
 
 
 class _Ps1Interpreter:
@@ -118,9 +133,15 @@ class _Ps1Interpreter:
             return self._exec_do_until(stmt)
         if isinstance(stmt, Ps1IfStatement):
             return self._exec_if(stmt)
+        if isinstance(stmt, Ps1SwitchStatement):
+            return self._exec_switch(stmt)
         if isinstance(stmt, Ps1ReturnStatement):
             value = self._eval(stmt.pipeline) if stmt.pipeline else None
             raise _ReturnSignal(value)
+        if isinstance(stmt, Ps1BreakStatement):
+            raise _BreakSignal
+        if isinstance(stmt, Ps1ContinueStatement):
+            raise _ContinueSignal
         raise _Ps1InterpreterError
 
     def _exec_pipeline(self, node: Ps1Pipeline) -> _Value:
@@ -142,7 +163,12 @@ class _Ps1Interpreter:
             if node.condition:
                 if not self._truthy(self._eval(node.condition)):
                     break
-            result = self._exec_block(node.body)
+            try:
+                result = self._exec_block(node.body)
+            except _BreakSignal:
+                break
+            except _ContinueSignal:
+                pass
             if node.iterator:
                 self._eval(node.iterator)
         return result
@@ -162,7 +188,12 @@ class _Ps1Interpreter:
         for item in items:
             self._tick()
             self._env[key] = item
-            result = self._exec_block(node.body)
+            try:
+                result = self._exec_block(node.body)
+            except _BreakSignal:
+                break
+            except _ContinueSignal:
+                continue
         return result
 
     def _exec_while(self, node: Ps1WhileLoop) -> _Value:
@@ -171,14 +202,24 @@ class _Ps1Interpreter:
             self._tick()
             if not self._truthy(self._eval(node.condition)):
                 break
-            result = self._exec_block(node.body)
+            try:
+                result = self._exec_block(node.body)
+            except _BreakSignal:
+                break
+            except _ContinueSignal:
+                continue
         return result
 
     def _exec_do_while(self, node: Ps1DoWhileLoop) -> _Value:
         result: _Value = None
         while True:
             self._tick()
-            result = self._exec_block(node.body)
+            try:
+                result = self._exec_block(node.body)
+            except _BreakSignal:
+                break
+            except _ContinueSignal:
+                pass
             if not self._truthy(self._eval(node.condition)):
                 break
         return result
@@ -187,7 +228,12 @@ class _Ps1Interpreter:
         result: _Value = None
         while True:
             self._tick()
-            result = self._exec_block(node.body)
+            try:
+                result = self._exec_block(node.body)
+            except _BreakSignal:
+                break
+            except _ContinueSignal:
+                pass
             if self._truthy(self._eval(node.condition)):
                 break
         return result
@@ -199,6 +245,44 @@ class _Ps1Interpreter:
         if node.else_block:
             return self._exec_block(node.else_block)
         return None
+
+    def _exec_switch(self, node: Ps1SwitchStatement) -> _Value:
+        value = self._eval(node.value)
+        default_block = None
+        for condition, block in node.clauses:
+            if condition is None:
+                default_block = block
+                continue
+            cond_val = self._eval(condition)
+            if self._switch_matches(value, cond_val):
+                try:
+                    return self._exec_block(block)
+                except _BreakSignal:
+                    return None
+        if default_block is not None:
+            try:
+                return self._exec_block(default_block)
+            except _BreakSignal:
+                return None
+        return None
+
+    @staticmethod
+    def _switch_matches(value: _Value, condition: _Value) -> bool:
+        if isinstance(value, str) and isinstance(condition, str):
+            return value.lower() == condition.lower()
+        if isinstance(value, (int, float)) and isinstance(condition, (int, float)):
+            return value == condition
+        if isinstance(value, int) and isinstance(condition, str):
+            try:
+                return value == int(condition)
+            except ValueError:
+                return False
+        if isinstance(value, str) and isinstance(condition, int):
+            try:
+                return int(value) == condition
+            except ValueError:
+                return False
+        return value is condition
 
     def _exec_block(self, block) -> _Value:
         if block is None:
@@ -216,6 +300,12 @@ class _Ps1Interpreter:
         if expr is None:
             return None
         if isinstance(expr, Ps1StringLiteral):
+            return expr.value
+        if isinstance(expr, Ps1ExpandableString):
+            return self._eval_string_parts(expr.parts)
+        if isinstance(expr, Ps1ExpandableHereString):
+            return self._eval_string_parts(expr.parts)
+        if isinstance(expr, Ps1HereString):
             return expr.value
         if isinstance(expr, Ps1IntegerLiteral):
             return expr.value
@@ -239,8 +329,12 @@ class _Ps1Interpreter:
             return self._eval_index(expr)
         if isinstance(expr, Ps1ArrayLiteral):
             return [self._eval(e) for e in expr.elements]
+        if isinstance(expr, Ps1ArrayExpression):
+            return self._eval_array_expression(expr)
         if isinstance(expr, Ps1CastExpression):
             return self._eval_cast(expr)
+        if isinstance(expr, Ps1SubExpression):
+            return self._exec_statements(expr.body)
         if isinstance(expr, Ps1Pipeline):
             return self._exec_pipeline(expr)
         if isinstance(expr, Ps1PipelineElement):
@@ -277,6 +371,39 @@ class _Ps1Interpreter:
         if size < 0 or size > self.max_string_length:
             raise _Ps1InterpreterError
         return [0] * size
+
+    def _eval_string_parts(self, parts: list) -> str:
+        """
+        Evaluate the parts of an expandable string or expandable here-string by
+        resolving each variable / subexpression and concatenating the results.
+        """
+        out: list[str] = []
+        for part in parts:
+            if isinstance(part, Ps1StringLiteral):
+                out.append(part.value)
+            elif isinstance(part, Ps1SubExpression):
+                val = self._exec_statements(part.body)
+                out.append(self._to_str(val))
+            else:
+                out.append(self._to_str(self._eval(part)))
+        result = ''.join(out)
+        if len(result) > self.max_string_length:
+            raise _Ps1InterpreterError
+        return result
+
+    def _eval_array_expression(self, expr: Ps1ArrayExpression) -> list:
+        """
+        Evaluate an `@( ... )` array expression by executing its body statements
+        and flattening the results into a list.
+        """
+        results: list[_Value] = []
+        for stmt in expr.body:
+            val = self._exec_statement(stmt)
+            if isinstance(val, list):
+                results.extend(val)
+            elif val is not None:
+                results.append(val)
+        return results
 
     def _eval_variable(self, node: Ps1Variable) -> _Value:
         if node.scope not in (Ps1ScopeModifier.NONE, Ps1ScopeModifier.LOCAL):
@@ -386,6 +513,28 @@ class _Ps1Interpreter:
             return self._compare(left, right, lambda a, b: a == b)
         if op == '-ne':
             return self._compare(left, right, lambda a, b: a != b)
+        if op in ('-split', '-csplit', '-isplit'):
+            return self._eval_split(left, right, op)
+        if op == '-join':
+            return self._eval_join(left, right)
+        if op in ('-replace', '-creplace', '-ireplace'):
+            return self._eval_replace(left, right, op)
+        if op in ('-match', '-cmatch', '-imatch'):
+            return self._eval_match(left, right, op)
+        if op in ('-notmatch', '-cnotmatch', '-inotmatch'):
+            return not self._eval_match(left, right, op)
+        if op == '-contains':
+            return self._eval_contains(left, right)
+        if op == '-notcontains':
+            return not self._eval_contains(left, right)
+        if op == '-in':
+            return self._eval_contains(right, left)
+        if op == '-notin':
+            return not self._eval_contains(right, left)
+        if op in ('-like', '-clike', '-ilike'):
+            return self._eval_like(left, right, op)
+        if op in ('-notlike', '-cnotlike', '-inotlike'):
+            return not self._eval_like(left, right, op)
         raise _Ps1InterpreterError
 
     def _eval_unary(self, node: Ps1UnaryExpression) -> _Value:
@@ -415,6 +564,15 @@ class _Ps1Interpreter:
             if isinstance(val, float):
                 return -val
             raise _Ps1InterpreterError
+        if op.lower() == '-split':
+            val = self._eval(node.operand)
+            parts = re.split(r'\s+', self._to_str(val))
+            return [p for p in parts if p]
+        if op.lower() == '-join':
+            val = self._eval(node.operand)
+            if isinstance(val, list):
+                return ''.join(self._to_str(item) for item in val)
+            return self._to_str(val)
         raise _Ps1InterpreterError
 
     _MEMBER_ARITHMETIC = re.compile(r'^(\w+)([+\-])(\d+)$')
@@ -460,6 +618,10 @@ class _Ps1Interpreter:
 
     _ENCODING_TYPES = frozenset({'system.text.encoding', 'text.encoding'})
 
+    _STRING_TYPES = frozenset({'string', 'system.string'})
+
+    _MATH_TYPES = frozenset({'math', 'system.math'})
+
     def _eval_invoke_member(self, node: Ps1InvokeMember) -> _Value:
         if node.access == Ps1AccessKind.STATIC:
             return self._eval_static_invoke(node)
@@ -497,6 +659,10 @@ class _Ps1Interpreter:
             return self._invoke_convert(name, args)
         if type_name in self._ENCODING_TYPES:
             return self._invoke_encoding(name, args)
+        if type_name in self._STRING_TYPES:
+            return self._invoke_string_static(name, args)
+        if type_name in self._MATH_TYPES:
+            return self._invoke_math_static(name, args)
         raise _Ps1InterpreterError
 
     def _invoke_convert(self, method: str, args: list[_Value]) -> _Value:
@@ -560,6 +726,72 @@ class _Ps1Interpreter:
             return raw.decode(encoding)
         except (ValueError, OverflowError, UnicodeDecodeError, LookupError):
             raise _Ps1InterpreterError
+
+    def _invoke_string_static(self, method: str, args: list[_Value]) -> _Value:
+        if method == 'join' and len(args) == 2:
+            separator = self._to_str(args[0])
+            collection = args[1]
+            if isinstance(collection, list):
+                return separator.join(self._to_str(item) for item in collection)
+            return self._to_str(collection)
+        if method == 'format' and len(args) >= 1:
+            fmt = self._to_str(args[0])
+            try:
+                def replacer(m: re.Match) -> str:
+                    full = m.group(0)
+                    if full == '{{':
+                        return '{'
+                    if full == '}}':
+                        return '}'
+                    idx = int(m.group(1)) + 1
+                    return self._to_str(args[idx])
+                return re.sub(r'\{\{|\}\}|\{(\d+)\}', replacer, fmt)
+            except (IndexError, ValueError):
+                raise _Ps1InterpreterError
+        if method == 'isnullorempty' and len(args) == 1:
+            v = args[0]
+            return v is None or (isinstance(v, str) and len(v) == 0)
+        if method == 'concat' and len(args) >= 1:
+            return ''.join(self._to_str(a) for a in args)
+        raise _Ps1InterpreterError
+
+    def _invoke_math_static(self, method: str, args: list[_Value]) -> _Value:
+        import math
+        try:
+            if method == 'abs' and len(args) == 1:
+                v = args[0]
+                if isinstance(v, int):
+                    return abs(v)
+                if isinstance(v, float):
+                    return abs(v)
+            if method == 'floor' and len(args) == 1:
+                return int(math.floor(float(self._to_int(args[0]) if isinstance(args[0], int) else args[0])))
+            if method == 'ceiling' and len(args) == 1:
+                return int(math.ceil(float(self._to_int(args[0]) if isinstance(args[0], int) else args[0])))
+            if method == 'round' and len(args) in (1, 2):
+                val = float(args[0]) if isinstance(args[0], (int, float)) else float(self._to_str(args[0]))
+                digits = self._to_int(args[1]) if len(args) == 2 else 0
+                result = round(val, digits)
+                return int(result) if digits == 0 else result
+            if method == 'pow' and len(args) == 2:
+                base = float(args[0]) if isinstance(args[0], (int, float)) else float(self._to_str(args[0]))
+                exp = float(args[1]) if isinstance(args[1], (int, float)) else float(self._to_str(args[1]))
+                result = math.pow(base, exp)
+                return int(result) if result == int(result) else result
+            if method == 'sqrt' and len(args) == 1:
+                val = float(args[0]) if isinstance(args[0], (int, float)) else float(self._to_str(args[0]))
+                return math.sqrt(val)
+            if method == 'min' and len(args) == 2:
+                a = args[0] if isinstance(args[0], (int, float)) else self._to_int(args[0])
+                b = args[1] if isinstance(args[1], (int, float)) else self._to_int(args[1])
+                return min(a, b)
+            if method == 'max' and len(args) == 2:
+                a = args[0] if isinstance(args[0], (int, float)) else self._to_int(args[0])
+                b = args[1] if isinstance(args[1], (int, float)) else self._to_int(args[1])
+                return max(a, b)
+        except (ValueError, OverflowError, TypeError):
+            raise _Ps1InterpreterError
+        raise _Ps1InterpreterError
 
     def _invoke_string_method(
         self, s: str, method: str, args: list[_Value],
@@ -751,6 +983,67 @@ class _Ps1Interpreter:
         if isinstance(left, (int, float)) and isinstance(right, (int, float)):
             return op(left, right)
         raise _Ps1InterpreterError
+
+    def _eval_split(self, left: _Value, right: _Value, op: str) -> list:
+        s = self._to_str(left)
+        pattern = self._to_str(right)
+        flags = re.IGNORECASE if op != '-csplit' else 0
+        try:
+            return re.split(pattern, s, flags=flags)
+        except re.error:
+            raise _Ps1InterpreterError
+
+    def _eval_join(self, left: _Value, right: _Value) -> str:
+        separator = self._to_str(right)
+        if isinstance(left, list):
+            return separator.join(self._to_str(item) for item in left)
+        return self._to_str(left)
+
+    def _eval_replace(self, left: _Value, right: _Value, op: str) -> str:
+        s = self._to_str(left)
+        if isinstance(right, list) and len(right) == 2:
+            pattern = self._to_str(right[0])
+            replacement = self._to_str(right[1])
+        else:
+            raise _Ps1InterpreterError
+        flags = re.IGNORECASE if op != '-creplace' else 0
+        try:
+            return re.sub(pattern, replacement, s, flags=flags)
+        except re.error:
+            raise _Ps1InterpreterError
+
+    @staticmethod
+    def _eval_match(left: _Value, right: _Value, op: str) -> bool:
+        if not isinstance(left, str) or not isinstance(right, str):
+            raise _Ps1InterpreterError
+        flags = re.IGNORECASE if op[1] != 'c' else 0
+        try:
+            return re.search(right, left, flags=flags) is not None
+        except re.error:
+            raise _Ps1InterpreterError
+
+    @staticmethod
+    def _eval_contains(collection: _Value, item: _Value) -> bool:
+        if isinstance(collection, list):
+            for elem in collection:
+                if isinstance(elem, str) and isinstance(item, str):
+                    if elem.lower() == item.lower():
+                        return True
+                elif elem == item:
+                    return True
+            return False
+        raise _Ps1InterpreterError
+
+    @staticmethod
+    def _eval_like(left: _Value, right: _Value, op: str) -> bool:
+        if not isinstance(left, str) or not isinstance(right, str):
+            raise _Ps1InterpreterError
+        flags = re.IGNORECASE if op[1] != 'c' else 0
+        pattern = re.escape(right).replace(r'\*', '.*').replace(r'\?', '.')
+        try:
+            return re.fullmatch(pattern, left, flags=flags) is not None
+        except re.error:
+            raise _Ps1InterpreterError
 
     @staticmethod
     def _truthy(value: _Value) -> bool:

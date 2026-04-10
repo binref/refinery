@@ -24,6 +24,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1AccessKind,
     Ps1ArrayExpression,
     Ps1ArrayLiteral,
+    Ps1AssignmentExpression,
     Ps1BinaryExpression,
     Ps1CastExpression,
     Ps1CommandArgument,
@@ -517,6 +518,8 @@ class Ps1IexInlining(Transformer):
         if not isinstance(stmt, Ps1ExpressionStatement):
             return None
         pipeline = stmt.expression
+        if isinstance(pipeline, Ps1AssignmentExpression):
+            pipeline = pipeline.value
         if not isinstance(pipeline, Ps1Pipeline):
             return None
         if len(pipeline.elements) < 2:
