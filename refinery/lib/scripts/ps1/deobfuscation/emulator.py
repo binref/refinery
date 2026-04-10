@@ -1261,9 +1261,9 @@ class Ps1FunctionEvaluator(Transformer):
 
 class Ps1ForEachPipeline(Transformer):
     """
-    Evaluate pipelines of the form ``<constant-array> | %{ <scriptblock> }``
-    by executing the scriptblock for each element and replacing the pipeline
-    with the computed result.
+    Evaluate pipelines of the form `<array> | %{ <scriptblock> }` by executing
+    the scriptblock for each element and replacing the pipeline with the
+    computed result.
     """
 
     _BUILTIN_VARS = frozenset({'_', 'true', 'false', 'null'})

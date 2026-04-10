@@ -31,8 +31,8 @@ from refinery.lib.scripts.ps1.model import (
 
 def _is_truthy(node) -> bool | None:
     """
-    Determine the boolean truth value of a constant expression using PowerShellsemantics. Returns
-    None for non-constant or unrecognized expressions.
+    Determine the boolean truth value of a constant expression using PowerShell
+    semantics. Returns `None` for non-constant or unrecognized expressions.
     """
     while isinstance(node, Ps1ParenExpression):
         node = node.expression

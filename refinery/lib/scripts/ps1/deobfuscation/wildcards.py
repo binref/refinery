@@ -57,8 +57,9 @@ _LIKE_OPERATORS = frozenset({'-like', '-ilike', '-clike'})
 
 def _variable_name_value(node: Expression) -> str | None:
     """
-    Extract a variable name from a command argument. In PowerShell, integers in command-argument
-    position are implicitly string-coerced, so `Set-Variable 0 'val'` means variable name `"0"`.
+    Extract a variable name from a command argument. In PowerShell, integers in
+    command-argument position are implicitly string-coerced, so
+    `Set-Variable 0 'val'` means variable name `"0"`.
     """
     if isinstance(node, Ps1IntegerLiteral):
         return str(node.value)

@@ -21,13 +21,12 @@ _ALIAS_COMMANDS = frozenset({'set-alias', 'sal', 'new-alias', 'nal'})
 
 def _extract_alias_definition(cmd: Ps1CommandInvocation) -> tuple[str, str] | None:
     """
-    Extract ``(alias_name, target_command)`` from a Set-Alias / New-Alias invocation.
+    Extract `(alias_name, target_command)` from a `Set-Alias` / `New-Alias`
+    invocation. Handles:
 
-    Handles:
-
-    - Positional:  ``sal aliasName targetCmd``
-    - Named:       ``Set-Alias -Name aliasName -Value targetCmd``
-    - Mixed:       ``Set-Alias aliasName -Value targetCmd``
+    - Positional:  `sal aliasName targetCmd`
+    - Named:       `Set-Alias -Name aliasName -Value targetCmd`
+    - Mixed:       `Set-Alias aliasName -Value targetCmd`
     """
     alias_name: str | None = None
     target_name: str | None = None
@@ -92,10 +91,9 @@ class Ps1AliasInlining(Transformer):
 
     def _collect_aliases(self, root: Node) -> dict[str, tuple[Ps1CommandInvocation, str]]:
         """
-        Collect alias definitions.
-
-        Returns ``{lower(alias_name): (definition_cmd_node, target_command_name)}``.
-        Only aliases defined exactly once are included.
+        Collect alias definitions. Returns a mapping from `lower(alias_name)`
+        to `(definition_cmd_node, target_command_name)`. Only aliases defined
+        exactly once are included.
         """
         define_counts: dict[str, int] = {}
         definitions: dict[str, tuple[Ps1CommandInvocation, str]] = {}

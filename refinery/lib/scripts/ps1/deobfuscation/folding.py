@@ -86,7 +86,8 @@ def _is_static_encoding_chain(node: Ps1InvokeMember) -> tuple[str, bool] | None:
 
 def _unwrap_to_array_literal(node: Expression) -> Ps1ArrayLiteral | None:
     """
-    Unwrap parentheses and array expressions to find an inner Ps1ArrayLiteral.
+    Unwrap parentheses and array expressions to find an inner
+    `Ps1ArrayLiteral`.
     """
     while isinstance(node, Ps1ParenExpression) and node.expression is not None:
         node = node.expression
@@ -124,7 +125,8 @@ def _variable_string_to_expandable(
     var_first: bool,
 ) -> Ps1ExpandableString:
     """
-    Fold `$var + 'text'` or `'text' + $var` into a `Ps1ExpandableString`.
+    Fold `$var + 'text'` or `'text' + $var` into a
+    `refinery.lib.scripts.ps1.model.Ps1ExpandableString`.
     """
     escaped = _escape_for_expandable(text)
     var_raw = _variable_raw(var)

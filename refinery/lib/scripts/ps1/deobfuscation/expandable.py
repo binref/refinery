@@ -1,12 +1,14 @@
 """
-Hoist void subexpressions out of expandable strings, replacing the expandable string with a plain
-string literal of its text parts. The hoisted statements are inserted around the parent statement
-preserving their side effects. Only operates on expandable strings where ALL subexpressions are
-void-producing (command invocations, assignments).
+Hoist void subexpressions out of expandable strings, replacing the expandable
+string with a plain string literal of its text parts. The hoisted statements
+are inserted around the parent statement preserving their side effects. Only
+operates on expandable strings where ALL subexpressions are void-producing
+(command invocations, assignments).
 
-Safety constraint: subexpressions from leftmost expandable strings are inserted BEFORE the parent
-statement (they were going to run first anyway). Subexpressions from other expandable strings are
-inserted AFTER the parent statement to preserve execution order.
+Safety constraint: subexpressions from leftmost expandable strings are
+inserted BEFORE the parent statement (they were going to run first anyway).
+Subexpressions from other expandable strings are inserted AFTER the parent
+statement to preserve execution order.
 """
 from __future__ import annotations
 
@@ -31,8 +33,9 @@ from refinery.lib.scripts.ps1.model import (
 
 class Ps1ExpandableStringHoist(Transformer):
     """
-    Extract void subexpressions from expandable strings into preceding or following statements,
-    then replace the expandable string with a plain string literal.
+    Extract void subexpressions from expandable strings into preceding or
+    following statements, then replace the expandable string with a plain
+    string literal.
     """
 
     def visit(self, node):
@@ -68,11 +71,12 @@ class Ps1ExpandableStringHoist(Transformer):
     @staticmethod
     def _is_leftmost(node) -> bool:
         """
-        Check whether *node* sits in the leftmost evaluation position of its enclosing expression
-        tree.  An expandable string is leftmost when every ancestor `Ps1BinaryExpression` has it
-        (or the subtree containing it) as its `left` operand. This guarantees the subexpressions
-        would have been the first thing evaluated, so hoisting them before the statement does not
-        change execution order.
+        Check whether *node* sits in the leftmost evaluation position of its
+        enclosing expression tree. An expandable string is leftmost when every
+        ancestor `Ps1BinaryExpression` has it (or the subtree containing it)
+        as its `left` operand. This guarantees the subexpressions would have
+        been the first thing evaluated, so hoisting them before the statement
+        does not change execution order.
         """
         child = node
         parent = node.parent
@@ -88,8 +92,9 @@ class Ps1ExpandableStringHoist(Transformer):
 
     def _extract_void_subexpressions(self, stmt) -> tuple[list, list]:
         """
-        Walk the statement tree, find expandable strings where all subexpressions are void, replace
-        them with string literals, and return (before_stmts, after_stmts).
+        Walk the statement tree, find expandable strings where all
+        subexpressions are void, replace them with string literals, and
+        return `(before_stmts, after_stmts)`.
         """
         before: list = []
         after: list = []

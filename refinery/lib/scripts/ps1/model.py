@@ -78,8 +78,8 @@ class Ps1StringLiteral(Expression):
 class Ps1ExpandableString(Expression):
     """
     An expandable (double-quoted) string with interleaved text and expression
-    parts. Text segments are Ps1StringLiteral, expression segments are any
-    Expression node.
+    parts. Text segments are `Ps1StringLiteral`, expression segments are any
+    `Expression` node.
     """
     parts: list[Expression] = field(default_factory=list)
     raw: str = '""'

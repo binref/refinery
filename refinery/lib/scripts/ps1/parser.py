@@ -218,7 +218,7 @@ class Ps1Parser:
     def _rescan_current(self):
         """
         Re-tokenize the current token under the active lexer mode. Used after
-        mode changes (e.g. ``pop_mode``) to ensure the lookahead token matches
+        mode changes (e.g. `pop_mode`) to ensure the lookahead token matches
         the new mode.
         """
         if self._current.offset >= 0:

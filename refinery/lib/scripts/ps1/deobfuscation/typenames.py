@@ -4740,7 +4740,7 @@ def get_member_order(type_name: str) -> list[str] | None:
 
 def _unwrap_parens(expr: Expression) -> Expression:
     """
-    Unwrap nested Ps1ParenExpression wrappers.
+    Unwrap nested `Ps1ParenExpression` wrappers.
     """
     while isinstance(expr, Ps1ParenExpression) and expr.expression is not None:
         expr = expr.expression
@@ -4749,7 +4749,7 @@ def _unwrap_parens(expr: Expression) -> Expression:
 
 def _pipeline_pipes_to_get_member(pipeline: Ps1Pipeline) -> bool:
     """
-    Check if the last element in a pipeline is a Get-Member command.
+    Check if the last element in a pipeline is a `Get-Member` command.
     """
     if not pipeline.elements:
         return False
@@ -4768,8 +4768,8 @@ def _pipeline_source_type(
     variable_types: dict[str, str] | None = None,
 ) -> str | None:
     """
-    Determine the .NET type of the expression piped into Get-Member.
-    Assumes Get-Member is the last pipeline element.
+    Determine the .NET type of the expression piped into `Get-Member`.
+    Assumes `Get-Member` is the last pipeline element.
     """
     if len(pipeline.elements) < 2:
         return None
@@ -4784,8 +4784,8 @@ def _pipeline_source_type(
 def collect_variable_types(root: Node) -> dict[str, str]:
     """
     Scan the AST for single-assignment variables whose RHS has a resolvable
-    .NET type (e.g. ``$x = New-Object Net.WebClient``). Returns a mapping
-    from lowercase variable name to canonical .NET type string.
+    .NET type (e.g. `$x = New-Object Net.WebClient`). Returns a mapping from
+    lowercase variable name to canonical .NET type string.
     """
     assign_counts: dict[str, int] = {}
     typed_assigns: dict[str, str] = {}
@@ -4823,7 +4823,7 @@ def collect_variable_types(root: Node) -> dict[str, str]:
 class Ps1TypeSystemSimplifications(Transformer):
     """
     Resolve type-aware patterns:
-    - ($X | Get-Member)[N].Name → 'MemberName'
+    - `($X | Get-Member)[N].Name` resolves to the Nth member name string.
     """
 
     def __init__(self):

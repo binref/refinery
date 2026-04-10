@@ -149,8 +149,8 @@ _PS1_KNOWN_VARIABLES: dict[str, str] = {
 
 def _assignment_target_variable(target) -> Ps1Variable | None:
     """
-    Extract the variable from an assignment target, unwrapping any type constraint casts.
-    Handles both ``$x = expr`` and ``[Type]$x = expr``.
+    Extract the variable from an assignment target, unwrapping any type
+    constraint casts. Handles both `$x = expr` and `[Type]$x = expr`.
     """
     while isinstance(target, Ps1CastExpression):
         target = target.operand
@@ -192,7 +192,7 @@ def _collect_mutated_variables(root: Node) -> set[str]:
 
 def _candidate_key(var: Ps1Variable) -> str | None:
     """
-    Return the candidate lookup key for a variable, or ``None`` if it is not
+    Return the candidate lookup key for a variable, or `None` if it is not
     eligible for constant inlining.
     """
     if var.scope == Ps1ScopeModifier.NONE:
@@ -204,8 +204,9 @@ def _candidate_key(var: Ps1Variable) -> str | None:
 
 def _constant_value_key(node: Node) -> tuple | None:
     """
-    Return a hashable key representing the constant value of a node, or `None` if the node is not
-    constant. Two constant nodes with the same key are guaranteed to represent the same value.
+    Return a hashable key representing the constant value of a node, or `None`
+    if the node is not constant. Two constant nodes with the same key are
+    guaranteed to represent the same value.
     """
     while isinstance(node, Ps1ParenExpression) and node.expression is not None:
         node = node.expression
@@ -257,7 +258,7 @@ def _is_constant(node: Node) -> bool:
 
 def _unwrap_array_expression(node: Ps1ArrayExpression) -> Ps1ArrayLiteral | None:
     """
-    Unwrap ``@(e1, e2, ...)`` to its inner ``Ps1ArrayLiteral`` if possible.
+    Unwrap `@(e1, e2, ...)` to its inner `Ps1ArrayLiteral` if possible.
     """
     if len(node.body) == 1:
         stmt = node.body[0]
@@ -268,7 +269,8 @@ def _unwrap_array_expression(node: Ps1ArrayExpression) -> Ps1ArrayLiteral | None
 
 def _get_array_literal(node: Node) -> Ps1ArrayLiteral | None:
     """
-    Return the indexable Ps1ArrayLiteral from either a bare literal or @(...).
+    Return the indexable `Ps1ArrayLiteral` from either a bare literal or
+    `@(...)`.
     """
     if isinstance(node, Ps1ArrayLiteral):
         return node

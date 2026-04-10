@@ -150,7 +150,9 @@ def _try_evaluate(
     bindings: dict[str, str | bytes] | None = None,
 ) -> str | bytes | None:
     """
-    Recursively evaluate a .NET expression chain to `str` or `bytes`. Handles the pattern:
+    Recursively evaluate a .NET expression chain to `str` or `bytes`. Handles
+    the pattern:
+
         [Convert]::FromBase64String(literal)
         -> [IO.MemoryStream]
         -> New-Object DeflateStream/GZipStream(stream, Decompress)
@@ -354,9 +356,10 @@ def _try_extract_scriptblock_create_from_statement(expr: Expression) -> Expressi
 
 class Ps1IexInlining(Transformer):
     """
-    Replaces the following patterns with the parsed statements from the reflectively loaded code:
+    Replaces the following patterns with the parsed statements from the
+    reflectively loaded code:
 
-    -`'CODE' | Invoke-Expression`
+    - `'CODE' | Invoke-Expression`
     - `Invoke-Expression 'CODE'`
     - `[scriptblock]::Create('CODE')`
     """
@@ -537,8 +540,8 @@ class Ps1IexInlining(Transformer):
     @staticmethod
     def _try_extract_scriptblock_create_string(stmt) -> str | None:
         """
-        Match `&([scriptblock]::Create(expr))` and `[scriptblock]::Create(expr).Invoke()` at the
-        statement level.
+        Match `&([scriptblock]::Create(expr))` and
+        `[scriptblock]::Create(expr).Invoke()` at the statement level.
         """
         if not isinstance(stmt, Ps1ExpressionStatement):
             return None
