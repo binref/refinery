@@ -450,6 +450,7 @@ class Ps1Parser:
             while self._eat(Ps1TokenKind.PIPE):
                 self._skip_newlines()
                 self._lexer.mode = Ps1LexerMode.ARGUMENT
+                self._rescan_current()
                 cmd = self._parse_command()
                 if cmd is not None:
                     elements.append(Ps1PipelineElement(offset=cmd.offset, expression=cmd))
@@ -495,23 +496,45 @@ class Ps1Parser:
             name_expr = self._parse_primary_postfix(name_expr)
 
         if isinstance(name_expr, Ps1StringLiteral) and not invocation_operator:
-            while self._at(Ps1TokenKind.DOT):
-                if self._current.offset > name_expr.offset + len(name_expr.raw):
-                    break
-                saved_pos = self._lexer.pos
-                saved_tok = self._current
-                self._advance()
-                if self._at(Ps1TokenKind.GENERIC_TOKEN) or self._current.kind.is_keyword:
-                    suffix = self._advance()
-                    name_expr = Ps1StringLiteral(
-                        offset=name_expr.offset,
-                        value=name_expr.value + '.' + suffix.value,
-                        raw=name_expr.raw + '.' + suffix.value,
-                    )
-                else:
-                    self._lexer.pos = saved_pos
-                    self._current = saved_tok
-                    break
+            absorbed = True
+            while absorbed:
+                absorbed = False
+                while self._at(Ps1TokenKind.DOT):
+                    if self._current.offset > name_expr.offset + len(name_expr.raw):
+                        break
+                    saved_pos = self._lexer.pos
+                    saved_tok = self._current
+                    self._advance()
+                    if self._at(Ps1TokenKind.GENERIC_TOKEN) or self._current.kind.is_keyword:
+                        suffix = self._advance()
+                        name_expr = Ps1StringLiteral(
+                            offset=name_expr.offset,
+                            value=name_expr.value + '.' + suffix.value,
+                            raw=name_expr.raw + '.' + suffix.value,
+                        )
+                        absorbed = True
+                    else:
+                        self._lexer.pos = saved_pos
+                        self._current = saved_tok
+                        break
+                while self._at(Ps1TokenKind.DASH):
+                    if self._current.offset > name_expr.offset + len(name_expr.raw):
+                        break
+                    saved_pos = self._lexer.pos
+                    saved_tok = self._current
+                    self._advance()
+                    if self._at(Ps1TokenKind.GENERIC_TOKEN) or self._current.kind.is_keyword:
+                        suffix = self._advance()
+                        name_expr = Ps1StringLiteral(
+                            offset=name_expr.offset,
+                            value=name_expr.value + '-' + suffix.value,
+                            raw=name_expr.raw + '-' + suffix.value,
+                        )
+                        absorbed = True
+                    else:
+                        self._lexer.pos = saved_pos
+                        self._current = saved_tok
+                        break
 
         self._lexer.mode = Ps1LexerMode.ARGUMENT
         self._rescan_current()

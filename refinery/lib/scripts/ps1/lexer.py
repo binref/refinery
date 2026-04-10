@@ -729,9 +729,6 @@ class Ps1Lexer:
                             self.mode = mode_hint
                         continue
 
-            # Hyphens are included in identifiers because PowerShell command and function
-            # names commonly contain them, and bare identifiers cannot be expression operands.
-
             if c.isalpha() or c == '_' or c == '`':
                 word = []
                 if c == '`' and self.pos + 1 < length:
@@ -747,7 +744,10 @@ class Ps1Lexer:
                         self.pos += 1
                         word.append(src[self.pos])
                         self.pos += 1
-                    elif ch.isalnum() or ch in '_-':
+                    elif ch.isalnum() or ch == '_':
+                        word.append(ch)
+                        self.pos += 1
+                    elif ch in DASHES and self.mode != Ps1LexerMode.EXPRESSION:
                         word.append(ch)
                         self.pos += 1
                     else:

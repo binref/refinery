@@ -547,6 +547,11 @@ class TestPs1VariableDriveResolution(TestPs1):
         result = self._deobfuscate("Set-Variable -Name foo -Value 'bar'")
         self.assertEqual(result.strip(), "$foo = 'bar'")
 
+    def test_set_variable_with_integer_name(self):
+        result = self._deobfuscate("Set-Variable 0 'hello'\n$0")
+        self.assertIn('hello', result)
+        self.assertNotIn('Set-Variable', result)
+
     def test_get_variable_value_only_resolved(self):
         result = self._deobfuscate('Get-Variable ExecutionContext -ValueOnly')
         self.assertEqual(result.strip(), '$ExecutionContext')
@@ -1188,6 +1193,10 @@ class TestPs1WildcardResolution(TestPs1):
         result = self._deobfuscate("[IO.StreamReader] | Get-Member | ? { $_.Name -ilike 'ReadT*d' }")
         self.assertIn('ReadToEnd', result)
 
+    def test_wildcard_member_filter_no_space_before_operator(self):
+        result = self._deobfuscate("[IO.StreamReader] | Get-Member | ? { $_.Name-ilike'ReadT*d' }")
+        self.assertIn('ReadToEnd', result)
+
     def test_wildcard_where_get_command(self):
         result = self._deobfuscate("Get-Command | ? { $_.Name -ilike '*w-*ct' }")
         self.assertIn('New-Object', result)
@@ -1271,6 +1280,12 @@ class TestPs1ParserModeRescan(TestPs1):
             'deVICEcREdEnTiaLDEPlOYmENt.eXe ; Write-Host hello'
         )
         self.assertIn('deVICEcREdEnTiaLDEPlOYmENt.eXe', result)
+
+    def test_member_dash_operator_not_absorbed(self):
+        ast = Ps1Parser("$_.Name-like'*test*'")
+        result = Ps1Synthesizer().convert(ast.parse())
+        self.assertIn('-like', result)
+        self.assertNotIn('Name-like', result)
 
     def test_array_type_in_param_block(self):
         result = self._deobfuscate(

@@ -35,6 +35,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1CommandArgumentKind,
     Ps1CommandInvocation,
     Ps1ExpressionStatement,
+    Ps1IntegerLiteral,
     Ps1InvokeMember,
     Ps1MemberAccess,
     Ps1ParenExpression,
@@ -54,6 +55,16 @@ _WHERE_OBJECT_ALIASES = frozenset({'?', 'where', 'where-object'})
 _LIKE_OPERATORS = frozenset({'-like', '-ilike', '-clike'})
 
 
+def _variable_name_value(node: Expression) -> str | None:
+    """
+    Extract a variable name from a command argument. In PowerShell, integers in command-argument
+    position are implicitly string-coerced, so `Set-Variable 0 'val'` means variable name `"0"`.
+    """
+    if isinstance(node, Ps1IntegerLiteral):
+        return str(node.value)
+    return _string_value(node)
+
+
 def _is_wildcard(pattern: str) -> bool:
     return '*' in pattern or '?' in pattern
 
@@ -63,8 +74,8 @@ def _wildcard_match_unique(
     candidates: Iterable[str],
 ) -> str | None:
     """
-    Match a wildcard pattern case-insensitively against canonical names.
-    Returns the name if exactly one candidate matches, else None.
+    Match a wildcard pattern case-insensitively against canonical names. Returns the name if one
+    exact candidate matches, else None.
     """
     regex = re.compile(fnmatch_translate(pattern), re.IGNORECASE)
     matches = [name for name in candidates if regex.match(name)]
@@ -94,8 +105,8 @@ def _is_psobject_member_access(
     leaf_name: str,
 ) -> Ps1MemberAccess | None:
     """
-    Check if expr is of the form `<something>.PSObject.<leaf_name>` and return
-    the inner `<something>.PSObject` member access, or None.
+    Check if expr is of the form `<something>.PSObject.<leaf_name>` and return the inner member
+    access to `<something>.PSObject`, or None.
     """
     if not isinstance(expr, Ps1MemberAccess):
         return None
@@ -116,9 +127,9 @@ def _determine_where_object_candidates(
     variable_types: dict[str, str] | None = None,
 ) -> Iterable[str] | None:
     """
-    Examine the pipeline elements preceding Where-Object to determine which
-    candidates the wildcard should match against. Returns canonical names to
-    match against, or None if the source is unrecognized.
+    Examine the pipeline elements preceding `Where-Object` to determine which candidates the
+    wildcard should match against. Returns canonical names to match against, or None if the source
+    is unrecognized.
     """
     for elem in elements:
         if not isinstance(elem, Ps1PipelineElement):
@@ -163,8 +174,8 @@ def _candidates_from_get_member(
     variable_types: dict[str, str] | None = None,
 ) -> list[str] | None:
     """
-    For a pipeline like `expr | Get-Member | Where-Object ...`, resolve
-    the type of the expression piped into Get-Member.
+    For a pipeline like `expr | Get-Member | Where-Object ...`, resolve the type of the expression
+    piped into `Get-Member`.
     """
     idx = None
     for i, elem in enumerate(elements):
@@ -254,17 +265,15 @@ def _concat_expressions(exprs: list[Expression]) -> Expression:
 
 def _has_valueonly_switch(cmd: Ps1CommandInvocation) -> bool:
     """
-    Check if a command has a switch that is any unambiguous abbreviation of
-    ``-ValueOnly``.  PowerShell allows ``-V``, ``-Val``, ``-Value``, etc.
+    Check if a command has a switch that is any unambiguous abbreviation of `-ValueOnly`; this is
+    true even for just `-v` since no other flag starts with `v`.
     """
-    full = '-valueonly'
     for arg in cmd.arguments:
         if not isinstance(arg, Ps1CommandArgument):
             continue
         if arg.kind != Ps1CommandArgumentKind.SWITCH:
             continue
-        name = arg.name.lower()
-        if full.startswith(name) and name.startswith('-v'):
+        if arg.name.lower().startswith('-v'):
             return True
     return False
 
@@ -273,8 +282,8 @@ def _resolve_variable_name(
     pattern: str,
 ) -> str | None:
     """
-    Resolve a variable name pattern (possibly wildcard) to a canonical name.
-    Returns the resolved name, or the pattern itself for non-wildcard names.
+    Resolve a variable name pattern (possibly wildcard) to a canonical name. Returns the resolved
+    name, or the pattern itself for non-wildcard names.
     """
     if _is_wildcard(pattern):
         return _wildcard_match_unique(pattern, _PS1_KNOWN_VARIABLES.values())
@@ -290,7 +299,9 @@ def _extract_where_object_wildcard(
 ) -> str | None:
     """
     Detect Where-Object with a scriptblock body of the form:
+
         $_.Name -ilike 'pattern'
+
     Returns the pattern string, or None.
     """
     name = _get_command_name(cmd)
@@ -389,11 +400,10 @@ class Ps1WildcardResolution(Transformer):
         node: Ps1MemberAccess,
     ) -> Expression | None:
         """
-        Resolve (Get-Item Variable:X).Value or (Get-Variable X).Value to $X.
+        Resolve `(Get-Item Variable:X).Value` or `(Get-Variable X).Value` to `$X`.
 
-        Get-Item Variable:X returns a PSVariable wrapper object. Only when
-        .Value is accessed do we get the actual variable value, which is
-        semantically equivalent to $X.
+        `Get-Item Variable:X` returns a `PSVariable` wrapper object. Only when `.Value` is accessed
+        do we get the actual variable value, which is semantically equivalent to `$X`.
         """
         member_name = _get_member_name(node.member)
         if member_name is None or member_name.lower() != 'value':
@@ -434,14 +444,17 @@ class Ps1WildcardResolution(Transformer):
         node: Ps1CommandInvocation,
     ) -> Expression | None:
         """
-        Resolve Get-Variable X -ValueOnly to $X.
+        Resolve `Get-Variable X -ValueOnly` to `$X`.
         """
         cmd_name = _get_command_name(node)
         if cmd_name is None or cmd_name.lower() not in _GET_VARIABLE_COMMANDS:
             return None
         if not _has_valueonly_switch(node):
             return None
-        arg_value = _extract_first_positional_string(node)
+        positionals = _extract_positional_args(node)
+        if not positionals:
+            return None
+        arg_value = _variable_name_value(positionals[0])
         if arg_value is None:
             return None
         resolved = _resolve_variable_name(arg_value)
@@ -566,9 +579,9 @@ class Ps1WildcardResolution(Transformer):
         positionals = _extract_positional_args(node)
         name_expr = _extract_named_value(node, '-name')
         if name_expr is not None:
-            var_name = _string_value(name_expr)
+            var_name = _variable_name_value(name_expr)
         elif positionals:
-            var_name = _string_value(positionals[0])
+            var_name = _variable_name_value(positionals[0])
             positionals = positionals[1:]
         else:
             return None

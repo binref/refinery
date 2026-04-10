@@ -205,8 +205,13 @@ class TestPs1Lexer(TestBase):
         self.assertIn(Ps1TokenKind.DOUBLE_COLON, kinds)
 
     def test_generic_token(self):
-        tokens = self._tokens('Write-Host')
+        tokens = self._tokens('Write-Host', mode=Ps1LexerMode.ARGUMENT)
         self.assertEqual(tokens[0], (Ps1TokenKind.GENERIC_TOKEN, 'Write-Host'))
+
+    def test_identifier_no_dash_in_expression_mode(self):
+        tokens = self._tokens('Name-like')
+        self.assertEqual(tokens[0], (Ps1TokenKind.GENERIC_TOKEN, 'Name'))
+        self.assertEqual(tokens[1], (Ps1TokenKind.OPERATOR, '-like'))
 
     def test_redirection(self):
         tokens = self._tokens('> file.txt')
