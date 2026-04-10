@@ -148,6 +148,7 @@ _DASH_OPERATORS: dict[str, str] = {
 }
 
 _FORCE_START_NEW_TOKEN = frozenset(' \t\r\n|&;,{}()')
+_FORCE_NEW_TOKEN_AFTER_NUMBER = frozenset('!#%*+-./<=>]')
 
 _VARIABLE_STOPS_NO_RESCAN = frozenset('.[=')
 
@@ -651,11 +652,13 @@ class Ps1Lexer:
             if c.isdigit() or (c == '.' and self.pos + 1 < length and src[self.pos + 1].isdigit()):
                 token = self._read_number()
                 if token:
-                    if self.mode == Ps1LexerMode.ARGUMENT and self.pos < length and (
-                        src[self.pos] not in _FORCE_START_NEW_TOKEN
-                    ):
-                        self.pos = start
-                        token = self._read_generic_token()
+                    nc = src[self.pos] if self.pos < length else None
+                    if nc is not None and nc not in _FORCE_START_NEW_TOKEN and not nc.isspace():
+                        if self.mode == Ps1LexerMode.ARGUMENT or (
+                            nc not in _FORCE_NEW_TOKEN_AFTER_NUMBER
+                        ):
+                            self.pos = start
+                            token = self._read_generic_token()
                     mode_hint = yield token
                     if mode_hint is not None:
                         self.mode = mode_hint

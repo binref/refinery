@@ -52,7 +52,7 @@ _pipeline = DeobfuscationPipeline(
     },
     invalidates={
         'normalize': set(),
-        'fold': {'evaluate', 'finalize'},
+        'fold': {'normalize', 'evaluate', 'finalize'},
     },
 )
 

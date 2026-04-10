@@ -483,6 +483,21 @@ class TestPS1Regressions(TestPs1):
         self.assertIn('Get-Item foo', result)
         self.assertIn('Get-Item bar', result)
 
+    def test_digit_starting_alias_inlined(self):
+        data = "Set-Alias 1abc Invoke-Expression\n1abc 'Write-Host hello'"
+        result = self._deobfuscate(data)
+        self.assertIn('Write-Host', result)
+        self.assertNotIn('1abc', result.split('\n')[-1])
+
+    def test_obfuscated_alias_target_resolved_after_folding(self):
+        data = (
+            "Set-Alias myalias $([char]73+[char]69+[char]88)\n"
+            "myalias 'Write-Host hi'"
+        )
+        result = self._deobfuscate(data)
+        self.assertIn('Write-Host', result)
+        self.assertNotIn('myalias', result.split('\n')[-1])
+
 
 class TestPs1VariableDriveResolution(TestPs1):
 
@@ -1263,6 +1278,10 @@ class TestPs1ParserModeRescan(TestPs1):
         )
         self.assertIn('[byte[]]', result)
         self.assertIn('String', result)
+
+    def test_digit_starting_token_does_not_break_expression(self):
+        result = self._deobfuscate('$x = 1 + 2')
+        self.assertIn('3', result)
 
 
 class TestPs1NameNormalization(TestPs1):
