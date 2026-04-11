@@ -4,6 +4,7 @@ import abc
 import codecs
 import sys
 
+from refinery.lib.id import guess_text_encoding
 from refinery.lib.scripts import Node
 from refinery.lib.types import Param, buf
 from refinery.units import Arg, Chunk, RefineryPartialResult, Unit
@@ -52,7 +53,13 @@ class IterativeDeobfuscator(Unit, abstract=True):
                 self.synthesize(ast), self.codec, errors='surrogateescape')
 
         self.log_info('parsing input data')
-        txt = codecs.decode(data, self.codec, errors='surrogateescape')
+
+        if format := guess_text_encoding(data):
+            codec = format.codec
+        else:
+            codec = self.codec
+
+        txt = codecs.decode(data, codec, errors='surrogateescape')
         ast = self.parse(txt)
 
         for k in range(self.args.timeout):
