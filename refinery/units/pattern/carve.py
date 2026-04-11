@@ -84,8 +84,8 @@ class carve(PatternExtractor):
             from ..encoding.htmlesc import htmlesc
             decoder = htmlesc()
         elif self.args.format == formats.vbastr:
-            from ..encoding.escps import escps
-            decoder = escps()
+            from ..encoding.escvb import escvb
+            decoder = escvb()
         elif self.args.format == formats.hexarray:
             from ..blockwise.pack import pack
             decoder = pack(0x10)
