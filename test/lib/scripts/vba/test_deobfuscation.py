@@ -369,4 +369,96 @@ class TestVbaDeobfuscation(TestBase):
         result = self._full_deobfuscate(code)
         self.assertIn('Shell', result)
         self.assertIn('Function Builder()', result)
-        self.assertIn('"cmd P"', result)
+        self.assertIn('"cmd Ppayload"', result)
+
+    def test_chr_non_printable_preserved(self):
+        code = 'Sub T()\nx = Chr(13)\nEnd Sub'
+        result = self._fold(code)
+        self.assertIn('Chr(13)', result)
+
+    def test_builtin_constant_in_chr(self):
+        code = 'Sub T()\nx = Chr(vbKeyA)\nEnd Sub'
+        result = self._fold(code)
+        self.assertIn('"A"', result)
+
+    def test_builtin_constant_vbobjecterror(self):
+        code = 'Sub T()\nx = vbObjectError\nF x\nEnd Sub'
+        result = self._deobfuscate(code)
+        self.assertIn('-2147221504', result)
+
+    def test_builtin_constant_vbcrlf_not_inlined(self):
+        code = 'Sub T()\nx = vbCrLf\nEnd Sub'
+        result = self._fold(code)
+        self.assertIn('vbCrLf', result)
+
+    def test_undefined_var_eliminated_in_concat(self):
+        code = (
+            'Function F()\n'
+            '  On Error Resume Next\n'
+            '  F = junk + "hello"\n'
+            'End Function\n'
+            'Sub T()\n'
+            '  G F()\n'
+            'End Sub'
+        )
+        result = self._full_deobfuscate(code)
+        self.assertIn('"hello"', result)
+        self.assertNotIn('junk', result)
+
+    def test_undefined_var_kept_without_oern(self):
+        code = 'Sub T()\nx = junk + "hello"\nEnd Sub'
+        result = self._fold(code)
+        self.assertIn('junk', result)
+
+    def test_return_variable_inlined(self):
+        code = (
+            'Function F()\n'
+            '  F = "hello"\n'
+            '  Shell "cmd " & F, 0\n'
+            'End Function\n'
+        )
+        result = self._full_deobfuscate(code)
+        self.assertIn('"cmd hello"', result)
+
+    def test_emulator_refuses_nonprintable_result(self):
+        code = (
+            'Function F()\n'
+            '  F = "a" & Chr(13) & "b"\n'
+            'End Function\n'
+            'Sub T()\n'
+            '  G F()\n'
+            'End Sub'
+        )
+        result = self._full_deobfuscate(code)
+        self.assertNotIn('F()', result)
+        self.assertIn('"a" & Chr(13) & "b"', result)
+
+    def test_chr_inlining_in_concat(self):
+        code = (
+            'Sub T()\n'
+            '  On Error Resume Next\n'
+            '  x = Chr(13)\n'
+            '  y = "a" + x + "b"\n'
+            '  F y\n'
+            'End Sub'
+        )
+        result = self._full_deobfuscate(code)
+        self.assertNotIn('x =', result)
+        self.assertIn('Chr(13)', result)
+        self.assertIn('"a"', result)
+        self.assertIn('"b"', result)
+
+    def test_emulator_nonprintable_result_synthesized(self):
+        code = (
+            'Function F()\n'
+            '  F = Chr(13) & "payload" & Chr(10)\n'
+            'End Function\n'
+            'Sub T()\n'
+            '  G F()\n'
+            'End Sub'
+        )
+        result = self._full_deobfuscate(code)
+        self.assertNotIn('F()', result)
+        self.assertIn('Chr(13)', result)
+        self.assertIn('"payload"', result)
+        self.assertIn('Chr(10)', result)

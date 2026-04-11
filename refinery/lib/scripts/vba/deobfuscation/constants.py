@@ -3,20 +3,22 @@ VBA constant inlining: substitutes single-assignment constant variableswith thei
 """
 from __future__ import annotations
 
-import copy
-
 from refinery.lib.scripts import Expression, Statement, Transformer
-from refinery.lib.scripts.vba.deobfuscation._helpers import _body_lists, _is_literal
+from refinery.lib.scripts.vba.deobfuscation._helpers import (
+    _body_lists,
+    _clone_expression,
+    _is_constant_expr,
+)
 from refinery.lib.scripts.vba.model import (
+    VbaCallExpression,
     VbaConstDeclaration,
     VbaConstDeclarator,
+    VbaExpressionStatement,
     VbaForEachStatement,
     VbaForStatement,
-    VbaFunctionDeclaration,
     VbaIdentifier,
     VbaLetStatement,
     VbaModule,
-    VbaPropertyDeclaration,
 )
 
 
@@ -35,7 +37,7 @@ class VbaConstantInlining(Transformer):
             for idx, stmt in enumerate(body):
                 if isinstance(stmt, VbaConstDeclaration):
                     for d in stmt.declarators:
-                        if d.value is not None and _is_literal(d.value):
+                        if d.value is not None and _is_constant_expr(d.value):
                             key = d.name.lower()
                             candidates.setdefault(key, []).append((d.value, body, idx))
                             assignment_counts[key] = assignment_counts.get(key, 0) + 1
@@ -46,22 +48,17 @@ class VbaConstantInlining(Transformer):
                 ):
                     key = stmt.target.name.lower()
                     assignment_counts[key] = assignment_counts.get(key, 0) + 1
-                    if _is_literal(stmt.value):
+                    if _is_constant_expr(stmt.value):
                         candidates.setdefault(key, []).append((stmt.value, body, idx))
         loop_variables: set[str] = set()
-        function_names: set[str] = set()
         for node in module.walk():
             if isinstance(node, (VbaForStatement, VbaForEachStatement)):
                 if isinstance(node.variable, VbaIdentifier):
                     loop_variables.add(node.variable.name.lower())
-            if isinstance(node, (VbaFunctionDeclaration, VbaPropertyDeclaration)):
-                if node.name:
-                    function_names.add(node.name.lower())
         candidates = {
             k: v for k, v in candidates.items()
             if len(v) == 1
             and k not in loop_variables
-            and k not in function_names
             and assignment_counts.get(k, 0) == 1
         }
         if not candidates:
@@ -75,6 +72,10 @@ class VbaConstantInlining(Transformer):
                 continue
             if isinstance(parent, (VbaConstDeclaration, VbaConstDeclarator)):
                 continue
+            if isinstance(parent, VbaCallExpression) and parent.callee is node:
+                continue
+            if isinstance(parent, VbaExpressionStatement) and parent.expression is node:
+                continue
             if (
                 isinstance(parent, (VbaForStatement, VbaForEachStatement))
                 and parent.variable is node
@@ -87,7 +88,7 @@ class VbaConstantInlining(Transformer):
         for key, refs in reads.items():
             literal_node, body, idx = candidates[key][0]
             for ref in refs:
-                replacement = copy.copy(literal_node)
+                replacement = _clone_expression(literal_node)
                 replacement.parent = ref.parent
                 parent = ref.parent
                 for attr_name in vars(parent):
