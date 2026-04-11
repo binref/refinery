@@ -32,6 +32,8 @@ from refinery.lib.scripts.vba.model import (
     VbaLoopConditionPosition,
     VbaLoopConditionType,
     VbaModule,
+    VbaOnErrorAction,
+    VbaOnErrorStatement,
     VbaParenExpression,
     VbaStringLiteral,
     VbaUnaryExpression,
@@ -40,6 +42,15 @@ from refinery.lib.scripts.vba.model import (
 
 
 class _VbaInterpreterError(Exception):
+    pass
+
+
+class _UnevaluableError(Exception):
+    """
+    Raised for statements the interpreter cannot model, such as implicit calls with potential side
+    effects. Unlike `_VbaInterpreterError`, this is not suppressed by On Error Resume Next, because
+    skipping a side-effecting statement would silently lose behavior.
+    """
     pass
 
 
@@ -68,10 +79,12 @@ class _VbaInterpreter:
         self.max_string_length = max_string_length
         self._env: dict[str, _Value] = {}
         self._iterations = 0
+        self._on_error_resume_next = False
 
     def execute(self, body: list, bindings: dict[str, _Value]) -> _Value:
         self._env = dict(bindings)
         self._iterations = 0
+        self._on_error_resume_next = False
         try:
             self._exec_statements(body)
         except _ExitFunctionSignal:
@@ -80,9 +93,18 @@ class _VbaInterpreter:
 
     def _exec_statements(self, stmts: list):
         for stmt in stmts:
-            self._exec_statement(stmt)
+            if self._on_error_resume_next:
+                try:
+                    self._exec_statement(stmt)
+                except _VbaInterpreterError:
+                    continue
+            else:
+                self._exec_statement(stmt)
 
     def _exec_statement(self, stmt):
+        if isinstance(stmt, VbaOnErrorStatement):
+            self._on_error_resume_next = stmt.action is VbaOnErrorAction.RESUME_NEXT
+            return
         if isinstance(stmt, VbaLetStatement):
             return self._exec_let(stmt)
         if isinstance(stmt, VbaConstDeclaration):
@@ -98,12 +120,12 @@ class _VbaInterpreter:
                 raise _ExitFunctionSignal
             raise _VbaInterpreterError
         if isinstance(stmt, VbaExpressionStatement):
-            return
+            raise _UnevaluableError
         if isinstance(stmt, VbaDebugPrintStatement):
             return
         if isinstance(stmt, VbaVariableDeclaration):
             return
-        raise _VbaInterpreterError
+        raise _UnevaluableError
 
     def _exec_let(self, stmt: VbaLetStatement):
         if not isinstance(stmt.target, VbaIdentifier):
@@ -582,7 +604,7 @@ class VbaFunctionEvaluator(Transformer):
         )
         try:
             return interpreter.execute(funcdef.body, bindings)
-        except _VbaInterpreterError:
+        except (_VbaInterpreterError, _UnevaluableError):
             return None
 
     @staticmethod

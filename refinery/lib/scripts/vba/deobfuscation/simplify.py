@@ -118,6 +118,10 @@ def _try_string_function(node: VbaCallExpression) -> str | None:
         n = _numeric_value(args[0])
         if isinstance(n, int) and 0 <= n <= 10000:
             return ' ' * n
+    if name == 'cstr' and len(args) == 1:
+        s = _string_value(args[0])
+        if s is not None:
+            return s
     if name == 'replace' and len(args) >= 3:
         haystack = _string_value(args[0])
         needle = _string_value(args[1])

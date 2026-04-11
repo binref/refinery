@@ -353,3 +353,20 @@ class TestVbaDeobfuscation(TestBase):
         result = self._full_deobfuscate(code)
         self.assertIn('"before"', result)
         self.assertNotIn('"inside"', result)
+
+    def test_emulator_preserves_side_effecting_function(self):
+        code = (
+            'Function Builder()\n'
+            '  On Error Resume Next\n'
+            '  Builder = "payload"\n'
+            '  Shell "cmd " & Chr(80) & Builder, 0\n'
+            'End Function\n'
+            'Sub Autoopen()\n'
+            '  On Error Resume Next\n'
+            '  Builder\n'
+            'End Sub'
+        )
+        result = self._full_deobfuscate(code)
+        self.assertIn('Shell', result)
+        self.assertIn('Function Builder()', result)
+        self.assertIn('"cmd P"', result)

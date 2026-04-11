@@ -13,6 +13,59 @@ from refinery.lib.scripts.vba.model import (
     VbaModule,
 )
 
+_PURE_BUILTINS = frozenset({
+    'abs',
+    'atn',
+    'cbool',
+    'cbyte',
+    'ccur',
+    'cdate',
+    'cdbl',
+    'cdec',
+    'chr',
+    'chr$',
+    'chrw',
+    'chrw$',
+    'cint',
+    'clng',
+    'clnglng',
+    'clngptr',
+    'cos',
+    'csng',
+    'cstr',
+    'cvar',
+    'exp',
+    'fix',
+    'hex',
+    'hex$',
+    'int',
+    'log',
+    'oct',
+    'oct$',
+    'sgn',
+    'sin',
+    'sqr',
+    'str',
+    'str$',
+    'tan',
+    'val',
+})
+
+
+def _has_side_effects(node) -> bool:
+    """
+    Return whether an expression tree might have side effects. Calls to known
+    pure VBA builtins are treated as side-effect-free.
+    """
+    for child in node.walk():
+        if not isinstance(child, VbaCallExpression):
+            continue
+        if not isinstance(child.callee, VbaIdentifier):
+            return True
+        if child.callee.name.lower() not in _PURE_BUILTINS:
+            return True
+    return False
+
 
 class VbaDeadVariableRemoval(Transformer):
 
@@ -33,12 +86,7 @@ class VbaDeadVariableRemoval(Transformer):
                     and isinstance(stmt.target, VbaIdentifier)
                     and stmt.value is not None
                 ):
-                    has_call = False
-                    for child in stmt.value.walk():
-                        if isinstance(child, VbaCallExpression):
-                            has_call = True
-                            break
-                    if not has_call:
+                    if not _has_side_effects(stmt.value):
                         key = stmt.target.name.lower()
                         assignments.setdefault(key, []).append((stmt, body, idx))
         read_names: set[str] = set()
