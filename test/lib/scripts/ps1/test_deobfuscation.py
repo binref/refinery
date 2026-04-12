@@ -246,6 +246,15 @@ class TestPs1Deobfuscator(TestPs1):
         self.assertNotIn('`', result)
         self.assertIn('function tRiomE', result)
 
+    def test_backtick_in_command_name(self):
+        result = self._deobfuscate("i`EX 'Write-Host hello'")
+        self.assertNotIn('`', result)
+        self.assertIn('Write-Host', result)
+
+    def test_backtick_in_parameter_name(self):
+        result = self._deobfuscate("Get-WmiObject -w`mI`InS`tAnCe foo")
+        self.assertNotIn('`', result)
+
     def test_cast_wrapped_array_pipeline(self):
         result = self._deobfuscate(
             "[String]([Char[]] (72,101,108,108,111) | "

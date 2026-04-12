@@ -166,6 +166,9 @@ class Ps1Simplifications(Transformer):
     def visit_Ps1CommandArgument(self, node: Ps1CommandArgument):
         self.generic_visit(node)
         if node.kind in (Ps1CommandArgumentKind.SWITCH, Ps1CommandArgumentKind.NAMED):
+            if '`' in node.name:
+                node.name = _strip_backtick_noop(node.name)
+                self.mark_changed()
             normalized = _case_normalize_name(node.name)
             if normalized != node.name:
                 node.name = normalized
@@ -222,6 +225,14 @@ class Ps1Simplifications(Transformer):
         if node.name is not old_name:
             self.mark_changed()
         if node.name and isinstance(node.name, Ps1StringLiteral):
+            if '`' in node.name.value:
+                stripped = _strip_backtick_noop(node.name.value)
+                node.name = Ps1StringLiteral(
+                    offset=node.name.offset,
+                    value=stripped,
+                    raw=stripped,
+                )
+                self.mark_changed()
             name_lower = node.name.value.lower()
             if name_lower not in self._local_functions:
                 alias_target = _KNOWN_ALIAS.get(name_lower)
