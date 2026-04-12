@@ -7,6 +7,7 @@
 
 ## Version 0.10.11
 - The `base` unit is now purely block-based (RFC 4648 style). Big-integer encoding has been split into a new `bigint` unit.
+- The `escvb` unit and the corresponding `vbastr` pattern for `carve` now support concatenations of quoted string literals and vb constants.
 
 ## Version 0.10.10
 - Improves `xtrar` performance by cythonizing parts of the code.
