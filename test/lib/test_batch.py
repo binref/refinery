@@ -1061,6 +1061,21 @@ class TestBatchEmulator(TestBase):
             '''
         self.assertListEqual(list(bat.emulate_commands()), ['echo FOO'])
 
+    def test_cmd_c_preserves_text_after_last_quote(self):
+        @emulate
+        class bat:
+            '''
+            cmd /c "echo hello"^& echo world
+            '''
+        cmds = list(bat.emulate_commands())
+        self.assertIn('echo hello', cmds)
+        self.assertIn('echo world', cmds)
+
+    def test_cmd_full_path_handler_lookup(self):
+        bat = BatchEmulator('C:\\Windows\\System32\\cmd.exe /c echo hello\n')
+        cmds = list(bat.emulate_commands())
+        self.assertIn('echo hello', cmds)
+
 
 class TestBatchUtil(TestBase):
 

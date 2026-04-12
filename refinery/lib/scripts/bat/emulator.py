@@ -849,12 +849,13 @@ class BatchEmulator:
         else:
             return 0
 
-        if (stripped := re.search('^\\s*"(.*)"', command)) and (strip
+        if (stripped := re.search('^(\\s*)"(.*)"(.*)', command, re.DOTALL)) and (strip
             or command.count('"') != 2
-            or re.search('[&<>()@^|]', stripped[1])
-            or re.search('\\s', stripped[1]) is None
+            or stripped[3].strip()
+            or re.search('[&<>()@^|]', stripped[2])
+            or re.search('\\s', stripped[2]) is None
         ):
-            command = stripped[1]
+            command = stripped[1] + stripped[2] + stripped[3]
 
         state = self.clone_state(delayexpand=delayexpand, cmdextended=cmdextended)
         state.codec = codec
@@ -1021,7 +1022,7 @@ class BatchEmulator:
         handler = self._command.handlers.get(verb)
 
         if handler is None:
-            base, ext = ntpath.splitext(verb)
+            base, ext = ntpath.splitext(ntpath.basename(verb))
             handler = None
             if any(ext == pe.upper() for pe in self.state.envar('PATHEXT', '').split(';')):
                 handler = self._command.handlers.get(base)
