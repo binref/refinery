@@ -21,6 +21,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1FunctionDefinition,
     Ps1IfStatement,
     Ps1IntegerLiteral,
+    Ps1ParenExpression,
     Ps1Pipeline,
     Ps1ReturnStatement,
     Ps1Script,
@@ -545,3 +546,17 @@ class TestPs1ParserStatements(TestBase):
             for arg in cmd.arguments
         )
         self.assertTrue(has_expandable)
+
+    def test_command_with_redirection_in_parens(self):
+        """
+        Redirections like 2>&1 inside a parenthesized command must be consumed
+        by the parser, not orphaned as error nodes. Regression test for a bug
+        where (iex $d 2>&1) left stray ) tokens in the output.
+        """
+        stmt = self._parse_stmt('(iex $d 2>&1)')
+        self.assertIsInstance(stmt, Ps1ExpressionStatement)
+        expr = stmt.expression
+        self.assertIsInstance(expr, Ps1ParenExpression)
+        cmd = expr.expression
+        self.assertIsInstance(cmd, Ps1CommandInvocation)
+        self.assertEqual(cmd.name.value, 'iex')

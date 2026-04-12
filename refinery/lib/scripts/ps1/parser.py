@@ -571,7 +571,9 @@ class Ps1Parser:
                         name=name,
                     ))
             elif self._at(Ps1TokenKind.REDIRECTION):
-                break
+                self._advance()
+                if not self._is_pipeline_terminator():
+                    self._parse_single_argument_value()
             elif self._at(Ps1TokenKind.OPERATOR):
                 tok = self._advance()
                 arguments.append(Ps1CommandArgument(
@@ -606,7 +608,6 @@ class Ps1Parser:
             Ps1TokenKind.EOF,
             Ps1TokenKind.DOUBLE_AMPERSAND,
             Ps1TokenKind.DOUBLE_PIPE,
-            Ps1TokenKind.REDIRECTION,
         )
 
     def _parse_argument_value(self) -> Expression | None:
