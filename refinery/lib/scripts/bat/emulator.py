@@ -849,13 +849,13 @@ class BatchEmulator:
         else:
             return 0
 
-        if (stripped := re.search('^(\\s*)"(.*)"(.*)', command, re.DOTALL)) and (strip
+        if (stripped := re.search('^\\s*"(.*)"(.*)', command, re.DOTALL)) and (strip
             or command.count('"') != 2
-            or stripped[3].strip()
-            or re.search('[&<>()@^|]', stripped[2])
-            or re.search('\\s', stripped[2]) is None
+            or stripped[2].strip()
+            or re.search('[&<>()@^|]', stripped[1])
+            or re.search('\\s', stripped[1]) is None
         ):
-            command = stripped[1] + stripped[2] + stripped[3]
+            command = stripped[1] + stripped[2]
 
         state = self.clone_state(delayexpand=delayexpand, cmdextended=cmdextended)
         state.codec = codec

@@ -3,7 +3,7 @@ from inspect import getdoc
 from refinery.lib.scripts.bat import BatchEmulator, BatchLexer, BatchParser, BatchState
 from refinery.lib.scripts.bat.synth import SynCommand
 from refinery.lib.scripts.bat.model import AstGroup, AstPipeline, AstSequence, InvalidLabel, EmulatorException, Redirect, RedirectIO
-from refinery.lib.scripts.bat.util import batchrange, batchint, u16, unquote, uncaret
+from refinery.lib.scripts.bat.util import batchrange, batchint, u16, unquote, uncaret, enquote
 
 from .. import TestBase
 
