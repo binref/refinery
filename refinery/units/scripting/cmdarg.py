@@ -241,7 +241,7 @@ class cmdarg(Unit):
         command_args: list[str] = []
         while i < len(argv):
             arg = argv[i]
-            if not arg.startswith(('-', '/')):
+            if command_args or not arg.startswith(('-', '/')):
                 command_args.append(arg)
                 i += 1
                 continue

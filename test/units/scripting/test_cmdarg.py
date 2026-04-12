@@ -198,3 +198,9 @@ class TestCmdArg(TestUnitBase):
         data = b'start "My Window" powershell.exe -Command whoami'
         result = data | self.load() | str
         self.assertEqual(result, 'whoami')
+
+    def test_format_operator_not_matched_as_file_switch(self):
+        data = b'PoweRsHeLl &( \'SV\' ) x ( \\"hello\\" -f \'world\' )'
+        result = data | self.load() | str
+        self.assertIn('-f', result)
+        self.assertIn('&(', result)
