@@ -74,7 +74,7 @@ class TestRegexSubstitution(TestUnitBase):
 
         layer1 = self.load(R'sjwakhwbtxwwb\("(.*?)"\)', R'"{1:resub[(.)(.),{{2}}{{1}}]}"')
         layer2 = self.load(R'nvbjtycmyxlfrdbypxqk\("([^"]+)",\s*(\d+)\)', R'"{1:snip[::{2}]}"')
-        layer3 = self.load(R'\$e\(\$b\("([^"]+)"\)\)', R'{1:base}')
+        layer3 = self.load(R'\$e\(\$b\("([^"]+)"\)\)', R'{1:bigint}')
 
         autoit_refined = autoit_obfuscated
         autoit_refined = layer1(autoit_refined)

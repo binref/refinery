@@ -37,7 +37,7 @@ class TestArgumentFormats(TestBase):
 
     def test_reduce_sum_of_odd_numbers(self):
         for k in range(1, 56):
-            result = int(argformats.DelayedArgument(F'base[-R]:be:reduce[S+B]:range:1:{k * 2}:2')(), 0)
+            result = int(argformats.DelayedArgument(F'bigint[-R]:be:reduce[S+B]:range:1:{k * 2}:2')(), 0)
             self.assertEqual(result, k ** 2, F'Failed for {k}.')
 
     def test_skip_first_character_of_cyclic_key(self):

@@ -3,19 +3,18 @@ from __future__ import annotations
 import io
 import re
 
-from refinery.lib.decorators import unicoded
 from refinery.lib.patterns import pattern_vbastr_token
 from refinery.units import Unit
 
 _VB_CONSTANTS = {
-    'vbcrlf'       : '\r\n',
-    'vbcr'         : '\r',
-    'vblf'         : '\n',
-    'vbnullchar'   : '\0',
-    'vbtab'        : '\t',
-    'vbback'       : '\b',
-    'vbformfeed'   : '\f',
-    'vbverticaltab': '\v',
+    b'vbcrlf'       : b'\r\n',
+    b'vbcr'         : b'\r',
+    b'vblf'         : b'\n',
+    b'vbnullchar'   : b'\0',
+    b'vbtab'        : b'\t',
+    b'vbback'       : b'\b',
+    b'vbformfeed'   : b'\f',
+    b'vbverticaltab': b'\v',
 }
 
 _VB_REVERSE = {
@@ -28,16 +27,24 @@ _VB_REVERSE = {
     0xD: b'vbCr',
 }
 
+_VB_INTEGER_PREFIX = {
+    B'h': 0x10,
+    B'H': 0x10,
+    B'o': 0x08,
+    B'O': 0x08,
+    B'b': 0x02,
+    B'B': 0x02,
+}
 
-def _parse_vbaint(s: str) -> int:
-    s = s.rstrip('&%^')
-    if s[:2].lower() == '&h':
-        return int(s[2:], 16)
-    if s[:2].lower() == '&o':
-        return int(s[2:] or '0', 8)
-    if s[:2].lower() == '&b':
-        return int(s[2:], 2)
-    return int(s)
+
+def _parse_vbaint(literal: bytes) -> int:
+    literal = literal.rstrip(b'&%^')
+    if literal[0] == 0x26:
+        base = _VB_INTEGER_PREFIX[literal[1:2]]
+        literal = literal[2:]
+    else:
+        base = 10
+    return int(literal, base)
 
 
 class escvb(Unit):
@@ -45,26 +52,28 @@ class escvb(Unit):
     Decodes Visual Basic (VB/VBA/VBS) string expressions. Handles concatenation of string
     literals, Chr/ChrW calls, and named constants like vbCrLf, joined by & or +.
     """
-    @unicoded
-    def process(self, data: str) -> str:
-        out = io.StringIO()
-        for match in re.finditer(pattern_vbastr_token, data, re.IGNORECASE):
-            token = match.group()
-            if token[0] == '"':
-                out.write(token[1:-1].replace('""', '"'))
-            elif token[0] in 'cC':
-                self.log_always(token)
-                _, _, arg = token.partition('(')
-                arg, _, _ = arg.partition(')')
-                out.write(chr(_parse_vbaint(arg)))
-            elif value := _VB_CONSTANTS.get(token.lower()):
-                out.write(value)
+    def process(self, data: bytearray):
+        out = bytearray()
+        for match in re.finditer(pattern_vbastr_token.encode(), data, re.IGNORECASE):
+            tok = match.group()
+            if tok[0] == 0x22:
+                out.extend(tok[1:-1].replace(b'""', b'"'))
+            elif tok.startswith((B'c', B'C')):
+                _, _, arg = tok.partition(b'(')
+                arg, _, _ = arg.partition(b')')
+                arg = _parse_vbaint(arg)
+                try:
+                    out.append(arg)
+                except ValueError:
+                    out.extend(chr(arg).encode(self.codec))
+            elif value := _VB_CONSTANTS.get(tok.lower()):
+                out.extend(value)
             else:
-                raise RuntimeError
-        if v := out.getvalue():
-            return v
-        elif data[:1] == '"' and data[-1:] == '"':
-            return data[1:-1].replace('""', '"')
+                raise RuntimeError(F'cannot decode token: {tok.decode()}')
+        if out:
+            return out
+        elif len(data) >= 2 and data[0] == 0x22 == data[-1]:
+            return data[1:-1].replace(b'""', b'"')
         return data
 
     def reverse(self, data):
@@ -82,7 +91,7 @@ class escvb(Unit):
             return out
 
         for b in data:
-            if 0x20 <= b <= 0x7E:
+            if 0x22 <= b <= 0x7E or b == 0x20:
                 run.append(b)
                 if b == 0x22:
                     run.append(b)
