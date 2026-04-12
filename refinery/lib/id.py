@@ -949,27 +949,6 @@ def get_microsoft_format(data: buf):
         return None
     if buffer_contains(data, b'\xE4\x52\x5C\x7B\x8C\xD8\xA7\x4D\xAE\xB1\x53\x78\xD0\x29\x96\xD3'):
         return Fmt.ONE
-    for k in range(0x200, 0x10000, 0x200):
-        mark = int.from_bytes(data[k:k + 4], 'little')
-        if mark == 0x00C1A5EC:
-            return Fmt.DOC
-        if mark == 0x00100809 and data[k + 4:k + 8] == B'\x00\x06\x05\x00':
-            return Fmt.XLS
-        if mark == 0xF01D46A0:
-            return Fmt.PPT
-        if mark == 0xF01E6E00:
-            return Fmt.PPT
-        if mark == 0x03E8000F:
-            return Fmt.PPT
-    if buffer_contains(data, b'W\0o\0r\0d\0D\0o\0c\0u\0m\0e\0n\0t\0'):
-        # WordDocument
-        return Fmt.DOC
-    if buffer_contains(data, b'P\0o\0w\0e\0r\0P\0o\0i\0n\0t\0'):
-        # PowerPoint
-        return Fmt.PPT
-    if buffer_contains(data, b'W\0o\0r\0k\0b\0o\0o\0k\0'):
-        # Workbook
-        return Fmt.XLS
     if buffer_contains(data, b'_\0_\0s\0u\0b\0s\0t\0g\01\0.\00\0_\0'):
         # __substg1._
         return Fmt.MSG
@@ -982,6 +961,15 @@ def get_microsoft_format(data: buf):
     if buffer_contains(data, b'_\0_\0p\0r\0o\0p\0e\0r\0t\0i\0e\0s\0_\0v\0e\0r\0s\0i\0o\0n\0'):
         # __properties_version
         return Fmt.MSG
+    if buffer_contains(data, b'W\0o\0r\0d\0D\0o\0c\0u\0m\0e\0n\0t\0'):
+        # WordDocument
+        return Fmt.DOC
+    if buffer_contains(data, b'P\0o\0w\0e\0r\0P\0o\0i\0n\0t\0'):
+        # PowerPoint
+        return Fmt.PPT
+    if buffer_contains(data, b'W\0o\0r\0k\0b\0o\0o\0k\0'):
+        # Workbook
+        return Fmt.XLS
     if buffer_contains(data, b'B\0o\0o\0k\0'):
         # Book
         return Fmt.XLS
@@ -991,6 +979,18 @@ def get_microsoft_format(data: buf):
         return Fmt.MSI
     if re.search(B'Msi(?:[A-Z][a-z]{2,30}){2,5}', data):
         return Fmt.MSI
+    for k in range(0x200, 0x10000, 0x200):
+        mark = int.from_bytes(data[k:k + 4], 'little')
+        if mark == 0x00C1A5EC:
+            return Fmt.DOC
+        if mark == 0x00100809 and data[k + 4:k + 8] == B'\x00\x06\x05\x00':
+            return Fmt.XLS
+        if mark == 0xF01D46A0:
+            return Fmt.PPT
+        if mark == 0xF01E6E00:
+            return Fmt.PPT
+        if mark == 0x03E8000F:
+            return Fmt.PPT
     else:
         return Fmt.CFF
 
