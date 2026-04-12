@@ -68,7 +68,7 @@ def unquote(token: str) -> str:
 def enquote(token: str) -> str:
     if re.search('[\\x20\\t\\v&<>^|]', token):
         token = '"""'.join(token.split('"'))
-        token = '"{token}"'
+        token = F'"{token}"'
     return token.replace('%', '%%')
 
 

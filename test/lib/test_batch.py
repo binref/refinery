@@ -1242,3 +1242,23 @@ class TestBatchUtil(TestBase):
         data = 'Hello'.encode('utf-16le')
         result = u16(data)
         self.assertEqual(result, 'Hello')
+
+    def test_enquote_with_special_characters(self):
+        self.assertIn('hello world', enquote('hello world'))
+        self.assertIn('a&b', enquote('a&b'))
+        self.assertIn('x<y', enquote('x<y'))
+
+    def test_enquote_no_quoting_needed(self):
+        self.assertEqual(enquote('simple'), 'simple')
+
+    def test_enquote_preserves_token_value(self):
+        for token in ('hello world', 'a&b', 'foo|bar', 'test^val', 'a<b>c'):
+            result = enquote(token)
+            self.assertIn(token.replace('"', '"""'), result)
+            self.assertNotEqual(result, '"{token}"')
+
+    def test_cmd_c_verb_with_special_chars_not_literal(self):
+        bat = BatchEmulator('CMD /c C:\\foo\\bar.exe /a\n')
+        cmds = list(bat.emulate_commands(allow_junk=True))
+        for cmd in cmds:
+            self.assertNotIn('{token}', cmd)
