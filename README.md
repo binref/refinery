@@ -275,14 +275,11 @@ emit 81a1fca7a1fb97fe021a1f2cf0bf9011dd2e72a5864aad674f8fea4ef009417b [ \
   | xlxtr 9.5:11.5 15.15 12.5:14.5 [ \
   | scope -n 3 | chop -t 5 [| sorted -a | snip 2: | sep ] \
   | pack 10 | alu --dec -sN B-S ]] \
-  | dump payload.ps1
+  | dump payload.cmd
 ```
 And get the domains for the next stage:
 ```
-emit payload.ps1 
-  | carve -sd b64 | zl | ps1
-  | carve -sd b64 | zl | ps1
-  | xtp -f domain
+emit payload.cmd | cmdarg | ps1 | xtp -f domain
 ```
 Extract the configuration of unpacked HawkEye samples:
 ```
