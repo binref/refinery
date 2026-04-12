@@ -53,13 +53,15 @@ class IterativeDeobfuscator(Unit, abstract=True):
                 self.synthesize(ast), self.codec, errors='surrogateescape')
 
         self.log_info('parsing input data')
+        view = memoryview(data)
 
         if format := guess_text_encoding(data):
             codec = format.codec
+            view = view[format.bom:]
         else:
             codec = self.codec
 
-        txt = codecs.decode(data, codec, errors='surrogateescape')
+        txt = codecs.decode(view, codec, errors='surrogateescape')
         ast = self.parse(txt)
 
         for k in range(self.args.timeout):
