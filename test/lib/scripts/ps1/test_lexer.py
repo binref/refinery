@@ -601,11 +601,11 @@ class TestPs1Lexer(TestBase):
 
     def test_number_followed_by_variable_in_argument_mode(self):
         """
-        In argument mode, 123$var is a single generic token (string interpolation).
+        In argument mode, 123$var is a single expandable generic token.
         """
         tokens = self._tokens('123$var', mode=Ps1LexerMode.ARGUMENT)
         self.assertEqual(len(tokens), 1)
-        self.assertEqual(tokens[0], (Ps1TokenKind.GENERIC_TOKEN, '123$var'))
+        self.assertEqual(tokens[0], (Ps1TokenKind.GENERIC_EXPAND, '123$var'))
 
     def test_at_sign_mid_generic_token_in_argument_mode(self):
         """
@@ -617,27 +617,50 @@ class TestPs1Lexer(TestBase):
 
     def test_variable_slash_path_in_argument_mode(self):
         """
-        $dir/file in argument mode is a single generic token.
+        $dir/file in argument mode is a single expandable generic token.
         """
         tokens = self._tokens('$dir/file.txt', mode=Ps1LexerMode.ARGUMENT)
         self.assertEqual(len(tokens), 1)
-        self.assertEqual(tokens[0], (Ps1TokenKind.GENERIC_TOKEN, '$dir/file.txt'))
+        self.assertEqual(tokens[0], (Ps1TokenKind.GENERIC_EXPAND, '$dir/file.txt'))
 
     def test_variable_backslash_path_in_argument_mode(self):
         """
-        $env:TEMP\\file in argument mode is a single generic token.
+        $env:TEMP\\file in argument mode is a single expandable generic token.
         """
         tokens = self._tokens('$env:TEMP\\file', mode=Ps1LexerMode.ARGUMENT)
         self.assertEqual(len(tokens), 1)
-        self.assertEqual(tokens[0], (Ps1TokenKind.GENERIC_TOKEN, '$env:TEMP\\file'))
+        self.assertEqual(tokens[0], (Ps1TokenKind.GENERIC_EXPAND, '$env:TEMP\\file'))
 
     def test_variable_dash_suffix_in_argument_mode(self):
         """
-        $var-suffix in argument mode is a single generic token, not variable + parameter.
+        $var-suffix in argument mode is a single expandable generic token.
         """
         tokens = self._tokens('$var-suffix', mode=Ps1LexerMode.ARGUMENT)
         self.assertEqual(len(tokens), 1)
-        self.assertEqual(tokens[0], (Ps1TokenKind.GENERIC_TOKEN, '$var-suffix'))
+        self.assertEqual(tokens[0], (Ps1TokenKind.GENERIC_EXPAND, '$var-suffix'))
+
+    def test_generic_token_without_variable_stays_plain(self):
+        """
+        A bareword without any $variable stays GENERIC_TOKEN, not GENERIC_EXPAND.
+        """
+        tokens = self._tokens('hello-world', mode=Ps1LexerMode.ARGUMENT)
+        self.assertEqual(len(tokens), 1)
+        self.assertEqual(tokens[0], (Ps1TokenKind.GENERIC_TOKEN, 'hello-world'))
+
+    def test_generic_expand_with_subexpression(self):
+        """
+        A generic token containing a $() subexpression becomes GENERIC_EXPAND.
+        """
+        tokens = self._tokens('prefix$(1+2)suffix', mode=Ps1LexerMode.ARGUMENT)
+        self.assertEqual(len(tokens), 1)
+        self.assertEqual(tokens[0], (Ps1TokenKind.GENERIC_EXPAND, 'prefix$(1+2)suffix'))
+
+    def test_generic_token_bare_dollar_no_variable(self):
+        """
+        $+ in argument mode has no valid variable, stays GENERIC_TOKEN.
+        """
+        tokens = self._tokens('$+rest', mode=Ps1LexerMode.ARGUMENT)
+        self.assertEqual(tokens[0][0], Ps1TokenKind.GENERIC_TOKEN)
 
     def test_variable_dot_remains_variable_in_argument_mode(self):
         """

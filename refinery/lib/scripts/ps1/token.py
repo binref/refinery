@@ -43,6 +43,7 @@ class Ps1TokenKind(enum.Enum):
     OPERATOR         = 'operator'        # noqa
     PARAMETER        = 'parameter'       # noqa
     GENERIC_TOKEN    = 'generic-token'   # noqa
+    GENERIC_EXPAND   = 'generic-expand'  # noqa
 
     LPAREN           = '('               # noqa
     RPAREN           = ')'               # noqa

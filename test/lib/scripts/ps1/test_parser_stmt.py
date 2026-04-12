@@ -14,6 +14,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1DoUntilLoop,
     Ps1DoWhileLoop,
     Ps1ExitStatement,
+    Ps1ExpandableString,
     Ps1ExpressionStatement,
     Ps1ForEachLoop,
     Ps1ForLoop,
@@ -531,17 +532,16 @@ class TestPs1ParserStatements(TestBase):
 
     def test_variable_path_argument_stays_separate(self):
         """
-        In SV zGK $ENV:aPpdatA\\path.exe the variable $ENV:aPpdatA must remain
-        a separate token from the backslash-path, so the deobfuscator can
-        resolve environment variables independently.
+        In SV zGK $ENV:aPpdatA\\path.exe the variable+path span becomes a
+        single expandable string argument that preserves variable semantics.
         """
         stmt = self._parse_stmt(r'SV zGK $ENV:aPpdatA\file.exe')
         self.assertIsInstance(stmt, Ps1ExpressionStatement)
         cmd = stmt.expression
         self.assertIsInstance(cmd, Ps1CommandInvocation)
-        has_variable_arg = any(
+        has_expandable = any(
             isinstance(arg, Ps1CommandArgument)
-            and isinstance(arg.value, Ps1Variable)
+            and isinstance(arg.value, Ps1ExpandableString)
             for arg in cmd.arguments
         )
-        self.assertTrue(has_variable_arg)
+        self.assertTrue(has_expandable)

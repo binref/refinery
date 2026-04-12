@@ -502,6 +502,7 @@ class Ps1Lexer:
         start = self.pos
         src = self.source
         length = len(src)
+        has_expansion = False
         while self.pos < length:
             c = src[self.pos]
             if c == '`' and self.pos + 1 < length:
@@ -516,12 +517,14 @@ class Ps1Lexer:
             if c == '$' and self.pos + 1 < length:
                 nc = src[self.pos + 1]
                 if nc == '(':
+                    has_expansion = True
                     self.pos += 2
                     self._skip_subexpression_content()
                     continue
                 if nc.isalnum() or nc in '_?{$^':
                     m = _VARIABLE_PATTERN.match(src, self.pos + 1)
                     if m:
+                        has_expansion = True
                         self.pos = m.end()
                         continue
                 self.pos += 1
@@ -529,7 +532,8 @@ class Ps1Lexer:
             if c in _FORCE_START_NEW_TOKEN:
                 break
             self.pos += 1
-        return Ps1Token(Ps1TokenKind.GENERIC_TOKEN, src[start:self.pos], start)
+        kind = Ps1TokenKind.GENERIC_EXPAND if has_expansion else Ps1TokenKind.GENERIC_TOKEN
+        return Ps1Token(kind, src[start:self.pos], start)
 
     def tokenize(self) -> Generator[Ps1Token, Ps1LexerMode | None, None]:
         src = self.source

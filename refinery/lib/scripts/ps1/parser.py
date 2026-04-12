@@ -428,7 +428,7 @@ class Ps1Parser:
 
     def _parse_pipeline_expression(self) -> Expression | None:
         self._lexer.mode = Ps1LexerMode.EXPRESSION
-        if self._at(Ps1TokenKind.GENERIC_TOKEN, Ps1TokenKind.AMPERSAND, Ps1TokenKind.DOT):
+        if self._at(Ps1TokenKind.GENERIC_TOKEN, Ps1TokenKind.GENERIC_EXPAND, Ps1TokenKind.AMPERSAND, Ps1TokenKind.DOT):
             first = self._parse_command()
             if first is None:
                 return None
@@ -468,7 +468,7 @@ class Ps1Parser:
 
         name_expr: Expression | None = None
 
-        if self._at(Ps1TokenKind.GENERIC_TOKEN):
+        if self._at(Ps1TokenKind.GENERIC_TOKEN, Ps1TokenKind.GENERIC_EXPAND):
             tok = self._advance()
             name_expr = Ps1StringLiteral(offset=tok.offset, value=tok.value, raw=tok.value)
         elif self._at(Ps1TokenKind.VARIABLE, Ps1TokenKind.SPLAT_VARIABLE):
@@ -542,8 +542,7 @@ class Ps1Parser:
         arguments: list[Ps1CommandArgument | Expression] = []
         while not self._is_pipeline_terminator():
             self._lexer.mode = Ps1LexerMode.ARGUMENT
-            if not self._at(Ps1TokenKind.VARIABLE, Ps1TokenKind.SPLAT_VARIABLE):
-                self._rescan_current()
+            self._rescan_current()
             if self._is_pipeline_terminator():
                 break
             if self._at(Ps1TokenKind.PARAMETER):
@@ -628,11 +627,20 @@ class Ps1Parser:
         return Ps1ArrayLiteral(offset=first.offset, elements=elements)
 
     def _parse_single_argument_value(self) -> Expression | None:
-        if self._at(Ps1TokenKind.GENERIC_TOKEN):
-            self._lexer.mode = Ps1LexerMode.EXPRESSION
+        if self._at(Ps1TokenKind.GENERIC_TOKEN, Ps1TokenKind.GENERIC_EXPAND):
             tok = self._advance()
-            result = Ps1StringLiteral(offset=tok.offset, value=tok.value, raw=tok.value)
-            while self._at(Ps1TokenKind.DOT):
+            if tok.kind == Ps1TokenKind.GENERIC_EXPAND:
+                parts = self._split_generic_expandable(tok.value)
+                if len(parts) == 1 and isinstance(parts[0], Ps1StringLiteral):
+                    result = Ps1StringLiteral(
+                        offset=tok.offset, value=parts[0].value, raw=tok.value)
+                else:
+                    result = Ps1ExpandableString(
+                        offset=tok.offset, parts=parts, raw=tok.value)
+            else:
+                result = Ps1StringLiteral(
+                    offset=tok.offset, value=tok.value, raw=tok.value)
+            while isinstance(result, Ps1StringLiteral) and self._at(Ps1TokenKind.DOT):
                 saved_pos = self._lexer.pos
                 saved_tok = self._current
                 self._advance()
@@ -860,8 +868,13 @@ class Ps1Parser:
             return self._parse_script_block()
         if tok.kind == Ps1TokenKind.LBRACKET:
             return self._try_parse_type_literal()
-        if tok.kind == Ps1TokenKind.GENERIC_TOKEN:
+        if tok.kind in (Ps1TokenKind.GENERIC_TOKEN, Ps1TokenKind.GENERIC_EXPAND):
             t = self._advance()
+            if t.kind == Ps1TokenKind.GENERIC_EXPAND:
+                parts = self._split_generic_expandable(t.value)
+                if len(parts) == 1 and isinstance(parts[0], Ps1StringLiteral):
+                    return Ps1StringLiteral(offset=t.offset, value=parts[0].value, raw=t.value)
+                return Ps1ExpandableString(offset=t.offset, parts=parts, raw=t.value)
             return Ps1StringLiteral(offset=t.offset, value=t.value, raw=t.value)
 
         return None
@@ -1002,6 +1015,117 @@ class Ps1Parser:
                     pos = m.end()
                     continue
 
+            buf.append(c)
+            pos += 1
+
+        flush_text()
+        return parts
+
+    def _split_generic_expandable(self, text: str) -> list[Expression]:
+        """
+        Split a GENERIC_EXPAND token value into interleaved literal and expression parts. Unlike
+        `refinery.lib.scripts.ps1.parser.Ps1Parser._split_expandable_string` (for double-quoted
+        strings), this operates on raw source text that may contain embedded single/double-quoted
+        strings and backtick escapes.
+        """
+        from refinery.lib.scripts.ps1.lexer import BACKTICK_ESCAPE
+        parts: list[Expression] = []
+        pos = 0
+        length = len(text)
+        buf: list[str] = []
+
+        def flush_text():
+            if buf:
+                value = ''.join(buf)
+                parts.append(Ps1StringLiteral(offset=-1, value=value, raw=value))
+                buf.clear()
+
+        while pos < length:
+            c = text[pos]
+            if c == '`' and pos + 1 < length:
+                nc = text[pos + 1]
+                buf.append(BACKTICK_ESCAPE.get(nc, nc))
+                pos += 2
+                continue
+            if c in SINGLE_QUOTES:
+                pos += 1
+                while pos < length:
+                    if text[pos] in SINGLE_QUOTES:
+                        pos += 1
+                        if pos < length and text[pos] in SINGLE_QUOTES:
+                            buf.append("'")
+                            pos += 1
+                            continue
+                        break
+                    buf.append(text[pos])
+                    pos += 1
+                continue
+            if c in DOUBLE_QUOTES:
+                flush_text()
+                pos += 1
+                inner_start = pos
+                while pos < length:
+                    if text[pos] == '`' and pos + 1 < length:
+                        pos += 2
+                        continue
+                    if text[pos] in DOUBLE_QUOTES:
+                        pos += 1
+                        break
+                    pos += 1
+                inner = text[inner_start:pos - 1]
+                sub_parts = self._split_expandable_string(inner)
+                parts.extend(sub_parts)
+                continue
+            if c == '$':
+                if pos + 1 < length and text[pos + 1] == '(':
+                    flush_text()
+                    depth = 1
+                    start = pos
+                    pos += 2
+                    while pos < length and depth > 0:
+                        sc = text[pos]
+                        if sc in SINGLE_QUOTES:
+                            pos += 1
+                            while pos < length:
+                                if text[pos] in SINGLE_QUOTES:
+                                    pos += 1
+                                    if pos < length and text[pos] in SINGLE_QUOTES:
+                                        pos += 1
+                                        continue
+                                    break
+                                pos += 1
+                            continue
+                        if sc in DOUBLE_QUOTES:
+                            pos += 1
+                            while pos < length:
+                                if text[pos] == '`' and pos + 1 < length:
+                                    pos += 2
+                                    continue
+                                if text[pos] in DOUBLE_QUOTES:
+                                    pos += 1
+                                    if pos < length and text[pos] in DOUBLE_QUOTES:
+                                        pos += 1
+                                        continue
+                                    break
+                                pos += 1
+                            continue
+                        if sc == '(':
+                            depth += 1
+                        elif sc == ')':
+                            depth -= 1
+                        pos += 1
+                    sub_text = text[start + 2:pos - 1]
+                    sub_parser = Ps1Parser(sub_text)
+                    sub_stmts = sub_parser._parse_statement_list()
+                    parts.append(Ps1SubExpression(offset=-1, body=sub_stmts))
+                    continue
+                m = _VARIABLE_FRAG.match(text, pos)
+                if m:
+                    flush_text()
+                    var = self._make_variable_from_text(m.group())
+                    parts.append(var)
+                    pos = m.end()
+                    continue
             buf.append(c)
             pos += 1
 
@@ -1153,7 +1277,7 @@ class Ps1Parser:
         return Ps1ArrayExpression(offset=offset, body=stmts)
 
     def _parse_label_or_key(self) -> Expression | None:
-        if self._at(Ps1TokenKind.GENERIC_TOKEN, Ps1TokenKind.LABEL):
+        if self._at(Ps1TokenKind.GENERIC_TOKEN, Ps1TokenKind.GENERIC_EXPAND, Ps1TokenKind.LABEL):
             tok = self._advance()
             return Ps1StringLiteral(offset=tok.offset, value=tok.value, raw=tok.value)
         if self._current.kind.is_keyword:
@@ -1472,7 +1596,7 @@ class Ps1Parser:
             self._skip_separators()
             if self._at(Ps1TokenKind.RBRACE):
                 break
-            if self._at(Ps1TokenKind.GENERIC_TOKEN) and self._current.value.lower() == 'default':
+            if self._at(Ps1TokenKind.GENERIC_TOKEN, Ps1TokenKind.GENERIC_EXPAND) and self._current.value.lower() == 'default':
                 self._advance()
                 self._skip_newlines()
                 block = self._parse_block()
@@ -1679,7 +1803,7 @@ class Ps1Parser:
                     if self._at(Ps1TokenKind.RPAREN):
                         break
                     if (
-                        self._at(Ps1TokenKind.GENERIC_TOKEN)
+                        self._at(Ps1TokenKind.GENERIC_TOKEN, Ps1TokenKind.GENERIC_EXPAND)
                         and self.source[self._current.offset:].find('=') > 0
                     ):
                         saved = self._current
