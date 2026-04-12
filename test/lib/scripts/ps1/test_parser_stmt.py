@@ -510,3 +510,38 @@ class TestPs1ParserStatements(TestBase):
         self.assertEqual(len(arg.value.elements), 3)
         for elem in arg.value.elements:
             self.assertIsInstance(elem, Ps1Variable)
+
+    def test_hyphenated_command_name_as_argument(self):
+        """
+        Set-Alias myAlias New-Object must keep New-Object intact, not split it
+        into New and -Object. Regression test for a bug where the identifier
+        scanner dropped dashes in expression mode after consuming a preceding
+        generic-token argument.
+        """
+        stmt = self._parse_stmt('Set-Alias myAlias New-Object')
+        self.assertIsInstance(stmt, Ps1ExpressionStatement)
+        cmd = stmt.expression
+        self.assertIsInstance(cmd, Ps1CommandInvocation)
+        self.assertEqual(len(cmd.arguments), 2)
+        second = cmd.arguments[1]
+        self.assertIsInstance(second, Ps1CommandArgument)
+        self.assertEqual(second.kind, Ps1CommandArgumentKind.POSITIONAL)
+        self.assertIsInstance(second.value, Ps1StringLiteral)
+        self.assertEqual(second.value.value, 'New-Object')
+
+    def test_variable_path_argument_stays_separate(self):
+        """
+        In SV zGK $ENV:aPpdatA\\path.exe the variable $ENV:aPpdatA must remain
+        a separate token from the backslash-path, so the deobfuscator can
+        resolve environment variables independently.
+        """
+        stmt = self._parse_stmt(r'SV zGK $ENV:aPpdatA\file.exe')
+        self.assertIsInstance(stmt, Ps1ExpressionStatement)
+        cmd = stmt.expression
+        self.assertIsInstance(cmd, Ps1CommandInvocation)
+        has_variable_arg = any(
+            isinstance(arg, Ps1CommandArgument)
+            and isinstance(arg.value, Ps1Variable)
+            for arg in cmd.arguments
+        )
+        self.assertTrue(has_variable_arg)

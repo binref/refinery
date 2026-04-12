@@ -542,11 +542,8 @@ class Ps1Parser:
         arguments: list[Ps1CommandArgument | Expression] = []
         while not self._is_pipeline_terminator():
             self._lexer.mode = Ps1LexerMode.ARGUMENT
-            if self._current.offset >= 0 and self._at(
-                Ps1TokenKind.DASH,
-            ):
-                self._lexer.pos = self._current.offset
-                self._advance()
+            if not self._at(Ps1TokenKind.VARIABLE, Ps1TokenKind.SPLAT_VARIABLE):
+                self._rescan_current()
             if self._is_pipeline_terminator():
                 break
             if self._at(Ps1TokenKind.PARAMETER):
@@ -631,8 +628,8 @@ class Ps1Parser:
         return Ps1ArrayLiteral(offset=first.offset, elements=elements)
 
     def _parse_single_argument_value(self) -> Expression | None:
-        self._lexer.mode = Ps1LexerMode.EXPRESSION
         if self._at(Ps1TokenKind.GENERIC_TOKEN):
+            self._lexer.mode = Ps1LexerMode.EXPRESSION
             tok = self._advance()
             result = Ps1StringLiteral(offset=tok.offset, value=tok.value, raw=tok.value)
             while self._at(Ps1TokenKind.DOT):
@@ -651,6 +648,7 @@ class Ps1Parser:
                     self._current = saved_tok
                     break
             return result
+        self._lexer.mode = Ps1LexerMode.EXPRESSION
         if self._current.kind in _EXPRESSION_START_KINDS:
             return self._parse_unary_expression()
         if self._at(Ps1TokenKind.STAR, Ps1TokenKind.SLASH, Ps1TokenKind.PERCENT):
