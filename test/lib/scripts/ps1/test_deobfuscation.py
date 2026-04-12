@@ -386,6 +386,23 @@ class TestPS1StringReplace(TestPs1):
         result = self._deobfuscate(data)
         self.assertIn('abcdef', result)
 
+    def test_replace_with_backslash_replacement(self):
+        data = "'MarkXPath' -Replace 'X', '\\'"
+        result = self._deobfuscate(data)
+        self.assertIn('Mark\\Path', result)
+        self.assertNotIn('-Replace', result)
+
+    def test_chained_replace_on_herestring(self):
+        data = (
+            "(@'\n"
+            "aXb cYd\n"
+            "'@ -Replace 'X', '1' -Replace 'Y', '2')"
+        )
+        result = self._deobfuscate_iterative(data)
+        self.assertIn('a1b', result)
+        self.assertIn('c2d', result)
+        self.assertNotIn('-Replace', result)
+
     def test_trivial(self):
         result = self._deobfuscate('''"Hello World".replace('l', "FOO")''')
         self.assertIn('HeFOOFOOo WorFOOd', result)
@@ -1233,6 +1250,18 @@ class TestPs1WildcardResolution(TestPs1):
         )
         self.assertNotIn('ChildItem', result)
         self.assertNotIn('Variable:', result)
+
+    def test_get_variable_name_wildcard(self):
+        result = self._deobfuscate("(Get-Variable '*mdr*').Name")
+        self.assertIn('MaximumDriveCount', result)
+        self.assertNotIn('Get-Variable', result)
+
+    def test_get_variable_name_wildcard_indexed_join(self):
+        result = self._deobfuscate_iterative(
+            "(Get-Variable '*mdr*').Name[3, 11, 2] -Join ''"
+        )
+        self.assertIn('iex', result.lower())
+        self.assertNotIn('Get-Variable', result)
 
 
 class TestPs1ParserModeRescan(TestPs1):

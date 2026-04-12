@@ -487,7 +487,7 @@ class Ps1ConstantFolding(Transformer):
             return None
         flags = re.IGNORECASE if op != '-creplace' else 0
         try:
-            result = re.sub(needle_str, insert_str, haystack, flags=flags)
+            result = re.sub(needle_str, lambda _: insert_str, haystack, flags=flags)
         except re.error:
             return None
         return _make_string_literal(result)

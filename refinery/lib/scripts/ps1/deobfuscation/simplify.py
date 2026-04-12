@@ -21,6 +21,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1ExpandableString,
     Ps1ExpressionStatement,
     Ps1FunctionDefinition,
+    Ps1HereString,
     Ps1IntegerLiteral,
     Ps1MemberAccess,
     Ps1ParenExpression,
@@ -96,7 +97,7 @@ class Ps1Simplifications(Transformer):
     def visit_Ps1ParenExpression(self, node: Ps1ParenExpression):
         self.generic_visit(node)
         inner = node.expression
-        if isinstance(inner, (Ps1StringLiteral, Ps1IntegerLiteral, Ps1RealLiteral)):
+        if isinstance(inner, (Ps1StringLiteral, Ps1HereString, Ps1IntegerLiteral, Ps1RealLiteral)):
             return inner
         return None
 

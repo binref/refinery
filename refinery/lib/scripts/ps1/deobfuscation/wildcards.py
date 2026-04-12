@@ -401,15 +401,38 @@ class Ps1WildcardResolution(Transformer):
         node: Ps1MemberAccess,
     ) -> Expression | None:
         """
-        Resolve `(Get-Item Variable:X).Value` or `(Get-Variable X).Value` to `$X`.
+        Resolve property access on `Get-Item Variable:X` or `Get-Variable X`:
 
-        `Get-Item Variable:X` returns a `PSVariable` wrapper object. Only when `.Value` is accessed
-        do we get the actual variable value, which is semantically equivalent to `$X`.
+        - `.Value` resolves to `$X` (the variable's value)
+        - `.Name` resolves to `'X'` as a string literal (the variable's name)
+
+        `Get-Item Variable:X` and `Get-Variable X` return a `PSVariable` wrapper object whose
+        `.Value` property gives the actual variable content and `.Name` property gives its name.
         """
         member_name = _get_member_name(node.member)
-        if member_name is None or member_name.lower() != 'value':
+        if member_name is None:
             return None
-        inner = node.object
+        member_lower = member_name.lower()
+        if member_lower not in ('value', 'name'):
+            return None
+        resolved = self._resolve_get_variable_pattern(node.object)
+        if resolved is None:
+            return None
+        if member_lower == 'value':
+            return Ps1Variable(
+                offset=node.offset,
+                name=resolved,
+                scope=Ps1ScopeModifier.NONE,
+            )
+        return _make_string_literal(resolved)
+
+    @staticmethod
+    def _resolve_get_variable_pattern(expr: Expression) -> str | None:
+        """
+        Given the object expression of a member access, check if it is a `Get-Item Variable:X` or
+        `Get-Variable X` invocation and resolve the variable name (supporting wildcards).
+        """
+        inner = expr
         while isinstance(inner, Ps1ParenExpression) and inner.expression is not None:
             inner = inner.expression
         if not isinstance(inner, Ps1CommandInvocation):
@@ -431,14 +454,7 @@ class Ps1WildcardResolution(Transformer):
             pattern = pattern.lstrip('/\\')
         else:
             pattern = arg_value
-        resolved = _resolve_variable_name(pattern)
-        if resolved is None:
-            return None
-        return Ps1Variable(
-            offset=node.offset,
-            name=resolved,
-            scope=Ps1ScopeModifier.NONE,
-        )
+        return _resolve_variable_name(pattern)
 
     def _try_resolve_get_variable_value_only(
         self,
