@@ -531,6 +531,36 @@ class TestBatchEmulator(TestBase):
         with self.assertRaises(StopIteration):
             next(it)
 
+    def test_set_unquoted_double_caret_immediate_expansion(self):
+        @emulate
+        class bat:
+            '''
+            set x=a^^b
+            echo %x%
+            '''
+        it = (cmd[5:] for cmd in bat.emulate() if cmd.startswith('echo'))
+        self.assertEqual(next(it), 'ab')
+        self.assertEqual(bat.state.environment['X'], 'a^b')
+
+    def test_set_unquoted_double_caret_delayed_expansion(self):
+        @emulate
+        class bat:
+            '''
+            setlocal enabledelayedexpansion
+            set x=a^^b
+            echo !x!
+            '''
+        it = (cmd[5:] for cmd in bat.emulate() if cmd.startswith('echo'))
+        self.assertEqual(next(it), 'a^b')
+        self.assertEqual(bat.state.environment['X'], 'a^b')
+
+    def test_set_unquoted_double_caret_cmdline_delayed_expansion(self):
+        state = BatchState(cmdline=True, delayexpand=True)
+        bat = BatchEmulator('set x=a^^b&&echo !x!\n', state)
+        commands = list(bat.emulate())
+        self.assertEqual(commands, ['echo a^b'])
+        self.assertEqual(state.environment['X'], 'a^b')
+
     def test_block_not_treated_as_block_after_goto(self):
         @emulate
         class bat:

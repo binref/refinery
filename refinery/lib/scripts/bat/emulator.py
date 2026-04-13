@@ -497,7 +497,6 @@ class BatchEmulator:
         self.block_labels.clear()
 
         arithmetic = False
-        quote_mode = False
         prompt = None
 
         it = iter(args)
@@ -575,6 +574,7 @@ class BatchEmulator:
             else:
                 std.o.write(F'{value!s}\r\n')
         else:
+            quote_mode = False
             try:
                 eq = args.index(Ctrl.Equals)
             except ValueError:
@@ -592,10 +592,11 @@ class BatchEmulator:
                         io.write(args[k])
                     content = io.getvalue()
                     name = cmd.args[eq - 1] if eq else ''
+            if quote_mode:
+                trailing_caret, content = uncaret(content, True)
+                if trailing_caret:
+                    content = content[:-1]
             name = name.upper()
-            trailing_caret, content = uncaret(content, quote_mode)
-            if trailing_caret:
-                content = content[:-1]
             if prompt is not None:
                 if (qc := content.strip()).startswith('"'):
                     _, _, qc = qc. partition('"') # noqa
