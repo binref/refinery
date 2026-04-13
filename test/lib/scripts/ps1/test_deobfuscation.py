@@ -1818,3 +1818,55 @@ class TestPs1NullVariableInlining(TestPs1):
         )
         self.assertNotIn('$Null', result)
         self.assertIn('$data', result)
+
+
+class TestPs1RegexFolding(TestPs1):
+
+    def test_regex_matches_simple(self):
+        result = self._deobfuscate("[Regex]::Matches('abc123def', '\\d+')")
+        self.assertIn('123', result)
+
+    def test_regex_matches_dot_righttoleft(self):
+        result = self._deobfuscate_iterative(
+            "(-Join [Regex]::Matches('dlroW olleH', '.', 'RightToLeft'))")
+        self.assertIn('Hello World', result)
+
+    def test_regex_matches_integer_option(self):
+        result = self._deobfuscate_iterative(
+            "(-Join [Regex]::Matches('olleH', '.', 64))")
+        self.assertIn('Hello', result)
+
+    def test_regex_matches_combined_options(self):
+        result = self._deobfuscate(
+            "[Regex]::Matches('aAbBcC', '[a-c]', 'IgnoreCase, RightToLeft')")
+        self.assertIn("'C'", result)
+        self.assertIn("'c'", result)
+
+    def test_regex_match_single(self):
+        result = self._deobfuscate("[Regex]::Match('abc123def456', '\\d+')")
+        self.assertIn('123', result)
+        self.assertNotIn('456', result)
+
+    def test_regex_match_no_match(self):
+        result = self._deobfuscate("[Regex]::Match('hello', '\\d+')")
+        self.assertIn("''", result)
+
+    def test_regex_replace_static(self):
+        result = self._deobfuscate("[Regex]::Replace('Hello World', 'World', 'Earth')")
+        self.assertIn('Hello Earth', result)
+
+    def test_regex_replace_with_pattern(self):
+        result = self._deobfuscate("[Regex]::Replace('abc123def456', '\\d+', 'X')")
+        self.assertIn('abcXdefX', result)
+
+    def test_regex_matches_fully_qualified_type(self):
+        result = self._deobfuscate(
+            "[Text.RegularExpressions.Regex]::Matches('abc', '.')")
+        self.assertIn("'a'", result)
+        self.assertIn("'b'", result)
+        self.assertIn("'c'", result)
+
+    def test_regex_join_chain(self):
+        result = self._deobfuscate_iterative(
+            "-Join [Regex]::Matches('!o!l!l!e!H', '[^!]', 'RightToLeft')")
+        self.assertIn('Hello', result)

@@ -55,6 +55,68 @@ _STRING_TYPE_NAMES = frozenset({
     'system.string',
 })
 
+_REGEX_TYPE_NAMES = frozenset({
+    'regex',
+    'text.regularexpressions.regex',
+})
+
+_REGEX_OPTION_FLAGS: dict[str, int] = {
+    'ignorecase'              : re.IGNORECASE,
+    'multiline'               : re.MULTILINE,
+    'singleline'              : re.DOTALL,
+    'ignorepatternwhitespace' : re.VERBOSE,
+    'none'                    : 0,
+}
+
+_REGEX_OPTION_INT: dict[int, int] = {
+    1  : re.IGNORECASE,
+    2  : re.MULTILINE,
+    16 : re.DOTALL,
+    32 : re.VERBOSE,
+}
+
+_RIGHT_TO_LEFT = 64
+
+
+def _is_static_regex_call(node: Ps1InvokeMember) -> bool:
+    if node.access != Ps1AccessKind.STATIC:
+        return False
+    if not isinstance(node.object, Ps1TypeExpression):
+        return False
+    return node.object.name.lower().replace(' ', '') in _REGEX_TYPE_NAMES
+
+
+def _parse_regex_options(node: Expression) -> tuple[int, bool] | None:
+    """
+    Parse a RegexOptions argument (string or integer) into Python re flags
+    and a right_to_left boolean.
+    """
+    sv = _string_value(node)
+    if sv is not None:
+        flags = 0
+        right_to_left = False
+        for part in sv.split(','):
+            key = part.strip().lower()
+            if not key:
+                continue
+            if key == 'righttoleft':
+                right_to_left = True
+                continue
+            flag = _REGEX_OPTION_FLAGS.get(key)
+            if flag is None:
+                return None
+            flags |= flag
+        return flags, right_to_left
+    if isinstance(node, Ps1IntegerLiteral):
+        value = node.value
+        right_to_left = bool(value & _RIGHT_TO_LEFT)
+        flags = 0
+        for bit, flag in _REGEX_OPTION_INT.items():
+            if value & bit:
+                flags |= flag
+        return flags, right_to_left
+    return None
+
 
 def _is_static_convert_call(node: Ps1InvokeMember) -> bool:
     if node.access != Ps1AccessKind.STATIC:
@@ -322,7 +384,96 @@ class Ps1ConstantFolding(Transformer):
                     args = _collect_string_arguments(array)
                     if args is not None:
                         return _make_string_literal(separator.join(args))
+        if _is_static_regex_call(node) and member_name is not None:
+            lower_member = member_name.lower()
+            if lower_member == 'matches':
+                return self._handle_regex_matches(node)
+            if lower_member == 'match':
+                return self._handle_regex_match(node)
+            if lower_member == 'replace':
+                return self._handle_regex_replace(node)
         return None
+
+    def _handle_regex_matches(self, node: Ps1InvokeMember) -> Expression | None:
+        if len(node.arguments) not in (2, 3):
+            return None
+        input_str = _string_value(node.arguments[0])
+        pattern_str = _string_value(node.arguments[1])
+        if input_str is None or pattern_str is None:
+            return None
+        flags = 0
+        right_to_left = False
+        if len(node.arguments) == 3:
+            opts = _parse_regex_options(node.arguments[2])
+            if opts is None:
+                return None
+            flags, right_to_left = opts
+        try:
+            if right_to_left:
+                matches = [
+                    m.group(0)[::-1]
+                    for m in re.finditer(pattern_str, input_str[::-1], flags)
+                ]
+            else:
+                matches = [m.group(0) for m in re.finditer(pattern_str, input_str, flags)]
+        except re.error:
+            return None
+        elements: list[Expression] = [_make_string_literal(s) for s in matches]
+        return Ps1ArrayLiteral(elements=elements)
+
+    def _handle_regex_match(self, node: Ps1InvokeMember) -> Expression | None:
+        if len(node.arguments) not in (2, 3):
+            return None
+        input_str = _string_value(node.arguments[0])
+        pattern_str = _string_value(node.arguments[1])
+        if input_str is None or pattern_str is None:
+            return None
+        flags = 0
+        right_to_left = False
+        if len(node.arguments) == 3:
+            opts = _parse_regex_options(node.arguments[2])
+            if opts is None:
+                return None
+            flags, right_to_left = opts
+        try:
+            if right_to_left:
+                m = re.search(pattern_str, input_str[::-1], flags)
+                if m is not None:
+                    return _make_string_literal(m.group(0)[::-1])
+            else:
+                m = re.search(pattern_str, input_str, flags)
+                if m is not None:
+                    return _make_string_literal(m.group(0))
+        except re.error:
+            return None
+        return _make_string_literal('')
+
+    def _handle_regex_replace(self, node: Ps1InvokeMember) -> Expression | None:
+        if len(node.arguments) not in (3, 4):
+            return None
+        input_str = _string_value(node.arguments[0])
+        pattern_str = _string_value(node.arguments[1])
+        replacement_str = _string_value(node.arguments[2])
+        if input_str is None or pattern_str is None or replacement_str is None:
+            return None
+        flags = 0
+        right_to_left = False
+        if len(node.arguments) == 4:
+            opts = _parse_regex_options(node.arguments[3])
+            if opts is None:
+                return None
+            flags, right_to_left = opts
+        try:
+            if right_to_left:
+                result = re.sub(
+                    pattern_str, lambda _: replacement_str, input_str[::-1], flags=flags)
+                result = result[::-1]
+            else:
+                result = re.sub(
+                    pattern_str, lambda _: replacement_str, input_str, flags=flags)
+        except re.error:
+            return None
+        return _make_string_literal(result)
 
     _ARITHMETIC_OPS = {
         '+' : int.__add__,
