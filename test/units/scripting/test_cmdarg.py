@@ -199,6 +199,11 @@ class TestCmdArg(TestUnitBase):
         result = data | self.load() | str
         self.assertEqual(result, 'whoami')
 
+    def test_cmd_switches_concatenated(self):
+        data = b'Cmd.exe /V:ON/C"set x=hello&& echo !x!"'
+        result = data | self.load() | str
+        self.assertEqual(result, 'set x=hello&& echo !x!')
+
     def test_format_operator_not_matched_as_file_switch(self):
         data = b'PoweRsHeLl &( \'SV\' ) x ( \\"hello\\" -f \'world\' )'
         result = data | self.load() | str

@@ -179,9 +179,9 @@ _RE_WMIC_CREATE = re.compile(r"""(?ix)
 
 _RE_CMD_RUN = re.compile(r"""(?ix)
     (?:%comspec%|(?:\S+[\\/])?
-       cmd(?:\.exe)?)
-    (?:\s+/[a-z](?::\w+)?)*
-       \s+/[ck]\s+
+       cmd(?:\.exe)?)\s*
+    (?:/[a-z](?::\w+)?\s*)*?
+       /[ck](?=[\s"])[\s]*
 """)
 
 
