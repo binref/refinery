@@ -462,3 +462,50 @@ class TestVbaDeobfuscation(TestBase):
         self.assertIn('Chr(13)', result)
         self.assertIn('"payload"', result)
         self.assertIn('Chr(10)', result)
+
+    def test_empty_sub_removed(self):
+        code = 'Sub Junk()\nEnd Sub\nSub T()\n  G 1\nEnd Sub'
+        result = self._deobfuscate(code)
+        self.assertNotIn('Junk', result)
+        self.assertIn('Sub T()', result)
+
+    def test_empty_function_removed(self):
+        code = 'Function Junk()\nEnd Function\nSub T()\n  G 1\nEnd Sub'
+        result = self._deobfuscate(code)
+        self.assertNotIn('Junk', result)
+        self.assertIn('Sub T()', result)
+
+    def test_empty_property_removed(self):
+        code = 'Property Get Junk()\nEnd Property\nSub T()\n  G 1\nEnd Sub'
+        result = self._deobfuscate(code)
+        self.assertNotIn('Junk', result)
+        self.assertIn('Sub T()', result)
+
+    def test_empty_sub_called_preserved(self):
+        code = 'Sub Junk()\nEnd Sub\nSub T()\n  Junk\nEnd Sub'
+        result = self._deobfuscate(code)
+        self.assertIn('Sub Junk()', result)
+
+    def test_nonempty_sub_uncalled_preserved(self):
+        code = 'Sub Junk()\n  MsgBox "hi"\nEnd Sub\nSub T()\n  G 1\nEnd Sub'
+        result = self._deobfuscate(code)
+        self.assertIn('Sub Junk()', result)
+
+    def test_mixed_empty_procedures(self):
+        code = (
+            'Sub A()\nEnd Sub\n'
+            'Sub B()\nEnd Sub\n'
+            'Sub T()\n  A\nEnd Sub'
+        )
+        result = self._deobfuscate(code)
+        self.assertIn('Sub A()', result)
+        self.assertNotIn('Sub B()', result)
+
+    def test_empty_sub_called_from_other_preserved(self):
+        code = (
+            'Sub Junk()\nEnd Sub\n'
+            'Sub Helper()\n  Junk\nEnd Sub\n'
+            'Sub T()\n  G 1\nEnd Sub'
+        )
+        result = self._deobfuscate(code)
+        self.assertIn('Sub Junk()', result)

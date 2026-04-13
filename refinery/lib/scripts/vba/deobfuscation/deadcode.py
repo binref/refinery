@@ -1,6 +1,5 @@
 """
-VBA dead variable removal: removes assignments to variables that are never read, provided the
-right-hand side has no side effects.
+VBA dead code removal: removes assignments to unread variables and empty uncalled procedures.
 """
 from __future__ import annotations
 
@@ -8,9 +7,12 @@ from refinery.lib.scripts import Statement, Transformer
 from refinery.lib.scripts.vba.deobfuscation._helpers import _body_lists
 from refinery.lib.scripts.vba.model import (
     VbaCallExpression,
+    VbaFunctionDeclaration,
     VbaIdentifier,
     VbaLetStatement,
     VbaModule,
+    VbaPropertyDeclaration,
+    VbaSubDeclaration,
 )
 
 _PURE_BUILTINS = frozenset({
@@ -105,3 +107,36 @@ class VbaDeadVariableRemoval(Transformer):
         for body, idx in sorted(removals, key=lambda t: t[1], reverse=True):
             del body[idx]
         return bool(removals)
+
+
+_PROCEDURE_TYPES = (VbaSubDeclaration, VbaFunctionDeclaration, VbaPropertyDeclaration)
+
+
+class VbaEmptyProcedureRemoval(Transformer):
+
+    def visit(self, node):
+        if isinstance(node, VbaModule):
+            if self._remove_empty_procedures(node):
+                self.mark_changed()
+        return None
+
+    def _remove_empty_procedures(self, module: VbaModule) -> bool:
+        empty: dict[str, list[int]] = {}
+        for idx, stmt in enumerate(module.body):
+            if isinstance(stmt, _PROCEDURE_TYPES) and not stmt.body:
+                empty.setdefault(stmt.name.lower(), []).append(idx)
+        if not empty:
+            return False
+        referenced: set[str] = set()
+        for node in module.walk():
+            if isinstance(node, VbaIdentifier):
+                key = node.name.lower()
+                if key in empty:
+                    referenced.add(key)
+        indices: list[int] = []
+        for key, positions in empty.items():
+            if key not in referenced:
+                indices.extend(positions)
+        for idx in sorted(indices, reverse=True):
+            del module.body[idx]
+        return bool(indices)
