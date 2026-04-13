@@ -4,6 +4,7 @@ import itertools
 import ntpath
 import re
 import uuid
+import operator
 
 from dataclasses import dataclass, field, fields
 from enum import Enum
@@ -45,6 +46,17 @@ from refinery.lib.scripts.bat.util import batchint, uncaret, unquote
 from refinery.lib.types import buf
 
 _T = TypeVar('_T')
+
+
+_IF_OPS = {
+    AstIfCmp.STR: operator.__eq__,
+    AstIfCmp.EQU: operator.__eq__,
+    AstIfCmp.NEQ: operator.__ne__,
+    AstIfCmp.LSS: operator.__lt__,
+    AstIfCmp.LEQ: operator.__le__,
+    AstIfCmp.GTR: operator.__gt__,
+    AstIfCmp.GEQ: operator.__ge__,
+}
 
 
 def winfnmatch(pattern: str, path: str, cwd: str):
@@ -247,12 +259,15 @@ class BatchEmulator:
         cmdextended: bool | None = None,
         environment: dict | None | ellipsis = ...,
         filename: str | None = None,
+        cmdline: bool | None = None,
     ):
         state = self.state
         if delayexpand is None:
             delayexpand = False
         if cmdextended is None:
             cmdextended = state.cmdextended
+        if cmdline is None:
+            cmdline = state.cmdline
         if environment is ...:
             environment = dict(state.environment)
         return BatchState(
@@ -265,6 +280,7 @@ class BatchEmulator:
             now=state.now,
             cwd=state.cwd,
             filename=filename,
+            cmdline=cmdline,
         )
 
     def get_for_variable_regex(self, vars: Iterable[str]):
@@ -321,9 +337,10 @@ class BatchEmulator:
             if isinstance(token, Enum):
                 return token
             if isinstance(token, str):
+                token = self.expand_forloop_variables(token, variables)
                 if delayexpand:
                     token = self.expand_delayed_variables(token)
-                return self.expand_forloop_variables(token, variables)
+                return token
             if isinstance(token, AstNode):
                 new = {}
                 for tf in fields(token):
@@ -873,7 +890,7 @@ class BatchEmulator:
         ):
             command = stripped[1] + stripped[2]
 
-        state = self.clone_state(delayexpand=delayexpand, cmdextended=cmdextended)
+        state = self.clone_state(delayexpand=delayexpand, cmdextended=cmdextended, cmdline=True)
         state.codec = codec
         state.echo = not quiet
         shell = self.spawn(command, state, std)
@@ -1140,40 +1157,33 @@ class BatchEmulator:
         self.block_labels.clear()
 
         if _if.variant == AstIfVariant.ErrorLevel:
-            condition = _if.var_int <= self.state.ec
+            condition = batchint(_if.lhs) <= self.state.ec
         elif _if.variant == AstIfVariant.CmdExtVersion:
-            condition = _if.var_int <= self.state.extensions_version
+            condition = batchint(_if.lhs) <= self.state.extensions_version
         elif _if.variant == AstIfVariant.Exist:
-            condition = self.state.exists_file(_if.var_str)
+            condition = self.state.exists_file(_if.lhs)
         elif _if.variant == AstIfVariant.Defined:
-            condition = _if.var_str.upper() in self.state.environment
+            condition = _if.lhs.upper() in self.state.environment
         else:
+            cmp = _if.cmp
             lhs = _if.lhs
             rhs = _if.rhs
-            cmp = _if.cmp
-            assert lhs is not None
             assert rhs is not None
-            if cmp == AstIfCmp.STR:
-                if _if.casefold:
-                    if isinstance(lhs, str):
-                        lhs = lhs.casefold()
-                    if isinstance(rhs, str):
-                        rhs = rhs.casefold()
-                condition = lhs == rhs
-            elif cmp == AstIfCmp.GTR:
-                condition = lhs > rhs
-            elif cmp == AstIfCmp.GEQ:
-                condition = lhs >= rhs
-            elif cmp == AstIfCmp.NEQ:
-                condition = lhs != rhs
-            elif cmp == AstIfCmp.EQU:
-                condition = lhs == rhs
-            elif cmp == AstIfCmp.LSS:
-                condition = lhs < rhs
-            elif cmp == AstIfCmp.LEQ:
-                condition = lhs <= rhs
+            assert cmp is not None
+            if _if.casefold:
+                lhs = lhs.casefold()
+                rhs = rhs.casefold()
             else:
-                raise RuntimeError(cmp)
+                try:
+                    ilh = batchint(lhs)
+                    irh = batchint(rhs)
+                except (ValueError, IndexError):
+                    pass
+                else:
+                    lhs = ilh
+                    rhs = irh
+            condition = _IF_OPS[cmp](lhs, rhs)
+
         if _if.negated:
             condition = not condition
 

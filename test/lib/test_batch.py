@@ -1076,6 +1076,101 @@ class TestBatchEmulator(TestBase):
         cmds = list(bat.emulate_commands())
         self.assertIn('echo hello', cmds)
 
+    def test_cmdline_for_loop_basic(self):
+        state = BatchState(cmdline=True)
+        bat = BatchEmulator('for %i in (foo,bar) do echo %i\n', state)
+        self.assertEqual(list(bat.emulate_commands()), ['echo foo', 'echo bar'])
+
+    def test_cmdline_for_loop_numeric(self):
+        state = BatchState(cmdline=True)
+        bat = BatchEmulator('for /l %i in (1,1,3) do echo %i\n', state)
+        self.assertEqual(list(bat.emulate_commands()), ['echo 1', 'echo 2', 'echo 3'])
+
+    def test_cmdline_for_loop_file_parsing(self):
+        state = BatchState(cmdline=True)
+        bat = BatchEmulator('for /f %i in ("hello") do echo %i\n', state)
+        self.assertEqual(list(bat.emulate_commands()), ['echo hello'])
+
+    def test_cmdline_env_vars_still_work(self):
+        state = BatchState(cmdline=True)
+        bat = BatchEmulator('set FOO=BAR\necho %FOO%\n', state)
+        self.assertEqual(list(bat.emulate()), ['echo BAR'])
+
+    def test_cmdline_percent_escape(self):
+        state = BatchState(cmdline=True)
+        bat = BatchEmulator('echo %%FOO%%\n', state)
+        self.assertEqual(list(bat.emulate()), ['echo %FOO%'])
+
+    def test_cmd_c_with_for_loop(self):
+        @emulate
+        class bat:
+            '''
+            cmd /c "for /l %%i in (1,1,2) do echo %%i"
+            '''
+        cmds = list(bat.emulate_commands())
+        self.assertIn('echo 1', cmds)
+        self.assertIn('echo 2', cmds)
+
+    def test_cmdline_for_loop_digit_variable(self):
+        state = BatchState(cmdline=True)
+        bat = BatchEmulator('for %4 in (a,b) do echo %4\n', state)
+        self.assertEqual(list(bat.emulate_commands()), ['echo a', 'echo b'])
+
+    def test_cmdline_digit_var_not_positional_arg(self):
+        state = BatchState(cmdline=True)
+        bat = BatchEmulator('echo %4\n', state)
+        self.assertEqual(list(bat.emulate()), ['echo %4'])
+
+    def test_batch_mode_positional_arg_still_works(self):
+        state = BatchState()
+        state.command_line = 'one two three four'
+        bat = BatchEmulator('echo %4\n', state)
+        self.assertEqual(list(bat.emulate()), ['echo four'])
+
+    def test_cmdline_deobfuscation_with_delayed_expansion(self):
+        state = BatchState(cmdline=True, delayexpand=True)
+        bat = BatchEmulator(
+            'set A=HELLO\n'
+            'for %i in (0,1,2,3,4) do set R=!R!!A:~%i,1!\n'
+            'echo !R!\n',
+            state,
+        )
+        self.assertIn('echo HELLO', list(bat.emulate()))
+
+    def test_cmd_c_digit_for_variable(self):
+        @emulate
+        class bat:
+            '''
+            cmd /V:ON /c "set A=XY&&for %%4 in (0,1) do set R=!R!!A:~%%4,1!&&if %%4 geq 1 echo !R!"
+            '''
+        cmds = list(bat.emulate_commands())
+        self.assertIn('echo XY', cmds)
+
+    def test_if_geq_with_expanded_for_variable(self):
+        state = BatchState(cmdline=True, delayexpand=True)
+        bat = BatchEmulator(
+            'for %i in (9,83) do if %i geq 83 echo %i\n',
+            state,
+        )
+        cmds = list(bat.emulate_commands())
+        self.assertEqual(cmds, ['echo 83'])
+
+    def test_delayed_expansion_substring_not_split_at_colon(self):
+        state = BatchState(cmdline=True, delayexpand=True)
+        bat = BatchEmulator(
+            'set A=HELLO\n'
+            'echo !A:~1,3!\n',
+            state,
+        )
+        cmds = list(bat.emulate_commands())
+        self.assertEqual(cmds, ['echo ELL'])
+
+    def test_colon_still_splits_without_delayed_expansion(self):
+        from refinery.lib.scripts.bat.model import Ctrl
+        lexer = BatchLexer('goto :label\n', BatchState())
+        tokens = list(lexer.tokens(0))
+        self.assertIn(Ctrl.Label, tokens)
+
 
 class TestBatchUtil(TestBase):
 

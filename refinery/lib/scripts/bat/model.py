@@ -5,12 +5,10 @@ import sys
 
 from dataclasses import dataclass, field
 from functools import cached_property
-from typing import Generic, TypeVar, Union
+from typing import Union
 
 from refinery.lib.scripts.bat.util import batchrange
 from refinery.lib.structures import FlagAccessMixin
-
-IntOrStr = TypeVar('IntOrStr', int, str)
 
 
 class Ctrl(str, enum.Enum):
@@ -326,29 +324,15 @@ class AstIfCmp(str, enum.Enum):
 
 
 @dataclass(repr=False)
-class AstIf(AstStatement, Generic[IntOrStr]):
+class AstIf(AstStatement):
     then_do: AstSequence
     else_do: AstSequence | None = None
     variant: AstIfVariant | None = None
     casefold: bool = True
     negated: bool = False
     cmp: AstIfCmp | None = None
-    lhs: IntOrStr | None = None
-    rhs: IntOrStr | None = None
-
-    @property
-    def var_int(self):
-        var = self.lhs
-        if isinstance(var, int):
-            return var
-        raise AttributeError
-
-    @property
-    def var_str(self):
-        var = self.lhs
-        if isinstance(var, str):
-            return var
-        raise AttributeError
+    lhs: str = ''
+    rhs: str | None = None
 
 
 class If(enum.IntFlag):

@@ -325,23 +325,10 @@ class BatchParser:
                     raise UnexpectedToken(offset, cmp)
 
             rhs = tokens.consume_nonspace_words()
-
-            try:
-                ilh = batchint(lhs)
-                irh = batchint(rhs)
-            except ValueError:
-                pass
-            else:
-                lhs = ilh
-                rhs = irh
         else:
             lhs = unquote(tokens.consume_nonspace_words())
             rhs = None
             cmp = None
-            try:
-                lhs = batchint(lhs)
-            except ValueError:
-                pass
 
         then_do = self.sequence(None, tokens, in_group)
 
@@ -360,7 +347,8 @@ class BatchParser:
             casefold,
             negated,
             cmp,
-            lhs, rhs # type:ignore
+            lhs,
+            rhs,
         )
         then_do.parent = ast
 

@@ -510,10 +510,10 @@ class BatchLexer:
                     var_name = u16(self.code[cursor.offset:current])
                     variable = u16(self.parse_env_variable(var_name))
                 except MissingVariable:
-                    if var_resume < 0:
+                    if var_resume < 0 and not self.state.cmdline:
                         var_resume = current + 1
                     break
-            elif var_cmdarg:
+            elif var_cmdarg and not self.state.cmdline:
                 if ZERO <= char <= NINE:
                     var_cmdarg.offset = char - ZERO
                     variable = u16(self.parse_arg_variable(var_cmdarg))
@@ -552,8 +552,11 @@ class BatchLexer:
                     continue
                 if q not in var_cmdarg.flags:
                     var_cmdarg = None
-        if var_resume >= 0:
+        if var_resume >= 0 and (variable is not None or not self.state.cmdline):
             cursor.offset = var_resume
+        elif self.state.cmdline:
+            cursor.subst_offset = 0
+            cursor.subst_buffer.append(PERCENT)
 
     @_register(Mode.Label)
     def gobble_label(self, mode: Mode, char: int) -> Generator[Token, None, bool]:
@@ -695,6 +698,9 @@ class BatchLexer:
         if char == SLASH and not self.pending_redirect:
             yield from self.emit_token()
         if char == COLON:
+            if self.state.delayexpand and self.cursor.token.count(0x21) % 2:
+                self.cursor.token.append(char)
+                return True
             if (yield from self.emit_token()):
                 return False
             elif self.next_char() == COLON:

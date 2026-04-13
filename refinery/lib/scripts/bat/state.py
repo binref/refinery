@@ -57,6 +57,7 @@ class BatchState:
         filename: str | None = '',
         echo: bool = True,
         codec: str = 'cp1252',
+        cmdline: bool = False,
     ):
         self.extensions_version = extensions_version
         file_system = file_system or {}
@@ -91,6 +92,7 @@ class BatchState:
         self.ec = None
         self.echo = echo
         self.codec = codec
+        self.cmdline = cmdline
 
     @property
     def cwd(self):
