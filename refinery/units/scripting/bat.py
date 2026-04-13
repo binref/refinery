@@ -39,6 +39,8 @@ class bat(Unit):
             help='Do not trace into CALL statements; emulation resumes at the next line instead.')] = False,
         skip_exit: Param[bool, Arg.Switch('-E',
             help='Do not respect EXIT commands; continue execution regardless.')] = False,
+        delayed_expand: Param[bool, Arg.Switch('-D',
+            help='Set delayed expansion of variables.')] = False,
     ):
         super().__init__(
             name=name,
@@ -51,6 +53,7 @@ class bat(Unit):
             skip_goto=skip_goto,
             skip_call=skip_call,
             skip_exit=skip_exit,
+            delayed_expand=delayed_expand,
         )
 
     def process(self, data):
@@ -72,5 +75,6 @@ class bat(Unit):
         state.command_line = ' '.join(
             codecs.decode(arg, self.codec) for arg in self.args.args)
         emulator = BatchEmulator(data, state, cfg)
+        emulator.state.delayexpand = self.args.delayed_expand
         for cmd in emulator.emulate():
             yield cmd.encode(self.codec)

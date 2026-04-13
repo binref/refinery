@@ -218,3 +218,12 @@ class TestBAT(TestUnitBase):
         batch = self.download_sample('50f453161e72b3be24885eded612f224b59ca6e69eb6605d36ce7ed8789b0f51')
         test = batch | self.load() | str
         self.assertIn('echo The Binary Refinery refines the finest Binaries', test)
+
+    def test_delay_expand_flag(self):
+        @multiline
+        class batch:
+            R'''
+            cmd.exe /V:ON/C"set a=FOO&&echo !a!"
+            '''
+        test = batch | self.load() | str
+        self.assertIn(R'echo FOO', test)

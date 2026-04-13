@@ -828,13 +828,27 @@ class BatchEmulator:
         cmdextended = None
 
         for arg in it:
+            def _flag():
+                if len(arg) > 2 and arg[2] == ':':
+                    flag_string = arg[3:]
+                else:
+                    try:
+                        flag_string = next(it)
+                    except KeyError:
+                        flag_string = ''
+                    else:
+                        flag_string = flag_string[1:] if flag_string.startswith(':') else ''
+                try:
+                    return _onoff(flag_string)
+                except ValueError:
+                    yield Error(F'Invalid flag in CMD execution: /{name} followed by {flag_string}.')
+                    return None
+
             if arg.isspace() or not arg.startswith('/'):
                 continue
-            name, _, flag = arg[1:].partition(':')
-            flag = flag.upper()
-            name = name.upper()
+            name = arg[1].upper()
             if name in 'CKR':
-                command = _fuse(it)
+                command = arg[2:] + _fuse(it)
                 break
             elif name == 'Q':
                 quiet = True
@@ -843,9 +857,11 @@ class BatchEmulator:
             elif name == 'U':
                 codec = 'utf-16le'
             elif name == 'E':
-                cmdextended = _onoff(flag)
+                if (cmdextended := (yield from _flag())) is None:
+                    return
             elif name == 'V':
-                delayexpand = _onoff(flag)
+                if (delayexpand := (yield from _flag())) is None:
+                    return
         else:
             return 0
 
