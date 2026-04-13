@@ -4,6 +4,7 @@ VBA built-in numeric constants.
 Only numeric constants are included. String constants like vbCrLf or vbTab represent control
 characters that cannot be expressed inside VBA string literals and are therefore not inlined.
 """
+from __future__ import annotations
 
 VBA_BUILTIN_CONSTANTS: dict[str, int] = {
     # miscellaneous

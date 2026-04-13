@@ -1,6 +1,8 @@
 """
 JavaScript AST deobfuscation transforms.
 """
+from __future__ import annotations
+
 from refinery.lib.scripts.js.deobfuscation.simplify import JsSimplifications
 from refinery.lib.scripts.js.model import JsScript
 from refinery.lib.scripts.pipeline import DeobfuscationPipeline, TransformerGroup

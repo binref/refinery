@@ -1,6 +1,8 @@
 """
 PowerShell AST deobfuscation transforms.
 """
+from __future__ import annotations
+
 from refinery.lib.scripts.pipeline import DeobfuscationPipeline, TransformerGroup
 from refinery.lib.scripts.ps1.deobfuscation.aliases import Ps1AliasInlining
 from refinery.lib.scripts.ps1.deobfuscation.constants import Ps1ConstantInlining, Ps1NullVariableInlining

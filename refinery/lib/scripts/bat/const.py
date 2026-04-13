@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 AMPERSAND   = BR'&'[0] # noqa
 ANGLE_CLOSE = BR'>'[0] # noqa
 ANGLE_OPEN  = BR'<'[0] # noqa
