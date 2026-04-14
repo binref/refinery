@@ -6,11 +6,12 @@ from __future__ import annotations
 
 import dataclasses
 import enum
-import sys
 import typing
 
 from dataclasses import dataclass, field
 from typing import Generator, Callable
+
+from refinery.lib.annotations import get_type_hints as _get_type_hints
 
 
 class Kind(enum.IntEnum):
@@ -27,10 +28,7 @@ _child_fields_cache: dict[type, list[tuple[str, Kind]]] = {}
 def _has_node_type(hint) -> bool:
     if isinstance(hint, type):
         return issubclass(hint, Node)
-    origin = typing.get_origin(hint)
-    if origin is type(int | str):
-        return any(_has_node_type(a) for a in typing.get_args(hint))
-    return False
+    return any(_has_node_type(a) for a in typing.get_args(hint))
 
 
 def _classify_fields(node_type: type) -> list[tuple[str, Kind]]:
@@ -39,10 +37,8 @@ def _classify_fields(node_type: type) -> list[tuple[str, Kind]]:
     except KeyError:
         pass
     result: list[tuple[str, Kind]] = []
-    mod = sys.modules.get(node_type.__module__)
-    globalns = vars(mod) if mod is not None else {}
     try:
-        hints = typing.get_type_hints(node_type, globalns=globalns)
+        hints = _get_type_hints(node_type)
     except Exception:
         _child_fields_cache[node_type] = result
         return result
