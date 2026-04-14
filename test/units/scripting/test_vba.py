@@ -42,10 +42,10 @@ class TestVBAASTDeobfuscator(TestUnitBase):
             'Attribute VB_Name = "Module1"\n'
             'Dim x As Long\n'
             'Sub Foo()\n'
-            'x = 1\n'
+            'MsgBox x\n'
             'End Sub\n'
             'Function Bar() As Long\n'
-            'Bar = x\n'
+            'Bar = MsgBox(x)\n'
             'End Function'
         )
         result = data | self.load() | str
