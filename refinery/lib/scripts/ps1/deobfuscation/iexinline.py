@@ -47,6 +47,30 @@ _IEX_NAMES = frozenset({'iex', 'invoke-expression'})
 _INVOKE_METHODS = frozenset({'invoke', 'invokereturnasis'})
 
 
+def _is_command_switch(arg) -> bool:
+    return (
+        isinstance(arg, Ps1CommandArgument)
+        and arg.kind == Ps1CommandArgumentKind.SWITCH
+        and isinstance(arg.name, str)
+        and arg.name.lower().startswith('-c')
+    )
+
+
+def _extract_iex_value(cmd: Ps1CommandInvocation) -> Expression | None:
+    args = cmd.arguments
+    if len(args) == 1:
+        arg = args[0]
+    elif len(args) == 2 and _is_command_switch(args[0]):
+        arg = args[1]
+    else:
+        return None
+    if isinstance(arg, Ps1CommandArgument):
+        if arg.kind != Ps1CommandArgumentKind.POSITIONAL:
+            return None
+        return arg.value
+    return arg
+
+
 _SCRIPTBLOCK_TYPE_NAMES = frozenset({
     'scriptblock',
     'management.automation.scriptblock',
@@ -435,15 +459,7 @@ class Ps1IexInlining(Transformer):
                 return None
             if node.name.value.lower() not in _IEX_NAMES:
                 return None
-            if len(node.arguments) != 1:
-                return None
-            arg = node.arguments[0]
-            if isinstance(arg, Ps1CommandArgument):
-                if arg.kind != Ps1CommandArgumentKind.POSITIONAL:
-                    return None
-                val = arg.value
-            else:
-                val = arg
+            val = _extract_iex_value(node)
             if val is None:
                 return None
             code = _resolve_to_string(val)
@@ -490,7 +506,9 @@ class Ps1IexInlining(Transformer):
             return False
         if cmd.name.value.lower() not in _IEX_NAMES:
             return False
-        return len(cmd.arguments) == 0
+        if len(cmd.arguments) == 0:
+            return True
+        return len(cmd.arguments) == 1 and _is_command_switch(cmd.arguments[0])
 
     @staticmethod
     def _try_extract_iex_string(stmt) -> str | None:
@@ -503,15 +521,7 @@ class Ps1IexInlining(Transformer):
             return None
         if cmd.name.value.lower() not in _IEX_NAMES:
             return None
-        if len(cmd.arguments) != 1:
-            return None
-        arg = cmd.arguments[0]
-        if isinstance(arg, Ps1CommandArgument):
-            if arg.kind != Ps1CommandArgumentKind.POSITIONAL:
-                return None
-            val = arg.value
-        else:
-            val = arg
+        val = _extract_iex_value(cmd)
         if val is None:
             return None
         return _resolve_to_string(val)

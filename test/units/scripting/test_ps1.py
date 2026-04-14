@@ -143,6 +143,27 @@ class TestPs1RealWorldSmall(TestUnitBase):
         self.assertIn('hello', result)
         self.assertNotIn('Invoke-Expression', result)
 
+    def test_iex_command_parameter(self):
+        data = b"Invoke-Expression -Command 'Write-Host hello'"
+        result = data | self.load() | str
+        self.assertIn('Write-Host', result)
+        self.assertIn('hello', result)
+        self.assertNotIn('Invoke-Expression', result)
+
+    def test_iex_abbreviated_command_parameter(self):
+        data = b"iex -Co 'Write-Host hello'"
+        result = data | self.load() | str
+        self.assertIn('Write-Host', result)
+        self.assertIn('hello', result)
+        self.assertNotIn('Invoke-Expression', result)
+
+    def test_piped_iex_command_parameter(self):
+        data = b"'Write-Host hello' | Invoke-Expression -Command"
+        result = data | self.load() | str
+        self.assertIn('Write-Host', result)
+        self.assertIn('hello', result)
+        self.assertNotIn('Invoke-Expression', result)
+
 
 
 class TestPs1RealWorldLarge(TestUnitBase):
