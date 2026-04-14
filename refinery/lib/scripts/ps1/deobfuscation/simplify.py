@@ -23,6 +23,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1FunctionDefinition,
     Ps1HereString,
     Ps1IntegerLiteral,
+    Ps1InvokeMember,
     Ps1MemberAccess,
     Ps1ParenExpression,
     Ps1RealLiteral,
@@ -132,6 +133,15 @@ class Ps1Simplifications(Transformer):
 
     def visit_Ps1MemberAccess(self, node: Ps1MemberAccess):
         self.generic_visit(node)
+        self._normalize_member(node)
+        return None
+
+    def visit_Ps1InvokeMember(self, node: Ps1InvokeMember):
+        self.generic_visit(node)
+        self._normalize_member(node)
+        return None
+
+    def _normalize_member(self, node: Ps1MemberAccess | Ps1InvokeMember):
         if isinstance(node.member, Ps1StringLiteral):
             name = node.member.value
             if node.member.raw and node.member.raw[0] == '"' and '`' in node.member.raw:
@@ -139,13 +149,12 @@ class Ps1Simplifications(Transformer):
             if SIMPLE_IDENTIFIER.match(name):
                 node.member = _case_normalize_name(name)
                 self.mark_changed()
-                return None
+                return
         if isinstance(node.member, str):
             normalized = _case_normalize_name(node.member)
             if normalized != node.member:
                 node.member = normalized
                 self.mark_changed()
-        return None
 
     def visit_Ps1BinaryExpression(self, node: Ps1BinaryExpression):
         self.generic_visit(node)
@@ -201,7 +210,13 @@ class Ps1Simplifications(Transformer):
         normalized = _case_normalize_name(name)
         if normalized != name:
             self.mark_changed()
-        return normalized
+            return normalized
+        from refinery.lib.scripts.ps1.deobfuscation.typenames import canonical_type_name
+        canonical = canonical_type_name(name)
+        if canonical is not None and canonical != name:
+            self.mark_changed()
+            return canonical
+        return name
 
     def visit_Ps1CommandInvocation(self, node: Ps1CommandInvocation):
         self.generic_visit(node)

