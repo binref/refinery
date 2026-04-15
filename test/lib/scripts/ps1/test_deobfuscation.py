@@ -1936,3 +1936,33 @@ class TestPs1ArrayInliningGuard(TestPs1):
         code = F'$x = @({elements}); Write-Host $x; Write-Host $x'
         result = self._deobfuscate(code)
         self.assertIn('$x', result)
+
+
+class TestPs1ControlCharStringLiteral(TestPs1):
+
+    def test_format_newline_only_produces_here_string(self):
+        code = '"{0}`n{1}" -f "hello","world"'
+        result = self._deobfuscate(code)
+        self.assertIn("@'", result)
+        self.assertIn('hello', result)
+        self.assertIn('world', result)
+
+    def test_tab_in_format_produces_backtick_escape(self):
+        code = '"{0}`t{1}" -f "a","b"'
+        result = self._deobfuscate(code)
+        self.assertIn('`t', result)
+        self.assertNotIn('\t', result)
+
+    def test_mixed_newline_and_control_chars_produces_dq_string(self):
+        code = '"{0}`n`t{1}" -f "a","b"'
+        result = self._deobfuscate(code)
+        self.assertNotIn("@'", result)
+        self.assertIn('`n', result)
+        self.assertIn('`t', result)
+
+    def test_concat_with_control_chars_no_raw_embedding(self):
+        code = "'hello' + \"`tworld\""
+        result = self._deobfuscate(code)
+        self.assertNotIn('\t', result)
+        self.assertIn('hello', result)
+        self.assertIn('world', result)

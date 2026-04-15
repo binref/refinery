@@ -721,10 +721,32 @@ def _string_value(node: Expression) -> str | None:
     return None
 
 
+_BACKTICK_ENCODE = {
+    '\x00': '`0',
+    '\x07': '`a',
+    '\x08': '`b',
+    '\x09': '`t',
+    '\x0A': '`n',
+    '\x0B': '`v',
+    '\x0C': '`f',
+    '\x0D': '`r',
+    '\x1B': '`e',
+}
+_NONPRINT_CONTROL = frozenset(_BACKTICK_ENCODE) - {'\n'}
+
+
 def _make_string_literal(value: str) -> Ps1StringLiteral | Ps1HereString:
-    if '\n' in value:
+    has_newline = '\n' in value
+    has_nonprint = any(c in value for c in _NONPRINT_CONTROL)
+    if has_newline and not has_nonprint:
         raw = F"@'\n{value}\n'@"
         return Ps1HereString(value=value, raw=raw)
+    if has_nonprint or has_newline:
+        escaped = value.replace('`', '``').replace('"', '`"').replace('$', '`$')
+        for ch, esc in _BACKTICK_ENCODE.items():
+            escaped = escaped.replace(ch, esc)
+        raw = F'"{escaped}"'
+        return Ps1StringLiteral(value=value, raw=raw)
     if "'" not in value:
         raw = F"'{value}'"
     elif '"' not in value and '$' not in value and '`' not in value:
