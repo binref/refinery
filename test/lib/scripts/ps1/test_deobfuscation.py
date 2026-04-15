@@ -1823,12 +1823,25 @@ class TestPs1NullVariableInlining(TestPs1):
 class TestPs1RegexFolding(TestPs1):
 
     def test_regex_matches_simple(self):
-        result = self._deobfuscate("[Regex]::Matches('abc123def', '\\d+')")
-        self.assertIn('123', result)
+        result = self._deobfuscate("[Regex]::Matches('abc123def', '\\d+').Groups.Captures.Groups.Value")
+        self.assertIn("'123'", result)
+
+    def test_regex_without_value_access_not_inlined(self):
+        result = self._deobfuscate(
+            """
+            [Regex]::Matches('REFINERY', '[RF]') | Write-Output;
+            """
+        )
+        self.assertIn('REFINERY', result)
 
     def test_regex_matches_dot_righttoleft(self):
         result = self._deobfuscate_iterative(
             "(-Join [Regex]::Matches('dlroW olleH', '.', 'RightToLeft'))")
+        self.assertIn('Hello World', result)
+
+    def test_regex_matches_dot_righttoleft_mapped(self):
+        result = self._deobfuscate_iterative(
+            "-Join([Regex]::Matches('dlroW olleH', '.', 'RightToLeft')|%{$_.Groups.Value})")
         self.assertIn('Hello World', result)
 
     def test_regex_matches_integer_option(self):
@@ -1836,20 +1849,26 @@ class TestPs1RegexFolding(TestPs1):
             "(-Join [Regex]::Matches('olleH', '.', 64))")
         self.assertIn('Hello', result)
 
+    def test_regression_props_of_constant_are_null(self):
+        self.assertEqual(self._deobfuscate("'a'.Value"), '$Null')
+        self.assertEqual(self._deobfuscate("'a'.fLaBu"), '$Null')
+
     def test_regex_matches_combined_options(self):
         result = self._deobfuscate(
-            "[Regex]::Matches('aAbBcC', '[a-c]', 'IgnoreCase, RightToLeft')")
+            "[Regex]::Matches('aAbBcC', '[a-c]', 'IgnoreCase, RightToLeft').Value")
         self.assertIn("'C'", result)
         self.assertIn("'c'", result)
+        self.assertNotIn('Value', result)
 
     def test_regex_match_single(self):
-        result = self._deobfuscate("[Regex]::Match('abc123def456', '\\d+')")
-        self.assertIn('123', result)
+        result = self._deobfuscate("[Regex]::Match('abc123def456', '\\d+').Value")
+        self.assertIn("'123'", result)
         self.assertNotIn('456', result)
 
     def test_regex_match_no_match(self):
-        result = self._deobfuscate("[Regex]::Match('hello', '\\d+')")
+        result = self._deobfuscate("[Regex]::Match('hello', '\\d+')|%{$_.Value}")
         self.assertIn("''", result)
+        self.assertNotIn("Value", result)
 
     def test_regex_replace_static(self):
         result = self._deobfuscate("[Regex]::Replace('Hello World', 'World', 'Earth')")
@@ -1861,12 +1880,59 @@ class TestPs1RegexFolding(TestPs1):
 
     def test_regex_matches_fully_qualified_type(self):
         result = self._deobfuscate(
-            "[Text.RegularExpressions.Regex]::Matches('abc', '.')")
+            "[Text.RegularExpressions.Regex]::Matches('abc', '.')|%{$_.Value}")
         self.assertIn("'a'", result)
         self.assertIn("'b'", result)
         self.assertIn("'c'", result)
+        self.assertNotIn("Value", result)
 
     def test_regex_join_chain(self):
         result = self._deobfuscate_iterative(
             "-Join [Regex]::Matches('!o!l!l!e!H', '[^!]', 'RightToLeft')")
         self.assertIn('Hello', result)
+
+
+class TestPs1SubstringFolding(TestPs1):
+
+    def test_substring_one_arg(self):
+        result = self._deobfuscate("'Hello World'.Substring(6)")
+        self.assertIn("'World'", result)
+        self.assertNotIn('Substring', result)
+
+    def test_substring_two_args(self):
+        result = self._deobfuscate("'Hello World'.Substring(0, 5)")
+        self.assertIn("'Hello'", result)
+        self.assertNotIn('Substring', result)
+
+    def test_substring_out_of_bounds(self):
+        result = self._deobfuscate("'abc'.Substring(0, 10)")
+        self.assertIn('Substring', result)
+
+
+class TestPs1LengthFolding(TestPs1):
+
+    def test_string_length(self):
+        self.assertEqual(self._deobfuscate("'Hello'.Length"), '5')
+
+    def test_array_length(self):
+        self.assertEqual(self._deobfuscate('@(1, 2, 3).Length'), '3')
+
+    def test_array_count(self):
+        self.assertEqual(self._deobfuscate('@(1, 2, 3).Count'), '3')
+
+    def test_string_length_via_variable(self):
+        result = self._deobfuscate("$x = 'Hello'; Write-Host $x.Length")
+        self.assertIn('5', result)
+
+
+class TestPs1ArrayInliningGuard(TestPs1):
+
+    def test_small_array_inlined_with_parens(self):
+        result = self._deobfuscate('$x = @(1, 2, 3); Write-Host $x')
+        self.assertIn('(1, 2, 3)', result)
+
+    def test_large_array_not_inlined(self):
+        elements = ', '.join(str(i) for i in range(100))
+        code = F'$x = @({elements}); Write-Host $x; Write-Host $x'
+        result = self._deobfuscate(code)
+        self.assertIn('$x', result)

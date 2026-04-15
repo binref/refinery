@@ -6,6 +6,7 @@ from __future__ import annotations
 import base64
 import codecs
 import re
+from collections.abc import Iterator
 
 from refinery.lib.scripts import Node, Transformer
 from refinery.lib.scripts.ps1.deobfuscation._helpers import (
@@ -15,6 +16,7 @@ from refinery.lib.scripts.ps1.deobfuscation._helpers import (
     _case_normalize_name,
     _collect_int_arguments,
     _collect_string_arguments,
+    _extract_foreach_scriptblock,
     _make_string_literal,
     _string_value,
     _unwrap_paren_to_array,
@@ -34,12 +36,20 @@ from refinery.lib.scripts.ps1.model import (
     Ps1InvokeMember,
     Ps1MemberAccess,
     Ps1ParenExpression,
+    Ps1Pipeline,
     Ps1ScopeModifier,
+    Ps1ScriptBlock,
     Ps1StringLiteral,
     Ps1TypeExpression,
     Ps1UnaryExpression,
     Ps1Variable,
 )
+
+from refinery.lib.scripts.ps1.deobfuscation.typenames import (
+    is_known_member,
+    resolve_member_type,
+)
+
 
 _SYSTEM_CONVERT_NAMES = frozenset({
     'system.convert',
@@ -116,6 +126,90 @@ def _parse_regex_options(node: Expression) -> tuple[int, bool] | None:
                 flags |= flag
         return flags, right_to_left
     return None
+
+
+def _iter_regex_matches(node: Ps1InvokeMember) -> Iterator[str] | None:
+    """
+    Yield matched strings from a call to
+
+        [Regex]::Match/Matches(input, pattern[, options])
+
+    Returns `None` if the arguments cannot be resolved.
+    """
+    if len(node.arguments) not in (2, 3):
+        return None
+    input = _string_value(node.arguments[0])
+    pattern = _string_value(node.arguments[1])
+    if input is None or pattern is None:
+        return None
+    if len(node.arguments) == 3:
+        if (options := _parse_regex_options(node.arguments[2])) is None:
+            return None
+        flags, right_to_left = options
+    else:
+        flags, right_to_left = 0, False
+    direction = (
+        lambda m: m,
+        lambda m: m[::-1],
+    )[right_to_left]
+    try:
+        return (direction(m[0]) for m in re.finditer(pattern, direction(input), flags))
+    except re.error:
+        return None
+
+
+def _compute_regex_matches(node: Ps1InvokeMember) -> list[str] | None:
+    if it := _iter_regex_matches(node):
+        return list(it)
+
+
+def _compute_regex_match(node: Ps1InvokeMember) -> str | None:
+    if it := _iter_regex_matches(node):
+        return next(it, '')
+
+
+_INTEGER_RESULT_TYPES = frozenset({
+    'system.int16',
+    'system.int32',
+    'system.int64',
+    'system.uint16',
+    'system.uint32',
+    'system.uint64',
+    'system.byte',
+    'system.sbyte',
+})
+
+
+def _foreach_extracts_value(sb: Ps1ScriptBlock) -> bool:
+    """
+    Check whether a ForEach scriptblock body is of the form `$_.Value`,
+    `$_.Groups.Value`, or `$_.Groups.Captures.Groups.Value` — i.e. it
+    extracts the string value from Match objects.
+    """
+    if sb.body is None or len(sb.body) != 1:
+        return False
+    stmt = sb.body[0]
+    if not isinstance(stmt, Ps1ExpressionStatement) or stmt.expression is None:
+        return False
+    node = stmt.expression
+    if not isinstance(node, Ps1Pipeline):
+        expr = node
+    elif len(node.elements) == 1 and node.elements[0].expression is not None:
+        expr = node.elements[0].expression
+    else:
+        return False
+    if not isinstance(expr, Ps1MemberAccess):
+        return False
+    member = expr.member if isinstance(expr.member, str) else None
+    if member is None or member.lower() != 'value':
+        return False
+    inner = expr.object
+    while isinstance(inner, Ps1MemberAccess):
+        prop = inner.member if isinstance(inner.member, str) else None
+        if prop is None or prop.lower() not in ('groups', 'captures'):
+            return False
+        inner = inner.object
+    return isinstance(inner, Ps1Variable) and inner.name == '_'
 
 
 def _is_static_convert_call(node: Ps1InvokeMember) -> bool:
@@ -237,14 +331,125 @@ class Ps1ConstantFolding(Transformer):
                     return True
         return False
 
+    def visit_Ps1Pipeline(self, node: Ps1Pipeline):
+        if len(node.elements) == 2:
+            result = self._try_fold_regex_pipeline(node)
+            if result is not None:
+                return result
+        self.generic_visit(node)
+        return None
+
+    def _try_fold_regex_pipeline(self, node: Ps1Pipeline) -> Expression | None:
+        first = node.elements[0].expression
+        second_expr = node.elements[1].expression
+        if not isinstance(first, Ps1InvokeMember) or not _is_static_regex_call(first):
+            return None
+        member = first.member if isinstance(first.member, str) else None
+        if member is None:
+            return None
+        sb = _extract_foreach_scriptblock(second_expr) if second_expr else None
+        if sb is None or not _foreach_extracts_value(sb):
+            return None
+        lower = member.lower()
+        if lower == 'matches':
+            matches = _compute_regex_matches(first)
+            if matches is not None:
+                elements: list[Expression] = [_make_string_literal(s) for s in matches]
+                return Ps1ArrayLiteral(elements=elements)
+        elif lower == 'match':
+            result = _compute_regex_match(first)
+            if result is not None:
+                return _make_string_literal(result)
+        return None
+
+    def visit_Ps1MemberAccess(self, node: Ps1MemberAccess):
+        self.generic_visit(node)
+        member = node.member if isinstance(node.member, str) else None
+        if member is None:
+            return None
+        obj = node.object
+        if obj is None:
+            return None
+        member_type = resolve_member_type(obj, member)
+        if member_type in _INTEGER_RESULT_TYPES:
+            s = _string_value(obj)
+            if s is not None:
+                return Ps1IntegerLiteral(value=len(s), raw=str(len(s)))
+            array = _unwrap_to_array_literal(obj)
+            if array is not None:
+                return Ps1IntegerLiteral(
+                    value=len(array.elements), raw=str(len(array.elements)))
+        if (
+            _string_value(obj) is not None
+            or isinstance(obj, Ps1IntegerLiteral)
+        ):
+            if not is_known_member(obj, member):
+                return Ps1Variable(name='Null')
+        result = self._try_fold_regex_member_access(node, member)
+        if result is not None:
+            return result
+        return None
+
+    def _try_fold_regex_member_access(
+        self, node: Ps1MemberAccess, member: str,
+    ) -> Expression | None:
+        chain: list[str] = [member]
+        inner = node.object
+        while isinstance(inner, Ps1MemberAccess):
+            prop = inner.member if isinstance(inner.member, str) else None
+            if prop is None:
+                return None
+            chain.append(prop)
+            inner = inner.object
+        chain.reverse()
+        if not isinstance(inner, Ps1InvokeMember) or not _is_static_regex_call(inner):
+            return None
+        normalized = [c.lower() for c in chain]
+        if normalized[-1] != 'value':
+            return None
+        for c in normalized[:-1]:
+            if c not in ('groups', 'captures'):
+                return None
+        call_member = inner.member if isinstance(inner.member, str) else None
+        if call_member is None:
+            return None
+        lower_call = call_member.lower()
+        if lower_call == 'matches':
+            matches = _compute_regex_matches(inner)
+            if matches is not None:
+                elements: list[Expression] = [_make_string_literal(s) for s in matches]
+                return Ps1ArrayLiteral(elements=elements)
+        elif lower_call == 'match':
+            result = _compute_regex_match(inner)
+            if result is not None:
+                return _make_string_literal(result)
+        return None
+
+    @staticmethod
+    def _try_join_regex_matches(operand: Expression) -> Expression | None:
+        unwrapped = operand
+        while isinstance(unwrapped, Ps1ParenExpression) and unwrapped.expression is not None:
+            unwrapped = unwrapped.expression
+        if not isinstance(unwrapped, Ps1InvokeMember) or not _is_static_regex_call(unwrapped):
+            return None
+        member = unwrapped.member if isinstance(unwrapped.member, str) else None
+        if member is None or member.lower() != 'matches':
+            return None
+        matches = _compute_regex_matches(unwrapped)
+        if matches is None:
+            return None
+        return _make_string_literal(''.join(matches))
+
     def visit_Ps1UnaryExpression(self, node: Ps1UnaryExpression):
         self.generic_visit(node)
         if node.operator.lower() != '-join' or node.operand is None:
             return None
-        # -Join on a scalar string is a no-op in PowerShell.
         scalar = _string_value(node.operand)
         if scalar is not None:
             return _make_string_literal(scalar)
+        result = self._try_join_regex_matches(node.operand)
+        if result is not None:
+            return result
         array = _unwrap_to_array_literal(node.operand)
         if array is None:
             return None
@@ -384,69 +589,29 @@ class Ps1ConstantFolding(Transformer):
                     args = _collect_string_arguments(array)
                     if args is not None:
                         return _make_string_literal(separator.join(args))
+        if member_name is not None and member_name.lower() == 'substring':
+            obj_str = _string_value(node.object) if node.object else None
+            if obj_str is not None:
+                if len(node.arguments) == 1:
+                    start = node.arguments[0]
+                    if isinstance(start, Ps1IntegerLiteral) and 0 <= start.value <= len(obj_str):
+                        return _make_string_literal(obj_str[start.value:])
+                if len(node.arguments) == 2:
+                    start = node.arguments[0]
+                    length = node.arguments[1]
+                    if (
+                        isinstance(start, Ps1IntegerLiteral)
+                        and isinstance(length, Ps1IntegerLiteral)
+                        and 0 <= start.value
+                        and start.value + length.value <= len(obj_str)
+                    ):
+                        return _make_string_literal(
+                            obj_str[start.value:start.value + length.value])
         if _is_static_regex_call(node) and member_name is not None:
             lower_member = member_name.lower()
-            if lower_member == 'matches':
-                return self._handle_regex_matches(node)
-            if lower_member == 'match':
-                return self._handle_regex_match(node)
             if lower_member == 'replace':
                 return self._handle_regex_replace(node)
         return None
-
-    def _handle_regex_matches(self, node: Ps1InvokeMember) -> Expression | None:
-        if len(node.arguments) not in (2, 3):
-            return None
-        input_str = _string_value(node.arguments[0])
-        pattern_str = _string_value(node.arguments[1])
-        if input_str is None or pattern_str is None:
-            return None
-        flags = 0
-        right_to_left = False
-        if len(node.arguments) == 3:
-            opts = _parse_regex_options(node.arguments[2])
-            if opts is None:
-                return None
-            flags, right_to_left = opts
-        try:
-            if right_to_left:
-                matches = [
-                    m.group(0)[::-1]
-                    for m in re.finditer(pattern_str, input_str[::-1], flags)
-                ]
-            else:
-                matches = [m.group(0) for m in re.finditer(pattern_str, input_str, flags)]
-        except re.error:
-            return None
-        elements: list[Expression] = [_make_string_literal(s) for s in matches]
-        return Ps1ArrayLiteral(elements=elements)
-
-    def _handle_regex_match(self, node: Ps1InvokeMember) -> Expression | None:
-        if len(node.arguments) not in (2, 3):
-            return None
-        input_str = _string_value(node.arguments[0])
-        pattern_str = _string_value(node.arguments[1])
-        if input_str is None or pattern_str is None:
-            return None
-        flags = 0
-        right_to_left = False
-        if len(node.arguments) == 3:
-            opts = _parse_regex_options(node.arguments[2])
-            if opts is None:
-                return None
-            flags, right_to_left = opts
-        try:
-            if right_to_left:
-                m = re.search(pattern_str, input_str[::-1], flags)
-                if m is not None:
-                    return _make_string_literal(m.group(0)[::-1])
-            else:
-                m = re.search(pattern_str, input_str, flags)
-                if m is not None:
-                    return _make_string_literal(m.group(0))
-        except re.error:
-            return None
-        return _make_string_literal('')
 
     def _handle_regex_replace(self, node: Ps1InvokeMember) -> Expression | None:
         if len(node.arguments) not in (3, 4):

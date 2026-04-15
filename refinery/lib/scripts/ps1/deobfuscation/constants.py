@@ -305,11 +305,17 @@ def _clone_constant(node: Node) -> Expression:
         if node.name.lower() in ('null', 'true', 'false'):
             return Ps1Variable(name=node.name)
     if isinstance(node, Ps1ArrayLiteral):
-        return Ps1ArrayLiteral(elements=[_clone_constant(e) for e in node.elements])
+        cloned = Ps1ArrayLiteral(elements=[_clone_constant(e) for e in node.elements])
+        if len(cloned.elements) > 1:
+            return Ps1ParenExpression(expression=cloned)
+        return cloned
     if isinstance(node, Ps1ArrayExpression):
         inner = _unwrap_array_expression(node)
         if inner is not None:
-            return Ps1ArrayLiteral(elements=[_clone_constant(e) for e in inner.elements])
+            cloned = Ps1ArrayLiteral(elements=[_clone_constant(e) for e in inner.elements])
+            if len(cloned.elements) > 1:
+                return Ps1ParenExpression(expression=cloned)
+            return cloned
     raise TypeError(F'cannot clone {type(node).__name__}')
 
 
@@ -499,6 +505,10 @@ class Ps1ConstantInlining(Transformer):
             use_count -= len(assign_nodes)
             if use_count > 1 and isinstance(const_value, (Ps1StringLiteral, Ps1HereString)):
                 if len(const_value.raw) > self.max_inline_length:
+                    remaining[key] = use_count
+            elif use_count > 1:
+                array = _get_array_literal(const_value)
+                if array is not None and len(array.elements) > self.max_inline_length:
                     remaining[key] = use_count
 
         assign_node_ids: set[int] = set()
