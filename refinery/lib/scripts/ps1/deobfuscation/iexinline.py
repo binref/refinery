@@ -38,6 +38,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1Pipeline,
     Ps1PipelineElement,
     Ps1StringLiteral,
+    Ps1SubExpression,
     Ps1TypeExpression,
     Ps1Variable,
 )
@@ -194,6 +195,13 @@ def _try_evaluate(
 
     if isinstance(expr, Ps1ParenExpression) and expr.expression is not None:
         return _try_evaluate(expr.expression, bindings)
+
+    if isinstance(expr, Ps1SubExpression):
+        if len(expr.body) == 1:
+            stmt = expr.body[0]
+            if isinstance(stmt, Ps1ExpressionStatement) and stmt.expression is not None:
+                return _try_evaluate(stmt.expression, bindings)
+        return None
 
     if isinstance(expr, Ps1Variable):
         if bindings and expr.name.lower() in bindings:
