@@ -3,6 +3,7 @@ Evaluate user-defined PowerShell functions called with constant arguments.
 """
 from __future__ import annotations
 
+import base64
 import re
 
 from typing import TYPE_CHECKING, Union
@@ -685,6 +686,13 @@ class _Ps1Interpreter:
                 return chr(self._to_int(args[0]))
             if method == 'tostring' and len(args) == 1:
                 return self._to_str(args[0])
+            if method == 'frombase64string' and len(args) == 1:
+                return list(base64.b64decode(self._to_str(args[0])))
+            if method == 'tobase64string' and len(args) == 1:
+                value = args[0]
+                if not isinstance(value, list):
+                    raise _Ps1InterpreterError
+                return base64.b64encode(bytearray(int(b) for b in value)).decode('ascii')
         except (ValueError, OverflowError, TypeError):
             raise _Ps1InterpreterError
         raise _Ps1InterpreterError

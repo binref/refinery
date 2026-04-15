@@ -943,6 +943,22 @@ class TestPs1FunctionEvaluator(TestPs1):
         self.assertIn('Hello', result)
         self.assertNotIn('function', result.lower())
 
+    def test_base64_xor_decode_function(self):
+        data = (
+            "Function F ([String]$s, [Byte]$k) {\n"
+            "$a = [System.Convert]::FromBase64String($s)\n"
+            "For ($i = 0; $i -lt $a.Length; $i++) {\n"
+            "$a[$i] = $a[$i] -bxor $k\n"
+            "}\n"
+            "return [System.Text.Encoding]::ASCII.GetString($a)\n"
+            "}\n"
+            "$x = F 'aEVMTE8=' 0x20\n"
+            "Write-Output $x\n"
+        )
+        result = self._deobfuscate(data)
+        self.assertIn('Hello', result)
+        self.assertNotIn('function', result.lower())
+
 
 class TestPs1IexInlining(TestPs1):
 
