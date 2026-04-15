@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import copy
 
-from typing import TYPE_CHECKING, Union, Optional
+from typing import TYPE_CHECKING, Optional, Union
 
 if TYPE_CHECKING:
     from typing import TypeAlias

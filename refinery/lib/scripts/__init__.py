@@ -9,7 +9,7 @@ import enum
 import typing
 
 from dataclasses import dataclass, field
-from typing import Generator, Callable
+from typing import Callable, Generator
 
 from refinery.lib.annotations import get_type_hints as _get_type_hints
 

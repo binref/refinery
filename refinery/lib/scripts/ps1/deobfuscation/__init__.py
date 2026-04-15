@@ -5,7 +5,10 @@ from __future__ import annotations
 
 from refinery.lib.scripts.pipeline import DeobfuscationPipeline, TransformerGroup
 from refinery.lib.scripts.ps1.deobfuscation.aliases import Ps1AliasInlining
-from refinery.lib.scripts.ps1.deobfuscation.constants import Ps1ConstantInlining, Ps1NullVariableInlining
+from refinery.lib.scripts.ps1.deobfuscation.constants import (
+    Ps1ConstantInlining,
+    Ps1NullVariableInlining,
+)
 from refinery.lib.scripts.ps1.deobfuscation.deadcode import Ps1DeadCodeElimination
 from refinery.lib.scripts.ps1.deobfuscation.emulator import Ps1ForEachPipeline, Ps1FunctionEvaluator
 from refinery.lib.scripts.ps1.deobfuscation.expandable import Ps1ExpandableStringHoist

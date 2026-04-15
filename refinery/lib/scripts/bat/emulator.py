@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import itertools
 import ntpath
+import operator
 import re
 import uuid
-import operator
 
 from dataclasses import dataclass, field, fields
 from enum import Enum

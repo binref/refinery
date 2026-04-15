@@ -3,12 +3,22 @@ from __future__ import annotations
 import dataclasses
 import io
 import struct
+
 from typing import Callable
 
 from refinery.lib.nsis.archive import (
-    NSArchive, NSHeader, NSHeaderFlags, NSMethod, NSScriptFlags,
-    NSScriptInstruction, NSScriptExtendedInstruction, NSSection,
-    NSSectionFlags, NSType, Op, OP_PARAMETER_COUNT,
+    OP_PARAMETER_COUNT,
+    NSArchive,
+    NSHeader,
+    NSHeaderFlags,
+    NSMethod,
+    NSScriptExtendedInstruction,
+    NSScriptFlags,
+    NSScriptInstruction,
+    NSSection,
+    NSSectionFlags,
+    NSType,
+    Op,
 )
 
 PAGE_LICENSE = 0
@@ -1923,7 +1933,12 @@ def emit_commands(
     recover If/Else constructs with indentation.
     """
     from refinery.lib.nsis.controlflow import (
-        build_cfg, eliminate_dead_code, linearize, reduce_if_else, reduce_loops, render_node,
+        build_cfg,
+        eliminate_dead_code,
+        linearize,
+        reduce_if_else,
+        reduce_loops,
+        render_node,
     )
 
     labels = label_info.labels

@@ -8,6 +8,7 @@ pattern-based structural analysis to recover high-level control flow constructs
 from __future__ import annotations
 
 import enum
+
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -871,7 +872,9 @@ def render_node(
     to raw Goto+label output.
     """
     from refinery.lib.nsis.decompiler import (
-        render_opcode, _add_goto_var, CMD_REF_Goto,
+        CMD_REF_Goto,
+        _add_goto_var,
+        render_opcode,
     )
 
     if isinstance(node, BlockNode):

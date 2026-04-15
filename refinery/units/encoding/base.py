@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import base64 as b64mod
 
-from refinery.units.encoding.bigint import _DEFAULT_ALPHABET, _DEFAULT_ALPH_STR, _LARGER_ALPHABETS
 from refinery.lib.types import Param, isq
 from refinery.units import Arg, Unit
+from refinery.units.encoding.bigint import _DEFAULT_ALPH_STR, _DEFAULT_ALPHABET, _LARGER_ALPHABETS
 
 
 def _block_params(base: int) -> tuple[int, int]:

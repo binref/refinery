@@ -16,6 +16,7 @@ from refinery.units import Arg, Unit
 
 if typing.TYPE_CHECKING:
     from io import TextIOBase
+
     from pygments.token import _TokenType as TokenType
 
 

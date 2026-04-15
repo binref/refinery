@@ -5,7 +5,6 @@ import re
 
 from refinery.lib.id import buffer_contains
 from refinery.lib.nsis.archive import NSArchive
-from refinery.lib.nsis.decompiler import NSDisassembler
 from refinery.units.formats.archive import ArchiveUnit
 
 

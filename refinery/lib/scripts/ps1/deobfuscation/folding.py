@@ -6,6 +6,7 @@ from __future__ import annotations
 import base64
 import codecs
 import re
+
 from collections.abc import Iterator
 
 from refinery.lib.scripts import Node, Transformer
@@ -20,6 +21,10 @@ from refinery.lib.scripts.ps1.deobfuscation._helpers import (
     _make_string_literal,
     _string_value,
     _unwrap_paren_to_array,
+)
+from refinery.lib.scripts.ps1.deobfuscation.typenames import (
+    is_known_member,
+    resolve_member_type,
 )
 from refinery.lib.scripts.ps1.model import (
     Expression,
@@ -44,12 +49,6 @@ from refinery.lib.scripts.ps1.model import (
     Ps1UnaryExpression,
     Ps1Variable,
 )
-
-from refinery.lib.scripts.ps1.deobfuscation.typenames import (
-    is_known_member,
-    resolve_member_type,
-)
-
 
 _SYSTEM_CONVERT_NAMES = frozenset({
     'system.convert',
