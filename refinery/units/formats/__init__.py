@@ -88,11 +88,11 @@ class PathPattern:
 
 class PathExtractorUnit(Unit, abstract=True):
     """
-    This unit is a path extractor which extracts data from a hierarchical structure. Each extracted
-    item is emitted as a separate chunk and has attached to it a meta variable that contains its
-    path within the source structure. The positional arguments to the command are patterns that can
-    be used to filter the extracted items by their path. To view only the paths of all chunks, use
-    the listing switch:
+    This unit extracts items with an associated virtual path from a container. Each extracted item
+    is emitted as a separate chunk and has attached to it a meta variable that contains its path
+    within the container format. The positional arguments to the command are patterns that can be
+    used to filter the extracted items by their path. To view only the paths of all chunks, use the
+    listing switch:
 
         emit something | <this> --list
 
@@ -100,18 +100,19 @@ class PathExtractorUnit(Unit, abstract=True):
     to properly process. In order to dump all extracted data to disk, the following pipeline can be
     used:
 
-        emit something | <this> [| d2p ]
+        emit something | <this> [| dump extracted/{path} ]
 
-    If you using <this> to unpack a file on disk, the following pattern can be useful:
+    The value `{path}` is a placeholder which is substituted by the virtual path of the extracted
+    item. When using <this> to unpack a file on disk, the following pattern can be useful:
 
-        ef pack.foo [| <this> -j | d2p ]
+        ef pack.bin [| <this> -j | d2p ]
 
     The unit `refinery.ef` is also a path extractor. By specifying `-j` (or `--join`), the paths of
-    extracted items are combined. The `refinery.d2p` unit will deconflict these with the local file
-    system. For example, if `pack.foo` contains items `one.txt` and `two.txt`, the following local
-    file tree would be the result:
+    extracted items are combined. Here, `refinery.d2p` is a shortcut for `dump {path}`. It
+    deconflicts the joined paths with the local file system: If `pack.bin` contains items `one.txt`
+    and `two.txt`, the following local file tree would be the result:
 
-        pack.foo
+        pack.bin
         pack/one.txt
         pack/two.txt
 

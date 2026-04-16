@@ -22,7 +22,7 @@ def convert_msi_name(name: str):
 
 class xtdoc(PathExtractorUnit):
     """
-    Extract files from an OLE document such as a Microsoft Word DOCX file.
+    Extract embedded files from an OLE document such as a Microsoft Word DOCX file.
     """
 
     def unpack(self, data: buf):

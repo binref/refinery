@@ -135,14 +135,14 @@ class MSIStringData:
             return string.decode('latin1')
 
 
-class xtmsi(xtdoc):
+class xtmsi(xtdoc, docs=(
+    'Extract files and metadata from Microsoft Installer (MSI) archives.'
+    '{p}{PathExtractorUnit}{p}{0}'
+)):
     """
-    Extract files and metadata from Microsoft Installer (MSI) archives.
-
-    The synthetic file {FN} contains parsed MSI table information, similar to the output of
-    the Orca tool. Binary streams are placed in a virtual folder called "Binary", and
-    extracted scripts from custom actions are separately extracted in a virtual folder named
-    "Action".
+    The synthetic file %s contains parsed MSI table information, similar to the output of the Orca
+    tool. Binary streams are placed in a virtual folder called "Binary", and extracted scripts from
+    custom actions are separately extracted in a virtual folder named "Action".
     """
 
     _SYNTHETIC_STREAMS_FILENAME = 'MsiTables.json'
@@ -468,4 +468,4 @@ class xtmsi(xtdoc):
 
 
 if _d := xtmsi.__doc__:
-    xtmsi.__doc__ = _d.format(FN=xtmsi._SYNTHETIC_STREAMS_FILENAME)
+    xtmsi.__doc__ = _d % xtmsi._SYNTHETIC_STREAMS_FILENAME
