@@ -110,7 +110,14 @@ class Ps1Simplifications(Transformer):
             stmt = node.body[0]
             if isinstance(stmt, Ps1ExpressionStatement):
                 inner = stmt.expression
-                if isinstance(inner, (Ps1Variable, Ps1StringLiteral, Ps1IntegerLiteral, Ps1RealLiteral)):
+                if isinstance(inner, (
+                    Ps1Variable,
+                    Ps1StringLiteral,
+                    Ps1IntegerLiteral,
+                    Ps1RealLiteral,
+                    Ps1TypeExpression,
+                    Ps1CastExpression,
+                )):
                     return inner
         return None
 
