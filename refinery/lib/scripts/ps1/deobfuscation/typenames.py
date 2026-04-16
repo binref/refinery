@@ -4386,9 +4386,11 @@ _PROPERTY_TYPES: dict[tuple[str, str], str] = {
     ('system.management.automation.providerintrinsics', 'content'): 'system.management.automation.contentcmdletproviderintrinsics',
     ('system.management.automation.providerintrinsics', 'item'): 'system.management.automation.itemcmdletproviderintrinsics',
     ('system.management.automation.providerintrinsics', 'property'): 'system.management.automation.propertycmdletproviderintrinsics',
-    ('system.management.automation.providerintrinsics', 'securitydescriptor'): 'system.management.automation.securitydescriptorcmdletproviderintrinsics',
+    ('system.management.automation.providerintrinsics', 'securitydescriptor'):
+        'system.management.automation.securitydescriptorcmdletproviderintrinsics',
     ('system.management.automation.pscredential', 'empty'): 'system.management.automation.pscredential',
-    ('system.management.automation.pscredential', 'getsymmetricencryptionkeydelegate'): 'system.management.automation.getsymmetricencryptionkey',
+    ('system.management.automation.pscredential', 'getsymmetricencryptionkeydelegate'):
+        'system.management.automation.getsymmetricencryptionkey',
     ('system.management.automation.pscredential', 'password'): 'system.security.securestring',
     ('system.management.automation.pscredential', 'username'): 'system.string',
     ('system.management.automation.psvariable', 'attributes'): 'system.collections.objectmodel.collection',
@@ -4844,21 +4846,25 @@ _PROPERTY_TYPES: dict[tuple[str, str], str] = {
     ('system.security.cryptography.tripledescryptoserviceprovider', 'mode'): 'system.security.cryptography.ciphermode',
     ('system.security.cryptography.tripledescryptoserviceprovider', 'padding'): 'system.security.cryptography.paddingmode',
     ('system.security.cryptography.x509certificates.x509certificate2', 'archived'): 'system.boolean',
-    ('system.security.cryptography.x509certificates.x509certificate2', 'extensions'): 'system.security.cryptography.x509certificates.x509extensioncollection',
+    ('system.security.cryptography.x509certificates.x509certificate2', 'extensions'):
+        'system.security.cryptography.x509certificates.x509extensioncollection',
     ('system.security.cryptography.x509certificates.x509certificate2', 'friendlyname'): 'system.string',
     ('system.security.cryptography.x509certificates.x509certificate2', 'handle'): 'system.intptr',
     ('system.security.cryptography.x509certificates.x509certificate2', 'hasprivatekey'): 'system.boolean',
     ('system.security.cryptography.x509certificates.x509certificate2', 'issuer'): 'system.string',
-    ('system.security.cryptography.x509certificates.x509certificate2', 'issuername'): 'system.security.cryptography.x509certificates.x500distinguishedname',
+    ('system.security.cryptography.x509certificates.x509certificate2', 'issuername'):
+        'system.security.cryptography.x509certificates.x500distinguishedname',
     ('system.security.cryptography.x509certificates.x509certificate2', 'notafter'): 'system.datetime',
     ('system.security.cryptography.x509certificates.x509certificate2', 'notbefore'): 'system.datetime',
     ('system.security.cryptography.x509certificates.x509certificate2', 'privatekey'): 'system.security.cryptography.asymmetricalgorithm',
-    ('system.security.cryptography.x509certificates.x509certificate2', 'publickey'): 'system.security.cryptography.x509certificates.publickey',
+    ('system.security.cryptography.x509certificates.x509certificate2', 'publickey'):
+        'system.security.cryptography.x509certificates.publickey',
     ('system.security.cryptography.x509certificates.x509certificate2', 'rawdata'): 'system.byte',
     ('system.security.cryptography.x509certificates.x509certificate2', 'serialnumber'): 'system.string',
     ('system.security.cryptography.x509certificates.x509certificate2', 'signaturealgorithm'): 'system.security.cryptography.oid',
     ('system.security.cryptography.x509certificates.x509certificate2', 'subject'): 'system.string',
-    ('system.security.cryptography.x509certificates.x509certificate2', 'subjectname'): 'system.security.cryptography.x509certificates.x500distinguishedname',
+    ('system.security.cryptography.x509certificates.x509certificate2', 'subjectname'):
+        'system.security.cryptography.x509certificates.x500distinguishedname',
     ('system.security.cryptography.x509certificates.x509certificate2', 'thumbprint'): 'system.string',
     ('system.security.cryptography.x509certificates.x509certificate2', 'version'): 'system.int32',
     ('system.security.principal.windowsidentity', 'accesstoken'): 'microsoft.win32.safehandles.safeaccesstokenhandle',

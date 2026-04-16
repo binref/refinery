@@ -171,24 +171,13 @@ _EXEC_FLAGS = (
 )
 
 _FLAG_VALUE_NAMES: dict[int, dict[int, str]] = {
-    0:  {0: 'false', 1: 'true'},                               # AutoClose
-    1:  {0: 'current', 1: 'all'},                               # ShellVarContext
-    4:  {0: 'false', 1: 'true'},                                # RebootFlag
-    8:  {0: 'normal', 1: 'silent'},                              # Silent
-    12: {0: '32', 256: '64'},                                    # RegView
-    13: {0: 'both', 2: 'textonly', 4: 'listonly', 6: 'none'},   # DetailsPrint
+    0 : {0: 'false', 1: 'true'},                              # AutoClose
+    1 : {0: 'current', 1: 'all'},                             # ShellVarContext
+    4 : {0: 'false', 1: 'true'},                              # RebootFlag
+    8 : {0: 'normal', 1: 'silent'},                           # Silent
+    12: {0: '32', 256: '64'},                                 # RegView
+    13: {0: 'both', 2: 'textonly', 4: 'listonly', 6: 'none'}, # DetailsPrint
 }
-
-
-def _decode_flag_value(flag_id: int, s: str) -> str | None:
-    table = _FLAG_VALUE_NAMES.get(flag_id)
-    if table is None:
-        return None
-    try:
-        v = int(s, 0)
-    except (ValueError, TypeError):
-        return None
-    return table.get(v)
 
 _SECTION_VARS = (
     'Text',
@@ -237,6 +226,17 @@ _POST_STRINGS = (
     'uninstcmd',
     'wininit',
 )
+
+
+def _decode_flag_value(flag_id: int, s: str) -> str | None:
+    table = _FLAG_VALUE_NAMES.get(flag_id)
+    if table is None:
+        return None
+    try:
+        v = int(s, 0)
+    except (ValueError, TypeError):
+        return None
+    return table.get(v)
 
 
 def decode_messagebox(param: int) -> str:
@@ -371,7 +371,6 @@ def decode_shortcut_hotkey(spec: int) -> str:
     else:
         parts.append(F'Char_{key}')
     return '|'.join(parts)
-
 
 
 class NSScriptWriter:
@@ -2106,13 +2105,13 @@ def emit_commands(
 
 
 _GOTO_MASKS: dict[Op, int] = {
-    Op.Nop:          1 << 0,
-    Op.IfFileExists: 3 << 1,
-    Op.IfFlag:       3 << 0,
-    Op.MessageBox:   5 << 3,
-    Op.StrCmp:       3 << 2,
-    Op.IntCmp:       7 << 2,
-    Op.IsWindow:     3 << 1,
+    Op.Nop           : 1 << 0,
+    Op.IfFileExists  : 3 << 1,
+    Op.IfFlag        : 3 << 0,
+    Op.MessageBox    : 5 << 3,
+    Op.StrCmp        : 3 << 2,
+    Op.IntCmp        : 7 << 2,
+    Op.IsWindow      : 3 << 1,
 }
 
 
