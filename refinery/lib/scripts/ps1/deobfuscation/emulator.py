@@ -9,6 +9,7 @@ import re
 from typing import TYPE_CHECKING, Union
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
     from typing import TypeAlias
 
 from refinery.lib.scripts import Block, Transformer
@@ -1361,4 +1362,21 @@ class Ps1ForEachPipeline(Transformer):
                 return _make_string_literal(''.join(parts))
             except (ValueError, OverflowError):
                 pass
+        return None
+
+
+def evaluate_truthy(
+    condition: Expression,
+    bindings: Mapping[str, int | float | str | bool | None],
+) -> bool | None:
+    """
+    Evaluate a PS1 condition with the given variable bindings and return its truthiness. Returns
+    None if the expression cannot be evaluated.
+    """
+    try:
+        interp = _Ps1Interpreter(max_iterations=100)
+        interp._env = dict(bindings)
+        value = interp._eval(condition)
+        return _Ps1Interpreter._truthy(value)
+    except _Ps1InterpreterError:
         return None

@@ -18,6 +18,7 @@ from refinery.lib.scripts.ps1.deobfuscation.securestring import Ps1SecureStringD
 from refinery.lib.scripts.ps1.deobfuscation.simplify import Ps1Simplifications
 from refinery.lib.scripts.ps1.deobfuscation.typecast import Ps1TypeCasts
 from refinery.lib.scripts.ps1.deobfuscation.typenames import Ps1TypeSystemSimplifications
+from refinery.lib.scripts.ps1.deobfuscation.unflatten import Ps1ControlFlowDeflattening
 from refinery.lib.scripts.ps1.deobfuscation.wildcards import Ps1WildcardResolution
 from refinery.lib.scripts.ps1.model import Ps1Script
 
@@ -34,6 +35,7 @@ _pipeline = DeobfuscationPipeline(
             'fold',
             Ps1ConstantFolding,
             Ps1DeadCodeElimination,
+            Ps1ControlFlowDeflattening,
             Ps1ConstantInlining,
             Ps1ExpandableStringHoist,
             Ps1TypeCasts,
