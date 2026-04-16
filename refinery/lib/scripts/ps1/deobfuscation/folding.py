@@ -454,6 +454,12 @@ class Ps1ConstantFolding(Transformer):
             return result
         array = _unwrap_to_array_literal(node.operand)
         if array is None:
+            if isinstance(node.operand, Ps1ArrayExpression) and len(node.operand.body) == 1:
+                stmt = node.operand.body[0]
+                if isinstance(stmt, Ps1ExpressionStatement):
+                    sv = _string_value(stmt.expression) if stmt.expression else None
+                    if sv is not None:
+                        return _make_string_literal(sv)
             return None
         args = _collect_string_arguments(array)
         if args is None:
@@ -636,20 +642,29 @@ class Ps1ConstantFolding(Transformer):
             and isinstance(node.object, Ps1TypeExpression)
             and node.object.name.lower().replace(' ', '') in _STRING_TYPE_NAMES
             and member_name is not None
-            and member_name.lower() == 'join'
-            and len(node.arguments) == 2
         ):
-            separator = _string_value(node.arguments[0])
-            if separator is not None:
-                second = node.arguments[1]
-                scalar = _string_value(second)
-                if scalar is not None:
-                    return _make_string_literal(scalar)
-                array = _unwrap_to_array_literal(second)
-                if array is not None:
-                    args = _collect_string_arguments(array)
-                    if args is not None:
-                        return _make_string_literal(separator.join(args))
+            lower_member = member_name.lower()
+            if lower_member == 'concat' and len(node.arguments) >= 1:
+                parts: list[str] = []
+                for arg in node.arguments:
+                    sv = _string_value(arg)
+                    if sv is None:
+                        break
+                    parts.append(sv)
+                else:
+                    return _make_string_literal(''.join(parts))
+            if lower_member == 'join' and len(node.arguments) == 2:
+                separator = _string_value(node.arguments[0])
+                if separator is not None:
+                    second = node.arguments[1]
+                    scalar = _string_value(second)
+                    if scalar is not None:
+                        return _make_string_literal(scalar)
+                    array = _unwrap_to_array_literal(second)
+                    if array is not None:
+                        args = _collect_string_arguments(array)
+                        if args is not None:
+                            return _make_string_literal(separator.join(args))
         if member_name is not None and member_name.lower() == 'substring':
             obj_str = _string_value(node.object) if node.object else None
             if obj_str is not None:
@@ -668,6 +683,30 @@ class Ps1ConstantFolding(Transformer):
                     ):
                         return _make_string_literal(
                             obj_str[start.value:start.value + length.value])
+        if member_name is not None and member_name.lower() == 'insert':
+            if len(node.arguments) == 2:
+                obj_str = _string_value(node.object) if node.object else None
+                if obj_str is not None and isinstance(node.arguments[0], Ps1IntegerLiteral):
+                    idx = node.arguments[0].value
+                    val = _string_value(node.arguments[1])
+                    if val is not None and 0 <= idx <= len(obj_str):
+                        return _make_string_literal(obj_str[:idx] + val + obj_str[idx:])
+        if member_name is not None and member_name.lower() == 'remove':
+            obj_str = _string_value(node.object) if node.object else None
+            if obj_str is not None:
+                if len(node.arguments) == 1 and isinstance(node.arguments[0], Ps1IntegerLiteral):
+                    idx = node.arguments[0].value
+                    if 0 <= idx <= len(obj_str):
+                        return _make_string_literal(obj_str[:idx])
+                if (
+                    len(node.arguments) == 2
+                    and isinstance(node.arguments[0], Ps1IntegerLiteral)
+                    and isinstance(node.arguments[1], Ps1IntegerLiteral)
+                ):
+                    idx = node.arguments[0].value
+                    count = node.arguments[1].value
+                    if 0 <= idx and idx + count <= len(obj_str):
+                        return _make_string_literal(obj_str[:idx] + obj_str[idx + count:])
         if _is_static_regex_call(node) and member_name is not None:
             lower_member = member_name.lower()
             if lower_member == 'replace':

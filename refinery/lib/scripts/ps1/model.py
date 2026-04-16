@@ -264,7 +264,7 @@ class Ps1CallExpression(Expression):
 class Ps1AssignmentExpression(Expression):
     target: Expression | None = None
     operator: str = '='
-    value: Expression | None = None
+    value: Node | None = None
 
     def __post_init__(self):
         self._adopt(self.target, self.value)

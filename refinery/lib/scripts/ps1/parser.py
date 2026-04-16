@@ -177,6 +177,16 @@ _VARIABLE_FRAG = re.compile(
     re.IGNORECASE,
 )
 
+_ASSIGNMENT_RHS_STATEMENT_KINDS = frozenset({
+    Ps1TokenKind.IF,
+    Ps1TokenKind.WHILE,
+    Ps1TokenKind.DO,
+    Ps1TokenKind.FOR,
+    Ps1TokenKind.FOREACH,
+    Ps1TokenKind.SWITCH,
+    Ps1TokenKind.TRY,
+})
+
 
 class Ps1Parser:
 
@@ -439,7 +449,10 @@ class Ps1Parser:
         if self._current.kind.is_assignment:
             op = self._advance()
             self._skip_newlines()
-            rhs = self._parse_pipeline_expression()
+            if self._current.kind in _ASSIGNMENT_RHS_STATEMENT_KINDS:
+                rhs = self._parse_statement()
+            else:
+                rhs = self._parse_pipeline_expression()
             expr = Ps1AssignmentExpression(
                 offset=expr.offset, target=expr, operator=op.value, value=rhs)
         return self._parse_pipeline_tail(expr)
@@ -1368,6 +1381,8 @@ class Ps1Parser:
             member = self._parse_string()
         elif self._at(Ps1TokenKind.LPAREN):
             member = self._parse_paren_expression()
+        elif self._at(Ps1TokenKind.DOLLAR_LPAREN):
+            member = self._parse_sub_expression()
         elif self._current.kind.is_keyword:
             tok = self._advance()
             member = tok.value

@@ -367,6 +367,18 @@ class TestPS1StringConcatenations(TestPs1):
         result = self._deobfuscate('"{{hello}}" -f "unused"')
         self.assertEqual(result, "'{hello}'")
 
+    def test_string_concat_static_method(self):
+        result = self._deobfuscate("[String]::Concat('a', 'b', 'c')")
+        self.assertEqual(result, "'abc'")
+
+    def test_join_single_string(self):
+        result = self._deobfuscate("-Join @('hello')")
+        self.assertEqual(result, "'hello'")
+
+    def test_replace_after_concat(self):
+        result = self._deobfuscate("$([String]::Concat('h_llo')).Replace('_', 'e')")
+        self.assertEqual(result, "'hello'")
+
 
 class TestPS1StringReplace(TestPs1):
 
@@ -523,6 +535,14 @@ class TestPS1Regressions(TestPs1):
         result = self._deobfuscate(data)
         self.assertIn('Write-Host', result)
         self.assertNotIn('myalias', result.split('\n')[-1])
+
+    def test_assignment_if_expression(self):
+        result = self._deobfuscate('$d = if ($x) { 1 } else { 2 }')
+        self.assertIn('$d = if', result)
+
+    def test_assignment_for_expression(self):
+        result = self._deobfuscate('$r = for ($i = 0; $i -LT 5; $i++) { $i }')
+        self.assertIn('$r = for', result)
 
 
 class TestPs1VariableDriveResolution(TestPs1):
@@ -1379,6 +1399,11 @@ class TestPs1SubExpressionSimplification(TestPs1):
         self.assertIn('hello there', result)
         self.assertNotIn('$(', result)
 
+    def test_subexpression_member_access(self):
+        result = self._deobfuscate('$K[$i % $K.$($p) * $f]')
+        self.assertIn('$K.$p', result)
+        self.assertNotIn('\n*\n', result)
+
     def test_chained_replace_across_subexpression(self):
         result = self._deobfuscate(
             "$('aXb'.Replace('X', 'Y')).Replace('Y', 'Z')"
@@ -1925,6 +1950,33 @@ class TestPs1SubstringFolding(TestPs1):
         self.assertIn('Substring', result)
 
 
+class TestPs1StringInsertRemoveFolding(TestPs1):
+
+    def test_string_insert(self):
+        result = self._deobfuscate("'hello'.Insert(0, 'X')")
+        self.assertEqual(result, "'Xhello'")
+
+    def test_string_insert_middle(self):
+        result = self._deobfuscate("'hello'.Insert(2, 'XY')")
+        self.assertEqual(result, "'heXYllo'")
+
+    def test_string_insert_end(self):
+        result = self._deobfuscate("'hello'.Insert(5, '!')")
+        self.assertEqual(result, "'hello!'")
+
+    def test_string_remove_one_arg(self):
+        result = self._deobfuscate("'hello'.Remove(3)")
+        self.assertEqual(result, "'hel'")
+
+    def test_string_remove_two_args(self):
+        result = self._deobfuscate("'hello'.Remove(1, 2)")
+        self.assertEqual(result, "'hlo'")
+
+    def test_string_insert_remove_chain(self):
+        result = self._deobfuscate("'abcdef'.Remove(2, 1).Insert(0, 'X')")
+        self.assertEqual(result, "'Xabdef'")
+
+
 class TestPs1LengthFolding(TestPs1):
 
     def test_string_length(self):
@@ -1982,3 +2034,4 @@ class TestPs1ControlCharStringLiteral(TestPs1):
         self.assertNotIn('\t', result)
         self.assertIn('hello', result)
         self.assertIn('world', result)
+
