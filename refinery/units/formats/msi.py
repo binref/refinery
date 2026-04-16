@@ -422,7 +422,6 @@ class xtmsi(xtdoc):
         from refinery.units.formats.csv import json_to_csv
 
         for key, jd in processed_table_data.items():
-            self.log_debug("whoop")
             sk = key.strip('_')
             if sk not in processed_table_data:
                 key = sk
