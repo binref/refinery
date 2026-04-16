@@ -18,6 +18,8 @@ from refinery.lib.scripts.ps1.deobfuscation._helpers import (
     _collect_int_arguments,
     _collect_string_arguments,
     _extract_foreach_scriptblock,
+    _get_body,
+    _is_array_reverse_call,
     _make_string_literal,
     _string_value,
     _unwrap_paren_to_array,
@@ -31,6 +33,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1AccessKind,
     Ps1ArrayExpression,
     Ps1ArrayLiteral,
+    Ps1AssignmentExpression,
     Ps1BinaryExpression,
     Ps1CommandInvocation,
     Ps1ExpandableString,
@@ -481,6 +484,65 @@ class Ps1ConstantFolding(Transformer):
                 chars.append(_make_string_literal(obj_str[idx]))
             return Ps1ArrayLiteral(elements=chars)
         return None
+
+    def visit_Ps1ExpressionStatement(self, node: Ps1ExpressionStatement):
+        self.generic_visit(node)
+        var = _is_array_reverse_call(node)
+        if var is not None and self._try_apply_array_reverse(node, var):
+            return node
+        return None
+
+    def _try_apply_array_reverse(
+        self, node: Ps1ExpressionStatement, var: Ps1Variable,
+    ) -> bool:
+        body = _get_body(node.parent)
+        if body is None:
+            return False
+        try:
+            idx = body.index(node)
+        except ValueError:
+            return False
+        var_name = var.name.lower()
+        for i in range(idx - 1, -1, -1):
+            stmt = body[i]
+            if not isinstance(stmt, Ps1ExpressionStatement):
+                continue
+            expr = stmt.expression
+            if not isinstance(expr, Ps1AssignmentExpression):
+                continue
+            if expr.operator != '=':
+                continue
+            target = expr.target
+            if not isinstance(target, Ps1Variable):
+                continue
+            if target.name.lower() != var_name:
+                continue
+            value = expr.value
+            if isinstance(value, Ps1ArrayLiteral):
+                value.elements.reverse()
+                node.expression = None
+                self.mark_changed()
+                return True
+            if isinstance(value, Ps1ArrayExpression) and len(value.body) == 1:
+                inner = value.body[0]
+                if (
+                    isinstance(inner, Ps1ExpressionStatement)
+                    and isinstance(inner.expression, Ps1ArrayLiteral)
+                ):
+                    inner.expression.elements.reverse()
+                    node.expression = None
+                    self.mark_changed()
+                    return True
+            sv = _string_value(value)
+            if sv is not None:
+                replacement = _make_string_literal(sv[::-1])
+                replacement.parent = expr
+                expr.value = replacement
+                node.expression = None
+                self.mark_changed()
+                return True
+            return False
+        return False
 
     def visit_Ps1InvokeMember(self, node: Ps1InvokeMember):
         self.generic_visit(node)

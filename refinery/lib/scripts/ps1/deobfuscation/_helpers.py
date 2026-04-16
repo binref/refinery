@@ -9,6 +9,7 @@ import re
 from refinery.lib.scripts import Block, Node
 from refinery.lib.scripts.ps1.model import (
     Expression,
+    Ps1AccessKind,
     Ps1ArrayLiteral,
     Ps1CommandArgument,
     Ps1CommandArgumentKind,
@@ -17,11 +18,14 @@ from refinery.lib.scripts.ps1.model import (
     Ps1ExpressionStatement,
     Ps1HereString,
     Ps1IntegerLiteral,
+    Ps1InvokeMember,
     Ps1ParenExpression,
     Ps1Script,
     Ps1ScriptBlock,
     Ps1StringLiteral,
     Ps1SubExpression,
+    Ps1TypeExpression,
+    Ps1Variable,
 )
 
 _KNOWN_ALIAS = {
@@ -701,7 +705,7 @@ KEYWORD_SPELLING: dict[str, str] = {
 SIMPLE_IDENTIFIER = re.compile(r'^[a-zA-Z_]\w*$')
 
 
-def _string_value(node: Expression) -> str | None:
+def _string_value(node: Expression | None) -> str | None:
     if isinstance(node, Ps1StringLiteral):
         return node.value
     if isinstance(node, Ps1HereString):
@@ -886,5 +890,32 @@ def _extract_foreach_scriptblock(expr: Expression) -> Ps1ScriptBlock | None:
             return None
         arg = arg.value
     if isinstance(arg, Ps1ScriptBlock):
+        return arg
+    return None
+
+
+_ARRAY_TYPE_NAMES = frozenset({'array', 'system.array'})
+
+
+def _is_array_reverse_call(node: Ps1ExpressionStatement) -> Ps1Variable | None:
+    """
+    If the statement is `[Array]::Reverse($var)`, return the variable node.
+    """
+    expr = node.expression
+    if not isinstance(expr, Ps1InvokeMember):
+        return None
+    if expr.access != Ps1AccessKind.STATIC:
+        return None
+    if not isinstance(expr.object, Ps1TypeExpression):
+        return None
+    if expr.object.name.lower().replace(' ', '') not in _ARRAY_TYPE_NAMES:
+        return None
+    member = expr.member if isinstance(expr.member, str) else None
+    if member is None or member.lower() != 'reverse':
+        return None
+    if len(expr.arguments) != 1:
+        return None
+    arg = expr.arguments[0]
+    if isinstance(arg, Ps1Variable):
         return arg
     return None

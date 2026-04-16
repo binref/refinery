@@ -6,6 +6,7 @@ from __future__ import annotations
 from refinery.lib.scripts import Expression, Node, Transformer
 from refinery.lib.scripts.ps1.deobfuscation._helpers import (
     _get_body,
+    _is_array_reverse_call,
     _make_string_literal,
     _replace_in_parent,
 )
@@ -190,6 +191,12 @@ def _collect_mutated_variables(root: Node) -> set[str]:
         elif isinstance(node, Ps1ParameterDeclaration):
             if isinstance(node.variable, Ps1Variable):
                 key = _candidate_key(node.variable)
+                if key is not None:
+                    mutated.add(key)
+        elif isinstance(node, Ps1ExpressionStatement):
+            rv = _is_array_reverse_call(node)
+            if rv is not None:
+                key = _candidate_key(rv)
                 if key is not None:
                     mutated.add(key)
     return mutated

@@ -176,6 +176,16 @@ class TestPs1RealWorldSmall(TestUnitBase):
         self.assertIn('CurrentThread', result)
         self.assertIn('ApartmentState', result)
 
+    def test_array_reverse(self):
+        data = (
+            b"$x = @('d','l','r','o','W',' ','o','l','l','e','H')\n"
+            b"$y = $x\n"
+            b"[Array]::Reverse($x)\n"
+            b"$msg = -Join $y\n"
+            b"Write-Output $msg\n"
+        )
+        result = data | self.load() | str
+        self.assertIn('Hello World', result)
 
 
 class TestPs1RealWorldLarge(TestUnitBase):
