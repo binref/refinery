@@ -535,6 +535,11 @@ class Ps1Lexer:
         kind = Ps1TokenKind.GENERIC_EXPAND if has_expansion else Ps1TokenKind.GENERIC_TOKEN
         return Ps1Token(kind, src[start:self.pos], start)
 
+    def _emit(self, token: Ps1Token) -> Generator[Ps1Token, Ps1LexerMode | None, None]:
+        mode_hint = yield token
+        if mode_hint is not None:
+            self.mode = mode_hint
+
     def tokenize(self) -> Generator[Ps1Token, Ps1LexerMode | None, None]:
         src = self.source
         length = len(src)
@@ -555,15 +560,11 @@ class Ps1Lexer:
 
             if c == '\r' and self.pos + 1 < length and src[self.pos + 1] == '\n':
                 self.pos += 2
-                mode_hint = yield Ps1Token(Ps1TokenKind.NEWLINE, '\r\n', start)
-                if mode_hint is not None:
-                    self.mode = mode_hint
+                yield from self._emit(Ps1Token(Ps1TokenKind.NEWLINE, '\r\n', start))
                 continue
             if c == '\n':
                 self.pos += 1
-                mode_hint = yield Ps1Token(Ps1TokenKind.NEWLINE, '\n', start)
-                if mode_hint is not None:
-                    self.mode = mode_hint
+                yield from self._emit(Ps1Token(Ps1TokenKind.NEWLINE, '\n', start))
                 continue
 
             if c2 == '<#':
@@ -577,15 +578,11 @@ class Ps1Lexer:
                 nc = src[self.pos + 1]
                 if nc in SINGLE_QUOTES:
                     text = self._read_verbatim_here_string()
-                    mode_hint = yield Ps1Token(Ps1TokenKind.HSTRING_VERBATIM, text, start)
-                    if mode_hint is not None:
-                        self.mode = mode_hint
+                    yield from self._emit(Ps1Token(Ps1TokenKind.HSTRING_VERBATIM, text, start))
                     continue
                 if nc in DOUBLE_QUOTES:
                     text = self._read_expandable_here_string()
-                    mode_hint = yield Ps1Token(Ps1TokenKind.HSTRING_EXPAND, text, start)
-                    if mode_hint is not None:
-                        self.mode = mode_hint
+                    yield from self._emit(Ps1Token(Ps1TokenKind.HSTRING_EXPAND, text, start))
                     continue
 
             if c2 in ('..', '--', '++', '::', '+=', '-=', '*=', '/=', '%=') and self.mode == Ps1LexerMode.ARGUMENT:
@@ -593,26 +590,20 @@ class Ps1Lexer:
                 if after < length and src[after] not in ' \t\r\n|&;,{}()':
                     token = self._read_generic_token()
                     if token.value:
-                        mode_hint = yield token
-                        if mode_hint is not None:
-                            self.mode = mode_hint
+                        yield from self._emit(token)
                         continue
 
             if c2 in _TWO_CHAR_OPS:
                 self.pos += 2
                 kind = _TWO_CHAR_OPS[c2]
-                mode_hint = yield Ps1Token(kind, c2, start)
-                if mode_hint is not None:
-                    self.mode = mode_hint
+                yield from self._emit(Ps1Token(kind, c2, start))
                 continue
 
             if c == ':' and self.pos + 1 < length and (src[self.pos + 1].isalpha() or src[self.pos + 1] == '_'):
                 self.pos += 1
                 while self.pos < length and (src[self.pos].isalnum() or src[self.pos] == '_'):
                     self.pos += 1
-                mode_hint = yield Ps1Token(Ps1TokenKind.LABEL, src[start:self.pos], start)
-                if mode_hint is not None:
-                    self.mode = mode_hint
+                yield from self._emit(Ps1Token(Ps1TokenKind.LABEL, src[start:self.pos], start))
                 continue
 
             if c == '$' or (c == '@' and self.pos + 1 < length and src[self.pos + 1] not in '({'):
@@ -626,31 +617,23 @@ class Ps1Lexer:
                         if fc not in _FORCE_START_NEW_TOKEN and fc not in _VARIABLE_STOPS_NO_RESCAN:
                             self.pos = start
                             token = self._read_generic_token()
-                    mode_hint = yield token
-                    if mode_hint is not None:
-                        self.mode = mode_hint
+                    yield from self._emit(token)
                     continue
 
             if c in SINGLE_QUOTES:
                 text = self._read_verbatim_string()
-                mode_hint = yield Ps1Token(Ps1TokenKind.STRING_VERBATIM, text, start)
-                if mode_hint is not None:
-                    self.mode = mode_hint
+                yield from self._emit(Ps1Token(Ps1TokenKind.STRING_VERBATIM, text, start))
                 continue
             if c in DOUBLE_QUOTES:
                 text = self._read_expandable_string()
-                mode_hint = yield Ps1Token(Ps1TokenKind.STRING_EXPAND, text, start)
-                if mode_hint is not None:
-                    self.mode = mode_hint
+                yield from self._emit(Ps1Token(Ps1TokenKind.STRING_EXPAND, text, start))
                 continue
 
             if c in '123456' and self.pos + 1 < length and src[self.pos + 1] == '>':
                 if self.mode != Ps1LexerMode.EXPRESSION:
                     redir = self._try_redirection()
                     if redir:
-                        mode_hint = yield redir
-                        if mode_hint is not None:
-                            self.mode = mode_hint
+                        yield from self._emit(redir)
                         continue
 
             if c.isdigit() or (c == '.' and self.pos + 1 < length and src[self.pos + 1].isdigit()):
@@ -663,32 +646,24 @@ class Ps1Lexer:
                         ):
                             self.pos = start
                             token = self._read_generic_token()
-                    mode_hint = yield token
-                    if mode_hint is not None:
-                        self.mode = mode_hint
+                    yield from self._emit(token)
                     continue
 
             if c in DASHES:
                 if self.mode == Ps1LexerMode.EXPRESSION:
                     op = self._try_dash_operator()
                     if op:
-                        mode_hint = yield op
-                        if mode_hint is not None:
-                            self.mode = mode_hint
+                        yield from self._emit(op)
                         continue
                 elif self.mode == Ps1LexerMode.ARGUMENT:
                     param = self._try_parameter()
                     if param:
-                        mode_hint = yield param
-                        if mode_hint is not None:
-                            self.mode = mode_hint
+                        yield from self._emit(param)
                         continue
 
             redir = self._try_redirection()
             if redir:
-                mode_hint = yield redir
-                if mode_hint is not None:
-                    self.mode = mode_hint
+                yield from self._emit(redir)
                 continue
 
             if self.mode == Ps1LexerMode.ARGUMENT:
@@ -697,26 +672,20 @@ class Ps1Lexer:
                     if nc not in ' \t\r\n|&;,{}()$' and nc not in SINGLE_QUOTES and nc not in DOUBLE_QUOTES:
                         token = self._read_generic_token()
                         if token.value:
-                            mode_hint = yield token
-                            if mode_hint is not None:
-                                self.mode = mode_hint
+                            yield from self._emit(token)
                             continue
 
             if self.mode == Ps1LexerMode.ARGUMENT and c in '*/%=!+':
                 if self.pos + 1 < length and src[self.pos + 1] not in ' \t\r\n|&;,{}()':
                     token = self._read_generic_token()
                     if token.value:
-                        mode_hint = yield token
-                        if mode_hint is not None:
-                            self.mode = mode_hint
+                        yield from self._emit(token)
                         continue
 
             if c in _ONE_CHAR_OPS or c in DASHES:
                 self.pos += 1
                 kind = _ONE_CHAR_OPS.get(c) or Ps1TokenKind.DASH
-                mode_hint = yield Ps1Token(kind, c, start)
-                if mode_hint is not None:
-                    self.mode = mode_hint
+                yield from self._emit(Ps1Token(kind, c, start))
                 continue
 
             if self.mode == Ps1LexerMode.ARGUMENT:
@@ -726,11 +695,9 @@ class Ps1Lexer:
                         word = token.value.lower()
                         kw = _KEYWORDS.get(word)
                         if kw is not None:
-                            mode_hint = yield Ps1Token(kw, token.value, token.offset)
+                            yield from self._emit(Ps1Token(kw, token.value, token.offset))
                         else:
-                            mode_hint = yield token
-                        if mode_hint is not None:
-                            self.mode = mode_hint
+                            yield from self._emit(token)
                         continue
 
             if c.isalpha() or c == '_' or c == '`':
@@ -765,22 +732,16 @@ class Ps1Lexer:
                         self.pos = start
                         token = self._read_generic_token()
                         if token.value:
-                            mode_hint = yield token
-                            if mode_hint is not None:
-                                self.mode = mode_hint
+                            yield from self._emit(token)
                             continue
                 identifier = ''.join(word)
                 if identifier:
                     kw = _KEYWORDS.get(identifier.lower())
                     if kw is not None:
-                        mode_hint = yield Ps1Token(kw, identifier, start)
+                        yield from self._emit(Ps1Token(kw, identifier, start))
                     else:
-                        mode_hint = yield Ps1Token(Ps1TokenKind.GENERIC_TOKEN, identifier, start)
-                    if mode_hint is not None:
-                        self.mode = mode_hint
+                        yield from self._emit(Ps1Token(Ps1TokenKind.GENERIC_TOKEN, identifier, start))
                     continue
 
             self.pos += 1
-            mode_hint = yield Ps1Token(Ps1TokenKind.GENERIC_TOKEN, c, start)
-            if mode_hint is not None:
-                self.mode = mode_hint
+            yield from self._emit(Ps1Token(Ps1TokenKind.GENERIC_TOKEN, c, start))
