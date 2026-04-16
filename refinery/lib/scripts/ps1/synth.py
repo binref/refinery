@@ -184,7 +184,7 @@ class Ps1Synthesizer(Visitor):
         if node.operand:
             self.visit(node.operand)
 
-    def visit_Ps1MemberAccess(self, node: Ps1MemberAccess):
+    def _emit_member_prefix(self, node: Ps1MemberAccess | Ps1InvokeMember):
         if node.object:
             self.visit(node.object)
         self._write(node.access.value)
@@ -192,6 +192,9 @@ class Ps1Synthesizer(Visitor):
             self.visit(node.member)
         else:
             self._write(str(node.member))
+
+    def visit_Ps1MemberAccess(self, node: Ps1MemberAccess):
+        self._emit_member_prefix(node)
 
     def visit_Ps1IndexExpression(self, node: Ps1IndexExpression):
         if node.object:
@@ -202,13 +205,7 @@ class Ps1Synthesizer(Visitor):
         self._write(']')
 
     def visit_Ps1InvokeMember(self, node: Ps1InvokeMember):
-        if node.object:
-            self.visit(node.object)
-        self._write(node.access.value)
-        if isinstance(node.member, Expression):
-            self.visit(node.member)
-        else:
-            self._write(str(node.member))
+        self._emit_member_prefix(node)
         self._write('(')
         for i, arg in enumerate(node.arguments):
             if i > 0:
@@ -297,39 +294,47 @@ class Ps1Synthesizer(Visitor):
             self.visit(node.expression)
         self._write(')')
 
+    def _emit_script_body(self, node: Ps1ScriptBlock | Ps1Script, *, newline_after: bool):
+        has_named = (
+            node.begin_block or node.process_block
+            or node.end_block or node.dynamicparam_block
+        )
+        if has_named:
+            for keyword, block in (
+                ('begin', node.begin_block),
+                ('process', node.process_block),
+                ('end', node.end_block),
+                ('dynamicparam', node.dynamicparam_block),
+            ):
+                if block:
+                    if not newline_after:
+                        self._newline()
+                    self._write(F'{keyword} ')
+                    self._emit_block(block)
+                    if newline_after:
+                        self._newline()
+        else:
+            if newline_after:
+                self._emit_statement_list(node.body)
+            else:
+                for stmt in node.body:
+                    self._newline()
+                    self.visit(stmt)
+
     def visit_Ps1ScriptBlock(self, node: Ps1ScriptBlock):
         self._write('{')
         self._depth += 1
         if node.param_block:
             self._newline()
             self.visit(node.param_block)
-        has_named = (
-            node.begin_block or node.process_block
+        self._emit_script_body(node, newline_after=False)
+        self._depth -= 1
+        has_content = (
+            node.body or node.param_block
+            or node.begin_block or node.process_block
             or node.end_block or node.dynamicparam_block
         )
-        if has_named:
-            if node.begin_block:
-                self._newline()
-                self._write('begin ')
-                self._emit_block(node.begin_block)
-            if node.process_block:
-                self._newline()
-                self._write('process ')
-                self._emit_block(node.process_block)
-            if node.end_block:
-                self._newline()
-                self._write('end ')
-                self._emit_block(node.end_block)
-            if node.dynamicparam_block:
-                self._newline()
-                self._write('dynamicparam ')
-                self._emit_block(node.dynamicparam_block)
-        else:
-            for stmt in node.body:
-                self._newline()
-                self.visit(stmt)
-        self._depth -= 1
-        if node.body or has_named or node.param_block:
+        if has_content:
             self._newline()
         self._write('}')
 
@@ -340,24 +345,24 @@ class Ps1Synthesizer(Visitor):
         if node.end:
             self.visit(node.end)
 
+    def _render_to_string(self, node: Node) -> str:
+        saved = self._parts
+        self._parts = io.StringIO()
+        try:
+            self.visit(node)
+            return self._parts.getvalue()
+        finally:
+            self._parts = saved
+
     def visit_Ps1Attribute(self, node: Ps1Attribute):
         self._write(F'[{node.name}')
         if node.positional_args or node.named_args:
             self._write('(')
             items: list[str] = []
             for arg in node.positional_args:
-                old_parts = self._parts
-                self._parts = io.StringIO()
-                self.visit(arg)
-                items.append(self._parts.getvalue())
-                self._parts = old_parts
+                items.append(self._render_to_string(arg))
             for key, val in node.named_args:
-                old_parts = self._parts
-                self._parts = io.StringIO()
-                self.visit(val)
-                v = self._parts.getvalue()
-                self._parts = old_parts
-                items.append(F'{key}={v}')
+                items.append(F'{key}={self._render_to_string(val)}')
             self._write(', '.join(items))
             self._write(')')
         self._write(']')
@@ -602,29 +607,7 @@ class Ps1Synthesizer(Visitor):
         if node.param_block:
             self.visit(node.param_block)
             self._newline()
-        has_named = (
-            node.begin_block or node.process_block
-            or node.end_block or node.dynamicparam_block
-        )
-        if has_named:
-            if node.begin_block:
-                self._write('begin ')
-                self._emit_block(node.begin_block)
-                self._newline()
-            if node.process_block:
-                self._write('process ')
-                self._emit_block(node.process_block)
-                self._newline()
-            if node.end_block:
-                self._write('end ')
-                self._emit_block(node.end_block)
-                self._newline()
-            if node.dynamicparam_block:
-                self._write('dynamicparam ')
-                self._emit_block(node.dynamicparam_block)
-                self._newline()
-        else:
-            self._emit_statement_list(node.body)
+        self._emit_script_body(node, newline_after=True)
 
     def visit_Block(self, node: Block):
         self._emit_block(node)

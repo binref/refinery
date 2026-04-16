@@ -1211,12 +1211,12 @@ class Ps1Parser:
         if tok.kind == Ps1TokenKind.HSTRING_VERBATIM:
             inner = self._strip_here_string(raw, "@'", "'@")
             return Ps1HereString(
-                offset=tok.offset, value=inner, raw=raw, expandable=False)
+                offset=tok.offset, value=inner, raw=raw)
         inner = self._strip_here_string(raw, '@"', '"@')
         parts = self._split_expandable_string(inner)
         if len(parts) == 1 and isinstance(parts[0], Ps1StringLiteral):
             return Ps1HereString(
-                offset=tok.offset, value=parts[0].value, raw=raw, expandable=True)
+                offset=tok.offset, value=parts[0].value, raw=raw)
         return Ps1ExpandableHereString(offset=tok.offset, parts=parts, raw=raw)
 
     @staticmethod

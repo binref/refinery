@@ -8,6 +8,7 @@ from refinery.lib.scripts.ps1.deobfuscation._helpers import (
     _KNOWN_ALIAS,
     SIMPLE_IDENTIFIER,
     _case_normalize_name,
+    _get_command_name,
     _make_string_literal,
     _string_value,
     _strip_backtick_noop,
@@ -233,7 +234,7 @@ class Ps1Simplifications(Transformer):
             if isinstance(inner, Ps1StringLiteral):
                 node.name = inner
             elif isinstance(inner, Ps1CommandInvocation):
-                cmd_name = self._get_command_name_str(inner)
+                cmd_name = _get_command_name(inner)
                 if cmd_name is not None and cmd_name.lower() in ('gcm', 'get-command'):
                     if len(inner.arguments) == 1:
                         arg = inner.arguments[0]
@@ -280,14 +281,4 @@ class Ps1Simplifications(Transformer):
                     )
                     node.invocation_operator = ''
                     self.mark_changed()
-        return None
-
-    @staticmethod
-    def _get_command_name_str(cmd: Ps1CommandInvocation) -> str | None:
-        name = cmd.name
-        if isinstance(name, Ps1StringLiteral):
-            return name.value
-        raw = getattr(name, 'raw', None)
-        if isinstance(raw, str):
-            return raw
         return None

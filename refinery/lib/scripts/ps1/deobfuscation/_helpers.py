@@ -441,8 +441,6 @@ _KNOWN_NAMES = {name.lower(): name for name in [
     'Security.Principal.WindowsPrincipal',
     'Security.SecureString',
     'ServiceProcess.ServiceController',
-    'IO.Compression.DeflateStream',
-    'IO.MemoryStream',
     'Text.ASCIIEncoding',
     'Text.Encoding',
     'Text.RegularExpressions.Regex',

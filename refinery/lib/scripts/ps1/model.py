@@ -95,7 +95,6 @@ class Ps1ExpandableString(Expression):
 class Ps1HereString(Expression):
     value: str = ''
     raw: str = ''
-    expandable: bool = False
 
     def children(self) -> Generator[Node, None, None]:
         yield from ()
