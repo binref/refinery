@@ -9,6 +9,7 @@ import re
 from refinery.lib.scripts import Block
 from refinery.lib.scripts.ps1.deobfuscation._helpers import _strip_backtick_noop
 from refinery.lib.scripts.ps1.lexer import (
+    BACKTICK_ESCAPE,
     DOUBLE_QUOTES,
     NORMALIZE_QUOTES,
     SINGLE_QUOTES,
@@ -424,6 +425,41 @@ class Ps1Parser:
 
         return self._parse_pipeline_or_assignment()
 
+    def _absorb_suffix(
+        self,
+        literal: Ps1StringLiteral,
+        separator_kind: Ps1TokenKind,
+        separator: str,
+        *,
+        check_adjacent: bool = False,
+    ) -> tuple[Ps1StringLiteral, bool]:
+        """
+        Try to absorb a `separator + identifier` sequence into `literal`. Returns the (possibly
+        extended) literal and whether anything was absorbed. When `check_adjacent` is True,
+        absorption is skipped if there is whitespace between the current literal and the separator
+        token.
+        """
+        absorbed = False
+        while self._at(separator_kind):
+            if check_adjacent and self._current.offset > literal.offset + len(literal.raw):
+                break
+            saved_pos = self._lexer.pos
+            saved_tok = self._current
+            self._advance()
+            if self._at(Ps1TokenKind.GENERIC_TOKEN) or self._current.kind.is_keyword:
+                suffix = self._advance()
+                literal = Ps1StringLiteral(
+                    offset=literal.offset,
+                    value=literal.value + separator + suffix.value,
+                    raw=literal.raw + separator + suffix.value,
+                )
+                absorbed = True
+            else:
+                self._lexer.pos = saved_pos
+                self._current = saved_tok
+                break
+        return literal, absorbed
+
     def _parse_pipeline_or_assignment(self) -> Statement | None:
         expr = self._parse_pipeline_expression()
         if expr is None:
@@ -511,43 +547,11 @@ class Ps1Parser:
         if isinstance(name_expr, Ps1StringLiteral) and not invocation_operator:
             absorbed = True
             while absorbed:
-                absorbed = False
-                while self._at(Ps1TokenKind.DOT):
-                    if self._current.offset > name_expr.offset + len(name_expr.raw):
-                        break
-                    saved_pos = self._lexer.pos
-                    saved_tok = self._current
-                    self._advance()
-                    if self._at(Ps1TokenKind.GENERIC_TOKEN) or self._current.kind.is_keyword:
-                        suffix = self._advance()
-                        name_expr = Ps1StringLiteral(
-                            offset=name_expr.offset,
-                            value=name_expr.value + '.' + suffix.value,
-                            raw=name_expr.raw + '.' + suffix.value,
-                        )
-                        absorbed = True
-                    else:
-                        self._lexer.pos = saved_pos
-                        self._current = saved_tok
-                        break
-                while self._at(Ps1TokenKind.DASH):
-                    if self._current.offset > name_expr.offset + len(name_expr.raw):
-                        break
-                    saved_pos = self._lexer.pos
-                    saved_tok = self._current
-                    self._advance()
-                    if self._at(Ps1TokenKind.GENERIC_TOKEN) or self._current.kind.is_keyword:
-                        suffix = self._advance()
-                        name_expr = Ps1StringLiteral(
-                            offset=name_expr.offset,
-                            value=name_expr.value + '-' + suffix.value,
-                            raw=name_expr.raw + '-' + suffix.value,
-                        )
-                        absorbed = True
-                    else:
-                        self._lexer.pos = saved_pos
-                        self._current = saved_tok
-                        break
+                name_expr, absorbed = self._absorb_suffix(
+                    name_expr, Ps1TokenKind.DOT, '.', check_adjacent=True)
+                name_expr, dash_absorbed = self._absorb_suffix(
+                    name_expr, Ps1TokenKind.DASH, '-', check_adjacent=True)
+                absorbed = absorbed or dash_absorbed
 
         self._lexer.mode = Ps1LexerMode.ARGUMENT
         self._rescan_current()
@@ -654,21 +658,8 @@ class Ps1Parser:
             else:
                 result = Ps1StringLiteral(
                     offset=tok.offset, value=tok.value, raw=tok.value)
-            while isinstance(result, Ps1StringLiteral) and self._at(Ps1TokenKind.DOT):
-                saved_pos = self._lexer.pos
-                saved_tok = self._current
-                self._advance()
-                if self._at(Ps1TokenKind.GENERIC_TOKEN) or self._current.kind.is_keyword:
-                    suffix = self._advance()
-                    result = Ps1StringLiteral(
-                        offset=result.offset,
-                        value=result.value + '.' + suffix.value,
-                        raw=result.raw + '.' + suffix.value,
-                    )
-                else:
-                    self._lexer.pos = saved_pos
-                    self._current = saved_tok
-                    break
+            if isinstance(result, Ps1StringLiteral):
+                result, _ = self._absorb_suffix(result, Ps1TokenKind.DOT, '.')
             return result
         self._lexer.mode = Ps1LexerMode.EXPRESSION
         if self._current.kind in _EXPRESSION_START_KINDS:
@@ -979,45 +970,8 @@ class Ps1Parser:
             if c == '$':
                 if pos + 1 < length and text[pos + 1] == '(':
                     flush_text()
-                    depth = 1
-                    start = pos
-                    pos += 2
-                    while pos < length and depth > 0:
-                        sc = text[pos]
-                        if sc in SINGLE_QUOTES:
-                            pos += 1
-                            while pos < length:
-                                if text[pos] in SINGLE_QUOTES:
-                                    pos += 1
-                                    if pos < length and text[pos] in SINGLE_QUOTES:
-                                        pos += 1
-                                        continue
-                                    break
-                                pos += 1
-                            continue
-                        if sc in DOUBLE_QUOTES:
-                            pos += 1
-                            while pos < length:
-                                if text[pos] == '`' and pos + 1 < length:
-                                    pos += 2
-                                    continue
-                                if text[pos] in DOUBLE_QUOTES:
-                                    pos += 1
-                                    if pos < length and text[pos] in DOUBLE_QUOTES:
-                                        pos += 1
-                                        continue
-                                    break
-                                pos += 1
-                            continue
-                        if sc == '(':
-                            depth += 1
-                        elif sc == ')':
-                            depth -= 1
-                        pos += 1
-                    sub_text = text[start + 2:pos - 1]
-                    sub_parser = Ps1Parser(sub_text)
-                    sub_stmts = sub_parser._parse_statement_list()
-                    parts.append(Ps1SubExpression(offset=-1, body=sub_stmts))
+                    node, pos = self._parse_embedded_subexpression(text, pos)
+                    parts.append(node)
                     continue
 
                 m = _VARIABLE_FRAG.match(text, pos)
@@ -1042,7 +996,6 @@ class Ps1Parser:
         strings), this operates on raw source text that may contain embedded single/double-quoted
         strings and backtick escapes.
         """
-        from refinery.lib.scripts.ps1.lexer import BACKTICK_ESCAPE
         parts: list[Expression] = []
         pos = 0
         length = len(text)
@@ -1093,45 +1046,8 @@ class Ps1Parser:
             if c == '$':
                 if pos + 1 < length and text[pos + 1] == '(':
                     flush_text()
-                    depth = 1
-                    start = pos
-                    pos += 2
-                    while pos < length and depth > 0:
-                        sc = text[pos]
-                        if sc in SINGLE_QUOTES:
-                            pos += 1
-                            while pos < length:
-                                if text[pos] in SINGLE_QUOTES:
-                                    pos += 1
-                                    if pos < length and text[pos] in SINGLE_QUOTES:
-                                        pos += 1
-                                        continue
-                                    break
-                                pos += 1
-                            continue
-                        if sc in DOUBLE_QUOTES:
-                            pos += 1
-                            while pos < length:
-                                if text[pos] == '`' and pos + 1 < length:
-                                    pos += 2
-                                    continue
-                                if text[pos] in DOUBLE_QUOTES:
-                                    pos += 1
-                                    if pos < length and text[pos] in DOUBLE_QUOTES:
-                                        pos += 1
-                                        continue
-                                    break
-                                pos += 1
-                            continue
-                        if sc == '(':
-                            depth += 1
-                        elif sc == ')':
-                            depth -= 1
-                        pos += 1
-                    sub_text = text[start + 2:pos - 1]
-                    sub_parser = Ps1Parser(sub_text)
-                    sub_stmts = sub_parser._parse_statement_list()
-                    parts.append(Ps1SubExpression(offset=-1, body=sub_stmts))
+                    node, pos = self._parse_embedded_subexpression(text, pos)
+                    parts.append(node)
                     continue
                 m = _VARIABLE_FRAG.match(text, pos)
                 if m:
@@ -1146,6 +1062,61 @@ class Ps1Parser:
         flush_text()
         return parts
 
+    @staticmethod
+    def _scan_subexpression_extent(text: str, pos: int) -> int:
+        """
+        Given that `'$(` occurs at `pos + 2`, skip past the matching closing parenthesis while
+        correctly handling nested parentheses and quoted strings. Returns the position immediately
+        after the last one.
+        """
+        length = len(text)
+        depth = 1
+        pos += 2
+        while pos < length and depth > 0:
+            sc = text[pos]
+            if sc in SINGLE_QUOTES:
+                pos += 1
+                while pos < length:
+                    if text[pos] in SINGLE_QUOTES:
+                        pos += 1
+                        if pos < length and text[pos] in SINGLE_QUOTES:
+                            pos += 1
+                            continue
+                        break
+                    pos += 1
+                continue
+            if sc in DOUBLE_QUOTES:
+                pos += 1
+                while pos < length:
+                    if text[pos] == '`' and pos + 1 < length:
+                        pos += 2
+                        continue
+                    if text[pos] in DOUBLE_QUOTES:
+                        pos += 1
+                        if pos < length and text[pos] in DOUBLE_QUOTES:
+                            pos += 1
+                            continue
+                        break
+                    pos += 1
+                continue
+            if sc == '(':
+                depth += 1
+            elif sc == ')':
+                depth -= 1
+            pos += 1
+        return pos
+
+    def _parse_embedded_subexpression(self, text: str, start: int) -> tuple[Ps1SubExpression, int]:
+        """
+        Parse a `$(...)` subexpression embedded in a string starting at position `start` (which
+        points at the dollar). Returns the AST node and the position after the closing parenthesis.
+        """
+        end = self._scan_subexpression_extent(text, start)
+        sub_text = text[start + 2:end - 1]
+        sub_parser = Ps1Parser(sub_text)
+        sub_stmts = sub_parser._parse_statement_list()
+        return Ps1SubExpression(offset=-1, body=sub_stmts), end
+
     def _decode_dq_escapes(self, text: str) -> str:
         result: list[str] = []
         i = 0
@@ -1154,7 +1125,6 @@ class Ps1Parser:
             c = text[i]
             if c == '`' and i + 1 < length:
                 nc = text[i + 1]
-                from refinery.lib.scripts.ps1.lexer import BACKTICK_ESCAPE
                 result.append(BACKTICK_ESCAPE.get(nc, nc))
                 i += 2
             elif c in DOUBLE_QUOTES and i + 1 < length and text[i + 1] in DOUBLE_QUOTES:
