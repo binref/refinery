@@ -3,8 +3,13 @@ Eliminate dead code from PowerShell scripts after constant folding.
 """
 from __future__ import annotations
 
-from refinery.lib.scripts import Block, Node, Statement, Transformer
-from refinery.lib.scripts.ps1.deobfuscation._helpers import _get_body
+from refinery.lib.scripts import Block, Expression, Node, Statement, Transformer
+from refinery.lib.scripts.ps1.deobfuscation._helpers import (
+    _COMPARISON_OPS,
+    _get_body,
+    _unwrap_integer,
+    _unwrap_parens,
+)
 from refinery.lib.scripts.ps1.model import (
     Ps1AssignmentExpression,
     Ps1BinaryExpression,
@@ -33,8 +38,7 @@ def _is_truthy(node) -> bool | None:
     Determine the boolean truth value of a constant expression using PowerShell
     semantics. Returns `None` for non-constant or unrecognized expressions.
     """
-    while isinstance(node, Ps1ParenExpression):
-        node = node.expression
+    node = _unwrap_parens(node) if isinstance(node, Expression) else node
     if node is None:
         return None
     if isinstance(node, Ps1Variable) and node.scope == node.scope.NONE:
@@ -53,39 +57,6 @@ def _is_truthy(node) -> bool | None:
     if isinstance(node, Ps1UnaryExpression) and node.operator == '-':
         return _is_truthy(node.operand)
     return None
-
-
-def _unwrap_integer(node) -> int | None:
-    """
-    Extract a plain integer value from a constant expression, or return None.
-    """
-    while isinstance(node, Ps1ParenExpression):
-        node = node.expression
-    if isinstance(node, Ps1IntegerLiteral):
-        return node.value
-    if (
-        isinstance(node, Ps1Variable)
-        and node.scope == Ps1ScopeModifier.NONE
-        and node.name.lower() == 'null'
-    ):
-        return 0
-    if isinstance(node, Ps1UnaryExpression) and node.operator == '-':
-        inner = node.operand
-        while isinstance(inner, Ps1ParenExpression):
-            inner = inner.expression
-        if isinstance(inner, Ps1IntegerLiteral):
-            return -inner.value
-    return None
-
-
-_COMPARISON_OPS = {
-    '-eq': int.__eq__,
-    '-ne': int.__ne__,
-    '-lt': int.__lt__,
-    '-le': int.__le__,
-    '-gt': int.__gt__,
-    '-ge': int.__ge__,
-}
 
 
 def _evaluate_for_condition(node: Ps1ForLoop) -> bool | None:
@@ -110,8 +81,8 @@ def _evaluate_for_condition(node: Ps1ForLoop) -> bool | None:
         return None
     var_name = init.target.name.lower()
     var_scope = init.target.scope
-    left_val = _resolve_side(cond.left, var_name, var_scope, init_val)
-    right_val = _resolve_side(cond.right, var_name, var_scope, init_val)
+    left_val = _resolve_side(cond.left, var_name, var_scope, init_val.value)
+    right_val = _resolve_side(cond.right, var_name, var_scope, init_val.value)
     if left_val is None or right_val is None:
         return None
     return bool(op_fn(left_val, right_val))
@@ -124,15 +95,15 @@ def _resolve_side(
     Resolve one side of a for-loop condition to an integer: if the node is the loop variable,
     return the initial value; if it is a constant integer, return that; otherwise return None.
     """
-    while isinstance(node, Ps1ParenExpression):
-        node = node.expression
+    node = _unwrap_parens(node) if isinstance(node, Expression) else node
     if (
         isinstance(node, Ps1Variable)
         and node.name.lower() == var_name
         and node.scope == var_scope
     ):
         return init_val
-    return _unwrap_integer(node)
+    result = _unwrap_integer(node)
+    return result.value if result is not None else None
 
 
 def _body_breaks_unconditionally(body: list[Statement]) -> bool:

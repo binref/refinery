@@ -11,6 +11,7 @@ from collections.abc import Iterator
 
 from refinery.lib.scripts import Node, Transformer
 from refinery.lib.scripts.ps1.deobfuscation._helpers import (
+    _COMPARISON_OPS,
     _ENCODING_MAP,
     _KNOWN_ALIAS,
     SIMPLE_IDENTIFIER,
@@ -22,7 +23,9 @@ from refinery.lib.scripts.ps1.deobfuscation._helpers import (
     _is_array_reverse_call,
     _make_string_literal,
     _string_value,
+    _unwrap_integer,
     _unwrap_paren_to_array,
+    _unwrap_parens,
 )
 from refinery.lib.scripts.ps1.deobfuscation.typenames import (
     is_known_member,
@@ -43,9 +46,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1IntegerLiteral,
     Ps1InvokeMember,
     Ps1MemberAccess,
-    Ps1ParenExpression,
     Ps1Pipeline,
-    Ps1ScopeModifier,
     Ps1ScriptBlock,
     Ps1StringLiteral,
     Ps1TypeExpression,
@@ -247,8 +248,7 @@ def _unwrap_to_array_literal(node: Expression) -> Ps1ArrayLiteral | None:
     Unwrap parentheses and array expressions to find an inner
     `Ps1ArrayLiteral`.
     """
-    while isinstance(node, Ps1ParenExpression) and node.expression is not None:
-        node = node.expression
+    node = _unwrap_parens(node)
     if isinstance(node, Ps1ArrayLiteral):
         return node
     if isinstance(node, Ps1ArrayExpression) and len(node.body) == 1:
@@ -429,9 +429,7 @@ class Ps1ConstantFolding(Transformer):
 
     @staticmethod
     def _try_join_regex_matches(operand: Expression) -> Expression | None:
-        unwrapped = operand
-        while isinstance(unwrapped, Ps1ParenExpression) and unwrapped.expression is not None:
-            unwrapped = unwrapped.expression
+        unwrapped = _unwrap_parens(operand)
         if not isinstance(unwrapped, Ps1InvokeMember) or not _is_static_regex_call(unwrapped):
             return None
         member = unwrapped.member if isinstance(unwrapped.member, str) else None
@@ -563,21 +561,49 @@ class Ps1ConstantFolding(Transformer):
             if normalized != member_name:
                 node.member = normalized
                 self.mark_changed()
-            member_name = node.member
-        if member_name is not None and member_name.lower() == 'tostring':
+            member_name = normalized
+        if member_name is None:
+            return None
+        lower = member_name.lower()
+        return (
+            self._try_fold_invoke_redirect(node, lower)
+            or self._try_fold_instance_method(node, lower)
+            or self._try_fold_static_method(node, lower)
+        ) or None
+
+    @staticmethod
+    def _try_fold_invoke_redirect(
+        node: Ps1InvokeMember, lower: str,
+    ) -> Expression | None:
+        if lower == 'invoke' and isinstance(node.object, Ps1MemberAccess):
+            return Ps1InvokeMember(
+                offset=node.offset,
+                object=node.object.object,
+                member=node.object.member,
+                arguments=node.arguments,
+                access=node.object.access,
+            )
+        return None
+
+    @staticmethod
+    def _try_fold_instance_method(
+        node: Ps1InvokeMember, lower: str,
+    ) -> Expression | None:
+        if lower == 'tostring':
             if len(node.arguments) == 0:
                 obj_str = _string_value(node.object) if node.object else None
                 if obj_str is not None:
                     return _make_string_literal(obj_str)
-        if member_name is not None and member_name.lower() == 'replace':
+            return None
+        if lower == 'replace':
             if len(node.arguments) == 2:
                 obj_str = _string_value(node.object) if node.object else None
                 needle_str = _string_value(node.arguments[0])
                 insert_str = _string_value(node.arguments[1])
                 if obj_str is not None and needle_str is not None and insert_str is not None:
-                    result = obj_str.replace(needle_str, insert_str)
-                    return _make_string_literal(result)
-        if member_name is not None and member_name.lower() == 'split':
+                    return _make_string_literal(obj_str.replace(needle_str, insert_str))
+            return None
+        if lower == 'split':
             if len(node.arguments) == 1:
                 obj_str = _string_value(node.object) if node.object else None
                 sep_str = _string_value(node.arguments[0])
@@ -586,31 +612,69 @@ class Ps1ConstantFolding(Transformer):
                     parts = re.split(pattern, obj_str)
                     elements: list[Expression] = [_make_string_literal(p) for p in parts]
                     return Ps1ArrayLiteral(elements=elements)
-        if member_name is not None and member_name.lower() == 'invoke':
-            if isinstance(node.object, Ps1MemberAccess):
-                return Ps1InvokeMember(
-                    offset=node.offset,
-                    object=node.object.object,
-                    member=node.object.member,
-                    arguments=node.arguments,
-                    access=node.object.access,
-                )
-        if _is_static_convert_call(node):
-            if member_name is not None and member_name.lower() == 'frombase64string':
-                if len(node.arguments) == 1:
-                    b64_str = _string_value(node.arguments[0])
-                    if b64_str is not None:
-                        try:
-                            decoded = base64.b64decode(b64_str)
-                        except Exception:
-                            return None
-                        elements = [
-                            Ps1IntegerLiteral(value=b, raw=F'0x{b:02X}')
-                            for b in decoded
-                        ]
-                        array = Ps1ArrayLiteral(elements=elements)
-                        return Ps1ArrayExpression(
-                            body=[Ps1ExpressionStatement(expression=array)])
+            return None
+        obj_str = _string_value(node.object) if node.object else None
+        if obj_str is None:
+            return None
+        if lower == 'substring':
+            if len(node.arguments) == 1:
+                start = node.arguments[0]
+                if isinstance(start, Ps1IntegerLiteral) and 0 <= start.value <= len(obj_str):
+                    return _make_string_literal(obj_str[start.value:])
+            if len(node.arguments) == 2:
+                start = node.arguments[0]
+                length = node.arguments[1]
+                if (
+                    isinstance(start, Ps1IntegerLiteral)
+                    and isinstance(length, Ps1IntegerLiteral)
+                    and 0 <= start.value
+                    and start.value + length.value <= len(obj_str)
+                ):
+                    return _make_string_literal(
+                        obj_str[start.value:start.value + length.value])
+            return None
+        if lower == 'insert':
+            if len(node.arguments) == 2 and isinstance(node.arguments[0], Ps1IntegerLiteral):
+                idx = node.arguments[0].value
+                val = _string_value(node.arguments[1])
+                if val is not None and 0 <= idx <= len(obj_str):
+                    return _make_string_literal(obj_str[:idx] + val + obj_str[idx:])
+            return None
+        if lower == 'remove':
+            if len(node.arguments) == 1 and isinstance(node.arguments[0], Ps1IntegerLiteral):
+                idx = node.arguments[0].value
+                if 0 <= idx <= len(obj_str):
+                    return _make_string_literal(obj_str[:idx])
+            if (
+                len(node.arguments) == 2
+                and isinstance(node.arguments[0], Ps1IntegerLiteral)
+                and isinstance(node.arguments[1], Ps1IntegerLiteral)
+            ):
+                idx = node.arguments[0].value
+                count = node.arguments[1].value
+                if 0 <= idx and idx + count <= len(obj_str):
+                    return _make_string_literal(obj_str[:idx] + obj_str[idx + count:])
+            return None
+        return None
+
+    def _try_fold_static_method(
+        self, node: Ps1InvokeMember, lower: str,
+    ) -> Expression | None:
+        if _is_static_convert_call(node) and lower == 'frombase64string':
+            if len(node.arguments) == 1:
+                b64_str = _string_value(node.arguments[0])
+                if b64_str is not None:
+                    try:
+                        decoded = base64.b64decode(b64_str)
+                    except Exception:
+                        return None
+                    elements = [
+                        Ps1IntegerLiteral(value=b, raw=F'0x{b:02X}')
+                        for b in decoded
+                    ]
+                    array = Ps1ArrayLiteral(elements=elements)
+                    return Ps1ArrayExpression(
+                        body=[Ps1ExpressionStatement(expression=array)])
         enc_info = _is_static_encoding_chain(node)
         if enc_info is not None:
             encoding_name, _ = enc_info
@@ -633,18 +697,16 @@ class Ps1ConstantFolding(Transformer):
                     except LookupError:
                         encoding = 'utf-8'
                     try:
-                        decoded = raw_bytes.decode(encoding)
+                        decoded_str = raw_bytes.decode(encoding)
                     except Exception:
                         return None
-                    return _make_string_literal(decoded)
+                    return _make_string_literal(decoded_str)
         if (
             node.access == Ps1AccessKind.STATIC
             and isinstance(node.object, Ps1TypeExpression)
             and node.object.name.lower().replace(' ', '') in _STRING_TYPE_NAMES
-            and member_name is not None
         ):
-            lower_member = member_name.lower()
-            if lower_member == 'concat' and len(node.arguments) >= 1:
+            if lower == 'concat' and len(node.arguments) >= 1:
                 parts: list[str] = []
                 for arg in node.arguments:
                     sv = _string_value(arg)
@@ -653,7 +715,7 @@ class Ps1ConstantFolding(Transformer):
                     parts.append(sv)
                 else:
                     return _make_string_literal(''.join(parts))
-            if lower_member == 'join' and len(node.arguments) == 2:
+            if lower == 'join' and len(node.arguments) == 2:
                 separator = _string_value(node.arguments[0])
                 if separator is not None:
                     second = node.arguments[1]
@@ -665,52 +727,8 @@ class Ps1ConstantFolding(Transformer):
                         args = _collect_string_arguments(array)
                         if args is not None:
                             return _make_string_literal(separator.join(args))
-        if member_name is not None and member_name.lower() == 'substring':
-            obj_str = _string_value(node.object) if node.object else None
-            if obj_str is not None:
-                if len(node.arguments) == 1:
-                    start = node.arguments[0]
-                    if isinstance(start, Ps1IntegerLiteral) and 0 <= start.value <= len(obj_str):
-                        return _make_string_literal(obj_str[start.value:])
-                if len(node.arguments) == 2:
-                    start = node.arguments[0]
-                    length = node.arguments[1]
-                    if (
-                        isinstance(start, Ps1IntegerLiteral)
-                        and isinstance(length, Ps1IntegerLiteral)
-                        and 0 <= start.value
-                        and start.value + length.value <= len(obj_str)
-                    ):
-                        return _make_string_literal(
-                            obj_str[start.value:start.value + length.value])
-        if member_name is not None and member_name.lower() == 'insert':
-            if len(node.arguments) == 2:
-                obj_str = _string_value(node.object) if node.object else None
-                if obj_str is not None and isinstance(node.arguments[0], Ps1IntegerLiteral):
-                    idx = node.arguments[0].value
-                    val = _string_value(node.arguments[1])
-                    if val is not None and 0 <= idx <= len(obj_str):
-                        return _make_string_literal(obj_str[:idx] + val + obj_str[idx:])
-        if member_name is not None and member_name.lower() == 'remove':
-            obj_str = _string_value(node.object) if node.object else None
-            if obj_str is not None:
-                if len(node.arguments) == 1 and isinstance(node.arguments[0], Ps1IntegerLiteral):
-                    idx = node.arguments[0].value
-                    if 0 <= idx <= len(obj_str):
-                        return _make_string_literal(obj_str[:idx])
-                if (
-                    len(node.arguments) == 2
-                    and isinstance(node.arguments[0], Ps1IntegerLiteral)
-                    and isinstance(node.arguments[1], Ps1IntegerLiteral)
-                ):
-                    idx = node.arguments[0].value
-                    count = node.arguments[1].value
-                    if 0 <= idx and idx + count <= len(obj_str):
-                        return _make_string_literal(obj_str[:idx] + obj_str[idx + count:])
-        if _is_static_regex_call(node) and member_name is not None:
-            lower_member = member_name.lower()
-            if lower_member == 'replace':
-                return self._handle_regex_replace(node)
+        if _is_static_regex_call(node) and lower == 'replace':
+            return self._handle_regex_replace(node)
         return None
 
     def _handle_regex_replace(self, node: Ps1InvokeMember) -> Expression | None:
@@ -753,15 +771,6 @@ class Ps1ConstantFolding(Transformer):
         '-shr' : int.__rshift__,
     }
 
-    _COMPARISON_OPS = {
-        '-eq': int.__eq__,
-        '-ne': int.__ne__,
-        '-lt': int.__lt__,
-        '-le': int.__le__,
-        '-gt': int.__gt__,
-        '-ge': int.__ge__,
-    }
-
     def visit_Ps1BinaryExpression(self, node: Ps1BinaryExpression):
         self.generic_visit(node)
         op = node.operator.lower()
@@ -777,29 +786,9 @@ class Ps1ConstantFolding(Transformer):
             return self._handle_binary_split(node, op)
         return self._handle_comparison(node, op) or self._handle_arithmetic(node, op)
 
-    @staticmethod
-    def _unwrap_integer(node: Expression | None) -> Ps1IntegerLiteral | None:
-        while isinstance(node, Ps1ParenExpression):
-            node = node.expression
-        if isinstance(node, Ps1IntegerLiteral):
-            return node
-        if (
-            isinstance(node, Ps1Variable)
-            and node.scope == Ps1ScopeModifier.NONE
-            and node.name.lower() == 'null'
-        ):
-            return Ps1IntegerLiteral(value=0, raw='0')
-        if isinstance(node, Ps1UnaryExpression) and node.operator == '-':
-            inner = node.operand
-            while isinstance(inner, Ps1ParenExpression):
-                inner = inner.expression
-            if isinstance(inner, Ps1IntegerLiteral):
-                return Ps1IntegerLiteral(value=-inner.value, raw=str(-inner.value))
-        return None
-
     def _handle_arithmetic(self, node: Ps1BinaryExpression, op: str) -> Expression | None:
-        left = self._unwrap_integer(node.left)
-        right = self._unwrap_integer(node.right)
+        left = _unwrap_integer(node.left)
+        right = _unwrap_integer(node.right)
         if left is None or right is None:
             return None
         fn = self._ARITHMETIC_OPS.get(op)
@@ -812,11 +801,11 @@ class Ps1ConstantFolding(Transformer):
         return Ps1IntegerLiteral(value=result, raw=str(result))
 
     def _handle_comparison(self, node: Ps1BinaryExpression, op: str) -> Expression | None:
-        left = self._unwrap_integer(node.left)
-        right = self._unwrap_integer(node.right)
+        left = _unwrap_integer(node.left)
+        right = _unwrap_integer(node.right)
         if left is None or right is None:
             return None
-        fn = self._COMPARISON_OPS.get(op)
+        fn = _COMPARISON_OPS.get(op)
         if fn is None:
             return None
         result = fn(left.value, right.value)

@@ -21,10 +21,12 @@ from refinery.lib.scripts.ps1.model import (
     Ps1IntegerLiteral,
     Ps1InvokeMember,
     Ps1ParenExpression,
+    Ps1ScopeModifier,
     Ps1ScriptBlock,
     Ps1StringLiteral,
     Ps1SubExpression,
     Ps1TypeExpression,
+    Ps1UnaryExpression,
     Ps1Variable,
     _Ps1Code,
 )
@@ -831,7 +833,58 @@ def _replace_in_parent(old: Node, new: Node):
                             return
 
 
+def _unwrap_parens(node: Expression) -> Expression:
+    """
+    Unwrap nested ``Ps1ParenExpression`` wrappers, stopping at an empty-parens node.
+    """
+    while isinstance(node, Ps1ParenExpression) and node.expression is not None:
+        node = node.expression
+    return node
+
+
+def _get_member_name(member: str | Expression) -> str | None:
+    """
+    Extract a plain member name string from a member that may be a string
+    or a string literal expression.
+    """
+    if isinstance(member, str):
+        return member
+    if isinstance(member, Ps1StringLiteral):
+        return member.value
+    return None
+
+
 _FOREACH_ALIASES = frozenset({'%', 'foreach', 'foreach-object'})
+
+
+def _unwrap_integer(node: Expression | None) -> Ps1IntegerLiteral | None:
+    """
+    Peel parentheses and unary negation to extract an integer literal, or return None.
+    """
+    node = _unwrap_parens(node) if isinstance(node, Expression) else node
+    if isinstance(node, Ps1IntegerLiteral):
+        return node
+    if (
+        isinstance(node, Ps1Variable)
+        and node.scope == Ps1ScopeModifier.NONE
+        and node.name.lower() == 'null'
+    ):
+        return Ps1IntegerLiteral(value=0, raw='0')
+    if isinstance(node, Ps1UnaryExpression) and node.operator == '-':
+        inner = _unwrap_parens(node.operand) if isinstance(node.operand, Expression) else node.operand
+        if isinstance(inner, Ps1IntegerLiteral):
+            return Ps1IntegerLiteral(value=-inner.value, raw=str(-inner.value))
+    return None
+
+
+_COMPARISON_OPS = {
+    '-eq': int.__eq__,
+    '-ne': int.__ne__,
+    '-lt': int.__lt__,
+    '-le': int.__le__,
+    '-gt': int.__gt__,
+    '-ge': int.__ge__,
+}
 
 _ENCODING_MAP = {
     'ascii'            : 'ascii',

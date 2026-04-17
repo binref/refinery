@@ -11,8 +11,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Callable, Generator
 
-from refinery.lib.scripts import Block, Node, Statement, Transformer
-from refinery.lib.scripts.ps1.deobfuscation._helpers import _get_body
+from refinery.lib.scripts import Block, Expression, Node, Statement, Transformer
+from refinery.lib.scripts.ps1.deobfuscation._helpers import _get_body, _unwrap_parens
 from refinery.lib.scripts.ps1.deobfuscation.emulator import evaluate_truthy
 from refinery.lib.scripts.ps1.model import (
     Ps1AssignmentExpression,
@@ -58,8 +58,7 @@ def _unwrap_constant(node) -> _StateKey | None:
     """
     Extract a constant value (int, float, or string) from an AST node.
     """
-    while isinstance(node, Ps1ParenExpression):
-        node = node.expression
+    node = _unwrap_parens(node) if isinstance(node, Expression) else node
     if isinstance(node, Ps1IntegerLiteral):
         return node.value
     if isinstance(node, Ps1RealLiteral):
@@ -67,9 +66,7 @@ def _unwrap_constant(node) -> _StateKey | None:
     if isinstance(node, Ps1StringLiteral):
         return node.value
     if isinstance(node, Ps1UnaryExpression) and node.operator == '-':
-        inner = node.operand
-        while isinstance(inner, Ps1ParenExpression):
-            inner = inner.expression
+        inner = _unwrap_parens(node.operand) if isinstance(node.operand, Expression) else node.operand
         if isinstance(inner, Ps1IntegerLiteral):
             return -inner.value
         if isinstance(inner, Ps1RealLiteral):
@@ -126,12 +123,6 @@ def _same_variable(node: Ps1Variable, name: str, scope: Ps1ScopeModifier) -> boo
 
 def _var_key(node: Ps1Variable) -> _VarKey:
     return (node.name.lower(), node.scope)
-
-
-def _unwrap_parens(node: Expression) -> Expression:
-    while isinstance(node, Ps1ParenExpression) and node.expression is not None:
-        node = node.expression
-    return node
 
 
 def _collect_variables(node: Node) -> set[_VarKey]:

@@ -11,17 +11,14 @@ from refinery.lib.scripts.ps1.deobfuscation._helpers import (
     _collect_string_arguments,
     _make_string_literal,
     _string_value,
+    _unwrap_integer,
     _unwrap_paren_to_array,
 )
 from refinery.lib.scripts.ps1.model import (
     Ps1BinaryExpression,
     Ps1CastExpression,
     Ps1IntegerLiteral,
-    Ps1ParenExpression,
-    Ps1ScopeModifier,
     Ps1TypeExpression,
-    Ps1UnaryExpression,
-    Ps1Variable,
 )
 
 _INTEGER_TYPE_NAMES = frozenset({
@@ -38,29 +35,6 @@ _INTEGER_TYPE_NAMES = frozenset({
     'uint64',
     'ushort',
 })
-
-
-def _unwrap_integer(node) -> int | None:
-    """
-    Peel parentheses and unary negation to extract an integer value, or return None.
-    """
-    while isinstance(node, Ps1ParenExpression):
-        node = node.expression
-    if isinstance(node, Ps1IntegerLiteral):
-        return node.value
-    if (
-        isinstance(node, Ps1Variable)
-        and node.scope == Ps1ScopeModifier.NONE
-        and node.name.lower() == 'null'
-    ):
-        return 0
-    if isinstance(node, Ps1UnaryExpression) and node.operator == '-':
-        inner = node.operand
-        while isinstance(inner, Ps1ParenExpression):
-            inner = inner.expression
-        if isinstance(inner, Ps1IntegerLiteral):
-            return -inner.value
-    return None
 
 
 class Ps1TypeCasts(Transformer):
@@ -91,16 +65,16 @@ class Ps1TypeCasts(Transformer):
                 if parts is not None and len(parts) > 1:
                     return _make_string_literal(' '.join(parts))
         if tn in _INTEGER_TYPE_NAMES:
-            value = _unwrap_integer(node.operand)
-            if value is not None:
-                return Ps1IntegerLiteral(value=value, raw=str(value))
+            result = _unwrap_integer(node.operand)
+            if result is not None:
+                return Ps1IntegerLiteral(value=result.value, raw=str(result.value))
         if tn == 'char':
-            value = _unwrap_integer(node.operand)
-            if value is not None:
-                if value == 0:
+            result = _unwrap_integer(node.operand)
+            if result is not None:
+                if result.value == 0:
                     return _make_string_literal('')
                 try:
-                    ch = chr(value)
+                    ch = chr(result.value)
                 except (ValueError, OverflowError):
                     return None
                 return _make_string_literal(ch)

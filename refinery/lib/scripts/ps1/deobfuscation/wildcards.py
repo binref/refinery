@@ -20,6 +20,7 @@ from refinery.lib.scripts.ps1.deobfuscation._helpers import (
     _get_command_name,
     _make_string_literal,
     _string_value,
+    _unwrap_parens,
 )
 from refinery.lib.scripts.ps1.deobfuscation.constants import _PS1_KNOWN_VARIABLES
 from refinery.lib.scripts.ps1.deobfuscation.typenames import (
@@ -432,9 +433,7 @@ class Ps1WildcardResolution(Transformer):
         Given the object expression of a member access, check if it is a `Get-Item Variable:X` or
         `Get-Variable X` invocation and resolve the variable name (supporting wildcards).
         """
-        inner = expr
-        while isinstance(inner, Ps1ParenExpression) and inner.expression is not None:
-            inner = inner.expression
+        inner = _unwrap_parens(expr)
         if not isinstance(inner, Ps1CommandInvocation):
             return None
         name = _get_command_name(inner)

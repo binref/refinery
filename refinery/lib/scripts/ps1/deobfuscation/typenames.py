@@ -9,8 +9,10 @@ from __future__ import annotations
 from refinery.lib.scripts import Node, Transformer
 from refinery.lib.scripts.ps1.deobfuscation._helpers import (
     _get_command_name,
+    _get_member_name,
     _make_string_literal,
     _string_value,
+    _unwrap_parens,
 )
 from refinery.lib.scripts.ps1.model import (
     Expression,
@@ -29,7 +31,6 @@ from refinery.lib.scripts.ps1.model import (
     Ps1InvokeMember,
     Ps1MemberAccess,
     Ps1ParameterDeclaration,
-    Ps1ParenExpression,
     Ps1Pipeline,
     Ps1PipelineElement,
     Ps1ScopeModifier,
@@ -5642,18 +5643,6 @@ def canonical_member_name(type_name_lower: str, member: str) -> str | None:
     return lookup.get(member.lower())
 
 
-def _get_member_name(member: str | Expression) -> str | None:
-    """
-    Extract a plain member name string from a member that may be a string
-    or a string literal expression.
-    """
-    if isinstance(member, str):
-        return member
-    if isinstance(member, Ps1StringLiteral):
-        return member.value
-    return None
-
-
 def resolve_expression_type(
     expr: Expression,
     variable_types: dict[str, str] | None = None,
@@ -5663,8 +5652,7 @@ def resolve_expression_type(
     chains. Returns the lowercase full .NET type name, or None if the type
     cannot be determined.
     """
-    while isinstance(expr, Ps1ParenExpression) and expr.expression is not None:
-        expr = expr.expression
+    expr = _unwrap_parens(expr)
     if isinstance(expr, (Ps1StringLiteral, Ps1HereString)):
         return 'system.string'
     if isinstance(expr, Ps1IntegerLiteral):
@@ -5774,15 +5762,6 @@ def get_member_order(type_name: str) -> list[str] | None:
         key=str.lower,
     )
     return methods + properties
-
-
-def _unwrap_parens(expr: Expression) -> Expression:
-    """
-    Unwrap nested `Ps1ParenExpression` wrappers.
-    """
-    while isinstance(expr, Ps1ParenExpression) and expr.expression is not None:
-        expr = expr.expression
-    return expr
 
 
 def _pipeline_pipes_to_get_member(pipeline: Ps1Pipeline) -> bool:

@@ -9,6 +9,7 @@ from refinery.lib.scripts.ps1.deobfuscation._helpers import (
     _is_array_reverse_call,
     _make_string_literal,
     _replace_in_parent,
+    _unwrap_parens,
 )
 from refinery.lib.scripts.ps1.model import (
     Ps1ArrayExpression,
@@ -220,8 +221,7 @@ def _constant_value_key(node: Node) -> tuple | None:
     if the node is not constant. Two constant nodes with the same key are
     guaranteed to represent the same value.
     """
-    while isinstance(node, Ps1ParenExpression) and node.expression is not None:
-        node = node.expression
+    node = _unwrap_parens(node)
     if isinstance(node, Ps1IntegerLiteral):
         return ('int', node.value)
     if isinstance(node, Ps1RealLiteral):
@@ -252,8 +252,7 @@ def _constant_value_key(node: Node) -> tuple | None:
 
 
 def _is_constant(node: Node) -> bool:
-    while isinstance(node, Ps1ParenExpression) and node.expression is not None:
-        node = node.expression
+    node = _unwrap_parens(node)
     if isinstance(node, _CONSTANT_TYPES):
         return True
     if isinstance(node, Ps1Variable) and node.scope == Ps1ScopeModifier.NONE:
@@ -296,8 +295,7 @@ def _clone_constant(node: Node) -> Expression:
     Create a fresh copy of a constant value node without following parent references. This avoids
     the catastrophic cost of `copy.deepcopy` which traverses the entire AST through parents.
     """
-    while isinstance(node, Ps1ParenExpression) and node.expression is not None:
-        node = node.expression
+    node = _unwrap_parens(node)
     if isinstance(node, Ps1IntegerLiteral):
         return Ps1IntegerLiteral(value=node.value, raw=node.raw)
     if isinstance(node, Ps1RealLiteral):
@@ -416,9 +414,7 @@ class Ps1ConstantInlining(Transformer):
                     if key is None or key in rejected:
                         continue
                     if node.operator == '=' and node.value is not None and _is_constant(node.value):
-                        value = node.value
-                        while isinstance(value, Ps1ParenExpression) and value.expression is not None:
-                            value = value.expression
+                        value = _unwrap_parens(node.value)
                         vk = _constant_value_key(value)
                         if vk is None:
                             _reject(key)
