@@ -217,28 +217,16 @@ class Ps1CommandInvocation(Expression):
     name: Expression | None = None
     arguments: list[Ps1CommandArgument | Expression] = field(default_factory=list)
     invocation_operator: str = ''
+    redirections: list[Ps1FileRedirection | Ps1MergingRedirection] = field(default_factory=list)
 
     def __post_init__(self):
-        self._adopt(self.name, *self.arguments)
+        self._adopt(self.name, *self.arguments, *self.redirections)
 
     def children(self) -> Generator[Node, None, None]:
         if self.name is not None:
             yield self.name
         yield from self.arguments
-
-
-@dataclass(repr=False)
-class Ps1CallExpression(Expression):
-    callee: Expression | None = None
-    arguments: list[Expression] = field(default_factory=list)
-
-    def __post_init__(self):
-        self._adopt(self.callee, *self.arguments)
-
-    def children(self) -> Generator[Node, None, None]:
-        if self.callee is not None:
-            yield self.callee
-        yield from self.arguments
+        yield from self.redirections
 
 
 @dataclass(repr=False)
@@ -411,10 +399,21 @@ class Ps1ParamBlock(Node):
         yield from self.parameters
 
 
+class Ps1RedirectionStream(enum.IntEnum):
+    ALL         = 0  # noqa
+    OUTPUT      = 1  # noqa
+    ERROR       = 2  # noqa
+    WARNING     = 3  # noqa
+    VERBOSE     = 4  # noqa
+    DEBUG       = 5  # noqa
+    INFORMATION = 6  # noqa
+
+
 @dataclass(repr=False)
-class Ps1Redirection(Node):
-    operator: str = '>'
+class Ps1FileRedirection(Node):
+    stream: Ps1RedirectionStream = Ps1RedirectionStream.OUTPUT
     target: Expression | None = None
+    append: bool = False
 
     def __post_init__(self):
         self._adopt(self.target)
@@ -425,9 +424,15 @@ class Ps1Redirection(Node):
 
 
 @dataclass(repr=False)
+class Ps1MergingRedirection(Node):
+    from_stream: Ps1RedirectionStream = Ps1RedirectionStream.ERROR
+    to_stream: Ps1RedirectionStream = Ps1RedirectionStream.OUTPUT
+
+
+@dataclass(repr=False)
 class Ps1PipelineElement(Node):
     expression: Expression | None = None
-    redirections: list[Ps1Redirection] = field(default_factory=list)
+    redirections: list[Ps1FileRedirection | Ps1MergingRedirection] = field(default_factory=list)
 
     def __post_init__(self):
         self._adopt(self.expression, *self.redirections)

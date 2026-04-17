@@ -45,7 +45,9 @@ from refinery.lib.scripts.ps1.model import (
     Ps1PipelineElement,
     Ps1RangeExpression,
     Ps1RealLiteral,
-    Ps1Redirection,
+    Ps1RedirectionStream,
+    Ps1FileRedirection,
+    Ps1MergingRedirection,
     Ps1ReturnStatement,
     Ps1ScopeModifier,
     Ps1Script,
@@ -221,6 +223,9 @@ class Ps1Synthesizer(Visitor):
         for arg in node.arguments:
             self._write(' ')
             self.visit(arg)
+        for redir in node.redirections:
+            self._write(' ')
+            self.visit(redir)
 
     def visit_Ps1CommandArgument(self, node: Ps1CommandArgument):
         if node.kind == Ps1CommandArgumentKind.SWITCH:
@@ -240,16 +245,6 @@ class Ps1Synthesizer(Visitor):
             self._write(')')
         else:
             self.visit(value)
-
-    def visit_Ps1CallExpression(self, node):
-        if node.callee:
-            self.visit(node.callee)
-        self._write('(')
-        for i, arg in enumerate(node.arguments):
-            if i > 0:
-                self._write(', ')
-            self.visit(arg)
-        self._write(')')
 
     def visit_Ps1AssignmentExpression(self, node: Ps1AssignmentExpression):
         if node.target:
@@ -387,11 +382,24 @@ class Ps1Synthesizer(Visitor):
             self.visit(param)
         self._write(')')
 
-    def visit_Ps1Redirection(self, node: Ps1Redirection):
-        self._write(node.operator)
-        self._write(' ')
+    def _emit_redirection_stream(self, stream: Ps1RedirectionStream) -> str:
+        if stream == Ps1RedirectionStream.OUTPUT:
+            return ''
+        if stream == Ps1RedirectionStream.ALL:
+            return '*'
+        return str(stream.value)
+
+    def visit_Ps1FileRedirection(self, node: Ps1FileRedirection):
+        prefix = self._emit_redirection_stream(node.stream)
+        op = '>>' if node.append else '>'
+        self._write(F'{prefix}{op}')
         if node.target:
+            self._write(' ')
             self.visit(node.target)
+
+    def visit_Ps1MergingRedirection(self, node: Ps1MergingRedirection):
+        prefix = self._emit_redirection_stream(node.from_stream)
+        self._write(F'{prefix}>&{node.to_stream.value}')
 
     def visit_Ps1PipelineElement(self, node: Ps1PipelineElement):
         if node.expression:

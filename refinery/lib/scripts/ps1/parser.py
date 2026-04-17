@@ -44,6 +44,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1ExpandableHereString,
     Ps1ExpandableString,
     Ps1ExpressionStatement,
+    Ps1FileRedirection,
     Ps1ForEachLoop,
     Ps1ForLoop,
     Ps1FunctionDefinition,
@@ -54,6 +55,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1IntegerLiteral,
     Ps1InvokeMember,
     Ps1MemberAccess,
+    Ps1MergingRedirection,
     Ps1ParamBlock,
     Ps1ParameterDeclaration,
     Ps1ParenExpression,
@@ -61,6 +63,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1PipelineElement,
     Ps1RangeExpression,
     Ps1RealLiteral,
+    Ps1RedirectionStream,
     Ps1ReturnStatement,
     Ps1ScopeModifier,
     Ps1Script,
@@ -222,6 +225,42 @@ class Ps1Parser:
             yield
         finally:
             self._disable_comma = old
+
+    _MERGING_PATTERN = re.compile(r'(\d|\*)?>&(\d)')
+
+    def _parse_redirection(
+        self, tok: Ps1Token,
+    ) -> Ps1FileRedirection | Ps1MergingRedirection:
+        op = tok.value
+        m = self._MERGING_PATTERN.fullmatch(op)
+        if m is not None:
+            prefix, to_digit = m.group(1), int(m.group(2))
+            if prefix is None:
+                from_stream = Ps1RedirectionStream.OUTPUT
+            elif prefix == '*':
+                from_stream = Ps1RedirectionStream.ALL
+            else:
+                from_stream = Ps1RedirectionStream(int(prefix))
+            return Ps1MergingRedirection(
+                offset=tok.offset,
+                from_stream=from_stream,
+                to_stream=Ps1RedirectionStream(to_digit),
+            )
+        if op[0] == '*':
+            stream = Ps1RedirectionStream.ALL
+            rest = op[1:]
+        elif op[0].isdigit():
+            stream = Ps1RedirectionStream(int(op[0]))
+            rest = op[1:]
+        else:
+            stream = Ps1RedirectionStream.OUTPUT
+            rest = op
+        append = rest == '>>'
+        target = None
+        if not self._is_pipeline_terminator():
+            target = self._parse_single_argument_value()
+        return Ps1FileRedirection(
+            offset=tok.offset, stream=stream, target=target, append=append)
 
     def _might_be_param_block(self) -> bool:
         if self._at(Ps1TokenKind.PARAM):
@@ -532,6 +571,7 @@ class Ps1Parser:
         self._rescan_current()
 
         arguments: list[Ps1CommandArgument | Expression] = []
+        redirections: list[Ps1FileRedirection | Ps1MergingRedirection] = []
         while not self._is_pipeline_terminator():
             self._lexer.mode = Ps1LexerMode.ARGUMENT
             self._rescan_current()
@@ -563,9 +603,8 @@ class Ps1Parser:
                         name=name,
                     ))
             elif self._at(Ps1TokenKind.REDIRECTION):
-                self._advance()
-                if not self._is_pipeline_terminator():
-                    self._parse_single_argument_value()
+                tok = self._advance()
+                redirections.append(self._parse_redirection(tok))
             elif self._at(Ps1TokenKind.OPERATOR):
                 tok = self._advance()
                 arguments.append(Ps1CommandArgument(
@@ -588,6 +627,7 @@ class Ps1Parser:
             name=name_expr,
             arguments=arguments,
             invocation_operator=invocation_operator,
+            redirections=redirections,
         )
 
     def _is_pipeline_terminator(self) -> bool:

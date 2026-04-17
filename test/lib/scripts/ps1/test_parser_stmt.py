@@ -15,13 +15,16 @@ from refinery.lib.scripts.ps1.model import (
     Ps1ExitStatement,
     Ps1ExpandableString,
     Ps1ExpressionStatement,
+    Ps1FileRedirection,
     Ps1ForEachLoop,
     Ps1ForLoop,
     Ps1FunctionDefinition,
     Ps1IfStatement,
     Ps1IntegerLiteral,
+    Ps1MergingRedirection,
     Ps1ParenExpression,
     Ps1Pipeline,
+    Ps1RedirectionStream,
     Ps1ReturnStatement,
     Ps1Script,
     Ps1StringLiteral,
@@ -561,3 +564,79 @@ class TestPs1ParserStatements(TestBase):
         cmd = expr.expression
         self.assertIsInstance(cmd, Ps1CommandInvocation)
         self.assertEqual(cmd.name.value, 'iex')
+
+    def test_file_redirection_output(self):
+        stmt = self._parse_stmt('cmd > file.txt')
+        self.assertIsInstance(stmt, Ps1ExpressionStatement)
+        cmd = stmt.expression
+        self.assertIsInstance(cmd, Ps1CommandInvocation)
+        self.assertEqual(len(cmd.redirections), 1)
+        r = cmd.redirections[0]
+        self.assertIsInstance(r, Ps1FileRedirection)
+        self.assertEqual(r.stream, Ps1RedirectionStream.OUTPUT)
+        self.assertFalse(r.append)
+        self.assertIsInstance(r.target, Ps1StringLiteral)
+        self.assertEqual(r.target.value, 'file.txt')
+
+    def test_file_redirection_append(self):
+        stmt = self._parse_stmt('cmd >> file.txt')
+        self.assertIsInstance(stmt, Ps1ExpressionStatement)
+        cmd = stmt.expression
+        self.assertIsInstance(cmd, Ps1CommandInvocation)
+        self.assertEqual(len(cmd.redirections), 1)
+        r = cmd.redirections[0]
+        self.assertIsInstance(r, Ps1FileRedirection)
+        self.assertEqual(r.stream, Ps1RedirectionStream.OUTPUT)
+        self.assertTrue(r.append)
+
+    def test_merging_redirection(self):
+        stmt = self._parse_stmt('cmd 2>&1')
+        self.assertIsInstance(stmt, Ps1ExpressionStatement)
+        cmd = stmt.expression
+        self.assertIsInstance(cmd, Ps1CommandInvocation)
+        self.assertEqual(len(cmd.redirections), 1)
+        r = cmd.redirections[0]
+        self.assertIsInstance(r, Ps1MergingRedirection)
+        self.assertEqual(r.from_stream, Ps1RedirectionStream.ERROR)
+        self.assertEqual(r.to_stream, Ps1RedirectionStream.OUTPUT)
+
+    def test_file_redirection_error_to_null(self):
+        stmt = self._parse_stmt('cmd 2>$null')
+        self.assertIsInstance(stmt, Ps1ExpressionStatement)
+        cmd = stmt.expression
+        self.assertIsInstance(cmd, Ps1CommandInvocation)
+        self.assertEqual(len(cmd.redirections), 1)
+        r = cmd.redirections[0]
+        self.assertIsInstance(r, Ps1FileRedirection)
+        self.assertEqual(r.stream, Ps1RedirectionStream.ERROR)
+        self.assertFalse(r.append)
+        self.assertIsInstance(r.target, Ps1Variable)
+        self.assertEqual(r.target.name, 'null')
+
+    def test_file_redirection_all_streams(self):
+        stmt = self._parse_stmt('cmd *>$null')
+        self.assertIsInstance(stmt, Ps1ExpressionStatement)
+        cmd = stmt.expression
+        self.assertIsInstance(cmd, Ps1CommandInvocation)
+        self.assertEqual(len(cmd.redirections), 1)
+        r = cmd.redirections[0]
+        self.assertIsInstance(r, Ps1FileRedirection)
+        self.assertEqual(r.stream, Ps1RedirectionStream.ALL)
+
+    def test_mixed_redirections(self):
+        stmt = self._parse_stmt('cmd 2>&1 > log.txt')
+        self.assertIsInstance(stmt, Ps1ExpressionStatement)
+        cmd = stmt.expression
+        self.assertIsInstance(cmd, Ps1CommandInvocation)
+        self.assertEqual(len(cmd.redirections), 2)
+        self.assertIsInstance(cmd.redirections[0], Ps1MergingRedirection)
+        self.assertIsInstance(cmd.redirections[1], Ps1FileRedirection)
+
+    def test_arguments_and_redirections_coexist(self):
+        stmt = self._parse_stmt('Write-Host hello 2>&1')
+        self.assertIsInstance(stmt, Ps1ExpressionStatement)
+        cmd = stmt.expression
+        self.assertIsInstance(cmd, Ps1CommandInvocation)
+        self.assertEqual(len(cmd.arguments), 1)
+        self.assertEqual(len(cmd.redirections), 1)
+        self.assertIsInstance(cmd.redirections[0], Ps1MergingRedirection)

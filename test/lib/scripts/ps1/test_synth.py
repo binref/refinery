@@ -145,3 +145,24 @@ class TestPs1Synthesizer(TestBase):
     def test_roundtrip_member_chain_after_invocation(self):
         self._round_trip(
             '(. (Get-Item Variable:E).Value.InVoke("x") Net.WebClient)')
+
+    def test_roundtrip_file_redirection(self):
+        self._round_trip('cmd > file.txt')
+
+    def test_roundtrip_file_redirection_append(self):
+        self._round_trip('cmd >> file.txt')
+
+    def test_roundtrip_merging_redirection(self):
+        self._round_trip('cmd 2>&1')
+
+    def test_roundtrip_error_to_null(self):
+        self._round_trip('cmd 2>$null')
+
+    def test_roundtrip_all_streams_to_null(self):
+        self._round_trip('cmd *>$null')
+
+    def test_roundtrip_mixed_redirections(self):
+        self._round_trip('cmd 2>&1 > log.txt')
+
+    def test_roundtrip_redirection_in_pipeline(self):
+        self._round_trip('cmd 2>&1 | Out-File log.txt')
