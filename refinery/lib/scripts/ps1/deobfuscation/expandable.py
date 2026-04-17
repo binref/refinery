@@ -24,10 +24,9 @@ from refinery.lib.scripts.ps1.model import (
     Ps1CommandInvocation,
     Ps1ExpandableString,
     Ps1ExpressionStatement,
-    Ps1Script,
-    Ps1ScriptBlock,
     Ps1StringLiteral,
     Ps1SubExpression,
+    _Ps1Code,
 )
 
 
@@ -84,7 +83,7 @@ class Ps1ExpandableStringHoist(Transformer):
             if isinstance(parent, Ps1BinaryExpression):
                 if parent.left is not child:
                     return False
-            if isinstance(parent, (Ps1ExpressionStatement, Ps1Script, Ps1ScriptBlock, Block)):
+            if isinstance(parent, (Ps1ExpressionStatement, _Ps1Code, Block)):
                 break
             child = parent
             parent = parent.parent

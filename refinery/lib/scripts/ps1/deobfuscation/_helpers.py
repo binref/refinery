@@ -21,12 +21,12 @@ from refinery.lib.scripts.ps1.model import (
     Ps1IntegerLiteral,
     Ps1InvokeMember,
     Ps1ParenExpression,
-    Ps1Script,
     Ps1ScriptBlock,
     Ps1StringLiteral,
     Ps1SubExpression,
     Ps1TypeExpression,
     Ps1Variable,
+    _Ps1Code,
 )
 
 _KNOWN_ALIAS = {
@@ -800,7 +800,7 @@ def _get_command_name(cmd: Ps1CommandInvocation) -> str | None:
 
 
 def _get_body(node) -> list | None:
-    if isinstance(node, (Ps1Script, Block, Ps1ScriptBlock, Ps1SubExpression)):
+    if isinstance(node, (_Ps1Code, Block, Ps1SubExpression)):
         return node.body
     return None
 

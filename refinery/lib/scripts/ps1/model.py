@@ -63,20 +63,25 @@ class Ps1StringLiteral(Expression):
 
 
 @dataclass(repr=False)
-class Ps1ExpandableString(Expression):
-    """
-    An expandable (double-quoted) string with interleaved text and expression
-    parts. Text segments are `Ps1StringLiteral`, expression segments are any
-    `Expression` node.
-    """
+class _Ps1Expandable(Expression):
     parts: list[Expression] = field(default_factory=list)
-    raw: str = '""'
+    raw: str = ''
 
     def __post_init__(self):
         self._adopt(*self.parts)
 
     def children(self) -> Generator[Node, None, None]:
         yield from self.parts
+
+
+@dataclass(repr=False)
+class Ps1ExpandableString(_Ps1Expandable):
+    """
+    An expandable (double-quoted) string with interleaved text and expression
+    parts. Text segments are `Ps1StringLiteral`, expression segments are any
+    `Expression` node.
+    """
+    raw: str = '""'
 
 
 @dataclass(repr=False)
@@ -86,15 +91,8 @@ class Ps1HereString(Expression):
 
 
 @dataclass(repr=False)
-class Ps1ExpandableHereString(Expression):
-    parts: list[Expression] = field(default_factory=list)
-    raw: str = ''
-
-    def __post_init__(self):
-        self._adopt(*self.parts)
-
-    def children(self) -> Generator[Node, None, None]:
-        yield from self.parts
+class Ps1ExpandableHereString(_Ps1Expandable):
+    pass
 
 
 @dataclass(repr=False)
@@ -305,7 +303,7 @@ class Ps1ParenExpression(Expression):
 
 
 @dataclass(repr=False)
-class Ps1ScriptBlock(Expression):
+class _Ps1Code(Node):
     param_block: Ps1ParamBlock | None = None
     begin_block: Block | None = None
     process_block: Block | None = None
@@ -335,6 +333,11 @@ class Ps1ScriptBlock(Expression):
         if self.dynamicparam_block is not None:
             yield self.dynamicparam_block
         yield from self.body
+
+
+@dataclass(repr=False)
+class Ps1ScriptBlock(_Ps1Code, Expression):
+    pass
 
 
 @dataclass(repr=False)
@@ -485,10 +488,14 @@ class Ps1IfStatement(Statement):
 
 
 @dataclass(repr=False)
-class Ps1WhileLoop(Statement):
+class _Ps1Loop(Statement):
+    label: str | None = None
+
+
+@dataclass(repr=False)
+class Ps1WhileLoop(_Ps1Loop):
     condition: Expression | None = None
     body: Block | None = None
-    label: str | None = None
 
     def __post_init__(self):
         self._adopt(self.condition, self.body)
@@ -501,11 +508,10 @@ class Ps1WhileLoop(Statement):
 
 
 @dataclass(repr=False)
-class Ps1DoLoop(Statement):
+class Ps1DoLoop(_Ps1Loop):
     condition: Expression | None = None
     body: Block | None = None
     is_until: bool = False
-    label: str | None = None
 
     def __post_init__(self):
         self._adopt(self.condition, self.body)
@@ -518,12 +524,11 @@ class Ps1DoLoop(Statement):
 
 
 @dataclass(repr=False)
-class Ps1ForLoop(Statement):
+class Ps1ForLoop(_Ps1Loop):
     initializer: Expression | None = None
     condition: Expression | None = None
     iterator: Expression | None = None
     body: Block | None = None
-    label: str | None = None
 
     def __post_init__(self):
         self._adopt(self.initializer, self.condition, self.iterator, self.body)
@@ -540,12 +545,11 @@ class Ps1ForLoop(Statement):
 
 
 @dataclass(repr=False)
-class Ps1ForEachLoop(Statement):
+class Ps1ForEachLoop(_Ps1Loop):
     variable: Expression | None = None
     iterable: Expression | None = None
     body: Block | None = None
     parallel: bool = False
-    label: str | None = None
 
     def __post_init__(self):
         self._adopt(self.variable, self.iterable, self.body)
@@ -642,7 +646,7 @@ class Ps1FunctionDefinition(Statement):
 
 
 @dataclass(repr=False)
-class Ps1ReturnStatement(Statement):
+class _Ps1Exit(Statement):
     pipeline: Expression | None = None
 
     def __post_init__(self):
@@ -654,19 +658,17 @@ class Ps1ReturnStatement(Statement):
 
 
 @dataclass(repr=False)
-class Ps1ThrowStatement(Statement):
-    pipeline: Expression | None = None
-
-    def __post_init__(self):
-        self._adopt(self.pipeline)
-
-    def children(self) -> Generator[Node, None, None]:
-        if self.pipeline is not None:
-            yield self.pipeline
+class Ps1ReturnStatement(_Ps1Exit):
+    pass
 
 
 @dataclass(repr=False)
-class Ps1BreakStatement(Statement):
+class Ps1ThrowStatement(_Ps1Exit):
+    pass
+
+
+@dataclass(repr=False)
+class _Ps1Jump(Statement):
     label: Expression | None = None
 
     def __post_init__(self):
@@ -678,27 +680,18 @@ class Ps1BreakStatement(Statement):
 
 
 @dataclass(repr=False)
-class Ps1ContinueStatement(Statement):
-    label: Expression | None = None
-
-    def __post_init__(self):
-        self._adopt(self.label)
-
-    def children(self) -> Generator[Node, None, None]:
-        if self.label is not None:
-            yield self.label
+class Ps1BreakStatement(_Ps1Jump):
+    pass
 
 
 @dataclass(repr=False)
-class Ps1ExitStatement(Statement):
-    pipeline: Expression | None = None
+class Ps1ContinueStatement(_Ps1Jump):
+    pass
 
-    def __post_init__(self):
-        self._adopt(self.pipeline)
 
-    def children(self) -> Generator[Node, None, None]:
-        if self.pipeline is not None:
-            yield self.pipeline
+@dataclass(repr=False)
+class Ps1ExitStatement(_Ps1Exit):
+    pass
 
 
 @dataclass(repr=False)
@@ -725,33 +718,5 @@ class Ps1ErrorNode(Node):
 
 
 @dataclass(repr=False)
-class Ps1Script(Statement):
-    param_block: Ps1ParamBlock | None = None
-    begin_block: Block | None = None
-    process_block: Block | None = None
-    end_block: Block | None = None
-    dynamicparam_block: Block | None = None
-    body: list[Statement] = field(default_factory=list)
-
-    def __post_init__(self):
-        self._adopt(
-            self.param_block,
-            self.begin_block,
-            self.process_block,
-            self.end_block,
-            self.dynamicparam_block,
-            *self.body,
-        )
-
-    def children(self) -> Generator[Node, None, None]:
-        if self.param_block is not None:
-            yield self.param_block
-        if self.begin_block is not None:
-            yield self.begin_block
-        if self.process_block is not None:
-            yield self.process_block
-        if self.end_block is not None:
-            yield self.end_block
-        if self.dynamicparam_block is not None:
-            yield self.dynamicparam_block
-        yield from self.body
+class Ps1Script(_Ps1Code, Statement):
+    pass

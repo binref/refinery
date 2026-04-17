@@ -62,6 +62,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1UnaryExpression,
     Ps1Variable,
     Ps1WhileLoop,
+    _Ps1Code,
 )
 
 
@@ -288,7 +289,7 @@ class Ps1Synthesizer(Visitor):
             self.visit(node.expression)
         self._write(')')
 
-    def _emit_script_body(self, node: Ps1ScriptBlock | Ps1Script, *, newline_after: bool):
+    def _emit_script_body(self, node: _Ps1Code, *, newline_after: bool):
         has_named = (
             node.begin_block or node.process_block
             or node.end_block or node.dynamicparam_block
