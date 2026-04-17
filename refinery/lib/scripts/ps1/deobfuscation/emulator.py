@@ -33,8 +33,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1CommandArgumentKind,
     Ps1CommandInvocation,
     Ps1ContinueStatement,
-    Ps1DoUntilLoop,
-    Ps1DoWhileLoop,
+    Ps1DoLoop,
     Ps1ExpandableHereString,
     Ps1ExpandableString,
     Ps1ExpressionStatement,
@@ -129,10 +128,8 @@ class _Ps1Interpreter:
             return self._exec_foreach(stmt)
         if isinstance(stmt, Ps1WhileLoop):
             return self._exec_while(stmt)
-        if isinstance(stmt, Ps1DoWhileLoop):
-            return self._exec_do_while(stmt)
-        if isinstance(stmt, Ps1DoUntilLoop):
-            return self._exec_do_until(stmt)
+        if isinstance(stmt, Ps1DoLoop):
+            return self._exec_do_loop(stmt)
         if isinstance(stmt, Ps1IfStatement):
             return self._exec_if(stmt)
         if isinstance(stmt, Ps1SwitchStatement):
@@ -212,7 +209,7 @@ class _Ps1Interpreter:
                 continue
         return result
 
-    def _exec_do_while(self, node: Ps1DoWhileLoop) -> _Value:
+    def _exec_do_loop(self, node: Ps1DoLoop) -> _Value:
         result: _Value = None
         while True:
             self._tick()
@@ -222,21 +219,8 @@ class _Ps1Interpreter:
                 break
             except _ContinueSignal:
                 pass
-            if not self._truthy(self._eval(node.condition)):
-                break
-        return result
-
-    def _exec_do_until(self, node: Ps1DoUntilLoop) -> _Value:
-        result: _Value = None
-        while True:
-            self._tick()
-            try:
-                result = self._exec_block(node.body)
-            except _BreakSignal:
-                break
-            except _ContinueSignal:
-                pass
-            if self._truthy(self._eval(node.condition)):
+            truth = self._truthy(self._eval(node.condition))
+            if node.is_until == truth:
                 break
         return result
 

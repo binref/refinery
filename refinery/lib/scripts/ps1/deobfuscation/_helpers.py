@@ -7,6 +7,7 @@ import io
 import re
 
 from refinery.lib.scripts import Block, Node
+from refinery.lib.scripts.ps1.token import BACKTICK_ESCAPE
 from refinery.lib.scripts.ps1.model import (
     Expression,
     Ps1AccessKind,
@@ -723,17 +724,7 @@ def _string_value(node: Expression | None) -> str | None:
     return None
 
 
-_BACKTICK_ENCODE = {
-    '\x00': '`0',
-    '\x07': '`a',
-    '\x08': '`b',
-    '\x09': '`t',
-    '\x0A': '`n',
-    '\x0B': '`v',
-    '\x0C': '`f',
-    '\x0D': '`r',
-    '\x1B': '`e',
-}
+_BACKTICK_ENCODE = {v: F'`{k}' for k, v in BACKTICK_ESCAPE.items()}
 _NONPRINT_CONTROL = frozenset(_BACKTICK_ENCODE) - {'\n'}
 
 
@@ -800,19 +791,6 @@ def _case_normalize_name(name: str) -> str:
     if canonical is not None:
         return canonical
     return name
-
-
-def _strip_backtick_noop(name: str) -> str:
-    result: list[str] = []
-    i = 0
-    while i < len(name):
-        if name[i] == '`' and i + 1 < len(name):
-            result.append(name[i + 1])
-            i += 2
-            continue
-        result.append(name[i])
-        i += 1
-    return ''.join(result)
 
 
 def _get_command_name(cmd: Ps1CommandInvocation) -> str | None:

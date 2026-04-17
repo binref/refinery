@@ -43,17 +43,11 @@ class Ps1Variable(Expression):
     braced: bool = False
     splatted: bool = False
 
-    def children(self) -> Generator[Node, None, None]:
-        yield from ()
-
 
 @dataclass(repr=False)
 class Ps1IntegerLiteral(Expression):
     value: int = 0
     raw: str = '0'
-
-    def children(self) -> Generator[Node, None, None]:
-        yield from ()
 
 
 @dataclass(repr=False)
@@ -61,17 +55,11 @@ class Ps1RealLiteral(Expression):
     value: float = 0.0
     raw: str = '0.0'
 
-    def children(self) -> Generator[Node, None, None]:
-        yield from ()
-
 
 @dataclass(repr=False)
 class Ps1StringLiteral(Expression):
     value: str = ''
     raw: str = "''"
-
-    def children(self) -> Generator[Node, None, None]:
-        yield from ()
 
 
 @dataclass(repr=False)
@@ -95,9 +83,6 @@ class Ps1ExpandableString(Expression):
 class Ps1HereString(Expression):
     value: str = ''
     raw: str = ''
-
-    def children(self) -> Generator[Node, None, None]:
-        yield from ()
 
 
 @dataclass(repr=False)
@@ -145,9 +130,6 @@ class Ps1UnaryExpression(Expression):
 @dataclass(repr=False)
 class Ps1TypeExpression(Expression):
     name: str = ''
-
-    def children(self) -> Generator[Node, None, None]:
-        yield from ()
 
 
 @dataclass(repr=False)
@@ -514,25 +496,10 @@ class Ps1WhileLoop(Statement):
 
 
 @dataclass(repr=False)
-class Ps1DoWhileLoop(Statement):
+class Ps1DoLoop(Statement):
     condition: Expression | None = None
     body: Block | None = None
-    label: str | None = None
-
-    def __post_init__(self):
-        self._adopt(self.condition, self.body)
-
-    def children(self) -> Generator[Node, None, None]:
-        if self.body is not None:
-            yield self.body
-        if self.condition is not None:
-            yield self.condition
-
-
-@dataclass(repr=False)
-class Ps1DoUntilLoop(Statement):
-    condition: Expression | None = None
-    body: Block | None = None
+    is_until: bool = False
     label: str | None = None
 
     def __post_init__(self):
@@ -750,9 +717,6 @@ class Ps1DataSection(Statement):
 class Ps1ErrorNode(Node):
     text: str = ''
     message: str = ''
-
-    def children(self) -> Generator[Node, None, None]:
-        yield from ()
 
 
 @dataclass(repr=False)

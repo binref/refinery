@@ -11,8 +11,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1CommandInvocation,
     Ps1ContinueStatement,
     Ps1DataSection,
-    Ps1DoUntilLoop,
-    Ps1DoWhileLoop,
+    Ps1DoLoop,
     Ps1ExitStatement,
     Ps1ExpandableString,
     Ps1ExpressionStatement,
@@ -68,11 +67,13 @@ class TestPs1ParserStatements(TestBase):
 
     def test_do_while_loop(self):
         stmt = self._parse_stmt('do { $x++ } while ($x -lt 10)')
-        self.assertIsInstance(stmt, Ps1DoWhileLoop)
+        self.assertIsInstance(stmt, Ps1DoLoop)
+        self.assertFalse(stmt.is_until)
 
     def test_do_until_loop(self):
         stmt = self._parse_stmt('do { $x-- } until ($x -eq 0)')
-        self.assertIsInstance(stmt, Ps1DoUntilLoop)
+        self.assertIsInstance(stmt, Ps1DoLoop)
+        self.assertTrue(stmt.is_until)
 
     def test_for_loop(self):
         stmt = self._parse_stmt('for ($i=0; $i -lt 10; $i++) { $x += $i }')
@@ -335,7 +336,7 @@ class TestPs1ParserStatements(TestBase):
 
     def test_labeled_do_while(self):
         stmt = self._parse_stmt(':repeat do { $x++ } while ($x -lt 5)')
-        self.assertIsInstance(stmt, Ps1DoWhileLoop)
+        self.assertIsInstance(stmt, Ps1DoLoop)
         self.assertEqual(stmt.label, ':repeat')
 
     def test_labeled_switch(self):

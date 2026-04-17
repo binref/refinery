@@ -11,8 +11,8 @@ from refinery.lib.scripts.ps1.deobfuscation._helpers import (
     _get_command_name,
     _make_string_literal,
     _string_value,
-    _strip_backtick_noop,
 )
+from refinery.lib.scripts.ps1.token import _strip_backtick_noop
 from refinery.lib.scripts.ps1.model import (
     Ps1BinaryExpression,
     Ps1CastExpression,

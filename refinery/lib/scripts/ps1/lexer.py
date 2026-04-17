@@ -6,40 +6,22 @@ import re
 from dataclasses import dataclass, field
 from typing import Generator
 
-from refinery.lib.scripts.ps1.token import _KEYWORDS, Ps1Token, Ps1TokenKind
+from refinery.lib.scripts.ps1.token import (
+    DASHES,
+    DOUBLE_QUOTES,
+    SINGLE_QUOTES,
+    WHITESPACE,
+    _KEYWORDS,
+    _VARIABLE_PATTERN_CORE,
+    Ps1Token,
+    Ps1TokenKind,
+)
 
 
 class Ps1LexerMode(enum.Enum):
     EXPRESSION = 'expression'
     ARGUMENT = 'argument'
 
-
-BACKTICK_ESCAPE = {
-    '0' : '\0',
-    'a' : '\a',
-    'b' : '\b',
-    'e' : '\x1b',
-    'f' : '\f',
-    'n' : '\n',
-    'r' : '\r',
-    't' : '\t',
-    'v' : '\v',
-}
-
-SINGLE_QUOTES = frozenset("'\u2018\u2019\u201A\u201B")
-DOUBLE_QUOTES = frozenset('"\u201C\u201D\u201E')
-DASHES = frozenset('-\u2013\u2014\u2015')
-WHITESPACE = frozenset(' \t\u00A0\u0085')
-
-NORMALIZE_QUOTES = str.maketrans({
-    '\u2018': "'",
-    '\u2019': "'",
-    '\u201A': "'",
-    '\u201B': "'",
-    '\u201C': '"',
-    '\u201D': '"',
-    '\u201E': '"',
-})
 
 _TWO_CHAR_OPS: dict[str, Ps1TokenKind] = {
     '+=' : Ps1TokenKind.PLUS_ASSIGN,
@@ -172,12 +154,9 @@ _REAL_PATTERN = re.compile(
     r'|[0-9]+(?:\.[0-9]+)?(?:[dD]|[kKmMgGtTpP][bB])',
 )
 
-_VARIABLE_PATTERN = re.compile(
-    r'(?:[a-zA-Z0-9_]+:(?!:))?'
-    r'(?:\{[^}]+\}|[a-zA-Z0-9_][a-zA-Z0-9_?]*)'
-    r'|[$?^]',
-    re.IGNORECASE,
-)
+_VARIABLE_PATTERN = re.compile(_VARIABLE_PATTERN_CORE, re.IGNORECASE)
+
+_DASH_WORD = re.compile(r'[a-zA-Z]+')
 
 _PARAMETER_TERMINATORS = frozenset(' \t\r\n{}();,|&.[')
 
@@ -225,26 +204,22 @@ class Ps1Lexer:
                 break
         return self.pos > start
 
-    def _read_line_comment(self) -> str:
-        start = self.pos
+    def _read_line_comment(self) -> None:
         src = self.source
         length = len(src)
         while self.pos < length and src[self.pos] != '\n':
             self.pos += 1
-        return src[start:self.pos]
 
-    def _read_block_comment(self) -> str:
-        start = self.pos
+    def _read_block_comment(self) -> None:
         src = self.source
         length = len(src)
         self.pos += 2
         while self.pos < length - 1:
             if src[self.pos] == '#' and src[self.pos + 1] == '>':
                 self.pos += 2
-                return src[start:self.pos]
+                return
             self.pos += 1
         self.pos = length
-        return src[start:self.pos]
 
     def _read_verbatim_string(self) -> str:
         start = self.pos
@@ -357,8 +332,7 @@ class Ps1Lexer:
             self.pos += 1
         return src[start:self.pos]
 
-    def _read_verbatim_here_string(self) -> str:
-        start = self.pos
+    def _skip_here_string_header(self):
         src = self.source
         length = len(src)
         self.pos += 2
@@ -366,36 +340,38 @@ class Ps1Lexer:
             self.pos += 1
         if self.pos < length and src[self.pos] == '\n':
             self.pos += 1
-        while self.pos < length:
-            if src[self.pos] in '\r\n':
-                if src[self.pos] == '\r' and self.pos + 1 < length and src[self.pos + 1] == '\n':
-                    nl_end = self.pos + 2
-                else:
-                    nl_end = self.pos + 1
-                if nl_end + 1 < length and src[nl_end] in SINGLE_QUOTES and src[nl_end + 1] == '@':
-                    self.pos = nl_end + 2
-                    return src[start:self.pos]
+
+    def _check_here_string_terminator(self, quote_set: frozenset[str]) -> bool:
+        src = self.source
+        length = len(src)
+        if src[self.pos] == '\r' and self.pos + 1 < length and src[self.pos + 1] == '\n':
+            nl_end = self.pos + 2
+        else:
+            nl_end = self.pos + 1
+        if nl_end + 1 < length and src[nl_end] in quote_set and src[nl_end + 1] == '@':
+            self.pos = nl_end + 2
+            return True
+        return False
+
+    def _read_verbatim_here_string(self) -> str:
+        start = self.pos
+        self._skip_here_string_header()
+        while self.pos < len(self.source):
+            if self.source[self.pos] in '\r\n':
+                if self._check_here_string_terminator(SINGLE_QUOTES):
+                    return self.source[start:self.pos]
             self.pos += 1
-        return src[start:self.pos]
+        return self.source[start:self.pos]
 
     def _read_expandable_here_string(self) -> str:
         start = self.pos
         src = self.source
         length = len(src)
-        self.pos += 2
-        if self.pos < length and src[self.pos] == '\r':
-            self.pos += 1
-        if self.pos < length and src[self.pos] == '\n':
-            self.pos += 1
+        self._skip_here_string_header()
         while self.pos < length:
             c = src[self.pos]
             if c in '\r\n':
-                if c == '\r' and self.pos + 1 < length and src[self.pos + 1] == '\n':
-                    nl_end = self.pos + 2
-                else:
-                    nl_end = self.pos + 1
-                if nl_end + 1 < length and src[nl_end] in DOUBLE_QUOTES and src[nl_end + 1] == '@':
-                    self.pos = nl_end + 2
+                if self._check_here_string_terminator(DOUBLE_QUOTES):
                     return src[start:self.pos]
             if c == '`' and self.pos + 1 < length:
                 self.pos += 2
@@ -453,13 +429,13 @@ class Ps1Lexer:
         src = self.source
         start = self.pos
         self.pos += 1
-        m = re.match(r'[a-zA-Z]+', src[self.pos:])
+        m = _DASH_WORD.match(src, self.pos)
         if not m:
             self.pos = start
             return None
         word = m.group().lower()
         if word in _DASH_OPERATORS:
-            self.pos += m.end()
+            self.pos = m.end()
             return Ps1Token(Ps1TokenKind.OPERATOR, _DASH_OPERATORS[word], start)
         self.pos = start
         return None
@@ -587,7 +563,7 @@ class Ps1Lexer:
 
             if c2 in ('..', '--', '++', '::', '+=', '-=', '*=', '/=', '%=') and self.mode == Ps1LexerMode.ARGUMENT:
                 after = self.pos + 2
-                if after < length and src[after] not in ' \t\r\n|&;,{}()':
+                if after < length and src[after] not in _FORCE_START_NEW_TOKEN:
                     token = self._read_generic_token()
                     if token.value:
                         yield from self._emit(token)
@@ -676,7 +652,7 @@ class Ps1Lexer:
                             continue
 
             if self.mode == Ps1LexerMode.ARGUMENT and c in '*/%=!+':
-                if self.pos + 1 < length and src[self.pos + 1] not in ' \t\r\n|&;,{}()':
+                if self.pos + 1 < length and src[self.pos + 1] not in _FORCE_START_NEW_TOKEN:
                     token = self._read_generic_token()
                     if token.value:
                         yield from self._emit(token)

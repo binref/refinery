@@ -5,6 +5,53 @@ import enum
 from dataclasses import dataclass
 
 
+BACKTICK_ESCAPE = {
+    '0' : '\0',
+    'a' : '\a',
+    'b' : '\b',
+    'e' : '\x1b',
+    'f' : '\f',
+    'n' : '\n',
+    'r' : '\r',
+    't' : '\t',
+    'v' : '\v',
+}
+
+SINGLE_QUOTES = frozenset("'\u2018\u2019\u201A\u201B")
+DOUBLE_QUOTES = frozenset('"\u201C\u201D\u201E')
+DASHES = frozenset('-\u2013\u2014\u2015')
+WHITESPACE = frozenset(' \t\u00A0\u0085')
+
+NORMALIZE_QUOTES = str.maketrans({
+    '\u2018': "'",
+    '\u2019': "'",
+    '\u201A': "'",
+    '\u201B': "'",
+    '\u201C': '"',
+    '\u201D': '"',
+    '\u201E': '"',
+})
+
+_VARIABLE_PATTERN_CORE = (
+    r'(?:[a-zA-Z0-9_]+:(?!:))?'
+    r'(?:\{[^}]+\}|[a-zA-Z0-9_][a-zA-Z0-9_?]*)'
+    r'|[$?^]'
+)
+
+
+def _strip_backtick_noop(name: str) -> str:
+    result: list[str] = []
+    i = 0
+    while i < len(name):
+        if name[i] == '`' and i + 1 < len(name):
+            result.append(name[i + 1])
+            i += 2
+            continue
+        result.append(name[i])
+        i += 1
+    return ''.join(result)
+
+
 class Ps1TokenKind(enum.Enum):
     INTEGER          = 'integer'         # noqa
     REAL             = 'real'            # noqa

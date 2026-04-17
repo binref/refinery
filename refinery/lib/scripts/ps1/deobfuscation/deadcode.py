@@ -10,8 +10,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1BinaryExpression,
     Ps1BreakStatement,
     Ps1ContinueStatement,
-    Ps1DoUntilLoop,
-    Ps1DoWhileLoop,
+    Ps1DoLoop,
     Ps1ExpressionStatement,
     Ps1ForLoop,
     Ps1IfStatement,
@@ -220,10 +219,8 @@ class Ps1DeadCodeElimination(Transformer):
     def _try_prune(self, stmt: Statement) -> list[Statement] | None:
         if isinstance(stmt, Ps1WhileLoop):
             return self._prune_while(stmt)
-        if isinstance(stmt, Ps1DoWhileLoop):
-            return self._prune_do_while(stmt)
-        if isinstance(stmt, Ps1DoUntilLoop):
-            return self._prune_do_until(stmt)
+        if isinstance(stmt, Ps1DoLoop):
+            return self._prune_do_loop(stmt)
         if isinstance(stmt, Ps1ForLoop):
             return self._prune_for(stmt)
         if isinstance(stmt, Ps1IfStatement):
@@ -245,18 +242,13 @@ class Ps1DeadCodeElimination(Transformer):
         return None
 
     @staticmethod
-    def _prune_do_while(node: Ps1DoWhileLoop) -> list[Statement] | None:
+    def _prune_do_loop(node: Ps1DoLoop) -> list[Statement] | None:
         if node.body is not None:
-            if _is_truthy(node.condition) is False:
-                return list(node.body.body)
-            if _body_breaks_unconditionally(node.body.body):
-                return list(node.body.body[:-1])
-        return None
-
-    @staticmethod
-    def _prune_do_until(node: Ps1DoUntilLoop) -> list[Statement] | None:
-        if node.body is not None:
-            if _is_truthy(node.condition) is True:
+            trivially_exits = (
+                _is_truthy(node.condition) is True if node.is_until
+                else _is_truthy(node.condition) is False
+            )
+            if trivially_exits:
                 return list(node.body.body)
             if _body_breaks_unconditionally(node.body.body):
                 return list(node.body.body[:-1])

@@ -5,17 +5,22 @@ Specification 3.0.
 from __future__ import annotations
 
 import re
+from contextlib import contextmanager
 
 from refinery.lib.scripts import Block
-from refinery.lib.scripts.ps1.deobfuscation._helpers import _strip_backtick_noop
 from refinery.lib.scripts.ps1.lexer import (
+    Ps1Lexer,
+    Ps1LexerMode,
+)
+from refinery.lib.scripts.ps1.token import (
     BACKTICK_ESCAPE,
     DOUBLE_QUOTES,
     NORMALIZE_QUOTES,
     SINGLE_QUOTES,
     WHITESPACE,
-    Ps1Lexer,
-    Ps1LexerMode,
+    _VARIABLE_PATTERN_CORE,
+    _strip_backtick_noop,
+    Ps1TokenKind,
 )
 from refinery.lib.scripts.ps1.model import (
     Expression,
@@ -33,8 +38,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1CommandInvocation,
     Ps1ContinueStatement,
     Ps1DataSection,
-    Ps1DoUntilLoop,
-    Ps1DoWhileLoop,
+    Ps1DoLoop,
     Ps1ErrorNode,
     Ps1ExitStatement,
     Ps1ExpandableHereString,
@@ -73,64 +77,21 @@ from refinery.lib.scripts.ps1.model import (
     Ps1WhileLoop,
     Statement,
 )
-from refinery.lib.scripts.ps1.token import Ps1Token, Ps1TokenKind
+from refinery.lib.scripts.ps1.token import Ps1Token
+from refinery.lib.scripts.ps1.lexer import _DASH_OPERATORS
 
-_COMPARISON_OPERATORS = frozenset({
-    '-as',
-    '-ccontains',
-    '-ceq',
-    '-cge',
-    '-cgt',
-    '-cin',
-    '-cle',
-    '-clike',
-    '-clt',
-    '-cmatch',
-    '-cne',
-    '-cnotcontains',
-    '-cnotin',
-    '-cnotlike',
-    '-cnotmatch',
-    '-contains',
-    '-creplace',
-    '-csplit',
-    '-eq',
-    '-ge',
-    '-gt',
-    '-icontains',
-    '-ieq',
-    '-ige',
-    '-igt',
-    '-iin',
-    '-ile',
-    '-ilike',
-    '-ilt',
-    '-imatch',
-    '-in',
-    '-ine',
-    '-inotcontains',
-    '-inotin',
-    '-inotlike',
-    '-inotmatch',
-    '-ireplace',
-    '-is',
-    '-isnot',
-    '-isplit',
-    '-join',
-    '-le',
-    '-like',
-    '-lt',
-    '-match',
-    '-ne',
-    '-notcontains',
-    '-notin',
-    '-notlike',
-    '-notmatch',
-    '-replace',
-    '-shl',
-    '-shr',
-    '-split',
+_NON_COMPARISON_DASH_OPS = frozenset({
+    '-and',
+    '-band',
+    '-bnot',
+    '-bor',
+    '-bxor',
+    '-f',
+    '-not',
+    '-or',
+    '-xor',
 })
+_COMPARISON_OPERATORS = frozenset(_DASH_OPERATORS.values()) - _NON_COMPARISON_DASH_OPS
 
 _BINARY_PRECEDENCE: dict[str, int] = {}
 _BINARY_PRECEDENCE.update(dict.fromkeys(('-and', '-or', '-xor'), 10))
@@ -169,12 +130,13 @@ _STATEMENT_TERMINATORS = frozenset({
     Ps1TokenKind.PIPE,
 })
 
+_PIPELINE_TERMINATORS = _STATEMENT_TERMINATORS | {
+    Ps1TokenKind.DOUBLE_AMPERSAND,
+    Ps1TokenKind.DOUBLE_PIPE,
+}
+
 _VARIABLE_FRAG = re.compile(
-    r'\$(?:'
-    r'(?:[a-zA-Z0-9_]+:(?!:))?'
-    r'(?:\{[^}]+\}|[a-zA-Z0-9_][a-zA-Z0-9_?]*)'
-    r'|[$?^]'
-    r')',
+    r'\$(?:' + _VARIABLE_PATTERN_CORE + r')',
     re.IGNORECASE,
 )
 
@@ -247,6 +209,19 @@ class Ps1Parser:
             Ps1TokenKind.SEMICOLON,
         ):
             self._advance()
+
+    @staticmethod
+    def _bare_string(tok: Ps1Token) -> Ps1StringLiteral:
+        return Ps1StringLiteral(offset=tok.offset, value=tok.value, raw=tok.value)
+
+    @contextmanager
+    def _comma_mode(self, disabled: bool):
+        old = self._disable_comma
+        self._disable_comma = disabled
+        try:
+            yield
+        finally:
+            self._disable_comma = old
 
     def _might_be_param_block(self) -> bool:
         if self._at(Ps1TokenKind.PARAM):
@@ -519,7 +494,7 @@ class Ps1Parser:
 
         if self._at(Ps1TokenKind.GENERIC_TOKEN, Ps1TokenKind.GENERIC_EXPAND):
             tok = self._advance()
-            name_expr = Ps1StringLiteral(offset=tok.offset, value=tok.value, raw=tok.value)
+            name_expr = self._bare_string(tok)
         elif self._at(Ps1TokenKind.VARIABLE, Ps1TokenKind.SPLAT_VARIABLE):
             name_expr = self._parse_variable()
         elif self._at(Ps1TokenKind.LBRACE):
@@ -530,10 +505,10 @@ class Ps1Parser:
             name_expr = self._parse_string()
         elif self._at(Ps1TokenKind.PERCENT):
             tok = self._advance()
-            name_expr = Ps1StringLiteral(offset=tok.offset, value=tok.value, raw=tok.value)
+            name_expr = self._bare_string(tok)
         elif self._current.kind.is_keyword:
             tok = self._advance()
-            name_expr = Ps1StringLiteral(offset=tok.offset, value=tok.value, raw=tok.value)
+            name_expr = self._bare_string(tok)
         else:
             if invocation_operator:
                 return Ps1CommandInvocation(offset=offset, invocation_operator=invocation_operator)
@@ -616,16 +591,7 @@ class Ps1Parser:
         )
 
     def _is_pipeline_terminator(self) -> bool:
-        return self._current.kind in (
-            Ps1TokenKind.PIPE,
-            Ps1TokenKind.NEWLINE,
-            Ps1TokenKind.SEMICOLON,
-            Ps1TokenKind.RBRACE,
-            Ps1TokenKind.RPAREN,
-            Ps1TokenKind.EOF,
-            Ps1TokenKind.DOUBLE_AMPERSAND,
-            Ps1TokenKind.DOUBLE_PIPE,
-        )
+        return self._current.kind in _PIPELINE_TERMINATORS
 
     def _parse_argument_value(self) -> Expression | None:
         first = self._parse_single_argument_value()
@@ -666,7 +632,7 @@ class Ps1Parser:
             return self._parse_unary_expression()
         if self._at(Ps1TokenKind.STAR, Ps1TokenKind.SLASH, Ps1TokenKind.PERCENT):
             tok = self._advance()
-            return Ps1StringLiteral(offset=tok.offset, value=tok.value, raw=tok.value)
+            return self._bare_string(tok)
         return None
 
     def _parse_expression(self) -> Expression | None:
@@ -728,12 +694,8 @@ class Ps1Parser:
         grammar but disables the comma operator so that commas delimit
         arguments rather than forming array literals.
         """
-        old = self._disable_comma
-        self._disable_comma = True
-        try:
+        with self._comma_mode(disabled=True):
             return self._parse_expression()
-        finally:
-            self._disable_comma = old
 
     def _parse_unary_expression(self) -> Expression | None:
         tok = self._peek()
@@ -1214,12 +1176,8 @@ class Ps1Parser:
         self._expect(Ps1TokenKind.LPAREN)
         self._skip_newlines()
         self._lexer.push_mode(Ps1LexerMode.EXPRESSION)
-        old = self._disable_comma
-        self._disable_comma = False
-        try:
+        with self._comma_mode(disabled=False):
             expr = self._parse_pipeline_expression()
-        finally:
-            self._disable_comma = old
         self._skip_newlines()
         self._expect(Ps1TokenKind.RPAREN)
         self._lexer.pop_mode()
@@ -1231,12 +1189,8 @@ class Ps1Parser:
         self._expect(Ps1TokenKind.DOLLAR_LPAREN)
         self._skip_newlines()
         self._lexer.push_mode(Ps1LexerMode.EXPRESSION)
-        old = self._disable_comma
-        self._disable_comma = False
-        try:
+        with self._comma_mode(disabled=False):
             stmts = self._parse_statement_list(until=Ps1TokenKind.RPAREN)
-        finally:
-            self._disable_comma = old
         self._skip_newlines()
         self._expect(Ps1TokenKind.RPAREN)
         self._lexer.pop_mode()
@@ -1248,12 +1202,8 @@ class Ps1Parser:
         self._expect(Ps1TokenKind.AT_LPAREN)
         self._skip_newlines()
         self._lexer.push_mode(Ps1LexerMode.EXPRESSION)
-        old = self._disable_comma
-        self._disable_comma = False
-        try:
+        with self._comma_mode(disabled=False):
             stmts = self._parse_statement_list(until=Ps1TokenKind.RPAREN)
-        finally:
-            self._disable_comma = old
         self._skip_newlines()
         self._expect(Ps1TokenKind.RPAREN)
         self._lexer.pop_mode()
@@ -1263,18 +1213,14 @@ class Ps1Parser:
     def _parse_label_or_key(self) -> Expression | None:
         if self._at(Ps1TokenKind.GENERIC_TOKEN, Ps1TokenKind.GENERIC_EXPAND, Ps1TokenKind.LABEL):
             tok = self._advance()
-            return Ps1StringLiteral(offset=tok.offset, value=tok.value, raw=tok.value)
+            return self._bare_string(tok)
         if self._current.kind.is_keyword:
             tok = self._advance()
-            return Ps1StringLiteral(offset=tok.offset, value=tok.value, raw=tok.value)
+            return self._bare_string(tok)
         if self._is_statement_terminator():
             return None
-        old = self._disable_comma
-        try:
-            self._disable_comma = True
+        with self._comma_mode(disabled=True):
             return self._parse_unary_expression()
-        finally:
-            self._disable_comma = old
 
     def _parse_hash_literal(self) -> Ps1HashLiteral:
         offset = self._current.offset
@@ -1305,9 +1251,7 @@ class Ps1Parser:
         offset = self._current.offset
         self._expect(Ps1TokenKind.LBRACE)
         self._skip_newlines()
-        old = self._disable_comma
-        self._disable_comma = False
-        try:
+        with self._comma_mode(disabled=False):
             param_block = None
             if self._might_be_param_block():
                 param_block = self._parse_param_block()
@@ -1329,8 +1273,6 @@ class Ps1Parser:
             self._skip_newlines()
             self._expect(Ps1TokenKind.RBRACE)
             return Ps1ScriptBlock(offset=offset, param_block=param_block, body=body)
-        finally:
-            self._disable_comma = old
 
     def _parse_member_access(self, obj: Expression) -> Expression:
         access_tok = self._advance()
@@ -1386,12 +1328,8 @@ class Ps1Parser:
     def _parse_index_expression(self, obj: Expression) -> Expression:
         self._advance()
         self._skip_newlines()
-        old = self._disable_comma
-        self._disable_comma = False
-        try:
+        with self._comma_mode(disabled=False):
             index = self._parse_expression()
-        finally:
-            self._disable_comma = old
         self._skip_newlines()
         self._expect(Ps1TokenKind.RBRACKET)
         return Ps1IndexExpression(offset=obj.offset, object=obj, index=index)
@@ -1460,7 +1398,7 @@ class Ps1Parser:
             cond = self._parse_pipeline_expression()
             self._skip_newlines()
             self._expect(Ps1TokenKind.RPAREN)
-            return Ps1DoWhileLoop(offset=offset, condition=cond, body=body, label=label)
+            return Ps1DoLoop(offset=offset, condition=cond, body=body, label=label)
         elif self._at(Ps1TokenKind.UNTIL):
             self._advance()
             self._skip_newlines()
@@ -1469,8 +1407,8 @@ class Ps1Parser:
             cond = self._parse_pipeline_expression()
             self._skip_newlines()
             self._expect(Ps1TokenKind.RPAREN)
-            return Ps1DoUntilLoop(offset=offset, condition=cond, body=body, label=label)
-        return Ps1DoWhileLoop(offset=offset, body=body, label=label)
+            return Ps1DoLoop(offset=offset, condition=cond, body=body, is_until=True, label=label)
+        return Ps1DoLoop(offset=offset, body=body, label=label)
 
     def _parse_for(self, label: str | None = None) -> Ps1ForLoop:
         offset = self._current.offset
@@ -1529,7 +1467,7 @@ class Ps1Parser:
         """
         if self._current.kind.is_keyword:
             tok = self._advance()
-            return Ps1StringLiteral(offset=tok.offset, value=tok.value, raw=tok.value)
+            return self._bare_string(tok)
         self._lexer.mode = Ps1LexerMode.EXPRESSION
         return self._parse_expression()
 
@@ -1746,12 +1684,8 @@ class Ps1Parser:
         default = None
         if self._eat(Ps1TokenKind.EQUALS):
             self._skip_newlines()
-            old = self._disable_comma
-            self._disable_comma = True
-            try:
+            with self._comma_mode(disabled=True):
                 default = self._parse_expression()
-            finally:
-                self._disable_comma = old
         return Ps1ParameterDeclaration(
             offset=offset, variable=var, attributes=attrs, default_value=default)
 
@@ -1781,9 +1715,7 @@ class Ps1Parser:
             self._skip_newlines()
             positional: list[Expression] = []
             named: list[tuple[str, Expression]] = []
-            old = self._disable_comma
-            self._disable_comma = True
-            try:
+            with self._comma_mode(disabled=True):
                 while not self._at(Ps1TokenKind.RPAREN, Ps1TokenKind.EOF):
                     self._skip_newlines()
                     if self._at(Ps1TokenKind.RPAREN):
@@ -1811,8 +1743,6 @@ class Ps1Parser:
                     self._skip_newlines()
                     if not self._eat(Ps1TokenKind.COMMA):
                         break
-            finally:
-                self._disable_comma = old
             self._expect(Ps1TokenKind.RPAREN)
             self._skip_newlines()
             self._expect(Ps1TokenKind.RBRACKET)

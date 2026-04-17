@@ -22,8 +22,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1CommandInvocation,
     Ps1ContinueStatement,
     Ps1DataSection,
-    Ps1DoUntilLoop,
-    Ps1DoWhileLoop,
+    Ps1DoLoop,
     Ps1ErrorNode,
     Ps1ExitStatement,
     Ps1ExpandableHereString,
@@ -435,24 +434,14 @@ class Ps1Synthesizer(Visitor):
         if node.body:
             self._emit_block(node.body)
 
-    def visit_Ps1DoWhileLoop(self, node: Ps1DoWhileLoop):
+    def visit_Ps1DoLoop(self, node: Ps1DoLoop):
         if node.label:
             self._write(F'{node.label} ')
         self._write('do ')
         if node.body:
             self._emit_block(node.body)
-        self._write(' while (')
-        if node.condition:
-            self.visit(node.condition)
-        self._write(')')
-
-    def visit_Ps1DoUntilLoop(self, node: Ps1DoUntilLoop):
-        if node.label:
-            self._write(F'{node.label} ')
-        self._write('do ')
-        if node.body:
-            self._emit_block(node.body)
-        self._write(' until (')
+        keyword = 'until' if node.is_until else 'while'
+        self._write(F' {keyword} (')
         if node.condition:
             self.visit(node.condition)
         self._write(')')
