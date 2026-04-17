@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from collections.abc import Callable, Generator
 
-from refinery.lib.scripts import Block, Expression, Node, Statement, Transformer
+from refinery.lib.scripts import Block, Node, Statement, Transformer
 from refinery.lib.scripts.ps1.deobfuscation._helpers import _get_body, _is_builtin_variable, _unwrap_parens
 from refinery.lib.scripts.ps1.deobfuscation.emulator import evaluate_truthy
 from refinery.lib.scripts.ps1.model import (

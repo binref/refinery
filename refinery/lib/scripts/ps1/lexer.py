@@ -160,6 +160,8 @@ _DASH_WORD = re.compile(r'[a-zA-Z]+')
 
 _PARAMETER_TERMINATORS = frozenset(' \t\r\n{}();,|&.[')
 
+_VARIABLE_START_CHARS = '_?{$^'
+
 
 @dataclass
 class Ps1Lexer:
@@ -181,9 +183,6 @@ class Ps1Lexer:
     def pop_mode(self):
         if len(self.mode_stack) > 1:
             self.mode_stack.pop()
-
-    def _peek(self, count: int = 1) -> str:
-        return self.source[self.pos:self.pos + count]
 
     def _at_end(self) -> bool:
         return self.pos >= len(self.source)
@@ -258,54 +257,18 @@ class Ps1Lexer:
                 continue
             if c == '@' and self.pos + 1 < length:
                 nc = src[self.pos + 1]
-                if (nc in SINGLE_QUOTES or nc in DOUBLE_QUOTES) and self.pos + 2 < length and src[self.pos + 2] in '\r\n':
-                    quote_set = SINGLE_QUOTES if nc in SINGLE_QUOTES else DOUBLE_QUOTES
-                    self.pos += 2
-                    if self.pos < length and src[self.pos] == '\r':
-                        self.pos += 1
-                    if self.pos < length and src[self.pos] == '\n':
-                        self.pos += 1
-                    while self.pos < length:
-                        if src[self.pos] in '\r\n':
-                            if src[self.pos] == '\r' and self.pos + 1 < length and src[self.pos + 1] == '\n':
-                                self.pos += 2
-                            else:
-                                self.pos += 1
-                            if self.pos + 1 < length and src[self.pos] in quote_set and src[self.pos + 1] == '@':
-                                self.pos += 2
-                                break
-                        else:
-                            self.pos += 1
-                    continue
+                if self.pos + 2 < length and src[self.pos + 2] in '\r\n':
+                    if nc in SINGLE_QUOTES:
+                        self._read_verbatim_here_string()
+                        continue
+                    if nc in DOUBLE_QUOTES:
+                        self._read_expandable_here_string()
+                        continue
             if c in SINGLE_QUOTES:
-                self.pos += 1
-                while self.pos < length:
-                    if src[self.pos] in SINGLE_QUOTES:
-                        self.pos += 1
-                        if self.pos < length and src[self.pos] in SINGLE_QUOTES:
-                            self.pos += 1
-                            continue
-                        break
-                    self.pos += 1
+                self._read_verbatim_string()
                 continue
             if c in DOUBLE_QUOTES:
-                self.pos += 1
-                while self.pos < length:
-                    sc = src[self.pos]
-                    if sc == '`' and self.pos + 1 < length:
-                        self.pos += 2
-                        continue
-                    if sc == '$' and self.pos + 1 < length and src[self.pos + 1] == '(':
-                        self.pos += 2
-                        self._skip_subexpression_content()
-                        continue
-                    if sc in DOUBLE_QUOTES:
-                        self.pos += 1
-                        if self.pos < length and src[self.pos] in DOUBLE_QUOTES:
-                            self.pos += 1
-                            continue
-                        break
-                    self.pos += 1
+                self._read_expandable_string()
                 continue
             self.pos += 1
 
@@ -497,7 +460,7 @@ class Ps1Lexer:
                     self.pos += 2
                     self._skip_subexpression_content()
                     continue
-                if nc.isalnum() or nc in '_?{$^':
+                if nc.isalnum() or nc in _VARIABLE_START_CHARS:
                     m = _VARIABLE_PATTERN.match(src, self.pos + 1)
                     if m:
                         has_expansion = True
@@ -584,9 +547,7 @@ class Ps1Lexer:
 
             if c == '$' or (c == '@' and self.pos + 1 < length and src[self.pos + 1] not in '({'):
                 nc = src[self.pos + 1] if self.pos + 1 < length else ''
-                if c == '$' and nc == '(':
-                    pass
-                elif nc and (nc.isalnum() or nc in '_?{$^'):
+                if nc and (nc.isalnum() or nc in _VARIABLE_START_CHARS):
                     token = self._read_variable(c)
                     if self.mode == Ps1LexerMode.ARGUMENT and self.pos < length:
                         fc = src[self.pos]

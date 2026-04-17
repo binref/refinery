@@ -79,6 +79,8 @@ from refinery.lib.scripts.ps1.model import (
     Ps1Variable,
     Ps1WhileLoop,
     Statement,
+    _Ps1Exit,
+    _Ps1Jump,
 )
 from refinery.lib.scripts.ps1.token import Ps1Token
 from refinery.lib.scripts.ps1.lexer import _DASH_OPERATORS
@@ -152,6 +154,14 @@ _ASSIGNMENT_RHS_STATEMENT_KINDS = frozenset({
     Ps1TokenKind.SWITCH,
     Ps1TokenKind.TRY,
 })
+
+_MULTIPLIER_SUFFIXES = {
+    'kb': 1024,
+    'mb': 1024 ** 2,
+    'gb': 1024 ** 3,
+    'tb': 1024 ** 4,
+    'pb': 1024 ** 5,
+}
 
 
 class Ps1Parser:
@@ -308,26 +318,31 @@ class Ps1Parser:
     def parse(self) -> Ps1Script:
         return self._parse_script()
 
-    def _parse_script(self) -> Ps1Script:
-        offset = self._current.offset
+    def _parse_code_body(
+        self,
+        until: Ps1TokenKind | None = None,
+    ) -> dict:
         self._skip_newlines()
-        param_block = None
+        fields: dict = {}
         if self._might_be_param_block():
-            param_block = self._parse_param_block()
+            fields['param_block'] = self._parse_param_block()
             self._skip_newlines()
         named = self._try_parse_named_blocks()
         if named is not None:
             begin_block, process_block, end_block, dynamicparam_block = named
-            return Ps1Script(
-                offset=offset,
-                param_block=param_block,
+            fields.update(
                 begin_block=begin_block,
                 process_block=process_block,
                 end_block=end_block,
                 dynamicparam_block=dynamicparam_block,
             )
-        body = self._parse_statement_list()
-        return Ps1Script(offset=offset, param_block=param_block, body=body)
+        else:
+            fields['body'] = self._parse_statement_list(until=until)
+        return fields
+
+    def _parse_script(self) -> Ps1Script:
+        offset = self._current.offset
+        return Ps1Script(offset=offset, **self._parse_code_body())
 
     def _try_parse_named_blocks(
         self,
@@ -650,20 +665,21 @@ class Ps1Parser:
             return elements[0]
         return Ps1ArrayLiteral(offset=first.offset, elements=elements)
 
+    def _parse_generic_as_string(self, tok: Ps1Token) -> Expression:
+        if tok.kind == Ps1TokenKind.GENERIC_EXPAND:
+            parts = self._split_generic_expandable(tok.value)
+            if len(parts) == 1 and isinstance(parts[0], Ps1StringLiteral):
+                return Ps1StringLiteral(
+                    offset=tok.offset, value=parts[0].value, raw=tok.value)
+            return Ps1ExpandableString(
+                offset=tok.offset, parts=parts, raw=tok.value)
+        return Ps1StringLiteral(
+            offset=tok.offset, value=tok.value, raw=tok.value)
+
     def _parse_single_argument_value(self) -> Expression | None:
         if self._at(Ps1TokenKind.GENERIC_TOKEN, Ps1TokenKind.GENERIC_EXPAND):
             tok = self._advance()
-            if tok.kind == Ps1TokenKind.GENERIC_EXPAND:
-                parts = self._split_generic_expandable(tok.value)
-                if len(parts) == 1 and isinstance(parts[0], Ps1StringLiteral):
-                    result = Ps1StringLiteral(
-                        offset=tok.offset, value=parts[0].value, raw=tok.value)
-                else:
-                    result = Ps1ExpandableString(
-                        offset=tok.offset, parts=parts, raw=tok.value)
-            else:
-                result = Ps1StringLiteral(
-                    offset=tok.offset, value=tok.value, raw=tok.value)
+            result = self._parse_generic_as_string(tok)
             if isinstance(result, Ps1StringLiteral):
                 result, _ = self._absorb_suffix(result, Ps1TokenKind.DOT, '.')
             return result
@@ -876,13 +892,7 @@ class Ps1Parser:
         if tok.kind == Ps1TokenKind.LBRACKET:
             return self._try_parse_type_literal()
         if tok.kind in (Ps1TokenKind.GENERIC_TOKEN, Ps1TokenKind.GENERIC_EXPAND):
-            t = self._advance()
-            if t.kind == Ps1TokenKind.GENERIC_EXPAND:
-                parts = self._split_generic_expandable(t.value)
-                if len(parts) == 1 and isinstance(parts[0], Ps1StringLiteral):
-                    return Ps1StringLiteral(offset=t.offset, value=parts[0].value, raw=t.value)
-                return Ps1ExpandableString(offset=t.offset, parts=parts, raw=t.value)
-            return Ps1StringLiteral(offset=t.offset, value=t.value, raw=t.value)
+            return self._parse_generic_as_string(self._advance())
 
         return None
 
@@ -900,15 +910,8 @@ class Ps1Parser:
         tok = self._advance()
         raw = tok.value
         text = raw.replace('_', '')
-        multipliers = {
-            'kb': 1024,
-            'mb': 1024 ** 2,
-            'gb': 1024 ** 3,
-            'tb': 1024 ** 4,
-            'pb': 1024 ** 5,
-        }
         value = 0.0
-        for suffix, mult in multipliers.items():
+        for suffix, mult in _MULTIPLIER_SUFFIXES.items():
             if text.lower().endswith(suffix):
                 text = text[:-len(suffix)].rstrip('lL')
                 try:
@@ -1224,9 +1227,13 @@ class Ps1Parser:
         self._rescan_current()
         return Ps1ParenExpression(offset=offset, expression=expr)
 
-    def _parse_sub_expression(self) -> Ps1SubExpression:
+    def _parse_delimited_statement_block(
+        self,
+        open_kind: Ps1TokenKind,
+        cls: type[Ps1SubExpression] | type[Ps1ArrayExpression],
+    ) -> Expression:
         offset = self._current.offset
-        self._expect(Ps1TokenKind.DOLLAR_LPAREN)
+        self._expect(open_kind)
         self._skip_newlines()
         self._lexer.push_mode(Ps1LexerMode.EXPRESSION)
         with self._comma_mode(disabled=False):
@@ -1235,20 +1242,15 @@ class Ps1Parser:
         self._expect(Ps1TokenKind.RPAREN)
         self._lexer.pop_mode()
         self._rescan_current()
-        return Ps1SubExpression(offset=offset, body=stmts)
+        return cls(offset=offset, body=stmts)
 
-    def _parse_array_expression(self) -> Ps1ArrayExpression:
-        offset = self._current.offset
-        self._expect(Ps1TokenKind.AT_LPAREN)
-        self._skip_newlines()
-        self._lexer.push_mode(Ps1LexerMode.EXPRESSION)
-        with self._comma_mode(disabled=False):
-            stmts = self._parse_statement_list(until=Ps1TokenKind.RPAREN)
-        self._skip_newlines()
-        self._expect(Ps1TokenKind.RPAREN)
-        self._lexer.pop_mode()
-        self._rescan_current()
-        return Ps1ArrayExpression(offset=offset, body=stmts)
+    def _parse_sub_expression(self) -> Expression:
+        return self._parse_delimited_statement_block(
+            Ps1TokenKind.DOLLAR_LPAREN, Ps1SubExpression)
+
+    def _parse_array_expression(self) -> Expression:
+        return self._parse_delimited_statement_block(
+            Ps1TokenKind.AT_LPAREN, Ps1ArrayExpression)
 
     def _parse_label_or_key(self) -> Expression | None:
         if self._at(Ps1TokenKind.GENERIC_TOKEN, Ps1TokenKind.GENERIC_EXPAND, Ps1TokenKind.LABEL):
@@ -1290,29 +1292,11 @@ class Ps1Parser:
     def _parse_script_block(self) -> Ps1ScriptBlock:
         offset = self._current.offset
         self._expect(Ps1TokenKind.LBRACE)
-        self._skip_newlines()
         with self._comma_mode(disabled=False):
-            param_block = None
-            if self._might_be_param_block():
-                param_block = self._parse_param_block()
-                self._skip_newlines()
-            named = self._try_parse_named_blocks()
-            if named is not None:
-                begin_block, process_block, end_block, dynamicparam_block = named
-                self._skip_newlines()
-                self._expect(Ps1TokenKind.RBRACE)
-                return Ps1ScriptBlock(
-                    offset=offset,
-                    param_block=param_block,
-                    begin_block=begin_block,
-                    process_block=process_block,
-                    end_block=end_block,
-                    dynamicparam_block=dynamicparam_block,
-                )
-            body = self._parse_statement_list(until=Ps1TokenKind.RBRACE)
+            fields = self._parse_code_body(until=Ps1TokenKind.RBRACE)
             self._skip_newlines()
             self._expect(Ps1TokenKind.RBRACE)
-            return Ps1ScriptBlock(offset=offset, param_block=param_block, body=body)
+        return Ps1ScriptBlock(offset=offset, **fields)
 
     def _parse_member_access(self, obj: Expression) -> Expression:
         access_tok = self._advance()
@@ -1430,7 +1414,8 @@ class Ps1Parser:
         self._skip_newlines()
         body = self._parse_block()
         self._skip_newlines()
-        if self._at(Ps1TokenKind.WHILE):
+        is_until = self._at(Ps1TokenKind.UNTIL)
+        if is_until or self._at(Ps1TokenKind.WHILE):
             self._advance()
             self._skip_newlines()
             self._expect(Ps1TokenKind.LPAREN)
@@ -1438,16 +1423,8 @@ class Ps1Parser:
             cond = self._parse_pipeline_expression()
             self._skip_newlines()
             self._expect(Ps1TokenKind.RPAREN)
-            return Ps1DoLoop(offset=offset, condition=cond, body=body, label=label)
-        elif self._at(Ps1TokenKind.UNTIL):
-            self._advance()
-            self._skip_newlines()
-            self._expect(Ps1TokenKind.LPAREN)
-            self._skip_newlines()
-            cond = self._parse_pipeline_expression()
-            self._skip_newlines()
-            self._expect(Ps1TokenKind.RPAREN)
-            return Ps1DoLoop(offset=offset, condition=cond, body=body, is_until=True, label=label)
+            return Ps1DoLoop(
+                offset=offset, condition=cond, body=body, is_until=is_until, label=label)
         return Ps1DoLoop(offset=offset, body=body, label=label)
 
     def _parse_for(self, label: str | None = None) -> Ps1ForLoop:
@@ -1656,29 +1633,11 @@ class Ps1Parser:
 
     def _parse_script_block_body(self, expect_close: bool = False) -> Ps1ScriptBlock:
         offset = self._current.offset
-        self._skip_newlines()
-        param_block = None
-        if self._might_be_param_block():
-            param_block = self._parse_param_block()
-            self._skip_newlines()
-        named = self._try_parse_named_blocks()
-        if named is not None:
-            begin_block, process_block, end_block, dynamicparam_block = named
-            if expect_close:
-                self._expect(Ps1TokenKind.RBRACE)
-            return Ps1ScriptBlock(
-                offset=offset,
-                param_block=param_block,
-                begin_block=begin_block,
-                process_block=process_block,
-                end_block=end_block,
-                dynamicparam_block=dynamicparam_block,
-            )
-        body = self._parse_statement_list(until=Ps1TokenKind.RBRACE)
+        fields = self._parse_code_body(until=Ps1TokenKind.RBRACE)
         self._skip_newlines()
         if expect_close:
             self._expect(Ps1TokenKind.RBRACE)
-        return Ps1ScriptBlock(offset=offset, param_block=param_block, body=body)
+        return Ps1ScriptBlock(offset=offset, **fields)
 
     def _parse_param_block(self) -> Ps1ParamBlock:
         offset = self._current.offset
@@ -1792,45 +1751,36 @@ class Ps1Parser:
         self._expect(Ps1TokenKind.RBRACKET)
         return Ps1TypeExpression(offset=offset, name=name)
 
-    def _parse_return(self) -> Ps1ReturnStatement:
+    def _parse_flow_with_pipeline(self, kind: Ps1TokenKind, cls: type[_Ps1Exit]) -> Statement:
         offset = self._current.offset
-        self._expect(Ps1TokenKind.RETURN)
+        self._expect(kind)
         pipeline = None
         if not self._is_statement_terminator():
             pipeline = self._parse_pipeline_expression()
-        return Ps1ReturnStatement(offset=offset, pipeline=pipeline)
+        return cls(offset=offset, pipeline=pipeline)
 
-    def _parse_throw(self) -> Ps1ThrowStatement:
+    def _parse_flow_with_label(self, kind: Ps1TokenKind, cls: type[_Ps1Jump]) -> Statement:
         offset = self._current.offset
-        self._expect(Ps1TokenKind.THROW)
-        pipeline = None
-        if not self._is_statement_terminator():
-            pipeline = self._parse_pipeline_expression()
-        return Ps1ThrowStatement(offset=offset, pipeline=pipeline)
-
-    def _parse_break(self) -> Ps1BreakStatement:
-        offset = self._current.offset
-        self._expect(Ps1TokenKind.BREAK)
+        self._expect(kind)
         label = None
         if not self._is_statement_terminator():
             label = self._parse_label_or_key()
-        return Ps1BreakStatement(offset=offset, label=label)
+        return cls(offset=offset, label=label)
 
-    def _parse_continue(self) -> Ps1ContinueStatement:
-        offset = self._current.offset
-        self._expect(Ps1TokenKind.CONTINUE)
-        label = None
-        if not self._is_statement_terminator():
-            label = self._parse_label_or_key()
-        return Ps1ContinueStatement(offset=offset, label=label)
+    def _parse_return(self) -> Statement:
+        return self._parse_flow_with_pipeline(Ps1TokenKind.RETURN, Ps1ReturnStatement)
 
-    def _parse_exit(self) -> Ps1ExitStatement:
-        offset = self._current.offset
-        self._expect(Ps1TokenKind.EXIT)
-        pipeline = None
-        if not self._is_statement_terminator():
-            pipeline = self._parse_pipeline_expression()
-        return Ps1ExitStatement(offset=offset, pipeline=pipeline)
+    def _parse_throw(self) -> Statement:
+        return self._parse_flow_with_pipeline(Ps1TokenKind.THROW, Ps1ThrowStatement)
+
+    def _parse_break(self) -> Statement:
+        return self._parse_flow_with_label(Ps1TokenKind.BREAK, Ps1BreakStatement)
+
+    def _parse_continue(self) -> Statement:
+        return self._parse_flow_with_label(Ps1TokenKind.CONTINUE, Ps1ContinueStatement)
+
+    def _parse_exit(self) -> Statement:
+        return self._parse_flow_with_pipeline(Ps1TokenKind.EXIT, Ps1ExitStatement)
 
     def _parse_data(self) -> Ps1DataSection:
         offset = self._current.offset

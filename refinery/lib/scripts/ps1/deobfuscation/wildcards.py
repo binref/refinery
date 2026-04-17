@@ -18,6 +18,7 @@ from refinery.lib.scripts import Node, Transformer
 from refinery.lib.scripts.ps1.deobfuscation._helpers import (
     _KNOWN_NAMES,
     _get_command_name,
+    _get_member_name,
     _make_string_literal,
     _string_value,
     _unwrap_parens,
@@ -92,14 +93,6 @@ _GET_MEMBER_ALIASES = frozenset({'get-member', 'gm'})
 
 def _known_cmdlets() -> list[str]:
     return [name for name in _KNOWN_NAMES.values() if '-' in name]
-
-
-def _get_member_name(member: str | Expression) -> str | None:
-    if isinstance(member, str):
-        return member
-    if isinstance(member, Ps1StringLiteral):
-        return member.value
-    return None
 
 
 def _is_psobject_member_access(
