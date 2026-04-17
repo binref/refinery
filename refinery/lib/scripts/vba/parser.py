@@ -568,7 +568,6 @@ class VbaParser:
             if self._at(VbaTokenKind.EOF):
                 break
             if self._at(VbaTokenKind.END):
-                saved_offset = self._current.offset
                 saved = self._current
                 self._advance()
                 next_kw = self._current.value.lower()
@@ -576,7 +575,6 @@ class VbaParser:
                     self._advance()
                     return body
                 self._current = saved
-                self._current.offset = saved_offset
             elif (
                 self._at(VbaTokenKind.IDENTIFIER)
                 and self._current.value.lower() == merged
@@ -638,9 +636,9 @@ class VbaParser:
         if kw == 'const':
             return self._parse_const_declaration(VbaScopeModifier.NONE)
         if kw == 'goto':
-            return self._parse_goto_statement()
+            return self._parse_go_statement(is_goto=True)
         if kw == 'gosub':
-            return self._parse_gosub_statement()
+            return self._parse_go_statement(is_goto=False)
         if kw == 'on':
             return self._parse_on_statement()
         if kw == 'exit':
@@ -1095,18 +1093,13 @@ class VbaParser:
         return VbaRaiseEventStatement(
             name=name, arguments=arguments, offset=offset)
 
-    def _parse_goto_statement(self) -> VbaGotoStatement:
+    def _parse_go_statement(self, is_goto: bool) -> VbaGotoStatement | VbaGosubStatement:
         offset = self._current.offset
         self._advance()
         label = self._current.value
         self._advance()
-        return VbaGotoStatement(label=label, offset=offset)
-
-    def _parse_gosub_statement(self) -> VbaGosubStatement:
-        offset = self._current.offset
-        self._advance()
-        label = self._current.value
-        self._advance()
+        if is_goto:
+            return VbaGotoStatement(label=label, offset=offset)
         return VbaGosubStatement(label=label, offset=offset)
 
     def _parse_on_statement(self) -> Statement:
@@ -1387,11 +1380,8 @@ class VbaParser:
         ):
             op_tok = self._advance()
             right = self._parse_concat_expression()
-            op_str = op_tok.value
-            if op_tok.kind == VbaTokenKind.EQ:
-                op_str = '='
             left = VbaBinaryExpression(
-                left=left, operator=op_str, right=right, offset=left.offset)
+                left=left, operator=op_tok.value, right=right, offset=left.offset)
         return left
 
     def _parse_concat_expression(self) -> Expression:

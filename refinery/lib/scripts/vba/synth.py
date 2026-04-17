@@ -37,7 +37,6 @@ from refinery.lib.scripts.vba.model import (
     VbaIdentifier,
     VbaIfStatement,
     VbaImplementsStatement,
-    VbaIndexExpression,
     VbaIntegerLiteral,
     VbaLabelStatement,
     VbaLetStatement,
@@ -69,7 +68,6 @@ from refinery.lib.scripts.vba.model import (
     VbaStringLiteral,
     VbaSubDeclaration,
     VbaTypeDefinition,
-    VbaTypedIdentifier,
     VbaTypeOfIsExpression,
     VbaUnaryExpression,
     VbaVariableDeclaration,
@@ -165,9 +163,6 @@ class VbaSynthesizer(Visitor):
     def visit_VbaIdentifier(self, node: VbaIdentifier):
         self._write(node.name)
 
-    def visit_VbaTypedIdentifier(self, node: VbaTypedIdentifier):
-        self._write(F'{node.name}{node.suffix}')
-
     def visit_VbaErrorNode(self, node: VbaErrorNode):
         self._write(node.text)
 
@@ -212,13 +207,6 @@ class VbaSynthesizer(Visitor):
         if node.object:
             self.visit(node.object)
         self._write(F'!{node.member}')
-
-    def visit_VbaIndexExpression(self, node: VbaIndexExpression):
-        if node.object:
-            self.visit(node.object)
-        self._write('(')
-        self._comma_separated(node.arguments)
-        self._write(')')
 
     def visit_VbaNewExpression(self, node: VbaNewExpression):
         self._write('New ')

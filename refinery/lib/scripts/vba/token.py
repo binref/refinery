@@ -127,14 +127,6 @@ class VbaTokenKind(enum.Enum):
         return self in _KEYWORDS_SET
 
     @property
-    def is_comparison(self):
-        return self in _COMPARISON_SET
-
-    @property
-    def is_logical(self):
-        return self in _LOGICAL_SET
-
-    @property
     def is_end_of_statement(self):
         return self in (VbaTokenKind.NEWLINE, VbaTokenKind.COLON, VbaTokenKind.EOF)
 
@@ -224,36 +216,6 @@ _KEYWORDS: dict[str, VbaTokenKind] = {
 }
 
 _KEYWORDS_SET = frozenset(_KEYWORDS.values())
-
-_COMPARISON_SET = frozenset({
-    VbaTokenKind.EQ,
-    VbaTokenKind.NEQ,
-    VbaTokenKind.LT,
-    VbaTokenKind.GT,
-    VbaTokenKind.LTE,
-    VbaTokenKind.GTE,
-    VbaTokenKind.IS,
-    VbaTokenKind.LIKE,
-})
-
-_LOGICAL_SET = frozenset({
-    VbaTokenKind.AND,
-    VbaTokenKind.OR,
-    VbaTokenKind.XOR,
-    VbaTokenKind.EQV,
-    VbaTokenKind.IMP,
-    VbaTokenKind.NOT,
-})
-
-_TYPE_SUFFIX_MAP: dict[str, str] = {
-    '%' : 'Integer',
-    '&' : 'Long',
-    '!' : 'Single',
-    '#' : 'Double',
-    '@' : 'Currency',
-    '$' : 'String',
-}
-
 
 @dataclass
 class VbaToken:

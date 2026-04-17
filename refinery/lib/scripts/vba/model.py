@@ -78,15 +78,6 @@ class VbaIdentifier(Expression):
 
 
 @dataclass(repr=False)
-class VbaTypedIdentifier(Expression):
-    name: str = ''
-    suffix: str = ''
-
-    def children(self) -> Generator[Node, None, None]:
-        yield from ()
-
-
-@dataclass(repr=False)
 class VbaMeExpression(Expression):
     def children(self) -> Generator[Node, None, None]:
         yield from ()
@@ -247,22 +238,6 @@ class VbaBangAccess(Expression):
     def children(self) -> Generator[Node, None, None]:
         if self.object is not None:
             yield self.object
-
-
-@dataclass(repr=False)
-class VbaIndexExpression(Expression):
-    object: Expression | None = None
-    arguments: list[Expression | None] = field(default_factory=list)
-
-    def __post_init__(self):
-        self._adopt(self.object, *[a for a in self.arguments if a is not None])
-
-    def children(self) -> Generator[Node, None, None]:
-        if self.object is not None:
-            yield self.object
-        for arg in self.arguments:
-            if arg is not None:
-                yield arg
 
 
 @dataclass(repr=False)

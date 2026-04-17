@@ -26,24 +26,27 @@ _ONE_CHAR_OPS: dict[str, VbaTokenKind] = {
 }
 
 
+_TWO_CHAR_OPS: dict[str, VbaTokenKind] = {
+    '<>': VbaTokenKind.NEQ,
+    '<=': VbaTokenKind.LTE,
+    '>=': VbaTokenKind.GTE,
+    ':=': VbaTokenKind.ASSIGN,
+}
+
+
 @dataclass
 class VbaLexer:
     source: str
     pos: int = 0
 
-    def _peek(self, count: int = 1) -> str:
-        return self.source[self.pos:self.pos + count]
-
     def _at_end(self) -> bool:
         return self.pos >= len(self.source)
 
-    def _skip_whitespace(self) -> bool:
-        start = self.pos
+    def _skip_whitespace(self) -> None:
         src = self.source
         length = len(src)
         while self.pos < length and src[self.pos] in ' \t':
             self.pos += 1
-        return self.pos > start
 
     def _read_string(self) -> str:
         start = self.pos
@@ -86,15 +89,14 @@ class VbaLexer:
         if src[self.pos] == '&' and self.pos + 1 < length:
             nc = src[self.pos + 1].lower()
             if nc == 'h':
+                digits = '0123456789abcdefABCDEF'
+            elif nc == 'o':
+                digits = '01234567'
+            else:
+                digits = ''
+            if digits:
                 self.pos += 2
-                while self.pos < length and src[self.pos] in '0123456789abcdefABCDEF':
-                    self.pos += 1
-                if self.pos < length and src[self.pos] in '&%':
-                    self.pos += 1
-                return VbaToken(VbaTokenKind.INTEGER, src[start:self.pos], start)
-            if nc == 'o':
-                self.pos += 2
-                while self.pos < length and src[self.pos] in '01234567':
+                while self.pos < length and src[self.pos] in digits:
                     self.pos += 1
                 if self.pos < length and src[self.pos] in '&%':
                     self.pos += 1
@@ -263,13 +265,6 @@ class VbaLexer:
 
             if c.isalpha() or c == '_':
                 tok = self._read_identifier_or_keyword()
-                if tok.kind in (
-                    VbaTokenKind.BOOLEAN_TRUE,
-                    VbaTokenKind.BOOLEAN_FALSE,
-                ):
-                    last_was_newline = False
-                    yield tok
-                    continue
                 if tok.value.lower() == 'rem':
                     text = self._read_comment()
                     yield VbaToken(VbaTokenKind.COMMENT, tok.value + text, start)
@@ -285,35 +280,18 @@ class VbaLexer:
                 continue
 
             c2 = src[self.pos:self.pos + 2]
-            if c2 == '<>':
+            two_kind = _TWO_CHAR_OPS.get(c2)
+            if two_kind is not None:
                 self.pos += 2
                 last_was_newline = False
-                yield VbaToken(VbaTokenKind.NEQ, '<>', start)
-                continue
-            if c2 == '<=':
-                self.pos += 2
-                last_was_newline = False
-                yield VbaToken(VbaTokenKind.LTE, '<=', start)
-                continue
-            if c2 == '>=':
-                self.pos += 2
-                last_was_newline = False
-                yield VbaToken(VbaTokenKind.GTE, '>=', start)
-                continue
-            if c2 == ':=':
-                self.pos += 2
-                last_was_newline = False
-                yield VbaToken(VbaTokenKind.ASSIGN, ':=', start)
+                yield VbaToken(two_kind, c2, start)
                 continue
 
             op_kind = _ONE_CHAR_OPS.get(c)
             if op_kind is not None:
                 self.pos += 1
                 last_was_newline = False
-                if op_kind == VbaTokenKind.COLON:
-                    yield VbaToken(VbaTokenKind.COLON, ':', start)
-                else:
-                    yield VbaToken(op_kind, c, start)
+                yield VbaToken(op_kind, c, start)
                 continue
 
             self.pos += 1

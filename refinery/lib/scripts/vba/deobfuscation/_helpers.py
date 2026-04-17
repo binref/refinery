@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import copy
 
-from typing import TYPE_CHECKING, Optional, Union
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from typing import TypeAlias
@@ -22,7 +22,7 @@ from refinery.lib.scripts.vba.model import (
     VbaStringLiteral,
 )
 
-_Value: TypeAlias = Optional[Union[str, int, float, bool]]
+_Value: TypeAlias = str | int | float | bool | None
 
 
 def _make_string_literal(value: str) -> VbaStringLiteral:
