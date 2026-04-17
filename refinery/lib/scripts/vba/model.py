@@ -65,22 +65,15 @@ class VbaErrorNode(Node):
     text: str = ''
     message: str = ''
 
-    def children(self) -> Generator[Node, None, None]:
-        yield from ()
-
 
 @dataclass(repr=False)
 class VbaIdentifier(Expression):
     name: str = ''
 
-    def children(self) -> Generator[Node, None, None]:
-        yield from ()
-
 
 @dataclass(repr=False)
 class VbaMeExpression(Expression):
-    def children(self) -> Generator[Node, None, None]:
-        yield from ()
+    pass
 
 
 @dataclass(repr=False)
@@ -88,17 +81,11 @@ class VbaIntegerLiteral(Expression):
     value: int = 0
     raw: str = '0'
 
-    def children(self) -> Generator[Node, None, None]:
-        yield from ()
-
 
 @dataclass(repr=False)
 class VbaFloatLiteral(Expression):
     value: float = 0.0
     raw: str = '0'
-
-    def children(self) -> Generator[Node, None, None]:
-        yield from ()
 
 
 @dataclass(repr=False)
@@ -106,42 +93,30 @@ class VbaStringLiteral(Expression):
     value: str = ''
     raw: str = '""'
 
-    def children(self) -> Generator[Node, None, None]:
-        yield from ()
-
 
 @dataclass(repr=False)
 class VbaDateLiteral(Expression):
     raw: str = '##'
-
-    def children(self) -> Generator[Node, None, None]:
-        yield from ()
 
 
 @dataclass(repr=False)
 class VbaBooleanLiteral(Expression):
     value: bool = False
 
-    def children(self) -> Generator[Node, None, None]:
-        yield from ()
-
 
 @dataclass(repr=False)
 class VbaNothingLiteral(Expression):
-    def children(self) -> Generator[Node, None, None]:
-        yield from ()
+    pass
 
 
 @dataclass(repr=False)
 class VbaNullLiteral(Expression):
-    def children(self) -> Generator[Node, None, None]:
-        yield from ()
+    pass
 
 
 @dataclass(repr=False)
 class VbaEmptyLiteral(Expression):
-    def children(self) -> Generator[Node, None, None]:
-        yield from ()
+    pass
 
 
 @dataclass(repr=False)
@@ -303,9 +278,6 @@ class VbaModule(Script):
 class VbaOptionStatement(Statement):
     keyword: str = ''
     value: str = ''
-
-    def children(self) -> Generator[Node, None, None]:
-        yield from ()
 
 
 @dataclass(repr=False)
@@ -720,25 +692,16 @@ class VbaWithStatement(Statement):
 class VbaGotoStatement(Statement):
     label: str = ''
 
-    def children(self) -> Generator[Node, None, None]:
-        yield from ()
-
 
 @dataclass(repr=False)
 class VbaGosubStatement(Statement):
     label: str = ''
-
-    def children(self) -> Generator[Node, None, None]:
-        yield from ()
 
 
 @dataclass(repr=False)
 class VbaOnErrorStatement(Statement):
     action: VbaOnErrorAction = VbaOnErrorAction.NONE
     label: str = ''
-
-    def children(self) -> Generator[Node, None, None]:
-        yield from ()
 
 
 @dataclass(repr=False)
@@ -755,14 +718,10 @@ class VbaOnBranchStatement(Statement):
 class VbaExitStatement(Statement):
     kind: VbaExitKind = VbaExitKind.SUB
 
-    def children(self) -> Generator[Node, None, None]:
-        yield from ()
-
 
 @dataclass(repr=False)
 class VbaReturnStatement(Statement):
-    def children(self) -> Generator[Node, None, None]:
-        yield from ()
+    pass
 
 
 @dataclass(repr=False)
@@ -804,20 +763,15 @@ class VbaRaiseEventStatement(Statement):
 class VbaLabelStatement(Statement):
     label: str = ''
 
-    def children(self) -> Generator[Node, None, None]:
-        yield from ()
-
 
 @dataclass(repr=False)
 class VbaStopStatement(Statement):
-    def children(self) -> Generator[Node, None, None]:
-        yield from ()
+    pass
 
 
 @dataclass(repr=False)
 class VbaEndStatement(Statement):
-    def children(self) -> Generator[Node, None, None]:
-        yield from ()
+    pass
 
 
 @dataclass(repr=False)
@@ -837,13 +791,7 @@ class VbaDebugPrintStatement(Statement):
 class VbaResumeStatement(Statement):
     label: str = ''
 
-    def children(self) -> Generator[Node, None, None]:
-        yield from ()
-
 
 @dataclass(repr=False)
 class VbaImplementsStatement(Statement):
     name: str = ''
-
-    def children(self) -> Generator[Node, None, None]:
-        yield from ()

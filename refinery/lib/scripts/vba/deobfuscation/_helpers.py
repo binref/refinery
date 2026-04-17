@@ -108,6 +108,64 @@ def _numeric_value(node: Expression) -> int | float | None:
     return None
 
 
+def _eval_string_builtin(name: str, args: list) -> str | None:
+    """
+    Evaluate a VBA string built-in on plain Python values. The `name` must already be lowercased
+    and stripped of a trailing `$`. Returns `None` when the function name is not recognized; raises
+    `ValueError` on domain errors (bad arg count, negative index, etc.).
+    """
+    if name == 'mid' and len(args) in (2, 3):
+        s = str(args[0]) if args[0] is not None else ''
+        start = int(args[1]) - 1
+        if start < 0:
+            raise ValueError
+        if len(args) == 3:
+            length = int(args[2])
+            return s[start:start + length]
+        return s[start:]
+    if name == 'left' and len(args) == 2:
+        s = str(args[0]) if args[0] is not None else ''
+        n = int(args[1])
+        return s[:n]
+    if name == 'right' and len(args) == 2:
+        s = str(args[0]) if args[0] is not None else ''
+        n = int(args[1])
+        return s[-n:] if n > 0 else ''
+    if name == 'strreverse' and len(args) == 1:
+        return str(args[0])[::-1] if args[0] is not None else ''
+    if name == 'lcase' and len(args) == 1:
+        return str(args[0]).lower() if args[0] is not None else ''
+    if name == 'ucase' and len(args) == 1:
+        return str(args[0]).upper() if args[0] is not None else ''
+    if name == 'trim' and len(args) == 1:
+        return str(args[0]).strip() if args[0] is not None else ''
+    if name == 'ltrim' and len(args) == 1:
+        return str(args[0]).lstrip() if args[0] is not None else ''
+    if name == 'rtrim' and len(args) == 1:
+        return str(args[0]).rstrip() if args[0] is not None else ''
+    if name == 'cstr' and len(args) == 1:
+        return str(args[0]) if args[0] is not None else ''
+    if name == 'string' and len(args) == 2:
+        n = int(args[0])
+        c = str(args[1]) if args[1] is not None else ''
+        if not c:
+            raise ValueError
+        return c[0] * n
+    if name == 'space' and len(args) == 1:
+        n = int(args[0])
+        if n < 0 or n > 10000:
+            raise ValueError
+        return ' ' * n
+    if name == 'replace' and len(args) >= 3:
+        haystack = str(args[0]) if args[0] is not None else ''
+        needle = str(args[1]) if args[1] is not None else ''
+        insert = str(args[2]) if args[2] is not None else ''
+        if not needle:
+            raise ValueError
+        return haystack.replace(needle, insert)
+    return None
+
+
 def _make_chr_call(code_point: int) -> VbaCallExpression:
     return VbaCallExpression(
         callee=VbaIdentifier(name='Chr'),
@@ -165,7 +223,7 @@ def _body_lists(module: VbaModule):
                 yield value
 
 
-def _clone_expression(node: Expression) -> Expression:
+def _clone_expression(node: Node) -> Node:
     """
     Deep-clone an expression tree downward without following parent pointers.
     """

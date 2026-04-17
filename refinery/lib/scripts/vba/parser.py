@@ -83,6 +83,8 @@ from refinery.lib.scripts.vba.token import VbaToken, VbaTokenKind
 
 class VbaParser:
 
+    _PAREN_ARG_STOP = frozenset({VbaTokenKind.RPAREN})
+
     def __init__(self, source: str):
         self._lexer = VbaLexer(source)
         self._source = source
@@ -151,23 +153,7 @@ class VbaParser:
             return True
         return False
 
-    def _eat_go_token(self, keyword: str) -> bool:
-        fused = VbaTokenKind.GOTO if keyword == 'to' else VbaTokenKind.GOSUB
-        if self._at(fused):
-            self._advance()
-            return True
-        if (
-            self._at(VbaTokenKind.IDENTIFIER)
-            and self._current.value.lower() == 'go'
-        ):
-            self._advance()
-            target = VbaTokenKind.TO if keyword == 'to' else VbaTokenKind.SUB
-            if self._at(target):
-                self._advance()
-                return True
-        return False
-
-    def _eat_go_branch(self) -> str:
+    def _eat_go_keyword(self) -> str:
         if self._at(VbaTokenKind.GOTO):
             self._advance()
             return 'goto'
@@ -430,18 +416,27 @@ class VbaParser:
         self._eat_eos()
         return VbaImplementsStatement(name=name, offset=offset)
 
-    def _parse_sub_declaration(
-        self, scope: VbaScopeModifier, is_static: bool,
-    ) -> VbaSubDeclaration:
-        offset = self._current.offset
-        self._advance()
+    def _parse_procedure_body(
+        self, end_keyword: str, has_return_type: bool,
+    ) -> tuple[str, list[VbaParameter], str, list[Statement]]:
         name = self._current.value
         self._advance()
         params: list[VbaParameter] = []
         if self._at(VbaTokenKind.LPAREN):
             params = self._parse_parameter_list()
+        return_type = ''
+        if has_return_type and self._eat(VbaTokenKind.AS):
+            return_type = self._parse_type_name()
         self._eat_eos()
-        body = self._parse_block_until('sub')
+        body = self._parse_block_until(end_keyword)
+        return name, params, return_type, body
+
+    def _parse_sub_declaration(
+        self, scope: VbaScopeModifier, is_static: bool,
+    ) -> VbaSubDeclaration:
+        offset = self._current.offset
+        self._advance()
+        name, params, _, body = self._parse_procedure_body('sub', has_return_type=False)
         return VbaSubDeclaration(
             scope=scope, name=name, params=params,
             body=body, is_static=is_static, offset=offset,
@@ -452,16 +447,8 @@ class VbaParser:
     ) -> VbaFunctionDeclaration:
         offset = self._current.offset
         self._advance()
-        name = self._current.value
-        self._advance()
-        params: list[VbaParameter] = []
-        if self._at(VbaTokenKind.LPAREN):
-            params = self._parse_parameter_list()
-        return_type = ''
-        if self._eat(VbaTokenKind.AS):
-            return_type = self._parse_type_name()
-        self._eat_eos()
-        body = self._parse_block_until('function')
+        name, params, return_type, body = self._parse_procedure_body(
+            'function', has_return_type=True)
         return VbaFunctionDeclaration(
             scope=scope, name=name, params=params,
             return_type=return_type, body=body,
@@ -475,16 +462,8 @@ class VbaParser:
         self._advance()
         kind = VbaPropertyKind(self._current.value.capitalize())
         self._advance()
-        name = self._current.value
-        self._advance()
-        params: list[VbaParameter] = []
-        if self._at(VbaTokenKind.LPAREN):
-            params = self._parse_parameter_list()
-        return_type = ''
-        if self._eat(VbaTokenKind.AS):
-            return_type = self._parse_type_name()
-        self._eat_eos()
-        body = self._parse_block_until('property')
+        name, params, return_type, body = self._parse_procedure_body(
+            'property', has_return_type=True)
         return VbaPropertyDeclaration(
             scope=scope, kind=kind, name=name, params=params,
             return_type=return_type, body=body,
@@ -666,18 +645,16 @@ class VbaParser:
         if kind == VbaTokenKind.IDENTIFIER and self._current.value.lower() == 'go':
             after = self._source[self._current.offset + len(self._current.value):].lstrip(' \t')
             word = after.split()[0].lower() if after.split() else ''
-            if word == 'to':
-                self._advance()
-                self._advance()
-                label = self._current.value
-                self._advance()
-                return VbaGotoStatement(label=label, offset=offset)
-            if word == 'sub':
-                self._advance()
-                self._advance()
-                label = self._current.value
-                self._advance()
-                return VbaGosubStatement(label=label, offset=offset)
+            if word in ('to', 'sub'):
+                branch = self._eat_go_keyword()
+                if branch == 'goto':
+                    label = self._current.value
+                    self._advance()
+                    return VbaGotoStatement(label=label, offset=offset)
+                if branch == 'gosub':
+                    label = self._current.value
+                    self._advance()
+                    return VbaGosubStatement(label=label, offset=offset)
 
         if kw == 'open':
             return self._skip_to_eos()
@@ -1115,7 +1092,7 @@ class VbaParser:
                         action=VbaOnErrorAction.RESUME_NEXT, offset=offset)
                 return VbaOnErrorStatement(
                     action=VbaOnErrorAction.RESUME, offset=offset)
-            if self._eat_go_token('to'):
+            if self._eat_go_keyword() == 'goto':
                 if self._at(VbaTokenKind.MINUS):
                     self._advance()
                     label = F'-{self._current.value}'
@@ -1126,7 +1103,7 @@ class VbaParser:
                     action=VbaOnErrorAction.GOTO, label=label, offset=offset)
             return VbaOnErrorStatement(action=VbaOnErrorAction.NONE, offset=offset)
         expr = self._parse_expression()
-        branch = self._eat_go_branch()
+        branch = self._eat_go_keyword()
         if branch == 'goto':
             kind = VbaOnBranchKind.GOTO
         elif branch == 'gosub':
@@ -1214,14 +1191,17 @@ class VbaParser:
 
         return VbaExpressionStatement(expression=expr, offset=offset)
 
-    def _parse_argument_list(self) -> list[Expression | None]:
+    def _parse_argument_list(
+        self,
+        stop: frozenset[VbaTokenKind] = frozenset({
+            VbaTokenKind.NEWLINE, VbaTokenKind.COLON,
+            VbaTokenKind.EOF, VbaTokenKind.RPAREN,
+            VbaTokenKind.ELSE,
+        }),
+    ) -> list[Expression | None]:
         args: list[Expression | None] = []
         while True:
-            if self._at(
-                VbaTokenKind.NEWLINE, VbaTokenKind.COLON,
-                VbaTokenKind.EOF, VbaTokenKind.RPAREN,
-                VbaTokenKind.ELSE,
-            ):
+            if self._current.kind in stop:
                 break
             if self._at(VbaTokenKind.COMMA):
                 args.append(None)
@@ -1302,7 +1282,7 @@ class VbaParser:
                 self._advance()
                 args: list[Expression | None] = []
                 if not self._at(VbaTokenKind.RPAREN):
-                    args = self._parse_call_argument_list()
+                    args = self._parse_argument_list(self._PAREN_ARG_STOP)
                 self._expect(VbaTokenKind.RPAREN)
                 expr = VbaCallExpression(callee=expr, arguments=args, offset=offset)
             else:
@@ -1473,27 +1453,13 @@ class VbaParser:
                 self._advance()
                 args: list[Expression | None] = []
                 if not self._at(VbaTokenKind.RPAREN):
-                    args = self._parse_call_argument_list()
+                    args = self._parse_argument_list(self._PAREN_ARG_STOP)
                 self._expect(VbaTokenKind.RPAREN)
                 expr = VbaCallExpression(
                     callee=expr, arguments=args, offset=expr.offset)
             else:
                 break
         return expr
-
-    def _parse_call_argument_list(self) -> list[Expression | None]:
-        args: list[Expression | None] = []
-        while True:
-            if self._at(VbaTokenKind.RPAREN):
-                break
-            if self._at(VbaTokenKind.COMMA):
-                args.append(None)
-                self._advance()
-                continue
-            args.append(self._parse_argument_expression())
-            if not self._eat(VbaTokenKind.COMMA):
-                break
-        return args
 
     def _parse_primary_expression(self) -> Expression:
         tok = self._current

@@ -9,6 +9,7 @@ from typing import Callable
 
 from refinery.lib.scripts import Transformer
 from refinery.lib.scripts.vba.deobfuscation._helpers import (
+    _eval_string_builtin,
     _is_literal,
     _make_integer_literal,
     _make_numeric_literal,
@@ -79,66 +80,24 @@ def _try_string_function(node: VbaCallExpression) -> str | None:
         return None
     name = node.callee.name.lower().rstrip('$')
     args = [a for a in node.arguments if a is not None]
-    if name == 'mid' and len(args) in (2, 3):
-        s = _string_value(args[0])
-        start_val = _numeric_value(args[1])
-        if s is None or start_val is None or not isinstance(start_val, int):
-            return None
-        start_idx = start_val - 1
-        if start_idx < 0:
-            return None
-        if len(args) == 3:
-            length_val = _numeric_value(args[2])
-            if length_val is None or not isinstance(length_val, int):
-                return None
-            return s[start_idx:start_idx + length_val]
-        return s[start_idx:]
-    if name == 'left' and len(args) == 2:
-        s = _string_value(args[0])
-        n = _numeric_value(args[1])
-        if s is not None and isinstance(n, int):
-            return s[:n]
-    if name == 'right' and len(args) == 2:
-        s = _string_value(args[0])
-        n = _numeric_value(args[1])
-        if s is not None and isinstance(n, int):
-            return s[-n:] if n > 0 else ''
-    if name == 'strreverse' and len(args) == 1:
-        s = _string_value(args[0])
-        if s is not None:
-            return s[::-1]
-    if name == 'lcase' and len(args) == 1:
-        s = _string_value(args[0])
-        if s is not None:
-            return s.lower()
-    if name == 'ucase' and len(args) == 1:
-        s = _string_value(args[0])
-        if s is not None:
-            return s.upper()
     if name == 'len' and len(args) == 1:
-        s = _string_value(args[0])
+        return None
+    values: list = []
+    for arg in args:
+        s = _string_value(arg)
         if s is not None:
-            return None
-    if name == 'string' and len(args) == 2:
-        n = _numeric_value(args[0])
-        c = _string_value(args[1])
-        if isinstance(n, int) and c is not None and len(c) >= 1:
-            return c[0] * n
-    if name == 'space' and len(args) == 1:
-        n = _numeric_value(args[0])
-        if isinstance(n, int) and 0 <= n <= 10000:
-            return ' ' * n
-    if name == 'cstr' and len(args) == 1:
-        s = _string_value(args[0])
-        if s is not None:
-            return s
-    if name == 'replace' and len(args) >= 3:
-        haystack = _string_value(args[0])
-        needle = _string_value(args[1])
-        insert = _string_value(args[2])
-        if haystack is not None and needle is not None and insert is not None and needle:
-            return haystack.replace(needle, insert)
-    return None
+            values.append(s)
+            continue
+        n = _numeric_value(arg)
+        if n is not None:
+            values.append(n)
+            continue
+        return None
+    try:
+        result = _eval_string_builtin(name, values)
+    except (ValueError, OverflowError, TypeError):
+        return None
+    return result
 
 
 class VbaSimplifications(Transformer):

@@ -7,6 +7,7 @@ from typing import Any, Callable
 
 from refinery.lib.scripts import Transformer
 from refinery.lib.scripts.vba.deobfuscation._helpers import (
+    _eval_string_builtin,
     _is_literal,
     _literal_value,
     _Value,
@@ -290,18 +291,6 @@ class _VbaInterpreter:
         'asc'       : lambda v: ord(str(v)[0]),
         'ascw'      : lambda v: ord(str(v)[0]),
         'len'       : lambda v: len(str(v)),
-        'lcase'     : lambda v: str(v).lower(),
-        'lcase$'    : lambda v: str(v).lower(),
-        'ucase'     : lambda v: str(v).upper(),
-        'ucase$'    : lambda v: str(v).upper(),
-        'trim'      : lambda v: str(v).strip(),
-        'trim$'     : lambda v: str(v).strip(),
-        'ltrim'     : lambda v: str(v).lstrip(),
-        'ltrim$'    : lambda v: str(v).lstrip(),
-        'rtrim'     : lambda v: str(v).rstrip(),
-        'rtrim$'    : lambda v: str(v).rstrip(),
-        'strreverse': lambda v: str(v)[::-1],
-        'cstr'      : lambda v: str(v),
         'cint'      : lambda v: int(round(float(v))),
         'clng'      : lambda v: int(round(float(v))),
         'cdbl'      : lambda v: float(v),
@@ -316,8 +305,6 @@ class _VbaInterpreter:
         'oct'       : lambda v: format(int(v), 'o'),
         'oct$'      : lambda v: format(int(v), 'o'),
         'cbyte'     : lambda v: int(v) & 0xFF,
-        'space'     : lambda v: ' ' * int(v),
-        'space$'    : lambda v: ' ' * int(v),
     }
 
     def _eval_call(self, node: VbaCallExpression) -> _Value:
@@ -331,69 +318,16 @@ class _VbaInterpreter:
                 return handler(args[0])
             except (ValueError, OverflowError, TypeError, IndexError):
                 raise _VbaInterpreterError
-        if name == 'mid' or name == 'mid$':
-            return self._builtin_mid(args)
-        if name == 'left' or name == 'left$':
-            return self._builtin_left(args)
-        if name == 'right' or name == 'right$':
-            return self._builtin_right(args)
-        if name == 'string' or name == 'string$':
-            return self._builtin_string(args)
-        if name == 'replace':
-            return self._builtin_replace(args)
+        stripped = name.rstrip('$')
+        try:
+            result = _eval_string_builtin(stripped, args)
+        except (ValueError, OverflowError, TypeError):
+            raise _VbaInterpreterError
+        if result is not None:
+            return result
         if name == 'instr':
             return self._builtin_instr(args)
         raise _VbaInterpreterError
-
-    @staticmethod
-    def _builtin_mid(args: list[_Value]) -> str:
-        if len(args) not in (2, 3):
-            raise _VbaInterpreterError
-        s = str(args[0]) if args[0] is not None else ''
-        start = int(args[1]) - 1  # type: ignore
-        if start < 0:
-            raise _VbaInterpreterError
-        if len(args) == 3:
-            length = int(args[2])  # type: ignore
-            return s[start:start + length]
-        return s[start:]
-
-    @staticmethod
-    def _builtin_left(args: list[_Value]) -> str:
-        if len(args) != 2:
-            raise _VbaInterpreterError
-        s = str(args[0]) if args[0] is not None else ''
-        n = int(args[1])  # type: ignore
-        return s[:n]
-
-    @staticmethod
-    def _builtin_right(args: list[_Value]) -> str:
-        if len(args) != 2:
-            raise _VbaInterpreterError
-        s = str(args[0]) if args[0] is not None else ''
-        n = int(args[1])  # type: ignore
-        return s[-n:] if n > 0 else ''
-
-    @staticmethod
-    def _builtin_string(args: list[_Value]) -> str:
-        if len(args) != 2:
-            raise _VbaInterpreterError
-        n = int(args[0])  # type: ignore
-        c = str(args[1]) if args[1] is not None else ''
-        if not c:
-            raise _VbaInterpreterError
-        return c[0] * n
-
-    @staticmethod
-    def _builtin_replace(args: list[_Value]) -> str:
-        if len(args) < 3:
-            raise _VbaInterpreterError
-        haystack = str(args[0]) if args[0] is not None else ''
-        needle = str(args[1]) if args[1] is not None else ''
-        insert = str(args[2]) if args[2] is not None else ''
-        if not needle:
-            raise _VbaInterpreterError
-        return haystack.replace(needle, insert)
 
     @staticmethod
     def _builtin_instr(args: list[_Value]) -> int:

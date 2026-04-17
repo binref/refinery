@@ -375,42 +375,42 @@ class VbaSynthesizer(Visitor):
             self._write(' = ')
             self.visit(node.default)
 
-    def visit_VbaSubDeclaration(self, node: VbaSubDeclaration):
-        if node.scope is not VbaScopeModifier.NONE:
-            self._write(F'{node.scope.value} ')
-        if node.is_static:
+    def _emit_procedure(
+        self,
+        keyword: str,
+        name: str,
+        params: list,
+        return_type: str,
+        body: list,
+        scope: VbaScopeModifier,
+        is_static: bool,
+    ):
+        if scope is not VbaScopeModifier.NONE:
+            self._write(F'{scope.value} ')
+        if is_static:
             self._write('Static ')
-        self._write(F'Sub {node.name}')
-        self._emit_params(node.params)
-        self._emit_body(node.body)
+        self._write(F'{keyword} {name}')
+        self._emit_params(params)
+        if return_type:
+            self._write(F' As {return_type}')
+        self._emit_body(body)
         self._newline()
-        self._write('End Sub')
+        self._write(F'End {keyword.split()[0]}')
+
+    def visit_VbaSubDeclaration(self, node: VbaSubDeclaration):
+        self._emit_procedure(
+            'Sub', node.name, node.params, '', node.body,
+            node.scope, node.is_static)
 
     def visit_VbaFunctionDeclaration(self, node: VbaFunctionDeclaration):
-        if node.scope is not VbaScopeModifier.NONE:
-            self._write(F'{node.scope.value} ')
-        if node.is_static:
-            self._write('Static ')
-        self._write(F'Function {node.name}')
-        self._emit_params(node.params)
-        if node.return_type:
-            self._write(F' As {node.return_type}')
-        self._emit_body(node.body)
-        self._newline()
-        self._write('End Function')
+        self._emit_procedure(
+            'Function', node.name, node.params, node.return_type, node.body,
+            node.scope, node.is_static)
 
     def visit_VbaPropertyDeclaration(self, node: VbaPropertyDeclaration):
-        if node.scope is not VbaScopeModifier.NONE:
-            self._write(F'{node.scope.value} ')
-        if node.is_static:
-            self._write('Static ')
-        self._write(F'Property {node.kind.value} {node.name}')
-        self._emit_params(node.params)
-        if node.return_type:
-            self._write(F' As {node.return_type}')
-        self._emit_body(node.body)
-        self._newline()
-        self._write('End Property')
+        self._emit_procedure(
+            F'Property {node.kind.value}', node.name, node.params, node.return_type,
+            node.body, node.scope, node.is_static)
 
     def visit_VbaExpressionStatement(self, node: VbaExpressionStatement):
         if node.expression:
