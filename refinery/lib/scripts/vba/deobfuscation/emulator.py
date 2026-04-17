@@ -3,19 +3,17 @@ Evaluate user-defined VBA functions called with constant arguments.
 """
 from __future__ import annotations
 
-from typing import Any, Callable
-
 from refinery.lib.scripts import Transformer
 from refinery.lib.scripts.vba.deobfuscation._helpers import (
     _eval_string_builtin,
     _is_literal,
     _literal_value,
+    _SINGLE_ARG_BUILTINS,
     _Value,
     _value_to_node,
 )
 from refinery.lib.scripts.vba.model import (
     VbaBinaryExpression,
-    VbaBooleanLiteral,
     VbaCallExpression,
     VbaConstDeclaration,
     VbaDebugPrintStatement,
@@ -23,12 +21,10 @@ from refinery.lib.scripts.vba.model import (
     VbaExitKind,
     VbaExitStatement,
     VbaExpressionStatement,
-    VbaFloatLiteral,
     VbaForStatement,
     VbaFunctionDeclaration,
     VbaIdentifier,
     VbaIfStatement,
-    VbaIntegerLiteral,
     VbaLetStatement,
     VbaLoopConditionPosition,
     VbaLoopConditionType,
@@ -36,7 +32,6 @@ from refinery.lib.scripts.vba.model import (
     VbaOnErrorAction,
     VbaOnErrorStatement,
     VbaParenExpression,
-    VbaStringLiteral,
     VbaUnaryExpression,
     VbaVariableDeclaration,
 )
@@ -57,14 +52,6 @@ class _UnevaluableError(Exception):
 
 class _ExitFunctionSignal(Exception):
     pass
-
-
-def _cast_to_int(value):
-    as_flt = float(value)
-    as_int = int(as_flt)
-    if as_flt < 0 and as_flt != int(as_flt):
-        as_int -= 1
-    return as_int
 
 
 class _VbaInterpreter:
@@ -201,14 +188,9 @@ class _VbaInterpreter:
     def _eval(self, expr) -> _Value:
         if expr is None:
             return None
-        if isinstance(expr, VbaStringLiteral):
-            return expr.value
-        if isinstance(expr, VbaIntegerLiteral):
-            return expr.value
-        if isinstance(expr, VbaFloatLiteral):
-            return expr.value
-        if isinstance(expr, VbaBooleanLiteral):
-            return expr.value
+        value = _literal_value(expr)
+        if value is not None:
+            return value
         if isinstance(expr, VbaIdentifier):
             return self._env.get(expr.name.lower())
         if isinstance(expr, VbaBinaryExpression):
@@ -283,36 +265,12 @@ class _VbaInterpreter:
             return ~self._to_int(val)
         raise _VbaInterpreterError
 
-    _BUILTINS: dict[str, Callable[[Any], _Value]] = {
-        'chr'       : lambda v: chr(int(v)),
-        'chrw'      : lambda v: chr(int(v)),
-        'chr$'      : lambda v: chr(int(v)),
-        'chrw$'     : lambda v: chr(int(v)),
-        'asc'       : lambda v: ord(str(v)[0]),
-        'ascw'      : lambda v: ord(str(v)[0]),
-        'len'       : lambda v: len(str(v)),
-        'cint'      : lambda v: int(round(float(v))),
-        'clng'      : lambda v: int(round(float(v))),
-        'cdbl'      : lambda v: float(v),
-        'csng'      : lambda v: float(v),
-        'cbool'     : lambda v: bool(v),
-        'abs'       : lambda v: abs(v),
-        'sgn'       : lambda v: (1 if v > 0 else (-1 if v < 0 else 0)),
-        'int'       : _cast_to_int,
-        'fix'       : lambda v: int(float(v)),
-        'hex'       : lambda v: format(int(v), 'X'),
-        'hex$'      : lambda v: format(int(v), 'X'),
-        'oct'       : lambda v: format(int(v), 'o'),
-        'oct$'      : lambda v: format(int(v), 'o'),
-        'cbyte'     : lambda v: int(v) & 0xFF,
-    }
-
     def _eval_call(self, node: VbaCallExpression) -> _Value:
         if not isinstance(node.callee, VbaIdentifier):
             raise _VbaInterpreterError
         name = node.callee.name.lower()
         args = [self._eval(a) for a in node.arguments if a is not None]
-        handler = self._BUILTINS.get(name)
+        handler = _SINGLE_ARG_BUILTINS.get(name)
         if handler is not None and len(args) == 1:
             try:
                 return handler(args[0])

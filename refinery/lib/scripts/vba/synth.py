@@ -5,6 +5,7 @@ import io
 from refinery.lib.scripts import Node, Visitor
 from refinery.lib.scripts.vba.model import (
     Statement,
+    VBA_PROCEDURE_TYPES,
     VbaBangAccess,
     VbaBinaryExpression,
     VbaBooleanLiteral,
@@ -79,10 +80,7 @@ from refinery.lib.scripts.vba.model import (
 
 class VbaSynthesizer(Visitor):
 
-    _BLOCK_TYPES = (
-        VbaSubDeclaration,
-        VbaFunctionDeclaration,
-        VbaPropertyDeclaration,
+    _BLOCK_TYPES = VBA_PROCEDURE_TYPES + (
         VbaTypeDefinition,
         VbaEnumDefinition,
     )

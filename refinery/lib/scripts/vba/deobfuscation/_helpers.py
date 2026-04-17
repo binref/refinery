@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import copy
 
-from typing import TYPE_CHECKING
+from typing import Any, Callable, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from typing import TypeAlias
@@ -164,6 +164,57 @@ def _eval_string_builtin(name: str, args: list) -> str | None:
             raise ValueError
         return haystack.replace(needle, insert)
     return None
+
+
+_STRING_BUILTINS = frozenset({
+    'cstr',
+    'instr',
+    'lcase',
+    'left',
+    'ltrim',
+    'mid',
+    'replace',
+    'right',
+    'rtrim',
+    'space',
+    'string',
+    'strreverse',
+    'trim',
+    'ucase',
+})
+
+
+def _cast_to_int(value):
+    as_flt = float(value)
+    as_int = int(as_flt)
+    if as_flt < 0 and as_flt != int(as_flt):
+        as_int -= 1
+    return as_int
+
+
+_SINGLE_ARG_BUILTINS: dict[str, Callable[[Any], _Value]] = {
+    'chr'   : lambda v: chr(int(v)),
+    'chrw'  : lambda v: chr(int(v)),
+    'chr$'  : lambda v: chr(int(v)),
+    'chrw$' : lambda v: chr(int(v)),
+    'asc'   : lambda v: ord(str(v)[0]),
+    'ascw'  : lambda v: ord(str(v)[0]),
+    'len'   : lambda v: len(str(v)),
+    'cint'  : lambda v: int(round(float(v))),
+    'clng'  : lambda v: int(round(float(v))),
+    'cdbl'  : lambda v: float(v),
+    'csng'  : lambda v: float(v),
+    'cbool' : lambda v: bool(v),
+    'abs'   : lambda v: abs(v),
+    'sgn'   : lambda v: (1 if v > 0 else (-1 if v < 0 else 0)),
+    'int'   : _cast_to_int,
+    'fix'   : lambda v: int(float(v)),
+    'hex'   : lambda v: format(int(v), 'X'),
+    'hex$'  : lambda v: format(int(v), 'X'),
+    'oct'   : lambda v: format(int(v), 'o'),
+    'oct$'  : lambda v: format(int(v), 'o'),
+    'cbyte' : lambda v: int(v) & 0xFF,
+}
 
 
 def _make_chr_call(code_point: int) -> VbaCallExpression:

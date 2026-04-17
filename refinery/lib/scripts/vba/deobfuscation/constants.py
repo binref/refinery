@@ -1,5 +1,5 @@
 """
-VBA constant inlining: substitutes single-assignment constant variableswith their literal values.
+VBA constant inlining: substitutes single-assignment constant variables with their literal values.
 """
 from __future__ import annotations
 

@@ -795,3 +795,6 @@ class VbaResumeStatement(Statement):
 @dataclass(repr=False)
 class VbaImplementsStatement(Statement):
     name: str = ''
+
+
+VBA_PROCEDURE_TYPES = (VbaSubDeclaration, VbaFunctionDeclaration, VbaPropertyDeclaration)

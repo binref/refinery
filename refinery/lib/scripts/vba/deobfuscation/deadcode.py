@@ -4,47 +4,31 @@ VBA dead code removal: removes assignments to unread variables and empty uncalle
 from __future__ import annotations
 
 from refinery.lib.scripts import Statement, Transformer
-from refinery.lib.scripts.vba.deobfuscation._helpers import _body_lists
+from refinery.lib.scripts.vba.deobfuscation._helpers import (
+    _body_lists,
+    _SINGLE_ARG_BUILTINS,
+    _STRING_BUILTINS,
+)
 from refinery.lib.scripts.vba.model import (
+    VBA_PROCEDURE_TYPES,
     VbaCallExpression,
-    VbaFunctionDeclaration,
     VbaIdentifier,
     VbaLetStatement,
     VbaModule,
-    VbaPropertyDeclaration,
-    VbaSubDeclaration,
 )
 
-_PURE_BUILTINS = frozenset({
-    'abs',
+_PURE_BUT_UNEVALUABLE = frozenset({
     'atn',
-    'cbool',
-    'cbyte',
     'ccur',
     'cdate',
-    'cdbl',
     'cdec',
-    'chr',
-    'chr$',
-    'chrw',
-    'chrw$',
-    'cint',
-    'clng',
     'clnglng',
     'clngptr',
     'cos',
     'csng',
-    'cstr',
     'cvar',
     'exp',
-    'fix',
-    'hex',
-    'hex$',
-    'int',
     'log',
-    'oct',
-    'oct$',
-    'sgn',
     'sin',
     'sqr',
     'str',
@@ -52,6 +36,8 @@ _PURE_BUILTINS = frozenset({
     'tan',
     'val',
 })
+
+_PURE_BUILTINS = frozenset(_SINGLE_ARG_BUILTINS) | _STRING_BUILTINS | _PURE_BUT_UNEVALUABLE
 
 
 def _has_side_effects(node) -> bool:
@@ -102,14 +88,11 @@ class VbaDeadVariableRemoval(Transformer):
         removals: list[tuple[list[Statement], int]] = []
         for key, entries in assignments.items():
             if key not in read_names:
-                for _stmt, body, idx in entries:
+                for _, body, idx in entries:
                     removals.append((body, idx))
         for body, idx in sorted(removals, key=lambda t: t[1], reverse=True):
             del body[idx]
         return bool(removals)
-
-
-_PROCEDURE_TYPES = (VbaSubDeclaration, VbaFunctionDeclaration, VbaPropertyDeclaration)
 
 
 class VbaEmptyProcedureRemoval(Transformer):
@@ -123,7 +106,7 @@ class VbaEmptyProcedureRemoval(Transformer):
     def _remove_empty_procedures(self, module: VbaModule) -> bool:
         empty: dict[str, list[int]] = {}
         for idx, stmt in enumerate(module.body):
-            if isinstance(stmt, _PROCEDURE_TYPES) and not stmt.body:
+            if isinstance(stmt, VBA_PROCEDURE_TYPES) and not stmt.body:
                 empty.setdefault(stmt.name.lower(), []).append(idx)
         if not empty:
             return False
