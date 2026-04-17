@@ -19,7 +19,7 @@ from refinery.lib.scripts.ps1.deobfuscation._helpers import (
     _get_command_name,
     _make_string_literal,
     _string_value,
-    _unwrap_parens,
+    _unwrap_to_array_literal,
 )
 from refinery.lib.scripts.ps1.model import (
     Expression,
@@ -1304,11 +1304,10 @@ class Ps1ForEachPipeline(Transformer):
     def _get_constant_array(expr: Expression | None) -> list[_Value] | None:
         while isinstance(expr, Ps1CastExpression):
             expr = expr.operand
-        expr = _unwrap_parens(expr)
-        if isinstance(expr, Ps1ArrayExpression) and len(expr.body) == 1:
-            stmt = expr.body[0]
-            if isinstance(stmt, Ps1ExpressionStatement) and isinstance(stmt.expression, Ps1ArrayLiteral):
-                expr = stmt.expression
+        if expr is not None:
+            array = _unwrap_to_array_literal(expr)
+            if array is not None:
+                expr = array
         if not isinstance(expr, Ps1ArrayLiteral):
             return None
         values: list[_Value] = []

@@ -7,9 +7,11 @@ from refinery.lib.scripts import Expression, Node, Transformer
 from refinery.lib.scripts.ps1.deobfuscation._helpers import (
     _get_body,
     _is_array_reverse_call,
+    _is_builtin_variable,
     _make_string_literal,
     _replace_in_parent,
     _unwrap_parens,
+    _unwrap_to_array_literal,
 )
 from refinery.lib.scripts.ps1.model import (
     Ps1ArrayExpression,
@@ -232,10 +234,8 @@ def _constant_value_key(node: Node) -> tuple | None:
         return ('str', node.value)
     if isinstance(node, Ps1TypeExpression):
         return ('type', node.name)
-    if isinstance(node, Ps1Variable) and node.scope == Ps1ScopeModifier.NONE:
-        lower = node.name.lower()
-        if lower in ('null', 'true', 'false'):
-            return ('var', lower)
+    if _is_builtin_variable(node) and isinstance(node, Ps1Variable):
+        return ('var', node.name.lower())
     if isinstance(node, Ps1ArrayLiteral):
         keys = []
         for e in node.elements:
@@ -245,7 +245,7 @@ def _constant_value_key(node: Node) -> tuple | None:
             keys.append(k)
         return ('array', tuple(keys))
     if isinstance(node, Ps1ArrayExpression):
-        inner = _unwrap_array_expression(node)
+        inner = _unwrap_to_array_literal(node)
         if inner is not None:
             return _constant_value_key(inner)
     return None
@@ -255,27 +255,15 @@ def _is_constant(node: Node) -> bool:
     node = _unwrap_parens(node)
     if isinstance(node, _CONSTANT_TYPES):
         return True
-    if isinstance(node, Ps1Variable) and node.scope == Ps1ScopeModifier.NONE:
-        if node.name.lower() in ('null', 'true', 'false'):
-            return True
+    if _is_builtin_variable(node):
+        return True
     if isinstance(node, Ps1ArrayLiteral):
         return all(_is_constant(e) for e in node.elements)
     if isinstance(node, Ps1ArrayExpression):
-        inner = _unwrap_array_expression(node)
+        inner = _unwrap_to_array_literal(node)
         if inner is not None:
             return _is_constant(inner)
     return False
-
-
-def _unwrap_array_expression(node: Ps1ArrayExpression) -> Ps1ArrayLiteral | None:
-    """
-    Unwrap `@(e1, e2, ...)` to its inner `Ps1ArrayLiteral` if possible.
-    """
-    if len(node.body) == 1:
-        stmt = node.body[0]
-        if isinstance(stmt, Ps1ExpressionStatement) and isinstance(stmt.expression, Ps1ArrayLiteral):
-            return stmt.expression
-    return None
 
 
 def _get_array_literal(node: Node) -> Ps1ArrayLiteral | None:
@@ -283,10 +271,8 @@ def _get_array_literal(node: Node) -> Ps1ArrayLiteral | None:
     Return the indexable `Ps1ArrayLiteral` from either a bare literal or
     `@(...)`.
     """
-    if isinstance(node, Ps1ArrayLiteral):
-        return node
-    if isinstance(node, Ps1ArrayExpression):
-        return _unwrap_array_expression(node)
+    if isinstance(node, Expression):
+        return _unwrap_to_array_literal(node)
     return None
 
 
@@ -306,16 +292,15 @@ def _clone_constant(node: Node) -> Expression:
         return Ps1HereString(value=node.value, raw=node.raw)
     if isinstance(node, Ps1TypeExpression):
         return Ps1TypeExpression(name=node.name)
-    if isinstance(node, Ps1Variable) and node.scope == Ps1ScopeModifier.NONE:
-        if node.name.lower() in ('null', 'true', 'false'):
-            return Ps1Variable(name=node.name)
+    if _is_builtin_variable(node) and isinstance(node, Ps1Variable):
+        return Ps1Variable(name=node.name)
     if isinstance(node, Ps1ArrayLiteral):
         cloned = Ps1ArrayLiteral(elements=[_clone_constant(e) for e in node.elements])
         if len(cloned.elements) > 1:
             return Ps1ParenExpression(expression=cloned)
         return cloned
     if isinstance(node, Ps1ArrayExpression):
-        inner = _unwrap_array_expression(node)
+        inner = _unwrap_to_array_literal(node)
         if inner is not None:
             cloned = Ps1ArrayLiteral(elements=[_clone_constant(e) for e in inner.elements])
             if len(cloned.elements) > 1:

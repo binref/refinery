@@ -6,7 +6,7 @@ from __future__ import annotations
 import enum
 
 from dataclasses import dataclass, field
-from typing import Generator
+from collections.abc import Generator
 
 from refinery.lib.scripts import Block, Expression, Node, Statement
 

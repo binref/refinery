@@ -7,6 +7,7 @@ from refinery.lib.scripts import Block, Expression, Node, Statement, Transformer
 from refinery.lib.scripts.ps1.deobfuscation._helpers import (
     _COMPARISON_OPS,
     _get_body,
+    _is_builtin_variable,
     _unwrap_integer,
     _unwrap_parens,
 )
@@ -41,7 +42,7 @@ def _is_truthy(node) -> bool | None:
     node = _unwrap_parens(node) if isinstance(node, Expression) else node
     if node is None:
         return None
-    if isinstance(node, Ps1Variable) and node.scope == node.scope.NONE:
+    if _is_builtin_variable(node) and isinstance(node, Ps1Variable):
         lower = node.name.lower()
         if lower == 'true':
             return True
@@ -132,8 +133,8 @@ def _is_pure_constant(node) -> bool:
     """
     if isinstance(node, (Ps1IntegerLiteral, Ps1RealLiteral)):
         return True
-    if isinstance(node, Ps1Variable) and node.scope == Ps1ScopeModifier.NONE:
-        return node.name.lower() in ('null', 'true', 'false')
+    if _is_builtin_variable(node):
+        return True
     if isinstance(node, Ps1ParenExpression):
         return _is_pure_constant(node.expression)
     if isinstance(node, Ps1UnaryExpression) and node.operator in ('+', '-'):

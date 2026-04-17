@@ -11,6 +11,7 @@ from refinery.lib.scripts.ps1.token import BACKTICK_ESCAPE
 from refinery.lib.scripts.ps1.model import (
     Expression,
     Ps1AccessKind,
+    Ps1ArrayExpression,
     Ps1ArrayLiteral,
     Ps1CommandArgument,
     Ps1CommandArgumentKind,
@@ -842,6 +843,20 @@ def _unwrap_parens(node: Expression) -> Expression:
     return node
 
 
+def _unwrap_to_array_literal(node: Expression) -> Ps1ArrayLiteral | None:
+    """
+    Unwrap parentheses and array expressions to find an inner ``Ps1ArrayLiteral``.
+    """
+    node = _unwrap_parens(node)
+    if isinstance(node, Ps1ArrayLiteral):
+        return node
+    if isinstance(node, Ps1ArrayExpression) and len(node.body) == 1:
+        stmt = node.body[0]
+        if isinstance(stmt, Ps1ExpressionStatement) and isinstance(stmt.expression, Ps1ArrayLiteral):
+            return stmt.expression
+    return None
+
+
 def _get_member_name(member: str | Expression) -> str | None:
     """
     Extract a plain member name string from a member that may be a string
@@ -864,11 +879,7 @@ def _unwrap_integer(node: Expression | None) -> Ps1IntegerLiteral | None:
     node = _unwrap_parens(node) if isinstance(node, Expression) else node
     if isinstance(node, Ps1IntegerLiteral):
         return node
-    if (
-        isinstance(node, Ps1Variable)
-        and node.scope == Ps1ScopeModifier.NONE
-        and node.name.lower() == 'null'
-    ):
+    if _is_builtin_variable(node, {'null'}):
         return Ps1IntegerLiteral(value=0, raw='0')
     if isinstance(node, Ps1UnaryExpression) and node.operator == '-':
         inner = _unwrap_parens(node.operand) if isinstance(node.operand, Expression) else node.operand
@@ -921,6 +932,21 @@ def _extract_foreach_scriptblock(expr: Expression) -> Ps1ScriptBlock | None:
     if isinstance(arg, Ps1ScriptBlock):
         return arg
     return None
+
+
+_BUILTIN_VARIABLES = frozenset({'null', 'true', 'false'})
+
+
+def _is_builtin_variable(node, names: set[str] | frozenset[str] = _BUILTIN_VARIABLES) -> bool:
+    """
+    Return True when `node` is an unscoped `Ps1Variable` whose lowered name is in `names` (defaults
+    to `$Null`, `$True`, `$False`).
+    """
+    return (
+        isinstance(node, Ps1Variable)
+        and node.scope == Ps1ScopeModifier.NONE
+        and node.name.lower() in names
+    )
 
 
 _ARRAY_TYPE_NAMES = frozenset({'array', 'system.array'})

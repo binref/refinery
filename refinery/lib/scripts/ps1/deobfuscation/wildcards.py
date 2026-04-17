@@ -12,7 +12,7 @@ from __future__ import annotations
 import re
 
 from fnmatch import translate as fnmatch_translate
-from typing import Iterable
+from collections.abc import Iterable
 
 from refinery.lib.scripts import Node, Transformer
 from refinery.lib.scripts.ps1.deobfuscation._helpers import (

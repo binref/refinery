@@ -26,6 +26,7 @@ from refinery.lib.scripts.ps1.deobfuscation._helpers import (
     _unwrap_integer,
     _unwrap_paren_to_array,
     _unwrap_parens,
+    _unwrap_to_array_literal,
 )
 from refinery.lib.scripts.ps1.deobfuscation.typenames import (
     is_known_member,
@@ -241,21 +242,6 @@ def _is_static_encoding_chain(node: Ps1InvokeMember) -> tuple[str, bool] | None:
     if encoding_name is None:
         return None
     return encoding_name, True
-
-
-def _unwrap_to_array_literal(node: Expression) -> Ps1ArrayLiteral | None:
-    """
-    Unwrap parentheses and array expressions to find an inner
-    `Ps1ArrayLiteral`.
-    """
-    node = _unwrap_parens(node)
-    if isinstance(node, Ps1ArrayLiteral):
-        return node
-    if isinstance(node, Ps1ArrayExpression) and len(node.body) == 1:
-        stmt = node.body[0]
-        if isinstance(stmt, Ps1ExpressionStatement) and isinstance(stmt.expression, Ps1ArrayLiteral):
-            return stmt.expression
-    return None
 
 
 def _escape_for_expandable(text: str) -> str:

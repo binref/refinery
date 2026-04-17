@@ -9,10 +9,10 @@ the state machine, and recovers the original structure.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Callable, Generator
+from collections.abc import Callable, Generator
 
 from refinery.lib.scripts import Block, Expression, Node, Statement, Transformer
-from refinery.lib.scripts.ps1.deobfuscation._helpers import _get_body, _unwrap_parens
+from refinery.lib.scripts.ps1.deobfuscation._helpers import _get_body, _is_builtin_variable, _unwrap_parens
 from refinery.lib.scripts.ps1.deobfuscation.emulator import evaluate_truthy
 from refinery.lib.scripts.ps1.model import (
     Ps1AssignmentExpression,
@@ -45,12 +45,8 @@ def _is_bool_literal(node: Expression) -> bool | None:
     Check if a node is a $True or $False variable literal. Returns the boolean value,
     or None if the node is not a boolean literal.
     """
-    if isinstance(node, Ps1Variable) and node.scope == Ps1ScopeModifier.NONE:
-        lower = node.name.lower()
-        if lower == 'true':
-            return True
-        if lower == 'false':
-            return False
+    if _is_builtin_variable(node, frozenset({'true', 'false'})) and isinstance(node, Ps1Variable):
+        return node.name.lower() == 'true'
     return None
 
 
@@ -71,11 +67,7 @@ def _unwrap_constant(node) -> _StateKey | None:
             return -inner.value
         if isinstance(inner, Ps1RealLiteral):
             return -inner.value
-    if (
-        isinstance(node, Ps1Variable)
-        and node.scope == Ps1ScopeModifier.NONE
-        and node.name.lower() == 'null'
-    ):
+    if _is_builtin_variable(node, frozenset({'null'})):
         return 0
     return None
 
