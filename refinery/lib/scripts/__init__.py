@@ -93,15 +93,8 @@ class Node:
                 node.parent = self
 
     def __repr__(self):
-        try:
-            return self.synthesize()
-        except Exception:
-            name = type(self).__name__
-            return F'{name}@{self.offset}'
-
-    def synthesize(self) -> str:
-        from refinery.lib.scripts.ps1.synth import Ps1Synthesizer
-        return Ps1Synthesizer().convert(self)
+        name = type(self).__name__
+        return F'{name}@{self.offset}'
 
 
 class Expression(Node):
