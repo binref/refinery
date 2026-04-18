@@ -202,7 +202,6 @@ class VbaDeclareStatement(Statement):
     is_function: bool = False
     params: list[VbaParameter] = field(default_factory=list)
     return_type: str = ''
-    raw: str = ''
 
 
 @dataclass(repr=False)

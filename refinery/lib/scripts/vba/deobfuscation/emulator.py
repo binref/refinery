@@ -8,6 +8,7 @@ from refinery.lib.scripts.vba.deobfuscation._helpers import (
     _eval_string_builtin,
     _is_identifier_read,
     _is_literal,
+    _is_nan_or_inf,
     _literal_value,
     _SINGLE_ARG_BUILTINS,
     _Value,
@@ -330,20 +331,8 @@ class _VbaInterpreter:
 
     @staticmethod
     def _to_int(v: _Value) -> int:
-        if v is None:
-            return 0
-        if isinstance(v, bool):
-            return -1 if v else 0
-        if isinstance(v, int):
-            return v
-        if isinstance(v, float):
-            return int(v)
-        if isinstance(v, str):
-            try:
-                return int(v)
-            except ValueError:
-                raise _VbaInterpreterError
-        raise _VbaInterpreterError
+        result = _VbaInterpreter._to_number(v)
+        return result if isinstance(result, int) else int(result)
 
     def _numeric_op(self, left: _Value, right: _Value, op) -> int | float:
         a = self._to_number(left)
@@ -352,7 +341,7 @@ class _VbaInterpreter:
             result = op(a, b)
         except (ZeroDivisionError, ValueError, OverflowError, ArithmeticError):
             raise _VbaInterpreterError
-        if isinstance(result, float) and (result != result or abs(result) == float('inf')):
+        if _is_nan_or_inf(result):
             raise _VbaInterpreterError
         return result
 

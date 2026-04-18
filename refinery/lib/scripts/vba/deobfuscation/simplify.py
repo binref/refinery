@@ -12,6 +12,7 @@ from refinery.lib.scripts.vba.deobfuscation._helpers import (
     _CHR_NAMES,
     _eval_string_builtin,
     _is_literal,
+    _is_nan_or_inf,
     _make_integer_literal,
     _make_numeric_literal,
     _make_string_literal,
@@ -216,11 +217,7 @@ class VbaSimplifications(Transformer):
                     result = fn(lhs, rhs)
                 except (ZeroDivisionError, ValueError, OverflowError):
                     return None
-                if isinstance(result, float) and (
-                    result != result
-                    or result == float('inf')
-                    or result == float('-inf')
-                ):
+                if _is_nan_or_inf(result):
                     return None
                 return _make_numeric_literal(result)
             fn = _INTEGER_OPS.get(node.operator)

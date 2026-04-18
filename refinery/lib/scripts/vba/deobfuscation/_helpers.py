@@ -39,6 +39,10 @@ def _make_string_literal(value: str) -> VbaStringLiteral:
     return VbaStringLiteral(value=value, raw=raw)
 
 
+def _is_nan_or_inf(value) -> bool:
+    return isinstance(value, float) and (value != value or abs(value) == float('inf'))
+
+
 def _make_integer_literal(value: int) -> VbaIntegerLiteral:
     return VbaIntegerLiteral(value=value, raw=str(value))
 
