@@ -14,10 +14,18 @@ if TYPE_CHECKING:
 
 from refinery.lib.scripts import Block, Transformer
 from refinery.lib.scripts.ps1.deobfuscation._helpers import (
+    _CONVERT_TYPE_NAMES,
     _ENCODING_MAP,
+    _ENCODING_TYPE_NAMES,
+    _MATH_TYPE_NAMES,
+    _STRING_TYPE_NAMES,
+    _detect_encoding_chain,
     _extract_foreach_scriptblock,
     _get_command_name,
+    _get_member_name,
     _make_string_literal,
+    _normalize_dotnet_type_name,
+    _normalize_type_expression,
     _string_value,
     _unwrap_to_array_literal,
 )
@@ -566,12 +574,9 @@ class _Ps1Interpreter:
 
     def _eval_member_access(self, node: Ps1MemberAccess) -> _Value:
         obj = self._eval(node.object)
-        member = node.member if isinstance(node.member, str) else None
+        member = _get_member_name(node.member)
         if member is None:
-            if isinstance(node.member, Ps1StringLiteral):
-                member = node.member.value
-            else:
-                raise _Ps1InterpreterError
+            raise _Ps1InterpreterError
         name = member.lower()
         result = self._resolve_property(obj, name)
         if result is not None:
@@ -601,14 +606,6 @@ class _Ps1Interpreter:
             return None
         return None
 
-    _CONVERT_TYPES = frozenset({'convert', 'system.convert'})
-
-    _ENCODING_TYPES = frozenset({'system.text.encoding', 'text.encoding'})
-
-    _STRING_TYPES = frozenset({'string', 'system.string'})
-
-    _MATH_TYPES = frozenset({'math', 'system.math'})
-
     def _eval_invoke_member(self, node: Ps1InvokeMember) -> _Value:
         if node.access == Ps1AccessKind.STATIC:
             return self._eval_static_invoke(node)
@@ -616,12 +613,9 @@ class _Ps1Interpreter:
         if enc is not None:
             return enc
         obj = self._eval(node.object)
-        member = node.member if isinstance(node.member, str) else None
+        member = _get_member_name(node.member)
         if member is None:
-            if isinstance(node.member, Ps1StringLiteral):
-                member = node.member.value
-            else:
-                raise _Ps1InterpreterError
+            raise _Ps1InterpreterError
         name = member.lower()
         args = [self._eval(a) for a in node.arguments]
         if isinstance(obj, str):
@@ -633,22 +627,19 @@ class _Ps1Interpreter:
     def _eval_static_invoke(self, node: Ps1InvokeMember) -> _Value:
         if not isinstance(node.object, Ps1TypeExpression):
             raise _Ps1InterpreterError
-        type_name = node.object.name.lower().replace(' ', '')
-        member = node.member if isinstance(node.member, str) else None
+        type_name = _normalize_type_expression(node.object.name)
+        member = _get_member_name(node.member)
         if member is None:
-            if isinstance(node.member, Ps1StringLiteral):
-                member = node.member.value
-            else:
-                raise _Ps1InterpreterError
+            raise _Ps1InterpreterError
         name = member.lower()
         args = [self._eval(a) for a in node.arguments]
-        if type_name in self._CONVERT_TYPES:
+        if type_name in _CONVERT_TYPE_NAMES:
             return self._invoke_convert(name, args)
-        if type_name in self._ENCODING_TYPES:
+        if type_name in _ENCODING_TYPE_NAMES:
             return self._invoke_encoding(name, args)
-        if type_name in self._STRING_TYPES:
+        if type_name in _STRING_TYPE_NAMES:
             return self._invoke_string_static(name, args)
-        if type_name in self._MATH_TYPES:
+        if type_name in _MATH_TYPE_NAMES:
             return self._invoke_math_static(name, args)
         raise _Ps1InterpreterError
 
@@ -690,20 +681,7 @@ class _Ps1Interpreter:
         return self._decode_byte_list(args[0], encoding)
 
     def _try_encoding_chain(self, node: Ps1InvokeMember) -> _Value | None:
-        member = node.member if isinstance(node.member, str) else None
-        if member is None or member.lower() != 'getstring':
-            return None
-        obj = node.object
-        if not isinstance(obj, Ps1MemberAccess):
-            return None
-        if obj.access != Ps1AccessKind.STATIC:
-            return None
-        if not isinstance(obj.object, Ps1TypeExpression):
-            return None
-        type_name = obj.object.name.lower().replace(' ', '')
-        if type_name not in self._ENCODING_TYPES:
-            return None
-        enc_name = obj.member if isinstance(obj.member, str) else None
+        enc_name = _detect_encoding_chain(node)
         if enc_name is None:
             return None
         encoding = _ENCODING_MAP.get(enc_name.lower(), enc_name.lower())
@@ -885,7 +863,7 @@ class _Ps1Interpreter:
         return self._apply_type_cast(node.type_name, val)
 
     def _apply_type_cast(self, type_name: str, val: _Value) -> _Value:
-        tn = type_name.lower().replace(' ', '')
+        tn = _normalize_dotnet_type_name(type_name)
         if tn == 'string':
             if isinstance(val, list):
                 return ' '.join(self._to_str(item) for item in val)

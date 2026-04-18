@@ -12,14 +12,17 @@ from collections.abc import Iterator
 from refinery.lib.scripts import Node, Transformer
 from refinery.lib.scripts.ps1.deobfuscation._helpers import (
     _COMPARISON_OPS,
+    _CONVERT_TYPE_NAMES_QUALIFIED,
     _ENCODING_MAP,
     _KNOWN_ALIAS,
-    SIMPLE_IDENTIFIER,
-    _case_normalize_name,
+    _REGEX_TYPE_NAMES,
+    _STRING_TYPE_NAMES,
     _collect_int_arguments,
     _collect_string_arguments,
+    _detect_encoding_chain,
     _extract_foreach_scriptblock,
     _get_body,
+    _get_member_name,
     _is_array_reverse_call,
     _is_static_type_call,
     _make_string_literal,
@@ -35,7 +38,6 @@ from refinery.lib.scripts.ps1.deobfuscation.typenames import (
 )
 from refinery.lib.scripts.ps1.model import (
     Expression,
-    Ps1AccessKind,
     Ps1ArrayExpression,
     Ps1ArrayLiteral,
     Ps1AssignmentExpression,
@@ -51,29 +53,9 @@ from refinery.lib.scripts.ps1.model import (
     Ps1Pipeline,
     Ps1ScriptBlock,
     Ps1StringLiteral,
-    Ps1TypeExpression,
     Ps1UnaryExpression,
     Ps1Variable,
 )
-
-_SYSTEM_CONVERT_NAMES = frozenset({
-    'system.convert',
-})
-
-_SYSTEM_TEXT_ENCODING_NAMES = frozenset({
-    'system.text.encoding',
-    'text.encoding',
-})
-
-_STRING_TYPE_NAMES = frozenset({
-    'string',
-    'system.string',
-})
-
-_REGEX_TYPE_NAMES = frozenset({
-    'regex',
-    'text.regularexpressions.regex',
-})
 
 _REGEX_OPTION_FLAGS: dict[str, int] = {
     'ignorecase'              : re.IGNORECASE,
@@ -214,27 +196,11 @@ def _foreach_extracts_value(sb: Ps1ScriptBlock) -> bool:
 
 
 def _is_static_convert_call(node: Ps1InvokeMember) -> bool:
-    return _is_static_type_call(node, _SYSTEM_CONVERT_NAMES)
+    return _is_static_type_call(node, _CONVERT_TYPE_NAMES_QUALIFIED)
 
 
-def _is_static_encoding_chain(node: Ps1InvokeMember) -> tuple[str, bool] | None:
-    member_name = node.member if isinstance(node.member, str) else None
-    if member_name is None or member_name.lower() != 'getstring':
-        return None
-    obj = node.object
-    if not isinstance(obj, Ps1MemberAccess):
-        return None
-    if obj.access != Ps1AccessKind.STATIC:
-        return None
-    if not isinstance(obj.object, Ps1TypeExpression):
-        return None
-    type_name = obj.object.name.lower().replace(' ', '')
-    if type_name not in _SYSTEM_TEXT_ENCODING_NAMES:
-        return None
-    encoding_name = obj.member if isinstance(obj.member, str) else None
-    if encoding_name is None:
-        return None
-    return encoding_name, True
+def _is_static_encoding_chain(node: Ps1InvokeMember) -> str | None:
+    return _detect_encoding_chain(node)
 
 
 def _escape_for_expandable(text: str) -> str:
@@ -279,13 +245,32 @@ def _variable_string_to_expandable(
 
 class Ps1ConstantFolding(Transformer):
 
+    def __init__(self):
+        super().__init__()
+        self._local_functions: set[str] = set()
+        self._entry = False
+
+    def visit(self, node: Node):
+        if self._entry:
+            return super().visit(node)
+        self._entry = True
+        try:
+            self._local_functions = {
+                n.name.lower()
+                for n in node.walk()
+                if isinstance(n, Ps1FunctionDefinition) and n.name
+            }
+            return super().visit(node)
+        finally:
+            self._entry = False
+
     def visit_Ps1CommandInvocation(self, node: Ps1CommandInvocation):
         self.generic_visit(node)
         if isinstance(node.name, Ps1StringLiteral):
             name_lower = node.name.value.lower()
             target = _KNOWN_ALIAS.get(name_lower)
             if target is not None and target != node.name.value:
-                if not self._has_function_definition(node, name_lower):
+                if name_lower not in self._local_functions:
                     node.name = Ps1StringLiteral(
                         offset=node.name.offset,
                         value=target,
@@ -294,23 +279,6 @@ class Ps1ConstantFolding(Transformer):
                     node.name.parent = node
                     self.mark_changed()
         return None
-
-    @staticmethod
-    def _has_function_definition(node: Node, name_lower: str) -> bool:
-        cursor = node.parent
-        while cursor is not None:
-            if isinstance(cursor, Ps1FunctionDefinition):
-                if cursor.name and cursor.name.lower() == name_lower:
-                    return True
-            cursor = cursor.parent
-        root = node
-        while root.parent is not None:
-            root = root.parent
-        for n in root.walk():
-            if isinstance(n, Ps1FunctionDefinition) and n.name:
-                if n.name.lower() == name_lower:
-                    return True
-        return False
 
     def visit_Ps1Pipeline(self, node: Ps1Pipeline):
         if len(node.elements) == 2:
@@ -325,7 +293,7 @@ class Ps1ConstantFolding(Transformer):
         second_expr = node.elements[1].expression
         if not isinstance(first, Ps1InvokeMember) or not _is_static_regex_call(first):
             return None
-        member = first.member if isinstance(first.member, str) else None
+        member = _get_member_name(first.member)
         if member is None:
             return None
         sb = _extract_foreach_scriptblock(second_expr) if second_expr else None
@@ -345,7 +313,7 @@ class Ps1ConstantFolding(Transformer):
 
     def visit_Ps1MemberAccess(self, node: Ps1MemberAccess):
         self.generic_visit(node)
-        member = node.member if isinstance(node.member, str) else None
+        member = _get_member_name(node.member)
         if member is None:
             return None
         obj = node.object
@@ -377,7 +345,7 @@ class Ps1ConstantFolding(Transformer):
         chain: list[str] = [member]
         inner = node.object
         while isinstance(inner, Ps1MemberAccess):
-            prop = inner.member if isinstance(inner.member, str) else None
+            prop = _get_member_name(inner.member)
             if prop is None:
                 return None
             chain.append(prop)
@@ -529,18 +497,7 @@ class Ps1ConstantFolding(Transformer):
 
     def visit_Ps1InvokeMember(self, node: Ps1InvokeMember):
         self.generic_visit(node)
-        if isinstance(node.member, Ps1StringLiteral):
-            name = node.member.value
-            if SIMPLE_IDENTIFIER.match(name):
-                node.member = name
-                self.mark_changed()
-        member_name = node.member if isinstance(node.member, str) else None
-        if member_name is not None:
-            normalized = _case_normalize_name(member_name)
-            if normalized != member_name:
-                node.member = normalized
-                self.mark_changed()
-            member_name = normalized
+        member_name = _get_member_name(node.member)
         if member_name is None:
             return None
         lower = member_name.lower()
@@ -654,9 +611,8 @@ class Ps1ConstantFolding(Transformer):
                     array = Ps1ArrayLiteral(elements=elements)
                     return Ps1ArrayExpression(
                         body=[Ps1ExpressionStatement(expression=array)])
-        enc_info = _is_static_encoding_chain(node)
-        if enc_info is not None:
-            encoding_name, _ = enc_info
+        encoding_name = _is_static_encoding_chain(node)
+        if encoding_name is not None:
             if len(node.arguments) == 1:
                 arg = _unwrap_paren_to_array(node.arguments[0])
                 if isinstance(arg, Ps1ArrayExpression) and len(arg.body) == 1:

@@ -10,6 +10,7 @@ from refinery.lib.scripts.ps1.deobfuscation._helpers import (
     _collect_int_arguments,
     _collect_string_arguments,
     _make_string_literal,
+    _normalize_dotnet_type_name,
     _string_value,
     _unwrap_integer,
     _unwrap_paren_to_array,
@@ -54,7 +55,7 @@ class Ps1TypeCasts(Transformer):
 
     def visit_Ps1CastExpression(self, node: Ps1CastExpression):
         self.generic_visit(node)
-        tn = node.type_name.lower().replace(' ', '')
+        tn = _normalize_dotnet_type_name(node.type_name)
         if tn in ('string', 'char[]'):
             if node.operand and _string_value(node.operand) is not None:
                 return node.operand

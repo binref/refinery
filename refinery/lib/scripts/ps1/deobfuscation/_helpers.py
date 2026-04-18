@@ -26,6 +26,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1HereString,
     Ps1IntegerLiteral,
     Ps1InvokeMember,
+    Ps1MemberAccess,
     Ps1ParameterDeclaration,
     Ps1ParenExpression,
     Ps1ScopeModifier,
@@ -884,9 +885,20 @@ _ENCODING_MAP = {
     'utf32'            : 'utf-32-le',
 }
 
+_CONVERT_TYPE_NAMES = frozenset({'convert', 'system.convert'})
+_CONVERT_TYPE_NAMES_QUALIFIED = frozenset({'system.convert'})
+_ENCODING_TYPE_NAMES = frozenset({'system.text.encoding', 'text.encoding'})
+_STRING_TYPE_NAMES = frozenset({'string', 'system.string'})
+_MATH_TYPE_NAMES = frozenset({'math', 'system.math'})
+_REGEX_TYPE_NAMES = frozenset({'regex', 'text.regularexpressions.regex'})
+
+
+def _normalize_type_expression(name: str) -> str:
+    return name.lower().replace(' ', '')
+
 
 def _normalize_dotnet_type_name(name: str) -> str:
-    result = name.lower().replace(' ', '')
+    result = _normalize_type_expression(name)
     if result.startswith('system.'):
         result = result[7:]
     return result
@@ -897,7 +909,28 @@ def _is_static_type_call(node: Ps1InvokeMember, type_names: frozenset[str]) -> b
         return False
     if not isinstance(node.object, Ps1TypeExpression):
         return False
-    return node.object.name.lower().replace(' ', '') in type_names
+    return _normalize_type_expression(node.object.name) in type_names
+
+
+def _detect_encoding_chain(node: Ps1InvokeMember) -> str | None:
+    """
+    If *node* is ``[Text.Encoding]::X.GetString(args)``, return the encoding
+    member name (e.g. ``'UTF8'``).  Otherwise return ``None``.
+    """
+    member = _get_member_name(node.member)
+    if member is None or member.lower() != 'getstring':
+        return None
+    obj = node.object
+    if not isinstance(obj, Ps1MemberAccess):
+        return None
+    if obj.access != Ps1AccessKind.STATIC:
+        return None
+    if not isinstance(obj.object, Ps1TypeExpression):
+        return None
+    if _normalize_type_expression(obj.object.name) not in _ENCODING_TYPE_NAMES:
+        return None
+    enc_name = _get_member_name(obj.member)
+    return enc_name
 
 
 def _iter_variable_mutations(
@@ -1021,9 +1054,9 @@ def _is_array_reverse_call(node: Ps1ExpressionStatement) -> Ps1Variable | None:
         return None
     if not isinstance(expr.object, Ps1TypeExpression):
         return None
-    if expr.object.name.lower().replace(' ', '') not in _ARRAY_TYPE_NAMES:
+    if _normalize_type_expression(expr.object.name) not in _ARRAY_TYPE_NAMES:
         return None
-    member = expr.member if isinstance(expr.member, str) else None
+    member = _get_member_name(expr.member)
     if member is None or member.lower() != 'reverse':
         return None
     if len(expr.arguments) != 1:
