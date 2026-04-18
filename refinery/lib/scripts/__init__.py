@@ -94,7 +94,7 @@ class Node:
 
     def __post_init__(self):
         for c in _children(self):
-            yield self._adopt(c)
+            self._adopt(c)
 
     def children(self) -> Generator[Node, None, None]:
         yield from _children(self)
