@@ -3,7 +3,7 @@ Shared utilities for VBA deobfuscation transforms.
 """
 from __future__ import annotations
 
-from typing import Any, Callable, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Callable
 
 if TYPE_CHECKING:
     from typing import TypeAlias

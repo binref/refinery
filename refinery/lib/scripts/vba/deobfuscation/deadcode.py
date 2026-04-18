@@ -5,16 +5,16 @@ from __future__ import annotations
 
 from refinery.lib.scripts import Statement, Transformer
 from refinery.lib.scripts.vba.deobfuscation._helpers import (
-    _body_lists,
     _SINGLE_ARG_BUILTINS,
     _STRING_BUILTINS,
+    _body_lists,
 )
 from refinery.lib.scripts.vba.model import (
-    VbaProcedureDeclaration,
     VbaCallExpression,
     VbaIdentifier,
     VbaLetStatement,
     VbaModule,
+    VbaProcedureDeclaration,
 )
 
 _PURE_BUT_UNEVALUABLE = frozenset({

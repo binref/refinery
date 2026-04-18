@@ -21,7 +21,6 @@ from refinery.lib.scripts.vba.deobfuscation._helpers import (
 )
 from refinery.lib.scripts.vba.deobfuscation.builtins import VBA_BUILTIN_CONSTANTS
 from refinery.lib.scripts.vba.model import (
-    VbaProcedureDeclaration,
     VbaBinaryExpression,
     VbaBooleanLiteral,
     VbaCallExpression,
@@ -34,6 +33,7 @@ from refinery.lib.scripts.vba.model import (
     VbaOnErrorAction,
     VbaOnErrorStatement,
     VbaParenExpression,
+    VbaProcedureDeclaration,
     VbaUnaryExpression,
 )
 

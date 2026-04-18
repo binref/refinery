@@ -3,7 +3,6 @@ from __future__ import annotations
 from refinery.lib.scripts import Synthesizer
 from refinery.lib.scripts.vba.model import (
     Statement,
-    VbaProcedureDeclaration,
     VbaBangAccess,
     VbaBinaryExpression,
     VbaBooleanLiteral,
@@ -54,6 +53,7 @@ from refinery.lib.scripts.vba.model import (
     VbaParameter,
     VbaParameterPassing,
     VbaParenExpression,
+    VbaProcedureDeclaration,
     VbaPropertyDeclaration,
     VbaRaiseEventStatement,
     VbaRangeExpression,

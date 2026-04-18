@@ -5,12 +5,12 @@ from __future__ import annotations
 
 from refinery.lib.scripts import Transformer
 from refinery.lib.scripts.vba.deobfuscation._helpers import (
+    _SINGLE_ARG_BUILTINS,
     _eval_string_builtin,
     _is_identifier_read,
     _is_literal,
     _is_nan_or_inf,
     _literal_value,
-    _SINGLE_ARG_BUILTINS,
     _Value,
     _value_to_node,
 )
