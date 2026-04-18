@@ -8,6 +8,7 @@ from refinery.lib.scripts.ps1.deobfuscation._helpers import (
     _get_body,
     _is_array_reverse_call,
     _is_builtin_variable,
+    _iter_variable_mutations,
     _make_string_literal,
     _replace_in_parent,
     _unwrap_parens,
@@ -174,29 +175,12 @@ def _collect_mutated_variables(root: Node) -> set[str]:
     assignment targets, ForEach loop variables, ++/-- operands, and parameter declarations.
     """
     mutated: set[str] = set()
+    for var, _kind, _node in _iter_variable_mutations(root):
+        key = _candidate_key(var)
+        if key is not None:
+            mutated.add(key)
     for node in root.walk():
-        if isinstance(node, Ps1AssignmentExpression):
-            var = _assignment_target_variable(node.target)
-            if var is not None:
-                key = _candidate_key(var)
-                if key is not None:
-                    mutated.add(key)
-        elif isinstance(node, Ps1ForEachLoop):
-            if isinstance(node.variable, Ps1Variable):
-                key = _candidate_key(node.variable)
-                if key is not None:
-                    mutated.add(key)
-        elif isinstance(node, Ps1UnaryExpression):
-            if node.operator in ('++', '--') and isinstance(node.operand, Ps1Variable):
-                key = _candidate_key(node.operand)
-                if key is not None:
-                    mutated.add(key)
-        elif isinstance(node, Ps1ParameterDeclaration):
-            if isinstance(node.variable, Ps1Variable):
-                key = _candidate_key(node.variable)
-                if key is not None:
-                    mutated.add(key)
-        elif isinstance(node, Ps1ExpressionStatement):
+        if isinstance(node, Ps1ExpressionStatement):
             rv = _is_array_reverse_call(node)
             if rv is not None:
                 key = _candidate_key(rv)

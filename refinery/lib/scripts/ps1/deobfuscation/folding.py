@@ -21,6 +21,7 @@ from refinery.lib.scripts.ps1.deobfuscation._helpers import (
     _extract_foreach_scriptblock,
     _get_body,
     _is_array_reverse_call,
+    _is_static_type_call,
     _make_string_literal,
     _string_value,
     _unwrap_integer,
@@ -93,11 +94,7 @@ _RIGHT_TO_LEFT = 64
 
 
 def _is_static_regex_call(node: Ps1InvokeMember) -> bool:
-    if node.access != Ps1AccessKind.STATIC:
-        return False
-    if not isinstance(node.object, Ps1TypeExpression):
-        return False
-    return node.object.name.lower().replace(' ', '') in _REGEX_TYPE_NAMES
+    return _is_static_type_call(node, _REGEX_TYPE_NAMES)
 
 
 def _parse_regex_options(node: Expression) -> tuple[int, bool] | None:
@@ -217,11 +214,7 @@ def _foreach_extracts_value(sb: Ps1ScriptBlock) -> bool:
 
 
 def _is_static_convert_call(node: Ps1InvokeMember) -> bool:
-    if node.access != Ps1AccessKind.STATIC:
-        return False
-    if not isinstance(node.object, Ps1TypeExpression):
-        return False
-    return node.object.name.lower().replace(' ', '') in _SYSTEM_CONVERT_NAMES
+    return _is_static_type_call(node, _SYSTEM_CONVERT_NAMES)
 
 
 def _is_static_encoding_chain(node: Ps1InvokeMember) -> tuple[str, bool] | None:
@@ -687,11 +680,7 @@ class Ps1ConstantFolding(Transformer):
                     except Exception:
                         return None
                     return _make_string_literal(decoded_str)
-        if (
-            node.access == Ps1AccessKind.STATIC
-            and isinstance(node.object, Ps1TypeExpression)
-            and node.object.name.lower().replace(' ', '') in _STRING_TYPE_NAMES
-        ):
+        if _is_static_type_call(node, _STRING_TYPE_NAMES):
             if lower == 'concat' and len(node.arguments) >= 1:
                 parts: list[str] = []
                 for arg in node.arguments:

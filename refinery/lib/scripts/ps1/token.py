@@ -138,7 +138,6 @@ class Ps1TokenKind(enum.Enum):
     DYNAMICPARAM     = 'dynamicparam'    # noqa
 
     NEWLINE          = 'newline'         # noqa
-    COMMENT          = 'comment'         # noqa
     EOF              = 'eof'             # noqa
 
     @property

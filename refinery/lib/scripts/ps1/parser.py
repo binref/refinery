@@ -145,6 +145,8 @@ _VARIABLE_FRAG = re.compile(
     re.IGNORECASE,
 )
 
+_MERGING_PATTERN = re.compile(r'(\d|\*)?>&(\d)')
+
 _ASSIGNMENT_RHS_STATEMENT_KINDS = frozenset({
     Ps1TokenKind.IF,
     Ps1TokenKind.WHILE,
@@ -184,9 +186,6 @@ class Ps1Parser:
         except StopIteration:
             self._current = Ps1Token(Ps1TokenKind.EOF, '', len(self.source))
         return prev
-
-    def _peek(self) -> Ps1Token:
-        return self._current
 
     def _at(self, *kinds: Ps1TokenKind) -> bool:
         return self._current.kind in kinds
@@ -236,13 +235,11 @@ class Ps1Parser:
         finally:
             self._disable_comma = old
 
-    _MERGING_PATTERN = re.compile(r'(\d|\*)?>&(\d)')
-
     def _parse_redirection(
         self, tok: Ps1Token,
     ) -> Ps1FileRedirection | Ps1MergingRedirection:
         op = tok.value
-        m = self._MERGING_PATTERN.fullmatch(op)
+        m = _MERGING_PATTERN.fullmatch(op)
         if m is not None:
             prefix, to_digit = m.group(1), int(m.group(2))
             if prefix is None:
@@ -272,6 +269,34 @@ class Ps1Parser:
         return Ps1FileRedirection(
             offset=tok.offset, stream=stream, target=target, append=append)
 
+    @staticmethod
+    def _skip_quoted_raw(
+        src: str,
+        pos: int,
+        end: int,
+        quote_set: frozenset[str],
+        *,
+        backtick: bool = False,
+    ) -> int:
+        """
+        Starting just after an opening quote character, advance past the quoted string content
+        and the closing quote. Handles doubled-quote escapes and optionally backtick escapes.
+        Returns the position immediately after the closing quote.
+        """
+        while pos < end:
+            ch = src[pos]
+            if backtick and ch == '`' and pos + 1 < end:
+                pos += 2
+                continue
+            if ch in quote_set:
+                pos += 1
+                if pos < end and src[pos] in quote_set:
+                    pos += 1
+                    continue
+                return pos
+            pos += 1
+        return pos
+
     def _might_be_param_block(self) -> bool:
         if self._at(Ps1TokenKind.PARAM):
             return True
@@ -290,15 +315,11 @@ class Ps1Parser:
                 elif ch == ']':
                     depth -= 1
                 elif ch in SINGLE_QUOTES and depth > 0:
-                    pos += 1
-                    while pos < end and src[pos] not in SINGLE_QUOTES:
-                        pos += 1
+                    pos = self._skip_quoted_raw(src, pos + 1, end, SINGLE_QUOTES)
+                    continue
                 elif ch in DOUBLE_QUOTES and depth > 0:
-                    pos += 1
-                    while pos < end and src[pos] not in DOUBLE_QUOTES:
-                        if src[pos] == '`':
-                            pos += 1
-                        pos += 1
+                    pos = self._skip_quoted_raw(src, pos + 1, end, DOUBLE_QUOTES, backtick=True)
+                    continue
                 pos += 1
             while pos < end and (src[pos] in WHITESPACE or src[pos] in '\r\n'):
                 pos += 1
@@ -411,7 +432,7 @@ class Ps1Parser:
 
     def _parse_statement(self) -> Statement | None:
         self._skip_newlines()
-        tok = self._peek()
+        tok = self._current
         kind = tok.kind
 
         label = None
@@ -419,7 +440,7 @@ class Ps1Parser:
             label = tok.value
             self._advance()
             self._skip_newlines()
-            kind = self._peek().kind
+            kind = self._current.kind
 
         if kind == Ps1TokenKind.IF:
             return self._parse_if()
@@ -754,7 +775,7 @@ class Ps1Parser:
             return self._parse_expression()
 
     def _parse_unary_expression(self) -> Expression | None:
-        tok = self._peek()
+        tok = self._current
 
         if tok.kind == Ps1TokenKind.COMMA:
             if self._disable_comma:
@@ -867,7 +888,7 @@ class Ps1Parser:
         return expr
 
     def _parse_primary_atom(self) -> Expression | None:
-        tok = self._peek()
+        tok = self._current
 
         if tok.kind == Ps1TokenKind.INTEGER:
             return self._parse_integer()
@@ -1067,8 +1088,8 @@ class Ps1Parser:
         flush_text()
         return parts
 
-    @staticmethod
-    def _scan_subexpression_extent(text: str, pos: int) -> int:
+    @classmethod
+    def _scan_subexpression_extent(cls, text: str, pos: int) -> int:
         """
         Given that `'$(` occurs at `pos + 2`, skip past the matching closing parenthesis while
         correctly handling nested parentheses and quoted strings. Returns the position immediately
@@ -1080,29 +1101,10 @@ class Ps1Parser:
         while pos < length and depth > 0:
             sc = text[pos]
             if sc in SINGLE_QUOTES:
-                pos += 1
-                while pos < length:
-                    if text[pos] in SINGLE_QUOTES:
-                        pos += 1
-                        if pos < length and text[pos] in SINGLE_QUOTES:
-                            pos += 1
-                            continue
-                        break
-                    pos += 1
+                pos = cls._skip_quoted_raw(text, pos + 1, length, SINGLE_QUOTES)
                 continue
             if sc in DOUBLE_QUOTES:
-                pos += 1
-                while pos < length:
-                    if text[pos] == '`' and pos + 1 < length:
-                        pos += 2
-                        continue
-                    if text[pos] in DOUBLE_QUOTES:
-                        pos += 1
-                        if pos < length and text[pos] in DOUBLE_QUOTES:
-                            pos += 1
-                            continue
-                        break
-                    pos += 1
+                pos = cls._skip_quoted_raw(text, pos + 1, length, DOUBLE_QUOTES, backtick=True)
                 continue
             if sc == '(':
                 depth += 1
@@ -1319,9 +1321,6 @@ class Ps1Parser:
             member = self._parse_paren_expression()
         elif self._at(Ps1TokenKind.DOLLAR_LPAREN):
             member = self._parse_sub_expression()
-        elif self._current.kind.is_keyword:
-            tok = self._advance()
-            member = tok.value
         else:
             tok = self._advance()
             member = tok.value
@@ -1719,10 +1718,7 @@ class Ps1Parser:
                     self._skip_newlines()
                     if self._at(Ps1TokenKind.RPAREN):
                         break
-                    if (
-                        self._at(Ps1TokenKind.GENERIC_TOKEN, Ps1TokenKind.GENERIC_EXPAND)
-                        and self.source[self._current.offset:].find('=') > 0
-                    ):
+                    if self._at(Ps1TokenKind.GENERIC_TOKEN, Ps1TokenKind.GENERIC_EXPAND):
                         saved = self._current
                         saved_pos = self._lexer.pos
                         key_tok = self._advance()

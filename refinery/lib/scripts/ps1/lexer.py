@@ -317,14 +317,16 @@ class Ps1Lexer:
         return False
 
     def _read_verbatim_here_string(self) -> str:
+        src = self.source
+        length = len(src)
         start = self.pos
         self._skip_here_string_header()
-        while self.pos < len(self.source):
-            if self.source[self.pos] in '\r\n':
+        while self.pos < length:
+            if src[self.pos] in '\r\n':
                 if self._check_here_string_terminator(SINGLE_QUOTES):
-                    return self.source[start:self.pos]
+                    return src[start:self.pos]
             self.pos += 1
-        return self.source[start:self.pos]
+        return src[start:self.pos]
 
     def _read_expandable_here_string(self) -> str:
         start = self.pos
@@ -437,6 +439,27 @@ class Ps1Lexer:
             return Ps1Token(Ps1TokenKind.REDIRECTION, m.group(), start)
         return None
 
+    def _read_identifier(self) -> Ps1Token:
+        src = self.source
+        length = len(src)
+        start = self.pos
+        c = src[self.pos]
+        if c == '`' and self.pos + 1 < length:
+            self.pos += 2
+        else:
+            self.pos += 1
+        while self.pos < length:
+            ch = src[self.pos]
+            if ch == '`' and self.pos + 1 < length:
+                self.pos += 2
+            elif ch.isalnum() or ch == '_':
+                self.pos += 1
+            elif ch in DASHES and self.mode != Ps1LexerMode.EXPRESSION:
+                self.pos += 1
+            else:
+                break
+        return Ps1Token(Ps1TokenKind.GENERIC_TOKEN, src[start:self.pos], start)
+
     def _read_generic_token(self) -> Ps1Token:
         start = self.pos
         src = self.source
@@ -491,11 +514,6 @@ class Ps1Lexer:
 
             start = self.pos
             c = src[self.pos]
-            c2 = src[self.pos:self.pos + 2]
-            if len(c2) == 2:
-                d0 = '-' if c2[0] in DASHES else c2[0]
-                d1 = '-' if c2[1] in DASHES else c2[1]
-                c2 = d0 + d1
 
             if c == '\r' and self.pos + 1 < length and src[self.pos + 1] == '\n':
                 self.pos += 2
@@ -505,6 +523,12 @@ class Ps1Lexer:
                 self.pos += 1
                 yield from self._emit(Ps1Token(Ps1TokenKind.NEWLINE, '\n', start))
                 continue
+
+            c2 = src[self.pos:self.pos + 2]
+            if len(c2) == 2:
+                d0 = '-' if c2[0] in DASHES else c2[0]
+                d1 = '-' if c2[1] in DASHES else c2[1]
+                c2 = d0 + d1
 
             if c2 == '<#':
                 self._read_block_comment()
@@ -567,7 +591,7 @@ class Ps1Lexer:
                 continue
 
             if c in '123456' and self.pos + 1 < length and src[self.pos + 1] == '>':
-                if self.mode != Ps1LexerMode.EXPRESSION:
+                if self.mode == Ps1LexerMode.ARGUMENT:
                     redir = self._try_redirection()
                     if redir:
                         yield from self._emit(redir)
@@ -606,7 +630,7 @@ class Ps1Lexer:
             if self.mode == Ps1LexerMode.ARGUMENT:
                 if c == '.' and self.pos + 1 < length:
                     nc = src[self.pos + 1]
-                    if nc not in ' \t\r\n|&;,{}()$' and nc not in SINGLE_QUOTES and nc not in DOUBLE_QUOTES:
+                    if nc not in _FORCE_START_NEW_TOKEN and nc != '$' and nc not in SINGLE_QUOTES and nc not in DOUBLE_QUOTES:
                         token = self._read_generic_token()
                         if token.value:
                             yield from self._emit(token)
@@ -638,28 +662,7 @@ class Ps1Lexer:
                         continue
 
             if c.isalpha() or c == '_' or c == '`':
-                word = []
-                if c == '`' and self.pos + 1 < length:
-                    self.pos += 1
-                    word.append(src[self.pos])
-                    self.pos += 1
-                else:
-                    word.append(c)
-                    self.pos += 1
-                while self.pos < length:
-                    ch = src[self.pos]
-                    if ch == '`' and self.pos + 1 < length:
-                        self.pos += 1
-                        word.append(src[self.pos])
-                        self.pos += 1
-                    elif ch.isalnum() or ch == '_':
-                        word.append(ch)
-                        self.pos += 1
-                    elif ch in DASHES and self.mode != Ps1LexerMode.EXPRESSION:
-                        word.append(ch)
-                        self.pos += 1
-                    else:
-                        break
+                token = self._read_identifier()
                 if self.pos < length and src[self.pos] not in _FORCE_START_NEW_TOKEN:
                     if self.mode == Ps1LexerMode.ARGUMENT or (
                         src[self.pos] in SINGLE_QUOTES
@@ -668,16 +671,12 @@ class Ps1Lexer:
                     ):
                         self.pos = start
                         token = self._read_generic_token()
-                        if token.value:
-                            yield from self._emit(token)
-                            continue
-                identifier = ''.join(word)
-                if identifier:
-                    kw = _KEYWORDS.get(identifier.lower())
+                if token.value:
+                    kw = _KEYWORDS.get(token.value.lower())
                     if kw is not None:
-                        yield from self._emit(Ps1Token(kw, identifier, start))
+                        yield from self._emit(Ps1Token(kw, token.value, token.offset))
                     else:
-                        yield from self._emit(Ps1Token(Ps1TokenKind.GENERIC_TOKEN, identifier, start))
+                        yield from self._emit(token)
                     continue
 
             self.pos += 1

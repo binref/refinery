@@ -10,6 +10,7 @@ from refinery.lib.scripts import Node, Transformer
 from refinery.lib.scripts.ps1.deobfuscation._helpers import (
     _get_command_name,
     _get_member_name,
+    _iter_variable_mutations,
     _make_string_literal,
     _string_value,
     _unwrap_parens,
@@ -24,19 +25,16 @@ from refinery.lib.scripts.ps1.model import (
     Ps1CommandArgumentKind,
     Ps1CommandInvocation,
     Ps1ExpressionStatement,
-    Ps1ForEachLoop,
     Ps1HereString,
     Ps1IndexExpression,
     Ps1IntegerLiteral,
     Ps1InvokeMember,
     Ps1MemberAccess,
-    Ps1ParameterDeclaration,
     Ps1Pipeline,
     Ps1PipelineElement,
     Ps1ScopeModifier,
     Ps1StringLiteral,
     Ps1TypeExpression,
-    Ps1UnaryExpression,
     Ps1Variable,
 )
 
@@ -5806,30 +5804,16 @@ def collect_variable_types(root: Node) -> dict[str, str]:
     """
     assign_counts: dict[str, int] = {}
     typed_assigns: dict[str, str] = {}
-    for node in root.walk():
-        if isinstance(node, Ps1AssignmentExpression):
-            target = node.target
-            if isinstance(target, Ps1Variable) and target.scope == Ps1ScopeModifier.NONE:
-                key = target.name.lower()
-                assign_counts[key] = assign_counts.get(key, 0) + 1
-                if node.operator == '=' and node.value is not None:
-                    resolved = resolve_expression_type(node.value)
-                    if resolved is not None:
-                        typed_assigns[key] = resolved
-        elif isinstance(node, Ps1ForEachLoop):
-            if isinstance(node.variable, Ps1Variable) and node.variable.scope == Ps1ScopeModifier.NONE:
-                key = node.variable.name.lower()
-                assign_counts[key] = assign_counts.get(key, 0) + 1
-        elif isinstance(node, Ps1UnaryExpression):
-            if node.operator in ('++', '--'):
-                operand = node.operand
-                if isinstance(operand, Ps1Variable) and operand.scope == Ps1ScopeModifier.NONE:
-                    key = operand.name.lower()
-                    assign_counts[key] = assign_counts.get(key, 0) + 1
-        elif isinstance(node, Ps1ParameterDeclaration):
-            if isinstance(node.variable, Ps1Variable) and node.variable.scope == Ps1ScopeModifier.NONE:
-                key = node.variable.name.lower()
-                assign_counts[key] = assign_counts.get(key, 0) + 1
+    for var, kind, node in _iter_variable_mutations(root):
+        if var.scope != Ps1ScopeModifier.NONE:
+            continue
+        key = var.name.lower()
+        assign_counts[key] = assign_counts.get(key, 0) + 1
+        if kind == 'assign' and isinstance(node, Ps1AssignmentExpression):
+            if node.operator == '=' and node.value is not None:
+                resolved = resolve_expression_type(node.value)
+                if resolved is not None:
+                    typed_assigns[key] = resolved
     return {
         key: type_name
         for key, type_name in typed_assigns.items()

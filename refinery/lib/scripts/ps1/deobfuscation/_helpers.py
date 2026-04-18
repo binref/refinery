@@ -6,6 +6,8 @@ from __future__ import annotations
 import io
 import re
 
+from collections.abc import Generator
+
 from refinery.lib.scripts import Block, Node
 from refinery.lib.scripts.ps1.token import BACKTICK_ESCAPE
 from refinery.lib.scripts.ps1.model import (
@@ -13,14 +15,18 @@ from refinery.lib.scripts.ps1.model import (
     Ps1AccessKind,
     Ps1ArrayExpression,
     Ps1ArrayLiteral,
+    Ps1AssignmentExpression,
+    Ps1CastExpression,
     Ps1CommandArgument,
     Ps1CommandArgumentKind,
     Ps1CommandInvocation,
     Ps1ExpandableString,
     Ps1ExpressionStatement,
+    Ps1ForEachLoop,
     Ps1HereString,
     Ps1IntegerLiteral,
     Ps1InvokeMember,
+    Ps1ParameterDeclaration,
     Ps1ParenExpression,
     Ps1ScopeModifier,
     Ps1ScriptBlock,
@@ -913,6 +919,39 @@ def _normalize_dotnet_type_name(name: str) -> str:
     if result.startswith('system.'):
         result = result[7:]
     return result
+
+
+def _is_static_type_call(node: Ps1InvokeMember, type_names: frozenset[str]) -> bool:
+    if node.access != Ps1AccessKind.STATIC:
+        return False
+    if not isinstance(node.object, Ps1TypeExpression):
+        return False
+    return node.object.name.lower().replace(' ', '') in type_names
+
+
+def _iter_variable_mutations(
+    root: Node,
+) -> Generator[tuple[Ps1Variable, str, Node], None, None]:
+    """
+    Walk the AST and yield `(variable, kind, node)` for every node that mutates a variable.
+    `kind` is one of 'assign', 'foreach', 'incrdecr', 'param'.
+    """
+    for node in root.walk():
+        if isinstance(node, Ps1AssignmentExpression):
+            target = node.target
+            while isinstance(target, (Ps1ParenExpression, Ps1CastExpression)):
+                target = target.expression if isinstance(target, Ps1ParenExpression) else target.operand
+            if isinstance(target, Ps1Variable):
+                yield target, 'assign', node
+        elif isinstance(node, Ps1ForEachLoop):
+            if isinstance(node.variable, Ps1Variable):
+                yield node.variable, 'foreach', node
+        elif isinstance(node, Ps1UnaryExpression):
+            if node.operator in ('++', '--') and isinstance(node.operand, Ps1Variable):
+                yield node.operand, 'incrdecr', node
+        elif isinstance(node, Ps1ParameterDeclaration):
+            if isinstance(node.variable, Ps1Variable):
+                yield node.variable, 'param', node
 
 
 def _extract_foreach_scriptblock(expr: Expression) -> Ps1ScriptBlock | None:

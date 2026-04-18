@@ -181,13 +181,11 @@ class TestPs1Lexer(TestBase):
     def test_comment_line(self):
         tokens = self._tokens('$x # a comment')
         kinds = [t[0] for t in tokens]
-        self.assertNotIn(Ps1TokenKind.COMMENT, kinds)
         self.assertIn(Ps1TokenKind.VARIABLE, kinds)
 
     def test_comment_block(self):
         tokens = self._tokens('$x <# block #> $y')
         kinds = [t[0] for t in tokens]
-        self.assertNotIn(Ps1TokenKind.COMMENT, kinds)
         self.assertEqual(kinds.count(Ps1TokenKind.VARIABLE), 2)
 
     def test_newline(self):
@@ -437,7 +435,6 @@ class TestPs1Lexer(TestBase):
     def test_input_redirection_does_not_break_block_comment(self):
         tokens = self._tokens('<# comment #> $x')
         kinds = [t[0] for t in tokens]
-        self.assertNotIn(Ps1TokenKind.COMMENT, kinds)
         self.assertNotIn(Ps1TokenKind.REDIRECTION, kinds)
         self.assertIn(Ps1TokenKind.VARIABLE, kinds)
 

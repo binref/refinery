@@ -249,6 +249,20 @@ class TestPs1ParserStatements(TestBase):
         self.assertIsNotNone(script.param_block)
         self.assertEqual(len(script.param_block.parameters), 2)
 
+    def test_param_block_after_attribute_with_doubled_quotes(self):
+        src = '[ValidateScript("test""quoted")] param($x)'
+        p = Ps1Parser(src)
+        script = p.parse()
+        self.assertIsNotNone(script.param_block)
+        self.assertEqual(len(script.param_block.parameters), 1)
+
+    def test_param_block_after_attribute_with_doubled_single_quotes(self):
+        src = "[ValidatePattern('it''s')] param($x)"
+        p = Ps1Parser(src)
+        script = p.parse()
+        self.assertIsNotNone(script.param_block)
+        self.assertEqual(len(script.param_block.parameters), 1)
+
     def test_begin_process_end_blocks(self):
         src = 'begin { $x = 0 }\nprocess { $x++ }\nend { $x }'
         p = Ps1Parser(src)

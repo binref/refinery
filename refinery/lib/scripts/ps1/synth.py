@@ -16,7 +16,6 @@ from refinery.lib.scripts.ps1.model import (
     Ps1BinaryExpression,
     Ps1BreakStatement,
     Ps1CastExpression,
-    Ps1CatchClause,
     Ps1CommandArgument,
     Ps1CommandArgumentKind,
     Ps1CommandInvocation,
@@ -537,9 +536,6 @@ class Ps1Synthesizer(Visitor):
         if node.finally_block:
             self._write(' finally ')
             self._emit_block(node.finally_block)
-
-    def visit_Ps1CatchClause(self, node: Ps1CatchClause):
-        pass
 
     def visit_Ps1TrapStatement(self, node: Ps1TrapStatement):
         self._write('trap ')
