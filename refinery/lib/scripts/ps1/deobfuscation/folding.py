@@ -9,7 +9,7 @@ import re
 
 from collections.abc import Iterator
 
-from refinery.lib.scripts import Node, Transformer
+from refinery.lib.scripts.ps1.deobfuscation._base import LocalFunctionAwareTransformer
 from refinery.lib.scripts.ps1.deobfuscation._helpers import (
     _COMPARISON_OPS,
     _CONVERT_TYPE_NAMES_QUALIFIED,
@@ -45,7 +45,6 @@ from refinery.lib.scripts.ps1.model import (
     Ps1CommandInvocation,
     Ps1ExpandableString,
     Ps1ExpressionStatement,
-    Ps1FunctionDefinition,
     Ps1IndexExpression,
     Ps1IntegerLiteral,
     Ps1InvokeMember,
@@ -243,26 +242,7 @@ def _variable_string_to_expandable(
     return Ps1ExpandableString(parts=parts, raw=raw)
 
 
-class Ps1ConstantFolding(Transformer):
-
-    def __init__(self):
-        super().__init__()
-        self._local_functions: set[str] = set()
-        self._entry = False
-
-    def visit(self, node: Node):
-        if self._entry:
-            return super().visit(node)
-        self._entry = True
-        try:
-            self._local_functions = {
-                n.name.lower()
-                for n in node.walk()
-                if isinstance(n, Ps1FunctionDefinition) and n.name
-            }
-            return super().visit(node)
-        finally:
-            self._entry = False
+class Ps1ConstantFolding(LocalFunctionAwareTransformer):
 
     def visit_Ps1CommandInvocation(self, node: Ps1CommandInvocation):
         self.generic_visit(node)

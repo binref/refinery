@@ -6,7 +6,6 @@ from __future__ import annotations
 import io
 
 from refinery.lib.scripts import Block, Node, Synthesizer
-from refinery.lib.scripts.ps1.token import KEYWORD_SPELLING
 from refinery.lib.scripts.ps1.model import (
     Expression,
     Ps1ArrayExpression,
@@ -27,6 +26,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1ExpandableHereString,
     Ps1ExpandableString,
     Ps1ExpressionStatement,
+    Ps1FileRedirection,
     Ps1ForEachLoop,
     Ps1ForLoop,
     Ps1FunctionDefinition,
@@ -37,6 +37,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1IntegerLiteral,
     Ps1InvokeMember,
     Ps1MemberAccess,
+    Ps1MergingRedirection,
     Ps1ParamBlock,
     Ps1ParameterDeclaration,
     Ps1ParenExpression,
@@ -45,8 +46,6 @@ from refinery.lib.scripts.ps1.model import (
     Ps1RangeExpression,
     Ps1RealLiteral,
     Ps1RedirectionStream,
-    Ps1FileRedirection,
-    Ps1MergingRedirection,
     Ps1ReturnStatement,
     Ps1ScopeModifier,
     Ps1Script,
@@ -63,6 +62,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1WhileLoop,
     _Ps1Code,
 )
+from refinery.lib.scripts.ps1.token import KEYWORD_SPELLING
 
 
 class Ps1Synthesizer(Synthesizer):

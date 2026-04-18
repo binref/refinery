@@ -8,11 +8,12 @@ from __future__ import annotations
 
 from refinery.lib.scripts import Node, Transformer
 from refinery.lib.scripts.ps1.deobfuscation._helpers import (
+    _GET_MEMBER_ALIASES,
+    _extract_first_positional_string,
     _get_command_name,
     _get_member_name,
     _iter_variable_mutations,
     _make_string_literal,
-    _string_value,
     _unwrap_parens,
 )
 from refinery.lib.scripts.ps1.model import (
@@ -21,8 +22,6 @@ from refinery.lib.scripts.ps1.model import (
     Ps1ArrayLiteral,
     Ps1AssignmentExpression,
     Ps1CastExpression,
-    Ps1CommandArgument,
-    Ps1CommandArgumentKind,
     Ps1CommandInvocation,
     Ps1ExpressionStatement,
     Ps1HereString,
@@ -5676,7 +5675,7 @@ def resolve_expression_type(
     if isinstance(expr, Ps1CommandInvocation):
         cmd_name = _get_command_name(expr)
         if cmd_name is not None and cmd_name.lower() == 'new-object':
-            type_str = _extract_first_positional_type(expr)
+            type_str = _extract_first_positional_string(expr)
             if type_str is not None:
                 return _resolve_type_name(type_str)
     if isinstance(expr, Ps1MemberAccess):
@@ -5724,23 +5723,6 @@ def is_known_member(
     if lookup is None:
         return False
     return member.lower() in lookup
-
-
-def _extract_first_positional_type(cmd: Ps1CommandInvocation) -> str | None:
-    """
-    Extract the first positional argument from a New-Object command as a
-    type name string.
-    """
-    for arg in cmd.arguments:
-        if isinstance(arg, Ps1CommandArgument):
-            if arg.kind == Ps1CommandArgumentKind.POSITIONAL:
-                return _string_value(arg.value) if arg.value else None
-        elif isinstance(arg, Expression):
-            return _string_value(arg)
-    return None
-
-
-_GET_MEMBER_ALIASES = frozenset({'get-member', 'gm'})
 
 
 def get_member_order(type_name: str) -> list[str] | None:

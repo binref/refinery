@@ -4,7 +4,6 @@ import enum
 
 from dataclasses import dataclass
 
-
 BACKTICK_ESCAPE = {
     '0' : '\0',
     'a' : '\a',
@@ -146,14 +145,7 @@ class Ps1TokenKind(enum.Enum):
 
     @property
     def is_assignment(self):
-        return self in (
-            Ps1TokenKind.EQUALS,
-            Ps1TokenKind.PLUS_ASSIGN,
-            Ps1TokenKind.DASH_ASSIGN,
-            Ps1TokenKind.STAR_ASSIGN,
-            Ps1TokenKind.SLASH_ASSIGN,
-            Ps1TokenKind.PERCENT_ASSIGN,
-        )
+        return self in _ASSIGNMENT_SET
 
 
 _KEYWORDS: dict[str, Ps1TokenKind] = {
@@ -190,6 +182,15 @@ _KEYWORDS: dict[str, Ps1TokenKind] = {
 }
 
 _KEYWORDS_SET = frozenset(_KEYWORDS.values())
+
+_ASSIGNMENT_SET = frozenset((
+    Ps1TokenKind.EQUALS,
+    Ps1TokenKind.PLUS_ASSIGN,
+    Ps1TokenKind.DASH_ASSIGN,
+    Ps1TokenKind.STAR_ASSIGN,
+    Ps1TokenKind.SLASH_ASSIGN,
+    Ps1TokenKind.PERCENT_ASSIGN,
+))
 
 KEYWORD_SPELLING: dict[str, str] = {
     'param': 'Param',

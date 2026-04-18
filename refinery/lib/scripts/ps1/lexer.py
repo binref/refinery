@@ -3,16 +3,16 @@ from __future__ import annotations
 import enum
 import re
 
-from dataclasses import dataclass, field
 from collections.abc import Generator
+from dataclasses import dataclass, field
 
 from refinery.lib.scripts.ps1.token import (
+    _KEYWORDS,
+    _VARIABLE_PATTERN_CORE,
     DASHES,
     DOUBLE_QUOTES,
     SINGLE_QUOTES,
     WHITESPACE,
-    _KEYWORDS,
-    _VARIABLE_PATTERN_CORE,
     Ps1Token,
     Ps1TokenKind,
 )

@@ -12,11 +12,10 @@ statement to preserve execution order.
 """
 from __future__ import annotations
 
-from refinery.lib.scripts import Block, Transformer
+from refinery.lib.scripts import Block, Transformer, _replace_in_parent
 from refinery.lib.scripts.ps1.deobfuscation._helpers import (
     _get_body,
     _make_string_literal,
-    _replace_in_parent,
 )
 from refinery.lib.scripts.ps1.model import (
     Ps1AssignmentExpression,

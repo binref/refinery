@@ -5,22 +5,14 @@ Specification 3.0.
 from __future__ import annotations
 
 import re
+
 from contextlib import contextmanager
 
 from refinery.lib.scripts import Block
 from refinery.lib.scripts.ps1.lexer import (
+    _DASH_OPERATORS,
     Ps1Lexer,
     Ps1LexerMode,
-)
-from refinery.lib.scripts.ps1.token import (
-    BACKTICK_ESCAPE,
-    DOUBLE_QUOTES,
-    NORMALIZE_QUOTES,
-    SINGLE_QUOTES,
-    WHITESPACE,
-    _VARIABLE_PATTERN_CORE,
-    _strip_backtick_noop,
-    Ps1TokenKind,
 )
 from refinery.lib.scripts.ps1.model import (
     Expression,
@@ -82,8 +74,17 @@ from refinery.lib.scripts.ps1.model import (
     _Ps1Exit,
     _Ps1Jump,
 )
-from refinery.lib.scripts.ps1.token import Ps1Token
-from refinery.lib.scripts.ps1.lexer import _DASH_OPERATORS
+from refinery.lib.scripts.ps1.token import (
+    _VARIABLE_PATTERN_CORE,
+    BACKTICK_ESCAPE,
+    DOUBLE_QUOTES,
+    NORMALIZE_QUOTES,
+    SINGLE_QUOTES,
+    WHITESPACE,
+    Ps1Token,
+    Ps1TokenKind,
+    _strip_backtick_noop,
+)
 
 _NON_COMPARISON_DASH_OPS = frozenset({
     '-and',

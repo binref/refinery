@@ -11,13 +11,16 @@ from __future__ import annotations
 
 import re
 
-from fnmatch import translate as fnmatch_translate
 from collections.abc import Iterable
+from fnmatch import translate as fnmatch_translate
 
 from refinery.lib.scripts import Node, Transformer
 from refinery.lib.scripts.ps1.deobfuscation._helpers import (
+    _GET_COMMAND_ALIASES,
+    _GET_MEMBER_ALIASES,
     _KNOWN_NAMES,
     _PS1_KNOWN_VARIABLES,
+    _extract_first_positional_string,
     _get_command_name,
     _get_member_name,
     _make_string_literal,
@@ -85,11 +88,6 @@ def _wildcard_match_unique(
     if len(matches) == 1:
         return matches[0]
     return None
-
-
-_GET_COMMAND_ALIASES = frozenset({'get-command', 'gcm'})
-_GET_MEMBER_ALIASES = frozenset({'get-member', 'gm'})
-
 
 def _known_cmdlets() -> list[str]:
     return [name for name in _KNOWN_NAMES.values() if '-' in name]
@@ -195,18 +193,6 @@ def _candidates_from_type(
     if type_name is None:
         return None
     return _TYPE_MEMBERS.get(type_name)
-
-
-def _extract_first_positional_string(
-    cmd: Ps1CommandInvocation,
-) -> str | None:
-    for arg in cmd.arguments:
-        if isinstance(arg, Ps1CommandArgument):
-            if arg.kind == Ps1CommandArgumentKind.POSITIONAL:
-                return _string_value(arg.value) if arg.value else None
-        elif isinstance(arg, Expression):
-            return _string_value(arg)
-    return None
 
 
 def _extract_positional_args(

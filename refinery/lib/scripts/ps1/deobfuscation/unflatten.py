@@ -8,13 +8,18 @@ the state machine, and recovers the original structure.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from collections.abc import Callable, Generator
+from dataclasses import dataclass, field
 
 from refinery.lib.scripts import Block, Node, Statement, Transformer
-from refinery.lib.scripts.ps1.deobfuscation._helpers import _get_body, _is_builtin_variable, _unwrap_parens
+from refinery.lib.scripts.ps1.deobfuscation._helpers import (
+    _get_body,
+    _is_builtin_variable,
+    _unwrap_parens,
+)
 from refinery.lib.scripts.ps1.deobfuscation.emulator import evaluate_truthy
 from refinery.lib.scripts.ps1.model import (
+    Expression,
     Ps1AssignmentExpression,
     Ps1BinaryExpression,
     Ps1BreakStatement,
@@ -30,7 +35,6 @@ from refinery.lib.scripts.ps1.model import (
     Ps1UnaryExpression,
     Ps1Variable,
     Ps1WhileLoop,
-    Expression,
 )
 
 _MAX_STATES = 500

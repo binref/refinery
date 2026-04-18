@@ -8,8 +8,7 @@ import re
 
 from collections.abc import Generator
 
-from refinery.lib.scripts import Block, Node, _replace_in_parent
-from refinery.lib.scripts.ps1.token import BACKTICK_ESCAPE
+from refinery.lib.scripts import Block, Node
 from refinery.lib.scripts.ps1.model import (
     Expression,
     Ps1AccessKind,
@@ -38,6 +37,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1Variable,
     _Ps1Code,
 )
+from refinery.lib.scripts.ps1.token import BACKTICK_ESCAPE
 
 _KNOWN_ALIAS = {
     'ac'      : 'Add-Content',
@@ -799,9 +799,25 @@ def _case_normalize_name(name: str) -> str:
     return name
 
 
+_GET_MEMBER_ALIASES = frozenset({'get-member', 'gm'})
+_GET_COMMAND_ALIASES = frozenset({'get-command', 'gcm'})
+
+
 def _get_command_name(cmd: Ps1CommandInvocation) -> str | None:
     if isinstance(cmd.name, Ps1StringLiteral):
         return cmd.name.value
+    return None
+
+
+def _extract_first_positional_string(
+    cmd: Ps1CommandInvocation,
+) -> str | None:
+    for arg in cmd.arguments:
+        if isinstance(arg, Ps1CommandArgument):
+            if arg.kind == Ps1CommandArgumentKind.POSITIONAL:
+                return _string_value(arg.value) if arg.value else None
+        elif isinstance(arg, Expression):
+            return _string_value(arg)
     return None
 
 
@@ -809,7 +825,6 @@ def _get_body(node) -> list | None:
     if isinstance(node, (_Ps1Code, Block, Ps1SubExpression)):
         return node.body
     return None
-
 
 
 def _unwrap_parens(node: Expression) -> Expression:

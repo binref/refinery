@@ -3,7 +3,7 @@ PowerShell syntax normalization transforms.
 """
 from __future__ import annotations
 
-from refinery.lib.scripts import Node, Transformer
+from refinery.lib.scripts.ps1.deobfuscation._base import LocalFunctionAwareTransformer
 from refinery.lib.scripts.ps1.deobfuscation._helpers import (
     _KNOWN_ALIAS,
     SIMPLE_IDENTIFIER,
@@ -12,7 +12,6 @@ from refinery.lib.scripts.ps1.deobfuscation._helpers import (
     _make_string_literal,
     _string_value,
 )
-from refinery.lib.scripts.ps1.token import _strip_backtick_noop
 from refinery.lib.scripts.ps1.model import (
     Ps1BinaryExpression,
     Ps1CastExpression,
@@ -35,6 +34,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1UnaryExpression,
     Ps1Variable,
 )
+from refinery.lib.scripts.ps1.token import _strip_backtick_noop
 from refinery.lib.scripts.win32const import DEFAULT_ENVIRONMENT_TEMPLATE
 
 _KNOWN_VARIABLE_NAMES = {name.lower(): name for name in [
@@ -49,26 +49,7 @@ _KNOWN_ENV_NAMES: dict[str, str] = {
 }
 
 
-class Ps1Simplifications(Transformer):
-
-    def __init__(self):
-        super().__init__()
-        self._local_functions: set[str] = set()
-        self._entry = False
-
-    def visit(self, node: Node):
-        if self._entry:
-            return super().visit(node)
-        self._entry = True
-        try:
-            self._local_functions = {
-                n.name.lower()
-                for n in node.walk()
-                if isinstance(n, Ps1FunctionDefinition) and n.name
-            }
-            return super().visit(node)
-        finally:
-            self._entry = False
+class Ps1Simplifications(LocalFunctionAwareTransformer):
 
     def visit_Ps1Variable(self, node: Ps1Variable):
         self.generic_visit(node)

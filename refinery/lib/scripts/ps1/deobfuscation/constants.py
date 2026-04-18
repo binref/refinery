@@ -3,15 +3,21 @@ Inline constant variable references in PowerShell scripts.
 """
 from __future__ import annotations
 
-from refinery.lib.scripts import Expression, Node, Transformer, _clone_node, _remove_from_parent
+from refinery.lib.scripts import (
+    Expression,
+    Node,
+    Transformer,
+    _clone_node,
+    _remove_from_parent,
+    _replace_in_parent,
+)
 from refinery.lib.scripts.ps1.deobfuscation._helpers import (
+    _PS1_KNOWN_VARIABLES,
     _get_body,
     _is_array_reverse_call,
     _is_builtin_variable,
     _iter_variable_mutations,
     _make_string_literal,
-    _PS1_KNOWN_VARIABLES,
-    _replace_in_parent,
     _unwrap_parens,
     _unwrap_to_array_literal,
 )
