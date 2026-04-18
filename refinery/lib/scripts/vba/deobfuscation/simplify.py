@@ -20,20 +20,19 @@ from refinery.lib.scripts.vba.deobfuscation._helpers import (
 )
 from refinery.lib.scripts.vba.deobfuscation.builtins import VBA_BUILTIN_CONSTANTS
 from refinery.lib.scripts.vba.model import (
+    VbaProcedureDeclaration,
     VbaBinaryExpression,
     VbaBooleanLiteral,
     VbaCallExpression,
     VbaConstDeclaration,
     VbaForEachStatement,
     VbaForStatement,
-    VbaFunctionDeclaration,
     VbaIdentifier,
     VbaLetStatement,
     VbaModule,
     VbaOnErrorAction,
     VbaOnErrorStatement,
     VbaParenExpression,
-    VbaSubDeclaration,
     VbaUnaryExpression,
 )
 
@@ -101,6 +100,13 @@ def _try_string_function(node: VbaCallExpression) -> str | None:
     return result
 
 
+def _has_oern(body: list) -> bool:
+    return any(
+        isinstance(s, VbaOnErrorStatement) and s.action is VbaOnErrorAction.RESUME_NEXT
+        for s in body
+    )
+
+
 class VbaSimplifications(Transformer):
 
     def __init__(self):
@@ -125,23 +131,15 @@ class VbaSimplifications(Transformer):
             elif isinstance(n, (VbaForStatement, VbaForEachStatement)):
                 if isinstance(n.variable, VbaIdentifier):
                     self._assigned_names.add(n.variable.name.lower())
-            if isinstance(n, (VbaFunctionDeclaration, VbaSubDeclaration)):
+            if isinstance(n, VbaProcedureDeclaration):
                 if n.params:
                     for p in n.params:
                         self._assigned_names.add(p.name.lower())
                 if n.name:
                     self._assigned_names.add(n.name.lower())
-                if n.body and any(
-                    isinstance(s, VbaOnErrorStatement)
-                    and s.action is VbaOnErrorAction.RESUME_NEXT
-                    for s in n.body
-                ):
+                if n.body and _has_oern(n.body):
                     self._oern_bodies.add(id(n.body))
-        if module.body and any(
-            isinstance(s, VbaOnErrorStatement)
-            and s.action is VbaOnErrorAction.RESUME_NEXT
-            for s in module.body
-        ):
+        if module.body and _has_oern(module.body):
             self._oern_bodies.add(id(module.body))
 
     def _is_oern_undefined(self, node) -> bool:
@@ -151,7 +149,7 @@ class VbaSimplifications(Transformer):
             return False
         parent = node.parent
         while parent is not None:
-            if isinstance(parent, (VbaFunctionDeclaration, VbaSubDeclaration)):
+            if isinstance(parent, VbaProcedureDeclaration):
                 return id(parent.body) in self._oern_bodies
             if isinstance(parent, VbaModule):
                 return id(parent.body) in self._oern_bodies

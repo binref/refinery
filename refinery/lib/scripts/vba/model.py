@@ -273,7 +273,7 @@ class VbaParameter(Node):
 
 
 @dataclass(repr=False)
-class VbaSubDeclaration(Statement):
+class VbaProcedureDeclaration(Statement):
     scope: VbaScopeModifier = VbaScopeModifier.NONE
     name: str = ''
     params: list[VbaParameter] = field(default_factory=list)
@@ -282,24 +282,19 @@ class VbaSubDeclaration(Statement):
 
 
 @dataclass(repr=False)
-class VbaFunctionDeclaration(Statement):
-    scope: VbaScopeModifier = VbaScopeModifier.NONE
-    name: str = ''
-    params: list[VbaParameter] = field(default_factory=list)
+class VbaSubDeclaration(VbaProcedureDeclaration):
+    pass
+
+
+@dataclass(repr=False)
+class VbaFunctionDeclaration(VbaProcedureDeclaration):
     return_type: str = ''
-    body: list[Statement] = field(default_factory=list)
-    is_static: bool = False
 
 
 @dataclass(repr=False)
-class VbaPropertyDeclaration(Statement):
-    scope: VbaScopeModifier = VbaScopeModifier.NONE
+class VbaPropertyDeclaration(VbaProcedureDeclaration):
     kind: VbaPropertyKind = VbaPropertyKind.GET
-    name: str = ''
-    params: list[VbaParameter] = field(default_factory=list)
     return_type: str = ''
-    body: list[Statement] = field(default_factory=list)
-    is_static: bool = False
 
 
 @dataclass(repr=False)
@@ -472,6 +467,3 @@ class VbaResumeStatement(Statement):
 @dataclass(repr=False)
 class VbaImplementsStatement(Statement):
     name: str = ''
-
-
-VBA_PROCEDURE_TYPES = (VbaSubDeclaration, VbaFunctionDeclaration, VbaPropertyDeclaration)

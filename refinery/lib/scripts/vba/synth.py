@@ -3,7 +3,7 @@ from __future__ import annotations
 from refinery.lib.scripts import Synthesizer
 from refinery.lib.scripts.vba.model import (
     Statement,
-    VBA_PROCEDURE_TYPES,
+    VbaProcedureDeclaration,
     VbaBangAccess,
     VbaBinaryExpression,
     VbaBooleanLiteral,
@@ -78,7 +78,8 @@ from refinery.lib.scripts.vba.model import (
 
 class VbaSynthesizer(Synthesizer):
 
-    _BLOCK_TYPES = VBA_PROCEDURE_TYPES + (
+    _BLOCK_TYPES = (
+        VbaProcedureDeclaration,
         VbaTypeDefinition,
         VbaEnumDefinition,
     )

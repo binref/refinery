@@ -10,7 +10,7 @@ from refinery.lib.scripts.vba.deobfuscation._helpers import (
     _STRING_BUILTINS,
 )
 from refinery.lib.scripts.vba.model import (
-    VBA_PROCEDURE_TYPES,
+    VbaProcedureDeclaration,
     VbaCallExpression,
     VbaIdentifier,
     VbaLetStatement,
@@ -105,7 +105,7 @@ class VbaEmptyProcedureRemoval(Transformer):
     def _remove_empty_procedures(self, module: VbaModule) -> bool:
         empty: dict[str, list[int]] = {}
         for idx, stmt in enumerate(module.body):
-            if isinstance(stmt, VBA_PROCEDURE_TYPES) and not stmt.body:
+            if isinstance(stmt, VbaProcedureDeclaration) and not stmt.body:
                 empty.setdefault(stmt.name.lower(), []).append(idx)
         if not empty:
             return False

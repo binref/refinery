@@ -30,6 +30,8 @@ _Value: TypeAlias = str | int | float | bool | None
 
 _CHR_NAMES = frozenset({'chr', 'chrw', 'chr$', 'chrw$'})
 
+_LITERAL_TYPES = (VbaStringLiteral, VbaIntegerLiteral, VbaFloatLiteral, VbaBooleanLiteral)
+
 
 def _make_string_literal(value: str) -> VbaStringLiteral:
     escaped = value.replace('"', '""')
@@ -54,10 +56,7 @@ def _make_numeric_literal(value: int | float) -> VbaIntegerLiteral | VbaFloatLit
 
 
 def _is_literal(node: Expression) -> bool:
-    return isinstance(node, (
-        VbaStringLiteral, VbaIntegerLiteral, VbaFloatLiteral,
-        VbaBooleanLiteral,
-    ))
+    return isinstance(node, _LITERAL_TYPES)
 
 
 def _is_constant_expr(node: Expression) -> bool:
@@ -111,13 +110,7 @@ def _is_identifier_read(node: VbaIdentifier) -> bool:
 
 
 def _literal_value(node: Expression) -> _Value:
-    if isinstance(node, VbaStringLiteral):
-        return node.value
-    if isinstance(node, VbaIntegerLiteral):
-        return node.value
-    if isinstance(node, VbaFloatLiteral):
-        return node.value
-    if isinstance(node, VbaBooleanLiteral):
+    if isinstance(node, _LITERAL_TYPES):
         return node.value
     return None
 
