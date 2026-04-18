@@ -17,13 +17,13 @@ from collections.abc import Iterable
 from refinery.lib.scripts import Node, Transformer
 from refinery.lib.scripts.ps1.deobfuscation._helpers import (
     _KNOWN_NAMES,
+    _PS1_KNOWN_VARIABLES,
     _get_command_name,
     _get_member_name,
     _make_string_literal,
     _string_value,
     _unwrap_parens,
 )
-from refinery.lib.scripts.ps1.deobfuscation.constants import _PS1_KNOWN_VARIABLES
 from refinery.lib.scripts.ps1.deobfuscation.typenames import (
     _TYPE_MEMBERS,
     collect_variable_types,

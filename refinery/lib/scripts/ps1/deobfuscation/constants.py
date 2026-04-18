@@ -3,13 +3,14 @@ Inline constant variable references in PowerShell scripts.
 """
 from __future__ import annotations
 
-from refinery.lib.scripts import Expression, Node, Transformer
+from refinery.lib.scripts import Expression, Node, Transformer, _clone_node, _remove_from_parent
 from refinery.lib.scripts.ps1.deobfuscation._helpers import (
     _get_body,
     _is_array_reverse_call,
     _is_builtin_variable,
     _iter_variable_mutations,
     _make_string_literal,
+    _PS1_KNOWN_VARIABLES,
     _replace_in_parent,
     _unwrap_parens,
     _unwrap_to_array_literal,
@@ -107,55 +108,6 @@ _PS1_AUTOMATIC_VARIABLES = frozenset({
     'this',
     'true',
 })
-
-_PS1_KNOWN_VARIABLES: dict[str, str] = {
-    name.lower(): name for name in [
-        'ConfirmPreference',
-        'ConsoleFileName',
-        'DebugPreference',
-        'Error',
-        'ErrorActionPreference',
-        'ExecutionContext',
-        'ForEach',
-        'FormatEnumerationLimit',
-        'HOME',
-        'Host',
-        'InformationPreference',
-        'Input',
-        'Matches',
-        'MaximumAliasCount',
-        'MaximumDriveCount',
-        'MaximumErrorCount',
-        'MaximumFunctionCount',
-        'MaximumHistoryCount',
-        'MaximumVariableCount',
-        'MyInvocation',
-        'NestedPromptLevel',
-        'OutputEncoding',
-        'PID',
-        'PROFILE',
-        'ProgressPreference',
-        'PSCommandPath',
-        'PSCulture',
-        'PSDefaultParameterValues',
-        'PSEmailServer',
-        'PSHome',
-        'PSScriptRoot',
-        'PSSessionApplicationName',
-        'PSSessionConfigurationName',
-        'PSSessionOption',
-        'PSUICulture',
-        'PSVersionTable',
-        'PWD',
-        'ShellID',
-        'StackTrace',
-        'This',
-        'VerbosePreference',
-        'WarningPreference',
-        'WhatIfPreference',
-    ]
-}
-
 
 def _assignment_target_variable(target) -> Ps1Variable | None:
     """
@@ -266,31 +218,15 @@ def _clone_constant(node: Node) -> Expression:
     the catastrophic cost of `copy.deepcopy` which traverses the entire AST through parents.
     """
     node = _unwrap_parens(node)
-    if isinstance(node, Ps1IntegerLiteral):
-        return Ps1IntegerLiteral(value=node.value, raw=node.raw)
-    if isinstance(node, Ps1RealLiteral):
-        return Ps1RealLiteral(value=node.value, raw=node.raw)
-    if isinstance(node, Ps1StringLiteral):
-        return Ps1StringLiteral(value=node.value, raw=node.raw)
-    if isinstance(node, Ps1HereString):
-        return Ps1HereString(value=node.value, raw=node.raw)
-    if isinstance(node, Ps1TypeExpression):
-        return Ps1TypeExpression(name=node.name)
-    if _is_builtin_variable(node) and isinstance(node, Ps1Variable):
-        return Ps1Variable(name=node.name)
-    if isinstance(node, Ps1ArrayLiteral):
-        cloned = Ps1ArrayLiteral(elements=[_clone_constant(e) for e in node.elements])
-        if len(cloned.elements) > 1:
-            return Ps1ParenExpression(expression=cloned)
-        return cloned
     if isinstance(node, Ps1ArrayExpression):
         inner = _unwrap_to_array_literal(node)
-        if inner is not None:
-            cloned = Ps1ArrayLiteral(elements=[_clone_constant(e) for e in inner.elements])
-            if len(cloned.elements) > 1:
-                return Ps1ParenExpression(expression=cloned)
-            return cloned
-    raise TypeError(F'cannot clone {type(node).__name__}')
+        if inner is None:
+            raise TypeError(F'cannot clone {type(node).__name__}')
+        node = inner
+    clone = _clone_node(node)
+    if isinstance(clone, Ps1ArrayLiteral) and len(clone.elements) > 1:
+        return Ps1ParenExpression(expression=clone)
+    return clone
 
 
 def _inside_try_body(node: Node) -> bool:
@@ -607,17 +543,8 @@ class Ps1ConstantInlining(Transformer):
                 stmt = self._find_removable_statement(assign_node)
                 if stmt is None:
                     continue
-                parent = stmt.parent
-                if parent is None:
-                    continue
-                for attr_name in vars(parent):
-                    if attr_name in ('parent', 'offset'):
-                        continue
-                    value = getattr(parent, attr_name)
-                    if isinstance(value, list) and stmt in value:
-                        value.remove(stmt)
-                        self.mark_changed()
-                        break
+                if _remove_from_parent(stmt):
+                    self.mark_changed()
 
     @staticmethod
     def _find_removable_statement(assign_node: Ps1AssignmentExpression) -> Node | None:

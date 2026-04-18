@@ -6,7 +6,7 @@ from __future__ import annotations
 import io
 
 from refinery.lib.scripts import Block, Node, Synthesizer
-from refinery.lib.scripts.ps1.deobfuscation._helpers import KEYWORD_SPELLING
+from refinery.lib.scripts.ps1.token import KEYWORD_SPELLING
 from refinery.lib.scripts.ps1.model import (
     Expression,
     Ps1ArrayExpression,

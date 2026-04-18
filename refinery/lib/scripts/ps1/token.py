@@ -191,6 +191,10 @@ _KEYWORDS: dict[str, Ps1TokenKind] = {
 
 _KEYWORDS_SET = frozenset(_KEYWORDS.values())
 
+KEYWORD_SPELLING: dict[str, str] = {
+    'param': 'Param',
+}
+
 
 @dataclass
 class Ps1Token:

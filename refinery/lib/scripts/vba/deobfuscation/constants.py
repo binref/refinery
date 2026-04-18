@@ -3,10 +3,9 @@ VBA constant inlining: substitutes single-assignment constant variables with the
 """
 from __future__ import annotations
 
-from refinery.lib.scripts import Expression, Statement, Transformer, _replace_in_parent
+from refinery.lib.scripts import Expression, Statement, Transformer, _clone_node, _replace_in_parent
 from refinery.lib.scripts.vba.deobfuscation._helpers import (
     _body_lists,
-    _clone_expression,
     _is_constant_expr,
     _is_identifier_read,
 )
@@ -95,7 +94,7 @@ class VbaConstantInlining(Transformer):
         for key, refs in reads.items():
             literal_node, body, idx = candidates[key][0]
             for ref in refs:
-                replacement = _clone_expression(literal_node)
+                replacement = _clone_node(literal_node)
                 _replace_in_parent(ref, replacement)
             removals.append((body, idx))
         for body, idx in sorted(removals, key=lambda t: t[1], reverse=True):

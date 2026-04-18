@@ -12,7 +12,7 @@ import base64
 import gzip
 import zlib
 
-from refinery.lib.scripts import Expression, Transformer
+from refinery.lib.scripts import Expression, Transformer, _replace_in_parent
 from refinery.lib.scripts.ps1.deobfuscation._helpers import (
     _ENCODING_MAP,
     _extract_foreach_scriptblock,
@@ -440,23 +440,8 @@ class Ps1IexInlining(Transformer):
                 continue
             if replacement is None:
                 continue
-            parent = expr.parent
-            for attr_name in vars(parent):
-                if attr_name.startswith('_') or attr_name in ('parent', 'offset'):
-                    continue
-                value = getattr(parent, attr_name)
-                if value is expr:
-                    replacement.parent = parent
-                    setattr(parent, attr_name, replacement)
-                    self.mark_changed()
-                    break
-                if isinstance(value, list):
-                    for idx, item in enumerate(value):
-                        if item is expr:
-                            replacement.parent = parent
-                            value[idx] = replacement
-                            self.mark_changed()
-                            break
+            _replace_in_parent(expr, replacement)
+            self.mark_changed()
 
     def _try_inline_expression(self, node: Ps1CommandInvocation) -> Expression | None:
         sb_arg = _try_extract_scriptblock_create_from_statement(node)

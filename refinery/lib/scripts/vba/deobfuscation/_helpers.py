@@ -3,14 +3,12 @@ Shared utilities for VBA deobfuscation transforms.
 """
 from __future__ import annotations
 
-import copy
-
 from typing import Any, Callable, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from typing import TypeAlias
 
-from refinery.lib.scripts import Expression, Kind, Node, Statement, _classify_fields
+from refinery.lib.scripts import Expression, Kind, Statement, _classify_fields
 from refinery.lib.scripts.vba.model import (
     VbaBinaryExpression,
     VbaBooleanLiteral,
@@ -302,44 +300,3 @@ def _body_lists(module: VbaModule):
             body = getattr(node, field_name)
             if body and isinstance(body[0], Statement):
                 yield body
-
-
-def _clone_expression(node: Node) -> Node:
-    """
-    Deep-clone an expression tree downward without following parent pointers.
-    """
-    clone = copy.copy(node)
-    clone.parent = None
-    for field_name, kind in _classify_fields(type(node)):
-        if kind == Kind.ChildNode:
-            value = getattr(node, field_name)
-            if isinstance(value, Node):
-                child = _clone_expression(value)
-                child.parent = clone
-                setattr(clone, field_name, child)
-        elif kind == Kind.ChildList:
-            items = getattr(node, field_name)
-            cloned = []
-            for item in items:
-                if isinstance(item, Node):
-                    child = _clone_expression(item)
-                    child.parent = clone
-                    cloned.append(child)
-                else:
-                    cloned.append(item)
-            setattr(clone, field_name, cloned)
-        elif kind == Kind.TupleList:
-            items = getattr(node, field_name)
-            cloned = []
-            for tup in items:
-                new_tup = []
-                for elem in tup:
-                    if isinstance(elem, Node):
-                        child = _clone_expression(elem)
-                        child.parent = clone
-                        new_tup.append(child)
-                    else:
-                        new_tup.append(elem)
-                cloned.append(tuple(new_tup))
-            setattr(clone, field_name, cloned)
-    return clone

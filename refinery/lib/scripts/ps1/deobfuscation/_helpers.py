@@ -706,10 +706,6 @@ for _name in list(_KNOWN_NAMES.values()):
 for _a, _n in _KNOWN_ALIAS.items():
     _KNOWN_NAMES[_n.lower()] = _n
 
-KEYWORD_SPELLING: dict[str, str] = {
-    'param': 'Param',
-}
-
 SIMPLE_IDENTIFIER = re.compile(r'^[a-zA-Z_]\w*$')
 
 
@@ -949,6 +945,54 @@ def _extract_foreach_scriptblock(expr: Expression) -> Ps1ScriptBlock | None:
 
 
 _BUILTIN_VARIABLES = frozenset({'null', 'true', 'false'})
+
+_PS1_KNOWN_VARIABLES: dict[str, str] = {
+    name.lower(): name for name in [
+        'ConfirmPreference',
+        'ConsoleFileName',
+        'DebugPreference',
+        'Error',
+        'ErrorActionPreference',
+        'ExecutionContext',
+        'ForEach',
+        'FormatEnumerationLimit',
+        'HOME',
+        'Host',
+        'InformationPreference',
+        'Input',
+        'Matches',
+        'MaximumAliasCount',
+        'MaximumDriveCount',
+        'MaximumErrorCount',
+        'MaximumFunctionCount',
+        'MaximumHistoryCount',
+        'MaximumVariableCount',
+        'MyInvocation',
+        'NestedPromptLevel',
+        'OutputEncoding',
+        'PID',
+        'PROFILE',
+        'ProgressPreference',
+        'PSCommandPath',
+        'PSCulture',
+        'PSDefaultParameterValues',
+        'PSEmailServer',
+        'PSHome',
+        'PSScriptRoot',
+        'PSSessionApplicationName',
+        'PSSessionConfigurationName',
+        'PSSessionOption',
+        'PSUICulture',
+        'PSVersionTable',
+        'PWD',
+        'ShellID',
+        'StackTrace',
+        'This',
+        'VerbosePreference',
+        'WarningPreference',
+        'WhatIfPreference',
+    ]
+}
 
 
 def _is_builtin_variable(node, names: set[str] | frozenset[str] = _BUILTIN_VARIABLES) -> bool:

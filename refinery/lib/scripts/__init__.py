@@ -4,6 +4,7 @@ across language-specific parsers.
 """
 from __future__ import annotations
 
+import copy
 import dataclasses
 import enum
 import io
@@ -267,6 +268,67 @@ def _replace_in_parent(old: Node, new: Node):
                             lst[j] = new
                             value[i] = tuple(lst)
                             return
+
+
+def _remove_from_parent(node: Node) -> bool:
+    """
+    Remove `node` from its parent's child list. Returns True if the node was found and removed.
+    Uses identity comparison to avoid removing structurally equal but distinct nodes.
+    """
+    parent = node.parent
+    if parent is None:
+        return False
+    for attr_name in vars(parent):
+        if attr_name in _SKIP_FIELDS:
+            continue
+        value = getattr(parent, attr_name)
+        if isinstance(value, list):
+            for i, item in enumerate(value):
+                if item is node:
+                    del value[i]
+                    return True
+    return False
+
+
+def _clone_node(node: Node) -> Node:
+    """
+    Deep-clone a node tree downward without following parent pointers.
+    """
+    clone = copy.copy(node)
+    clone.parent = None
+    for field_name, kind in _classify_fields(type(node)):
+        if kind == Kind.ChildNode:
+            value = getattr(node, field_name)
+            if isinstance(value, Node):
+                child = _clone_node(value)
+                child.parent = clone
+                setattr(clone, field_name, child)
+        elif kind == Kind.ChildList:
+            items = getattr(node, field_name)
+            cloned = []
+            for item in items:
+                if isinstance(item, Node):
+                    child = _clone_node(item)
+                    child.parent = clone
+                    cloned.append(child)
+                else:
+                    cloned.append(item)
+            setattr(clone, field_name, cloned)
+        elif kind == Kind.TupleList:
+            items = getattr(node, field_name)
+            cloned = []
+            for tup in items:
+                new_tup = []
+                for elem in tup:
+                    if isinstance(elem, Node):
+                        child = _clone_node(elem)
+                        child.parent = clone
+                        new_tup.append(child)
+                    else:
+                        new_tup.append(elem)
+                cloned.append(tuple(new_tup))
+            setattr(clone, field_name, cloned)
+    return clone
 
 
 class Synthesizer(Visitor):
