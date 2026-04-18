@@ -22,45 +22,58 @@ from refinery.lib.scripts.ps1.deobfuscation.unflatten import Ps1ControlFlowDefla
 from refinery.lib.scripts.ps1.deobfuscation.wildcards import Ps1WildcardResolution
 from refinery.lib.scripts.ps1.model import Ps1Script
 
-_pipeline = DeobfuscationPipeline(
-    groups=[
-        TransformerGroup(
-            'normalize',
-            Ps1Simplifications,
-            Ps1AliasInlining,
-            Ps1WildcardResolution,
-            Ps1TypeSystemSimplifications,
-        ),
-        TransformerGroup(
-            'fold',
-            Ps1ConstantFolding,
-            Ps1DeadCodeElimination,
-            Ps1ControlFlowDeflattening,
-            Ps1ConstantInlining,
-            Ps1ExpandableStringHoist,
-            Ps1TypeCasts,
-            Ps1NullVariableInlining,
-        ),
-        TransformerGroup(
-            'evaluate',
-            Ps1ForEachPipeline,
-            Ps1FunctionEvaluator,
-        ),
-        TransformerGroup(
-            'finalize',
-            Ps1SecureStringDecryptor,
-            Ps1IexInlining,
-        ),
-    ],
-    dependencies={
-        'fold': {'normalize'},
-        'evaluate': {'fold'},
-        'finalize': {'evaluate'},
-    },
-    invalidates={
-        'normalize': set(),
-        'fold': {'normalize', 'evaluate', 'finalize'},
-    },
+_folds = (
+    Ps1ConstantFolding,
+    Ps1DeadCodeElimination,
+    Ps1ControlFlowDeflattening,
+    Ps1ConstantInlining,
+    Ps1ExpandableStringHoist,
+    Ps1TypeCasts,
+)
+
+_fold_base = TransformerGroup('fold', *_folds)
+_fold_full = TransformerGroup('fold', *_folds, Ps1NullVariableInlining)
+
+_emulate = TransformerGroup(
+    'emulate',
+    Ps1ForEachPipeline,
+    Ps1FunctionEvaluator,
+)
+
+_normalize = TransformerGroup(
+    'normalize',
+    Ps1Simplifications,
+    Ps1AliasInlining,
+    Ps1WildcardResolution,
+    Ps1TypeSystemSimplifications,
+)
+
+_finalize = TransformerGroup(
+    'finalize',
+    Ps1SecureStringDecryptor,
+    Ps1IexInlining,
+)
+
+_DEPENDENCIES = {
+    'fold'      : {'normalize'},
+    'emulate'   : {'fold'},
+    'finalize'  : {'emulate'},
+}
+
+_INVALIDATORS = {
+    'fold': {'normalize', 'emulate', 'finalize'},
+}
+
+_phase1 = DeobfuscationPipeline(
+    [_normalize, _fold_base, _emulate, _finalize],
+    dependencies=_DEPENDENCIES,
+    invalidators=_INVALIDATORS,
+)
+
+_phase2 = DeobfuscationPipeline(
+    [_normalize, _fold_full, _emulate, _finalize],
+    dependencies=_DEPENDENCIES,
+    invalidators=_INVALIDATORS,
 )
 
 
@@ -68,8 +81,6 @@ def deobfuscate(ast: Ps1Script, max_steps: int = 0) -> int:
     """
     Apply all available deobfuscators to the input.
     """
-    Ps1NullVariableInlining.enabled = False
-    steps = _pipeline.run(ast, max_steps=max_steps)
-    Ps1NullVariableInlining.enabled = True
-    steps += _pipeline.run(ast, max_steps=max_steps)
-    return steps
+    s1 = _phase1.run(ast, max_steps=max_steps)
+    s2 = _phase2.run(ast, max_steps=max_steps - s1)
+    return s1 + s2

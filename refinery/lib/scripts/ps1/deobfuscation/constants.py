@@ -646,8 +646,6 @@ class Ps1NullVariableInlining(Transformer):
     comparison, cast, assignment value).
     """
 
-    enabled: bool = False
-
     @staticmethod
     def _is_null_eligible(ref: Ps1Variable) -> bool:
         cursor = ref
@@ -674,8 +672,6 @@ class Ps1NullVariableInlining(Transformer):
         return False
 
     def visit(self, node: Node):
-        if not Ps1NullVariableInlining.enabled:
-            return
         mutated = _collect_mutated_variables(node)
         for ref in list(node.walk()):
             if not isinstance(ref, Ps1Variable):

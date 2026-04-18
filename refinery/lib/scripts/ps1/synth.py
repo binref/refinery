@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import io
 
-from refinery.lib.scripts import Block, Node, Visitor
+from refinery.lib.scripts import Block, Node, Synthesizer
 from refinery.lib.scripts.ps1.deobfuscation._helpers import KEYWORD_SPELLING
 from refinery.lib.scripts.ps1.model import (
     Expression,
@@ -65,27 +65,7 @@ from refinery.lib.scripts.ps1.model import (
 )
 
 
-class Ps1Synthesizer(Visitor):
-
-    def __init__(self, indent: str = '  '):
-        super().__init__()
-        self._indent = indent
-        self._depth = 0
-        self._parts = io.StringIO()
-
-    def convert(self, node: Node) -> str:
-        self._parts.seek(0)
-        self._parts.truncate(0)
-        self._depth = 0
-        self.visit(node)
-        return self._parts.getvalue()
-
-    def _write(self, text: str):
-        self._parts.write(text)
-
-    def _newline(self):
-        self._parts.write('\n')
-        self._parts.write(self._indent * self._depth)
+class Ps1Synthesizer(Synthesizer):
 
     def _emit_block(self, block: Block):
         self._write('{')
@@ -103,9 +83,6 @@ class Ps1Synthesizer(Visitor):
             if i > 0:
                 self._newline()
             self.visit(stmt)
-
-    def generic_visit(self, node: Node):
-        self._write(F'<{type(node).__name__}>')
 
     def visit_Ps1Variable(self, node: Ps1Variable):
         prefix = '@' if node.splatted else '$'

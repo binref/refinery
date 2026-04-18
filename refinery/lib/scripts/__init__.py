@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import dataclasses
 import enum
+import io
 import typing
 
 from dataclasses import dataclass, field
@@ -236,3 +237,33 @@ class Transformer(Visitor):
                     setattr(node, field_name, new_list)
                     self.mark_changed()
         return None
+
+
+class Synthesizer(Visitor):
+    """
+    Base class for AST-to-source synthesizers. Provides indentation-aware output buffering shared
+    by all language-specific synthesizers.
+    """
+
+    def __init__(self, indent: str = '  '):
+        super().__init__()
+        self._indent = indent
+        self._depth = 0
+        self._parts = io.StringIO()
+
+    def convert(self, node: Node) -> str:
+        self._parts.seek(0)
+        self._parts.truncate(0)
+        self._depth = 0
+        self.visit(node)
+        return self._parts.getvalue()
+
+    def _write(self, text: str):
+        self._parts.write(text)
+
+    def _newline(self):
+        self._parts.write('\n')
+        self._parts.write(self._indent * self._depth)
+
+    def generic_visit(self, node: Node):
+        raise LookupError(F'no synthesizer visit method for {type(node).__name__}')

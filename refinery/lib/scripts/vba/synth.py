@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import io
-
-from refinery.lib.scripts import Node, Visitor
+from refinery.lib.scripts import Synthesizer
 from refinery.lib.scripts.vba.model import (
     Statement,
     VBA_PROCEDURE_TYPES,
@@ -78,32 +76,12 @@ from refinery.lib.scripts.vba.model import (
 )
 
 
-class VbaSynthesizer(Visitor):
+class VbaSynthesizer(Synthesizer):
 
     _BLOCK_TYPES = VBA_PROCEDURE_TYPES + (
         VbaTypeDefinition,
         VbaEnumDefinition,
     )
-
-    def __init__(self, indent: str = '  '):
-        super().__init__()
-        self._indent = indent
-        self._depth = 0
-        self._parts = io.StringIO()
-
-    def convert(self, node: Node) -> str:
-        self._parts.seek(0)
-        self._parts.truncate(0)
-        self._depth = 0
-        self.visit(node)
-        return self._parts.getvalue()
-
-    def _write(self, text: str):
-        self._parts.write(text)
-
-    def _newline(self):
-        self._parts.write('\n')
-        self._parts.write(self._indent * self._depth)
 
     def _emit_body(self, body: list[Statement]):
         self._depth += 1
@@ -127,9 +105,6 @@ class VbaSynthesizer(Visitor):
                 self._write(', ')
             self.visit(p)
         self._write(')')
-
-    def generic_visit(self, node: Node):
-        self._write(F'<{type(node).__name__}>')
 
     def visit_VbaIntegerLiteral(self, node: VbaIntegerLiteral):
         self._write(node.raw)

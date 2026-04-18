@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import io
-
-from refinery.lib.scripts import Node, Visitor
+from refinery.lib.scripts import Node, Synthesizer
 from refinery.lib.scripts.js.model import (
     JsArrayExpression,
     JsArrayPattern,
@@ -82,7 +80,7 @@ from refinery.lib.scripts.js.model import (
 _WORD_UNARY_OPS = frozenset({'typeof', 'void', 'delete'})
 
 
-class JsSynthesizer(Visitor):
+class JsSynthesizer(Synthesizer):
 
     def __init__(
         self,
@@ -90,26 +88,9 @@ class JsSynthesizer(Visitor):
         unescape_strings: bool = False,
         strip_comments: bool = False,
     ):
-        super().__init__()
-        self._indent = indent
-        self._depth = 0
-        self._parts = io.StringIO()
+        super().__init__(indent)
         self._unescape_strings = unescape_strings
         self._strip_comments = strip_comments
-
-    def convert(self, node: Node) -> str:
-        self._parts.seek(0)
-        self._parts.truncate(0)
-        self._depth = 0
-        self.visit(node)
-        return self._parts.getvalue()
-
-    def _write(self, text: str):
-        self._parts.write(text)
-
-    def _newline(self):
-        self._parts.write('\n')
-        self._parts.write(self._indent * self._depth)
 
     def _emit_leading_comments(self, node: Node):
         if self._strip_comments or not node.leading_comments:
@@ -149,9 +130,6 @@ class JsSynthesizer(Visitor):
         self._write('function')
         if generator:
             self._write('*')
-
-    def generic_visit(self, node: Node):
-        self._write(F'<{type(node).__name__}>')
 
     def visit_JsNumericLiteral(self, node: JsNumericLiteral):
         self._write(node.raw)
