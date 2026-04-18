@@ -81,6 +81,8 @@ def deobfuscate(ast: Ps1Script, max_steps: int = 0) -> int:
     """
     Apply all available deobfuscators to the input.
     """
-    s1 = _phase1.run(ast, max_steps=max_steps)
-    s2 = _phase2.run(ast, max_steps=max_steps - s1)
-    return s1 + s2
+    steps = _phase1.run(ast, max_steps=max_steps)
+    if max_steps > 0:
+        max_steps -= steps
+    steps = _phase2.run(ast, max_steps=max_steps) + steps
+    return steps
