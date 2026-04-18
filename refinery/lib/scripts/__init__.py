@@ -31,7 +31,7 @@ def _has_node_type(hint) -> bool:
     return any(_has_node_type(a) for a in typing.get_args(hint))
 
 
-def _classify_fields(node_type: type) -> list[tuple[str, Kind]]:
+def _classify_fields(node_type: type[Node]) -> list[tuple[str, Kind]]:
     try:
         return _child_fields_cache[node_type]
     except KeyError:
@@ -67,6 +67,22 @@ def _classify_fields(node_type: type) -> list[tuple[str, Kind]]:
     return result
 
 
+def _children(node: Node):
+    def _candidates():
+        for name, kind in _classify_fields(type(node)):
+            field = getattr(node, name)
+            if kind == Kind.ChildNode:
+                yield field
+            elif kind == Kind.ChildList:
+                yield from field
+            elif kind == Kind.TupleList:
+                for item in field:
+                    yield from item
+    for item in _candidates():
+        if isinstance(item, Node):
+            yield item
+
+
 @dataclass(repr=False)
 class Node:
     """
@@ -76,8 +92,12 @@ class Node:
     parent: Node | None = field(default=None, compare=False)
     leading_comments: list[str] = field(default_factory=list, compare=False)
 
+    def __post_init__(self):
+        for c in _children(self):
+            yield self._adopt(c)
+
     def children(self) -> Generator[Node, None, None]:
-        yield from ()
+        yield from _children(self)
 
     def walk(self) -> Generator[Node, None, None]:
         stack: list[Node] = [self]
@@ -118,12 +138,6 @@ class Block(Node):
     """
     body: list[Statement] = field(default_factory=list)
 
-    def __post_init__(self):
-        self._adopt(*self.body)
-
-    def children(self) -> Generator[Node, None, None]:
-        yield from self.body
-
 
 @dataclass(repr=False)
 class Script(Node):
@@ -131,12 +145,6 @@ class Script(Node):
     Top-level node representing an entire script.
     """
     body: list[Statement] = field(default_factory=list)
-
-    def __post_init__(self):
-        self._adopt(*self.body)
-
-    def children(self) -> Generator[Node, None, None]:
-        yield from self.body
 
 
 class Visitor:

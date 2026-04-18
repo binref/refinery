@@ -3,7 +3,6 @@ from __future__ import annotations
 import enum
 
 from dataclasses import dataclass, field
-from typing import Generator
 
 from refinery.lib.scripts import Expression, Node, Script, Statement
 
@@ -125,27 +124,11 @@ class VbaBinaryExpression(Expression):
     operator: str = ''
     right: Expression | None = None
 
-    def __post_init__(self):
-        self._adopt(self.left, self.right)
-
-    def children(self) -> Generator[Node, None, None]:
-        if self.left is not None:
-            yield self.left
-        if self.right is not None:
-            yield self.right
-
 
 @dataclass(repr=False)
 class VbaUnaryExpression(Expression):
     operator: str = ''
     operand: Expression | None = None
-
-    def __post_init__(self):
-        self._adopt(self.operand)
-
-    def children(self) -> Generator[Node, None, None]:
-        if self.operand is not None:
-            yield self.operand
 
 
 @dataclass(repr=False)
@@ -153,24 +136,10 @@ class VbaNamedArgument(Expression):
     name: str = ''
     expression: Expression | None = None
 
-    def __post_init__(self):
-        self._adopt(self.expression)
-
-    def children(self) -> Generator[Node, None, None]:
-        if self.expression is not None:
-            yield self.expression
-
 
 @dataclass(repr=False)
 class VbaByValArgument(Expression):
     expression: Expression | None = None
-
-    def __post_init__(self):
-        self._adopt(self.expression)
-
-    def children(self) -> Generator[Node, None, None]:
-        if self.expression is not None:
-            yield self.expression
 
 
 @dataclass(repr=False)
@@ -178,28 +147,11 @@ class VbaCallExpression(Expression):
     callee: Expression | None = None
     arguments: list[Expression | None] = field(default_factory=list)
 
-    def __post_init__(self):
-        self._adopt(self.callee, *[a for a in self.arguments if a is not None])
-
-    def children(self) -> Generator[Node, None, None]:
-        if self.callee is not None:
-            yield self.callee
-        for arg in self.arguments:
-            if arg is not None:
-                yield arg
-
 
 @dataclass(repr=False)
 class VbaMemberAccess(Expression):
     object: Expression | None = None
     member: str = ''
-
-    def __post_init__(self):
-        self._adopt(self.object)
-
-    def children(self) -> Generator[Node, None, None]:
-        if self.object is not None:
-            yield self.object
 
 
 @dataclass(repr=False)
@@ -207,24 +159,10 @@ class VbaBangAccess(Expression):
     object: Expression | None = None
     member: str = ''
 
-    def __post_init__(self):
-        self._adopt(self.object)
-
-    def children(self) -> Generator[Node, None, None]:
-        if self.object is not None:
-            yield self.object
-
 
 @dataclass(repr=False)
 class VbaNewExpression(Expression):
     class_name: Expression | None = None
-
-    def __post_init__(self):
-        self._adopt(self.class_name)
-
-    def children(self) -> Generator[Node, None, None]:
-        if self.class_name is not None:
-            yield self.class_name
 
 
 @dataclass(repr=False)
@@ -232,41 +170,16 @@ class VbaTypeOfIsExpression(Expression):
     operand: Expression | None = None
     type_name: Expression | None = None
 
-    def __post_init__(self):
-        self._adopt(self.operand, self.type_name)
-
-    def children(self) -> Generator[Node, None, None]:
-        if self.operand is not None:
-            yield self.operand
-        if self.type_name is not None:
-            yield self.type_name
-
 
 @dataclass(repr=False)
 class VbaParenExpression(Expression):
     expression: Expression | None = None
-
-    def __post_init__(self):
-        self._adopt(self.expression)
-
-    def children(self) -> Generator[Node, None, None]:
-        if self.expression is not None:
-            yield self.expression
 
 
 @dataclass(repr=False)
 class VbaRangeExpression(Expression):
     start: Expression | None = None
     end: Expression | None = None
-
-    def __post_init__(self):
-        self._adopt(self.start, self.end)
-
-    def children(self) -> Generator[Node, None, None]:
-        if self.start is not None:
-            yield self.start
-        if self.end is not None:
-            yield self.end
 
 
 @dataclass(repr=False)
@@ -291,24 +204,12 @@ class VbaDeclareStatement(Statement):
     return_type: str = ''
     raw: str = ''
 
-    def __post_init__(self):
-        self._adopt(*self.params)
-
-    def children(self) -> Generator[Node, None, None]:
-        yield from self.params
-
 
 @dataclass(repr=False)
 class VbaTypeDefinition(Statement):
     scope: VbaScopeModifier = VbaScopeModifier.NONE
     name: str = ''
     members: list[VbaVariableDeclarator] = field(default_factory=list)
-
-    def __post_init__(self):
-        self._adopt(*self.members)
-
-    def children(self) -> Generator[Node, None, None]:
-        yield from self.members
 
 
 @dataclass(repr=False)
@@ -317,24 +218,11 @@ class VbaEnumDefinition(Statement):
     name: str = ''
     members: list[VbaEnumMember] = field(default_factory=list)
 
-    def __post_init__(self):
-        self._adopt(*self.members)
-
-    def children(self) -> Generator[Node, None, None]:
-        yield from self.members
-
 
 @dataclass(repr=False)
 class VbaEnumMember(Node):
     name: str = ''
     value: Expression | None = None
-
-    def __post_init__(self):
-        self._adopt(self.value)
-
-    def children(self) -> Generator[Node, None, None]:
-        if self.value is not None:
-            yield self.value
 
 
 @dataclass(repr=False)
@@ -343,24 +231,11 @@ class VbaConstDeclarator(Node):
     type_name: str = ''
     value: Expression | None = None
 
-    def __post_init__(self):
-        self._adopt(self.value)
-
-    def children(self) -> Generator[Node, None, None]:
-        if self.value is not None:
-            yield self.value
-
 
 @dataclass(repr=False)
 class VbaConstDeclaration(Statement):
     scope: VbaScopeModifier = VbaScopeModifier.NONE
     declarators: list[VbaConstDeclarator] = field(default_factory=list)
-
-    def __post_init__(self):
-        self._adopt(*self.declarators)
-
-    def children(self) -> Generator[Node, None, None]:
-        yield from self.declarators
 
 
 @dataclass(repr=False)
@@ -372,23 +247,11 @@ class VbaVariableDeclarator(Node):
     is_new: bool = False
     with_events: bool = False
 
-    def __post_init__(self):
-        self._adopt(*self.bounds)
-
-    def children(self) -> Generator[Node, None, None]:
-        yield from self.bounds
-
 
 @dataclass(repr=False)
 class VbaVariableDeclaration(Statement):
     scope: VbaScopeModifier = VbaScopeModifier.NONE
     declarators: list[VbaVariableDeclarator] = field(default_factory=list)
-
-    def __post_init__(self):
-        self._adopt(*self.declarators)
-
-    def children(self) -> Generator[Node, None, None]:
-        yield from self.declarators
 
 
 @dataclass(repr=False)
@@ -396,12 +259,6 @@ class VbaEventDeclaration(Statement):
     scope: VbaScopeModifier = VbaScopeModifier.NONE
     name: str = ''
     params: list[VbaParameter] = field(default_factory=list)
-
-    def __post_init__(self):
-        self._adopt(*self.params)
-
-    def children(self) -> Generator[Node, None, None]:
-        yield from self.params
 
 
 @dataclass(repr=False)
@@ -414,13 +271,6 @@ class VbaParameter(Node):
     default: Expression | None = None
     is_array: bool = False
 
-    def __post_init__(self):
-        self._adopt(self.default)
-
-    def children(self) -> Generator[Node, None, None]:
-        if self.default is not None:
-            yield self.default
-
 
 @dataclass(repr=False)
 class VbaSubDeclaration(Statement):
@@ -429,13 +279,6 @@ class VbaSubDeclaration(Statement):
     params: list[VbaParameter] = field(default_factory=list)
     body: list[Statement] = field(default_factory=list)
     is_static: bool = False
-
-    def __post_init__(self):
-        self._adopt(*self.params, *self.body)
-
-    def children(self) -> Generator[Node, None, None]:
-        yield from self.params
-        yield from self.body
 
 
 @dataclass(repr=False)
@@ -446,13 +289,6 @@ class VbaFunctionDeclaration(Statement):
     return_type: str = ''
     body: list[Statement] = field(default_factory=list)
     is_static: bool = False
-
-    def __post_init__(self):
-        self._adopt(*self.params, *self.body)
-
-    def children(self) -> Generator[Node, None, None]:
-        yield from self.params
-        yield from self.body
 
 
 @dataclass(repr=False)
@@ -465,50 +301,17 @@ class VbaPropertyDeclaration(Statement):
     body: list[Statement] = field(default_factory=list)
     is_static: bool = False
 
-    def __post_init__(self):
-        self._adopt(*self.params, *self.body)
-
-    def children(self) -> Generator[Node, None, None]:
-        yield from self.params
-        yield from self.body
-
 
 @dataclass(repr=False)
 class VbaExpressionStatement(Statement):
     expression: Expression | None = None
     arguments: list[Expression | None] = field(default_factory=list)
 
-    def __post_init__(self):
-        self._adopt(
-            self.expression,
-            *[a for a in self.arguments if a is not None],
-        )
-
-    def children(self) -> Generator[Node, None, None]:
-        if self.expression is not None:
-            yield self.expression
-        for arg in self.arguments:
-            if arg is not None:
-                yield arg
-
 
 @dataclass(repr=False)
 class VbaCallStatement(Statement):
     callee: Expression | None = None
     arguments: list[Expression | None] = field(default_factory=list)
-
-    def __post_init__(self):
-        self._adopt(
-            self.callee,
-            *[a for a in self.arguments if a is not None],
-        )
-
-    def children(self) -> Generator[Node, None, None]:
-        if self.callee is not None:
-            yield self.callee
-        for arg in self.arguments:
-            if arg is not None:
-                yield arg
 
 
 @dataclass(repr=False)
@@ -518,43 +321,17 @@ class VbaLetStatement(Statement):
     explicit: bool = False
     keyword: str = ''
 
-    def __post_init__(self):
-        self._adopt(self.target, self.value)
-
-    def children(self) -> Generator[Node, None, None]:
-        if self.target is not None:
-            yield self.target
-        if self.value is not None:
-            yield self.value
-
 
 @dataclass(repr=False)
 class VbaSetStatement(Statement):
     target: Expression | None = None
     value: Expression | None = None
 
-    def __post_init__(self):
-        self._adopt(self.target, self.value)
-
-    def children(self) -> Generator[Node, None, None]:
-        if self.target is not None:
-            yield self.target
-        if self.value is not None:
-            yield self.value
-
 
 @dataclass(repr=False)
 class VbaElseIfClause(Node):
     condition: Expression | None = None
     body: list[Statement] = field(default_factory=list)
-
-    def __post_init__(self):
-        self._adopt(self.condition, *self.body)
-
-    def children(self) -> Generator[Node, None, None]:
-        if self.condition is not None:
-            yield self.condition
-        yield from self.body
 
 
 @dataclass(repr=False)
@@ -565,16 +342,6 @@ class VbaIfStatement(Statement):
     else_body: list[Statement] = field(default_factory=list)
     single_line: bool = False
 
-    def __post_init__(self):
-        self._adopt(self.condition, *self.body, *self.elseif_clauses, *self.else_body)
-
-    def children(self) -> Generator[Node, None, None]:
-        if self.condition is not None:
-            yield self.condition
-        yield from self.body
-        yield from self.elseif_clauses
-        yield from self.else_body
-
 
 @dataclass(repr=False)
 class VbaForStatement(Statement):
@@ -584,36 +351,12 @@ class VbaForStatement(Statement):
     step: Expression | None = None
     body: list[Statement] = field(default_factory=list)
 
-    def __post_init__(self):
-        self._adopt(self.variable, self.start, self.end, self.step, *self.body)
-
-    def children(self) -> Generator[Node, None, None]:
-        if self.variable is not None:
-            yield self.variable
-        if self.start is not None:
-            yield self.start
-        if self.end is not None:
-            yield self.end
-        if self.step is not None:
-            yield self.step
-        yield from self.body
-
 
 @dataclass(repr=False)
 class VbaForEachStatement(Statement):
     variable: Expression | None = None
     collection: Expression | None = None
     body: list[Statement] = field(default_factory=list)
-
-    def __post_init__(self):
-        self._adopt(self.variable, self.collection, *self.body)
-
-    def children(self) -> Generator[Node, None, None]:
-        if self.variable is not None:
-            yield self.variable
-        if self.collection is not None:
-            yield self.collection
-        yield from self.body
 
 
 @dataclass(repr=False)
@@ -623,27 +366,11 @@ class VbaDoLoopStatement(Statement):
     condition_position: VbaLoopConditionPosition | None = None
     body: list[Statement] = field(default_factory=list)
 
-    def __post_init__(self):
-        self._adopt(self.condition, *self.body)
-
-    def children(self) -> Generator[Node, None, None]:
-        if self.condition is not None:
-            yield self.condition
-        yield from self.body
-
 
 @dataclass(repr=False)
 class VbaWhileStatement(Statement):
     condition: Expression | None = None
     body: list[Statement] = field(default_factory=list)
-
-    def __post_init__(self):
-        self._adopt(self.condition, *self.body)
-
-    def children(self) -> Generator[Node, None, None]:
-        if self.condition is not None:
-            yield self.condition
-        yield from self.body
 
 
 @dataclass(repr=False)
@@ -652,40 +379,17 @@ class VbaCaseClause(Node):
     body: list[Statement] = field(default_factory=list)
     is_else: bool = False
 
-    def __post_init__(self):
-        self._adopt(*self.tests, *self.body)
-
-    def children(self) -> Generator[Node, None, None]:
-        yield from self.tests
-        yield from self.body
-
 
 @dataclass(repr=False)
 class VbaSelectCaseStatement(Statement):
     expression: Expression | None = None
     cases: list[VbaCaseClause] = field(default_factory=list)
 
-    def __post_init__(self):
-        self._adopt(self.expression, *self.cases)
-
-    def children(self) -> Generator[Node, None, None]:
-        if self.expression is not None:
-            yield self.expression
-        yield from self.cases
-
 
 @dataclass(repr=False)
 class VbaWithStatement(Statement):
     object: Expression | None = None
     body: list[Statement] = field(default_factory=list)
-
-    def __post_init__(self):
-        self._adopt(self.object, *self.body)
-
-    def children(self) -> Generator[Node, None, None]:
-        if self.object is not None:
-            yield self.object
-        yield from self.body
 
 
 @dataclass(repr=False)
@@ -710,9 +414,6 @@ class VbaOnBranchStatement(Statement):
     kind: VbaOnBranchKind = VbaOnBranchKind.GOTO
     labels: list[str] = field(default_factory=list)
 
-    def children(self) -> Generator[Node, None, None]:
-        yield self.expression
-
 
 @dataclass(repr=False)
 class VbaExitStatement(Statement):
@@ -729,34 +430,16 @@ class VbaRedimStatement(Statement):
     preserve: bool = False
     declarators: list[VbaVariableDeclarator] = field(default_factory=list)
 
-    def __post_init__(self):
-        self._adopt(*self.declarators)
-
-    def children(self) -> Generator[Node, None, None]:
-        yield from self.declarators
-
 
 @dataclass(repr=False)
 class VbaEraseStatement(Statement):
     targets: list[Expression] = field(default_factory=list)
-
-    def __post_init__(self):
-        self._adopt(*self.targets)
-
-    def children(self) -> Generator[Node, None, None]:
-        yield from self.targets
 
 
 @dataclass(repr=False)
 class VbaRaiseEventStatement(Statement):
     name: str = ''
     arguments: list[Expression] = field(default_factory=list)
-
-    def __post_init__(self):
-        self._adopt(*self.arguments)
-
-    def children(self) -> Generator[Node, None, None]:
-        yield from self.arguments
 
 
 @dataclass(repr=False)
@@ -779,12 +462,6 @@ class VbaDebugPrintStatement(Statement):
     method: str = 'Print'
     arguments: list[Expression] = field(default_factory=list)
     separators: list[str] = field(default_factory=list)
-
-    def __post_init__(self):
-        self._adopt(*self.arguments)
-
-    def children(self) -> Generator[Node, None, None]:
-        yield from self.arguments
 
 
 @dataclass(repr=False)
