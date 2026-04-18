@@ -1276,45 +1276,33 @@ class VbaParser:
     def _parse_expression(self) -> Expression:
         return self._parse_imp_expression()
 
-    def _parse_imp_expression(self) -> Expression:
-        left = self._parse_eqv_expression()
-        while self._eat(VbaTokenKind.IMP):
-            right = self._parse_eqv_expression()
-            left = VbaBinaryExpression(
-                left=left, operator='Imp', right=right, offset=left.offset)
+    def _binary_left(self, next_parser, *ops) -> Expression:
+        left = next_parser()
+        while True:
+            for kind, op_str in ops:
+                if self._eat(kind):
+                    right = next_parser()
+                    left = VbaBinaryExpression(
+                        left=left, operator=op_str, right=right, offset=left.offset)
+                    break
+            else:
+                break
         return left
+
+    def _parse_imp_expression(self) -> Expression:
+        return self._binary_left(self._parse_eqv_expression, (VbaTokenKind.IMP, 'Imp'))
 
     def _parse_eqv_expression(self) -> Expression:
-        left = self._parse_xor_expression()
-        while self._eat(VbaTokenKind.EQV):
-            right = self._parse_xor_expression()
-            left = VbaBinaryExpression(
-                left=left, operator='Eqv', right=right, offset=left.offset)
-        return left
+        return self._binary_left(self._parse_xor_expression, (VbaTokenKind.EQV, 'Eqv'))
 
     def _parse_xor_expression(self) -> Expression:
-        left = self._parse_or_expression()
-        while self._eat(VbaTokenKind.XOR):
-            right = self._parse_or_expression()
-            left = VbaBinaryExpression(
-                left=left, operator='Xor', right=right, offset=left.offset)
-        return left
+        return self._binary_left(self._parse_or_expression, (VbaTokenKind.XOR, 'Xor'))
 
     def _parse_or_expression(self) -> Expression:
-        left = self._parse_and_expression()
-        while self._eat(VbaTokenKind.OR):
-            right = self._parse_and_expression()
-            left = VbaBinaryExpression(
-                left=left, operator='Or', right=right, offset=left.offset)
-        return left
+        return self._binary_left(self._parse_and_expression, (VbaTokenKind.OR, 'Or'))
 
     def _parse_and_expression(self) -> Expression:
-        left = self._parse_not_expression()
-        while self._eat(VbaTokenKind.AND):
-            right = self._parse_not_expression()
-            left = VbaBinaryExpression(
-                left=left, operator='And', right=right, offset=left.offset)
-        return left
+        return self._binary_left(self._parse_not_expression, (VbaTokenKind.AND, 'And'))
 
     def _parse_not_expression(self) -> Expression:
         tok = self._eat(VbaTokenKind.NOT)
@@ -1339,46 +1327,22 @@ class VbaParser:
         return left
 
     def _parse_concat_expression(self) -> Expression:
-        left = self._parse_additive_expression()
-        while self._eat(VbaTokenKind.AMPERSAND):
-            right = self._parse_additive_expression()
-            left = VbaBinaryExpression(
-                left=left, operator='&', right=right, offset=left.offset)
-        return left
+        return self._binary_left(self._parse_additive_expression, (VbaTokenKind.AMPERSAND, '&'))
 
     def _parse_additive_expression(self) -> Expression:
-        left = self._parse_mod_expression()
-        while self._at(VbaTokenKind.PLUS, VbaTokenKind.MINUS):
-            op = self._advance().value
-            right = self._parse_mod_expression()
-            left = VbaBinaryExpression(
-                left=left, operator=op, right=right, offset=left.offset)
-        return left
+        return self._binary_left(
+            self._parse_mod_expression, (VbaTokenKind.PLUS, '+'), (VbaTokenKind.MINUS, '-'))
 
     def _parse_mod_expression(self) -> Expression:
-        left = self._parse_integer_div_expression()
-        while self._eat(VbaTokenKind.MOD):
-            right = self._parse_integer_div_expression()
-            left = VbaBinaryExpression(
-                left=left, operator='Mod', right=right, offset=left.offset)
-        return left
+        return self._binary_left(self._parse_integer_div_expression, (VbaTokenKind.MOD, 'Mod'))
 
     def _parse_integer_div_expression(self) -> Expression:
-        left = self._parse_multiplicative_expression()
-        while self._eat(VbaTokenKind.BACKSLASH):
-            right = self._parse_multiplicative_expression()
-            left = VbaBinaryExpression(
-                left=left, operator='\\', right=right, offset=left.offset)
-        return left
+        return self._binary_left(
+            self._parse_multiplicative_expression, (VbaTokenKind.BACKSLASH, '\\'))
 
     def _parse_multiplicative_expression(self) -> Expression:
-        left = self._parse_unary_expression()
-        while self._at(VbaTokenKind.STAR, VbaTokenKind.SLASH):
-            op = self._advance().value
-            right = self._parse_unary_expression()
-            left = VbaBinaryExpression(
-                left=left, operator=op, right=right, offset=left.offset)
-        return left
+        return self._binary_left(
+            self._parse_unary_expression, (VbaTokenKind.STAR, '*'), (VbaTokenKind.SLASH, '/'))
 
     def _parse_exponentiation_expression(self) -> Expression:
         left = self._parse_postfix_expression()
