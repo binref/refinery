@@ -214,6 +214,14 @@ class Ps1Parser:
         while self._current.kind == Ps1TokenKind.NEWLINE:
             self._advance()
 
+    def _parse_parenthesized_condition(self) -> Expression | None:
+        self._expect(Ps1TokenKind.LPAREN)
+        self._skip_newlines()
+        expr = self._parse_pipeline_expression()
+        self._skip_newlines()
+        self._expect(Ps1TokenKind.RPAREN)
+        return expr
+
     def _skip_separators(self):
         while self._current.kind in (
             Ps1TokenKind.COMMA,
@@ -966,6 +974,16 @@ class Ps1Parser:
             return Ps1StringLiteral(offset=tok.offset, value=parts[0].value, raw=raw)
         return Ps1ExpandableString(offset=tok.offset, parts=parts, raw=raw)
 
+    def _try_parse_dollar_expansion(self, text: str, pos: int) -> tuple[Expression | None, int]:
+        length = len(text)
+        if pos + 1 < length and text[pos + 1] == '(':
+            node, new_pos = self._parse_embedded_subexpression(text, pos)
+            return node, new_pos
+        m = _VARIABLE_FRAG.match(text, pos)
+        if m:
+            return self._make_variable_from_text(m.group()), m.end()
+        return None, pos
+
     def _split_expandable_string(self, text: str) -> list[Expression]:
         parts: list[Expression] = []
         pos = 0
@@ -994,19 +1012,11 @@ class Ps1Parser:
                 continue
 
             if c == '$':
-                if pos + 1 < length and text[pos + 1] == '(':
+                node, new_pos = self._try_parse_dollar_expansion(text, pos)
+                if node is not None:
                     flush_text()
-                    node, pos = self._parse_embedded_subexpression(text, pos)
                     parts.append(node)
-                    continue
-
-                m = _VARIABLE_FRAG.match(text, pos)
-                if m:
-                    flush_text()
-                    var_text = m.group()
-                    var = self._make_variable_from_text(var_text)
-                    parts.append(var)
-                    pos = m.end()
+                    pos = new_pos
                     continue
 
             buf.append(c)
@@ -1070,17 +1080,11 @@ class Ps1Parser:
                 parts.extend(sub_parts)
                 continue
             if c == '$':
-                if pos + 1 < length and text[pos + 1] == '(':
+                node, new_pos = self._try_parse_dollar_expansion(text, pos)
+                if node is not None:
                     flush_text()
-                    node, pos = self._parse_embedded_subexpression(text, pos)
                     parts.append(node)
-                    continue
-                m = _VARIABLE_FRAG.match(text, pos)
-                if m:
-                    flush_text()
-                    var = self._make_variable_from_text(m.group())
-                    parts.append(var)
-                    pos = m.end()
+                    pos = new_pos
                     continue
             buf.append(c)
             pos += 1
@@ -1363,11 +1367,7 @@ class Ps1Parser:
 
         self._expect(Ps1TokenKind.IF)
         self._skip_newlines()
-        self._expect(Ps1TokenKind.LPAREN)
-        self._skip_newlines()
-        cond = self._parse_pipeline_expression()
-        self._skip_newlines()
-        self._expect(Ps1TokenKind.RPAREN)
+        cond = self._parse_parenthesized_condition()
         self._skip_newlines()
         body = self._parse_block()
         clauses.append((cond, body))
@@ -1376,11 +1376,7 @@ class Ps1Parser:
         while self._at(Ps1TokenKind.ELSEIF):
             self._advance()
             self._skip_newlines()
-            self._expect(Ps1TokenKind.LPAREN)
-            self._skip_newlines()
-            cond = self._parse_pipeline_expression()
-            self._skip_newlines()
-            self._expect(Ps1TokenKind.RPAREN)
+            cond = self._parse_parenthesized_condition()
             self._skip_newlines()
             body = self._parse_block()
             clauses.append((cond, body))
@@ -1398,11 +1394,7 @@ class Ps1Parser:
         offset = self._current.offset
         self._expect(Ps1TokenKind.WHILE)
         self._skip_newlines()
-        self._expect(Ps1TokenKind.LPAREN)
-        self._skip_newlines()
-        cond = self._parse_pipeline_expression()
-        self._skip_newlines()
-        self._expect(Ps1TokenKind.RPAREN)
+        cond = self._parse_parenthesized_condition()
         self._skip_newlines()
         body = self._parse_block()
         return Ps1WhileLoop(offset=offset, condition=cond, body=body, label=label)
@@ -1417,11 +1409,7 @@ class Ps1Parser:
         if is_until or self._at(Ps1TokenKind.WHILE):
             self._advance()
             self._skip_newlines()
-            self._expect(Ps1TokenKind.LPAREN)
-            self._skip_newlines()
-            cond = self._parse_pipeline_expression()
-            self._skip_newlines()
-            self._expect(Ps1TokenKind.RPAREN)
+            cond = self._parse_parenthesized_condition()
             return Ps1DoLoop(
                 offset=offset, condition=cond, body=body, is_until=is_until, label=label)
         return Ps1DoLoop(offset=offset, body=body, label=label)
@@ -1523,11 +1511,7 @@ class Ps1Parser:
             value = self._parse_argument_value()
             self._skip_newlines()
         else:
-            self._expect(Ps1TokenKind.LPAREN)
-            self._skip_newlines()
-            value = self._parse_pipeline_expression()
-            self._skip_newlines()
-            self._expect(Ps1TokenKind.RPAREN)
+            value = self._parse_parenthesized_condition()
             self._skip_newlines()
         self._expect(Ps1TokenKind.LBRACE)
         self._skip_newlines()

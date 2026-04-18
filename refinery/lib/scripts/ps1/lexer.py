@@ -220,16 +220,24 @@ class Ps1Lexer:
             self.pos += 1
         self.pos = length
 
-    def _read_verbatim_string(self) -> str:
+    def _read_string(self, quote_set: frozenset[str], expandable: bool = False) -> str:
         start = self.pos
         src = self.source
         length = len(src)
         self.pos += 1
         while self.pos < length:
             c = src[self.pos]
-            if c in SINGLE_QUOTES:
+            if expandable:
+                if c == '`' and self.pos + 1 < length:
+                    self.pos += 2
+                    continue
+                if c == '$' and self.pos + 1 < length and src[self.pos + 1] == '(':
+                    self.pos += 2
+                    self._skip_subexpression_content()
+                    continue
+            if c in quote_set:
                 self.pos += 1
-                if self.pos < length and src[self.pos] in SINGLE_QUOTES:
+                if self.pos < length and src[self.pos] in quote_set:
                     self.pos += 1
                     continue
                 return src[start:self.pos]
@@ -259,16 +267,16 @@ class Ps1Lexer:
                 nc = src[self.pos + 1]
                 if self.pos + 2 < length and src[self.pos + 2] in '\r\n':
                     if nc in SINGLE_QUOTES:
-                        self._read_verbatim_here_string()
+                        self._read_here_string(SINGLE_QUOTES)
                         continue
                     if nc in DOUBLE_QUOTES:
-                        self._read_expandable_here_string()
+                        self._read_here_string(DOUBLE_QUOTES, expandable=True)
                         continue
             if c in SINGLE_QUOTES:
-                self._read_verbatim_string()
+                self._read_string(SINGLE_QUOTES)
                 continue
             if c in DOUBLE_QUOTES:
-                self._read_expandable_string()
+                self._read_string(DOUBLE_QUOTES, expandable=True)
                 continue
             self.pos += 1
 
@@ -316,19 +324,7 @@ class Ps1Lexer:
             return True
         return False
 
-    def _read_verbatim_here_string(self) -> str:
-        src = self.source
-        length = len(src)
-        start = self.pos
-        self._skip_here_string_header()
-        while self.pos < length:
-            if src[self.pos] in '\r\n':
-                if self._check_here_string_terminator(SINGLE_QUOTES):
-                    return src[start:self.pos]
-            self.pos += 1
-        return src[start:self.pos]
-
-    def _read_expandable_here_string(self) -> str:
+    def _read_here_string(self, quote_set: frozenset[str], expandable: bool = False) -> str:
         start = self.pos
         src = self.source
         length = len(src)
@@ -336,15 +332,16 @@ class Ps1Lexer:
         while self.pos < length:
             c = src[self.pos]
             if c in '\r\n':
-                if self._check_here_string_terminator(DOUBLE_QUOTES):
+                if self._check_here_string_terminator(quote_set):
                     return src[start:self.pos]
-            if c == '`' and self.pos + 1 < length:
-                self.pos += 2
-                continue
-            if c == '$' and self.pos + 1 < length and src[self.pos + 1] == '(':
-                self.pos += 2
-                self._skip_subexpression_content()
-                continue
+            if expandable:
+                if c == '`' and self.pos + 1 < length:
+                    self.pos += 2
+                    continue
+                if c == '$' and self.pos + 1 < length and src[self.pos + 1] == '(':
+                    self.pos += 2
+                    self._skip_subexpression_content()
+                    continue
             self.pos += 1
         return src[start:self.pos]
 
@@ -471,10 +468,10 @@ class Ps1Lexer:
                 self.pos += 2
                 continue
             if c in SINGLE_QUOTES:
-                self._read_verbatim_string()
+                self._read_string(SINGLE_QUOTES)
                 continue
             if c in DOUBLE_QUOTES:
-                self._read_expandable_string()
+                self._read_string(DOUBLE_QUOTES, expandable=True)
                 continue
             if c == '$' and self.pos + 1 < length:
                 nc = src[self.pos + 1]
@@ -501,6 +498,13 @@ class Ps1Lexer:
         mode_hint = yield token
         if mode_hint is not None:
             self.mode = mode_hint
+
+    def _emit_keyword_or_token(self, token: Ps1Token) -> Generator[Ps1Token, Ps1LexerMode | None, None]:
+        kw = _KEYWORDS.get(token.value.lower())
+        if kw is not None:
+            yield from self._emit(Ps1Token(kw, token.value, token.offset))
+        else:
+            yield from self._emit(token)
 
     def tokenize(self) -> Generator[Ps1Token, Ps1LexerMode | None, None]:
         src = self.source
@@ -540,11 +544,11 @@ class Ps1Lexer:
             if c == '@' and self.pos + 1 < length:
                 nc = src[self.pos + 1]
                 if nc in SINGLE_QUOTES:
-                    text = self._read_verbatim_here_string()
+                    text = self._read_here_string(SINGLE_QUOTES)
                     yield from self._emit(Ps1Token(Ps1TokenKind.HSTRING_VERBATIM, text, start))
                     continue
                 if nc in DOUBLE_QUOTES:
-                    text = self._read_expandable_here_string()
+                    text = self._read_here_string(DOUBLE_QUOTES, expandable=True)
                     yield from self._emit(Ps1Token(Ps1TokenKind.HSTRING_EXPAND, text, start))
                     continue
 
@@ -582,11 +586,11 @@ class Ps1Lexer:
                     continue
 
             if c in SINGLE_QUOTES:
-                text = self._read_verbatim_string()
+                text = self._read_string(SINGLE_QUOTES)
                 yield from self._emit(Ps1Token(Ps1TokenKind.STRING_VERBATIM, text, start))
                 continue
             if c in DOUBLE_QUOTES:
-                text = self._read_expandable_string()
+                text = self._read_string(DOUBLE_QUOTES, expandable=True)
                 yield from self._emit(Ps1Token(Ps1TokenKind.STRING_EXPAND, text, start))
                 continue
 
@@ -653,12 +657,7 @@ class Ps1Lexer:
                 if c.isalpha() or c == '_' or c == '\\' or c == '`':
                     token = self._read_generic_token()
                     if token.value:
-                        word = token.value.lower()
-                        kw = _KEYWORDS.get(word)
-                        if kw is not None:
-                            yield from self._emit(Ps1Token(kw, token.value, token.offset))
-                        else:
-                            yield from self._emit(token)
+                        yield from self._emit_keyword_or_token(token)
                         continue
 
             if c.isalpha() or c == '_' or c == '`':
@@ -672,11 +671,7 @@ class Ps1Lexer:
                         self.pos = start
                         token = self._read_generic_token()
                 if token.value:
-                    kw = _KEYWORDS.get(token.value.lower())
-                    if kw is not None:
-                        yield from self._emit(Ps1Token(kw, token.value, token.offset))
-                    else:
-                        yield from self._emit(token)
+                    yield from self._emit_keyword_or_token(token)
                     continue
 
             self.pos += 1
