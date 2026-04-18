@@ -162,29 +162,32 @@ class VbaSimplifications(Transformer):
         self.generic_visit(node)
         if node.left is None or node.right is None:
             return None
-        op = node.operator
+        if node.operator in ('&', '+'):
+            result = self._fold_string_concat(node)
+            if result is not None:
+                return result
+        return self._fold_numeric_binary(node)
 
-        if op in ('&', '+'):
-            if self._is_oern_undefined(node.left) and _string_value(node.right) is not None:
-                return node.right
-            if self._is_oern_undefined(node.right) and _string_value(node.left) is not None:
-                return node.left
-
-        left_str = _string_value(node.left)
-        right_str = _string_value(node.right)
-        if op in ('&', '+') and left_str is not None and right_str is not None:
-            return _make_string_literal(left_str + right_str)
-        if op in ('&', '+') and right_str is not None:
+    def _fold_string_concat(self, node: VbaBinaryExpression):
+        if self._is_oern_undefined(node.left) and _string_value(node.right) is not None:
+            return node.right
+        if self._is_oern_undefined(node.right) and _string_value(node.left) is not None:
+            return node.left
+        lhs = _string_value(node.left)
+        rhs = _string_value(node.right)
+        if lhs is not None and rhs is not None:
+            return _make_string_literal(lhs + rhs)
+        if rhs is not None:
             if (
                 isinstance(node.left, VbaBinaryExpression)
                 and node.left.operator in ('&', '+')
             ):
                 inner_right_str = _string_value(node.left.right)
                 if inner_right_str is not None:
-                    node.left.right = _make_string_literal(inner_right_str + right_str)
+                    node.left.right = _make_string_literal(inner_right_str + rhs)
                     node.left.right.parent = node.left
                     return node.left
-        if op in ('&', '+') and left_str is not None:
+        if lhs is not None:
             inner = node.right
             while (
                 isinstance(inner, VbaBinaryExpression)
@@ -199,17 +202,20 @@ class VbaSimplifications(Transformer):
             ):
                 inner_left_str = _string_value(inner.left)
                 if inner_left_str is not None:
-                    inner.left = _make_string_literal(left_str + inner_left_str)
+                    inner.left = _make_string_literal(lhs + inner_left_str)
                     inner.left.parent = inner
                     return node.right
+        return None
 
-        left_num = _numeric_value(node.left)
-        right_num = _numeric_value(node.right)
-        if left_num is not None and right_num is not None:
-            fn = _BINARY_OPS.get(op)
+    @staticmethod
+    def _fold_numeric_binary(node: VbaBinaryExpression):
+        lhs = _numeric_value(node.left)
+        rhs = _numeric_value(node.right)
+        if lhs is not None and rhs is not None:
+            fn = _BINARY_OPS.get(node.operator)
             if fn is not None:
                 try:
-                    result = fn(left_num, right_num)
+                    result = fn(lhs, rhs)
                 except (ZeroDivisionError, ValueError, OverflowError):
                     return None
                 if isinstance(result, float) and (
@@ -219,16 +225,16 @@ class VbaSimplifications(Transformer):
                 ):
                     return None
                 return _make_numeric_literal(result)
-            fn = _INTEGER_OPS.get(op)
+            fn = _INTEGER_OPS.get(node.operator)
             if fn is not None:
                 try:
-                    result = fn(left_num, right_num)
+                    result = fn(lhs, rhs)
                 except (ZeroDivisionError, ValueError, OverflowError):
                     return None
                 return _make_integer_literal(int(result))
-            if op == '^':
+            if node.operator == '^':
                 try:
-                    result = left_num ** right_num
+                    result = lhs ** rhs
                 except (ZeroDivisionError, ValueError, OverflowError):
                     return None
                 return _make_numeric_literal(result)

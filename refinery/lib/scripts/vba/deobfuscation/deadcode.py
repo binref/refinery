@@ -81,8 +81,7 @@ class VbaDeadVariableRemoval(Transformer):
         for node in module.walk():
             if not isinstance(node, VbaIdentifier):
                 continue
-            parent = node.parent
-            if isinstance(parent, VbaLetStatement) and parent.target is node:
+            if isinstance(node.parent, VbaLetStatement) and node.parent.target is node:
                 continue
             read_names.add(node.name.lower())
         removals: list[tuple[list[Statement], int]] = []

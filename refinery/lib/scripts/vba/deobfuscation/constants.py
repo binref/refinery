@@ -3,17 +3,15 @@ VBA constant inlining: substitutes single-assignment constant variables with the
 """
 from __future__ import annotations
 
-from refinery.lib.scripts import Expression, Statement, Transformer
+from refinery.lib.scripts import Expression, Statement, Transformer, _replace_in_parent
 from refinery.lib.scripts.vba.deobfuscation._helpers import (
     _body_lists,
     _clone_expression,
     _is_constant_expr,
+    _is_identifier_read,
 )
 from refinery.lib.scripts.vba.model import (
-    VbaCallExpression,
     VbaConstDeclaration,
-    VbaConstDeclarator,
-    VbaExpressionStatement,
     VbaForEachStatement,
     VbaForStatement,
     VbaIdentifier,
@@ -31,6 +29,16 @@ class VbaConstantInlining(Transformer):
         return None
 
     def _inline_constants(self, module: VbaModule) -> bool:
+        candidates = self._collect_inline_candidates(module)
+        if not candidates:
+            return False
+        reads = self._find_constant_reads(module, candidates)
+        return self._apply_constant_replacements(reads, candidates)
+
+    @staticmethod
+    def _collect_inline_candidates(
+        module: VbaModule,
+    ) -> dict[str, list[tuple[Expression, list[Statement], int]]]:
         candidates: dict[str, list[tuple[Expression, list[Statement], int]]] = {}
         assignment_counts: dict[str, int] = {}
         for body in _body_lists(module):
@@ -55,52 +63,40 @@ class VbaConstantInlining(Transformer):
             if isinstance(node, (VbaForStatement, VbaForEachStatement)):
                 if isinstance(node.variable, VbaIdentifier):
                     loop_variables.add(node.variable.name.lower())
-        candidates = {
+        return {
             k: v for k, v in candidates.items()
             if len(v) == 1
             and k not in loop_variables
             and assignment_counts.get(k, 0) == 1
         }
-        if not candidates:
-            return False
+
+    @staticmethod
+    def _find_constant_reads(
+        module: VbaModule,
+        candidates: dict[str, list[tuple[Expression, list[Statement], int]]],
+    ) -> dict[str, list[VbaIdentifier]]:
         reads: dict[str, list[VbaIdentifier]] = {}
         for node in module.walk():
             if not isinstance(node, VbaIdentifier):
                 continue
-            parent = node.parent
-            if isinstance(parent, VbaLetStatement) and parent.target is node:
-                continue
-            if isinstance(parent, (VbaConstDeclaration, VbaConstDeclarator)):
-                continue
-            if isinstance(parent, VbaCallExpression) and parent.callee is node:
-                continue
-            if isinstance(parent, VbaExpressionStatement) and parent.expression is node:
-                continue
-            if (
-                isinstance(parent, (VbaForStatement, VbaForEachStatement))
-                and parent.variable is node
-            ):
+            if not _is_identifier_read(node):
                 continue
             key = node.name.lower()
             if key in candidates:
                 reads.setdefault(key, []).append(node)
+        return reads
+
+    @staticmethod
+    def _apply_constant_replacements(
+        reads: dict[str, list[VbaIdentifier]],
+        candidates: dict[str, list[tuple[Expression, list[Statement], int]]],
+    ) -> bool:
         removals: list[tuple[list[Statement], int]] = []
         for key, refs in reads.items():
             literal_node, body, idx = candidates[key][0]
             for ref in refs:
                 replacement = _clone_expression(literal_node)
-                replacement.parent = ref.parent
-                parent = ref.parent
-                for attr_name in vars(parent):
-                    if attr_name in ('parent', 'offset'):
-                        continue
-                    value = getattr(parent, attr_name)
-                    if value is ref:
-                        setattr(parent, attr_name, replacement)
-                    elif isinstance(value, list):
-                        for i, item in enumerate(value):
-                            if item is ref:
-                                value[i] = replacement
+                _replace_in_parent(ref, replacement)
             removals.append((body, idx))
         for body, idx in sorted(removals, key=lambda t: t[1], reverse=True):
             del body[idx]

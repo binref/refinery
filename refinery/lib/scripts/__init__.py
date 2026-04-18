@@ -239,6 +239,36 @@ class Transformer(Visitor):
         return None
 
 
+def _replace_in_parent(old: Node, new: Node):
+    """
+    Replace `old` with `new` in `old`'s parent node. Sets `new.parent` and handles direct fields,
+    list items, and tuple-in-list items.
+    """
+    parent = old.parent
+    if parent is None:
+        return
+    new.parent = parent
+    for attr_name in vars(parent):
+        if attr_name in _SKIP_FIELDS:
+            continue
+        value = getattr(parent, attr_name)
+        if value is old:
+            setattr(parent, attr_name, new)
+            return
+        if isinstance(value, list):
+            for i, item in enumerate(value):
+                if item is old:
+                    value[i] = new
+                    return
+                if isinstance(item, tuple):
+                    lst = list(item)
+                    for j, elem in enumerate(lst):
+                        if elem is old:
+                            lst[j] = new
+                            value[i] = tuple(lst)
+                            return
+
+
 class Synthesizer(Visitor):
     """
     Base class for AST-to-source synthesizers. Provides indentation-aware output buffering shared

@@ -8,7 +8,7 @@ import re
 
 from collections.abc import Generator
 
-from refinery.lib.scripts import Block, Node
+from refinery.lib.scripts import Block, Node, _replace_in_parent
 from refinery.lib.scripts.ps1.token import BACKTICK_ESCAPE
 from refinery.lib.scripts.ps1.model import (
     Expression,
@@ -813,31 +813,6 @@ def _get_body(node) -> list | None:
         return node.body
     return None
 
-
-def _replace_in_parent(old: Node, new: Node):
-    parent = old.parent
-    if parent is None:
-        return
-    new.parent = parent
-    for attr_name in vars(parent):
-        if attr_name in ('parent', 'offset'):
-            continue
-        value = getattr(parent, attr_name)
-        if value is old:
-            setattr(parent, attr_name, new)
-            return
-        if isinstance(value, list):
-            for i, item in enumerate(value):
-                if item is old:
-                    value[i] = new
-                    return
-                if isinstance(item, tuple):
-                    lst = list(item)
-                    for j, elem in enumerate(lst):
-                        if elem is old:
-                            lst[j] = new
-                            value[i] = tuple(lst)
-                            return
 
 
 def _unwrap_parens(node: Expression) -> Expression:

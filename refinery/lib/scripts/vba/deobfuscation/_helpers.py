@@ -15,9 +15,15 @@ from refinery.lib.scripts.vba.model import (
     VbaBinaryExpression,
     VbaBooleanLiteral,
     VbaCallExpression,
+    VbaConstDeclaration,
+    VbaConstDeclarator,
+    VbaExpressionStatement,
     VbaFloatLiteral,
+    VbaForEachStatement,
+    VbaForStatement,
     VbaIdentifier,
     VbaIntegerLiteral,
+    VbaLetStatement,
     VbaModule,
     VbaStringLiteral,
 )
@@ -84,6 +90,28 @@ def _is_constant_expr(node: Expression) -> bool:
     return False
 
 
+def _is_identifier_read(node: VbaIdentifier) -> bool:
+    """
+    Return whether an identifier node is in a read position. Returns False for identifiers that
+    appear as assignment targets, declaration names, call targets, or loop variables.
+    """
+    parent = node.parent
+    if isinstance(parent, VbaLetStatement) and parent.target is node:
+        return False
+    if isinstance(parent, (VbaConstDeclaration, VbaConstDeclarator)):
+        return False
+    if isinstance(parent, VbaCallExpression) and parent.callee is node:
+        return False
+    if isinstance(parent, VbaExpressionStatement) and parent.expression is node:
+        return False
+    if (
+        isinstance(parent, (VbaForStatement, VbaForEachStatement))
+        and parent.variable is node
+    ):
+        return False
+    return True
+
+
 def _literal_value(node: Expression) -> _Value:
     if isinstance(node, VbaStringLiteral):
         return node.value
@@ -96,13 +124,13 @@ def _literal_value(node: Expression) -> _Value:
     return None
 
 
-def _string_value(node: Expression) -> str | None:
+def _string_value(node: Expression | None) -> str | None:
     if isinstance(node, VbaStringLiteral):
         return node.value
     return None
 
 
-def _numeric_value(node: Expression) -> int | float | None:
+def _numeric_value(node: Expression | None) -> int | float | None:
     if isinstance(node, VbaIntegerLiteral):
         return node.value
     if isinstance(node, VbaFloatLiteral):

@@ -106,6 +106,10 @@ class VbaSynthesizer(Synthesizer):
             self.visit(p)
         self._write(')')
 
+    def _emit_scope(self, scope: VbaScopeModifier):
+        if scope is not VbaScopeModifier.NONE:
+            self._write(F'{scope.value} ')
+
     def visit_VbaIntegerLiteral(self, node: VbaIntegerLiteral):
         self._write(node.raw)
 
@@ -240,8 +244,7 @@ class VbaSynthesizer(Synthesizer):
             self._write(F' {node.value}')
 
     def visit_VbaDeclareStatement(self, node: VbaDeclareStatement):
-        if node.scope is not VbaScopeModifier.NONE:
-            self._write(F'{node.scope.value} ')
+        self._emit_scope(node.scope)
         kind = 'Function' if node.is_function else 'Sub'
         self._write(F'Declare {kind} {node.name}')
         if node.lib:
@@ -253,8 +256,7 @@ class VbaSynthesizer(Synthesizer):
             self._write(F' As {node.return_type}')
 
     def visit_VbaTypeDefinition(self, node: VbaTypeDefinition):
-        if node.scope is not VbaScopeModifier.NONE:
-            self._write(F'{node.scope.value} ')
+        self._emit_scope(node.scope)
         self._write(F'Type {node.name}')
         self._depth += 1
         for m in node.members:
@@ -271,8 +273,7 @@ class VbaSynthesizer(Synthesizer):
         self._write('End Type')
 
     def visit_VbaEnumDefinition(self, node: VbaEnumDefinition):
-        if node.scope is not VbaScopeModifier.NONE:
-            self._write(F'{node.scope.value} ')
+        self._emit_scope(node.scope)
         self._write(F'Enum {node.name}')
         self._depth += 1
         for m in node.members:
@@ -289,8 +290,7 @@ class VbaSynthesizer(Synthesizer):
             self.visit(node.value)
 
     def visit_VbaConstDeclaration(self, node: VbaConstDeclaration):
-        if node.scope is not VbaScopeModifier.NONE:
-            self._write(F'{node.scope.value} ')
+        self._emit_scope(node.scope)
         self._write('Const ')
         for i, d in enumerate(node.declarators):
             if i > 0:
@@ -327,8 +327,7 @@ class VbaSynthesizer(Synthesizer):
                 self._write(F' As {node.type_name}')
 
     def visit_VbaEventDeclaration(self, node: VbaEventDeclaration):
-        if node.scope is not VbaScopeModifier.NONE:
-            self._write(F'{node.scope.value} ')
+        self._emit_scope(node.scope)
         self._write(F'Event {node.name}')
         self._emit_params(node.params)
 
@@ -358,8 +357,7 @@ class VbaSynthesizer(Synthesizer):
         scope: VbaScopeModifier,
         is_static: bool,
     ):
-        if scope is not VbaScopeModifier.NONE:
-            self._write(F'{scope.value} ')
+        self._emit_scope(scope)
         if is_static:
             self._write('Static ')
         self._write(F'{keyword} {name}')

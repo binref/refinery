@@ -6,6 +6,7 @@ from __future__ import annotations
 from refinery.lib.scripts import Transformer
 from refinery.lib.scripts.vba.deobfuscation._helpers import (
     _eval_string_builtin,
+    _is_identifier_read,
     _is_literal,
     _literal_value,
     _SINGLE_ARG_BUILTINS,
@@ -166,19 +167,19 @@ class _VbaInterpreter:
         is_until = stmt.condition_type is VbaLoopConditionType.UNTIL
         while True:
             self._tick()
-            if check_before and stmt.condition is not None:
-                cond = self._truthy(self._eval(stmt.condition))
-                if is_until and cond:
-                    break
-                if not is_until and not cond:
-                    break
+            if check_before and self._should_exit_loop(stmt.condition, is_until):
+                break
             self._exec_statements(stmt.body)
-            if not check_before and stmt.condition is not None:
-                cond = self._truthy(self._eval(stmt.condition))
-                if is_until and cond:
-                    break
-                if not is_until and not cond:
-                    break
+            if not check_before and self._should_exit_loop(stmt.condition, is_until):
+                break
+
+    def _should_exit_loop(self, condition, is_until: bool) -> bool:
+        if condition is None:
+            return False
+        cond = self._truthy(self._eval(condition))
+        if is_until:
+            return cond
+        return not cond
 
     def _tick(self):
         self._iterations += 1
@@ -466,10 +467,7 @@ class VbaFunctionEvaluator(Transformer):
             required = [p for p in funcdef.params if not p.is_optional and p.default is None]
             if required:
                 return None
-        parent = node.parent
-        if isinstance(parent, VbaLetStatement) and parent.target is node:
-            return None
-        if isinstance(parent, VbaCallExpression) and parent.callee is node:
+        if not _is_identifier_read(node):
             return None
         self._call_counts[key] = self._call_counts.get(key, 0) + 1
         bindings = self._bind_parameters(funcdef, [])
