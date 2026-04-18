@@ -10,7 +10,7 @@ from typing import Any, Callable, TYPE_CHECKING
 if TYPE_CHECKING:
     from typing import TypeAlias
 
-from refinery.lib.scripts import Expression, Node, Statement
+from refinery.lib.scripts import Expression, Kind, Node, Statement, _classify_fields
 from refinery.lib.scripts.vba.model import (
     VbaBinaryExpression,
     VbaBooleanLiteral,
@@ -23,6 +23,8 @@ from refinery.lib.scripts.vba.model import (
 )
 
 _Value: TypeAlias = str | int | float | bool | None
+
+_CHR_NAMES = frozenset({'chr', 'chrw', 'chr$', 'chrw$'})
 
 
 def _make_string_literal(value: str) -> VbaStringLiteral:
@@ -64,7 +66,7 @@ def _is_constant_expr(node: Expression) -> bool:
     if isinstance(node, VbaCallExpression):
         if (
             isinstance(node.callee, VbaIdentifier)
-            and node.callee.name.lower() in ('chr', 'chrw', 'chr$', 'chrw$')
+            and node.callee.name.lower() in _CHR_NAMES
             and len(node.arguments) == 1
             and node.arguments[0] is not None
             and isinstance(node.arguments[0], VbaIntegerLiteral)
@@ -266,12 +268,12 @@ def _body_lists(module: VbaModule):
     Yield every statement-list body reachable from the module.
     """
     for node in module.walk():
-        for attr_name in vars(node):
-            if attr_name in ('parent', 'offset'):
+        for field_name, kind in _classify_fields(type(node)):
+            if kind != Kind.ChildList:
                 continue
-            value = getattr(node, attr_name)
-            if isinstance(value, list) and value and isinstance(value[0], Statement):
-                yield value
+            body = getattr(node, field_name)
+            if body and isinstance(body[0], Statement):
+                yield body
 
 
 def _clone_expression(node: Node) -> Node:
@@ -280,22 +282,36 @@ def _clone_expression(node: Node) -> Node:
     """
     clone = copy.copy(node)
     clone.parent = None
-    for attr_name in vars(node):
-        if attr_name in ('parent', 'offset', 'leading_comments'):
-            continue
-        value = getattr(node, attr_name)
-        if isinstance(value, Node):
-            child = _clone_expression(value)
-            child.parent = clone
-            setattr(clone, attr_name, child)
-        elif isinstance(value, list):
+    for field_name, kind in _classify_fields(type(node)):
+        if kind == Kind.ChildNode:
+            value = getattr(node, field_name)
+            if isinstance(value, Node):
+                child = _clone_expression(value)
+                child.parent = clone
+                setattr(clone, field_name, child)
+        elif kind == Kind.ChildList:
+            items = getattr(node, field_name)
             cloned = []
-            for item in value:
+            for item in items:
                 if isinstance(item, Node):
                     child = _clone_expression(item)
                     child.parent = clone
                     cloned.append(child)
                 else:
                     cloned.append(item)
-            setattr(clone, attr_name, cloned)
+            setattr(clone, field_name, cloned)
+        elif kind == Kind.TupleList:
+            items = getattr(node, field_name)
+            cloned = []
+            for tup in items:
+                new_tup = []
+                for elem in tup:
+                    if isinstance(elem, Node):
+                        child = _clone_expression(elem)
+                        child.parent = clone
+                        new_tup.append(child)
+                    else:
+                        new_tup.append(elem)
+                cloned.append(tuple(new_tup))
+            setattr(clone, field_name, cloned)
     return clone

@@ -9,6 +9,7 @@ from typing import Callable
 
 from refinery.lib.scripts import Transformer
 from refinery.lib.scripts.vba.deobfuscation._helpers import (
+    _CHR_NAMES,
     _eval_string_builtin,
     _is_literal,
     _make_integer_literal,
@@ -52,7 +53,7 @@ _INTEGER_OPS: dict[str, Callable] = {
 def _is_chr_call(node: VbaCallExpression) -> int | None:
     if (
         isinstance(node.callee, VbaIdentifier)
-        and node.callee.name.lower() in ('chr', 'chrw', 'chr$', 'chrw$')
+        and node.callee.name.lower() in _CHR_NAMES
         and len(node.arguments) == 1
         and node.arguments[0] is not None
     ):
