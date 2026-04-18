@@ -293,10 +293,7 @@ class VbaSynthesizer(Synthesizer):
     def visit_VbaConstDeclaration(self, node: VbaConstDeclaration):
         self._emit_scope(node.scope)
         self._write('Const ')
-        for i, d in enumerate(node.declarators):
-            if i > 0:
-                self._write(', ')
-            self.visit(d)
+        self._comma_separated(node.declarators)
 
     def visit_VbaConstDeclarator(self, node: VbaConstDeclarator):
         self._write(node.name)
@@ -308,10 +305,7 @@ class VbaSynthesizer(Synthesizer):
 
     def visit_VbaVariableDeclaration(self, node: VbaVariableDeclaration):
         self._write(F'{node.scope.value} ')
-        for i, d in enumerate(node.declarators):
-            if i > 0:
-                self._write(', ')
-            self.visit(d)
+        self._comma_separated(node.declarators)
 
     def visit_VbaVariableDeclarator(self, node: VbaVariableDeclarator):
         if node.with_events:
@@ -571,10 +565,7 @@ class VbaSynthesizer(Synthesizer):
         self._write('ReDim ')
         if node.preserve:
             self._write('Preserve ')
-        for i, d in enumerate(node.declarators):
-            if i > 0:
-                self._write(', ')
-            self.visit(d)
+        self._comma_separated(node.declarators)
 
     def visit_VbaEraseStatement(self, node: VbaEraseStatement):
         self._write('Erase ')

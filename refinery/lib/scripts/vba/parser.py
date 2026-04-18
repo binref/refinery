@@ -820,20 +820,23 @@ class VbaParser:
         offset = self._current.offset
         self._advance()
 
+        def _loop_condition(position):
+            if self._at(VbaTokenKind.WHILE):
+                kind = VbaLoopConditionType.WHILE
+            elif self._at(VbaTokenKind.UNTIL):
+                kind = VbaLoopConditionType.UNTIL
+            else:
+                return None
+            self._advance()
+            return kind, position, self._parse_expression()
+
         condition: Expression | None = None
         condition_type: VbaLoopConditionType | None = None
         condition_position: VbaLoopConditionPosition | None = None
 
-        if self._at(VbaTokenKind.WHILE):
-            condition_type = VbaLoopConditionType.WHILE
-            condition_position = VbaLoopConditionPosition.PRE
-            self._advance()
-            condition = self._parse_expression()
-        elif self._at(VbaTokenKind.UNTIL):
-            condition_type = VbaLoopConditionType.UNTIL
-            condition_position = VbaLoopConditionPosition.PRE
-            self._advance()
-            condition = self._parse_expression()
+        parsed = _loop_condition(VbaLoopConditionPosition.PRE)
+        if parsed is not None:
+            condition_type, condition_position, condition = parsed
 
         self._eat_eos()
         body: list[Statement] = []
@@ -841,16 +844,9 @@ class VbaParser:
             self._eat_eos()
             if self._at(VbaTokenKind.LOOP):
                 self._advance()
-                if self._at(VbaTokenKind.WHILE):
-                    condition_type = VbaLoopConditionType.WHILE
-                    condition_position = VbaLoopConditionPosition.POST
-                    self._advance()
-                    condition = self._parse_expression()
-                elif self._at(VbaTokenKind.UNTIL):
-                    condition_type = VbaLoopConditionType.UNTIL
-                    condition_position = VbaLoopConditionPosition.POST
-                    self._advance()
-                    condition = self._parse_expression()
+                parsed = _loop_condition(VbaLoopConditionPosition.POST)
+                if parsed is not None:
+                    condition_type, condition_position, condition = parsed
                 break
             if self._at(VbaTokenKind.EOF):
                 break
@@ -1246,21 +1242,7 @@ class VbaParser:
         return self._parse_bound_expression()
 
     def _reparse_is_as_expression(self, offset: int) -> Expression:
-        expr: Expression = VbaIdentifier(name='Is', offset=offset)
-        while True:
-            if self._eat(VbaTokenKind.DOT):
-                member = self._current.value
-                self._advance()
-                expr = VbaMemberAccess(object=expr, member=member, offset=offset)
-            elif self._at(VbaTokenKind.LPAREN):
-                self._advance()
-                args: list[Expression | None] = []
-                if not self._at(VbaTokenKind.RPAREN):
-                    args = self._parse_argument_list(self._PAREN_ARG_STOP)
-                self._expect(VbaTokenKind.RPAREN)
-                expr = VbaCallExpression(callee=expr, arguments=args, offset=offset)
-            else:
-                break
+        expr = self._parse_postfix_chain(VbaIdentifier(name='Is', offset=offset))
         if self._eat(VbaTokenKind.TO):
             upper = self._parse_expression()
             return VbaRangeExpression(start=expr, end=upper, offset=offset)
@@ -1374,8 +1356,7 @@ class VbaParser:
             return self._parse_unary_expression()
         return self._parse_exponentiation_expression()
 
-    def _parse_postfix_expression(self) -> Expression:
-        expr = self._parse_primary_expression()
+    def _parse_postfix_chain(self, expr: Expression) -> Expression:
         while True:
             if self._eat(VbaTokenKind.DOT):
                 member = self._current.value
@@ -1398,6 +1379,9 @@ class VbaParser:
             else:
                 break
         return expr
+
+    def _parse_postfix_expression(self) -> Expression:
+        return self._parse_postfix_chain(self._parse_primary_expression())
 
     def _parse_primary_expression(self) -> Expression:
         tok = self._current
