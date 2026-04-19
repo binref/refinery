@@ -13,7 +13,7 @@ from refinery.lib.scripts.ps1.deobfuscation._helpers import (
     _normalize_dotnet_type_name,
     _string_value,
     _unwrap_integer,
-    _unwrap_paren_to_array,
+    _unwrap_single_paren,
 )
 from refinery.lib.scripts.ps1.model import (
     Ps1BinaryExpression,
@@ -61,7 +61,7 @@ class Ps1TypeCasts(Transformer):
                 return node.operand
         if tn == 'string':
             if node.operand is not None:
-                inner = _unwrap_paren_to_array(node.operand)
+                inner = _unwrap_single_paren(node.operand)
                 parts = _collect_string_arguments(inner)
                 if parts is not None and len(parts) > 1:
                     return _make_string_literal(' '.join(parts))
@@ -81,7 +81,7 @@ class Ps1TypeCasts(Transformer):
                 return _make_string_literal(ch)
         if tn == 'char[]':
             if node.operand is not None:
-                inner = _unwrap_paren_to_array(node.operand)
+                inner = _unwrap_single_paren(node.operand)
                 int_values = _collect_int_arguments(inner)
                 if int_values is not None:
                     try:

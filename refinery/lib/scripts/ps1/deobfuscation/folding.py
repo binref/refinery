@@ -12,11 +12,11 @@ from collections.abc import Iterator
 from refinery.lib.scripts.ps1.deobfuscation._base import LocalFunctionAwareTransformer
 from refinery.lib.scripts.ps1.deobfuscation._helpers import (
     _COMPARISON_OPS,
-    _CONVERT_TYPE_NAMES_QUALIFIED,
+    _CONVERT_TYPE_NAMES,
     _ENCODING_MAP,
-    _KNOWN_ALIAS,
     _REGEX_TYPE_NAMES,
     _STRING_TYPE_NAMES,
+    _apply_format_string,
     _collect_int_arguments,
     _collect_string_arguments,
     _detect_encoding_chain,
@@ -28,7 +28,7 @@ from refinery.lib.scripts.ps1.deobfuscation._helpers import (
     _make_string_literal,
     _string_value,
     _unwrap_integer,
-    _unwrap_paren_to_array,
+    _unwrap_single_paren,
     _unwrap_parens,
     _unwrap_to_array_literal,
 )
@@ -194,14 +194,6 @@ def _foreach_extracts_value(sb: Ps1ScriptBlock) -> bool:
     return isinstance(inner, Ps1Variable) and inner.name == '_'
 
 
-def _is_static_convert_call(node: Ps1InvokeMember) -> bool:
-    return _is_static_type_call(node, _CONVERT_TYPE_NAMES_QUALIFIED)
-
-
-def _is_static_encoding_chain(node: Ps1InvokeMember) -> str | None:
-    return _detect_encoding_chain(node)
-
-
 def _escape_for_expandable(text: str) -> str:
     """
     Escape characters that are special inside double-quoted strings.
@@ -246,18 +238,6 @@ class Ps1ConstantFolding(LocalFunctionAwareTransformer):
 
     def visit_Ps1CommandInvocation(self, node: Ps1CommandInvocation):
         self.generic_visit(node)
-        if isinstance(node.name, Ps1StringLiteral):
-            name_lower = node.name.value.lower()
-            target = _KNOWN_ALIAS.get(name_lower)
-            if target is not None and target != node.name.value:
-                if name_lower not in self._local_functions:
-                    node.name = Ps1StringLiteral(
-                        offset=node.name.offset,
-                        value=target,
-                        raw=target,
-                    )
-                    node.name.parent = node
-                    self.mark_changed()
         return None
 
     def visit_Ps1Pipeline(self, node: Ps1Pipeline):
@@ -576,7 +556,7 @@ class Ps1ConstantFolding(LocalFunctionAwareTransformer):
     def _try_fold_static_method(
         self, node: Ps1InvokeMember, lower: str,
     ) -> Expression | None:
-        if _is_static_convert_call(node) and lower == 'frombase64string':
+        if _is_static_type_call(node, _CONVERT_TYPE_NAMES) and lower == 'frombase64string':
             if len(node.arguments) == 1:
                 b64_str = _string_value(node.arguments[0])
                 if b64_str is not None:
@@ -591,10 +571,10 @@ class Ps1ConstantFolding(LocalFunctionAwareTransformer):
                     array = Ps1ArrayLiteral(elements=elements)
                     return Ps1ArrayExpression(
                         body=[Ps1ExpressionStatement(expression=array)])
-        encoding_name = _is_static_encoding_chain(node)
+        encoding_name = _detect_encoding_chain(node)
         if encoding_name is not None:
             if len(node.arguments) == 1:
-                arg = _unwrap_paren_to_array(node.arguments[0])
+                arg = _unwrap_single_paren(node.arguments[0])
                 if isinstance(arg, Ps1ArrayExpression) and len(arg.body) == 1:
                     stmt = arg.body[0]
                     if isinstance(stmt, Ps1ExpressionStatement) and stmt.expression:
@@ -729,17 +709,8 @@ class Ps1ConstantFolding(LocalFunctionAwareTransformer):
         args = _collect_string_arguments(node.right)
         if args is None:
             return None
-        try:
-            def replacer(m: re.Match) -> str:
-                full = m.group(0)
-                if full == '{{':
-                    return '{'
-                if full == '}}':
-                    return '}'
-                idx = int(m.group(1))
-                return args[idx]
-            result = re.sub(r'\{\{|\}\}|\{(\d+)\}', replacer, fmt_str)
-        except (IndexError, ValueError):
+        result = _apply_format_string(fmt_str, args)
+        if result is None:
             return None
         return _make_string_literal(result)
 

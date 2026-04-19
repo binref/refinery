@@ -770,6 +770,28 @@ def _collect_string_arguments(node: Expression) -> list[str] | None:
     return None
 
 
+_FORMAT_PATTERN = re.compile(r'\{\{|\}\}|\{(\d+)\}')
+
+
+def _apply_format_string(fmt: str, args: list[str]) -> str | None:
+    """
+    Apply a PowerShell-style format string to a list of string arguments.
+    Returns the formatted string, or ``None`` on index/value errors.
+    """
+    try:
+        def replacer(m: re.Match) -> str:
+            full = m.group(0)
+            if full == '{{':
+                return '{'
+            if full == '}}':
+                return '}'
+            idx = int(m.group(1))
+            return args[idx]
+        return _FORMAT_PATTERN.sub(replacer, fmt)
+    except (IndexError, ValueError):
+        return None
+
+
 def _collect_int_arguments(node: Expression) -> list[int] | None:
     if isinstance(node, Ps1ArrayLiteral):
         result = []
@@ -785,7 +807,7 @@ def _collect_int_arguments(node: Expression) -> list[int] | None:
     return None
 
 
-def _unwrap_paren_to_array(node: Expression) -> Expression:
+def _unwrap_single_paren(node: Expression) -> Expression:
     if isinstance(node, Ps1ParenExpression) and node.expression is not None:
         return node.expression
     return node
@@ -901,7 +923,6 @@ _ENCODING_MAP = {
 }
 
 _CONVERT_TYPE_NAMES = frozenset({'convert', 'system.convert'})
-_CONVERT_TYPE_NAMES_QUALIFIED = frozenset({'system.convert'})
 _ENCODING_TYPE_NAMES = frozenset({'system.text.encoding', 'text.encoding'})
 _STRING_TYPE_NAMES = frozenset({'string', 'system.string'})
 _MATH_TYPE_NAMES = frozenset({'math', 'system.math'})

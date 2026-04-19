@@ -19,6 +19,7 @@ from refinery.lib.scripts.ps1.deobfuscation._helpers import (
     _ENCODING_TYPE_NAMES,
     _MATH_TYPE_NAMES,
     _STRING_TYPE_NAMES,
+    _apply_format_string,
     _detect_encoding_chain,
     _extract_foreach_scriptblock,
     _get_command_name,
@@ -708,18 +709,11 @@ class _Ps1Interpreter:
             return self._to_str(collection)
         if method == 'format' and len(args) >= 1:
             fmt = self._to_str(args[0])
-            try:
-                def replacer(m: re.Match) -> str:
-                    full = m.group(0)
-                    if full == '{{':
-                        return '{'
-                    if full == '}}':
-                        return '}'
-                    idx = int(m.group(1)) + 1
-                    return self._to_str(args[idx])
-                return re.sub(r'\{\{|\}\}|\{(\d+)\}', replacer, fmt)
-            except (IndexError, ValueError):
+            str_args = [self._to_str(a) for a in args[1:]]
+            result = _apply_format_string(fmt, str_args)
+            if result is None:
                 raise _Ps1InterpreterError
+            return result
         if method == 'isnullorempty' and len(args) == 1:
             v = args[0]
             return v is None or (isinstance(v, str) and len(v) == 0)

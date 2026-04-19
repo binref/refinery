@@ -85,8 +85,8 @@ class TestPs1Deobfuscator(TestPs1):
         result = self._deobfuscate(
             "$x = [Type]'Convert'; $x::FromBase64String('dGVzdA==')"
         )
-        self.assertIn('[Convert]', result)
         self.assertNotIn("'Convert'", result)
+        self.assertIn('0x74', result)
 
     def test_uncurly_variable(self):
         data = '${variable}'
@@ -132,6 +132,13 @@ class TestPs1Deobfuscator(TestPs1):
 
     def test_b64convert(self):
         data = '[System.Convert]::FromBase64String("AQID")'
+        result = self._deobfuscate(data)
+        self.assertIn('0x01', result)
+        self.assertIn('0x02', result)
+        self.assertIn('0x03', result)
+
+    def test_b64convert_unqualified(self):
+        data = '[Convert]::FromBase64String("AQID")'
         result = self._deobfuscate(data)
         self.assertIn('0x01', result)
         self.assertIn('0x02', result)
