@@ -5,12 +5,12 @@ from __future__ import annotations
 
 from refinery.lib.scripts import Block, Expression, Node, Statement, Transformer
 from refinery.lib.scripts.ps1.deobfuscation.helpers import (
-    COMPARISON_OPS,
     get_body,
     is_builtin_variable,
     unwrap_integer,
     unwrap_parens,
 )
+from refinery.lib.scripts.ps1.deobfuscation.names import COMPARISON_OPS
 from refinery.lib.scripts.ps1.model import (
     Ps1AssignmentExpression,
     Ps1BinaryExpression,

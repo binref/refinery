@@ -11,12 +11,6 @@ from collections.abc import Iterator
 
 from refinery.lib.scripts.ps1.deobfuscation.base import LocalFunctionAwareTransformer
 from refinery.lib.scripts.ps1.deobfuscation.helpers import (
-    COMPARISON_OPS,
-    CONVERT_TYPE_NAMES,
-    ENCODING_MAP,
-    REGEX_TYPE_NAMES,
-    STRING_TYPE_NAMES,
-    apply_format_string,
     collect_int_arguments,
     collect_string_arguments,
     detect_encoding_chain,
@@ -28,9 +22,17 @@ from refinery.lib.scripts.ps1.deobfuscation.helpers import (
     make_string_literal,
     string_value,
     unwrap_integer,
-    unwrap_single_paren,
     unwrap_parens,
+    unwrap_single_paren,
     unwrap_to_array_literal,
+)
+from refinery.lib.scripts.ps1.deobfuscation.names import (
+    COMPARISON_OPS,
+    CONVERT_TYPE_NAMES,
+    ENCODING_MAP,
+    REGEX_TYPE_NAMES,
+    STRING_TYPE_NAMES,
+    apply_format_string,
 )
 from refinery.lib.scripts.ps1.deobfuscation.typenames import (
     is_known_member,

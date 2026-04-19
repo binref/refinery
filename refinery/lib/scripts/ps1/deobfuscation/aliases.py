@@ -5,10 +5,10 @@ from __future__ import annotations
 
 from refinery.lib.scripts import Node, Transformer
 from refinery.lib.scripts.ps1.deobfuscation.helpers import (
-    case_normalize_name,
     get_command_name,
     string_value,
 )
+from refinery.lib.scripts.ps1.deobfuscation.names import case_normalize_name
 from refinery.lib.scripts.ps1.model import (
     Ps1CommandArgument,
     Ps1CommandArgumentKind,
@@ -21,8 +21,7 @@ _ALIAS_COMMANDS = frozenset({'set-alias', 'sal', 'new-alias', 'nal'})
 
 def _extract_alias_definition(cmd: Ps1CommandInvocation) -> tuple[str, str] | None:
     """
-    Extract `(alias_name, target_command)` from a `Set-Alias` / `New-Alias`
-    invocation. Handles:
+    Extract `(alias_name, target_command)` from a `Set-Alias` / `New-Alias` invocation. Handles:
 
     - Positional:  `sal aliasName targetCmd`
     - Named:       `Set-Alias -Name aliasName -Value targetCmd`
@@ -72,13 +71,12 @@ def _extract_alias_definition(cmd: Ps1CommandInvocation) -> tuple[str, str] | No
 
 class Ps1AliasInlining(Transformer):
     """
-    Replace command invocations that use aliases defined via Set-Alias / sal
-    with their target command names.
+    Replace command invocations that use aliases defined via Set-Alias / sal with their target
+    command names.
 
-    Alias definitions are intentionally kept in the AST: IEX inlining may
-    parse new code in later iterations that references the same alias, so
-    removing the definition prematurely would leave those references
-    unresolved.
+    Alias definitions are intentionally kept in the AST: IEX inlining may parse new code in later
+    iterations that references the same alias, so removing the definition prematurely would leave
+    those references unresolved.
     """
 
     def visit(self, node: Node):
@@ -91,9 +89,11 @@ class Ps1AliasInlining(Transformer):
 
     def _collect_aliases(self, root: Node) -> dict[str, tuple[Ps1CommandInvocation, str]]:
         """
-        Collect alias definitions. Returns a mapping from `lower(alias_name)`
-        to `(definition_cmd_node, target_command_name)`. Only aliases defined
-        exactly once are included.
+        Collect alias definitions. Returns a mapping from `lower(alias_name)` to:
+
+            (definition_cmd_node, target_command_name)
+
+        Only aliases defined exactly once are included.
         """
         define_counts: dict[str, int] = {}
         definitions: dict[str, tuple[Ps1CommandInvocation, str]] = {}
@@ -124,7 +124,7 @@ class Ps1AliasInlining(Transformer):
         """
         Normalize the target command name inside alias definition arguments.
         """
-        for _key, (defn_node, target_name) in aliases.items():
+        for defn_node, target_name in aliases.values():
             normalized = case_normalize_name(target_name)
             if normalized == target_name:
                 continue

@@ -12,7 +12,6 @@ from refinery.lib.scripts import (
     _replace_in_parent,
 )
 from refinery.lib.scripts.ps1.deobfuscation.helpers import (
-    PS1_KNOWN_VARIABLES,
     get_body,
     is_array_reverse_call,
     is_builtin_variable,
@@ -21,6 +20,7 @@ from refinery.lib.scripts.ps1.deobfuscation.helpers import (
     unwrap_parens,
     unwrap_to_array_literal,
 )
+from refinery.lib.scripts.ps1.deobfuscation.names import PS1_KNOWN_VARIABLES
 from refinery.lib.scripts.ps1.model import (
     Ps1ArrayExpression,
     Ps1ArrayLiteral,
@@ -118,6 +118,7 @@ _PS1_AUTOMATIC_VARIABLES = frozenset({
     'true',
 })
 
+
 def _assignment_target_variable(target) -> Ps1Variable | None:
     """
     Extract the variable from an assignment target, unwrapping any type
@@ -198,8 +199,7 @@ def _constant_value_key(node: Node) -> tuple | None:
 
 def _get_array_literal(node: Node) -> Ps1ArrayLiteral | None:
     """
-    Return the indexable `Ps1ArrayLiteral` from either a bare literal or
-    `@(...)`.
+    Return the indexable `Ps1ArrayLiteral` from either a bare literal or `@(...)`.
     """
     if isinstance(node, Expression):
         return unwrap_to_array_literal(node)
@@ -292,9 +292,9 @@ class Ps1ConstantInlining(Transformer):
 
             (candidates, scope_entries)
 
-        where candidates maps lower_name to ([assignment_nodes], constant_value) for variables whose
-        every assignment is to the same constant value, and scope_entries maps lower_name to a list
-        of (body_list, index) tuples locating each assignment in its enclosing body.
+        where candidates maps lower_name to ([assignment_nodes], constant_value) for variables
+        whose every assignment is to the same constant value, and scope_entries maps lower_name to
+        a list of (body_list, index) tuples locating each assignment in its enclosing body.
         """
         rejected: set[str] = set()
         candidates: dict[str, tuple[list[Ps1AssignmentExpression], Node]] = {}
@@ -423,104 +423,122 @@ class Ps1ConstantInlining(Transformer):
         handled_vars: set[int] = set()
 
         for node in list(root.walk()):
-            # Indexed access: $x[2]
             if isinstance(node, Ps1IndexExpression):
                 var = node.object
                 if isinstance(var, Ps1Variable):
                     key = _candidate_key(var)
-                    if key is None:
-                        continue
-                    info = candidates.get(key)
-                    if info is None:
-                        continue
-                    assign_nodes, const_value = info
-                    if id(node.parent) in assign_node_ids:
-                        handled_vars.add(id(var))
-                        continue
-                    if _inside_try_body(node):
-                        remaining[key] = remaining.get(key, 0) + 1
-                        handled_vars.add(id(var))
-                        continue
-                    entries = scope_entries.get(key)
-                    if entries is not None and not _is_dominated_by(node, entries):
-                        remaining[key] = remaining.get(key, 0) + 1
-                        handled_vars.add(id(var))
-                        continue
-                    if not isinstance(node.index, Ps1IntegerLiteral):
-                        if isinstance(const_value, Ps1StringLiteral):
-                            replacement = _clone_constant(const_value)
-                            replacement.parent = node
-                            node.object = replacement
-                            self.mark_changed()
-                            inlined[key] = inlined.get(key, 0) + 1
-                            handled_vars.add(id(var))
-                        else:
-                            remaining[key] = remaining.get(key, 0) + 1
-                            handled_vars.add(id(var))
-                        continue
-                    idx = node.index.value
-                    if isinstance(const_value, Ps1StringLiteral):
-                        s = const_value.value
-                        if idx < 0 or idx >= len(s):
-                            remaining[key] = remaining.get(key, 0) + 1
-                            continue
-                        replacement = make_string_literal(s[idx])
-                        _replace_in_parent(node, replacement)
-                        self.mark_changed()
-                        inlined[key] = inlined.get(key, 0) + 1
-                        handled_vars.add(id(var))
-                        continue
-                    array = _get_array_literal(const_value)
-                    if array is None:
-                        remaining[key] = remaining.get(key, 0) + 1
-                        handled_vars.add(id(var))
-                        continue
-                    elements = array.elements
-                    if idx < 0 or idx >= len(elements):
-                        remaining[key] = remaining.get(key, 0) + 1
-                        continue
-                    replacement = _clone_constant(elements[idx])
-                    _replace_in_parent(node, replacement)
-                    self.mark_changed()
-                    inlined[key] = inlined.get(key, 0) + 1
-                    handled_vars.add(id(var))
+                    if key is not None and key in candidates:
+                        self._substitute_index_reference(
+                            node, var, key, candidates, scope_entries,
+                            assign_node_ids, remaining, inlined, handled_vars,
+                        )
                 continue
-
-            # Simple variable reference: $x
             if isinstance(node, Ps1Variable):
-                if id(node) in handled_vars:
-                    continue
-                key = _candidate_key(node)
-                if key is None:
-                    continue
-                info = candidates.get(key)
-                if info is None:
-                    continue
-                if key in remaining:
-                    continue
-                assign_nodes, const_value = info
-                parent = node.parent
-                while isinstance(parent, Ps1CastExpression):
-                    parent = parent.parent
-                if (
-                    id(parent) in assign_node_ids
-                    and isinstance(parent, Ps1AssignmentExpression)
-                    and _assignment_target_variable(parent.target) is node
-                ):
-                    continue
-                if _inside_try_body(node):
-                    remaining[key] = remaining.get(key, 0) + 1
-                    continue
-                entries = scope_entries.get(key)
-                if entries is not None and not _is_dominated_by(node, entries):
-                    remaining[key] = remaining.get(key, 0) + 1
-                    continue
-                replacement = _clone_constant(const_value)
-                _replace_in_parent(node, replacement)
-                self.mark_changed()
-                inlined[key] = inlined.get(key, 0) + 1
+                if id(node) not in handled_vars:
+                    key = _candidate_key(node)
+                    if key is not None and key in candidates and key not in remaining:
+                        self._substitute_variable_reference(
+                            node, key, candidates, scope_entries,
+                            assign_node_ids, remaining, inlined,
+                        )
 
         return remaining, inlined
+
+    def _substitute_index_reference(
+        self,
+        node: Ps1IndexExpression,
+        var: Ps1Variable,
+        key: str,
+        candidates: dict[str, tuple[list[Ps1AssignmentExpression], Node]],
+        scope_entries: dict[str, list[tuple[list, int]]],
+        assign_node_ids: set[int],
+        remaining: dict[str, int],
+        inlined: dict[str, int],
+        handled_vars: set[int],
+    ) -> None:
+        _, const_value = candidates[key]
+        if id(node.parent) in assign_node_ids:
+            handled_vars.add(id(var))
+            return
+        if _inside_try_body(node):
+            remaining[key] = remaining.get(key, 0) + 1
+            handled_vars.add(id(var))
+            return
+        entries = scope_entries.get(key)
+        if entries is not None and not _is_dominated_by(node, entries):
+            remaining[key] = remaining.get(key, 0) + 1
+            handled_vars.add(id(var))
+            return
+        if not isinstance(node.index, Ps1IntegerLiteral):
+            if isinstance(const_value, Ps1StringLiteral):
+                replacement = _clone_constant(const_value)
+                replacement.parent = node
+                node.object = replacement
+                self.mark_changed()
+                inlined[key] = inlined.get(key, 0) + 1
+                handled_vars.add(id(var))
+            else:
+                remaining[key] = remaining.get(key, 0) + 1
+                handled_vars.add(id(var))
+            return
+        idx = node.index.value
+        if isinstance(const_value, Ps1StringLiteral):
+            s = const_value.value
+            if idx < 0 or idx >= len(s):
+                remaining[key] = remaining.get(key, 0) + 1
+                return
+            replacement = make_string_literal(s[idx])
+            _replace_in_parent(node, replacement)
+            self.mark_changed()
+            inlined[key] = inlined.get(key, 0) + 1
+            handled_vars.add(id(var))
+            return
+        array = _get_array_literal(const_value)
+        if array is None:
+            remaining[key] = remaining.get(key, 0) + 1
+            handled_vars.add(id(var))
+            return
+        elements = array.elements
+        if idx < 0 or idx >= len(elements):
+            remaining[key] = remaining.get(key, 0) + 1
+            return
+        replacement = _clone_constant(elements[idx])
+        _replace_in_parent(node, replacement)
+        self.mark_changed()
+        inlined[key] = inlined.get(key, 0) + 1
+        handled_vars.add(id(var))
+
+    def _substitute_variable_reference(
+        self,
+        node: Ps1Variable,
+        key: str,
+        candidates: dict[str, tuple[list[Ps1AssignmentExpression], Node]],
+        scope_entries: dict[str, list[tuple[list, int]]],
+        assign_node_ids: set[int],
+        remaining: dict[str, int],
+        inlined: dict[str, int],
+    ) -> None:
+        _, const_value = candidates[key]
+        parent = node.parent
+        while isinstance(parent, Ps1CastExpression):
+            parent = parent.parent
+        if (
+            id(parent) in assign_node_ids
+            and isinstance(parent, Ps1AssignmentExpression)
+            and _assignment_target_variable(parent.target) is node
+        ):
+            return
+        if _inside_try_body(node):
+            remaining[key] = remaining.get(key, 0) + 1
+            return
+        entries = scope_entries.get(key)
+        if entries is not None and not _is_dominated_by(node, entries):
+            remaining[key] = remaining.get(key, 0) + 1
+            return
+        replacement = _clone_constant(const_value)
+        _replace_in_parent(node, replacement)
+        self.mark_changed()
+        inlined[key] = inlined.get(key, 0) + 1
 
     def _remove_dead_assignments(
         self,

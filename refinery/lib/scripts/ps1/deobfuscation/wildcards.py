@@ -15,10 +15,6 @@ from collections.abc import Iterable
 from fnmatch import translate as fnmatch_translate
 
 from refinery.lib.scripts.ps1.deobfuscation.helpers import (
-    GET_COMMAND_ALIASES,
-    GET_MEMBER_ALIASES,
-    KNOWN_NAMES,
-    PS1_KNOWN_VARIABLES,
     extract_first_positional_string,
     get_command_name,
     get_member_name,
@@ -26,9 +22,15 @@ from refinery.lib.scripts.ps1.deobfuscation.helpers import (
     string_value,
     unwrap_parens,
 )
+from refinery.lib.scripts.ps1.deobfuscation.names import (
+    GET_COMMAND_ALIASES,
+    GET_MEMBER_ALIASES,
+    KNOWN_NAMES,
+    PS1_KNOWN_VARIABLES,
+)
 from refinery.lib.scripts.ps1.deobfuscation.typenames import (
-    VariableTypeAwareTransformer,
     _TYPE_MEMBERS,
+    VariableTypeAwareTransformer,
     resolve_expression_type,
 )
 from refinery.lib.scripts.ps1.model import (

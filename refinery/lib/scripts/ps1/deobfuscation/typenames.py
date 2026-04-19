@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from refinery.lib.scripts import Node, Transformer
 from refinery.lib.scripts.ps1.deobfuscation.helpers import (
-    GET_MEMBER_ALIASES,
     extract_first_positional_string,
     get_command_name,
     get_member_name,
@@ -16,6 +15,7 @@ from refinery.lib.scripts.ps1.deobfuscation.helpers import (
     make_string_literal,
     unwrap_parens,
 )
+from refinery.lib.scripts.ps1.deobfuscation.names import GET_MEMBER_ALIASES
 from refinery.lib.scripts.ps1.model import (
     Expression,
     Ps1ArrayExpression,

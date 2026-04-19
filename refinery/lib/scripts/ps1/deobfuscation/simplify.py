@@ -7,12 +7,14 @@ from refinery.lib.scripts.ps1.deobfuscation.base import (
     LocalFunctionAwareTransformer,
 )
 from refinery.lib.scripts.ps1.deobfuscation.helpers import (
-    KNOWN_ALIAS,
-    SIMPLE_IDENTIFIER,
-    case_normalize_name,
     get_command_name,
     make_string_literal,
     string_value,
+)
+from refinery.lib.scripts.ps1.deobfuscation.names import (
+    KNOWN_ALIAS,
+    SIMPLE_IDENTIFIER,
+    case_normalize_name,
 )
 from refinery.lib.scripts.ps1.model import (
     Ps1BinaryExpression,

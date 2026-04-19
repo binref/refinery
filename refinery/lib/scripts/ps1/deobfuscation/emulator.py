@@ -14,21 +14,23 @@ if TYPE_CHECKING:
 
 from refinery.lib.scripts import Block, Transformer
 from refinery.lib.scripts.ps1.deobfuscation.helpers import (
+    detect_encoding_chain,
+    extract_foreach_scriptblock,
+    get_command_name,
+    get_member_name,
+    make_string_literal,
+    string_value,
+    unwrap_to_array_literal,
+)
+from refinery.lib.scripts.ps1.deobfuscation.names import (
     CONVERT_TYPE_NAMES,
     ENCODING_MAP,
     ENCODING_TYPE_NAMES,
     MATH_TYPE_NAMES,
     STRING_TYPE_NAMES,
     apply_format_string,
-    detect_encoding_chain,
-    extract_foreach_scriptblock,
-    get_command_name,
-    get_member_name,
-    make_string_literal,
     normalize_dotnet_type_name,
     normalize_type_expression,
-    string_value,
-    unwrap_to_array_literal,
 )
 from refinery.lib.scripts.ps1.model import (
     Expression,

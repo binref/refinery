@@ -14,11 +14,13 @@ import zlib
 
 from refinery.lib.scripts import Expression, Transformer, _replace_in_parent
 from refinery.lib.scripts.ps1.deobfuscation.helpers import (
-    ENCODING_MAP,
     extract_foreach_scriptblock,
     get_body,
-    normalize_dotnet_type_name,
     string_value,
+)
+from refinery.lib.scripts.ps1.deobfuscation.names import (
+    ENCODING_MAP,
+    normalize_dotnet_type_name,
 )
 from refinery.lib.scripts.ps1.model import (
     Ps1AccessKind,
