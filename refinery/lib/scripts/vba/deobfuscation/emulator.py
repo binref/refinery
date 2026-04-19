@@ -532,6 +532,8 @@ class VbaFunctionEvaluator(Transformer):
                 body = parent.body
             else:
                 continue
-            if funcdef in body:
-                body.remove(funcdef)
-                self.mark_changed()
+            for k, stmt in enumerate(body):
+                if stmt is funcdef:
+                    del body[k]
+                    self.mark_changed()
+                    break

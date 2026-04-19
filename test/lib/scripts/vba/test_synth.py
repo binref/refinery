@@ -9,8 +9,13 @@ from refinery.lib.scripts.vba.synth import VbaSynthesizer
 class TestVbaSynthesizer(TestBase):
 
     def _roundtrip(self, source: str) -> str:
-        ast = VbaParser(source).parse()
-        return VbaSynthesizer().convert(ast)
+        synth = VbaSynthesizer()
+        ast1 = VbaParser(source).parse()
+        out1 = synth.convert(ast1)
+        ast2 = VbaParser(out1).parse()
+        out2 = synth.convert(ast2)
+        self.assertEqual(out1, out2)
+        return out1
 
     def test_sub_empty(self):
         code = 'Sub Test()\nEnd Sub'
