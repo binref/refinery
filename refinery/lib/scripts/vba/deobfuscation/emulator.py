@@ -133,13 +133,11 @@ class _VbaInterpreter:
             self._env[key] = value
 
     def _exec_if(self, stmt: VbaIfStatement):
-        cond = self._eval(stmt.condition)
-        if self._truthy(cond):
+        if self._eval(stmt.condition):
             self._exec_statements(stmt.body)
             return
         for clause in stmt.elseif_clauses:
-            cond = self._eval(clause.condition)
-            if self._truthy(cond):
+            if self._eval(clause.condition):
                 self._exec_statements(clause.body)
                 return
         if stmt.else_body:
@@ -179,10 +177,7 @@ class _VbaInterpreter:
     def _should_exit_loop(self, condition, is_until: bool) -> bool:
         if condition is None:
             return False
-        cond = self._truthy(self._eval(condition))
-        if is_until:
-            return cond
-        return not cond
+        return is_until is bool(self._eval(condition))
 
     def _tick(self):
         self._iterations += 1
@@ -331,20 +326,6 @@ class _VbaInterpreter:
         if isinstance(left, (int, float)) and isinstance(right, (int, float)):
             return op(left, right)
         raise _VbaInterpreterError
-
-    @staticmethod
-    def _truthy(value: Value) -> bool:
-        if value is None:
-            return False
-        if isinstance(value, bool):
-            return value
-        if isinstance(value, int):
-            return value != 0
-        if isinstance(value, float):
-            return value != 0.0
-        if isinstance(value, str):
-            return len(value) > 0
-        return True
 
 
 class VbaFunctionEvaluator(Transformer):
