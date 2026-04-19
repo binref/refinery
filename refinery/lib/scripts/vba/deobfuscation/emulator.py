@@ -11,7 +11,11 @@ from refinery.lib.scripts.vba.deobfuscation.helpers import (
     literal_value,
     value_to_node,
 )
-from refinery.lib.scripts.vba.deobfuscation.names import SINGLE_ARG_BUILTINS, Value, eval_string_builtin
+from refinery.lib.scripts.vba.deobfuscation.names import (
+    SINGLE_ARG_BUILTINS,
+    Value,
+    eval_string_builtin,
+)
 from refinery.lib.scripts.vba.model import (
     VbaBinaryExpression,
     VbaCallExpression,

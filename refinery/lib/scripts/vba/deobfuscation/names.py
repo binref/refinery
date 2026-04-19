@@ -4,7 +4,7 @@ used by multiple deobfuscation transforms.
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Callable, Union, Optional
+from typing import TYPE_CHECKING, Any, Callable, Optional, Union
 
 if TYPE_CHECKING:
     from typing import TypeAlias

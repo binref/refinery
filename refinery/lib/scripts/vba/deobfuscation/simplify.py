@@ -8,6 +8,7 @@ import operator
 from typing import Callable
 
 from refinery.lib.scripts import Transformer
+from refinery.lib.scripts.vba.deobfuscation.builtins import VBA_BUILTIN_CONSTANTS
 from refinery.lib.scripts.vba.deobfuscation.helpers import (
     is_literal,
     is_nan_or_inf,
@@ -18,7 +19,6 @@ from refinery.lib.scripts.vba.deobfuscation.helpers import (
     string_value,
 )
 from refinery.lib.scripts.vba.deobfuscation.names import CHR_NAMES, eval_string_builtin
-from refinery.lib.scripts.vba.deobfuscation.builtins import VBA_BUILTIN_CONSTANTS
 from refinery.lib.scripts.vba.model import (
     VbaBinaryExpression,
     VbaBooleanLiteral,
