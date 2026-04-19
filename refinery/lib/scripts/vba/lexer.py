@@ -33,6 +33,10 @@ _TWO_CHAR_OPS: dict[str, VbaTokenKind] = {
     ':=': VbaTokenKind.ASSIGN,
 }
 
+_TYPE_SUFFIXES = '%&!#@$'
+_TYPE_SUFFIXES_NO_DOLLAR = '%&!#@'
+_AMPERSAND_STOP_CHARS = ' \t\r\n)],;:\x00(.!'
+
 
 @dataclass
 class VbaLexer:
@@ -48,33 +52,18 @@ class VbaLexer:
         while self.pos < length and src[self.pos] in ' \t':
             self.pos += 1
 
-    def _read_string(self) -> str:
+    def _read_delimited(self, terminator: str, allow_doubling: bool = False) -> str:
         start = self.pos
         src = self.source
         length = len(src)
         self.pos += 1
         while self.pos < length:
             c = src[self.pos]
-            if c == '"':
+            if c == terminator:
                 self.pos += 1
-                if self.pos < length and src[self.pos] == '"':
+                if allow_doubling and self.pos < length and src[self.pos] == terminator:
                     self.pos += 1
                     continue
-                return src[start:self.pos]
-            if c in '\r\n':
-                return src[start:self.pos]
-            self.pos += 1
-        return src[start:self.pos]
-
-    def _read_date_literal(self) -> str:
-        start = self.pos
-        src = self.source
-        length = len(src)
-        self.pos += 1
-        while self.pos < length:
-            c = src[self.pos]
-            if c == '#':
-                self.pos += 1
                 return src[start:self.pos]
             if c in '\r\n':
                 return src[start:self.pos]
@@ -122,7 +111,7 @@ class VbaLexer:
             while self.pos < length and src[self.pos].isdigit():
                 self.pos += 1
 
-        if self.pos < length and src[self.pos] in '%&!#@':
+        if self.pos < length and src[self.pos] in _TYPE_SUFFIXES_NO_DOLLAR:
             self.pos += 1
 
         kind = VbaTokenKind.FLOAT if is_float else VbaTokenKind.INTEGER
@@ -140,12 +129,12 @@ class VbaLexer:
                 break
         word = src[start:self.pos]
         suffix = ''
-        if self.pos < length and src[self.pos] in '%&!#@$':
+        if self.pos < length and src[self.pos] in _TYPE_SUFFIXES:
             c_suffix = src[self.pos]
             consume = True
             if c_suffix == '&' and not (
                 self.pos + 1 >= length
-                or src[self.pos + 1] in ' \t\r\n)],;:\x00(.!'
+                or src[self.pos + 1] in _AMPERSAND_STOP_CHARS
             ):
                 consume = False
             elif c_suffix == '!' and (
@@ -160,21 +149,6 @@ class VbaLexer:
         if kw is not None and not suffix:
             return VbaToken(kw, word, start)
         return VbaToken(VbaTokenKind.IDENTIFIER, word + suffix, start)
-
-    def _read_bracket_identifier(self) -> str:
-        start = self.pos
-        src = self.source
-        length = len(src)
-        self.pos += 1
-        while self.pos < length:
-            c = src[self.pos]
-            if c == ']':
-                self.pos += 1
-                return src[start:self.pos]
-            if c in '\r\n':
-                return src[start:self.pos]
-            self.pos += 1
-        return src[start:self.pos]
 
     def _read_comment(self) -> str:
         start = self.pos
@@ -226,7 +200,7 @@ class VbaLexer:
                 continue
 
             if c == '"':
-                text = self._read_string()
+                text = self._read_delimited('"', allow_doubling=True)
                 last_was_newline = False
                 yield VbaToken(VbaTokenKind.STRING, text, start)
                 continue
@@ -242,7 +216,7 @@ class VbaLexer:
                             self.pos += 1
                         continue
                 if self.pos + 1 < length and not src[self.pos + 1].isspace():
-                    text = self._read_date_literal()
+                    text = self._read_delimited('#')
                     last_was_newline = False
                     yield VbaToken(VbaTokenKind.DATE_LITERAL, text, start)
                     continue
@@ -274,7 +248,7 @@ class VbaLexer:
                 continue
 
             if c == '[':
-                text = self._read_bracket_identifier()
+                text = self._read_delimited(']')
                 last_was_newline = False
                 yield VbaToken(VbaTokenKind.IDENTIFIER, text, start)
                 continue

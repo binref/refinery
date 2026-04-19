@@ -133,80 +133,102 @@ def _numeric_value(node: Expression | None) -> int | float | None:
     return None
 
 
+def _str_arg(args: list, index: int = 0) -> str:
+    return str(args[index]) if args[index] is not None else ''
+
+
+def _eval_mid(args: list) -> str | None:
+    if len(args) not in (2, 3):
+        return None
+    s = _str_arg(args)
+    start = int(args[1]) - 1
+    if start < 0:
+        raise ValueError
+    if len(args) == 3:
+        length = int(args[2])
+        return s[start:start + length]
+    return s[start:]
+
+
+def _eval_left(args: list) -> str | None:
+    if len(args) != 2:
+        return None
+    return _str_arg(args)[:int(args[1])]
+
+
+def _eval_right(args: list) -> str | None:
+    if len(args) != 2:
+        return None
+    n = int(args[1])
+    return _str_arg(args)[-n:] if n > 0 else ''
+
+
+def _eval_strreverse(args: list) -> str | None:
+    if len(args) != 1:
+        return None
+    return _str_arg(args)[::-1]
+
+
+def _eval_string_fn(args: list) -> str | None:
+    if len(args) != 2:
+        return None
+    n = int(args[0])
+    c = _str_arg(args, 1)
+    if not c:
+        raise ValueError
+    return c[0] * n
+
+
+def _eval_space(args: list) -> str | None:
+    if len(args) != 1:
+        return None
+    n = int(args[0])
+    if n < 0 or n > 10000:
+        raise ValueError
+    return ' ' * n
+
+
+def _eval_replace(args: list) -> str | None:
+    if len(args) < 3:
+        return None
+    haystack = _str_arg(args)
+    needle = _str_arg(args, 1)
+    insert = _str_arg(args, 2)
+    if not needle:
+        raise ValueError
+    return haystack.replace(needle, insert)
+
+
+_STRING_DISPATCH: dict[str, Callable[[list], str | None]] = {
+    'mid'        : _eval_mid,
+    'left'       : _eval_left,
+    'right'      : _eval_right,
+    'strreverse' : _eval_strreverse,
+    'lcase'      : lambda a: _str_arg(a).lower() if len(a) == 1 else None,
+    'ucase'      : lambda a: _str_arg(a).upper() if len(a) == 1 else None,
+    'trim'       : lambda a: _str_arg(a).strip() if len(a) == 1 else None,
+    'ltrim'      : lambda a: _str_arg(a).lstrip() if len(a) == 1 else None,
+    'rtrim'      : lambda a: _str_arg(a).rstrip() if len(a) == 1 else None,
+    'cstr'       : lambda a: _str_arg(a) if len(a) == 1 else None,
+    'string'     : _eval_string_fn,
+    'space'      : _eval_space,
+    'replace'    : _eval_replace,
+}
+
+
 def _eval_string_builtin(name: str, args: list) -> str | None:
     """
     Evaluate a VBA string built-in on plain Python values. The `name` must already be lowercased
     and stripped of a trailing `$`. Returns `None` when the function name is not recognized; raises
     `ValueError` on domain errors (bad arg count, negative index, etc.).
     """
-    if name == 'mid' and len(args) in (2, 3):
-        s = str(args[0]) if args[0] is not None else ''
-        start = int(args[1]) - 1
-        if start < 0:
-            raise ValueError
-        if len(args) == 3:
-            length = int(args[2])
-            return s[start:start + length]
-        return s[start:]
-    if name == 'left' and len(args) == 2:
-        s = str(args[0]) if args[0] is not None else ''
-        n = int(args[1])
-        return s[:n]
-    if name == 'right' and len(args) == 2:
-        s = str(args[0]) if args[0] is not None else ''
-        n = int(args[1])
-        return s[-n:] if n > 0 else ''
-    if name == 'strreverse' and len(args) == 1:
-        return str(args[0])[::-1] if args[0] is not None else ''
-    if name == 'lcase' and len(args) == 1:
-        return str(args[0]).lower() if args[0] is not None else ''
-    if name == 'ucase' and len(args) == 1:
-        return str(args[0]).upper() if args[0] is not None else ''
-    if name == 'trim' and len(args) == 1:
-        return str(args[0]).strip() if args[0] is not None else ''
-    if name == 'ltrim' and len(args) == 1:
-        return str(args[0]).lstrip() if args[0] is not None else ''
-    if name == 'rtrim' and len(args) == 1:
-        return str(args[0]).rstrip() if args[0] is not None else ''
-    if name == 'cstr' and len(args) == 1:
-        return str(args[0]) if args[0] is not None else ''
-    if name == 'string' and len(args) == 2:
-        n = int(args[0])
-        c = str(args[1]) if args[1] is not None else ''
-        if not c:
-            raise ValueError
-        return c[0] * n
-    if name == 'space' and len(args) == 1:
-        n = int(args[0])
-        if n < 0 or n > 10000:
-            raise ValueError
-        return ' ' * n
-    if name == 'replace' and len(args) >= 3:
-        haystack = str(args[0]) if args[0] is not None else ''
-        needle = str(args[1]) if args[1] is not None else ''
-        insert = str(args[2]) if args[2] is not None else ''
-        if not needle:
-            raise ValueError
-        return haystack.replace(needle, insert)
-    return None
+    handler = _STRING_DISPATCH.get(name)
+    if handler is None:
+        return None
+    return handler(args)
 
 
-_STRING_BUILTINS = frozenset({
-    'cstr',
-    'instr',
-    'lcase',
-    'left',
-    'ltrim',
-    'mid',
-    'replace',
-    'right',
-    'rtrim',
-    'space',
-    'string',
-    'strreverse',
-    'trim',
-    'ucase',
-})
+_STRING_BUILTINS = frozenset(_STRING_DISPATCH) | frozenset({'instr'})
 
 
 def _cast_to_int(value):
