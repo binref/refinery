@@ -14,6 +14,7 @@ import zlib
 
 from refinery.lib.scripts import Expression, Transformer, _replace_in_parent
 from refinery.lib.scripts.ps1.deobfuscation.helpers import (
+    collect_byte_array,
     extract_foreach_scriptblock,
     get_body,
     string_value,
@@ -33,7 +34,6 @@ from refinery.lib.scripts.ps1.model import (
     Ps1CommandArgumentKind,
     Ps1CommandInvocation,
     Ps1ExpressionStatement,
-    Ps1IntegerLiteral,
     Ps1InvokeMember,
     Ps1MemberAccess,
     Ps1ParenExpression,
@@ -98,21 +98,6 @@ def _try_extract_scriptblock_create_arg(expr: Expression) -> Expression | None:
     if len(expr.arguments) != 1:
         return None
     return expr.arguments[0]
-
-
-def _try_evaluate_byte_array(elements: list) -> bytes | None:
-    """
-    Convert a list of `Ps1IntegerLiteral` elements to `bytes`.
-    """
-    values = []
-    for elem in elements:
-        if not isinstance(elem, Ps1IntegerLiteral):
-            return None
-        values.append(elem.value)
-    try:
-        return bytes(bytearray(values))
-    except (ValueError, OverflowError):
-        return None
 
 
 def _extract_new_object_args(cmd: Ps1CommandInvocation) -> tuple[str, list[Expression]] | None:
@@ -210,16 +195,8 @@ def _try_evaluate(
             return bindings[expr.name.lower()]
         return None
 
-    if isinstance(expr, Ps1ArrayLiteral):
-        return _try_evaluate_byte_array(expr.elements)
-
-    if isinstance(expr, Ps1ArrayExpression):
-        if len(expr.body) == 1:
-            stmt = expr.body[0]
-            inner = stmt.expression if isinstance(stmt, Ps1ExpressionStatement) else None
-            if isinstance(inner, Ps1ArrayLiteral):
-                return _try_evaluate_byte_array(inner.elements)
-        return None
+    if isinstance(expr, (Ps1ArrayLiteral, Ps1ArrayExpression)):
+        return collect_byte_array(expr)
 
     if isinstance(expr, Ps1BinaryExpression) and expr.operator == '+':
         if expr.left is not None and expr.right is not None:

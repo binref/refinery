@@ -5,11 +5,11 @@ from __future__ import annotations
 
 from refinery.lib.scripts import Transformer
 from refinery.lib.scripts.ps1.deobfuscation.helpers import (
+    collect_byte_array,
     get_command_name,
     make_string_literal,
 )
 from refinery.lib.scripts.ps1.model import (
-    Ps1ArrayLiteral,
     Ps1CommandArgument,
     Ps1CommandArgumentKind,
     Ps1CommandInvocation,
@@ -33,20 +33,10 @@ def _collect_key_bytes(node) -> bytes | None:
             if a > b:
                 r = reversed(r)
             try:
-                return bytes(bytearray(r))
+                return bytes(r)
             except (ValueError, OverflowError):
                 return None
-    if isinstance(node, Ps1ArrayLiteral):
-        values = []
-        for elem in node.elements:
-            if not isinstance(elem, Ps1IntegerLiteral):
-                return None
-            values.append(elem.value)
-        try:
-            return bytes(bytearray(values))
-        except (ValueError, OverflowError):
-            return None
-    return None
+    return collect_byte_array(node)
 
 
 def _find_key_argument(cmd: Ps1CommandInvocation) -> bytes | None:

@@ -1262,12 +1262,12 @@ class Ps1Parser:
             Ps1TokenKind.AT_LPAREN, Ps1ArrayExpression)
 
     def _parse_label_or_key(self) -> Expression | None:
-        if self._at(Ps1TokenKind.GENERIC_TOKEN, Ps1TokenKind.GENERIC_EXPAND, Ps1TokenKind.LABEL):
-            tok = self._advance()
-            return self._bare_string(tok)
-        if self._current.kind.is_keyword:
-            tok = self._advance()
-            return self._bare_string(tok)
+        if self._at(
+            Ps1TokenKind.GENERIC_TOKEN,
+            Ps1TokenKind.GENERIC_EXPAND,
+            Ps1TokenKind.LABEL
+        ) or self._current.kind.is_keyword:
+            return self._bare_string(self._advance())
         if self._is_statement_terminator():
             return None
         with self._comma_mode(disabled=True):
@@ -1595,11 +1595,10 @@ class Ps1Parser:
         is_filter = kw.kind == Ps1TokenKind.FILTER
         self._skip_newlines()
         name = ''
-        if self._at(Ps1TokenKind.GENERIC_TOKEN):
-            name = self._advance().value
-        elif self._current.kind.is_keyword:
-            name = self._advance().value
-        elif self._at(Ps1TokenKind.VARIABLE):
+        if self._at(
+            Ps1TokenKind.GENERIC_TOKEN,
+            Ps1TokenKind.VARIABLE
+        ) or self._current.kind.is_keyword:
             name = self._advance().value
         self._lexer.mode = Ps1LexerMode.EXPRESSION
         self._skip_newlines()

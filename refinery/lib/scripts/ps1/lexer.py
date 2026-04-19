@@ -220,6 +220,19 @@ class Ps1Lexer:
             self.pos += 1
         self.pos = length
 
+    def _try_skip_expandable(self) -> bool:
+        src = self.source
+        length = len(src)
+        c = src[self.pos]
+        if c == '`' and self.pos + 1 < length:
+            self.pos += 2
+            return True
+        if c == '$' and self.pos + 1 < length and src[self.pos + 1] == '(':
+            self.pos += 2
+            self._skip_subexpression_content()
+            return True
+        return False
+
     def _read_string(self, quote_set: frozenset[str], expandable: bool = False) -> str:
         start = self.pos
         src = self.source
@@ -227,14 +240,8 @@ class Ps1Lexer:
         self.pos += 1
         while self.pos < length:
             c = src[self.pos]
-            if expandable:
-                if c == '`' and self.pos + 1 < length:
-                    self.pos += 2
-                    continue
-                if c == '$' and self.pos + 1 < length and src[self.pos + 1] == '(':
-                    self.pos += 2
-                    self._skip_subexpression_content()
-                    continue
+            if expandable and self._try_skip_expandable():
+                continue
             if c in quote_set:
                 self.pos += 1
                 if self.pos < length and src[self.pos] in quote_set:
@@ -311,14 +318,8 @@ class Ps1Lexer:
             if c in '\r\n':
                 if self._check_here_string_terminator(quote_set):
                     return src[start:self.pos]
-            if expandable:
-                if c == '`' and self.pos + 1 < length:
-                    self.pos += 2
-                    continue
-                if c == '$' and self.pos + 1 < length and src[self.pos + 1] == '(':
-                    self.pos += 2
-                    self._skip_subexpression_content()
-                    continue
+            if expandable and self._try_skip_expandable():
+                continue
             self.pos += 1
         return src[start:self.pos]
 

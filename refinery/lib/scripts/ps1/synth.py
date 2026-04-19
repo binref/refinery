@@ -544,7 +544,7 @@ class Ps1Synthesizer(Synthesizer):
     def visit_Ps1ReturnStatement(self, node: Ps1ReturnStatement):
         self._visit_exit(node, 'return')
 
-    def visitPs1ExitStatement(self, node: Ps1ExitStatement):
+    def visit_Ps1ExitStatement(self, node: Ps1ExitStatement):
         self._visit_exit(node, 'exit')
 
     def visit_Ps1ThrowStatement(self, node: Ps1ThrowStatement):

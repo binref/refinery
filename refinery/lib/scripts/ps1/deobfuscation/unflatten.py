@@ -11,6 +11,7 @@ from __future__ import annotations
 from collections import deque
 from collections.abc import Callable, Generator
 from dataclasses import dataclass, field
+from typing import NamedTuple
 
 from refinery.lib.scripts import Block, Node, Statement, Transformer
 from refinery.lib.scripts.ps1.deobfuscation.emulator import evaluate_truthy
@@ -813,32 +814,11 @@ def _try_unroll_loop(
 
     internal_vars = _collect_internal_vars(states, loop_states, loop_var_key)
 
-    true_target = cond_trans.true_target
-    false_target = cond_trans.false_target
-    true_is_exit = is_exit(true_target) or true_target not in states
-    false_is_exit = is_exit(false_target) or false_target not in states
-
-    true_reaches_header = _state_reaches(
-        states, true_target, header, is_exit, loop_headers - {header},
-    )
-    false_reaches_header = _state_reaches(
-        states, false_target, header, is_exit, loop_headers - {header},
-    )
-
-    if true_reaches_header and (not false_reaches_header or false_is_exit):
-        body_entry = true_target
-        body_prefix_stmts = list(cond_trans.true_prefix)
-    elif false_reaches_header and (not true_reaches_header or true_is_exit):
-        body_entry = false_target
-        body_prefix_stmts = list(cond_trans.false_prefix)
-    elif false_is_exit:
-        body_entry = true_target
-        body_prefix_stmts = list(cond_trans.true_prefix)
-    elif true_is_exit:
-        body_entry = false_target
-        body_prefix_stmts = list(cond_trans.false_prefix)
-    else:
+    direction = _determine_loop_direction(states, cond_trans, header, is_exit, loop_headers)
+    if direction is None:
         return None
+    body_entry = direction.body_entry
+    body_prefix_stmts = direction.prefix
 
     seed = _seed_env_from_preamble(states, entry, header, is_exit, internal_vars)
     env: dict[_VarKey, _StateKey | bool] = seed if seed is not None else {}
@@ -1057,38 +1037,17 @@ def _recover_structure(
 
         if isinstance(block.transition, _ConditionalTransition):
             cond_trans = block.transition
-            true_target = cond_trans.true_target
-            false_target = cond_trans.false_target
-            true_is_exit = is_exit(true_target) or true_target not in states
-            false_is_exit = is_exit(false_target) or false_target not in states
-
-            true_reaches_header = _state_reaches(
-                states, true_target, header, is_exit, loop_headers - {header},
+            direction = _determine_loop_direction(
+                states, cond_trans, header, is_exit, loop_headers,
             )
-            false_reaches_header = _state_reaches(
-                states, false_target, header, is_exit, loop_headers - {header},
-            )
-
-            if true_reaches_header and not false_reaches_header:
-                loop_cond = cond_trans.condition
-                body_start_stmts = list(block.statements) + list(cond_trans.true_prefix)
-                body_start = true_target
-                exit_target = false_target
-            elif false_reaches_header and not true_reaches_header:
-                loop_cond = _negate_condition(cond_trans.condition)
-                body_start_stmts = list(block.statements) + list(cond_trans.false_prefix)
-                body_start = false_target
-                exit_target = true_target
-            elif true_is_exit:
-                loop_cond = _negate_condition(cond_trans.condition)
-                body_start_stmts = list(block.statements) + list(cond_trans.false_prefix)
-                body_start = false_target
-                exit_target = true_target
-            elif false_is_exit:
-                loop_cond = cond_trans.condition
-                body_start_stmts = list(block.statements) + list(cond_trans.true_prefix)
-                body_start = true_target
-                exit_target = false_target
+            if direction is not None:
+                loop_cond = (
+                    _negate_condition(cond_trans.condition) if direction.negated
+                    else cond_trans.condition
+                )
+                body_start_stmts = list(block.statements) + direction.prefix
+                body_start = direction.body_entry
+                exit_target = direction.exit_target
             else:
                 loop_cond = Ps1Variable(name='True', scope=Ps1ScopeModifier.NONE)
                 body_start_stmts = list(block.statements)
@@ -1096,12 +1055,12 @@ def _recover_structure(
                 outer_claimed.add(header)
                 inner_claimed: set[_StateKey] = set()
                 inner_claimed.add(header)
-                body_result = _emit_arm(true_target, header, inner_claimed)
+                body_result = _emit_arm(cond_trans.true_target, header, inner_claimed)
                 if body_result is None:
                     return None
                 body_stmts = body_start_stmts
                 if_true, _ = body_result
-                if_false_result = _emit_arm(false_target, header, inner_claimed)
+                if_false_result = _emit_arm(cond_trans.false_target, header, inner_claimed)
                 if if_false_result is None:
                     return None
                 if_false, _ = if_false_result
@@ -1149,6 +1108,46 @@ def _recover_structure(
         return None
     stmts, _ = result
     return stmts
+
+
+class _LoopDirection(NamedTuple):
+    body_entry: _StateKey
+    exit_target: _StateKey | None
+    prefix: list[Statement]
+    negated: bool
+
+
+def _determine_loop_direction(
+    states: dict[_StateKey, _StateBlock],
+    cond_trans: _ConditionalTransition,
+    header: _StateKey,
+    is_exit: Callable[[_StateKey], bool],
+    loop_headers: set[_StateKey],
+) -> _LoopDirection | None:
+    """
+    Determine which branch of a conditional loop header leads to the loop body
+    and which leads to the exit. Returns None when direction is ambiguous (both
+    branches reach the header, or neither does).
+    """
+    true_target = cond_trans.true_target
+    false_target = cond_trans.false_target
+    true_is_exit = is_exit(true_target) or true_target not in states
+    false_is_exit = is_exit(false_target) or false_target not in states
+    true_reaches = _state_reaches(
+        states, true_target, header, is_exit, loop_headers - {header},
+    )
+    false_reaches = _state_reaches(
+        states, false_target, header, is_exit, loop_headers - {header},
+    )
+    if true_reaches and (not false_reaches or false_is_exit):
+        return _LoopDirection(true_target, false_target, list(cond_trans.true_prefix), False)
+    if false_reaches and (not true_reaches or true_is_exit):
+        return _LoopDirection(false_target, true_target, list(cond_trans.false_prefix), True)
+    if false_is_exit:
+        return _LoopDirection(true_target, false_target, list(cond_trans.true_prefix), False)
+    if true_is_exit:
+        return _LoopDirection(false_target, true_target, list(cond_trans.false_prefix), True)
+    return None
 
 
 def _state_reaches(

@@ -127,6 +127,22 @@ def collect_int_arguments(node: Expression) -> list[int] | None:
     return collect_typed_arguments(node, extract_int)
 
 
+def collect_byte_array(node: Expression) -> bytes | None:
+    """
+    Extract an integer array from `node` and convert to `bytes`. Handles `Ps1ArrayLiteral`, `Ps1ArrayExpression`, and parenthesized wrappers.
+    """
+    array = unwrap_to_array_literal(node)
+    if array is not None:
+        node = array
+    values = collect_int_arguments(node)
+    if values is None:
+        return None
+    try:
+        return bytes(values)
+    except (ValueError, OverflowError):
+        return None
+
+
 def unwrap_single_paren(node: Expression) -> Expression:
     if isinstance(node, Ps1ParenExpression) and node.expression is not None:
         return node.expression
@@ -172,7 +188,7 @@ def get_body(node) -> list | None:
 
 def unwrap_parens(node: Node) -> Node:
     """
-    Unwrap nested ``Ps1ParenExpression`` wrappers, stopping at an empty-parens node.
+    Unwrap nested `Ps1ParenExpression` wrappers, stopping at an empty-parens node.
     """
     while isinstance(node, Ps1ParenExpression) and node.expression is not None:
         node = node.expression
@@ -181,7 +197,7 @@ def unwrap_parens(node: Node) -> Node:
 
 def unwrap_to_array_literal(node: Node) -> Ps1ArrayLiteral | None:
     """
-    Unwrap parentheses and array expressions to find an inner ``Ps1ArrayLiteral``.
+    Unwrap parentheses and array expressions to find an inner `Ps1ArrayLiteral`.
     """
     node = unwrap_parens(node)
     if isinstance(node, Ps1ArrayLiteral):
@@ -232,8 +248,8 @@ def is_static_type_call(node: Ps1InvokeMember, canonical: str) -> bool:
 
 def detect_encoding_chain(node: Ps1InvokeMember) -> str | None:
     """
-    If *node* is ``[Text.Encoding]::X.GetString(args)``, return the encoding
-    member name (e.g. ``'UTF8'``).  Otherwise return ``None``.
+    If *node* is `[Text.Encoding]::X.GetString(args)`, return the encoding member name (e.g.
+    `'UTF8'`).  Otherwise return `None`.
     """
     from refinery.lib.scripts.ps1.deobfuscation.typenames import is_type
     member = get_member_name(node.member)
@@ -301,8 +317,8 @@ def is_builtin_variable(
     names: set[str] | frozenset[str] = BUILTIN_VARIABLES,
 ) -> TypeGuard[Ps1Variable]:
     """
-    Return True when ``node`` is an unscoped ``Ps1Variable`` whose lowered name is in ``names``
-    (defaults to ``$Null``, ``$True``, ``$False``).
+    Return True when `node` is an unscoped `Ps1Variable` whose lowered name is in `names` (defaults
+    to `$Null`, `$True`, `$False`).
     """
     return (
         isinstance(node, Ps1Variable)
