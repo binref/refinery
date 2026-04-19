@@ -200,25 +200,45 @@ def _cast_to_int(value: Any) -> int:
     return as_int
 
 
+def _chr_builtin(v):
+    return chr(int(v))
+
+
+def _asc_builtin(v):
+    return ord(str(v)[0])
+
+
+def _round_to_int(v):
+    return int(round(float(v)))
+
+
+def _to_hex(v):
+    return format(int(v), 'X')
+
+
+def _to_oct(v):
+    return format(int(v), 'o')
+
+
 SINGLE_ARG_BUILTINS: dict[str, Callable[[Any], Value]] = {
-    'chr'   : lambda v: chr(int(v)),
-    'chrw'  : lambda v: chr(int(v)),
-    'chr$'  : lambda v: chr(int(v)),
-    'chrw$' : lambda v: chr(int(v)),
-    'asc'   : lambda v: ord(str(v)[0]),
-    'ascw'  : lambda v: ord(str(v)[0]),
-    'cint'  : lambda v: int(round(float(v))),
-    'clng'  : lambda v: int(round(float(v))),
-    'cdbl'  : lambda v: float(v),
-    'csng'  : lambda v: float(v),
-    'cbool' : lambda v: bool(v),
-    'abs'   : lambda v: abs(v),
+    'chr'   : _chr_builtin,
+    'chrw'  : _chr_builtin,
+    'chr$'  : _chr_builtin,
+    'chrw$' : _chr_builtin,
+    'asc'   : _asc_builtin,
+    'ascw'  : _asc_builtin,
+    'cint'  : _round_to_int,
+    'clng'  : _round_to_int,
+    'cdbl'  : float,
+    'csng'  : float,
+    'cbool' : bool,
+    'abs'   : abs,
     'sgn'   : lambda v: (1 if v > 0 else (-1 if v < 0 else 0)),
     'int'   : _cast_to_int,
     'fix'   : lambda v: int(float(v)),
-    'hex'   : lambda v: format(int(v), 'X'),
-    'hex$'  : lambda v: format(int(v), 'X'),
-    'oct'   : lambda v: format(int(v), 'o'),
-    'oct$'  : lambda v: format(int(v), 'o'),
+    'hex'   : _to_hex,
+    'hex$'  : _to_hex,
+    'oct'   : _to_oct,
+    'oct$'  : _to_oct,
     'cbyte' : lambda v: int(v) & 0xFF,
 }

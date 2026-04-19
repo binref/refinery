@@ -3,6 +3,8 @@ Evaluate user-defined VBA functions called with constant arguments.
 """
 from __future__ import annotations
 
+import operator as _op
+
 from refinery.lib.scripts import Transformer
 from refinery.lib.scripts.vba.deobfuscation.helpers import (
     apply_removals,
@@ -39,6 +41,34 @@ from refinery.lib.scripts.vba.model import (
     VbaUnaryExpression,
     VbaVariableDeclaration,
 )
+
+
+_NUMERIC_DIVMOD_OPS = {
+    '\\' : _op.floordiv,
+    'mod': _op.mod,
+}
+
+_NUMERIC_BINARY_OPS = {
+    '-'  : _op.sub,
+    '*'  : _op.mul,
+    '/'  : _op.truediv,
+    '^'  : _op.pow,
+}
+
+_BITWISE_BINARY_OPS = {
+    'xor': _op.xor,
+    'and': _op.and_,
+    'or' : _op.or_,
+}
+
+_COMPARISON_OPS = {
+    '='  : _op.eq,
+    '<>' : _op.ne,
+    '<'  : _op.lt,
+    '>'  : _op.gt,
+    '<=' : _op.le,
+    '>=' : _op.ge,
+}
 
 
 class _VbaInterpreterError(Exception):
@@ -205,51 +235,24 @@ class _VbaInterpreter:
     def _eval_binary(self, node: VbaBinaryExpression) -> Value:
         left = self._eval(node.left)
         right = self._eval(node.right)
-        op = node.operator
+        op = node.operator.lower()
         if op == '&':
             return self._concat(left, right)
         if op == '+':
-            if isinstance(left, str) or isinstance(right, str):
+            if isinstance(left, str) and isinstance(right, str):
                 return self._concat(left, right)
-            return self._numeric_op(left, right, lambda a, b: a + b)
-        if op == '-':
-            return self._numeric_op(left, right, lambda a, b: a - b)
-        if op == '*':
-            return self._numeric_op(left, right, lambda a, b: a * b)
-        if op == '/':
-            return self._numeric_op(left, right, lambda a, b: a / b)
-        if op == '\\':
-            a = self._to_int(left)
-            b = self._to_int(right)
+            return self._numeric_op(left, right, _op.add)
+        if fn := _NUMERIC_DIVMOD_OPS.get(op):
+            a, b = self._to_int(left), self._to_int(right)
             if b == 0:
                 raise _VbaInterpreterError
-            return a // b
-        if op.lower() == 'mod':
-            a = self._to_int(left)
-            b = self._to_int(right)
-            if b == 0:
-                raise _VbaInterpreterError
-            return a % b
-        if op == '^':
-            return self._numeric_op(left, right, lambda a, b: a ** b)
-        if op.lower() == 'xor':
-            return self._to_int(left) ^ self._to_int(right)
-        if op.lower() == 'and':
-            return self._to_int(left) & self._to_int(right)
-        if op.lower() == 'or':
-            return self._to_int(left) | self._to_int(right)
-        if op == '=':
-            return left == right
-        if op == '<>':
-            return left != right
-        if op == '<':
-            return self._compare(left, right, lambda a, b: a < b)
-        if op == '>':
-            return self._compare(left, right, lambda a, b: a > b)
-        if op == '<=':
-            return self._compare(left, right, lambda a, b: a <= b)
-        if op == '>=':
-            return self._compare(left, right, lambda a, b: a >= b)
+            return fn(a, b)
+        if fn := _NUMERIC_BINARY_OPS.get(op):
+            return self._numeric_op(left, right, fn)
+        if fn := _BITWISE_BINARY_OPS.get(op):
+            return fn(self._to_int(left), self._to_int(right))
+        if fn := _COMPARISON_OPS.get(op):
+            return self._compare(left, right, fn)
         raise _VbaInterpreterError
 
     def _eval_unary(self, node: VbaUnaryExpression) -> Value:
@@ -396,17 +399,7 @@ class VbaFunctionEvaluator(Transformer):
         args = self._extract_constant_args(node)
         if args is None:
             return None
-        bindings = self._bind_parameters(funcdef, args)
-        if bindings is None:
-            return None
-        result = self._try_evaluate(funcdef, bindings)
-        if result is None:
-            return None
-        replacement = value_to_node(result)
-        if replacement is None:
-            return None
-        self._replaced_counts[key] = self._replaced_counts.get(key, 0) + 1
-        return replacement
+        return self._try_replace(key, funcdef, args)
 
     def visit_VbaIdentifier(self, node: VbaIdentifier):
         key = node.name.lower()
@@ -422,7 +415,15 @@ class VbaFunctionEvaluator(Transformer):
         if not is_identifier_read(node):
             return None
         self._call_counts[key] = self._call_counts.get(key, 0) + 1
-        bindings = self._bind_parameters(funcdef, [])
+        return self._try_replace(key, funcdef, [])
+
+    def _try_replace(
+        self,
+        key: str,
+        funcdef: VbaFunctionDeclaration,
+        args: list[Value],
+    ):
+        bindings = self._bind_parameters(funcdef, args)
         if bindings is None:
             return None
         result = self._try_evaluate(funcdef, bindings)
