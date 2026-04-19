@@ -4,11 +4,8 @@ VBA dead code removal: removes assignments to unread variables and empty uncalle
 from __future__ import annotations
 
 from refinery.lib.scripts import Statement, Transformer
-from refinery.lib.scripts.vba.deobfuscation.helpers import (
-    SINGLE_ARG_BUILTINS,
-    STRING_BUILTINS,
-    body_lists,
-)
+from refinery.lib.scripts.vba.deobfuscation.helpers import body_lists
+from refinery.lib.scripts.vba.deobfuscation.names import SINGLE_ARG_BUILTINS, STRING_BUILTINS
 from refinery.lib.scripts.vba.model import (
     VbaCallExpression,
     VbaIdentifier,

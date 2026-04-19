@@ -3,6 +3,8 @@ VBA constant inlining: substitutes single-assignment constant variables with the
 """
 from __future__ import annotations
 
+from typing import NamedTuple
+
 from refinery.lib.scripts import Expression, Statement, Transformer, _clone_node, _replace_in_parent
 from refinery.lib.scripts.vba.deobfuscation.helpers import (
     body_lists,
@@ -17,6 +19,12 @@ from refinery.lib.scripts.vba.model import (
     VbaLetStatement,
     VbaModule,
 )
+
+
+class InlineCandidate(NamedTuple):
+    value: Expression
+    body: list[Statement]
+    position: int
 
 
 class VbaConstantInlining(Transformer):
@@ -37,16 +45,16 @@ class VbaConstantInlining(Transformer):
     @staticmethod
     def _collect_inline_candidates(
         module: VbaModule,
-    ) -> dict[str, list[tuple[Expression, list[Statement], int]]]:
-        candidates: dict[str, list[tuple[Expression, list[Statement], int]]] = {}
+    ) -> dict[str, list[InlineCandidate]]:
+        candidates: dict[str, list[InlineCandidate]] = {}
         assignment_counts: dict[str, int] = {}
         for body in body_lists(module):
-            for idx, stmt in enumerate(body):
+            for pos, stmt in enumerate(body):
                 if isinstance(stmt, VbaConstDeclaration):
                     for d in stmt.declarators:
                         if d.value is not None and is_constant_expr(d.value):
                             key = d.name.lower()
-                            candidates.setdefault(key, []).append((d.value, body, idx))
+                            candidates.setdefault(key, []).append(InlineCandidate(d.value, body, pos))
                             assignment_counts[key] = assignment_counts.get(key, 0) + 1
                 elif (
                     isinstance(stmt, VbaLetStatement)
@@ -56,7 +64,7 @@ class VbaConstantInlining(Transformer):
                     key = stmt.target.name.lower()
                     assignment_counts[key] = assignment_counts.get(key, 0) + 1
                     if is_constant_expr(stmt.value):
-                        candidates.setdefault(key, []).append((stmt.value, body, idx))
+                        candidates.setdefault(key, []).append(InlineCandidate(stmt.value, body, pos))
         loop_variables: set[str] = set()
         for node in module.walk():
             if isinstance(node, (VbaForStatement, VbaForEachStatement)):
@@ -72,7 +80,7 @@ class VbaConstantInlining(Transformer):
     @staticmethod
     def _find_constant_reads(
         module: VbaModule,
-        candidates: dict[str, list[tuple[Expression, list[Statement], int]]],
+        candidates: dict[str, list[InlineCandidate]],
     ) -> dict[str, list[VbaIdentifier]]:
         reads: dict[str, list[VbaIdentifier]] = {}
         for node in module.walk():
@@ -88,15 +96,15 @@ class VbaConstantInlining(Transformer):
     @staticmethod
     def _apply_constant_replacements(
         reads: dict[str, list[VbaIdentifier]],
-        candidates: dict[str, list[tuple[Expression, list[Statement], int]]],
+        candidates: dict[str, list[InlineCandidate]],
     ) -> bool:
         removals: list[tuple[list[Statement], int]] = []
         for key, refs in reads.items():
-            literal_node, body, idx = candidates[key][0]
+            candidate = candidates[key][0]
             for ref in refs:
-                replacement = _clone_node(literal_node)
+                replacement = _clone_node(candidate.value)
                 _replace_in_parent(ref, replacement)
-            removals.append((body, idx))
-        for body, idx in sorted(removals, key=lambda t: t[1], reverse=True):
-            del body[idx]
+            removals.append((candidate.body, candidate.position))
+        for body, pos in sorted(removals, key=lambda t: t[1], reverse=True):
+            del body[pos]
         return bool(removals)

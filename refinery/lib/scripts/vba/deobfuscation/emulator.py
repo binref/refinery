@@ -5,15 +5,13 @@ from __future__ import annotations
 
 from refinery.lib.scripts import Transformer
 from refinery.lib.scripts.vba.deobfuscation.helpers import (
-    SINGLE_ARG_BUILTINS,
-    eval_string_builtin,
     is_identifier_read,
     is_literal,
     is_nan_or_inf,
     literal_value,
-    Value,
     value_to_node,
 )
+from refinery.lib.scripts.vba.deobfuscation.names import SINGLE_ARG_BUILTINS, Value, eval_string_builtin
 from refinery.lib.scripts.vba.model import (
     VbaBinaryExpression,
     VbaCallExpression,
@@ -386,13 +384,16 @@ class VbaFunctionEvaluator(Transformer):
         self._functions: dict[str, VbaFunctionDeclaration] = {}
         self._call_counts: dict[str, int] = {}
         self._replaced_counts: dict[str, int] = {}
-        self._entry = False
+        self._visiting = False
         self._inside_function: str | None = None
 
     def visit(self, node):
-        if self._entry:
+        if self._visiting:
             return super().visit(node)
-        self._entry = True
+        return self._evaluate_module(node)
+
+    def _evaluate_module(self, node):
+        self._visiting = True
         try:
             self._functions.clear()
             self._call_counts.clear()
@@ -401,10 +402,10 @@ class VbaFunctionEvaluator(Transformer):
             if not self._functions:
                 return None
             super().visit(node)
-            self._remove_resolved_definitions(node)
+            self._remove_resolved_definitions()
             return None
         finally:
-            self._entry = False
+            self._visiting = False
 
     def _collect_functions(self, root):
         for node in root.walk():
@@ -519,7 +520,7 @@ class VbaFunctionEvaluator(Transformer):
                 return None
         return bindings
 
-    def _remove_resolved_definitions(self, _root):
+    def _remove_resolved_definitions(self):
         for key, funcdef in self._functions.items():
             call_count = self._call_counts.get(key, 0)
             replaced_count = self._replaced_counts.get(key, 0)
