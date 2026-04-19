@@ -42,7 +42,7 @@ def _is_truthy(node) -> bool | None:
     node = _unwrap_parens(node) if isinstance(node, Expression) else node
     if node is None:
         return None
-    if _is_builtin_variable(node) and isinstance(node, Ps1Variable):
+    if _is_builtin_variable(node):
         lower = node.name.lower()
         if lower == 'true':
             return True

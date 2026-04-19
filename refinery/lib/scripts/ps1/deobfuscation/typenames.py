@@ -5806,11 +5806,7 @@ def collect_variable_types(root: Node) -> dict[str, str]:
     }
 
 
-class Ps1TypeSystemSimplifications(Transformer):
-    """
-    Resolve type-aware patterns:
-    - `($X | Get-Member)[N].Name` resolves to the Nth member name string.
-    """
+class VariableTypeAwareTransformer(Transformer):
 
     def __init__(self):
         super().__init__()
@@ -5820,6 +5816,13 @@ class Ps1TypeSystemSimplifications(Transformer):
         if self._variable_types is None:
             self._variable_types = collect_variable_types(node)
         return super().visit(node)
+
+
+class Ps1TypeSystemSimplifications(VariableTypeAwareTransformer):
+    """
+    Resolve type-aware patterns:
+    - ``($X | Get-Member)[N].Name`` resolves to the Nth member name string.
+    """
 
     def visit_Ps1MemberAccess(self, node: Ps1MemberAccess):
         self.generic_visit(node)

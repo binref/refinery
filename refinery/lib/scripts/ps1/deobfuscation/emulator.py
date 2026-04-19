@@ -891,8 +891,6 @@ class _Ps1Interpreter:
             return result
         if isinstance(left, (int, float)) or isinstance(right, (int, float)):
             return self._numeric_op(left, right, int.__add__, float.__add__)
-        if left is None and isinstance(right, (int, float)):
-            return right
         if isinstance(left, list):
             if isinstance(right, list):
                 return left + right
@@ -1306,7 +1304,7 @@ class Ps1ForEachPipeline(Transformer):
     @staticmethod
     def _results_to_node(results: list[_Value]) -> Expression | None:
         if all(isinstance(r, str) for r in results):
-            return _make_string_literal(''.join(str(r) for r in results))
+            return _make_string_literal(''.join(r for r in results if isinstance(r, str)))
         if all(isinstance(r, int) and not isinstance(r, bool) for r in results):
             elements: list[Expression] = [
                 Ps1IntegerLiteral(value=v, raw=str(v))

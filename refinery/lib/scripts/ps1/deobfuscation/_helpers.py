@@ -6,7 +6,13 @@ from __future__ import annotations
 import io
 import re
 
-from collections.abc import Generator
+from collections.abc import Callable, Generator
+from typing import TYPE_CHECKING, TypeVar
+
+if TYPE_CHECKING:
+    from typing import TypeGuard
+
+_T = TypeVar('_T')
 
 from refinery.lib.scripts import Block, Node
 from refinery.lib.scripts.ps1.model import (
@@ -755,19 +761,25 @@ def _make_string_literal(value: str) -> Ps1StringLiteral | Ps1HereString:
     return Ps1StringLiteral(value=value, raw=raw)
 
 
-def _collect_string_arguments(node: Expression) -> list[str] | None:
+def _collect_typed_arguments(
+    node: Expression, extract: Callable[[Expression], _T | None],
+) -> list[_T] | None:
     if isinstance(node, Ps1ArrayLiteral):
-        result = []
+        result: list[_T] = []
         for elem in node.elements:
-            sv = _string_value(elem)
-            if sv is None:
+            value = extract(elem)
+            if value is None:
                 return None
-            result.append(sv)
+            result.append(value)
         return result
-    sv = _string_value(node)
-    if sv is not None:
-        return [sv]
+    value = extract(node)
+    if value is not None:
+        return [value]
     return None
+
+
+def _collect_string_arguments(node: Expression) -> list[str] | None:
+    return _collect_typed_arguments(node, _string_value)
 
 
 _FORMAT_PATTERN = re.compile(r'\{\{|\}\}|\{(\d+)\}')
@@ -792,19 +804,14 @@ def _apply_format_string(fmt: str, args: list[str]) -> str | None:
         return None
 
 
+def _extract_int(node: Expression) -> int | None:
+    return node.value if isinstance(node, Ps1IntegerLiteral) else None
+
+
 def _collect_int_arguments(node: Expression) -> list[int] | None:
-    if isinstance(node, Ps1ArrayLiteral):
-        result = []
-        for elem in node.elements:
-            if not isinstance(elem, Ps1IntegerLiteral):
-                return None
-            result.append(elem.value)
-        return result
     if isinstance(node, Ps1ParenExpression) and node.expression is not None:
         return _collect_int_arguments(node.expression)
-    if isinstance(node, Ps1IntegerLiteral):
-        return [node.value]
-    return None
+    return _collect_typed_arguments(node, _extract_int)
 
 
 def _unwrap_single_paren(node: Expression) -> Expression:
@@ -1064,10 +1071,13 @@ _PS1_KNOWN_VARIABLES: dict[str, str] = {
 }
 
 
-def _is_builtin_variable(node, names: set[str] | frozenset[str] = _BUILTIN_VARIABLES) -> bool:
+def _is_builtin_variable(
+    node: Node | None,
+    names: set[str] | frozenset[str] = _BUILTIN_VARIABLES,
+) -> TypeGuard[Ps1Variable]:
     """
-    Return True when `node` is an unscoped `Ps1Variable` whose lowered name is in `names` (defaults
-    to `$Null`, `$True`, `$False`).
+    Return True when ``node`` is an unscoped ``Ps1Variable`` whose lowered name is in ``names``
+    (defaults to ``$Null``, ``$True``, ``$False``).
     """
     return (
         isinstance(node, Ps1Variable)

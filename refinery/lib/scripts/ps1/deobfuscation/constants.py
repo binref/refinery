@@ -51,8 +51,6 @@ from refinery.lib.scripts.ps1.model import (
 )
 from refinery.lib.scripts.win32const import DEFAULT_ENVIRONMENT_TEMPLATE
 
-_CONSTANT_TYPES = (Ps1StringLiteral, Ps1HereString, Ps1IntegerLiteral, Ps1RealLiteral, Ps1TypeExpression)
-
 _PS1_DEFAULT_VARIABLES: dict[str, str] = {
     key.lower(): value for key, value in {
         'ConfirmPreference'          : r'High',
@@ -181,7 +179,7 @@ def _constant_value_key(node: Node) -> tuple | None:
         return ('str', node.value)
     if isinstance(node, Ps1TypeExpression):
         return ('type', node.name)
-    if _is_builtin_variable(node) and isinstance(node, Ps1Variable):
+    if _is_builtin_variable(node):
         return ('var', node.name.lower())
     if isinstance(node, Ps1ArrayLiteral):
         keys = []
@@ -196,21 +194,6 @@ def _constant_value_key(node: Node) -> tuple | None:
         if inner is not None:
             return _constant_value_key(inner)
     return None
-
-
-def _is_constant(node: Node) -> bool:
-    node = _unwrap_parens(node)
-    if isinstance(node, _CONSTANT_TYPES):
-        return True
-    if _is_builtin_variable(node):
-        return True
-    if isinstance(node, Ps1ArrayLiteral):
-        return all(_is_constant(e) for e in node.elements)
-    if isinstance(node, Ps1ArrayExpression):
-        inner = _unwrap_to_array_literal(node)
-        if inner is not None:
-            return _is_constant(inner)
-    return False
 
 
 def _get_array_literal(node: Node) -> Ps1ArrayLiteral | None:
@@ -331,9 +314,8 @@ class Ps1ConstantInlining(Transformer):
                     key = _candidate_key(target)
                     if key is None or key in rejected:
                         continue
-                    if node.operator == '=' and node.value is not None and _is_constant(node.value):
-                        value = _unwrap_parens(node.value)
-                        vk = _constant_value_key(value)
+                    if node.operator == '=' and node.value is not None:
+                        vk = _constant_value_key(node.value)
                         if vk is None:
                             _reject(key)
                         else:
@@ -342,11 +324,12 @@ class Ps1ConstantInlining(Transformer):
                                 _reject(key)
                             else:
                                 value_keys[key] = vk
+                                const_value = _unwrap_parens(node.value)
                                 existing = candidates.get(key)
                                 if existing is not None:
                                     existing[0].append(node)
                                 else:
-                                    candidates[key] = ([node], value)
+                                    candidates[key] = ([node], const_value)
                                 entry = _find_body_entry(node)
                                 if entry is not None:
                                     scope_entries.setdefault(key, []).append(entry)

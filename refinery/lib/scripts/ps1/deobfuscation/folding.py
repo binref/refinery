@@ -248,6 +248,21 @@ class Ps1ConstantFolding(LocalFunctionAwareTransformer):
         self.generic_visit(node)
         return None
 
+    @staticmethod
+    def _fold_regex_call_result(
+        invoke: Ps1InvokeMember, member_lower: str,
+    ) -> Expression | None:
+        if member_lower == 'matches':
+            matches = _compute_regex_matches(invoke)
+            if matches is not None:
+                elements: list[Expression] = [_make_string_literal(s) for s in matches]
+                return Ps1ArrayLiteral(elements=elements)
+        elif member_lower == 'match':
+            result = _compute_regex_match(invoke)
+            if result is not None:
+                return _make_string_literal(result)
+        return None
+
     def _try_fold_regex_pipeline(self, node: Ps1Pipeline) -> Expression | None:
         first = node.elements[0].expression
         second_expr = node.elements[1].expression
@@ -259,17 +274,7 @@ class Ps1ConstantFolding(LocalFunctionAwareTransformer):
         sb = _extract_foreach_scriptblock(second_expr) if second_expr else None
         if sb is None or not _foreach_extracts_value(sb):
             return None
-        lower = member.lower()
-        if lower == 'matches':
-            matches = _compute_regex_matches(first)
-            if matches is not None:
-                elements: list[Expression] = [_make_string_literal(s) for s in matches]
-                return Ps1ArrayLiteral(elements=elements)
-        elif lower == 'match':
-            result = _compute_regex_match(first)
-            if result is not None:
-                return _make_string_literal(result)
-        return None
+        return self._fold_regex_call_result(first, member.lower())
 
     def visit_Ps1MemberAccess(self, node: Ps1MemberAccess):
         self.generic_visit(node)
@@ -322,17 +327,7 @@ class Ps1ConstantFolding(LocalFunctionAwareTransformer):
         call_member = inner.member if isinstance(inner.member, str) else None
         if call_member is None:
             return None
-        lower_call = call_member.lower()
-        if lower_call == 'matches':
-            matches = _compute_regex_matches(inner)
-            if matches is not None:
-                elements: list[Expression] = [_make_string_literal(s) for s in matches]
-                return Ps1ArrayLiteral(elements=elements)
-        elif lower_call == 'match':
-            result = _compute_regex_match(inner)
-            if result is not None:
-                return _make_string_literal(result)
-        return None
+        return self._fold_regex_call_result(inner, call_member.lower())
 
     @staticmethod
     def _try_join_regex_matches(operand: Expression) -> Expression | None:
@@ -382,8 +377,6 @@ class Ps1ConstantFolding(LocalFunctionAwareTransformer):
                 return _make_string_literal(obj_str[idx])
             return None
         array = _unwrap_to_array_literal(node.index)
-        if array is None and isinstance(node.index, Ps1ArrayLiteral):
-            array = node.index
         if array is not None:
             chars: list[Expression] = []
             for elem in array.elements:
@@ -750,8 +743,6 @@ class Ps1ConstantFolding(LocalFunctionAwareTransformer):
         if scalar is not None:
             return _make_string_literal(scalar)
         array = _unwrap_to_array_literal(node.left)
-        if array is None and isinstance(node.left, Ps1ArrayLiteral):
-            array = node.left
         if array is None:
             return None
         args = _collect_string_arguments(array)
@@ -794,8 +785,6 @@ class Ps1ConstantFolding(LocalFunctionAwareTransformer):
             inputs = [left_str]
         else:
             array = _unwrap_to_array_literal(node.left)
-            if array is None and isinstance(node.left, Ps1ArrayLiteral):
-                array = node.left
             if array is None:
                 return None
             inputs_opt = _collect_string_arguments(array)

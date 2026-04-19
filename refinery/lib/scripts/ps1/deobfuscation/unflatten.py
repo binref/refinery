@@ -49,7 +49,7 @@ def _is_bool_literal(node: Node) -> bool | None:
     Check if a node is a $True or $False variable literal. Returns the boolean value,
     or None if the node is not a boolean literal.
     """
-    if _is_builtin_variable(node, frozenset({'true', 'false'})) and isinstance(node, Ps1Variable):
+    if _is_builtin_variable(node, frozenset({'true', 'false'})):
         return node.name.lower() == 'true'
     return None
 
@@ -127,9 +127,9 @@ def _collect_variables(node: Node) -> set[_VarKey]:
     """
     result: set[_VarKey] = set()
     for child in node.walk():
-        if isinstance(child, Ps1Variable) and child.scope != Ps1ScopeModifier.NONE:
-            continue
         if isinstance(child, Ps1Variable):
+            if child.scope != Ps1ScopeModifier.NONE:
+                continue
             lower = child.name.lower()
             if lower in ('true', 'false', 'null'):
                 continue
@@ -803,6 +803,19 @@ def _seed_env_from_preamble(
     return env
 
 
+def _merge_next_state(
+    true_next: _StateKey | None,
+    false_next: _StateKey | None,
+) -> _StateKey | None:
+    if true_next == false_next:
+        return true_next
+    if true_next is None:
+        return false_next
+    if false_next is None:
+        return true_next
+    return true_next
+
+
 def _try_unroll_loop(
     states: dict[_StateKey, _StateBlock],
     entry: _StateKey,
@@ -969,14 +982,7 @@ def _try_unroll_loop(
                         env[key] = tv
                     else:
                         env.pop(key, None)
-                if true_next == false_next:
-                    current = true_next
-                elif true_next is None:
-                    current = false_next
-                elif false_next is None:
-                    current = true_next
-                else:
-                    current = true_next
+                current = _merge_next_state(true_next, false_next)
                 continue
             return None
 
@@ -1066,14 +1072,7 @@ def _recover_structure(
                 if_stmt = _build_if(transition.condition, true_stmts, false_stmts)
                 if if_stmt is not None:
                     result.append(if_stmt)
-                if true_next == false_next:
-                    current = true_next
-                elif true_next is None:
-                    current = false_next
-                elif false_next is None:
-                    current = true_next
-                else:
-                    current = true_next
+                current = _merge_next_state(true_next, false_next)
                 continue
         return (result, None)
 

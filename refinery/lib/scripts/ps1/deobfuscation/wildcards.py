@@ -14,7 +14,6 @@ import re
 from collections.abc import Iterable
 from fnmatch import translate as fnmatch_translate
 
-from refinery.lib.scripts import Node, Transformer
 from refinery.lib.scripts.ps1.deobfuscation._helpers import (
     _GET_COMMAND_ALIASES,
     _GET_MEMBER_ALIASES,
@@ -28,8 +27,8 @@ from refinery.lib.scripts.ps1.deobfuscation._helpers import (
     _unwrap_parens,
 )
 from refinery.lib.scripts.ps1.deobfuscation.typenames import (
+    VariableTypeAwareTransformer,
     _TYPE_MEMBERS,
-    collect_variable_types,
     resolve_expression_type,
 )
 from refinery.lib.scripts.ps1.model import (
@@ -89,8 +88,12 @@ def _wildcard_match_unique(
         return matches[0]
     return None
 
+
+_KNOWN_CMDLET_LIST: list[str] = [name for name in _KNOWN_NAMES.values() if '-' in name]
+
+
 def _known_cmdlets() -> list[str]:
-    return [name for name in _KNOWN_NAMES.values() if '-' in name]
+    return _KNOWN_CMDLET_LIST
 
 
 def _is_psobject_member_access(
@@ -334,16 +337,7 @@ def _extract_where_object_wildcard(
     return _string_value(expr.right)
 
 
-class Ps1WildcardResolution(Transformer):
-
-    def __init__(self):
-        super().__init__()
-        self._variable_types: dict[str, str] | None = None
-
-    def visit(self, node: Node):
-        if self._variable_types is None:
-            self._variable_types = collect_variable_types(node)
-        return super().visit(node)
+class Ps1WildcardResolution(VariableTypeAwareTransformer):
 
     def visit_Ps1MemberAccess(self, node: Ps1MemberAccess):
         self.generic_visit(node)
@@ -467,12 +461,8 @@ class Ps1WildcardResolution(Transformer):
         self,
         node: Ps1InvokeMember,
     ) -> Expression | None:
-        member = node.member
-        if isinstance(member, Ps1StringLiteral):
-            member_name = member.value
-        elif isinstance(member, str):
-            member_name = member
-        else:
+        member_name = _get_member_name(node.member)
+        if member_name is None:
             return None
         member_lower = member_name.lower()
         is_getcmdlets = member_lower in ('getcmdlets', 'getcmdlet')
