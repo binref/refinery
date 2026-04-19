@@ -51,9 +51,9 @@ VBA_BUILTIN_CONSTANTS: dict[str, int] = {
     'vbkey0': 48, 'vbkey1': 49, 'vbkey2': 50, 'vbkey3': 51, 'vbkey4': 52,
     'vbkey5': 53, 'vbkey6': 54, 'vbkey7': 55, 'vbkey8': 56, 'vbkey9': 57,
     # key codes: numpad
-    'vbkeynumpad0'  : 0x60, 'vbkeynumpad1' : 0x61, 'vbkeynumpad2': 0x62,
-    'vbkeynumpad3'  : 0x63, 'vbkeynumpad4' : 0x64, 'vbkeynumpad5': 0x65,
-    'vbkeynumpad6'  : 0x66, 'vbkeynumpad7' : 0x67, 'vbkeynumpad8': 0x68,
+    'vbkeynumpad0'  : 0x60, 'vbkeynumpad1' : 0x61, 'vbkeynumpad2' : 0x62,
+    'vbkeynumpad3'  : 0x63, 'vbkeynumpad4' : 0x64, 'vbkeynumpad5' : 0x65,
+    'vbkeynumpad6'  : 0x66, 'vbkeynumpad7' : 0x67, 'vbkeynumpad8' : 0x68,
     'vbkeynumpad9'  : 0x69,
     'vbkeymultiply' : 0x6A,
     'vbkeyadd'      : 0x6B,

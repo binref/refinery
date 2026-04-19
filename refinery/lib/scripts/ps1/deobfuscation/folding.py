@@ -604,16 +604,16 @@ class Ps1ConstantFolding(LocalFunctionAwareTransformer):
         return make_string_literal(result)
 
     _ARITHMETIC_OPS = {
-        '+' : int.__add__,
-        '-' : int.__sub__,
-        '*' : int.__mul__,
-        '/' : int.__floordiv__,
-        '%' : int.__mod__,
-        '-band': int.__and__,
-        '-bor' : int.__or__,
-        '-bxor': int.__xor__,
-        '-shl' : int.__lshift__,
-        '-shr' : int.__rshift__,
+        '+'     : int.__add__,
+        '-'     : int.__sub__,
+        '*'     : int.__mul__,
+        '/'     : int.__floordiv__,
+        '%'     : int.__mod__,
+        '-band' : int.__and__,
+        '-bor'  : int.__or__,
+        '-bxor' : int.__xor__,
+        '-shl'  : int.__lshift__,
+        '-shr'  : int.__rshift__,
     }
 
     def visit_Ps1BinaryExpression(self, node: Ps1BinaryExpression):
@@ -740,7 +740,6 @@ class Ps1ConstantFolding(LocalFunctionAwareTransformer):
         if pattern_str is None:
             return None
         flags = re.IGNORECASE if op != '-csplit' else 0
-        # Collect input strings: either a single string or an array of strings.
         left_str = string_value(node.left)
         if left_str is not None:
             inputs = [left_str]

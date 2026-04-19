@@ -70,9 +70,8 @@ class _Ps1Expandable(Expression):
 @dataclass(repr=False)
 class Ps1ExpandableString(_Ps1Expandable):
     """
-    An expandable (double-quoted) string with interleaved text and expression
-    parts. Text segments are `Ps1StringLiteral`, expression segments are any
-    `Expression` node.
+    An expandable (double-quoted) string with interleaved text and expression parts. Text segments
+    are `Ps1StringLiteral`, expression segments are any `Expression` node.
     """
     raw: str = '""'
 

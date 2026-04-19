@@ -164,7 +164,7 @@ BUILTIN_DISPATCH: dict[str, Callable[[list[Value]], Value]] = {
 def eval_builtin(name: str, args: list[Value]) -> Value:
     """
     Evaluate a VBA built-in on plain Python values. The name must already be lowercased and
-    stripped of a trailing $. Returns None when the function name is not recognized; raises
+    stripped of a trailing `$`. Returns `None` when the function name is not recognized; raises
     ValueError on domain errors (bad arg count, negative index, etc.).
     """
     handler = BUILTIN_DISPATCH.get(name)

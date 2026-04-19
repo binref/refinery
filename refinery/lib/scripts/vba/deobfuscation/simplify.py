@@ -57,7 +57,7 @@ _INTEGER_OPS: dict[str, Callable] = {
 def _try_evaluate_call(node: VbaCallExpression):
     """
     Try to statically evaluate a VBA builtin call with constant arguments. Returns the
-    evaluated Python value, or None if evaluation is not possible.
+    evaluated Python value, or `None` if evaluation is not possible.
     """
     if not isinstance(node.callee, VbaIdentifier):
         return None

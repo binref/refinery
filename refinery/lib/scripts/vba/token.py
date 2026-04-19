@@ -149,6 +149,7 @@ _KEYWORDS: dict[str, VbaTokenKind] = {
 
 _KEYWORDS_SET = frozenset(_KEYWORDS.values())
 
+
 @dataclass
 class VbaToken:
     kind: VbaTokenKind

@@ -769,7 +769,7 @@ def case_normalize_name(name: str) -> str:
 def apply_format_string(fmt: str, args: list[str]) -> str | None:
     """
     Apply a PowerShell-style format string to a list of string arguments.
-    Returns the formatted string, or ``None`` on index/value errors.
+    Returns the formatted string, or `None` on index/value errors.
     """
     try:
         def replacer(m: re.Match) -> str:

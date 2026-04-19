@@ -452,9 +452,8 @@ class Ps1ConstantInlining(Transformer):
         remaining: dict[str, int],
     ) -> bool:
         """
-        Shared guard for substitution methods. Returns True if the substitution
-        should be skipped (node is inside a try body or not dominated by its
-        scope entry).
+        Shared guard for substitution methods. Returns `True` if the substitution should be skipped
+        (node is inside a try body or not dominated by its scope entry).
         """
         if _inside_try_body(node):
             remaining[key] = remaining.get(key, 0) + 1

@@ -495,8 +495,7 @@ class JsParser:
             self._advance()
         consequent: list[Statement] = []
         while not self._at(
-            JsTokenKind.CASE, JsTokenKind.DEFAULT,
-            JsTokenKind.RBRACE, JsTokenKind.EOF,
+            JsTokenKind.CASE, JsTokenKind.DEFAULT, JsTokenKind.RBRACE, JsTokenKind.EOF,
         ):
             stmt = self._parse_statement()
             if stmt is not None:
@@ -977,8 +976,7 @@ class JsParser:
     def _parse_equality_expression(self) -> Expression:
         left = self._parse_relational_expression()
         while self._at(
-            JsTokenKind.EQ2, JsTokenKind.BANG_EQ,
-            JsTokenKind.EQ3, JsTokenKind.BANG_EQ2,
+            JsTokenKind.EQ2, JsTokenKind.BANG_EQ, JsTokenKind.EQ3, JsTokenKind.BANG_EQ2,
         ):
             op = self._advance().value
             right = self._parse_relational_expression()
@@ -989,9 +987,12 @@ class JsParser:
     def _parse_relational_expression(self) -> Expression:
         left = self._parse_shift_expression()
         while self._at(
-            JsTokenKind.LT, JsTokenKind.GT,
-            JsTokenKind.LT_EQ, JsTokenKind.GT_EQ,
-            JsTokenKind.INSTANCEOF, JsTokenKind.IN,
+            JsTokenKind.LT,
+            JsTokenKind.GT,
+            JsTokenKind.LT_EQ,
+            JsTokenKind.GT_EQ,
+            JsTokenKind.INSTANCEOF,
+            JsTokenKind.IN,
         ):
             if self._no_in and self._at(JsTokenKind.IN):
                 break
@@ -1040,8 +1041,11 @@ class JsParser:
 
     def _parse_unary_expression(self) -> Expression:
         if self._at(
-            JsTokenKind.BANG, JsTokenKind.TILDE,
-            JsTokenKind.TYPEOF, JsTokenKind.VOID, JsTokenKind.DELETE,
+            JsTokenKind.BANG,
+            JsTokenKind.TILDE,
+            JsTokenKind.TYPEOF,
+            JsTokenKind.VOID,
+            JsTokenKind.DELETE,
         ):
             tok = self._advance()
             operand = self._parse_unary_expression()
@@ -1087,15 +1091,13 @@ class JsParser:
                 prop_tok = self._advance()
                 prop = JsIdentifier(name=prop_tok.value, offset=prop_tok.offset)
                 expr = JsMemberExpression(
-                    object=expr, property=prop,
-                    computed=False, optional=False, offset=expr.offset)
+                    object=expr, property=prop, computed=False, optional=False, offset=expr.offset)
             elif self._at(JsTokenKind.LBRACKET):
                 self._advance()
                 prop = self._parse_expression()
                 self._expect(JsTokenKind.RBRACKET)
                 expr = JsMemberExpression(
-                    object=expr, property=prop,
-                    computed=True, optional=False, offset=expr.offset)
+                    object=expr, property=prop, computed=True, optional=False, offset=expr.offset)
             elif self._eat(JsTokenKind.QUESTION_DOT):
                 if self._at(JsTokenKind.LPAREN):
                     expr = self._parse_call_arguments(expr, optional=True)
@@ -1104,14 +1106,12 @@ class JsParser:
                     prop = self._parse_expression()
                     self._expect(JsTokenKind.RBRACKET)
                     expr = JsMemberExpression(
-                        object=expr, property=prop,
-                        computed=True, optional=True, offset=expr.offset)
+                        object=expr, property=prop, computed=True, optional=True, offset=expr.offset)
                 else:
                     prop_tok = self._advance()
                     prop = JsIdentifier(name=prop_tok.value, offset=prop_tok.offset)
                     expr = JsMemberExpression(
-                        object=expr, property=prop,
-                        computed=False, optional=True, offset=expr.offset)
+                        object=expr, property=prop, computed=False, optional=True, offset=expr.offset)
             elif self._at(
                 JsTokenKind.TEMPLATE_FULL, JsTokenKind.TEMPLATE_HEAD,
             ):
@@ -1447,7 +1447,7 @@ class JsParser:
                 JsTokenKind.COLON,
                 JsTokenKind.COMMA,
                 JsTokenKind.RBRACE,
-                JsTokenKind.EQUALS
+                JsTokenKind.EQUALS,
             ):
                 key = JsIdentifier(name=kind_val, offset=saved.offset)
                 return self._finish_property_value(key, False, False, offset)

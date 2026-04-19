@@ -57,7 +57,6 @@ def _extract_alias_definition(cmd: Ps1CommandInvocation) -> tuple[str, str] | No
                 return None
             positional.append(sv)
 
-    # Fill in from positional arguments
     if alias_name is None and len(positional) >= 1:
         alias_name = positional[0]
         positional = positional[1:]

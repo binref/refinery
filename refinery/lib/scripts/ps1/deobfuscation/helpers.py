@@ -129,7 +129,8 @@ def collect_int_arguments(node: Expression) -> list[int] | None:
 
 def collect_byte_array(node: Expression) -> bytes | None:
     """
-    Extract an integer array from `node` and convert to `bytes`. Handles `Ps1ArrayLiteral`, `Ps1ArrayExpression`, and parenthesized wrappers.
+    Extract an integer array from `node` and convert to `bytes`. Handles `Ps1ArrayLiteral`,
+    `Ps1ArrayExpression`, and parenthesized wrappers.
     """
     array = unwrap_to_array_literal(node)
     if array is not None:
@@ -223,7 +224,7 @@ def get_member_name(member: str | Expression) -> str | None:
 
 def unwrap_integer(node: Node | None) -> Ps1IntegerLiteral | None:
     """
-    Peel parentheses and unary negation to extract an integer literal, or return None.
+    Peel parentheses and unary negation to extract an integer literal, or return `None`.
     """
     node = unwrap_parens(node) if isinstance(node, Expression) else node
     if isinstance(node, Ps1IntegerLiteral):
@@ -317,7 +318,7 @@ def is_builtin_variable(
     names: set[str] | frozenset[str] = BUILTIN_VARIABLES,
 ) -> TypeGuard[Ps1Variable]:
     """
-    Return True when `node` is an unscoped `Ps1Variable` whose lowered name is in `names` (defaults
+    Return `True` when `node` is an unscoped `Ps1Variable` whose lowered name is in `names` (defaults
     to `$Null`, `$True`, `$False`).
     """
     return (

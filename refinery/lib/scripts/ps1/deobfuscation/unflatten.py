@@ -49,8 +49,8 @@ _StateKey = int | float | str
 
 def _is_bool_literal(node: Node) -> bool | None:
     """
-    Check if a node is a $True or $False variable literal. Returns the boolean value,
-    or None if the node is not a boolean literal.
+    Check if a node is a `$True` or `$False` variable literal. Returns the boolean value,
+    or `None` if the node is not a boolean literal.
     """
     if is_builtin_variable(node, frozenset({'true', 'false'})):
         return node.name.lower() == 'true'
@@ -172,7 +172,7 @@ def _is_state_assignment(
 ) -> _StateKey | None:
     """
     If the statement is an assignment to the state variable with a constant value, return that
-    value. Otherwise return None.
+    value. Otherwise return `None`.
     """
     result = _get_simple_assignment(stmt)
     if result is None:
@@ -188,7 +188,7 @@ def _get_simple_assignment(
 ) -> tuple[_VarKey, Node] | None:
     """
     If the statement is a simple assignment ($var = <value>), return the variable key
-    and the value node. Returns None for non-assignments or compound operators.
+    and the value node. Returns `None` for non-assignments or compound operators.
     """
     if not isinstance(stmt, Ps1ExpressionStatement):
         return None
@@ -320,7 +320,7 @@ def _find_state_init(
 ) -> tuple[int, _StateKey] | None:
     """
     Scan backwards from the while loop to find the state variable initialization. Returns
-    (index_in_body, initial_state_value) or None.
+    (index_in_body, initial_state_value) or `None`.
     """
     for i in range(loop_index - 1, -1, -1):
         value = _is_state_assignment(body[i], var_name, var_scope)
@@ -346,7 +346,7 @@ def _extract_transition(
 ) -> tuple[list[Statement], _Transition] | None:
     """
     Separate a switch case body into side-effect statements and a state transition. Returns
-    (side_effects, transition) or None if the pattern is not recognized.
+    (side_effects, transition) or `None` if the pattern is not recognized.
     """
     if not stmts:
         return None
@@ -386,7 +386,7 @@ def _extract_state_machine(
     is_exit: Callable[[_StateKey], bool],
 ) -> dict[_StateKey, _StateBlock] | None:
     """
-    Parse all switch cases into a state machine dictionary. Returns None on failure.
+    Parse all switch cases into a state machine dictionary. Returns `None` on failure.
     """
     states: dict[_StateKey, _StateBlock] = {}
     var_name = match.state_var_name
@@ -451,7 +451,7 @@ def _build_if(
     false_body: list[Statement],
 ) -> Ps1IfStatement | None:
     """
-    Build an if/else statement. Returns None if both bodies are empty. Omits the else block if the
+    Build an if/else statement. Returns `None` if both bodies are empty. Omits the else block if the
     false body is empty; negates the condition if only the true body is empty.
     """
     if not true_body and not false_body:
@@ -512,7 +512,7 @@ def _find_join_point(
     back_edge_targets: set[_StateKey],
 ) -> _StateKey | None:
     """
-    Find the first state reachable from both arms of a conditional (the join point). Returns None
+    Find the first state reachable from both arms of a conditional (the join point). Returns `None`
     if no common state is found (one or both arms exit).
     """
     true_reach: list[_StateKey] = []
@@ -682,7 +682,7 @@ def _simulate_arm(
 ) -> tuple[list[Statement], _StateKey | None] | None:
     """
     Simulate execution of a single arm (branch) during loop unrolling. Follows the state graph
-    linearly, resolving conditions where possible. Returns (statements, next_state) or None if a
+    linearly, resolving conditions where possible. Returns (statements, next_state) or `None` if a
     condition cannot be resolved.
     """
     current: _StateKey | None = start
@@ -736,7 +736,7 @@ def _seed_env_from_preamble(
 ) -> dict[_VarKey, _StateKey | bool] | None:
     """
     Walk the linear chain from entry to header, simulating assignments to build the initial
-    variable environment. Returns the env or None if the path from entry to header is not a
+    variable environment. Returns the env or `None` if the path from entry to header is not a
     simple linear chain.
     """
     env: dict[_VarKey, _StateKey | bool] = {}
@@ -782,7 +782,7 @@ def _try_unroll_loop(
 
         (unrolled_statements, internal_vars)
 
-    if successful, or None if the loop cannot be fully resolved.
+    if successful, or `None` if the loop cannot be fully resolved.
     """
     block = states[header]
     if not isinstance(block.transition, _ConditionalTransition):
@@ -929,7 +929,7 @@ def _recover_structure(
     is_exit: Callable[[_StateKey], bool],
 ) -> list[Statement] | None:
     """
-    Walk the state graph from the entry state and emit the recovered AST. Returns None if the
+    Walk the state graph from the entry state and emit the recovered AST. Returns `None` if the
     structure cannot be recovered (e.g., irreducible control flow).
     """
     back_edges = _find_back_edges(states, entry, is_exit)
@@ -945,7 +945,7 @@ def _recover_structure(
 
             (statements, next_state)
 
-        where next_state is the stop state or None.
+        where next_state is the stop state or `None`.
         """
         result: list[Statement] = []
         current: _StateKey | None = start
@@ -1126,7 +1126,7 @@ def _determine_loop_direction(
 ) -> _LoopDirection | None:
     """
     Determine which branch of a conditional loop header leads to the loop body
-    and which leads to the exit. Returns None when direction is ambiguous (both
+    and which leads to the exit. Returns `None` when direction is ambiguous (both
     branches reach the header, or neither does).
     """
     true_target = cond_trans.true_target

@@ -21,7 +21,7 @@ DEFAULT_ENVIRONMENT_TEMPLATE = {
     'NumberOfProcessors'       : r'16',
     'OneDrive'                 : r'C:\Users\{u}\OneDrive',
     'OS'                       : r'Windows_NT',
-    'Path': ';'.join(
+    'Path'                     : ';'.join(
         [
             r'C:\Windows',
             r'C:\Windows\System32',

@@ -175,7 +175,7 @@ class Visitor:
 class Transformer(Visitor):
     """
     In-place tree rewriter. Each visit method may return a replacement node
-    or None to keep the original. Tracks whether any transformation was applied
+    or `None` to keep the original. Tracks whether any transformation was applied
     via the `changed` flag.
     """
 
@@ -272,7 +272,7 @@ def _replace_in_parent(old: Node, new: Node):
 
 def _remove_from_parent(node: Node) -> bool:
     """
-    Remove `node` from its parent's child list. Returns True if the node was found and removed.
+    Remove `node` from its parent's child list. Returns `True` if the node was found and removed.
     Uses identity comparison to avoid removing structurally equal but distinct nodes.
     """
     parent = node.parent

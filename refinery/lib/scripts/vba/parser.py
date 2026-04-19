@@ -1141,8 +1141,10 @@ class VbaParser:
     def _parse_argument_list(
         self,
         stop: frozenset[VbaTokenKind] = frozenset({
-            VbaTokenKind.NEWLINE, VbaTokenKind.COLON,
-            VbaTokenKind.EOF, VbaTokenKind.RPAREN,
+            VbaTokenKind.NEWLINE,
+            VbaTokenKind.COLON,
+            VbaTokenKind.EOF,
+            VbaTokenKind.RPAREN,
             VbaTokenKind.ELSE,
         }),
     ) -> list[Expression | None]:

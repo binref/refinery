@@ -63,7 +63,7 @@ def _is_truthy(node) -> bool | None:
 def _evaluate_for_condition(node: Ps1ForLoop) -> bool | None:
     """
     Try to evaluate a for-loop condition at loop entry by substituting the initial value of the
-    loop variable into the comparison. Returns the boolean result, or None if the pattern does not
+    loop variable into the comparison. Returns the boolean result, or `None` if the pattern does not
     match.
     """
     init = node.initializer
@@ -94,7 +94,7 @@ def _resolve_side(
 ) -> int | None:
     """
     Resolve one side of a for-loop condition to an integer: if the node is the loop variable,
-    return the initial value; if it is a constant integer, return that; otherwise return None.
+    return the initial value; if it is a constant integer, return that; otherwise return `None`.
     """
     node = unwrap_parens(node) if isinstance(node, Expression) else node
     if (
@@ -109,7 +109,7 @@ def _resolve_side(
 
 def _body_breaks_unconditionally(body: list[Statement]) -> bool:
     """
-    Return True if the last statement in the body is an unlabeled break and the body contains no
+    Return `True` if the last statement in the body is an unlabeled break and the body contains no
     continue statements at any nesting depth. Such a loop body executes exactly once.
     """
     if not body:
@@ -126,7 +126,7 @@ def _body_breaks_unconditionally(body: list[Statement]) -> bool:
 
 def _is_pure_constant(node) -> bool:
     """
-    Return True when an expression is a side-effect-free constant that can be removed as a
+    Return `True` when an expression is a side-effect-free constant that can be removed as a
     standalone statement. Only matches numeric literals and the built-in constants `$Null`,
     `$True`, and `$False` — string literals are excluded because they may represent intentional
     pipeline output.

@@ -6,11 +6,13 @@ from __future__ import annotations
 import base64
 import re
 
-from typing import TYPE_CHECKING, Union
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
     from typing import TypeAlias
+
+    _Value: TypeAlias = str | int | float | bool | list | None
 
 from refinery.lib.scripts import Block, Transformer
 from refinery.lib.scripts.ps1.deobfuscation.helpers import (
@@ -74,8 +76,6 @@ from refinery.lib.scripts.ps1.model import (
     Ps1Variable,
     Ps1WhileLoop,
 )
-
-_Value: TypeAlias = Union[str, int, float, bool, list, None]
 
 _MAX_INTERPRETER_ITERATIONS = 100_000
 _MAX_INTERPRETER_STRING_LEN = 1_000_000
@@ -1174,9 +1174,8 @@ class Ps1FunctionEvaluator(Transformer):
 
 class Ps1ForEachPipeline(Transformer):
     """
-    Evaluate pipelines of the form `<array> | %{ <scriptblock> }` by executing
-    the scriptblock for each element and replacing the pipeline with the
-    computed result.
+    Evaluate pipelines of the form `<array> | %{ <scriptblock> }` by executing the scriptblock
+    for each element and replacing the pipeline with the computed result.
     """
 
     _BUILTIN_VARS = frozenset({'_', 'true', 'false', 'null'})
@@ -1275,7 +1274,7 @@ def evaluate_truthy(
 ) -> bool | None:
     """
     Evaluate a PS1 condition with the given variable bindings and return its truthiness. Returns
-    None if the expression cannot be evaluated.
+    `None` if the expression cannot be evaluated.
     """
     try:
         interp = _Ps1Interpreter(max_iterations=100)

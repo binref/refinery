@@ -1,6 +1,5 @@
 """
-Recursive-descent parser for PowerShell based on the PowerShell Language
-Specification 3.0.
+Recursive-descent parser for PowerShell based on the PowerShell Language Specification 3.0.
 """
 from __future__ import annotations
 
@@ -203,9 +202,8 @@ class Ps1Parser:
 
     def _rescan_current(self):
         """
-        Re-tokenize the current token under the active lexer mode. Used after
-        mode changes (e.g. `pop_mode`) to ensure the lookahead token matches
-        the new mode.
+        Re-tokenize the current token under the active lexer mode. Used after mode changes
+        (e.g. `pop_mode`) to ensure the lookahead token matches the new mode.
         """
         if self._current.offset >= 0:
             self._lexer.pos = self._current.offset
@@ -496,7 +494,7 @@ class Ps1Parser:
     ) -> tuple[Ps1StringLiteral, bool]:
         """
         Try to absorb a `separator + identifier` sequence into `literal`. Returns the (possibly
-        extended) literal and whether anything was absorbed. When `check_adjacent` is True,
+        extended) literal and whether anything was absorbed. When `check_adjacent` is `True`,
         absorption is skipped if there is whitespace between the current literal and the separator
         token.
         """
@@ -1265,7 +1263,7 @@ class Ps1Parser:
         if self._at(
             Ps1TokenKind.GENERIC_TOKEN,
             Ps1TokenKind.GENERIC_EXPAND,
-            Ps1TokenKind.LABEL
+            Ps1TokenKind.LABEL,
         ) or self._current.kind.is_keyword:
             return self._bare_string(self._advance())
         if self._is_statement_terminator():
@@ -1597,7 +1595,7 @@ class Ps1Parser:
         name = ''
         if self._at(
             Ps1TokenKind.GENERIC_TOKEN,
-            Ps1TokenKind.VARIABLE
+            Ps1TokenKind.VARIABLE,
         ) or self._current.kind.is_keyword:
             name = self._advance().value
         self._lexer.mode = Ps1LexerMode.EXPRESSION

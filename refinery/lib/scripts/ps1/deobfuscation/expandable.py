@@ -31,9 +31,8 @@ from refinery.lib.scripts.ps1.model import (
 
 class Ps1ExpandableStringHoist(Transformer):
     """
-    Extract void subexpressions from expandable strings into preceding or
-    following statements, then replace the expandable string with a plain
-    string literal.
+    Extract void subexpressions from expandable strings into preceding or following statements,
+    then replace the expandable string with a plain string literal.
     """
 
     def visit(self, node):

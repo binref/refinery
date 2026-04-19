@@ -5590,9 +5590,9 @@ _CANONICAL_TYPE_NAMES: dict[str, str] = {
 
 def _resolve_type_name(name: str) -> str | None:
     """
-    Resolve a type name (as written in PowerShell) to its canonical lowercase
-    full .NET name. Handles short names like 'String', qualified names like
-    'Net.WebClient', and full names like 'System.Net.WebClient'.
+    Resolve a type name (as written in PowerShell) to its canonical lowercase full .NET name.
+    Handles short names like 'String', qualified names like 'Net.WebClient', and full names like
+    'System.Net.WebClient'.
     """
     lower = name.lower()
     if lower in _TYPE_MEMBERS:
@@ -5607,8 +5607,8 @@ def _resolve_type_name(name: str) -> str | None:
 
 def is_type(name: str, canonical_lower: str) -> bool:
     """
-    Check whether a type name (as written in PowerShell source) resolves to
-    the given canonical lowercase .NET type name.
+    Check whether a type name (as written in PowerShell source) resolves to the given canonical
+    lowercase .NET type name.
     """
     resolved = _resolve_type_name(name)
     return resolved == canonical_lower
@@ -5621,9 +5621,8 @@ for _type_lower, _members in _TYPE_MEMBERS.items():
 
 def canonical_type_name(name: str) -> str | None:
     """
-    Return the canonical PascalCase display name for a .NET type, preserving
-    an explicit ``System.`` prefix if the caller used one. Returns ``None``
-    if the type is not in the database.
+    Return the canonical PascalCase display name for a .NET type, preserving an explicit `System.`
+    prefix if the caller used one. Returns `None` if the type is not in the database.
     """
     resolved = _resolve_type_name(name)
     lower = resolved if resolved is not None else name.lower()
@@ -5640,8 +5639,6 @@ def canonical_type_name(name: str) -> str | None:
 def canonical_member_name(type_name_lower: str, member: str) -> str | None:
     """
     Return the canonical PascalCase member name for a known .NET type.
-    *type_name_lower* must be the resolved lowercase full type name (as
-    returned by ``_resolve_type_name`` or ``resolve_expression_type``).
     """
     lookup = _MEMBER_LOOKUP.get(type_name_lower)
     if lookup is None:
@@ -5654,9 +5651,8 @@ def resolve_expression_type(
     variable_types: dict[str, str] | None = None,
 ) -> str | None:
     """
-    Trace the .NET type of a PowerShell expression by walking member access
-    chains. Returns the lowercase full .NET type name, or None if the type
-    cannot be determined.
+    Trace the .NET type of a PowerShell expression by walking member access chains. Returns the
+    lowercase full .NET type name, or `None` if the type cannot be determined.
     """
     unwrapped = unwrap_parens(expr)
     if not isinstance(unwrapped, Expression):
@@ -5709,9 +5705,8 @@ def resolve_member_type(
     variable_types: dict[str, str] | None = None,
 ) -> str | None:
     """
-    Resolve the .NET result type of accessing *member* on *obj*. Returns the
-    lowercase full .NET type name (e.g. ``'system.int32'``), or ``None`` if
-    the object type or the member cannot be resolved.
+    Resolve the .NET result type of accessing member on obj. Returns the lowercase full .NET type
+    name (e.g. `'system.int32'`), or `None` if the object type or the member cannot be resolved.
     """
     obj_type = resolve_expression_type(obj, variable_types)
     if obj_type is None:
@@ -5725,8 +5720,7 @@ def is_known_member(
     variable_types: dict[str, str] | None = None,
 ) -> bool:
     """
-    Return ``True`` if *member* is a known member (property or method) of
-    the resolved type of *obj*.
+    Return `True` if *member* is a known member (property or method) of the resolved type of obj.
     """
     obj_type = resolve_expression_type(obj, variable_types)
     if obj_type is None:
@@ -5739,8 +5733,8 @@ def is_known_member(
 
 def get_member_order(type_name: str) -> list[str] | None:
     """
-    Return the members of a .NET type in PowerShell Get-Member display order:
-    methods sorted alphabetically, then properties sorted alphabetically.
+    Return the members of a .NET type in PowerShell Get-Member display order: Methods sorted
+    alphabetically, then properties sorted alphabetically.
     """
     members = _TYPE_MEMBERS.get(type_name)
     if members is None:
@@ -5777,8 +5771,8 @@ def _pipeline_source_type(
     variable_types: dict[str, str] | None = None,
 ) -> str | None:
     """
-    Determine the .NET type of the expression piped into `Get-Member`.
-    Assumes `Get-Member` is the last pipeline element.
+    Determine the .NET type of the expression piped into `Get-Member`. Assumes `Get-Member` is the
+    last pipeline element.
     """
     if len(pipeline.elements) < 2:
         return None
@@ -5792,9 +5786,11 @@ def _pipeline_source_type(
 
 def collect_variable_types(root: Node) -> dict[str, str]:
     """
-    Scan the AST for single-assignment variables whose RHS has a resolvable
-    .NET type (e.g. `$x = New-Object Net.WebClient`). Returns a mapping from
-    lowercase variable name to canonical .NET type string.
+    Scan the AST for single-assignment variables whose RHS has a resolvable .NET type; e.g.
+
+        `$x = New-Object Net.WebClient`
+
+    Returns a mapping from lowercase variable name to canonical .NET type string.
     """
     assign_counts: dict[str, int] = {}
     typed_assigns: dict[str, str] = {}
@@ -5829,8 +5825,9 @@ class VariableTypeAwareTransformer(Transformer):
 
 class Ps1TypeSystemSimplifications(VariableTypeAwareTransformer):
     """
-    Resolve type-aware patterns:
-    - ``($X | Get-Member)[N].Name`` resolves to the Nth member name string.
+    Resolve type-aware patterns. For example, the following resolves to the Nth member name string:
+
+        ($X | Get-Member)[N].Name
     """
 
     def visit_Ps1MemberAccess(self, node: Ps1MemberAccess):
@@ -5870,9 +5867,8 @@ class Ps1TypeSystemSimplifications(VariableTypeAwareTransformer):
         """
         Strip .Name access on a string literal.
 
-        After Where-Object wildcard resolution or Get-Member index resolution,
-        a MemberInfo .Name access can be left dangling on the resolved string.
-        'GetCmdlets'.Name -> 'GetCmdlets'
+        After Where-Object wildcard resolution or Get-Member index resolution, a MemberInfo .Name
+        access can be left dangling on the resolved string. 'GetCmdlets'.Name -> 'GetCmdlets'
         """
         member_name = get_member_name(node.member)
         if member_name is None or member_name.lower() != 'name':

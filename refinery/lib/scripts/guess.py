@@ -6,7 +6,7 @@ from refinery.lib.types import INF
 def guess_language(data: str | bytearray | bytes | memoryview) -> str | None:
     """
     Try to parse the input as JavaScript, PowerShell, and VBA, then return the name of the language
-    whose parser produces the fewest error nodes. Returns None when no parser can handle more than
+    whose parser produces the fewest error nodes. Returns `None` when no parser can handle more than
     half of the input.
     """
     best_name: str | None = None

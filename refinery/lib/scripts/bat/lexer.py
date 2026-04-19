@@ -102,7 +102,7 @@ class BatchLexerCursor:
             list(self.modes),
             array.array('H', self.token),
             self.subst_offset,
-            array.array('H', self.subst_buffer)
+            array.array('H', self.subst_buffer),
         )
 
     @property
@@ -483,7 +483,7 @@ class BatchLexer:
         else:
             char = self.next_char()
             if char not in range(ZERO, NINE + 1):
-                raise UnexpectedToken(char)
+                raise UnexpectedToken(self.cursor.offset, char)
             self.consume_char()
             yield RedirectIO(how, source, char - ZERO)
 

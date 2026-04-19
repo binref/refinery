@@ -883,11 +883,15 @@ class BatchEmulator:
         else:
             return 0
 
-        if (stripped := re.search('^\\s*"(.*)"(.*)', command, re.DOTALL)) and (strip
-            or command.count('"') != 2
-            or stripped[2].strip()
-            or re.search('[&<>()@^|]', stripped[1])
-            or re.search('\\s', stripped[1]) is None
+        if (
+            (stripped := re.search('^\\s*"(.*)"(.*)', command, re.DOTALL))
+            and (
+                strip
+                or command.count('"') != 2
+                or stripped[2].strip()
+                or re.search('[&<>()@^|]', stripped[1])
+                or re.search('\\s', stripped[1]) is None
+            )
         ):
             command = stripped[1] + stripped[2]
 
@@ -1204,8 +1208,8 @@ class BatchEmulator:
 
         if (
             self.contains_for_variable(body, vars)
-                or _for.variant != AstForVariant.NumericLoop
-                or len(_for.spec) != 1
+            or _for.variant != AstForVariant.NumericLoop
+            or len(_for.spec) != 1
         ):
             yield synthesize(_for)
 

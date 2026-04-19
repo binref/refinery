@@ -64,7 +64,7 @@ def is_literal(node: Expression) -> bool:
 
 def is_constant_expr(node: Expression) -> bool:
     """
-    Returns True for expressions that can be safely propagated as constants: literals, Chr/ChrW
+    Returns `True` for expressions that can be safely propagated as constants: literals, Chr/ChrW
     calls with literal integer arguments, and concatenations of such expressions.
     """
     if is_literal(node):
@@ -95,7 +95,7 @@ def is_constant_expr(node: Expression) -> bool:
 
 def is_identifier_read(node: VbaIdentifier) -> bool:
     """
-    Return whether an identifier node is in a read position. Returns False for identifiers that
+    Return whether an identifier node is in a read position. Returns `False` for identifiers that
     appear as assignment targets, declaration names, call targets, or loop variables.
     """
     parent = node.parent

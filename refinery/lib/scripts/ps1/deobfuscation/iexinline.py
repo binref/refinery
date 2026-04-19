@@ -162,8 +162,7 @@ def _try_evaluate(
     bindings: dict[str, str | bytes] | None = None,
 ) -> str | bytes | None:
     """
-    Recursively evaluate a .NET expression chain to `str` or `bytes`. Handles
-    the pattern:
+    Recursively evaluate a .NET expression chain to `str` or `bytes`. Handles the pattern:
 
         [Convert]::FromBase64String(literal)
         -> [IO.MemoryStream]

@@ -42,7 +42,6 @@ from refinery.lib.scripts.vba.model import (
     VbaVariableDeclaration,
 )
 
-
 _NUMERIC_DIVMOD_OPS = {
     '\\' : _op.floordiv,
     'mod': _op.mod,

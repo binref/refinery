@@ -83,7 +83,7 @@ def _wildcard_match_unique(
 ) -> str | None:
     """
     Match a wildcard pattern case-insensitively against canonical names. Returns the name if one
-    exact candidate matches, else None.
+    exact candidate matches, else `None`.
     """
     regex = re.compile(fnmatch_translate(pattern), re.IGNORECASE)
     matches = [name for name in candidates if regex.match(name)]
@@ -105,7 +105,7 @@ def _is_psobject_member_access(
 ) -> Ps1MemberAccess | None:
     """
     Check if expr is of the form `<something>.PSObject.<leaf_name>` and return the inner member
-    access to `<something>.PSObject`, or None.
+    access to `<something>.PSObject`, or `None`.
     """
     if not isinstance(expr, Ps1MemberAccess):
         return None
@@ -127,7 +127,7 @@ def _determine_where_object_candidates(
 ) -> Iterable[str] | None:
     """
     Examine the pipeline elements preceding `Where-Object` to determine which candidates the
-    wildcard should match against. Returns canonical names to match against, or None if the source
+    wildcard should match against. Returns canonical names to match against, or `None` if the source
     is unrecognized.
     """
     for elem in elements:
@@ -273,7 +273,7 @@ def _extract_where_object_wildcard(
 
         $_.Name -ilike 'pattern'
 
-    Returns the pattern string, or None.
+    Returns the pattern string, or `None`.
     """
     name = get_command_name(cmd)
     if name is None or name.lower() not in _WHERE_OBJECT_ALIASES:
