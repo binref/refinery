@@ -11,6 +11,8 @@ from collections.abc import Iterator
 
 from refinery.lib.scripts.ps1.deobfuscation.helpers import (
     LocalFunctionAwareTransformer,
+    StringMethodError,
+    apply_string_method,
     collect_int_arguments,
     collect_string_arguments,
     detect_encoding_chain,
@@ -477,72 +479,32 @@ class Ps1ConstantFolding(LocalFunctionAwareTransformer):
     def _try_fold_instance_method(
         node: Ps1InvokeMember, lower: str,
     ) -> Expression | None:
-        if lower == 'tostring':
-            if len(node.arguments) == 0:
-                obj_str = string_value(node.object) if node.object else None
-                if obj_str is not None:
-                    return make_string_literal(obj_str)
-            return None
-        if lower == 'replace':
-            if len(node.arguments) == 2:
-                obj_str = string_value(node.object) if node.object else None
-                needle_str = string_value(node.arguments[0])
-                insert_str = string_value(node.arguments[1])
-                if obj_str is not None and needle_str is not None and insert_str is not None:
-                    return make_string_literal(obj_str.replace(needle_str, insert_str))
-            return None
-        if lower == 'split':
-            if len(node.arguments) == 1:
-                obj_str = string_value(node.object) if node.object else None
-                sep_str = string_value(node.arguments[0])
-                if obj_str is not None and sep_str is not None and sep_str:
-                    pattern = '[' + re.escape(sep_str) + ']'
-                    parts = re.split(pattern, obj_str)
-                    elements: list[Expression] = [make_string_literal(p) for p in parts]
-                    return Ps1ArrayLiteral(elements=elements)
-            return None
         obj_str = string_value(node.object) if node.object else None
         if obj_str is None:
             return None
-        if lower == 'substring':
-            if len(node.arguments) == 1:
-                start = node.arguments[0]
-                if isinstance(start, Ps1IntegerLiteral) and 0 <= start.value <= len(obj_str):
-                    return make_string_literal(obj_str[start.value:])
-            if len(node.arguments) == 2:
-                start = node.arguments[0]
-                length = node.arguments[1]
-                if (
-                    isinstance(start, Ps1IntegerLiteral)
-                    and isinstance(length, Ps1IntegerLiteral)
-                    and 0 <= start.value
-                    and start.value + length.value <= len(obj_str)
-                ):
-                    return make_string_literal(
-                        obj_str[start.value:start.value + length.value])
+        coerced: list[str | int] = []
+        for arg in node.arguments:
+            sv = string_value(arg)
+            if sv is not None:
+                coerced.append(sv)
+                continue
+            if isinstance(arg, Ps1IntegerLiteral):
+                coerced.append(arg.value)
+                continue
             return None
-        if lower == 'insert':
-            if len(node.arguments) == 2 and isinstance(node.arguments[0], Ps1IntegerLiteral):
-                idx = node.arguments[0].value
-                val = string_value(node.arguments[1])
-                if val is not None and 0 <= idx <= len(obj_str):
-                    return make_string_literal(obj_str[:idx] + val + obj_str[idx:])
+        try:
+            result = apply_string_method(obj_str, lower, coerced)
+        except StringMethodError:
             return None
-        if lower == 'remove':
-            if len(node.arguments) == 1 and isinstance(node.arguments[0], Ps1IntegerLiteral):
-                idx = node.arguments[0].value
-                if 0 <= idx <= len(obj_str):
-                    return make_string_literal(obj_str[:idx])
-            if (
-                len(node.arguments) == 2
-                and isinstance(node.arguments[0], Ps1IntegerLiteral)
-                and isinstance(node.arguments[1], Ps1IntegerLiteral)
-            ):
-                idx = node.arguments[0].value
-                count = node.arguments[1].value
-                if 0 <= idx and idx + count <= len(obj_str):
-                    return make_string_literal(obj_str[:idx] + obj_str[idx + count:])
-            return None
+        if isinstance(result, str):
+            return make_string_literal(result)
+        if isinstance(result, bool):
+            return Ps1Variable(name='True' if result else 'False')
+        if isinstance(result, int):
+            return Ps1IntegerLiteral(value=result, raw=str(result))
+        if isinstance(result, list):
+            elements: list[Expression] = [make_string_literal(p) for p in result]
+            return Ps1ArrayLiteral(elements=elements)
         return None
 
     def _try_fold_static_method(

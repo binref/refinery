@@ -14,6 +14,8 @@ if TYPE_CHECKING:
 
 from refinery.lib.scripts import Block, Transformer
 from refinery.lib.scripts.ps1.deobfuscation.helpers import (
+    StringMethodError,
+    apply_string_method,
     detect_encoding_chain,
     extract_foreach_scriptblock,
     get_command_name,
@@ -757,62 +759,15 @@ class _Ps1Interpreter:
         self, s: str, method: str, args: list[_Value],
     ) -> _Value:
         try:
-            if method == 'substring':
-                if len(args) == 1:
-                    start = self._to_int(args[0])
-                    return s[start:]
-                if len(args) == 2:
-                    start = self._to_int(args[0])
-                    length = self._to_int(args[1])
-                    return s[start:start + length]
-            if method == 'replace' and len(args) == 2:
-                old = self._to_str(args[0])
-                new = self._to_str(args[1])
-                return s.replace(old, new)
-            if method == 'tostring' and not args:
-                return s
-            if method == 'tolower' and not args:
-                return s.lower()
-            if method == 'toupper' and not args:
-                return s.upper()
-            if method == 'trim' and not args:
-                return s.strip()
-            if method == 'trimstart' and not args:
-                return s.lstrip()
-            if method == 'trimend' and not args:
-                return s.rstrip()
+            coerced = [self._to_int(a) if isinstance(a, (int, float, bool)) else self._to_str(a) for a in args]
+            return apply_string_method(s, method, coerced)
+        except StringMethodError:
+            pass
+        except (IndexError, ValueError, TypeError, OverflowError):
+            raise _Ps1InterpreterError
+        try:
             if method == 'tochararray' and not args:
                 return list(s)
-            if method == 'split' and len(args) == 1:
-                sep = self._to_str(args[0])
-                if not sep:
-                    return [s]
-                pattern = '[' + re.escape(sep) + ']'
-                return re.split(pattern, s)
-            if method == 'indexof' and len(args) == 1:
-                sub = self._to_str(args[0])
-                return s.find(sub)
-            if method == 'contains' and len(args) == 1:
-                sub = self._to_str(args[0])
-                return sub in s
-            if method == 'startswith' and len(args) == 1:
-                prefix = self._to_str(args[0])
-                return s.startswith(prefix)
-            if method == 'endswith' and len(args) == 1:
-                suffix = self._to_str(args[0])
-                return s.endswith(suffix)
-            if method == 'insert' and len(args) == 2:
-                idx = self._to_int(args[0])
-                val = self._to_str(args[1])
-                return s[:idx] + val + s[idx:]
-            if method == 'remove':
-                if len(args) == 1:
-                    idx = self._to_int(args[0])
-                    return s[:idx]
-                if len(args) == 2:
-                    idx = self._to_int(args[0])
-                    count = self._to_int(args[1])
-                    return s[:idx] + s[idx + count:]
             if method == 'padleft' and len(args) >= 1:
                 width = self._to_int(args[0])
                 ch = self._to_str(args[1]) if len(args) > 1 else ' '

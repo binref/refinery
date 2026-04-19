@@ -19,6 +19,7 @@ from refinery.lib.scripts.ps1.deobfuscation.helpers import (
     is_builtin_variable,
     unwrap_parens,
 )
+from refinery.lib.scripts.ps1.deobfuscation.names import COMPARISON_OPS
 from refinery.lib.scripts.ps1.model import (
     Expression,
     Ps1AssignmentExpression,
@@ -242,60 +243,34 @@ def _resolve_bool(
         val = env.get(key)
         if isinstance(val, bool):
             return val
-    if isinstance(expr, Ps1BinaryExpression) and expr.left is not None and expr.right is not None:
-        op = expr.operator.lower()
-        if op in ('-eq', '-ne', '-lt', '-le', '-gt', '-ge'):
-            left_val = _resolve_value(expr.left, env)
-            right_val = _resolve_value(expr.right, env)
-            if left_val is not None and right_val is not None:
-                if type(left_val) is not type(right_val):
+    if (
+        isinstance(expr, Ps1BinaryExpression)
+        and (_l := expr.left) is not None
+        and (_r := expr.right) is not None
+    ):
+        if comparator := COMPARISON_OPS.get(op := expr.operator.lower()):
+            lhs = _resolve_value(_l, env)
+            rhs = _resolve_value(_r, env)
+            if lhs is not None and rhs is not None:
+                if type(lhs) is not type(rhs):
                     return None
-                if op == '-eq':
-                    return left_val == right_val
-                if op == '-ne':
-                    return left_val != right_val
-                if isinstance(left_val, str):
-                    assert isinstance(right_val, str)
-                    a_s, b_s = left_val, right_val
-                    if op == '-lt':
-                        return a_s < b_s
-                    if op == '-le':
-                        return a_s <= b_s
-                    if op == '-gt':
-                        return a_s > b_s
-                    if op == '-ge':
-                        return a_s >= b_s
-                else:
-                    a_n = float(left_val)
-                    b_n = float(right_val)
-                    if op == '-lt':
-                        return a_n < b_n
-                    if op == '-le':
-                        return a_n <= b_n
-                    if op == '-gt':
-                        return a_n > b_n
-                    if op == '-ge':
-                        return a_n >= b_n
-        elif op == '-and':
-            left_bool = _resolve_bool(expr.left, env)
-            right_bool = _resolve_bool(expr.right, env)
-            if left_bool is not None and right_bool is not None:
-                return left_bool and right_bool
-            if left_bool is False or right_bool is False:
-                return False
-        elif op == '-or':
-            left_bool = _resolve_bool(expr.left, env)
-            right_bool = _resolve_bool(expr.right, env)
-            if left_bool is not None and right_bool is not None:
-                return left_bool or right_bool
-            if left_bool is True or right_bool is True:
-                return True
-    if isinstance(expr, Ps1UnaryExpression) and expr.operand is not None:
-        op = expr.operator.lower()
-        if op in ('-not', '!'):
-            inner = _resolve_bool(expr.operand, env)
-            if inner is not None:
-                return not inner
+                return comparator(lhs, rhs)
+        else:
+            lhs = _resolve_bool(_l, env)
+            rhs = _resolve_bool(_r, env)
+            if lhs is None:
+                lhs, rhs = rhs, lhs
+            if op == '-and':
+                return lhs and rhs
+            if op == '-or':
+                return lhs or rhs
+    if (
+        isinstance(expr, Ps1UnaryExpression)
+        and (_v := expr.operand) is not None
+        and (op := expr.operator.lower()) in ('-not', '!')
+        and (bv := _resolve_bool(_v, env)) is not None
+    ):
+        return not bv
     return None
 
 

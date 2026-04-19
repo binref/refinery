@@ -4,6 +4,7 @@ Shared utilities for PowerShell deobfuscation transforms.
 from __future__ import annotations
 
 import io
+import re
 
 from collections.abc import Callable, Generator
 from typing import TYPE_CHECKING, TypeVar
@@ -333,6 +334,86 @@ def is_array_reverse_call(node: Ps1ExpressionStatement) -> Ps1Variable | None:
     if isinstance(arg, Ps1Variable):
         return arg
     return None
+
+
+class StringMethodError(Exception):
+    """
+    Raised by apply_string_method when a method is unknown or arguments are invalid.
+    """
+    pass
+
+
+def apply_string_method(
+    s: str,
+    method: str,
+    args: list,
+) -> str | int | bool | list[str]:
+    """
+    Apply a .NET System.String instance method to a Python string with already-coerced
+    arguments. Raises StringMethodError for unknown methods or invalid arguments.
+    """
+    def _offset(k: int):
+        offset = args[k]
+        if not isinstance(offset, int) or offset < 0 or offset > len(s):
+            raise StringMethodError
+        return offset
+    if (nargs := len(args)) == 0:
+        if method == 'tostring':
+            return s
+        if method == 'tolower':
+            return s.lower()
+        if method == 'toupper':
+            return s.upper()
+        if method == 'trim':
+            return s.strip()
+        if method == 'trimstart':
+            return s.lstrip()
+        if method == 'trimend':
+            return s.rstrip()
+    elif nargs == 1:
+        if method == 'contains':
+            return args[0] in s
+        if method == 'startswith':
+            return s.startswith(args[0])
+        if method == 'endswith':
+            return s.endswith(args[0])
+        if method == 'indexof':
+            return s.find(args[0])
+        if method == 'split':
+            if not (sep := args[0]):
+                return [s]
+            return re.split(F'[{re.escape(sep)}]', s)
+        if method == 'substring':
+            return s[_offset(0):]
+        if method == 'remove':
+            return s[:_offset(0)]
+    elif nargs == 2:
+        if method == 'replace':
+            return s.replace(*args)
+        if method == 'substring':
+            offset, length = args
+            if (
+                not isinstance(offset, int)
+                or not isinstance(length, int)
+                or offset < 0
+                or offset + length > len(s)
+            ):
+                raise StringMethodError
+            return s[offset:offset + length]
+        if method == 'insert':
+            offset = _offset(0)
+            return s[:offset] + args[1] + s[offset:]
+        if method == 'remove':
+            offset, count = args
+            if (
+                not isinstance(offset, int)
+                or not isinstance(count, int)
+                or offset < 0
+                or offset + count > len(s)
+            ):
+                raise StringMethodError
+            return s[:offset] + s[offset + count:]
+    raise StringMethodError
 
 
 class LocalFunctionAwareTransformer(Transformer):
