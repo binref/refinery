@@ -4,10 +4,10 @@ VBA dead code removal: removes assignments to unread variables and empty uncalle
 from __future__ import annotations
 
 from refinery.lib.scripts import Statement, Transformer
-from refinery.lib.scripts.vba.deobfuscation._helpers import (
-    _SINGLE_ARG_BUILTINS,
-    _STRING_BUILTINS,
-    _body_lists,
+from refinery.lib.scripts.vba.deobfuscation.helpers import (
+    SINGLE_ARG_BUILTINS,
+    STRING_BUILTINS,
+    body_lists,
 )
 from refinery.lib.scripts.vba.model import (
     VbaCallExpression,
@@ -37,7 +37,7 @@ _PURE_BUT_UNEVALUABLE = frozenset({
     'val',
 })
 
-_PURE_BUILTINS = frozenset(_SINGLE_ARG_BUILTINS) | _STRING_BUILTINS | _PURE_BUT_UNEVALUABLE
+_PURE_BUILTINS = frozenset(SINGLE_ARG_BUILTINS) | STRING_BUILTINS | _PURE_BUT_UNEVALUABLE
 
 
 def _has_side_effects(node) -> bool:
@@ -65,7 +65,7 @@ class VbaDeadVariableRemoval(Transformer):
 
     def _remove_dead_variables(self, module: VbaModule) -> bool:
         assignments: dict[str, list[tuple[VbaLetStatement, list[Statement], int]]] = {}
-        for body in _body_lists(module):
+        for body in body_lists(module):
             if body is module.body:
                 continue
             for idx, stmt in enumerate(body):

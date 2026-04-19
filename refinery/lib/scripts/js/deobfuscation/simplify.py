@@ -4,14 +4,14 @@ JavaScript syntax normalization transforms.
 from __future__ import annotations
 
 from refinery.lib.scripts import Transformer
-from refinery.lib.scripts.js.deobfuscation._helpers import (
-    _BINARY_OPS,
-    _is_literal,
-    _is_valid_identifier,
-    _make_numeric_literal,
-    _make_string_literal,
-    _numeric_value,
-    _string_value,
+from refinery.lib.scripts.js.deobfuscation.helpers import (
+    BINARY_OPS,
+    is_literal,
+    is_valid_identifier,
+    make_numeric_literal,
+    make_string_literal,
+    numeric_value,
+    string_value,
 )
 from refinery.lib.scripts.js.model import (
     JsArrayExpression,
@@ -34,14 +34,14 @@ class JsSimplifications(Transformer):
         if node.left is None or node.right is None:
             return None
         op = node.operator
-        left_str = _string_value(node.left)
-        right_str = _string_value(node.right)
+        left_str = string_value(node.left)
+        right_str = string_value(node.right)
         if op == '+' and left_str is not None and right_str is not None:
-            return _make_string_literal(left_str + right_str)
-        left_num = _numeric_value(node.left)
-        right_num = _numeric_value(node.right)
+            return make_string_literal(left_str + right_str)
+        left_num = numeric_value(node.left)
+        right_num = numeric_value(node.right)
         if left_num is not None and right_num is not None:
-            fn = _BINARY_OPS.get(op)
+            fn = BINARY_OPS.get(op)
             if fn is not None:
                 try:
                     result = fn(left_num, right_num)
@@ -51,7 +51,7 @@ class JsSimplifications(Transformer):
                     result != result or result == float('inf') or result == float('-inf')
                 ):
                     return None
-                return _make_numeric_literal(result)
+                return make_numeric_literal(result)
             if op == '>>>':
                 try:
                     left_i = int(left_num) & 0xFFFFFFFF
@@ -59,7 +59,7 @@ class JsSimplifications(Transformer):
                     result = (left_i >> shift) & 0xFFFFFFFF
                 except (ValueError, OverflowError):
                     return None
-                return _make_numeric_literal(result)
+                return make_numeric_literal(result)
         return None
 
     def visit_JsParenthesizedExpression(self, node: JsParenthesizedExpression):
@@ -67,10 +67,10 @@ class JsSimplifications(Transformer):
         inner = node.expression
         if inner is None:
             return None
-        if _is_literal(inner):
+        if is_literal(inner):
             return inner
         if isinstance(inner, JsSequenceExpression) and inner.expressions:
-            if all(_is_literal(e) for e in inner.expressions):
+            if all(is_literal(e) for e in inner.expressions):
                 return inner.expressions[-1]
         return None
 
@@ -85,11 +85,11 @@ class JsSimplifications(Transformer):
                 elements = node.object.elements
                 if (
                     isinstance(idx, int) and 0 <= idx < len(elements)
-                    and all(e is not None and _is_literal(e) for e in elements)
+                    and all(e is not None and is_literal(e) for e in elements)
                 ):
                     return elements[idx]
-            prop_str = _string_value(node.property)
-            if prop_str is not None and _is_valid_identifier(prop_str):
+            prop_str = string_value(node.property)
+            if prop_str is not None and is_valid_identifier(prop_str):
                 node.computed = False
                 node.property = JsIdentifier(name=prop_str)
                 self.mark_changed()
@@ -107,16 +107,16 @@ class JsSimplifications(Transformer):
             if node.operand.value == 1:
                 return JsBooleanLiteral(value=False)
         if op == '-' and isinstance(node.operand, JsNumericLiteral):
-            return _make_numeric_literal(-node.operand.value)
+            return make_numeric_literal(-node.operand.value)
         if op == '+' and isinstance(node.operand, JsNumericLiteral):
             return node.operand
-        if op == 'typeof' and _is_literal(node.operand):
+        if op == 'typeof' and is_literal(node.operand):
             if isinstance(node.operand, JsNumericLiteral):
-                return _make_string_literal('number')
+                return make_string_literal('number')
             if isinstance(node.operand, JsStringLiteral):
-                return _make_string_literal('string')
+                return make_string_literal('string')
             if isinstance(node.operand, JsBooleanLiteral):
-                return _make_string_literal('boolean')
+                return make_string_literal('boolean')
         if op == 'void' and isinstance(node.operand, JsNumericLiteral):
             if node.operand.value == 0:
                 return JsIdentifier(name='undefined')

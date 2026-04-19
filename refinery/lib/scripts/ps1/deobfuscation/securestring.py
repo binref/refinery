@@ -4,9 +4,9 @@ PowerShell SecureString decryption transformer.
 from __future__ import annotations
 
 from refinery.lib.scripts import Transformer
-from refinery.lib.scripts.ps1.deobfuscation._helpers import (
-    _get_command_name,
-    _make_string_literal,
+from refinery.lib.scripts.ps1.deobfuscation.helpers import (
+    get_command_name,
+    make_string_literal,
 )
 from refinery.lib.scripts.ps1.model import (
     Ps1ArrayLiteral,
@@ -88,7 +88,7 @@ class Ps1SecureStringDecryptor(Transformer):
                 k += 1
                 continue
             cmd = rhs.expression
-            cmd_name = _get_command_name(cmd)
+            cmd_name = get_command_name(cmd)
             if cmd_name is None or cmd_name.lower() != 'convertto-securestring':
                 k += 1
                 continue
@@ -105,7 +105,7 @@ class Ps1SecureStringDecryptor(Transformer):
             except Exception:
                 k += 1
                 continue
-            replacement = _make_string_literal(plaintext)
+            replacement = make_string_literal(plaintext)
             new_element = Ps1PipelineElement(expression=replacement)
             new_element.parent = node
             replacement.parent = new_element

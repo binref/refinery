@@ -19,9 +19,9 @@ from refinery.lib.scripts.js.token import FUTURE_RESERVED, KEYWORDS
 
 SIMPLE_IDENTIFIER = re.compile(r'^[a-zA-Z_$][a-zA-Z_$0-9]*$')
 
-_JS_RESERVED = frozenset(set(KEYWORDS) | FUTURE_RESERVED | {'undefined'})
+JS_RESERVED = frozenset(set(KEYWORDS) | FUTURE_RESERVED | {'undefined'})
 
-_BINARY_OPS: dict[str, Callable] = {
+BINARY_OPS: dict[str, Callable] = {
     '+'  : operator.add,
     '-'  : operator.sub,
     '*'  : operator.mul,
@@ -36,25 +36,25 @@ _BINARY_OPS: dict[str, Callable] = {
 }
 
 
-def _string_value(node: Expression) -> str | None:
+def string_value(node: Expression) -> str | None:
     if isinstance(node, JsStringLiteral):
         return node.value
     return None
 
 
-def _make_string_literal(value: str) -> JsStringLiteral:
+def make_string_literal(value: str) -> JsStringLiteral:
     escaped = value.replace('\\', '\\\\').replace("'", "\\'")
     raw = F"'{escaped}'"
     return JsStringLiteral(value=value, raw=raw)
 
 
-def _numeric_value(node: Expression) -> int | float | None:
+def numeric_value(node: Expression) -> int | float | None:
     if isinstance(node, JsNumericLiteral):
         return node.value
     return None
 
 
-def _make_numeric_literal(value: int | float) -> JsNumericLiteral:
+def make_numeric_literal(value: int | float) -> JsNumericLiteral:
     if isinstance(value, float):
         if value == int(value) and not (value == 0.0 and str(value).startswith('-')):
             raw = str(int(value))
@@ -65,11 +65,11 @@ def _make_numeric_literal(value: int | float) -> JsNumericLiteral:
     return JsNumericLiteral(value=value, raw=raw)
 
 
-def _is_literal(node: Expression) -> bool:
+def is_literal(node: Expression) -> bool:
     return isinstance(node, (
         JsStringLiteral, JsNumericLiteral, JsBooleanLiteral, JsNullLiteral,
     ))
 
 
-def _is_valid_identifier(name: str) -> bool:
-    return bool(SIMPLE_IDENTIFIER.match(name)) and name not in _JS_RESERVED
+def is_valid_identifier(name: str) -> bool:
+    return bool(SIMPLE_IDENTIFIER.match(name)) and name not in JS_RESERVED

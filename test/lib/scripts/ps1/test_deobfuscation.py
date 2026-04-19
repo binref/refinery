@@ -1172,13 +1172,13 @@ class TestPs1IexInlining(TestPs1):
         self.assertNotIn('|', result)
 
     def test_multiline_string_emitted_as_here_string(self):
-        from refinery.lib.scripts.ps1.deobfuscation._helpers import _make_string_literal
+        from refinery.lib.scripts.ps1.deobfuscation.helpers import make_string_literal
         from refinery.lib.scripts.ps1.model import Ps1HereString, Ps1StringLiteral
-        node = _make_string_literal('line1\nline2')
+        node = make_string_literal('line1\nline2')
         self.assertIsInstance(node, Ps1HereString)
         self.assertEqual(node.value, 'line1\nline2')
         self.assertIn("@'\n", node.raw)
-        node2 = _make_string_literal('no newlines')
+        node2 = make_string_literal('no newlines')
         self.assertIsInstance(node2, Ps1StringLiteral)
 
 

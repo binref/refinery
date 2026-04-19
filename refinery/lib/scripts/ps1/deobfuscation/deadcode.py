@@ -4,12 +4,12 @@ Eliminate dead code from PowerShell scripts after constant folding.
 from __future__ import annotations
 
 from refinery.lib.scripts import Block, Expression, Node, Statement, Transformer
-from refinery.lib.scripts.ps1.deobfuscation._helpers import (
-    _COMPARISON_OPS,
-    _get_body,
-    _is_builtin_variable,
-    _unwrap_integer,
-    _unwrap_parens,
+from refinery.lib.scripts.ps1.deobfuscation.helpers import (
+    COMPARISON_OPS,
+    get_body,
+    is_builtin_variable,
+    unwrap_integer,
+    unwrap_parens,
 )
 from refinery.lib.scripts.ps1.model import (
     Ps1AssignmentExpression,
@@ -39,10 +39,10 @@ def _is_truthy(node) -> bool | None:
     Determine the boolean truth value of a constant expression using PowerShell
     semantics. Returns `None` for non-constant or unrecognized expressions.
     """
-    node = _unwrap_parens(node) if isinstance(node, Expression) else node
+    node = unwrap_parens(node) if isinstance(node, Expression) else node
     if node is None:
         return None
-    if _is_builtin_variable(node):
+    if is_builtin_variable(node):
         lower = node.name.lower()
         if lower == 'true':
             return True
@@ -72,12 +72,12 @@ def _evaluate_for_condition(node: Ps1ForLoop) -> bool | None:
         return None
     if not isinstance(init.target, Ps1Variable):
         return None
-    init_val = _unwrap_integer(init.value)
+    init_val = unwrap_integer(init.value)
     if init_val is None:
         return None
     if not isinstance(cond, Ps1BinaryExpression):
         return None
-    op_fn = _COMPARISON_OPS.get(cond.operator.lower())
+    op_fn = COMPARISON_OPS.get(cond.operator.lower())
     if op_fn is None:
         return None
     var_name = init.target.name.lower()
@@ -96,14 +96,14 @@ def _resolve_side(
     Resolve one side of a for-loop condition to an integer: if the node is the loop variable,
     return the initial value; if it is a constant integer, return that; otherwise return None.
     """
-    node = _unwrap_parens(node) if isinstance(node, Expression) else node
+    node = unwrap_parens(node) if isinstance(node, Expression) else node
     if (
         isinstance(node, Ps1Variable)
         and node.name.lower() == var_name
         and node.scope == var_scope
     ):
         return init_val
-    result = _unwrap_integer(node)
+    result = unwrap_integer(node)
     return result.value if result is not None else None
 
 
@@ -133,7 +133,7 @@ def _is_pure_constant(node) -> bool:
     """
     if isinstance(node, (Ps1IntegerLiteral, Ps1RealLiteral)):
         return True
-    if _is_builtin_variable(node):
+    if is_builtin_variable(node):
         return True
     if isinstance(node, Ps1ParenExpression):
         return _is_pure_constant(node.expression)
@@ -152,7 +152,7 @@ class Ps1DeadCodeElimination(Transformer):
         for parent in list(node.walk()):
             if isinstance(parent, Ps1SubExpression):
                 continue
-            body = _get_body(parent)
+            body = get_body(parent)
             if body is None:
                 continue
             new_body = self._prune_body(body, isinstance(parent, Ps1Script))

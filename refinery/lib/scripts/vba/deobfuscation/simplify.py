@@ -8,16 +8,16 @@ import operator
 from typing import Callable
 
 from refinery.lib.scripts import Transformer
-from refinery.lib.scripts.vba.deobfuscation._helpers import (
-    _CHR_NAMES,
-    _eval_string_builtin,
-    _is_literal,
-    _is_nan_or_inf,
-    _make_integer_literal,
-    _make_numeric_literal,
-    _make_string_literal,
-    _numeric_value,
-    _string_value,
+from refinery.lib.scripts.vba.deobfuscation.helpers import (
+    CHR_NAMES,
+    eval_string_builtin,
+    is_literal,
+    is_nan_or_inf,
+    make_integer_literal,
+    make_numeric_literal,
+    make_string_literal,
+    numeric_value,
+    string_value,
 )
 from refinery.lib.scripts.vba.deobfuscation.builtins import VBA_BUILTIN_CONSTANTS
 from refinery.lib.scripts.vba.model import (
@@ -53,11 +53,11 @@ _INTEGER_OPS: dict[str, Callable] = {
 def _is_chr_call(node: VbaCallExpression) -> int | None:
     if (
         isinstance(node.callee, VbaIdentifier)
-        and node.callee.name.lower() in _CHR_NAMES
+        and node.callee.name.lower() in CHR_NAMES
         and len(node.arguments) == 1
         and node.arguments[0] is not None
     ):
-        val = _numeric_value(node.arguments[0])
+        val = numeric_value(node.arguments[0])
         if val is not None and isinstance(val, int) and 0 <= val <= 0xFFFF:
             return val
     return None
@@ -70,7 +70,7 @@ def _is_asc_call(node: VbaCallExpression) -> str | None:
         and len(node.arguments) == 1
         and node.arguments[0] is not None
     ):
-        val = _string_value(node.arguments[0])
+        val = string_value(node.arguments[0])
         if val is not None and len(val) >= 1:
             return val[0]
     return None
@@ -85,17 +85,17 @@ def _try_string_function(node: VbaCallExpression) -> str | None:
         return None
     values: list = []
     for arg in args:
-        s = _string_value(arg)
+        s = string_value(arg)
         if s is not None:
             values.append(s)
             continue
-        n = _numeric_value(arg)
+        n = numeric_value(arg)
         if n is not None:
             values.append(n)
             continue
         return None
     try:
-        result = _eval_string_builtin(name, values)
+        result = eval_string_builtin(name, values)
     except (ValueError, OverflowError, TypeError):
         return None
     return result
@@ -168,22 +168,22 @@ class VbaSimplifications(Transformer):
         return self._fold_numeric_binary(node)
 
     def _fold_string_concat(self, node: VbaBinaryExpression):
-        if self._is_oern_undefined(node.left) and _string_value(node.right) is not None:
+        if self._is_oern_undefined(node.left) and string_value(node.right) is not None:
             return node.right
-        if self._is_oern_undefined(node.right) and _string_value(node.left) is not None:
+        if self._is_oern_undefined(node.right) and string_value(node.left) is not None:
             return node.left
-        lhs = _string_value(node.left)
-        rhs = _string_value(node.right)
+        lhs = string_value(node.left)
+        rhs = string_value(node.right)
         if lhs is not None and rhs is not None:
-            return _make_string_literal(lhs + rhs)
+            return make_string_literal(lhs + rhs)
         if rhs is not None:
             if (
                 isinstance(node.left, VbaBinaryExpression)
                 and node.left.operator in ('&', '+')
             ):
-                inner_right_str = _string_value(node.left.right)
+                inner_right_str = string_value(node.left.right)
                 if inner_right_str is not None:
-                    node.left.right = _make_string_literal(inner_right_str + rhs)
+                    node.left.right = make_string_literal(inner_right_str + rhs)
                     node.left.right.parent = node.left
                     return node.left
         if lhs is not None:
@@ -199,17 +199,17 @@ class VbaSimplifications(Transformer):
                 isinstance(inner, VbaBinaryExpression)
                 and inner.operator in ('&', '+')
             ):
-                inner_left_str = _string_value(inner.left)
+                inner_left_str = string_value(inner.left)
                 if inner_left_str is not None:
-                    inner.left = _make_string_literal(lhs + inner_left_str)
+                    inner.left = make_string_literal(lhs + inner_left_str)
                     inner.left.parent = inner
                     return node.right
         return None
 
     @staticmethod
     def _fold_numeric_binary(node: VbaBinaryExpression):
-        lhs = _numeric_value(node.left)
-        rhs = _numeric_value(node.right)
+        lhs = numeric_value(node.left)
+        rhs = numeric_value(node.right)
         if lhs is not None and rhs is not None:
             fn = _BINARY_OPS.get(node.operator)
             if fn is not None:
@@ -217,22 +217,22 @@ class VbaSimplifications(Transformer):
                     result = fn(lhs, rhs)
                 except (ZeroDivisionError, ValueError, OverflowError):
                     return None
-                if _is_nan_or_inf(result):
+                if is_nan_or_inf(result):
                     return None
-                return _make_numeric_literal(result)
+                return make_numeric_literal(result)
             fn = _INTEGER_OPS.get(node.operator)
             if fn is not None:
                 try:
                     result = fn(lhs, rhs)
                 except (ZeroDivisionError, ValueError, OverflowError):
                     return None
-                return _make_integer_literal(int(result))
+                return make_integer_literal(int(result))
             if node.operator == '^':
                 try:
                     result = lhs ** rhs
                 except (ZeroDivisionError, ValueError, OverflowError):
                     return None
-                return _make_numeric_literal(result)
+                return make_numeric_literal(result)
         return None
 
     def visit_VbaCallExpression(self, node: VbaCallExpression):
@@ -241,37 +241,37 @@ class VbaSimplifications(Transformer):
         if code_point is not None:
             c = chr(code_point)
             if c.isprintable():
-                return _make_string_literal(c)
+                return make_string_literal(c)
             return None
         char = _is_asc_call(node)
         if char is not None:
-            return _make_integer_literal(ord(char))
+            return make_integer_literal(ord(char))
         result = _try_string_function(node)
         if result is not None:
-            return _make_string_literal(result)
+            return make_string_literal(result)
         if (
             isinstance(node.callee, VbaIdentifier)
             and node.callee.name.lower() == 'len'
             and len(node.arguments) == 1
             and node.arguments[0] is not None
         ):
-            s = _string_value(node.arguments[0])
+            s = string_value(node.arguments[0])
             if s is not None:
-                return _make_integer_literal(len(s))
+                return make_integer_literal(len(s))
         return None
 
     def visit_VbaIdentifier(self, node: VbaIdentifier):
         value = VBA_BUILTIN_CONSTANTS.get(node.name.lower())
         if value is None:
             return None
-        return _make_integer_literal(value)
+        return make_integer_literal(value)
 
     def visit_VbaParenExpression(self, node: VbaParenExpression):
         self.generic_visit(node)
         inner = node.expression
         if inner is None:
             return None
-        if _is_literal(inner):
+        if is_literal(inner):
             return inner
         return None
 
@@ -281,13 +281,13 @@ class VbaSimplifications(Transformer):
             return None
         op = node.operator
         if op == '-':
-            val = _numeric_value(node.operand)
+            val = numeric_value(node.operand)
             if val is not None:
-                return _make_numeric_literal(-val)
+                return make_numeric_literal(-val)
         if op == 'Not':
             if isinstance(node.operand, VbaBooleanLiteral):
                 return VbaBooleanLiteral(value=not node.operand.value)
-            val = _numeric_value(node.operand)
+            val = numeric_value(node.operand)
             if isinstance(val, int):
-                return _make_integer_literal(~val)
+                return make_integer_literal(~val)
         return None

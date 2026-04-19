@@ -13,22 +13,22 @@ if TYPE_CHECKING:
     from typing import TypeAlias
 
 from refinery.lib.scripts import Block, Transformer
-from refinery.lib.scripts.ps1.deobfuscation._helpers import (
-    _CONVERT_TYPE_NAMES,
-    _ENCODING_MAP,
-    _ENCODING_TYPE_NAMES,
-    _MATH_TYPE_NAMES,
-    _STRING_TYPE_NAMES,
-    _apply_format_string,
-    _detect_encoding_chain,
-    _extract_foreach_scriptblock,
-    _get_command_name,
-    _get_member_name,
-    _make_string_literal,
-    _normalize_dotnet_type_name,
-    _normalize_type_expression,
-    _string_value,
-    _unwrap_to_array_literal,
+from refinery.lib.scripts.ps1.deobfuscation.helpers import (
+    CONVERT_TYPE_NAMES,
+    ENCODING_MAP,
+    ENCODING_TYPE_NAMES,
+    MATH_TYPE_NAMES,
+    STRING_TYPE_NAMES,
+    apply_format_string,
+    detect_encoding_chain,
+    extract_foreach_scriptblock,
+    get_command_name,
+    get_member_name,
+    make_string_literal,
+    normalize_dotnet_type_name,
+    normalize_type_expression,
+    string_value,
+    unwrap_to_array_literal,
 )
 from refinery.lib.scripts.ps1.model import (
     Expression,
@@ -575,7 +575,7 @@ class _Ps1Interpreter:
 
     def _eval_member_access(self, node: Ps1MemberAccess) -> _Value:
         obj = self._eval(node.object)
-        member = _get_member_name(node.member)
+        member = get_member_name(node.member)
         if member is None:
             raise _Ps1InterpreterError
         name = member.lower()
@@ -614,7 +614,7 @@ class _Ps1Interpreter:
         if enc is not None:
             return enc
         obj = self._eval(node.object)
-        member = _get_member_name(node.member)
+        member = get_member_name(node.member)
         if member is None:
             raise _Ps1InterpreterError
         name = member.lower()
@@ -628,19 +628,19 @@ class _Ps1Interpreter:
     def _eval_static_invoke(self, node: Ps1InvokeMember) -> _Value:
         if not isinstance(node.object, Ps1TypeExpression):
             raise _Ps1InterpreterError
-        type_name = _normalize_type_expression(node.object.name)
-        member = _get_member_name(node.member)
+        type_name = normalize_type_expression(node.object.name)
+        member = get_member_name(node.member)
         if member is None:
             raise _Ps1InterpreterError
         name = member.lower()
         args = [self._eval(a) for a in node.arguments]
-        if type_name in _CONVERT_TYPE_NAMES:
+        if type_name in CONVERT_TYPE_NAMES:
             return self._invoke_convert(name, args)
-        if type_name in _ENCODING_TYPE_NAMES:
+        if type_name in ENCODING_TYPE_NAMES:
             return self._invoke_encoding(name, args)
-        if type_name in _STRING_TYPE_NAMES:
+        if type_name in STRING_TYPE_NAMES:
             return self._invoke_string_static(name, args)
-        if type_name in _MATH_TYPE_NAMES:
+        if type_name in MATH_TYPE_NAMES:
             return self._invoke_math_static(name, args)
         raise _Ps1InterpreterError
 
@@ -676,16 +676,16 @@ class _Ps1Interpreter:
         raise _Ps1InterpreterError
 
     def _invoke_encoding(self, method: str, args: list[_Value]) -> _Value:
-        encoding = _ENCODING_MAP.get(method)
+        encoding = ENCODING_MAP.get(method)
         if encoding is None or len(args) != 1:
             raise _Ps1InterpreterError
         return self._decode_byte_list(args[0], encoding)
 
     def _try_encoding_chain(self, node: Ps1InvokeMember) -> _Value | None:
-        enc_name = _detect_encoding_chain(node)
+        enc_name = detect_encoding_chain(node)
         if enc_name is None:
             return None
-        encoding = _ENCODING_MAP.get(enc_name.lower(), enc_name.lower())
+        encoding = ENCODING_MAP.get(enc_name.lower(), enc_name.lower())
         if len(node.arguments) != 1:
             raise _Ps1InterpreterError
         arg = self._eval(node.arguments[0])
@@ -710,7 +710,7 @@ class _Ps1Interpreter:
         if method == 'format' and len(args) >= 1:
             fmt = self._to_str(args[0])
             str_args = [self._to_str(a) for a in args[1:]]
-            result = _apply_format_string(fmt, str_args)
+            result = apply_format_string(fmt, str_args)
             if result is None:
                 raise _Ps1InterpreterError
             return result
@@ -857,7 +857,7 @@ class _Ps1Interpreter:
         return self._apply_type_cast(node.type_name, val)
 
     def _apply_type_cast(self, type_name: str, val: _Value) -> _Value:
-        tn = _normalize_dotnet_type_name(type_name)
+        tn = normalize_dotnet_type_name(type_name)
         if tn == 'string':
             if isinstance(val, list):
                 return ' '.join(self._to_str(item) for item in val)
@@ -1105,7 +1105,7 @@ class Ps1FunctionEvaluator(Transformer):
 
     def visit_Ps1CommandInvocation(self, node: Ps1CommandInvocation):
         self.generic_visit(node)
-        name_str = _get_command_name(node)
+        name_str = get_command_name(node)
         if name_str is None:
             return None
         key = name_str.lower()
@@ -1147,7 +1147,7 @@ class Ps1FunctionEvaluator(Transformer):
                 val = arg
             else:
                 return None
-            sv = _string_value(val) if val is not None else None
+            sv = string_value(val) if val is not None else None
             if sv is not None:
                 args.append(sv)
                 continue
@@ -1182,7 +1182,7 @@ class Ps1FunctionEvaluator(Transformer):
             if i < len(args):
                 bindings[key] = args[i]
             elif param.default_value is not None:
-                sv = _string_value(param.default_value)
+                sv = string_value(param.default_value)
                 if sv is not None:
                     bindings[key] = sv
                 elif isinstance(param.default_value, Ps1IntegerLiteral):
@@ -1198,7 +1198,7 @@ class Ps1FunctionEvaluator(Transformer):
     @staticmethod
     def _value_to_node(value: _Value) -> Expression | None:
         if isinstance(value, str):
-            return _make_string_literal(value)
+            return make_string_literal(value)
         if isinstance(value, int) and not isinstance(value, bool):
             return Ps1IntegerLiteral(value=value, raw=str(value))
         return None
@@ -1247,7 +1247,7 @@ class Ps1ForEachPipeline(Transformer):
             return None
         if cmd_elem.expression is None:
             return None
-        script_block = _extract_foreach_scriptblock(cmd_elem.expression)
+        script_block = extract_foreach_scriptblock(cmd_elem.expression)
         if script_block is None:
             return None
         if self._has_free_variables(script_block):
@@ -1277,14 +1277,14 @@ class Ps1ForEachPipeline(Transformer):
         while isinstance(expr, Ps1CastExpression):
             expr = expr.operand
         if expr is not None:
-            array = _unwrap_to_array_literal(expr)
+            array = unwrap_to_array_literal(expr)
             if array is not None:
                 expr = array
         if not isinstance(expr, Ps1ArrayLiteral):
             return None
         values: list[_Value] = []
         for elem in expr.elements:
-            sv = _string_value(elem)
+            sv = string_value(elem)
             if sv is not None:
                 values.append(sv)
                 continue
@@ -1304,7 +1304,7 @@ class Ps1ForEachPipeline(Transformer):
     @staticmethod
     def _results_to_node(results: list[_Value]) -> Expression | None:
         if all(isinstance(r, str) for r in results):
-            return _make_string_literal(''.join(r for r in results if isinstance(r, str)))
+            return make_string_literal(''.join(r for r in results if isinstance(r, str)))
         if all(isinstance(r, int) and not isinstance(r, bool) for r in results):
             elements: list[Expression] = [
                 Ps1IntegerLiteral(value=v, raw=str(v))
@@ -1314,7 +1314,7 @@ class Ps1ForEachPipeline(Transformer):
         if all(isinstance(r, (str, int)) and not isinstance(r, bool) for r in results):
             try:
                 parts = [chr(r) if isinstance(r, int) else str(r) for r in results]
-                return _make_string_literal(''.join(parts))
+                return make_string_literal(''.join(parts))
             except (ValueError, OverflowError):
                 pass
         return None

@@ -13,12 +13,12 @@ import gzip
 import zlib
 
 from refinery.lib.scripts import Expression, Transformer, _replace_in_parent
-from refinery.lib.scripts.ps1.deobfuscation._helpers import (
-    _ENCODING_MAP,
-    _extract_foreach_scriptblock,
-    _get_body,
-    _normalize_dotnet_type_name,
-    _string_value,
+from refinery.lib.scripts.ps1.deobfuscation.helpers import (
+    ENCODING_MAP,
+    extract_foreach_scriptblock,
+    get_body,
+    normalize_dotnet_type_name,
+    string_value,
 )
 from refinery.lib.scripts.ps1.model import (
     Ps1AccessKind,
@@ -88,7 +88,7 @@ def _try_extract_scriptblock_create_arg(expr: Expression) -> Expression | None:
         return None
     if not isinstance(expr.object, Ps1TypeExpression):
         return None
-    tn = _normalize_dotnet_type_name(expr.object.name)
+    tn = normalize_dotnet_type_name(expr.object.name)
     if tn not in _SCRIPTBLOCK_TYPE_NAMES:
         return None
     if not isinstance(expr.member, str) or expr.member.lower() != 'create':
@@ -163,11 +163,11 @@ def _resolve_encoding(expr: Expression) -> str | None:
         return None
     if not isinstance(expr.object, Ps1TypeExpression):
         return None
-    if _normalize_dotnet_type_name(expr.object.name) != 'text.encoding':
+    if normalize_dotnet_type_name(expr.object.name) != 'text.encoding':
         return None
     if not isinstance(expr.member, str):
         return None
-    return _ENCODING_MAP.get(expr.member.lower())
+    return ENCODING_MAP.get(expr.member.lower())
 
 
 def _try_evaluate(
@@ -230,12 +230,12 @@ def _try_evaluate(
         if (
             expr.access == Ps1AccessKind.STATIC
             and isinstance(expr.object, Ps1TypeExpression)
-            and _normalize_dotnet_type_name(expr.object.name) == 'convert'
+            and normalize_dotnet_type_name(expr.object.name) == 'convert'
             and isinstance(expr.member, str)
             and expr.member.lower() == 'frombase64string'
             and len(expr.arguments) == 1
         ):
-            sv = _string_value(expr.arguments[0])
+            sv = string_value(expr.arguments[0])
             if sv is not None:
                 try:
                     return base64.b64decode(sv)
@@ -252,7 +252,7 @@ def _try_evaluate(
             return _try_evaluate(expr.object, bindings)
 
     if isinstance(expr, Ps1CastExpression) and expr.operand is not None:
-        tn = _normalize_dotnet_type_name(expr.type_name)
+        tn = normalize_dotnet_type_name(expr.type_name)
         if tn == 'io.memorystream':
             return _try_evaluate(expr.operand, bindings)
 
@@ -261,7 +261,7 @@ def _try_evaluate(
         if result is None:
             return None
         type_name, ctor_args = result
-        tn = _normalize_dotnet_type_name(type_name)
+        tn = normalize_dotnet_type_name(type_name)
 
         if tn == 'io.memorystream' and len(ctor_args) >= 1:
             return _try_evaluate(ctor_args[0], bindings)
@@ -325,7 +325,7 @@ def _try_evaluate_pipeline(
             return None
         if elem.expression is None:
             return None
-        script_block = _extract_foreach_scriptblock(elem.expression)
+        script_block = extract_foreach_scriptblock(elem.expression)
         if script_block is None:
             return None
         if len(script_block.body) != 1:
@@ -350,7 +350,7 @@ def _resolve_to_string(expr: Expression) -> str | None:
     """
     Try to resolve an expression to a string: first as a literal, then via evaluation.
     """
-    s = _string_value(expr)
+    s = string_value(expr)
     if s is not None:
         return s
     result = _try_evaluate(expr)
@@ -403,7 +403,7 @@ class Ps1IexInlining(Transformer):
 
     def _inline_statements(self, node):
         for container in list(node.walk()):
-            body = _get_body(container)
+            body = get_body(container)
             if body is None:
                 continue
             i = 0

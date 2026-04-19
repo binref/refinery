@@ -13,9 +13,9 @@ statement to preserve execution order.
 from __future__ import annotations
 
 from refinery.lib.scripts import Block, Transformer, _replace_in_parent
-from refinery.lib.scripts.ps1.deobfuscation._helpers import (
-    _get_body,
-    _make_string_literal,
+from refinery.lib.scripts.ps1.deobfuscation.helpers import (
+    get_body,
+    make_string_literal,
 )
 from refinery.lib.scripts.ps1.model import (
     Ps1AssignmentExpression,
@@ -38,7 +38,7 @@ class Ps1ExpandableStringHoist(Transformer):
 
     def visit(self, node):
         for container in list(node.walk()):
-            body = _get_body(container)
+            body = get_body(container)
             if body is None:
                 continue
             i = 0
@@ -118,6 +118,6 @@ class Ps1ExpandableStringHoist(Transformer):
                 before.extend(collected)
             else:
                 after.extend(collected)
-            replacement = _make_string_literal(''.join(text_parts))
+            replacement = make_string_literal(''.join(text_parts))
             _replace_in_parent(node, replacement)
         return before, after

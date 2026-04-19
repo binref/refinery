@@ -10,27 +10,27 @@ import re
 from collections.abc import Iterator
 
 from refinery.lib.scripts.ps1.deobfuscation._base import LocalFunctionAwareTransformer
-from refinery.lib.scripts.ps1.deobfuscation._helpers import (
-    _COMPARISON_OPS,
-    _CONVERT_TYPE_NAMES,
-    _ENCODING_MAP,
-    _REGEX_TYPE_NAMES,
-    _STRING_TYPE_NAMES,
-    _apply_format_string,
-    _collect_int_arguments,
-    _collect_string_arguments,
-    _detect_encoding_chain,
-    _extract_foreach_scriptblock,
-    _get_body,
-    _get_member_name,
-    _is_array_reverse_call,
-    _is_static_type_call,
-    _make_string_literal,
-    _string_value,
-    _unwrap_integer,
-    _unwrap_single_paren,
-    _unwrap_parens,
-    _unwrap_to_array_literal,
+from refinery.lib.scripts.ps1.deobfuscation.helpers import (
+    COMPARISON_OPS,
+    CONVERT_TYPE_NAMES,
+    ENCODING_MAP,
+    REGEX_TYPE_NAMES,
+    STRING_TYPE_NAMES,
+    apply_format_string,
+    collect_int_arguments,
+    collect_string_arguments,
+    detect_encoding_chain,
+    extract_foreach_scriptblock,
+    get_body,
+    get_member_name,
+    is_array_reverse_call,
+    is_static_type_call,
+    make_string_literal,
+    string_value,
+    unwrap_integer,
+    unwrap_single_paren,
+    unwrap_parens,
+    unwrap_to_array_literal,
 )
 from refinery.lib.scripts.ps1.deobfuscation.typenames import (
     is_known_member,
@@ -75,7 +75,7 @@ _RIGHT_TO_LEFT = 64
 
 
 def _is_static_regex_call(node: Ps1InvokeMember) -> bool:
-    return _is_static_type_call(node, _REGEX_TYPE_NAMES)
+    return is_static_type_call(node, REGEX_TYPE_NAMES)
 
 
 def _parse_regex_options(node: Expression) -> tuple[int, bool] | None:
@@ -83,7 +83,7 @@ def _parse_regex_options(node: Expression) -> tuple[int, bool] | None:
     Parse a RegexOptions argument (string or integer) into Python re flags
     and a right_to_left boolean.
     """
-    sv = _string_value(node)
+    sv = string_value(node)
     if sv is not None:
         flags = 0
         right_to_left = False
@@ -120,8 +120,8 @@ def _iter_regex_matches(node: Ps1InvokeMember) -> Iterator[str] | None:
     """
     if len(node.arguments) not in (2, 3):
         return None
-    input = _string_value(node.arguments[0])
-    pattern = _string_value(node.arguments[1])
+    input = string_value(node.arguments[0])
+    pattern = string_value(node.arguments[1])
     if input is None or pattern is None:
         return None
     if len(node.arguments) == 3:
@@ -255,12 +255,12 @@ class Ps1ConstantFolding(LocalFunctionAwareTransformer):
         if member_lower == 'matches':
             matches = _compute_regex_matches(invoke)
             if matches is not None:
-                elements: list[Expression] = [_make_string_literal(s) for s in matches]
+                elements: list[Expression] = [make_string_literal(s) for s in matches]
                 return Ps1ArrayLiteral(elements=elements)
         elif member_lower == 'match':
             result = _compute_regex_match(invoke)
             if result is not None:
-                return _make_string_literal(result)
+                return make_string_literal(result)
         return None
 
     def _try_fold_regex_pipeline(self, node: Ps1Pipeline) -> Expression | None:
@@ -268,17 +268,17 @@ class Ps1ConstantFolding(LocalFunctionAwareTransformer):
         second_expr = node.elements[1].expression
         if not isinstance(first, Ps1InvokeMember) or not _is_static_regex_call(first):
             return None
-        member = _get_member_name(first.member)
+        member = get_member_name(first.member)
         if member is None:
             return None
-        sb = _extract_foreach_scriptblock(second_expr) if second_expr else None
+        sb = extract_foreach_scriptblock(second_expr) if second_expr else None
         if sb is None or not _foreach_extracts_value(sb):
             return None
         return self._fold_regex_call_result(first, member.lower())
 
     def visit_Ps1MemberAccess(self, node: Ps1MemberAccess):
         self.generic_visit(node)
-        member = _get_member_name(node.member)
+        member = get_member_name(node.member)
         if member is None:
             return None
         obj = node.object
@@ -286,15 +286,15 @@ class Ps1ConstantFolding(LocalFunctionAwareTransformer):
             return None
         member_type = resolve_member_type(obj, member)
         if member_type in _INTEGER_RESULT_TYPES:
-            s = _string_value(obj)
+            s = string_value(obj)
             if s is not None:
                 return Ps1IntegerLiteral(value=len(s), raw=str(len(s)))
-            array = _unwrap_to_array_literal(obj)
+            array = unwrap_to_array_literal(obj)
             if array is not None:
                 return Ps1IntegerLiteral(
                     value=len(array.elements), raw=str(len(array.elements)))
         if (
-            _string_value(obj) is not None
+            string_value(obj) is not None
             or isinstance(obj, Ps1IntegerLiteral)
         ):
             if not is_known_member(obj, member):
@@ -310,7 +310,7 @@ class Ps1ConstantFolding(LocalFunctionAwareTransformer):
         chain: list[str] = [member]
         inner = node.object
         while isinstance(inner, Ps1MemberAccess):
-            prop = _get_member_name(inner.member)
+            prop = get_member_name(inner.member)
             if prop is None:
                 return None
             chain.append(prop)
@@ -331,7 +331,7 @@ class Ps1ConstantFolding(LocalFunctionAwareTransformer):
 
     @staticmethod
     def _try_join_regex_matches(operand: Expression) -> Expression | None:
-        unwrapped = _unwrap_parens(operand)
+        unwrapped = unwrap_parens(operand)
         if not isinstance(unwrapped, Ps1InvokeMember) or not _is_static_regex_call(unwrapped):
             return None
         member = unwrapped.member if isinstance(unwrapped.member, str) else None
@@ -340,43 +340,43 @@ class Ps1ConstantFolding(LocalFunctionAwareTransformer):
         matches = _compute_regex_matches(unwrapped)
         if matches is None:
             return None
-        return _make_string_literal(''.join(matches))
+        return make_string_literal(''.join(matches))
 
     def visit_Ps1UnaryExpression(self, node: Ps1UnaryExpression):
         self.generic_visit(node)
         if node.operator.lower() != '-join' or node.operand is None:
             return None
-        scalar = _string_value(node.operand)
+        scalar = string_value(node.operand)
         if scalar is not None:
-            return _make_string_literal(scalar)
+            return make_string_literal(scalar)
         result = self._try_join_regex_matches(node.operand)
         if result is not None:
             return result
-        array = _unwrap_to_array_literal(node.operand)
+        array = unwrap_to_array_literal(node.operand)
         if array is None:
             if isinstance(node.operand, Ps1ArrayExpression) and len(node.operand.body) == 1:
                 stmt = node.operand.body[0]
                 if isinstance(stmt, Ps1ExpressionStatement):
-                    sv = _string_value(stmt.expression) if stmt.expression else None
+                    sv = string_value(stmt.expression) if stmt.expression else None
                     if sv is not None:
-                        return _make_string_literal(sv)
+                        return make_string_literal(sv)
             return None
-        args = _collect_string_arguments(array)
+        args = collect_string_arguments(array)
         if args is None:
             return None
-        return _make_string_literal(''.join(args))
+        return make_string_literal(''.join(args))
 
     def visit_Ps1IndexExpression(self, node: Ps1IndexExpression):
         self.generic_visit(node)
-        obj_str = _string_value(node.object) if node.object else None
+        obj_str = string_value(node.object) if node.object else None
         if obj_str is None or node.index is None:
             return None
         if isinstance(node.index, Ps1IntegerLiteral):
             idx = node.index.value
             if 0 <= idx < len(obj_str):
-                return _make_string_literal(obj_str[idx])
+                return make_string_literal(obj_str[idx])
             return None
-        array = _unwrap_to_array_literal(node.index)
+        array = unwrap_to_array_literal(node.index)
         if array is not None:
             chars: list[Expression] = []
             for elem in array.elements:
@@ -385,13 +385,13 @@ class Ps1ConstantFolding(LocalFunctionAwareTransformer):
                 idx = elem.value
                 if idx < 0 or idx >= len(obj_str):
                     return None
-                chars.append(_make_string_literal(obj_str[idx]))
+                chars.append(make_string_literal(obj_str[idx]))
             return Ps1ArrayLiteral(elements=chars)
         return None
 
     def visit_Ps1ExpressionStatement(self, node: Ps1ExpressionStatement):
         self.generic_visit(node)
-        var = _is_array_reverse_call(node)
+        var = is_array_reverse_call(node)
         if var is not None and self._try_apply_array_reverse(node, var):
             return node
         return None
@@ -399,7 +399,7 @@ class Ps1ConstantFolding(LocalFunctionAwareTransformer):
     def _try_apply_array_reverse(
         self, node: Ps1ExpressionStatement, var: Ps1Variable,
     ) -> bool:
-        body = _get_body(node.parent)
+        body = get_body(node.parent)
         if body is None:
             return False
         try:
@@ -437,9 +437,9 @@ class Ps1ConstantFolding(LocalFunctionAwareTransformer):
                     node.expression = None
                     self.mark_changed()
                     return True
-            sv = _string_value(value)
+            sv = string_value(value)
             if sv is not None:
-                replacement = _make_string_literal(sv[::-1])
+                replacement = make_string_literal(sv[::-1])
                 replacement.parent = expr
                 expr.value = replacement
                 node.expression = None
@@ -450,7 +450,7 @@ class Ps1ConstantFolding(LocalFunctionAwareTransformer):
 
     def visit_Ps1InvokeMember(self, node: Ps1InvokeMember):
         self.generic_visit(node)
-        member_name = _get_member_name(node.member)
+        member_name = get_member_name(node.member)
         if member_name is None:
             return None
         lower = member_name.lower()
@@ -480,36 +480,36 @@ class Ps1ConstantFolding(LocalFunctionAwareTransformer):
     ) -> Expression | None:
         if lower == 'tostring':
             if len(node.arguments) == 0:
-                obj_str = _string_value(node.object) if node.object else None
+                obj_str = string_value(node.object) if node.object else None
                 if obj_str is not None:
-                    return _make_string_literal(obj_str)
+                    return make_string_literal(obj_str)
             return None
         if lower == 'replace':
             if len(node.arguments) == 2:
-                obj_str = _string_value(node.object) if node.object else None
-                needle_str = _string_value(node.arguments[0])
-                insert_str = _string_value(node.arguments[1])
+                obj_str = string_value(node.object) if node.object else None
+                needle_str = string_value(node.arguments[0])
+                insert_str = string_value(node.arguments[1])
                 if obj_str is not None and needle_str is not None and insert_str is not None:
-                    return _make_string_literal(obj_str.replace(needle_str, insert_str))
+                    return make_string_literal(obj_str.replace(needle_str, insert_str))
             return None
         if lower == 'split':
             if len(node.arguments) == 1:
-                obj_str = _string_value(node.object) if node.object else None
-                sep_str = _string_value(node.arguments[0])
+                obj_str = string_value(node.object) if node.object else None
+                sep_str = string_value(node.arguments[0])
                 if obj_str is not None and sep_str is not None and sep_str:
                     pattern = '[' + re.escape(sep_str) + ']'
                     parts = re.split(pattern, obj_str)
-                    elements: list[Expression] = [_make_string_literal(p) for p in parts]
+                    elements: list[Expression] = [make_string_literal(p) for p in parts]
                     return Ps1ArrayLiteral(elements=elements)
             return None
-        obj_str = _string_value(node.object) if node.object else None
+        obj_str = string_value(node.object) if node.object else None
         if obj_str is None:
             return None
         if lower == 'substring':
             if len(node.arguments) == 1:
                 start = node.arguments[0]
                 if isinstance(start, Ps1IntegerLiteral) and 0 <= start.value <= len(obj_str):
-                    return _make_string_literal(obj_str[start.value:])
+                    return make_string_literal(obj_str[start.value:])
             if len(node.arguments) == 2:
                 start = node.arguments[0]
                 length = node.arguments[1]
@@ -519,21 +519,21 @@ class Ps1ConstantFolding(LocalFunctionAwareTransformer):
                     and 0 <= start.value
                     and start.value + length.value <= len(obj_str)
                 ):
-                    return _make_string_literal(
+                    return make_string_literal(
                         obj_str[start.value:start.value + length.value])
             return None
         if lower == 'insert':
             if len(node.arguments) == 2 and isinstance(node.arguments[0], Ps1IntegerLiteral):
                 idx = node.arguments[0].value
-                val = _string_value(node.arguments[1])
+                val = string_value(node.arguments[1])
                 if val is not None and 0 <= idx <= len(obj_str):
-                    return _make_string_literal(obj_str[:idx] + val + obj_str[idx:])
+                    return make_string_literal(obj_str[:idx] + val + obj_str[idx:])
             return None
         if lower == 'remove':
             if len(node.arguments) == 1 and isinstance(node.arguments[0], Ps1IntegerLiteral):
                 idx = node.arguments[0].value
                 if 0 <= idx <= len(obj_str):
-                    return _make_string_literal(obj_str[:idx])
+                    return make_string_literal(obj_str[:idx])
             if (
                 len(node.arguments) == 2
                 and isinstance(node.arguments[0], Ps1IntegerLiteral)
@@ -542,16 +542,16 @@ class Ps1ConstantFolding(LocalFunctionAwareTransformer):
                 idx = node.arguments[0].value
                 count = node.arguments[1].value
                 if 0 <= idx and idx + count <= len(obj_str):
-                    return _make_string_literal(obj_str[:idx] + obj_str[idx + count:])
+                    return make_string_literal(obj_str[:idx] + obj_str[idx + count:])
             return None
         return None
 
     def _try_fold_static_method(
         self, node: Ps1InvokeMember, lower: str,
     ) -> Expression | None:
-        if _is_static_type_call(node, _CONVERT_TYPE_NAMES) and lower == 'frombase64string':
+        if is_static_type_call(node, CONVERT_TYPE_NAMES) and lower == 'frombase64string':
             if len(node.arguments) == 1:
-                b64_str = _string_value(node.arguments[0])
+                b64_str = string_value(node.arguments[0])
                 if b64_str is not None:
                     try:
                         decoded = base64.b64decode(b64_str)
@@ -564,21 +564,21 @@ class Ps1ConstantFolding(LocalFunctionAwareTransformer):
                     array = Ps1ArrayLiteral(elements=elements)
                     return Ps1ArrayExpression(
                         body=[Ps1ExpressionStatement(expression=array)])
-        encoding_name = _detect_encoding_chain(node)
+        encoding_name = detect_encoding_chain(node)
         if encoding_name is not None:
             if len(node.arguments) == 1:
-                arg = _unwrap_single_paren(node.arguments[0])
+                arg = unwrap_single_paren(node.arguments[0])
                 if isinstance(arg, Ps1ArrayExpression) and len(arg.body) == 1:
                     stmt = arg.body[0]
                     if isinstance(stmt, Ps1ExpressionStatement) and stmt.expression:
                         arg = stmt.expression
-                int_values = _collect_int_arguments(arg)
+                int_values = collect_int_arguments(arg)
                 if int_values is not None:
                     try:
                         raw_bytes = bytearray(int_values)
                     except (ValueError, OverflowError):
                         return None
-                    encoding = _ENCODING_MAP.get(
+                    encoding = ENCODING_MAP.get(
                         encoding_name.lower(), encoding_name)
                     try:
                         codecs.lookup(encoding)
@@ -588,29 +588,29 @@ class Ps1ConstantFolding(LocalFunctionAwareTransformer):
                         decoded_str = raw_bytes.decode(encoding)
                     except Exception:
                         return None
-                    return _make_string_literal(decoded_str)
-        if _is_static_type_call(node, _STRING_TYPE_NAMES):
+                    return make_string_literal(decoded_str)
+        if is_static_type_call(node, STRING_TYPE_NAMES):
             if lower == 'concat' and len(node.arguments) >= 1:
                 parts: list[str] = []
                 for arg in node.arguments:
-                    sv = _string_value(arg)
+                    sv = string_value(arg)
                     if sv is None:
                         break
                     parts.append(sv)
                 else:
-                    return _make_string_literal(''.join(parts))
+                    return make_string_literal(''.join(parts))
             if lower == 'join' and len(node.arguments) == 2:
-                separator = _string_value(node.arguments[0])
+                separator = string_value(node.arguments[0])
                 if separator is not None:
                     second = node.arguments[1]
-                    scalar = _string_value(second)
+                    scalar = string_value(second)
                     if scalar is not None:
-                        return _make_string_literal(scalar)
-                    array = _unwrap_to_array_literal(second)
+                        return make_string_literal(scalar)
+                    array = unwrap_to_array_literal(second)
                     if array is not None:
-                        args = _collect_string_arguments(array)
+                        args = collect_string_arguments(array)
                         if args is not None:
-                            return _make_string_literal(separator.join(args))
+                            return make_string_literal(separator.join(args))
         if _is_static_regex_call(node) and lower == 'replace':
             return self._handle_regex_replace(node)
         return None
@@ -618,9 +618,9 @@ class Ps1ConstantFolding(LocalFunctionAwareTransformer):
     def _handle_regex_replace(self, node: Ps1InvokeMember) -> Expression | None:
         if len(node.arguments) not in (3, 4):
             return None
-        input_str = _string_value(node.arguments[0])
-        pattern_str = _string_value(node.arguments[1])
-        replacement_str = _string_value(node.arguments[2])
+        input_str = string_value(node.arguments[0])
+        pattern_str = string_value(node.arguments[1])
+        replacement_str = string_value(node.arguments[2])
         if input_str is None or pattern_str is None or replacement_str is None:
             return None
         flags = 0
@@ -640,7 +640,7 @@ class Ps1ConstantFolding(LocalFunctionAwareTransformer):
                     pattern_str, lambda _: replacement_str, input_str, flags=flags)
         except re.error:
             return None
-        return _make_string_literal(result)
+        return make_string_literal(result)
 
     _ARITHMETIC_OPS = {
         '+' : int.__add__,
@@ -671,8 +671,8 @@ class Ps1ConstantFolding(LocalFunctionAwareTransformer):
         return self._handle_comparison(node, op) or self._handle_arithmetic(node, op)
 
     def _handle_arithmetic(self, node: Ps1BinaryExpression, op: str) -> Expression | None:
-        left = _unwrap_integer(node.left)
-        right = _unwrap_integer(node.right)
+        left = unwrap_integer(node.left)
+        right = unwrap_integer(node.right)
         if left is None or right is None:
             return None
         fn = self._ARITHMETIC_OPS.get(op)
@@ -685,42 +685,42 @@ class Ps1ConstantFolding(LocalFunctionAwareTransformer):
         return Ps1IntegerLiteral(value=result, raw=str(result))
 
     def _handle_comparison(self, node: Ps1BinaryExpression, op: str) -> Expression | None:
-        left = _unwrap_integer(node.left)
-        right = _unwrap_integer(node.right)
+        left = unwrap_integer(node.left)
+        right = unwrap_integer(node.right)
         if left is None or right is None:
             return None
-        fn = _COMPARISON_OPS.get(op)
+        fn = COMPARISON_OPS.get(op)
         if fn is None:
             return None
         result = fn(left.value, right.value)
         return Ps1Variable(name='True' if result else 'False')
 
     def _handle_format(self, node: Ps1BinaryExpression) -> Expression | None:
-        fmt_str = _string_value(node.left) if node.left else None
+        fmt_str = string_value(node.left) if node.left else None
         if fmt_str is None or node.right is None:
             return None
-        args = _collect_string_arguments(node.right)
+        args = collect_string_arguments(node.right)
         if args is None:
             return None
-        result = _apply_format_string(fmt_str, args)
+        result = apply_format_string(fmt_str, args)
         if result is None:
             return None
-        return _make_string_literal(result)
+        return make_string_literal(result)
 
     def _handle_concat(self, node: Ps1BinaryExpression) -> Expression | None:
-        left_str = _string_value(node.left) if node.left else None
-        right_str = _string_value(node.right) if node.right else None
+        left_str = string_value(node.left) if node.left else None
+        right_str = string_value(node.right) if node.right else None
         if left_str is not None and right_str is not None:
-            return _make_string_literal(left_str + right_str)
+            return make_string_literal(left_str + right_str)
         if right_str is not None and isinstance(node.left, Ps1BinaryExpression):
             if node.left.operator == '+':
-                inner_right_str = _string_value(node.left.right) if node.left.right else None
+                inner_right_str = string_value(node.left.right) if node.left.right else None
                 if inner_right_str is not None:
-                    node.left.right = _make_string_literal(inner_right_str + right_str)
+                    node.left.right = make_string_literal(inner_right_str + right_str)
                     return node.left
         if right_str is not None and isinstance(node.left, Ps1ArrayLiteral):
             elements = list(node.left.elements)
-            elements.append(_make_string_literal(right_str))
+            elements.append(make_string_literal(right_str))
             return Ps1ArrayLiteral(elements=elements)
         is_inner_concat = (
             isinstance(node.parent, Ps1BinaryExpression)
@@ -735,30 +735,30 @@ class Ps1ConstantFolding(LocalFunctionAwareTransformer):
         return None
 
     def _handle_binary_join(self, node: Ps1BinaryExpression) -> Expression | None:
-        separator = _string_value(node.right) if node.right else None
+        separator = string_value(node.right) if node.right else None
         if separator is None or node.left is None:
             return None
         # Binary -Join on a scalar string is a no-op.
-        scalar = _string_value(node.left)
+        scalar = string_value(node.left)
         if scalar is not None:
-            return _make_string_literal(scalar)
-        array = _unwrap_to_array_literal(node.left)
+            return make_string_literal(scalar)
+        array = unwrap_to_array_literal(node.left)
         if array is None:
             return None
-        args = _collect_string_arguments(array)
+        args = collect_string_arguments(array)
         if args is None:
             return None
-        return _make_string_literal(separator.join(args))
+        return make_string_literal(separator.join(args))
 
     def _handle_binary_replace(
         self, node: Ps1BinaryExpression, op: str,
     ) -> Expression | None:
-        haystack = _string_value(node.left) if node.left else None
+        haystack = string_value(node.left) if node.left else None
         if haystack is None or node.right is None:
             return None
         if isinstance(node.right, Ps1ArrayLiteral) and len(node.right.elements) == 2:
-            needle_str = _string_value(node.right.elements[0])
-            insert_str = _string_value(node.right.elements[1])
+            needle_str = string_value(node.right.elements[0])
+            insert_str = string_value(node.right.elements[1])
         else:
             return None
         if needle_str is None or insert_str is None:
@@ -768,26 +768,26 @@ class Ps1ConstantFolding(LocalFunctionAwareTransformer):
             result = re.sub(needle_str, lambda _: insert_str, haystack, flags=flags)
         except re.error:
             return None
-        return _make_string_literal(result)
+        return make_string_literal(result)
 
     def _handle_binary_split(
         self, node: Ps1BinaryExpression, op: str,
     ) -> Expression | None:
         if node.right is None or node.left is None:
             return None
-        pattern_str = _string_value(node.right)
+        pattern_str = string_value(node.right)
         if pattern_str is None:
             return None
         flags = re.IGNORECASE if op != '-csplit' else 0
         # Collect input strings: either a single string or an array of strings.
-        left_str = _string_value(node.left)
+        left_str = string_value(node.left)
         if left_str is not None:
             inputs = [left_str]
         else:
-            array = _unwrap_to_array_literal(node.left)
+            array = unwrap_to_array_literal(node.left)
             if array is None:
                 return None
-            inputs_opt = _collect_string_arguments(array)
+            inputs_opt = collect_string_arguments(array)
             if inputs_opt is None:
                 return None
             inputs = inputs_opt
@@ -797,5 +797,5 @@ class Ps1ConstantFolding(LocalFunctionAwareTransformer):
                 parts.extend(re.split(pattern_str, s, flags=flags))
         except re.error:
             return None
-        elements: list[Expression] = [_make_string_literal(p) for p in parts]
+        elements: list[Expression] = [make_string_literal(p) for p in parts]
         return Ps1ArrayLiteral(elements=elements)

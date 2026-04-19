@@ -14,17 +14,17 @@ import re
 from collections.abc import Iterable
 from fnmatch import translate as fnmatch_translate
 
-from refinery.lib.scripts.ps1.deobfuscation._helpers import (
-    _GET_COMMAND_ALIASES,
-    _GET_MEMBER_ALIASES,
-    _KNOWN_NAMES,
-    _PS1_KNOWN_VARIABLES,
-    _extract_first_positional_string,
-    _get_command_name,
-    _get_member_name,
-    _make_string_literal,
-    _string_value,
-    _unwrap_parens,
+from refinery.lib.scripts.ps1.deobfuscation.helpers import (
+    GET_COMMAND_ALIASES,
+    GET_MEMBER_ALIASES,
+    KNOWN_NAMES,
+    PS1_KNOWN_VARIABLES,
+    extract_first_positional_string,
+    get_command_name,
+    get_member_name,
+    make_string_literal,
+    string_value,
+    unwrap_parens,
 )
 from refinery.lib.scripts.ps1.deobfuscation.typenames import (
     VariableTypeAwareTransformer,
@@ -67,7 +67,7 @@ def _variable_name_value(node: Expression) -> str | None:
     """
     if isinstance(node, Ps1IntegerLiteral):
         return str(node.value)
-    return _string_value(node)
+    return string_value(node)
 
 
 def _is_wildcard(pattern: str) -> bool:
@@ -89,7 +89,7 @@ def _wildcard_match_unique(
     return None
 
 
-_KNOWN_CMDLET_LIST: list[str] = [name for name in _KNOWN_NAMES.values() if '-' in name]
+_KNOWN_CMDLET_LIST: list[str] = [name for name in KNOWN_NAMES.values() if '-' in name]
 
 
 def _known_cmdlets() -> list[str]:
@@ -106,13 +106,13 @@ def _is_psobject_member_access(
     """
     if not isinstance(expr, Ps1MemberAccess):
         return None
-    name = _get_member_name(expr.member)
+    name = get_member_name(expr.member)
     if name is None or name.lower() != leaf_name:
         return None
     inner = expr.object
     if not isinstance(inner, Ps1MemberAccess):
         return None
-    ps_name = _get_member_name(inner.member)
+    ps_name = get_member_name(inner.member)
     if ps_name is None or ps_name.lower() != 'psobject':
         return None
     return inner
@@ -143,12 +143,12 @@ def _determine_where_object_candidates(
             expr = inner
 
         if isinstance(expr, Ps1CommandInvocation):
-            cmd_name = _get_command_name(expr)
+            cmd_name = get_command_name(expr)
             if cmd_name is not None:
                 cmd_lower = cmd_name.lower()
-                if cmd_lower in _GET_COMMAND_ALIASES:
+                if cmd_lower in GET_COMMAND_ALIASES:
                     return _known_cmdlets()
-                if cmd_lower in _GET_MEMBER_ALIASES:
+                if cmd_lower in GET_MEMBER_ALIASES:
                     return _candidates_from_get_member(
                         elements, elem, variable_types,
                     )
@@ -270,10 +270,10 @@ def _resolve_variable_name(
     name, or the pattern itself for non-wildcard names.
     """
     if _is_wildcard(pattern):
-        return _wildcard_match_unique(pattern, _PS1_KNOWN_VARIABLES.values())
+        return _wildcard_match_unique(pattern, PS1_KNOWN_VARIABLES.values())
     pattern_lower = pattern.lower()
     return next(
-        (v for v in _PS1_KNOWN_VARIABLES.values() if v.lower() == pattern_lower),
+        (v for v in PS1_KNOWN_VARIABLES.values() if v.lower() == pattern_lower),
         pattern,
     )
 
@@ -288,7 +288,7 @@ def _extract_where_object_wildcard(
 
     Returns the pattern string, or None.
     """
-    name = _get_command_name(cmd)
+    name = get_command_name(cmd)
     if name is None or name.lower() not in _WHERE_OBJECT_ALIASES:
         return None
     if len(cmd.arguments) != 1:
@@ -334,7 +334,7 @@ def _extract_where_object_wildcard(
         return None
     if expr.right is None:
         return None
-    return _string_value(expr.right)
+    return string_value(expr.right)
 
 
 class Ps1WildcardResolution(VariableTypeAwareTransformer):
@@ -383,7 +383,7 @@ class Ps1WildcardResolution(VariableTypeAwareTransformer):
         `Get-Item Variable:X` and `Get-Variable X` return a `PSVariable` wrapper object whose
         `.Value` property gives the actual variable content and `.Name` property gives its name.
         """
-        member_name = _get_member_name(node.member)
+        member_name = get_member_name(node.member)
         if member_name is None:
             return None
         member_lower = member_name.lower()
@@ -400,7 +400,7 @@ class Ps1WildcardResolution(VariableTypeAwareTransformer):
                 name=resolved,
                 scope=Ps1ScopeModifier.NONE,
             )
-        return _make_string_literal(resolved)
+        return make_string_literal(resolved)
 
     @staticmethod
     def _resolve_get_variable_pattern(expr: Expression) -> str | None:
@@ -408,16 +408,16 @@ class Ps1WildcardResolution(VariableTypeAwareTransformer):
         Given the object expression of a member access, check if it is a `Get-Item Variable:X` or
         `Get-Variable X` invocation and resolve the variable name (supporting wildcards).
         """
-        inner = _unwrap_parens(expr)
+        inner = unwrap_parens(expr)
         if not isinstance(inner, Ps1CommandInvocation):
             return None
-        name = _get_command_name(inner)
+        name = get_command_name(inner)
         if name is None:
             return None
         name_lower = name.lower()
         if name_lower not in _GET_ITEM_COMMANDS and name_lower not in _GET_VARIABLE_COMMANDS:
             return None
-        arg_value = _extract_first_positional_string(inner)
+        arg_value = extract_first_positional_string(inner)
         if arg_value is None:
             return None
         if name_lower in _GET_ITEM_COMMANDS:
@@ -437,7 +437,7 @@ class Ps1WildcardResolution(VariableTypeAwareTransformer):
         """
         Resolve `Get-Variable X -ValueOnly` to `$X`.
         """
-        cmd_name = _get_command_name(node)
+        cmd_name = get_command_name(node)
         if cmd_name is None or cmd_name.lower() not in _GET_VARIABLE_COMMANDS:
             return None
         if not _has_valueonly_switch(node):
@@ -461,7 +461,7 @@ class Ps1WildcardResolution(VariableTypeAwareTransformer):
         self,
         node: Ps1InvokeMember,
     ) -> Expression | None:
-        member_name = _get_member_name(node.member)
+        member_name = get_member_name(node.member)
         if member_name is None:
             return None
         member_lower = member_name.lower()
@@ -472,7 +472,7 @@ class Ps1WildcardResolution(VariableTypeAwareTransformer):
             return None
         if len(node.arguments) < 1:
             return None
-        pattern = _string_value(node.arguments[0])
+        pattern = string_value(node.arguments[0])
         if pattern is None:
             return None
         if is_invoke and '-' not in pattern:
@@ -485,7 +485,7 @@ class Ps1WildcardResolution(VariableTypeAwareTransformer):
                 (c for c in cmdlets if c.lower() == pattern.lower()), None)
         if resolved is None:
             return None
-        return _make_string_literal(resolved)
+        return make_string_literal(resolved)
 
     def _try_resolve_where_object_wildcard(
         self,
@@ -513,7 +513,7 @@ class Ps1WildcardResolution(VariableTypeAwareTransformer):
         resolved = _wildcard_match_unique(pattern, candidates)
         if resolved is None:
             return None
-        return _make_string_literal(resolved)
+        return make_string_literal(resolved)
 
     def _try_resolve_set_variable(
         self,
@@ -522,7 +522,7 @@ class Ps1WildcardResolution(VariableTypeAwareTransformer):
         """
         Resolve Set-Item Variable:X value or Set-Variable X value to $X = value.
         """
-        cmd_name = _get_command_name(node)
+        cmd_name = get_command_name(node)
         if cmd_name is None:
             return None
         cmd_lower = cmd_name.lower()
@@ -542,7 +542,7 @@ class Ps1WildcardResolution(VariableTypeAwareTransformer):
         positionals = _extract_positional_args(node)
         if len(positionals) < 2:
             return None
-        path_str = _string_value(positionals[0])
+        path_str = string_value(positionals[0])
         if path_str is None:
             return None
         prefix = 'variable:'

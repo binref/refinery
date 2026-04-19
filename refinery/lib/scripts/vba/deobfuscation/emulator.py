@@ -4,15 +4,15 @@ Evaluate user-defined VBA functions called with constant arguments.
 from __future__ import annotations
 
 from refinery.lib.scripts import Transformer
-from refinery.lib.scripts.vba.deobfuscation._helpers import (
-    _SINGLE_ARG_BUILTINS,
-    _eval_string_builtin,
-    _is_identifier_read,
-    _is_literal,
-    _is_nan_or_inf,
-    _literal_value,
-    _Value,
-    _value_to_node,
+from refinery.lib.scripts.vba.deobfuscation.helpers import (
+    SINGLE_ARG_BUILTINS,
+    eval_string_builtin,
+    is_identifier_read,
+    is_literal,
+    is_nan_or_inf,
+    literal_value,
+    Value,
+    value_to_node,
 )
 from refinery.lib.scripts.vba.model import (
     VbaBinaryExpression,
@@ -67,11 +67,11 @@ class _VbaInterpreter:
         self.function_name = function_name.lower()
         self.max_iterations = max_iterations
         self.max_string_length = max_string_length
-        self._env: dict[str, _Value] = {}
+        self._env: dict[str, Value] = {}
         self._iterations = 0
         self._on_error_resume_next = False
 
-    def execute(self, body: list, bindings: dict[str, _Value]) -> _Value:
+    def execute(self, body: list, bindings: dict[str, Value]) -> Value:
         self._env = dict(bindings)
         self._iterations = 0
         self._on_error_resume_next = False
@@ -187,10 +187,10 @@ class _VbaInterpreter:
         if self._iterations > self.max_iterations:
             raise _VbaInterpreterError
 
-    def _eval(self, expr) -> _Value:
+    def _eval(self, expr) -> Value:
         if expr is None:
             return None
-        value = _literal_value(expr)
+        value = literal_value(expr)
         if value is not None:
             return value
         if isinstance(expr, VbaIdentifier):
@@ -205,7 +205,7 @@ class _VbaInterpreter:
             return self._eval_call(expr)
         raise _VbaInterpreterError
 
-    def _eval_binary(self, node: VbaBinaryExpression) -> _Value:
+    def _eval_binary(self, node: VbaBinaryExpression) -> Value:
         left = self._eval(node.left)
         right = self._eval(node.right)
         op = node.operator
@@ -255,7 +255,7 @@ class _VbaInterpreter:
             return self._compare(left, right, lambda a, b: a >= b)
         raise _VbaInterpreterError
 
-    def _eval_unary(self, node: VbaUnaryExpression) -> _Value:
+    def _eval_unary(self, node: VbaUnaryExpression) -> Value:
         val = self._eval(node.operand)
         op = node.operator
         if op == '-':
@@ -267,12 +267,12 @@ class _VbaInterpreter:
             return ~self._to_int(val)
         raise _VbaInterpreterError
 
-    def _eval_call(self, node: VbaCallExpression) -> _Value:
+    def _eval_call(self, node: VbaCallExpression) -> Value:
         if not isinstance(node.callee, VbaIdentifier):
             raise _VbaInterpreterError
         name = node.callee.name.lower()
         args = [self._eval(a) for a in node.arguments if a is not None]
-        handler = _SINGLE_ARG_BUILTINS.get(name)
+        handler = SINGLE_ARG_BUILTINS.get(name)
         if handler is not None and len(args) == 1:
             try:
                 return handler(args[0])
@@ -280,7 +280,7 @@ class _VbaInterpreter:
                 raise _VbaInterpreterError
         stripped = name.rstrip('$')
         try:
-            result = _eval_string_builtin(stripped, args)
+            result = eval_string_builtin(stripped, args)
         except (ValueError, OverflowError, TypeError):
             raise _VbaInterpreterError
         if result is not None:
@@ -290,7 +290,7 @@ class _VbaInterpreter:
         raise _VbaInterpreterError
 
     @staticmethod
-    def _builtin_instr(args: list[_Value]) -> int:
+    def _builtin_instr(args: list[Value]) -> int:
         if len(args) == 2:
             haystack = str(args[0]) if args[0] is not None else ''
             needle = str(args[1]) if args[1] is not None else ''
@@ -304,7 +304,7 @@ class _VbaInterpreter:
             return idx + 1 if idx >= 0 else 0
         raise _VbaInterpreterError
 
-    def _concat(self, lhs: _Value, rhs: _Value) -> str:
+    def _concat(self, lhs: Value, rhs: Value) -> str:
         a = str(lhs) if lhs is not None else ''
         b = str(rhs) if rhs is not None else ''
         result = a + b
@@ -313,7 +313,7 @@ class _VbaInterpreter:
         return result
 
     @staticmethod
-    def _to_number(v: _Value) -> int | float:
+    def _to_number(v: Value) -> int | float:
         if v is None:
             return 0
         if isinstance(v, bool):
@@ -330,23 +330,23 @@ class _VbaInterpreter:
                     raise _VbaInterpreterError
 
     @staticmethod
-    def _to_int(v: _Value) -> int:
+    def _to_int(v: Value) -> int:
         result = _VbaInterpreter._to_number(v)
         return result if isinstance(result, int) else int(result)
 
-    def _numeric_op(self, left: _Value, right: _Value, op) -> int | float:
+    def _numeric_op(self, left: Value, right: Value, op) -> int | float:
         a = self._to_number(left)
         b = self._to_number(right)
         try:
             result = op(a, b)
         except (ZeroDivisionError, ValueError, OverflowError, ArithmeticError):
             raise _VbaInterpreterError
-        if _is_nan_or_inf(result):
+        if is_nan_or_inf(result):
             raise _VbaInterpreterError
         return result
 
     @staticmethod
-    def _compare(left: _Value, right: _Value, op) -> bool:
+    def _compare(left: Value, right: Value, op) -> bool:
         if isinstance(left, str) and isinstance(right, str):
             return op(left.lower(), right.lower())
         if isinstance(left, (int, float)) and isinstance(right, (int, float)):
@@ -354,7 +354,7 @@ class _VbaInterpreter:
         raise _VbaInterpreterError
 
     @staticmethod
-    def _truthy(value: _Value) -> bool:
+    def _truthy(value: Value) -> bool:
         if value is None:
             return False
         if isinstance(value, bool):
@@ -439,7 +439,7 @@ class VbaFunctionEvaluator(Transformer):
         result = self._try_evaluate(funcdef, bindings)
         if result is None:
             return None
-        replacement = _value_to_node(result)
+        replacement = value_to_node(result)
         if replacement is None:
             return None
         self._replaced_counts[key] = self._replaced_counts.get(key, 0) + 1
@@ -456,7 +456,7 @@ class VbaFunctionEvaluator(Transformer):
             required = [p for p in funcdef.params if not p.is_optional and p.default is None]
             if required:
                 return None
-        if not _is_identifier_read(node):
+        if not is_identifier_read(node):
             return None
         self._call_counts[key] = self._call_counts.get(key, 0) + 1
         bindings = self._bind_parameters(funcdef, [])
@@ -465,7 +465,7 @@ class VbaFunctionEvaluator(Transformer):
         result = self._try_evaluate(funcdef, bindings)
         if result is None:
             return None
-        replacement = _value_to_node(result)
+        replacement = value_to_node(result)
         if replacement is None:
             return None
         self._replaced_counts[key] = self._replaced_counts.get(key, 0) + 1
@@ -474,8 +474,8 @@ class VbaFunctionEvaluator(Transformer):
     def _try_evaluate(
         self,
         funcdef: VbaFunctionDeclaration,
-        bindings: dict[str, _Value],
-    ) -> _Value:
+        bindings: dict[str, Value],
+    ) -> Value:
         interpreter = _VbaInterpreter(
             function_name=funcdef.name,
             max_iterations=self.max_iterations,
@@ -487,30 +487,30 @@ class VbaFunctionEvaluator(Transformer):
             return None
 
     @staticmethod
-    def _extract_constant_args(node: VbaCallExpression) -> list[_Value] | None:
-        args: list[_Value] = []
+    def _extract_constant_args(node: VbaCallExpression) -> list[Value] | None:
+        args: list[Value] = []
         for arg in node.arguments:
             if arg is None:
                 args.append(None)
                 continue
-            if not _is_literal(arg):
+            if not is_literal(arg):
                 return None
-            args.append(_literal_value(arg))
+            args.append(literal_value(arg))
         return args
 
     @staticmethod
     def _bind_parameters(
         funcdef: VbaFunctionDeclaration,
-        args: list[_Value],
-    ) -> dict[str, _Value] | None:
-        bindings: dict[str, _Value] = {}
+        args: list[Value],
+    ) -> dict[str, Value] | None:
+        bindings: dict[str, Value] = {}
         for i, param in enumerate(funcdef.params):
             key = param.name.lower()
             if i < len(args):
                 bindings[key] = args[i]
             elif param.is_optional and param.default is not None:
-                if _is_literal(param.default):
-                    bindings[key] = _literal_value(param.default)
+                if is_literal(param.default):
+                    bindings[key] = literal_value(param.default)
                 else:
                     return None
             elif param.is_optional:

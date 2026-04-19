@@ -11,15 +11,15 @@ from refinery.lib.scripts import (
     _remove_from_parent,
     _replace_in_parent,
 )
-from refinery.lib.scripts.ps1.deobfuscation._helpers import (
-    _PS1_KNOWN_VARIABLES,
-    _get_body,
-    _is_array_reverse_call,
-    _is_builtin_variable,
-    _iter_variable_mutations,
-    _make_string_literal,
-    _unwrap_parens,
-    _unwrap_to_array_literal,
+from refinery.lib.scripts.ps1.deobfuscation.helpers import (
+    PS1_KNOWN_VARIABLES,
+    get_body,
+    is_array_reverse_call,
+    is_builtin_variable,
+    iter_variable_mutations,
+    make_string_literal,
+    unwrap_parens,
+    unwrap_to_array_literal,
 )
 from refinery.lib.scripts.ps1.model import (
     Ps1ArrayExpression,
@@ -136,13 +136,13 @@ def _collect_mutated_variables(root: Node) -> set[str]:
     assignment targets, ForEach loop variables, ++/-- operands, and parameter declarations.
     """
     mutated: set[str] = set()
-    for var, _kind, _node in _iter_variable_mutations(root):
+    for var, _kind, _node in iter_variable_mutations(root):
         key = _candidate_key(var)
         if key is not None:
             mutated.add(key)
     for node in root.walk():
         if isinstance(node, Ps1ExpressionStatement):
-            rv = _is_array_reverse_call(node)
+            rv = is_array_reverse_call(node)
             if rv is not None:
                 key = _candidate_key(rv)
                 if key is not None:
@@ -168,7 +168,7 @@ def _constant_value_key(node: Node) -> tuple | None:
     if the node is not constant. Two constant nodes with the same key are
     guaranteed to represent the same value.
     """
-    node = _unwrap_parens(node)
+    node = unwrap_parens(node)
     if isinstance(node, Ps1IntegerLiteral):
         return ('int', node.value)
     if isinstance(node, Ps1RealLiteral):
@@ -179,7 +179,7 @@ def _constant_value_key(node: Node) -> tuple | None:
         return ('str', node.value)
     if isinstance(node, Ps1TypeExpression):
         return ('type', node.name)
-    if _is_builtin_variable(node):
+    if is_builtin_variable(node):
         return ('var', node.name.lower())
     if isinstance(node, Ps1ArrayLiteral):
         keys = []
@@ -190,7 +190,7 @@ def _constant_value_key(node: Node) -> tuple | None:
             keys.append(k)
         return ('array', tuple(keys))
     if isinstance(node, Ps1ArrayExpression):
-        inner = _unwrap_to_array_literal(node)
+        inner = unwrap_to_array_literal(node)
         if inner is not None:
             return _constant_value_key(inner)
     return None
@@ -202,7 +202,7 @@ def _get_array_literal(node: Node) -> Ps1ArrayLiteral | None:
     `@(...)`.
     """
     if isinstance(node, Expression):
-        return _unwrap_to_array_literal(node)
+        return unwrap_to_array_literal(node)
     return None
 
 
@@ -211,9 +211,9 @@ def _clone_constant(node: Node) -> Expression:
     Create a fresh copy of a constant value node without following parent references. This avoids
     the catastrophic cost of `copy.deepcopy` which traverses the entire AST through parents.
     """
-    unwrapped = _unwrap_parens(node)
+    unwrapped = unwrap_parens(node)
     if isinstance(unwrapped, Ps1ArrayExpression):
-        inner = _unwrap_to_array_literal(unwrapped)
+        inner = unwrap_to_array_literal(unwrapped)
         if inner is None:
             raise TypeError(F'cannot clone {type(unwrapped).__name__}')
         unwrapped = inner
@@ -239,7 +239,7 @@ def _find_body_entry(node: Node) -> tuple[list, int] | None:
     cursor = node
     while cursor.parent is not None:
         parent = cursor.parent
-        body = _get_body(parent)
+        body = get_body(parent)
         if body is not None:
             for idx, entry in enumerate(body):
                 if entry is cursor:
@@ -253,7 +253,7 @@ def _is_dominated_by(node: Node, scope_entries: list[tuple[list, int]]) -> bool:
     reached_root = False
     while cursor.parent is not None:
         parent = cursor.parent
-        body = _get_body(parent)
+        body = get_body(parent)
         if body is not None:
             reached_root = True
             for idx, entry in enumerate(body):
@@ -324,7 +324,7 @@ class Ps1ConstantInlining(Transformer):
                                 _reject(key)
                             else:
                                 value_keys[key] = vk
-                                const_value = _unwrap_parens(node.value)
+                                const_value = unwrap_parens(node.value)
                                 existing = candidates.get(key)
                                 if existing is not None:
                                     existing[0].append(node)
@@ -366,11 +366,11 @@ class Ps1ConstantInlining(Transformer):
         }
         for key, value in _PS1_DEFAULT_VARIABLES.items():
             if key not in rejected and key not in candidates:
-                result[key] = ([], _make_string_literal(value))
+                result[key] = ([], make_string_literal(value))
         for key, value in _PS1_ENV_CONSTANTS.items():
             env_key = F'env:{key}'
             if env_key not in rejected and env_key not in candidates:
-                result[env_key] = ([], _make_string_literal(value))
+                result[env_key] = ([], make_string_literal(value))
         return result, result_scope
 
     def _substitute(
@@ -464,7 +464,7 @@ class Ps1ConstantInlining(Transformer):
                         if idx < 0 or idx >= len(s):
                             remaining[key] = remaining.get(key, 0) + 1
                             continue
-                        replacement = _make_string_literal(s[idx])
+                        replacement = make_string_literal(s[idx])
                         _replace_in_parent(node, replacement)
                         self.mark_changed()
                         inlined[key] = inlined.get(key, 0) + 1
@@ -604,7 +604,7 @@ class Ps1NullVariableInlining(Transformer):
                 continue
             if key in mutated:
                 continue
-            if key in _PS1_KNOWN_VARIABLES:
+            if key in PS1_KNOWN_VARIABLES:
                 continue
             if key in _PS1_DEFAULT_VARIABLES:
                 continue

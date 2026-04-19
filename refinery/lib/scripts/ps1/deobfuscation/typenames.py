@@ -7,14 +7,14 @@ Do not edit manually — except for utility functions at the end of the file.
 from __future__ import annotations
 
 from refinery.lib.scripts import Node, Transformer
-from refinery.lib.scripts.ps1.deobfuscation._helpers import (
-    _GET_MEMBER_ALIASES,
-    _extract_first_positional_string,
-    _get_command_name,
-    _get_member_name,
-    _iter_variable_mutations,
-    _make_string_literal,
-    _unwrap_parens,
+from refinery.lib.scripts.ps1.deobfuscation.helpers import (
+    GET_MEMBER_ALIASES,
+    extract_first_positional_string,
+    get_command_name,
+    get_member_name,
+    iter_variable_mutations,
+    make_string_literal,
+    unwrap_parens,
 )
 from refinery.lib.scripts.ps1.model import (
     Expression,
@@ -5649,7 +5649,7 @@ def resolve_expression_type(
     chains. Returns the lowercase full .NET type name, or None if the type
     cannot be determined.
     """
-    unwrapped = _unwrap_parens(expr)
+    unwrapped = unwrap_parens(expr)
     if not isinstance(unwrapped, Expression):
         return None
     expr = unwrapped
@@ -5676,9 +5676,9 @@ def resolve_expression_type(
     if isinstance(expr, Ps1CastExpression):
         return _resolve_type_name(expr.type_name)
     if isinstance(expr, Ps1CommandInvocation):
-        cmd_name = _get_command_name(expr)
+        cmd_name = get_command_name(expr)
         if cmd_name is not None and cmd_name.lower() == 'new-object':
-            type_str = _extract_first_positional_string(expr)
+            type_str = extract_first_positional_string(expr)
             if type_str is not None:
                 return _resolve_type_name(type_str)
     if isinstance(expr, Ps1MemberAccess):
@@ -5687,7 +5687,7 @@ def resolve_expression_type(
         obj_type = resolve_expression_type(expr.object, variable_types)
         if obj_type is None:
             return None
-        member_name = _get_member_name(expr.member)
+        member_name = get_member_name(expr.member)
         if member_name is None:
             return None
         return _PROPERTY_TYPES.get((obj_type, member_name.lower()))
@@ -5759,8 +5759,8 @@ def _pipeline_pipes_to_get_member(pipeline: Ps1Pipeline) -> bool:
     cmd = last.expression
     if not isinstance(cmd, Ps1CommandInvocation):
         return False
-    name = _get_command_name(cmd)
-    return name is not None and name.lower() in _GET_MEMBER_ALIASES
+    name = get_command_name(cmd)
+    return name is not None and name.lower() in GET_MEMBER_ALIASES
 
 
 def _pipeline_source_type(
@@ -5789,7 +5789,7 @@ def collect_variable_types(root: Node) -> dict[str, str]:
     """
     assign_counts: dict[str, int] = {}
     typed_assigns: dict[str, str] = {}
-    for var, kind, node in _iter_variable_mutations(root):
+    for var, kind, node in iter_variable_mutations(root):
         if var.scope != Ps1ScopeModifier.NONE:
             continue
         key = var.name.lower()
@@ -5846,7 +5846,7 @@ class Ps1TypeSystemSimplifications(VariableTypeAwareTransformer):
         obj_type = resolve_expression_type(node.object, self._variable_types)
         if obj_type is None:
             return
-        member_name = _get_member_name(node.member)
+        member_name = get_member_name(node.member)
         if member_name is None:
             return
         canonical = canonical_member_name(obj_type, member_name)
@@ -5865,7 +5865,7 @@ class Ps1TypeSystemSimplifications(VariableTypeAwareTransformer):
         a MemberInfo .Name access can be left dangling on the resolved string.
         'GetCmdlets'.Name -> 'GetCmdlets'
         """
-        member_name = _get_member_name(node.member)
+        member_name = get_member_name(node.member)
         if member_name is None or member_name.lower() != 'name':
             return None
         if not isinstance(node.object, Ps1StringLiteral):
@@ -5879,7 +5879,7 @@ class Ps1TypeSystemSimplifications(VariableTypeAwareTransformer):
         """
         Resolve ($X | Get-Member)[N].Name to the Nth member name string.
         """
-        member_name = _get_member_name(node.member)
+        member_name = get_member_name(node.member)
         if member_name is None or member_name.lower() != 'name':
             return None
         obj = node.object
@@ -5888,7 +5888,7 @@ class Ps1TypeSystemSimplifications(VariableTypeAwareTransformer):
         if not isinstance(obj.index, Ps1IntegerLiteral):
             return None
         index = obj.index.value
-        inner = _unwrap_parens(obj.object) if obj.object is not None else None
+        inner = unwrap_parens(obj.object) if obj.object is not None else None
         if not isinstance(inner, Ps1Pipeline):
             return None
         if not _pipeline_pipes_to_get_member(inner):
@@ -5899,4 +5899,4 @@ class Ps1TypeSystemSimplifications(VariableTypeAwareTransformer):
         ordered = get_member_order(type_name)
         if ordered is None or index < 0 or index >= len(ordered):
             return None
-        return _make_string_literal(ordered[index])
+        return make_string_literal(ordered[index])

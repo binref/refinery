@@ -12,10 +12,10 @@ from collections.abc import Callable, Generator
 from dataclasses import dataclass, field
 
 from refinery.lib.scripts import Block, Node, Statement, Transformer
-from refinery.lib.scripts.ps1.deobfuscation._helpers import (
-    _get_body,
-    _is_builtin_variable,
-    _unwrap_parens,
+from refinery.lib.scripts.ps1.deobfuscation.helpers import (
+    get_body,
+    is_builtin_variable,
+    unwrap_parens,
 )
 from refinery.lib.scripts.ps1.deobfuscation.emulator import evaluate_truthy
 from refinery.lib.scripts.ps1.model import (
@@ -49,7 +49,7 @@ def _is_bool_literal(node: Node) -> bool | None:
     Check if a node is a $True or $False variable literal. Returns the boolean value,
     or None if the node is not a boolean literal.
     """
-    if _is_builtin_variable(node, frozenset({'true', 'false'})):
+    if is_builtin_variable(node, frozenset({'true', 'false'})):
         return node.name.lower() == 'true'
     return None
 
@@ -58,7 +58,7 @@ def _unwrap_constant(node) -> _StateKey | None:
     """
     Extract a constant value (int, float, or string) from an AST node.
     """
-    node = _unwrap_parens(node) if isinstance(node, Expression) else node
+    node = unwrap_parens(node) if isinstance(node, Expression) else node
     if isinstance(node, Ps1IntegerLiteral):
         return node.value
     if isinstance(node, Ps1RealLiteral):
@@ -66,12 +66,12 @@ def _unwrap_constant(node) -> _StateKey | None:
     if isinstance(node, Ps1StringLiteral):
         return node.value
     if isinstance(node, Ps1UnaryExpression) and node.operator == '-':
-        inner = _unwrap_parens(node.operand) if isinstance(node.operand, Expression) else node.operand
+        inner = unwrap_parens(node.operand) if isinstance(node.operand, Expression) else node.operand
         if isinstance(inner, Ps1IntegerLiteral):
             return -inner.value
         if isinstance(inner, Ps1RealLiteral):
             return -inner.value
-    if _is_builtin_variable(node, frozenset({'null'})):
+    if is_builtin_variable(node, frozenset({'null'})):
         return 0
     return None
 
@@ -210,7 +210,7 @@ def _resolve_value(
     """
     if not isinstance(node, Expression):
         return None
-    expr = _unwrap_parens(node)
+    expr = unwrap_parens(node)
     value = _unwrap_constant(expr)
     if value is not None:
         return value
@@ -231,7 +231,7 @@ def _resolve_bool(
     """
     if not isinstance(node, Expression):
         return None
-    expr = _unwrap_parens(node)
+    expr = unwrap_parens(node)
     literal = _is_bool_literal(expr)
     if literal is not None:
         return literal
@@ -439,7 +439,7 @@ def _negate_condition(cond: Expression) -> Expression:
     Return the logical negation of a condition expression. Tries to simplify where possible (e.g.,
     flipping -eq to -ne) rather than wrapping in -Not.
     """
-    unwrapped = _unwrap_parens(cond)
+    unwrapped = unwrap_parens(cond)
     if not isinstance(unwrapped, Expression):
         return Ps1UnaryExpression(operator='-Not', operand=cond, prefix=True)
     cond = unwrapped
@@ -645,7 +645,7 @@ def _collect_internal_vars(
                     if key in candidates:
                         continue
                     if isinstance(value, Expression):
-                        value = _unwrap_parens(value)
+                        value = unwrap_parens(value)
                     if _unwrap_constant(value) is not None:
                         candidates.add(key)
                         changed = True
@@ -680,7 +680,7 @@ def _update_env(
     Update the variable environment for an internal assignment.
     """
     if isinstance(value, Expression):
-        value = _unwrap_parens(value)
+        value = unwrap_parens(value)
     const_val = _unwrap_constant(value)
     if const_val is not None:
         env[key] = const_val
@@ -845,11 +845,11 @@ def _try_unroll_loop(
 
     cond = cond_trans.condition
     loop_var_key: _VarKey | None = None
-    cond_unwrapped = _unwrap_parens(cond)
+    cond_unwrapped = unwrap_parens(cond)
     if isinstance(cond_unwrapped, Ps1BinaryExpression):
-        left = _unwrap_parens(cond_unwrapped.left) if cond_unwrapped.left is not None else None
+        left = unwrap_parens(cond_unwrapped.left) if cond_unwrapped.left is not None else None
         right = (
-            _unwrap_parens(cond_unwrapped.right) if cond_unwrapped.right is not None else None
+            unwrap_parens(cond_unwrapped.right) if cond_unwrapped.right is not None else None
         )
         if isinstance(left, Ps1Variable):
             loop_var_key = _var_key(left)
@@ -1237,7 +1237,7 @@ class Ps1ControlFlowDeflattening(Transformer):
         for parent in list(node.walk()):
             if isinstance(parent, Ps1SubExpression):
                 continue
-            body = _get_body(parent)
+            body = get_body(parent)
             if body is None:
                 continue
             self._try_deflatten_body(body, parent)

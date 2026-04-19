@@ -4,10 +4,10 @@ Inline command aliases defined via Set-Alias / New-Alias.
 from __future__ import annotations
 
 from refinery.lib.scripts import Node, Transformer
-from refinery.lib.scripts.ps1.deobfuscation._helpers import (
-    _case_normalize_name,
-    _get_command_name,
-    _string_value,
+from refinery.lib.scripts.ps1.deobfuscation.helpers import (
+    case_normalize_name,
+    get_command_name,
+    string_value,
 )
 from refinery.lib.scripts.ps1.model import (
     Ps1CommandArgument,
@@ -37,7 +37,7 @@ def _extract_alias_definition(cmd: Ps1CommandInvocation) -> tuple[str, str] | No
             if arg.kind == Ps1CommandArgumentKind.POSITIONAL:
                 if arg.value is None:
                     return None
-                sv = _string_value(arg.value)
+                sv = string_value(arg.value)
                 if sv is None:
                     return None
                 positional.append(sv)
@@ -45,7 +45,7 @@ def _extract_alias_definition(cmd: Ps1CommandInvocation) -> tuple[str, str] | No
                 param = arg.name.lstrip('-').lower()
                 if arg.value is None:
                     return None
-                sv = _string_value(arg.value)
+                sv = string_value(arg.value)
                 if sv is None:
                     return None
                 if param in ('name', 'n'):
@@ -53,7 +53,7 @@ def _extract_alias_definition(cmd: Ps1CommandInvocation) -> tuple[str, str] | No
                 elif param in ('value', 'v', 'definition', 'd'):
                     target_name = sv
         else:
-            sv = _string_value(arg)
+            sv = string_value(arg)
             if sv is None:
                 return None
             positional.append(sv)
@@ -101,7 +101,7 @@ class Ps1AliasInlining(Transformer):
         for node in root.walk():
             if not isinstance(node, Ps1CommandInvocation):
                 continue
-            name = _get_command_name(node)
+            name = get_command_name(node)
             if name is None or name.lower() not in _ALIAS_COMMANDS:
                 continue
             result = _extract_alias_definition(node)
@@ -125,7 +125,7 @@ class Ps1AliasInlining(Transformer):
         Normalize the target command name inside alias definition arguments.
         """
         for _key, (defn_node, target_name) in aliases.items():
-            normalized = _case_normalize_name(target_name)
+            normalized = case_normalize_name(target_name)
             if normalized == target_name:
                 continue
             for arg in defn_node.arguments:
@@ -151,7 +151,7 @@ class Ps1AliasInlining(Transformer):
         for node in list(root.walk()):
             if not isinstance(node, Ps1CommandInvocation):
                 continue
-            name = _get_command_name(node)
+            name = get_command_name(node)
             if name is None:
                 continue
             key = name.lower()
@@ -163,7 +163,7 @@ class Ps1AliasInlining(Transformer):
                 continue
             if node.name is None:
                 continue
-            normalized = _case_normalize_name(target_name)
+            normalized = case_normalize_name(target_name)
             node.name = Ps1StringLiteral(
                 offset=node.name.offset,
                 value=normalized,

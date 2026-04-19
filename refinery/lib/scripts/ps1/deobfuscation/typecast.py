@@ -6,14 +6,14 @@ from __future__ import annotations
 import string
 
 from refinery.lib.scripts import Transformer
-from refinery.lib.scripts.ps1.deobfuscation._helpers import (
-    _collect_int_arguments,
-    _collect_string_arguments,
-    _make_string_literal,
-    _normalize_dotnet_type_name,
-    _string_value,
-    _unwrap_integer,
-    _unwrap_single_paren,
+from refinery.lib.scripts.ps1.deobfuscation.helpers import (
+    collect_int_arguments,
+    collect_string_arguments,
+    make_string_literal,
+    normalize_dotnet_type_name,
+    string_value,
+    unwrap_integer,
+    unwrap_single_paren,
 )
 from refinery.lib.scripts.ps1.model import (
     Ps1BinaryExpression,
@@ -55,34 +55,34 @@ class Ps1TypeCasts(Transformer):
 
     def visit_Ps1CastExpression(self, node: Ps1CastExpression):
         self.generic_visit(node)
-        tn = _normalize_dotnet_type_name(node.type_name)
+        tn = normalize_dotnet_type_name(node.type_name)
         if tn in ('string', 'char[]'):
-            if node.operand and _string_value(node.operand) is not None:
+            if node.operand and string_value(node.operand) is not None:
                 return node.operand
         if tn == 'string':
             if node.operand is not None:
-                inner = _unwrap_single_paren(node.operand)
-                parts = _collect_string_arguments(inner)
+                inner = unwrap_single_paren(node.operand)
+                parts = collect_string_arguments(inner)
                 if parts is not None and len(parts) > 1:
-                    return _make_string_literal(' '.join(parts))
+                    return make_string_literal(' '.join(parts))
         if tn in _INTEGER_TYPE_NAMES:
-            result = _unwrap_integer(node.operand)
+            result = unwrap_integer(node.operand)
             if result is not None:
                 return Ps1IntegerLiteral(value=result.value, raw=str(result.value))
         if tn == 'char':
-            result = _unwrap_integer(node.operand)
+            result = unwrap_integer(node.operand)
             if result is not None:
                 if result.value == 0:
-                    return _make_string_literal('')
+                    return make_string_literal('')
                 try:
                     ch = chr(result.value)
                 except (ValueError, OverflowError):
                     return None
-                return _make_string_literal(ch)
+                return make_string_literal(ch)
         if tn == 'char[]':
             if node.operand is not None:
-                inner = _unwrap_single_paren(node.operand)
-                int_values = _collect_int_arguments(inner)
+                inner = unwrap_single_paren(node.operand)
+                int_values = collect_int_arguments(inner)
                 if int_values is not None:
                     try:
                         result_bytes = bytes(int_values)
@@ -91,9 +91,9 @@ class Ps1TypeCasts(Transformer):
                             return None
                     except (ValueError, UnicodeDecodeError, OverflowError):
                         return None
-                    return _make_string_literal(result)
+                    return make_string_literal(result)
         if tn == 'type':
-            sv = _string_value(node.operand) if node.operand else None
+            sv = string_value(node.operand) if node.operand else None
             if sv is not None:
                 return Ps1TypeExpression(offset=node.offset, name=sv)
         return None
