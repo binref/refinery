@@ -4,7 +4,7 @@ VBA dead code removal: removes assignments to unread variables and empty uncalle
 from __future__ import annotations
 
 from refinery.lib.scripts import Statement, Transformer
-from refinery.lib.scripts.vba.deobfuscation.helpers import body_lists
+from refinery.lib.scripts.vba.deobfuscation.helpers import apply_removals, body_lists
 from refinery.lib.scripts.vba.deobfuscation.names import SINGLE_ARG_BUILTINS, STRING_BUILTINS
 from refinery.lib.scripts.vba.model import (
     VbaCallExpression,
@@ -81,14 +81,12 @@ class VbaDeadVariableRemoval(Transformer):
             if isinstance(node.parent, VbaLetStatement) and node.parent.target is node:
                 continue
             read_names.add(node.name.lower())
-        removals: list[tuple[list[Statement], int]] = []
+        removals: list[tuple[int, list[Statement]]] = []
         for key, entries in assignments.items():
             if key not in read_names:
                 for _, body, idx in entries:
-                    removals.append((body, idx))
-        for body, idx in sorted(removals, key=lambda t: t[1], reverse=True):
-            del body[idx]
-        return bool(removals)
+                    removals.append((idx, body))
+        return apply_removals(removals)
 
 
 class VbaEmptyProcedureRemoval(Transformer):

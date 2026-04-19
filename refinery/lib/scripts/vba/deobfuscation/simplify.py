@@ -81,8 +81,6 @@ def _try_builtin_function(node: VbaCallExpression):
         return None
     name = node.callee.name.lower().rstrip('$')
     args = [a for a in node.arguments if a is not None]
-    if name == 'len' and len(args) == 1:
-        return None
     values: list = []
     for arg in args:
         s = string_value(arg)
@@ -249,15 +247,6 @@ class VbaSimplifications(Transformer):
         result = _try_builtin_function(node)
         if result is not None:
             return value_to_node(result)
-        if (
-            isinstance(node.callee, VbaIdentifier)
-            and node.callee.name.lower() == 'len'
-            and len(node.arguments) == 1
-            and node.arguments[0] is not None
-        ):
-            s = string_value(node.arguments[0])
-            if s is not None:
-                return make_integer_literal(len(s))
         return None
 
     def visit_VbaIdentifier(self, node: VbaIdentifier):

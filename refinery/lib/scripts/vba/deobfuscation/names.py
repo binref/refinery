@@ -128,15 +128,15 @@ def eval_strcomp(args: list[Value]) -> int | None:
     return -1 if s1 < s2 else 1
 
 
-def _stringop(a: list[Value], op: Callable[[str], str] | None = None):
+def eval_str(a: list[Value], then: Callable | None = None) -> Value:
     try:
         value, = a
     except Exception:
         return None
     else:
         value = str(value)
-    if op is not None:
-        value = op(value)
+    if then is not None:
+        value = then(value)
     return value
 
 
@@ -144,13 +144,14 @@ BUILTIN_DISPATCH: dict[str, Callable[[list[Value]], Value]] = {
     'mid'        : eval_mid,
     'left'       : eval_left,
     'right'      : eval_right,
+    'cstr'       : eval_str,
     'strreverse' : eval_strreverse,
-    'lcase'      : partial(_stringop, op=str.lower),
-    'ucase'      : partial(_stringop, op=str.upper),
-    'trim'       : partial(_stringop, op=str.strip),
-    'ltrim'      : partial(_stringop, op=str.lstrip),
-    'rtrim'      : partial(_stringop, op=str.rstrip),
-    'cstr'       : _stringop,
+    'lcase'      : partial(eval_str, then=str.lower),
+    'ucase'      : partial(eval_str, then=str.upper),
+    'trim'       : partial(eval_str, then=str.strip),
+    'ltrim'      : partial(eval_str, then=str.lstrip),
+    'rtrim'      : partial(eval_str, then=str.rstrip),
+    'len'        : partial(eval_str, then=len),
     'string'     : eval_string_fn,
     'space'      : eval_space,
     'replace'    : eval_replace,

@@ -3,6 +3,7 @@ Shared AST utilities for VBA deobfuscation transforms.
 """
 from __future__ import annotations
 
+from operator import itemgetter
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -185,3 +186,14 @@ def body_lists(module: VbaModule) -> Generator[list[Statement]]:
             body = getattr(node, field_name)
             if body and isinstance(body[0], Statement):
                 yield body
+
+
+def apply_removals(removals: list[tuple[int, list[Statement]]]) -> bool:
+    """
+    Delete statements at the given (body, index) positions in reverse index order so that earlier
+    deletions do not invalidate later indices. Returns whether any removals occurred.
+    """
+    removals.sort(key=itemgetter(0), reverse=True)
+    for pos, body in removals:
+        del body[pos]
+    return bool(removals)

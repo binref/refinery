@@ -7,6 +7,7 @@ from typing import NamedTuple
 
 from refinery.lib.scripts import Expression, Statement, Transformer, _clone_node, _replace_in_parent
 from refinery.lib.scripts.vba.deobfuscation.helpers import (
+    apply_removals,
     body_lists,
     is_constant_expr,
     is_identifier_read,
@@ -98,13 +99,11 @@ class VbaConstantInlining(Transformer):
         reads: dict[str, list[VbaIdentifier]],
         candidates: dict[str, list[InlineCandidate]],
     ) -> bool:
-        removals: list[tuple[list[Statement], int]] = []
+        removals: list[tuple[int, list[Statement]]] = []
         for key, refs in reads.items():
-            candidate = candidates[key][0]
+            value, body, pos = candidates[key][0]
             for ref in refs:
-                replacement = _clone_node(candidate.value)
+                replacement = _clone_node(value)
                 _replace_in_parent(ref, replacement)
-            removals.append((candidate.body, candidate.position))
-        for body, pos in sorted(removals, key=lambda t: t[1], reverse=True):
-            del body[pos]
-        return bool(removals)
+            removals.append((pos, body))
+        return apply_removals(removals)
