@@ -23,6 +23,7 @@ from refinery.lib.scripts.ps1.deobfuscation.helpers import (
     unwrap_to_array_literal,
 )
 from refinery.lib.scripts.ps1.deobfuscation.names import (
+    COMPARISON_OPS,
     ENCODING_MAP,
     apply_format_string,
     normalize_dotnet_type_name,
@@ -496,18 +497,9 @@ class _Ps1Interpreter:
             if op == '-or':
                 return lb or rb
             return lb != rb
-        if op == '-lt':
-            return self._compare(left, right, lambda a, b: a < b)
-        if op == '-le':
-            return self._compare(left, right, lambda a, b: a <= b)
-        if op == '-gt':
-            return self._compare(left, right, lambda a, b: a > b)
-        if op == '-ge':
-            return self._compare(left, right, lambda a, b: a >= b)
-        if op == '-eq':
-            return self._compare(left, right, lambda a, b: a == b)
-        if op == '-ne':
-            return self._compare(left, right, lambda a, b: a != b)
+        cmp_fn = COMPARISON_OPS.get(op)
+        if cmp_fn is not None:
+            return self._compare(left, right, cmp_fn)
         if op in ('-split', '-csplit', '-isplit'):
             return self._eval_split(left, right, op)
         if op == '-join':

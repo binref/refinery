@@ -4,6 +4,7 @@ used by multiple deobfuscation transforms.
 """
 from __future__ import annotations
 
+import operator
 import re
 
 KNOWN_ALIAS = {
@@ -675,12 +676,12 @@ GET_COMMAND_ALIASES = frozenset({'get-command', 'gcm'})
 FOREACH_ALIASES = frozenset({'%', 'foreach', 'foreach-object'})
 
 COMPARISON_OPS = {
-    '-eq': int.__eq__,
-    '-ne': int.__ne__,
-    '-lt': int.__lt__,
-    '-le': int.__le__,
-    '-gt': int.__gt__,
-    '-ge': int.__ge__,
+    '-eq': operator.eq,
+    '-ne': operator.ne,
+    '-lt': operator.lt,
+    '-le': operator.le,
+    '-gt': operator.gt,
+    '-ge': operator.ge,
 }
 
 ENCODING_MAP = {

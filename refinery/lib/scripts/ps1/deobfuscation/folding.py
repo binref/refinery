@@ -9,8 +9,8 @@ import re
 
 from collections.abc import Iterator
 
-from refinery.lib.scripts.ps1.deobfuscation.base import LocalFunctionAwareTransformer
 from refinery.lib.scripts.ps1.deobfuscation.helpers import (
+    LocalFunctionAwareTransformer,
     collect_int_arguments,
     collect_string_arguments,
     detect_encoding_chain,

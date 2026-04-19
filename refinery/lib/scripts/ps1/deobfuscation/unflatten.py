@@ -8,6 +8,7 @@ the state machine, and recovers the original structure.
 """
 from __future__ import annotations
 
+from collections import deque
 from collections.abc import Callable, Generator
 from dataclasses import dataclass, field
 
@@ -80,6 +81,10 @@ def _unwrap_constant(node) -> _StateKey | None:
 class _LinearTransition:
     target: _StateKey
 
+    @property
+    def successors(self) -> tuple[_StateKey, ...]:
+        return (self.target,)
+
 
 @dataclass
 class _ConditionalTransition:
@@ -89,10 +94,17 @@ class _ConditionalTransition:
     true_prefix: list[Statement] = field(default_factory=list)
     false_prefix: list[Statement] = field(default_factory=list)
 
+    @property
+    def successors(self) -> tuple[_StateKey, ...]:
+        return (self.true_target, self.false_target)
+
 
 @dataclass
 class _ExitTransition:
-    pass
+
+    @property
+    def successors(self) -> tuple[_StateKey, ...]:
+        return ()
 
 
 _Transition = _LinearTransition | _ConditionalTransition | _ExitTransition
@@ -111,10 +123,6 @@ class _DispatcherMatch:
     state_var_scope: Ps1ScopeModifier
     condition: Expression
     switch: Ps1SwitchStatement
-
-
-def _same_variable(node: Ps1Variable, name: str, scope: Ps1ScopeModifier) -> bool:
-    return node.name.lower() == name and node.scope == scope
 
 
 def _var_key(node: Ps1Variable) -> _VarKey:
@@ -164,19 +172,13 @@ def _is_state_assignment(
     If the statement is an assignment to the state variable with a constant value, return that
     value. Otherwise return None.
     """
-    if not isinstance(stmt, Ps1ExpressionStatement):
+    result = _get_simple_assignment(stmt)
+    if result is None:
         return None
-    expr = stmt.expression
-    if not isinstance(expr, Ps1AssignmentExpression):
+    key, value = result
+    if key != (var_name, var_scope):
         return None
-    if expr.operator != '=':
-        return None
-    target = expr.target
-    if not isinstance(target, Ps1Variable):
-        return None
-    if not _same_variable(target, var_name, var_scope):
-        return None
-    return _unwrap_constant(expr.value)
+    return _unwrap_constant(value)
 
 
 def _get_simple_assignment(
@@ -505,14 +507,6 @@ def _find_back_edges(
     visiting: set[_StateKey] = set()
     visited: set[_StateKey] = set()
 
-    def _targets(block: _StateBlock) -> Generator[_StateKey, None, None]:
-        t = block.transition
-        if isinstance(t, _LinearTransition):
-            yield t.target
-        elif isinstance(t, _ConditionalTransition):
-            yield t.true_target
-            yield t.false_target
-
     def _dfs(state: _StateKey):
         if is_exit(state) or state not in states:
             return
@@ -520,7 +514,7 @@ def _find_back_edges(
             return
         visiting.add(state)
         block = states[state]
-        for target in _targets(block):
+        for target in block.transition.successors:
             if is_exit(target) or target not in states:
                 continue
             if target in visiting:
@@ -547,29 +541,18 @@ def _find_join_point(
     """
     true_reach: list[_StateKey] = []
     false_reach: list[_StateKey] = []
-    true_queue: list[_StateKey] = [true_start]
-    false_queue: list[_StateKey] = [false_start]
+    true_queue: deque[_StateKey] = deque([true_start])
+    false_queue: deque[_StateKey] = deque([false_start])
     true_seen: set[_StateKey] = set()
     false_seen: set[_StateKey] = set()
 
-    def _successors(s: _StateKey) -> list[_StateKey]:
-        if s not in states:
-            return []
-        block = states[s]
-        t = block.transition
-        if isinstance(t, _LinearTransition):
-            return [t.target]
-        if isinstance(t, _ConditionalTransition):
-            return [t.true_target, t.false_target]
-        return []
-
     def _expand(
-        queue: list[_StateKey],
+        queue: deque[_StateKey],
         seen: set[_StateKey],
         reach: list[_StateKey],
     ):
         while queue:
-            s = queue.pop(0)
+            s = queue.popleft()
             if is_exit(s) or s not in states:
                 continue
             if s in seen:
@@ -579,7 +562,7 @@ def _find_join_point(
                 continue
             seen.add(s)
             reach.append(s)
-            for succ in _successors(s):
+            for succ in states[s].transition.successors:
                 queue.append(succ)
 
     _expand(true_queue, true_seen, true_reach)
@@ -602,21 +585,15 @@ def _collect_loop_states(
     latches).
     """
     loop_states: set[_StateKey] = set()
-    queue: list[_StateKey] = [header]
+    queue: deque[_StateKey] = deque([header])
     while queue:
-        s = queue.pop(0)
+        s = queue.popleft()
         if is_exit(s) or s not in states or s in loop_states:
             continue
         loop_states.add(s)
         if s in latches and s != header:
             continue
-        block = states[s]
-        t = block.transition
-        if isinstance(t, _LinearTransition):
-            queue.append(t.target)
-        elif isinstance(t, _ConditionalTransition):
-            queue.append(t.true_target)
-            queue.append(t.false_target)
+        queue.extend(states[s].transition.successors)
     return loop_states
 
 
@@ -1210,21 +1187,15 @@ def _state_reaches(
     Check if the state graph can reach target from start without crossing barriers.
     """
     visited: set[_StateKey] = set()
-    queue: list[_StateKey] = [start]
+    queue: deque[_StateKey] = deque([start])
     while queue:
-        s = queue.pop(0)
+        s = queue.popleft()
         if s == target:
             return True
         if is_exit(s) or s not in states or s in visited or s in barriers:
             continue
         visited.add(s)
-        block = states[s]
-        t = block.transition
-        if isinstance(t, _LinearTransition):
-            queue.append(t.target)
-        elif isinstance(t, _ConditionalTransition):
-            queue.append(t.true_target)
-            queue.append(t.false_target)
+        queue.extend(states[s].transition.successors)
     return False
 
 
