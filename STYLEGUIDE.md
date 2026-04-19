@@ -150,7 +150,8 @@ def parse_foo_header(data: bytes):
 
 ### Dictionaries
 
-When typing large dictionaries, the omission of `E203` is to allow you to write them like so:
+When typing large dictionaries, the omission of `E203` is to allow you to align the values;
+this is done by aligning the colons to the same character depth:
 ```python
 data = {
     'key1'         : 'data1',
@@ -159,6 +160,31 @@ data = {
 }
 ```
 This can make large dictionaries with somewhat tabular data easier to read in the code.
+When aligning values like this, do **not** place the colon right after the key;
+that would generate a linter error. Instead, align the colons as shown above.
+
+### Lists
+
+When defining a list literal in code, there are only two valid formatting strategies:
+Either, all items fit on one line:
+```python
+literal = [value1, value2, value3]
+```
+or similarly:
+```python
+long_or_heavily_indented_literal = [
+  value1, value2, value3, value4, value5, value6, value7
+]
+```
+When more than one line is required to fit the values within the 120 character limit, 
+each item must be on a separate line, with trailing comma in the last line:
+```python
+literal = [
+  value1,
+  value2,
+  value3,
+]
+```
 
 ### Multi-Line Conditions
 
