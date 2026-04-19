@@ -395,6 +395,8 @@ class Ps1WildcardResolution(Transformer):
         member_lower = member_name.lower()
         if member_lower not in ('value', 'name'):
             return None
+        if node.object is None:
+            return None
         resolved = self._resolve_get_variable_pattern(node.object)
         if resolved is None:
             return None

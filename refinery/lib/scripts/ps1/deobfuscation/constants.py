@@ -27,9 +27,12 @@ from refinery.lib.scripts.ps1.model import (
     Ps1AssignmentExpression,
     Ps1BinaryExpression,
     Ps1CastExpression,
+    Ps1DoLoop,
     Ps1ExpressionStatement,
     Ps1ForEachLoop,
+    Ps1ForLoop,
     Ps1HereString,
+    Ps1IfStatement,
     Ps1IndexExpression,
     Ps1IntegerLiteral,
     Ps1ParameterDeclaration,
@@ -39,10 +42,12 @@ from refinery.lib.scripts.ps1.model import (
     Ps1RealLiteral,
     Ps1ScopeModifier,
     Ps1StringLiteral,
+    Ps1SwitchStatement,
     Ps1TryCatchFinally,
     Ps1TypeExpression,
     Ps1UnaryExpression,
     Ps1Variable,
+    Ps1WhileLoop,
 )
 from refinery.lib.scripts.win32const import DEFAULT_ENVIRONMENT_TEMPLATE
 
@@ -223,13 +228,15 @@ def _clone_constant(node: Node) -> Expression:
     Create a fresh copy of a constant value node without following parent references. This avoids
     the catastrophic cost of `copy.deepcopy` which traverses the entire AST through parents.
     """
-    node = _unwrap_parens(node)
-    if isinstance(node, Ps1ArrayExpression):
-        inner = _unwrap_to_array_literal(node)
+    unwrapped = _unwrap_parens(node)
+    if isinstance(unwrapped, Ps1ArrayExpression):
+        inner = _unwrap_to_array_literal(unwrapped)
         if inner is None:
-            raise TypeError(F'cannot clone {type(node).__name__}')
-        node = inner
-    clone = _clone_node(node)
+            raise TypeError(F'cannot clone {type(unwrapped).__name__}')
+        unwrapped = inner
+    if not isinstance(unwrapped, Expression):
+        raise TypeError(F'cannot clone {type(unwrapped).__name__}')
+    clone = _clone_node(unwrapped)
     if isinstance(clone, Ps1ArrayLiteral) and len(clone.elements) > 1:
         return Ps1ParenExpression(expression=clone)
     return clone
@@ -595,9 +602,9 @@ class Ps1NullVariableInlining(Transformer):
             if isinstance(parent, (Ps1ParenExpression, Ps1ArrayLiteral)):
                 cursor = parent
                 continue
-            if hasattr(parent, 'condition') and cursor is parent.condition:
+            if isinstance(parent, (Ps1WhileLoop, Ps1DoLoop, Ps1ForLoop)) and cursor is parent.condition:
                 return True
-            if hasattr(parent, 'clauses'):
+            if isinstance(parent, (Ps1IfStatement, Ps1SwitchStatement)):
                 for cond, _body in parent.clauses:
                     if cursor is cond:
                         return True

@@ -731,9 +731,9 @@ class _Ps1Interpreter:
                 if isinstance(v, float):
                     return abs(v)
             if method == 'floor' and len(args) == 1:
-                return int(math.floor(float(self._to_int(args[0]) if isinstance(args[0], int) else args[0])))
+                return int(math.floor(float(self._to_int(args[0]))))
             if method == 'ceiling' and len(args) == 1:
-                return int(math.ceil(float(self._to_int(args[0]) if isinstance(args[0], int) else args[0])))
+                return int(math.ceil(float(self._to_int(args[0]))))
             if method == 'round' and len(args) in (1, 2):
                 val = float(args[0]) if isinstance(args[0], (int, float)) else float(self._to_str(args[0]))
                 digits = self._to_int(args[1]) if len(args) == 2 else 0
@@ -1247,6 +1247,8 @@ class Ps1ForEachPipeline(Transformer):
         items = self._get_constant_array(src_elem.expression)
         if items is None:
             return None
+        if cmd_elem.expression is None:
+            return None
         script_block = _extract_foreach_scriptblock(cmd_elem.expression)
         if script_block is None:
             return None
@@ -1307,13 +1309,13 @@ class Ps1ForEachPipeline(Transformer):
             return _make_string_literal(''.join(str(r) for r in results))
         if all(isinstance(r, int) and not isinstance(r, bool) for r in results):
             elements: list[Expression] = [
-                Ps1IntegerLiteral(value=int(v), raw=str(v))
-                for v in results
+                Ps1IntegerLiteral(value=v, raw=str(v))
+                for v in results if isinstance(v, int)
             ]
             return Ps1ArrayLiteral(elements=elements)
         if all(isinstance(r, (str, int)) and not isinstance(r, bool) for r in results):
             try:
-                parts = [chr(r) if isinstance(r, int) else r for r in results]
+                parts = [chr(r) if isinstance(r, int) else str(r) for r in results]
                 return _make_string_literal(''.join(parts))
             except (ValueError, OverflowError):
                 pass

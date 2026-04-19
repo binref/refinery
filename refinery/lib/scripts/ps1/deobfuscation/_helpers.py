@@ -710,7 +710,7 @@ for _a, _n in _KNOWN_ALIAS.items():
 SIMPLE_IDENTIFIER = re.compile(r'^[a-zA-Z_]\w*$')
 
 
-def _string_value(node: Expression | None) -> str | None:
+def _string_value(node: Node | None) -> str | None:
     if isinstance(node, Ps1StringLiteral):
         return node.value
     if isinstance(node, Ps1HereString):
@@ -849,7 +849,7 @@ def _get_body(node) -> list | None:
     return None
 
 
-def _unwrap_parens(node: Expression) -> Expression:
+def _unwrap_parens(node: Node) -> Node:
     """
     Unwrap nested ``Ps1ParenExpression`` wrappers, stopping at an empty-parens node.
     """
@@ -858,7 +858,7 @@ def _unwrap_parens(node: Expression) -> Expression:
     return node
 
 
-def _unwrap_to_array_literal(node: Expression) -> Ps1ArrayLiteral | None:
+def _unwrap_to_array_literal(node: Node) -> Ps1ArrayLiteral | None:
     """
     Unwrap parentheses and array expressions to find an inner ``Ps1ArrayLiteral``.
     """
@@ -887,7 +887,7 @@ def _get_member_name(member: str | Expression) -> str | None:
 _FOREACH_ALIASES = frozenset({'%', 'foreach', 'foreach-object'})
 
 
-def _unwrap_integer(node: Expression | None) -> Ps1IntegerLiteral | None:
+def _unwrap_integer(node: Node | None) -> Ps1IntegerLiteral | None:
     """
     Peel parentheses and unary negation to extract an integer literal, or return None.
     """

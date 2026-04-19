@@ -11,7 +11,7 @@ import io
 import typing
 
 from dataclasses import dataclass, field
-from typing import Callable, Generator
+from typing import Callable, Generator, TypeVar
 
 from refinery.lib.annotations import get_type_hints as _get_type_hints
 
@@ -290,7 +290,10 @@ def _remove_from_parent(node: Node) -> bool:
     return False
 
 
-def _clone_node(node: Node) -> Node:
+_N = TypeVar('_N', bound='Node')
+
+
+def _clone_node(node: _N) -> _N:
     """
     Deep-clone a node tree downward without following parent pointers.
     """

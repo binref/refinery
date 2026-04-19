@@ -161,6 +161,8 @@ class Ps1AliasInlining(Transformer):
             defn_node, target_name = info
             if node is defn_node:
                 continue
+            if node.name is None:
+                continue
             normalized = _case_normalize_name(target_name)
             node.name = Ps1StringLiteral(
                 offset=node.name.offset,

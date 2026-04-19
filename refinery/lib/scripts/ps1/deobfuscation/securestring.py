@@ -101,7 +101,7 @@ class Ps1SecureStringDecryptor(Transformer):
                 from refinery.units.crypto.cipher.secstr import secstr
                 unit = secstr(key=key)
                 decrypted = unit(ciphertext.encode('utf-8'))
-                plaintext = decrypted.decode('utf-8')
+                plaintext = bytes(decrypted).decode('utf-8')
             except Exception:
                 k += 1
                 continue

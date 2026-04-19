@@ -60,7 +60,7 @@ class VbaParameterPassing(enum.Enum):
 
 
 @dataclass(repr=False)
-class VbaErrorNode(Node):
+class VbaErrorNode(Expression, Statement):
     text: str = ''
     message: str = ''
 

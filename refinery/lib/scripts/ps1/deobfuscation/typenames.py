@@ -5649,7 +5649,10 @@ def resolve_expression_type(
     chains. Returns the lowercase full .NET type name, or None if the type
     cannot be determined.
     """
-    expr = _unwrap_parens(expr)
+    unwrapped = _unwrap_parens(expr)
+    if not isinstance(unwrapped, Expression):
+        return None
+    expr = unwrapped
     if isinstance(expr, (Ps1StringLiteral, Ps1HereString)):
         return 'system.string'
     if isinstance(expr, Ps1IntegerLiteral):
@@ -5792,7 +5795,7 @@ def collect_variable_types(root: Node) -> dict[str, str]:
         key = var.name.lower()
         assign_counts[key] = assign_counts.get(key, 0) + 1
         if kind == 'assign' and isinstance(node, Ps1AssignmentExpression):
-            if node.operator == '=' and node.value is not None:
+            if node.operator == '=' and isinstance(node.value, Expression):
                 resolved = resolve_expression_type(node.value)
                 if resolved is not None:
                     typed_assigns[key] = resolved

@@ -44,7 +44,7 @@ _VarKey = tuple[str, Ps1ScopeModifier]
 _StateKey = int | float | str
 
 
-def _is_bool_literal(node: Expression) -> bool | None:
+def _is_bool_literal(node: Node) -> bool | None:
     """
     Check if a node is a $True or $False variable literal. Returns the boolean value,
     or None if the node is not a boolean literal.
@@ -439,7 +439,10 @@ def _negate_condition(cond: Expression) -> Expression:
     Return the logical negation of a condition expression. Tries to simplify where possible (e.g.,
     flipping -eq to -ne) rather than wrapping in -Not.
     """
-    cond = _unwrap_parens(cond)
+    unwrapped = _unwrap_parens(cond)
+    if not isinstance(unwrapped, Expression):
+        return Ps1UnaryExpression(operator='-Not', operand=cond, prefix=True)
+    cond = unwrapped
     if isinstance(cond, Ps1BinaryExpression):
         flipped = {
             '-eq': '-NE',

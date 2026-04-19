@@ -564,7 +564,7 @@ class Ps1ConstantFolding(LocalFunctionAwareTransformer):
                         decoded = base64.b64decode(b64_str)
                     except Exception:
                         return None
-                    elements = [
+                    elements: list[Expression] = [
                         Ps1IntegerLiteral(value=b, raw=F'0x{b:02X}')
                         for b in decoded
                     ]

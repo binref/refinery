@@ -252,7 +252,7 @@ class Ps1PipelineElement(Node):
 
 
 @dataclass(repr=False)
-class Ps1Pipeline(Statement):
+class Ps1Pipeline(Expression, Statement):
     elements: list[Ps1PipelineElement] = field(default_factory=list)
 
 
