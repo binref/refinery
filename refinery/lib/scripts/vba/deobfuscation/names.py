@@ -1,9 +1,10 @@
 """
-VBA name constants, dispatch tables, and string-only evaluation functions
-used by multiple deobfuscation transforms.
+VBA name constants, dispatch tables, and string-only evaluation functions used by multiple
+deobfuscation transforms.
 """
 from __future__ import annotations
 
+from functools import partial
 from typing import TYPE_CHECKING, Any, Callable, Optional, Union
 
 if TYPE_CHECKING:
@@ -80,17 +81,29 @@ def eval_replace(args: list[Value]) -> str | None:
     return haystack.replace(needle, insert)
 
 
+def _stringop(a: list[Value], op: Callable[[str], str] | None = None):
+    try:
+        value, = a
+    except Exception:
+        return None
+    else:
+        value = str(value)
+    if op is not None:
+        value = op(value)
+    return value
+
+
 STRING_DISPATCH: dict[str, Callable[[list[Value]], str | None]] = {
     'mid'        : eval_mid,
     'left'       : eval_left,
     'right'      : eval_right,
     'strreverse' : eval_strreverse,
-    'lcase'      : lambda a: str_arg(a).lower() if len(a) == 1 else None,
-    'ucase'      : lambda a: str_arg(a).upper() if len(a) == 1 else None,
-    'trim'       : lambda a: str_arg(a).strip() if len(a) == 1 else None,
-    'ltrim'      : lambda a: str_arg(a).lstrip() if len(a) == 1 else None,
-    'rtrim'      : lambda a: str_arg(a).rstrip() if len(a) == 1 else None,
-    'cstr'       : lambda a: str_arg(a) if len(a) == 1 else None,
+    'lcase'      : partial(_stringop, op=str.lower),
+    'ucase'      : partial(_stringop, op=str.upper),
+    'trim'       : partial(_stringop, op=str.strip),
+    'ltrim'      : partial(_stringop, op=str.lstrip),
+    'rtrim'      : partial(_stringop, op=str.rstrip),
+    'cstr'       : _stringop,
     'string'     : eval_string_fn,
     'space'      : eval_space,
     'replace'    : eval_replace,
