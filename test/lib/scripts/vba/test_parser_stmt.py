@@ -548,6 +548,14 @@ class TestVbaParserStatements(TestBase):
         self.assertEqual(stmt.name, 'MyType')
         self.assertEqual(len(stmt.members), 2)
 
+    def test_type_definition_fused_end(self):
+        code = 'Type MyType\nx As Long\nEndType'
+        ast = self._parse(code)
+        stmt = ast.body[0]
+        assert isinstance(stmt, VbaTypeDefinition)
+        self.assertEqual(stmt.name, 'MyType')
+        self.assertEqual(len(stmt.members), 1)
+
     def test_enum_definition(self):
         code = 'Enum Colors\nRed = 1\nGreen = 2\nBlue = 3\nEnd Enum'
         ast = self._parse(code)
@@ -555,6 +563,14 @@ class TestVbaParserStatements(TestBase):
         assert isinstance(stmt, VbaEnumDefinition)
         self.assertEqual(stmt.name, 'Colors')
         self.assertEqual(len(stmt.members), 3)
+
+    def test_enum_definition_fused_end(self):
+        code = 'Enum Colors\nRed = 1\nEndEnum'
+        ast = self._parse(code)
+        stmt = ast.body[0]
+        assert isinstance(stmt, VbaEnumDefinition)
+        self.assertEqual(stmt.name, 'Colors')
+        self.assertEqual(len(stmt.members), 1)
 
     def test_declare_function(self):
         code = 'Declare Function GetTickCount Lib "kernel32" () As Long'

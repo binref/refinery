@@ -119,6 +119,11 @@ class VbaParser:
             return self._advance()
         return None
 
+    def _eat_keyword(self, *words: str) -> VbaToken | None:
+        if self._at_keyword(*words):
+            return self._advance()
+        return None
+
     def _expect(self, kind: VbaTokenKind) -> VbaToken:
         if self._current.kind == kind:
             return self._advance()
@@ -242,8 +247,7 @@ class VbaParser:
     def _parse_declare_statement(self, scope: VbaScopeModifier) -> VbaDeclareStatement:
         offset = self._current.offset
         self._advance()
-        if self._at_keyword('ptrsafe'):
-            self._advance()
+        self._eat_keyword('ptrsafe')
         is_function = self._at_keyword('function')
         self._advance()
         name = self._current.value
@@ -279,13 +283,8 @@ class VbaParser:
         self._eat_eos()
         members: list[VbaVariableDeclarator] = []
         while not self._at(VbaTokenKind.EOF):
-            if self._at(VbaTokenKind.END):
-                saved = self._current
-                self._advance()
-                if self._at_keyword('type'):
-                    self._advance()
-                    break
-                self._current = saved
+            if self._eat_end('type'):
+                break
             m_offset = self._current.offset
             m_name = self._current.value
             self._advance()
@@ -312,13 +311,8 @@ class VbaParser:
         self._eat_eos()
         members: list[VbaEnumMember] = []
         while not self._at(VbaTokenKind.EOF):
-            if self._at(VbaTokenKind.END):
-                saved = self._current
-                self._advance()
-                if self._at_keyword('enum'):
-                    self._advance()
-                    break
-                self._current = saved
+            if self._eat_end('enum'):
+                break
             m_offset = self._current.offset
             m_name = self._current.value
             self._advance()
@@ -352,10 +346,8 @@ class VbaParser:
 
     def _parse_variable_declaration(self, scope: VbaScopeModifier) -> VbaVariableDeclaration:
         offset = self._current.offset
-        if self._at_keyword('dim', 'global', 'static'):
-            self._advance()
-        if self._at_keyword('shared'):
-            self._advance()
+        self._eat_keyword('dim', 'global', 'static')
+        self._eat_keyword('shared')
         declarators = [self._parse_variable_declarator()]
         while self._eat(VbaTokenKind.COMMA):
             declarators.append(self._parse_variable_declarator())
@@ -487,9 +479,7 @@ class VbaParser:
                 self._advance()
             else:
                 break
-        if self._at_keyword('paramarray'):
-            is_paramarray = True
-            self._advance()
+        is_paramarray = bool(self._eat_keyword('paramarray'))
 
         name = self._current.value
         self._advance()
@@ -926,8 +916,7 @@ class VbaParser:
     def _parse_case_clause(self) -> VbaCaseClause:
         offset = self._current.offset
         self._advance()
-        if self._at_keyword('else'):
-            self._advance()
+        if self._eat_keyword('else'):
             self._eat_eos()
             body = self._parse_case_body()
             return VbaCaseClause(is_else=True, body=body, offset=offset)
@@ -980,10 +969,7 @@ class VbaParser:
     def _parse_redim_statement(self) -> VbaRedimStatement:
         offset = self._current.offset
         self._advance()
-        preserve = False
-        if self._at_keyword('preserve'):
-            preserve = True
-            self._advance()
+        preserve = bool(self._eat_keyword('preserve'))
         declarators = [self._parse_redim_declarator()]
         while self._eat(VbaTokenKind.COMMA):
             declarators.append(self._parse_redim_declarator())
