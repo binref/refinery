@@ -15,6 +15,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1BinaryExpression,
     Ps1BreakStatement,
     Ps1CastExpression,
+    Ps1Code,
     Ps1CommandArgument,
     Ps1CommandArgumentKind,
     Ps1CommandInvocation,
@@ -22,6 +23,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1DataSection,
     Ps1DoLoop,
     Ps1ErrorNode,
+    Ps1Exit,
     Ps1ExitStatement,
     Ps1ExpandableHereString,
     Ps1ExpandableString,
@@ -36,6 +38,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1IndexExpression,
     Ps1IntegerLiteral,
     Ps1InvokeMember,
+    Ps1Jump,
     Ps1MemberAccess,
     Ps1MergingRedirection,
     Ps1ParamBlock,
@@ -60,7 +63,6 @@ from refinery.lib.scripts.ps1.model import (
     Ps1UnaryExpression,
     Ps1Variable,
     Ps1WhileLoop,
-    _Ps1Code,
 )
 from refinery.lib.scripts.ps1.token import KEYWORD_SPELLING
 
@@ -265,7 +267,7 @@ class Ps1Synthesizer(Synthesizer):
             self.visit(node.expression)
         self._write(')')
 
-    def _emit_script_body(self, node: _Ps1Code, *, newline_after: bool):
+    def _emit_script_body(self, node: Ps1Code, *, newline_after: bool):
         has_named = (
             node.begin_block or node.process_block
             or node.end_block or node.dynamicparam_block
@@ -527,35 +529,32 @@ class Ps1Synthesizer(Synthesizer):
         if node.body:
             self.visit(node.body)
 
-    def visit_Ps1ReturnStatement(self, node: Ps1ReturnStatement):
-        self._write('return')
-        if node.pipeline:
+    def _visit_jump(self, node: Ps1Jump, name: str):
+        self._write(name)
+        if suffix := node.label:
             self._write(' ')
-            self.visit(node.pipeline)
+            self.visit(suffix)
+
+    def _visit_exit(self, node: Ps1Exit, name: str):
+        self._write(name)
+        if suffix := node.pipeline:
+            self._write(' ')
+            self.visit(suffix)
+
+    def visit_Ps1ReturnStatement(self, node: Ps1ReturnStatement):
+        self._visit_exit(node, 'return')
+
+    def visitPs1ExitStatement(self, node: Ps1ExitStatement):
+        self._visit_exit(node, 'exit')
 
     def visit_Ps1ThrowStatement(self, node: Ps1ThrowStatement):
-        self._write('throw')
-        if node.pipeline:
-            self._write(' ')
-            self.visit(node.pipeline)
+        self._visit_exit(node, 'throw')
 
     def visit_Ps1BreakStatement(self, node: Ps1BreakStatement):
-        self._write('break')
-        if node.label:
-            self._write(' ')
-            self.visit(node.label)
+        self._visit_jump(node, 'break')
 
     def visit_Ps1ContinueStatement(self, node: Ps1ContinueStatement):
-        self._write('continue')
-        if node.label:
-            self._write(' ')
-            self.visit(node.label)
-
-    def visit_Ps1ExitStatement(self, node: Ps1ExitStatement):
-        self._write('exit')
-        if node.pipeline:
-            self._write(' ')
-            self.visit(node.pipeline)
+        self._visit_jump(node, 'continue')
 
     def visit_Ps1DataSection(self, node: Ps1DataSection):
         self._write('data ')

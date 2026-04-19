@@ -182,7 +182,7 @@ class Ps1ParenExpression(Expression):
 
 
 @dataclass(repr=False)
-class _Ps1Code(Node):
+class Ps1Code(Node):
     param_block: Ps1ParamBlock | None = None
     begin_block: Block | None = None
     process_block: Block | None = None
@@ -192,7 +192,7 @@ class _Ps1Code(Node):
 
 
 @dataclass(repr=False)
-class Ps1ScriptBlock(_Ps1Code, Expression):
+class Ps1ScriptBlock(Ps1Code, Expression):
     pass
 
 
@@ -340,37 +340,37 @@ class Ps1FunctionDefinition(Statement):
 
 
 @dataclass(repr=False)
-class _Ps1Exit(Statement):
+class Ps1Exit(Statement):
     pipeline: Expression | None = None
 
 
 @dataclass(repr=False)
-class Ps1ReturnStatement(_Ps1Exit):
+class Ps1ReturnStatement(Ps1Exit):
     pass
 
 
 @dataclass(repr=False)
-class Ps1ThrowStatement(_Ps1Exit):
+class Ps1ThrowStatement(Ps1Exit):
     pass
 
 
 @dataclass(repr=False)
-class _Ps1Jump(Statement):
+class Ps1Jump(Statement):
     label: Expression | None = None
 
 
 @dataclass(repr=False)
-class Ps1BreakStatement(_Ps1Jump):
+class Ps1BreakStatement(Ps1Jump):
     pass
 
 
 @dataclass(repr=False)
-class Ps1ContinueStatement(_Ps1Jump):
+class Ps1ContinueStatement(Ps1Jump):
     pass
 
 
 @dataclass(repr=False)
-class Ps1ExitStatement(_Ps1Exit):
+class Ps1ExitStatement(Ps1Exit):
     pass
 
 
@@ -388,5 +388,5 @@ class Ps1ErrorNode(Expression):
 
 
 @dataclass(repr=False)
-class Ps1Script(_Ps1Code, Statement):
+class Ps1Script(Ps1Code, Statement):
     pass

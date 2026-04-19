@@ -32,6 +32,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1DataSection,
     Ps1DoLoop,
     Ps1ErrorNode,
+    Ps1Exit,
     Ps1ExitStatement,
     Ps1ExpandableHereString,
     Ps1ExpandableString,
@@ -46,6 +47,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1IndexExpression,
     Ps1IntegerLiteral,
     Ps1InvokeMember,
+    Ps1Jump,
     Ps1MemberAccess,
     Ps1MergingRedirection,
     Ps1ParamBlock,
@@ -71,8 +73,6 @@ from refinery.lib.scripts.ps1.model import (
     Ps1Variable,
     Ps1WhileLoop,
     Statement,
-    _Ps1Exit,
-    _Ps1Jump,
 )
 from refinery.lib.scripts.ps1.token import (
     _VARIABLE_PATTERN_CORE,
@@ -1738,7 +1738,7 @@ class Ps1Parser:
         self._expect(Ps1TokenKind.RBRACKET)
         return Ps1TypeExpression(offset=offset, name=name)
 
-    def _parse_flow_with_pipeline(self, kind: Ps1TokenKind, cls: type[_Ps1Exit]) -> Statement:
+    def _parse_flow_with_pipeline(self, kind: Ps1TokenKind, cls: type[Ps1Exit]) -> Statement:
         offset = self._current.offset
         self._expect(kind)
         pipeline = None
@@ -1746,7 +1746,7 @@ class Ps1Parser:
             pipeline = self._parse_pipeline_expression()
         return cls(offset=offset, pipeline=pipeline)
 
-    def _parse_flow_with_label(self, kind: Ps1TokenKind, cls: type[_Ps1Jump]) -> Statement:
+    def _parse_flow_with_label(self, kind: Ps1TokenKind, cls: type[Ps1Jump]) -> Statement:
         offset = self._current.offset
         self._expect(kind)
         label = None

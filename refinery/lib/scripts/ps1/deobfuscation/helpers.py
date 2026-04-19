@@ -25,6 +25,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1ArrayLiteral,
     Ps1AssignmentExpression,
     Ps1CastExpression,
+    Ps1Code,
     Ps1CommandArgument,
     Ps1CommandArgumentKind,
     Ps1CommandInvocation,
@@ -45,7 +46,6 @@ from refinery.lib.scripts.ps1.model import (
     Ps1TypeExpression,
     Ps1UnaryExpression,
     Ps1Variable,
-    _Ps1Code,
 )
 from refinery.lib.scripts.ps1.token import BACKTICK_ESCAPE
 
@@ -165,7 +165,7 @@ def extract_first_positional_string(
 
 
 def get_body(node) -> list | None:
-    if isinstance(node, (_Ps1Code, Block, Ps1SubExpression)):
+    if isinstance(node, (Ps1Code, Block, Ps1SubExpression)):
         return node.body
     return None
 
