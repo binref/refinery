@@ -64,7 +64,12 @@ Note also that lines should **not** wrap at less than 100 characters.
 Do not wrap at 80 characters.
 The hard limit for code is at **140** characters to allow occasional code lines that exceed 100 characters.
 
-When a function call or definition becomes too long for the line width limit, it should be split like so:
+### Lists
+
+This section applies to set, tuple, and list definitions as well as function argument lists.
+
+When a function call or definition becomes too long for the line width limit,
+it should be split up with exactly one item on each line, like so:
 ```python
 result = function_call(
     argument_1,
@@ -73,7 +78,7 @@ result = function_call(
     keyword_parameter_2=keyword_argument_2,
 )
 ```
-And for function definitions:
+Similarly for function definitions:
 ```python
 def function_call(
     argument_1: int,
@@ -83,20 +88,43 @@ def function_call(
 ):
   ...
 ```
-In other words, each positional and keyword argument as well as the closing parenthesis are on one separate line respectively.
-Indentation is increased by one for the arguments, the closing parenthesis is not indented.
-The same rule applies to other comma-separated list, tuple, or set literals.
-
+The following style is permitted when the line is broken exactly once:
+```python
+result = function_call(
+    argument_1, argument_2, argument_3, keyword_parameter=value
+)
+```
 Do **not** use bracket-aligned indentation like this:
 ```python
 for kw in ['if', 'elseif', 'else',
            'while', 'for', 'foreach']:
 ```
-
-The following style is only permitted for function calls, and only if the line is broken exactly once:
+Do **not** split a sequence up into multiple lines and simultaneously define multiple items one the same line. The following is wrong:
 ```python
-result = function_call(argument_1, argument_2, argument_3,
-    argument_4, keyword_parameter_1=keyword_argument_1, keyword_parameter_2=keyword_argument_2)
+list = [
+  'foo', 'bar', 'baz',
+  'bam', 'goo', 'bor',
+]
+```
+Similarly, for lists, tuples, sets, there are only two valid formatting strategies.
+Either, all items fit on one line:
+```python
+literal = [value1, value2, value3]
+```
+or similarly:
+```python
+long_or_heavily_indented_literal = [
+  value1, value2, value3, value4, value5, value6, value7
+]
+```
+When more than one line is required to fit the values within the 120 character limit, 
+each item must be on a separate line, with trailing comma in the last line:
+```python
+literal = [
+  value1,
+  value2,
+  value3,
+]
 ```
 
 ### Docstrings
@@ -162,29 +190,6 @@ data = {
 This can make large dictionaries with somewhat tabular data easier to read in the code.
 When aligning values like this, do **not** place the colon right after the key;
 that would generate a linter error. Instead, align the colons as shown above.
-
-### Lists
-
-When defining a list literal in code, there are only two valid formatting strategies:
-Either, all items fit on one line:
-```python
-literal = [value1, value2, value3]
-```
-or similarly:
-```python
-long_or_heavily_indented_literal = [
-  value1, value2, value3, value4, value5, value6, value7
-]
-```
-When more than one line is required to fit the values within the 120 character limit, 
-each item must be on a separate line, with trailing comma in the last line:
-```python
-literal = [
-  value1,
-  value2,
-  value3,
-]
-```
 
 ### Multi-Line Conditions
 
