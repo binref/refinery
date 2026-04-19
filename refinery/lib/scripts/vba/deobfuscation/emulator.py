@@ -14,7 +14,7 @@ from refinery.lib.scripts.vba.deobfuscation.helpers import (
 from refinery.lib.scripts.vba.deobfuscation.names import (
     SINGLE_ARG_BUILTINS,
     Value,
-    eval_string_builtin,
+    eval_builtin,
 )
 from refinery.lib.scripts.vba.model import (
     VbaBinaryExpression,
@@ -282,28 +282,11 @@ class _VbaInterpreter:
                 raise _VbaInterpreterError
         stripped = name.rstrip('$')
         try:
-            result = eval_string_builtin(stripped, args)
+            result = eval_builtin(stripped, args)
         except (ValueError, OverflowError, TypeError):
             raise _VbaInterpreterError
         if result is not None:
             return result
-        if name == 'instr':
-            return self._builtin_instr(args)
-        raise _VbaInterpreterError
-
-    @staticmethod
-    def _builtin_instr(args: list[Value]) -> int:
-        if len(args) == 2:
-            haystack = str(args[0]) if args[0] is not None else ''
-            needle = str(args[1]) if args[1] is not None else ''
-            idx = haystack.find(needle)
-            return idx + 1 if idx >= 0 else 0
-        if len(args) == 3:
-            start = int(args[0])  # type: ignore
-            haystack = str(args[1]) if args[1] is not None else ''
-            needle = str(args[2]) if args[2] is not None else ''
-            idx = haystack.find(needle, start - 1)
-            return idx + 1 if idx >= 0 else 0
         raise _VbaInterpreterError
 
     def _concat(self, lhs: Value, rhs: Value) -> str:

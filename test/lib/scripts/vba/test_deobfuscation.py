@@ -509,3 +509,69 @@ class TestVbaDeobfuscation(TestBase):
         )
         result = self._deobfuscate(code)
         self.assertIn('Sub Junk()', result)
+
+    def test_instr_two_args(self):
+        code = 'Sub T()\nx = InStr("abcabc", "bc")\nEnd Sub'
+        result = self._fold(code)
+        self.assertIn('x = 2', result)
+
+    def test_instr_three_args(self):
+        code = 'Sub T()\nx = InStr(3, "abcabc", "bc")\nEnd Sub'
+        result = self._fold(code)
+        self.assertIn('x = 5', result)
+
+    def test_instr_not_found(self):
+        code = 'Sub T()\nx = InStr("abc", "z")\nEnd Sub'
+        result = self._fold(code)
+        self.assertIn('x = 0', result)
+
+    def test_instrrev_two_args(self):
+        code = 'Sub T()\nx = InStrRev("abcabc", "bc")\nEnd Sub'
+        result = self._fold(code)
+        self.assertIn('x = 5', result)
+
+    def test_instrrev_three_args(self):
+        code = 'Sub T()\nx = InStrRev("abcabc", "bc", 4)\nEnd Sub'
+        result = self._fold(code)
+        self.assertIn('x = 2', result)
+
+    def test_strcomp_equal(self):
+        code = 'Sub T()\nx = StrComp("abc", "abc")\nEnd Sub'
+        result = self._fold(code)
+        self.assertIn('x = 0', result)
+
+    def test_strcomp_less(self):
+        code = 'Sub T()\nx = StrComp("abc", "def")\nEnd Sub'
+        result = self._fold(code)
+        self.assertIn('x = -1', result)
+
+    def test_strcomp_case_insensitive(self):
+        code = 'Sub T()\nx = StrComp("ABC", "abc", 1)\nEnd Sub'
+        result = self._fold(code)
+        self.assertIn('x = 0', result)
+
+    def test_emulator_instr(self):
+        code = (
+            'Function F()\n'
+            '  F = InStr("hello world", "world")\n'
+            'End Function\n'
+            'Sub T()\n'
+            '  x = F()\n'
+            '  G x\n'
+            'End Sub'
+        )
+        result = self._full_deobfuscate(code)
+        self.assertIn('7', result)
+
+    def test_emulator_instrrev(self):
+        code = (
+            'Function F()\n'
+            '  F = InStrRev("abcabc", "abc")\n'
+            'End Function\n'
+            'Sub T()\n'
+            '  x = F()\n'
+            '  G x\n'
+            'End Sub'
+        )
+        result = self._full_deobfuscate(code)
+        self.assertIn('4', result)

@@ -1,5 +1,5 @@
 """
-VBA name constants, dispatch tables, and string-only evaluation functions used by multiple
+VBA name constants, dispatch tables, and builtin evaluation functions used by multiple
 deobfuscation transforms.
 """
 from __future__ import annotations
@@ -81,6 +81,53 @@ def eval_replace(args: list[Value]) -> str | None:
     return haystack.replace(needle, insert)
 
 
+def eval_instr(args: list[Value]) -> int | None:
+    if len(args) == 2:
+        haystack = str_arg(args)
+        needle = str_arg(args, 1)
+        idx = haystack.find(needle)
+        return idx + 1 if idx >= 0 else 0
+    if len(args) == 3:
+        start = int(args[0])  # type: ignore
+        if start < 1:
+            raise ValueError
+        haystack = str_arg(args, 1)
+        needle = str_arg(args, 2)
+        idx = haystack.find(needle, start - 1)
+        return idx + 1 if idx >= 0 else 0
+    return None
+
+
+def eval_instrrev(args: list[Value]) -> int | None:
+    if len(args) == 2:
+        haystack = str_arg(args)
+        needle = str_arg(args, 1)
+        idx = haystack.rfind(needle)
+        return idx + 1 if idx >= 0 else 0
+    if len(args) == 3:
+        haystack = str_arg(args)
+        needle = str_arg(args, 1)
+        start = int(args[2])  # type: ignore
+        if start < 1:
+            raise ValueError
+        idx = haystack.rfind(needle, 0, start)
+        return idx + 1 if idx >= 0 else 0
+    return None
+
+
+def eval_strcomp(args: list[Value]) -> int | None:
+    if len(args) not in (2, 3):
+        return None
+    s1 = str_arg(args)
+    s2 = str_arg(args, 1)
+    if len(args) == 3 and int(args[2]) == 1:  # type: ignore
+        s1 = s1.lower()
+        s2 = s2.lower()
+    if s1 == s2:
+        return 0
+    return -1 if s1 < s2 else 1
+
+
 def _stringop(a: list[Value], op: Callable[[str], str] | None = None):
     try:
         value, = a
@@ -93,7 +140,7 @@ def _stringop(a: list[Value], op: Callable[[str], str] | None = None):
     return value
 
 
-STRING_DISPATCH: dict[str, Callable[[list[Value]], str | None]] = {
+BUILTIN_DISPATCH: dict[str, Callable[[list[Value]], Value]] = {
     'mid'        : eval_mid,
     'left'       : eval_left,
     'right'      : eval_right,
@@ -107,22 +154,25 @@ STRING_DISPATCH: dict[str, Callable[[list[Value]], str | None]] = {
     'string'     : eval_string_fn,
     'space'      : eval_space,
     'replace'    : eval_replace,
+    'instr'      : eval_instr,
+    'instrrev'   : eval_instrrev,
+    'strcomp'    : eval_strcomp,
 }
 
 
-def eval_string_builtin(name: str, args: list[Value]) -> str | None:
+def eval_builtin(name: str, args: list[Value]) -> Value:
     """
-    Evaluate a VBA string built-in on plain Python values. The `name` must already be lowercased
-    and stripped of a trailing `$`. Returns `None` when the function name is not recognized; raises
-    `ValueError` on domain errors (bad arg count, negative index, etc.).
+    Evaluate a VBA built-in on plain Python values. The name must already be lowercased and
+    stripped of a trailing $. Returns None when the function name is not recognized; raises
+    ValueError on domain errors (bad arg count, negative index, etc.).
     """
-    handler = STRING_DISPATCH.get(name)
+    handler = BUILTIN_DISPATCH.get(name)
     if handler is None:
         return None
     return handler(args)
 
 
-STRING_BUILTINS = frozenset(STRING_DISPATCH) | frozenset({'instr'})
+STRING_BUILTINS = frozenset(BUILTIN_DISPATCH) | frozenset({'format'})
 
 
 def _cast_to_int(value: Any) -> int:

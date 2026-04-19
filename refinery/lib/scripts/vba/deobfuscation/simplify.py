@@ -17,8 +17,9 @@ from refinery.lib.scripts.vba.deobfuscation.helpers import (
     make_string_literal,
     numeric_value,
     string_value,
+    value_to_node,
 )
-from refinery.lib.scripts.vba.deobfuscation.names import CHR_NAMES, eval_string_builtin
+from refinery.lib.scripts.vba.deobfuscation.names import CHR_NAMES, eval_builtin
 from refinery.lib.scripts.vba.model import (
     VbaBinaryExpression,
     VbaBooleanLiteral,
@@ -75,7 +76,7 @@ def _is_asc_call(node: VbaCallExpression) -> str | None:
     return None
 
 
-def _try_string_function(node: VbaCallExpression) -> str | None:
+def _try_builtin_function(node: VbaCallExpression):
     if not isinstance(node.callee, VbaIdentifier):
         return None
     name = node.callee.name.lower().rstrip('$')
@@ -94,7 +95,7 @@ def _try_string_function(node: VbaCallExpression) -> str | None:
             continue
         return None
     try:
-        result = eval_string_builtin(name, values)
+        result = eval_builtin(name, values)
     except (ValueError, OverflowError, TypeError):
         return None
     return result
@@ -245,9 +246,9 @@ class VbaSimplifications(Transformer):
         char = _is_asc_call(node)
         if char is not None:
             return make_integer_literal(ord(char))
-        result = _try_string_function(node)
+        result = _try_builtin_function(node)
         if result is not None:
-            return make_string_literal(result)
+            return value_to_node(result)
         if (
             isinstance(node.callee, VbaIdentifier)
             and node.callee.name.lower() == 'len'
