@@ -22,8 +22,7 @@ from refinery.lib.scripts.vba.deobfuscation.helpers import (
 )
 from refinery.lib.scripts.vba.deobfuscation.names import (
     CHR_NAMES,
-    SINGLE_ARG_BUILTINS,
-    eval_builtin,
+    dispatch_builtin,
 )
 from refinery.lib.scripts.vba.model import (
     VbaBinaryExpression,
@@ -58,8 +57,7 @@ _INTEGER_OPS: dict[str, Callable] = {
 def _try_evaluate_call(node: VbaCallExpression):
     """
     Try to statically evaluate a VBA builtin call with constant arguments. Returns the
-    evaluated Python value, or None if evaluation is not possible. Checks single-argument
-    builtins first, then falls back to multi-argument dispatch.
+    evaluated Python value, or None if evaluation is not possible.
     """
     if not isinstance(node.callee, VbaIdentifier):
         return None
@@ -70,17 +68,12 @@ def _try_evaluate_call(node: VbaCallExpression):
         if v is None:
             return None
         values.append(v)
-    name = node.callee.name.lower().rstrip('$')
-    handler = SINGLE_ARG_BUILTINS.get(name)
-    if handler is not None and len(values) == 1:
-        try:
-            return handler(values[0])
-        except (ValueError, OverflowError, TypeError, IndexError):
-            return None
+    name = node.callee.name.lower()
     try:
-        return eval_builtin(name, values)
-    except (ValueError, OverflowError, TypeError):
+        matched, result = dispatch_builtin(name, values)
+    except (ValueError, OverflowError, TypeError, IndexError):
         return None
+    return result if matched else None
 
 
 def _has_oern(body: list) -> bool:

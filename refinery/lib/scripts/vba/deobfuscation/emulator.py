@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from refinery.lib.scripts import Transformer
 from refinery.lib.scripts.vba.deobfuscation.helpers import (
+    apply_removals,
     is_identifier_read,
     is_literal,
     is_nan_or_inf,
@@ -12,9 +13,8 @@ from refinery.lib.scripts.vba.deobfuscation.helpers import (
     value_to_node,
 )
 from refinery.lib.scripts.vba.deobfuscation.names import (
-    SINGLE_ARG_BUILTINS,
     Value,
-    eval_builtin,
+    dispatch_builtin,
 )
 from refinery.lib.scripts.vba.model import (
     VbaBinaryExpression,
@@ -274,20 +274,13 @@ class _VbaInterpreter:
             raise _VbaInterpreterError
         name = node.callee.name.lower()
         args = [self._eval(a) for a in node.arguments if a is not None]
-        handler = SINGLE_ARG_BUILTINS.get(name)
-        if handler is not None and len(args) == 1:
-            try:
-                return handler(args[0])
-            except (ValueError, OverflowError, TypeError, IndexError):
-                raise _VbaInterpreterError
-        stripped = name.rstrip('$')
         try:
-            result = eval_builtin(stripped, args)
-        except (ValueError, OverflowError, TypeError):
+            matched, result = dispatch_builtin(name, args)
+        except (ValueError, OverflowError, TypeError, IndexError):
             raise _VbaInterpreterError
-        if result is not None:
-            return result
-        raise _VbaInterpreterError
+        if not matched:
+            raise _VbaInterpreterError
+        return result
 
     def _concat(self, lhs: Value, rhs: Value) -> str:
         a = str(lhs) if lhs is not None else ''
@@ -313,6 +306,7 @@ class _VbaInterpreter:
                     return float(v)
                 except ValueError:
                     raise _VbaInterpreterError
+        raise _VbaInterpreterError
 
     @staticmethod
     def _to_int(v: Value) -> int:
@@ -508,20 +502,18 @@ class VbaFunctionEvaluator(Transformer):
         return bindings
 
     def _remove_resolved_definitions(self):
+        removals: list[tuple[int, list]] = []
         for key, funcdef in self._functions.items():
             call_count = self._call_counts.get(key, 0)
             replaced_count = self._replaced_counts.get(key, 0)
             if call_count == 0 or replaced_count < call_count:
                 continue
             parent = funcdef.parent
-            if parent is None:
+            if parent is None or not isinstance(parent, VbaModule):
                 continue
-            if isinstance(parent, VbaModule):
-                body = parent.body
-            else:
-                continue
-            for k, stmt in enumerate(body):
+            for k, stmt in enumerate(parent.body):
                 if stmt is funcdef:
-                    del body[k]
-                    self.mark_changed()
+                    removals.append((k, parent.body))
                     break
+        if apply_removals(removals):
+            self.mark_changed()

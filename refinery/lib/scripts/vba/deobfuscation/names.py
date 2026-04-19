@@ -131,7 +131,7 @@ def eval_strcomp(args: list[Value]) -> int | None:
 def eval_str(a: list[Value], then: Callable | None = None) -> Value:
     try:
         value, = a
-    except Exception:
+    except ValueError:
         return None
     else:
         value = str(value)
@@ -174,6 +174,22 @@ def eval_builtin(name: str, args: list[Value]) -> Value:
 
 
 STRING_BUILTINS = frozenset(BUILTIN_DISPATCH) | frozenset({'format'})
+
+
+def dispatch_builtin(name: str, args: list) -> tuple[bool, Value]:
+    """
+    Two-phase dispatch for VBA builtin calls. Tries SINGLE_ARG_BUILTINS with the exact
+    lowercased name first, then strips a trailing $ and tries BUILTIN_DISPATCH. Returns
+    (matched, result). Does not catch exceptions — callers handle errors differently.
+    """
+    handler = SINGLE_ARG_BUILTINS.get(name)
+    if handler is not None and len(args) == 1:
+        return True, handler(args[0])
+    stripped = name.rstrip('$')
+    result = eval_builtin(stripped, args)
+    if result is not None:
+        return True, result
+    return False, None
 
 
 def _cast_to_int(value: Any) -> int:
