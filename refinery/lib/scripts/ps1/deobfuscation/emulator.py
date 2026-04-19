@@ -75,6 +75,9 @@ from refinery.lib.scripts.ps1.model import (
 
 _Value: TypeAlias = Union[str, int, float, bool, list, None]
 
+_MAX_INTERPRETER_ITERATIONS = 100_000
+_MAX_INTERPRETER_STRING_LEN = 1_000_000
+
 
 class _Ps1InterpreterError(Exception):
     pass
@@ -97,11 +100,11 @@ class _Ps1Interpreter:
 
     def __init__(
         self,
-        max_iterations: int = 100_000,
-        max_string_length: int = 1_000_000,
+        max_iterations: int = _MAX_INTERPRETER_ITERATIONS,
+        max_string_len: int = _MAX_INTERPRETER_STRING_LEN,
     ):
         self.max_iterations = max_iterations
-        self.max_string_length = max_string_length
+        self.max_string_len = max_string_len
         self._env: dict[str, _Value] = {}
         self._iterations = 0
 
@@ -364,7 +367,7 @@ class _Ps1Interpreter:
         if not isinstance(type_name, str) or not type_name.lower().endswith('[]'):
             raise _Ps1InterpreterError
         size = self._to_int(positional[1])
-        if size < 0 or size > self.max_string_length:
+        if size < 0 or size > self.max_string_len:
             raise _Ps1InterpreterError
         return [0] * size
 
@@ -383,7 +386,7 @@ class _Ps1Interpreter:
             else:
                 out.append(self._to_str(self._eval(part)))
         result = ''.join(out)
-        if len(result) > self.max_string_length:
+        if len(result) > self.max_string_len:
             raise _Ps1InterpreterError
         return result
 
@@ -877,7 +880,7 @@ class _Ps1Interpreter:
             return left
         if isinstance(left, str) or isinstance(right, str):
             result = self._to_str(left) + self._to_str(right)
-            if len(result) > self.max_string_length:
+            if len(result) > self.max_string_len:
                 raise _Ps1InterpreterError
             return result
         if isinstance(left, (int, float)) or isinstance(right, (int, float)):
@@ -891,7 +894,7 @@ class _Ps1Interpreter:
     def _multiply(self, left: _Value, right: _Value) -> _Value:
         if isinstance(left, str) and isinstance(right, int):
             result = left * right
-            if len(result) > self.max_string_length:
+            if len(result) > self.max_string_len:
                 raise _Ps1InterpreterError
             return result
         return self._numeric_op(left, right, int.__mul__, float.__mul__)
@@ -1055,12 +1058,12 @@ class Ps1FunctionEvaluator(Transformer):
 
     def __init__(
         self,
-        max_iterations: int = 100_000,
-        max_string_length: int = 1_000_000,
+        max_iterations: int = _MAX_INTERPRETER_ITERATIONS,
+        max_string_len: int = _MAX_INTERPRETER_STRING_LEN,
     ):
         super().__init__()
         self.max_iterations = max_iterations
-        self.max_string_length = max_string_length
+        self.max_string_len = max_string_len
         self._functions: dict[str, Ps1FunctionDefinition] = {}
         self._call_counts: dict[str, int] = {}
         self._replaced_counts: dict[str, int] = {}
@@ -1112,7 +1115,7 @@ class Ps1FunctionEvaluator(Transformer):
             return None
         interpreter = _Ps1Interpreter(
             max_iterations=self.max_iterations,
-            max_string_length=self.max_string_length,
+            max_string_len=self.max_string_len,
         )
         if funcdef.body is None:
             return None

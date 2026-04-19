@@ -64,11 +64,11 @@ class _VbaInterpreter:
         self,
         function_name: str,
         max_iterations: int = 100_000,
-        max_string_length: int = 1_000_000,
+        max_string_len: int = 1_000_000,
     ):
         self.function_name = function_name.lower()
         self.max_iterations = max_iterations
-        self.max_string_length = max_string_length
+        self.max_string_len = max_string_len
         self._env: dict[str, Value] = {}
         self._iterations = 0
         self._on_error_resume_next = False
@@ -293,7 +293,7 @@ class _VbaInterpreter:
         a = str(lhs) if lhs is not None else ''
         b = str(rhs) if rhs is not None else ''
         result = a + b
-        if len(result) > self.max_string_length:
+        if len(result) > self.max_string_len:
             raise _VbaInterpreterError
         return result
 
@@ -363,11 +363,11 @@ class VbaFunctionEvaluator(Transformer):
     def __init__(
         self,
         max_iterations: int = 100_000,
-        max_string_length: int = 1_000_000,
+        max_string_len: int = 1_000_000,
     ):
         super().__init__()
         self.max_iterations = max_iterations
-        self.max_string_length = max_string_length
+        self.max_string_len = max_string_len
         self._functions: dict[str, VbaFunctionDeclaration] = {}
         self._call_counts: dict[str, int] = {}
         self._replaced_counts: dict[str, int] = {}
@@ -467,7 +467,7 @@ class VbaFunctionEvaluator(Transformer):
         interpreter = _VbaInterpreter(
             function_name=funcdef.name,
             max_iterations=self.max_iterations,
-            max_string_length=self.max_string_length,
+            max_string_len=self.max_string_len,
         )
         try:
             return interpreter.execute(funcdef.body, bindings)
