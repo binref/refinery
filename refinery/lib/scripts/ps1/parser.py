@@ -1481,33 +1481,27 @@ class Ps1Parser:
         self._expect(Ps1TokenKind.SWITCH)
         self._skip_newlines()
         self._lexer.mode = Ps1LexerMode.ARGUMENT
-        flags = {'regex': False, 'wildcard': False, 'exact': False,
-                 'case_sensitive': False, 'file': False}
-        switch_flags = {'regex', 'wildcard', 'exact', 'casesensitive', 'file'}
-        while self._at(Ps1TokenKind.PARAMETER) or (
-            self._at(Ps1TokenKind.DASH)
-            and self.source[self._current.offset + 1:self._current.offset + 20].split()[0].lower()
-            in switch_flags
-        ):
-            if self._at(Ps1TokenKind.DASH):
-                self._advance()
-                tok = self._advance()
-                p = tok.value.lower()
-            else:
-                p = self._current.value.lower().lstrip('-').rstrip(':')
-                self._advance()
+        self._rescan_current()
+        regex = False
+        wildcard = False
+        exact = False
+        case_sensitive = False
+        file = False
+        while self._at(Ps1TokenKind.PARAMETER):
+            p = self._current.value.lower().lstrip('-').rstrip(':')
+            self._advance()
             self._skip_newlines()
             if p == 'regex':
-                flags['regex'] = True
+                regex = True
             elif p == 'wildcard':
-                flags['wildcard'] = True
+                wildcard = True
             elif p == 'exact':
-                flags['exact'] = True
+                exact = True
             elif p == 'casesensitive':
-                flags['case_sensitive'] = True
+                case_sensitive = True
             elif p == 'file':
-                flags['file'] = True
-        if flags['file']:
+                file = True
+        if file:
             self._lexer.mode = Ps1LexerMode.ARGUMENT
             value = self._parse_argument_value()
             self._skip_newlines()
@@ -1533,7 +1527,17 @@ class Ps1Parser:
                 clauses.append((cond, block))
             self._skip_separators()
         self._expect(Ps1TokenKind.RBRACE)
-        return Ps1SwitchStatement(offset=offset, value=value, clauses=clauses, label=label, **flags)
+        return Ps1SwitchStatement(
+            offset=offset,
+            value=value,
+            clauses=clauses,
+            label=label,
+            regex=regex,
+            wildcard=wildcard,
+            exact=exact,
+            case_sensitive=case_sensitive,
+            file=file,
+        )
 
     def _parse_try(self) -> Ps1TryCatchFinally:
         offset = self._current.offset
