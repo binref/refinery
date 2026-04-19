@@ -191,7 +191,6 @@ SINGLE_ARG_BUILTINS: dict[str, Callable[[Any], Value]] = {
     'chrw$' : lambda v: chr(int(v)),
     'asc'   : lambda v: ord(str(v)[0]),
     'ascw'  : lambda v: ord(str(v)[0]),
-    'len'   : lambda v: len(str(v)),
     'cint'  : lambda v: int(round(float(v))),
     'clng'  : lambda v: int(round(float(v))),
     'cdbl'  : lambda v: float(v),

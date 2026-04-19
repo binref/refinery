@@ -12,6 +12,7 @@ from refinery.lib.scripts.vba.deobfuscation.builtins import VBA_BUILTIN_CONSTANT
 from refinery.lib.scripts.vba.deobfuscation.helpers import (
     is_literal,
     is_nan_or_inf,
+    literal_value,
     make_integer_literal,
     make_numeric_literal,
     make_string_literal,
@@ -19,7 +20,11 @@ from refinery.lib.scripts.vba.deobfuscation.helpers import (
     string_value,
     value_to_node,
 )
-from refinery.lib.scripts.vba.deobfuscation.names import CHR_NAMES, eval_builtin
+from refinery.lib.scripts.vba.deobfuscation.names import (
+    CHR_NAMES,
+    SINGLE_ARG_BUILTINS,
+    eval_builtin,
+)
 from refinery.lib.scripts.vba.model import (
     VbaBinaryExpression,
     VbaBooleanLiteral,
@@ -50,53 +55,32 @@ _INTEGER_OPS: dict[str, Callable] = {
 }
 
 
-def _is_chr_call(node: VbaCallExpression) -> int | None:
-    if (
-        isinstance(node.callee, VbaIdentifier)
-        and node.callee.name.lower() in CHR_NAMES
-        and len(node.arguments) == 1
-        and node.arguments[0] is not None
-    ):
-        val = numeric_value(node.arguments[0])
-        if val is not None and isinstance(val, int) and 0 <= val <= 0xFFFF:
-            return val
-    return None
-
-
-def _is_asc_call(node: VbaCallExpression) -> str | None:
-    if (
-        isinstance(node.callee, VbaIdentifier)
-        and node.callee.name.lower() in ('asc', 'ascw')
-        and len(node.arguments) == 1
-        and node.arguments[0] is not None
-    ):
-        val = string_value(node.arguments[0])
-        if val is not None and len(val) >= 1:
-            return val[0]
-    return None
-
-
-def _try_builtin_function(node: VbaCallExpression):
+def _try_evaluate_call(node: VbaCallExpression):
+    """
+    Try to statically evaluate a VBA builtin call with constant arguments. Returns the
+    evaluated Python value, or None if evaluation is not possible. Checks single-argument
+    builtins first, then falls back to multi-argument dispatch.
+    """
     if not isinstance(node.callee, VbaIdentifier):
         return None
-    name = node.callee.name.lower().rstrip('$')
     args = [a for a in node.arguments if a is not None]
     values: list = []
     for arg in args:
-        s = string_value(arg)
-        if s is not None:
-            values.append(s)
-            continue
-        n = numeric_value(arg)
-        if n is not None:
-            values.append(n)
-            continue
-        return None
+        v = literal_value(arg)
+        if v is None:
+            return None
+        values.append(v)
+    name = node.callee.name.lower().rstrip('$')
+    handler = SINGLE_ARG_BUILTINS.get(name)
+    if handler is not None and len(values) == 1:
+        try:
+            return handler(values[0])
+        except (ValueError, OverflowError, TypeError, IndexError):
+            return None
     try:
-        result = eval_builtin(name, values)
+        return eval_builtin(name, values)
     except (ValueError, OverflowError, TypeError):
         return None
-    return result
 
 
 def _has_oern(body: list) -> bool:
@@ -235,19 +219,16 @@ class VbaSimplifications(Transformer):
 
     def visit_VbaCallExpression(self, node: VbaCallExpression):
         self.generic_visit(node)
-        code_point = _is_chr_call(node)
-        if code_point is not None:
-            c = chr(code_point)
-            if c.isprintable():
-                return make_string_literal(c)
+        result = _try_evaluate_call(node)
+        if result is None:
             return None
-        char = _is_asc_call(node)
-        if char is not None:
-            return make_integer_literal(ord(char))
-        result = _try_builtin_function(node)
-        if result is not None:
-            return value_to_node(result)
-        return None
+        if isinstance(result, str) and len(result) == 1 and not result.isprintable():
+            if (
+                isinstance(node.callee, VbaIdentifier)
+                and node.callee.name.lower() in CHR_NAMES
+            ):
+                return None
+        return value_to_node(result)
 
     def visit_VbaIdentifier(self, node: VbaIdentifier):
         value = VBA_BUILTIN_CONSTANTS.get(node.name.lower())

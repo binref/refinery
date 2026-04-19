@@ -187,6 +187,12 @@ class TestVbaDeobfuscation(TestBase):
         self.assertNotIn('x = 2', result)
         self.assertIn('x = y', result)
 
+    def test_negative_constant_inlining(self):
+        code = 'Sub T()\nConst X = -1\ny = X + 5\nF y\nEnd Sub'
+        result = self._deobfuscate(code)
+        self.assertIn('4', result)
+        self.assertNotIn('Const', result)
+
     def test_dead_variable_removal(self):
         code = 'Sub T()\nx = 1\nEnd Sub'
         result = self._deobfuscate(code)

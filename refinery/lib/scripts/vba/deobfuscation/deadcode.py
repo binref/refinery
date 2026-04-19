@@ -110,10 +110,9 @@ class VbaEmptyProcedureRemoval(Transformer):
                 key = node.name.lower()
                 if key in empty:
                     referenced.add(key)
-        indices: list[int] = []
+        removals: list[tuple[int, list[Statement]]] = []
         for key, positions in empty.items():
             if key not in referenced:
-                indices.extend(positions)
-        for idx in sorted(indices, reverse=True):
-            del module.body[idx]
-        return bool(indices)
+                for idx in positions:
+                    removals.append((idx, module.body))
+        return apply_removals(removals)

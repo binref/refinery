@@ -26,6 +26,7 @@ from refinery.lib.scripts.vba.model import (
     VbaLetStatement,
     VbaModule,
     VbaStringLiteral,
+    VbaUnaryExpression,
 )
 
 LITERAL_TYPES = (VbaStringLiteral, VbaIntegerLiteral, VbaFloatLiteral, VbaBooleanLiteral)
@@ -86,6 +87,9 @@ def is_constant_expr(node: Expression) -> bool:
                 and is_constant_expr(node.left)
                 and is_constant_expr(node.right)
             )
+    if isinstance(node, VbaUnaryExpression):
+        if node.operator in ('-', 'Not') and node.operand is not None:
+            return is_constant_expr(node.operand)
     return False
 
 
