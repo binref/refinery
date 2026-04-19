@@ -23,15 +23,12 @@ from refinery.lib.scripts.ps1.deobfuscation.helpers import (
     unwrap_to_array_literal,
 )
 from refinery.lib.scripts.ps1.deobfuscation.names import (
-    CONVERT_TYPE_NAMES,
     ENCODING_MAP,
-    ENCODING_TYPE_NAMES,
-    MATH_TYPE_NAMES,
-    STRING_TYPE_NAMES,
     apply_format_string,
     normalize_dotnet_type_name,
     normalize_type_expression,
 )
+from refinery.lib.scripts.ps1.deobfuscation.typenames import is_type
 from refinery.lib.scripts.ps1.model import (
     Expression,
     Ps1AccessKind,
@@ -636,13 +633,13 @@ class _Ps1Interpreter:
             raise _Ps1InterpreterError
         name = member.lower()
         args = [self._eval(a) for a in node.arguments]
-        if type_name in CONVERT_TYPE_NAMES:
+        if is_type(type_name, 'system.convert'):
             return self._invoke_convert(name, args)
-        if type_name in ENCODING_TYPE_NAMES:
+        if is_type(type_name, 'system.text.encoding'):
             return self._invoke_encoding(name, args)
-        if type_name in STRING_TYPE_NAMES:
+        if is_type(type_name, 'system.string'):
             return self._invoke_string_static(name, args)
-        if type_name in MATH_TYPE_NAMES:
+        if is_type(type_name, 'system.math'):
             return self._invoke_math_static(name, args)
         raise _Ps1InterpreterError
 

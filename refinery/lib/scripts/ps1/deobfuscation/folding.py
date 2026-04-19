@@ -28,10 +28,7 @@ from refinery.lib.scripts.ps1.deobfuscation.helpers import (
 )
 from refinery.lib.scripts.ps1.deobfuscation.names import (
     COMPARISON_OPS,
-    CONVERT_TYPE_NAMES,
     ENCODING_MAP,
-    REGEX_TYPE_NAMES,
-    STRING_TYPE_NAMES,
     apply_format_string,
 )
 from refinery.lib.scripts.ps1.deobfuscation.typenames import (
@@ -77,7 +74,7 @@ _RIGHT_TO_LEFT = 64
 
 
 def _is_static_regex_call(node: Ps1InvokeMember) -> bool:
-    return is_static_type_call(node, REGEX_TYPE_NAMES)
+    return is_static_type_call(node, 'system.text.regularexpressions.regex')
 
 
 def _parse_regex_options(node: Expression) -> tuple[int, bool] | None:
@@ -551,7 +548,7 @@ class Ps1ConstantFolding(LocalFunctionAwareTransformer):
     def _try_fold_static_method(
         self, node: Ps1InvokeMember, lower: str,
     ) -> Expression | None:
-        if is_static_type_call(node, CONVERT_TYPE_NAMES) and lower == 'frombase64string':
+        if is_static_type_call(node, 'system.convert') and lower == 'frombase64string':
             if len(node.arguments) == 1:
                 b64_str = string_value(node.arguments[0])
                 if b64_str is not None:
@@ -591,7 +588,7 @@ class Ps1ConstantFolding(LocalFunctionAwareTransformer):
                     except Exception:
                         return None
                     return make_string_literal(decoded_str)
-        if is_static_type_call(node, STRING_TYPE_NAMES):
+        if is_static_type_call(node, 'system.string'):
             if lower == 'concat' and len(node.arguments) >= 1:
                 parts: list[str] = []
                 for arg in node.arguments:

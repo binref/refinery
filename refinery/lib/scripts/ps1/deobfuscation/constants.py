@@ -444,6 +444,27 @@ class Ps1ConstantInlining(Transformer):
 
         return remaining, inlined
 
+    def _guard_fails(
+        self,
+        node: Node,
+        key: str,
+        scope_entries: dict[str, list[tuple[list, int]]],
+        remaining: dict[str, int],
+    ) -> bool:
+        """
+        Shared guard for substitution methods. Returns True if the substitution
+        should be skipped (node is inside a try body or not dominated by its
+        scope entry).
+        """
+        if _inside_try_body(node):
+            remaining[key] = remaining.get(key, 0) + 1
+            return True
+        entries = scope_entries.get(key)
+        if entries is not None and not _is_dominated_by(node, entries):
+            remaining[key] = remaining.get(key, 0) + 1
+            return True
+        return False
+
     def _substitute_index_reference(
         self,
         node: Ps1IndexExpression,
@@ -460,13 +481,7 @@ class Ps1ConstantInlining(Transformer):
         if id(node.parent) in assign_node_ids:
             handled_vars.add(id(var))
             return
-        if _inside_try_body(node):
-            remaining[key] = remaining.get(key, 0) + 1
-            handled_vars.add(id(var))
-            return
-        entries = scope_entries.get(key)
-        if entries is not None and not _is_dominated_by(node, entries):
-            remaining[key] = remaining.get(key, 0) + 1
+        if self._guard_fails(node, key, scope_entries, remaining):
             handled_vars.add(id(var))
             return
         if not isinstance(node.index, Ps1IntegerLiteral):
@@ -528,12 +543,7 @@ class Ps1ConstantInlining(Transformer):
             and _assignment_target_variable(parent.target) is node
         ):
             return
-        if _inside_try_body(node):
-            remaining[key] = remaining.get(key, 0) + 1
-            return
-        entries = scope_entries.get(key)
-        if entries is not None and not _is_dominated_by(node, entries):
-            remaining[key] = remaining.get(key, 0) + 1
+        if self._guard_fails(node, key, scope_entries, remaining):
             return
         replacement = _clone_constant(const_value)
         _replace_in_parent(node, replacement)

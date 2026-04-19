@@ -16,6 +16,7 @@ from refinery.lib.scripts.ps1.deobfuscation.names import (
     SIMPLE_IDENTIFIER,
     case_normalize_name,
 )
+from refinery.lib.scripts.ps1.deobfuscation.typenames import canonical_type_name
 from refinery.lib.scripts.ps1.model import (
     Ps1BinaryExpression,
     Ps1CastExpression,
@@ -204,7 +205,6 @@ class Ps1Simplifications(LocalFunctionAwareTransformer):
         if normalized != name:
             self.mark_changed()
             return normalized
-        from refinery.lib.scripts.ps1.deobfuscation.typenames import canonical_type_name
         canonical = canonical_type_name(name)
         if canonical is not None and canonical != name:
             self.mark_changed()

@@ -13,9 +13,7 @@ if TYPE_CHECKING:
 
 from refinery.lib.scripts import Block, Node
 from refinery.lib.scripts.ps1.deobfuscation.names import (
-    ARRAY_TYPE_NAMES,
     BUILTIN_VARIABLES,
-    ENCODING_TYPE_NAMES,
     FOREACH_ALIASES,
     normalize_type_expression,
 )
@@ -139,15 +137,28 @@ def get_command_name(cmd: Ps1CommandInvocation) -> str | None:
     return None
 
 
+def extract_positional_values(
+    cmd: Ps1CommandInvocation,
+) -> list[Expression]:
+    """
+    Collect all positional argument values from a command invocation.
+    """
+    result: list[Expression] = []
+    for arg in cmd.arguments:
+        if isinstance(arg, Ps1CommandArgument):
+            if arg.kind == Ps1CommandArgumentKind.POSITIONAL and arg.value is not None:
+                result.append(arg.value)
+        elif isinstance(arg, Expression):
+            result.append(arg)
+    return result
+
+
 def extract_first_positional_string(
     cmd: Ps1CommandInvocation,
 ) -> str | None:
-    for arg in cmd.arguments:
-        if isinstance(arg, Ps1CommandArgument):
-            if arg.kind == Ps1CommandArgumentKind.POSITIONAL:
-                return string_value(arg.value) if arg.value else None
-        elif isinstance(arg, Expression):
-            return string_value(arg)
+    values = extract_positional_values(cmd)
+    if values:
+        return string_value(values[0])
     return None
 
 
@@ -208,12 +219,13 @@ def unwrap_integer(node: Node | None) -> Ps1IntegerLiteral | None:
     return None
 
 
-def is_static_type_call(node: Ps1InvokeMember, type_names: frozenset[str]) -> bool:
+def is_static_type_call(node: Ps1InvokeMember, canonical: str) -> bool:
+    from refinery.lib.scripts.ps1.deobfuscation.typenames import is_type
     if node.access != Ps1AccessKind.STATIC:
         return False
     if not isinstance(node.object, Ps1TypeExpression):
         return False
-    return normalize_type_expression(node.object.name) in type_names
+    return is_type(normalize_type_expression(node.object.name), canonical)
 
 
 def detect_encoding_chain(node: Ps1InvokeMember) -> str | None:
@@ -221,6 +233,7 @@ def detect_encoding_chain(node: Ps1InvokeMember) -> str | None:
     If *node* is ``[Text.Encoding]::X.GetString(args)``, return the encoding
     member name (e.g. ``'UTF8'``).  Otherwise return ``None``.
     """
+    from refinery.lib.scripts.ps1.deobfuscation.typenames import is_type
     member = get_member_name(node.member)
     if member is None or member.lower() != 'getstring':
         return None
@@ -231,7 +244,7 @@ def detect_encoding_chain(node: Ps1InvokeMember) -> str | None:
         return None
     if not isinstance(obj.object, Ps1TypeExpression):
         return None
-    if normalize_type_expression(obj.object.name) not in ENCODING_TYPE_NAMES:
+    if not is_type(normalize_type_expression(obj.object.name), 'system.text.encoding'):
         return None
     enc_name = get_member_name(obj.member)
     return enc_name
@@ -300,6 +313,7 @@ def is_array_reverse_call(node: Ps1ExpressionStatement) -> Ps1Variable | None:
     """
     If the statement is `[Array]::Reverse($var)`, return the variable node.
     """
+    from refinery.lib.scripts.ps1.deobfuscation.typenames import is_type
     expr = node.expression
     if not isinstance(expr, Ps1InvokeMember):
         return None
@@ -307,7 +321,7 @@ def is_array_reverse_call(node: Ps1ExpressionStatement) -> Ps1Variable | None:
         return None
     if not isinstance(expr.object, Ps1TypeExpression):
         return None
-    if normalize_type_expression(expr.object.name) not in ARRAY_TYPE_NAMES:
+    if not is_type(normalize_type_expression(expr.object.name), 'system.array'):
         return None
     member = get_member_name(expr.member)
     if member is None or member.lower() != 'reverse':

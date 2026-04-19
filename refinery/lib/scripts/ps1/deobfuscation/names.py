@@ -693,13 +693,6 @@ ENCODING_MAP = {
     'utf32'            : 'utf-32-le',        # noqa
 }
 
-CONVERT_TYPE_NAMES = frozenset({'convert', 'system.convert'})
-ENCODING_TYPE_NAMES = frozenset({'system.text.encoding', 'text.encoding'})
-STRING_TYPE_NAMES = frozenset({'string', 'system.string'})
-MATH_TYPE_NAMES = frozenset({'math', 'system.math'})
-REGEX_TYPE_NAMES = frozenset({'regex', 'text.regularexpressions.regex'})
-ARRAY_TYPE_NAMES = frozenset({'array', 'system.array'})
-
 BUILTIN_VARIABLES = frozenset({'null', 'true', 'false'})
 
 PS1_KNOWN_VARIABLES: dict[str, str] = {

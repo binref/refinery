@@ -5605,6 +5605,15 @@ def _resolve_type_name(name: str) -> str | None:
     return None
 
 
+def is_type(name: str, canonical_lower: str) -> bool:
+    """
+    Check whether a type name (as written in PowerShell source) resolves to
+    the given canonical lowercase .NET type name.
+    """
+    resolved = _resolve_type_name(name)
+    return resolved == canonical_lower
+
+
 _MEMBER_LOOKUP: dict[str, dict[str, str]] = {}
 for _type_lower, _members in _TYPE_MEMBERS.items():
     _MEMBER_LOOKUP[_type_lower] = {m.lower(): m for m in _members}

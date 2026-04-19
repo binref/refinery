@@ -16,6 +16,7 @@ from fnmatch import translate as fnmatch_translate
 
 from refinery.lib.scripts.ps1.deobfuscation.helpers import (
     extract_first_positional_string,
+    extract_positional_values,
     get_command_name,
     get_member_name,
     make_string_literal,
@@ -198,22 +199,6 @@ def _candidates_from_type(
     if type_name is None:
         return None
     return _TYPE_MEMBERS.get(type_name)
-
-
-def _extract_positional_args(
-    cmd: Ps1CommandInvocation,
-) -> list[Expression]:
-    """
-    Collect all positional argument values from a command invocation.
-    """
-    result: list[Expression] = []
-    for arg in cmd.arguments:
-        if isinstance(arg, Ps1CommandArgument):
-            if arg.kind == Ps1CommandArgumentKind.POSITIONAL and arg.value is not None:
-                result.append(arg.value)
-        elif isinstance(arg, Expression):
-            result.append(arg)
-    return result
 
 
 def _extract_named_value(
@@ -444,7 +429,7 @@ class Ps1WildcardResolution(VariableTypeAwareTransformer):
             return None
         if not _has_valueonly_switch(node):
             return None
-        positionals = _extract_positional_args(node)
+        positionals = extract_positional_values(node)
         if not positionals:
             return None
         arg_value = _variable_name_value(positionals[0])
@@ -541,7 +526,7 @@ class Ps1WildcardResolution(VariableTypeAwareTransformer):
         """
         Set-Item Variable:/X val1 val2 → $X = val1 + val2
         """
-        positionals = _extract_positional_args(node)
+        positionals = extract_positional_values(node)
         if len(positionals) < 2:
             return None
         path_str = string_value(positionals[0])
@@ -565,7 +550,7 @@ class Ps1WildcardResolution(VariableTypeAwareTransformer):
         Set-Variable X val or Set-Variable -Name X -Value val → $X = val
         """
         named_value = _extract_named_value(node, '-value')
-        positionals = _extract_positional_args(node)
+        positionals = extract_positional_values(node)
         name_expr = _extract_named_value(node, '-name')
         if name_expr is not None:
             var_name = _variable_name_value(name_expr)
