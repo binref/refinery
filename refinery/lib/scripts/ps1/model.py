@@ -382,7 +382,7 @@ class Ps1DataSection(Statement):
 
 
 @dataclass(repr=False)
-class Ps1ErrorNode(Node):
+class Ps1ErrorNode(Expression):
     text: str = ''
     message: str = ''
 

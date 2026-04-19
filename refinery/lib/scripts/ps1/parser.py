@@ -215,12 +215,14 @@ class Ps1Parser:
         while self._current.kind == Ps1TokenKind.NEWLINE:
             self._advance()
 
-    def _parse_parenthesized_condition(self) -> Expression | None:
+    def _parse_parenthesized_condition(self) -> Expression:
         self._expect(Ps1TokenKind.LPAREN)
         self._skip_newlines()
         expr = self._parse_pipeline_expression()
         self._skip_newlines()
         self._expect(Ps1TokenKind.RPAREN)
+        if expr is None:
+            return Ps1ErrorNode(offset=self._current.offset, message='missing condition')
         return expr
 
     def _skip_separators(self):
