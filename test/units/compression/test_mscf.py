@@ -1,9 +1,12 @@
 import lzma
 
+import pytest
+
 from test.units import TestUnitBase
 from test.units.compression import KADATH1, KADATH2
 
 
+@pytest.mark.cythonized
 class TestMicrosoftCompressionFormat(TestUnitBase):
 
     def test_xpress_with_huffmann_01(self):

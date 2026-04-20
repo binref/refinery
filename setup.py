@@ -73,6 +73,8 @@ EXTENSION_DICT = {
     'refinery.lib.fast.blz'       : 'refinery/lib/fast/blz.pyx',
     'refinery.lib.fast.lzfse'     : 'refinery/lib/fast/lzfse.pyx',
     'refinery.lib.fast.lzjb'      : 'refinery/lib/fast/lzjb.pyx',
+    'refinery.lib.fast.lzw'       : 'refinery/lib/fast/lzw.pyx',
+    'refinery.lib.fast.xpress'    : 'refinery/lib/fast/xpress.pyx',
     'refinery.lib.fast.pkware'    : 'refinery/lib/fast/pkware.pyx',
     'refinery.lib.fast.zipcrypto' : 'refinery/lib/fast/zipcrypto.pyx',
     'refinery.lib.seven.deflate'  : 'refinery/lib/seven/deflate.pyx',

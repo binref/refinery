@@ -1,6 +1,9 @@
+import pytest
+
 from .. import TestUnitBase
 
 
+@pytest.mark.cythonized
 class TestLZW(TestUnitBase):
 
     def test_flareon10(self):

@@ -5,12 +5,7 @@ import zlib
 
 from typing import Callable
 
-from refinery.lib.decompression import (
-    BitBufferedReader,
-    make_huffman_decode_table,
-    read_huffman_symbol,
-)
-from refinery.lib.structures import MemoryFile, StructReader, StructReaderBits
+from refinery.lib.structures import MemoryFile, StructReader
 from refinery.lib.types import Param
 from refinery.units import Arg, Unit
 
@@ -36,9 +31,6 @@ class MODE(enum.IntEnum):
 class mscf(Unit):
     """
     Decompress data using the Microsoft Compression Format (MSZIP, XPRESS, LZMS).
-
-    This pure Python implementation is very slow when compared to native code, so decompressing very
-    large inputs can take several minutes.
     """
 
     _SIGNATURE = B'\x0A\x51\xE5\xC0'
@@ -173,90 +165,18 @@ class mscf(Unit):
         target: int | None = None,
         max_chunk_size: int = 0x10000
     ) -> None:
-        limit = writer.tell()
-        reader = StructReaderBits(reader)
-        if target is not None:
-            target += limit
-
-        while not reader.eof:
-
-            if reader.remaining_bytes < XPRESS_NUM_SYMBOLS // 2:
-                raise IndexError(
-                    F'There are only {reader.remaining_bytes} bytes reamining in the input buffer,'
-                    F' but at least {XPRESS_NUM_SYMBOLS // 2} are required to read a Huffman table.')
-
-            table = bytearray(reader.read_integer(4) for _ in range(XPRESS_NUM_SYMBOLS))
-            table = make_huffman_decode_table(table, XPRESS_TABLEBITS, XPRESS_MAX_CODEWORD_LEN)
-            limit = limit + max_chunk_size
-            flags = BitBufferedReader(reader, 16)
-
-            while True:
-                position = writer.tell()
-                if position == target:
-                    if reader.remaining_bytes:
-                        self.log_info(F'chunk decompressed with {reader.remaining_bytes} bytes remaining in input buffer')
-                    return
-                if position >= limit:
-                    if position > limit:
-                        limit = position
-                        self.log_info(F'decompression of one chunk generated more than the limit of {max_chunk_size} bytes')
-                    flags.collect()
-                    break
-                try:
-                    sym = read_huffman_symbol(flags, table, XPRESS_TABLEBITS, XPRESS_MAX_CODEWORD_LEN)
-                except EOFError:
-                    self.log_debug('end of file while reading huffman symbol')
-                    break
-                if sym < XPRESS_NUM_CHARS:
-                    writer.write_byte(sym)
-                    continue
-                length = sym & 0xF
-                offsetlog = (sym >> 4) & 0xF
-                flags.collect()
-                if reader.eof:
-                    break
-                offset = (1 << offsetlog) | flags.read(offsetlog)
-                if length == 0xF:
-                    nudge = reader.read_byte()
-                    if nudge < 0xFF:
-                        length += nudge
-                    else:
-                        length = reader.u16() or reader.u32()
-                length += XPRESS_MIN_MATCH_LEN
-                writer.replay(offset, length)
+        from refinery.lib.fast.xpress import xpress_huffman_decompress
+        raw = bytes(reader.read())
+        actual_target = target if target is not None else 0
+        result = xpress_huffman_decompress(raw, actual_target, max_chunk_size)
+        writer.write(result)
 
     def _decompress_xpress(self, reader: StructReader, writer: MemoryFile, target: int | None = None) -> None:
-        if target is not None:
-            target += writer.tell()
-        flags = BitBufferedReader(reader)
-        nibble_cache = None
-        while not reader.eof:
-            if target is not None and writer.tell() >= target:
-                return
-            if not flags.next():
-                writer.write(reader.read(1))
-                continue
-            offset, length = divmod(reader.u16(), 8)
-            offset += 1
-            if length == 7:
-                length = nibble_cache
-                if length is None:
-                    length_pair = reader.u8()
-                    nibble_cache = length_pair >> 4
-                    length = length_pair & 0xF
-                else:
-                    nibble_cache = None
-                if length == 15:
-                    length = reader.u8()
-                    if length == 0xFF:
-                        length = reader.u16() or reader.u32()
-                        length -= 22
-                        if length < 0:
-                            raise RuntimeError(F'Invalid match length of {length} for long delta sequence')
-                    length += 15
-                length += 7
-            length += 3
-            writer.replay(offset, length)
+        from refinery.lib.fast.xpress import xpress_decompress
+        raw = bytes(reader.read())
+        actual_target = target if target is not None else 0
+        result = xpress_decompress(raw, actual_target)
+        writer.write(result)
 
     @classmethod
     def handles(cls, data) -> bool | None:
