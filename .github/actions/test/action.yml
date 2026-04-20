@@ -16,27 +16,27 @@ runs:
     - name: Unit Tests (Pure Python)
       if: ${{ contains(inputs.os, 'windows') }}
       shell: cmd
-      run: pytest -n=8 --dist=loadgroup test 2>NUL
+      run: pytest -n=8 --dist=worksteal test 2>NUL
     - name: Unit Tests (Pure Python)
       if: ${{ contains(inputs.os, 'mac') }}
       shell: bash
-      run: pytest -n=8 --dist=loadgroup test
+      run: pytest -n=8 --dist=worksteal test
     - name: Unit Tests (Pure Python)
       if: ${{ contains(inputs.os, 'ubuntu') }}
       shell: bash
-      run: XDG_SESSION_TYPE=x11 xvfb-run pytest -n=8 --dist=loadgroup test
+      run: XDG_SESSION_TYPE=x11 xvfb-run pytest -n=8 --dist=worksteal test
     - name: Prepare Compiled Module Tests
       shell: ${{ contains(inputs.os, 'windows') && 'pwsh' || 'bash' }}
       run: python setup.py build_ext --inplace
     - name: Unit Tests (Cython Modules)
       if: ${{ contains(inputs.os, 'windows') }}
       shell: cmd
-      run: pytest -n=8 --dist=loadgroup -m cythonized test 2>NUL
+      run: pytest -n=8 --dist=worksteal -m cythonized test 2>NUL
     - name: Unit Tests (Cython Modules)
       if: ${{ contains(inputs.os, 'mac') }}
       shell: bash
-      run: pytest -n=8 --dist=loadgroup -m cythonized test
+      run: pytest -n=8 --dist=worksteal -m cythonized test
     - name: Unit Tests (Cython Modules)
       if: ${{ contains(inputs.os, 'ubuntu') }}
       shell: bash
-      run: XDG_SESSION_TYPE=x11 xvfb-run pytest -n=8 --dist=loadgroup -m cythonized test
+      run: XDG_SESSION_TYPE=x11 xvfb-run pytest -n=8 --dist=worksteal -m cythonized test
