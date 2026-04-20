@@ -14,14 +14,29 @@ class lznt1(Unit):
     routine `RtlDecompressBuffer`.
     """
 
+    @classmethod
+    def handles(cls, data) -> bool | None:
+        if len(data) < 2:
+            return False
+        header = data[0] | (data[1] << 8)
+        if header == 0:
+            return False
+        signature = (header >> 12) & 7
+        if signature != 3:
+            return False
+        size = (header & 0xFFF) + 1
+        if size > len(data) - 2:
+            return False
+        return None
+
     def _decompress_chunk(self, chunk):
-        out = B''
+        out = bytearray()
         while chunk:
             flags = chunk[0]
             chunk = chunk[1:]
             for i in range(8):
                 if not (flags >> i & 1):
-                    out += chunk[:1]
+                    out.append(chunk[0])
                     chunk = chunk[1:]
                 else:
                     flag = struct.unpack('<H', chunk[:2])[0]
@@ -35,10 +50,10 @@ class lznt1(Unit):
                     length = (flag & l_mask) + 3
                     offset = (flag >> o_shift) + 1
                     if length >= offset:
-                        tmp = out[-offset:] * (0xFFF // len(out[-offset:]) + 1)
-                        out += tmp[:length]
+                        tmp = bytes(out[-offset:]) * (0xFFF // len(out[-offset:]) + 1)
+                        out.extend(tmp[:length])
                     else:
-                        out += out[-offset:length - offset]
+                        out.extend(out[-offset:length - offset])
                     chunk = chunk[2:]
                 if len(chunk) == 0:
                     break

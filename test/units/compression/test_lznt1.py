@@ -1,6 +1,9 @@
 from .. import TestUnitBase
 
+import pytest
 
+
+@pytest.mark.cythonized
 class TestLZNT1(TestUnitBase):
 
     def test_roundtrip(self):

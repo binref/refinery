@@ -3,6 +3,7 @@ from __future__ import annotations
 import struct
 import zlib
 
+from refinery.lib.fast.blz import blz_decompress_chunk
 from refinery.lib.structures import MemoryFile, StructReader
 from refinery.units import RefineryPartialResult, Unit
 
@@ -30,6 +31,7 @@ class blz(Unit):
         return self
 
     def _decompress(self):
+        t: tuple[int, ...] = self._src.read_struct('>6L') # type:ignore
         (
             signature,
             version,
@@ -37,7 +39,7 @@ class blz(Unit):
             src_crc32,
             dst_count,
             dst_crc32,
-        ) = self._src.read_struct('>6L')
+        ) = t
         if signature != 0x626C7A1A:
             raise ValueError(F'Invalid BriefLZ signature: {signature:08X}, should be 626C7A1A.')
         if version > 10:
@@ -75,59 +77,19 @@ class blz(Unit):
             remaining -= chunk_size
         return self._decompress_chunk(remaining)
 
-    def _decompress_chunk(self, size=None):
-        bitcount = 0
-        bitstore = 0
-        decompressed = 1
-
-        def readbit():
-            nonlocal bitcount, bitstore
-            if not bitcount:
-                bitstore = int.from_bytes(self._src.read_exactly(2), 'little')
-                bitcount = 0xF
-            else:
-                bitcount = bitcount - 1
-            return (bitstore >> bitcount) & 1
-
-        def readint():
-            result = 2 + readbit()
-            while readbit():
-                result <<= 1
-                result += readbit()
-            return result
-
-        self._dst.write(self._src.read_exactly(1))
-
+    def _decompress_chunk(self, size: int):
+        data = bytes(self._src.getvalue())
+        verbatim_offset = self._src.tell()
+        src_offset = verbatim_offset + 1
+        prefix = self._dst.getvalue() or None
         try:
-            while not size or decompressed < size:
-                if readbit():
-                    length = readint() + 2
-                    sector = readint() - 2
-                    offset = self._src.read_byte() + 1
-                    delta = offset + 0x100 * sector
-                    available = self._dst.tell()
-                    if delta not in range(available + 1):
-                        raise RefineryPartialResult(
-                            F'Requested rewind by 0x{delta:08X} bytes with only 0x{available:08X} bytes in output buffer.',
-                            partial=self._dst.getvalue())
-                    quotient, remainder = divmod(length, delta)
-                    replay = memoryview(self._dst.getvalue())
-                    replay = bytes(replay[-delta:] if quotient else replay[-delta:length - delta])
-                    replay = quotient * replay + replay[:remainder]
-                    self._dst.write(replay)
-                    decompressed += length
-                else:
-                    self._dst.write(self._src.read_exactly(1))
-                    decompressed += 1
-        except EOFError as E:
+            result, new_pos = blz_decompress_chunk(
+                data, src_offset, verbatim_offset, size, prefix)
+        except (EOFError, ValueError) as E:
             raise RefineryPartialResult(str(E), partial=self._dst.getvalue())
-        dst = self._dst.getvalue()
-        if decompressed < size:
-            raise RefineryPartialResult(
-                F'Attempted to decompress {size} bytes, got only {len(dst)}.', dst)
-        if decompressed > size:
-            raise RuntimeError('Decompressed buffer contained more bytes than expected.')
-        return dst
+        self._src.seek(new_pos)
+        self._dst.write(result)
+        return self._dst.getvalue()
 
     def _compress(self):
         from refinery.lib.suffixtree import SuffixTree

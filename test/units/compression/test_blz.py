@@ -1,6 +1,9 @@
 from .. import TestUnitBase
 
+import pytest
 
+
+@pytest.mark.cythonized
 class TestBriefLZ(TestUnitBase):
 
     def test_decompress_partial(self):

@@ -1,9 +1,12 @@
 import time
 
+import pytest
+
 from .. import TestUnitBase
 from . import KADATH1, KADATH2
 
 
+@pytest.mark.cythonized_only
 class TestAutoDecompressor(TestUnitBase):
 
     def test_lz_with_length_prefix(self):

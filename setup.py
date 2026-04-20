@@ -68,8 +68,11 @@ __topics__ = [
 
 EXTENSION_DICT = {
     'refinery.lib.fast.a3x'       : 'refinery/lib/fast/a3x.pyx',
+    'refinery.lib.fast.aplib'     : 'refinery/lib/fast/aplib.pyx',
     'refinery.lib.fast.argon2'    : 'refinery/lib/fast/argon2.pyx',
+    'refinery.lib.fast.blz'       : 'refinery/lib/fast/blz.pyx',
     'refinery.lib.fast.lzfse'     : 'refinery/lib/fast/lzfse.pyx',
+    'refinery.lib.fast.lzjb'      : 'refinery/lib/fast/lzjb.pyx',
     'refinery.lib.fast.pkware'    : 'refinery/lib/fast/pkware.pyx',
     'refinery.lib.fast.zipcrypto' : 'refinery/lib/fast/zipcrypto.pyx',
     'refinery.lib.seven.deflate'  : 'refinery/lib/seven/deflate.pyx',

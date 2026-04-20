@@ -1,6 +1,9 @@
 from .. import TestUnitBase
 
+import pytest
 
+
+@pytest.mark.cythonized
 class TestAPLib(TestUnitBase):
 
     def test_decompress_kevin(self):
