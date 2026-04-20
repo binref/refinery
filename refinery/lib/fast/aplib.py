@@ -124,11 +124,10 @@ def aplib_compress(data: bytes | bytearray | memoryview) -> bytearray:
     is_tagged = False
 
     def _flush_tag() -> None:
-        nonlocal output
         output[tagoffset] = bitbuffer
 
     def _write_bit(value: int) -> None:
-        nonlocal bitcount, bitbuffer, tagoffset, is_tagged, output
+        nonlocal bitcount, bitbuffer, tagoffset, is_tagged
         if bitcount != 0:
             bitcount -= 1
         else:
