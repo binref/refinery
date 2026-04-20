@@ -11,7 +11,7 @@ from __future__ import annotations
 from collections import deque
 from collections.abc import Callable, Generator
 from dataclasses import dataclass, field
-from typing import NamedTuple, TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 from refinery.lib.scripts import Block, Node, Statement, Transformer
 from refinery.lib.scripts.ps1.deobfuscation.emulator import evaluate_truthy
