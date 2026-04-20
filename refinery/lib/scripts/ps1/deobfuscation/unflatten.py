@@ -11,7 +11,7 @@ from __future__ import annotations
 from collections import deque
 from collections.abc import Callable, Generator
 from dataclasses import dataclass, field
-from typing import NamedTuple
+from typing import NamedTuple, TYPE_CHECKING
 
 from refinery.lib.scripts import Block, Node, Statement, Transformer
 from refinery.lib.scripts.ps1.deobfuscation.emulator import evaluate_truthy
@@ -43,8 +43,9 @@ from refinery.lib.scripts.ps1.model import (
 _MAX_STATES = 500
 _MAX_UNROLL_ITERATIONS = 500
 
-_VarKey = tuple[str, Ps1ScopeModifier]
-_StateKey = int | float | str
+if TYPE_CHECKING:
+    _VarKey = tuple[str, Ps1ScopeModifier]
+    _StateKey = int | float | str
 
 
 def _is_bool_literal(node: Node) -> bool | None:
@@ -109,7 +110,8 @@ class _ExitTransition:
         return ()
 
 
-_Transition = _LinearTransition | _ConditionalTransition | _ExitTransition
+if TYPE_CHECKING:
+    _Transition = _LinearTransition | _ConditionalTransition | _ExitTransition
 
 
 @dataclass
