@@ -986,6 +986,73 @@ class TestPs1FunctionEvaluator(TestPs1):
         self.assertIn('Hello', result)
         self.assertNotIn('function', result.lower())
 
+    def test_named_parameters(self):
+        data = (
+            "function F { Param([string]$a, [string]$b); $a + $b }\n"
+            "$x = F -a 'Hel' -b 'lo'\n"
+            "Write-Output $x"
+        )
+        result = self._deobfuscate(data)
+        self.assertIn('Hello', result)
+        self.assertNotIn('function', result.lower())
+
+    def test_named_parameters_unordered(self):
+        data = (
+            "function G { Param([string]$first, [string]$second); $second + $first }\n"
+            "$x = G -second 'World' -first 'Hello'\n"
+            "Write-Output $x"
+        )
+        result = self._deobfuscate(data)
+        self.assertIn('WorldHello', result)
+        self.assertNotIn('function', result.lower())
+
+    def test_constant_inlining_respects_function_scope(self):
+        data = (
+            "$a = 'INLINED'\n"
+            "function F { Param([string]$a); $a }\n"
+            "$x = F -a 'Hello'\n"
+            "Write-Output $x"
+        )
+        result = self._deobfuscate(data)
+        self.assertIn('Hello', result)
+
+    def test_iex_trampoline_function(self):
+        data = (
+            "function Wrapper { Param([string]$code); Invoke-Expression $code > $Null 2> $Null }\n"
+            "function Builder { Param([string]$a, [string]$b); $r = $a + $b; Wrapper '$r' }\n"
+            "Builder -a 'Write-Host ' -b 'Hello'"
+        )
+        result = self._deobfuscate(data)
+        self.assertIn('Write-Host', result)
+        self.assertIn('Hello', result)
+        self.assertNotIn('function Builder', result)
+
+    def test_decoy_function_producing_garbage_is_pruned(self):
+        data = (
+            "function IexWrap { Param([string]$c); Invoke-Expression $c }\n"
+            "function Decoy { Param([string]$a); IexWrap ($a + '!!!###@@@') }\n"
+            "function Real { Param([string]$a, [string]$b); IexWrap ($a + $b) }\n"
+            "Decoy -a '!!!###@@@'\n"
+            "Real -a 'Write-Host ' -b 'OK'"
+        )
+        result = self._deobfuscate(data)
+        self.assertNotIn('function Decoy', result)
+        self.assertNotIn('Decoy', result.split('Write-Host')[0])
+        self.assertIn('Write-Host', result)
+        self.assertIn('OK', result)
+
+    def test_helper_only_called_from_function_bodies_is_pruned(self):
+        data = (
+            "function Helper { Param([string]$x); Invoke-Expression $x }\n"
+            "function Caller { Param([string]$s); Helper $s }\n"
+            "Caller -s 'Write-Host Done'"
+        )
+        result = self._deobfuscate(data)
+        self.assertNotIn('function Helper', result)
+        self.assertNotIn('function Caller', result)
+        self.assertIn('Write-Host', result)
+        self.assertIn('Done', result)
+
 
 class TestPs1IexInlining(TestPs1):
 
@@ -2015,10 +2082,10 @@ class TestPs1ArrayInliningGuard(TestPs1):
 
 class TestPs1ControlCharStringLiteral(TestPs1):
 
-    def test_format_newline_only_produces_here_string(self):
+    def test_format_newline_only_produces_backtick_escape(self):
         code = '"{0}`n{1}" -f "hello","world"'
         result = self._deobfuscate(code)
-        self.assertIn("@'", result)
+        self.assertIn('`n', result)
         self.assertIn('hello', result)
         self.assertIn('world', result)
 

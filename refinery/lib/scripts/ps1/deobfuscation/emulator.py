@@ -48,6 +48,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1CommandInvocation,
     Ps1ContinueStatement,
     Ps1DoLoop,
+    Ps1ErrorNode,
     Ps1ExpandableHereString,
     Ps1ExpandableString,
     Ps1ExpressionStatement,
@@ -60,6 +61,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1IntegerLiteral,
     Ps1InvokeMember,
     Ps1MemberAccess,
+    Ps1ParameterDeclaration,
     Ps1ParenExpression,
     Ps1Pipeline,
     Ps1PipelineElement,
@@ -90,6 +92,16 @@ class _ReturnSignal(Exception):
         self.value = value
 
 
+class InvokeExpression(Exception):
+    """
+    Raised when the interpreter encounters `Invoke-Expression` with a string argument. Instead of
+    attempting to execute the string (which may contain constructs the interpreter cannot handle),
+    the string is propagated upward so the function evaluator can emit it as a literal replacement.
+    """
+    def __init__(self, code: str):
+        self.code = code
+
+
 class _BreakSignal(Exception):
     pass
 
@@ -104,9 +116,13 @@ class _Ps1Interpreter:
         self,
         max_iterations: int = _MAX_INTERPRETER_ITERATIONS,
         max_string_len: int = _MAX_INTERPRETER_STRING_LEN,
+        functions: Mapping[str, Ps1FunctionDefinition] | None = None,
+        parent_env: dict[str, _Value] | None = None,
     ):
         self.max_iterations = max_iterations
         self.max_string_len = max_string_len
+        self._functions: Mapping[str, Ps1FunctionDefinition] = functions or {}
+        self._parent_env: dict[str, _Value] | None = parent_env
         self._env: dict[str, _Value] = {}
         self._iterations = 0
 
@@ -164,9 +180,10 @@ class _Ps1Interpreter:
         elem = node.elements[0]
         if not isinstance(elem, Ps1PipelineElement):
             raise _Ps1InterpreterError
+        result = self._eval(elem.expression)
         if elem.redirections:
-            raise _Ps1InterpreterError
-        return self._eval(elem.expression)
+            return None
+        return result
 
     def _exec_for(self, node: Ps1ForLoop) -> _Value:
         if node.initializer:
@@ -350,8 +367,78 @@ class _Ps1Interpreter:
         if not isinstance(node.name, Ps1StringLiteral):
             raise _Ps1InterpreterError
         cmd = node.name.value.lower().replace('-', '')
-        if cmd != 'newobject':
+        if cmd in ('iex', 'invokeexpression'):
+            return self._eval_iex(node)
+        if cmd == 'newobject':
+            return self._eval_new_object(node)
+        return self._eval_user_function_call(node, cmd)
+
+    def _eval_iex(self, node: Ps1CommandInvocation) -> _Value:
+        positional = self._collect_positional_args(node)
+        if len(positional) != 1:
             raise _Ps1InterpreterError
+        code_str = positional[0]
+        if not isinstance(code_str, str):
+            raise _Ps1InterpreterError
+        raise InvokeExpression(code_str)
+
+    def _eval_user_function_call(
+        self, node: Ps1CommandInvocation, cmd: str,
+    ) -> _Value:
+        funcdef = self._functions.get(cmd)
+        if funcdef is None:
+            raise _Ps1InterpreterError
+        body = funcdef.body
+        if body is None:
+            raise _Ps1InterpreterError
+        if body.begin_block or body.process_block:
+            raise _Ps1InterpreterError
+        if body.end_block or body.dynamicparam_block:
+            raise _Ps1InterpreterError
+        positional = self._collect_positional_args(node)
+        bindings = Ps1FunctionEvaluator._bind_parameters(funcdef, positional)
+        if bindings is None:
+            raise _Ps1InterpreterError
+        child = _Ps1Interpreter(
+            max_iterations=self.max_iterations - self._iterations,
+            max_string_len=self.max_string_len,
+            functions=self._functions,
+            parent_env=self._env,
+        )
+        try:
+            result = child.execute(body, bindings)
+        except InvokeExpression as iex:
+            return self._resolve_iex_code(iex.code)
+        except _Ps1InterpreterError:
+            raise
+        finally:
+            self._iterations += child._iterations
+        return result
+
+    def _resolve_iex_code(self, code: str) -> _Value:
+        """
+        When a called function raises `_IexSignal`, the code string may be
+        a simple variable reference like ``$varName``.  Resolve it in the
+        current scope before propagating via `_IexSignal`.
+        """
+        from refinery.lib.scripts.ps1.parser import Ps1Parser
+        try:
+            parsed = Ps1Parser(code).parse()
+        except Exception:
+            raise InvokeExpression(code)
+        if (
+            len(parsed.body) == 1
+            and isinstance(parsed.body[0], Ps1ExpressionStatement)
+        ):
+            expr = parsed.body[0].expression
+            if isinstance(expr, Ps1Variable):
+                resolved = self._eval_variable(expr)
+                if isinstance(resolved, str):
+                    raise InvokeExpression(resolved)
+                raise _Ps1InterpreterError
+        raise InvokeExpression(code)
+
+    def _collect_positional_args(self, node: Ps1CommandInvocation) -> list[_Value]:
         positional: list[_Value] = []
         for arg in node.arguments:
             if isinstance(arg, Ps1CommandArgument):
@@ -361,8 +448,12 @@ class _Ps1Interpreter:
             elif isinstance(arg, Expression):
                 expr = arg
             else:
-                raise _Ps1InterpreterError
+                continue
             positional.append(self._eval(expr) if expr is not None else None)
+        return positional
+
+    def _eval_new_object(self, node: Ps1CommandInvocation) -> _Value:
+        positional = self._collect_positional_args(node)
         if len(positional) != 2:
             raise _Ps1InterpreterError
         type_name = positional[0]
@@ -416,7 +507,11 @@ class _Ps1Interpreter:
             return False
         if name == 'null':
             return None
-        return self._env.get(name)
+        if name in self._env:
+            return self._env[name]
+        if self._parent_env is not None:
+            return self._parent_env.get(name)
+        return None
 
     def _eval_assignment(self, node: Ps1AssignmentExpression) -> _Value:
         if isinstance(node.target, Ps1IndexExpression):
@@ -986,6 +1081,8 @@ class _Ps1Interpreter:
             return str(value)
         if isinstance(value, float):
             return str(value)
+        if isinstance(value, list):
+            return ' '.join(_Ps1Interpreter._to_str(item) for item in value)
         raise _Ps1InterpreterError
 
     @staticmethod
@@ -1022,6 +1119,8 @@ class Ps1FunctionEvaluator(Transformer):
         self._functions: dict[str, Ps1FunctionDefinition] = {}
         self._call_counts: dict[str, int] = {}
         self._replaced_counts: dict[str, int] = {}
+        self._failed_counts: dict[str, int] = {}
+        self._callers: dict[str, set[str]] = {}
         self._entry = False
 
     def visit(self, node):
@@ -1032,6 +1131,8 @@ class Ps1FunctionEvaluator(Transformer):
             self._functions.clear()
             self._call_counts.clear()
             self._replaced_counts.clear()
+            self._failed_counts.clear()
+            self._callers.clear()
             self._collect_functions(node)
             if not self._functions:
                 return None
@@ -1051,6 +1152,18 @@ class Ps1FunctionEvaluator(Transformer):
                 if node.body is None:
                     continue
                 self._functions[node.name.lower()] = node
+        func_names = set(self._functions)
+        for caller_key, funcdef in self._functions.items():
+            for node in funcdef.walk():
+                if isinstance(node, Ps1CommandInvocation):
+                    name = get_command_name(node)
+                    if name is not None:
+                        callee = name.lower()
+                        if callee in func_names and callee != caller_key:
+                            self._callers.setdefault(callee, set()).add(caller_key)
+
+    def visit_Ps1FunctionDefinition(self, node: Ps1FunctionDefinition):
+        return None
 
     def visit_Ps1CommandInvocation(self, node: Ps1CommandInvocation):
         self.generic_visit(node)
@@ -1071,11 +1184,19 @@ class Ps1FunctionEvaluator(Transformer):
         interpreter = _Ps1Interpreter(
             max_iterations=self.max_iterations,
             max_string_len=self.max_string_len,
+            functions=self._functions,
         )
         if funcdef.body is None:
             return None
         try:
             result = interpreter.execute(funcdef.body, bindings)
+        except InvokeExpression as iex:
+            replacement = self._make_iex_node(iex.code)
+            if replacement is None:
+                self._failed_counts[key] = self._failed_counts.get(key, 0) + 1
+                return None
+            self._replaced_counts[key] = self._replaced_counts.get(key, 0) + 1
+            return replacement
         except _Ps1InterpreterError:
             return None
         replacement = self._value_to_node(result)
@@ -1085,63 +1206,139 @@ class Ps1FunctionEvaluator(Transformer):
         return replacement
 
     @staticmethod
-    def _extract_constant_args(node: Ps1CommandInvocation) -> list[_Value] | None:
+    def _extract_constant_value(val: Expression | None) -> tuple[bool, _Value]:
+        """
+        Try to extract a constant value from a command argument expression.
+        - Returns `(True, value)` on success.
+        - Returns `(False, None)` on failure.
+        """
+        sv = string_value(val) if val is not None else None
+        if sv is not None:
+            return True, sv
+        if isinstance(val, Ps1IntegerLiteral):
+            return True, val.value
+        if isinstance(val, Ps1RealLiteral):
+            return True, val.value
+        return False, None
+
+    @staticmethod
+    def _extract_constant_args(
+        node: Ps1CommandInvocation,
+    ) -> list[_Value] | dict[str, _Value] | None:
+        arguments = node.arguments
+        has_switch = any(
+            isinstance(a, Ps1CommandArgument)
+            and a.kind == Ps1CommandArgumentKind.SWITCH
+            for a in arguments
+        )
+        if has_switch:
+            named: dict[str, _Value] = {}
+            i = 0
+            while i < len(arguments):
+                arg = arguments[i]
+                if isinstance(arg, Ps1CommandArgument):
+                    if arg.kind == Ps1CommandArgumentKind.SWITCH:
+                        param_name = arg.name.lstrip('-').lower()
+                        i += 1
+                        if i >= len(arguments):
+                            return None
+                        val_arg = arguments[i]
+                        if isinstance(val_arg, Ps1CommandArgument):
+                            if val_arg.kind != Ps1CommandArgumentKind.POSITIONAL:
+                                return None
+                            val_expr = val_arg.value
+                        elif isinstance(val_arg, Expression):
+                            val_expr = val_arg
+                        else:
+                            return None
+                        ok, val = Ps1FunctionEvaluator._extract_constant_value(val_expr)
+                        if not ok:
+                            return None
+                        named[param_name] = val
+                        i += 1
+                        continue
+                    if arg.kind == Ps1CommandArgumentKind.NAMED:
+                        ok, val = Ps1FunctionEvaluator._extract_constant_value(arg.value)
+                        if not ok:
+                            return None
+                        named[arg.name.lstrip('-').lower()] = val
+                        i += 1
+                        continue
+                    return None
+                else:
+                    return None
+            return named
         args: list[_Value] = []
-        for arg in node.arguments:
+        for arg in arguments:
             if isinstance(arg, Ps1CommandArgument):
+                if arg.kind == Ps1CommandArgumentKind.NAMED:
+                    ok, val = Ps1FunctionEvaluator._extract_constant_value(arg.value)
+                    if not ok:
+                        return None
+                    args.append(val)
+                    continue
                 if arg.kind != Ps1CommandArgumentKind.POSITIONAL:
                     return None
-                val = arg.value
+                val_expr = arg.value
             elif isinstance(arg, Expression):
-                val = arg
+                val_expr = arg
             else:
                 return None
-            sv = string_value(val) if val is not None else None
-            if sv is not None:
-                args.append(sv)
-                continue
-            if isinstance(val, Ps1IntegerLiteral):
-                args.append(val.value)
-                continue
-            if isinstance(val, Ps1RealLiteral):
-                args.append(val.value)
-                continue
-            return None
+            ok, extracted = Ps1FunctionEvaluator._extract_constant_value(val_expr)
+            if not ok:
+                return None
+            args.append(extracted)
         return args
 
     @staticmethod
     def _bind_parameters(
         funcdef: Ps1FunctionDefinition,
-        args: list[_Value],
+        args: list[_Value] | dict[str, _Value],
     ) -> dict[str, _Value] | None:
         body = funcdef.body
         if body is None:
             return None
         param_block = body.param_block
+
+        def _default(param: Ps1ParameterDeclaration) -> tuple[bool, _Value]:
+            if param.default_value is not None:
+                return Ps1FunctionEvaluator._extract_constant_value(param.default_value)
+            return True, None
+
+        if isinstance(args, dict):
+            if param_block is None:
+                return {} if not args else None
+            bindings: dict[str, _Value] = {}
+            for param in param_block.parameters:
+                if not isinstance(param.variable, Ps1Variable):
+                    return None
+                key = param.variable.name.lower()
+                if key in args:
+                    bindings[key] = args[key]
+                else:
+                    ok, val = _default(param)
+                    if not ok:
+                        return None
+                    bindings[key] = val
+            return bindings
+
         if param_block is None:
             if args:
                 return {'args': args}
             return {}
         params = param_block.parameters
-        bindings: dict[str, _Value] = {}
+        bindings = {}
         for i, param in enumerate(params):
             if not isinstance(param.variable, Ps1Variable):
                 return None
             key = param.variable.name.lower()
             if i < len(args):
                 bindings[key] = args[i]
-            elif param.default_value is not None:
-                sv = string_value(param.default_value)
-                if sv is not None:
-                    bindings[key] = sv
-                elif isinstance(param.default_value, Ps1IntegerLiteral):
-                    bindings[key] = param.default_value.value
-                elif isinstance(param.default_value, Ps1RealLiteral):
-                    bindings[key] = param.default_value.value
-                else:
-                    return None
             else:
-                bindings[key] = None
+                ok, val = _default(param)
+                if not ok:
+                    return None
+                bindings[key] = val
         return bindings
 
     @staticmethod
@@ -1152,24 +1349,109 @@ class Ps1FunctionEvaluator(Transformer):
             return Ps1IntegerLiteral(value=value, raw=str(value))
         return None
 
-    def _remove_resolved_definitions(self, _root):
+    @staticmethod
+    def _make_iex_node(code: str) -> Ps1CommandInvocation | None:
+        """
+        Build an `Invoke-Expression 'code'` command node so that the existing IEX-inlining pass
+        can pick it up in a later round. Returns `None` when the code string is empty or does not
+        parse into a valid PowerShell AST (i.e. contains error nodes).
+        """
+        if not code or not code.strip():
+            return None
+        from refinery.lib.scripts.ps1.parser import Ps1Parser
+        try:
+            parsed = Ps1Parser(code).parse()
+        except Exception:
+            return None
+        for node in parsed.walk():
+            if isinstance(node, Ps1ErrorNode):
+                return None
+        return Ps1CommandInvocation(
+            name=Ps1StringLiteral(value='Invoke-Expression', raw='Invoke-Expression'),
+            arguments=[Ps1CommandArgument(
+                kind=Ps1CommandArgumentKind.POSITIONAL,
+                name='',
+                value=make_string_literal(code),
+            )],
+        )
+
+    def _remove_resolved_definitions(self, root):
+        removed: set[str] = set()
+        dead_functions: set[str] = set()
         for key, funcdef in self._functions.items():
             call_count = self._call_counts.get(key, 0)
-            replaced_count = self._replaced_counts.get(key, 0)
-            if call_count == 0 or replaced_count < call_count:
+            if call_count == 0:
                 continue
-            parent = funcdef.parent
-            if parent is None:
+            replaced = self._replaced_counts.get(key, 0)
+            failed = self._failed_counts.get(key, 0)
+            if (replaced + failed) < call_count:
                 continue
-            if isinstance(parent, Ps1Script):
-                body = parent.body
-            elif isinstance(parent, Block):
-                body = parent.body
-            else:
+            if self._remove_funcdef(funcdef):
+                removed.add(key)
+            if failed > 0:
+                dead_functions.add(key)
+        for key, funcdef in self._functions.items():
+            if key in removed:
                 continue
-            if funcdef in body:
-                body.remove(funcdef)
-                self.mark_changed()
+            callers = self._callers.get(key)
+            if callers is None or not callers:
+                continue
+            if not callers.issubset(removed):
+                continue
+            self._remove_funcdef(funcdef)
+            removed.add(key)
+        if dead_functions:
+            self._remove_dead_calls(root, dead_functions)
+
+    def _remove_funcdef(self, funcdef: Ps1FunctionDefinition) -> bool:
+        parent = funcdef.parent
+        if parent is None:
+            return False
+        if isinstance(parent, Ps1Script):
+            body = parent.body
+        elif isinstance(parent, Block):
+            body = parent.body
+        else:
+            return False
+        if funcdef in body:
+            body.remove(funcdef)
+            self.mark_changed()
+            return True
+        return False
+
+    def _remove_dead_calls(self, root, dead_functions: set[str]):
+        if isinstance(root, Ps1Script):
+            body = root.body
+        elif isinstance(root, Block):
+            body = root.body
+        else:
+            return
+        to_remove = []
+        for stmt in body:
+            target = self._get_call_target(stmt)
+            if target is not None and target in dead_functions:
+                to_remove.append(stmt)
+        for stmt in to_remove:
+            body.remove(stmt)
+            self.mark_changed()
+
+    @staticmethod
+    def _get_call_target(stmt) -> str | None:
+        if isinstance(stmt, Ps1ExpressionStatement):
+            expr = stmt.expression
+        elif isinstance(stmt, Ps1Pipeline):
+            expr = stmt
+        else:
+            return None
+        if isinstance(expr, Ps1Pipeline) and len(expr.elements) == 1:
+            elem = expr.elements[0]
+            if isinstance(elem, Ps1PipelineElement):
+                expr = elem.expression
+        if isinstance(expr, Ps1CommandInvocation):
+            name = get_command_name(expr)
+            if name:
+                return name.lower()
+        return None
 
 
 class Ps1ForEachPipeline(Transformer):

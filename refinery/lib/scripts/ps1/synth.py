@@ -6,6 +6,7 @@ from __future__ import annotations
 import io
 
 from refinery.lib.scripts import Block, Node, Synthesizer
+from refinery.lib.scripts.ps1.deobfuscation.helpers import BACKTICK_ENCODE
 from refinery.lib.scripts.ps1.model import (
     Expression,
     Ps1ArrayExpression,
@@ -101,7 +102,10 @@ class Ps1Synthesizer(Synthesizer):
         self._write(node.raw)
 
     def visit_Ps1StringLiteral(self, node: Ps1StringLiteral):
-        self._write(node.raw)
+        if '\n' in node.raw:
+            self._write(F'"{self._escape_for_dq(node.value)}"')
+        else:
+            self._write(node.raw)
 
     def visit_Ps1ExpandableString(self, node: Ps1ExpandableString):
         self._write('"')
@@ -123,10 +127,17 @@ class Ps1Synthesizer(Synthesizer):
 
     @staticmethod
     def _escape_for_dq(value: str) -> str:
-        return value.replace('`', '``').replace('"', '""').replace('$', '`$')
+        for c in '`"$':
+            value = value.replace(c, F'`{c}')
+        for ch, esc in BACKTICK_ENCODE.items():
+            value = value.replace(ch, esc)
+        return value
 
     def visit_Ps1HereString(self, node: Ps1HereString):
-        self._write(node.raw)
+        if '\n' in node.value:
+            self._write(F'"{self._escape_for_dq(node.value)}"')
+        else:
+            self._write(node.raw)
 
     def visit_Ps1ExpandableHereString(self, node: Ps1ExpandableHereString):
         self._write(node.raw)

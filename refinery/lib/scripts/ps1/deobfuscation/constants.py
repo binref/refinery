@@ -31,6 +31,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1ExpressionStatement,
     Ps1ForEachLoop,
     Ps1ForLoop,
+    Ps1FunctionDefinition,
     Ps1HereString,
     Ps1IfStatement,
     Ps1IndexExpression,
@@ -235,6 +236,21 @@ def _inside_try_body(node: Node) -> bool:
     return False
 
 
+def _walk_outer_scope(root: Node):
+    """
+    Walk the AST like `root.walk()` but skip the bodies of `Ps1FunctionDefinition` nodes. The
+    function definition node itself is yielded so that it can still be removed or inspected.
+    """
+    stack: list[Node] = [root]
+    while stack:
+        node = stack.pop()
+        yield node
+        if isinstance(node, Ps1FunctionDefinition):
+            continue
+        for child in node.children():
+            stack.append(child)
+
+
 def _find_body_entry(node: Node) -> tuple[list, int] | None:
     cursor = node
     while cursor.parent is not None:
@@ -307,7 +323,7 @@ class Ps1ConstantInlining(Transformer):
             value_keys.pop(k, None)
             scope_entries.pop(k, None)
 
-        for node in root.walk():
+        for node in _walk_outer_scope(root):
             if isinstance(node, Ps1AssignmentExpression):
                 target = _assignment_target_variable(node.target)
                 if target is not None:
@@ -393,7 +409,7 @@ class Ps1ConstantInlining(Transformer):
         # Pre-count references to decide whether inlining would bloat the code.
         # Variables referenced more than once with long values are kept as-is.
         ref_counts: dict[str, int] = {}
-        for node in root.walk():
+        for node in _walk_outer_scope(root):
             if isinstance(node, Ps1IndexExpression):
                 var = node.object
                 if isinstance(var, Ps1Variable):
@@ -422,7 +438,7 @@ class Ps1ConstantInlining(Transformer):
 
         handled_vars: set[int] = set()
 
-        for node in list(root.walk()):
+        for node in list(_walk_outer_scope(root)):
             if isinstance(node, Ps1IndexExpression):
                 var = node.object
                 if isinstance(var, Ps1Variable):
