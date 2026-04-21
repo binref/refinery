@@ -66,7 +66,7 @@ The hard limit for code is at **140** characters to allow occasional code lines 
 
 ### Lists
 
-This section applies to set, tuple, and list definitions as well as function argument lists.
+This section applies to frozenset, set, tuple, and list definitions as well as function argument lists.
 
 When a function call or definition becomes too long for the line width limit,
 it should be split up with exactly one item on each line, like so:
@@ -126,6 +126,8 @@ literal = [
   value3,
 ]
 ```
+Notably: **No** property makes items exempt from the one item per line rule.
+For absolutely no reason may items be grouped on one line when there are multiple lines in a sequence definition.
 
 ### Docstrings
 

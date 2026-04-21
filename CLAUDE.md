@@ -1,9 +1,11 @@
-# Agent Checklist
+# Mandatory Work Protocol
 
-- Read [README](README.md) to understand the project goal and design.
-- Read the [STYLEGUIDE](STYLEGUIDE.md) and make sure that all written code is compliant with it.
+The following steps must be taken each time your context window resets:
 
-## Style Rules That Differ From PEP 8
+1. Read [README](README.md) to understand the project goal and design.
+2. Read the [STYLEGUIDE](STYLEGUIDE.md) and make sure that all written code is compliant with it.
+
+## Reference: Style Rules That Differ From PEP 8
 
 The following rules contradict common Python conventions. Check them explicitly:
 
@@ -23,7 +25,7 @@ The following rules contradict common Python conventions. Check them explicitly:
   for k in [1, 2,
             3, 4]:
   ```
-  Use one-level indentation with closing bracket on its own line.
+  Use one-level indentation with closing bracket on its own line and **exactly one item per line**.
 - **DO NOT** put conditions on the same line as `if (`:
   ```python
   # WRONG:
@@ -37,8 +39,8 @@ The following rules contradict common Python conventions. Check them explicitly:
   ):
   ```
 - **DO NOT** use double quotes for strings. Single quotes only (except docstrings).
-- **DO NOT** use `Optional`, `Union`, or `List` from `typing` in annotations. Use `X | None`, `X | Y`, `list[X]`.
-- **DO NOT** write comments unless the information absolutely cannot be communicated by naming or structure. Never write comments that reference external source code.
+- **DO NOT** write comments unless the information absolutely cannot be communicated by naming or structure.
+  Never write comments that reference external source code.
 
 # Rules of Engagement
 
