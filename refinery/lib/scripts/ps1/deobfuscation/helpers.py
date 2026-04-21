@@ -187,6 +187,20 @@ def get_body(node) -> list | None:
     return None
 
 
+def inside_value_producing_context(node) -> bool:
+    """
+    Return `True` when `node` is or is nested inside a `Ps1SubExpression` or `Ps1ScriptBlock`.
+    These are expression contexts whose statement bodies produce return values and must not be
+    pruned as junk or dead code.
+    """
+    cursor = node
+    while cursor is not None:
+        if isinstance(cursor, (Ps1SubExpression, Ps1ScriptBlock)):
+            return True
+        cursor = cursor.parent
+    return False
+
+
 def unwrap_parens(node: Node) -> Node:
     """
     Unwrap nested `Ps1ParenExpression` wrappers, stopping at an empty-parens node.

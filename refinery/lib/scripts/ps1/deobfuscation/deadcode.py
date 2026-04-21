@@ -6,6 +6,7 @@ from __future__ import annotations
 from refinery.lib.scripts import Block, Expression, Node, Statement, Transformer
 from refinery.lib.scripts.ps1.deobfuscation.helpers import (
     get_body,
+    inside_value_producing_context,
     is_builtin_variable,
     unwrap_integer,
     unwrap_parens,
@@ -26,7 +27,6 @@ from refinery.lib.scripts.ps1.model import (
     Ps1ScopeModifier,
     Ps1Script,
     Ps1StringLiteral,
-    Ps1SubExpression,
     Ps1SwitchStatement,
     Ps1UnaryExpression,
     Ps1Variable,
@@ -150,7 +150,7 @@ class Ps1DeadCodeElimination(Transformer):
 
     def visit(self, node: Node):
         for parent in list(node.walk()):
-            if isinstance(parent, Ps1SubExpression):
+            if inside_value_producing_context(parent):
                 continue
             body = get_body(parent)
             if body is None:

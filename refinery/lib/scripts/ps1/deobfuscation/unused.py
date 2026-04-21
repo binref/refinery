@@ -12,7 +12,11 @@ from refinery.lib.scripts.ps1.deobfuscation.constants import (
     _find_removable_statement,
     _walk_outer_scope,
 )
-from refinery.lib.scripts.ps1.deobfuscation.helpers import get_body, get_command_name
+from refinery.lib.scripts.ps1.deobfuscation.helpers import (
+    get_body,
+    get_command_name,
+    inside_value_producing_context,
+)
 from refinery.lib.scripts.ps1.deobfuscation.names import PS1_KNOWN_VARIABLES
 from refinery.lib.scripts.ps1.model import (
     Expression,
@@ -318,17 +322,47 @@ class Ps1JunkStatementRemoval(Transformer):
     """
 
     def visit(self, node: Node):
-        called: set[str] = set()
-        for n in _walk_outer_scope(node):
-            if isinstance(n, Ps1CommandInvocation):
-                name = get_command_name(n)
-                if name is not None:
-                    called.add(name.lower())
+        called = self._reachable_functions(node)
         for parent in list(_walk_outer_scope(node)):
+            if inside_value_producing_context(parent):
+                continue
             body = get_body(parent)
             if body is None:
                 continue
             self._prune_body(body, parent is node, called)
+
+    @staticmethod
+    def _reachable_functions(node: Node) -> set[str]:
+        """
+        Collect all function names transitively reachable from top-level call sites. First gather
+        direct calls from the outer scope, then expand through function bodies until stable.
+        """
+        directly_called: set[str] = set()
+        functions: dict[str, Ps1FunctionDefinition] = {}
+        for n in _walk_outer_scope(node):
+            if isinstance(n, Ps1CommandInvocation):
+                name = get_command_name(n)
+                if name is not None:
+                    directly_called.add(name.lower())
+            elif isinstance(n, Ps1FunctionDefinition):
+                functions[n.name.lower()] = n
+        reachable = set(directly_called)
+        frontier = list(reachable & functions.keys())
+        while frontier:
+            fname = frontier.pop()
+            fdef = functions[fname]
+            if fdef.body is None:
+                continue
+            for n in fdef.body.walk():
+                if isinstance(n, Ps1CommandInvocation):
+                    name = get_command_name(n)
+                    if name is not None:
+                        key = name.lower()
+                        if key not in reachable:
+                            reachable.add(key)
+                            if key in functions:
+                                frontier.append(key)
+        return reachable
 
     def _prune_body(self, body: list, is_root: bool, called: set[str]):
         removable_set: set[int] = set()

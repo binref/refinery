@@ -1777,6 +1777,14 @@ class TestPs1DeadCodeElimination(TestPs1):
         self.assertIn('suffix', result)
         self.assertNotIn('prefix""suffix', result.replace(' ', ''))
 
+    def test_scriptblock_body_constant_preserved(self):
+        result = self._deobfuscate('$x = & { $True }')
+        self.assertIn('$True', result)
+
+    def test_scriptblock_body_numeric_preserved(self):
+        result = self._deobfuscate('$x = & { 42 }')
+        self.assertIn('42', result)
+
 
 class TestPs1CharIntFolding(TestPs1):
 
@@ -2436,3 +2444,21 @@ class TestPs1JunkStatementRemoval(TestPs1):
             'while ($True) { [Void]"noise"; Write-Host running; break }')
         self.assertNotIn('noise', result)
         self.assertIn('running', result)
+
+    def test_subexpression_body_preserved(self):
+        result = self._deobfuscate("$x = $($a.Name + '.' + $a.Extension)")
+        self.assertIn('.Name', result)
+        self.assertIn('.Extension', result)
+
+    def test_scriptblock_body_preserved(self):
+        result = self._deobfuscate('1,2,3 | ForEach-Object { $_.ToString() }')
+        self.assertIn('.ToString()', result)
+
+    def test_transitive_function_calls_preserved(self):
+        result = self._deobfuscate(
+            'function Inner { Get-Date }\n'
+            'function Outer { Inner }\n'
+            'Outer\n'
+        )
+        self.assertIn('Inner', result)
+        self.assertIn('Get-Date', result)
