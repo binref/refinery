@@ -68,10 +68,8 @@ cdef int _replay(
 
 
 cdef int32_t _s32shift(int32_t k, int shift) noexcept nogil:
-    cdef uint32_t M = <uint32_t>(1) << 32
     shift = shift % 32
-    k = <int32_t>((<uint32_t>k * (<uint32_t>(1) << shift)) % M)
-    return k
+    return <int32_t>((<uint32_t>k) << shift)
 
 
 cdef int _make_decode_table(
