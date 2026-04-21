@@ -784,11 +784,6 @@ class TestPs1ConstantInlining(TestPs1):
         result = self._deobfuscate("$x = Get-Date; Write-Output $x")
         self.assertIn('$x', result)
 
-    def test_zero_ref_constant_not_pruned(self):
-        result = self._deobfuscate("$url = 'http://evil.com'; Write-Host done")
-        self.assertIn('$url', result)
-        self.assertIn('http://evil.com', result)
-
     def test_env_comspec_inlined(self):
         result = self._deobfuscate("$x = $env:ComSpec[4]")
         self.assertNotIn('ComSpec', result)
@@ -1684,7 +1679,7 @@ class TestPs1DeadCodeElimination(TestPs1):
 
     def test_for_break_not_last_preserved(self):
         result = self._deobfuscate(
-            "for($i=0;$i -lt 5;$i++){break; $x = 1}")
+            "for($i=0;$i -lt 5;$i++){break; Write-Host done}")
         self.assertIn('for', result.lower())
 
     def test_for_break_only(self):
@@ -1721,7 +1716,7 @@ class TestPs1DeadCodeElimination(TestPs1):
 
     def test_while_break_unknown_condition_guarded(self):
         result = self._deobfuscate(
-            "while(Get-Random){$x = 42; break}")
+            "while(Get-Random){Write-Host 42; break}")
         self.assertNotIn('while', result.lower())
         self.assertNotIn('break', result.lower())
         self.assertIn('if', result.lower())
@@ -1853,7 +1848,8 @@ class TestPs1DeadBranchInlining(TestPs1):
         result = self._deobfuscate_iterative(
             'if ($y -GE 100) { $a = 500 }\n'
             '$b = $a - 700\n'
-            '$c = [Char][int]$b'
+            '$c = [Char][int]$b\n'
+            'Write-Host $c'
         )
         self.assertNotIn('$y', result)
         self.assertNotIn('$a', result)
@@ -2316,3 +2312,56 @@ class TestPs1ControlFlowDeflattening(TestPs1):
         self.assertNotIn('switch', result)
         self.assertNotIn('while', result)
         self.assertIn('$script:msg', result)
+
+
+class TestPs1UnusedVariableRemoval(TestPs1):
+
+    def test_unused_constant_assignment_removed(self):
+        result = self._deobfuscate("$x = 'hello'; Write-Host done")
+        self.assertNotIn('$x', result)
+        self.assertNotIn('hello', result)
+        self.assertIn('done', result)
+
+    def test_multiple_unused_removed(self):
+        result = self._deobfuscate("$a = 1; $b = 2; Write-Host done")
+        self.assertNotIn('$a', result)
+        self.assertNotIn('$b', result)
+        self.assertIn('done', result)
+
+    def test_used_variable_kept(self):
+        result = self._deobfuscate("$x = 'hello'; Write-Host $x")
+        self.assertIn('hello', result)
+
+    def test_side_effect_rhs_preserved(self):
+        result = self._deobfuscate("$x = Get-Date; Write-Host done")
+        self.assertNotIn('$x', result)
+        self.assertIn('Get-Date', result)
+        self.assertIn('done', result)
+
+    def test_increment_removed(self):
+        result = self._deobfuscate("$x = 0; $x++; Write-Host done")
+        self.assertNotIn('$x', result)
+        self.assertIn('done', result)
+
+    def test_foreach_variable_preserved(self):
+        result = self._deobfuscate(
+            "foreach ($item in @(1,2,3)) { Write-Host 'hi' }")
+        self.assertIn('foreach', result.lower())
+
+    def test_scoped_variable_preserved(self):
+        result = self._deobfuscate("$script:x = 42; Write-Host done")
+        self.assertIn('$script:x', result)
+
+    def test_parameter_preserved(self):
+        result = self._deobfuscate(
+            "function Test { Param($x); Write-Host done }; Test")
+        self.assertIn('$x', result)
+
+    def test_compound_assignment_removed(self):
+        result = self._deobfuscate("$x = 0; $x += 1; Write-Host done")
+        self.assertNotIn('$x', result)
+        self.assertIn('done', result)
+
+    def test_self_referential_kept(self):
+        result = self._deobfuscate("$x = 0; $x = $x + 1; Write-Host $x")
+        self.assertIn('$x', result)

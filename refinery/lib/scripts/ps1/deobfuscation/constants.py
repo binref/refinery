@@ -284,6 +284,28 @@ def _is_dominated_by(node: Node, scope_entries: list[tuple[list, int]]) -> bool:
     return not reached_root
 
 
+def _find_removable_statement(node: Node) -> Node | None:
+    """
+    Walk upward from an expression node to find the statement-level node that can be removed from
+    its parent's body list.
+    """
+    cursor = node
+    while cursor.parent is not None:
+        parent = cursor.parent
+        if isinstance(parent, Ps1ExpressionStatement):
+            cursor = parent
+            continue
+        if isinstance(parent, Ps1PipelineElement):
+            cursor = parent
+            continue
+        if isinstance(parent, Ps1Pipeline):
+            if len(parent.elements) == 1:
+                cursor = parent
+                continue
+        return cursor
+    return None
+
+
 class Ps1ConstantInlining(Transformer):
 
     def __init__(self, max_inline_length: int = 64, min_inlines_to_prune: int | None = 1):
@@ -585,24 +607,7 @@ class Ps1ConstantInlining(Transformer):
                 if _remove_from_parent(stmt):
                     self.mark_changed()
 
-    @staticmethod
-    def _find_removable_statement(assign_node: Ps1AssignmentExpression) -> Node | None:
-        cursor = assign_node
-        while cursor.parent is not None:
-            parent = cursor.parent
-            if isinstance(parent, Ps1ExpressionStatement):
-                cursor = parent
-                continue
-            if isinstance(parent, Ps1PipelineElement):
-                cursor = parent
-                continue
-            if isinstance(parent, Ps1Pipeline):
-                if len(parent.elements) == 1:
-                    cursor = parent
-                    continue
-            # cursor is the statement to remove from parent's body list
-            return cursor
-        return None
+    _find_removable_statement = staticmethod(_find_removable_statement)
 
 
 class Ps1NullVariableInlining(Transformer):
