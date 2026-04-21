@@ -144,6 +144,13 @@ class TestPs1Deobfuscator(TestPs1):
         self.assertIn('0x02', result)
         self.assertIn('0x03', result)
 
+    def test_b64convert_parenthesized_type(self):
+        data = '([Convert])::FromBase64String("AQID")'
+        result = self._deobfuscate(data)
+        self.assertIn('0x01', result)
+        self.assertIn('0x02', result)
+        self.assertIn('0x03', result)
+
     def test_encoding_utf8(self):
         data = '[System.Text.Encoding]::UTF8.GetString(@(72, 101, 108, 108, 111))'
         result = self._deobfuscate(data)
@@ -1401,9 +1408,9 @@ class TestPs1ParserModeRescan(TestPs1):
             '$X = [Convert];'
             ' (Get-Variable X -ValueOnly)::FromBase64String("AAAA")'
         )
-        self.assertIn('::FromBase64String', result)
-        self.assertIn('Convert', result)
+        self.assertIn('0x00', result)
         self.assertNotIn('Get-Variable', result)
+        self.assertNotIn('FromBase64String', result)
 
     def test_member_name_case_normalization(self):
         result = self._deobfuscate(

@@ -83,7 +83,7 @@ class Ps1Simplifications(LocalFunctionAwareTransformer):
     def visit_Ps1ParenExpression(self, node: Ps1ParenExpression):
         self.generic_visit(node)
         inner = node.expression
-        if isinstance(inner, (Ps1StringLiteral, Ps1HereString, Ps1IntegerLiteral, Ps1RealLiteral)):
+        if isinstance(inner, (Ps1StringLiteral, Ps1HereString, Ps1IntegerLiteral, Ps1RealLiteral, Ps1TypeExpression)):
             return inner
         return None
 
