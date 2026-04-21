@@ -19,7 +19,7 @@ from refinery.lib.scripts.ps1.deobfuscation.simplify import Ps1Simplifications
 from refinery.lib.scripts.ps1.deobfuscation.typecast import Ps1TypeCasts
 from refinery.lib.scripts.ps1.deobfuscation.typenames import Ps1TypeSystemSimplifications
 from refinery.lib.scripts.ps1.deobfuscation.unflatten import Ps1ControlFlowDeflattening
-from refinery.lib.scripts.ps1.deobfuscation.unused import Ps1UnusedVariableRemoval
+from refinery.lib.scripts.ps1.deobfuscation.unused import Ps1JunkStatementRemoval, Ps1UnusedVariableRemoval
 from refinery.lib.scripts.ps1.deobfuscation.wildcards import Ps1WildcardResolution
 from refinery.lib.scripts.ps1.model import Ps1Script
 
@@ -32,8 +32,14 @@ _folds = (
     Ps1TypeCasts,
 )
 
+_cleanup = (
+    Ps1NullVariableInlining,
+    Ps1UnusedVariableRemoval,
+    Ps1JunkStatementRemoval,
+)
+
 _fold_base = TransformerGroup('fold', *_folds)
-_fold_full = TransformerGroup('fold', *_folds, Ps1NullVariableInlining, Ps1UnusedVariableRemoval)
+_fold_full = TransformerGroup('fold', *_folds, *_cleanup)
 
 _emulate = TransformerGroup(
     'emulate',
@@ -78,11 +84,15 @@ _phase2 = DeobfuscationPipeline(
 )
 
 
-def deobfuscate(ast: Ps1Script, max_steps: int = 0) -> int:
+def deobfuscate(ast: Ps1Script, max_steps: int = 0, remove_junk: bool = True) -> int:
     """
-    Apply all available deobfuscators to the input.
+    Apply all available deobfuscators to the input. When `remove_junk` is `True`, a second pass
+    removes unused variable assignments, uncalled function definitions, and side-effect-free
+    expression statements.
     """
     steps = _phase1.run(ast, max_steps=max_steps)
+    if not remove_junk:
+        return steps
     if max_steps > 0:
         max_steps -= steps
     steps = _phase2.run(ast, max_steps=max_steps) + steps

@@ -1,5 +1,5 @@
 """
-Remove assignments to variables that are never read.
+Remove unused variable assignments and junk expression statements.
 """
 from __future__ import annotations
 
@@ -12,24 +12,30 @@ from refinery.lib.scripts.ps1.deobfuscation.constants import (
     _find_removable_statement,
     _walk_outer_scope,
 )
-from refinery.lib.scripts.ps1.deobfuscation.helpers import get_body
+from refinery.lib.scripts.ps1.deobfuscation.helpers import get_body, get_command_name
 from refinery.lib.scripts.ps1.deobfuscation.names import PS1_KNOWN_VARIABLES
 from refinery.lib.scripts.ps1.model import (
     Expression,
+    Ps1AccessKind,
     Ps1ArrayExpression,
     Ps1ArrayLiteral,
     Ps1AssignmentExpression,
     Ps1BinaryExpression,
     Ps1CastExpression,
+    Ps1CommandInvocation,
+    Ps1ExpandableString,
     Ps1ExpressionStatement,
     Ps1ForEachLoop,
     Ps1FunctionDefinition,
     Ps1HereString,
     Ps1IndexExpression,
     Ps1IntegerLiteral,
+    Ps1InvokeMember,
     Ps1MemberAccess,
     Ps1ParameterDeclaration,
     Ps1ParenExpression,
+    Ps1Pipeline,
+    Ps1PipelineElement,
     Ps1RangeExpression,
     Ps1RealLiteral,
     Ps1StringLiteral,
@@ -39,6 +45,91 @@ from refinery.lib.scripts.ps1.model import (
 )
 
 _SKIP_VARIABLES = _PS1_AUTOMATIC_VARIABLES | frozenset(PS1_KNOWN_VARIABLES) | frozenset(_PS1_DEFAULT_VARIABLES)
+
+_PURE_STATIC_TYPES = frozenset({
+    'array',
+    'bitconverter',
+    'char',
+    'convert',
+    'datetime',
+    'decimal',
+    'double',
+    'environment',
+    'guid',
+    'int',
+    'int32',
+    'int64',
+    'math',
+    'string',
+    'system.array',
+    'system.bitconverter',
+    'system.char',
+    'system.convert',
+    'system.datetime',
+    'system.decimal',
+    'system.double',
+    'system.environment',
+    'system.guid',
+    'system.int32',
+    'system.int64',
+    'system.math',
+    'system.string',
+    'system.timespan',
+    'timespan',
+})
+
+_PURE_INSTANCE_METHODS = frozenset({
+    'adddays',
+    'addhours',
+    'addminutes',
+    'addmonths',
+    'addseconds',
+    'addyears',
+    'compareto',
+    'contains',
+    'endswith',
+    'equals',
+    'gethashcode',
+    'gettype',
+    'indexof',
+    'insert',
+    'lastindexof',
+    'length',
+    'padleft',
+    'padright',
+    'remove',
+    'replace',
+    'split',
+    'startswith',
+    'substring',
+    'tochar',
+    'tochararray',
+    'tolower',
+    'tostring',
+    'touniversaltime',
+    'toupper',
+    'trim',
+    'trimend',
+    'trimstart',
+})
+
+_PURE_CMDLETS = frozenset({
+    'foreach-object',
+    'get-childitem',
+    'get-content',
+    'get-date',
+    'get-item',
+    'get-location',
+    'get-process',
+    'get-random',
+    'get-variable',
+    'measure-object',
+    'out-null',
+    'out-string',
+    'select-object',
+    'sort-object',
+    'where-object',
+})
 
 
 def _is_side_effect_free(node) -> bool:
@@ -76,6 +167,30 @@ def _is_side_effect_free(node) -> bool:
         return _is_side_effect_free(node.object) and _is_side_effect_free(node.index)
     if isinstance(node, Ps1MemberAccess):
         return _is_side_effect_free(node.object)
+    if isinstance(node, Ps1InvokeMember):
+        if not all(_is_side_effect_free(a) for a in node.arguments):
+            return False
+        if node.access == Ps1AccessKind.STATIC:
+            obj = node.object
+            if isinstance(obj, Ps1TypeExpression) and obj.name.lower() in _PURE_STATIC_TYPES:
+                return True
+        elif _is_side_effect_free(node.object):
+            member = node.member
+            if isinstance(member, str) and member.lower() in _PURE_INSTANCE_METHODS:
+                return True
+        return False
+    if isinstance(node, Ps1CommandInvocation):
+        name = get_command_name(node)
+        if name is not None and name.lower() in _PURE_CMDLETS:
+            return True
+        return False
+    if isinstance(node, Ps1Pipeline):
+        return all(
+            isinstance(el, Ps1PipelineElement) and _is_side_effect_free(el.expression)
+            for el in node.elements
+        )
+    if isinstance(node, Ps1ExpandableString):
+        return all(_is_side_effect_free(p) for p in node.parts)
     return False
 
 
@@ -194,3 +309,82 @@ class Ps1UnusedVariableRemoval(Transformer):
             stmt = _find_removable_statement(mutation)
             if stmt is not None and _remove_from_parent(stmt):
                 self.mark_changed()
+
+
+class Ps1JunkStatementRemoval(Transformer):
+    """
+    Remove standalone expression statements that produce no observable side effects (junk/noise
+    injected for anti-analysis) and function definitions that are never called.
+    """
+
+    def visit(self, node: Node):
+        called: set[str] = set()
+        for n in _walk_outer_scope(node):
+            if isinstance(n, Ps1CommandInvocation):
+                name = get_command_name(n)
+                if name is not None:
+                    called.add(name.lower())
+        for parent in list(_walk_outer_scope(node)):
+            body = get_body(parent)
+            if body is None:
+                continue
+            self._prune_body(body, parent is node, called)
+
+    def _prune_body(self, body: list, is_root: bool, called: set[str]):
+        removable_set: set[int] = set()
+        for stmt in body:
+            if self._is_removable_statement(stmt):
+                removable_set.add(id(stmt))
+            elif is_root and isinstance(stmt, Ps1FunctionDefinition):
+                if stmt.name.lower() not in called:
+                    removable_set.add(id(stmt))
+        if not removable_set:
+            return
+        if is_root:
+            surviving = [
+                s for s in body
+                if id(s) not in removable_set
+                and not isinstance(s, Ps1FunctionDefinition)
+            ]
+            if not surviving:
+                return
+        for stmt in list(body):
+            if id(stmt) in removable_set:
+                if _remove_from_parent(stmt):
+                    self.mark_changed()
+
+    @staticmethod
+    def _is_removable_statement(stmt) -> bool:
+        if not isinstance(stmt, Ps1ExpressionStatement):
+            return False
+        expr = stmt.expression
+        if expr is None:
+            return False
+        if isinstance(expr, Ps1CastExpression) and expr.type_name.lower() == 'void':
+            return True
+        if isinstance(expr, Ps1Pipeline):
+            if _pipeline_ends_with_out_null(expr) and _pipeline_prefix_is_pure(expr):
+                return True
+        return _is_side_effect_free(expr)
+
+
+def _pipeline_ends_with_out_null(pipeline: Ps1Pipeline) -> bool:
+    if len(pipeline.elements) < 2:
+        return False
+    last = pipeline.elements[-1]
+    if not isinstance(last, Ps1PipelineElement):
+        return False
+    expr = last.expression
+    if isinstance(expr, Ps1CommandInvocation):
+        name = get_command_name(expr)
+        return name is not None and name.lower() == 'out-null'
+    return False
+
+
+def _pipeline_prefix_is_pure(pipeline: Ps1Pipeline) -> bool:
+    for el in pipeline.elements[:-1]:
+        if not isinstance(el, Ps1PipelineElement):
+            return False
+        if not _is_side_effect_free(el.expression):
+            return False
+    return True

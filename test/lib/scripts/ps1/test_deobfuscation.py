@@ -9,15 +9,15 @@ from refinery.lib.scripts.ps1.synth import Ps1Synthesizer
 
 class TestPs1(TestBase):
 
-    def _deobfuscate(self, source: str) -> str:
+    def _deobfuscate(self, source: str, remove_junk: bool = True) -> str:
         ast = Ps1Parser(source).parse()
-        deobfuscate(ast)
+        deobfuscate(ast, remove_junk=remove_junk)
         return Ps1Synthesizer().convert(ast)
 
-    def _deobfuscate_iterative(self, source: str, iterations: int = 100) -> str:
+    def _deobfuscate_iterative(self, source: str, iterations: int = 100, remove_junk: bool = True) -> str:
         ast = Ps1Parser(source).parse()
         for _ in range(iterations):
-            if not deobfuscate(ast):
+            if not deobfuscate(ast, remove_junk=remove_junk):
                 break
         return Ps1Synthesizer().convert(ast)
 
@@ -391,12 +391,12 @@ class TestPS1StringReplace(TestPs1):
 
     def test_real_world_01(self):
         data = '''-RepLaCe"UVL",""""-CrePLAcE "MQo","``" -RepLaCe ("0"+"N"+"R"),"'"-CrePLAcE'eV5',"`$"-CrePLAcE  '31V',"|")'''
-        result = self._deobfuscate(data)
+        result = self._deobfuscate(data, remove_junk=False)
         self.assertIn('0NR', result)
 
     def test_real_world_02(self):
         result = self._deobfuscate(
-            '''"UVL0NR"-RepLaCe"UVL",""""-RepLaCe "0NR","'"-CrePLAcE  '31V',"|"))''')
+            '''"UVL0NR"-RepLaCe"UVL",""""-RepLaCe "0NR","'"-CrePLAcE  '31V',"|"))''', remove_junk=False)
         self.assertIn("'", result)
 
     def test_string_replace_method(self):
@@ -452,7 +452,7 @@ class TestPS1Regressions(TestPs1):
         self.assertIn('[0, 1]', result)
 
     def test_scriptblock_comma_in_method_arg(self):
-        result = self._deobfuscate('$x.Where({$_ -in 1,2,3})')
+        result = self._deobfuscate('$x.Where({$_ -in 1,2,3})', remove_junk=False)
         self.assertIn('1, 2, 3', result)
 
     def test_shl_operator(self):
@@ -505,7 +505,7 @@ class TestPS1Regressions(TestPs1):
 
     def test_where_object_wildcard_not_over_resolved(self):
         data = "$obj.PSObject.Methods | ? { $_.Name -ilike '*ts' }"
-        result = self._deobfuscate(data)
+        result = self._deobfuscate(data, remove_junk=False)
         self.assertNotIn('Exists', result)
         self.assertIn("'*ts'", result)
 
@@ -519,7 +519,7 @@ class TestPS1Regressions(TestPs1):
         self.assertIn('"${env:Temp}\\foo.exe"', result)
 
     def test_expandable_string_value_subexpr_kept(self):
-        result = self._deobfuscate('''"prefix$( 1 + 2 )suffix"''')
+        result = self._deobfuscate('''"prefix$( 1 + 2 )suffix"''', remove_junk=False)
         self.assertIn('prefix$(', result)
 
     def test_semicolons_are_statement_separators(self):
@@ -654,7 +654,7 @@ class TestPs1VariableDriveResolution(TestPs1):
             "$x = New-Object Net.WebClient;"
             " ($x | Get-Member) | ? { $_.Name -ilike 'Do*e' }"
         )
-        result = self._deobfuscate(code)
+        result = self._deobfuscate(code, remove_junk=False)
         self.assertIn('DownloadFile', result)
         self.assertNotIn('Do*e', result)
 
@@ -1333,7 +1333,7 @@ class TestPs1WildcardResolution(TestPs1):
         self.assertIn('New-Object', result)
 
     def test_wildcard_where_unknown_source(self):
-        result = self._deobfuscate("$obj | ? { $_.Name -ilike '*ts' }")
+        result = self._deobfuscate("$obj | ? { $_.Name -ilike '*ts' }", remove_junk=False)
         self.assertNotIn('Exists', result)
         self.assertIn("'*ts'", result)
 
@@ -1495,7 +1495,7 @@ class TestPs1ExpandableStringFolding(TestPs1):
         self.assertNotIn('$(', result)
 
     def test_expandable_variable_not_folded(self):
-        result = self._deobfuscate("\"\"\"$($x)\"\"\"")
+        result = self._deobfuscate("\"\"\"$($x)\"\"\"", remove_junk=False)
         self.assertIn('$(', result)
 
     def test_expandable_full_chain_with_iex(self):
@@ -1534,7 +1534,7 @@ class TestPs1ComparisonFolding(TestPs1):
         self.assertIn('$True', result)
 
     def test_non_constant_unchanged(self):
-        result = self._deobfuscate('$x = $env:V\n($x -eq 3)')
+        result = self._deobfuscate('$x = $env:V\n($x -eq 3)', remove_junk=False)
         self.assertIn('-Eq', result)
 
 
@@ -1756,7 +1756,8 @@ class TestPs1DeadCodeElimination(TestPs1):
         result = self._deobfuscate_iterative(
             '$x = Get-Process\n'
             "'hello'\n"
-            'Write-Host $x\n'
+            'Write-Host $x\n',
+            remove_junk=False,
         )
         self.assertIn('hello', result)
 
@@ -2333,9 +2334,9 @@ class TestPs1UnusedVariableRemoval(TestPs1):
         self.assertIn('hello', result)
 
     def test_side_effect_rhs_preserved(self):
-        result = self._deobfuscate("$x = Get-Date; Write-Host done")
+        result = self._deobfuscate("$x = Start-Process notepad; Write-Host done")
         self.assertNotIn('$x', result)
-        self.assertIn('Get-Date', result)
+        self.assertIn('Start-Process', result)
         self.assertIn('done', result)
 
     def test_increment_removed(self):
@@ -2365,3 +2366,73 @@ class TestPs1UnusedVariableRemoval(TestPs1):
     def test_self_referential_kept(self):
         result = self._deobfuscate("$x = 0; $x = $x + 1; Write-Host $x")
         self.assertIn('$x', result)
+
+
+class TestPs1JunkStatementRemoval(TestPs1):
+
+    def test_void_cast_removed(self):
+        result = self._deobfuscate('[Void]([Math]::Sqrt(144)); Write-Host done')
+        self.assertNotIn('Sqrt', result)
+        self.assertIn('done', result)
+
+    def test_out_null_pipeline_removed(self):
+        result = self._deobfuscate('[Math]::Pow(2, 8) | Out-Null; Write-Host done')
+        self.assertNotIn('Pow', result)
+        self.assertIn('done', result)
+
+    def test_pure_static_method_removed(self):
+        result = self._deobfuscate('[Math]::Sqrt(36); Write-Host done')
+        self.assertNotIn('Sqrt', result)
+        self.assertIn('done', result)
+
+    def test_pure_cmdlet_removed(self):
+        result = self._deobfuscate('Get-Random -Minimum 1 -Maximum 100; Write-Host done')
+        self.assertNotIn('Get-Random', result)
+        self.assertIn('done', result)
+
+    def test_pure_instance_method_removed(self):
+        result = self._deobfuscate('(Get-Date).ToString("yyyy"); Write-Host done')
+        self.assertNotIn('ToString', result)
+        self.assertIn('done', result)
+
+    def test_side_effect_command_preserved(self):
+        result = self._deobfuscate('Start-Sleep -s 1; Write-Host done')
+        self.assertIn('Start-Sleep', result)
+        self.assertIn('done', result)
+
+    def test_uncalled_function_removed(self):
+        result = self._deobfuscate(
+            'function Junk { Get-Random }; Write-Host done')
+        self.assertNotIn('Junk', result)
+        self.assertIn('done', result)
+
+    def test_called_function_preserved(self):
+        result = self._deobfuscate(
+            'function Helper { Get-Random }; Helper; Write-Host done')
+        self.assertIn('Helper', result)
+
+    def test_expandable_string_removed(self):
+        result = self._deobfuscate('"noise ${x} text"; Write-Host done')
+        self.assertNotIn('noise', result)
+        self.assertIn('done', result)
+
+    def test_string_literal_removed(self):
+        result = self._deobfuscate("'junk string'; Write-Host done")
+        self.assertNotIn('junk', result)
+        self.assertIn('done', result)
+
+    def test_pure_pipeline_removed(self):
+        result = self._deobfuscate(
+            'Get-Date | Out-String; Write-Host done')
+        self.assertNotIn('Get-Date', result)
+        self.assertIn('done', result)
+
+    def test_empty_body_guard(self):
+        result = self._deobfuscate('[Math]::Sqrt(36)')
+        self.assertIn('Sqrt', result)
+
+    def test_nested_body_junk_removed(self):
+        result = self._deobfuscate(
+            'while ($True) { [Void]"noise"; Write-Host running; break }')
+        self.assertNotIn('noise', result)
+        self.assertIn('running', result)
