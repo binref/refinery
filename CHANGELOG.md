@@ -6,8 +6,16 @@
 > Otherwise, the changelog entries highlight only new or changed functionality.
 
 ## Version 0.10.11
+- The entire scripting deobfuscation system was rewritten from scratch.
+  The old deobfuscation units (`deob-ps1-*`, `deob-vba-*`, `deob-js-*`) have been replaced by full parsers and emulators for 
+  PowerShell, VBA, and JavaScript.
+  The new units are `ps1`, `vba`, `js`, and the universal `defu` which auto-detects the language.
+- The new `cmdarg` unit extracts and unescapes arguments passed to `wmic`, `cmd`, `start`, or `powershell` commands.
+- The `xtnsis` unit now includes a script decompiler that outputs human-readable NSIS source.
+- The `swf` unit was added for extracting resources from Flash SWF files.
 - The `base` unit is now purely block-based (RFC 4648 style). Big-integer encoding has been split into a new `bigint` unit.
 - The `escvb` unit and the corresponding `vbastr` pattern for `carve` now support concatenations of quoted string literals and vb constants.
+- Several compression libraries (`aplib`, `blz`, `lzjb`, `lzw`, `xpress`, `mscf`) were cythonized for improved performance.
 
 ## Version 0.10.10
 - Improves `xtrar` performance by cythonizing parts of the code.

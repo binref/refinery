@@ -34,7 +34,7 @@ various `refinery.units.Unit`s can be combined.
 """
 from __future__ import annotations
 
-__version__ = '0.10.10'
+__version__ = '0.10.11'
 __distribution__ = 'binary-refinery'
 
 from typing import Iterable, TypeVar
