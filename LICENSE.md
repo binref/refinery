@@ -1,6 +1,6 @@
 # The 3-Clause BSD License
 
-### Copyright 2019 - 2025 by Jesko Hüttenhain
+### Copyright 2019 - 2026 by Jesko Hüttenhain
 
 Redistribution and use in source and binary forms, with or without modification,
 are permitted provided that the following conditions are met:
