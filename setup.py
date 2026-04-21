@@ -293,7 +293,7 @@ def get_config():
 
     try:
         import Cython.Build as cy
-        ext = cy.cythonize(EXTENSION_LIST)
+        ext = cy.cythonize(EXTENSION_LIST, nthreads=os.cpu_count() or 1)
     except Exception:
         ext = []
 
