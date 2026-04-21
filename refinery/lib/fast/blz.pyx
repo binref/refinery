@@ -9,13 +9,13 @@ from libc.stdlib cimport free, malloc, realloc
 from libc.string cimport memcpy
 
 
-cdef void _ensure_capacity(
+cdef int _ensure_capacity(
     uint8_t **buf, uint32_t *cap, uint32_t needed
-) except * nogil:
+) except -1 nogil:
     cdef uint32_t new_cap
     cdef uint8_t *tmp
     if needed <= cap[0]:
-        return
+        return 0
     new_cap = cap[0]
     while new_cap < needed:
         new_cap = new_cap * 2
@@ -25,6 +25,7 @@ cdef void _ensure_capacity(
             raise MemoryError
     buf[0] = tmp
     cap[0] = new_cap
+    return 0
 
 
 cdef inline uint32_t _readbit(

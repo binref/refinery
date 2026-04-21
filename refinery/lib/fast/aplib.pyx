@@ -17,13 +17,13 @@ cdef inline uint32_t _lengthdelta(uint32_t offset) noexcept nogil:
     return 0
 
 
-cdef void _ensure_capacity(
+cdef int _ensure_capacity(
     uint8_t **buf, uint32_t *cap, uint32_t needed
-) except * nogil:
+) except -1 nogil:
     cdef uint32_t new_cap
     cdef uint8_t *tmp
     if needed <= cap[0]:
-        return
+        return 0
     new_cap = cap[0]
     while new_cap < needed:
         new_cap = new_cap * 2
@@ -33,6 +33,7 @@ cdef void _ensure_capacity(
             raise MemoryError
     buf[0] = tmp
     cap[0] = new_cap
+    return 0
 
 
 def aplib_decompress(data) -> bytearray:
@@ -317,7 +318,7 @@ cdef inline void _flush_tag(CompressorState *st) noexcept nogil:
     st.out_buf[st.tagoffset] = st.bitbuffer
 
 
-cdef void _write_bit(CompressorState *st, int value) except * nogil:
+cdef int _write_bit(CompressorState *st, int value) except -1 nogil:
     if st.bitcount != 0:
         st.bitcount -= 1
     else:
@@ -333,24 +334,27 @@ cdef void _write_bit(CompressorState *st, int value) except * nogil:
         st.bitbuffer = 0
     if value:
         st.bitbuffer |= (1 << st.bitcount)
+    return 0
 
 
-cdef inline void _write_byte(CompressorState *st, uint8_t b) except * nogil:
+cdef inline int _write_byte(CompressorState *st, uint8_t b) except -1 nogil:
     _ensure_capacity(&st.out_buf, &st.out_cap, st.cursor + 1)
     st.out_buf[st.cursor] = b
     st.cursor += 1
+    return 0
 
 
-cdef void _write_fixednumber(CompressorState *st, uint32_t value, int nbbit) except * nogil:
+cdef int _write_fixednumber(CompressorState *st, uint32_t value, int nbbit) except -1 nogil:
     cdef int i
     for i in range(nbbit - 1, -1, -1):
         _write_bit(st, (value >> i) & 1)
+    return 0
 
 
-cdef void _write_gamma(CompressorState *st, uint32_t value) except * nogil:
+cdef int _write_gamma(CompressorState *st, uint32_t value) except -1 nogil:
     cdef int length, i
     if value < 2:
-        return
+        return 0
     length = 0
     cdef uint32_t tmp = value >> 2
     while tmp:
@@ -361,6 +365,7 @@ cdef void _write_gamma(CompressorState *st, uint32_t value) except * nogil:
         _write_bit(st, 1)
         _write_bit(st, (value >> i) & 1)
     _write_bit(st, 0)
+    return 0
 
 
 cdef (uint32_t, uint32_t) _find_longest_match(

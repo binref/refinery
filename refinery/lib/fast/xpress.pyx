@@ -18,11 +18,11 @@ DEF _SHIFT = 4
 DEF _MASK = (1 << _SHIFT) - 1
 
 
-cdef void _ensure(uint8_t **buf, uint32_t *cap, uint32_t needed) except * nogil:
+cdef int _ensure(uint8_t **buf, uint32_t *cap, uint32_t needed) except -1 nogil:
     cdef uint32_t nc
     cdef uint8_t *tmp
     if needed <= cap[0]:
-        return
+        return 0
     nc = cap[0]
     while nc < needed:
         nc = nc * 2
@@ -32,20 +32,22 @@ cdef void _ensure(uint8_t **buf, uint32_t *cap, uint32_t needed) except * nogil:
             raise MemoryError
     buf[0] = tmp
     cap[0] = nc
+    return 0
 
 
-cdef inline void _out_byte(
+cdef inline int _out_byte(
     uint8_t **buf, uint32_t *cap, uint32_t *length, uint8_t b
-) except * nogil:
+) except -1 nogil:
     _ensure(buf, cap, length[0] + 1)
     buf[0][length[0]] = b
     length[0] += 1
+    return 0
 
 
-cdef void _replay(
+cdef int _replay(
     uint8_t **buf, uint32_t *cap, uint32_t *length,
     uint32_t offset, uint32_t match_len
-) except * nogil:
+) except -1 nogil:
     cdef uint32_t start, chunk_len, pos
     _ensure(buf, cap, length[0] + match_len)
     start = length[0] - offset
@@ -62,6 +64,7 @@ cdef void _replay(
         start += chunk_len
         match_len -= chunk_len
     length[0] = pos
+    return 0
 
 
 cdef int32_t _s32shift(int32_t k, int shift) noexcept nogil:
