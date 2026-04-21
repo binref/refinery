@@ -733,10 +733,17 @@ class TestPs1ConstantInlining(TestPs1):
         self.assertIn('$a', result)
         self.assertIn('$i', result)
 
-    def test_try_body_skipped(self):
+    def test_try_body_inlined(self):
         result = self._deobfuscate(
             "$x = 'val'; try { Write-Output $x } catch { }")
-        self.assertIn('$x', result)
+        self.assertIn("'val'", result)
+        self.assertNotIn('$x', result)
+
+    def test_try_body_array_inlined(self):
+        result = self._deobfuscate(
+            "$a = @('x','y','z'); try { Write-Output $a[1] } catch { }")
+        self.assertIn("'y'", result)
+        self.assertNotIn('$a', result)
 
     def test_catch_body_inlined(self):
         result = self._deobfuscate(
@@ -1807,6 +1814,28 @@ class TestPs1CharIntFolding(TestPs1):
     def test_int_identity_cast_stripped(self):
         result = self._deobfuscate('[int]42')
         self.assertEqual(result.strip(), '42')
+
+    def test_int_cast_string(self):
+        result = self._deobfuscate("[int]'27'")
+        self.assertIn('27', result)
+        self.assertNotIn("'", result)
+
+    def test_int_cast_from_array_index(self):
+        result = self._deobfuscate("$x = [int](('10', '20', '30')[2])")
+        self.assertIn('30', result)
+        self.assertNotIn("'30'", result)
+
+    def test_array_literal_index_scalar(self):
+        result = self._deobfuscate("$x = ('hello', 'world', 'foo')[2]")
+        self.assertIn('foo', result)
+        self.assertNotIn('hello', result)
+
+    def test_array_literal_index_nested(self):
+        result = self._deobfuscate(
+            "$x = ('a', 'b', 'c', 'd')[[int](('3', '1', '0')[2])]")
+        self.assertNotIn("'b'", result)
+        self.assertNotIn("'c'", result)
+        self.assertNotIn("'d'", result)
 
     def test_char_int_multi_concat(self):
         result = self._deobfuscate_iterative(

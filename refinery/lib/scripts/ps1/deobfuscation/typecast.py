@@ -51,7 +51,7 @@ class Ps1TypeCasts(Transformer):
             type_name=node.right.name,
             operand=node.left,
         )
-        return self.visit_Ps1CastExpression(cast)
+        return self.visit_Ps1CastExpression(cast) or cast
 
     def visit_Ps1CastExpression(self, node: Ps1CastExpression):
         self.generic_visit(node)
@@ -69,6 +69,15 @@ class Ps1TypeCasts(Transformer):
             result = unwrap_integer(node.operand)
             if result is not None:
                 return Ps1IntegerLiteral(value=result.value, raw=str(result.value))
+            sv = string_value(node.operand) if node.operand else None
+            if sv is not None:
+                sv = sv.strip()
+                try:
+                    value = int(sv, 0)
+                except (ValueError, OverflowError):
+                    pass
+                else:
+                    return Ps1IntegerLiteral(value=value, raw=str(value))
         if tn == 'char':
             result = unwrap_integer(node.operand)
             if result is not None:

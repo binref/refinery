@@ -44,7 +44,6 @@ from refinery.lib.scripts.ps1.model import (
     Ps1ScopeModifier,
     Ps1StringLiteral,
     Ps1SwitchStatement,
-    Ps1TryCatchFinally,
     Ps1TypeExpression,
     Ps1UnaryExpression,
     Ps1Variable,
@@ -224,16 +223,6 @@ def _clone_constant(node: Node) -> Expression:
     if isinstance(clone, Ps1ArrayLiteral) and len(clone.elements) > 1:
         return Ps1ParenExpression(expression=clone)
     return clone
-
-
-def _inside_try_body(node: Node) -> bool:
-    cursor = node.parent
-    while cursor is not None:
-        parent = cursor.parent
-        if isinstance(parent, Ps1TryCatchFinally) and cursor is parent.try_block:
-            return True
-        cursor = parent
-    return False
 
 
 def _walk_outer_scope(root: Node):
@@ -491,11 +480,8 @@ class Ps1ConstantInlining(Transformer):
     ) -> bool:
         """
         Shared guard for substitution methods. Returns `True` if the substitution should be skipped
-        (node is inside a try body or not dominated by its scope entry).
+        (node is not dominated by its scope entry).
         """
-        if _inside_try_body(node):
-            remaining[key] = remaining.get(key, 0) + 1
-            return True
         entries = scope_entries.get(key)
         if entries is not None and not _is_dominated_by(node, entries):
             remaining[key] = remaining.get(key, 0) + 1

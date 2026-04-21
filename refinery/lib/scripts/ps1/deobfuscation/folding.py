@@ -235,6 +235,48 @@ def _variable_string_to_expandable(
     return Ps1ExpandableString(parts=parts, raw=raw)
 
 
+def _resolve_index_values(index: Expression) -> int | list[int] | None:
+    if isinstance(index, Ps1IntegerLiteral):
+        return index.value
+    array = unwrap_to_array_literal(index)
+    if array is not None:
+        result: list[int] = []
+        for elem in array.elements:
+            if not isinstance(elem, Ps1IntegerLiteral):
+                return None
+            result.append(elem.value)
+        return result
+    return None
+
+
+def _index_into_string(s: str, indices: int | list[int]) -> Expression | None:
+    if isinstance(indices, int):
+        if 0 <= indices < len(s):
+            return make_string_literal(s[indices])
+        return None
+    selected: list[Expression] = []
+    for i in indices:
+        if i < 0 or i >= len(s):
+            return None
+        selected.append(make_string_literal(s[i]))
+    return Ps1ArrayLiteral(elements=selected)
+
+
+def _index_into_array(
+    array: Ps1ArrayLiteral, indices: int | list[int],
+) -> Expression | None:
+    if isinstance(indices, int):
+        if 0 <= indices < len(array.elements):
+            return array.elements[indices]
+        return None
+    selected: list[Expression] = []
+    for i in indices:
+        if i < 0 or i >= len(array.elements):
+            return None
+        selected.append(array.elements[i])
+    return Ps1ArrayLiteral(elements=selected)
+
+
 class Ps1ConstantFolding(LocalFunctionAwareTransformer):
 
     def visit_Ps1CommandInvocation(self, node: Ps1CommandInvocation):
@@ -369,25 +411,17 @@ class Ps1ConstantFolding(LocalFunctionAwareTransformer):
 
     def visit_Ps1IndexExpression(self, node: Ps1IndexExpression):
         self.generic_visit(node)
-        obj_str = string_value(node.object) if node.object else None
-        if obj_str is None or node.index is None:
+        if node.index is None or node.object is None:
             return None
-        if isinstance(node.index, Ps1IntegerLiteral):
-            idx = node.index.value
-            if 0 <= idx < len(obj_str):
-                return make_string_literal(obj_str[idx])
+        indices = _resolve_index_values(node.index)
+        if indices is None:
             return None
-        array = unwrap_to_array_literal(node.index)
+        obj_str = string_value(node.object)
+        if obj_str is not None:
+            return _index_into_string(obj_str, indices)
+        array = unwrap_to_array_literal(node.object)
         if array is not None:
-            chars: list[Expression] = []
-            for elem in array.elements:
-                if not isinstance(elem, Ps1IntegerLiteral):
-                    return None
-                idx = elem.value
-                if idx < 0 or idx >= len(obj_str):
-                    return None
-                chars.append(make_string_literal(obj_str[idx]))
-            return Ps1ArrayLiteral(elements=chars)
+            return _index_into_array(array, indices)
         return None
 
     def visit_Ps1ExpressionStatement(self, node: Ps1ExpressionStatement):
