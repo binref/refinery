@@ -13,6 +13,7 @@ from refinery.lib.scripts.ps1.deobfuscation.helpers import (
     LocalFunctionAwareTransformer,
     StringMethodError,
     apply_string_method,
+    collect_format_arguments,
     collect_int_arguments,
     collect_string_arguments,
     detect_encoding_chain,
@@ -806,7 +807,7 @@ class Ps1ConstantFolding(LocalFunctionAwareTransformer):
         fmt_str = string_value(node.left) if node.left else None
         if fmt_str is None or node.right is None:
             return None
-        args = collect_string_arguments(node.right)
+        args = collect_format_arguments(node.right)
         if args is None:
             return None
         result = apply_format_string(fmt_str, args)

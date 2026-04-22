@@ -2628,3 +2628,38 @@ class TestPs1NegativeIndexFolding(TestPs1):
     def test_string_multi_negative_index(self):
         result = self._deobfuscate("'ABCDE'[-1, -3] -Join ''")
         self.assertIn('EC', result)
+
+
+class TestPs1FormatStringSpecifiers(TestPs1):
+
+    def test_hex_uppercase(self):
+        result = self._deobfuscate("'{0:X2}' -f 65")
+        self.assertIn('41', result)
+
+    def test_hex_lowercase(self):
+        result = self._deobfuscate("'{0:x4}' -f 255")
+        self.assertIn('00ff', result)
+
+    def test_decimal_padding(self):
+        result = self._deobfuscate("'{0:D3}' -f 7")
+        self.assertIn('007', result)
+
+    def test_alignment_right(self):
+        result = self._deobfuscate("'{0,5}' -f 'hi'")
+        self.assertIn('   hi', result)
+
+    def test_alignment_left(self):
+        result = self._deobfuscate("'{0,-5}' -f 'hi'")
+        self.assertIn('hi   ', result)
+
+    def test_alignment_with_format(self):
+        result = self._deobfuscate("'{0,6:X2}' -f 255")
+        self.assertIn('    FF', result)
+
+    def test_existing_basic_format(self):
+        result = self._deobfuscate('"{0}{2}{1}" -f "signa","ures","t"')
+        self.assertIn('signatures', result)
+
+    def test_hex_multi_arg(self):
+        result = self._deobfuscate("'{0:X2}{1:X2}' -f 72, 105")
+        self.assertIn('4869', result)

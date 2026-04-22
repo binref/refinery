@@ -118,6 +118,21 @@ def collect_string_arguments(node: Expression) -> list[str] | None:
     return collect_typed_arguments(node, string_value)
 
 
+def extract_format_argument(node: Expression) -> str | int | None:
+    """
+    Extract a format-string argument value: integers are returned as `int` so that numeric format
+    specifiers (`X`, `D`, etc.) can be applied; everything else is returned as `str`.
+    """
+    result = unwrap_integer(node)
+    if result is not None:
+        return result.value
+    return string_value(node)
+
+
+def collect_format_arguments(node: Expression) -> list[str | int] | None:
+    return collect_typed_arguments(node, extract_format_argument)
+
+
 def extract_int(node: Expression) -> int | None:
     return node.value if isinstance(node, Ps1IntegerLiteral) else None
 

@@ -744,7 +744,48 @@ PS1_KNOWN_VARIABLES: dict[str, str] = {
     ]
 }
 
-FORMAT_PATTERN = re.compile(r'\{\{|\}\}|\{(\d+)\}')
+FORMAT_PATTERN = re.compile(r'\{\{|\}\}|\{(\d+)(?:,(-?\d+))?(?::([^}]+))?\}')
+
+
+def _apply_dotnet_format(value: str | int, spec: str) -> str | None:
+    """
+    Apply a .NET composite format specifier to a single value. Supports `X`/`x` (hex), `D`/`d`
+    (decimal), and `N`/`n` (number). Precision width is honored for zero-padding or digit count.
+    Returns `None` when the specifier is not recognized or inapplicable.
+    """
+    if not spec:
+        return str(value)
+    code = spec[0]
+    width_str = spec[1:]
+    width = int(width_str) if width_str.isdigit() else 0
+    code_upper = code.upper()
+    if code_upper in ('X', 'D', 'N') and not isinstance(value, int):
+        try:
+            value = int(value)
+        except (ValueError, TypeError):
+            return None
+    if code_upper == 'X':
+        raw = format(value, 'X' if code.isupper() else 'x')
+        return raw.zfill(width) if width else raw
+    if code_upper == 'D':
+        raw = str(value)
+        return raw.zfill(width) if width else raw
+    if code_upper == 'N':
+        assert isinstance(value, int)
+        negative = value < 0
+        abs_val = abs(value)
+        int_part = str(abs_val)
+        groups: list[str] = []
+        while int_part:
+            groups.append(int_part[-3:])
+            int_part = int_part[:-3]
+        formatted = ','.join(reversed(groups))
+        decimal_places = width if width else 2
+        formatted += '.' + '0' * decimal_places
+        if negative:
+            formatted = '-' + formatted
+        return formatted
+    return None
 
 
 def normalize_type_expression(name: str) -> str:
@@ -766,9 +807,10 @@ def case_normalize_name(name: str) -> str:
     return name
 
 
-def apply_format_string(fmt: str, args: list[str]) -> str | None:
+def apply_format_string(fmt: str, args: list[str | int]) -> str | None:
     """
-    Apply a PowerShell-style format string to a list of string arguments.
+    Apply a PowerShell-style format string to a list of arguments. Each argument can be a string
+    or an integer. Format specifiers like `{0:X2}` and alignment like `{0,10}` are supported.
     Returns the formatted string, or `None` on index/value errors.
     """
     try:
@@ -779,7 +821,23 @@ def apply_format_string(fmt: str, args: list[str]) -> str | None:
             if full == '}}':
                 return '}'
             idx = int(m.group(1))
-            return args[idx]
+            value = args[idx]
+            spec = m.group(3)
+            if spec:
+                formatted = _apply_dotnet_format(value, spec)
+                if formatted is None:
+                    raise ValueError(F'unsupported format specifier: {spec}')
+                result = formatted
+            else:
+                result = str(value)
+            align_str = m.group(2)
+            if align_str:
+                align_width = int(align_str)
+                if align_width < 0:
+                    result = result.ljust(-align_width)
+                else:
+                    result = result.rjust(align_width)
+            return result
         return FORMAT_PATTERN.sub(replacer, fmt)
     except (IndexError, ValueError):
         return None
