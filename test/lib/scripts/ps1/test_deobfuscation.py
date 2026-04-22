@@ -2741,3 +2741,18 @@ class TestPs1EnvironmentVariableFolding(TestPs1):
         result = self._deobfuscate("[Environment]::GetEnvironmentVariable('CUSTOM_VAR')")
         self.assertIn('GetEnvironmentVariable', result)
 
+
+class TestPs1HashtableLookup(TestPs1):
+
+    def test_basic_string_lookup(self):
+        result = self._deobfuscate("@{'a'='hello'}['a']")
+        self.assertIn('hello', result)
+        self.assertNotIn('@{', result)
+
+    def test_integer_value_lookup(self):
+        result = self._deobfuscate("@{'x'=42}['x']")
+        self.assertIn('42', result)
+
+    def test_missing_key_not_folded(self):
+        result = self._deobfuscate("@{'a'='hello'}['b']")
+        self.assertIn('@{', result)

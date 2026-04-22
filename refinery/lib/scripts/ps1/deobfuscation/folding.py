@@ -50,6 +50,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1CommandInvocation,
     Ps1ExpandableString,
     Ps1ExpressionStatement,
+    Ps1HashLiteral,
     Ps1IndexExpression,
     Ps1IntegerLiteral,
     Ps1InvokeMember,
@@ -287,6 +288,18 @@ def _index_into_array(
     return Ps1ArrayLiteral(elements=selected)
 
 
+def _lookup_hashtable(ht: Ps1HashLiteral, index: Expression) -> Expression | None:
+    key = string_value(index)
+    if key is None:
+        return None
+    lower = key.lower()
+    for pair_key, pair_value in ht.pairs:
+        k = string_value(pair_key)
+        if k is not None and k.lower() == lower:
+            return pair_value
+    return None
+
+
 class Ps1ConstantFolding(LocalFunctionAwareTransformer):
 
     def visit_Ps1CommandInvocation(self, node: Ps1CommandInvocation):
@@ -455,6 +468,8 @@ class Ps1ConstantFolding(LocalFunctionAwareTransformer):
         self.generic_visit(node)
         if node.index is None or node.object is None:
             return None
+        if isinstance(node.object, Ps1HashLiteral):
+            return _lookup_hashtable(node.object, node.index)
         indices = _resolve_index_values(node.index)
         if indices is None:
             return None
