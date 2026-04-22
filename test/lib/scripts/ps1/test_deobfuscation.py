@@ -2498,3 +2498,25 @@ class TestPs1JunkStatementRemoval(TestPs1):
         )
         self.assertIn('Inner', result)
         self.assertIn('Get-Date', result)
+
+
+class TestPs1StringMultiplicationFolding(TestPs1):
+
+    def test_string_times_int(self):
+        result = self._deobfuscate("'x' * 5")
+        self.assertIn('xxxxx', result)
+        self.assertNotIn('*', result)
+
+    def test_int_times_string(self):
+        result = self._deobfuscate("3 * 'ab'")
+        self.assertIn('ababab', result)
+        self.assertNotIn('*', result)
+
+    def test_string_multiply_in_expression(self):
+        result = self._deobfuscate("$x = 'A' * 3 + 'B'")
+        self.assertIn('AAAB', result)
+
+    def test_string_multiply_zero(self):
+        result = self._deobfuscate("'hello' * 0")
+        self.assertNotIn('hello', result)
+        self.assertNotIn('*', result)

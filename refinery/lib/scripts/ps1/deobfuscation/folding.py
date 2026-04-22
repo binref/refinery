@@ -73,6 +73,7 @@ _REGEX_OPTION_INT: dict[int, int] = {
 }
 
 _RIGHT_TO_LEFT = 64
+_MAX_STRING_EXPAND = 0x1000
 
 
 def _is_static_regex_call(node: Ps1InvokeMember) -> bool:
@@ -657,6 +658,8 @@ class Ps1ConstantFolding(LocalFunctionAwareTransformer):
             return self._handle_format(node)
         if op == '+':
             return self._handle_concat(node) or self._handle_arithmetic(node, op)
+        if op == '*':
+            return self._handle_string_multiply(node) or self._handle_arithmetic(node, op)
         if op == '-join':
             return self._handle_binary_join(node)
         if op in ('-replace', '-creplace', '-ireplace'):
@@ -678,6 +681,22 @@ class Ps1ConstantFolding(LocalFunctionAwareTransformer):
         except (ZeroDivisionError, ValueError, OverflowError):
             return None
         return Ps1IntegerLiteral(value=result, raw=str(result))
+
+    @staticmethod
+    def _handle_string_multiply(node: Ps1BinaryExpression) -> Expression | None:
+        s = string_value(node.left) if node.left else None
+        n = unwrap_integer(node.right)
+        if s is None or n is None:
+            s = string_value(node.right) if node.right else None
+            n = unwrap_integer(node.left)
+        if s is None or n is None:
+            return None
+        count = n.value
+        if count < 0:
+            count = 0
+        if len(s) * count > _MAX_STRING_EXPAND:
+            return None
+        return make_string_literal(s * count)
 
     def _handle_comparison(self, node: Ps1BinaryExpression, op: str) -> Expression | None:
         left = unwrap_integer(node.left)
