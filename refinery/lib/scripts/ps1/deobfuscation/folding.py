@@ -616,8 +616,7 @@ class Ps1ConstantFolding(LocalFunctionAwareTransformer):
             if lower == 'concat' and len(node.arguments) >= 1:
                 parts: list[str] = []
                 for arg in node.arguments:
-                    sv = string_value(arg)
-                    if sv is None:
+                    if (sv := string_value(arg)) is None:
                         break
                     parts.append(sv)
                 else:
