@@ -9,6 +9,7 @@ import re
 
 from collections.abc import Iterator
 
+from refinery.lib.scripts.ps1.deobfuscation.constants import PS1_ENV_CONSTANTS
 from refinery.lib.scripts.ps1.deobfuscation.helpers import (
     LocalFunctionAwareTransformer,
     StringMethodError,
@@ -637,6 +638,14 @@ class Ps1ConstantFolding(LocalFunctionAwareTransformer):
             return self._handle_regex_replace(node)
         if is_static_type_call(node, 'system.bitconverter') and lower == 'tostring':
             return self._try_fold_bitconverter_tostring(node)
+        if (
+            is_static_type_call(node, 'system.environment')
+            and lower == 'getenvironmentvariable'
+            and len(na := node.arguments) == 1
+            and (_en := string_value(na[0])) is not None
+            and (_ev := PS1_ENV_CONSTANTS.get(_en.lower())) is not None
+        ):
+            return make_string_literal(_ev)
         return None
 
     _CONVERT_INT_METHODS = {

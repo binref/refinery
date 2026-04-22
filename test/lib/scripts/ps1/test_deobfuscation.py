@@ -2724,3 +2724,20 @@ class TestPs1BitConverterFolding(TestPs1):
     def test_tostring_with_offset_and_length(self):
         result = self._deobfuscate('[BitConverter]::ToString(@(0x41, 0x42, 0x43, 0x44), 1, 2)')
         self.assertIn('42-43', result)
+
+
+class TestPs1EnvironmentVariableFolding(TestPs1):
+
+    def test_comspec(self):
+        result = self._deobfuscate("[Environment]::GetEnvironmentVariable('ComSpec')")
+        self.assertIn('cmd.exe', result)
+        self.assertNotIn('GetEnvironmentVariable', result)
+
+    def test_os(self):
+        result = self._deobfuscate("[Environment]::GetEnvironmentVariable('OS')")
+        self.assertIn('Windows_NT', result)
+
+    def test_unknown_variable_not_folded(self):
+        result = self._deobfuscate("[Environment]::GetEnvironmentVariable('CUSTOM_VAR')")
+        self.assertIn('GetEnvironmentVariable', result)
+

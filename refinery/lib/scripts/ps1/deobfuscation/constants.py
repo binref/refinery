@@ -73,7 +73,7 @@ _PS1_DEFAULT_VARIABLES: dict[str, str] = {
     }.items()
 }
 
-_PS1_ENV_CONSTANTS = {
+PS1_ENV_CONSTANTS = {
     lower_key: value
     for key, value in DEFAULT_ENVIRONMENT_TEMPLATE.items()
     if not (lower_key := key.lower()).startswith(('path', 'processor'))
@@ -394,7 +394,7 @@ class Ps1ConstantInlining(Transformer):
         for key, value in _PS1_DEFAULT_VARIABLES.items():
             if key not in rejected and key not in candidates:
                 result[key] = ([], make_string_literal(value))
-        for key, value in _PS1_ENV_CONSTANTS.items():
+        for key, value in PS1_ENV_CONSTANTS.items():
             env_key = F'env:{key}'
             if env_key not in rejected and env_key not in candidates:
                 result[env_key] = ([], make_string_literal(value))
