@@ -239,27 +239,30 @@ def _variable_string_to_expandable(
 
 
 def _resolve_index_values(index: Expression) -> int | list[int] | None:
-    if isinstance(index, Ps1IntegerLiteral):
-        return index.value
+    n = unwrap_integer(index)
+    if n is not None:
+        return n.value
     array = unwrap_to_array_literal(index)
     if array is not None:
         result: list[int] = []
         for elem in array.elements:
-            if not isinstance(elem, Ps1IntegerLiteral):
+            n = unwrap_integer(elem)
+            if n is None:
                 return None
-            result.append(elem.value)
+            result.append(n.value)
         return result
     return None
 
 
 def _index_into_string(s: str, indices: int | list[int]) -> Expression | None:
+    n = len(s)
     if isinstance(indices, int):
-        if 0 <= indices < len(s):
+        if -n <= indices < n:
             return make_string_literal(s[indices])
         return None
     selected: list[Expression] = []
     for i in indices:
-        if i < 0 or i >= len(s):
+        if not (-n <= i < n):
             return None
         selected.append(make_string_literal(s[i]))
     return Ps1ArrayLiteral(elements=selected)
@@ -268,13 +271,14 @@ def _index_into_string(s: str, indices: int | list[int]) -> Expression | None:
 def _index_into_array(
     array: Ps1ArrayLiteral, indices: int | list[int],
 ) -> Expression | None:
+    n = len(array.elements)
     if isinstance(indices, int):
-        if 0 <= indices < len(array.elements):
+        if -n <= indices < n:
             return array.elements[indices]
         return None
     selected: list[Expression] = []
     for i in indices:
-        if i < 0 or i >= len(array.elements):
+        if not (-n <= i < n):
             return None
         selected.append(array.elements[i])
     return Ps1ArrayLiteral(elements=selected)

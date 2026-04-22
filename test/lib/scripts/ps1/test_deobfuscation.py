@@ -2607,3 +2607,24 @@ class TestPs1ConvertFolding(TestPs1):
     def test_toint32_octal_base(self):
         result = self._deobfuscate("[Convert]::ToInt32('77', 8)")
         self.assertIn('63', result)
+
+
+class TestPs1NegativeIndexFolding(TestPs1):
+
+    def test_string_negative_one(self):
+        result = self._deobfuscate("'hello'[-1]")
+        self.assertIn('o', result)
+        self.assertNotIn('-1', result)
+
+    def test_string_negative_two(self):
+        result = self._deobfuscate("'ABCDE'[-2]")
+        self.assertIn('D', result)
+
+    def test_array_negative_one(self):
+        result = self._deobfuscate('@(10, 20, 30)[-1]')
+        self.assertIn('30', result)
+        self.assertNotIn('-1', result)
+
+    def test_string_multi_negative_index(self):
+        result = self._deobfuscate("'ABCDE'[-1, -3] -Join ''")
+        self.assertIn('EC', result)
