@@ -2578,3 +2578,32 @@ class TestPs1UnaryOperatorFolding(TestPs1):
     def test_bang_false(self):
         result = self._deobfuscate('!$False')
         self.assertIn('$True', result)
+
+
+class TestPs1ConvertFolding(TestPs1):
+
+    def test_toint32_hex_base(self):
+        result = self._deobfuscate("[Convert]::ToInt32('41', 16)")
+        self.assertIn('65', result)
+        self.assertNotIn('Convert', result)
+
+    def test_toint32_binary_base(self):
+        result = self._deobfuscate("[Convert]::ToInt32('01000001', 2)")
+        self.assertIn('65', result)
+
+    def test_toint32_decimal_string(self):
+        result = self._deobfuscate("[Convert]::ToInt32('123')")
+        self.assertIn('123', result)
+        self.assertNotIn('Convert', result)
+
+    def test_tobyte(self):
+        result = self._deobfuscate("[Convert]::ToByte('FF', 16)")
+        self.assertIn('255', result)
+
+    def test_tochar(self):
+        result = self._deobfuscate('[Convert]::ToChar(65)')
+        self.assertIn('A', result)
+
+    def test_toint32_octal_base(self):
+        result = self._deobfuscate("[Convert]::ToInt32('77', 8)")
+        self.assertIn('63', result)

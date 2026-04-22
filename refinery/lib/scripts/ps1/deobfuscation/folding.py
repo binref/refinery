@@ -579,21 +579,8 @@ class Ps1ConstantFolding(LocalFunctionAwareTransformer):
     def _try_fold_static_method(
         self, node: Ps1InvokeMember, lower: str,
     ) -> Expression | None:
-        if is_static_type_call(node, 'system.convert') and lower == 'frombase64string':
-            if len(node.arguments) == 1:
-                b64_str = string_value(node.arguments[0])
-                if b64_str is not None:
-                    try:
-                        decoded = base64.b64decode(b64_str)
-                    except Exception:
-                        return None
-                    elements: list[Expression] = [
-                        Ps1IntegerLiteral(value=b, raw=F'0x{b:02X}')
-                        for b in decoded
-                    ]
-                    array = Ps1ArrayLiteral(elements=elements)
-                    return Ps1ArrayExpression(
-                        body=[Ps1ExpressionStatement(expression=array)])
+        if is_static_type_call(node, 'system.convert'):
+            return self._try_fold_convert(node, lower)
         encoding_name = detect_encoding_chain(node)
         if encoding_name is not None:
             if len(node.arguments) == 1:
@@ -643,6 +630,74 @@ class Ps1ConstantFolding(LocalFunctionAwareTransformer):
                             return make_string_literal(separator.join(args))
         if _is_static_regex_call(node) and lower == 'replace':
             return self._handle_regex_replace(node)
+        return None
+
+    _CONVERT_INT_METHODS = {
+        'tobyte'  : (0, 0xFF),
+        'toint16' : (-0x8000, 0x7FFF),
+        'toint32' : (-0x80000000, 0x7FFFFFFF),
+        'toint64' : (-0x8000000000000000, 0x7FFFFFFFFFFFFFFF),
+        'tosbyte' : (-0x80, 0x7F),
+        'touint16': (0, 0xFFFF),
+        'touint32': (0, 0xFFFFFFFF),
+        'touint64': (0, 0xFFFFFFFFFFFFFFFF),
+    }
+
+    def _try_fold_convert(
+        self, node: Ps1InvokeMember, lower: str,
+    ) -> Expression | None:
+        if lower == 'frombase64string' and len(node.arguments) == 1:
+            b64_str = string_value(node.arguments[0])
+            if b64_str is not None:
+                try:
+                    decoded = base64.b64decode(b64_str)
+                except Exception:
+                    return None
+                elements: list[Expression] = [
+                    Ps1IntegerLiteral(value=b, raw=F'0x{b:02X}') for b in decoded
+                ]
+                array = Ps1ArrayLiteral(elements=elements)
+                return Ps1ArrayExpression(
+                    body=[Ps1ExpressionStatement(expression=array)])
+        bounds = self._CONVERT_INT_METHODS.get(lower)
+        if bounds is not None:
+            return self._fold_convert_int(node, bounds)
+        if lower == 'tochar':
+            n = unwrap_integer(node.arguments[0]) if len(node.arguments) == 1 else None
+            if n is not None:
+                try:
+                    return make_string_literal(chr(n.value))
+                except (ValueError, OverflowError):
+                    pass
+        return None
+
+    def _fold_convert_int(
+        self, node: Ps1InvokeMember, bounds: tuple[int, int],
+    ) -> Expression | None:
+        lo, hi = bounds
+        if len(node.arguments) == 1:
+            n = unwrap_integer(node.arguments[0])
+            if n is not None and lo <= n.value <= hi:
+                return Ps1IntegerLiteral(value=n.value, raw=str(n.value))
+            sv = string_value(node.arguments[0])
+            if sv is not None:
+                sv = sv.strip()
+                try:
+                    value = int(sv, 0)
+                except (ValueError, OverflowError):
+                    return None
+                if lo <= value <= hi:
+                    return Ps1IntegerLiteral(value=value, raw=str(value))
+        elif len(node.arguments) == 2:
+            sv = string_value(node.arguments[0])
+            base_int = unwrap_integer(node.arguments[1])
+            if sv is not None and base_int is not None and base_int.value in (2, 8, 10, 16):
+                try:
+                    value = int(sv, base_int.value)
+                except (ValueError, OverflowError):
+                    return None
+                if lo <= value <= hi:
+                    return Ps1IntegerLiteral(value=value, raw=str(value))
         return None
 
     def _handle_regex_replace(self, node: Ps1InvokeMember) -> Expression | None:
