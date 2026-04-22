@@ -39,6 +39,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1ParenExpression,
     Ps1Pipeline,
     Ps1PipelineElement,
+    Ps1ScriptBlock,
     Ps1StringLiteral,
     Ps1SubExpression,
     Ps1TypeExpression,
@@ -48,6 +49,51 @@ from refinery.lib.scripts.ps1.model import (
 _IEX_NAMES = frozenset({'iex', 'invoke-expression'})
 
 _INVOKE_METHODS = frozenset({'invoke', 'invokereturnasis'})
+
+_INVOKE_COMMAND_NAMES = frozenset({'invoke-command', 'icm'})
+
+_REMOTING_PARAMS = frozenset({
+    '-computername',
+    '-cn',
+    '-session',
+    '-hostname',
+    '-vmid',
+    '-vmname',
+    '-containerid',
+})
+
+
+def _try_extract_invoke_command_body(cmd: Ps1CommandInvocation) -> list | None:
+    """
+    If `cmd` is `Invoke-Command -ScriptBlock { ... }` without remoting parameters, return the
+    scriptblock body statements.
+    """
+    if not isinstance(cmd.name, Ps1StringLiteral):
+        return None
+    if cmd.name.value.lower() not in _INVOKE_COMMAND_NAMES:
+        return None
+    scriptblock: Ps1ScriptBlock | None = None
+    index = 0
+    args = cmd.arguments
+    while index < len(args):
+        arg = args[index]
+        if not isinstance(arg, Ps1CommandArgument) or arg.kind != Ps1CommandArgumentKind.SWITCH:
+            index += 1
+            continue
+        name_lower = arg.name.lower() if isinstance(arg.name, str) else ''
+        if name_lower in _REMOTING_PARAMS:
+            return None
+        if name_lower != '-scriptblock' or index + 1 >= len(args):
+            index += 1
+            continue
+        next_arg = args[index + 1]
+        value = next_arg.value if isinstance(next_arg, Ps1CommandArgument) else next_arg
+        if isinstance(value, Ps1ScriptBlock):
+            scriptblock = value
+        index += 2
+    if scriptblock is None:
+        return None
+    return list(scriptblock.body)
 
 
 def _is_execution_context_invoke_script(expr: Ps1InvokeMember) -> bool:
@@ -407,15 +453,7 @@ class Ps1IexInlining(Transformer):
                 continue
             i = 0
             while i < len(body):
-                code = self._try_extract_iex_string(body[i])
-                if code is None:
-                    code = self._try_extract_piped_iex_string(body[i])
-                if code is None:
-                    code = self._try_extract_scriptblock_create_string(body[i])
-                if code is None:
-                    i += 1
-                    continue
-                parsed = self._try_parse(code)
+                parsed = self._try_resolve_inline(body[i])
                 if parsed is None:
                     i += 1
                     continue
@@ -424,6 +462,16 @@ class Ps1IexInlining(Transformer):
                 body[i:i + 1] = parsed
                 self.mark_changed()
                 i += len(parsed)
+
+    def _try_resolve_inline(self, stmt) -> list | None:
+        code = self._try_extract_iex_string(stmt)
+        if code is None:
+            code = self._try_extract_piped_iex_string(stmt)
+        if code is None:
+            code = self._try_extract_scriptblock_create_string(stmt)
+        if code is not None:
+            return self._try_parse(code)
+        return self._try_extract_invoke_command(stmt)
 
     def _inline_expressions(self, node):
         for expr in list(node.walk()):
@@ -560,6 +608,15 @@ class Ps1IexInlining(Transformer):
         if sb_arg is None:
             return None
         return _resolve_to_string(sb_arg)
+
+    @staticmethod
+    def _try_extract_invoke_command(stmt) -> list | None:
+        if not isinstance(stmt, Ps1ExpressionStatement):
+            return None
+        cmd = stmt.expression
+        if not isinstance(cmd, Ps1CommandInvocation):
+            return None
+        return _try_extract_invoke_command_body(cmd)
 
     @staticmethod
     def _try_parse(code: str) -> list | None:

@@ -2688,3 +2688,23 @@ class TestPs1InvokeScriptInlining(TestPs1):
         )
         self.assertIn('Write-Host', result)
         self.assertNotIn('invokescript', result.lower())
+
+
+class TestPs1InvokeCommandInlining(TestPs1):
+
+    def test_scriptblock_literal(self):
+        result = self._deobfuscate('Invoke-Command -ScriptBlock { Write-Host hello }')
+        self.assertIn('Write-Host', result)
+        self.assertIn('hello', result)
+        self.assertNotIn('Invoke-Command', result)
+
+    def test_icm_alias(self):
+        result = self._deobfuscate('icm -ScriptBlock { Write-Host test }')
+        self.assertIn('Write-Host', result)
+        self.assertNotIn('icm', result.lower())
+
+    def test_remoting_not_inlined(self):
+        result = self._deobfuscate(
+            'Invoke-Command -ComputerName server -ScriptBlock { Get-Process }'
+        )
+        self.assertIn('Invoke-Command', result)
