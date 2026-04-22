@@ -39,6 +39,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1MemberAccess,
     Ps1ParameterDeclaration,
     Ps1ParenExpression,
+    Ps1RealLiteral,
     Ps1ScopeModifier,
     Ps1ScriptBlock,
     Ps1StringLiteral,
@@ -340,6 +341,28 @@ def is_builtin_variable(
         and node.scope == Ps1ScopeModifier.NONE
         and node.name.lower() in names
     )
+
+
+def is_truthy(node: Node | None) -> bool | None:
+    """
+    Determine the boolean truth value of a constant expression using PowerShell semantics. Returns
+    `None` for non-constant or unrecognized expressions.
+    """
+    node = unwrap_parens(node) if isinstance(node, Expression) else node
+    if node is None:
+        return None
+    if is_builtin_variable(node):
+        lower = node.name.lower()
+        if lower == 'true':
+            return True
+        if lower in ('false', 'null'):
+            return False
+        return None
+    if isinstance(node, (Ps1IntegerLiteral, Ps1RealLiteral, Ps1StringLiteral)):
+        return bool(node.value)
+    if isinstance(node, Ps1UnaryExpression) and node.operator == '-':
+        return is_truthy(node.operand)
+    return None
 
 
 def is_array_reverse_call(node: Ps1ExpressionStatement) -> Ps1Variable | None:

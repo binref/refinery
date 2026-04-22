@@ -8,6 +8,7 @@ from refinery.lib.scripts.ps1.deobfuscation.helpers import (
     get_body,
     inside_value_producing_context,
     is_builtin_variable,
+    is_truthy,
     unwrap_integer,
     unwrap_parens,
 )
@@ -32,32 +33,6 @@ from refinery.lib.scripts.ps1.model import (
     Ps1Variable,
     Ps1WhileLoop,
 )
-
-
-def _is_truthy(node) -> bool | None:
-    """
-    Determine the boolean truth value of a constant expression using PowerShell
-    semantics. Returns `None` for non-constant or unrecognized expressions.
-    """
-    node = unwrap_parens(node) if isinstance(node, Expression) else node
-    if node is None:
-        return None
-    if is_builtin_variable(node):
-        lower = node.name.lower()
-        if lower == 'true':
-            return True
-        if lower in ('false', 'null'):
-            return False
-        return None
-    if isinstance(node, Ps1IntegerLiteral):
-        return node.value != 0
-    if isinstance(node, Ps1RealLiteral):
-        return node.value != 0.0
-    if isinstance(node, Ps1StringLiteral):
-        return len(node.value) > 0
-    if isinstance(node, Ps1UnaryExpression) and node.operator == '-':
-        return _is_truthy(node.operand)
-    return None
 
 
 def _evaluate_for_condition(node: Ps1ForLoop) -> bool | None:
@@ -203,7 +178,7 @@ class Ps1DeadCodeElimination(Transformer):
 
     @staticmethod
     def _prune_while(node: Ps1WhileLoop) -> list[Statement] | None:
-        truth = _is_truthy(node.condition)
+        truth = is_truthy(node.condition)
         if truth is False:
             return []
         if node.body is not None and _body_breaks_unconditionally(node.body.body):
@@ -217,8 +192,8 @@ class Ps1DeadCodeElimination(Transformer):
     def _prune_do_loop(node: Ps1DoLoop) -> list[Statement] | None:
         if node.body is not None:
             trivially_exits = (
-                _is_truthy(node.condition) is True if node.is_until
-                else _is_truthy(node.condition) is False
+                is_truthy(node.condition) is True if node.is_until
+                else is_truthy(node.condition) is False
             )
             if trivially_exits:
                 return list(node.body.body)
@@ -230,7 +205,7 @@ class Ps1DeadCodeElimination(Transformer):
     def _prune_for(node: Ps1ForLoop) -> list[Statement] | None:
         truth = _evaluate_for_condition(node)
         if truth is None:
-            truth = _is_truthy(node.condition)
+            truth = is_truthy(node.condition)
         if truth is False:
             result: list[Statement] = []
             if node.initializer is not None:
@@ -252,7 +227,7 @@ class Ps1DeadCodeElimination(Transformer):
     def _prune_if(node: Ps1IfStatement) -> list[Statement] | None:
         kept_clauses: list[tuple] = []
         for condition, block in node.clauses:
-            truth = _is_truthy(condition)
+            truth = is_truthy(condition)
             if truth is True:
                 return list(block.body)
             if truth is False:

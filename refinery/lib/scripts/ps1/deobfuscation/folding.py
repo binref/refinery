@@ -21,6 +21,7 @@ from refinery.lib.scripts.ps1.deobfuscation.helpers import (
     get_member_name,
     is_array_reverse_call,
     is_static_type_call,
+    is_truthy,
     make_string_literal,
     string_value,
     unwrap_integer,
@@ -389,18 +390,35 @@ class Ps1ConstantFolding(LocalFunctionAwareTransformer):
 
     def visit_Ps1UnaryExpression(self, node: Ps1UnaryExpression):
         self.generic_visit(node)
-        if node.operator.lower() != '-join' or node.operand is None:
+        if node.operand is None:
             return None
-        scalar = string_value(node.operand)
+        op = node.operator.lower()
+        if op == '-join':
+            return self._handle_unary_join(node)
+        if op == '-bnot':
+            n = unwrap_integer(node.operand)
+            if n is not None:
+                return Ps1IntegerLiteral(value=~n.value, raw=str(~n.value))
+        if op in ('-not', '!'):
+            truth = is_truthy(node.operand)
+            if truth is not None:
+                return Ps1Variable(name='False' if truth else 'True')
+        return None
+
+    def _handle_unary_join(self, node: Ps1UnaryExpression) -> Expression | None:
+        operand = node.operand
+        if operand is None:
+            return None
+        scalar = string_value(operand)
         if scalar is not None:
             return make_string_literal(scalar)
-        result = self._try_join_regex_matches(node.operand)
+        result = self._try_join_regex_matches(operand)
         if result is not None:
             return result
-        array = unwrap_to_array_literal(node.operand)
+        array = unwrap_to_array_literal(operand)
         if array is None:
-            if isinstance(node.operand, Ps1ArrayExpression) and len(node.operand.body) == 1:
-                stmt = node.operand.body[0]
+            if isinstance(operand, Ps1ArrayExpression) and len(operand.body) == 1:
+                stmt = operand.body[0]
                 if isinstance(stmt, Ps1ExpressionStatement):
                     sv = string_value(stmt.expression) if stmt.expression else None
                     if sv is not None:

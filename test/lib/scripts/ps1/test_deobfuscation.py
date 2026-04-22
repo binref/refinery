@@ -2549,3 +2549,32 @@ class TestPs1RangeExpressionFolding(TestPs1):
         result = self._deobfuscate("'ABCDEFG'[1..3] -Join ''")
         self.assertIn('BCD', result)
         self.assertNotIn('..', result)
+
+
+class TestPs1UnaryOperatorFolding(TestPs1):
+
+    def test_bnot_integer(self):
+        result = self._deobfuscate('-bnot 0')
+        self.assertIn('-1', result)
+        self.assertNotIn('bnot', result.lower())
+
+    def test_bnot_hex(self):
+        result = self._deobfuscate('-bnot 0xFF00')
+        self.assertNotIn('bnot', result.lower())
+        self.assertNotIn('0xFF00', result)
+
+    def test_not_zero(self):
+        result = self._deobfuscate('-not 0')
+        self.assertIn('$True', result)
+
+    def test_not_nonzero(self):
+        result = self._deobfuscate('-not 1')
+        self.assertIn('$False', result)
+
+    def test_not_true(self):
+        result = self._deobfuscate('-not $True')
+        self.assertIn('$False', result)
+
+    def test_bang_false(self):
+        result = self._deobfuscate('!$False')
+        self.assertIn('$True', result)
