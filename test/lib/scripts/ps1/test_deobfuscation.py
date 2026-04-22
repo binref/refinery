@@ -2520,3 +2520,32 @@ class TestPs1StringMultiplicationFolding(TestPs1):
         result = self._deobfuscate("'hello' * 0")
         self.assertNotIn('hello', result)
         self.assertNotIn('*', result)
+
+
+class TestPs1RangeExpressionFolding(TestPs1):
+
+    def test_ascending_range(self):
+        result = self._deobfuscate('1..3')
+        self.assertIn('1', result)
+        self.assertIn('2', result)
+        self.assertIn('3', result)
+
+    def test_descending_range(self):
+        result = self._deobfuscate('3..1')
+        self.assertIn('3', result)
+        self.assertIn('2', result)
+        self.assertIn('1', result)
+
+    def test_char_array_cast_on_range(self):
+        result = self._deobfuscate("[char[]](65..67) -Join ''")
+        self.assertIn('ABC', result)
+
+    def test_single_element_range(self):
+        result = self._deobfuscate('5..5')
+        self.assertIn('5', result)
+        self.assertNotIn('..', result)
+
+    def test_range_used_as_index(self):
+        result = self._deobfuscate("'ABCDEFG'[1..3] -Join ''")
+        self.assertIn('BCD', result)
+        self.assertNotIn('..', result)

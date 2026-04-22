@@ -51,6 +51,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1InvokeMember,
     Ps1MemberAccess,
     Ps1Pipeline,
+    Ps1RangeExpression,
     Ps1ScriptBlock,
     Ps1StringLiteral,
     Ps1UnaryExpression,
@@ -409,6 +410,21 @@ class Ps1ConstantFolding(LocalFunctionAwareTransformer):
         if args is None:
             return None
         return make_string_literal(''.join(args))
+
+    def visit_Ps1RangeExpression(self, node: Ps1RangeExpression):
+        self.generic_visit(node)
+        if isinstance(node.parent, Ps1RangeExpression):
+            return None
+        lower = unwrap_integer(node.start)
+        upper = unwrap_integer(node.end)
+        if lower is None or upper is None:
+            return None
+        step = 1 if (b := upper.value) >= (a := lower.value) else -1
+        count = abs(b - a) + 1
+        if count > _MAX_STRING_EXPAND:
+            return None
+        return Ps1ArrayLiteral(elements=[
+            Ps1IntegerLiteral(value=v, raw=str(v)) for v in range(a, b + step, step)])
 
     def visit_Ps1IndexExpression(self, node: Ps1IndexExpression):
         self.generic_visit(node)
