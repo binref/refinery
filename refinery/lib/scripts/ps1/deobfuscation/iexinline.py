@@ -50,6 +50,24 @@ _IEX_NAMES = frozenset({'iex', 'invoke-expression'})
 _INVOKE_METHODS = frozenset({'invoke', 'invokereturnasis'})
 
 
+def _is_execution_context_invoke_script(expr: Ps1InvokeMember) -> bool:
+    """
+    Return `True` when `expr` matches `$ExecutionContext.InvokeCommand.InvokeScript(...)`.
+    """
+    return (
+        expr.access == Ps1AccessKind.INSTANCE
+        and isinstance(expr.member, str)
+        and expr.member.lower() == 'invokescript'
+        and len(expr.arguments) == 1
+        and isinstance(mid := expr.object, Ps1MemberAccess)
+        and mid.access == Ps1AccessKind.INSTANCE
+        and isinstance(mid.member, str)
+        and mid.member.lower() == 'invokecommand'
+        and isinstance(root := mid.object, Ps1Variable)
+        and root.name.lower() == 'executioncontext'
+    )
+
+
 def _is_command_switch(arg) -> bool:
     return (
         isinstance(arg, Ps1CommandArgument)
@@ -344,8 +362,9 @@ def _try_extract_scriptblock_create_from_statement(expr: Expression) -> Expressi
     - `&([scriptblock]::Create(arg))`
     - `[scriptblock]::Create(arg).Invoke()`
     - `[scriptblock]::Create(arg).InvokeReturnAsIs()`
+    - `$ExecutionContext.InvokeCommand.InvokeScript(arg)`
 
-    Returns the `Create` argument expression, or `None`.
+    Returns the `Create`/`InvokeScript` argument expression, or `None`.
     """
     if isinstance(expr, Ps1CommandInvocation) and expr.invocation_operator == '&':
         name = expr.name
@@ -361,6 +380,8 @@ def _try_extract_scriptblock_create_from_statement(expr: Expression) -> Expressi
             and expr.object is not None
         ):
             return _try_extract_scriptblock_create_arg(expr.object)
+        if _is_execution_context_invoke_script(expr):
+            return expr.arguments[0]
     return None
 
 
@@ -446,16 +467,22 @@ class Ps1IexInlining(Transformer):
 
     def _try_inline_scriptblock_create_expression(self, node: Ps1InvokeMember) -> Expression | None:
         """
-        Handle `[scriptblock]::Create(expr).Invoke()` in expression position.
+        Handles:
+        - `[scriptblock]::Create(expr).Invoke()`
+        - `$ExecutionContext.InvokeCommand.InvokeScript(expr)`
+        in expression position.
         """
-        if (
-            node.access != Ps1AccessKind.INSTANCE
-            or not isinstance(node.member, str)
-            or node.member.lower() not in _INVOKE_METHODS
-            or node.object is None
+        if _is_execution_context_invoke_script(node):
+            sb_arg = node.arguments[0]
+        elif (
+            node.access == Ps1AccessKind.INSTANCE
+            and isinstance(node.member, str)
+            and node.member.lower() in _INVOKE_METHODS
+            and node.object is not None
         ):
+            sb_arg = _try_extract_scriptblock_create_arg(node.object)
+        else:
             return None
-        sb_arg = _try_extract_scriptblock_create_arg(node.object)
         if sb_arg is None:
             return None
         code = _resolve_to_string(sb_arg)

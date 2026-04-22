@@ -2663,3 +2663,28 @@ class TestPs1FormatStringSpecifiers(TestPs1):
     def test_hex_multi_arg(self):
         result = self._deobfuscate("'{0:X2}{1:X2}' -f 72, 105")
         self.assertIn('4869', result)
+
+
+class TestPs1InvokeScriptInlining(TestPs1):
+
+    def test_invoke_script_basic(self):
+        result = self._deobfuscate(
+            "$ExecutionContext.InvokeCommand.InvokeScript('Write-Host hello')"
+        )
+        self.assertIn('Write-Host', result)
+        self.assertIn('hello', result)
+        self.assertNotIn('InvokeScript', result)
+
+    def test_invoke_script_concat(self):
+        result = self._deobfuscate(
+            "$ExecutionContext.InvokeCommand.InvokeScript('Write' + '-Host hi')"
+        )
+        self.assertIn('Write-Host', result)
+        self.assertNotIn('InvokeScript', result)
+
+    def test_invoke_script_case_insensitive(self):
+        result = self._deobfuscate(
+            "$executioncontext.invokecommand.invokescript('Write-Host test')"
+        )
+        self.assertIn('Write-Host', result)
+        self.assertNotIn('invokescript', result.lower())
