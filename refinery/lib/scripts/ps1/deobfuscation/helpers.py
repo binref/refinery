@@ -151,6 +151,19 @@ def collect_byte_array(node: Expression) -> bytes | None:
     array = unwrap_to_array_literal(node)
     if array is not None:
         node = array
+    elif isinstance(node, Ps1ArrayExpression):
+        items: list[int] = []
+        for stmt in node.body:
+            if not isinstance(stmt, Ps1ExpressionStatement) or stmt.expression is None:
+                return None
+            value = extract_int(stmt.expression)
+            if value is None:
+                return None
+            items.append(value)
+        try:
+            return bytes(items)
+        except (ValueError, OverflowError):
+            return None
     values = collect_int_arguments(node)
     if values is None:
         return None

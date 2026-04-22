@@ -2708,3 +2708,19 @@ class TestPs1InvokeCommandInlining(TestPs1):
             'Invoke-Command -ComputerName server -ScriptBlock { Get-Process }'
         )
         self.assertIn('Invoke-Command', result)
+
+
+class TestPs1BitConverterFolding(TestPs1):
+
+    def test_tostring_basic(self):
+        result = self._deobfuscate('[BitConverter]::ToString(@(0x41, 0x42, 0x43))')
+        self.assertIn('41-42-43', result)
+
+    def test_tostring_single_byte(self):
+        result = self._deobfuscate('[BitConverter]::ToString(@(0xFF))')
+        self.assertNotIn('BitConverter', result)
+        self.assertIn('FF', result)
+
+    def test_tostring_with_offset_and_length(self):
+        result = self._deobfuscate('[BitConverter]::ToString(@(0x41, 0x42, 0x43, 0x44), 1, 2)')
+        self.assertIn('42-43', result)

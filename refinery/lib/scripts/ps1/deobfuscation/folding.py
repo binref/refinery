@@ -13,6 +13,7 @@ from refinery.lib.scripts.ps1.deobfuscation.helpers import (
     LocalFunctionAwareTransformer,
     StringMethodError,
     apply_string_method,
+    collect_byte_array,
     collect_format_arguments,
     collect_int_arguments,
     collect_string_arguments,
@@ -635,6 +636,8 @@ class Ps1ConstantFolding(LocalFunctionAwareTransformer):
                             return make_string_literal(separator.join(args))
         if _is_static_regex_call(node) and lower == 'replace':
             return self._handle_regex_replace(node)
+        if is_static_type_call(node, 'system.bitconverter') and lower == 'tostring':
+            return self._try_fold_bitconverter_tostring(node)
         return None
 
     _CONVERT_INT_METHODS = {
@@ -704,6 +707,30 @@ class Ps1ConstantFolding(LocalFunctionAwareTransformer):
                 if lo <= value <= hi:
                     return Ps1IntegerLiteral(value=value, raw=str(value))
         return None
+
+    @staticmethod
+    def _try_fold_bitconverter_tostring(node: Ps1InvokeMember) -> Expression | None:
+        if not node.arguments:
+            return None
+        data = collect_byte_array(node.arguments[0])
+        if data is None:
+            return None
+        offset = 0
+        length = len(data)
+        if len(node.arguments) >= 2:
+            n = unwrap_integer(node.arguments[1])
+            if n is None:
+                return None
+            offset = n.value
+        if len(node.arguments) >= 3:
+            n = unwrap_integer(node.arguments[2])
+            if n is None:
+                return None
+            length = n.value
+        if offset < 0 or length < 0 or offset + length > len(data):
+            return None
+        segment = data[offset:offset + length]
+        return make_string_literal('-'.join(F'{b:02X}' for b in segment))
 
     def _handle_regex_replace(self, node: Ps1InvokeMember) -> Expression | None:
         if len(node.arguments) not in (3, 4):
