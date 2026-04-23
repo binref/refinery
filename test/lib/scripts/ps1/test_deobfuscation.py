@@ -710,10 +710,6 @@ class TestPs1ConstantInlining(TestPs1):
         self.assertIn('XZ', result)
         self.assertNotIn('$a', result)
 
-    def test_double_assignment_not_inlined(self):
-        result = self._deobfuscate("$x = 'a'; $x = 'b'; Write-Output $x")
-        self.assertIn('$x', result)
-
     def test_compound_assignment_disqualifies(self):
         result = self._deobfuscate("$x = 'a'; $x += 'b'; Write-Output $x")
         self.assertIn('$x', result)
@@ -730,10 +726,6 @@ class TestPs1ConstantInlining(TestPs1):
         self.assertNotIn('$x', result)
         self.assertIn('151', result)
         self.assertIn('152', result)
-
-    def test_mixed_constant_and_nonconst_not_inlined(self):
-        result = self._deobfuscate("$x = 'a'; $x = $y; Write-Output $x")
-        self.assertIn('$x', result)
 
     def test_variable_index_skipped(self):
         result = self._deobfuscate("$a = @('x','y'); Write-Output $a[$i]")
@@ -2756,3 +2748,46 @@ class TestPs1HashtableLookup(TestPs1):
     def test_missing_key_not_folded(self):
         result = self._deobfuscate("@{'a'='hello'}['b']")
         self.assertIn('@{', result)
+
+
+class TestPs1ReassignedVariableInlining(TestPs1):
+
+    def test_both_regions_inlined(self):
+        result = self._deobfuscate(
+            "$x='hello'; Write-Host $x; $x='world'; Write-Host $x"
+        )
+        self.assertIn('hello', result)
+        self.assertIn('world', result)
+        self.assertNotIn('$x', result)
+
+    def test_non_constant_reassignment_blocks_later_region(self):
+        result = self._deobfuscate(
+            "$x='hello'; Write-Host $x; $x=$y; Write-Host $x"
+        )
+        self.assertIn('hello', result)
+        self.assertNotIn("$x = 'hello'", result)
+
+    def test_dead_assignment_removed(self):
+        result = self._deobfuscate(
+            "$x='hello'; Write-Host $x; $x='world'; Write-Host $x"
+        )
+        self.assertNotIn("$x='hello'", result)
+        self.assertNotIn("$x='world'", result)
+        self.assertNotIn("$x = 'hello'", result)
+        self.assertNotIn("$x = 'world'", result)
+
+    def test_constant_before_nonconst_inlined(self):
+        result = self._deobfuscate(
+            "$x='hello'; Write-Host $x; $x=$y; Write-Host $x"
+        )
+        self.assertIn('hello', result)
+        self.assertNotIn("$x = 'hello'", result)
+
+    def test_nested_nonconst_blocks_outer_reference(self):
+        code = '\n'.join([
+            "$s = 'initial'",
+            'if ($script:cond) { $s = $script:dynamic }',
+            'Write-Host $s',
+        ])
+        result = self._deobfuscate(code)
+        self.assertIn('$s', result)

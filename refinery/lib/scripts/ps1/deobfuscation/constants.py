@@ -3,6 +3,8 @@ Inline constant variable references in PowerShell scripts.
 """
 from __future__ import annotations
 
+from typing import NamedTuple
+
 from refinery.lib.scripts import (
     Expression,
     Node,
@@ -241,6 +243,15 @@ def _walk_outer_scope(root: Node):
 
 
 def _find_body_entry(node: Node) -> tuple[list, int] | None:
+    entries = _find_all_body_entries(node)
+    return entries[0] if entries else None
+
+
+def _find_all_body_entries(node: Node) -> list[tuple[list, int]]:
+    """
+    Walk upward from `node` and return a body-list position at every ancestor level.
+    """
+    result: list[tuple[list, int]] = []
     cursor = node
     while cursor.parent is not None:
         parent = cursor.parent
@@ -248,29 +259,62 @@ def _find_body_entry(node: Node) -> tuple[list, int] | None:
         if body is not None:
             for idx, entry in enumerate(body):
                 if entry is cursor:
-                    return (body, idx)
-        cursor = parent
-    return None
-
-
-def _is_dominated_by(node: Node, scope_entries: list[tuple[list, int]]) -> bool:
-    cursor = node
-    reached_root = False
-    while cursor.parent is not None:
-        parent = cursor.parent
-        body = get_body(parent)
-        if body is not None:
-            reached_root = True
-            for idx, entry in enumerate(body):
-                if entry is cursor:
-                    for assign_body, assign_idx in scope_entries:
-                        if assign_body is body and assign_idx <= idx:
-                            return True
+                    result.append((body, idx))
                     break
+        cursor = parent
+    return result
+
+
+def _find_dominating_entry(
+    node: Node,
+    entries: list[_CandidateEntry],
+    seal_points: list[tuple[list, int]] | None = None,
+) -> _CandidateEntry | None:
+    """
+    For a variable reference, find the assignment entry that dominates it. When multiple
+    constant assignments exist, pick the latest one whose scope position precedes the reference
+    without any later assignment of the same variable intervening.
+
+    If `seal_points` is provided, a candidate is rejected when a non-constant assignment
+    (seal point) falls between the candidate's position and the reference position.
+    """
+    cursor = node
+    while cursor.parent is not None:
+        parent = cursor.parent
+        body = get_body(parent)
+        if body is not None:
+            ref_idx: int | None = None
+            for idx, entry in enumerate(body):
+                if entry is cursor:
+                    ref_idx = idx
+                    break
+            if ref_idx is not None:
+                best: _CandidateEntry | None = None
+                best_idx = -1
+                for candidate_entry in entries:
+                    scope = candidate_entry.scope
+                    if scope is None:
+                        continue
+                    assign_body, assign_idx = scope
+                    if assign_body is body and assign_idx <= ref_idx and assign_idx > best_idx:
+                        best = candidate_entry
+                        best_idx = assign_idx
+                if best is not None and seal_points:
+                    for sp_body, sp_idx in seal_points:
+                        if sp_body is body and best_idx < sp_idx <= ref_idx:
+                            best = None
+                            break
+                if best is not None:
+                    return best
             cursor = parent
             continue
         cursor = parent
-    return not reached_root
+    if not entries:
+        return None
+    for candidate_entry in entries:
+        if candidate_entry.scope is None:
+            return candidate_entry
+    return None
 
 
 def _find_removable_statement(node: Node) -> Node | None:
@@ -295,6 +339,12 @@ def _find_removable_statement(node: Node) -> Node | None:
     return None
 
 
+class _CandidateEntry(NamedTuple):
+    assign: Ps1AssignmentExpression | None
+    value: Node
+    scope: tuple[list, int] | None
+
+
 class Ps1ConstantInlining(Transformer):
 
     def __init__(self, max_inline_length: int = 64, min_inlines_to_prune: int | None = 1):
@@ -303,36 +353,35 @@ class Ps1ConstantInlining(Transformer):
         self.min_inlines_to_prune = min_inlines_to_prune
 
     def visit(self, node: Node):
-        candidates, scope_entries = self._collect_candidates(node)
+        candidates, seal_points = self._collect_candidates(node)
         if not candidates:
             return None
-        remaining, inlined = self._substitute(node, candidates, scope_entries)
+        remaining, inlined = self._substitute(node, candidates, seal_points)
         self._remove_dead_assignments(candidates, remaining, inlined)
         return None
 
     def _collect_candidates(
         self,
         root: Node,
-    ) -> tuple[dict[str, tuple[list[Ps1AssignmentExpression], Node]], dict[str, list[tuple[list, int]]]]:
+    ) -> tuple[dict[str, list[_CandidateEntry]], dict[str, list[tuple[list, int]]]]:
         """
-        Returns:
+        Collect constant assignment entries per variable. Each entry is a `_CandidateEntry` of
+        `(assignment_node, constant_value, scope_entry)`. A variable may have multiple entries
+        when it is reassigned to different constants; each entry covers the region from its
+        assignment to the next reassignment.
 
-            (candidates, scope_entries)
-
-        where candidates maps lower_name to ([assignment_nodes], constant_value) for variables
-        whose every assignment is to the same constant value, and scope_entries maps lower_name to
-        a list of (body_list, index) tuples locating each assignment in its enclosing body.
+        Also returns a dict of seal points: body-list positions of non-constant `=` assignments
+        that terminate the preceding constant region. Each seal point is expanded to all ancestor
+        body levels so that nested non-constant assignments correctly block references in outer
+        scopes.
         """
         rejected: set[str] = set()
-        candidates: dict[str, tuple[list[Ps1AssignmentExpression], Node]] = {}
-        value_keys: dict[str, tuple] = {}
-        scope_entries: dict[str, list[tuple[list, int]]] = {}
+        sealed: dict[str, list[tuple[list, int]]] = {}
+        candidates: dict[str, list[_CandidateEntry]] = {}
 
         def _reject(k: str):
             rejected.add(k)
             candidates.pop(k, None)
-            value_keys.pop(k, None)
-            scope_entries.pop(k, None)
 
         for node in _walk_outer_scope(root):
             if isinstance(node, Ps1AssignmentExpression):
@@ -344,22 +393,11 @@ class Ps1ConstantInlining(Transformer):
                     if node.operator == '=' and node.value is not None:
                         vk = _constant_value_key(node.value)
                         if vk is None:
-                            _reject(key)
+                            sealed.setdefault(key, []).extend(_find_all_body_entries(node))
                         else:
-                            prev = value_keys.get(key)
-                            if prev is not None and prev != vk:
-                                _reject(key)
-                            else:
-                                value_keys[key] = vk
-                                const_value = unwrap_parens(node.value)
-                                existing = candidates.get(key)
-                                if existing is not None:
-                                    existing[0].append(node)
-                                else:
-                                    candidates[key] = ([node], const_value)
-                                entry = _find_body_entry(node)
-                                if entry is not None:
-                                    scope_entries.setdefault(key, []).append(entry)
+                            const_value = unwrap_parens(node.value)
+                            entry = _find_body_entry(node)
+                            candidates.setdefault(key, []).append(_CandidateEntry(node, const_value, entry))
                     else:
                         _reject(key)
 
@@ -383,42 +421,34 @@ class Ps1ConstantInlining(Transformer):
                     if key is not None:
                         _reject(key)
 
-        result = {
+        result: dict[str, list[_CandidateEntry]] = {
             key: val for key, val in candidates.items()
             if key not in _PS1_DEFAULT_VARIABLES
         }
-        result_scope = {
-            key: entries for key, entries in scope_entries.items()
-            if key in result
-        }
         for key, value in _PS1_DEFAULT_VARIABLES.items():
-            if key not in rejected and key not in candidates:
-                result[key] = ([], make_string_literal(value))
+            if key not in rejected and key not in sealed and key not in candidates:
+                result[key] = [_CandidateEntry(None, make_string_literal(value), None)]
         for key, value in PS1_ENV_CONSTANTS.items():
             env_key = F'env:{key}'
-            if env_key not in rejected and env_key not in candidates:
-                result[env_key] = ([], make_string_literal(value))
-        return result, result_scope
+            if env_key not in rejected and env_key not in sealed and env_key not in candidates:
+                result[env_key] = [_CandidateEntry(None, make_string_literal(value), None)]
+        return result, sealed
 
     def _substitute(
         self,
         root: Node,
-        candidates: dict[str, tuple[list[Ps1AssignmentExpression], Node]],
-        scope_entries: dict[str, list[tuple[list, int]]],
+        candidates: dict[str, list[_CandidateEntry]],
+        seal_points: dict[str, list[tuple[list, int]]],
     ) -> tuple[dict[str, int], dict[str, int]]:
         """
-        Inline constant values. Returns:
-
-            (remaining, inlined)
-
-        where remaining maps lower_name to count of references that could not be substituted, and
-        inlined maps lower_name to count of successful substitutions.
+        Inline constant values. Returns `(remaining, inlined)` where remaining maps lower_name
+        to count of references that could not be substituted, and inlined maps lower_name to
+        count of successful substitutions.
         """
         remaining: dict[str, int] = {}
         inlined: dict[str, int] = {}
+        bloat_blocked: set[str] = set()
 
-        # Pre-count references to decide whether inlining would bloat the code.
-        # Variables referenced more than once with long values are kept as-is.
         ref_counts: dict[str, int] = {}
         for node in _walk_outer_scope(root):
             if isinstance(node, Ps1IndexExpression):
@@ -431,21 +461,26 @@ class Ps1ConstantInlining(Transformer):
                 key = _candidate_key(node)
                 if key is not None and key in candidates:
                     ref_counts[key] = ref_counts.get(key, 0) + 1
-        for key, (assign_nodes, const_value) in candidates.items():
-            use_count = ref_counts.get(key, 0)
-            use_count -= len(assign_nodes)
-            if use_count > 1 and isinstance(const_value, (Ps1StringLiteral, Ps1HereString)):
-                if len(const_value.raw) > self.max_inline_length:
-                    remaining[key] = use_count
-            elif use_count > 1:
-                array = _get_array_literal(const_value)
-                if array is not None and len(array.elements) > self.max_inline_length:
-                    remaining[key] = use_count
+        for key, entries in candidates.items():
+            assign_count = sum(1 for a, _, _ in entries if a is not None)
+            use_count = ref_counts.get(key, 0) - assign_count
+            if use_count > 1 and len(entries) == 1:
+                const_value = entries[0].value
+                if isinstance(const_value, (Ps1StringLiteral, Ps1HereString)):
+                    if len(const_value.raw) > self.max_inline_length:
+                        remaining[key] = use_count
+                        bloat_blocked.add(key)
+                else:
+                    array = _get_array_literal(const_value)
+                    if array is not None and len(array.elements) > self.max_inline_length:
+                        remaining[key] = use_count
+                        bloat_blocked.add(key)
 
         assign_node_ids: set[int] = set()
-        for assign_nodes, _ in candidates.values():
-            for an in assign_nodes:
-                assign_node_ids.add(id(an))
+        for entries in candidates.values():
+            for assign_node, _, _ in entries:
+                if assign_node is not None:
+                    assign_node_ids.add(id(assign_node))
 
         handled_vars: set[int] = set()
 
@@ -454,59 +489,56 @@ class Ps1ConstantInlining(Transformer):
                 var = node.object
                 if isinstance(var, Ps1Variable):
                     key = _candidate_key(var)
-                    if key is not None and key in candidates:
+                    if key is not None and key in candidates and key not in bloat_blocked:
                         self._substitute_index_reference(
-                            node, var, key, candidates, scope_entries,
-                            assign_node_ids, remaining, inlined, handled_vars,
+                            node,
+                            var,
+                            key,
+                            candidates,
+                            seal_points,
+                            assign_node_ids,
+                            remaining,
+                            inlined,
+                            handled_vars,
                         )
                 continue
             if isinstance(node, Ps1Variable):
                 if id(node) not in handled_vars:
                     key = _candidate_key(node)
-                    if key is not None and key in candidates and key not in remaining:
+                    if key is not None and key in candidates and key not in bloat_blocked:
                         self._substitute_variable_reference(
-                            node, key, candidates, scope_entries,
-                            assign_node_ids, remaining, inlined,
+                            node,
+                            key,
+                            candidates,
+                            seal_points,
+                            assign_node_ids,
+                            remaining,
+                            inlined,
                         )
 
         return remaining, inlined
-
-    def _guard_fails(
-        self,
-        node: Node,
-        key: str,
-        scope_entries: dict[str, list[tuple[list, int]]],
-        remaining: dict[str, int],
-    ) -> bool:
-        """
-        Shared guard for substitution methods. Returns `True` if the substitution should be skipped
-        (node is not dominated by its scope entry).
-        """
-        entries = scope_entries.get(key)
-        if entries is not None and not _is_dominated_by(node, entries):
-            remaining[key] = remaining.get(key, 0) + 1
-            return True
-        return False
 
     def _substitute_index_reference(
         self,
         node: Ps1IndexExpression,
         var: Ps1Variable,
         key: str,
-        candidates: dict[str, tuple[list[Ps1AssignmentExpression], Node]],
-        scope_entries: dict[str, list[tuple[list, int]]],
+        candidates: dict[str, list[_CandidateEntry]],
+        seal_points: dict[str, list[tuple[list, int]]],
         assign_node_ids: set[int],
         remaining: dict[str, int],
         inlined: dict[str, int],
         handled_vars: set[int],
     ) -> None:
-        _, const_value = candidates[key]
         if id(node.parent) in assign_node_ids:
             handled_vars.add(id(var))
             return
-        if self._guard_fails(node, key, scope_entries, remaining):
+        entry = _find_dominating_entry(node, candidates[key], seal_points.get(key))
+        if entry is None:
+            remaining[key] = remaining.get(key, 0) + 1
             handled_vars.add(id(var))
             return
+        const_value = entry.value
         if not isinstance(node.index, Ps1IntegerLiteral):
             if isinstance(const_value, Ps1StringLiteral):
                 replacement = _clone_constant(const_value)
@@ -550,13 +582,12 @@ class Ps1ConstantInlining(Transformer):
         self,
         node: Ps1Variable,
         key: str,
-        candidates: dict[str, tuple[list[Ps1AssignmentExpression], Node]],
-        scope_entries: dict[str, list[tuple[list, int]]],
+        candidates: dict[str, list[_CandidateEntry]],
+        seal_points: dict[str, list[tuple[list, int]]],
         assign_node_ids: set[int],
         remaining: dict[str, int],
         inlined: dict[str, int],
     ) -> None:
-        _, const_value = candidates[key]
         parent = node.parent
         while isinstance(parent, Ps1CastExpression):
             parent = parent.parent
@@ -566,27 +597,29 @@ class Ps1ConstantInlining(Transformer):
             and _assignment_target_variable(parent.target) is node
         ):
             return
-        if self._guard_fails(node, key, scope_entries, remaining):
+        entry = _find_dominating_entry(node, candidates[key], seal_points.get(key))
+        if entry is None:
+            remaining[key] = remaining.get(key, 0) + 1
             return
-        replacement = _clone_constant(const_value)
+        replacement = _clone_constant(entry.value)
         _replace_in_parent(node, replacement)
         self.mark_changed()
         inlined[key] = inlined.get(key, 0) + 1
 
     def _remove_dead_assignments(
         self,
-        candidates: dict[str, tuple[list[Ps1AssignmentExpression], Node]],
+        candidates: dict[str, list[_CandidateEntry]],
         remaining: dict[str, int],
         inlined: dict[str, int],
     ):
-        for key, (assign_nodes, _) in candidates.items():
-            if not assign_nodes:
-                continue
+        for key, entries in candidates.items():
             if remaining.get(key, 0) > 0:
                 continue
             if self.min_inlines_to_prune is not None and inlined.get(key, 0) < self.min_inlines_to_prune:
                 continue
-            for assign_node in assign_nodes:
+            for assign_node, _, _ in entries:
+                if assign_node is None:
+                    continue
                 stmt = self._find_removable_statement(assign_node)
                 if stmt is None:
                     continue
