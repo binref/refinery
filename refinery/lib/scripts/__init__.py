@@ -85,7 +85,7 @@ def _children(node: Node):
             yield item
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class Node:
     """
     Base class for all AST nodes.
@@ -133,7 +133,7 @@ class Statement(Node):
     pass
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class Block(Node):
     """
     Ordered sequence of statements.
@@ -141,7 +141,7 @@ class Block(Node):
     body: list[Statement] = field(default_factory=list)
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class Script(Node):
     """
     Top-level node representing an entire script.

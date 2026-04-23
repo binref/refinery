@@ -207,31 +207,31 @@ class Ps1UnusedVariableRemoval(Transformer):
 
     def visit(self, node: Node):
         write_nodes: dict[str, list[Node]] = {}
-        write_targets: set[int] = set()
+        write_targets: set[Ps1Variable] = set()
         read_in_assign: dict[str, set[str]] = {}
         has_free_read: set[str] = set()
         for n in _walk_outer_scope(node):
             if isinstance(n, Ps1AssignmentExpression):
                 var = _assignment_target_variable(n.target)
                 if var is not None:
-                    write_targets.add(id(var))
+                    write_targets.add(var)
                     key = _candidate_key(var)
                     if key is not None:
                         write_nodes.setdefault(key, []).append(n)
             elif isinstance(n, Ps1ForEachLoop):
                 if isinstance(n.variable, Ps1Variable):
-                    write_targets.add(id(n.variable))
+                    write_targets.add(n.variable)
             elif isinstance(n, Ps1UnaryExpression) and n.operator in ('++', '--'):
                 if isinstance(n.operand, Ps1Variable):
-                    write_targets.add(id(n.operand))
+                    write_targets.add(n.operand)
                     key = _candidate_key(n.operand)
                     if key is not None:
                         write_nodes.setdefault(key, []).append(n)
             elif isinstance(n, Ps1ParameterDeclaration):
                 if isinstance(n.variable, Ps1Variable):
-                    write_targets.add(id(n.variable))
+                    write_targets.add(n.variable)
         for n in _walk_outer_scope(node):
-            if not isinstance(n, Ps1Variable) or id(n) in write_targets:
+            if not isinstance(n, Ps1Variable) or n in write_targets:
                 continue
             key = _candidate_key(n)
             if key is None:
@@ -262,15 +262,15 @@ class Ps1UnusedVariableRemoval(Transformer):
             return None
         body = get_body(node)
         if body is not None:
-            dead_stmts: set[int] = set()
+            dead_stmts: set[Node] = set()
             for key in dead:
                 for mutation in write_nodes[key]:
                     stmt = _find_removable_statement(mutation)
                     if stmt is not None:
-                        dead_stmts.add(id(stmt))
+                        dead_stmts.add(stmt)
             surviving = [
                 s for s in body
-                if id(s) not in dead_stmts
+                if s not in dead_stmts
                 and not isinstance(s, Ps1FunctionDefinition)
             ]
             if not surviving:
@@ -365,25 +365,25 @@ class Ps1JunkStatementRemoval(Transformer):
         return reachable
 
     def _prune_body(self, body: list, is_root: bool, called: set[str]):
-        removable_set: set[int] = set()
+        removable: set[Node] = set()
         for stmt in body:
             if self._is_removable_statement(stmt):
-                removable_set.add(id(stmt))
+                removable.add(stmt)
             elif is_root and isinstance(stmt, Ps1FunctionDefinition):
                 if stmt.name.lower() not in called:
-                    removable_set.add(id(stmt))
-        if not removable_set:
+                    removable.add(stmt)
+        if not removable:
             return
         if is_root:
             surviving = [
                 s for s in body
-                if id(s) not in removable_set
+                if s not in removable
                 and not isinstance(s, Ps1FunctionDefinition)
             ]
             if not surviving:
                 return
         for stmt in list(body):
-            if id(stmt) in removable_set:
+            if stmt in removable:
                 if _remove_from_parent(stmt):
                     self.mark_changed()
 

@@ -178,7 +178,7 @@ class AstCondition(str, enum.Enum):
         return self.value
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class AstNode:
     offset: int
     parent: AstNode | None
@@ -206,42 +206,42 @@ class AstNode:
             return str(synth.synthesize(self))
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class AstError(AstNode):
     token: str
     error: str | None
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class AstStatement(AstNode):
     silenced: bool
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class AstLabel(AstStatement):
     line: str = ''
     label: str = ''
     comment: bool = False
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class AstCommand(AstStatement):
     redirects: dict[int, RedirectIO] = field(default_factory=dict)
     fragments: list[str] = field(default_factory=list)
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class AstGroup(AstStatement):
     redirects: dict[int, RedirectIO] = field(default_factory=dict)
     fragments: list[AstSequence] = field(default_factory=list)
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class AstPipeline(AstStatement):
     parts: list[AstCommand | AstGroup] = field(default_factory=list)
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class AstConditionalStatement(AstNode):
     condition: AstCondition
     statement: AstStatement
@@ -250,7 +250,7 @@ class AstConditionalStatement(AstNode):
         return F'{self.condition.value} {self.statement!r}'
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class AstSequence(AstNode):
     head: AstStatement
     tail: list[AstConditionalStatement] = field(default_factory=list)
@@ -284,7 +284,7 @@ class AstForOptions:
     usebackq: bool = False
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class AstFor(AstStatement):
     variant: AstForVariant
     variable: str
@@ -323,7 +323,7 @@ class AstIfCmp(str, enum.Enum):
     GEQ = 'GEQ'
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class AstIf(AstStatement):
     then_do: AstSequence
     else_do: AstSequence | None = None

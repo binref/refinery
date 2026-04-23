@@ -6,7 +6,7 @@ from typing import Generator
 from refinery.lib.scripts import Expression, Node, Statement
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class JsErrorNode(Node):
     text: str = ''
     message: str = ''
@@ -15,7 +15,7 @@ class JsErrorNode(Node):
         yield from ()
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class JsIdentifier(Expression):
     name: str = ''
 
@@ -23,7 +23,7 @@ class JsIdentifier(Expression):
         yield from ()
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class JsNumericLiteral(Expression):
     value: int | float = 0
     raw: str = '0'
@@ -32,7 +32,7 @@ class JsNumericLiteral(Expression):
         yield from ()
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class JsBigIntLiteral(Expression):
     value: int = 0
     raw: str = '0n'
@@ -41,7 +41,7 @@ class JsBigIntLiteral(Expression):
         yield from ()
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class JsStringLiteral(Expression):
     value: str = ''
     raw: str = "''"
@@ -50,7 +50,7 @@ class JsStringLiteral(Expression):
         yield from ()
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class JsRegExpLiteral(Expression):
     pattern: str = ''
     flags: str = ''
@@ -60,7 +60,7 @@ class JsRegExpLiteral(Expression):
         yield from ()
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class JsTemplateLiteral(Expression):
     quasis: list[JsTemplateElement] = field(default_factory=list)
     expressions: list[Expression] = field(default_factory=list)
@@ -78,7 +78,7 @@ class JsTemplateLiteral(Expression):
                 yield e
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class JsTemplateElement(Node):
     value: str = ''
     raw: str = ''
@@ -88,7 +88,7 @@ class JsTemplateElement(Node):
         yield from ()
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class JsBooleanLiteral(Expression):
     value: bool = False
 
@@ -96,19 +96,19 @@ class JsBooleanLiteral(Expression):
         yield from ()
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class JsNullLiteral(Expression):
     def children(self) -> Generator[Node, None, None]:
         yield from ()
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class JsThisExpression(Expression):
     def children(self) -> Generator[Node, None, None]:
         yield from ()
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class JsArrayExpression(Expression):
     elements: list[Expression | None] = field(default_factory=list)
 
@@ -121,7 +121,7 @@ class JsArrayExpression(Expression):
                 yield e
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class JsObjectExpression(Expression):
     properties: list[JsProperty | JsSpreadElement] = field(default_factory=list)
 
@@ -132,7 +132,7 @@ class JsObjectExpression(Expression):
         yield from self.properties
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class JsProperty(Node):
     key: Expression | None = None
     value: Expression | None = None
@@ -151,7 +151,7 @@ class JsProperty(Node):
             yield self.value
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class JsSpreadElement(Expression):
     argument: Expression | None = None
 
@@ -163,7 +163,7 @@ class JsSpreadElement(Expression):
             yield self.argument
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class JsFunctionExpression(Expression):
     id: JsIdentifier | None = None
     params: list[Expression] = field(default_factory=list)
@@ -182,7 +182,7 @@ class JsFunctionExpression(Expression):
             yield self.body
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class JsArrowFunctionExpression(Expression):
     params: list[Expression] = field(default_factory=list)
     body: Expression | JsBlockStatement | None = None
@@ -197,7 +197,7 @@ class JsArrowFunctionExpression(Expression):
             yield self.body
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class JsClassExpression(Expression):
     id: JsIdentifier | None = None
     super_class: Expression | None = None
@@ -215,7 +215,7 @@ class JsClassExpression(Expression):
             yield self.body
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class JsUnaryExpression(Expression):
     operator: str = ''
     operand: Expression | None = None
@@ -229,7 +229,7 @@ class JsUnaryExpression(Expression):
             yield self.operand
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class JsUpdateExpression(Expression):
     operator: str = ''
     argument: Expression | None = None
@@ -243,7 +243,7 @@ class JsUpdateExpression(Expression):
             yield self.argument
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class JsBinaryExpression(Expression):
     left: Expression | None = None
     operator: str = ''
@@ -259,7 +259,7 @@ class JsBinaryExpression(Expression):
             yield self.right
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class JsLogicalExpression(Expression):
     left: Expression | None = None
     operator: str = ''
@@ -275,7 +275,7 @@ class JsLogicalExpression(Expression):
             yield self.right
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class JsAssignmentExpression(Expression):
     left: Expression | None = None
     operator: str = '='
@@ -291,7 +291,7 @@ class JsAssignmentExpression(Expression):
             yield self.right
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class JsConditionalExpression(Expression):
     test: Expression | None = None
     consequent: Expression | None = None
@@ -309,7 +309,7 @@ class JsConditionalExpression(Expression):
             yield self.alternate
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class JsMemberExpression(Expression):
     object: Expression | None = None
     property: Expression | None = None
@@ -326,7 +326,7 @@ class JsMemberExpression(Expression):
             yield self.property
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class JsCallExpression(Expression):
     callee: Expression | None = None
     arguments: list[Expression] = field(default_factory=list)
@@ -341,7 +341,7 @@ class JsCallExpression(Expression):
         yield from self.arguments
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class JsNewExpression(Expression):
     callee: Expression | None = None
     arguments: list[Expression] = field(default_factory=list)
@@ -355,7 +355,7 @@ class JsNewExpression(Expression):
         yield from self.arguments
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class JsSequenceExpression(Expression):
     expressions: list[Expression] = field(default_factory=list)
 
@@ -366,7 +366,7 @@ class JsSequenceExpression(Expression):
         yield from self.expressions
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class JsYieldExpression(Expression):
     argument: Expression | None = None
     delegate: bool = False
@@ -379,7 +379,7 @@ class JsYieldExpression(Expression):
             yield self.argument
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class JsAwaitExpression(Expression):
     argument: Expression | None = None
 
@@ -391,7 +391,7 @@ class JsAwaitExpression(Expression):
             yield self.argument
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class JsTaggedTemplateExpression(Expression):
     tag: Expression | None = None
     quasi: JsTemplateLiteral | None = None
@@ -406,7 +406,7 @@ class JsTaggedTemplateExpression(Expression):
             yield self.quasi
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class JsParenthesizedExpression(Expression):
     expression: Expression | None = None
 
@@ -418,7 +418,7 @@ class JsParenthesizedExpression(Expression):
             yield self.expression
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class JsArrayPattern(Expression):
     elements: list[Expression | None] = field(default_factory=list)
 
@@ -431,7 +431,7 @@ class JsArrayPattern(Expression):
                 yield e
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class JsObjectPattern(Expression):
     properties: list[JsProperty | JsRestElement] = field(default_factory=list)
 
@@ -442,7 +442,7 @@ class JsObjectPattern(Expression):
         yield from self.properties
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class JsAssignmentPattern(Expression):
     left: Expression | None = None
     right: Expression | None = None
@@ -457,7 +457,7 @@ class JsAssignmentPattern(Expression):
             yield self.right
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class JsRestElement(Expression):
     argument: Expression | None = None
 
@@ -469,7 +469,7 @@ class JsRestElement(Expression):
             yield self.argument
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class JsClassBody(Node):
     body: list[JsMethodDefinition | JsPropertyDefinition] = field(default_factory=list)
 
@@ -480,7 +480,7 @@ class JsClassBody(Node):
         yield from self.body
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class JsMethodDefinition(Node):
     key: Expression | None = None
     value: JsFunctionExpression | None = None
@@ -498,7 +498,7 @@ class JsMethodDefinition(Node):
             yield self.value
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class JsPropertyDefinition(Node):
     key: Expression | None = None
     value: Expression | None = None
@@ -515,7 +515,7 @@ class JsPropertyDefinition(Node):
             yield self.value
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class JsExpressionStatement(Statement):
     expression: Expression | None = None
 
@@ -527,7 +527,7 @@ class JsExpressionStatement(Statement):
             yield self.expression
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class JsBlockStatement(Statement):
     body: list[Statement] = field(default_factory=list)
 
@@ -538,13 +538,13 @@ class JsBlockStatement(Statement):
         yield from self.body
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class JsEmptyStatement(Statement):
     def children(self) -> Generator[Node, None, None]:
         yield from ()
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class JsVariableDeclaration(Statement):
     declarations: list[JsVariableDeclarator] = field(default_factory=list)
     kind: str = 'var'
@@ -556,7 +556,7 @@ class JsVariableDeclaration(Statement):
         yield from self.declarations
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class JsVariableDeclarator(Node):
     id: Expression | None = None
     init: Expression | None = None
@@ -571,7 +571,7 @@ class JsVariableDeclarator(Node):
             yield self.init
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class JsIfStatement(Statement):
     test: Expression | None = None
     consequent: Statement | None = None
@@ -589,7 +589,7 @@ class JsIfStatement(Statement):
             yield self.alternate
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class JsWhileStatement(Statement):
     test: Expression | None = None
     body: Statement | None = None
@@ -604,7 +604,7 @@ class JsWhileStatement(Statement):
             yield self.body
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class JsDoWhileStatement(Statement):
     test: Expression | None = None
     body: Statement | None = None
@@ -619,7 +619,7 @@ class JsDoWhileStatement(Statement):
             yield self.test
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class JsForStatement(Statement):
     init: Expression | Statement | None = None
     test: Expression | None = None
@@ -640,7 +640,7 @@ class JsForStatement(Statement):
             yield self.body
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class JsForInStatement(Statement):
     left: Expression | Statement | None = None
     right: Expression | None = None
@@ -658,7 +658,7 @@ class JsForInStatement(Statement):
             yield self.body
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class JsForOfStatement(Statement):
     left: Expression | Statement | None = None
     right: Expression | None = None
@@ -677,7 +677,7 @@ class JsForOfStatement(Statement):
             yield self.body
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class JsSwitchStatement(Statement):
     discriminant: Expression | None = None
     cases: list[JsSwitchCase] = field(default_factory=list)
@@ -691,7 +691,7 @@ class JsSwitchStatement(Statement):
         yield from self.cases
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class JsSwitchCase(Node):
     test: Expression | None = None
     consequent: list[Statement] = field(default_factory=list)
@@ -705,7 +705,7 @@ class JsSwitchCase(Node):
         yield from self.consequent
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class JsTryStatement(Statement):
     block: JsBlockStatement | None = None
     handler: JsCatchClause | None = None
@@ -723,7 +723,7 @@ class JsTryStatement(Statement):
             yield self.finalizer
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class JsCatchClause(Node):
     param: Expression | None = None
     body: JsBlockStatement | None = None
@@ -738,7 +738,7 @@ class JsCatchClause(Node):
             yield self.body
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class JsThrowStatement(Statement):
     argument: Expression | None = None
 
@@ -750,7 +750,7 @@ class JsThrowStatement(Statement):
             yield self.argument
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class JsReturnStatement(Statement):
     argument: Expression | None = None
 
@@ -762,7 +762,7 @@ class JsReturnStatement(Statement):
             yield self.argument
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class JsBreakStatement(Statement):
     label: JsIdentifier | None = None
 
@@ -774,7 +774,7 @@ class JsBreakStatement(Statement):
             yield self.label
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class JsContinueStatement(Statement):
     label: JsIdentifier | None = None
 
@@ -786,7 +786,7 @@ class JsContinueStatement(Statement):
             yield self.label
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class JsLabeledStatement(Statement):
     label: JsIdentifier | None = None
     body: Statement | None = None
@@ -801,7 +801,7 @@ class JsLabeledStatement(Statement):
             yield self.body
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class JsWithStatement(Statement):
     object: Expression | None = None
     body: Statement | None = None
@@ -816,13 +816,13 @@ class JsWithStatement(Statement):
             yield self.body
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class JsDebuggerStatement(Statement):
     def children(self) -> Generator[Node, None, None]:
         yield from ()
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class JsFunctionDeclaration(Statement):
     id: JsIdentifier | None = None
     params: list[Expression] = field(default_factory=list)
@@ -841,7 +841,7 @@ class JsFunctionDeclaration(Statement):
             yield self.body
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class JsClassDeclaration(Statement):
     id: JsIdentifier | None = None
     super_class: Expression | None = None
@@ -859,7 +859,7 @@ class JsClassDeclaration(Statement):
             yield self.body
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class JsImportSpecifier(Node):
     imported: JsIdentifier | None = None
     local: JsIdentifier | None = None
@@ -874,7 +874,7 @@ class JsImportSpecifier(Node):
             yield self.local
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class JsImportDefaultSpecifier(Node):
     local: JsIdentifier | None = None
 
@@ -886,7 +886,7 @@ class JsImportDefaultSpecifier(Node):
             yield self.local
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class JsImportNamespaceSpecifier(Node):
     local: JsIdentifier | None = None
 
@@ -898,7 +898,7 @@ class JsImportNamespaceSpecifier(Node):
             yield self.local
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class JsImportDeclaration(Statement):
     specifiers: list[
         JsImportSpecifier | JsImportDefaultSpecifier | JsImportNamespaceSpecifier
@@ -914,7 +914,7 @@ class JsImportDeclaration(Statement):
             yield self.source
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class JsExportSpecifier(Node):
     local: JsIdentifier | None = None
     exported: JsIdentifier | None = None
@@ -929,7 +929,7 @@ class JsExportSpecifier(Node):
             yield self.exported
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class JsExportNamedDeclaration(Statement):
     declaration: Statement | None = None
     specifiers: list[JsExportSpecifier] = field(default_factory=list)
@@ -946,7 +946,7 @@ class JsExportNamedDeclaration(Statement):
             yield self.source
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class JsExportDefaultDeclaration(Statement):
     declaration: Expression | Statement | None = None
 
@@ -958,7 +958,7 @@ class JsExportDefaultDeclaration(Statement):
             yield self.declaration
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class JsExportAllDeclaration(Statement):
     source: JsStringLiteral | None = None
     exported: JsIdentifier | None = None
@@ -973,7 +973,7 @@ class JsExportAllDeclaration(Statement):
             yield self.exported
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, eq=False)
 class JsScript(Statement):
     body: list[Statement] = field(default_factory=list)
 

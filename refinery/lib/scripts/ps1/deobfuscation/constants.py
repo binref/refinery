@@ -476,13 +476,13 @@ class Ps1ConstantInlining(Transformer):
                         remaining[key] = use_count
                         bloat_blocked.add(key)
 
-        assign_node_ids: set[int] = set()
+        assign_nodes: set[Ps1AssignmentExpression] = set()
         for entries in candidates.values():
             for assign_node, _, _ in entries:
                 if assign_node is not None:
-                    assign_node_ids.add(id(assign_node))
+                    assign_nodes.add(assign_node)
 
-        handled_vars: set[int] = set()
+        handled_vars: set[Ps1Variable] = set()
 
         for node in list(_walk_outer_scope(root)):
             if isinstance(node, Ps1IndexExpression):
@@ -496,14 +496,14 @@ class Ps1ConstantInlining(Transformer):
                             key,
                             candidates,
                             seal_points,
-                            assign_node_ids,
+                            assign_nodes,
                             remaining,
                             inlined,
                             handled_vars,
                         )
                 continue
             if isinstance(node, Ps1Variable):
-                if id(node) not in handled_vars:
+                if node not in handled_vars:
                     key = _candidate_key(node)
                     if key is not None and key in candidates and key not in bloat_blocked:
                         self._substitute_variable_reference(
@@ -511,7 +511,7 @@ class Ps1ConstantInlining(Transformer):
                             key,
                             candidates,
                             seal_points,
-                            assign_node_ids,
+                            assign_nodes,
                             remaining,
                             inlined,
                         )
@@ -525,18 +525,18 @@ class Ps1ConstantInlining(Transformer):
         key: str,
         candidates: dict[str, list[_CandidateEntry]],
         seal_points: dict[str, list[tuple[list, int]]],
-        assign_node_ids: set[int],
+        assign_nodes: set[Ps1AssignmentExpression],
         remaining: dict[str, int],
         inlined: dict[str, int],
-        handled_vars: set[int],
+        handled_vars: set[Ps1Variable],
     ) -> None:
-        if id(node.parent) in assign_node_ids:
-            handled_vars.add(id(var))
+        if node.parent in assign_nodes:
+            handled_vars.add(var)
             return
         entry = _find_dominating_entry(node, candidates[key], seal_points.get(key))
         if entry is None:
             remaining[key] = remaining.get(key, 0) + 1
-            handled_vars.add(id(var))
+            handled_vars.add(var)
             return
         const_value = entry.value
         if not isinstance(node.index, Ps1IntegerLiteral):
@@ -546,10 +546,10 @@ class Ps1ConstantInlining(Transformer):
                 node.object = replacement
                 self.mark_changed()
                 inlined[key] = inlined.get(key, 0) + 1
-                handled_vars.add(id(var))
+                handled_vars.add(var)
             else:
                 remaining[key] = remaining.get(key, 0) + 1
-                handled_vars.add(id(var))
+                handled_vars.add(var)
             return
         idx = node.index.value
         if isinstance(const_value, Ps1StringLiteral):
@@ -561,12 +561,12 @@ class Ps1ConstantInlining(Transformer):
             _replace_in_parent(node, replacement)
             self.mark_changed()
             inlined[key] = inlined.get(key, 0) + 1
-            handled_vars.add(id(var))
+            handled_vars.add(var)
             return
         array = _get_array_literal(const_value)
         if array is None:
             remaining[key] = remaining.get(key, 0) + 1
-            handled_vars.add(id(var))
+            handled_vars.add(var)
             return
         elements = array.elements
         if idx < 0 or idx >= len(elements):
@@ -576,7 +576,7 @@ class Ps1ConstantInlining(Transformer):
         _replace_in_parent(node, replacement)
         self.mark_changed()
         inlined[key] = inlined.get(key, 0) + 1
-        handled_vars.add(id(var))
+        handled_vars.add(var)
 
     def _substitute_variable_reference(
         self,
@@ -584,7 +584,7 @@ class Ps1ConstantInlining(Transformer):
         key: str,
         candidates: dict[str, list[_CandidateEntry]],
         seal_points: dict[str, list[tuple[list, int]]],
-        assign_node_ids: set[int],
+        assign_nodes: set[Ps1AssignmentExpression],
         remaining: dict[str, int],
         inlined: dict[str, int],
     ) -> None:
@@ -592,7 +592,7 @@ class Ps1ConstantInlining(Transformer):
         while isinstance(parent, Ps1CastExpression):
             parent = parent.parent
         if (
-            id(parent) in assign_node_ids
+            parent in assign_nodes
             and isinstance(parent, Ps1AssignmentExpression)
             and _assignment_target_variable(parent.target) is node
         ):
