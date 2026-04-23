@@ -279,9 +279,14 @@ class VbaParser:
             return_type = self._parse_type_name()
         self._eat_eos()
         return VbaDeclareStatement(
-            scope=scope, name=name, lib=lib, alias=alias,
-            is_function=is_function, params=params,
-            return_type=return_type, offset=offset,
+            scope=scope,
+            name=name,
+            lib=lib,
+            alias=alias,
+            is_function=is_function,
+            params=params,
+            return_type=return_type,
+            offset=offset,
         )
 
     def _parse_type_definition(self, scope: VbaScopeModifier) -> VbaTypeDefinition:
@@ -384,8 +389,13 @@ class VbaParser:
         self._advance()
         is_array, bounds, type_name, is_new = self._parse_declarator_suffix(allow_new=True)
         return VbaVariableDeclarator(
-            name=name, type_name=type_name, is_array=is_array,
-            bounds=bounds, is_new=is_new, with_events=with_events, offset=offset,
+            name=name,
+            type_name=type_name,
+            is_array=is_array,
+            bounds=bounds,
+            is_new=is_new,
+            with_events=with_events,
+            offset=offset,
         )
 
     def _parse_event_declaration(self, scope: VbaScopeModifier) -> VbaEventDeclaration:
@@ -428,8 +438,12 @@ class VbaParser:
         self._advance()
         name, params, _, body = self._parse_procedure_body('sub', has_return_type=False)
         return VbaSubDeclaration(
-            scope=scope, name=name, params=params,
-            body=body, is_static=is_static, offset=offset,
+            scope=scope,
+            name=name,
+            params=params,
+            body=body,
+            is_static=is_static,
+            offset=offset,
         )
 
     def _parse_function_declaration(
@@ -440,9 +454,13 @@ class VbaParser:
         name, params, return_type, body = self._parse_procedure_body(
             'function', has_return_type=True)
         return VbaFunctionDeclaration(
-            scope=scope, name=name, params=params,
-            return_type=return_type, body=body,
-            is_static=is_static, offset=offset,
+            scope=scope,
+            name=name,
+            params=params,
+            return_type=return_type,
+            body=body,
+            is_static=is_static,
+            offset=offset,
         )
 
     def _parse_property_declaration(
@@ -455,9 +473,14 @@ class VbaParser:
         name, params, return_type, body = self._parse_procedure_body(
             'property', has_return_type=True)
         return VbaPropertyDeclaration(
-            scope=scope, kind=kind, name=name, params=params,
-            return_type=return_type, body=body,
-            is_static=is_static, offset=offset,
+            scope=scope,
+            kind=kind,
+            name=name,
+            params=params,
+            return_type=return_type,
+            body=body,
+            is_static=is_static,
+            offset=offset,
         )
 
     def _parse_parameter_list(self) -> list[VbaParameter]:
@@ -508,9 +531,14 @@ class VbaParser:
             default = self._parse_expression()
 
         return VbaParameter(
-            name=name, passing=passing, type_name=type_name,
-            is_optional=is_optional, is_paramarray=is_paramarray,
-            default=default, is_array=is_array, offset=offset,
+            name=name,
+            passing=passing,
+            type_name=type_name,
+            is_optional=is_optional,
+            is_paramarray=is_paramarray,
+            default=default,
+            is_array=is_array,
+            offset=offset,
         )
 
     def _parse_type_name(self) -> str:
@@ -792,8 +820,10 @@ class VbaParser:
             collection = self._parse_expression()
             body = self._parse_for_body()
             return VbaForEachStatement(
-                variable=variable, collection=collection,
-                body=body, offset=offset,
+                variable=variable,
+                collection=collection,
+                body=body,
+                offset=offset,
             )
 
         variable = self._parse_postfix_expression()
@@ -806,8 +836,12 @@ class VbaParser:
             step = self._parse_expression()
         body = self._parse_for_body()
         return VbaForStatement(
-            variable=variable, start=start, end=end,
-            step=step, body=body, offset=offset,
+            variable=variable,
+            start=start,
+            end=end,
+            step=step,
+            body=body,
+            offset=offset,
         )
 
     def _collect_body(self, is_done) -> list[Statement]:
@@ -994,8 +1028,11 @@ class VbaParser:
         name = '.'.join(parts)
         is_array, bounds, type_name, _ = self._parse_declarator_suffix()
         return VbaVariableDeclarator(
-            name=name, type_name=type_name, is_array=is_array,
-            bounds=bounds, offset=offset,
+            name=name,
+            type_name=type_name,
+            is_array=is_array,
+            bounds=bounds,
+            offset=offset,
         )
 
     def _parse_erase_statement(self) -> VbaEraseStatement:
@@ -1200,7 +1237,9 @@ class VbaParser:
                 right = self._parse_expression()
                 return VbaBinaryExpression(
                     left=VbaIdentifier(name='Is', offset=offset),
-                    operator=op, right=right, offset=offset,
+                    operator=op,
+                    right=right,
+                    offset=offset,
                 )
             return self._reparse_is_as_expression(offset)
         if self._at(*self._COMPARISON_OPS):
@@ -1208,7 +1247,9 @@ class VbaParser:
             right = self._parse_expression()
             return VbaBinaryExpression(
                 left=VbaIdentifier(name='Is', offset=offset),
-                operator=op, right=right, offset=offset,
+                operator=op,
+                right=right,
+                offset=offset,
             )
         return self._parse_bound_expression()
 
@@ -1268,10 +1309,14 @@ class VbaParser:
     def _parse_comparison_expression(self) -> Expression:
         left = self._parse_concat_expression()
         while self._at(
-            VbaTokenKind.EQ, VbaTokenKind.NEQ,
-            VbaTokenKind.LT, VbaTokenKind.GT,
-            VbaTokenKind.LTE, VbaTokenKind.GTE,
-            VbaTokenKind.IS, VbaTokenKind.LIKE,
+            VbaTokenKind.EQ,
+            VbaTokenKind.NEQ,
+            VbaTokenKind.LT,
+            VbaTokenKind.GT,
+            VbaTokenKind.LTE,
+            VbaTokenKind.GTE,
+            VbaTokenKind.IS,
+            VbaTokenKind.LIKE,
         ):
             op_tok = self._advance()
             right = self._parse_concat_expression()

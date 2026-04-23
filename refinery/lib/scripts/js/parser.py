@@ -696,8 +696,12 @@ class JsParser:
                 value = self._parse_assignment_expression()
             self._eat_semicolon()
             return JsPropertyDefinition(
-                key=key, value=value, computed=computed,
-                is_static=is_static, offset=offset)
+                key=key,
+                value=value,
+                computed=computed,
+                is_static=is_static,
+                offset=offset,
+            )
 
         return self._finish_class_member(key, is_static, is_generator, offset, kind, computed)
 
@@ -722,8 +726,13 @@ class JsParser:
         if isinstance(key, JsIdentifier) and key.name == 'constructor' and kind == 'method':
             kind = 'constructor'
         return JsMethodDefinition(
-            key=key, value=value, kind=kind, computed=computed,
-            is_static=is_static, offset=offset)
+            key=key,
+            value=value,
+            kind=kind,
+            computed=computed,
+            is_static=is_static,
+            offset=offset,
+        )
 
     def _parse_import_declaration(self) -> JsImportDeclaration:
         offset = self._current.offset
@@ -921,8 +930,11 @@ class JsParser:
             self._expect(JsTokenKind.COLON)
             alternate = self._parse_assignment_expression()
             return JsConditionalExpression(
-                test=expr, consequent=consequent, alternate=alternate,
-                offset=expr.offset)
+                test=expr,
+                consequent=consequent,
+                alternate=alternate,
+                offset=expr.offset,
+            )
         return expr
 
     def _parse_nullish_coalescing_expression(self) -> Expression:
@@ -1458,8 +1470,10 @@ class JsParser:
             saved = self._current
             self._advance()
             if self._preceded_by_newline or self._at(
-                JsTokenKind.COLON, JsTokenKind.COMMA,
-                JsTokenKind.RBRACE, JsTokenKind.EQUALS,
+                JsTokenKind.COLON,
+                JsTokenKind.COMMA,
+                JsTokenKind.RBRACE,
+                JsTokenKind.EQUALS,
                 JsTokenKind.LPAREN,
             ):
                 if self._at(JsTokenKind.LPAREN):
@@ -1714,9 +1728,13 @@ class JsParser:
             delegate = True
         argument = None
         if not self._preceded_by_newline and not self._at(
-            JsTokenKind.SEMICOLON, JsTokenKind.RBRACE,
-            JsTokenKind.RPAREN, JsTokenKind.RBRACKET,
-            JsTokenKind.COMMA, JsTokenKind.COLON, JsTokenKind.EOF,
+            JsTokenKind.SEMICOLON,
+            JsTokenKind.RBRACE,
+            JsTokenKind.RPAREN,
+            JsTokenKind.RBRACKET,
+            JsTokenKind.COMMA,
+            JsTokenKind.COLON,
+            JsTokenKind.EOF,
         ):
             argument = self._parse_assignment_expression()
         return JsYieldExpression(
