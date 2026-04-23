@@ -389,6 +389,16 @@ class TestPS1StringConcatenations(TestPs1):
         result = self._deobfuscate("-Join @('hello')")
         self.assertEqual(result, "'hello'")
 
+    def test_string_join_variadic_empty_separator(self):
+        data = "[String]::Join('', 'Nam', 'e')"
+        result = self._deobfuscate(data)
+        self.assertIn("'Name'", result)
+
+    def test_string_join_variadic_with_separator(self):
+        data = "[String]::Join('-', 'a', 'b', 'c')"
+        result = self._deobfuscate(data)
+        self.assertIn("'a-b-c'", result)
+
     def test_replace_after_concat(self):
         result = self._deobfuscate("$([String]::Concat('h_llo')).Replace('_', 'e')")
         self.assertEqual(result, "'hello'")

@@ -638,18 +638,22 @@ class Ps1ConstantFolding(LocalFunctionAwareTransformer):
                     parts.append(sv)
                 else:
                     return make_string_literal(''.join(parts))
-            if lower == 'join' and len(node.arguments) == 2:
+            if lower == 'join' and len(node.arguments) >= 2:
                 separator = string_value(node.arguments[0])
                 if separator is not None:
-                    second = node.arguments[1]
-                    scalar = string_value(second)
-                    if scalar is not None:
-                        return make_string_literal(scalar)
-                    array = unwrap_to_array_literal(second)
-                    if array is not None:
-                        args = collect_string_arguments(array)
-                        if args is not None:
-                            return make_string_literal(separator.join(args))
+                    joined: list[str] = []
+                    for arg in node.arguments[1:]:
+                        if (sv := string_value(arg)) is None:
+                            break
+                        joined.append(sv)
+                    else:
+                        return make_string_literal(separator.join(joined))
+                    if len(node.arguments) == 2:
+                        array = unwrap_to_array_literal(node.arguments[1])
+                        if array is not None:
+                            args = collect_string_arguments(array)
+                            if args is not None:
+                                return make_string_literal(separator.join(args))
         if _is_static_regex_call(node) and lower == 'replace':
             return self._handle_regex_replace(node)
         if is_static_type_call(node, 'system.bitconverter') and lower == 'tostring':

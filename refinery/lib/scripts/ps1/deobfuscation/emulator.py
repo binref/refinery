@@ -792,12 +792,11 @@ class _Ps1Interpreter:
             raise _Ps1InterpreterError
 
     def _invoke_string_static(self, method: str, args: list[_Value]) -> _Value:
-        if method == 'join' and len(args) == 2:
+        if method == 'join' and len(args) >= 2:
             separator = self._to_str(args[0])
-            collection = args[1]
-            if isinstance(collection, list):
-                return separator.join(self._to_str(item) for item in collection)
-            return self._to_str(collection)
+            if len(args) > 2 or not isinstance(args[1], list):
+                return separator.join(self._to_str(a) for a in args[1:])
+            return separator.join(self._to_str(item) for item in args[1])
         if method == 'format' and len(args) >= 1:
             fmt = self._to_str(args[0])
             str_args = [self._to_str(a) for a in args[1:]]

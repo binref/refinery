@@ -78,6 +78,11 @@ class TestPs1RealWorldSmall(TestUnitBase):
         result = data | self.load() | str
         self.assertIn('Hello World', result)
 
+    def test_string_join_variadic(self):
+        data = b"[String]::Join('', 'Nam', 'e')"
+        result = data | self.load() | str
+        self.assertIn('Name', result)
+
     def test_alias_survives_iex_inlining(self):
         data = b"sal x Invoke-Expression; x '[String]::Join('''', @(''Write'', ''-Host''))'"
         result = data | self.load() | str
