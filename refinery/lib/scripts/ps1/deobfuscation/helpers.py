@@ -34,6 +34,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1ForEachLoop,
     Ps1FunctionDefinition,
     Ps1HereString,
+    Ps1IndexExpression,
     Ps1IntegerLiteral,
     Ps1InvokeMember,
     Ps1MemberAccess,
@@ -326,6 +327,9 @@ def iter_variable_mutations(
                 target = target.expression if isinstance(target, Ps1ParenExpression) else target.operand
             if isinstance(target, Ps1Variable):
                 yield target, 'assign', node
+            elif isinstance(target, (Ps1IndexExpression, Ps1MemberAccess)):
+                if isinstance(target.object, Ps1Variable):
+                    yield target.object, 'assign', node
         elif isinstance(node, Ps1ForEachLoop):
             if isinstance(node.variable, Ps1Variable):
                 yield node.variable, 'foreach', node

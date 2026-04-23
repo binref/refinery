@@ -2399,9 +2399,10 @@ class TestPs1UnusedVariableRemoval(TestPs1):
         self.assertNotIn('$x', result)
         self.assertIn('done', result)
 
-    def test_self_referential_kept(self):
+    def test_self_referential_folded(self):
         result = self._deobfuscate("$x = 0; $x = $x + 1; Write-Host $x")
-        self.assertIn('$x', result)
+        self.assertNotIn('$x', result)
+        self.assertIn('1', result)
 
 
 class TestPs1JunkStatementRemoval(TestPs1):
@@ -2791,3 +2792,153 @@ class TestPs1ReassignedVariableInlining(TestPs1):
         ])
         result = self._deobfuscate(code)
         self.assertIn('$s', result)
+
+    def test_seal_point_rhs_inlined(self):
+        result = self._deobfuscate("$x = 39\n$x = [char]($x)\nWrite-Host $x")
+        self.assertNotIn('$x', result)
+        self.assertIn("'", result)
+
+    def test_seal_point_string_rhs_inlined(self):
+        result = self._deobfuscate(
+            "$x = 'hello'\n$x = $x + ' world'\nWrite-Host $x"
+        )
+        self.assertNotIn('$x', result)
+        self.assertIn('hello world', result)
+
+    def test_seal_point_multiple_rhs_refs_inlined(self):
+        result = self._deobfuscate("$x = 10\n$x = $x + $x\nWrite-Host $x")
+        self.assertNotIn('$x', result)
+        self.assertIn('20', result)
+
+    def test_seal_point_does_not_affect_later_ref(self):
+        result = self._deobfuscate(
+            "$x = 39\n$x = [char]($x)\n$y = $x + 'test'"
+        )
+        self.assertNotIn('$x', result)
+        self.assertIn('test', result)
+
+    def test_seal_point_index_rhs_inlined(self):
+        result = self._deobfuscate("$x = 'abc'\n$x = $x[0]\nWrite-Host $x")
+        self.assertNotIn('$x', result)
+        self.assertIn('a', result)
+
+    def test_seal_point_array_index_rhs_inlined(self):
+        result = self._deobfuscate(
+            "$x = @('a','b','c')\n$x = $x[1]\nWrite-Host $x"
+        )
+        self.assertNotIn('$x', result)
+        self.assertIn('b', result)
+
+    def test_seal_point_index_in_loop_not_inlined(self):
+        result = self._deobfuscate(
+            "$x = 'hello'\nwhile ($true) { $x = $x[0] }"
+        )
+        self.assertIn('$x', result)
+
+    def test_self_ref_in_loop_not_inlined(self):
+        code = "$s = 0\nwhile ($s -ne 10) {\n  $s = $s + 1\n}"
+        result = self._deobfuscate(code)
+        self.assertIn('$s', result)
+
+    def test_index_assign_rejects_candidate(self):
+        result = self._deobfuscate(
+            "$x = @('a','b','c')\n$x[0] = 'z'\nWrite-Host $x[0]"
+        )
+        self.assertIn('$x', result)
+
+    def test_member_assign_rejects_candidate(self):
+        result = self._deobfuscate(
+            "$x = 'hello'\n$x.Length = 5\nWrite-Host $x"
+        )
+        self.assertIn('$x', result)
+
+    def test_switch_array_self_ref_not_inlined(self):
+        result = self._deobfuscate(
+            "$x = 0\nswitch (1, 2, 3) {\n  default { $x = $x + 1 }\n}"
+        )
+        self.assertIn('$x', result)
+
+    def test_constant_re_established_after_seal(self):
+        code = '\n'.join([
+            "$x = 'first'",
+            'if ($script:c) { $x = $script:d }',
+            "$x = 'second'",
+            'Write-Host $x',
+        ])
+        result = self._deobfuscate(code)
+        self.assertIn('second', result)
+        self.assertNotIn('$x', result)
+
+    def test_both_branches_seal(self):
+        code = '\n'.join([
+            "$x = 'const'",
+            'if ($script:c) { $x = $script:d } else { $x = $script:e }',
+            'Write-Host $x',
+        ])
+        result = self._deobfuscate(code)
+        self.assertIn('$x', result)
+
+    def test_inline_before_seal_preserves_after(self):
+        code = '\n'.join([
+            "$x = 'hello'",
+            'Write-Host $x',
+            'if ($script:c) { $x = $script:d }',
+            'Write-Host $x',
+        ])
+        result = self._deobfuscate(code)
+        self.assertIn('hello', result)
+        self.assertIn('$x', result)
+
+    def test_self_ref_in_do_while_not_inlined(self):
+        code = "$x = 0\ndo { $x = $x + 1 } while ($x -lt 10)"
+        result = self._deobfuscate(code)
+        self.assertIn('$x', result)
+
+    def test_self_ref_in_for_loop_not_inlined(self):
+        code = "$x = ''\nfor ($i = 0; $i -lt 3; $i++) { $x = $x + 'a' }"
+        result = self._deobfuscate(code)
+        self.assertIn('$x', result)
+
+    def test_foreach_rejects_candidate(self):
+        result = self._deobfuscate(
+            "$x = 'const'\nforeach ($x in @(1, 2, 3)) { Write-Host $x }"
+        )
+        self.assertIn('$x', result)
+
+    def test_seal_rhs_then_new_constant(self):
+        code = "$x = 10\n$x = $x * 2\n$x = 'done'\nWrite-Host $x"
+        result = self._deobfuscate(code)
+        self.assertIn('done', result)
+        self.assertNotIn('$x', result)
+
+    def test_augmented_assignment_rejects(self):
+        result = self._deobfuscate(
+            "$x = 'hello'\n$x += ' world'\nWrite-Host $x"
+        )
+        self.assertIn('$x', result)
+
+    def test_same_stmt_assign_does_not_dominate_earlier_ref(self):
+        result = self._deobfuscate(
+            "$x = 'old'\nWrite-Host $x ($x = 'new')"
+        )
+        self.assertIn('old', result)
+
+    def test_same_stmt_binary_assign_does_not_dominate(self):
+        result = self._deobfuscate(
+            "$x = 'old'\n$y = $x + ($x = 'new')"
+        )
+        self.assertIn('old', result)
+
+    def test_nested_assign_seal_exclusion(self):
+        result = self._deobfuscate(
+            "$x = 'hello'\n$x = ($y = $x)\nWrite-Host $y"
+        )
+        self.assertIn('hello', result)
+        self.assertNotIn('$x', result)
+
+    def test_deeply_nested_assign_seal_exclusion(self):
+        result = self._deobfuscate(
+            "$x = 'deep'\n$x = ($y = ($z = $x))\nWrite-Host $z"
+        )
+        self.assertIn('deep', result)
+        self.assertNotIn('$x', result)
