@@ -80,6 +80,7 @@ _REGEX_OPTION_INT: dict[int, int] = {
 
 _RIGHT_TO_LEFT = 64
 _MAX_STRING_EXPAND = 0x1000
+_MAX_RANGES_EXPAND = 15
 
 
 def _is_static_regex_call(node: Ps1InvokeMember) -> bool:
@@ -459,7 +460,7 @@ class Ps1ConstantFolding(LocalFunctionAwareTransformer):
             return None
         step = 1 if (b := upper.value) >= (a := lower.value) else -1
         count = abs(b - a) + 1
-        if count > _MAX_STRING_EXPAND:
+        if count > _MAX_RANGES_EXPAND:
             return None
         return Ps1ArrayLiteral(elements=[
             Ps1IntegerLiteral(value=v, raw=str(v)) for v in range(a, b + step, step)])
