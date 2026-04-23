@@ -282,32 +282,32 @@ def _find_dominating_entry(
     while cursor.parent is not None:
         parent = cursor.parent
         body = get_body(parent)
-        if body is not None:
-            ref_idx: int | None = None
-            for idx, entry in enumerate(body):
-                if entry is cursor:
-                    ref_idx = idx
-                    break
-            if ref_idx is not None:
-                best: _CandidateEntry | None = None
-                best_idx = -1
-                for candidate_entry in entries:
-                    scope = candidate_entry.scope
-                    if scope is None:
-                        continue
-                    assign_body, assign_idx = scope
-                    if assign_body is body and assign_idx <= ref_idx and assign_idx > best_idx:
-                        best = candidate_entry
-                        best_idx = assign_idx
-                if best is not None and seal_points:
-                    for sp_body, sp_idx in seal_points:
-                        if sp_body is body and best_idx < sp_idx <= ref_idx:
-                            best = None
-                            break
-                if best is not None:
-                    return best
+        if body is None:
             cursor = parent
             continue
+        ref_idx: int | None = None
+        for idx, entry in enumerate(body):
+            if entry is cursor:
+                ref_idx = idx
+                break
+        if ref_idx is not None:
+            best: _CandidateEntry | None = None
+            best_idx = -1
+            for candidate_entry in entries:
+                scope = candidate_entry.scope
+                if scope is None:
+                    continue
+                assign_body, assign_idx = scope
+                if assign_body is body and assign_idx <= ref_idx and assign_idx > best_idx:
+                    best = candidate_entry
+                    best_idx = assign_idx
+            if best is not None and seal_points:
+                for sp_body, sp_idx in seal_points:
+                    if sp_body is body and best_idx < sp_idx <= ref_idx:
+                        best = None
+                        break
+            if best is not None:
+                return best
         cursor = parent
     if not entries:
         return None
@@ -655,9 +655,7 @@ class Ps1NullVariableInlining(Transformer):
             if isinstance(parent, (Ps1WhileLoop, Ps1DoLoop, Ps1ForLoop)) and cursor is parent.condition:
                 return True
             if isinstance(parent, (Ps1IfStatement, Ps1SwitchStatement)):
-                for cond, _body in parent.clauses:
-                    if cursor is cond:
-                        return True
+                return any(cursor is cond for cond, _ in parent.clauses)
             return False
         return False
 
