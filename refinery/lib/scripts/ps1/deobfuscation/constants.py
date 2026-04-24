@@ -704,7 +704,8 @@ class Ps1NullVariableInlining(Transformer):
             if isinstance(parent, Ps1UnaryExpression):
                 return True
             if isinstance(parent, Ps1CastExpression):
-                return True
+                cursor = parent
+                continue
             if isinstance(parent, Ps1AssignmentExpression) and cursor is parent.value:
                 return True
             if isinstance(parent, (Ps1ParenExpression, Ps1ArrayLiteral)):
