@@ -1977,6 +1977,91 @@ class TestPs1NullVariableInlining(TestPs1):
         self.assertNotIn('$Null', result)
         self.assertIn('$data', result)
 
+    def test_no_inlining_for_cast_parameter_in_command(self):
+        result = self._deobfuscate_iterative(
+            'class B { static [int] A([string]$xWdH){return $xWdH[0]}}'
+        )
+        self.assertIn('$xWdH', result)
+        self.assertNotIn('$Null', result)
+
+
+class TestPs1ClassEnum(TestPs1):
+
+    def test_class_basic_round_trip(self):
+        result = self._deobfuscate('class Foo { [string]$Name }')
+        self.assertIn('class Foo', result)
+        self.assertIn('$Name', result)
+
+    def test_class_with_inheritance(self):
+        result = self._deobfuscate('class Derived : Base { [int]$X }')
+        self.assertIn('class Derived : Base', result)
+        self.assertIn('$X', result)
+
+    def test_class_static_method(self):
+        result = self._deobfuscate_iterative(
+            'class B { static [int] A([string]$xWdH){return $xWdH[0]}}'
+        )
+        self.assertIn('class B', result)
+        self.assertIn('static', result)
+        self.assertIn('[int]', result)
+        self.assertIn('A(', result)
+        self.assertIn('$xWdH', result)
+
+    def test_class_method_with_body(self):
+        result = self._deobfuscate(
+            'class Foo : Bar { [void] Greet() { Write-Host "hello" } }'
+        )
+        self.assertIn('class Foo : Bar', result)
+        self.assertIn('Greet()', result)
+        self.assertIn('Write-Host', result)
+
+    def test_class_hidden_property(self):
+        result = self._deobfuscate('class H { hidden [int]$Secret = 42 }')
+        self.assertIn('hidden', result)
+        self.assertIn('$Secret', result)
+        self.assertIn('42', result)
+
+    def test_class_constructor(self):
+        result = self._deobfuscate(
+            'class C { C([int]$n) { $this.N = $n } ; [int]$N }'
+        )
+        self.assertIn('class C', result)
+        self.assertIn('$n', result)
+        self.assertIn('$this.N', result)
+
+    def test_class_method_params_not_null_inlined(self):
+        result = self._deobfuscate_iterative(
+            'class B { static [int] A([string]$xWdH){return $xWdH[0]}}'
+        )
+        self.assertNotIn('$Null', result)
+        self.assertIn('$xWdH[0]', result)
+
+    def test_class_preserved_alongside_outer_code(self):
+        result = self._deobfuscate_iterative(
+            '$x = 1; class C { [int]$N }; Write-Host $x'
+        )
+        self.assertIn('class C', result)
+        self.assertIn('Write-Host', result)
+
+    def test_enum_basic(self):
+        result = self._deobfuscate('enum Color { Red; Green; Blue }')
+        self.assertIn('enum Color', result)
+        self.assertIn('Red', result)
+        self.assertIn('Green', result)
+        self.assertIn('Blue', result)
+
+    def test_enum_with_values(self):
+        result = self._deobfuscate('enum Flags { None = 0; Read = 1; Write = 2 }')
+        self.assertIn('enum Flags', result)
+        self.assertIn('Read = 1', result)
+        self.assertIn('Write = 2', result)
+
+    def test_enum_with_underlying_type(self):
+        result = self._deobfuscate('enum Size : byte { Small; Large }')
+        self.assertIn('enum Size : byte', result)
+        self.assertIn('Small', result)
+        self.assertIn('Large', result)
+
 
 class TestPs1RegexFolding(TestPs1):
 

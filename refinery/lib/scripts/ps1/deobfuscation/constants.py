@@ -33,6 +33,8 @@ from refinery.lib.scripts.ps1.model import (
     Ps1ExpressionStatement,
     Ps1ForEachLoop,
     Ps1ForLoop,
+    Ps1ClassDefinition,
+    Ps1EnumDefinition,
     Ps1FunctionDefinition,
     Ps1HereString,
     Ps1IfStatement,
@@ -230,14 +232,14 @@ def _clone_constant(node: Node) -> Expression:
 
 def _walk_outer_scope(root: Node):
     """
-    Walk the AST like `root.walk()` but skip the bodies of `Ps1FunctionDefinition` nodes. The
-    function definition node itself is yielded so that it can still be removed or inspected.
+    Walk the AST like `root.walk()` but skip the bodies of function, class, and enum definitions.
+    The definition node itself is yielded so that it can still be removed or inspected.
     """
     stack: list[Node] = [root]
     while stack:
         node = stack.pop()
         yield node
-        if isinstance(node, Ps1FunctionDefinition):
+        if isinstance(node, (Ps1FunctionDefinition, Ps1ClassDefinition, Ps1EnumDefinition)):
             continue
         for child in node.children():
             stack.append(child)

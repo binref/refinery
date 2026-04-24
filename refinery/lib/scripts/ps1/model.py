@@ -338,6 +338,49 @@ class Ps1FunctionDefinition(Statement):
     body: Ps1ScriptBlock | None = None
 
 
+class Ps1MemberModifier(enum.Flag):
+    NONE   = 0       # noqa
+    STATIC = enum.auto()  # noqa
+    HIDDEN = enum.auto()  # noqa
+
+
+@dataclass(repr=False, eq=False)
+class Ps1PropertyMember(Node):
+    attributes: list[Ps1Attribute] = field(default_factory=list)
+    modifiers: Ps1MemberModifier = Ps1MemberModifier.NONE
+    type_constraint: Ps1TypeExpression | None = None
+    variable: Ps1Variable | None = None
+    initial_value: Expression | None = None
+
+
+@dataclass(repr=False, eq=False)
+class Ps1MethodMember(Node):
+    attributes: list[Ps1Attribute] = field(default_factory=list)
+    modifiers: Ps1MemberModifier = Ps1MemberModifier.NONE
+    return_type: Ps1TypeExpression | None = None
+    definition: Ps1FunctionDefinition | None = None
+
+
+@dataclass(repr=False, eq=False)
+class Ps1ClassDefinition(Statement):
+    name: str = ''
+    base_types: list[str] = field(default_factory=list)
+    members: list[Ps1PropertyMember | Ps1MethodMember] = field(default_factory=list)
+
+
+@dataclass(repr=False, eq=False)
+class Ps1EnumMember(Node):
+    name: str = ''
+    value: Expression | None = None
+
+
+@dataclass(repr=False, eq=False)
+class Ps1EnumDefinition(Statement):
+    name: str = ''
+    base_type: str = ''
+    members: list[Ps1EnumMember] = field(default_factory=list)
+
+
 @dataclass(repr=False, eq=False)
 class Ps1Exit(Statement):
     pipeline: Expression | None = None

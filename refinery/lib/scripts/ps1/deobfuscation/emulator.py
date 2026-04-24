@@ -54,6 +54,8 @@ from refinery.lib.scripts.ps1.model import (
     Ps1ExpressionStatement,
     Ps1ForEachLoop,
     Ps1ForLoop,
+    Ps1ClassDefinition,
+    Ps1EnumDefinition,
     Ps1FunctionDefinition,
     Ps1HereString,
     Ps1IfStatement,
@@ -1162,6 +1164,12 @@ class Ps1FunctionEvaluator(Transformer):
                             self._callers.setdefault(callee, set()).add(caller_key)
 
     def visit_Ps1FunctionDefinition(self, node: Ps1FunctionDefinition):
+        return None
+
+    def visit_Ps1ClassDefinition(self, node: Ps1ClassDefinition):
+        return None
+
+    def visit_Ps1EnumDefinition(self, node: Ps1EnumDefinition):
         return None
 
     def visit_Ps1CommandInvocation(self, node: Ps1CommandInvocation):

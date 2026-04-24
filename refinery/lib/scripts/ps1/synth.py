@@ -16,6 +16,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1BinaryExpression,
     Ps1BreakStatement,
     Ps1CastExpression,
+    Ps1ClassDefinition,
     Ps1Code,
     Ps1CommandArgument,
     Ps1CommandArgumentKind,
@@ -23,6 +24,8 @@ from refinery.lib.scripts.ps1.model import (
     Ps1ContinueStatement,
     Ps1DataSection,
     Ps1DoLoop,
+    Ps1EnumDefinition,
+    Ps1EnumMember,
     Ps1ErrorNode,
     Ps1Exit,
     Ps1ExitStatement,
@@ -41,12 +44,15 @@ from refinery.lib.scripts.ps1.model import (
     Ps1InvokeMember,
     Ps1Jump,
     Ps1MemberAccess,
+    Ps1MemberModifier,
     Ps1MergingRedirection,
+    Ps1MethodMember,
     Ps1ParamBlock,
     Ps1ParameterDeclaration,
     Ps1ParenExpression,
     Ps1Pipeline,
     Ps1PipelineElement,
+    Ps1PropertyMember,
     Ps1RangeExpression,
     Ps1RealLiteral,
     Ps1RedirectionStream,
@@ -539,6 +545,90 @@ class Ps1Synthesizer(Synthesizer):
         self._write(F'{kw} {node.name} ')
         if node.body:
             self.visit(node.body)
+
+    def _emit_member_modifiers(self, modifiers: Ps1MemberModifier):
+        if Ps1MemberModifier.STATIC in modifiers:
+            self._write('static ')
+        if Ps1MemberModifier.HIDDEN in modifiers:
+            self._write('hidden ')
+
+    def visit_Ps1PropertyMember(self, node: Ps1PropertyMember):
+        for attr in node.attributes:
+            self.visit(attr)
+        self._emit_member_modifiers(node.modifiers)
+        if node.type_constraint:
+            self.visit(node.type_constraint)
+        if node.variable:
+            self.visit(node.variable)
+        if node.initial_value:
+            self._write(' = ')
+            self.visit(node.initial_value)
+
+    def visit_Ps1MethodMember(self, node: Ps1MethodMember):
+        for attr in node.attributes:
+            self.visit(attr)
+        self._emit_member_modifiers(node.modifiers)
+        if node.return_type:
+            self.visit(node.return_type)
+            self._write(' ')
+        if node.definition:
+            funcdef = node.definition
+            self._write(F'{funcdef.name}(')
+            if funcdef.body and funcdef.body.param_block:
+                for i, param in enumerate(funcdef.body.param_block.parameters):
+                    if i > 0:
+                        self._write(', ')
+                    self.visit(param)
+            self._write(') {')
+            self._depth += 1
+            if funcdef.body:
+                self._emit_script_body(funcdef.body, newline_after=False)
+            self._depth -= 1
+            has_content = funcdef.body and (
+                funcdef.body.body
+                or funcdef.body.begin_block
+                or funcdef.body.process_block
+                or funcdef.body.end_block
+                or funcdef.body.dynamicparam_block
+            )
+            if has_content:
+                self._newline()
+            self._write('}')
+
+    def visit_Ps1ClassDefinition(self, node: Ps1ClassDefinition):
+        self._write(F'class {node.name}')
+        if node.base_types:
+            self._write(' : ')
+            self._write(', '.join(node.base_types))
+        self._write(' {')
+        self._depth += 1
+        for member in node.members:
+            self._newline()
+            self.visit(member)
+        self._depth -= 1
+        if node.members:
+            self._newline()
+        self._write('}')
+
+    def visit_Ps1EnumMember(self, node: Ps1EnumMember):
+        self._write(node.name)
+        if node.value is not None:
+            self._write(' = ')
+            self.visit(node.value)
+
+    def visit_Ps1EnumDefinition(self, node: Ps1EnumDefinition):
+        self._write(F'enum {node.name}')
+        if node.base_type:
+            self._write(F' : {node.base_type}')
+        self._write(' {')
+        self._depth += 1
+        for member in node.members:
+            self._newline()
+            self.visit(member)
+        self._depth -= 1
+        if node.members:
+            self._newline()
+        self._write('}')
 
     def _visit_jump(self, node: Ps1Jump, name: str):
         self._write(name)

@@ -24,12 +24,15 @@ from refinery.lib.scripts.ps1.model import (
     Ps1BreakStatement,
     Ps1CastExpression,
     Ps1CatchClause,
+    Ps1ClassDefinition,
     Ps1CommandArgument,
     Ps1CommandArgumentKind,
     Ps1CommandInvocation,
     Ps1ContinueStatement,
     Ps1DataSection,
     Ps1DoLoop,
+    Ps1EnumDefinition,
+    Ps1EnumMember,
     Ps1ErrorNode,
     Ps1Exit,
     Ps1ExitStatement,
@@ -48,12 +51,15 @@ from refinery.lib.scripts.ps1.model import (
     Ps1InvokeMember,
     Ps1Jump,
     Ps1MemberAccess,
+    Ps1MemberModifier,
     Ps1MergingRedirection,
+    Ps1MethodMember,
     Ps1ParamBlock,
     Ps1ParameterDeclaration,
     Ps1ParenExpression,
     Ps1Pipeline,
     Ps1PipelineElement,
+    Ps1PropertyMember,
     Ps1RangeExpression,
     Ps1RealLiteral,
     Ps1RedirectionStream,
@@ -194,6 +200,15 @@ class Ps1Parser:
         if self._current.kind == kind:
             return self._advance()
         return None
+
+    def _eat_colon(self) -> bool:
+        if self._current.kind == Ps1TokenKind.DOUBLE_COLON:
+            self._advance()
+            return True
+        if self._current.kind == Ps1TokenKind.GENERIC_TOKEN and self._current.value == ':':
+            self._advance()
+            return True
+        return False
 
     def _expect(self, kind: Ps1TokenKind) -> Ps1Token:
         if self._current.kind == kind:
@@ -469,6 +484,10 @@ class Ps1Parser:
             return self._parse_trap()
         if kind in (Ps1TokenKind.FUNCTION, Ps1TokenKind.FILTER):
             return self._parse_function_definition()
+        if kind == Ps1TokenKind.CLASS:
+            return self._parse_class_definition()
+        if kind == Ps1TokenKind.ENUM:
+            return self._parse_enum_definition()
         if kind == Ps1TokenKind.RETURN:
             return self._parse_return()
         if kind == Ps1TokenKind.THROW:
@@ -1617,6 +1636,197 @@ class Ps1Parser:
         body = self._parse_script_block()
         return Ps1FunctionDefinition(
             offset=offset, name=name, is_filter=is_filter, body=body)
+
+    def _parse_class_definition(self) -> Ps1ClassDefinition:
+        offset = self._current.offset
+        self._advance(Ps1LexerMode.ARGUMENT)
+        self._skip_newlines()
+        name = ''
+        if self._at(Ps1TokenKind.GENERIC_TOKEN) or self._current.kind.is_keyword:
+            name = self._advance().value
+        self._skip_newlines()
+        base_types: list[str] = []
+        if self._eat_colon():
+            self._skip_newlines()
+            while not self._at(Ps1TokenKind.LBRACE, Ps1TokenKind.EOF):
+                if self._at(Ps1TokenKind.GENERIC_TOKEN) or self._current.kind.is_keyword:
+                    base_types.append(self._advance().value)
+                elif self._at(Ps1TokenKind.LBRACKET):
+                    type_lit = self._try_parse_type_literal()
+                    if type_lit is not None:
+                        base_types.append(type_lit.name)
+                    else:
+                        break
+                elif self._eat(Ps1TokenKind.COMMA):
+                    self._skip_newlines()
+                    continue
+                else:
+                    break
+                self._skip_newlines()
+        self._skip_newlines()
+        self._expect(Ps1TokenKind.LBRACE)
+        self._lexer.mode = Ps1LexerMode.EXPRESSION
+        self._skip_newlines()
+        members: list[Ps1PropertyMember | Ps1MethodMember] = []
+        while not self._at(Ps1TokenKind.RBRACE, Ps1TokenKind.EOF):
+            while self._at(Ps1TokenKind.NEWLINE, Ps1TokenKind.SEMICOLON):
+                self._advance()
+            if self._at(Ps1TokenKind.RBRACE, Ps1TokenKind.EOF):
+                break
+            member = self._parse_class_member()
+            if member is not None:
+                members.append(member)
+            else:
+                break
+        self._expect(Ps1TokenKind.RBRACE)
+        return Ps1ClassDefinition(
+            offset=offset,
+            name=name,
+            base_types=base_types,
+            members=members,
+        )
+
+    def _parse_class_member(self) -> Ps1PropertyMember | Ps1MethodMember | None:
+        self._skip_newlines()
+        if self._at(Ps1TokenKind.RBRACE, Ps1TokenKind.EOF):
+            return None
+        offset = self._current.offset
+        attributes: list[Ps1Attribute] = []
+        type_constraint: Ps1TypeExpression | None = None
+        modifiers = Ps1MemberModifier.NONE
+        while True:
+            self._skip_newlines()
+            if self._at(Ps1TokenKind.LBRACKET):
+                attr = self._parse_attribute()
+                if isinstance(attr, Ps1Attribute):
+                    attributes.append(attr)
+                elif type_constraint is None:
+                    type_constraint = attr
+                self._skip_newlines()
+                continue
+            if (
+                self._current.kind == Ps1TokenKind.GENERIC_TOKEN
+                and self._current.value.lower() == 'static'
+            ):
+                modifiers |= Ps1MemberModifier.STATIC
+                self._advance()
+                continue
+            if (
+                self._current.kind == Ps1TokenKind.GENERIC_TOKEN
+                and self._current.value.lower() == 'hidden'
+            ):
+                modifiers |= Ps1MemberModifier.HIDDEN
+                self._advance()
+                continue
+            break
+        if self._at(Ps1TokenKind.VARIABLE):
+            var_tok = self._advance()
+            var = self._make_variable_from_text(var_tok.value)
+            initial_value: Expression | None = None
+            if self._eat(Ps1TokenKind.EQUALS):
+                self._skip_newlines()
+                self._lexer.mode = Ps1LexerMode.EXPRESSION
+                initial_value = self._parse_expression()
+            while self._at(Ps1TokenKind.NEWLINE, Ps1TokenKind.SEMICOLON):
+                self._advance()
+            return Ps1PropertyMember(
+                offset=offset,
+                attributes=attributes,
+                modifiers=modifiers,
+                type_constraint=type_constraint,
+                variable=var,
+                initial_value=initial_value,
+            )
+        if (
+            self._at(Ps1TokenKind.GENERIC_TOKEN)
+            or self._current.kind.is_keyword
+        ):
+            method_name = self._advance().value
+            self._lexer.mode = Ps1LexerMode.EXPRESSION
+            self._skip_newlines()
+            params: list[Ps1ParameterDeclaration] = []
+            if self._at(Ps1TokenKind.LPAREN):
+                self._advance()
+                self._skip_newlines()
+                params = self._parse_parameter_list()
+                self._skip_newlines()
+                self._expect(Ps1TokenKind.RPAREN)
+            self._skip_newlines()
+            self._expect(Ps1TokenKind.LBRACE)
+            self._skip_newlines()
+            script_body = self._parse_script_block_body(expect_close=True)
+            if params:
+                script_body.param_block = Ps1ParamBlock(
+                    offset=offset, parameters=params)
+            funcdef = Ps1FunctionDefinition(
+                offset=offset,
+                name=method_name,
+                body=script_body,
+            )
+            return_type = type_constraint
+            return Ps1MethodMember(
+                offset=offset,
+                attributes=attributes,
+                modifiers=modifiers,
+                return_type=return_type,
+                definition=funcdef,
+            )
+        return None
+
+    def _parse_enum_definition(self) -> Ps1EnumDefinition:
+        offset = self._current.offset
+        self._advance(Ps1LexerMode.ARGUMENT)
+        self._skip_newlines()
+        name = ''
+        if self._at(Ps1TokenKind.GENERIC_TOKEN) or self._current.kind.is_keyword:
+            name = self._advance().value
+        self._skip_newlines()
+        base_type = ''
+        if self._eat_colon():
+            self._skip_newlines()
+            if self._at(Ps1TokenKind.LBRACKET):
+                type_lit = self._try_parse_type_literal()
+                if type_lit is not None:
+                    base_type = type_lit.name
+            elif self._at(Ps1TokenKind.GENERIC_TOKEN) or self._current.kind.is_keyword:
+                base_type = self._advance().value
+            self._skip_newlines()
+        self._expect(Ps1TokenKind.LBRACE)
+        self._skip_newlines()
+        members: list[Ps1EnumMember] = []
+        while not self._at(Ps1TokenKind.RBRACE, Ps1TokenKind.EOF):
+            member = self._parse_enum_member()
+            if member is not None:
+                members.append(member)
+            else:
+                break
+        self._expect(Ps1TokenKind.RBRACE)
+        return Ps1EnumDefinition(
+            offset=offset,
+            name=name,
+            base_type=base_type,
+            members=members,
+        )
+
+    def _parse_enum_member(self) -> Ps1EnumMember | None:
+        self._skip_newlines()
+        if self._at(Ps1TokenKind.RBRACE, Ps1TokenKind.EOF):
+            return None
+        offset = self._current.offset
+        if not (
+            self._at(Ps1TokenKind.GENERIC_TOKEN)
+            or self._current.kind.is_keyword
+        ):
+            return None
+        name = self._advance().value
+        value: Expression | None = None
+        self._lexer.mode = Ps1LexerMode.EXPRESSION
+        if self._eat(Ps1TokenKind.EQUALS):
+            self._skip_newlines()
+            value = self._parse_expression()
+        while self._at(Ps1TokenKind.NEWLINE, Ps1TokenKind.SEMICOLON):
+            self._advance()
+        return Ps1EnumMember(offset=offset, name=name, value=value)
 
     def _parse_script_block_body(self, expect_close: bool = False) -> Ps1ScriptBlock:
         offset = self._current.offset

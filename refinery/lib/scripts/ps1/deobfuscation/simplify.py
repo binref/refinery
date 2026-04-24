@@ -18,6 +18,7 @@ from refinery.lib.scripts.ps1.deobfuscation.typenames import canonical_type_name
 from refinery.lib.scripts.ps1.model import (
     Ps1BinaryExpression,
     Ps1CastExpression,
+    Ps1ClassDefinition,
     Ps1CommandArgument,
     Ps1CommandArgumentKind,
     Ps1CommandInvocation,
@@ -74,6 +75,13 @@ class Ps1Simplifications(LocalFunctionAwareTransformer):
         return None
 
     def visit_Ps1FunctionDefinition(self, node: Ps1FunctionDefinition):
+        self.generic_visit(node)
+        if '`' in node.name:
+            node.name = _strip_backtick_noop(node.name)
+            self.mark_changed()
+        return None
+
+    def visit_Ps1ClassDefinition(self, node: Ps1ClassDefinition):
         self.generic_visit(node)
         if '`' in node.name:
             node.name = _strip_backtick_noop(node.name)
