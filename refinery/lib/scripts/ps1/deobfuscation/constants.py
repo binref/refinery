@@ -22,7 +22,7 @@ from refinery.lib.scripts.ps1.deobfuscation.helpers import (
     unwrap_parens,
     unwrap_to_array_literal,
 )
-from refinery.lib.scripts.ps1.deobfuscation.names import PS1_KNOWN_VARIABLES
+from refinery.lib.scripts.ps1.deobfuscation.data import PS1_KNOWN_VARIABLES
 from refinery.lib.scripts.ps1.model import (
     Ps1ArrayExpression,
     Ps1ArrayLiteral,

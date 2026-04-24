@@ -14,7 +14,7 @@ from refinery.lib.scripts.ps1.deobfuscation.helpers import (
     unwrap_integer,
     unwrap_single_paren,
 )
-from refinery.lib.scripts.ps1.deobfuscation.names import normalize_dotnet_type_name
+from refinery.lib.scripts.ps1.deobfuscation.helpers import normalize_dotnet_type_name
 from refinery.lib.scripts.ps1.model import (
     Ps1BinaryExpression,
     Ps1CastExpression,

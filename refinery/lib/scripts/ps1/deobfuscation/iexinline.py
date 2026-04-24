@@ -19,10 +19,8 @@ from refinery.lib.scripts.ps1.deobfuscation.helpers import (
     get_body,
     string_value,
 )
-from refinery.lib.scripts.ps1.deobfuscation.names import (
-    ENCODING_MAP,
-    normalize_dotnet_type_name,
-)
+from refinery.lib.scripts.ps1.deobfuscation.data import ENCODING_MAP
+from refinery.lib.scripts.ps1.deobfuscation.helpers import normalize_dotnet_type_name
 from refinery.lib.scripts.ps1.model import (
     Ps1AccessKind,
     Ps1ArrayExpression,

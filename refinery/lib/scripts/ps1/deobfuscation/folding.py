@@ -32,11 +32,11 @@ from refinery.lib.scripts.ps1.deobfuscation.helpers import (
     unwrap_single_paren,
     unwrap_to_array_literal,
 )
-from refinery.lib.scripts.ps1.deobfuscation.names import (
+from refinery.lib.scripts.ps1.deobfuscation.data import (
     COMPARISON_OPS,
     ENCODING_MAP,
-    apply_format_string,
 )
+from refinery.lib.scripts.ps1.deobfuscation.helpers import apply_format_string
 from refinery.lib.scripts.ps1.deobfuscation.typenames import (
     is_known_member,
     resolve_member_type,

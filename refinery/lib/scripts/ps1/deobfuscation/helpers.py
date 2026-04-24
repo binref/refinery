@@ -13,10 +13,11 @@ if TYPE_CHECKING:
     from typing import TypeGuard
 
 from refinery.lib.scripts import Block, Node, Transformer
-from refinery.lib.scripts.ps1.deobfuscation.names import (
+from refinery.lib.scripts.ps1.deobfuscation.data import (
     BUILTIN_VARIABLES,
     FOREACH_ALIASES,
-    normalize_type_expression,
+    FORMAT_PATTERN,
+    is_type,
 )
 from refinery.lib.scripts.ps1.model import (
     Expression,
@@ -283,7 +284,6 @@ def unwrap_integer(node: Node | None) -> Ps1IntegerLiteral | None:
 
 
 def is_static_type_call(node: Ps1InvokeMember, canonical: str) -> bool:
-    from refinery.lib.scripts.ps1.deobfuscation.typenames import is_type
     if node.access != Ps1AccessKind.STATIC:
         return False
     if not isinstance(node.object, Ps1TypeExpression):
@@ -296,7 +296,6 @@ def detect_encoding_chain(node: Ps1InvokeMember) -> str | None:
     If *node* is `[Text.Encoding]::X.GetString(args)`, return the encoding member name (e.g.
     `'UTF8'`).  Otherwise return `None`.
     """
-    from refinery.lib.scripts.ps1.deobfuscation.typenames import is_type
     member = get_member_name(node.member)
     if member is None or member.lower() != 'getstring':
         return None
@@ -401,7 +400,6 @@ def is_array_reverse_call(node: Ps1ExpressionStatement) -> Ps1Variable | None:
     """
     If the statement is `[Array]::Reverse($var)`, return the variable node.
     """
-    from refinery.lib.scripts.ps1.deobfuscation.typenames import is_type
     expr = node.expression
     if not isinstance(expr, Ps1InvokeMember):
         return None
@@ -522,3 +520,91 @@ class LocalFunctionAwareTransformer(Transformer):
             return super().visit(node)
         finally:
             self._entry = False
+
+
+def _apply_dotnet_format(value: str | int, spec: str) -> str | None:
+    """
+    Apply a .NET composite format specifier to a single value. Supports `X`/`x` (hex), `D`/`d`
+    (decimal), and `N`/`n` (number). Precision width is honored for zero-padding or digit count.
+    Returns `None` when the specifier is not recognized or inapplicable.
+    """
+    if not spec:
+        return str(value)
+    code = spec[0]
+    width_str = spec[1:]
+    width = int(width_str) if width_str.isdigit() else 0
+    code_upper = code.upper()
+    if code_upper in ('X', 'D', 'N') and not isinstance(value, int):
+        try:
+            value = int(value)
+        except (ValueError, TypeError):
+            return None
+    if code_upper == 'X':
+        raw = format(value, 'X' if code.isupper() else 'x')
+        return raw.zfill(width) if width else raw
+    if code_upper == 'D':
+        raw = str(value)
+        return raw.zfill(width) if width else raw
+    if code_upper == 'N':
+        assert isinstance(value, int)
+        negative = value < 0
+        abs_val = abs(value)
+        int_part = str(abs_val)
+        groups: list[str] = []
+        while int_part:
+            groups.append(int_part[-3:])
+            int_part = int_part[:-3]
+        formatted = ','.join(reversed(groups))
+        decimal_places = width if width else 2
+        formatted += '.' + '0' * decimal_places
+        if negative:
+            formatted = '-' + formatted
+        return formatted
+    return None
+
+
+def normalize_type_expression(name: str) -> str:
+    return name.lower().replace(' ', '')
+
+
+def normalize_dotnet_type_name(name: str) -> str:
+    result = normalize_type_expression(name)
+    if result.startswith('system.'):
+        result = result[7:]
+    return result
+
+
+def apply_format_string(fmt: str, args: list[str | int]) -> str | None:
+    """
+    Apply a PowerShell-style format string to a list of arguments. Each argument can be a string
+    or an integer. Format specifiers like `{0:X2}` and alignment like `{0,10}` are supported.
+    Returns the formatted string, or `None` on index/value errors.
+    """
+    try:
+        def replacer(m: re.Match) -> str:
+            full = m.group(0)
+            if full == '{{':
+                return '{'
+            if full == '}}':
+                return '}'
+            idx = int(m.group(1))
+            value = args[idx]
+            spec = m.group(3)
+            if spec:
+                formatted = _apply_dotnet_format(value, spec)
+                if formatted is None:
+                    raise ValueError(F'unsupported format specifier: {spec}')
+                result = formatted
+            else:
+                result = str(value)
+            align_str = m.group(2)
+            if align_str:
+                align_width = int(align_str)
+                if align_width < 0:
+                    result = result.ljust(-align_width)
+                else:
+                    result = result.rjust(align_width)
+            return result
+        return FORMAT_PATTERN.sub(replacer, fmt)
+    except (IndexError, ValueError):
+        return None

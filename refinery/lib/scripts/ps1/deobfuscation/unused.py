@@ -17,7 +17,7 @@ from refinery.lib.scripts.ps1.deobfuscation.helpers import (
     get_command_name,
     inside_value_producing_context,
 )
-from refinery.lib.scripts.ps1.deobfuscation.names import PS1_KNOWN_VARIABLES
+from refinery.lib.scripts.ps1.deobfuscation.data import PS1_KNOWN_VARIABLES
 from refinery.lib.scripts.ps1.model import (
     Expression,
     Ps1AccessKind,
@@ -26,6 +26,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1AssignmentExpression,
     Ps1BinaryExpression,
     Ps1CastExpression,
+    Ps1CommandArgument,
     Ps1CommandInvocation,
     Ps1ExpandableString,
     Ps1ExpressionStatement,
@@ -42,6 +43,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1PipelineElement,
     Ps1RangeExpression,
     Ps1RealLiteral,
+    Ps1ScriptBlock,
     Ps1StringLiteral,
     Ps1TypeExpression,
     Ps1UnaryExpression,
@@ -118,7 +120,6 @@ _PURE_INSTANCE_METHODS = frozenset({
 })
 
 _PURE_CMDLETS = frozenset({
-    'foreach-object',
     'get-childitem',
     'get-content',
     'get-date',
@@ -134,6 +135,32 @@ _PURE_CMDLETS = frozenset({
     'sort-object',
     'where-object',
 })
+
+_PURE_PIPELINE_CMDLETS = frozenset({
+    'foreach-object',
+    'select-object',
+    'sort-object',
+    'where-object',
+})
+
+
+def _command_body_is_pure(cmd: Ps1CommandInvocation) -> bool:
+    """
+    Check whether all script block arguments of a pipeline cmdlet (ForEach-Object, Where-Object,
+    etc.) have side-effect-free bodies. These cmdlets are pure transforms: they evaluate a script
+    block per input item without mutating state themselves.
+    """
+    for arg in cmd.arguments:
+        block = arg.value if isinstance(arg, Ps1CommandArgument) else arg
+        if not isinstance(block, Ps1ScriptBlock):
+            continue
+        for stmt in block.body:
+            if isinstance(stmt, Ps1ExpressionStatement) and stmt.expression is not None:
+                if not _is_side_effect_free(stmt.expression):
+                    return False
+            elif not isinstance(stmt, Ps1ExpressionStatement):
+                return False
+    return True
 
 
 def _is_side_effect_free(node) -> bool:
@@ -185,8 +212,12 @@ def _is_side_effect_free(node) -> bool:
         return False
     if isinstance(node, Ps1CommandInvocation):
         name = get_command_name(node)
-        if name is not None and name.lower() in _PURE_CMDLETS:
+        if name is None:
+            return False
+        if name.lower() in _PURE_CMDLETS:
             return True
+        if name.lower() in _PURE_PIPELINE_CMDLETS:
+            return _command_body_is_pure(node)
         return False
     if isinstance(node, Ps1Pipeline):
         return all(
@@ -399,6 +430,10 @@ class Ps1JunkStatementRemoval(Transformer):
         if isinstance(expr, Ps1Pipeline):
             if _pipeline_ends_with_out_null(expr) and _pipeline_prefix_is_pure(expr):
                 return True
+            if _pipeline_ends_with_void_foreach(expr) and _pipeline_prefix_is_pure(expr):
+                return True
+            if _pipeline_ends_with_cmdlet(expr, _PURE_PIPELINE_CMDLETS):
+                return False
         return _is_side_effect_free(expr)
 
 
@@ -422,3 +457,46 @@ def _pipeline_prefix_is_pure(pipeline: Ps1Pipeline) -> bool:
         if not _is_side_effect_free(el.expression):
             return False
     return True
+
+
+def _pipeline_ends_with_void_foreach(pipeline: Ps1Pipeline) -> bool:
+    """
+    Detect junk pipelines like ``... | ForEach-Object { [Void]$_ }`` where the ForEach body
+    explicitly discards all output via ``[Void]`` casts. These are anti-analysis noise injected
+    into malware scripts.
+    """
+    if len(pipeline.elements) < 2:
+        return False
+    last = pipeline.elements[-1]
+    if not isinstance(last, Ps1PipelineElement):
+        return False
+    expr = last.expression
+    if not isinstance(expr, Ps1CommandInvocation):
+        return False
+    name = get_command_name(expr)
+    if name is None or name.lower() != 'foreach-object':
+        return False
+    for arg in expr.arguments:
+        block = arg.value if isinstance(arg, Ps1CommandArgument) else arg
+        if not isinstance(block, Ps1ScriptBlock):
+            continue
+        for stmt in block.body:
+            if not isinstance(stmt, Ps1ExpressionStatement) or stmt.expression is None:
+                return False
+            if not (isinstance(stmt.expression, Ps1CastExpression)
+                    and stmt.expression.type_name.lower() == 'void'):
+                return False
+    return True
+
+
+def _pipeline_ends_with_cmdlet(pipeline: Ps1Pipeline, names: frozenset) -> bool:
+    if len(pipeline.elements) < 2:
+        return False
+    last = pipeline.elements[-1]
+    if not isinstance(last, Ps1PipelineElement):
+        return False
+    expr = last.expression
+    if not isinstance(expr, Ps1CommandInvocation):
+        return False
+    name = get_command_name(expr)
+    return name is not None and name.lower() in names

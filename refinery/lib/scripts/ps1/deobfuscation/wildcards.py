@@ -23,14 +23,14 @@ from refinery.lib.scripts.ps1.deobfuscation.helpers import (
     string_value,
     unwrap_parens,
 )
-from refinery.lib.scripts.ps1.deobfuscation.names import (
+from refinery.lib.scripts.ps1.deobfuscation.data import (
     GET_COMMAND_ALIASES,
     GET_MEMBER_ALIASES,
-    KNOWN_NAMES,
+    KNOWN_CMDLETS,
     PS1_KNOWN_VARIABLES,
+    TYPE_MEMBERS,
 )
 from refinery.lib.scripts.ps1.deobfuscation.typenames import (
-    _TYPE_MEMBERS,
     VariableTypeAwareTransformer,
     resolve_expression_type,
 )
@@ -92,7 +92,7 @@ def _wildcard_match_unique(
     return None
 
 
-_KNOWN_CMDLET_LIST: list[str] = [name for name in KNOWN_NAMES.values() if '-' in name]
+_KNOWN_CMDLET_LIST: list[str] = list(KNOWN_CMDLETS.values())
 
 
 def _known_cmdlets() -> list[str]:
@@ -198,7 +198,7 @@ def _candidates_from_type(
     type_name = resolve_expression_type(expr, variable_types)
     if type_name is None:
         return None
-    return _TYPE_MEMBERS.get(type_name)
+    return TYPE_MEMBERS.get(type_name)
 
 
 def _extract_named_value(

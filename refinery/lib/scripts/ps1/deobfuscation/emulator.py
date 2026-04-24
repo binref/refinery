@@ -26,14 +26,16 @@ from refinery.lib.scripts.ps1.deobfuscation.helpers import (
     string_value,
     unwrap_to_array_literal,
 )
-from refinery.lib.scripts.ps1.deobfuscation.names import (
+from refinery.lib.scripts.ps1.deobfuscation.data import (
     COMPARISON_OPS,
     ENCODING_MAP,
+    is_type,
+)
+from refinery.lib.scripts.ps1.deobfuscation.helpers import (
     apply_format_string,
     normalize_dotnet_type_name,
     normalize_type_expression,
 )
-from refinery.lib.scripts.ps1.deobfuscation.typenames import is_type
 from refinery.lib.scripts.ps1.model import (
     Expression,
     Ps1AccessKind,

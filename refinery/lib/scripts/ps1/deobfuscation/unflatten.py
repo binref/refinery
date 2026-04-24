@@ -21,7 +21,7 @@ from refinery.lib.scripts.ps1.deobfuscation.helpers import (
     is_builtin_variable,
     unwrap_parens,
 )
-from refinery.lib.scripts.ps1.deobfuscation.names import COMPARISON_OPS
+from refinery.lib.scripts.ps1.deobfuscation.data import COMPARISON_OPS
 from refinery.lib.scripts.ps1.model import (
     Expression,
     Ps1AssignmentExpression,

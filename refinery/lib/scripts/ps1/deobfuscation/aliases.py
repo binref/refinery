@@ -8,7 +8,7 @@ from refinery.lib.scripts.ps1.deobfuscation.helpers import (
     get_command_name,
     string_value,
 )
-from refinery.lib.scripts.ps1.deobfuscation.names import case_normalize_name
+from refinery.lib.scripts.ps1.deobfuscation.data import KNOWN_CMDLETS
 from refinery.lib.scripts.ps1.model import (
     Ps1CommandArgument,
     Ps1CommandArgumentKind,
@@ -124,7 +124,7 @@ class Ps1AliasInlining(Transformer):
         Normalize the target command name inside alias definition arguments.
         """
         for defn_node, target_name in aliases.values():
-            normalized = case_normalize_name(target_name)
+            normalized = KNOWN_CMDLETS.get(target_name.lower(), target_name)
             if normalized == target_name:
                 continue
             for arg in defn_node.arguments:
@@ -162,7 +162,7 @@ class Ps1AliasInlining(Transformer):
                 continue
             if node.name is None:
                 continue
-            normalized = case_normalize_name(target_name)
+            normalized = KNOWN_CMDLETS.get(target_name.lower(), target_name)
             node.name = Ps1StringLiteral(
                 offset=node.name.offset,
                 value=normalized,
