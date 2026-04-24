@@ -395,7 +395,7 @@ class vstack(EmulatingUnit):
     Emulation is halted as soon as a certain number of instructions have not performed any
     memory writes, or when an error occurs. By default, most registers are set to the current
     location in the emulated stack. If you want to initialize some of them differently, the
-    `-r` switch maes the unit initialize register values from meta variables:
+    `-r` switch makes the unit initialize register values from meta variables:
 
         emit shellcode [| put eax 0x2000 | vstack -r ]
 
