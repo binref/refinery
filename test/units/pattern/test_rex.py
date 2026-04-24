@@ -13,6 +13,10 @@ class TestRex(TestUnitBase):
         unit = self.load(r'(?P<foo>x.*?)?bar', '{foo}')
         self.assertSetEqual(B'bar and xbazbar' | unit | {str}, {'', 'xbaz'})
 
+    def test_optional_group_index_transform(self):
+        unit = self.load(r'a(b)?c', '{1}')
+        self.assertSetEqual(B'ac and abc' | unit | {str}, {'b'})
+
     def test_skip_internal_groups(self):
         unit = self.load(r'((??intarray))#((??integer))', '{1}', '{2}')
         test = '12,1,9,13,36#6' | unit | [str]

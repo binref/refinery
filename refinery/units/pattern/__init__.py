@@ -227,6 +227,8 @@ class PatternExtractorBase(Unit, abstract=True):
                         transformed = match[transform]
                     else:
                         transformed = transform
+                    if transformed is None:
+                        continue
                     if expose_named_groups:
                         kwargs.update(match.groupdict())
                 chunk = self.labelled(transformed, **kwargs)
