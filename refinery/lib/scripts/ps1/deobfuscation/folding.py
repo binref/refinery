@@ -879,7 +879,9 @@ class Ps1ConstantFolding(LocalFunctionAwareTransformer):
             if node.left.operator == '+':
                 inner_right_str = string_value(node.left.right) if node.left.right else None
                 if inner_right_str is not None:
-                    node.left.right = make_string_literal(inner_right_str + right_str)
+                    nl = make_string_literal(inner_right_str + right_str)
+                    nl.parent = node.left
+                    node.left.right = nl
                     return node.left
         if right_str is not None and isinstance(node.left, Ps1ArrayLiteral):
             elements = list(node.left.elements)
