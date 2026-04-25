@@ -78,6 +78,7 @@ jobs:
         with:
           ignore-vulns: |
             GHSA-4xh5-x5gv-qwph # pip; independent of refinery
+                  CVE-2026-3219 # pip; independent of refinery
                   CVE-2026-4539 # pygments bug we won't trigger
 
   coverage:
