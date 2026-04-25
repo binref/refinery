@@ -3,11 +3,12 @@ Shared utilities for PowerShell deobfuscation transforms.
 """
 from __future__ import annotations
 
+import enum
 import io
 import re
 
 from collections.abc import Callable, Generator
-from typing import TYPE_CHECKING, TypeVar
+from typing import TYPE_CHECKING, NamedTuple, TypeVar
 
 if TYPE_CHECKING:
     from typing import TypeGuard
@@ -53,6 +54,21 @@ from refinery.lib.scripts.ps1.model import (
 from refinery.lib.scripts.ps1.token import BACKTICK_ESCAPE
 
 _T = TypeVar('_T')
+
+
+class MutationKind(enum.Enum):
+    ASSIGN        = 'assign'
+    MEMBER_ASSIGN = 'member_assign'
+    FOREACH       = 'foreach'
+    INCRDECR      = 'incrdecr'
+    PARAM         = 'param'
+
+
+class VariableMutation(NamedTuple):
+    variable: Ps1Variable
+    kind: MutationKind
+    node: Node
+
 
 BACKTICK_ENCODE = {v: F'`{k}' for k, v in BACKTICK_ESCAPE.items()}
 NONPRINT_CONTROL = frozenset(BACKTICK_ENCODE) - {'\n'}
@@ -314,10 +330,9 @@ def detect_encoding_chain(node: Ps1InvokeMember) -> str | None:
 
 def iter_variable_mutations(
     root: Node,
-) -> Generator[tuple[Ps1Variable, str, Node], None, None]:
+) -> Generator[VariableMutation, None, None]:
     """
-    Walk the AST and yield `(variable, kind, node)` for every node that mutates a variable.
-    `kind` is one of 'assign', 'foreach', 'incrdecr', 'param'.
+    Walk the AST and yield a `VariableMutation` for every node that mutates a variable.
     """
     for node in root.walk():
         if isinstance(node, Ps1AssignmentExpression):
@@ -325,19 +340,19 @@ def iter_variable_mutations(
             while isinstance(target, (Ps1ParenExpression, Ps1CastExpression)):
                 target = target.expression if isinstance(target, Ps1ParenExpression) else target.operand
             if isinstance(target, Ps1Variable):
-                yield target, 'assign', node
+                yield VariableMutation(target, MutationKind.ASSIGN, node)
             elif isinstance(target, (Ps1IndexExpression, Ps1MemberAccess)):
                 if isinstance(target.object, Ps1Variable):
-                    yield target.object, 'assign', node
+                    yield VariableMutation(target.object, MutationKind.MEMBER_ASSIGN, node)
         elif isinstance(node, Ps1ForEachLoop):
             if isinstance(node.variable, Ps1Variable):
-                yield node.variable, 'foreach', node
+                yield VariableMutation(node.variable, MutationKind.FOREACH, node)
         elif isinstance(node, Ps1UnaryExpression):
             if node.operator in ('++', '--') and isinstance(node.operand, Ps1Variable):
-                yield node.operand, 'incrdecr', node
+                yield VariableMutation(node.operand, MutationKind.INCRDECR, node)
         elif isinstance(node, Ps1ParameterDeclaration):
             if isinstance(node.variable, Ps1Variable):
-                yield node.variable, 'param', node
+                yield VariableMutation(node.variable, MutationKind.PARAM, node)
 
 
 def extract_foreach_scriptblock(expr: Expression) -> Ps1ScriptBlock | None:

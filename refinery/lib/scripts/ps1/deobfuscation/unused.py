@@ -12,12 +12,14 @@ from refinery.lib.scripts.ps1.deobfuscation.constants import (
     _find_removable_statement,
     _walk_outer_scope,
 )
+from refinery.lib.scripts.ps1.deobfuscation.data import (
+    PS1_KNOWN_VARIABLES,
+)
 from refinery.lib.scripts.ps1.deobfuscation.helpers import (
     get_body,
     get_command_name,
     inside_value_producing_context,
 )
-from refinery.lib.scripts.ps1.deobfuscation.data import PS1_KNOWN_VARIABLES
 from refinery.lib.scripts.ps1.model import (
     Expression,
     Ps1AccessKind,

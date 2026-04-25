@@ -14,6 +14,13 @@ import re
 from collections.abc import Iterable
 from fnmatch import translate as fnmatch_translate
 
+from refinery.lib.scripts.ps1.deobfuscation.data import (
+    GET_COMMAND_ALIASES,
+    GET_MEMBER_ALIASES,
+    KNOWN_CMDLETS,
+    PS1_KNOWN_VARIABLES,
+    TYPE_MEMBERS,
+)
 from refinery.lib.scripts.ps1.deobfuscation.helpers import (
     extract_first_positional_string,
     extract_positional_values,
@@ -22,13 +29,6 @@ from refinery.lib.scripts.ps1.deobfuscation.helpers import (
     make_string_literal,
     string_value,
     unwrap_parens,
-)
-from refinery.lib.scripts.ps1.deobfuscation.data import (
-    GET_COMMAND_ALIASES,
-    GET_MEMBER_ALIASES,
-    KNOWN_CMDLETS,
-    PS1_KNOWN_VARIABLES,
-    TYPE_MEMBERS,
 )
 from refinery.lib.scripts.ps1.deobfuscation.typenames import (
     VariableTypeAwareTransformer,

@@ -253,7 +253,7 @@ class TestPs1Deobfuscator(TestPs1):
     def test_backtick_member_access(self):
         result = self._deobfuscate('$x."me`Th`od"')
         self.assertNotIn('`', result)
-        self.assertIn('.Method', result)
+        self.assertIn('.meThod', result)
 
     def test_backtick_function_name_stripped(self):
         result = self._deobfuscate("function tR`iomE { Param($x); return $x }")
@@ -855,7 +855,7 @@ class TestPs1FunctionEvaluator(TestPs1):
             "$y = D $input"
         )
         result = self._deobfuscate(data)
-        self.assertIn('$input', result)
+        self.assertIn('$Input', result)
         self.assertIn('function', result.lower())
 
     def test_while_loop_variant(self):
@@ -2027,7 +2027,7 @@ class TestPs1ClassEnum(TestPs1):
         )
         self.assertIn('class C', result)
         self.assertIn('$n', result)
-        self.assertIn('$this.N', result)
+        self.assertIn('$This.N', result)
 
     def test_class_method_params_not_null_inlined(self):
         result = self._deobfuscate_iterative(

@@ -4,22 +4,26 @@
 from __future__ import annotations
 
 from refinery.lib.scripts import Node, Transformer
+from refinery.lib.scripts.ps1.deobfuscation.data import (
+    CANONICAL_TYPE_NAMES,
+    GET_MEMBER_ALIASES,
+    MEMBER_LOOKUP,
+    OBJ_COMMANDS,
+    PROPERTY_TYPES,
+    TYPE_MEMBERS,
+    VARIABLE_TYPES,
+    WMI_CLASS_NAMES,
+    WMI_COMMANDS,
+    _resolve_type_name,
+)
 from refinery.lib.scripts.ps1.deobfuscation.helpers import (
     extract_first_positional_string,
     get_command_name,
     get_member_name,
     iter_variable_mutations,
     make_string_literal,
+    MutationKind,
     unwrap_parens,
-)
-from refinery.lib.scripts.ps1.deobfuscation.data import (
-    CANONICAL_TYPE_NAMES,
-    GET_MEMBER_ALIASES,
-    MEMBER_LOOKUP,
-    PROPERTY_TYPES,
-    TYPE_MEMBERS,
-    VARIABLE_TYPES,
-    _resolve_type_name,
 )
 from refinery.lib.scripts.ps1.model import (
     Expression,
@@ -29,6 +33,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1CastExpression,
     Ps1CommandInvocation,
     Ps1ExpressionStatement,
+    Ps1ForEachLoop,
     Ps1HereString,
     Ps1IndexExpression,
     Ps1IntegerLiteral,
@@ -42,6 +47,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1Variable,
 )
 
+
 def canonical_type_name(name: str) -> str | None:
     """
     Return the canonical PascalCase display name for a .NET type, preserving an explicit `System.`
@@ -50,6 +56,10 @@ def canonical_type_name(name: str) -> str | None:
     resolved = _resolve_type_name(name)
     lower = resolved if resolved is not None else name.lower()
     display = CANONICAL_TYPE_NAMES.get(lower)
+    if display is None:
+        bare = lower.removeprefix('system.')
+        if bare != lower:
+            display = CANONICAL_TYPE_NAMES.get(bare)
     if display is None:
         return None
     has_system = name.lower().startswith('system.')
@@ -105,10 +115,18 @@ def resolve_expression_type(
         return _resolve_type_name(expr.type_name)
     if isinstance(expr, Ps1CommandInvocation):
         cmd_name = get_command_name(expr)
-        if cmd_name is not None and cmd_name.lower() == 'new-object':
-            type_str = extract_first_positional_string(expr)
-            if type_str is not None:
-                return _resolve_type_name(type_str)
+        if cmd_name is not None:
+            cmd_lower = cmd_name.lower()
+            if cmd_lower in OBJ_COMMANDS:
+                type_str = extract_first_positional_string(expr)
+                if type_str is not None:
+                    return _resolve_type_name(type_str)
+            elif cmd_lower in WMI_COMMANDS:
+                class_str = extract_first_positional_string(expr)
+                if class_str is not None:
+                    wmi_lower = class_str.lower()
+                    if wmi_lower in WMI_CLASS_NAMES:
+                        return wmi_lower
     if isinstance(expr, Ps1MemberAccess):
         if expr.object is None:
             return None
@@ -207,13 +225,39 @@ def _pipeline_source_type(
     return resolve_expression_type(source.expression, variable_types)
 
 
+def _resolve_foreach_element_type(iterable: Expression | None) -> str | None:
+    """
+    Determine the .NET type of elements produced by a foreach iterable. For a string, PowerShell
+    yields the string itself (not individual chars). For an array literal, if all elements share
+    the same resolved type, that type is returned.
+    """
+    if iterable is None:
+        return None
+    if isinstance(iterable, (Ps1StringLiteral, Ps1HereString)):
+        return 'system.string'
+    if isinstance(iterable, Ps1ArrayLiteral) and iterable.elements:
+        types = set()
+        for elem in iterable.elements:
+            if isinstance(elem, Expression):
+                t = resolve_expression_type(elem)
+                if t is None:
+                    return None
+                types.add(t)
+            else:
+                return None
+        if len(types) == 1:
+            return types.pop()
+    return None
+
+
 def collect_variable_types(root: Node) -> dict[str, str]:
     """
     Scan the AST for single-assignment variables whose RHS has a resolvable .NET type; e.g.
 
-        `$x = New-Object Net.WebClient`
+        $x = New-Object Net.WebClient
 
-    Returns a mapping from lowercase variable name to canonical .NET type string.
+    Returns a mapping from lowercase variable name to canonical .NET type string. Mutations that do
+    not change the variable's type (member/index assignments, ++/--) are not reassignments.
     """
     assign_counts: dict[str, int] = {}
     typed_assigns: dict[str, str] = {}
@@ -221,12 +265,18 @@ def collect_variable_types(root: Node) -> dict[str, str]:
         if var.scope != Ps1ScopeModifier.NONE:
             continue
         key = var.name.lower()
+        if kind in (MutationKind.MEMBER_ASSIGN, MutationKind.INCRDECR):
+            continue
         assign_counts[key] = assign_counts.get(key, 0) + 1
-        if kind == 'assign' and isinstance(node, Ps1AssignmentExpression):
+        if kind is MutationKind.ASSIGN and isinstance(node, Ps1AssignmentExpression):
             if node.operator == '=' and isinstance(node.value, Expression):
                 resolved = resolve_expression_type(node.value)
                 if resolved is not None:
                     typed_assigns[key] = resolved
+        elif kind is MutationKind.FOREACH and isinstance(node, Ps1ForEachLoop):
+            element_type = _resolve_foreach_element_type(node.iterable)
+            if element_type is not None:
+                typed_assigns[key] = element_type
     return {
         key: type_name
         for key, type_name in typed_assigns.items()
@@ -288,10 +338,9 @@ class Ps1TypeSystemSimplifications(VariableTypeAwareTransformer):
         node: Ps1MemberAccess,
     ) -> Expression | None:
         """
-        Strip .Name access on a string literal.
-
-        After Where-Object wildcard resolution or Get-Member index resolution, a MemberInfo .Name
-        access can be left dangling on the resolved string. 'GetCmdlets'.Name -> 'GetCmdlets'
+        Strip `.Name` access on a string literal: After `Where-Object` wildcard resolution or
+        `Get-Member` index resolution, a MemberInfo `.Name` access can be left dangling on the
+        resolved string: `'GetCmdlets'.Name` -> `'GetCmdlets'`.
         """
         member_name = get_member_name(node.member)
         if member_name is None or member_name.lower() != 'name':

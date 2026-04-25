@@ -4,6 +4,7 @@ Eliminate dead code from PowerShell scripts after constant folding.
 from __future__ import annotations
 
 from refinery.lib.scripts import Block, Expression, Node, Statement, Transformer
+from refinery.lib.scripts.ps1.deobfuscation.data import COMPARISON_OPS
 from refinery.lib.scripts.ps1.deobfuscation.helpers import (
     get_body,
     inside_value_producing_context,
@@ -12,7 +13,6 @@ from refinery.lib.scripts.ps1.deobfuscation.helpers import (
     unwrap_integer,
     unwrap_parens,
 )
-from refinery.lib.scripts.ps1.deobfuscation.data import COMPARISON_OPS
 from refinery.lib.scripts.ps1.model import (
     Ps1AssignmentExpression,
     Ps1BinaryExpression,

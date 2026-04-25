@@ -3,21 +3,21 @@ PowerShell syntax normalization transforms.
 """
 from __future__ import annotations
 
+from refinery.lib.scripts.ps1.deobfuscation.data import (
+    ALL_PARAMETER_NAMES,
+    KNOWN_ALIAS,
+    KNOWN_CMDLETS,
+    KNOWN_PS_OPERATORS,
+    KNOWN_PS_SWITCHES,
+    PS1_KNOWN_VARIABLES,
+    SIMPLE_IDENTIFIER,
+    TYPE_ARG_COMMANDS,
+)
 from refinery.lib.scripts.ps1.deobfuscation.helpers import (
     LocalFunctionAwareTransformer,
     get_command_name,
     make_string_literal,
     string_value,
-)
-from refinery.lib.scripts.ps1.deobfuscation.data import (
-    ALL_PARAMETER_NAMES,
-    KNOWN_ALIAS,
-    KNOWN_CMDLETS,
-    KNOWN_MEMBER_NAMES,
-    KNOWN_PS_OPERATORS,
-    KNOWN_PS_SWITCHES,
-    KNOWN_TYPE_NAMES,
-    SIMPLE_IDENTIFIER,
 )
 from refinery.lib.scripts.ps1.deobfuscation.typenames import canonical_type_name
 from refinery.lib.scripts.ps1.model import (
@@ -46,23 +46,9 @@ from refinery.lib.scripts.ps1.model import (
 from refinery.lib.scripts.ps1.token import _strip_backtick_noop
 from refinery.lib.scripts.win32const import DEFAULT_ENVIRONMENT_TEMPLATE
 
-_KNOWN_VARIABLE_NAMES = {name.lower(): name for name in [
-    'True',
-    'False',
-    'Null',
-    'ExecutionContext',
-]}
-
 _KNOWN_ENV_NAMES: dict[str, str] = {
     name.lower(): name for name in DEFAULT_ENVIRONMENT_TEMPLATE
 }
-
-
-_TYPE_ARG_COMMANDS = frozenset({
-    'get-ciminstance',
-    'get-wmiobject',
-    'new-object',
-})
 
 
 class Ps1Simplifications(LocalFunctionAwareTransformer):
@@ -75,7 +61,7 @@ class Ps1Simplifications(LocalFunctionAwareTransformer):
         if node.braced and SIMPLE_IDENTIFIER.match(node.name):
             node.braced = False
             self.mark_changed()
-        canonical = _KNOWN_VARIABLE_NAMES.get(node.name.lower())
+        canonical = PS1_KNOWN_VARIABLES.get(node.name.lower())
         if canonical is not None and canonical != node.name:
             node.name = canonical
             self.mark_changed()
@@ -154,20 +140,14 @@ class Ps1Simplifications(LocalFunctionAwareTransformer):
         return None
 
     def _normalize_member(self, node: Ps1MemberAccess | Ps1InvokeMember):
-        if isinstance(node.member, Ps1StringLiteral):
-            name = node.member.value
-            if node.member.raw and node.member.raw[0] == '"' and '`' in node.member.raw:
-                name = _strip_backtick_noop(node.member.raw[1:-1])
-            if SIMPLE_IDENTIFIER.match(name):
-                normalized = KNOWN_MEMBER_NAMES.get(name.lower(), name)
-                node.member = normalized
-                self.mark_changed()
-                return
-        if isinstance(node.member, str):
-            normalized = KNOWN_MEMBER_NAMES.get(node.member.lower(), node.member)
-            if normalized != node.member:
-                node.member = normalized
-                self.mark_changed()
+        if not isinstance(node.member, Ps1StringLiteral):
+            return
+        name = node.member.value
+        if node.member.raw and node.member.raw[0] == '"' and '`' in node.member.raw:
+            name = _strip_backtick_noop(node.member.raw[1:-1])
+        if SIMPLE_IDENTIFIER.match(name):
+            node.member = name
+            self.mark_changed()
 
     def visit_Ps1BinaryExpression(self, node: Ps1BinaryExpression):
         self.generic_visit(node)
@@ -216,10 +196,6 @@ class Ps1Simplifications(LocalFunctionAwareTransformer):
         return None
 
     def _normalize_type_name(self, name: str) -> str:
-        normalized = KNOWN_TYPE_NAMES.get(name.lower())
-        if normalized is not None and normalized != name:
-            self.mark_changed()
-            return normalized
         canonical = canonical_type_name(name)
         if canonical is not None and canonical != name:
             self.mark_changed()
@@ -281,7 +257,7 @@ class Ps1Simplifications(LocalFunctionAwareTransformer):
                     )
                     node.invocation_operator = ''
                     self.mark_changed()
-        if (c := get_command_name(node)) and c.lower() in _TYPE_ARG_COMMANDS:
+        if (c := get_command_name(node)) and c.lower() in TYPE_ARG_COMMANDS:
             self._normalize_first_positional_type_arg(node)
         return None
 

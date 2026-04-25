@@ -15,26 +15,24 @@ if TYPE_CHECKING:
     _Value: TypeAlias = str | int | float | bool | list | None
 
 from refinery.lib.scripts import Block, Transformer
-from refinery.lib.scripts.ps1.deobfuscation.helpers import (
-    StringMethodError,
-    apply_string_method,
-    detect_encoding_chain,
-    extract_foreach_scriptblock,
-    get_command_name,
-    get_member_name,
-    make_string_literal,
-    string_value,
-    unwrap_to_array_literal,
-)
 from refinery.lib.scripts.ps1.deobfuscation.data import (
     COMPARISON_OPS,
     ENCODING_MAP,
     is_type,
 )
 from refinery.lib.scripts.ps1.deobfuscation.helpers import (
+    StringMethodError,
     apply_format_string,
+    apply_string_method,
+    detect_encoding_chain,
+    extract_foreach_scriptblock,
+    get_command_name,
+    get_member_name,
+    make_string_literal,
     normalize_dotnet_type_name,
     normalize_type_expression,
+    string_value,
+    unwrap_to_array_literal,
 )
 from refinery.lib.scripts.ps1.model import (
     Expression,
@@ -45,19 +43,19 @@ from refinery.lib.scripts.ps1.model import (
     Ps1BinaryExpression,
     Ps1BreakStatement,
     Ps1CastExpression,
+    Ps1ClassDefinition,
     Ps1CommandArgument,
     Ps1CommandArgumentKind,
     Ps1CommandInvocation,
     Ps1ContinueStatement,
     Ps1DoLoop,
+    Ps1EnumDefinition,
     Ps1ErrorNode,
     Ps1ExpandableHereString,
     Ps1ExpandableString,
     Ps1ExpressionStatement,
     Ps1ForEachLoop,
     Ps1ForLoop,
-    Ps1ClassDefinition,
-    Ps1EnumDefinition,
     Ps1FunctionDefinition,
     Ps1HereString,
     Ps1IfStatement,

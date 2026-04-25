@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, NamedTuple
 
 from refinery.lib.scripts import Block, Node, Statement, Transformer
+from refinery.lib.scripts.ps1.deobfuscation.data import COMPARISON_OPS
 from refinery.lib.scripts.ps1.deobfuscation.emulator import evaluate_truthy
 from refinery.lib.scripts.ps1.deobfuscation.helpers import (
     get_body,
@@ -21,7 +22,6 @@ from refinery.lib.scripts.ps1.deobfuscation.helpers import (
     is_builtin_variable,
     unwrap_parens,
 )
-from refinery.lib.scripts.ps1.deobfuscation.data import COMPARISON_OPS
 from refinery.lib.scripts.ps1.model import (
     Expression,
     Ps1AssignmentExpression,

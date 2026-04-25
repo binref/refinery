@@ -10,11 +10,11 @@ from refinery.lib.scripts.ps1.deobfuscation.helpers import (
     collect_int_arguments,
     collect_string_arguments,
     make_string_literal,
+    normalize_dotnet_type_name,
     string_value,
     unwrap_integer,
     unwrap_single_paren,
 )
-from refinery.lib.scripts.ps1.deobfuscation.helpers import normalize_dotnet_type_name
 from refinery.lib.scripts.ps1.model import (
     Ps1BinaryExpression,
     Ps1CastExpression,

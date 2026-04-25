@@ -19,7 +19,10 @@ from refinery.lib.scripts.ps1.deobfuscation.simplify import Ps1Simplifications
 from refinery.lib.scripts.ps1.deobfuscation.typecast import Ps1TypeCasts
 from refinery.lib.scripts.ps1.deobfuscation.typenames import Ps1TypeSystemSimplifications
 from refinery.lib.scripts.ps1.deobfuscation.unflatten import Ps1ControlFlowDeflattening
-from refinery.lib.scripts.ps1.deobfuscation.unused import Ps1JunkStatementRemoval, Ps1UnusedVariableRemoval
+from refinery.lib.scripts.ps1.deobfuscation.unused import (
+    Ps1JunkStatementRemoval,
+    Ps1UnusedVariableRemoval,
+)
 from refinery.lib.scripts.ps1.deobfuscation.wildcards import Ps1WildcardResolution
 from refinery.lib.scripts.ps1.model import Ps1Script
 

@@ -10,9 +10,14 @@ import re
 from collections.abc import Iterator
 
 from refinery.lib.scripts.ps1.deobfuscation.constants import PS1_ENV_CONSTANTS
+from refinery.lib.scripts.ps1.deobfuscation.data import (
+    COMPARISON_OPS,
+    ENCODING_MAP,
+)
 from refinery.lib.scripts.ps1.deobfuscation.helpers import (
     LocalFunctionAwareTransformer,
     StringMethodError,
+    apply_format_string,
     apply_string_method,
     collect_byte_array,
     collect_format_arguments,
@@ -32,11 +37,6 @@ from refinery.lib.scripts.ps1.deobfuscation.helpers import (
     unwrap_single_paren,
     unwrap_to_array_literal,
 )
-from refinery.lib.scripts.ps1.deobfuscation.data import (
-    COMPARISON_OPS,
-    ENCODING_MAP,
-)
-from refinery.lib.scripts.ps1.deobfuscation.helpers import apply_format_string
 from refinery.lib.scripts.ps1.deobfuscation.typenames import (
     is_known_member,
     resolve_member_type,

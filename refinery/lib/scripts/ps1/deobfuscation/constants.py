@@ -13,6 +13,7 @@ from refinery.lib.scripts import (
     _remove_from_parent,
     _replace_in_parent,
 )
+from refinery.lib.scripts.ps1.deobfuscation.data import PS1_KNOWN_VARIABLES
 from refinery.lib.scripts.ps1.deobfuscation.helpers import (
     get_body,
     is_array_reverse_call,
@@ -22,19 +23,18 @@ from refinery.lib.scripts.ps1.deobfuscation.helpers import (
     unwrap_parens,
     unwrap_to_array_literal,
 )
-from refinery.lib.scripts.ps1.deobfuscation.data import PS1_KNOWN_VARIABLES
 from refinery.lib.scripts.ps1.model import (
     Ps1ArrayExpression,
     Ps1ArrayLiteral,
     Ps1AssignmentExpression,
     Ps1BinaryExpression,
     Ps1CastExpression,
+    Ps1ClassDefinition,
     Ps1DoLoop,
+    Ps1EnumDefinition,
     Ps1ExpressionStatement,
     Ps1ForEachLoop,
     Ps1ForLoop,
-    Ps1ClassDefinition,
-    Ps1EnumDefinition,
     Ps1FunctionDefinition,
     Ps1HereString,
     Ps1IfStatement,

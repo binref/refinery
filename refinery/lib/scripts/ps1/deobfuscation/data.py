@@ -44,33 +44,25 @@ for _full in _PWSH['types']:
     CANONICAL_TYPE_NAMES.setdefault(_full.lower(), _display)
     CANONICAL_TYPE_NAMES.setdefault(_full.lower().removeprefix('system.'), _display)
 
+for _wmi in _PWSH['wmi_classes']:
+    CANONICAL_TYPE_NAMES.setdefault(_wmi.lower(), _wmi)
+
+CANONICAL_TYPE_NAMES.setdefault(
+    'management.automation.sessionstateinternal',
+    'Management.Automation.SessionStateInternal',
+)
+
 MEMBER_LOOKUP: dict[str, dict[str, str]] = {}
 
 for _type_lower, _members in TYPE_MEMBERS.items():
     MEMBER_LOOKUP[_type_lower] = {m.lower(): m for m in _members}
 
-ALL_MEMBER_NAMES: dict[str, str] = {}
+WMI_CLASS_NAMES: dict[str, str] = {}
 
-for _members in TYPE_MEMBERS.values():
-    for _m in _members:
-        ALL_MEMBER_NAMES.setdefault(_m.lower(), _m)
-for _wmi_props in _PWSH['wmi_properties'].values():
-    for _m in _wmi_props:
-        ALL_MEMBER_NAMES.setdefault(_m.lower(), _m)
-
-ALL_TYPE_DISPLAY_NAMES: dict[str, str] = {}
-
-for _lower, _display in CANONICAL_TYPE_NAMES.items():
-    if _lower.startswith('system.') and not _display.startswith('System.'):
-        ALL_TYPE_DISPLAY_NAMES[_lower] = F'System.{_display}'
-    else:
-        ALL_TYPE_DISPLAY_NAMES[_lower] = _display
-    _bare = _lower.removeprefix('system.')
-    if _bare != _lower:
-        ALL_TYPE_DISPLAY_NAMES.setdefault(_bare, _display)
-    else:
-        _full_key = F'system.{_lower}'
-        ALL_TYPE_DISPLAY_NAMES.setdefault(_full_key, F'System.{_display}')
+for _wmi_cls, _wmi_props in _PWSH['wmi_properties'].items():
+    _wmi_lower = _wmi_cls.lower()
+    WMI_CLASS_NAMES[_wmi_lower] = _wmi_cls
+    MEMBER_LOOKUP.setdefault(_wmi_lower, {}).update({p.lower(): p for p in _wmi_props})
 
 
 def _resolve_type_name(name: str) -> str | None:
@@ -162,7 +154,7 @@ KNOWN_CMDLETS: dict[str, str] = {name.lower(): name for name in _PWSH['cmdlets']
 KNOWN_CMDLETS.setdefault('convertfrom-base64', 'ConvertFrom-Base64')
 KNOWN_CMDLETS.setdefault('powershell', 'PowerShell')
 
-for _a, _n in KNOWN_ALIAS.items():
+for _n in KNOWN_ALIAS.values():
     KNOWN_CMDLETS.setdefault(_n.lower(), _n)
 
 CMDLET_PARAMETERS: dict[str, list[str]] = {
@@ -175,36 +167,20 @@ for _params in CMDLET_PARAMETERS.values():
     for _p in _params:
         ALL_PARAMETER_NAMES.setdefault(_p.lower(), _p)
 
-KNOWN_TYPE_NAMES: dict[str, str] = {name.lower(): name for name in [
-    'Management.Automation.SessionStateInternal',
-]}
-
-for _wmi in _PWSH['wmi_classes']:
-    KNOWN_TYPE_NAMES.setdefault(_wmi.lower(), _wmi)
-
 del _PWSH
 
-for _name in list(KNOWN_TYPE_NAMES.values()):
-    if '.' in _name:
-        _full = F'System.{_name}'
-        KNOWN_TYPE_NAMES.setdefault(_full.lower(), _full)
-
-_saved = dict(KNOWN_TYPE_NAMES)
-
-KNOWN_TYPE_NAMES.update(ALL_TYPE_DISPLAY_NAMES)
-KNOWN_TYPE_NAMES.update(_saved)
-
-KNOWN_MEMBER_NAMES: dict[str, str] = {name.lower(): name for name in [
-    'GetModuleHandle',
-    'GetProcAddress',
-    'LoadLibrary',
-    'ShellExecute',
-]}
-_saved = dict(KNOWN_MEMBER_NAMES)
-KNOWN_MEMBER_NAMES.update(ALL_MEMBER_NAMES)
-KNOWN_MEMBER_NAMES.update(_saved)
-
 SIMPLE_IDENTIFIER = re.compile(r'^[a-zA-Z_]\w*$')
+
+OBJ_COMMANDS = frozenset({
+    'new-object',
+})
+
+WMI_COMMANDS = frozenset({
+    'get-ciminstance',
+    'get-wmiobject',
+})
+
+TYPE_ARG_COMMANDS = frozenset(OBJ_COMMANDS | WMI_COMMANDS)
 
 GET_MEMBER_ALIASES = frozenset({'get-member', 'gm'})
 GET_COMMAND_ALIASES = frozenset({'get-command', 'gcm'})
@@ -240,6 +216,7 @@ PS1_KNOWN_VARIABLES: dict[str, str] = {
         'Error',
         'ErrorActionPreference',
         'ExecutionContext',
+        'False',
         'ForEach',
         'FormatEnumerationLimit',
         'HOME',
@@ -255,6 +232,7 @@ PS1_KNOWN_VARIABLES: dict[str, str] = {
         'MaximumVariableCount',
         'MyInvocation',
         'NestedPromptLevel',
+        'Null',
         'OutputEncoding',
         'PID',
         'PROFILE',
@@ -274,6 +252,7 @@ PS1_KNOWN_VARIABLES: dict[str, str] = {
         'ShellID',
         'StackTrace',
         'This',
+        'True',
         'VerbosePreference',
         'WarningPreference',
         'WhatIfPreference',
