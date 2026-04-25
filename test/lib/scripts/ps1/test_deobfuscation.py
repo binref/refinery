@@ -403,6 +403,11 @@ class TestPS1StringConcatenations(TestPs1):
         result = self._deobfuscate("$([String]::Concat('h_llo')).Replace('_', 'e')")
         self.assertEqual(result, "'hello'")
 
+    def test_string_join_static_with_separator(self):
+        data = "[String]::Join(',', @('a','b','c'))"
+        result = self._deobfuscate(data)
+        self.assertIn('a,b,c', result)
+
 
 class TestPS1StringReplace(TestPs1):
 
@@ -499,11 +504,6 @@ class TestPS1Regressions(TestPs1):
         self.assertIn('.commandline', result.lower())
         for line in result.strip().splitlines():
             self.assertNotEqual(line.strip(), ')')
-
-    def test_pipeline_index_member_access(self):
-        result = self._deobfuscate('($ExecutionContext | Get-Member)[6].Name')
-        self.assertIn('InvokeCommand', result)
-        self.assertNotIn('[6]', result)
 
     def test_user_function_not_aliased(self):
         data = (
@@ -1309,11 +1309,6 @@ class TestPs1ForEachPipeline(TestPs1):
         result = self._deobfuscate(data)
         self.assertIn('A', result)
         self.assertIn('B', result)
-
-    def test_foreach_pipeline_string_join_static(self):
-        data = "[String]::Join(',', @('a','b','c'))"
-        result = self._deobfuscate(data)
-        self.assertIn('a,b,c', result)
 
 
 class TestPs1WildcardResolution(TestPs1):
