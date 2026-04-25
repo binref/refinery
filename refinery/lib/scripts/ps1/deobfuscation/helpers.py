@@ -57,11 +57,11 @@ _T = TypeVar('_T')
 
 
 class MutationKind(enum.Enum):
-    ASSIGN        = 'assign'
+    ASSIGN = 'assign'
     MEMBER_ASSIGN = 'member_assign'
-    FOREACH       = 'foreach'
-    INCRDECR      = 'incrdecr'
-    PARAM         = 'param'
+    FOREACH = 'foreach'
+    INCRDECR = 'incrdecr'
+    PARAM = 'param'
 
 
 class VariableMutation(NamedTuple):
