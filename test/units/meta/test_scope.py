@@ -27,6 +27,6 @@ class TestScope(TestMetaBase):
         from refinery import scope
         argp = scope.argparser()
         buffer = io.StringIO('w')
-        argp.print_help(buffer, generics=False)
+        argp.print_help(buffer, compact=True)
         help = buffer.getvalue().strip()
         self.assertIn('default is ::', help)
