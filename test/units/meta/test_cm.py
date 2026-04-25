@@ -119,7 +119,7 @@ class TestCommonMeta(TestUnitBase):
 
     def test_cm_hashes_flag(self):
         data = b'test data'
-        unit = self.load('-H')
+        unit = self.load('-A')
         result_md5 = str(data | unit | self.ldu('pf', '{md5}'))
         result_sha1 = str(data | unit | self.ldu('pf', '{sha1}'))
         result_sha256 = str(data | unit | self.ldu('pf', '{sha256}'))

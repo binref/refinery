@@ -68,16 +68,16 @@ class LineWrapRawTextHelpFormatter(RawDescriptionHelpFormatter):
 class HelpAction(Action):
     """
     A custom help action that calls the parser's custom print_help method during
-    parsing, before required arguments are validated. The `generics` parameter
-    controls whether the full help (including generic options) is displayed.
+    parsing, before required arguments are validated. The `compact` parameter
+    controls whether generic options are hidden from the help output.
     """
 
-    def __init__(self, option_strings, dest, default=0, generics=False, **kwargs):
+    def __init__(self, option_strings, dest, default=0, compact=False, **kwargs):
         super().__init__(option_strings=option_strings, dest=dest, default=default, nargs=0, **kwargs)
-        self.generics = generics
+        self.compact = compact
 
     def __call__(self, parser, namespace, values, option_string=None):
-        parser.print_help(generics=self.generics)
+        parser.print_help(compact=self.compact)
         parser.exit(0)
 
 
@@ -121,9 +121,9 @@ class ArgumentParserWithKeywordHooks(ArgumentParser):
         self.keywords = keywords
         self.order = []
 
-    def print_help(self, file: SupportsWrite[str] | None = None, generics: bool = False) -> None:
+    def print_help(self, file: SupportsWrite[str] | None = None, compact: bool = False) -> None:
         out = file or sys.stderr
-        if generics:
+        if not compact:
             super().print_help(file=out)
         else:
             formatter = self._get_formatter()

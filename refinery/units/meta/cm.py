@@ -28,7 +28,7 @@ class cm(Unit):
         sha256: Param[bool, Arg.Switch('-2', help='compute hash: SHA-256')] = False,
         crc32: Param[bool, Arg.Switch('-3', help='compute hash: CRC32')] = False,
         md5: Param[bool, Arg.Switch('-5', help='compute hash: MD5')] = False,
-        hashes: Param[bool, Arg.Switch('-H', help='compute all common hashes')] = False,
+        hashes: Param[bool, Arg.Switch('-A', help='compute all common hashes')] = False,
         *names: Param[str, Arg.String(metavar='name', help=(
             F'A variable name that can include the common properties: {_COMMON_PROPERTIES_LIST}.'
             R' If none is given, the size variable is populated. For most of these, an optional '

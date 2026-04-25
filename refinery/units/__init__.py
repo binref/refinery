@@ -2209,9 +2209,10 @@ class Unit(UnitBase, abstract=True):
 
         base.set_defaults(reverse=False, squeeze=False, iff=0)
         help = base.add_mutually_exclusive_group()
-        help.add_argument('-h', '--help', action=HelpAction, generics=True,
+        help.add_argument('-h', '--help', action=HelpAction,
             help='Show this help message and exit.')
-        help.add_argument('-?', action=HelpAction, generics=False, help=SUPPRESS)
+        help.add_argument('-H', action=HelpAction, compact=True, help=SUPPRESS)
+        help.add_argument('-?', action=HelpAction, compact=True, help=SUPPRESS)
 
         base.add_argument('-L', '--lenient', action='count', default=0,
             help='Increase the leniency, allowing partial results and ignoring more errors.')

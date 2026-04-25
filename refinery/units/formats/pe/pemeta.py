@@ -174,7 +174,7 @@ class pemeta(JSONTableUnit):
             help='Extract time stamps. Specify twice for more detail.')] = 0,
         version: Param[bool, Arg.Switch('-V',
             help='Parse the VERSION resource.')] = False,
-        header: Param[bool, Arg.Switch('-H',
+        header: Param[bool, Arg.Switch('-B',
             help='Parse base data from the PE header.')] = False,
         exports: Param[int, Arg.Counts('-E',
             help='List all exported functions. Specify twice to include addresses.')] = 0,

@@ -148,7 +148,7 @@ class machometa(JSONTableUnit):
     def __init__(
         self, all: Param[bool, Arg('-c', '--custom',
             help='Unless enabled, all default categories will be extracted.')] = True,
-        header: Param[bool, Arg('-H', help='Parse basic data from the Mach-O header.')] = False,
+        header: Param[bool, Arg('-B', help='Parse basic data from the Mach-O header.')] = False,
         linked_images: Param[bool, Arg('-K', help='Parse all library images linked by the Mach-O.')] = False,
         signatures: Param[bool, Arg('-S', help='Parse signature and entitlement information.')] = False,
         version: Param[bool, Arg('-V', help='Parse version information from the Mach-O load commands.')] = False,

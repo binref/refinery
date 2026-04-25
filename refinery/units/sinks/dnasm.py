@@ -23,7 +23,7 @@ class dnasm(DotnetDisassemblerUnit):
         count=None, until=None,
         no_il_refs: Param[bool, Arg.Switch('-I', help='Disable reference resolution to IL_*.')] = False,
         no_address: Param[bool, Arg.Switch('-A', help='Disable address display.')] = False,
-        no_hexdump: Param[bool, Arg.Switch('-H', help='Disable opcodes hexdump.')] = False,
+        no_hexdump: Param[bool, Arg.Switch('-X', help='Disable opcodes hexdump.')] = False,
         no_args: Param[bool, Arg.Switch('-O', help='Disable output of instruction arguments.')] = False,
         description: Param[bool, Arg.Switch('-d', help='Enable opcodes descriptions in output.')] = False,
     ):

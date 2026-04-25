@@ -100,7 +100,7 @@ def get_help_string(unit: type[Unit], brief: bool = False, width: int = 0, remov
             argp = fail.parser
         else:
             buffer = io.StringIO('w')
-            argp.print_help(buffer, generics=not remove_generic)
+            argp.print_help(buffer, compact=remove_generic)
             return buffer.getvalue().strip()
         finally:
             if width > 0:
