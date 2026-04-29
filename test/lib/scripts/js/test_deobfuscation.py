@@ -516,6 +516,34 @@ class TestDeadCodeElimination(TestJsDeobfuscator):
         self.assertNotIn('dead()', result)
         self.assertNotIn('if', result)
 
+    def test_in_empty_function_guard_folded(self):
+        """
+        js-confuser's dead code injection uses ``"randomKey" in emptyFunction`` as a guard that
+        always evaluates to false. The simplifier folds this to ``false`` and dead code elimination
+        prunes the branch. The dead function declarations themselves may remain as orphans.
+        """
+        source = '\n'.join([
+            'function __p_sentinel() {}',
+            'if ("xK9mQ" in __p_sentinel) {',
+            '  __p_dead_1();',
+            '}',
+            'function __p_dead_1() { var fake = 999; }',
+            'function real(n) {',
+            '  if ("abc" in __p_sentinel) {',
+            '    __p_dead_2();',
+            '  }',
+            '  function __p_dead_2() { var junk = 0; }',
+            '  return n + 1;',
+            '}',
+            'console.log(real(5));',
+        ])
+        result = self._deobfuscate(source)
+        self.assertNotIn('xK9mQ', result)
+        self.assertNotIn('"abc" in', result)
+        self.assertNotIn('if (', result)
+        self.assertIn('return n + 1', result)
+        self.assertIn('console.log', result)
+
 
 class TestExtendedOperatorFolding(TestJsDeobfuscator):
 

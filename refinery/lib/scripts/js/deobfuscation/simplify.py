@@ -24,9 +24,11 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
 from refinery.lib.scripts.js.model import (
     JsArrayExpression,
     JsBinaryExpression,
+    JsBlockStatement,
     JsBooleanLiteral,
     JsCallExpression,
     JsConditionalExpression,
+    JsFunctionDeclaration,
     JsFunctionExpression,
     JsIdentifier,
     JsLogicalExpression,
@@ -34,10 +36,33 @@ from refinery.lib.scripts.js.model import (
     JsNullLiteral,
     JsNumericLiteral,
     JsParenthesizedExpression,
+    JsScript,
     JsSequenceExpression,
     JsStringLiteral,
     JsUnaryExpression,
 )
+
+
+def _is_empty_function(node: Node, name: str) -> bool:
+    """
+    Check whether *name* resolves to an empty `FunctionDeclaration` in any enclosing scope. Walks
+    up from *node* through all `JsScript` and `JsBlockStatement` ancestors, searching each body for
+    a function declaration with the given name and an empty body.
+    """
+    scope = node.parent
+    while scope is not None:
+        if isinstance(scope, (JsScript, JsBlockStatement)):
+            for stmt in scope.body:
+                if (
+                    isinstance(stmt, JsFunctionDeclaration)
+                    and isinstance(stmt.id, JsIdentifier)
+                    and stmt.id.name == name
+                    and isinstance(stmt.body, JsBlockStatement)
+                    and not stmt.body.body
+                ):
+                    return True
+        scope = scope.parent
+    return False
 
 
 class JsSimplifications(Transformer):
@@ -96,6 +121,13 @@ class JsSimplifications(Transformer):
                 return JsBooleanLiteral(value=RELATIONAL_OPS[op](left_num, right_num))
             if left_str is not None and right_str is not None:
                 return JsBooleanLiteral(value=RELATIONAL_OPS[op](left_str, right_str))
+        if (
+            op == 'in'
+            and isinstance(node.left, JsStringLiteral)
+            and isinstance(node.right, JsIdentifier)
+            and _is_empty_function(node, node.right.name)
+        ):
+            return JsBooleanLiteral(value=False)
         return None
 
     def visit_JsCallExpression(self, node: JsCallExpression):
