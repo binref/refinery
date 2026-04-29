@@ -202,6 +202,29 @@ class PkgSigningBlock(Struct):
                 return apksig
 
 
+class ChromeCr24(Struct):
+    """
+    The standard APK signing block.
+    """
+    Signature = B'Cr24'
+
+    def __init__(self, reader: StructReader[memoryview]):
+        self.offset = reader.tell()
+        sig = reader.read(4)
+        if sig != self.Signature:
+            raise ValueError(F'Invalid signature: {sig.hex()}')
+        self.version = version = reader.u32()
+        if version == 2:
+            key_len = reader.u32()
+        elif version != 3:
+            raise ValueError(F'Invalid version: {version}')
+        else:
+            key_len = 0
+        sig_len = reader.u32()
+        self.key = reader.read_exactly(key_len)
+        self.sig = reader.read_exactly(sig_len)
+
+
 class ApkSigningBlock42(PkgSigningBlock):
     """
     The standard APK signing block.
@@ -1068,6 +1091,14 @@ class Zip:
         self.has_pk00_header = (data[:4] == B'PK00')
         if self.has_pk00_header:
             self.coverage.addi(0, 4)
+
+        try:
+            cr24 = ChromeCr24.Parse(data)
+        except ValueError:
+            self.chrome_sig = None
+        else:
+            self.chrome_sig = cr24
+            coverage.addi(0, len(cr24))
 
         for EOCD in (
             ZipEndOfCentralDirectory64,

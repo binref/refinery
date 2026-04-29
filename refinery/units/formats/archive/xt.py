@@ -39,7 +39,7 @@ class xt(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
         from refinery.units.formats.archive.xtasar import xtasar      ; yield xtasar    # noqa
         from refinery.units.formats.office.xtrtf import xtrtf         ; yield xtrtf     # noqa
         from refinery.units.formats.pdf import xtpdf                  ; yield xtpdf     # noqa
-        from refinery.units.formats.swf import swf                     ; yield swf       # noqa
+        from refinery.units.formats.swf import swf                    ; yield swf       # noqa
         from refinery.units.formats.winreg import winreg              ; yield winreg    # noqa
         from refinery.units.formats.archive.xtgz import xtgz          ; yield xtgz      # noqa
         from refinery.units.formats.archive.xtcpio import xtcpio      ; yield xtcpio    # noqa
@@ -50,7 +50,6 @@ class xt(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
         # units that search for markers
         from refinery.units.formats.archive.xt7z import xt7z          ; yield xt7z      # noqa
         from refinery.units.formats.archive.xtrar import xtrar        ; yield xtrar     # noqa
-        from refinery.units.formats.archive.xtzip import xtzip        ; yield xtzip     # noqa
         from refinery.units.formats.pe.dotnet.dnsfx import dnsfx      ; yield dnsfx     # noqa
         from refinery.units.formats.archive.xtinno import xtinno      ; yield xtinno    # noqa
         from refinery.units.formats.archive.xtiss import xtiss        ; yield xtiss     # noqa
@@ -66,6 +65,8 @@ class xt(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
         from refinery.units.formats.archive.xtsim import xtsim        ; yield xtsim     # noqa
         from refinery.units.formats.archive.xtsf import xtsf          ; yield xtsf      # noqa
         from refinery.units.formats.archive.xtnuitka import xtnuitka  ; yield xtnuitka  # noqa
+        # many things can contain a zip, so we want to check this late:
+        from refinery.units.formats.archive.xtzip import xtzip        ; yield xtzip     # noqa
         # fallbacks that have to be attempted last
         from refinery.units.formats.json import xtjson                ; yield xtjson    # noqa
         from refinery.units.formats.xml import xtxml                  ; yield xtxml     # noqa

@@ -4,7 +4,15 @@ import codecs
 
 from refinery.lib.id import buffer_offset, is_likely_pe
 from refinery.lib.types import buf
-from refinery.lib.zip import InvalidChecksum, InvalidPassword, PasswordRequired, Zip, ZipDirEntry
+from refinery.lib.zip import (
+    InvalidChecksum,
+    InvalidPassword,
+    PasswordRequired,
+    Zip,
+    ZipDirEntry,
+    ZipEndOfCentralDirectory,
+    ZipEndOfCentralDirectory64,
+)
 from refinery.units import RefineryPartialResult
 from refinery.units.formats.archive import ArchiveUnit, MultipleArchives
 from refinery.units.formats.pe import get_pe_size
@@ -81,6 +89,12 @@ class xtzip(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
             B'PK\x07\x08',
         ):
             return True
+        for EOCD in (
+            ZipEndOfCentralDirectory64,
+            ZipEndOfCentralDirectory,
+        ):
+            if buffer_offset(data, EOCD.Signature, back2front=True) > 0:
+                return True
         if not is_likely_pe(data):
             return False
         memory = memoryview(data)
