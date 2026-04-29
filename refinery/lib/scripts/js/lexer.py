@@ -54,6 +54,7 @@ def _decode_one_escape(src: str, pos: int, length: int) -> tuple[str, int]:
         return '', pos
     return c, pos
 
+
 _FOUR_CHAR_OPS: dict[str, JsTokenKind] = {
     '>>>=' : JsTokenKind.GT3_ASSIGN,
 }
