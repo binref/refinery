@@ -544,6 +544,84 @@ class TestDeadCodeElimination(TestJsDeobfuscator):
         self.assertIn('return n + 1', result)
         self.assertIn('console.log', result)
 
+    def test_in_empty_function_known_property_folds_true(self):
+        """
+        Built-in properties like ``length`` exist on every function's prototype chain. The
+        expression ``"length" in emptyFunc`` must fold to ``true``.
+        """
+        source = '\n'.join([
+            'function sentinel() {}',
+            'if ("length" in sentinel) {',
+            '  live();',
+            '} else {',
+            '  dead();',
+            '}',
+        ])
+        result = self._deobfuscate(source)
+        self.assertIn('live()', result)
+        self.assertNotIn('dead()', result)
+        self.assertNotIn('if (', result)
+
+    def test_in_empty_class_guard_folded(self):
+        """
+        An empty class declaration (no super, no body) has the same property set as a function.
+        Unknown keys fold to ``false``.
+        """
+        source = '\n'.join([
+            'class Sentinel {}',
+            'if ("randomJunk" in Sentinel) {',
+            '  dead();',
+            '} else {',
+            '  live();',
+            '}',
+        ])
+        result = self._deobfuscate(source)
+        self.assertIn('live()', result)
+        self.assertNotIn('dead()', result)
+        self.assertNotIn('if (', result)
+
+    def test_in_const_empty_object_guard_folded(self):
+        """
+        A ``const`` empty object literal has only Object.prototype properties. Unknown keys fold
+        to ``false`` and known Object.prototype keys fold to ``true``.
+        """
+        source = '\n'.join([
+            'const sentinel = {};',
+            'if ("randomKey" in sentinel) {',
+            '  dead();',
+            '} else {',
+            '  live();',
+            '}',
+        ])
+        result = self._deobfuscate(source)
+        self.assertIn('live()', result)
+        self.assertNotIn('dead()', result)
+        self.assertNotIn('if (', result)
+
+    def test_in_const_empty_object_known_property_folds_true(self):
+        """
+        ``"toString"`` is on Object.prototype, so ``"toString" in {}`` must fold to ``true``.
+        Functions additionally have ``"length"`` — empty objects do not.
+        """
+        source = '\n'.join([
+            'const obj = {};',
+            'if ("toString" in obj) {',
+            '  live();',
+            '} else {',
+            '  dead();',
+            '}',
+            'if ("length" in obj) {',
+            '  dead2();',
+            '} else {',
+            '  live2();',
+            '}',
+        ])
+        result = self._deobfuscate(source)
+        self.assertIn('live()', result)
+        self.assertNotIn('dead()', result)
+        self.assertIn('live2()', result)
+        self.assertNotIn('dead2()', result)
+
 
 class TestExtendedOperatorFolding(TestJsDeobfuscator):
 

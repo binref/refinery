@@ -27,6 +27,7 @@ from refinery.lib.scripts.js.model import (
     JsBlockStatement,
     JsBooleanLiteral,
     JsCallExpression,
+    JsClassDeclaration,
     JsConditionalExpression,
     JsFunctionDeclaration,
     JsFunctionExpression,
@@ -35,19 +36,53 @@ from refinery.lib.scripts.js.model import (
     JsMemberExpression,
     JsNullLiteral,
     JsNumericLiteral,
+    JsObjectExpression,
     JsParenthesizedExpression,
     JsScript,
     JsSequenceExpression,
     JsStringLiteral,
     JsUnaryExpression,
+    JsVarKind,
+    JsVariableDeclaration,
+    JsVariableDeclarator,
 )
 
 
-def _is_empty_function(node: Node, name: str) -> bool:
+_OBJECT_PROTO_PROPERTIES = frozenset({
+    '__defineGetter__',
+    '__defineSetter__',
+    '__lookupGetter__',
+    '__lookupSetter__',
+    '__proto__',
+    'constructor',
+    'hasOwnProperty',
+    'isPrototypeOf',
+    'propertyIsEnumerable',
+    'toLocaleString',
+    'toString',
+    'valueOf',
+})
+
+_FUNCTION_PROPERTIES = _OBJECT_PROTO_PROPERTIES | frozenset({
+    'apply',
+    'arguments',
+    'bind',
+    'call',
+    'caller',
+    'length',
+    'name',
+    'prototype',
+})
+
+_EMPTY_OBJECT_PROPERTIES = _OBJECT_PROTO_PROPERTIES
+
+
+def _resolve_in_expression(node: Node, key: str, name: str) -> bool | None:
     """
-    Check whether *name* resolves to an empty `FunctionDeclaration` in any enclosing scope. Walks
-    up from *node* through all `JsScript` and `JsBlockStatement` ancestors, searching each body for
-    a function declaration with the given name and an empty body.
+    Attempt to statically resolve `key in name` by walking up from *node* through all enclosing
+    scopes. Recognizes empty function declarations, empty class declarations (no super, no body),
+    and const empty object literals. Returns `True` when *key* is a known built-in property of the
+    resolved type, `False` when it is not, or `None` when the identifier cannot be resolved.
     """
     scope = node.parent
     while scope is not None:
@@ -60,9 +95,31 @@ def _is_empty_function(node: Node, name: str) -> bool:
                     and isinstance(stmt.body, JsBlockStatement)
                     and not stmt.body.body
                 ):
-                    return True
+                    return key in _FUNCTION_PROPERTIES
+                if (
+                    isinstance(stmt, JsClassDeclaration)
+                    and isinstance(stmt.id, JsIdentifier)
+                    and stmt.id.name == name
+                    and stmt.super_class is None
+                    and stmt.body is not None
+                    and not stmt.body.body
+                ):
+                    return key in _FUNCTION_PROPERTIES
+                if (
+                    isinstance(stmt, JsVariableDeclaration)
+                    and stmt.kind is JsVarKind.CONST
+                ):
+                    for decl in stmt.declarations:
+                        if (
+                            isinstance(decl, JsVariableDeclarator)
+                            and isinstance(decl.id, JsIdentifier)
+                            and decl.id.name == name
+                            and isinstance(decl.init, JsObjectExpression)
+                            and not decl.init.properties
+                        ):
+                            return key in _EMPTY_OBJECT_PROPERTIES
         scope = scope.parent
-    return False
+    return None
 
 
 class JsSimplifications(Transformer):
@@ -125,9 +182,10 @@ class JsSimplifications(Transformer):
             op == 'in'
             and isinstance(node.left, JsStringLiteral)
             and isinstance(node.right, JsIdentifier)
-            and _is_empty_function(node, node.right.name)
         ):
-            return JsBooleanLiteral(value=False)
+            result = _resolve_in_expression(node, node.left.value, node.right.name)
+            if result is not None:
+                return JsBooleanLiteral(value=result)
         return None
 
     def visit_JsCallExpression(self, node: JsCallExpression):
