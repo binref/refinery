@@ -32,6 +32,12 @@ for executable in itertools.chain(
         bucket = deps_by_level.setdefault(0, set())
         bucket.update(executable.required_dependencies)
 
+listed = set()
+
+for level in builtins.sorted(deps_by_level):
+    deps_by_level[level] -= listed
+    listed |= deps_by_level[level]
+
 for level in builtins.sorted(deps_by_level):
     print(F'Dependencies Level {level}:')
     deps = builtins.sorted(deps_by_level[level])
