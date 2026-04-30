@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import base64
+import inspect
+import lzma
+
 from test import TestBase
 
 from refinery.lib.scripts.js.deobfuscation import deobfuscate
@@ -7,6 +11,7 @@ from refinery.lib.scripts.js.deobfuscation.constants import JsConstantInlining
 from refinery.lib.scripts.js.deobfuscation.deadcode import JsDeadCodeElimination
 from refinery.lib.scripts.js.deobfuscation.helpers import make_string_literal
 from refinery.lib.scripts.js.deobfuscation.objectfold import JsObjectFold
+from refinery.lib.scripts.js.deobfuscation.b91strings import _decode_base91
 from refinery.lib.scripts.js.deobfuscation.simplify import JsSimplifications
 from refinery.lib.scripts.js.parser import JsParser
 from refinery.lib.scripts.js.synth import JsSynthesizer
@@ -223,20 +228,29 @@ class TestBasicSimplifications(TestJsDeobfuscator):
 
 class TestStringArray(TestJsDeobfuscator):
 
+    _DEFAULT_PRESET_BODY = (
+        r"(function(_0x13a108,_0x20b5f6){var _0x2bca43=_0x1b07,_0x36965a=_0x13a108();whi"
+        r"le(!![]){try{var _0x293699=-parseInt(_0x2bca43(0xa7))/0x1+-parseInt(_0x2bca43(0xa1))/0x2*(-parseInt("
+        r"_0x2bca43(0xab))/0x3)+parseInt(_0x2bca43(0xa3))/0x4*(-parseInt(_0x2bca43(0xa9))/0x5)+parseInt(_0x2bc"
+        r"a43(0xa6))/0x6+parseInt(_0x2bca43(0xaa))/0x7*(parseInt(_0x2bca43(0xa2))/0x8)+-parseInt(_0x2bca43(0xa"
+        r"4))/0x9*(-parseInt(_0x2bca43(0xa5))/0xa)+-parseInt(_0x2bca43(0xa0))/0xb;if(_0x293699===_0x20b5f6)bre"
+        r"ak;else _0x36965a['push'](_0x36965a['shift']());}catch(_0x35acf4){_0x36965a['push'](_0x36965a['shift"
+        r"']());}}}(_0x2fc0,0x827c2));function _0x1b07(_0x3a2c1f,_0x271b5b){_0x3a2c1f=_0x3a2c1f-0xa0;var _0x2f"
+        r"c00e=_0x2fc0();var _0x1b0775=_0x2fc00e[_0x3a2c1f];return _0x1b0775;}var msg=_0xe6abe5(0xac);function"
+        r" _0x2fc0(){var _0x581e61=['2435007zbgngY','test\x20string','12767458FlCTYp','2BveYOA','96VHQLDe','16"
+        r"0CSMRCB','486kcIkKD','183450npXmbZ','4067550xFhrYl','462884STmCds','log','50725EqKMLb','48769HzjsUR'"
+        r"];_0x2fc0=function(){return _0x581e61;};return _0x2fc0();}console[_0xe6abe5(0xa8)](msg);"
+    )
+
+    @classmethod
+    def _default_preset(cls, accessor: str = '_0xe6abe5') -> str:
+        source = cls._DEFAULT_PRESET_BODY
+        if accessor == '_0xe6abe5':
+            return F'var _0xe6abe5=_0x1b07;{source}'
+        return source.replace('_0xe6abe5', accessor)
+
     def test_string_array_default_preset(self):
-        result = self._deobfuscate(
-            r"var _0xe6abe5=_0x1b07;(function(_0x13a108,_0x20b5f6){var _0x2bca43=_0x1b07,_0x36965a=_0x13a108();whi"
-            r"le(!![]){try{var _0x293699=-parseInt(_0x2bca43(0xa7))/0x1+-parseInt(_0x2bca43(0xa1))/0x2*(-parseInt("
-            r"_0x2bca43(0xab))/0x3)+parseInt(_0x2bca43(0xa3))/0x4*(-parseInt(_0x2bca43(0xa9))/0x5)+parseInt(_0x2bc"
-            r"a43(0xa6))/0x6+parseInt(_0x2bca43(0xaa))/0x7*(parseInt(_0x2bca43(0xa2))/0x8)+-parseInt(_0x2bca43(0xa"
-            r"4))/0x9*(-parseInt(_0x2bca43(0xa5))/0xa)+-parseInt(_0x2bca43(0xa0))/0xb;if(_0x293699===_0x20b5f6)bre"
-            r"ak;else _0x36965a['push'](_0x36965a['shift']());}catch(_0x35acf4){_0x36965a['push'](_0x36965a['shift"
-            r"']());}}}(_0x2fc0,0x827c2));function _0x1b07(_0x3a2c1f,_0x271b5b){_0x3a2c1f=_0x3a2c1f-0xa0;var _0x2f"
-            r"c00e=_0x2fc0();var _0x1b0775=_0x2fc00e[_0x3a2c1f];return _0x1b0775;}var msg=_0xe6abe5(0xac);function"
-            r" _0x2fc0(){var _0x581e61=['2435007zbgngY','test\x20string','12767458FlCTYp','2BveYOA','96VHQLDe','16"
-            r"0CSMRCB','486kcIkKD','183450npXmbZ','4067550xFhrYl','462884STmCds','log','50725EqKMLb','48769HzjsUR'"
-            r"];_0x2fc0=function(){return _0x581e61;};return _0x2fc0();}console[_0xe6abe5(0xa8)](msg);"
-        )
+        result = self._deobfuscate(self._default_preset())
         self.assertIn("'test string'", result)
         self.assertIn('console.log', result)
         self.assertNotIn('_0x2fc0', result)
@@ -375,24 +389,13 @@ class TestStringArray(TestJsDeobfuscator):
 
     def test_string_array_with_wrappers(self):
         """
-        When accessor calls are routed through wrapper functions (as in obfuscator.io's high
-        preset), the wrappers pipeline stage must inline them before string array resolution
-        can recognize and replace the accessor patterns. This sample wraps the default-preset
-        accessor through an identity-arithmetic wrapper function.
+        When accessor calls are routed through wrapper functions, the wrappers pipeline stage must
+        inline them before string array resolution can recognize and replace the accessor patterns.
+        This sample wraps the default-preset accessor through an identity-arithmetic wrapper.
         """
         source = (
             r"function _0xw(_0xa){return _0x1b07(_0xa- -0x0);}"
-            r"(function(_0x13a108,_0x20b5f6){var _0x2bca43=_0x1b07,_0x36965a=_0x13a108();whi"
-            r"le(!![]){try{var _0x293699=-parseInt(_0x2bca43(0xa7))/0x1+-parseInt(_0x2bca43(0xa1))/0x2*(-parseInt("
-            r"_0x2bca43(0xab))/0x3)+parseInt(_0x2bca43(0xa3))/0x4*(-parseInt(_0x2bca43(0xa9))/0x5)+parseInt(_0x2bc"
-            r"a43(0xa6))/0x6+parseInt(_0x2bca43(0xaa))/0x7*(parseInt(_0x2bca43(0xa2))/0x8)+-parseInt(_0x2bca43(0xa"
-            r"4))/0x9*(-parseInt(_0x2bca43(0xa5))/0xa)+-parseInt(_0x2bca43(0xa0))/0xb;if(_0x293699===_0x20b5f6)bre"
-            r"ak;else _0x36965a['push'](_0x36965a['shift']());}catch(_0x35acf4){_0x36965a['push'](_0x36965a['shift"
-            r"']());}}}(_0x2fc0,0x827c2));function _0x1b07(_0x3a2c1f,_0x271b5b){_0x3a2c1f=_0x3a2c1f-0xa0;var _0x2f"
-            r"c00e=_0x2fc0();var _0x1b0775=_0x2fc00e[_0x3a2c1f];return _0x1b0775;}var msg=_0xw(0xac);function"
-            r" _0x2fc0(){var _0x581e61=['2435007zbgngY','test\x20string','12767458FlCTYp','2BveYOA','96VHQLDe','16"
-            r"0CSMRCB','486kcIkKD','183450npXmbZ','4067550xFhrYl','462884STmCds','log','50725EqKMLb','48769HzjsUR'"
-            r"];_0x2fc0=function(){return _0x581e61;};return _0x2fc0();}console[_0xw(0xa8)](msg);"
+            + self._default_preset('_0xw')
         )
         result = self._deobfuscate(source)
         self.assertIn("'test string'", result)
@@ -411,19 +414,7 @@ class TestStringArray(TestJsDeobfuscator):
             JsStringArrayResolver,
             _CACHE_ATTR,
         )
-        source = (
-            r"var _0xe6abe5=_0x1b07;(function(_0x13a108,_0x20b5f6){var _0x2bca43=_0x1b07,_0x36965a=_0x13a108();whi"
-            r"le(!![]){try{var _0x293699=-parseInt(_0x2bca43(0xa7))/0x1+-parseInt(_0x2bca43(0xa1))/0x2*(-parseInt("
-            r"_0x2bca43(0xab))/0x3)+parseInt(_0x2bca43(0xa3))/0x4*(-parseInt(_0x2bca43(0xa9))/0x5)+parseInt(_0x2bc"
-            r"a43(0xa6))/0x6+parseInt(_0x2bca43(0xaa))/0x7*(parseInt(_0x2bca43(0xa2))/0x8)+-parseInt(_0x2bca43(0xa"
-            r"4))/0x9*(-parseInt(_0x2bca43(0xa5))/0xa)+-parseInt(_0x2bca43(0xa0))/0xb;if(_0x293699===_0x20b5f6)bre"
-            r"ak;else _0x36965a['push'](_0x36965a['shift']());}catch(_0x35acf4){_0x36965a['push'](_0x36965a['shift"
-            r"']());}}}(_0x2fc0,0x827c2));function _0x1b07(_0x3a2c1f,_0x271b5b){_0x3a2c1f=_0x3a2c1f-0xa0;var _0x2f"
-            r"c00e=_0x2fc0();var _0x1b0775=_0x2fc00e[_0x3a2c1f];return _0x1b0775;}var msg=_0xe6abe5(0xac);function"
-            r" _0x2fc0(){var _0x581e61=['2435007zbgngY','test\x20string','12767458FlCTYp','2BveYOA','96VHQLDe','16"
-            r"0CSMRCB','486kcIkKD','183450npXmbZ','4067550xFhrYl','462884STmCds','log','50725EqKMLb','48769HzjsUR'"
-            r"];_0x2fc0=function(){return _0x581e61;};return _0x2fc0();}console[_0xe6abe5(0xa8)](msg);"
-        )
+        source = self._default_preset()
         ast = JsParser(source).parse()
         resolver = JsStringArrayResolver()
         resolver.visit(ast)
@@ -467,6 +458,58 @@ class TestCallWrapperInliner(TestJsDeobfuscator):
         self.assertNotIn('outer', result)
         self.assertNotIn('inner', result)
         self.assertIn('target(18)', result)
+
+
+class TestStackUnwrapper(TestJsDeobfuscator):
+
+    @staticmethod
+    def _wrapper(name: str = 'wr') -> str:
+        return F'function {name}() {{ {name} = function() {{}}; }}'
+
+    def test_statement_expansion(self):
+        source = self._wrapper() + 'wr(a = 1, b = 2); g(a, b);'
+        result = self._deobfuscate(source)
+        self.assertIn('a = 1', result)
+        self.assertIn('b = 2', result)
+        self.assertIn('g(a, b)', result)
+        self.assertNotIn('wr(', result)
+
+    def test_single_arg(self):
+        source = self._wrapper() + 'wr(x = 42); g(x);'
+        result = self._deobfuscate(source)
+        self.assertIn('x = 42', result)
+        self.assertNotIn('wr(', result)
+
+    def test_no_args(self):
+        source = self._wrapper() + 'wr(); g();'
+        result = self._deobfuscate(source)
+        self.assertNotIn('wr', result)
+        self.assertIn('g()', result)
+
+    def test_wrapper_removed(self):
+        source = self._wrapper() + 'wr(a = 1);'
+        result = self._deobfuscate(source)
+        self.assertNotIn('function wr', result)
+
+    def test_non_wrapper_not_affected(self):
+        source = 'function noop() {} noop(a, b);'
+        result = self._deobfuscate(source)
+        self.assertIn('noop(a, b)', result)
+
+    def test_multiple_wrappers(self):
+        source = self._wrapper('wr1') + self._wrapper('wr2') + 'wr1(a = 1); wr2(b = 2); g(a, b);'
+        result = self._deobfuscate(source)
+        self.assertIn('a = 1', result)
+        self.assertIn('b = 2', result)
+        self.assertNotIn('wr1', result)
+        self.assertNotIn('wr2', result)
+
+    def test_nested_in_function_body(self):
+        source = self._wrapper() + 'function outer() { wr(x = 1, y = 2); return x + y; } outer();'
+        result = self._deobfuscate(source)
+        self.assertIn('x = 1', result)
+        self.assertIn('y = 2', result)
+        self.assertNotIn('wr(', result)
 
 
 class TestDeadCodeElimination(TestJsDeobfuscator):
@@ -518,25 +561,27 @@ class TestDeadCodeElimination(TestJsDeobfuscator):
 
     def test_in_empty_function_guard_folded(self):
         """
-        js-confuser's dead code injection uses ``"randomKey" in emptyFunction`` as a guard that
-        always evaluates to false. The simplifier folds this to ``false`` and dead code elimination
-        prunes the branch. The dead function declarations themselves may remain as orphans.
+        Dead code injection which uses `"randomKey" in emptyFunction` as a guard that always
+        evaluates to false. The simplifier folds this to `false` and dead code elimination prunes
+        the branch. The dead function declarations themselves may remain as orphans.
         """
-        source = '\n'.join([
-            'function __p_sentinel() {}',
-            'if ("xK9mQ" in __p_sentinel) {',
-            '  __p_dead_1();',
-            '}',
-            'function __p_dead_1() { var fake = 999; }',
-            'function real(n) {',
-            '  if ("abc" in __p_sentinel) {',
-            '    __p_dead_2();',
-            '  }',
-            '  function __p_dead_2() { var junk = 0; }',
-            '  return n + 1;',
-            '}',
-            'console.log(real(5));',
-        ])
+        source = inspect.cleandoc(
+            """
+            function __p_sentinel() {}
+            if ("xK9mQ" in __p_sentinel) {
+              __p_dead_1();
+            }
+            function __p_dead_1() { var fake = 999; }
+            function real(n) {
+              if ("abc" in __p_sentinel) {
+                __p_dead_2();
+              }
+              function __p_dead_2() { var junk = 0; }
+              return n + 1;
+            }
+            console.log(real(5));
+            """
+        )
         result = self._deobfuscate(source)
         self.assertNotIn('xK9mQ', result)
         self.assertNotIn('"abc" in', result)
@@ -546,8 +591,8 @@ class TestDeadCodeElimination(TestJsDeobfuscator):
 
     def test_in_empty_function_known_property_folds_true(self):
         """
-        Built-in properties like ``length`` exist on every function's prototype chain. The
-        expression ``"length" in emptyFunc`` must fold to ``true``.
+        Built-in properties like `length` exist on every function's prototype chain. The
+        expression `"length" in emptyFunc` must fold to `true`.
         """
         source = '\n'.join([
             'function sentinel() {}',
@@ -565,7 +610,7 @@ class TestDeadCodeElimination(TestJsDeobfuscator):
     def test_in_empty_class_guard_folded(self):
         """
         An empty class declaration (no super, no body) has the same property set as a function.
-        Unknown keys fold to ``false``.
+        Unknown keys fold to `false`.
         """
         source = '\n'.join([
             'class Sentinel {}',
@@ -582,8 +627,8 @@ class TestDeadCodeElimination(TestJsDeobfuscator):
 
     def test_in_const_empty_object_guard_folded(self):
         """
-        A ``const`` empty object literal has only Object.prototype properties. Unknown keys fold
-        to ``false`` and known Object.prototype keys fold to ``true``.
+        A `const` empty object literal has only Object.prototype properties. Unknown keys fold
+        to `false` and known Object.prototype keys fold to `true`.
         """
         source = '\n'.join([
             'const sentinel = {};',
@@ -600,8 +645,8 @@ class TestDeadCodeElimination(TestJsDeobfuscator):
 
     def test_in_const_empty_object_known_property_folds_true(self):
         """
-        ``"toString"`` is on Object.prototype, so ``"toString" in {}`` must fold to ``true``.
-        Functions additionally have ``"length"`` — empty objects do not.
+        `"toString"` is on Object.prototype, so `"toString" in {}` must fold to `true`.
+        Functions additionally have `"length"` — empty objects do not.
         """
         source = '\n'.join([
             'const obj = {};',
@@ -1223,6 +1268,230 @@ class TestConstantInlining(TestBase):
         self.assertIn('var y', result)
         self.assertIn('return y;', result)
 
+    def test_const_array_element_inlined(self):
+        source = "const p = [0, 'push']; x[p[1]]('a'); if (y === p[0]) {}"
+        result = self._inline(source)
+        self.assertIn("x['push']('a')", result)
+        self.assertIn('y === 0', result)
+        self.assertNotIn('const p', result)
+
+    def test_const_array_numeric_element(self):
+        source = 'const p = [42]; f(p[0]);'
+        result = self._inline(source)
+        self.assertIn('f(42)', result)
+        self.assertNotIn('const p', result)
+
+    def test_const_pool_declaration_removed(self):
+        source = "const pool = [0, 'push', 0xff]; f(pool[0]); g(pool[1]); h(pool[2]);"
+        result = self._inline(source)
+        self.assertNotIn('const pool', result)
+        self.assertIn('f(0)', result)
+        self.assertIn("g('push')", result)
+        self.assertIn('h(0xff)', result)
+
+    def test_var_array_not_inlined_across_functions(self):
+        source = "var p = ['a']; function f() { return p[0]; }"
+        result = self._inline(source)
+        self.assertIn('var p', result)
+        self.assertIn('return p[0];', result)
+
+    def test_const_array_inlined_across_functions(self):
+        source = "const p = ['a']; function f() { return p[0]; }"
+        result = self._inline(source)
+        self.assertNotIn('const p', result)
+        self.assertIn("return 'a';", result)
+
+    def test_non_literal_array_not_inlined(self):
+        source = 'const p = [a, 1]; f(p[0]);'
+        result = self._inline(source)
+        self.assertIn('const p', result)
+        self.assertIn('f(p[0])', result)
+
+    def test_out_of_bounds_index_unchanged(self):
+        source = 'const p = [1, 2]; f(p[999]);'
+        result = self._inline(source)
+        self.assertIn('p[999]', result)
+
+    def test_non_numeric_index_unchanged(self):
+        source = "const p = [1, 2]; f(p[x]);"
+        result = self._inline(source)
+        self.assertIn('p[x]', result)
+
+
+class TestConstantPoolIntegration(TestJsDeobfuscator):
+
+    def test_individual_duplicateLiteralsRemoval(self):
+        source = inspect.cleandoc(
+            """
+            const q = [0, "push"];
+            function fizzbuzz(n) {
+              var results = [];
+              for (var i = 1; i <= n; i++) {
+                if (i % 15 === q[0]) {
+                  results[q[1]]('FizzBuzz');
+                } else {
+                  if (i % 3 === q[0]) {
+                    results[q[1]]('Fizz');
+                  } else {
+                    if (i % 5 === q[0]) {
+                      results[q[1]]('Buzz');
+                    } else {
+                      results[q[1]](i);
+                    }
+                  }
+                }
+              }
+              return results;
+            }
+            console["log"](fizzbuzz(20));
+            """
+        )
+        result = self._deobfuscate(source)
+        self.assertIn('.push', result)
+        self.assertIn("'FizzBuzz'", result)
+        self.assertIn("'Fizz'", result)
+        self.assertIn("'Buzz'", result)
+        self.assertNotIn('dlrArray', result)
+
+
+class TestDispatcherUnwrapping(TestJsDeobfuscator):
+
+    def test_single_function_direct_call(self):
+        """
+        A dispatcher with one function entry and a direct call site should be unwrapped into a
+        standalone function declaration with the call rewritten.
+        """
+        source = inspect.cleandoc(
+            """
+            var c = Object["create"](null);
+            var p;
+            function d(name, flag, rtype, lengths) {
+              var output;
+              var fns = {
+                "abc": function() { var [x] = p; return x + 1; }
+              };
+              if (flag === "initF") { p = []; }
+              if (flag === "createF") {
+                output = c[name] || (c[name] = fns[name]);
+              } else {
+                output = fns[name]();
+              }
+              if (rtype === "wrapF") { return { "wk": output }; }
+              else { return output; }
+            }
+            function stub() {}
+            console.log((p = [5], d("abc")));
+            """
+        )
+        result = self._deobfuscate(source)
+        self.assertNotIn('function d(', result)
+        self.assertNotIn('var p', result)
+        self.assertIn('abc(5)', result)
+        self.assertIn('return x + 1', result)
+
+    def test_multi_function_dispatcher(self):
+        """
+        A dispatcher with multiple function entries should extract all of them and rewrite all
+        corresponding call sites.
+        """
+        source = inspect.cleandoc(
+            """
+            var c = Object["create"](null);
+            var p;
+            function d(name, flag, rtype, lengths) {
+              var output;
+              var fns = {
+                "f1": function() { var [a, b] = p; return a + b; },
+                "f2": function() { var [a, b] = p; return a * b; }
+              };
+              if (flag === "initF") { p = []; }
+              if (flag === "createF") {
+                output = c[name] || (c[name] = fns[name]);
+              } else {
+                output = fns[name]();
+              }
+              if (rtype === "wrapF") { return { "wk": output }; }
+              else { return output; }
+            }
+            function stub() {}
+            var x = (p = [2, 3], d("f1"));
+            var y = (p = [x, 4], d("f2"));
+            console.log(y);
+            """
+        )
+        result = self._deobfuscate(source)
+        self.assertNotIn('function d(', result)
+        self.assertIn('f1(2, 3)', result)
+        self.assertIn('f2(', result)
+        self.assertIn('return a + b', result)
+        self.assertIn('return a * b', result)
+
+    def test_wrapped_reference(self):
+        """
+        The wrapped reference pattern `new d("key", s, wrapFlag)["wk"]` should be rewritten
+        to just the function identifier.
+        """
+        source = inspect.cleandoc(
+            """
+            var c = Object["create"](null);
+            var p;
+            function d(name, flag, rtype, lengths) {
+              var output;
+              var fns = {
+                "id": function() { var [x] = p; return x; }
+              };
+              if (flag === "initF") { p = []; }
+              if (flag === "createF") {
+                output = c[name] || (c[name] = fns[name]);
+              } else {
+                output = fns[name]();
+              }
+              if (rtype === "wrapF") { return { "wk": output }; }
+              else { return output; }
+            }
+            function stub() {}
+            var fn = new d("id", "createF", "wrapF")["wk"];
+            console.log(fn(42));
+            """
+        )
+        result = self._deobfuscate(source)
+        self.assertNotIn('function d(', result)
+        self.assertNotIn('new d(', result)
+        self.assertNotIn('"wk"', result)
+
+    def test_boilerplate_removal(self):
+        """
+        The cache variable, payload variable, and empty fnLength stub should all be removed.
+        """
+        source = inspect.cleandoc(
+            """
+            var myCache = Object["create"](null);
+            var myPayload;
+            function d(name, flag, rtype, lengths) {
+              var output;
+              var fns = {
+                "k": function() { return 42; }
+              };
+              if (flag === "initF") { myPayload = []; }
+              if (flag === "createF") {
+                output = myCache[name] || (myCache[name] = fns[name]);
+              } else {
+                output = fns[name]();
+              }
+              if (rtype === "wrapF") { return { "wk": output }; }
+              else { return output; }
+            }
+            function emptyStub() {}
+            console.log(d("k"));
+            """
+        )
+        result = self._deobfuscate(source)
+        self.assertNotIn('myCache', result)
+        self.assertNotIn('myPayload', result)
+        self.assertNotIn('emptyStub', result)
+        self.assertNotIn('function d(', result)
+        self.assertIn('42', result)
+
 
 class TestRegressions(TestBase):
 
@@ -1265,3 +1534,410 @@ class TestRegressions(TestBase):
         t.visit(ast)
         result = JsSynthesizer().convert(ast)
         self.assertIn('var o', result)
+
+
+class TestStringConcealing(TestJsDeobfuscator):
+
+    _ALPHABET = '0,Fz)`Q(lH=j5gK[i8~mJt_b&qr/fW^Y2]?#|@.!$cLZ9BN>A1o7ye+D%IM}O6;pV:P*E3CRnxXSh{wvaTUuk4G"s<d'
+
+    @staticmethod
+    def _decode_js(name: str, alphabet: str, indent: int = 4) -> list[str]:
+        p = ' ' * indent
+        return [
+            F'function {name}(str) {{',
+            F'{p}var alpha = "{alphabet}";',
+            F'{p}var raw = "" + (str || "");',
+            F'{p}var len = raw.length;',
+            F'{p}var ret = [];',
+            F'{p}var b = 0, n = 0, v = -1;',
+            F'{p}for (var i = 0; i < len; i++) {{',
+            F'{p}    var p = alpha.indexOf(raw[i]);',
+            F'{p}    if (p === -1) continue;',
+            F'{p}    if (v < 0) {{ v = p; }}',
+            F'{p}    else {{',
+            F'{p}        v += p * 91;',
+            F'{p}        b |= v << n;',
+            F'{p}        n += (v & 8191) > 88 ? 13 : 14;',
+            F'{p}        do {{ ret.push(b & 0xff); b >>= 8; n -= 8; }} while (n > 7);',
+            F'{p}        v = -1;',
+            F'{p}    }}',
+            F'{p}}}',
+            F'{p}if (v > -1) {{ ret.push((b | v << n) & 0xff); }}',
+            F'{p}return bufferToString(ret);',
+            '}',
+        ]
+
+    @staticmethod
+    def _access_js(
+        name: str,
+        cache: str,
+        decoder: str,
+        table: str = 'table',
+        indent: int = 4,
+    ) -> list[str]:
+        p = ' ' * indent
+        q = "'" if indent == 4 else '"'
+        return [
+            F'function {name}(index) {{',
+            F'{p}if (typeof {cache}[index] === {q}undefined{q}) {{',
+            F'{p}    return {cache}[index] = {decoder}({table}[index]);',
+            F'{p}}}',
+            F'{p}return {cache}[index];',
+            '}',
+        ]
+
+    _ESCAPED_ALPHABET = _ALPHABET.replace('"', '\\"')
+
+    def _minimal_sample(self) -> str:
+        return '\n'.join([
+            'var cache = {};',
+            'var table = ["aa","bb","cc","dd","ee","ff","gg","hh","ii","jj",'
+            '"fOg=r","lrCD^","#ZlH"];',
+            *self._decode_js('decode', self._ESCAPED_ALPHABET),
+            *self._access_js('accessor', 'cache', 'decode'),
+            'var results = [];',
+            'results[accessor(10)]("hello");',
+            'console[accessor(12)](results);',
+        ])
+
+    def test_base91_decode(self):
+        """
+        The base91 decoder must correctly decode encoded strings using the
+        shuffled 91-character alphabet.
+        """
+        self.assertEqual(_decode_base91('fOg=r', self._ALPHABET), 'push')
+        self.assertEqual(_decode_base91('lrCD^', self._ALPHABET), 'Fizz')
+        self.assertEqual(_decode_base91('#ZlH', self._ALPHABET), 'log')
+
+    def test_accessor_calls_resolved(self):
+        """
+        Accessor calls with numeric literal arguments must be replaced by the
+        decoded string literals.
+        """
+        result = self._deobfuscate(self._minimal_sample())
+        self.assertIn('.push', result)
+        self.assertIn('.log', result)
+
+    def test_decoder_and_accessor_removed(self):
+        """
+        After resolution, the decoder and accessor function declarations must be removed from the
+        output.
+        """
+        result = self._deobfuscate(self._minimal_sample())
+        self.assertNotIn('function decode', result)
+        self.assertNotIn('function accessor', result)
+
+    def test_property_access_rewritten(self):
+        """
+        Computed member access through an accessor call must be rewritten to dotted property access
+        after the string is resolved.
+        """
+        result = self._deobfuscate(self._minimal_sample())
+        self.assertIn('results.push', result)
+        self.assertIn('console.log', result)
+
+    def test_full_fizzbuzz_sample(self):
+        source = lzma.decompress(base64.b85decode(
+            "{Wp48S^xk9=GL@E0stWa8~^|S5YJf5;3H2DoLvAj9ZCPGVfzyXn;9}d7=bd;P-u|=hS4y!t6q`3iYd7Jn@gb<iH1XeW)Th&veG?%"
+            "YwBK2@+d2^J$YeG%M4UKdAGD!4GsZVt`^bppHR_iV0FXK*h#6x)K@pE_d426aHY}ck*@-Z<qci=bK`7R;<|B{jy#q`0RF-r89E<6"
+            "0NR8U5LQ4+SMYp0!@U)YE9aZ2<C1H(i)Ja=td{a`jBi3Pw2b`|RxTgt!Zt?T5A+=vwd3}<`A_)<#%0j}rE<Uyze9OMpIYM_yB$8f"
+            "lFYLgihO@M;R;Yy*bT@NU~MBn!72xabk|YC97+%~)WLf?Y31`n`4ox#nBkldkM-DO_pL|x_|x!m_#cR+AoS4U(gq!N;y|W&li7Dr"
+            "nYt}Xh@0~yU}Ie{%l!DLhXZjK38YEcGr#;06*+dTW*|Z4IzC30a<XYwiSyWmZ}o_yAuFJtrYSq`eeQ43_^zW{lURqRypcD{vD6vs"
+            "ZgMB2f5zJhsbiAW`Y#5wMJTkZM>0fs6cOIh^{+7~Ig)3?Djuny%SQBcKsJRv=F7ruU2*G%D#|>zbUHn>Urfsomq_Ow_7nSzY+=QJ"
+            "qKGT85z=|d<@mT@WM7Atb3#%oC0z()pmE1X)6i)v^dc4Ul?qPRc8U#lYArH4)y0K*XCKu;;p_0(4S#^zKK$Y@;IeB{ZJpIu(~!;W"
+            "8<!)^wVux4hdJf(L_xS$salx~v4bQa(3!!Xy7(&+L-5#k7ikmuP?%8^UQ*yW<nGbs!VC3r>r(wyrB8qJ{Ls2Y6p9Ne%sujz-usGQ"
+            "SK`pcyy5RsI;t>-f!$B=F7J#rnKYIh1w+T@kkEH_0*gleI<#_B7||ICyQ=*v580&)bSy0xY@cTsg1Eu1=hVH|U8c6G+-#JiKvY*m"
+            "#%7EGFYA~v_;R^tyZ43gYt7<l0t^U7;z)BT6Qq7eMO-NLyn-toN#j%~F23{p40Q$ppFVcrV1feuAN&I=5KB7GF;N3;{mcZHyDdM2"
+            "24j$QODP9r|0ic>%L6`AC^ca^_ZQl)Th04=QV>#g4Cu>+P9L?fSp@$hP<eR}RzF|DxYkyb53yuALn<zvvnj5)TbLyz0}F)qH`!@5"
+            "L;hN8?f<4@5sx2SSR@zz7L5fTHT!d(p<FLE=*EUw3z-~=H;L&9tqqrZUsZ1O0EfjhA#VWv6@%<<4q%diHkFJRf%U$z2&Yd2wx~}N"
+            "8GKlrJ#x1trcK?{NLZ0A0B1TMN6Bk<W3nGrVQT^LI!^)figyO`8+$zJTU!;hd+K;G|1j?R1N8TI4R}vUzL;{_?g_gZacLo_LUM}<"
+            "e`RZmxr?u2wsxBptfS5+O+d5;24<1Gv@0?G|3etT#Ww*ks)etI@<$>$Yqw@i9uQY(AY*3W{yRsW4(nMlXKV>i#8_&Ipg8z%o&FZg"
+            "nOAfqHNKzTjXbyciwn7sv|i`<r*uv+dgSod5T-hS7*`d2bzXuEF*Ft^1Frk%^HOVh{yusXFXIoZz<Nset6Iyv<K@pR-!Q$&x$kfS"
+            "W!Pm^N+dZa^F))r`If9OV>mtcY5WIxKo*R*=E3`#PJ9EL&&6UT7hxR`$XWdc@Ewd2U(xpH<Os^P=<}aa+;Z8H5{B6?&9gC-80`sV"
+            "ISjF44et8`pYu>m*(C(A9k`T<O9rQ@7i$=lY=OE^WfCk-)JKEcUn3h+v-|GbcA7a;CWHsB$6eh#o`eY}wl5cja*f|l4)WHRT9`d_"
+            "2`gyKRbWSEvL5I!CE?yx?P$n0JbjEfK4lt_<WUW!0mP>*WZy<vF;*zH2MQBr?FSx>S8pMts~UH*f$G+f66qzov+O(Hfp<)TRlz3f"
+            "+%K8ebvZ>bNk(tU7f^nW<`xg7HyvS6?jU#a&ZzOrw`FT2)Og@RAy6UO9f+2DpF~6c8Pmf`Ko%a#>15r%4vxTQ_j5G?oFL2n#R1Ua"
+            "JWaG+-Q5@^)e;rae;3~G623vIL(=(6ITQuGl;SKodlc_WV}2f(zF>M#_ZlbwEcnwcU~C*$LeJe=*Ni#2l-T^#;I3v5$5};p1Ah=i"
+            "tTuAI+&Jjv@ia5(TZsg~6p(dNrLq!h;Y}g-txi}K2mrVZpfUN!UB!J1fW64J>;&gWXo^S;0|2bt2KJc1WMz8q5QNFoEFhYEZSZNx"
+            "6HP&s%<fjD^mV5;xOlOgXC`Tn{?#WJvcUvx@ODT+6q)|&@5F&Ya7t>4Y98xnquQe?nd%?lAiiTehcq5A`6O+5w<17tXm6?3k?+i9"
+            "G^1advdX4vJ_+s+L2n0n98k@`EW;~(LlSc!Ac}!u64*|C$brcSR|EX@AEk?I?|*(d-2CHZTd<%4U^uq0p{4uZ_9luHcvIpsoJcys"
+            "ll{2_al}beNxRr#v*AoDi)SyZVZ}9JgADq^zA$wh+fSOSiPzJF7XS#nZdLXGW#9vR8<d_`_no8nS$Oqeii%>u6$crna8nv9Is;)0"
+            "!0<<$?wjkivufO0P5PVwY9nv(oV&7BaUeXk1HY!`uTAiMQ$m=z09cdwbsk^4en8P0i>y`^LS7AXzMZ0=J|c;=36@kEG_XYS4+A<P"
+            "ww5j5YLdZ3ZO#E%2OU&N{)CJl<|efQTPn-ZOsG)I$t<-Dv0{)0{!jZB%s4z}-Y|BEFFK&T?SEan;gZZamc&<8-Eq%V%2P}3dBmYc"
+            "^yMOS(6p7xu+k!t16w@H>;?jX{WJ|v>qS1y{YbbFl_<<;`=!HHJXduBFRd8-G~=5G<2H*C-$fZ4mqBu4>YOWvzbfS=l&i64`07Qt"
+            "QKmyegh4)u2lLW@>!-bM3Nh?4RiiqrmInTCMXWxJk25%ABW>H4tVQ+H3%-;_2=ds>=&DwZl#7}&yHPZRoo=q&*89ut<GlJQ5uesi"
+            "!tapVwZ&^nz>Z@*$gaB~FgbV?6J8!&d+(p8(}2q}ccMkaX$5lokEWlWPf$EWT@>OUqPR!2mOGB6!?o#V&(`Y>5QkDBQFTf~Dk|Ns"
+            "G$dD3{**Ri^B?9Rm0x<lW#9!cY>=Z4S;QVg4_MJKYDfz^Tx9Clhibw7{sEDYfNkw%w&>C)aKqF&JG+C)mo014pvMD|Y94)SFcg+s"
+            "m`mddGz*<{&b3qmCnYed_ZB6UaV=llt|U}6e4I)B8)hK7%0@b%Ld`eS%_3{DU<#!Mk4s&@wHB0t+AB}a;UyAFm)gZ*o6|N0fsc6i"
+            "5j3&3a(pklsrt<se!<N37tDXfEcjicg3QCahc^g6WpU<OAugoO^|p(vL*)tk&a(NNe%Z(R)$Rv9Ox0D9aVBL%V6)pRN23qOd=+4U"
+            "r8eCWH6GiSpoTN((IV$}_N?el9<+iJ<4T*lZWvh5J9I$7jd`>2xLRua!FtW_b8-}XrDfG?%FJlTpYnvRA((&zmsD{}h1BZCqAj3K"
+            "-%|W;7qO40wvE)RPFbr}yS3@l71F?tPz=P^(?RdWf+}GpQ02-X!$Sbh#+dW;C0>@t(yMQ;YC*!7p2P|6F_`Br$~C05*;h^E!HoEW"
+            "e11FC{#NUcxG>vMtOtTAFd7FR=~bar+;L7Kg~w%Al4>9oiA7YEEG3$$o0ob#S3NnhP-+Gp1}v+xRr#P^<(3}ew<^vhuB1aZlm(+G"
+            "XOXP>gN5afXcDiPyh<BKncp~F&i~lNU&73g1&|6ipi8KU{})>gdwK`738?hqmY8c4w$ILEG~}<I+4|g5;z8A#qQ;SA;;__K3E*rg"
+            "2Y5XkANO!X>_A)Z<#gXb@8NMK{<ez69eA)HN$q6}!=hzF7>{q*1wm<}zFDYLGmajv3gP6c{-zcaK<Am>p{}EPz~B~GH<%E-gS#ke"
+            "A!ui?mwK7c`!q^WBG>i^PmhfN;Ii~+A4iaN{@)86vM1|YDky>~#ZfpEiq*>ohnP_!hahKphd~@zO#VS_aO2l#5<3pn-4@~Txsqtc"
+            "yn98ijRPDB1|}5;cs|D!a}+z44@;i;MXt4!_PIV&lV+ogZJ>8#-0wK?@%I|ieO8XhCLaikzy_IxZD!~fc)E^!sky1$6y-v1m(({|"
+            "f-P@Ooe07?CHhOH#&Sj=p6di~z9QJ^WN7LdL&UZbGhHT5#7%|-qky$8+JZ2(Vh8yb%e@`B$jF%Bvv=Wk&5F%DfnBR|IJf0g?$Rat"
+            "=o=&VuGQo?rMtGr!H|Jy!9#2Vttb|<CvZ!L+AnfqvnNYdwNioB6NPYn631GWF(3J>U$lrIjDumiUw6j?3b{#dSWe~mulIqibry04"
+            "`2c|te*=f7)2X!9v0~`ghbh`NYOM)bxdu7Cg7<+crR{r1!qRhv_S;i;U&01B0KBh3Wf0&4D*_TdK_Z|rr6JG43@!Ru1M-tuYtn0@"
+            "|ELS8eH9OJV|y%;!|UF?gn+RGw%@fYl4n;&uIO;jdyY6sWpEwgsQs6q7_|Z^&4NZ}xFHxVxfZJRaK{ZVyxzrY3(WD4FrY{#nBYCe"
+            "T0QURTLwvSXW|Cl@NPAOGK+tBjg8(e`LyCYj*7%Y6qWXsf@+{zv=Y+Kwu&t2`Tyq1e48N{zWRN;l(m3T|BNYiVA6|fdriE-4v|?P"
+            "{Appfr+r_$ZebnK{ckz+WmPD45=SR?bn@_!X*UQ;O!{q$7S{TTTMc%1^}uHZh00ZCH(RZ16{$*|_u_ppM?aY9yYr<1!TSi7HJ`u|"
+            "&822Yz)LIuTag|tC9F%~7J#M37rekRDy_Hx>EBK6wyqj2J}6*v3@E2)87c1NV!B4=Ks^Uz!pvDZ#*CWLyjasxTJ7ihJJn_Z&l_U!"
+            "04;Bg)j5#R(yeWP92Ure3n18;2Nlues$t43FU!vE=HSF=%twf;sNfdwq)|4alu`3ryXyl-!8GedmY2adU7B-hFpWQWt-}A;=}xX)"
+            "Xb^`%f~m-kYjv9SNuxHAg(MM7ED<>BpKzaO{_ktZ;_Apj@ThO_>Pdn!5i?l9=#N{UfvZ)4US&_8ImIzrgFe-CTk+8Jo}#g+c*NQ2"
+            "3uH-2h8S9j5gaW!<R?RCj4%E_aB}Q-$Eu??D2Z4=4y|CnQajE%5OC(rMYvnwLH5j60X{d(4A3|RxXo)1|MsSX4&(hjOIS1221;E)"
+            "nb(gf4mErZ;J?VGGcz`5QFp!o{-$Tq8{0!cWR0UeOnMD$s&{9z;Ck)vH_cox7)@1(?vLXN+JV1HV7fJ=AEcU~^Ba0ru@Cvr0=ZBm"
+            "%bQGS=ej;30)^>|*f5s$S)&3YOdG{R<Zr|PITBM2o}hXT00Fok&_)0NeGNZ_vBYQl0ssI200dcD"
+        )).decode('utf8')
+        result = self._deobfuscate(source)
+        self.assertIn("'FizzBuzz'", result)
+        self.assertIn("'Fizz'", result)
+        self.assertIn("'Buzz'", result)
+        self.assertIn('results.push', result)
+        self.assertIn('console.log', result)
+
+    def test_scope_aware_decoder_pairing(self):
+        """
+        When the same decoder function name is reused in nested scopes with different alphabets,
+        each accessor must pair with its sibling decoder — not a same-named decoder from a
+        different scope. This regression test uses two alphabets (original and reversed) so
+        cross-decoding fails with UnicodeDecodeError.
+        """
+        alpha1 = '0,Fz)`Q(lH=j5gK[i8~mJt_b&qr/fW^Y2]?#|@.!$cLZ9BN>A1o7ye+D%IM}O6;pV:P*E3CRnxXSh{wvaTUuk4G"s<d'
+        alpha2 = alpha1[::-1]
+        # Verify the test fixture is meaningful: cross-decode must NOT produce 'push'
+        self.assertNotEqual(_decode_base91('fOg=r', alpha2), 'push')
+        esc1 = alpha1.replace('"', '\\"')
+        esc2 = alpha2.replace('"', '\\"')
+        source = '\n'.join([
+            # Shared string table: idx 10="push" (alpha1), idx 11="log" (alpha1)
+            # idx 12="push" (alpha2), idx 13="log" (alpha2)
+            'var table = ["aa","bb","cc","dd","ee","ff","gg","hh","ii","jj",'
+            '"fOg=r","#ZlH",";^{aV","D>UT"];',
+            # --- outer scope: decoder with alpha1, accessor pairing ---',
+            'var cache1 = {};',
+            *self._decode_js('dec', esc1),
+            *self._access_js('acc', 'cache1', 'dec'),
+            'var results = [];',
+            'results[acc(10)]("hello");',
+            'console[acc(11)](results);',
+            # --- inner scope: same decoder+accessor names, alpha2 ---',
+            'function inner() {',
+            '    var cache2 = {};',
+            *[F'    {line}' for line in self._decode_js('dec', esc2, indent=8)],
+            *[F'    {line}' for line in self._access_js('acc', 'cache2', 'dec', indent=8)],
+            '    var items = [];',
+            '    items[acc(12)]("world");',
+            '    console[acc(13)](items);',
+            '}',
+            'inner();',
+        ])
+        result = self._deobfuscate(source)
+        self.assertIn("results.push", result)
+        self.assertIn("console.log", result)
+        self.assertIn("items.push", result)
+
+    def test_assignment_table_removed(self):
+        """
+        When the string table is assigned via `table = [...]` rather than declared as
+        `var table = [...]`, the assignment statement and its hoisted `var table;`
+        declarator must both be removed after all accessor calls are resolved.
+        """
+        source = '\n'.join([
+            'var table;',
+            'var cache = {};',
+            'table = ["aa","bb","cc","dd","ee","ff","gg","hh","ii","jj",'
+            '"fOg=r","lrCD^","#ZlH"];',
+            *self._decode_js('decode', self._ESCAPED_ALPHABET),
+            *self._access_js('accessor', 'cache', 'decode'),
+            'var results = [];',
+            'results[accessor(10)]("hello");',
+            'console[accessor(12)](results);',
+        ])
+        result = self._deobfuscate(source)
+        self.assertIn('results.push', result)
+        self.assertIn('console.log', result)
+        self.assertNotIn('table', result)
+        self.assertNotIn('function decode', result)
+        self.assertNotIn('function accessor', result)
+
+    def test_assignment_table_with_shadowing(self):
+        """
+        An inner function that declares `var table` must not prevent the outer assignment-based
+        string table from being removed. The inner `var table` is a separate variable.
+        """
+        source = '\n'.join([
+            'var table;',
+            'var cache = {};',
+            'table = ["aa","bb","cc","dd","ee","ff","gg","hh","ii","jj",'
+            '"fOg=r","#ZlH"];',
+            *self._decode_js('decode', self._ESCAPED_ALPHABET),
+            *self._access_js('accessor', 'cache', 'decode'),
+            'console[accessor(11)](accessor(10));',
+            '// Inner function with shadowed table variable',
+            'function inner() {',
+            '    var table = [1, 2, 3];',
+            '    return table;',
+            '}',
+            'inner();',
+        ])
+        result = self._deobfuscate(source)
+        self.assertIn('console.log', result)
+        # The outer table assignment must be gone
+        self.assertNotIn("'aa'", result)
+        # The inner function with its own local table must survive
+        self.assertIn('function inner', result)
+        self.assertIn('table', result)
+
+
+class TestUnusedCodeRemoval(TestJsDeobfuscator):
+
+    def test_uncalled_function_removed(self):
+        """
+        A function that is never called or referenced must be removed.
+        """
+        source = '\n'.join([
+            'function alive() { return 1; }',
+            'function dead() { return 2; }',
+            'console.log(alive());',
+        ])
+        result = self._deobfuscate(source)
+        self.assertIn('function alive', result)
+        self.assertNotIn('function dead', result)
+        self.assertIn('console.log', result)
+
+    def test_transitive_reachability(self):
+        """
+        If function A calls function B, and A is called from live code, then B must survive.
+        """
+        source = '\n'.join([
+            'function helper() { return 42; }',
+            'function main() { return helper(); }',
+            'function orphan() { return 99; }',
+            'console.log(main());',
+        ])
+        result = self._deobfuscate(source)
+        self.assertIn('function helper', result)
+        self.assertIn('function main', result)
+        self.assertNotIn('function orphan', result)
+
+    def test_identifier_as_value_makes_reachable(self):
+        """
+        A function name referenced as a value (not called) must be kept alive.
+        """
+        source = '\n'.join([
+            'function callback() { return 1; }',
+            'function unused() { return 2; }',
+            'var x = callback;',
+        ])
+        result = self._deobfuscate(source)
+        self.assertIn('function callback', result)
+        self.assertNotIn('function unused', result)
+
+    def test_all_functions_unreachable_keeps_them(self):
+        """
+        If removing unreachable functions would leave no non-function statements, nothing
+        is removed (safety guard).
+        """
+        source = '\n'.join([
+            'function a() { return 1; }',
+            'function b() { return 2; }',
+        ])
+        result = self._deobfuscate(source)
+        self.assertIn('function a', result)
+        self.assertIn('function b', result)
+
+    def test_nested_dead_code_in_block(self):
+        """
+        Dead functions declared inside a block (not top-level) must also be removed.
+        """
+        source = '\n'.join([
+            'function main(n) {',
+            '  if (n > 0) {',
+            '    function dead_inside() { return "sha256"; }',
+            '    return n * 2;',
+            '  }',
+            '  return 0;',
+            '}',
+            'console.log(main(5));',
+        ])
+        result = self._deobfuscate(source)
+        self.assertIn('function main', result)
+        self.assertNotIn('dead_inside', result)
+        self.assertIn('console.log', result)
+
+    def test_dead_assignment_removed(self):
+        """
+        An assignment to a variable that is never read must be removed.
+        """
+        source = '\n'.join([
+            'var x;',
+            'x = {};',
+            'console.log("hello");',
+        ])
+        result = self._deobfuscate(source)
+        self.assertNotIn('x', result)
+        self.assertIn('console.log', result)
+
+    def test_cascading_dead_variables(self):
+        """
+        If variable A is only read by the RHS of variable B's assignment, and B is dead, then
+        both A and B must be removed.
+        """
+        source = '\n'.join([
+            'var alpha, beta, gamma;',
+            'alpha = {};',
+            'beta = alpha.foo;',
+            'gamma = alpha.bar || beta;',
+            'console.log("live");',
+        ])
+        result = self._deobfuscate(source)
+        self.assertNotIn('alpha', result)
+        self.assertNotIn('beta', result)
+        self.assertNotIn('gamma', result)
+        self.assertIn('console.log', result)
+
+    def test_shadowed_param_does_not_prevent_removal(self):
+        """
+        A variable that is only referenced inside a function parameter (shadowing the outer name)
+        must still be treated as dead in the outer scope.
+        """
+        source = '\n'.join([
+            'var x;',
+            'x = 42;',
+            'function foo(x) { return x + 1; }',
+            'console.log(foo(10));',
+        ])
+        result = self._deobfuscate(source)
+        self.assertNotIn('x = 42', result)
+        self.assertIn('function foo', result)
+        self.assertIn('console.log', result)
+
+    def test_live_variable_preserved(self):
+        """
+        A variable that IS read outside of any assignment context must be kept.
+        """
+        source = '\n'.join([
+            'var x;',
+            'x = 42;',
+            'console.log(x);',
+        ])
+        result = self._deobfuscate(source)
+        self.assertIn('x = 42', result)
+        self.assertIn('console.log(x)', result)
+
+    def test_side_effect_rhs_preserved(self):
+        """
+        When a dead variable's RHS has side effects (a call expression), the assignment is
+        stripped but the RHS is preserved as a standalone expression statement.
+        """
+        source = '\n'.join([
+            'var x;',
+            'x = sideEffect();',
+            'console.log("done");',
+        ])
+        result = self._deobfuscate(source)
+        self.assertNotIn('x =', result)
+        self.assertIn('sideEffect()', result)
+        self.assertIn('console.log', result)

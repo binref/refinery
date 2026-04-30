@@ -7,9 +7,13 @@ from refinery.lib.scripts.js.deobfuscation.antidbg import JsRemoveReDoS
 from refinery.lib.scripts.js.deobfuscation.cff import JsControlFlowUnflattening
 from refinery.lib.scripts.js.deobfuscation.constants import JsConstantInlining
 from refinery.lib.scripts.js.deobfuscation.deadcode import JsDeadCodeElimination
+from refinery.lib.scripts.js.deobfuscation.dispatcher import JsDispatcherUnwrapper
 from refinery.lib.scripts.js.deobfuscation.objectfold import JsObjectFold
 from refinery.lib.scripts.js.deobfuscation.simplify import JsSimplifications
+from refinery.lib.scripts.js.deobfuscation.argwrap import JsAssignmentsAsFunctionArgs
 from refinery.lib.scripts.js.deobfuscation.stringarray import JsStringArrayResolver
+from refinery.lib.scripts.js.deobfuscation.b91strings import JsBase91StringDecoder
+from refinery.lib.scripts.js.deobfuscation.unused import JsUnusedCodeRemoval
 from refinery.lib.scripts.js.deobfuscation.wrappers import JsCallWrapperInliner
 from refinery.lib.scripts.js.model import JsScript
 from refinery.lib.scripts.pipeline import DeobfuscationPipeline, TransformerGroup
@@ -19,12 +23,14 @@ _pipeline = DeobfuscationPipeline(
     groups=[
         TransformerGroup(
             'normalize',
+            JsAssignmentsAsFunctionArgs,
             JsSimplifications,
             JsDeadCodeElimination,
         ),
         TransformerGroup(
             'fold',
             JsCallWrapperInliner,
+            JsDispatcherUnwrapper,
             JsObjectFold,
             JsControlFlowUnflattening,
             JsConstantInlining,
@@ -32,10 +38,12 @@ _pipeline = DeobfuscationPipeline(
         TransformerGroup(
             'resolve',
             JsStringArrayResolver,
+            JsBase91StringDecoder,
         ),
         TransformerGroup(
             'cleanup',
             JsRemoveReDoS,
+            JsUnusedCodeRemoval,
         ),
     ],
     dependencies={

@@ -91,9 +91,8 @@ def string_value(node: Expression | None) -> str | None:
 
 def property_key(prop: JsProperty) -> str | None:
     """
-    Extract the string key from a property node. Handles both string-literal keys
-    (``{'key': ...}``) and plain identifier keys (``{key: ...}``). Returns ``None`` for computed
-    keys.
+    Extract the string key from a property node. Handles both string-literal keys and plain
+    identifier keys. Returns `None` for computed keys.
     """
     if prop.computed:
         return None
@@ -151,7 +150,7 @@ def is_simple_expression(node: Node) -> bool:
 
 def is_truthy(node: Node) -> bool | None:
     """
-    Return the JavaScript truthiness of a literal node, or ``None`` when the value cannot be
+    Return the JavaScript truthiness of a literal node, or `None` when the value cannot be
     determined statically.
     """
     if isinstance(node, JsBooleanLiteral):
@@ -173,7 +172,7 @@ def is_truthy(node: Node) -> bool | None:
 def is_statically_evaluable(node: Node) -> bool:
     """
     Return whether the node can be evaluated to a known truthiness at transform time. This
-    includes all literal types and the ``undefined`` identifier.
+    includes all literal types and the `undefined` identifier.
     """
     return (
         is_literal(node)
@@ -184,7 +183,7 @@ def is_statically_evaluable(node: Node) -> bool:
 
 def is_nullish(node: Node) -> bool:
     """
-    Return whether the node is statically known to be ``null`` or ``undefined``.
+    Return whether the node is statically known to be `null` or `undefined`.
     """
     if isinstance(node, JsNullLiteral):
         return True
@@ -195,10 +194,10 @@ def is_nullish(node: Node) -> bool:
 
 def js_parse_int(s: str, radix: int = 10) -> int | None:
     """
-    Replicate the semantics of JavaScript's ``parseInt(string, radix)``. Strips leading whitespace,
-    handles an optional ``+``/``-`` sign, and for radix 16 skips a leading ``0x``/``0X`` prefix.
-    Parses leading characters valid for the given radix (2-36) and stops at the first invalid one.
-    Returns ``None`` when no valid digits are found (JS would return ``NaN``).
+    Replicate the semantics of JavaScript's `parseInt(string, radix)`. Strips leading whitespace,
+    handles an optional `+`/`-` sign, and for radix 16 skips a leading `0x`/`0X` prefix. Parses
+    leading characters valid for the given radix (2-36) and stops at the first invalid one. Returns
+    `None` when no valid digits are found (JS would return `NaN`).
     """
     if radix == 0:
         radix = 10
@@ -229,6 +228,15 @@ def js_parse_int(s: str, radix: int = 10) -> int | None:
     if not digits:
         return None
     return sign * int(''.join(digits), radix)
+
+
+def get_body(node: Node) -> list | None:
+    """
+    Return the statement body list of a node if it has one (JsScript or JsBlockStatement).
+    """
+    if isinstance(node, (JsScript, JsBlockStatement)):
+        return node.body
+    return None
 
 
 def remove_declarator(declarator: JsVariableDeclarator) -> None:
@@ -292,7 +300,7 @@ def try_inline_trivial_function(
     """
     If *func* is a trivial wrapper (single return whose expression uses only the function's
     parameters), substitute call-site arguments into a clone of the return expression. Returns the
-    inlined expression or ``None`` if the function is not a simple wrapper.
+    inlined expression or `None` if the function is not a simple wrapper.
     """
     if func.body is None or not isinstance(func.body, JsBlockStatement):
         return None
@@ -311,6 +319,22 @@ def try_inline_trivial_function(
     if not is_closed_expression(expr, set(param_names)):
         return None
     return substitute_params(expr, param_names, call_args)
+
+
+def walk_outer_scope(root: Node):
+    """
+    Walk the AST like `root.walk()` but skip the bodies of function definitions and expressions.
+    The function node itself is yielded so that it can still be inspected or removed; only its
+    subtree is suppressed.
+    """
+    stack: list[Node] = [root]
+    while stack:
+        node = stack.pop()
+        yield node
+        if isinstance(node, (JsFunctionDeclaration, JsFunctionExpression, JsArrowFunctionExpression)):
+            continue
+        for child in node.children():
+            stack.append(child)
 
 
 class BodyProcessingTransformer(Transformer):
