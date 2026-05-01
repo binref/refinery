@@ -33,8 +33,10 @@ from refinery.lib.scripts.js.model import (
     JsScript,
     JsStringLiteral,
     JsUnaryExpression,
+    JsVarKind,
     JsVariableDeclaration,
     JsVariableDeclarator,
+    JsWhileStatement,
 )
 from refinery.lib.scripts.js.token import FUTURE_RESERVED, KEYWORDS
 
@@ -142,6 +144,24 @@ def is_literal(node: Node) -> TypeGuard[JsStringLiteral | JsNumericLiteral | JsB
     return isinstance(node, (
         JsStringLiteral, JsNumericLiteral, JsBooleanLiteral, JsNullLiteral,
     ))
+
+
+def is_while_true(node: JsWhileStatement) -> bool:
+    """
+    Check whether the while-loop condition is `true`, `!![]`, or `!0` — the forms the
+    obfuscator uses for infinite loops.
+    """
+    test = node.test
+    if isinstance(test, JsBooleanLiteral) and test.value is True:
+        return True
+    if not isinstance(test, JsUnaryExpression) or test.operator != '!':
+        return False
+    inner = test.operand
+    if isinstance(inner, JsNumericLiteral) and inner.value == 0:
+        return True
+    if isinstance(inner, JsUnaryExpression) and inner.operator == '!':
+        return True
+    return False
 
 
 def is_valid_identifier(name: str) -> bool:
@@ -333,20 +353,123 @@ def try_inline_trivial_function(
     return substitute_params(expr, param_names, call_args)
 
 
-def walk_outer_scope(root: Node):
+def walk_scope(root: Node, *, include_root_body: bool = False):
     """
-    Walk the AST like `root.walk()` but skip the bodies of function definitions and expressions.
-    The function node itself is yielded so that it can still be inspected or removed; only its
-    subtree is suppressed.
+    Walk the AST under *root* without descending into nested function bodies. Function boundary
+    nodes are yielded (so their identifiers can be inspected) but their subtrees are suppressed.
+    Children are visited in source order.
+
+    When *include_root_body* is True and *root* is itself a function, its body IS traversed (only
+    inner functions are skipped). This is useful when *root* represents the scope being analyzed.
     """
     stack: list[Node] = [root]
     while stack:
         node = stack.pop()
         yield node
         if isinstance(node, (JsFunctionDeclaration, JsFunctionExpression, JsArrowFunctionExpression)):
-            continue
-        for child in node.children():
+            if not (include_root_body and node is root):
+                continue
+        children = list(node.children())
+        children.reverse()
+        for child in children:
             stack.append(child)
+
+
+def collect_identifier_names(node: Node) -> set[str]:
+    """
+    Collect the names of all `JsIdentifier` nodes in the subtree rooted at *node*.
+    """
+    return {n.name for n in node.walk() if isinstance(n, JsIdentifier)}
+
+
+def find_enclosing_body(node: Node) -> list | None:
+    """
+    Walk up parent pointers from *node* to find the body list that directly contains it. Returns
+    the `body` attribute of the nearest `JsBlockStatement` or `JsScript` ancestor whose body
+    list includes *node* (or an ancestor of *node*).
+    """
+    child = node
+    parent = node.parent
+    while parent is not None:
+        if isinstance(parent, (JsBlockStatement, JsScript)):
+            if child in parent.body:
+                return parent.body
+        child = parent
+        parent = parent.parent
+    return None
+
+
+def _body_declares_var(body: list, name: str) -> bool:
+    """
+    Check whether a function body's statement list contains a `var` declaration that includes a
+    declarator with the given *name*.
+    """
+    for stmt in body:
+        if not isinstance(stmt, JsVariableDeclaration):
+            continue
+        if stmt.kind != JsVarKind.VAR:
+            continue
+        for decl in stmt.declarations:
+            if isinstance(decl, JsVariableDeclarator) and isinstance(decl.id, JsIdentifier):
+                if decl.id.name == name:
+                    return True
+    return False
+
+
+def _is_shadowed(node: Node, name: str) -> bool:
+    """
+    Walk up from *node* through all enclosing function boundaries and check whether any of them
+    shadows *name* via a `var` declaration or a function parameter.
+    """
+    parent = node.parent
+    while parent is not None:
+        if isinstance(parent, (JsFunctionDeclaration, JsFunctionExpression, JsArrowFunctionExpression)):
+            for param in getattr(parent, 'params', ()):
+                if isinstance(param, JsIdentifier) and param.name == name:
+                    return True
+            body = getattr(parent, 'body', None)
+            if isinstance(body, JsBlockStatement):
+                if _body_declares_var(body.body, name):
+                    return True
+        parent = parent.parent
+    return False
+
+
+def has_remaining_references(
+    root: Node,
+    name: str,
+    exclude: Node | None = None,
+    exclude_ids: set[int] | None = None,
+    check_shadowing: bool = False,
+) -> bool:
+    """
+    Check whether *name* is referenced anywhere in the subtree of *root*, excluding nodes that
+    belong to *exclude* (by identity) or whose `id()` is in *exclude_ids*. When *check_shadowing*
+    is True, identifiers inside function bodies that shadow *name* via `var`/param are skipped.
+    Bare hoisted declarations (`var NAME;` with no initializer) are never counted.
+    """
+    if exclude is not None:
+        if exclude_ids is None:
+            exclude_ids = set()
+        exclude_ids = exclude_ids | {id(n) for n in exclude.walk()}
+    for node in root.walk():
+        if exclude_ids and id(node) in exclude_ids:
+            continue
+        parent = node.parent
+        if exclude_ids and parent is not None and id(parent) in exclude_ids:
+            continue
+        if not isinstance(node, JsIdentifier) or node.name != name:
+            continue
+        if (
+            isinstance(parent, JsVariableDeclarator)
+            and parent.id is node
+            and parent.init is None
+        ):
+            continue
+        if check_shadowing and _is_shadowed(node, name):
+            continue
+        return True
+    return False
 
 
 class BodyProcessingTransformer(Transformer):
@@ -390,7 +513,7 @@ class ScopeProcessingTransformer(Transformer):
     """
     Base for transforms that process at function-scope boundaries. Visits `JsScript` and each
     function body (`JsFunctionDeclaration`, `JsFunctionExpression`, `JsArrowFunctionExpression`).
-    Subclasses override `_process_scope`.
+    Subclasses may override either `_process_scope` or `_process_scope_body`.
     """
 
     def visit_JsScript(self, node: JsScript):
@@ -417,4 +540,33 @@ class ScopeProcessingTransformer(Transformer):
         return None
 
     def _process_scope(self, scope: Node) -> None:
+        """
+        Receives the raw scope node (`JsScript` or `JsBlockStatement`).
+        """
+        body = get_body(scope)
+        if body is not None:
+            self._process_scope_body(scope, body)
+
+    def _process_scope_body(self, scope: Node, body: list) -> None:
+        """
+        Receives the scope node and its `body` list. The `_process_scope` method extracts the body
+        and delegates here.
+        """
+        raise NotImplementedError
+
+
+class ScriptLevelTransformer(Transformer):
+    """
+    Base for transforms that process the entire script manually rather than using the recursive
+    visitor. Subclasses override `_process_script`.
+    """
+
+    def visit_JsScript(self, node: JsScript):
+        self._process_script(node)
+        return None
+
+    def generic_visit(self, node: Node):
+        pass
+
+    def _process_script(self, node: JsScript) -> None:
         raise NotImplementedError

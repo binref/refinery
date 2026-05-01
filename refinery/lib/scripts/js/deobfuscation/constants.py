@@ -8,9 +8,11 @@ from typing import NamedTuple
 from refinery.lib.scripts import Node, _clone_node, _replace_in_parent
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     ScopeProcessingTransformer,
+    collect_identifier_names,
     get_body,
     is_literal,
     remove_declarator,
+    walk_scope,
 )
 from refinery.lib.scripts.js.model import (
     JsArrayExpression,
@@ -57,25 +59,7 @@ class _CandidateEntry(NamedTuple):
     scope: tuple[list, int] | None
 
 
-def _walk_scope(root: Node):
-    """
-    Walk the AST under *root* in source order without descending into nested function bodies. The
-    function boundary node itself is yielded (so its identifier can be inspected) but its children
-    are not visited.
-    """
-    stack: list[Node] = [root]
-    while stack:
-        node = stack.pop()
-        yield node
-        if isinstance(node, _FUNCTION_NODES) and node is not root:
-            continue
-        children = list(node.children())
-        children.reverse()
-        for child in children:
-            stack.append(child)
-
-
-def _is_side_effect_free(node: Node) -> bool:
+def _is_primitive_and_pure(node: Node) -> bool:
     """
     Return whether evaluating *node* is guaranteed to produce no observable side effects and
     the result is a primitive value (not an object, array, or function).
@@ -98,13 +82,6 @@ def _is_side_effect_free(node: Node) -> bool:
         )):
             return False
     return True
-
-
-def _identifier_leaves(node: Node) -> set[str]:
-    """
-    Collect the names of all `JsIdentifier` leaves in an expression tree.
-    """
-    return {n.name for n in node.walk() if isinstance(n, JsIdentifier)}
 
 
 def _is_literal_array(node: Node) -> bool:
@@ -354,7 +331,7 @@ class JsConstantInlining(ScopeProcessingTransformer):
         seal_points: dict[str, list[tuple[list, int]]] = {}
         rejected: set[str] = set()
 
-        for node in _walk_scope(scope):
+        for node in walk_scope(scope, include_root_body=True):
             if isinstance(node, JsVariableDeclaration):
                 for decl in node.declarations:
                     if not isinstance(decl, JsVariableDeclarator):
@@ -431,7 +408,7 @@ class JsConstantInlining(ScopeProcessingTransformer):
                     decl_ids.add(id(entry.declarator.id))
 
         ref_counts: dict[str, int] = {}
-        for node in _walk_scope(scope):
+        for node in walk_scope(scope, include_root_body=True):
             if isinstance(node, JsMemberExpression) and node.computed:
                 obj = node.object
                 if isinstance(obj, JsIdentifier) and id(obj) not in decl_ids and obj.name in candidates:
@@ -462,7 +439,7 @@ class JsConstantInlining(ScopeProcessingTransformer):
         if not constant_names:
             return inlined
 
-        for node in list(_walk_scope(scope)):
+        for node in list(walk_scope(scope, include_root_body=True)):
             if isinstance(node, JsMemberExpression) and node.computed:
                 obj = node.object
                 if (
@@ -573,7 +550,7 @@ class JsConstantInlining(ScopeProcessingTransformer):
             return
 
         called_functions: set[str] = set()
-        for node in _walk_scope(scope):
+        for node in walk_scope(scope, include_root_body=True):
             if (
                 isinstance(node, JsCallExpression)
                 and isinstance(node.callee, JsIdentifier)
@@ -674,7 +651,7 @@ class JsConstantInlining(ScopeProcessingTransformer):
                     decl_ids.add(id(entry.declarator.id))
 
         ref_counts: dict[str, int] = {}
-        for node in _walk_scope(scope):
+        for node in walk_scope(scope, include_root_body=True):
             if not isinstance(node, JsIdentifier):
                 continue
             if id(node) in decl_ids:
@@ -695,9 +672,9 @@ class JsConstantInlining(ScopeProcessingTransformer):
             count = ref_counts.get(name, 0)
             if is_literal(init) or _is_literal_array(init) or count != 1:
                 continue
-            if not _is_side_effect_free(init):
+            if not _is_primitive_and_pure(init):
                 continue
-            if _identifier_leaves(init) & mutated:
+            if collect_identifier_names(init) & mutated:
                 continue
             to_inline[name] = entry
 
@@ -705,7 +682,7 @@ class JsConstantInlining(ScopeProcessingTransformer):
             return {}
 
         inlined: dict[str, int] = {}
-        for node in list(_walk_scope(scope)):
+        for node in list(walk_scope(scope, include_root_body=True)):
             if not isinstance(node, JsIdentifier):
                 continue
             if id(node) in decl_ids:

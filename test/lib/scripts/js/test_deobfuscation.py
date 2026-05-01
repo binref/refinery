@@ -9,11 +9,11 @@ from test import TestBase
 from refinery.lib.scripts import Transformer
 from refinery.lib.scripts.js.deobfuscation import deobfuscate
 from refinery.lib.scripts.js.deobfuscation.argwrap import JsAssignmentsAsFunctionArgs
-from refinery.lib.scripts.js.deobfuscation.b91strings import _decode_base91, _has_references
+from refinery.lib.scripts.js.deobfuscation.b91strings import _decode_base91
+from refinery.lib.scripts.js.deobfuscation.helpers import has_remaining_references, make_string_literal
 from refinery.lib.scripts.js.deobfuscation.cff import _strip_trailing_flow
 from refinery.lib.scripts.js.deobfuscation.constants import JsConstantInlining
 from refinery.lib.scripts.js.deobfuscation.deadcode import JsDeadCodeElimination
-from refinery.lib.scripts.js.deobfuscation.helpers import make_string_literal
 from refinery.lib.scripts.js.deobfuscation.objectfold import JsObjectFold
 from refinery.lib.scripts.js.deobfuscation.simplify import JsSimplifications
 from refinery.lib.scripts.js.deobfuscation.unused import JsUnusedCodeRemoval
@@ -1989,7 +1989,7 @@ class TestRegressionBugs(TestJsDeobfuscator):
             """
         )
         ast = JsParser(source).parse()
-        result = _has_references(ast, 'table', set())
+        result = has_remaining_references(ast, 'table', check_shadowing=True)
         self.assertFalse(result,
             'all occurrences of table are shadowed by function parameters')
 

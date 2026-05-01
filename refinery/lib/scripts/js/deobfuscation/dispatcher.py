@@ -14,6 +14,7 @@ from refinery.lib.scripts import (
 )
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     ScopeProcessingTransformer,
+    has_remaining_references,
     property_key,
     remove_declarator,
     string_value,
@@ -30,12 +31,13 @@ from refinery.lib.scripts.js.model import (
     JsFunctionExpression,
     JsIdentifier,
     JsIfStatement,
+    JsLogicalExpression,
     JsMemberExpression,
     JsNewExpression,
     JsNullLiteral,
     JsObjectExpression,
     JsProperty,
-    JsScript,
+    JsReturnStatement,
     JsSequenceExpression,
     JsStringLiteral,
     JsVariableDeclaration,
@@ -161,7 +163,6 @@ def _find_wrap_key(body: list, third_param: str) -> str | None:
             inner = cons.body[0]
         else:
             inner = cons
-        from refinery.lib.scripts.js.model import JsReturnStatement
         if not isinstance(inner, JsReturnStatement):
             continue
         ret_val = inner.argument
@@ -199,7 +200,6 @@ def _find_cache_id(body: list, first_param: str) -> str | None:
                 and node.computed
             ):
                 parent = node.parent
-                from refinery.lib.scripts.js.model import JsLogicalExpression
                 if isinstance(parent, JsLogicalExpression) and parent.operator == '||':
                     return node.object.name
     return None
@@ -351,13 +351,7 @@ class JsDispatcherUnwrapper(ScopeProcessingTransformer):
     functions, rewrite call sites, and remove the dispatcher scaffolding.
     """
 
-    def _process_scope(self, scope: Node) -> None:
-        if isinstance(scope, JsScript):
-            body = scope.body
-        elif isinstance(scope, JsBlockStatement):
-            body = scope.body
-        else:
-            return
+    def _process_scope_body(self, scope: Node, body: list) -> None:
         for func in list(body):
             if not isinstance(func, JsFunctionDeclaration):
                 continue
@@ -384,7 +378,7 @@ class JsDispatcherUnwrapper(ScopeProcessingTransformer):
         for i, (key, decl) in enumerate(extracted.items()):
             decl.parent = scope
             body.insert(insert_idx + i, decl)
-        self._remove_boilerplate(body, info)
+        self._remove_boilerplate(scope, body, info)
         self.mark_changed()
 
     def _rewrite_call_sites(
@@ -532,7 +526,7 @@ class JsDispatcherUnwrapper(ScopeProcessingTransformer):
         _replace_in_parent(call, replacement)
 
     @staticmethod
-    def _remove_boilerplate(body: list, info: _DispatcherInfo) -> None:
+    def _remove_boilerplate(scope: Node, body: list, info: _DispatcherInfo) -> None:
         """
         Remove dispatcher-related boilerplate declarations from the scope body.
         """
@@ -558,20 +552,7 @@ class JsDispatcherUnwrapper(ScopeProcessingTransformer):
                     and not stmt.body.body
                     and not stmt.params
                 ):
-                    if not _has_references(body, stmt.id.name, stmt):
+                    if not has_remaining_references(scope, stmt.id.name, exclude=stmt):
                         to_remove.append(stmt)
         for stmt in to_remove:
             body.remove(stmt)
-
-
-def _has_references(body: list, name: str, exclude: Node) -> bool:
-    """
-    Check if *name* is referenced anywhere in *body* outside of *exclude*.
-    """
-    for stmt in body:
-        if stmt is exclude:
-            continue
-        for node in stmt.walk():
-            if isinstance(node, JsIdentifier) and node.name == name:
-                return True
-    return False

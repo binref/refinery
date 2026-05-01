@@ -10,11 +10,11 @@ from __future__ import annotations
 
 from refinery.lib.scripts import (
     Node,
-    Transformer,
     _remove_from_parent,
     _replace_in_parent,
 )
 from refinery.lib.scripts.js.deobfuscation.helpers import (
+    ScriptLevelTransformer,
     extract_identifier_params,
     is_closed_expression,
     is_simple_expression,
@@ -91,15 +91,15 @@ def _collect_wrappers(root: Node) -> dict[str, _WrapperInfo]:
     return wrappers
 
 
-class JsCallWrapperInliner(Transformer):
+class JsCallWrapperInliner(ScriptLevelTransformer):
     """
     Detect trivial call wrapper functions and inline them at every call site.
     """
 
-    def visit_JsScript(self, node: JsScript):
+    def _process_script(self, node: JsScript):
         wrappers = _collect_wrappers(node)
         if not wrappers:
-            return None
+            return
         inlined = False
         for ast_node in list(node.walk()):
             if not isinstance(ast_node, JsCallExpression):
@@ -121,7 +121,7 @@ class JsCallWrapperInliner(Transformer):
             _replace_in_parent(ast_node, replacement)
             inlined = True
         if not inlined:
-            return None
+            return
         exclude_ids: set[int] = set()
         for info in wrappers.values():
             for n in info.node.walk():
@@ -136,7 +136,3 @@ class JsCallWrapperInliner(Transformer):
             if name not in referenced:
                 _remove_from_parent(info.node)
         self.mark_changed()
-        return None
-
-    def generic_visit(self, node: Node):
-        pass

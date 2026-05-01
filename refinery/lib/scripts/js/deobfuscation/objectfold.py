@@ -22,7 +22,6 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     try_inline_trivial_function,
 )
 from refinery.lib.scripts.js.model import (
-    JsBlockStatement,
     JsCallExpression,
     JsFunctionExpression,
     JsIdentifier,
@@ -30,7 +29,6 @@ from refinery.lib.scripts.js.model import (
     JsObjectExpression,
     JsProperty,
     JsPropertyKind,
-    JsScript,
     JsVariableDeclaration,
     JsVariableDeclarator,
 )
@@ -74,13 +72,7 @@ class JsObjectFold(ScopeProcessingTransformer):
     script-scope boundaries because JavaScript `var` declarations are function-scoped.
     """
 
-    def _process_scope(self, scope: Node) -> None:
-        if isinstance(scope, JsScript):
-            body = scope.body
-        elif isinstance(scope, JsBlockStatement):
-            body = scope.body
-        else:
-            return
+    def _process_scope_body(self, scope: Node, body: list) -> None:
         for candidate in list(self._find_candidates(body)):
             obj_name, declarator, prop_map = candidate
             if not self._is_safe_to_fold(scope, obj_name, declarator):

@@ -5,7 +5,8 @@ call back into individual statements, and removes the wrapper definition.
 """
 from __future__ import annotations
 
-from refinery.lib.scripts import Node, Statement, Transformer, _remove_from_parent, _replace_in_parent
+from refinery.lib.scripts import Node, Statement, _remove_from_parent, _replace_in_parent
+from refinery.lib.scripts.js.deobfuscation.helpers import ScriptLevelTransformer, has_remaining_references
 from refinery.lib.scripts.js.model import (
     JsAssignmentExpression,
     JsBlockStatement,
@@ -80,16 +81,16 @@ def _enclosing_statement(node: Node) -> Statement | None:
     return None
 
 
-class JsAssignmentsAsFunctionArgs(Transformer):
+class JsAssignmentsAsFunctionArgs(ScriptLevelTransformer):
     """
     Detect self-disabling wrapper functions and expand their call sites into individual expression
     statements.
     """
 
-    def visit_JsScript(self, node: JsScript):
+    def _process_script(self, node: JsScript):
         wrapper_names = _find_expression_wrappers(node)
         if not wrapper_names:
-            return None
+            return
         unwrapped = False
         for ast_node in list(node.walk()):
             if not isinstance(ast_node, JsCallExpression):
@@ -139,7 +140,7 @@ class JsAssignmentsAsFunctionArgs(Transformer):
                 _replace_in_parent(ast_node, void_0)
                 unwrapped = True
         if not unwrapped:
-            return None
+            return
         for ast_node in list(node.walk()):
             if not isinstance(ast_node, JsFunctionDeclaration):
                 continue
@@ -147,19 +148,6 @@ class JsAssignmentsAsFunctionArgs(Transformer):
                 continue
             if ast_node.id.name not in wrapper_names:
                 continue
-            if not _has_remaining_references(node, ast_node.id.name, ast_node):
+            if not has_remaining_references(node, ast_node.id.name, exclude=ast_node):
                 _remove_from_parent(ast_node)
         self.mark_changed()
-
-    def generic_visit(self, node: Node):
-        pass
-
-
-def _has_remaining_references(root: Node, name: str, decl: JsFunctionDeclaration) -> bool:
-    decl_nodes: set[int] = {id(n) for n in decl.walk()}
-    for node in root.walk():
-        if id(node) in decl_nodes:
-            continue
-        if isinstance(node, JsIdentifier) and node.name == name:
-            return True
-    return False

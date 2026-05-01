@@ -16,8 +16,9 @@ from __future__ import annotations
 from refinery.lib.scripts import Node, _remove_from_parent
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     BodyProcessingTransformer,
+    collect_identifier_names,
     remove_declarator,
-    walk_outer_scope,
+    walk_scope,
 )
 from refinery.lib.scripts.js.model import (
     JsArrayExpression,
@@ -49,17 +50,6 @@ from refinery.lib.scripts.js.model import (
 )
 
 
-def _collect_identifiers(node: Node) -> set[str]:
-    """
-    Collect all identifier names referenced anywhere in *node*'s subtree.
-    """
-    names: set[str] = set()
-    for child in node.walk():
-        if isinstance(child, JsIdentifier):
-            names.add(child.name)
-    return names
-
-
 def _reachable_functions(
     body: list[Statement],
     functions: dict[str, JsFunctionDeclaration],
@@ -73,13 +63,13 @@ def _reachable_functions(
     for stmt in body:
         if isinstance(stmt, JsFunctionDeclaration):
             continue
-        referenced |= _collect_identifiers(stmt)
+        referenced |= collect_identifier_names(stmt)
     reachable = referenced & functions.keys()
     frontier = list(reachable)
     while frontier:
         name = frontier.pop()
         func = functions[name]
-        for ident_name in _collect_identifiers(func):
+        for ident_name in collect_identifier_names(func):
             if ident_name in functions and ident_name not in reachable:
                 reachable.add(ident_name)
                 frontier.append(ident_name)
@@ -217,7 +207,7 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
             return set()
         has_free_read: set[str] = set()
         read_in_assign: dict[str, set[str]] = {}
-        for node in walk_outer_scope(parent):
+        for node in walk_scope(parent):
             if not isinstance(node, JsIdentifier):
                 continue
             name = node.name
@@ -306,7 +296,7 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
                     continue
                 if referenced is None:
                     referenced = set()
-                    for node in walk_outer_scope(parent):
+                    for node in walk_scope(parent):
                         if isinstance(node, JsIdentifier) and not self._is_binding_site(node):
                             referenced.add(node.name)
                         if (
@@ -339,7 +329,7 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
                         if isinstance(n, JsIdentifier):
                             names.add(n.name)
         for stmt in body:
-            for node in walk_outer_scope(stmt):
+            for node in walk_scope(stmt):
                 if isinstance(node, JsVariableDeclaration):
                     for decl in node.declarations:
                         if isinstance(decl, JsVariableDeclarator) and isinstance(decl.id, JsIdentifier):

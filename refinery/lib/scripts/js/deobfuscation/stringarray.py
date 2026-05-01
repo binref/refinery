@@ -15,12 +15,12 @@ import functools
 
 from refinery.lib.scripts import (
     Node,
-    Transformer,
     _remove_from_parent,
     _replace_in_parent,
 )
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     BINARY_OPS,
+    ScriptLevelTransformer,
     js_parse_int,
     make_string_literal,
     property_key,
@@ -935,16 +935,16 @@ class _CachedResolution(NamedTuple):
 _CACHE_ATTR = '_stringarray_cache'
 
 
-class JsStringArrayResolver(Transformer):
+class JsStringArrayResolver(ScriptLevelTransformer):
 
-    def visit_JsScript(self, node: JsScript):
+    def _process_script(self, node: JsScript):
         body = node.body
         array = _find_array_function(body)
         if array is None:
-            return None
+            return
         accessor = _find_accessor_function(body, array.name)
         if accessor is None:
-            return None
+            return
         encoding = _detect_encoding(accessor.node)
         cache: _CachedResolution | None = getattr(node, _CACHE_ATTR, None)
         if (
@@ -956,10 +956,10 @@ class JsStringArrayResolver(Transformer):
         else:
             rotation = _find_rotation_iife(body, array.name)
             if rotation is None:
-                return None
+                return
             checksum = _extract_checksum_expression(rotation.body, accessor.name)
             if checksum is None:
-                return None
+                return
             resolved = _simulate_rotation(
                 array.strings,
                 accessor.base_offset,
@@ -971,7 +971,7 @@ class JsStringArrayResolver(Transformer):
                 checksum.prop_maps or None,
             )
             if resolved is None:
-                return None
+                return
             setattr(node, _CACHE_ATTR, _CachedResolution(resolved, accessor.base_offset, encoding))
         aliases = _collect_accessor_aliases(body, accessor.name)
         aliases.add(accessor.name)
@@ -980,13 +980,9 @@ class JsStringArrayResolver(Transformer):
         if _replace_accessor_calls(
             node, aliases, raw_lookup, encoding, all_wrappers,
         ) == 0:
-            return None
+            return
         wrapper_names = set(all_wrappers)
         has_remaining, dead_nodes = _find_remaining_calls(node, aliases, wrapper_names)
         if not has_remaining:
             _cleanup_infrastructure(node, body, array, accessor, dead_nodes, aliases)
         self.mark_changed()
-        return None
-
-    def generic_visit(self, node: Node):
-        pass

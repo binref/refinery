@@ -9,12 +9,8 @@ variable declarator, and the associated factory function.
 """
 from __future__ import annotations
 
-from refinery.lib.scripts import (
-    Node,
-    Transformer,
-    _remove_from_parent,
-)
-from refinery.lib.scripts.js.deobfuscation.helpers import remove_declarator
+from refinery.lib.scripts import _remove_from_parent
+from refinery.lib.scripts.js.deobfuscation.helpers import ScriptLevelTransformer, remove_declarator
 from refinery.lib.scripts.js.model import (
     JsBlockStatement,
     JsCallExpression,
@@ -29,19 +25,18 @@ from refinery.lib.scripts.js.model import (
 _REDOS_SIGNATURE = '(((.+)+)+)+$'
 
 
-class JsRemoveReDoS(Transformer):
+class JsRemoveReDoS(ScriptLevelTransformer):
     """
     Detect and remove the self-defending ReDoS pattern by its signature regex string.
     """
 
-    def visit_JsScript(self, node: JsScript):
+    def _process_script(self, node: JsScript):
         for literal in list(node.walk()):
             if (
                 isinstance(literal, JsStringLiteral)
                 and _REDOS_SIGNATURE in literal.value
             ):
                 self._remove_pattern(literal)
-        return None
 
     def _remove_pattern(self, redos_literal: JsStringLiteral) -> None:
         guard_decl = redos_literal.parent
@@ -94,6 +89,3 @@ class JsRemoveReDoS(Transformer):
                     ):
                         remove_declarator(d)
         self.mark_changed()
-
-    def generic_visit(self, node: Node):
-        pass

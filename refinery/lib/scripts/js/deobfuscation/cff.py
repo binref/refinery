@@ -19,11 +19,10 @@ dispatcher span with the re-sequenced statements.
 from __future__ import annotations
 
 from refinery.lib.scripts import Node, Statement
-from refinery.lib.scripts.js.deobfuscation.helpers import BodyProcessingTransformer, string_value
+from refinery.lib.scripts.js.deobfuscation.helpers import BodyProcessingTransformer, is_while_true, string_value
 from refinery.lib.scripts.js.model import (
     JsArrayExpression,
     JsBlockStatement,
-    JsBooleanLiteral,
     JsBreakStatement,
     JsCallExpression,
     JsContinueStatement,
@@ -33,30 +32,11 @@ from refinery.lib.scripts.js.model import (
     JsStringLiteral,
     JsSwitchCase,
     JsSwitchStatement,
-    JsUnaryExpression,
     JsUpdateExpression,
     JsVariableDeclaration,
     JsVariableDeclarator,
     JsWhileStatement,
 )
-
-
-def _is_while_true(node: JsWhileStatement) -> bool:
-    """
-    Check whether the while-loop condition is `true`, `!![]`, or `!0` — the forms the obfuscator
-    uses for infinite loops.
-    """
-    test = node.test
-    if isinstance(test, JsBooleanLiteral) and test.value is True:
-        return True
-    if not isinstance(test, JsUnaryExpression) or test.operator != '!':
-        return False
-    inner = test.operand
-    if isinstance(inner, JsNumericLiteral) and inner.value == 0:
-        return True
-    if isinstance(inner, JsUnaryExpression) and inner.operator == '!':
-        return True
-    return False
 
 
 def _strip_trailing_flow(stmts: list[Statement]) -> list[Statement]:
@@ -91,7 +71,7 @@ def _match_dispatcher(
             break;
         }
     """
-    if not _is_while_true(while_node):
+    if not is_while_true(while_node):
         return None
     body = while_node.body
     if not isinstance(body, JsBlockStatement):

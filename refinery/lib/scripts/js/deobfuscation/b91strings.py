@@ -9,10 +9,15 @@ from __future__ import annotations
 
 from typing import NamedTuple, Sequence
 
-from refinery.lib.scripts import Node, Transformer, _remove_from_parent, _replace_in_parent
-from refinery.lib.scripts.js.deobfuscation.helpers import make_string_literal, remove_declarator
+from refinery.lib.scripts import Node, _remove_from_parent, _replace_in_parent
+from refinery.lib.scripts.js.deobfuscation.helpers import (
+    ScriptLevelTransformer,
+    find_enclosing_body,
+    has_remaining_references,
+    make_string_literal,
+    remove_declarator,
+)
 from refinery.lib.scripts.js.model import (
-    JsArrowFunctionExpression,
     JsArrayExpression,
     JsAssignmentExpression,
     JsBlockStatement,
@@ -26,7 +31,6 @@ from refinery.lib.scripts.js.model import (
     JsObjectExpression,
     JsScript,
     JsStringLiteral,
-    JsVarKind,
     JsVariableDeclaration,
     JsVariableDeclarator,
 )
@@ -281,23 +285,6 @@ class _ScopedAccessor(NamedTuple):
     strings: list[str]
 
 
-def _find_enclosing_body(node: Node) -> list | None:
-    """
-    Walk up parent pointers from *node* to find the body list that directly contains it. Returns
-    the `body` attribute of the nearest `JsBlockStatement` or `JsScript` ancestor whose body
-    list includes *node* (or an ancestor of *node*).
-    """
-    child = node
-    parent = node.parent
-    while parent is not None:
-        if isinstance(parent, (JsBlockStatement, JsScript)):
-            if child in parent.body:
-                return parent.body
-        child = parent
-        parent = parent.parent
-    return None
-
-
 def _pair_accessors_with_decoders(
     accessors: list[_AccessorInfo],
     decoders: list[_DecoderInfo],
@@ -311,7 +298,7 @@ def _pair_accessors_with_decoders(
     table_map = {t.name: t.strings for t in tables}
     decoder_by_scope: dict[tuple[int, str], _DecoderInfo] = {}
     for d in decoders:
-        body = _find_enclosing_body(d.node)
+        body = find_enclosing_body(d.node)
         if body is not None:
             decoder_by_scope[id(body), d.name] = d
     result: list[_ScopedAccessor] = []
@@ -319,7 +306,7 @@ def _pair_accessors_with_decoders(
         strings = table_map.get(a.table_name)
         if strings is None:
             continue
-        body = _find_enclosing_body(a.node)
+        body = find_enclosing_body(a.node)
         if body is None:
             continue
         decoder = decoder_by_scope.get((id(body), a.decoder_name))
@@ -340,7 +327,7 @@ def _resolve_calls(
     """
     accessor_by_scope: dict[tuple[int, str], _ScopedAccessor] = {}
     for sa in scoped_accessors:
-        body = _find_enclosing_body(sa.node)
+        body = find_enclosing_body(sa.node)
         if body is not None:
             accessor_by_scope[id(body), sa.name] = sa
     accessor_names = {sa.name for sa in scoped_accessors}
@@ -396,72 +383,6 @@ def _find_scoped_accessor(
     return None
 
 
-def _has_references(root: Node, name: str, exclude_ids: set[int]) -> bool:
-    """
-    Check whether *name* is referenced anywhere in the AST outside of nodes whose `id` is in
-    *exclude_ids*. Scope-aware: identifiers inside function bodies that contain a local `var`
-    declaration of the same name are considered shadowed and are not counted as references. Bare
-    hoisted declarations (`var NAME;` with no initializer) are not counted as references either.
-    """
-    for node in root.walk():
-        if id(node) in exclude_ids:
-            continue
-        parent = node.parent
-        if parent is not None and id(parent) in exclude_ids:
-            continue
-        if not isinstance(node, JsIdentifier) or node.name != name:
-            continue
-        # A bare hoisted var declaration (var NAME;) is not a reference
-        if (
-            isinstance(parent, JsVariableDeclarator)
-            and parent.id is node
-            and parent.init is None
-        ):
-            continue
-        if _is_shadowed(node, name):
-            continue
-        return True
-    return False
-
-
-def _is_shadowed(node: Node, name: str) -> bool:
-    """
-    Walk up from *node* through all enclosing function boundaries and check whether any of them
-    shadows *name* via a `var` declaration or a function parameter. Because `var` is function-scoped
-    and parameters are local to their function, either form prevents the identifier from referring to
-    an outer scope.
-    """
-    parent = node.parent
-    while parent is not None:
-        if isinstance(parent, (JsFunctionDeclaration, JsFunctionExpression, JsArrowFunctionExpression)):
-            for param in getattr(parent, 'params', ()):
-                if isinstance(param, JsIdentifier) and param.name == name:
-                    return True
-            body = getattr(parent, 'body', None)
-            if isinstance(body, JsBlockStatement):
-                if _body_declares_var(body.body, name):
-                    return True
-        parent = parent.parent
-    return False
-
-
-def _body_declares_var(body: list, name: str) -> bool:
-    """
-    Check whether a function body's statement list contains a `var` declaration that includes
-    a declarator with the given *name*.
-    """
-    for stmt in body:
-        if not isinstance(stmt, JsVariableDeclaration):
-            continue
-        if stmt.kind != JsVarKind.VAR:
-            continue
-        for decl in stmt.declarations:
-            if isinstance(decl, JsVariableDeclarator) and isinstance(decl.id, JsIdentifier):
-                if decl.id.name == name:
-                    return True
-    return False
-
-
 def _remove_assignment_table(table: _StringTableInfo) -> None:
     """
     Remove an assignment-based string table. This handles the pattern where the variable is hoisted
@@ -472,7 +393,7 @@ def _remove_assignment_table(table: _StringTableInfo) -> None:
     """
     assert table.assignment is not None
     stmt = table.assignment.parent
-    body = _find_enclosing_body(stmt) if isinstance(stmt, JsExpressionStatement) else None
+    body = find_enclosing_body(stmt) if isinstance(stmt, JsExpressionStatement) else None
     if isinstance(stmt, JsExpressionStatement):
         _remove_from_parent(stmt)
     if body is None:
@@ -517,7 +438,7 @@ def _cleanup(
     for d in decoders:
         _remove_from_parent(d.node)
     for t in tables:
-        if not _has_references(root, t.name, dead_ids):
+        if not has_remaining_references(root, t.name, exclude_ids=dead_ids, check_shadowing=True):
             if t.declarator is not None:
                 remove_declarator(t.declarator)
             elif t.assignment is not None:
@@ -526,7 +447,9 @@ def _cleanup(
         if isinstance(node, JsVariableDeclarator) and isinstance(node.id, JsIdentifier):
             if node.id.name in cache_names and isinstance(node.init, JsObjectExpression):
                 if not node.init.properties:
-                    if not _has_references(root, node.id.name, dead_ids):
+                    if not has_remaining_references(
+                        root, node.id.name, exclude_ids=dead_ids, check_shadowing=True,
+                    ):
                         remove_declarator(node)
     _remove_buffer_infrastructure(root)
 
@@ -614,31 +537,31 @@ def _remove_buffer_infrastructure(root: Node) -> None:
                     break
 
 
-class JsBase91StringDecoder(Transformer):
+class JsBase91StringDecoder(ScriptLevelTransformer):
     """
     Resolve per-scope b91 string obfuscation. Detects the shared encoded string table, per-scope
     base91 decoders with shuffled alphabets, and caching accessor functions. Decodes all strings in
     Python and replaces accessor calls with string literals.
     """
 
-    def visit_JsScript(self, node: JsScript):
+    def _process_script(self, node: JsScript):
         tables = _find_string_tables(node)
         if not tables:
-            return None
+            return
         decoders = _find_decoders(node)
         if not decoders:
-            return None
+            return
         decoder_names = {d.name for d in decoders}
         table_names = {t.name for t in tables}
         accessors = _find_accessors(node, decoder_names, table_names)
         if not accessors:
-            return None
+            return
         scoped_accessors = _pair_accessors_with_decoders(accessors, decoders, tables)
         if not scoped_accessors:
-            return None
+            return
         count = _resolve_calls(node, scoped_accessors)
         if count == 0:
-            return None
+            return
         cache_names = {a.cache_name for a in accessors}
         resolved_accessor_nodes = {id(sa.node) for sa in scoped_accessors}
         resolved_accessors = [a for a in accessors if id(a.node) in resolved_accessor_nodes]
@@ -646,7 +569,3 @@ class JsBase91StringDecoder(Transformer):
         resolved_decoders = [d for d in decoders if d.name in resolved_decoder_names]
         _cleanup(node, resolved_accessors, resolved_decoders, tables, cache_names)
         self.mark_changed()
-        return None
-
-    def generic_visit(self, node: Node):
-        pass
