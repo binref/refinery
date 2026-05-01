@@ -7,6 +7,7 @@ from refinery.lib.scripts import Node, Transformer
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     BINARY_OPS,
     RELATIONAL_OPS,
+    access_key,
     escape_js_string,
     is_literal,
     is_nullish,
@@ -233,13 +234,7 @@ class JsSimplifications(Transformer):
         obj_str = string_value(callee.object)
         if obj_str is None:
             return None
-        method = callee.property
-        if isinstance(method, JsStringLiteral):
-            method_name = method.value
-        elif isinstance(method, JsIdentifier) and not callee.computed:
-            method_name = method.name
-        else:
-            return None
+        method_name = access_key(callee)
         if method_name != 'split':
             return None
         sep = string_value(node.arguments[0])

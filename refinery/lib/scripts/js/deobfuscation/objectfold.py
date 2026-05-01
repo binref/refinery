@@ -15,10 +15,10 @@ from refinery.lib.scripts import (
 )
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     ScopeProcessingTransformer,
+    access_key,
     is_simple_expression,
     property_key,
     remove_declarator,
-    string_value,
     try_inline_trivial_function,
 )
 from refinery.lib.scripts.js.model import (
@@ -52,18 +52,6 @@ def _build_property_map(
             return None
         result[key] = prop.value
     return result
-
-
-def _access_key(node: JsMemberExpression) -> str | None:
-    """
-    Extract the string key from a member-access expression. Handles both computed
-    (`obj['key']`) and dot (`obj.key`) accesses.
-    """
-    if node.computed:
-        return string_value(node.property)
-    if isinstance(node.property, JsIdentifier):
-        return node.property.name
-    return None
 
 
 class JsObjectFold(ScopeProcessingTransformer):
@@ -144,7 +132,7 @@ class JsObjectFold(ScopeProcessingTransformer):
                 continue
             if not isinstance(node.object, JsIdentifier) or node.object.name != name:
                 continue
-            key = _access_key(node)
+            key = access_key(node)
             if key is None:
                 can_remove = False
                 continue

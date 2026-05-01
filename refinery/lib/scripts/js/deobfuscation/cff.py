@@ -19,7 +19,7 @@ dispatcher span with the re-sequenced statements.
 from __future__ import annotations
 
 from refinery.lib.scripts import Node, Statement
-from refinery.lib.scripts.js.deobfuscation.helpers import BodyProcessingTransformer, is_while_true, string_value
+from refinery.lib.scripts.js.deobfuscation.helpers import BodyProcessingTransformer, access_key, is_while_true, string_value
 from refinery.lib.scripts.js.model import (
     JsArrayExpression,
     JsBlockStatement,
@@ -29,7 +29,6 @@ from refinery.lib.scripts.js.model import (
     JsIdentifier,
     JsMemberExpression,
     JsNumericLiteral,
-    JsStringLiteral,
     JsSwitchCase,
     JsSwitchStatement,
     JsUpdateExpression,
@@ -138,14 +137,7 @@ def _extract_order_sequence(node: Node | None) -> list[str] | None:
     callee = node.callee
     if not isinstance(callee, JsMemberExpression):
         return None
-    method = callee.property
-    if isinstance(method, JsStringLiteral):
-        if method.value != 'split':
-            return None
-    elif isinstance(method, JsIdentifier):
-        if method.name != 'split':
-            return None
-    else:
+    if access_key(callee) != 'split':
         return None
     obj = string_value(callee.object)
     if obj is None:

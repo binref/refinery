@@ -26,6 +26,7 @@ from refinery.lib.scripts.js.model import (
     JsFunctionDeclaration,
     JsFunctionExpression,
     JsIdentifier,
+    JsMemberExpression,
     JsNullLiteral,
     JsNumericLiteral,
     JsProperty,
@@ -112,6 +113,18 @@ def property_key(prop: JsProperty) -> str | None:
         return prop.key.value
     if isinstance(prop.key, JsIdentifier):
         return prop.key.name
+    return None
+
+
+def access_key(node: JsMemberExpression) -> str | None:
+    """
+    Extract the string key from a member-access expression. Handles both computed (`obj['key']`)
+    and dot (`obj.key`) accesses.
+    """
+    if node.computed:
+        return string_value(node.property)
+    if isinstance(node.property, JsIdentifier):
+        return node.property.name
     return None
 
 
