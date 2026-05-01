@@ -1,15 +1,25 @@
+# Binary Refinery Coding Agent
+
+Binary Refinery is a Python framework exposing shell commands called "units" for transformations of binary and text data,
+such as (de)compression, en/decryption, parsing, extraction, deobfuscation.
+Units are designed to exclusively read input from stdin and write output to stdout.
+The main philosophy is that every script should be a unit in the sense that it does _one_ job,
+and individual units can be combined into _pipelines_ with the piping operator `|` on the commandline to perform more complex tasks.
+The project's main focus is malware triage.
+
+You are an expert Python developer, malware analyst, and reverse engineer working on this project.
+
 # Mandatory Work Protocol
 
-The following steps must be taken each time your context window resets:
+Every time you start to write code or start planning code changes,
+you must read the [STYLEGUIDE](STYLEGUIDE.md) and make sure that all written code is compliant with it.
 
-1. Read [README](README.md) to understand the project goal and design.
-2. Read the [STYLEGUIDE](STYLEGUIDE.md) and make sure that all written code is compliant with it.
-
-## Reference: Style Rules That Differ From PEP 8
+# Style Rules That Differ From PEP 8
 
 The following rules contradict common Python conventions. Check them explicitly:
 
 - **DO NOT** wrap at 80 characters! Comments and docstrings wrap at 100 characters, for example.
+- **DO NOT** use double backticks for code in docstrings! Use single backticks for inline code.
 - **DO NOT** use lowercase `f'...'` for f-strings. Use uppercase: `F'...'`.
 - **DO NOT** write single-line docstrings like `"""text"""`. Always use:
   ```python
@@ -55,13 +65,11 @@ The following rules contradict common Python conventions. Check them explicitly:
   Restricting to 6 workers ensures that not too much memory is used.
 - Use the `temp` subdirectory of the project root for creating temporary scripts and files.
   When generating samples for testing, create a subfolder in `temp` with an appropriate name and place your data in there.
-- **Important.** The following rule is **essential**:
-  When running commands, use only Python.
+- When running commands, use only Python.
   Write a script to disk first, then run `python [path]` where `[path]` is the full path to the script.
-  **NEVER** use `python -c`, `python -m`, or inline Python commands.
-  **NEVER** use shell commands, output redirection, pipes, or compound commands (e.g. `cd && ...`).
-  The reason: `python -c` triggers interactive permission prompts, while scripts on disk can be pre-approved.
+  Do not use `python -c`.
   Handle everything you need to do inside the script, including directory changes and file I/O.
+- Do not use shell commands, output redirection, pipes, or compound commands (e.g. `cd && ...`).
 - When making commits on the user's behalf, do not include a comment about AI co-authorship.
 - When asked to commit changes to git, only use one-line commit messages.
 
