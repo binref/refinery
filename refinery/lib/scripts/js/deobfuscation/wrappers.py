@@ -43,14 +43,14 @@ class _WrapperInfo(NamedTuple):
 
 def _detect_wrapper(node: JsFunctionDeclaration) -> _WrapperInfo | None:
     """
-    Test whether a function declaration is a call wrapper. A call wrapper has one or more
-    identifier parameters, a body consisting of a single return statement, and the returned
-    expression is a call whose argument sub-expressions reference only the wrapper's parameters
-    and literal constants.
+    Test whether a function declaration is a trivial wrapper. Two forms are recognized:
+
+    1. **Call wrappers** (one or more parameters): the body is a single return of a call expression
+       whose arguments are closed over the wrapper's parameters and literal constants.
+    2. **Constant functions** (zero parameters): the body is a single return of an expression that
+       is closed (no free variables — only literal constants).
     """
     if node.id is None or node.body is None:
-        return None
-    if not node.params:
         return None
     param_names = extract_identifier_params(node.params)
     if param_names is None:
@@ -61,17 +61,21 @@ def _detect_wrapper(node: JsFunctionDeclaration) -> _WrapperInfo | None:
     stmt = body[0]
     if not isinstance(stmt, JsReturnStatement) or stmt.argument is None:
         return None
-    call = stmt.argument
-    if not isinstance(call, JsCallExpression):
-        return None
-    if not isinstance(call.callee, JsIdentifier):
-        return None
-    allowed_names = set(param_names)
-    allowed_names.add(call.callee.name)
-    for arg in call.arguments:
-        if not is_closed_expression(arg, allowed_names):
+    expr = stmt.argument
+    if param_names:
+        if not isinstance(expr, JsCallExpression):
             return None
-    return _WrapperInfo(node, node.id.name, param_names, call)
+        if not isinstance(expr.callee, JsIdentifier):
+            return None
+        allowed_names = set(param_names)
+        allowed_names.add(expr.callee.name)
+        for arg in expr.arguments:
+            if not is_closed_expression(arg, allowed_names):
+                return None
+    else:
+        if not is_closed_expression(expr, set()):
+            return None
+    return _WrapperInfo(node, node.id.name, param_names, expr)
 
 
 def _collect_wrappers(root: Node) -> dict[str, _WrapperInfo]:

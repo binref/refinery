@@ -13,12 +13,15 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     remove_declarator,
 )
 from refinery.lib.scripts.js.model import (
-    JsArrowFunctionExpression,
     JsArrayExpression,
+    JsArrayPattern,
+    JsArrowFunctionExpression,
     JsAssignmentExpression,
     JsAwaitExpression,
     JsCallExpression,
     JsClassExpression,
+    JsForInStatement,
+    JsForOfStatement,
     JsFunctionDeclaration,
     JsFunctionExpression,
     JsIdentifier,
@@ -26,6 +29,7 @@ from refinery.lib.scripts.js.model import (
     JsNewExpression,
     JsNumericLiteral,
     JsObjectExpression,
+    JsObjectPattern,
     JsStringLiteral,
     JsTaggedTemplateExpression,
     JsUpdateExpression,
@@ -36,6 +40,14 @@ from refinery.lib.scripts.js.model import (
 )
 
 _FUNCTION_NODES = (JsFunctionDeclaration, JsFunctionExpression, JsArrowFunctionExpression)
+
+
+def _pattern_identifiers(pattern: Node) -> set[str]:
+    """
+    Extract all identifier names from a destructuring pattern (array or object pattern). These are
+    the variables being assigned to.
+    """
+    return {n.name for n in pattern.walk() if isinstance(n, JsIdentifier)}
 
 
 class _CandidateEntry(NamedTuple):
@@ -262,15 +274,26 @@ class JsConstantInlining(ScopeProcessingTransformer):
                         seal_points.setdefault(name, []).extend(_find_all_body_entries(node))
                         candidates[name] = [_CandidateEntry(decl, decl.init, entry)]
 
-            if isinstance(node, JsAssignmentExpression) and isinstance(node.left, JsIdentifier):
-                name = node.left.name
-                rejected.add(name)
-                candidates.pop(name, None)
+            if isinstance(node, JsAssignmentExpression):
+                if isinstance(node.left, JsIdentifier):
+                    name = node.left.name
+                    rejected.add(name)
+                    candidates.pop(name, None)
+                elif isinstance(node.left, (JsArrayPattern, JsObjectPattern)):
+                    for name in _pattern_identifiers(node.left):
+                        rejected.add(name)
+                        candidates.pop(name, None)
 
             if isinstance(node, JsUpdateExpression) and isinstance(node.argument, JsIdentifier):
                 name = node.argument.name
                 rejected.add(name)
                 candidates.pop(name, None)
+
+            if isinstance(node, (JsForInStatement, JsForOfStatement)):
+                if isinstance(node.left, JsIdentifier):
+                    name = node.left.name
+                    rejected.add(name)
+                    candidates.pop(name, None)
 
         return candidates, seal_points, rejected
 
@@ -519,7 +542,13 @@ class JsConstantInlining(ScopeProcessingTransformer):
             parent = node.parent
             if isinstance(parent, JsAssignmentExpression) and parent.left is node:
                 continue
-            _replace_in_parent(node, _clone_node(to_inline[name].value))
+            entry = to_inline[name]
+            if entry.scope is not None:
+                assign_body, assign_idx = entry.scope
+                ref_entry = _find_body_entry(node)
+                if ref_entry is None or ref_entry[0] is not assign_body or ref_entry[1] <= assign_idx:
+                    continue
+            _replace_in_parent(node, _clone_node(entry.value))
             self.mark_changed()
             inlined[name] = inlined.get(name, 0) + 1
         return inlined

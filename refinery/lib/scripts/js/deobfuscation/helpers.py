@@ -3,6 +3,7 @@ Shared utilities for JavaScript deobfuscation transforms.
 """
 from __future__ import annotations
 
+import math
 import operator
 import re
 
@@ -44,18 +45,24 @@ SIMPLE_IDENTIFIER = re.compile(r'^[a-zA-Z_$][a-zA-Z_$0-9]*$')
 
 JS_RESERVED = frozenset(set(KEYWORDS) | FUTURE_RESERVED | {'undefined'})
 
+
+def _to_int32(v: int | float) -> int:
+    v = int(v) & 0xFFFFFFFF
+    return v - 0x100000000 if v >= 0x80000000 else v
+
+
 BINARY_OPS: dict[str, Callable] = {
     '+'  : operator.add,
     '-'  : operator.sub,
     '*'  : operator.mul,
     '/'  : operator.truediv,
-    '%'  : operator.mod,
+    '%'  : math.fmod,
     '**' : operator.pow,
-    '|'  : operator.or_,
-    '&'  : operator.and_,
-    '^'  : operator.xor,
-    '<<' : operator.lshift,
-    '>>' : operator.rshift,
+    '|'  : lambda a, b: _to_int32(int(a) | int(b)),
+    '&'  : lambda a, b: _to_int32(int(a) & int(b)),
+    '^'  : lambda a, b: _to_int32(int(a) ^ int(b)),
+    '<<' : lambda a, b: _to_int32(int(a) << (int(b) & 0x1F)),
+    '>>' : lambda a, b: _to_int32(_to_int32(int(a)) >> (int(b) & 0x1F)),
 }
 
 RELATIONAL_OPS: dict[str, Callable] = {
@@ -70,17 +77,20 @@ def escape_js_string(value: str, quote: str = "'") -> str:
     """
     Escape a string for use in a JavaScript string literal. Returns the escaped body without
     surrounding quotes. Backslash is escaped first to avoid double-escaping. Control characters
-    not covered by named escapes are emitted as `\\xHH`.
+    not covered by named escapes are emitted as `\\xHH`; surrogates as `\\uXXXX`.
     """
     def _residue(m: re.Match[str]):
-        return F'\\x{ord(m.group()):02x}'
+        cp = ord(m.group())
+        if cp > 0xFF:
+            return F'\\u{cp:04X}'
+        return F'\\x{cp:02x}'
     value = value.replace('\\', r'\\')
     value = value.replace('\n', r'\n')
     value = value.replace('\r', r'\r')
     value = value.replace('\t', r'\t')
     value = value.replace('\0', r'\0')
     value = value.replace(quote, F'\\{quote}')
-    return re.sub(r'[\x01-\x1f]', _residue, value)
+    return re.sub(r'[\x01-\x1f\ud800-\udfff]', _residue, value)
 
 
 def string_value(node: Expression | None) -> str | None:

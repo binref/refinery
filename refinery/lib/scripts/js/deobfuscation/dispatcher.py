@@ -434,7 +434,10 @@ class JsDispatcherUnwrapper(ScopeProcessingTransformer):
         key = key_arg.value
         if key not in extracted:
             return
-        args = [e for e in assign.right.elements if e is not None]
+        args = [
+            JsIdentifier(name='undefined') if e is None else e
+            for e in assign.right.elements
+        ]
         replacement = JsCallExpression(
             callee=JsIdentifier(name=key),
             arguments=args,

@@ -66,7 +66,7 @@ def _strip_trailing_flow(stmts: list[Statement]) -> list[Statement]:
     if not stmts:
         return []
     last = stmts[-1]
-    if isinstance(last, (JsContinueStatement, JsBreakStatement)):
+    if isinstance(last, (JsContinueStatement, JsBreakStatement)) and last.label is None:
         return stmts[:-1]
     return stmts
 

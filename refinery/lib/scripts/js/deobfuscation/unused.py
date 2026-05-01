@@ -27,6 +27,8 @@ from refinery.lib.scripts.js.model import (
     JsCallExpression,
     JsConditionalExpression,
     JsExpressionStatement,
+    JsForInStatement,
+    JsForOfStatement,
     JsFunctionDeclaration,
     JsFunctionExpression,
     JsIdentifier,
@@ -256,7 +258,8 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
     ):
         """
         Remove `var X;` declarators (no initializer) for dead variable names or names that have
-        no references in the outer scope.
+        no references in the outer scope. Variables used as `for-in` or `for-of` iteration targets
+        are always considered referenced.
         """
         referenced: set[str] | None = None
         for stmt in list(body):
@@ -278,16 +281,26 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
                     for node in walk_outer_scope(parent):
                         if isinstance(node, JsIdentifier) and not self._is_binding_site(node):
                             referenced.add(node.name)
+                        if (
+                            isinstance(node, (JsForInStatement, JsForOfStatement))
+                            and isinstance(node.left, JsIdentifier)
+                        ):
+                            referenced.add(node.left.name)
                 if name not in referenced:
                     remove_declarator(decl)
 
     @staticmethod
     def _is_write_target(node: JsIdentifier) -> bool:
         """
-        Return whether this identifier is the LHS of an assignment expression.
+        Return whether this identifier is a write target: the LHS of an assignment expression, or
+        the iteration variable of a `for-in` / `for-of` statement.
         """
         p = node.parent
-        return isinstance(p, JsAssignmentExpression) and p.left is node
+        if isinstance(p, JsAssignmentExpression) and p.left is node:
+            return True
+        if isinstance(p, (JsForInStatement, JsForOfStatement)) and p.left is node:
+            return True
+        return False
 
     @staticmethod
     def _is_binding_site(node: JsIdentifier) -> bool:

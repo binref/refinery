@@ -427,13 +427,16 @@ def _has_references(root: Node, name: str, exclude_ids: set[int]) -> bool:
 def _is_shadowed(node: Node, name: str) -> bool:
     """
     Walk up from *node* through all enclosing function boundaries and check whether any of them
-    contains a `var` declaration of *name*. Because `var` is function-scoped and closures capture
-    outer function variables, the identifier is shadowed if **any** enclosing function (not just the
-    innermost) declares it.
+    shadows *name* via a `var` declaration or a function parameter. Because `var` is function-scoped
+    and parameters are local to their function, either form prevents the identifier from referring to
+    an outer scope.
     """
     parent = node.parent
     while parent is not None:
         if isinstance(parent, (JsFunctionDeclaration, JsFunctionExpression, JsArrowFunctionExpression)):
+            for param in getattr(parent, 'params', ()):
+                if isinstance(param, JsIdentifier) and param.name == name:
+                    return True
             body = getattr(parent, 'body', None)
             if isinstance(body, JsBlockStatement):
                 if _body_declares_var(body.body, name):

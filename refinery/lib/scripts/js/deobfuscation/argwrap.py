@@ -5,7 +5,7 @@ call back into individual statements, and removes the wrapper definition.
 """
 from __future__ import annotations
 
-from refinery.lib.scripts import Node, Transformer, _remove_from_parent, _replace_in_parent
+from refinery.lib.scripts import Node, Statement, Transformer, _remove_from_parent, _replace_in_parent
 from refinery.lib.scripts.js.model import (
     JsAssignmentExpression,
     JsBlockStatement,
@@ -14,8 +14,9 @@ from refinery.lib.scripts.js.model import (
     JsFunctionDeclaration,
     JsFunctionExpression,
     JsIdentifier,
+    JsNumericLiteral,
     JsScript,
-    JsSequenceExpression,
+    JsUnaryExpression,
 )
 
 
@@ -67,6 +68,18 @@ def _find_expression_wrappers(root: Node) -> set[str]:
     return names
 
 
+def _enclosing_statement(node: Node) -> Statement | None:
+    """
+    Walk up from an expression node to find its nearest ancestor that is a statement.
+    """
+    cursor = node.parent
+    while cursor is not None:
+        if isinstance(cursor, Statement):
+            return cursor
+        cursor = cursor.parent
+    return None
+
+
 class JsAssignmentsAsFunctionArgs(Transformer):
     """
     Detect self-disabling wrapper functions and expand their call sites into individual expression
@@ -102,14 +115,28 @@ class JsAssignmentsAsFunctionArgs(Transformer):
                     stmt.parent = pp
                 unwrapped = True
             else:
-                args = ast_node.arguments
-                if not args:
-                    replacement = JsIdentifier(name='undefined')
-                elif len(args) == 1:
-                    replacement = args[0]
-                else:
-                    replacement = JsSequenceExpression(expressions=list(args))
-                _replace_in_parent(ast_node, replacement)
+                stmt = _enclosing_statement(ast_node)
+                if stmt is None:
+                    continue
+                stmt_parent = stmt.parent
+                if not isinstance(stmt_parent, (JsBlockStatement, JsScript)):
+                    continue
+                body = stmt_parent.body
+                try:
+                    idx = body.index(stmt)
+                except ValueError:
+                    continue
+                hoisted = [
+                    JsExpressionStatement(expression=arg) for arg in ast_node.arguments
+                ]
+                body[idx:idx] = hoisted
+                for s in hoisted:
+                    s.parent = stmt_parent
+                void_0 = JsUnaryExpression(
+                    operator='void',
+                    operand=JsNumericLiteral(value=0, raw='0'),
+                )
+                _replace_in_parent(ast_node, void_0)
                 unwrapped = True
         if not unwrapped:
             return None

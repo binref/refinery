@@ -245,8 +245,21 @@ class JsSimplifications(Transformer):
         sep = string_value(node.arguments[0])
         if sep is None:
             return None
+        if sep:
+            parts = obj_str.split(sep)
+        else:
+            parts = []
+            for ch in obj_str:
+                cp = ord(ch)
+                if cp > 0xFFFF:
+                    hi = 0xD800 + ((cp - 0x10000) >> 10)
+                    lo = 0xDC00 + ((cp - 0x10000) & 0x3FF)
+                    parts.append(chr(hi))
+                    parts.append(chr(lo))
+                else:
+                    parts.append(ch)
         return JsArrayExpression(
-            elements=[make_string_literal(p) for p in obj_str.split(sep)],
+            elements=[make_string_literal(p) for p in parts],
         )
 
     def visit_JsConditionalExpression(self, node: JsConditionalExpression):
@@ -321,9 +334,6 @@ class JsSimplifications(Transformer):
                 return make_string_literal('string')
             if isinstance(node.operand, JsBooleanLiteral):
                 return make_string_literal('boolean')
-        if op == 'void' and isinstance(node.operand, JsNumericLiteral):
-            if node.operand.value == 0:
-                return JsIdentifier(name='undefined')
         return None
 
     def visit_JsStringLiteral(self, node: JsStringLiteral):
