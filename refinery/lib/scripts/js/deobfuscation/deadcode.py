@@ -1,7 +1,7 @@
 """
 Eliminate dead code branches guarded by constant conditions.
 
-This transformer prunes unreachable branches from ``if``/``else`` statements when the test is a
+This transformer prunes unreachable branches from `if`/`else` statements when the test is a
 literal whose truthiness can be determined statically.
 """
 from __future__ import annotations
@@ -15,6 +15,8 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
 from refinery.lib.scripts.js.model import (
     JsBlockStatement,
     JsIfStatement,
+    JsVarKind,
+    JsVariableDeclaration,
 )
 
 
@@ -53,10 +55,17 @@ class JsDeadCodeElimination(BodyProcessingTransformer):
     def _unwrap_branch(branch: Statement | None) -> list[Statement]:
         """
         Extract the statements from a branch. If the branch is a block, return its body list
-        contents; if it is a bare statement, wrap it in a single-element list.
+        contents; if it is a bare statement, wrap it in a single-element list. Blocks containing
+        `let` or `const` declarations are kept as-is to preserve block scoping.
         """
         if branch is None:
             return []
         if isinstance(branch, JsBlockStatement):
+            for stmt in branch.body:
+                if isinstance(stmt, JsVariableDeclaration) and stmt.kind in (
+                    JsVarKind.LET,
+                    JsVarKind.CONST,
+                ):
+                    return [branch]
             return list(branch.body)
         return [branch]

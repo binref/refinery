@@ -2220,3 +2220,70 @@ class TestRegressionBugs(TestJsDeobfuscator):
         )
         result = self._deobfuscate(source)
         self.assertIn('console.log(x)', result)
+
+    def test_deadcode_block_scoped_declarations_not_leaked(self):
+        result = self._deadcode(
+            'if (true) { let x = 1; f(x); } let x = 2;'
+        )
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                {
+                  let x = 1;
+                  f(x);
+                }
+                let x = 2;
+                """
+            ),
+            result,
+        )
+
+    def test_objectfold_no_inline_sideeffect_argument(self):
+        source = inspect.cleandoc(
+            """
+            var o = {fn: function(a) { return a + a; }};
+            o.fn(g());
+            """
+        )
+        result = self._objectfold(source)
+        self.assertIn('g()', result)
+        self.assertEqual(result.count('g()'), 1)
+
+    def test_objectfold_getter_not_folded(self):
+        source = 'var o = { get x() { return 1; } }; o.x;'
+        result = self._objectfold(source)
+        self.assertIn('get x', result)
+
+    def test_var_not_inlined_past_call_with_inner_let_shadow(self):
+        """
+        An inner-block `let x` must not prevent `_function_local_names` from detecting that the
+        function modifies the outer `x`. Without the fix, the inner `let x = 3` would be
+        collected as function-local, masking the `x = 2` assignment from mod/ref analysis.
+        """
+        source = inspect.cleandoc(
+            """
+            var x = 1;
+            function f() {
+              x = 2;
+              if (true) {
+                let x = 3;
+              }
+            }
+            f();
+            console.log(x);
+            """
+        )
+        result = self._inline(source)
+        self.assertIn('console.log(x)', result)
+        self.assertNotIn('console.log(1)', result)
+
+    def test_delete_expression_not_removed(self):
+        source = inspect.cleandoc(
+            """
+            var x = 1;
+            delete x;
+            console.log('done');
+            """
+        )
+        result = self._run_transformer(source, JsUnusedCodeRemoval)
+        self.assertEqual(source, result)

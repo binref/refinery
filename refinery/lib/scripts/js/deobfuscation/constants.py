@@ -18,6 +18,7 @@ from refinery.lib.scripts.js.model import (
     JsArrowFunctionExpression,
     JsAssignmentExpression,
     JsAwaitExpression,
+    JsBlockStatement,
     JsCallExpression,
     JsClassExpression,
     JsForInStatement,
@@ -117,28 +118,37 @@ def _is_literal_array(node: Node) -> bool:
 
 def _function_local_names(func: JsFunctionDeclaration) -> set[str]:
     """
-    Collect names declared locally inside a function: parameter names and `var`/`let`/`const`
-    declarations. These shadow outer-scope variables and should not be treated as modifications
-    to the enclosing scope.
+    Collect names declared locally inside a function: parameter names, `var` declarations
+    (function-scoped), and top-level `let`/`const` declarations. Inner-block `let`/`const`
+    are block-scoped and do not shadow variables at the function level.
     """
-    locals_: set[str] = set()
+    local_names: set[str] = set()
     for p in func.params:
         if isinstance(p, JsIdentifier):
-            locals_.add(p.name)
+            local_names.add(p.name)
         else:
             for n in p.walk():
                 if isinstance(n, JsIdentifier):
-                    locals_.add(n.name)
+                    local_names.add(n.name)
     if func.body is not None:
         for n in func.body.walk():
-            if isinstance(n, JsVariableDeclaration):
+            if isinstance(n, JsVariableDeclaration) and n.kind is JsVarKind.VAR:
                 for d in n.declarations:
                     if isinstance(d, JsVariableDeclarator) and isinstance(d.id, JsIdentifier):
-                        locals_.add(d.id.name)
+                        local_names.add(d.id.name)
             if isinstance(n, _FUNCTION_NODES) and n is not func:
                 if isinstance(n, JsFunctionDeclaration) and n.id is not None:
-                    locals_.add(n.id.name)
-    return locals_
+                    local_names.add(n.id.name)
+        if isinstance(func.body, JsBlockStatement):
+            for stmt in func.body.body:
+                if (
+                    isinstance(stmt, JsVariableDeclaration)
+                    and stmt.kind in (JsVarKind.LET, JsVarKind.CONST)
+                ):
+                    for d in stmt.declarations:
+                        if isinstance(d, JsVariableDeclarator) and isinstance(d.id, JsIdentifier):
+                            local_names.add(d.id.name)
+    return local_names
 
 
 def _compute_function_mods(scope: Node) -> dict[str, set[str]]:
@@ -579,7 +589,11 @@ class JsConstantInlining(ScopeProcessingTransformer):
                     and obj.name in cross_candidates
                 ):
                     name = obj.name
-                    if name not in const_names:
+                    if name in const_names:
+                        enclosing = self._enclosing_function_name(obj, func_mods)
+                        if enclosing is None:
+                            continue
+                    else:
                         enclosing = self._enclosing_function_name(obj, func_mods)
                         if (
                             enclosing is None
@@ -603,17 +617,21 @@ class JsConstantInlining(ScopeProcessingTransformer):
                 continue
             if isinstance(parent, JsMemberExpression) and parent.object is node and parent.computed:
                 continue
+            if isinstance(parent, JsVariableDeclarator) and parent.id is node:
+                continue
             entry = cross_candidates[name][0]
             if not is_literal(entry.value):
                 continue
-            if name not in const_names:
-                enclosing = self._enclosing_function_name(node, func_mods)
-                if (
-                    enclosing is None
-                    or enclosing not in called_functions
-                    or name in func_mods.get(enclosing, set())
-                ):
+            enclosing = self._enclosing_function_name(node, func_mods)
+            if name in const_names:
+                if enclosing is None:
                     continue
+            elif (
+                enclosing is None
+                or enclosing not in called_functions
+                or name in func_mods.get(enclosing, set())
+            ):
+                continue
             _replace_in_parent(node, _clone_node(entry.value))
             self.mark_changed()
             inlined[name] = inlined.get(name, 0) + 1

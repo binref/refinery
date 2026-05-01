@@ -117,6 +117,8 @@ def _is_side_effect_free(node: Node, defunct: set[str] | None = None) -> bool:
     if isinstance(node, JsFunctionExpression):
         return True
     if isinstance(node, JsUnaryExpression):
+        if node.operator == 'delete':
+            return False
         return node.operand is not None and _is_side_effect_free(node.operand, defunct)
     if isinstance(node, JsMemberExpression):
         if node.object is None:

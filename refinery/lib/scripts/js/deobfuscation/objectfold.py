@@ -15,6 +15,7 @@ from refinery.lib.scripts import (
 )
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     ScopeProcessingTransformer,
+    is_simple_expression,
     property_key,
     remove_declarator,
     string_value,
@@ -28,6 +29,7 @@ from refinery.lib.scripts.js.model import (
     JsMemberExpression,
     JsObjectExpression,
     JsProperty,
+    JsPropertyKind,
     JsScript,
     JsVariableDeclaration,
     JsVariableDeclarator,
@@ -44,6 +46,8 @@ def _build_property_map(
     result: dict[str, Node] = {}
     for prop in obj.properties:
         if not isinstance(prop, JsProperty):
+            return None
+        if prop.kind is not JsPropertyKind.INIT:
             return None
         key = property_key(prop)
         if key is None or prop.value is None:
@@ -162,6 +166,7 @@ class JsObjectFold(ScopeProcessingTransformer):
                 isinstance(parent, JsCallExpression)
                 and parent.callee is node
                 and isinstance(value, JsFunctionExpression)
+                and all(is_simple_expression(a) for a in parent.arguments)
             ):
                 replacement = try_inline_trivial_function(value, parent.arguments)
                 if replacement is not None:
