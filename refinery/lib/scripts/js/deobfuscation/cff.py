@@ -178,12 +178,12 @@ def _find_order_sequence(
     end_idx: int,
     order_var: str,
     counter_var: str,
-) -> tuple[list[str], int, int] | None:
+) -> tuple[list[str], int, int, set[int]] | None:
     """
     Scan backwards from *end_idx* in *body* to find the initialization of the order array and
     the counter variable. Returns a tuple
 
-        (order_sequence, first_init_idx, last_init_idx)
+        (order_sequence, first_init_idx, last_init_idx, init_indices)
 
     or `None`.
     """
@@ -216,7 +216,7 @@ def _find_order_sequence(
         return None
     first = min(order_init_idx, counter_init_idx)
     last = max(order_init_idx, counter_init_idx)
-    return order_sequence, first, last
+    return order_sequence, first, last, {order_init_idx, counter_init_idx}
 
 
 class JsControlFlowUnflattening(BodyProcessingTransformer):
@@ -240,11 +240,14 @@ class JsControlFlowUnflattening(BodyProcessingTransformer):
             if order_info is None:
                 i += 1
                 continue
-            order_sequence, first_init, _ = order_info
+            order_sequence, first_init, _, init_indices = order_info
             if not all(label in case_map for label in order_sequence):
                 i += 1
                 continue
             recovered: list[Statement] = []
+            for j in range(first_init, i):
+                if j not in init_indices:
+                    recovered.append(body[j])
             for label in order_sequence:
                 recovered.extend(case_map[label])
             remove_start = first_init

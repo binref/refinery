@@ -21,6 +21,7 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
 )
 from refinery.lib.scripts.js.model import (
     JsArrayExpression,
+    JsArrowFunctionExpression,
     JsAssignmentExpression,
     JsBinaryExpression,
     JsBooleanLiteral,
@@ -38,6 +39,7 @@ from refinery.lib.scripts.js.model import (
     JsNumericLiteral,
     JsObjectExpression,
     JsProperty,
+    JsScript,
     JsSequenceExpression,
     JsStringLiteral,
     JsUnaryExpression,
@@ -84,6 +86,24 @@ def _reachable_functions(
     return reachable
 
 
+def _is_safe_property_base(node: Node, defunct: set[str] | None = None) -> bool:
+    """
+    Check whether property access on *node* is guaranteed to be side-effect-free. Returns `True`
+    when the object is a value that cannot have custom getters: literals, fresh object/array/function
+    expressions, or identifiers in the *defunct* set (being removed, so their getters are irrelevant
+    to live code). Chained member expressions are safe when their root base is safe.
+    """
+    if isinstance(node, (JsStringLiteral, JsNumericLiteral, JsBooleanLiteral, JsNullLiteral)):
+        return True
+    if isinstance(node, (JsObjectExpression, JsArrayExpression, JsFunctionExpression)):
+        return True
+    if isinstance(node, JsIdentifier):
+        return bool(defunct) and node.name in defunct
+    if isinstance(node, JsMemberExpression) and node.object is not None:
+        return _is_safe_property_base(node.object, defunct)
+    return False
+
+
 def _is_side_effect_free(node: Node, defunct: set[str] | None = None) -> bool:
     """
     Conservative check for whether an expression can be removed without observable side effects.
@@ -99,11 +119,13 @@ def _is_side_effect_free(node: Node, defunct: set[str] | None = None) -> bool:
     if isinstance(node, JsUnaryExpression):
         return node.operand is not None and _is_side_effect_free(node.operand, defunct)
     if isinstance(node, JsMemberExpression):
-        return (
-            node.object is not None
-            and _is_side_effect_free(node.object, defunct)
-            and (node.property is None or _is_side_effect_free(node.property, defunct))
-        )
+        if node.object is None:
+            return False
+        if not _is_side_effect_free(node.object, defunct):
+            return False
+        if node.property is not None and not _is_side_effect_free(node.property, defunct):
+            return False
+        return _is_safe_property_base(node.object, defunct)
     if isinstance(node, (JsBinaryExpression, JsLogicalExpression)):
         return (
             node.left is not None and _is_side_effect_free(node.left, defunct)
@@ -175,6 +197,7 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
         simple dead assignments and transitive chains where one dead variable is only read by
         another dead variable's RHS. Returns the set of dead variable names.
         """
+        local_names = self._collect_local_names(parent, body)
         write_stmts: dict[str, list[JsExpressionStatement]] = {}
         for stmt in body:
             if not isinstance(stmt, JsExpressionStatement):
@@ -184,7 +207,10 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
                 continue
             if expr.operator != '=' or not isinstance(expr.left, JsIdentifier):
                 continue
-            write_stmts.setdefault(expr.left.name, []).append(stmt)
+            name = expr.left.name
+            if local_names is not None and name not in local_names:
+                continue
+            write_stmts.setdefault(name, []).append(stmt)
         if not write_stmts:
             return set()
         has_free_read: set[str] = set()
@@ -288,6 +314,35 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
                             referenced.add(node.left.name)
                 if name not in referenced:
                     remove_declarator(decl)
+
+    @staticmethod
+    def _collect_local_names(parent: Node, body: list[Statement]) -> set[str] | None:
+        """
+        Collect names declared locally in this scope. Returns `None` for `JsScript` (top level)
+        where all variables are local. For function bodies, returns parameter names, `var`, `let`,
+        and `const` declarations.
+        """
+        if isinstance(parent, JsScript):
+            return None
+        names: set[str] = set()
+        func_parent = parent.parent
+        if isinstance(func_parent, (
+            JsFunctionDeclaration, JsFunctionExpression, JsArrowFunctionExpression,
+        )):
+            for p in func_parent.params:
+                if isinstance(p, JsIdentifier):
+                    names.add(p.name)
+                else:
+                    for n in p.walk():
+                        if isinstance(n, JsIdentifier):
+                            names.add(n.name)
+        for stmt in body:
+            for node in walk_outer_scope(stmt):
+                if isinstance(node, JsVariableDeclaration):
+                    for decl in node.declarations:
+                        if isinstance(decl, JsVariableDeclarator) and isinstance(decl.id, JsIdentifier):
+                            names.add(decl.id.name)
+        return names
 
     @staticmethod
     def _is_write_target(node: JsIdentifier) -> bool:

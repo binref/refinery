@@ -315,7 +315,12 @@ class JsSimplifications(Transformer):
             if truthy is not None:
                 return JsBooleanLiteral(value=not truthy)
         if op == '-' and isinstance(node.operand, JsNumericLiteral):
-            return make_numeric_literal(-node.operand.value)
+            value = node.operand.value
+            if value == 0 and isinstance(value, int):
+                value = -0.0
+            else:
+                value = -value
+            return make_numeric_literal(value)
         if op == '+' and isinstance(node.operand, JsNumericLiteral):
             return node.operand
         if op == '~' and isinstance(node.operand, JsNumericLiteral):

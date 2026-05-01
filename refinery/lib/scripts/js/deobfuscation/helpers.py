@@ -127,7 +127,9 @@ def numeric_value(node: Expression) -> int | float | None:
 
 def make_numeric_literal(value: int | float) -> JsNumericLiteral:
     if isinstance(value, float):
-        if value == int(value) and not (value == 0.0 and str(value).startswith('-')):
+        if value == 0.0 and str(value).startswith('-'):
+            raw = '-0'
+        elif value == int(value):
             raw = str(int(value))
         else:
             raw = str(value)

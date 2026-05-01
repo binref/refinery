@@ -2119,3 +2119,104 @@ class TestRegressionBugs(TestJsDeobfuscator):
             self._simplify("var x = '\U0001f600'.split('');"),
             "var x = ['\\uD83D', '\\uDE00'];",
         )
+
+    def test_negative_zero_literal(self):
+        self.assertEqual('var x = -0;', self._simplify('var x = -(0);'))
+
+    def test_cff_preserves_intervening_statements(self):
+        source = inspect.cleandoc(
+            """
+            var _order = ['1', '0'];
+            console.log('side effect');
+            var _idx = 0;
+            while (true) {
+              switch (_order[_idx++]) {
+                case '0': var b = 2; continue;
+                case '1': var a = 1; continue;
+              }
+              break;
+            }
+            """
+        )
+        result = self._deobfuscate(source)
+        self.assertIn("console.log('side effect');", result)
+
+    def test_dead_variable_preserves_external_property_access(self):
+        source = inspect.cleandoc(
+            """
+            var x;
+            x = externalObj.prop;
+            """
+        )
+        result = self._run_transformer(source, JsUnusedCodeRemoval)
+        self.assertEqual(result, 'externalObj.prop;')
+
+    def test_free_variable_not_inlined_past_modifying_call(self):
+        test = self._deobfuscate_iterative(inspect.cleandoc(
+            """
+            function modifyGlobal() {
+                x = 9;
+            }
+            var x = 12;
+            modifyGlobal();
+            console.log(x);
+            """
+        ))
+        self.assertEqual(test, inspect.cleandoc(
+            """
+            function modifyGlobal() {
+              x = 9;
+            }
+            var x = 12;
+            modifyGlobal();
+            console.log(x);
+            """
+        ))
+
+    def test_free_variable_is_inlined_past_harmless_call(self):
+        test = self._deobfuscate_iterative(inspect.cleandoc(
+            """
+            function harmlessCall() {
+                if (x == 12) {
+                    console.log("good");
+                }
+            }
+            var x = 12;
+            harmlessCall();
+            console.log(x);
+            """
+        ))
+        self.assertEqual(test, inspect.cleandoc(
+            """
+            function harmlessCall() {
+              console.log("good");
+            }
+            harmlessCall();
+            console.log(12);
+            """
+        ))
+
+    def test_free_variable_inlined_without_intervening_call(self):
+        source = inspect.cleandoc(
+            """
+            var x = a + b;
+            console.log(x);
+            """
+        )
+        result = self._inline(source)
+        self.assertIn('console.log(a + b)', result)
+
+    def test_local_variable_not_inlined_past_modifying_call(self):
+        source = inspect.cleandoc(
+            """
+            function f() {
+                x = 9;
+            }
+            var a = 1;
+            var x = a;
+            f();
+            console.log(x);
+            """
+        )
+        result = self._deobfuscate(source)
+        self.assertIn('console.log(x)', result)

@@ -115,6 +115,96 @@ def _is_literal_array(node: Node) -> bool:
     return all(el is not None and is_literal(el) for el in node.elements)
 
 
+def _function_local_names(func: JsFunctionDeclaration) -> set[str]:
+    """
+    Collect names declared locally inside a function: parameter names and `var`/`let`/`const`
+    declarations. These shadow outer-scope variables and should not be treated as modifications
+    to the enclosing scope.
+    """
+    locals_: set[str] = set()
+    for p in func.params:
+        if isinstance(p, JsIdentifier):
+            locals_.add(p.name)
+        else:
+            for n in p.walk():
+                if isinstance(n, JsIdentifier):
+                    locals_.add(n.name)
+    if func.body is not None:
+        for n in func.body.walk():
+            if isinstance(n, JsVariableDeclaration):
+                for d in n.declarations:
+                    if isinstance(d, JsVariableDeclarator) and isinstance(d.id, JsIdentifier):
+                        locals_.add(d.id.name)
+            if isinstance(n, _FUNCTION_NODES) and n is not func:
+                if isinstance(n, JsFunctionDeclaration) and n.id is not None:
+                    locals_.add(n.id.name)
+    return locals_
+
+
+def _compute_function_mods(scope: Node) -> dict[str, set[str]]:
+    """
+    For each function declaration at the top level of *scope*, compute the set of outer-scope
+    variable names it can modify (directly or transitively through calls to other known functions).
+    """
+    functions: dict[str, JsFunctionDeclaration] = {}
+    body = getattr(scope, 'body', None)
+    if not isinstance(body, list):
+        return {}
+    for stmt in body:
+        if isinstance(stmt, JsFunctionDeclaration) and stmt.id is not None:
+            functions[stmt.id.name] = stmt
+    if not functions:
+        return {}
+
+    direct_mods: dict[str, set[str]] = {}
+    calls: dict[str, set[str]] = {}
+
+    for fname, func in functions.items():
+        locals_ = _function_local_names(func)
+        mods: set[str] = set()
+        callees: set[str] = set()
+        if func.body is None:
+            direct_mods[fname] = mods
+            calls[fname] = callees
+            continue
+        for node in func.body.walk():
+            if isinstance(node, JsAssignmentExpression) and isinstance(node.left, JsIdentifier):
+                name = node.left.name
+                if name not in locals_:
+                    mods.add(name)
+            elif isinstance(node, JsAssignmentExpression) and isinstance(
+                node.left, (JsArrayPattern, JsObjectPattern),
+            ):
+                for name in _pattern_identifiers(node.left):
+                    if name not in locals_:
+                        mods.add(name)
+            elif isinstance(node, JsUpdateExpression) and isinstance(node.argument, JsIdentifier):
+                if node.argument.name not in locals_:
+                    mods.add(node.argument.name)
+            elif isinstance(node, (JsForInStatement, JsForOfStatement)):
+                if isinstance(node.left, JsIdentifier) and node.left.name not in locals_:
+                    mods.add(node.left.name)
+            if isinstance(node, JsCallExpression) and isinstance(node.callee, JsIdentifier):
+                callee_name = node.callee.name
+                if callee_name in functions and callee_name != fname:
+                    callees.add(callee_name)
+        direct_mods[fname] = mods
+        calls[fname] = callees
+
+    result: dict[str, set[str]] = {fname: set(mods) for fname, mods in direct_mods.items()}
+    changed = True
+    while changed:
+        changed = False
+        for fname, callees in calls.items():
+            before = len(result[fname])
+            for callee in callees:
+                result[fname] |= result.get(callee, set())
+            if len(result[fname]) > before:
+                changed = True
+
+    return result
+
+
 def _is_constant_value(node: Node) -> bool:
     """
     Return whether *node* is a constant value eligible for multi-use inlining: a scalar literal or
@@ -220,15 +310,18 @@ class JsConstantInlining(ScopeProcessingTransformer):
         self.max_inline_length = max_inline_length
 
     def _process_scope(self, scope: Node) -> None:
+        func_mods = _compute_function_mods(scope)
         while True:
-            candidates, seal_points, mutated = self._collect_candidates(scope)
+            candidates, seal_points, mutated = self._collect_candidates(scope, func_mods)
             if not candidates:
                 return
-            inlined = self._substitute_constants(scope, candidates, seal_points)
+            inlined = self._substitute_constants(scope, candidates, seal_points, func_mods)
             if inlined:
                 self._remove_dead(scope, candidates, inlined)
                 continue
-            inlined = self._substitute_expressions(scope, candidates, mutated)
+            inlined = self._substitute_expressions(
+                scope, candidates, mutated, seal_points,
+            )
             if inlined:
                 self._remove_dead(scope, candidates, inlined)
                 continue
@@ -237,6 +330,7 @@ class JsConstantInlining(ScopeProcessingTransformer):
     @staticmethod
     def _collect_candidates(
         scope: Node,
+        func_mods: dict[str, set[str]],
     ) -> tuple[dict[str, list[_CandidateEntry]], dict[str, list[tuple[list, int]]], set[str]]:
         """
         Collect constant declaration entries per variable. Each entry is a `_CandidateEntry` of
@@ -295,6 +389,15 @@ class JsConstantInlining(ScopeProcessingTransformer):
                     rejected.add(name)
                     candidates.pop(name, None)
 
+            if isinstance(node, JsCallExpression) and isinstance(node.callee, JsIdentifier):
+                callee_name = node.callee.name
+                mods = func_mods.get(callee_name)
+                if mods:
+                    call_entries = _find_all_body_entries(node)
+                    for modified_var in mods:
+                        if modified_var in candidates:
+                            seal_points.setdefault(modified_var, []).extend(call_entries)
+
         return candidates, seal_points, rejected
 
     def _substitute_constants(
@@ -302,6 +405,7 @@ class JsConstantInlining(ScopeProcessingTransformer):
         scope: Node,
         candidates: dict[str, list[_CandidateEntry]],
         seal_points: dict[str, list[tuple[list, int]]],
+        func_mods: dict[str, set[str]],
     ) -> dict[str, int]:
         """
         Inline constant (literal and literal-array) variable references using domination. Handles
@@ -385,7 +489,7 @@ class JsConstantInlining(ScopeProcessingTransformer):
             inlined[name] = inlined.get(name, 0) + 1
 
         self._substitute_const_across_functions(
-            scope, candidates, seal_points, decl_ids, bloat_blocked, inlined,
+            scope, candidates, seal_points, decl_ids, bloat_blocked, func_mods, inlined,
         )
 
         return inlined
@@ -428,13 +532,19 @@ class JsConstantInlining(ScopeProcessingTransformer):
         seal_points: dict[str, list[tuple[list, int]]],
         decl_ids: set[int],
         bloat_blocked: set[str],
+        func_mods: dict[str, set[str]],
         inlined: dict[str, int],
     ) -> None:
         """
-        For `const`-qualified candidates with literal or all-literal-array values, walk the full
-        subtree to inline references inside nested function bodies.
+        For constant-valued candidates, walk the full subtree to inline references inside nested
+        function bodies. `const`-qualified candidates are inlined unconditionally (they cannot be
+        reassigned). `var`/`let`-qualified candidates are inlined only into functions that are
+        actually called in the current scope and that do not modify the variable (per the mod/ref
+        analysis). The call-site requirement prevents inlining into functions that may be invoked
+        from elsewhere with a different value for the variable.
         """
-        const_candidates: dict[str, list[_CandidateEntry]] = {}
+        cross_candidates: dict[str, list[_CandidateEntry]] = {}
+        const_names: set[str] = set()
         for name, entries in candidates.items():
             if name in bloat_blocked:
                 continue
@@ -443,14 +553,22 @@ class JsConstantInlining(ScopeProcessingTransformer):
             entry = entries[0]
             if entry.declarator is None:
                 continue
-            if not _is_const_qualified(entry.declarator):
-                continue
             if not _is_constant_value(entry.value):
                 continue
-            const_candidates[name] = entries
+            cross_candidates[name] = entries
+            if _is_const_qualified(entry.declarator):
+                const_names.add(name)
 
-        if not const_candidates:
+        if not cross_candidates:
             return
+
+        called_functions: set[str] = set()
+        for node in _walk_scope(scope):
+            if (
+                isinstance(node, JsCallExpression)
+                and isinstance(node.callee, JsIdentifier)
+            ):
+                called_functions.add(node.callee.name)
 
         for node in list(scope.walk()):
             if isinstance(node, JsMemberExpression) and node.computed:
@@ -458,10 +576,19 @@ class JsConstantInlining(ScopeProcessingTransformer):
                 if (
                     isinstance(obj, JsIdentifier)
                     and id(obj) not in decl_ids
-                    and obj.name in const_candidates
+                    and obj.name in cross_candidates
                 ):
+                    name = obj.name
+                    if name not in const_names:
+                        enclosing = self._enclosing_function_name(obj, func_mods)
+                        if (
+                            enclosing is None
+                            or enclosing not in called_functions
+                            or name in func_mods.get(enclosing, set())
+                        ):
+                            continue
                     self._try_inline_index(
-                        node, obj.name, const_candidates, seal_points, inlined,
+                        node, name, cross_candidates, seal_points, inlined,
                     )
                     continue
             if not isinstance(node, JsIdentifier):
@@ -469,25 +596,54 @@ class JsConstantInlining(ScopeProcessingTransformer):
             if id(node) in decl_ids:
                 continue
             name = node.name
-            if name not in const_candidates:
+            if name not in cross_candidates:
                 continue
             parent = node.parent
             if isinstance(parent, JsAssignmentExpression) and parent.left is node:
                 continue
             if isinstance(parent, JsMemberExpression) and parent.object is node and parent.computed:
                 continue
-            entry = const_candidates[name][0]
+            entry = cross_candidates[name][0]
             if not is_literal(entry.value):
                 continue
+            if name not in const_names:
+                enclosing = self._enclosing_function_name(node, func_mods)
+                if (
+                    enclosing is None
+                    or enclosing not in called_functions
+                    or name in func_mods.get(enclosing, set())
+                ):
+                    continue
             _replace_in_parent(node, _clone_node(entry.value))
             self.mark_changed()
             inlined[name] = inlined.get(name, 0) + 1
+
+    @staticmethod
+    def _enclosing_function_name(
+        node: Node,
+        func_mods: dict[str, set[str]],
+    ) -> str | None:
+        """
+        Walk upward from *node* to find the innermost enclosing function declaration whose name
+        appears in *func_mods*. Returns the function name or `None` if the node is at top scope.
+        """
+        cursor = node.parent
+        while cursor is not None:
+            if (
+                isinstance(cursor, JsFunctionDeclaration)
+                and cursor.id is not None
+                and cursor.id.name in func_mods
+            ):
+                return cursor.id.name
+            cursor = cursor.parent
+        return None
 
     def _substitute_expressions(
         self,
         scope: Node,
         candidates: dict[str, list[_CandidateEntry]],
         mutated: set[str],
+        seal_points: dict[str, list[tuple[list, int]]],
     ) -> dict[str, int]:
         """
         Inline single-use, side-effect-free, non-literal expressions. This is the second pass that
@@ -548,6 +704,15 @@ class JsConstantInlining(ScopeProcessingTransformer):
                 ref_entry = _find_body_entry(node)
                 if ref_entry is None or ref_entry[0] is not assign_body or ref_entry[1] <= assign_idx:
                     continue
+                sp = seal_points.get(name)
+                if sp is not None:
+                    ref_idx = ref_entry[1]
+                    sealed = any(
+                        sp_body is assign_body and assign_idx < sp_idx <= ref_idx
+                        for sp_body, sp_idx in sp
+                    )
+                    if sealed:
+                        continue
             _replace_in_parent(node, _clone_node(entry.value))
             self.mark_changed()
             inlined[name] = inlined.get(name, 0) + 1
