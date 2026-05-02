@@ -758,6 +758,7 @@ tlds = [
     'macys',
     'mango',
     'media',
+    'merck',
     'miami',
     'money',
     'movie',
