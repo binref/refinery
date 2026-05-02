@@ -59,10 +59,26 @@ class _CandidateEntry(NamedTuple):
     scope: tuple[list, int] | None
 
 
+def _candidate_decl_ids(candidates: dict[str, list[_CandidateEntry]]) -> set[int]:
+    """
+    Collect the `id()` values of all declaration-site identifier nodes across candidate entries.
+    Used to distinguish binding occurrences from reference occurrences during scope walks.
+    """
+    result: set[int] = set()
+    for entries in candidates.values():
+        for entry in entries:
+            if (d := entry.declarator) is not None:
+                result.add(id(d.id))
+    return result
+
+
 def _is_primitive_and_pure(node: Node) -> bool:
     """
     Return whether evaluating *node* is guaranteed to produce no observable side effects and
-    the result is a primitive value (not an object, array, or function).
+    the result is a primitive value (not an object, array, or function). This is stricter than
+    `is_side_effect_free` — it rejects expressions that allocate objects or access properties,
+    because inlining such expressions into a new location can change reference identity or
+    trigger getters at a different point in execution.
     """
     for n in node.walk():
         if isinstance(n, (
@@ -82,6 +98,47 @@ def _is_primitive_and_pure(node: Node) -> bool:
         )):
             return False
     return True
+
+
+def _count_scope_references(
+    scope: Node,
+    names: set[str],
+    decl_ids: set[int],
+    *,
+    walk_full: bool = False,
+    count_member_access: bool = False,
+) -> dict[str, int]:
+    """
+    Count identifier references within *scope* for each name in *names*, excluding declaration
+    sites in *decl_ids* and assignment write targets. When *walk_full* is True, the entire subtree
+    is traversed (including nested function bodies); otherwise only the current scope is walked.
+    When *count_member_access* is True, computed member accesses like `name[idx]` are counted
+    separately (the identifier inside the member is counted and the walk continues so the member
+    node itself is not double-counted).
+    """
+    walker = scope.walk() if walk_full else walk_scope(scope, include_root_body=True)
+    counts: dict[str, int] = {}
+    for node in walker:
+        if count_member_access and isinstance(node, JsMemberExpression) and node.computed:
+            obj = node.object
+            if isinstance(obj, JsIdentifier) and id(obj) not in decl_ids and obj.name in names:
+                counts[obj.name] = counts.get(obj.name, 0) + 1
+                continue
+        if not isinstance(node, JsIdentifier):
+            continue
+        if id(node) in decl_ids:
+            continue
+        name = node.name
+        if name not in names:
+            continue
+        parent = node.parent
+        if isinstance(parent, JsAssignmentExpression) and parent.left is node:
+            continue
+        if count_member_access:
+            if isinstance(parent, JsMemberExpression) and parent.object is node and parent.computed:
+                continue
+        counts[name] = counts.get(name, 0) + 1
+    return counts
 
 
 def _is_literal_array(node: Node) -> bool:
@@ -401,26 +458,10 @@ class JsConstantInlining(ScopeProcessingTransformer):
         inlined: dict[str, int] = {}
         bloat_blocked: set[str] = set()
 
-        decl_ids: set[int] = set()
-        for entries in candidates.values():
-            for entry in entries:
-                if entry.declarator is not None:
-                    decl_ids.add(id(entry.declarator.id))
-
-        ref_counts: dict[str, int] = {}
-        for node in walk_scope(scope, include_root_body=True):
-            if isinstance(node, JsMemberExpression) and node.computed:
-                obj = node.object
-                if isinstance(obj, JsIdentifier) and id(obj) not in decl_ids and obj.name in candidates:
-                    ref_counts[obj.name] = ref_counts.get(obj.name, 0) + 1
-                    continue
-            if isinstance(node, JsIdentifier) and id(node) not in decl_ids and node.name in candidates:
-                parent = node.parent
-                if isinstance(parent, JsAssignmentExpression) and parent.left is node:
-                    continue
-                if isinstance(parent, JsMemberExpression) and parent.object is node and parent.computed:
-                    continue
-                ref_counts[node.name] = ref_counts.get(node.name, 0) + 1
+        decl_ids = _candidate_decl_ids(candidates)
+        ref_counts = _count_scope_references(
+            scope, set(candidates), decl_ids, count_member_access=True,
+        )
 
         for name, entries in candidates.items():
             if len(entries) != 1:
@@ -644,24 +685,8 @@ class JsConstantInlining(ScopeProcessingTransformer):
         Inline single-use, side-effect-free, non-literal expressions. This is the second pass that
         runs after constant inlining and preserves the existing behavior.
         """
-        decl_ids: set[int] = set()
-        for entries in candidates.values():
-            for entry in entries:
-                if entry.declarator is not None:
-                    decl_ids.add(id(entry.declarator.id))
-
-        ref_counts: dict[str, int] = {}
-        for node in walk_scope(scope, include_root_body=True):
-            if not isinstance(node, JsIdentifier):
-                continue
-            if id(node) in decl_ids:
-                continue
-            if node.name not in candidates:
-                continue
-            parent = node.parent
-            if isinstance(parent, JsAssignmentExpression) and parent.left is node:
-                continue
-            ref_counts[node.name] = ref_counts.get(node.name, 0) + 1
+        decl_ids = _candidate_decl_ids(candidates)
+        ref_counts = _count_scope_references(scope, set(candidates), decl_ids)
 
         to_inline: dict[str, _CandidateEntry] = {}
         for name, entries in candidates.items():
@@ -724,22 +749,10 @@ class JsConstantInlining(ScopeProcessingTransformer):
         qualified candidates, check the full subtree since cross-function inlining may have
         replaced references inside nested functions.
         """
-        decl_ids: set[int] = set()
-        for entries in candidates.values():
-            for entry in entries:
-                if entry.declarator is not None:
-                    decl_ids.add(id(entry.declarator.id))
-
-        ref_counts: dict[str, int] = {}
-        for node in scope.walk():
-            if not isinstance(node, JsIdentifier):
-                continue
-            if id(node) in decl_ids:
-                continue
-            name = node.name
-            if name not in inlined:
-                continue
-            ref_counts[name] = ref_counts.get(name, 0) + 1
+        decl_ids = _candidate_decl_ids(candidates)
+        ref_counts = _count_scope_references(
+            scope, set(inlined), decl_ids, walk_full=True,
+        )
 
         for name in inlined:
             remaining = ref_counts.get(name, 0)

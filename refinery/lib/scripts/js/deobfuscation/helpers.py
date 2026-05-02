@@ -21,17 +21,26 @@ from refinery.lib.scripts import (
 from refinery.lib.scripts.js.model import (
     JsArrayExpression,
     JsArrowFunctionExpression,
+    JsAssignmentExpression,
+    JsBinaryExpression,
     JsBlockStatement,
     JsBooleanLiteral,
+    JsCallExpression,
+    JsConditionalExpression,
+    JsForInStatement,
+    JsForOfStatement,
     JsFunctionDeclaration,
     JsFunctionExpression,
     JsIdentifier,
+    JsLogicalExpression,
     JsMemberExpression,
     JsNullLiteral,
     JsNumericLiteral,
+    JsObjectExpression,
     JsProperty,
     JsReturnStatement,
     JsScript,
+    JsSequenceExpression,
     JsStringLiteral,
     JsUnaryExpression,
     JsVarKind,
@@ -193,6 +202,32 @@ def is_simple_expression(node: Node) -> bool:
     return False
 
 
+def is_write_target(node: JsIdentifier) -> bool:
+    """
+    Return whether this identifier is a write target: the left-hand side of an assignment
+    expression, or the iteration variable of a `for-in` / `for-of` statement.
+    """
+    p = node.parent
+    if isinstance(p, JsAssignmentExpression) and p.left is node:
+        return True
+    if isinstance(p, (JsForInStatement, JsForOfStatement)) and p.left is node:
+        return True
+    return False
+
+
+def is_binding_site(node: JsIdentifier) -> bool:
+    """
+    Return whether this identifier is in a binding position (variable declarator id or function
+    declaration name) rather than a reference/read position.
+    """
+    p = node.parent
+    if isinstance(p, JsVariableDeclarator) and p.id is node:
+        return True
+    if isinstance(p, JsFunctionDeclaration) and p.id is node:
+        return True
+    return False
+
+
 def is_truthy(node: Node) -> bool | None:
     """
     Return the JavaScript truthiness of a literal node, or `None` when the value cannot be
@@ -234,6 +269,80 @@ def is_nullish(node: Node) -> bool:
         return True
     if isinstance(node, JsIdentifier) and node.name == 'undefined':
         return True
+    return False
+
+
+def _is_safe_property_base(node: Node, defunct: set[str] | None = None) -> bool:
+    """
+    Check whether property access on *node* is guaranteed to be side-effect-free. Returns `True`
+    when the object is a value that cannot have custom getters: literals, fresh object/array/function
+    expressions, or identifiers in the *defunct* set (being removed, so their getters are irrelevant
+    to live code). Chained member expressions are safe when their root base is safe.
+    """
+    if isinstance(node, (JsStringLiteral, JsNumericLiteral, JsBooleanLiteral, JsNullLiteral)):
+        return True
+    if isinstance(node, (JsObjectExpression, JsArrayExpression, JsFunctionExpression)):
+        return True
+    if isinstance(node, JsIdentifier):
+        return bool(defunct) and node.name in defunct
+    if isinstance(node, JsMemberExpression) and node.object is not None:
+        return _is_safe_property_base(node.object, defunct)
+    return False
+
+
+def is_side_effect_free(node: Node, defunct: set[str] | None = None) -> bool:
+    """
+    Conservative check for whether an expression can be removed without observable side effects.
+    When *defunct* is provided, calls to identifiers in that set are treated as side-effect-free
+    (the function no longer exists in scope).
+    """
+    if isinstance(node, (JsStringLiteral, JsNumericLiteral, JsBooleanLiteral, JsNullLiteral)):
+        return True
+    if isinstance(node, JsIdentifier):
+        return True
+    if isinstance(node, JsFunctionExpression):
+        return True
+    if isinstance(node, JsUnaryExpression):
+        if node.operator == 'delete':
+            return False
+        return node.operand is not None and is_side_effect_free(node.operand, defunct)
+    if isinstance(node, JsMemberExpression):
+        if node.object is None:
+            return False
+        if not is_side_effect_free(node.object, defunct):
+            return False
+        if node.property is not None and not is_side_effect_free(node.property, defunct):
+            return False
+        return _is_safe_property_base(node.object, defunct)
+    if isinstance(node, (JsBinaryExpression, JsLogicalExpression)):
+        return (
+            node.left is not None and is_side_effect_free(node.left, defunct)
+            and node.right is not None and is_side_effect_free(node.right, defunct)
+        )
+    if isinstance(node, JsConditionalExpression):
+        return (
+            node.test is not None and is_side_effect_free(node.test, defunct)
+            and node.consequent is not None and is_side_effect_free(node.consequent, defunct)
+            and node.alternate is not None and is_side_effect_free(node.alternate, defunct)
+        )
+    if isinstance(node, JsObjectExpression):
+        for prop in node.properties:
+            if not isinstance(prop, JsProperty):
+                return False
+            if prop.value is not None and not is_side_effect_free(prop.value, defunct):
+                return False
+        return True
+    if isinstance(node, JsArrayExpression):
+        return all(
+            elem is None or is_side_effect_free(elem, defunct) for elem in node.elements
+        )
+    if isinstance(node, JsSequenceExpression):
+        return all(is_side_effect_free(e, defunct) for e in node.expressions)
+    if isinstance(node, JsCallExpression):
+        if defunct and isinstance(node.callee, JsIdentifier) and node.callee.name in defunct:
+            return all(is_side_effect_free(arg, defunct) for arg in node.arguments)
+        if isinstance(node.callee, JsFunctionExpression):
+            return all(is_side_effect_free(arg, defunct) for arg in node.arguments)
     return False
 
 

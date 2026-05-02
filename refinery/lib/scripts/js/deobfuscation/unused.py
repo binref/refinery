@@ -17,33 +17,22 @@ from refinery.lib.scripts import Node, _remove_from_parent
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     BodyProcessingTransformer,
     collect_identifier_names,
+    is_binding_site,
+    is_side_effect_free,
+    is_write_target,
     remove_declarator,
     walk_scope,
 )
 from refinery.lib.scripts.js.model import (
-    JsArrayExpression,
     JsArrowFunctionExpression,
     JsAssignmentExpression,
-    JsBinaryExpression,
-    JsBooleanLiteral,
-    JsCallExpression,
-    JsConditionalExpression,
     JsExpressionStatement,
     JsForInStatement,
     JsForOfStatement,
     JsFunctionDeclaration,
     JsFunctionExpression,
     JsIdentifier,
-    JsLogicalExpression,
-    JsMemberExpression,
-    JsNullLiteral,
-    JsNumericLiteral,
-    JsObjectExpression,
-    JsProperty,
     JsScript,
-    JsSequenceExpression,
-    JsStringLiteral,
-    JsUnaryExpression,
     JsVariableDeclaration,
     JsVariableDeclarator,
     Statement,
@@ -74,81 +63,6 @@ def _reachable_functions(
                 reachable.add(ident_name)
                 frontier.append(ident_name)
     return reachable
-
-
-def _is_safe_property_base(node: Node, defunct: set[str] | None = None) -> bool:
-    """
-    Check whether property access on *node* is guaranteed to be side-effect-free. Returns `True`
-    when the object is a value that cannot have custom getters: literals, fresh object/array/function
-    expressions, or identifiers in the *defunct* set (being removed, so their getters are irrelevant
-    to live code). Chained member expressions are safe when their root base is safe.
-    """
-    if isinstance(node, (JsStringLiteral, JsNumericLiteral, JsBooleanLiteral, JsNullLiteral)):
-        return True
-    if isinstance(node, (JsObjectExpression, JsArrayExpression, JsFunctionExpression)):
-        return True
-    if isinstance(node, JsIdentifier):
-        return bool(defunct) and node.name in defunct
-    if isinstance(node, JsMemberExpression) and node.object is not None:
-        return _is_safe_property_base(node.object, defunct)
-    return False
-
-
-def _is_side_effect_free(node: Node, defunct: set[str] | None = None) -> bool:
-    """
-    Conservative check for whether an expression can be removed without observable side effects.
-    When *defunct* is provided, calls to identifiers in that set are treated as side-effect-free
-    (the function no longer exists in scope).
-    """
-    if isinstance(node, (JsStringLiteral, JsNumericLiteral, JsBooleanLiteral, JsNullLiteral)):
-        return True
-    if isinstance(node, JsIdentifier):
-        return True
-    if isinstance(node, JsFunctionExpression):
-        return True
-    if isinstance(node, JsUnaryExpression):
-        if node.operator == 'delete':
-            return False
-        return node.operand is not None and _is_side_effect_free(node.operand, defunct)
-    if isinstance(node, JsMemberExpression):
-        if node.object is None:
-            return False
-        if not _is_side_effect_free(node.object, defunct):
-            return False
-        if node.property is not None and not _is_side_effect_free(node.property, defunct):
-            return False
-        return _is_safe_property_base(node.object, defunct)
-    if isinstance(node, (JsBinaryExpression, JsLogicalExpression)):
-        return (
-            node.left is not None and _is_side_effect_free(node.left, defunct)
-            and node.right is not None and _is_side_effect_free(node.right, defunct)
-        )
-    if isinstance(node, JsConditionalExpression):
-        return (
-            node.test is not None and _is_side_effect_free(node.test, defunct)
-            and node.consequent is not None and _is_side_effect_free(node.consequent, defunct)
-            and node.alternate is not None and _is_side_effect_free(node.alternate, defunct)
-        )
-    if isinstance(node, JsObjectExpression):
-        for prop in node.properties:
-            if not isinstance(prop, JsProperty):
-                return False
-            if prop.value is not None and not _is_side_effect_free(prop.value, defunct):
-                return False
-        return True
-    if isinstance(node, JsArrayExpression):
-        return all(
-            elem is None or _is_side_effect_free(elem, defunct)
-            for elem in node.elements
-        )
-    if isinstance(node, JsSequenceExpression):
-        return all(_is_side_effect_free(e, defunct) for e in node.expressions)
-    if isinstance(node, JsCallExpression):
-        if defunct and isinstance(node.callee, JsIdentifier) and node.callee.name in defunct:
-            return all(_is_side_effect_free(arg, defunct) for arg in node.arguments)
-        if isinstance(node.callee, JsFunctionExpression):
-            return all(_is_side_effect_free(arg, defunct) for arg in node.arguments)
-    return False
 
 
 class JsUnusedCodeRemoval(BodyProcessingTransformer):
@@ -213,9 +127,9 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
             name = node.name
             if name not in write_stmts:
                 continue
-            if self._is_write_target(node):
+            if is_write_target(node):
                 continue
-            if self._is_binding_site(node):
+            if is_binding_site(node):
                 continue
             enclosing = self._enclosing_assignment_target(node)
             if enclosing is not None:
@@ -244,7 +158,7 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
                 if not isinstance(expr, JsAssignmentExpression) or expr.right is None:
                     _remove_from_parent(stmt)
                     continue
-                if _is_side_effect_free(expr.right, all_defunct):
+                if is_side_effect_free(expr.right, all_defunct):
                     _remove_from_parent(stmt)
                 else:
                     stmt.expression = expr.right
@@ -267,7 +181,7 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
                 continue
             if isinstance(stmt.expression, JsAssignmentExpression):
                 continue
-            if _is_side_effect_free(stmt.expression, defunct):
+            if is_side_effect_free(stmt.expression, defunct):
                 _remove_from_parent(stmt)
                 self.mark_changed()
 
@@ -297,7 +211,7 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
                 if referenced is None:
                     referenced = set()
                     for node in walk_scope(parent):
-                        if isinstance(node, JsIdentifier) and not self._is_binding_site(node):
+                        if isinstance(node, JsIdentifier) and not is_binding_site(node):
                             referenced.add(node.name)
                         if (
                             isinstance(node, (JsForInStatement, JsForOfStatement))
@@ -335,32 +249,6 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
                         if isinstance(decl, JsVariableDeclarator) and isinstance(decl.id, JsIdentifier):
                             names.add(decl.id.name)
         return names
-
-    @staticmethod
-    def _is_write_target(node: JsIdentifier) -> bool:
-        """
-        Return whether this identifier is a write target: the LHS of an assignment expression, or
-        the iteration variable of a `for-in` / `for-of` statement.
-        """
-        p = node.parent
-        if isinstance(p, JsAssignmentExpression) and p.left is node:
-            return True
-        if isinstance(p, (JsForInStatement, JsForOfStatement)) and p.left is node:
-            return True
-        return False
-
-    @staticmethod
-    def _is_binding_site(node: JsIdentifier) -> bool:
-        """
-        Return whether this identifier is in a binding position (variable declarator id or
-        function declaration name) rather than a reference/read position.
-        """
-        p = node.parent
-        if isinstance(p, JsVariableDeclarator) and p.id is node:
-            return True
-        if isinstance(p, JsFunctionDeclaration) and p.id is node:
-            return True
-        return False
 
     @staticmethod
     def _enclosing_assignment_target(node: JsIdentifier) -> str | None:

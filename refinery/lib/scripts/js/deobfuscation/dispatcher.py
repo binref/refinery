@@ -14,10 +14,10 @@ from refinery.lib.scripts import (
 )
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     ScopeProcessingTransformer,
+    access_key,
     has_remaining_references,
     property_key,
     remove_declarator,
-    string_value,
 )
 from refinery.lib.scripts.js.model import (
     JsArrayExpression,
@@ -449,10 +449,7 @@ class JsDispatcherUnwrapper(ScopeProcessingTransformer):
         """
         call = node
         if isinstance(node, JsMemberExpression) and info.wrap_key is not None:
-            prop_name = string_value(node.property) if node.computed else (
-                node.property.name if isinstance(node.property, JsIdentifier) else None
-            )
-            if prop_name == info.wrap_key:
+            if access_key(node) == info.wrap_key:
                 call = node.object
         if not isinstance(call, (JsCallExpression, JsNewExpression)):
             return None
@@ -473,10 +470,7 @@ class JsDispatcherUnwrapper(ScopeProcessingTransformer):
         """
         if info.wrap_key is None:
             return
-        prop_name = string_value(member.property) if member.computed else (
-            member.property.name if isinstance(member.property, JsIdentifier) else None
-        )
-        if prop_name != info.wrap_key:
+        if access_key(member) != info.wrap_key:
             return
         new_expr = member.object
         if not isinstance(new_expr, JsNewExpression):
