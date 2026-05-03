@@ -15,6 +15,7 @@ from refinery.lib.scripts.js.deobfuscation.cff import _strip_trailing_flow
 from refinery.lib.scripts.js.deobfuscation.constants import JsConstantInlining
 from refinery.lib.scripts.js.deobfuscation.deadcode import JsDeadCodeElimination
 from refinery.lib.scripts.js.deobfuscation.objectfold import JsObjectFold
+from refinery.lib.scripts.js.deobfuscation.reflection import JsReflectionInlining
 from refinery.lib.scripts.js.deobfuscation.simplify import JsSimplifications
 from refinery.lib.scripts.js.deobfuscation.unused import JsUnusedCodeRemoval
 from refinery.lib.scripts.js.deobfuscation.wrappers import JsCallWrapperInliner
@@ -2287,3 +2288,144 @@ class TestRegressionBugs(TestJsDeobfuscator):
         )
         result = self._run_transformer(source, JsUnusedCodeRemoval)
         self.assertEqual(source, result)
+
+
+class TestReflectionInlining(TestJsDeobfuscator):
+
+    def _reflect(self, source: str) -> str:
+        return self._run_transformer(source, JsReflectionInlining)
+
+    def test_eval_string_literal(self):
+        result = self._reflect("eval('var x = 1;');")
+        self.assertIn('var x = 1;', result)
+        self.assertNotIn('eval', result)
+
+    def test_eval_non_literal_not_inlined(self):
+        result = self._reflect('eval(x);')
+        self.assertIn('eval', result)
+
+    def test_eval_parenthesized(self):
+        result = self._reflect("(eval)('var x = 1;');")
+        self.assertIn('var x = 1;', result)
+        self.assertNotIn('eval', result)
+
+    def test_indirect_eval_comma_operator(self):
+        result = self._reflect("(0, eval)('var x = 1;');")
+        self.assertIn('var x = 1;', result)
+        self.assertNotIn('eval', result)
+
+    def test_indirect_eval_window(self):
+        result = self._reflect("window.eval('var x = 1;');")
+        self.assertIn('var x = 1;', result)
+        self.assertNotIn('eval', result)
+
+    def test_indirect_eval_globalthis(self):
+        result = self._reflect("globalThis.eval('var x = 1;');")
+        self.assertIn('var x = 1;', result)
+
+    def test_settimeout_string(self):
+        result = self._reflect("setTimeout('alert(1)', 0);")
+        self.assertIn('alert(1)', result)
+        self.assertNotIn('setTimeout', result)
+
+    def test_setinterval_string(self):
+        result = self._reflect("setInterval('doStuff()', 1000);")
+        self.assertIn('doStuff()', result)
+        self.assertNotIn('setInterval', result)
+
+    def test_settimeout_non_string_not_inlined(self):
+        result = self._reflect('setTimeout(fn, 0);')
+        self.assertIn('setTimeout', result)
+
+    def test_new_function_body_invoked(self):
+        result = self._reflect("new Function('return 42')();")
+        self.assertIn('return 42', result)
+        self.assertNotIn('Function', result)
+
+    def test_function_constructor_body_invoked(self):
+        result = self._reflect("Function('return 42')();")
+        self.assertIn('return 42', result)
+        self.assertNotIn('Function', result)
+
+    def test_constructor_chain_string(self):
+        result = self._reflect("''.constructor.constructor('return 1')();")
+        self.assertIn('return 1', result)
+        self.assertNotIn('constructor', result)
+
+    def test_constructor_chain_array(self):
+        result = self._reflect("[].constructor.constructor('return 1')();")
+        self.assertIn('return 1', result)
+        self.assertNotIn('constructor', result)
+
+    def test_eval_expression_position_single_expr(self):
+        result = self._reflect("var x = eval(\"'hello'\");")
+        self.assertIn("'hello'", result)
+        self.assertNotIn('eval', result)
+
+    def test_eval_multi_statement_expression_position_not_inlined(self):
+        result = self._reflect("var x = eval('a = 1; b = 2;');")
+        self.assertIn('eval', result)
+
+    def test_new_function_return_expression_position(self):
+        result = self._reflect("var x = new Function('return 42')();")
+        self.assertIn('x = 42', result)
+        self.assertNotIn('Function', result)
+
+    def test_pack_simple_getter(self):
+        source = inspect.cleandoc(
+            """
+            Function("o", "o['a'].log('hello');")(
+            { get 'a'() { return console; } });
+            """
+        )
+        result = self._reflect(source)
+        self.assertIn('console', result)
+        self.assertIn("log('hello')", result)
+        self.assertNotIn('Function', result)
+
+    def test_pack_getter_and_setter(self):
+        source = inspect.cleandoc(
+            """
+            Function("o", "o['a'].log('hello'); o['b'] = 1;")(
+            { get 'a'() { return console; },
+              set 'b'(v) { return b = v; },
+              get 'b'() { return b; } });
+            """
+        )
+        result = self._reflect(source)
+        self.assertIn('console', result)
+        self.assertIn('b = 1', result)
+        self.assertNotIn('Function', result)
+
+    def test_pack_typeof_getter(self):
+        source = inspect.cleandoc(
+            """
+            Function("o", "o['t'];")(
+            { get 't'() { return typeof myVar; } });
+            """
+        )
+        result = self._reflect(source)
+        self.assertIn('typeof myVar', result)
+        self.assertNotIn('Function', result)
+
+    def test_pack_proxy_mapping_failure_not_inlined(self):
+        source = "Function('o', 'o.x;')({ get 'a'() { return something(); } });"
+        result = self._reflect(source)
+        self.assertIn('Function', result)
+
+    def test_eval_multi_statement_inlined_in_statement_position(self):
+        result = self._reflect("eval('var a = 1; var b = 2;');")
+        self.assertIn('var a = 1;', result)
+        self.assertIn('var b = 2;', result)
+        self.assertNotIn('eval', result)
+
+    def test_pack_full_pipeline(self):
+        source = inspect.cleandoc(
+            """
+            Function("o", "o['a'].log('hello');")(
+            { get 'a'() { return console; } });
+            """
+        )
+        result = self._deobfuscate(source)
+        self.assertIn('console', result)
+        self.assertIn("log('hello')", result)
