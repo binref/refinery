@@ -1,8 +1,6 @@
 """
 BCJ2 decoder for 7z archives.
 
-Ported from 7-Zip's Bcj2.c (Igor Pavlov, public domain).
-
 BCJ2 is a complex x86 branch filter with 4 input streams and 1 output stream.
 It uses a range coder to predict whether x86 CALL/JMP instructions should
 have their relative addresses converted to absolute.

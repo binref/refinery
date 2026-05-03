@@ -4,8 +4,6 @@ Parser for VBA macro extraction from OLE and OOXML documents.
 Implements MS-OVBA decompression and VBA project/dir stream parsing to extract VBA source code from
 Word, Excel, PowerPoint, and related formats. Supports OLE, OpenXML (ZIP), Word 2003 XML, Flat OPC,
 and MHTML containers.
-
-Ported from oletools/olevba.py (BSD-licensed) by Philippe Lagadec.
 """
 from __future__ import annotations
 

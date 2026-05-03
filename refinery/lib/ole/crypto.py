@@ -3,8 +3,6 @@ Decryption support for encrypted Microsoft Office documents.
 
 Supports ECMA-376 Agile (OOXML), ECMA-376 Standard, RC4, RC4 CryptoAPI, and XOR obfuscation
 methods across DOC, XLS, PPT, and OOXML container formats.
-
-Ported from the msoffcrypto-tool project; uses Cryptodome instead of the cryptography package.
 """
 from __future__ import annotations
 
