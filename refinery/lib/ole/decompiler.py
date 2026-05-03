@@ -1,6 +1,7 @@
 """
 VBA p-code decompiler that converts disassembled p-code back to VBA source code. This module
 is based on pcode2code by Nicolas Zilio (@Big5_sec), originally available at:
+
 https://github.com/Big5-sec/pcode2code
 
 Copyright (C) 2019 Nicolas Zilio
