@@ -323,6 +323,7 @@ from refinery.units.meta.xfcc import xfcc as xfcc
 from refinery.units.misc.autoxor import autoxor as autoxor
 from refinery.units.misc.datefix import datefix as datefix
 from refinery.units.misc.drp import drp as drp
+from refinery.units.misc.meow import meow as meow
 from refinery.units.misc.nop import nop as nop
 from refinery.units.misc.run import run as run
 from refinery.units.misc.unq import unq as unq

@@ -322,6 +322,7 @@ UNITS = {
     'autoxor'                                    : 'refinery.units.misc.autoxor',
     'datefix'                                    : 'refinery.units.misc.datefix',
     'drp'                                        : 'refinery.units.misc.drp',
+    'meow'                                       : 'refinery.units.misc.meow',
     'nop'                                        : 'refinery.units.misc.nop',
     'run'                                        : 'refinery.units.misc.run',
     'unq'                                        : 'refinery.units.misc.unq',
