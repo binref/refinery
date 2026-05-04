@@ -17,6 +17,11 @@ class RegexTextBase(TestBase):
             self.assertListEqual([string], [match[0] for match in re.finditer(conv(pattern), string)],
                 msg=F'The string "{string}" not recovered by pattern {pattern.name} as {conv.__name__}')
 
+    def assertNoMatch(self, pattern: indicators | formats, _string: str):
+        for conv, string in ((str, _string), (bytes, _string.encode('latin1'))):
+            self.assertIsNone(re.fullmatch(conv(pattern), string),
+                msg=F'The string "{string}" should not match the pattern {pattern.name} as {conv.__name__}')
+
 
 class TestIndicators(RegexTextBase):
 
@@ -42,6 +47,26 @@ class TestIndicators(RegexTextBase):
         self.assertMatches(indicators.date, '2030-01-01T09:00:00')
         self.assertMatches(indicators.date, '2020-01-01T12:07:00')
         self.assertMatches(indicators.date, 'Wed Mar 31 00:00:00 UTC 2027')
+
+    def test_date_iso8601_utc_z(self):
+        self.assertMatches(indicators.date, '2024-01-01T12:00:00Z')
+
+    def test_date_iso8601_fractional(self):
+        self.assertMatches(indicators.date, '2024-01-01T12:00:00.123456')
+
+    def test_date_ordinal_10th_through_19th(self):
+        for d in ('10th', '11th', '12th', '13th', '14th', '15th', '16th', '17th', '18th', '19th'):
+            self.assertMatches(indicators.date, F'Mon {d} Jan, 2024')
+
+    def test_date_ordinal_no_32nd(self):
+        self.assertNoMatch(indicators.date, 'Mon 32nd Jan, 2024')
+
+    def test_guid_balanced_braces(self):
+        guid = '12345678-1234-1234-1234-123456789ABC'
+        self.assertMatches(indicators.guid, guid)
+        self.assertMatches(indicators.guid, '{' + guid + '}')
+        self.assertNoMatch(indicators.guid, '{' + guid)
+        self.assertNoMatch(indicators.guid, guid + '}')
 
 
 class TestFormats(RegexTextBase):
@@ -83,3 +108,14 @@ class TestFormats(RegexTextBase):
     def test_two_part_path(self):
         self.assertMatches(indicators.path,
             R'/root/something_something_in_the_root.txt')
+
+    def test_base32_lowercase(self):
+        self.assertMatches(formats.base32, 'mfra')
+
+    def test_base32_uppercase(self):
+        self.assertMatches(formats.base32, 'MFRA')
+
+    def test_vbaint_octal_requires_digit(self):
+        self.assertNoMatch(formats.vbaint, '&O')
+        self.assertMatches(formats.vbaint, '&O0')
+        self.assertMatches(formats.vbaint, '&O777')

@@ -371,7 +371,7 @@ _pattern_date_elements = {
         '[nN]ov(?:ember)?',
         '[dD]ec(?:ember)?',
     ])),
-    'D': '(?:[23]?(?:1st|2nd|3rd|[4-9]th)|20th|30th)',
+    'D': '(?:(?:1[0-9]|20|2[4-9]|30|[4-9])th|[23]?1st|2?2nd|2?3rd)',
     'd': '(?:0?[1-9]|[12][0-9]|3[01])',
     'm': '(?:0[1-9]|1[012])',
     'I': '(?:0[1-9]|1[0-2])',
@@ -392,7 +392,7 @@ _pattern_date_elements['T'] = _pattern_time
 _pattern_date_list = [
     R'{A}{c}(?:{d}|{D}){gap}{B}{c}{Y}(?:\s{T})?',
     R'{B}\s(?:{d}|{D}){c}{Y}(?:\s{T})?',
-    R'{Y}[-:]{m}[-:]{d}(?:[T\x20]{H}:{M}(?::{S})?(?:[Z.][0-9]{{6}})?{z}?)',
+    R'{Y}[-:]{m}[-:]{d}(?:[T\x20]{H}:{M}(?::{S})?(?:\.[0-9]{{1,6}})?(?:Z|{z})?)',
     R'{m}/{d}/{Y}(?:{c}{T})?',
     R'{A}{c}{B}{c}(?:{d}|{D}){c}{T}(?:\s\(?UTC\)?)?\s{Y}',
 ]
@@ -433,7 +433,7 @@ def _sized_pattern_cmdstr(lower: int = 0, upper: int = 0):
 
 _pattern_cmdstr = _sized_pattern_cmdstr()
 _pattern_ps1str = R'''(?:(?:@"\s*?[\r\n].*?[\r\n]"@)|(?:@'\s*?[\r\n].*?[\r\n]'@)|(?:"(?:`.|""|[^"\n])*")|(?:'(?:''|[^'\n])*'))'''
-_pattern_vbaint = R'(?:&[bB][01]+|&[hH][0-9a-fA-F]+|&[oO][0-7]*|[-+]?(?:[1-9][0-9]*|0))(?=\b|$)'
+_pattern_vbaint = R'(?:&[bB][01]+|&[hH][0-9a-fA-F]+|&[oO][0-7]+|[-+]?(?:[1-9][0-9]*|0))(?=\b|$)'
 _pattern_string = _sized_pattern_string()
 
 _pattern_vbastr_literals = R'"(?:""|[^"])*"'
@@ -461,8 +461,8 @@ _pattern_json = (
 _pattern_wshenc = R'''#@~\^[ -~]{6}==(?:.*?)[ -~]{6}==\^#~@'''
 
 _part_url_credentials = (
-    R'(?:([^"\'\s\x00-\x20\x7E-\xFF]{1,256})?'
-    R'(?::([^"\'\s\x00-\x20\x7E-\xFF]{0,256})?)?@)?'
+    R'(?:([^"\'\s\x00-\x20\x7F-\xFF]{1,256})?'
+    R'(?::([^"\'\s\x00-\x20\x7F-\xFF]{0,256})?)?@)?'
 )
 _prefix_serrated_url = R'(([a-zA-Z]{2,20}:)?\/\/)' + _part_url_credentials
 _prefix_defanged_url = R'(([a-zA-Z]{2,20}(?:\[:\]|:))?\/\/)' + _part_url_credentials
@@ -472,7 +472,10 @@ _pattern_serrated_url = F'{_prefix_serrated_url}({_pattern_serrated_host}){_suff
 _pattern_defanged_url = F'{_prefix_defanged_url}({_pattern_defanged_host}){_suffix_combined_url}'
 
 _pattern_email = fR'(?:[a-zA-Z0-9_\.\+\-]{{1,256}}?)@(?:{_pattern_serrated_domain})'
-_pattern_guid = R'(?:\b|\{)[0-9A-Fa-f]{8}(?:\-[0-9A-Fa-f]{4}){3}\-[0-9A-Fa-f]{12}(?:\}|\b)'
+_pattern_guid = (
+    R'(?:\{[0-9A-Fa-f]{8}(?:\-[0-9A-Fa-f]{4}){3}\-[0-9A-Fa-f]{12}\}'
+    R'|\b[0-9A-Fa-f]{8}(?:\-[0-9A-Fa-f]{4}){3}\-[0-9A-Fa-f]{12}\b)'
+)
 
 _pattern_pathpart_nospace = R'[-\w+,.;@\]\[{}^`~#=]{1,256}'  # R'[^/\\:"<>|\s\x7E-\xFF\x00-\x1F\xAD]+'
 _pattern_win_path_element = R'(?:{n} ){{0,4}}{n}'.format(n=_pattern_pathpart_nospace)
@@ -530,7 +533,7 @@ _pattern_hexline = make_hexline_pattern(1)
 
 _pattern_pem = (
     R'-----BEGIN(?:\s[A-Z0-9]+)+-----{n}'
-    R'(?:{b}{{40,100}}{n})*{b}{{1,100}}={{0,3}}{n}'
+    R'(?:{b}{{40,100}}{n})*{b}{{1,100}}={{0,2}}{n}'
     R'-----END(?:\s[A-Z0-9]+)+-----'
 ).format(n=R'(?:\r\n|\n\r|\n)', b=R'[0-9a-zA-Z\+\/]')
 
@@ -587,13 +590,13 @@ class formats(_PatternEnum):
         description="encoded Windows Scripting Host Scripts (JS/VBS)")
     alnum = alphabet(R'[a-zA-Z0-9]',
         description="alphanumeric characters")
-    base32 = pattern('[A-Z2-7]+|[a-z2-7+]',
+    base32 = pattern('[A-Z2-7]+|[a-z2-7]+',
         description="Base32 encoded strings")
     base58 = alphabet(R'(?:[1-9A-HJ-NP-Za-km-z]',
         description="Base58 encoded strings")
     base62 = alphabet(R'(?:[0-9A-Za-z]',
         description="Base62 encoded strings")
-    base64 = alphabet(R'(?:[0-9a-zA-Z\+/]{4})', suffix=R'(?:(?:[0-9a-zA-Z\+/]{2,3})={0,3})?', suffix_max=6, token_size=4,
+    base64 = alphabet(R'(?:[0-9a-zA-Z\+/]{4})', suffix=R'(?:(?:[0-9a-zA-Z\+/]{2,3})={0,2})?', suffix_max=6, token_size=4,
         description="Base64 encoded strings")
     base85 = alphabet(R'[-!+*()#-&^-~0-9;-Z]',
         description="Base85 encoded strings")
