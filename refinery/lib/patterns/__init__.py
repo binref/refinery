@@ -248,7 +248,7 @@ class _PatternEnum(enum.Enum):
         return self.value.description
 
     @classmethod
-    def make_table_with_shorts(cls, name: str):
+    def make_table_with_shorts(cls, name: str, indent: int = 4):
         alias = {p.name: name for name, p in cls.__members__.items() if name != p.name}
         for p in cls:
             if p.name.endswith('array'):
@@ -258,13 +258,13 @@ class _PatternEnum(enum.Enum):
             (name.upper(), 'SHORT', 'DESCRIPTION'), *(
                 (p.name, alias.get(p.name, ''), p.description) for p in cls)]
         return '\n'.join((
-            F'{"":>4}{n:>{width}} {s:<5} {d}' for n, s, d in table))
+            F'{"":>{indent}}{n:>{width}} {s:<5} {d}' for n, s, d in table))
 
     @classmethod
-    def make_table(cls, name: str):
+    def make_table(cls, name: str, indent: int = 4):
         width = max(len(p.name) for p in cls) + 4
         table = [(name.upper(), 'DESCRIPTION'), *((p.name, p.description) for p in cls)]
-        return '\n'.join((F'{"":>4}{n:>{width}} {d}' for n, d in table))
+        return '\n'.join((F'{"":>{indent}}{n:>{width}} {d}' for n, d in table))
 
 
 _TLDS = R'(?i:{possible_tld})(?!(?:{dealbreakers}))'.format(

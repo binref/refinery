@@ -5,7 +5,7 @@ from refinery.lib.types import Param
 from refinery.units.meta import Arg, ConditionalUnit
 
 _PATTERNS = {
-    p.name: p.value for d in (formats, indicators) for p in d
+    name: p.value for d in (formats, indicators) for name, p in d.__members__.items()
 }
 
 
@@ -13,7 +13,13 @@ class iffp(ConditionalUnit, docs='{0}{p}{1}'):
     """
     Filter incoming chunks depending on whether it matches any of a given set of patterns.
 
-    The available patterns are the following: {}.
+    The available format patterns are:
+
+    {0}
+
+    The available indicator patterns are:
+
+    {1}
     """
 
     def __init__(
@@ -38,4 +44,9 @@ class iffp(ConditionalUnit, docs='{0}{p}{1}'):
 
 
 if __doc := iffp.__doc__:
-    iffp.__doc__ = __doc.format(", ".join(_PATTERNS))
+    _f = formats
+    _i = indicators
+    iffp.__doc__ = __doc.format(
+        _f.make_table('PATTERN', 0),
+        _i.make_table('PATTERN', 0),
+    )
