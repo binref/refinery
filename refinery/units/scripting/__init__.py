@@ -48,20 +48,22 @@ class IterativeDeobfuscator(Unit, abstract=True):
             sys.setrecursionlimit(old_limit)
 
     def _process(self, data: Chunk) -> buf:
-        def _result():
-            return codecs.encode(
-                self.synthesize(ast), self.codec, errors='surrogateescape')
-
         self.log_info('parsing input data')
         view = memoryview(data)
 
         if format := guess_text_encoding(data):
             codec = format.codec
             view = view[format.bom:]
+            errors = 'surrogatepass' if format.step > 1 else 'surrogateescape'
         else:
             codec = self.codec
+            errors = 'surrogateescape'
 
-        txt = codecs.decode(view, codec, errors='surrogateescape')
+        def _result():
+            return codecs.encode(
+                self.synthesize(ast), self.codec, errors=errors)
+
+        txt = codecs.decode(view, codec, errors=errors)
         ast = self.parse(txt)
 
         for k in range(self.args.timeout):
