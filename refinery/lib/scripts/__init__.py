@@ -211,27 +211,25 @@ class Transformer(Visitor):
                         self.mark_changed()
             elif kind == Kind.ChildList:
                 items = getattr(node, field_name)
-                new_list = []
-                changed = False
-                for item in items:
+                new_list = None
+                for idx, item in enumerate(items):
                     if isinstance(item, Node):
                         replacement = self.visit(item)
                         if replacement is not None:
+                            if new_list is None:
+                                new_list = list(items[:idx])
                             replacement.parent = node
                             new_list.append(replacement)
-                            changed = True
-                        else:
-                            new_list.append(item)
-                    else:
+                            continue
+                    if new_list is not None:
                         new_list.append(item)
-                if changed:
+                if new_list is not None:
                     setattr(node, field_name, new_list)
                     self.mark_changed()
             elif kind == Kind.TupleList:
                 items = getattr(node, field_name)
-                new_list = []
-                changed = False
-                for item in items:
+                new_list = None
+                for idx, item in enumerate(items):
                     new_tuple = []
                     tuple_changed = False
                     for elem in item:
@@ -245,9 +243,13 @@ class Transformer(Visitor):
                                 new_tuple.append(elem)
                         else:
                             new_tuple.append(elem)
-                    new_list.append(tuple(new_tuple) if tuple_changed else item)
-                    changed = changed or tuple_changed
-                if changed:
+                    if tuple_changed:
+                        if new_list is None:
+                            new_list = list(items[:idx])
+                        new_list.append(tuple(new_tuple))
+                    elif new_list is not None:
+                        new_list.append(item)
+                if new_list is not None:
                     setattr(node, field_name, new_list)
                     self.mark_changed()
         return None

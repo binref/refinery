@@ -172,8 +172,13 @@ class VbaParser:
                 return 'gosub'
         return ''
 
-    def _peek_after_current(self) -> str:
-        return self._source[self._current.offset + len(self._current.value):].lstrip(' \t')
+    def _peek_after_current(self, limit: int) -> str:
+        pos = self._current.offset + len(self._current.value)
+        src = self._source
+        length = len(src)
+        while pos < length and src[pos] in ' \t':
+            pos += 1
+        return src[pos:pos + limit]
 
     def _comma_list(self, parse_element) -> list:
         items = [parse_element()]
@@ -592,7 +597,7 @@ class VbaParser:
             return VbaLabelStatement(label=label_val, offset=offset)
 
         if kind == VbaTokenKind.IDENTIFIER and not kind.is_keyword:
-            next_peek = self._peek_after_current()
+            next_peek = self._peek_after_current(2)
             if next_peek.startswith(':') and not next_peek.startswith(':='):
                 label_val = self._current.value
                 self._advance()
@@ -653,7 +658,7 @@ class VbaParser:
             return self._parse_let_statement()
 
         if self._at_keyword('go'):
-            after = self._peek_after_current()
+            after = self._peek_after_current(4)
             word = after.split()[0].lower() if after.split() else ''
             if word in ('to', 'sub'):
                 branch = self._eat_go_keyword()
@@ -670,7 +675,7 @@ class VbaParser:
             return self._skip_to_eos()
 
         if self._at_keyword('line'):
-            peek = self._peek_after_current()
+            peek = self._peek_after_current(5)
             if peek.lower().startswith('input'):
                 return self._skip_to_eos()
 
@@ -943,7 +948,7 @@ class VbaParser:
             if self._at(VbaTokenKind.CASE):
                 return True
             if self._at(VbaTokenKind.END):
-                after = self._peek_after_current()
+                after = self._peek_after_current(7)
                 if after[:6].lower() == 'select' and not after[6:7].isalnum():
                     return True
             return self._at_keyword('endselect')

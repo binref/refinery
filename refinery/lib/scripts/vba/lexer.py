@@ -58,16 +58,27 @@ class VbaLexer:
         length = len(src)
         self.pos += 1
         while self.pos < length:
-            c = src[self.pos]
-            if c == terminator:
-                self.pos += 1
+            next_term = src.find(terminator, self.pos)
+            next_cr = src.find('\r', self.pos)
+            next_lf = src.find('\n', self.pos)
+            stop = length
+            if next_term >= 0 and next_term < stop:
+                stop = next_term
+            if next_cr >= 0 and next_cr < stop:
+                stop = next_cr
+            if next_lf >= 0 and next_lf < stop:
+                stop = next_lf
+            if stop >= length:
+                self.pos = length
+                break
+            if src[stop] == terminator:
+                self.pos = stop + 1
                 if allow_doubling and self.pos < length and src[self.pos] == terminator:
                     self.pos += 1
                     continue
                 return src[start:self.pos]
-            if c in '\r\n':
-                return src[start:self.pos]
-            self.pos += 1
+            self.pos = stop
+            return src[start:self.pos]
         return src[start:self.pos]
 
     def _read_number(self) -> VbaToken:
