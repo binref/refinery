@@ -221,6 +221,41 @@ class TestJsParserExpressions(TestBase):
         self.assertIsInstance(expr.callee, JsIdentifier)
         self.assertEqual(len(expr.arguments), 1)
 
+    def test_new_member_expression(self):
+        expr = self._parse_expr('new Foo.Bar()')
+        self.assertIsInstance(expr, JsNewExpression)
+        self.assertIsInstance(expr.callee, JsMemberExpression)
+        self.assertIsInstance(expr.callee.object, JsIdentifier)
+        self.assertEqual(expr.callee.object.name, 'Foo')
+        self.assertIsInstance(expr.callee.property, JsIdentifier)
+        self.assertEqual(expr.callee.property.name, 'Bar')
+
+    def test_new_member_chain(self):
+        expr = self._parse_expr('new A.B.C(x)')
+        self.assertIsInstance(expr, JsNewExpression)
+        self.assertIsInstance(expr.callee, JsMemberExpression)
+        self.assertEqual(expr.callee.property.name, 'C')
+        inner = expr.callee.object
+        self.assertIsInstance(inner, JsMemberExpression)
+        self.assertEqual(inner.object.name, 'A')
+        self.assertEqual(inner.property.name, 'B')
+        self.assertEqual(len(expr.arguments), 1)
+
+    def test_new_computed_member(self):
+        expr = self._parse_expr('new Foo[x]()')
+        self.assertIsInstance(expr, JsNewExpression)
+        self.assertIsInstance(expr.callee, JsMemberExpression)
+        self.assertTrue(expr.callee.computed)
+        self.assertEqual(expr.callee.object.name, 'Foo')
+
+    def test_new_no_args_with_member(self):
+        expr = self._parse_expr('new Foo.Bar')
+        self.assertIsInstance(expr, JsNewExpression)
+        self.assertIsInstance(expr.callee, JsMemberExpression)
+        self.assertEqual(expr.callee.object.name, 'Foo')
+        self.assertEqual(expr.callee.property.name, 'Bar')
+        self.assertEqual(len(expr.arguments), 0)
+
     def test_array_literal(self):
         expr = self._parse_expr('[1, 2, 3]')
         self.assertIsInstance(expr, JsArrayExpression)

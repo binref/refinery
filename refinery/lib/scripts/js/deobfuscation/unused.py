@@ -32,6 +32,7 @@ from refinery.lib.scripts.js.model import (
     JsFunctionDeclaration,
     JsFunctionExpression,
     JsIdentifier,
+    JsMemberExpression,
     JsScript,
     JsVariableDeclaration,
     JsVariableDeclarator,
@@ -42,11 +43,17 @@ from refinery.lib.scripts.js.model import (
 def _reachable_functions(
     body: list[Statement],
     functions: dict[str, JsFunctionDeclaration],
-) -> set[str]:
+) -> tuple[set[str], dict[str, list[Statement]]]:
     """
     Compute the set of function names transitively reachable from non-function statements in
     *body*. A function is reachable if its name appears as any identifier in a reachable statement
     or in the body of another reachable function.
+
+    Functions that are only referenced as the object of property-write statements
+    (`funcName.prop = ...`) where neither the function nor its properties are read anywhere else
+    are considered unreachable. Returns a `(set, dict)` pair: the set of reachable function
+    names and a dict mapping each write-only function name to the statements that are its only
+    references.
     """
     referenced: set[str] = set()
     for stmt in body:
@@ -62,7 +69,82 @@ def _reachable_functions(
             if ident_name in functions and ident_name not in reachable:
                 reachable.add(ident_name)
                 frontier.append(ident_name)
-    return reachable
+    write_only_stmts: dict[str, list[Statement]] = {}
+    for name in list(reachable):
+        if name not in functions:
+            continue
+        stmts = _classify_property_write_only(body, name)
+        if stmts is not None:
+            reachable.discard(name)
+            write_only_stmts[name] = stmts
+    return reachable, write_only_stmts
+
+
+def _classify_property_write_only(
+    body: list[Statement], func_name: str,
+) -> list[Statement] | None:
+    """
+    Check if ALL non-function-declaration references to `func_name` in `body` are property-write
+    statements (`funcName.prop = ...`) with no reads of the function or its properties elsewhere.
+    Returns the list of write-only statements if so, or `None` if the function has live usage.
+    """
+    write_stmts: list[Statement] = []
+    for stmt in body:
+        if isinstance(stmt, JsFunctionDeclaration):
+            continue
+        names_in_stmt = collect_identifier_names(stmt)
+        if func_name not in names_in_stmt:
+            continue
+        if not _is_pure_property_write(stmt, func_name):
+            return None
+        write_stmts.append(stmt)
+    if not write_stmts:
+        return None
+    for stmt in body:
+        if isinstance(stmt, JsFunctionDeclaration):
+            continue
+        if stmt in write_stmts:
+            continue
+        if _has_property_read(stmt, func_name):
+            return None
+    return write_stmts
+
+
+def _is_pure_property_write(stmt: Statement, func_name: str) -> bool:
+    """
+    Return True if `stmt` is an expression statement of the form `funcName.prop = expr` where
+    `func_name` does not appear in the RHS.
+    """
+    if not isinstance(stmt, JsExpressionStatement):
+        return False
+    expr = stmt.expression
+    if not isinstance(expr, JsAssignmentExpression) or expr.operator != '=':
+        return False
+    lhs = expr.left
+    if not isinstance(lhs, JsMemberExpression):
+        return False
+    if not isinstance(lhs.object, JsIdentifier) or lhs.object.name != func_name:
+        return False
+    if expr.right is not None and func_name in collect_identifier_names(expr.right):
+        return False
+    return True
+
+
+def _has_property_read(stmt: Statement, func_name: str) -> bool:
+    """
+    Return True if `stmt` contains a member-expression read on `func_name` (e.g. `funcName.prop`
+    used in a non-assignment-target context).
+    """
+    for node in stmt.walk():
+        if not isinstance(node, JsMemberExpression):
+            continue
+        if not isinstance(node.object, JsIdentifier) or node.object.name != func_name:
+            continue
+        parent = node.parent
+        if isinstance(parent, JsAssignmentExpression) and parent.left is node:
+            continue
+        return True
+    return False
 
 
 class JsUnusedCodeRemoval(BodyProcessingTransformer):
@@ -73,8 +155,8 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
 
     def _process_body(self, parent: Node, body: list[Statement]):
         removed_functions = self._remove_dead_functions(body)
-        dead_variables = self._remove_dead_variables(parent, body, removed_functions)
-        self._remove_dead_expressions(body, removed_functions | dead_variables)
+        dead_variables, preserved = self._remove_dead_variables(parent, body, removed_functions)
+        self._remove_dead_expressions(body, removed_functions | dead_variables, preserved)
 
     def _remove_dead_functions(self, body: list[Statement]) -> set[str]:
         functions: dict[str, JsFunctionDeclaration] = {}
@@ -83,7 +165,7 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
                 functions[stmt.id.name] = stmt
         if not functions:
             return set()
-        reachable = _reachable_functions(body, functions)
+        reachable, write_only_stmts = _reachable_functions(body, functions)
         unreachable = set(functions.keys()) - reachable
         if not unreachable:
             return set()
@@ -92,23 +174,26 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
             return set()
         for name in unreachable:
             _remove_from_parent(functions[name])
+            for stmt in write_only_stmts.get(name, ()):
+                _remove_from_parent(stmt)
         self.mark_changed()
         return unreachable
 
     def _remove_dead_variables(
         self, parent: Node, body: list[Statement], defunct: set[str],
-    ) -> set[str]:
+    ) -> tuple[set[str], set[JsExpressionStatement]]:
         """
         Remove assignments to variables that are never read in the outer scope. Handles both
         simple dead assignments and transitive chains where one dead variable is only read by
-        another dead variable's RHS. Returns the set of dead variable names.
+        another dead variable's RHS. Returns the set of dead variable names and the set of
+        expression statements created by preserving side-effectful RHS expressions.
         """
         local_names = self._collect_local_names(parent, body)
         write_stmts: dict[str, list[JsExpressionStatement]] = {}
-        for stmt in body:
-            if not isinstance(stmt, JsExpressionStatement):
+        for node in walk_scope(parent):
+            if not isinstance(node, JsExpressionStatement):
                 continue
-            expr = stmt.expression
+            expr = node.expression
             if not isinstance(expr, JsAssignmentExpression):
                 continue
             if expr.operator != '=' or not isinstance(expr.left, JsIdentifier):
@@ -116,9 +201,9 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
             name = expr.left.name
             if local_names is not None and name not in local_names:
                 continue
-            write_stmts.setdefault(name, []).append(stmt)
+            write_stmts.setdefault(name, []).append(node)
         if not write_stmts:
-            return set()
+            return set(), set()
         has_free_read: set[str] = set()
         read_in_assign: dict[str, set[str]] = {}
         for node in walk_scope(parent):
@@ -150,8 +235,9 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
                     dead.add(name)
                     changed = True
         if not dead:
-            return set()
+            return set(), set()
         all_defunct = defunct | dead
+        preserved: set[JsExpressionStatement] = set()
         for name in dead:
             for stmt in write_stmts[name]:
                 expr = stmt.expression
@@ -163,15 +249,64 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
                 else:
                     stmt.expression = expr.right
                     expr.right.parent = stmt
+                    preserved.add(stmt)
         self._remove_empty_declarators(parent, body, dead)
         self.mark_changed()
-        return dead
+        return dead, preserved
 
-    def _remove_dead_expressions(self, body: list[Statement], defunct: set[str]):
+    def _remove_dead_expressions(
+        self, body: list[Statement], defunct: set[str], preserved: set[JsExpressionStatement],
+    ):
         """
         Remove standalone expression statements that are side-effect-free given the set of
-        known-removed names (removed functions and dead variables from this pass).
+        known-removed names. Also iteratively discovers orphan functions: functions whose only
+        live references are from preserved RHS statements (created by dead variable removal)
+        that would be side-effect-free if the function were defunct.
         """
+        functions: dict[str, JsFunctionDeclaration] = {}
+        for stmt in body:
+            if isinstance(stmt, JsFunctionDeclaration) and stmt.id is not None:
+                if stmt.id.name not in defunct:
+                    functions[stmt.id.name] = stmt
+        if functions and preserved:
+            stmt_names: dict[int, set[str]] = {
+                id(stmt): collect_identifier_names(stmt)
+                for stmt in body
+                if not isinstance(stmt, JsFunctionDeclaration)
+            }
+            extended = True
+            while extended:
+                extended = False
+                for name, func in list(functions.items()):
+                    if name in defunct:
+                        continue
+                    orphan = True
+                    has_reference = False
+                    for stmt in body:
+                        if stmt is func:
+                            continue
+                        if isinstance(stmt, JsFunctionDeclaration):
+                            continue
+                        names_in_stmt = stmt_names.get(id(stmt), set())
+                        if name not in names_in_stmt:
+                            continue
+                        has_reference = True
+                        if stmt not in preserved:
+                            orphan = False
+                            break
+                        if not isinstance(stmt, JsExpressionStatement):
+                            orphan = False
+                            break
+                        if (
+                            stmt.expression is None
+                            or isinstance(stmt.expression, JsAssignmentExpression)
+                            or not is_side_effect_free(stmt.expression, defunct | {name})
+                        ):
+                            orphan = False
+                            break
+                    if orphan and has_reference:
+                        defunct.add(name)
+                        extended = True
         if not defunct:
             return
         for stmt in list(body):
@@ -184,16 +319,22 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
             if is_side_effect_free(stmt.expression, defunct):
                 _remove_from_parent(stmt)
                 self.mark_changed()
+        for name in defunct:
+            if name in functions:
+                _remove_from_parent(functions[name])
+                self.mark_changed()
 
     def _remove_empty_declarators(
         self, parent: Node, body: list[Statement], dead_names: set[str],
     ):
         """
         Remove `var X;` declarators (no initializer) for dead variable names or names that have
-        no references in the outer scope. Variables used as `for-in` or `for-of` iteration targets
-        are always considered referenced.
+        no references in the outer scope. Also removes initialized declarators whose initializer
+        is side-effect-free and whose name has no reads anywhere in the tree. Variables used as
+        `for-in` or `for-of` iteration targets are always considered referenced.
         """
         referenced: set[str] | None = None
+        referenced_deep: set[str] | None = None
         for stmt in list(body):
             if not isinstance(stmt, JsVariableDeclaration):
                 continue
@@ -202,39 +343,51 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
                     continue
                 if not isinstance(decl.id, JsIdentifier):
                     continue
-                if decl.init is not None:
-                    continue
                 name = decl.id.name
-                if name in dead_names:
-                    remove_declarator(decl)
-                    continue
-                if referenced is None:
-                    referenced = set()
-                    for node in walk_scope(parent):
-                        if isinstance(node, JsIdentifier) and not is_binding_site(node):
-                            referenced.add(node.name)
-                        if (
-                            isinstance(node, (JsForInStatement, JsForOfStatement))
-                            and isinstance(node.left, JsIdentifier)
-                        ):
-                            referenced.add(node.left.name)
-                if name not in referenced:
-                    remove_declarator(decl)
+                if decl.init is None:
+                    if name in dead_names:
+                        remove_declarator(decl)
+                        continue
+                    if referenced is None:
+                        referenced = set()
+                        for node in walk_scope(parent):
+                            if isinstance(node, JsIdentifier) and not is_binding_site(node):
+                                referenced.add(node.name)
+                            if (
+                                isinstance(node, (JsForInStatement, JsForOfStatement))
+                                and isinstance(node.left, JsIdentifier)
+                            ):
+                                referenced.add(node.left.name)
+                    if name not in referenced:
+                        remove_declarator(decl)
+                else:
+                    if referenced_deep is None:
+                        referenced_deep = set()
+                        for node in parent.walk():
+                            if isinstance(node, JsIdentifier) and not is_binding_site(node):
+                                referenced_deep.add(node.name)
+                    if name not in referenced_deep and is_side_effect_free(decl.init):
+                        remove_declarator(decl)
+                        self.mark_changed()
 
     @staticmethod
     def _collect_local_names(parent: Node, body: list[Statement]) -> set[str] | None:
         """
         Collect names declared locally in this scope. Returns `None` for `JsScript` (top level)
         where all variables are local. For function bodies, returns parameter names, `var`, `let`,
-        and `const` declarations.
+        and `const` declarations, plus undeclared assignment targets that don't shadow any name in
+        enclosing scopes.
         """
         if isinstance(parent, JsScript):
             return None
         names: set[str] = set()
         func_parent = parent.parent
-        if isinstance(func_parent, (
-            JsFunctionDeclaration, JsFunctionExpression, JsArrowFunctionExpression,
-        )):
+        is_function_body = isinstance(func_parent, (
+            JsFunctionDeclaration,
+            JsFunctionExpression,
+            JsArrowFunctionExpression,
+        ))
+        if is_function_body:
             for p in func_parent.params:
                 if isinstance(p, JsIdentifier):
                     names.add(p.name)
@@ -248,7 +401,40 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
                     for decl in node.declarations:
                         if isinstance(decl, JsVariableDeclarator) and isinstance(decl.id, JsIdentifier):
                             names.add(decl.id.name)
+        if is_function_body:
+            enclosing = JsUnusedCodeRemoval._gather_enclosing_declarations(func_parent)
+            for node in walk_scope(parent):
+                if (
+                    isinstance(node, JsExpressionStatement)
+                    and isinstance(node.expression, JsAssignmentExpression)
+                    and node.expression.operator == '='
+                    and isinstance(node.expression.left, JsIdentifier)
+                ):
+                    name = node.expression.left.name
+                    if name not in names and name not in enclosing:
+                        names.add(name)
         return names
+
+    @staticmethod
+    def _gather_enclosing_declarations(func: Node) -> set[str]:
+        """
+        Collect all variable names declared in scopes enclosing `func` (up to and including the
+        script scope). Used to distinguish truly-undeclared assignment targets from outer-scope
+        variables.
+        """
+        declared: set[str] = set()
+        cursor = func.parent
+        while cursor is not None:
+            if isinstance(cursor, JsScript):
+                for stmt in cursor.body:
+                    for node in walk_scope(stmt):
+                        if isinstance(node, JsVariableDeclaration):
+                            for decl in node.declarations:
+                                if isinstance(decl, JsVariableDeclarator) and isinstance(decl.id, JsIdentifier):
+                                    declared.add(decl.id.name)
+                break
+            cursor = cursor.parent
+        return declared
 
     @staticmethod
     def _enclosing_assignment_target(node: JsIdentifier) -> str | None:

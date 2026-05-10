@@ -571,7 +571,7 @@ class JsSynthesizer(Synthesizer):
         else:
             self._write('default:')
         self._depth += 1
-        for stmt in node.consequent:
+        for stmt in node.body:
             self._newline()
             self.visit(stmt)
         self._depth -= 1

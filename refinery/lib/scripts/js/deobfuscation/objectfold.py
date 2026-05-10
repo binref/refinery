@@ -8,20 +8,23 @@ an expression using only parameters) are inlined at the call site.
 """
 from __future__ import annotations
 
+from typing import Iterator
+
 from refinery.lib.scripts import (
     Node,
+    Statement,
     _clone_node,
     _replace_in_parent,
 )
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     ScopeProcessingTransformer,
     access_key,
-    is_simple_expression,
     property_key,
     remove_declarator,
     try_inline_trivial_function,
 )
 from refinery.lib.scripts.js.model import (
+    JsAssignmentExpression,
     JsCallExpression,
     JsFunctionExpression,
     JsIdentifier,
@@ -60,7 +63,7 @@ class JsObjectFold(ScopeProcessingTransformer):
     script-scope boundaries because JavaScript `var` declarations are function-scoped.
     """
 
-    def _process_scope_body(self, scope: Node, body: list) -> None:
+    def _process_scope_body(self, scope: Node, body: list[Statement]) -> None:
         for candidate in list(self._find_candidates(body)):
             obj_name, declarator, prop_map = candidate
             if not self._is_safe_to_fold(scope, obj_name, declarator):
@@ -72,7 +75,7 @@ class JsObjectFold(ScopeProcessingTransformer):
                 self.mark_changed()
 
     @staticmethod
-    def _find_candidates(body: list):
+    def _find_candidates(body: list[Statement]) -> Iterator[tuple[str, JsVariableDeclarator, dict[str, Node]]]:
         """
         Yield tuples of (name, declarator_node, property_map) for each variable declarator in
         *body* that initializes a variable to an object literal with all statically-keyed
@@ -97,7 +100,9 @@ class JsObjectFold(ScopeProcessingTransformer):
     def _is_safe_to_fold(root: Node, name: str, declarator: JsVariableDeclarator) -> bool:
         """
         Verify that the variable is never reassigned, passed as an argument, or used in any
-        context other than `obj['key']` or `obj.key` member access.
+        context other than `obj['key']` or `obj.key` member access. Also reject objects that are
+        mutated via property assignment at any nesting depth (e.g. `obj.x = val` or
+        `obj.x.y = val`).
         """
         decl_name_node = declarator.id
         for node in root.walk():
@@ -106,9 +111,16 @@ class JsObjectFold(ScopeProcessingTransformer):
             if not isinstance(node, JsIdentifier) or node.name != name:
                 continue
             p = node.parent
-            if isinstance(p, JsMemberExpression) and p.object is node:
-                continue
-            return False
+            if not isinstance(p, JsMemberExpression) or p.object is not node:
+                return False
+            ancestor = p
+            while True:
+                ap = ancestor.parent
+                if isinstance(ap, JsAssignmentExpression) and ap.left is ancestor:
+                    return False
+                if not isinstance(ap, JsMemberExpression) or ap.object is not ancestor:
+                    break
+                ancestor = ap
         return True
 
     @staticmethod
@@ -121,7 +133,7 @@ class JsObjectFold(ScopeProcessingTransformer):
         Replace all `obj['key']` accesses with the corresponding property value. For function-valued
         properties called as `obj['key'](args)`, inline the call. When a key is statically known
         but absent from the property map, the access provably evaluates to `undefined` and is
-        replaced accordingly. Returns a pair ``(changed, can_remove)`` where *changed* is True when
+        replaced accordingly. Returns a pair `(changed, can_remove)` where *changed* is True when
         any replacement was made and *can_remove* is True when no unresolvable member accesses
         remain on the object (i.e. every access had a statically extractable key).
         """
@@ -146,9 +158,8 @@ class JsObjectFold(ScopeProcessingTransformer):
                 isinstance(parent, JsCallExpression)
                 and parent.callee is node
                 and isinstance(value, JsFunctionExpression)
-                and all(is_simple_expression(a) for a in parent.arguments)
             ):
-                replacement = try_inline_trivial_function(value, parent.arguments)
+                replacement = try_inline_trivial_function(value, parent.arguments, relaxed=True)
                 if replacement is not None:
                     _replace_in_parent(parent, replacement)
                     changed = True

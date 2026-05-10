@@ -402,9 +402,14 @@ class JsDispatcherUnwrapper(ScopeProcessingTransformer):
         extracted: dict[str, JsFunctionDeclaration],
     ) -> None:
         """
-        Rewrite `(payload = [args], dispatcher("key"))` to `key(args)`.
-        Also handles the wrapped variant `(payload = [args], dispatcher("key", s, wrapFlag)["wk"])`
-        where the return value is unwrapped via a member access on the wrap key.
+        Rewrite a sequence expression dispatch call to a direct call:
+
+            (payload = [args], dispatcher("key"))  ->  key(args)
+
+        Also handles the wrapped variant where the return value is unwrapped via a member access
+        on the wrap key:
+
+            (payload = [args], dispatcher("key", s, wrapFlag)["wk"])
         """
         if len(seq.expressions) != 2:
             return
@@ -444,8 +449,12 @@ class JsDispatcherUnwrapper(ScopeProcessingTransformer):
         info: _DispatcherInfo,
     ) -> JsCallExpression | JsNewExpression | None:
         """
-        Extract a dispatcher call from *node*, which may be a bare `dispatcher(...)` call or
-        a `dispatcher(...)["wrapKey"]` member access. Returns the call node or `None`.
+        Extract a dispatcher call from *node*, which may be a bare call or a member access of
+        the form:
+
+            dispatcher(...)["wrapKey"]
+
+        Returns the call node or `None`.
         """
         call = node
         if isinstance(node, JsMemberExpression) and info.wrap_key is not None:
@@ -466,7 +475,9 @@ class JsDispatcherUnwrapper(ScopeProcessingTransformer):
         extracted: dict[str, JsFunctionDeclaration],
     ) -> None:
         """
-        Rewrite `new dispatcher("key", s2, s3)["wrapKey"]` to `key`.
+        Rewrite new-expression dispatch with wrap key access to the resolved function identifier:
+
+            new dispatcher("key", s2, s3)["wrapKey"]  ->  key
         """
         if info.wrap_key is None:
             return

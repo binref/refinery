@@ -42,7 +42,9 @@ class JsDeadCodeElimination(BodyProcessingTransformer):
     def _try_prune(stmt: Statement) -> list[Statement] | None:
         if not isinstance(stmt, JsIfStatement):
             return None
-        if stmt.test is None or not is_statically_evaluable(stmt.test):
+        if stmt.test is None:
+            return None
+        if not is_statically_evaluable(stmt.test):
             return None
         truthy = is_truthy(stmt.test)
         if truthy is None:

@@ -122,6 +122,14 @@ class Node:
             children = list(node.children())
             stack.extend(reversed(children))
 
+    def is_descendant_of(self, ancestor: Node) -> bool:
+        cursor = self.parent
+        while cursor is not None:
+            if cursor is ancestor:
+                return True
+            cursor = cursor.parent
+        return False
+
     def _adopt(self, *nodes: Node | None):
         for node in nodes:
             if node is not None:

@@ -1,10 +1,14 @@
 """
 Inline reflectively executed JavaScript code: eval, Function constructor, constructor chains, and
-setTimeout/setInterval with string arguments. The js-confuser `pack` transform, which wraps the
-entire program in `Function(param, code)(proxyObject)`, is handled as a special case with automatic
-proxy object resolution.
+setTimeout/setInterval with string arguments. An obfuscator which wraps the entire program in
+
+    Function(param, code)(proxyObject)
+
+is handled as a special case with automatic proxy object resolution.
 """
 from __future__ import annotations
+
+from typing import NamedTuple
 
 from refinery.lib.scripts import Expression, Node, _clone_node, _replace_in_parent
 from refinery.lib.scripts.js.deobfuscation.helpers import (
@@ -124,9 +128,14 @@ def _extract_function_body_code(
     constructor_call: JsCallExpression | JsNewExpression,
 ) -> str | None:
     """
-    Extract the body code string from `Function("code")`, `Function("a", "b", "code")`,
-    `new Function("code")`, etc. The last string argument is the function body; preceding
-    string arguments are parameter names (ignored for now).
+    Extract the body code string from Function constructor calls:
+
+        Function("code")
+        Function("a", "b", "code")
+        new Function("code")
+
+    The last string argument is the function body; preceding string arguments are parameter
+    names (ignored for now).
     """
     callee = constructor_call.callee
     if callee is None:
@@ -146,7 +155,9 @@ def _extract_function_body_code(
 
 def _is_constructor_chain(node: JsCallExpression | JsNewExpression) -> bool:
     """
-    Detect `<literal>.constructor.constructor` as the callee, which is equivalent to `Function`.
+    Detect a constructor chain callee pattern equivalent to `Function`:
+
+        <literal>.constructor.constructor
     """
     callee = node.callee
     if not isinstance(callee, JsMemberExpression):
@@ -166,8 +177,10 @@ def _is_constructor_chain(node: JsCallExpression | JsNewExpression) -> bool:
 
 def _extract_constructor_chain_code(node: JsCallExpression) -> str | None:
     """
-    Extract code from `"".constructor.constructor("code")()` or
-    `[].constructor.constructor("code")()`.
+    Extract code from constructor chain IIFE patterns:
+
+        "".constructor.constructor("code")()
+        [].constructor.constructor("code")()
     """
     inner_call = node.callee
     if not isinstance(inner_call, JsCallExpression):
@@ -182,9 +195,10 @@ def _extract_constructor_chain_code(node: JsCallExpression) -> str | None:
 def _extract_invoked_function_body(node: JsCallExpression) -> str | None:
     """
     Extract code from immediately-invoked Function constructors:
-    - `Function("code")()`
-    - `new Function("code")()`
-    - `Function("a", "b", "code")(args...)`
+
+        Function("code")()
+        new Function("code")()
+        Function("a", "b", "code")(args)
     """
     inner = node.callee
     if not isinstance(inner, (JsCallExpression, JsNewExpression)):
@@ -196,7 +210,7 @@ def _extract_getter_target(func: Expression | None) -> str | JsUnaryExpression |
     """
     Extract the value returned by a getter. Expected patterns:
     - `{ return <identifier>; }` -> returns the identifier name as `str`
-    - `{ return typeof <identifier>; }` -> returns a `JsUnaryExpression` clone
+    - a `typeof` expression -> returns a `JsUnaryExpression` clone
     """
     if not isinstance(func, JsFunctionExpression):
         return None
@@ -254,9 +268,14 @@ def _extract_setter_target(func: Expression | None) -> str | None:
     return expr.left.name
 
 
+class _ProxyMapping(NamedTuple):
+    getters: dict[str, str | JsUnaryExpression]
+    setters: dict[str, str]
+
+
 def _build_proxy_mapping(
     obj: JsObjectExpression,
-) -> tuple[dict[str, str | JsUnaryExpression], dict[str, str]] | None:
+) -> _ProxyMapping | None:
     """
     Build getter and setter mappings from a pack proxy object. Returns `(getters, setters)` or
     `None` if any property is malformed.
@@ -281,7 +300,7 @@ def _build_proxy_mapping(
             setters[key] = target
         else:
             return None
-    return getters, setters
+    return _ProxyMapping(getters, setters)
 
 
 def _substitute_proxy_accesses(
@@ -326,7 +345,16 @@ def _try_unpack_function_constructor(
     node: JsCallExpression,
 ) -> list[Statement] | None:
     """
-    Handle the js-confuser pack pattern: `Function(param, code)(proxyObject)`.
+    Unpack an immediately-invoked `Function` constructor whose single argument is a proxy object
+    with getter/setter properties that redirect to global variables:
+
+        Function("p", "p.abc = p.def(p.ghi)")(
+            {get abc() { return x }, set abc(v) { x = v }, get def() { return y }, ...}
+        )
+
+    Parses the code string, resolves all `p.key` accesses through the proxy mapping back to their
+    original global identifiers, and returns the recovered statement list. Returns `None` if the
+    node does not match or if any proxy access cannot be resolved.
     """
     inner = node.callee
     if not isinstance(inner, JsCallExpression):
@@ -378,8 +406,8 @@ def _is_pack_shaped(node: JsCallExpression) -> bool:
 
 class JsReflectionInlining(ScriptLevelTransformer):
     """
-    Inline reflective code execution: `eval`, `Function` constructor (including the js-confuser
-    `pack` transform), constructor chains, and `setTimeout`/`setInterval` with string arguments.
+    Inline reflective code execution: `eval`, `Function` constructor, constructor chains, and
+    indirect invocation via `setTimeout` and `setInterval`.
     """
 
     def _process_script(self, node: JsScript) -> None:
@@ -391,17 +419,36 @@ class JsReflectionInlining(ScriptLevelTransformer):
             body = get_body(container)
             if body is None:
                 continue
+            is_script = isinstance(container, JsScript)
             i = 0
             while i < len(body):
                 parsed = self._try_resolve_statement(body[i])
                 if parsed is None:
                     i += 1
                     continue
+                if is_script:
+                    parsed = self._sanitize_for_script_scope(parsed)
+                    if parsed is None:
+                        i += 1
+                        continue
                 for stmt in parsed:
                     stmt.parent = container
                 body[i:i + 1] = parsed
                 self.mark_changed()
                 i += len(parsed)
+
+    @staticmethod
+    def _sanitize_for_script_scope(stmts: list[Statement]) -> list[Statement] | None:
+        for stmt in stmts[:-1] if stmts else ():
+            if isinstance(stmt, JsReturnStatement):
+                return None
+        if stmts and isinstance(stmts[-1], JsReturnStatement):
+            last = stmts[-1]
+            if last.argument is not None:
+                stmts = stmts[:-1] + [JsExpressionStatement(expression=last.argument)]
+            else:
+                stmts = stmts[:-1]
+        return stmts
 
     def _inline_expressions(self, root: JsScript) -> None:
         for node in list(root.walk()):

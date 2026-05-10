@@ -1,25 +1,20 @@
 """
-Recover sequential code from control-flow-flattened dispatchers. The obfuscator replaces a sequence
-of statements with a dispatcher loop:
+Recover sequential code from control-flow-flattened dispatchers.
 
-    var _order = ['2', '0', '4', '1', '3'];
-    var _idx = 0;
-    while (true) {
-        switch (_order[_idx++]) {
-            case '0': /* block 0 */; continue;
-            case '1': /* block 1 */; continue;
-            ...
-        }
-        break;
-    }
-
-Recovery reads the order sequence and emits the case bodies in that order, replacing the entire
-dispatcher span with the re-sequenced statements.
+Handles the sequential reordering pattern: a `while(true)` loop with `switch(t[i++])` where a
+pre-defined array holds the execution sequence.
 """
 from __future__ import annotations
 
+from typing import NamedTuple
+
 from refinery.lib.scripts import Node, Statement
-from refinery.lib.scripts.js.deobfuscation.helpers import BodyProcessingTransformer, access_key, is_while_true, string_value
+from refinery.lib.scripts.js.deobfuscation.helpers import (
+    BodyProcessingTransformer,
+    access_key,
+    is_while_true,
+    string_value,
+)
 from refinery.lib.scripts.js.model import (
     JsArrayExpression,
     JsBlockStatement,
@@ -50,15 +45,17 @@ def _strip_trailing_flow(stmts: list[Statement]) -> list[Statement]:
     return stmts
 
 
+class _DispatcherMatch(NamedTuple):
+    order_var: str
+    counter_var: str
+    case_map: dict[str, list[Statement]]
+
+
 def _match_dispatcher(
     while_node: JsWhileStatement,
-) -> tuple[str, str, dict[str, list[Statement]]] | None:
+) -> _DispatcherMatch | None:
     """
-    Test whether *while_node* is a CFF dispatcher. Returns a tuple
-
-        (order_var, counter_var, case_map)
-
-    or `None`.
+    Test whether *while_node* is a CFF dispatcher. Returns a `_DispatcherMatch` or `None`.
 
     Expected structure::
 
@@ -108,8 +105,8 @@ def _match_dispatcher(
                 label = str(int(case.test.value))
             else:
                 return None
-        case_map[label] = _strip_trailing_flow(case.consequent)
-    return order_var, counter_var, case_map
+        case_map[label] = _strip_trailing_flow(case.body)
+    return _DispatcherMatch(order_var, counter_var, case_map)
 
 
 def _extract_order_sequence(node: Node | None) -> list[str] | None:
@@ -145,19 +142,22 @@ def _extract_order_sequence(node: Node | None) -> list[str] | None:
     return obj.split('|')
 
 
+class _OrderSequenceInfo(NamedTuple):
+    order_sequence: list[str]
+    first_init_idx: int
+    last_init_idx: int
+    init_indices: set[int]
+
+
 def _find_order_sequence(
     body: list[Statement],
     end_idx: int,
     order_var: str,
     counter_var: str,
-) -> tuple[list[str], int, int, set[int]] | None:
+) -> _OrderSequenceInfo | None:
     """
     Scan backwards from *end_idx* in *body* to find the initialization of the order array and
-    the counter variable. Returns a tuple
-
-        (order_sequence, first_init_idx, last_init_idx, init_indices)
-
-    or `None`.
+    the counter variable. Returns an `_OrderSequenceInfo` or `None`.
     """
     order_init_idx: int | None = None
     counter_init_idx: int | None = None
@@ -188,7 +188,7 @@ def _find_order_sequence(
         return None
     first = min(order_init_idx, counter_init_idx)
     last = max(order_init_idx, counter_init_idx)
-    return order_sequence, first, last, {order_init_idx, counter_init_idx}
+    return _OrderSequenceInfo(order_sequence, first, last, {order_init_idx, counter_init_idx})
 
 
 class JsControlFlowUnflattening(BodyProcessingTransformer):
@@ -207,22 +207,20 @@ class JsControlFlowUnflattening(BodyProcessingTransformer):
             if match is None:
                 i += 1
                 continue
-            order_var, counter_var, case_map = match
-            order_info = _find_order_sequence(body, i, order_var, counter_var)
+            order_info = _find_order_sequence(body, i, match.order_var, match.counter_var)
             if order_info is None:
                 i += 1
                 continue
-            order_sequence, first_init, _, init_indices = order_info
-            if not all(label in case_map for label in order_sequence):
+            if not all(label in match.case_map for label in order_info.order_sequence):
                 i += 1
                 continue
             recovered: list[Statement] = []
-            for j in range(first_init, i):
-                if j not in init_indices:
+            for j in range(order_info.first_init_idx, i):
+                if j not in order_info.init_indices:
                     recovered.append(body[j])
-            for label in order_sequence:
-                recovered.extend(case_map[label])
-            remove_start = first_init
+            for label in order_info.order_sequence:
+                recovered.extend(match.case_map[label])
+            remove_start = order_info.first_init_idx
             remove_end = i
             replacement = body[:remove_start] + recovered + body[remove_end + 1:]
             self._replace_body(parent, body, replacement)

@@ -17,6 +17,7 @@ from refinery.lib.scripts.js.model import (
     JsIdentifier,
     JsNumericLiteral,
     JsScript,
+    JsSwitchCase,
     JsUnaryExpression,
 )
 
@@ -101,7 +102,7 @@ class JsAssignmentsAsFunctionArgs(ScriptLevelTransformer):
                 continue
             if (
                 isinstance(parent := ast_node.parent, JsExpressionStatement)
-                and isinstance(pp := parent.parent, (JsBlockStatement, JsScript))
+                and isinstance(pp := parent.parent, (JsBlockStatement, JsScript, JsSwitchCase))
             ):
                 body = pp.body
                 try:
@@ -120,7 +121,7 @@ class JsAssignmentsAsFunctionArgs(ScriptLevelTransformer):
                 if stmt is None:
                     continue
                 stmt_parent = stmt.parent
-                if not isinstance(stmt_parent, (JsBlockStatement, JsScript)):
+                if not isinstance(stmt_parent, (JsBlockStatement, JsScript, JsSwitchCase)):
                     continue
                 body = stmt_parent.body
                 try:

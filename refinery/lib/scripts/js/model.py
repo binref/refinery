@@ -351,7 +351,7 @@ class JsSwitchStatement(Statement):
 @dataclass(repr=False, eq=False)
 class JsSwitchCase(Node):
     test: Expression | None = None
-    consequent: list[Statement] = field(default_factory=list)
+    body: list[Statement] = field(default_factory=list)
 
 
 @dataclass(repr=False, eq=False)

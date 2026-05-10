@@ -7,7 +7,11 @@ import math
 import operator
 import re
 
-from typing import Callable, Sequence, TYPE_CHECKING
+from typing import Callable, Iterator, Sequence, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from typing import TypeAlias
+    LiteralValue: TypeAlias = str | int | float | bool | list | dict | None
 
 from refinery.lib.scripts import (
     Expression,
@@ -50,12 +54,11 @@ from refinery.lib.scripts.js.model import (
 )
 from refinery.lib.scripts.js.token import FUTURE_RESERVED, KEYWORDS
 
-if TYPE_CHECKING:
-    from typing import TypeGuard
-
 SIMPLE_IDENTIFIER = re.compile(r'^[a-zA-Z_$][a-zA-Z_$0-9]*$')
 
 JS_RESERVED = frozenset(set(KEYWORDS) | FUTURE_RESERVED | {'undefined'})
+
+FUNCTION_NODE_TYPES = (JsFunctionDeclaration, JsFunctionExpression, JsArrowFunctionExpression)
 
 
 def _to_int32(v: int | float) -> int:
@@ -83,6 +86,32 @@ RELATIONAL_OPS: dict[str, Callable] = {
     '<=': operator.le,
     '>=': operator.ge,
 }
+
+
+def eval_binary_op(op: str, left: int | float, right: int | float) -> int | float | bool | None:
+    """
+    Evaluate a JavaScript binary operator on two numeric operands. Returns the result value, or
+    `None` when the operator is unknown or the computation overflows/divides by zero. Handles
+    arithmetic, bitwise, relational, equality, and the unsigned right shift `>>>`.
+    """
+    if op in ('===', '=='):
+        return left == right
+    if op in ('!==', '!='):
+        return left != right
+    rel = RELATIONAL_OPS.get(op)
+    if rel is not None:
+        return rel(left, right)
+    if op == '>>>':
+        a = int(left) & 0xFFFFFFFF
+        b = int(right) & 0x1F
+        return (a >> b) & 0xFFFFFFFF
+    fn = BINARY_OPS.get(op)
+    if fn is None:
+        return None
+    try:
+        return fn(left, right)
+    except (ZeroDivisionError, OverflowError, ValueError):
+        return None
 
 
 def escape_js_string(value: str, quote: str = "'") -> str:
@@ -162,10 +191,112 @@ def make_numeric_literal(value: int | float) -> JsNumericLiteral:
     return JsNumericLiteral(value=value, raw=raw)
 
 
-def is_literal(node: Node) -> TypeGuard[JsStringLiteral | JsNumericLiteral | JsBooleanLiteral | JsNullLiteral]:
-    return isinstance(node, (
-        JsStringLiteral, JsNumericLiteral, JsBooleanLiteral, JsNullLiteral,
-    ))
+def extract_literal_value(node: Node) -> tuple[bool, LiteralValue]:
+    """
+    Extract a Python value from a literal AST node. Returns `(True, value)` on success or
+    `(False, None)` when the node is not a recognized literal form. Handles string, numeric,
+    boolean, null literals, `void expr`, negative numerics, `!0`/`!1`, and array expressions
+    where all elements are themselves literals.
+    """
+    if isinstance(node, JsStringLiteral):
+        return True, node.value
+    if isinstance(node, JsNumericLiteral):
+        return True, node.value
+    if isinstance(node, JsBooleanLiteral):
+        return True, node.value
+    if isinstance(node, JsNullLiteral):
+        return True, None
+    if isinstance(node, JsUnaryExpression):
+        if node.operator == 'void' and isinstance(node.operand, (JsNumericLiteral, JsStringLiteral)):
+            return True, None
+        if node.operator == '-' and isinstance(node.operand, JsNumericLiteral):
+            return True, -node.operand.value
+        if node.operator == '+' and isinstance(node.operand, JsNumericLiteral):
+            return True, node.operand.value
+        if node.operator == '!' and isinstance(node.operand, JsNumericLiteral):
+            return True, not bool(node.operand.value)
+    if isinstance(node, JsArrayExpression):
+        items: list[LiteralValue] = []
+        for el in node.elements:
+            if el is None:
+                return False, None
+            ok, val = extract_literal_value(el)
+            if not ok:
+                return False, None
+            items.append(val)
+        return True, items
+    return False, None
+
+
+def value_to_node(value: object) -> Expression | None:
+    """
+    Convert a Python value to the corresponding AST literal node. Returns `None` when the value
+    type is not representable as a literal expression.
+    """
+    if isinstance(value, str):
+        return make_string_literal(value)
+    if isinstance(value, bool):
+        return JsBooleanLiteral(value=value)
+    if isinstance(value, int):
+        if value < 0:
+            return JsUnaryExpression(operator='-', operand=make_numeric_literal(-value))
+        return make_numeric_literal(value)
+    if isinstance(value, float):
+        if value != value:
+            return JsIdentifier(name='NaN')
+        if value == float('inf'):
+            return JsIdentifier(name='Infinity')
+        if value == float('-inf'):
+            return JsUnaryExpression(operator='-', operand=JsIdentifier(name='Infinity'))
+        if value < 0:
+            return JsUnaryExpression(operator='-', operand=make_numeric_literal(-value))
+        return make_numeric_literal(value)
+    if isinstance(value, list):
+        elements: list[Expression | None] = []
+        for item in value:
+            el = value_to_node(item)
+            if el is None:
+                return None
+            elements.append(el)
+        return JsArrayExpression(elements=elements)
+    if value is None:
+        return JsUnaryExpression(
+            operator='void',
+            operand=JsNumericLiteral(value=0, raw='0'),
+        )
+    return None
+
+
+def is_literal(node: Node) -> bool:
+    if isinstance(node, (JsStringLiteral, JsNumericLiteral, JsBooleanLiteral, JsNullLiteral)):
+        return True
+    if isinstance(node, JsUnaryExpression):
+        if node.operator == 'void' and isinstance(node.operand, (JsNumericLiteral, JsStringLiteral)):
+            return True
+        if node.operator == '-' and isinstance(node.operand, JsNumericLiteral):
+            return True
+    return False
+
+
+def member_key(node: JsMemberExpression) -> str | None:
+    """
+    Flatten a chain of property accesses into a dot-separated key string. Handles both dot
+    notation and computed access with string-literal keys. Returns `None` if the chain contains
+    a dynamic computed access that cannot be resolved to a static key.
+    """
+    parts: list[str] = []
+    cursor: Expression | None = node
+    while isinstance(cursor, JsMemberExpression):
+        key = access_key(cursor)
+        if key is None:
+            return None
+        parts.append(key)
+        cursor = cursor.object
+    if not isinstance(cursor, JsIdentifier):
+        return None
+    parts.append(cursor.name)
+    parts.reverse()
+    return '.'.join(parts)
 
 
 def is_while_true(node: JsWhileStatement) -> bool:
@@ -228,6 +359,25 @@ def is_binding_site(node: JsIdentifier) -> bool:
     return False
 
 
+def is_reference(node: JsIdentifier) -> bool:
+    """
+    Return whether this identifier is in a true variable reference position: not a binding site,
+    not a non-computed member property, and not a non-computed object-literal key.
+    """
+    p = node.parent
+    if p is None:
+        return False
+    if isinstance(p, JsVariableDeclarator) and p.id is node:
+        return False
+    if isinstance(p, JsFunctionDeclaration) and p.id is node:
+        return False
+    if isinstance(p, JsMemberExpression) and p.property is node and not p.computed:
+        return False
+    if isinstance(p, JsProperty) and p.key is node and not p.computed:
+        return False
+    return True
+
+
 def is_truthy(node: Node) -> bool | None:
     """
     Return the JavaScript truthiness of a literal node, or `None` when the value cannot be
@@ -275,9 +425,10 @@ def is_nullish(node: Node) -> bool:
 def _is_safe_property_base(node: Node, defunct: set[str] | None = None) -> bool:
     """
     Check whether property access on *node* is guaranteed to be side-effect-free. Returns `True`
-    when the object is a value that cannot have custom getters: literals, fresh object/array/function
-    expressions, or identifiers in the *defunct* set (being removed, so their getters are irrelevant
-    to live code). Chained member expressions are safe when their root base is safe.
+    when the object is a value that cannot have custom getters: literals, fresh
+    object/array/function expressions, or identifiers in the *defunct* set (being removed, so
+    their getters are irrelevant to live code). Chained member expressions are safe when their
+    root base is safe.
     """
     if isinstance(node, (JsStringLiteral, JsNumericLiteral, JsBooleanLiteral, JsNullLiteral)):
         return True
@@ -316,14 +467,19 @@ def is_side_effect_free(node: Node, defunct: set[str] | None = None) -> bool:
         return _is_safe_property_base(node.object, defunct)
     if isinstance(node, (JsBinaryExpression, JsLogicalExpression)):
         return (
-            node.left is not None and is_side_effect_free(node.left, defunct)
-            and node.right is not None and is_side_effect_free(node.right, defunct)
+            node.left is not None
+            and is_side_effect_free(node.left, defunct)
+            and node.right is not None
+            and is_side_effect_free(node.right, defunct)
         )
     if isinstance(node, JsConditionalExpression):
         return (
-            node.test is not None and is_side_effect_free(node.test, defunct)
-            and node.consequent is not None and is_side_effect_free(node.consequent, defunct)
-            and node.alternate is not None and is_side_effect_free(node.alternate, defunct)
+            node.test is not None
+            and is_side_effect_free(node.test, defunct)
+            and node.consequent is not None
+            and is_side_effect_free(node.consequent, defunct)
+            and node.alternate is not None
+            and is_side_effect_free(node.alternate, defunct)
         )
     if isinstance(node, JsObjectExpression):
         for prop in node.properties:
@@ -384,7 +540,7 @@ def js_parse_int(s: str, radix: int = 10) -> int | None:
     return sign * int(''.join(digits), radix)
 
 
-def get_body(node: Node) -> list | None:
+def get_body(node: Node) -> list[Statement] | None:
     """
     Return the statement body list of a node if it has one (JsScript or JsBlockStatement).
     """
@@ -450,11 +606,17 @@ def substitute_params(
 def try_inline_trivial_function(
     func: JsFunctionExpression,
     call_args: list,
+    *,
+    relaxed: bool = False,
 ) -> Node | None:
     """
     If *func* is a trivial wrapper (single return whose expression uses only the function's
     parameters), substitute call-site arguments into a clone of the return expression. Returns the
     inlined expression or `None` if the function is not a simple wrapper.
+
+    When *relaxed* is False (default), all arguments must be side-effect-free simple expressions.
+    When *relaxed* is True, only arguments used more than once in the return expression need to be
+    simple (prevents duplicating side effects while allowing complex single-use arguments).
     """
     if func.body is None or not isinstance(func.body, JsBlockStatement):
         return None
@@ -472,10 +634,15 @@ def try_inline_trivial_function(
     expr = stmt.argument
     if not is_closed_expression(expr, set(param_names)):
         return None
+    if relaxed:
+        for i, name in enumerate(param_names):
+            uses = sum(1 for n in expr.walk() if isinstance(n, JsIdentifier) and n.name == name)
+            if uses > 1 and not is_simple_expression(call_args[i]):
+                return None
     return substitute_params(expr, param_names, call_args)
 
 
-def walk_scope(root: Node, *, include_root_body: bool = False):
+def walk_scope(root: Node, *, include_root_body: bool = False) -> Iterator[Node]:
     """
     Walk the AST under *root* without descending into nested function bodies. Function boundary
     nodes are yielded (so their identifiers can be inspected) but their subtrees are suppressed.
@@ -504,7 +671,7 @@ def collect_identifier_names(node: Node) -> set[str]:
     return {n.name for n in node.walk() if isinstance(n, JsIdentifier)}
 
 
-def find_enclosing_body(node: Node) -> list | None:
+def find_enclosing_body(node: Node) -> list[Statement] | None:
     """
     Walk up parent pointers from *node* to find the body list that directly contains it. Returns
     the `body` attribute of the nearest `JsBlockStatement` or `JsScript` ancestor whose body
@@ -538,14 +705,47 @@ def _body_declares_var(body: list, name: str) -> bool:
     return False
 
 
+def function_binds_name(func: Node, name: str) -> bool:
+    """
+    Check if a function creates a local binding for `name` (parameter, function name, or var
+    declaration anywhere in its body — excluding nested functions).
+    """
+    if isinstance(func, JsFunctionDeclaration) and func.id is not None and func.id.name == name:
+        return True
+    for p in (getattr(func, 'params', None) or []):
+        if isinstance(p, JsIdentifier) and p.name == name:
+            return True
+    body = getattr(func, 'body', None)
+    if not isinstance(body, JsBlockStatement):
+        return False
+    stack: list[Node] = [body]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, FUNCTION_NODE_TYPES):
+            continue
+        if isinstance(node, JsVariableDeclaration) and node.kind == JsVarKind.VAR:
+            for decl in node.declarations:
+                if isinstance(decl, JsVariableDeclarator) and isinstance(decl.id, JsIdentifier):
+                    if decl.id.name == name:
+                        return True
+        for child in node.children():
+            stack.append(child)
+    return False
+
+
 def _is_shadowed(node: Node, name: str) -> bool:
     """
     Walk up from *node* through all enclosing function boundaries and check whether any of them
     shadows *name* via a `var` declaration or a function parameter.
+
+    This intentionally checks only function boundaries, NOT block/script-level declarations.
+    `has_remaining_references` relies on this: a script-level `var x = expr` must not be considered
+    "shadowed" at its own declaration site, or the function will incorrectly conclude no references
+    remain.
     """
     parent = node.parent
     while parent is not None:
-        if isinstance(parent, (JsFunctionDeclaration, JsFunctionExpression, JsArrowFunctionExpression)):
+        if isinstance(parent, FUNCTION_NODE_TYPES):
             for param in getattr(parent, 'params', ()):
                 if isinstance(param, JsIdentifier) and param.name == name:
                     return True

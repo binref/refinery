@@ -11,13 +11,17 @@ from refinery.lib.scripts.js.deobfuscation import deobfuscate
 from refinery.lib.scripts.js.deobfuscation.argwrap import JsAssignmentsAsFunctionArgs
 from refinery.lib.scripts.js.deobfuscation.b91strings import _decode_base91
 from refinery.lib.scripts.js.deobfuscation.helpers import has_remaining_references, make_string_literal
-from refinery.lib.scripts.js.deobfuscation.cff import _strip_trailing_flow
+from refinery.lib.scripts.js.deobfuscation.cff import JsGeneratorCFFUnflattening
+from refinery.lib.scripts.js.deobfuscation.cff.sequential import _strip_trailing_flow
 from refinery.lib.scripts.js.deobfuscation.constants import JsConstantInlining
 from refinery.lib.scripts.js.deobfuscation.deadcode import JsDeadCodeElimination
 from refinery.lib.scripts.js.deobfuscation.objectfold import JsObjectFold
 from refinery.lib.scripts.js.deobfuscation.reflection import JsReflectionInlining
 from refinery.lib.scripts.js.deobfuscation.simplify import JsSimplifications
 from refinery.lib.scripts.js.deobfuscation.unused import JsUnusedCodeRemoval
+from refinery.lib.scripts.js.deobfuscation.namespaces import JsNamespaceFlattening
+from refinery.lib.scripts.js.deobfuscation.restunpack import JsRestArrayUnpacking
+from refinery.lib.scripts.js.deobfuscation.unshuffle import JsArrayUnshuffle
 from refinery.lib.scripts.js.deobfuscation.wrappers import JsCallWrapperInliner
 from refinery.lib.scripts.js.model import (
     JsBreakStatement,
@@ -109,10 +113,13 @@ class TestBasicSimplifications(TestJsDeobfuscator):
         self.assertEqual('1 / 0;', self._simplify('1 / 0;'))
 
     def test_tuple_all_literals(self):
-        self.assertEqual("'a', 'b', 'c';", self._simplify("'a', 'b', 'c';"))
+        self.assertEqual("'c';", self._simplify("'a', 'b', 'c';"))
 
-    def test_tuple_non_literal_unchanged(self):
-        self.assertEqual("'a', x, 'c';", self._simplify("'a', x, 'c';"))
+    def test_tuple_side_effect_free(self):
+        self.assertEqual("'c';", self._simplify("'a', x, 'c';"))
+
+    def test_tuple_with_side_effect(self):
+        self.assertEqual("f(), 'c';", self._simplify("'a', f(), 'c';"))
 
     def test_array_indexing(self):
         self.assertEqual('"b";', self._simplify('["a", "b", "c"][1];'))
@@ -192,8 +199,7 @@ class TestBasicSimplifications(TestJsDeobfuscator):
         self.assertEqual("'Hello';", self._simplify("'\\u0048\\u0065\\u006c\\u006c\\u006f';"))
 
     def test_unescape_unicode_non_ascii(self):
-        result = self._simplify("'\\u4f60\\u597d';")
-        self.assertNotIn('\\u', result)
+        self.assertEqual("'你好';", self._simplify("'\\u4f60\\u597d';"))
 
     def test_unescape_preserves_quote(self):
         self.assertEqual("'don\\'t';", self._simplify("'don\\x27t';"))
@@ -587,17 +593,7 @@ class TestDeadCodeElimination(TestJsDeobfuscator):
             console.log(real(5));
             """
         )
-        self.assertEqual(
-            self._deobfuscate(source),
-            inspect.cleandoc(
-                """
-                function real(n) {
-                  return n + 1;
-                }
-                console.log(real(5));
-                """
-            ),
-        )
+        self.assertEqual(self._deobfuscate(source), 'console.log(6);')
 
     def test_in_empty_function_known_property_folds_true(self):
         source = inspect.cleandoc(
@@ -671,6 +667,38 @@ class TestDeadCodeElimination(TestJsDeobfuscator):
             live2();
             """
         ))
+
+
+    def test_in_function_guard_nested_scope(self):
+        source = inspect.cleandoc(
+            """
+            function sentinel() { return 1; }
+            function main(n) {
+              for (var i = 0; i < n; i++) {
+                if ("xK9mQ" in sentinel) {
+                  dead();
+                }
+              }
+              return n;
+            }
+            console.log(main(5));
+            """
+        )
+        self.assertEqual('console.log(5);', self._deobfuscate(source))
+
+    def test_undeclared_dead_write_in_nested_block(self):
+        source = inspect.cleandoc(
+            """
+            function f() {
+              for (var i = 0; i < 3; i++) {
+                deadVar = function() { return 42; };
+              }
+              return i;
+            }
+            f();
+            """
+        )
+        self.assertEqual('3;', self._deobfuscate(source))
 
 
 class TestExtendedOperatorFolding(TestJsDeobfuscator):
@@ -894,11 +922,30 @@ class TestObjectFold(TestJsDeobfuscator):
             r"_0xc3dbcf['push'](_0x159b71['uvdVt']);}}var _0x51ec37=_0xc3dbcf['length'];return{'items':_0xc3dbcf,'"
             r"total':_0x51ec37};}"
         )
-        self.assertNotIn('QUMXw', result)
-        self.assertNotIn('smFRR', result)
-        self.assertIn("'positive'", result)
-        self.assertIn("'negative'", result)
-        self.assertIn("'zero'", result)
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function classify(_0xc9c876) {
+                  var _0xc3dbcf = [];
+                  for (var _0x254ae8 = 0x0; _0x254ae8 < _0xc9c876['length']; _0x254ae8++) {
+                    var _0xe54f7c = _0xc9c876[_0x254ae8];
+                    if (_0xe54f7c > 0x0) {
+                      _0xc3dbcf['push']('positive');
+                    } else {
+                      if (_0xe54f7c < 0x0) {
+                        _0xc3dbcf['push']('negative');
+                      } else {
+                        _0xc3dbcf['push']('zero');
+                      }
+                    }
+                  }
+                  var _0x51ec37 = _0xc3dbcf['length'];
+                  return { 'items': _0xc3dbcf, 'total': _0x51ec37 };
+                }
+                """
+            ),
+            result,
+        )
 
     def test_multi_declarator(self):
         source = "var x = 1, o = {'k': 'hello'}, y = 2; z(o['k']);"
@@ -1122,10 +1169,29 @@ class TestAntiDebug(TestJsDeobfuscator):
             "var other = a(this, function() { return 42; });"
             "console.log(other);"
         )
-        result = self._deobfuscate(source)
-        self.assertNotIn('(((.+)+)+)+$', result)
-        self.assertIn('var a', result)
-        self.assertIn('console.log', result)
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var a = function() {
+                  var b = true;
+                  return function(c, d) {
+                    var e = b ? function() {
+                      if (d) {
+                        var f = d.apply(c, arguments);
+                        return d = null, f;
+                      }
+                    } : function() {};
+                    return b = false, e;
+                  };
+                }();
+                var other = a(this, function() {
+                  return 42;
+                });
+                console.log(other);
+                """
+            ),
+            self._deobfuscate(source),
+        )
 
 
 class TestConstantInlining(TestJsDeobfuscator):
@@ -1238,8 +1304,16 @@ class TestConstantInlining(TestJsDeobfuscator):
     def test_long_string_not_duplicated(self):
         long_str = 'a' * 100
         source = F"var x = '{long_str}'; console.log(x); alert(x);"
-        result = self._inline(source)
-        self.assertIn('var x', result)
+        self.assertEqual(
+            inspect.cleandoc(
+                F"""
+                var x = '{long_str}';
+                console.log(x);
+                alert(x);
+                """
+            ),
+            self._inline(source),
+        )
 
     def test_expression_with_mutated_identifier_not_inlined(self):
         self.assertEqual(
@@ -1417,26 +1491,7 @@ class TestConstantPoolIntegration(TestJsDeobfuscator):
         result = self._deobfuscate(source)
         self.assertEqual(result, inspect.cleandoc(
             """
-            function fizzbuzz(n) {
-              var results = [];
-              for (var i = 1; i <= n; i++) {
-                if (i % 15 === 0) {
-                  results.push('FizzBuzz');
-                } else {
-                  if (i % 3 === 0) {
-                    results.push('Fizz');
-                  } else {
-                    if (i % 5 === 0) {
-                      results.push('Buzz');
-                    } else {
-                      results.push(i);
-                    }
-                  }
-                }
-              }
-              return results;
-            }
-            console.log(fizzbuzz(20));
+            console.log([1, 2, 'Fizz', 4, 'Buzz', 'Fizz', 7, 8, 'Fizz', 'Buzz', 11, 'Fizz', 13, 14, 'FizzBuzz', 16, 17, 'Fizz', 19, 'Buzz']);
             """
         ))
 
@@ -1474,11 +1529,7 @@ class TestDispatcherUnwrapping(TestJsDeobfuscator):
                 'console.log((p = [5], d("abc")));'
             ]
         )
-        result = self._deobfuscate(source)
-        self.assertNotIn('function d(', result)
-        self.assertNotIn('var p', result)
-        self.assertIn('abc(5)', result)
-        self.assertIn('return x + 1', result)
+        self.assertEqual('console.log(6);', self._deobfuscate(source))
 
     def test_multi_function_dispatcher(self):
         source = self._make_dispatcher(
@@ -1492,12 +1543,7 @@ class TestDispatcherUnwrapping(TestJsDeobfuscator):
                 'console.log(y);',
             ]
         )
-        result = self._deobfuscate(source)
-        self.assertNotIn('function d(', result)
-        self.assertIn('f1(2, 3)', result)
-        self.assertIn('f2(', result)
-        self.assertIn('return a + b', result)
-        self.assertIn('return a * b', result)
+        self.assertEqual('console.log(20);', self._deobfuscate(source))
 
     def test_wrapped_reference(self):
         source = self._make_dispatcher(
@@ -1509,10 +1555,7 @@ class TestDispatcherUnwrapping(TestJsDeobfuscator):
                 'console.log(fn(42));',
             ]
         )
-        result = self._deobfuscate(source)
-        self.assertNotIn('function d(', result)
-        self.assertNotIn('new d(', result)
-        self.assertNotIn('"wk"', result)
+        self.assertEqual('console.log(42);', self._deobfuscate(source))
 
     def test_boilerplate_removal(self):
         source = self._make_dispatcher(
@@ -1554,8 +1597,20 @@ class TestRegressions(TestJsDeobfuscator):
             "  if (true) { var o = {'k': 'hello'}; x(o['k']); }"
             "  return o['k'];"
             "}")
-        result = self._objectfold(source)
-        self.assertIn('var o', result)
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function f() {
+                  if (true) {
+                    var o = { 'k': 'hello' };
+                    x(o['k']);
+                  }
+                  return o['k'];
+                }
+                """
+            ),
+            self._objectfold(source),
+        )
 
 
 class TestStringConcealing(TestJsDeobfuscator):
@@ -1629,18 +1684,45 @@ class TestStringConcealing(TestJsDeobfuscator):
 
     def test_accessor_calls_resolved(self):
         result = self._deobfuscate(self._minimal_sample())
-        self.assertIn('.push', result)
-        self.assertIn('.log', result)
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var cache = {};
+                var results = [];
+                results.push("hello");
+                console.log(results);
+                """
+            ),
+            result,
+        )
 
     def test_decoder_and_accessor_removed(self):
         result = self._deobfuscate(self._minimal_sample())
-        self.assertNotIn('function decode', result)
-        self.assertNotIn('function accessor', result)
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var cache = {};
+                var results = [];
+                results.push("hello");
+                console.log(results);
+                """
+            ),
+            result,
+        )
 
     def test_property_access_rewritten(self):
         result = self._deobfuscate(self._minimal_sample())
-        self.assertIn('results.push', result)
-        self.assertIn('console.log', result)
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var cache = {};
+                var results = [];
+                results.push("hello");
+                console.log(results);
+                """
+            ),
+            result,
+        )
 
     def test_full_fizzbuzz_sample(self):
         source = lzma.decompress(base64.b85decode(
@@ -1700,7 +1782,6 @@ class TestStringConcealing(TestJsDeobfuscator):
         self.assertIn("'FizzBuzz'", result)
         self.assertIn("'Fizz'", result)
         self.assertIn("'Buzz'", result)
-        self.assertIn('results.push', result)
         self.assertIn('console.log', result)
 
     def test_scope_aware_decoder_pairing(self):
@@ -1740,9 +1821,23 @@ class TestStringConcealing(TestJsDeobfuscator):
             'inner();',
         ])
         result = self._deobfuscate(source)
-        self.assertIn("results.push", result)
-        self.assertIn("console.log", result)
-        self.assertIn("items.push", result)
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var cache1 = {};
+                var results = [];
+                results.push("hello");
+                console.log(results);
+                function inner() {
+                  var items = [];
+                  items.push("world");
+                  console.log(items);
+                }
+                inner();
+                """
+            ),
+            result,
+        )
 
     def test_assignment_table_removed_even_if_not_var(self):
         source = '\n'.join([
@@ -1756,12 +1851,17 @@ class TestStringConcealing(TestJsDeobfuscator):
             'results[accessor(10)]("hello");',
             'console[accessor(12)](results);',
         ])
-        result = self._deobfuscate(source)
-        self.assertIn('results.push', result)
-        self.assertIn('console.log', result)
-        self.assertNotIn('table', result)
-        self.assertNotIn('function decode', result)
-        self.assertNotIn('function accessor', result)
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var cache = {};
+                var results = [];
+                results.push("hello");
+                console.log(results);
+                """
+            ),
+            self._deobfuscate(source),
+        )
 
     def test_assignment_table_with_shadowing(self):
         source = '\n'.join([
@@ -1776,13 +1876,18 @@ class TestStringConcealing(TestJsDeobfuscator):
             '    var table = [1, 2, 3];',
             '    return table;',
             '}',
-            'inner();',
+            'console.log(inner());',
         ])
-        result = self._deobfuscate(source)
-        self.assertIn('console.log', result)
-        self.assertNotIn("'aa'", result)
-        self.assertIn('function inner', result)
-        self.assertIn('table', result)
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var cache = {};
+                console.log('push');
+                console.log([1, 2, 3]);
+                """
+            ),
+            self._deobfuscate(source),
+        )
 
 
 class TestUnusedCodeRemoval(TestJsDeobfuscator):
@@ -1819,10 +1924,20 @@ class TestUnusedCodeRemoval(TestJsDeobfuscator):
             console.log(main());
             """
         )
-        result = self._remove_unused(source)
-        self.assertIn('function helper', result)
-        self.assertIn('function main', result)
-        self.assertNotIn('function orphan', result)
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function helper() {
+                  return 42;
+                }
+                function main() {
+                  return helper();
+                }
+                console.log(main());
+                """
+            ),
+            self._remove_unused(source),
+        )
 
     def test_identifier_as_value_makes_reachable(self):
         source = inspect.cleandoc(
@@ -1832,9 +1947,17 @@ class TestUnusedCodeRemoval(TestJsDeobfuscator):
             var x = callback;
             """
         )
-        result = self._remove_unused(source)
-        self.assertIn('function callback', result)
-        self.assertNotIn('function unused', result)
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function callback() {
+                  return 1;
+                }
+                var x = callback;
+                """
+            ),
+            self._remove_unused(source),
+        )
 
     def test_all_functions_unreachable_keeps_them(self):
         source = inspect.cleandoc(
@@ -1870,9 +1993,20 @@ class TestUnusedCodeRemoval(TestJsDeobfuscator):
             console.log(main(5));
             """
         )
-        result = self._remove_unused(source)
-        self.assertIn('function main', result)
-        self.assertNotIn('dead_inside', result)
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function main(n) {
+                  if (n > 0) {
+                    return n * 2;
+                  }
+                  return 0;
+                }
+                console.log(main(5));
+                """
+            ),
+            self._remove_unused(source),
+        )
 
     def test_dead_assignment_removed(self):
         source = inspect.cleandoc(
@@ -1905,10 +2039,17 @@ class TestUnusedCodeRemoval(TestJsDeobfuscator):
             console.log(foo(10));
             """
         )
-        result = self._remove_unused(source)
-        self.assertNotIn('x = 42', result)
-        self.assertIn('function foo', result)
-        self.assertIn('console.log', result)
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function foo(x) {
+                  return x + 1;
+                }
+                console.log(foo(10));
+                """
+            ),
+            self._remove_unused(source),
+        )
 
     def test_live_variable_preserved(self):
         source = inspect.cleandoc(
@@ -1937,9 +2078,15 @@ class TestUnusedCodeRemoval(TestJsDeobfuscator):
             console.log("done");
             """
         )
-        result = self._remove_unused(source)
-        self.assertNotIn('x =', result)
-        self.assertIn('sideEffect()', result)
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                sideEffect();
+                console.log("done");
+                """
+            ),
+            self._remove_unused(source),
+        )
 
     def test_forin_target_var_not_removed(self):
         source = inspect.cleandoc(
@@ -2036,7 +2183,7 @@ class TestRegressionBugs(TestJsDeobfuscator):
             function f1(a, b, c) {
               return a + b + c;
             }
-            console.log((f1(1, undefined, 3)));
+            console.log(f1(1, undefined, 3));
             """
         ))
 
@@ -2139,8 +2286,16 @@ class TestRegressionBugs(TestJsDeobfuscator):
             }
             """
         )
-        result = self._deobfuscate(source)
-        self.assertIn("console.log('side effect');", result)
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                console.log('side effect');
+                var a = 1;
+                var b = 2;
+                """
+            ),
+            self._deobfuscate(source),
+        )
 
     def test_dead_variable_preserves_external_property_access(self):
         source = inspect.cleandoc(
@@ -2204,8 +2359,7 @@ class TestRegressionBugs(TestJsDeobfuscator):
             console.log(x);
             """
         )
-        result = self._inline(source)
-        self.assertIn('console.log(a + b)', result)
+        self.assertEqual('console.log(a + b);', self._inline(source))
 
     def test_local_variable_not_inlined_past_modifying_call(self):
         source = inspect.cleandoc(
@@ -2219,8 +2373,19 @@ class TestRegressionBugs(TestJsDeobfuscator):
             console.log(x);
             """
         )
-        result = self._deobfuscate(source)
-        self.assertIn('console.log(x)', result)
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function f() {
+                  x = 9;
+                }
+                var x = 1;
+                f();
+                console.log(x);
+                """
+            ),
+            self._deobfuscate(source),
+        )
 
     def test_deadcode_block_scoped_declarations_not_leaked(self):
         result = self._deadcode(
@@ -2246,14 +2411,30 @@ class TestRegressionBugs(TestJsDeobfuscator):
             o.fn(g());
             """
         )
-        result = self._objectfold(source)
-        self.assertIn('g()', result)
-        self.assertEqual(result.count('g()'), 1)
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function(a) {
+                  return a + a;
+                }(g());
+                """
+            ),
+            self._objectfold(source),
+        )
 
     def test_objectfold_getter_not_folded(self):
         source = 'var o = { get x() { return 1; } }; o.x;'
-        result = self._objectfold(source)
-        self.assertIn('get x', result)
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var o = { get x() {
+                  return 1;
+                } };
+                o.x;
+                """
+            ),
+            self._objectfold(source),
+        )
 
     def test_var_not_inlined_past_call_with_inner_let_shadow(self):
         """
@@ -2275,8 +2456,7 @@ class TestRegressionBugs(TestJsDeobfuscator):
             """
         )
         result = self._inline(source)
-        self.assertIn('console.log(x)', result)
-        self.assertNotIn('console.log(1)', result)
+        self.assertEqual(source, result)
 
     def test_delete_expression_not_removed(self):
         source = inspect.cleandoc(
@@ -2296,80 +2476,55 @@ class TestReflectionInlining(TestJsDeobfuscator):
         return self._run_transformer(source, JsReflectionInlining)
 
     def test_eval_string_literal(self):
-        result = self._reflect("eval('var x = 1;');")
-        self.assertIn('var x = 1;', result)
-        self.assertNotIn('eval', result)
+        self.assertEqual('var x = 1;', self._reflect("eval('var x = 1;');"))
 
     def test_eval_non_literal_not_inlined(self):
-        result = self._reflect('eval(x);')
-        self.assertIn('eval', result)
+        self.assertEqual('eval(x);', self._reflect('eval(x);'))
 
     def test_eval_parenthesized(self):
-        result = self._reflect("(eval)('var x = 1;');")
-        self.assertIn('var x = 1;', result)
-        self.assertNotIn('eval', result)
+        self.assertEqual('var x = 1;', self._reflect("(eval)('var x = 1;');"))
 
     def test_indirect_eval_comma_operator(self):
-        result = self._reflect("(0, eval)('var x = 1;');")
-        self.assertIn('var x = 1;', result)
-        self.assertNotIn('eval', result)
+        self.assertEqual('var x = 1;', self._reflect("(0, eval)('var x = 1;');"))
 
     def test_indirect_eval_window(self):
-        result = self._reflect("window.eval('var x = 1;');")
-        self.assertIn('var x = 1;', result)
-        self.assertNotIn('eval', result)
+        self.assertEqual('var x = 1;', self._reflect("window.eval('var x = 1;');"))
 
     def test_indirect_eval_globalthis(self):
-        result = self._reflect("globalThis.eval('var x = 1;');")
-        self.assertIn('var x = 1;', result)
+        self.assertEqual('var x = 1;', self._reflect("globalThis.eval('var x = 1;');"))
 
     def test_settimeout_string(self):
-        result = self._reflect("setTimeout('alert(1)', 0);")
-        self.assertIn('alert(1)', result)
-        self.assertNotIn('setTimeout', result)
+        self.assertEqual('alert(1);', self._reflect("setTimeout('alert(1)', 0);"))
 
     def test_setinterval_string(self):
-        result = self._reflect("setInterval('doStuff()', 1000);")
-        self.assertIn('doStuff()', result)
-        self.assertNotIn('setInterval', result)
+        self.assertEqual('doStuff();', self._reflect("setInterval('doStuff()', 1000);"))
 
     def test_settimeout_non_string_not_inlined(self):
-        result = self._reflect('setTimeout(fn, 0);')
-        self.assertIn('setTimeout', result)
+        self.assertEqual('setTimeout(fn, 0);', self._reflect('setTimeout(fn, 0);'))
 
     def test_new_function_body_invoked(self):
-        result = self._reflect("new Function('return 42')();")
-        self.assertIn('return 42', result)
-        self.assertNotIn('Function', result)
+        self.assertEqual('42;', self._reflect("new Function('return 42')();"))
 
     def test_function_constructor_body_invoked(self):
-        result = self._reflect("Function('return 42')();")
-        self.assertIn('return 42', result)
-        self.assertNotIn('Function', result)
+        self.assertEqual('42;', self._reflect("Function('return 42')();"))
 
     def test_constructor_chain_string(self):
-        result = self._reflect("''.constructor.constructor('return 1')();")
-        self.assertIn('return 1', result)
-        self.assertNotIn('constructor', result)
+        self.assertEqual('1;', self._reflect("''.constructor.constructor('return 1')();"))
 
     def test_constructor_chain_array(self):
-        result = self._reflect("[].constructor.constructor('return 1')();")
-        self.assertIn('return 1', result)
-        self.assertNotIn('constructor', result)
+        self.assertEqual('1;', self._reflect("[].constructor.constructor('return 1')();"))
 
     def test_eval_expression_position_single_expr(self):
-        result = self._reflect("var x = eval(\"'hello'\");")
-        self.assertIn("'hello'", result)
-        self.assertNotIn('eval', result)
+        self.assertEqual("var x = 'hello';", self._reflect("var x = eval(\"'hello'\");"))
 
     def test_eval_multi_statement_expression_position_not_inlined(self):
-        result = self._reflect("var x = eval('a = 1; b = 2;');")
-        self.assertIn('eval', result)
+        self.assertEqual(
+            "var x = eval('a = 1; b = 2;');",
+            self._reflect("var x = eval('a = 1; b = 2;');"),
+        )
 
     def test_new_function_return_expression_position(self):
-        result = self._reflect("var x = new Function('return 42')();")
-        self.assertIn('x = 42', result)
-        self.assertNotIn('Function', result)
+        self.assertEqual('var x = 42;', self._reflect("var x = new Function('return 42')();"))
 
     def test_pack_simple_getter(self):
         source = inspect.cleandoc(
@@ -2378,10 +2533,7 @@ class TestReflectionInlining(TestJsDeobfuscator):
             { get 'a'() { return console; } });
             """
         )
-        result = self._reflect(source)
-        self.assertIn('console', result)
-        self.assertIn("log('hello')", result)
-        self.assertNotIn('Function', result)
+        self.assertEqual("console.log('hello');", self._reflect(source))
 
     def test_pack_getter_and_setter(self):
         source = inspect.cleandoc(
@@ -2392,10 +2544,15 @@ class TestReflectionInlining(TestJsDeobfuscator):
               get 'b'() { return b; } });
             """
         )
-        result = self._reflect(source)
-        self.assertIn('console', result)
-        self.assertIn('b = 1', result)
-        self.assertNotIn('Function', result)
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                console.log('hello');
+                b = 1;
+                """
+            ),
+            self._reflect(source),
+        )
 
     def test_pack_typeof_getter(self):
         source = inspect.cleandoc(
@@ -2404,20 +2561,30 @@ class TestReflectionInlining(TestJsDeobfuscator):
             { get 't'() { return typeof myVar; } });
             """
         )
-        result = self._reflect(source)
-        self.assertIn('typeof myVar', result)
-        self.assertNotIn('Function', result)
+        self.assertEqual('typeof myVar;', self._reflect(source))
 
     def test_pack_proxy_mapping_failure_not_inlined(self):
-        source = "Function('o', 'o.x;')({ get 'a'() { return something(); } });"
-        result = self._reflect(source)
-        self.assertIn('Function', result)
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                Function('o', 'o.x;')({ get 'a'() {
+                  return something();
+                } });
+                """
+            ),
+            self._reflect("Function('o', 'o.x;')({ get 'a'() { return something(); } });"),
+        )
 
     def test_eval_multi_statement_inlined_in_statement_position(self):
-        result = self._reflect("eval('var a = 1; var b = 2;');")
-        self.assertIn('var a = 1;', result)
-        self.assertIn('var b = 2;', result)
-        self.assertNotIn('eval', result)
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var a = 1;
+                var b = 2;
+                """
+            ),
+            self._reflect("eval('var a = 1; var b = 2;');"),
+        )
 
     def test_pack_full_pipeline(self):
         source = inspect.cleandoc(
@@ -2426,6 +2593,1831 @@ class TestReflectionInlining(TestJsDeobfuscator):
             { get 'a'() { return console; } });
             """
         )
-        result = self._deobfuscate(source)
-        self.assertIn('console', result)
-        self.assertIn("log('hello')", result)
+        self.assertEqual("console.log('hello');", self._deobfuscate(source))
+
+
+class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
+
+    FIZZBUZZ_CFF = inspect.cleandoc(
+        """
+        function fizzbuzz(n) {
+          function* ECU0cy7(eFGm4GL, QmFNlk, AT7hsy7, sYhBnK = {
+            ["GrHow6O"]: {}
+          }) {
+            while (eFGm4GL + QmFNlk + AT7hsy7 !== -182) {
+              with (sYhBnK["Pia5Vq"] || sYhBnK) {
+                switch (eFGm4GL + QmFNlk + AT7hsy7) {
+                  case sYhBnK["GrHow6O"]["_TkmcFL"] + -375:
+                  case 210:
+                  case 17:
+                    [sYhBnK["GrHow6O"]["HwIYcaT"], sYhBnK["GrHow6O"]["_TkmcFL"]] = [95, -148];
+                    sYhBnK["Pia5Vq"] = sYhBnK["GrHow6O"], eFGm4GL += AT7hsy7 - 200, QmFNlk += AT7hsy7 - -792, AT7hsy7 += QmFNlk - 183;
+                    break;
+                  case -125:
+                  case QmFNlk - 131:
+                    [sYhBnK["GrHow6O"]["HwIYcaT"], sYhBnK["GrHow6O"]["_TkmcFL"]] = [99, 225];
+                    GrHow6O["QOwuVkJ"] = [];
+                    for (GrHow6O["z947WD2"] = 1; GrHow6O["z947WD2"] <= n; GrHow6O["z947WD2"]++) {
+                      if (GrHow6O["z947WD2"] % 15 === QmFNlk + -66) {
+                        GrHow6O["QOwuVkJ"]["push"]('FizzBuzz');
+                      } else {
+                        if (GrHow6O["z947WD2"] % (QmFNlk + -63) === 0) {
+                          GrHow6O["QOwuVkJ"]["push"]('Fizz');
+                        } else {
+                          if (GrHow6O["z947WD2"] % (QmFNlk + -61) === eFGm4GL + 46) {
+                            GrHow6O["QOwuVkJ"]["push"]('Buzz');
+                          } else {
+                            GrHow6O["QOwuVkJ"]["push"](GrHow6O["z947WD2"]);
+                          }
+                        }
+                      }
+                    }
+                    return DL1uIO3 = true, GrHow6O["QOwuVkJ"];
+                    eFGm4GL += AT7hsy7 - 326, QmFNlk += AT7hsy7 - -101, AT7hsy7 += QmFNlk - -196;
+                    break;
+                  case -142:
+                  case sYhBnK["GrHow6O"]["_TkmcFL"] + 12:
+                    sYhBnK["Pia5Vq"] = sYhBnK["GrHow6O"], eFGm4GL += QmFNlk - 193, QmFNlk += eFGm4GL - 563;
+                    break;
+                  case 29:
+                  case 222:
+                    sYhBnK["Pia5Vq"] = sYhBnK["GrHow6O"], eFGm4GL += AT7hsy7 - 205, QmFNlk += AT7hsy7 - -618, AT7hsy7 += QmFNlk - 183;
+                    break;
+                  default:
+                  case -31:
+                    [sYhBnK["GrHow6O"]["HwIYcaT"], sYhBnK["GrHow6O"]["_TkmcFL"]] = [142, -215];
+                    sYhBnK["Pia5Vq"] = sYhBnK["GrHow6O"], eFGm4GL += AT7hsy7 - 210, QmFNlk += AT7hsy7 - -530, AT7hsy7 += QmFNlk - 445;
+                    break;
+                  case eFGm4GL - 67:
+                    sYhBnK["Pia5Vq"] = sYhBnK["YS6RFB"], eFGm4GL += QmFNlk - 370, QmFNlk += AT7hsy7 - -149, AT7hsy7 += QmFNlk - -79;
+                    break;
+                }
+              }
+            }
+          }
+          var DL1uIO3;
+          var WLHepXQ = ECU0cy7(-46, 66, -85)["next"]()["value"];
+          if (DL1uIO3) {
+            return WLHepXQ;
+          }
+        }
+        console["log"](fizzbuzz(20));
+        """
+    )
+
+    def test_generator_cff_fizzbuzz(self):
+        result = self._deobfuscate(self.FIZZBUZZ_CFF)
+        self.assertNotIn('function*', result)
+        self.assertNotIn('while', result)
+        self.assertNotIn('switch', result)
+        self.assertIn('for', result)
+        self.assertIn('FizzBuzz', result)
+        self.assertIn('Fizz', result)
+        self.assertIn('Buzz', result)
+        self.assertIn('% 15', result)
+        self.assertIn('% 3', result)
+        self.assertIn('% 5', result)
+        self.assertIn('return', result)
+
+    def test_generator_cff_return_recovery(self):
+        result = self._deobfuscate(self.FIZZBUZZ_CFF)
+        self.assertNotIn('DL1uIO3', result)
+        self.assertNotIn('WLHepXQ', result)
+
+    def test_generator_cff_state_substitution(self):
+        result = self._deobfuscate(self.FIZZBUZZ_CFF)
+        self.assertNotIn('eFGm4GL', result)
+        self.assertNotIn('QmFNlk', result)
+        self.assertNotIn('AT7hsy7', result)
+        self.assertIn('=== 0', result)
+
+    WITH_DISSOLUTION_CFF = inspect.cleandoc(
+        """
+        function wrapper() {
+          function* gen(a, b, scope = {NS: {}}, args) {
+            while (a + b !== 100) {
+              with (scope.RV || scope) {
+                switch (a + b) {
+                  case 10:
+                    scope.RV = scope.NS;
+                    x = globalThis;
+                    a = 40, b = 0;
+                    break;
+                  case 40:
+                    return done = true, x;
+                    break;
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    def test_generator_cff_with_statement_dissolved(self):
+        """
+        The `with(scope)` wrapping the switch is dissolved during CFF recovery: scope-qualified
+        member expressions become bare identifiers and no `with` statement remains.
+        """
+        result = self._run_transformer(self.WITH_DISSOLUTION_CFF, JsGeneratorCFFUnflattening)
+        self.assertEqual(result, inspect.cleandoc(
+            """
+            function wrapper() {
+              var NS = {};
+              NS.x = globalThis;
+              return NS.x;
+            }
+            """
+        ))
+
+    SHARED_WRAPPER_CFF = inspect.cleandoc(
+        """
+        function wrapper() {
+          function* gen(a, b, scope = {}, args) {
+            while (a + b !== 100) {
+              with (scope) {
+                switch (a + b) {
+                  case -10:
+                    scope.R = {};
+                    scope.R.k = -10;
+                    a = 20, b = 10;
+                    break;
+                  case scope.R.k + 40:
+                    var wrapper = function(...rest) {
+                      return gen(25, 10, scope, rest)["next"]()["value"];
+                    };
+                    a = 80, b = -30;
+                    break;
+                  case 50:
+                    return x = true, wrapper(1, 2);
+                    break;
+                  case scope.R.k + 45:
+                    return x = true, args[0] + args[1];
+                    break;
+                }
+              }
+            }
+          }
+          var x;
+          var result = gen(5, -15)["next"]()["value"];
+          if (x) { return result; }
+        }
+"""
+    )
+
+    def test_generator_cff_shared_wrapper_routing(self):
+        """
+        Verify that predicate-gated cases referencing scope routing values are resolved when
+        the outer execution accumulates routing entries and passes them to wrapper execution.
+        """
+        result = self._deobfuscate(self.SHARED_WRAPPER_CFF)
+        self.assertNotIn('function*', result)
+        self.assertNotIn('while', result)
+        self.assertNotIn('switch', result)
+        self.assertIn('rest[0] + rest[1]', result)
+
+    GUARDED_PREDICATE_CFF = inspect.cleandoc(
+        """
+        function wrapper() {
+          function* gen(a, b, c, scope = {}, args) {
+            while (a + b + c !== 200) {
+              with (scope) {
+                switch (a + b + c) {
+                  case 10:
+                    scope.R = {};
+                    scope.R.k = 50;
+                    a = 20, b = 30, c = -10;
+                    break;
+                  case a != 30 && a + 20:
+                    var wrapper = function(...rest) {
+                      return gen(10, 20, 20, scope, rest)["next"]()["value"];
+                    };
+                    a = 60, b = 30, c = 10;
+                    break;
+                  case 100:
+                    return x = true, wrapper(1, 2);
+                    break;
+                  case scope.R.k + 0:
+                    return x = true, "resolved";
+                    break;
+                }
+              }
+            }
+          }
+          var x;
+          var result = gen(5, 10, -5)["next"]()["value"];
+          if (x) { return result; }
+        }
+"""
+    )
+
+    def test_generator_cff_guarded_predicate(self):
+        """
+        Test that switch cases using logical AND guards (a != X && expr) evaluate correctly and
+        that prefix state variable assignments are accounted for when computing successor edges.
+        """
+        result = self._deobfuscate(self.GUARDED_PREDICATE_CFF)
+        self.assertNotIn('function*', result)
+        self.assertNotIn('while', result)
+        self.assertNotIn('switch', result)
+        self.assertIn('resolved', result)
+
+    REDIRECT_VAR_CFF = inspect.cleandoc(
+        """
+        function wrapper() {
+          function* gen(a, b, scope = {NS: {}}, args) {
+            while (a + b !== 100) {
+              with (scope.RV || scope) {
+                switch (a + b) {
+                  case 10:
+                    scope.RV = scope.NS;
+                    y = 42;
+                    a = 30, b = 20;
+                    break;
+                  case 50:
+                    return x = true, y;
+                    break;
+                }
+              }
+            }
+          }
+          var x;
+          var result = gen(5, 5)["next"]()["value"];
+          if (x) { return result; }
+        }
+"""
+    )
+
+    def test_generator_cff_redirect_var_removed(self):
+        """
+        Verify that CFF redirect variable assignments (scope.RV = scope.NS) are removed from
+        recovered output after the with statement is dissolved.
+        """
+        result = self._run_transformer(self.REDIRECT_VAR_CFF, JsGeneratorCFFUnflattening)
+        self.assertEqual(result, inspect.cleandoc(
+            """
+            function wrapper() {
+              var NS = {};
+              NS.y = 42;
+              return NS.y;
+            }
+            """
+        ))
+
+    REDIRECT_QUALIFY_CFF = inspect.cleandoc(
+        """
+        function wrapper() {
+          function* gen(a, b, c, scope = {NS: {}}, args) {
+            while (a + b + c !== 200) {
+              with (scope.RV || scope) {
+                switch (a + b + c) {
+                  case 30:
+                    scope.Sub = {};
+                    scope.RV = scope.NS;
+                    a = 40, b = 50, c = 10;
+                    break;
+                  case 100:
+                    Sub.arr = args;
+                    scope.RV = scope.Sub;
+                    a = 20, b = 30, c = 100;
+                    break;
+                  case 150:
+                    return DR = true, scope.NS.extra + val;
+                    break;
+                }
+              }
+            }
+          }
+          var DR;
+          var result = gen(10, 10, 10)["next"]()["value"];
+          if (DR) { return result; }
+        }
+"""
+    )
+
+    def test_generator_cff_redirect_qualification_levels(self):
+        """
+        Bare identifiers must be qualified at the redirect level active for their block, while
+        explicit scope accesses are qualified at root level. When redirect is set to Sub,
+        bare 'val' becomes NS.Sub.val, not NS.val.
+        """
+        result = self._deobfuscate(self.REDIRECT_QUALIFY_CFF)
+        self.assertNotIn('function*', result)
+        self.assertNotIn('scope', result)
+        self.assertNotIn('RV', result)
+        self.assertIn('Sub.arr', result)
+        self.assertIn('Sub.val', result)
+        self.assertIn('extra', result)
+
+    COMPUTED_REDIRECT_CFF = inspect.cleandoc(
+        """
+        function wrapper() {
+          function* gen(a, b, c, scope = {NS: {}}, args) {
+            while (a + b + c !== 200) {
+              with (scope["RV"] || scope) {
+                switch (a + b + c) {
+                  case 30:
+                    scope["RV"] = scope["NS"];
+                    a = 40, b = 50, c = 10;
+                    break;
+                  case 100:
+                    data = args;
+                    a = 20, b = 30, c = 100;
+                    break;
+                  case 150:
+                    return DR = true, val;
+                    break;
+                }
+              }
+            }
+          }
+          var DR;
+          var result = gen(10, 10, 10)["next"]()["value"];
+          if (DR) { return result; }
+        }
+"""
+    )
+
+    def test_generator_cff_computed_redirect_resolved(self):
+        """
+        CFF using bracket notation for redirect variable assignments. The redirect mechanism
+        must work identically to the dot-notation variant.
+        """
+        result = self._deobfuscate(self.COMPUTED_REDIRECT_CFF)
+        self.assertNotIn('function*', result)
+        self.assertNotIn('scope', result)
+        self.assertNotIn('RV', result)
+        self.assertIn('val', result)
+
+    LOOPING_CFF = inspect.cleandoc(
+        """
+        function wrapper() {
+          function* gen(a, b, scope = {}, args) {
+            while (a + b !== 100) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    scope.i = 0;
+                    a = 20, b = 0;
+                    break;
+                  case 20:
+                    if (scope.i < 3) {
+                      a = 20, b = 10;
+                    } else {
+                      a = 50, b = 0;
+                    }
+                    break;
+                  case 30:
+                    console.log(scope.i);
+                    scope.i = scope.i + 1;
+                    a = 20, b = 0;
+                    break;
+                  case 50:
+                    return x = true, "done";
+                    break;
+                }
+              }
+            }
+          }
+          var x;
+          var result = gen(5, 5)["next"]()["value"];
+          if (x) { return result; }
+        }
+"""
+    )
+
+    def test_generator_cff_loop_body_not_duplicated(self):
+        """
+        A CFF pattern with a looping state machine (state 30 → state 20 back-edge). Loop body
+        statements must appear exactly once inside a while loop, not duplicated at the outer level.
+        """
+        result = self._deobfuscate(self.LOOPING_CFF)
+        self.assertNotIn('function*', result)
+        self.assertNotIn('switch', result)
+        self.assertEqual(result.count('console.log'), 1)
+
+    CONTINUE_IN_LOOP_CFF = inspect.cleandoc(
+        """
+        function wrapper() {
+          function* gen(a, b, scope = {}, args) {
+            while (a + b !== 100) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    scope.i = 0;
+                    a = 20, b = 0;
+                    break;
+                  case 20:
+                    if (scope.i < 5) {
+                      a = 30, b = 0;
+                    } else {
+                      a = 50, b = 0;
+                    }
+                    break;
+                  case 30:
+                    if (scope.i % 2 === 0) {
+                      scope.i = scope.i + 1;
+                      a = 20, b = 0;
+                    } else {
+                      a = 30, b = 10;
+                    }
+                    break;
+                  case 40:
+                    console.log(scope.i);
+                    scope.i = scope.i + 1;
+                    a = 20, b = 0;
+                    break;
+                  case 50:
+                    return done = true, "result";
+                    break;
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+"""
+    )
+
+    def test_generator_cff_continue_in_loop(self):
+        """
+        A CFF loop where a body node conditionally loops back to the header (simulating continue)
+        while the other branch continues to a forward body node. The forward body (console.log)
+        must appear in the output and not be dropped.
+        """
+        result = self._deobfuscate(self.CONTINUE_IN_LOOP_CFF)
+        self.assertNotIn('function*', result)
+        self.assertNotIn('switch', result)
+        self.assertIn('console.log', result)
+        self.assertNotIn('scope', result)
+
+    HEADER_PAYLOAD_CFF = inspect.cleandoc(
+        """
+        function wrapper() {
+          function* gen(a, b, scope = {}, args) {
+            while (a + b !== 100) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    scope.i = 0;
+                    a = 20, b = 0;
+                    break;
+                  case 20:
+                    scope.i = scope.i + 1;
+                    if (scope.i < 4) {
+                      a = 20, b = 10;
+                    } else {
+                      a = 50, b = 0;
+                    }
+                    break;
+                  case 30:
+                    console.log(scope.i);
+                    a = 20, b = 0;
+                    break;
+                  case 50:
+                    return done = true, "result";
+                    break;
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+"""
+    )
+
+    def test_generator_cff_header_payload_before_condition(self):
+        """
+        A CFF loop where the header block has payload (scope.i++) before its conditional
+        transition. The payload must execute before the condition check — structured as
+        while(true) { payload; if(!cond) break; body; }, not while(cond) { payload; body; }.
+        """
+        result = self._deobfuscate(self.HEADER_PAYLOAD_CFF)
+        self.assertNotIn('function*', result)
+        self.assertNotIn('switch', result)
+        self.assertIn('console.log', result)
+        self.assertEqual(result.count('console.log'), 1)
+        self.assertNotIn('scope', result)
+
+    COMPUTED_MEMBER_CFF = inspect.cleandoc(
+        """
+        function wrapper() {
+          function* gen(a, b, scope = {}, args) {
+            while (a + b !== 100) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    scope["counter"] = 0;
+                    a = 20, b = 0;
+                    break;
+                  case 20:
+                    scope["counter"] = scope["counter"] + 1;
+                    if (scope["counter"] < 3) {
+                      a = 20, b = 0;
+                    } else {
+                      a = 50, b = 0;
+                    }
+                    break;
+                  case 50:
+                    console.log(scope["counter"]);
+                    return done = true, scope["counter"];
+                    break;
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+"""
+    )
+
+    def test_generator_cff_computed_member_scope(self):
+        """
+        A CFF sample using bracket notation (scope["x"]) instead of dot notation (scope.x).
+        The scope prefix must still be stripped, producing bare identifiers in output.
+        """
+        result = self._deobfuscate(self.COMPUTED_MEMBER_CFF)
+        self.assertNotIn('function*', result)
+        self.assertNotIn('switch', result)
+        self.assertNotIn('scope', result)
+        self.assertIn('counter', result)
+        self.assertIn('console.log', result)
+
+    SEQUENCE_STATE_CFF = inspect.cleandoc(
+        """
+        function wrapper() {
+          function* gen(a, b, scope = {}, args) {
+            while (a + b !== 100) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    scope.items = [], scope.i = 0, a = 20, b = 0;
+                    break;
+                  case 20:
+                    scope.items.push(scope.i), scope.i = scope.i + 1, a = 30, b = 0;
+                    break;
+                  case 30:
+                    if (scope.i < 4) {
+                      a = 20, b = 0;
+                    } else {
+                      a = 50, b = 0;
+                    }
+                    break;
+                  case 50:
+                    console.log(scope.items);
+                    return done = true, scope.items;
+                    break;
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+"""
+    )
+
+    def test_generator_cff_sequence_state_assignments(self):
+        """
+        A CFF sample where state variable transitions are embedded in sequence expressions
+        alongside payload expressions (e.g., `scope.x = foo(), a = 20, b = 0;`). State vars
+        must be stripped from the sequence while preserving the payload expressions.
+        """
+        result = self._deobfuscate(self.SEQUENCE_STATE_CFF)
+        self.assertNotIn('function*', result)
+        self.assertNotIn('switch', result)
+        self.assertNotIn('scope', result)
+        self.assertIn('items.push', result)
+        self.assertIn('console.log', result)
+
+    NESTED_CONDITIONAL_CFF = inspect.cleandoc(
+        """
+        function wrapper() {
+          function* gen(a, b, scope = {}, args) {
+            while (a + b !== 100) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    scope.x = 7;
+                    a = 20, b = 0;
+                    break;
+                  case 20:
+                    if (scope.x > 5) {
+                      a = 30, b = 0;
+                    } else {
+                      a = 40, b = 0;
+                    }
+                    break;
+                  case 30:
+                    if (scope.x > 10) {
+                      a = 50, b = 0;
+                    } else {
+                      a = 60, b = 0;
+                    }
+                    break;
+                  case 40:
+                    console.log("alpha");
+                    a = 50, b = 0;
+                    break;
+                  case 50:
+                    console.log("beta");
+                    return done = true, "end";
+                    break;
+                  case 60:
+                    console.log("gamma");
+                    return done = true, "end";
+                    break;
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+"""
+    )
+
+    def test_generator_cff_nested_conditional_join(self):
+        """
+        A CFF sample where a conditional's true branch leads to another conditional, creating
+        a non-diamond CFG. One inner branch and the outer false branch both target the same
+        node (case 50). The join point must be computed correctly (post-dominator) so that the
+        shared node is not claimed exclusively by one branch.
+        """
+        result = self._deobfuscate(self.NESTED_CONDITIONAL_CFF)
+        self.assertNotIn('function*', result)
+        self.assertNotIn('switch', result)
+        self.assertIn('alpha', result)
+        self.assertIn('beta', result)
+        self.assertIn('gamma', result)
+        self.assertNotIn('scope', result)
+
+    COMPUTED_ROUTING_CFF = inspect.cleandoc(
+        """
+        function wrapper() {
+          function* gen(a, b, scope = {}, args) {
+            while (a + b !== 100) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    scope["count"] = 0;
+                    a = 20, b = 0;
+                    break;
+                  case 20:
+                    scope["count"] = scope["count"] + 1;
+                    console.log("tick");
+                    if (scope["count"] < 3) {
+                      a = 20, b = 0;
+                    } else {
+                      a = 30, b = 0;
+                    }
+                    break;
+                  case 30:
+                    console.log("done");
+                    return done = true, scope["count"];
+                    break;
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+"""
+    )
+
+    def test_generator_cff_computed_routing_member(self):
+        """
+        A CFF sample using bracket notation (scope["count"]) for routing state and value access.
+        The scope routing tracker must resolve computed string-literal members so that
+        discriminant-based transition analysis and scope stripping work correctly.
+        """
+        result = self._deobfuscate(self.COMPUTED_ROUTING_CFF)
+        self.assertNotIn('function*', result)
+        self.assertNotIn('switch', result)
+        self.assertNotIn('scope[', result)
+        self.assertIn('count', result)
+        self.assertIn('tick', result)
+        self.assertIn('done', result)
+
+    BOOKKEEPING_LEAK_CFF = inspect.cleandoc(
+        """
+        function wrapper() {
+          function* gen(a, b, scope = {}, args) {
+            while (a + b !== 100) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    scope.pred = 1;
+                    console.log("start");
+                    a = 20, b = 0;
+                    break;
+                  case 20:
+                    console.log("end");
+                    return done = true, "result";
+                    break;
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+"""
+    )
+
+    def test_generator_cff_bookkeeping_suppressed(self):
+        """
+        A CFF sample with scope routing bookkeeping (scope.pred = 1) alongside real payload.
+        The bookkeeping filter must run before scope stripping so that it can recognize and
+        suppress the scope-member routing assignment, while preserving actual payload statements.
+        """
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function wrapper() {
+                  console.log("start");
+                  console.log("end");
+                  return "result";
+                }
+                """
+            ),
+            self._deobfuscate(self.BOOKKEEPING_LEAK_CFF),
+        )
+
+    SHARED_INTERMEDIATE_CFF = inspect.cleandoc(
+        """
+        function wrapper() {
+          function* gen(a, b, scope = {}, args) {
+            while (a + b !== 100) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    scope.x = 0;
+                    if (scope.x === 0) {
+                      a = 20, b = 0;
+                    } else {
+                      a = 30, b = 0;
+                    }
+                    break;
+                  case 20:
+                    console.log("path-a");
+                    a = 40, b = 0;
+                    break;
+                  case 30:
+                    console.log("path-b");
+                    a = 40, b = 0;
+                    break;
+                  case 40:
+                    console.log("shared");
+                    return done = true, "done";
+                    break;
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+"""
+    )
+
+    def test_generator_cff_shared_intermediate_node(self):
+        """
+        A CFF sample where both branches of a conditional lead to the same intermediate node
+        (case 40) before the exit. The ipdom computation must correctly identify the shared node
+        as the join point so its payload is emitted once after the if/else, not duplicated in
+        both branches.
+        """
+        result = self._deobfuscate(self.SHARED_INTERMEDIATE_CFF)
+        self.assertNotIn('function*', result)
+        self.assertNotIn('switch', result)
+        self.assertNotIn('scope', result)
+        self.assertIn('path-a', result)
+        self.assertIn('path-b', result)
+        self.assertIn('shared', result)
+        self.assertEqual(result.count('shared'), 1)
+
+    BARE_SCOPE_CONDITION_CFF = inspect.cleandoc(
+        """
+        function wrapper() {
+          function* gen(a, b, scope = {}, args) {
+            while (a + b !== 100) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    scope.ready = 1;
+                    a = 20, b = 0;
+                    break;
+                  case 20:
+                    if (scope.ready) {
+                      console.log("go");
+                      a = 50, b = 0;
+                    } else {
+                      console.log("wait");
+                      a = 50, b = 0;
+                    }
+                    break;
+                  case 50:
+                    return done = true, "ok";
+                    break;
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+"""
+    )
+
+    def test_generator_cff_bare_scope_condition_stripped(self):
+        """
+        A CFF sample where the conditional test is a bare scope member expression (scope.ready).
+        The condition must be stripped to a bare identifier even when it is the root expression
+        node, not nested inside a larger expression.
+        """
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function wrapper() {
+                  if (ready) {
+                    console.log("go");
+                  } else {
+                    console.log("wait");
+                  }
+                  return "ok";
+                }
+                """
+            ),
+            self._deobfuscate(self.BARE_SCOPE_CONDITION_CFF),
+        )
+
+    MIXED_SEQUENCE_BRANCH_CFF = inspect.cleandoc(
+        """
+        function wrapper() {
+          function* gen(a, b, scope = {}, args) {
+            while (a + b !== 100) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    if (scope.x) {
+                      console.log("mixed"), a = 40, b = 0;
+                    } else {
+                      console.log("other"), a = 40, b = 0;
+                    }
+                    break;
+                  case 40:
+                    console.log("end");
+                    return done = true, "result";
+                    break;
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+"""
+    )
+
+    def test_generator_cff_mixed_sequence_branch_preserved(self):
+        """
+        A CFF sample where conditional branch endings mix non-state payload expressions with
+        state transitions in a single sequence expression. The non-state expressions must be
+        preserved in the output.
+        """
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function wrapper() {
+                  if (x) {
+                    console.log("mixed");
+                  } else {
+                    console.log("other");
+                  }
+                  console.log("end");
+                  return "result";
+                }
+                """
+            ),
+            self._deobfuscate(self.MIXED_SEQUENCE_BRANCH_CFF),
+        )
+
+    NAMESPACE_DECL_CFF = inspect.cleandoc(
+        """
+        function wrapper() {
+          function* gen(a, b, scope = {NS: {}}, args) {
+            while (a + b !== 100) {
+              with (scope.RV || scope) {
+                switch (a + b) {
+                  case 10:
+                    scope.RV = scope.NS;
+                    x = 1;
+                    a = 40, b = 0;
+                    break;
+                  case 40:
+                    return done = true, x + y;
+                    break;
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+"""
+    )
+
+    def test_generator_cff_scope_namespace_declared(self):
+        """
+        After flattening a generator CFF with `with(scope.RV || scope)` and a scope default
+        containing a namespace object, the namespace is emitted and then flattened to bare vars.
+        """
+        result = self._run_transformer(self.NAMESPACE_DECL_CFF, JsGeneratorCFFUnflattening)
+        self.assertEqual(result, inspect.cleandoc(
+            """
+            function wrapper() {
+              var NS = {};
+              NS.x = 1;
+              return NS.x + NS.y;
+            }
+            """
+        ))
+
+    LABELED_CONTINUE_CFF = inspect.cleandoc(
+        """
+        function wrapper() {
+          function* gen(a, b, scope = {NS: {}}, args) {
+            while (a + b !== 100) {
+              with (scope.RV || scope) {
+                switch (a + b) {
+                  case 10:
+                    scope.RV = scope.NS;
+                    a = 40, b = 0;
+                    break;
+                  case 40:
+                    LBL: for (var i = 0; i < 3; i++) {
+                      if (i === 1) continue LBL;
+                    }
+                    return done = true, i;
+                    break;
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+"""
+    )
+
+    def test_generator_cff_labeled_continue_preserved(self):
+        """
+        Labels and `continue <label>` inside the CFF body must remain simple identifiers after
+        qualification — they must not be turned into member expressions.
+        """
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function wrapper() {
+                  var NS = {};
+                  LBL: for (var i = 0; i < 3; i++) {
+                    if (i === 1) {
+                      continue LBL;
+                    }
+                  }
+                  return i;
+                }
+                """
+            ),
+            self._deobfuscate(self.LABELED_CONTINUE_CFF),
+        )
+
+
+class TestVariableDemasking(TestJsDeobfuscator):
+
+    def _demask(self, source: str) -> str:
+        return self._run_transformer(source, JsRestArrayUnpacking)
+
+    def test_simple_two_params(self):
+        """
+        Basic variableMasking with 2 parameters: rest param slots 0 and 1 become named params.
+        """
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var f = function(p0, p1) {
+                  return p0 + p1;
+                };
+                """
+            ),
+            self._demask('var f = function(...s) { s.length = 2; return s[0] + s[1]; }'),
+        )
+
+    def test_simple_zero_params_with_locals(self):
+        """
+        Zero-param function where all stack keys are local variables.
+        """
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var f = function() {
+                  var v0;
+                  v0 = 10;
+                  return v0;
+                };
+                """
+            ),
+            self._demask('var f = function(...s) { s.length = 0; s.a = 10; return s.a; }'),
+        )
+
+    def test_simple_negative_keys(self):
+        """
+        Negative integer keys from variableMasking (random keys in [-250, 250] range).
+        """
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var f = function(p0) {
+                  var v0;
+                  v0 = p0 + 1;
+                  return v0;
+                };
+                """
+            ),
+            self._demask(
+                'var f = function(...s) { s.length = 1; s[-42] = s[0] + 1; return s[-42]; }'
+            ),
+        )
+
+    def test_frame_qualified(self):
+        """
+        Frame-qualified pattern where the stack is a nested property on a frame object.
+        """
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var NS = {};
+                NS.fn = function(p0) {
+                  return p0 * 2;
+                };
+                """
+            ),
+            self._demask(
+                'var NS = {}; NS.fn = function(...r) { NS.F.stk.length = 1; return NS.F.stk[0] * 2; }'
+            ),
+        )
+
+    def test_skips_unresolvable_access(self):
+        """
+        Functions with dynamic (non-static) stack access keys are left unchanged.
+        """
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var f = function(...s) {
+                  s.length = 1;
+                  return s[x];
+                };
+                """
+            ),
+            self._demask('var f = function(...s) { s.length = 1; return s[x]; }'),
+        )
+
+    def test_skips_rest_param_aliased(self):
+        """
+        Functions where the rest param is used as a value (not just indexed) are left unchanged.
+        """
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var f = function(...s) {
+                  s.length = 1;
+                  foo(s);
+                  return s[0];
+                };
+                """
+            ),
+            self._demask('var f = function(...s) { s.length = 1; foo(s); return s[0]; }'),
+        )
+
+    def test_nested_function_not_processed(self):
+        """
+        Inner function expressions are not recursed into during the outer function's collection.
+        The inner function is processed independently in its own pass.
+        """
+        source = inspect.cleandoc(
+            """
+            var outer = function(...s) {
+              s.length = 1;
+              s.x = function(...t) { t.length = 0; t.a = 5; return t.a; };
+              return s[0] + s.x();
+            }
+            """
+        )
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var outer = function(p0) {
+                  var v0;
+                  v0 = function() {
+                    var v0;
+                    v0 = 5;
+                    return v0;
+                  };
+                  return p0 + v0();
+                };
+                """
+            ),
+            self._demask(source),
+        )
+
+    def test_frame_qualified_missing_accesses_skipped(self):
+        """
+        If param_count > 0 but no matching accesses found (chain mismatch), skip the function.
+        """
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var f = function(...r) {
+                  A.B.C.length = 2;
+                  return A.X.C[0];
+                };
+                """
+            ),
+            self._demask('var f = function(...r) { A.B.C.length = 2; return A.X.C[0]; }'),
+        )
+
+
+class TestNamespaceFlattening(TestJsDeobfuscator):
+
+    def _flatten(self, source: str) -> str:
+        return self._run_transformer(source, JsNamespaceFlattening)
+
+    def test_basic_namespace_flatten(self):
+        """
+        A simple namespace with only member-access usage is fully flattened to bare variables.
+        """
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var x, y;
+                x = 1;
+                y = x + 2;
+                """
+            ),
+            self._flatten('var NS = {}; NS.x = 1; NS.y = NS.x + 2;'),
+        )
+
+    def test_computed_string_access(self):
+        """
+        Computed access with a string literal key is equivalent to dot access for flattening.
+        """
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var x, y;
+                x = 1;
+                y = x;
+                """
+            ),
+            self._flatten('var NS = {}; NS["x"] = 1; NS["y"] = NS["x"];'),
+        )
+
+    def test_reject_bare_reference(self):
+        """
+        If the namespace object is used as a bare value (not just property access), do not flatten.
+        """
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var NS = {};
+                NS.x = 1;
+                f(NS);
+                """
+            ),
+            self._flatten('var NS = {}; NS.x = 1; f(NS);'),
+        )
+
+    def test_reject_computed_dynamic_key(self):
+        """
+        Computed access with a non-literal key blocks flattening (key cannot be statically resolved).
+        """
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var NS = {};
+                NS[key] = 1;
+                """
+            ),
+            self._flatten('var NS = {}; NS[key] = 1;'),
+        )
+
+    def test_conflict_skips_conflicting_property(self):
+        """
+        A property whose name conflicts with an existing variable is left on the namespace while
+        other properties are flattened.
+        """
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var y;
+                var NS = {};
+                NS.x = 1;
+                y = 2;
+                var x = 10;
+                """
+            ),
+            self._flatten('var NS = {}; NS.x = 1; NS.y = 2; var x = 10;'),
+        )
+
+    def test_shadowing_nested_function_untouched(self):
+        """
+        A nested function that re-declares `var NS` shadows the outer namespace. References to
+        `NS` inside that function must not be rewritten.
+        """
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var a;
+                a = 1;
+                function f() {
+                  var NS;
+                  return NS.b;
+                }
+                """
+            ),
+            self._flatten('var NS = {}; NS.a = 1; function f() { var NS; return NS.b; }'),
+        )
+
+    def test_non_shadowing_nested_function_rewritten(self):
+        """
+        A nested function that does NOT shadow the namespace name accesses the outer namespace
+        via closure; those accesses are flattened.
+        """
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var x;
+                x = 1;
+                function f() {
+                  return x;
+                }
+                """
+            ),
+            self._flatten('var NS = {}; NS.x = 1; function f() { return NS.x; }'),
+        )
+
+
+class TestArrayUnshuffle(TestJsDeobfuscator):
+
+    def _unshuffle(self, source: str) -> str:
+        return self._run_transformer(source, JsArrayUnshuffle)
+
+    def test_direct_callee_in_rotation_names(self):
+        """
+        A direct call to a structurally-verified rotation function is unshuffled.
+        """
+        source = inspect.cleandoc(
+            """
+            function rot(arr, n) {
+              for (var i = 0; i < n; i++) arr.push(arr.shift());
+              return arr;
+            }
+            var x = rot(["b", "c", "d", "e", "f", "g", "h", "i", "j", "a"], 9);
+            """
+        )
+        result = self._unshuffle(source)
+        self.assertIn('"a", "b", "c", "d", "e", "f", "g", "h", "i", "j"', result)
+
+    def test_namespace_qualified_callee_with_empty_object(self):
+        """
+        A namespace-qualified rotation call `NS.rot(array, shift)` where the rotation function is
+        assigned to a namespace object is resolved: namespace flattening promotes the function to a
+        declaration, then unshuffle matches the now-direct callee.
+        """
+        source = inspect.cleandoc(
+            """
+            var NS = {};
+            NS.rot = function(arr, n) {
+              for (var i = 0; i < n; i++) arr.push(arr.shift());
+              return arr;
+            };
+            var x = NS.rot(["b", "c", "d", "e", "f", "g", "h", "i", "j", "a"], 9);
+            """
+        )
+        ast = JsParser(source).parse()
+        JsNamespaceFlattening().visit(ast)
+        JsArrayUnshuffle().visit(ast)
+        result = JsSynthesizer().convert(ast)
+        self.assertIn('"a", "b", "c", "d", "e", "f", "g", "h", "i", "j"', result)
+
+    def test_namespace_qualified_callee_without_empty_object_rejected(self):
+        """
+        A member-expression call `utils.process(array, number)` where the object is NOT declared
+        as an empty object literal must NOT be treated as a rotation.
+        """
+        source = inspect.cleandoc(
+            """
+            var utils = require("utils");
+            var x = utils.process(["b", "c", "d", "e", "f", "g", "h", "i", "j", "a"], 9);
+            """
+        )
+        result = self._unshuffle(source)
+        self.assertIn('utils.process(', result)
+
+
+class TestCFFArgParamDeclarations(TestJsDeobfuscator):
+
+    def test_undeclared_assignment_not_removed_when_read_in_outer_scope(self):
+        """
+        An assignment to a variable declared in an enclosing scope must not be treated as a dead
+        local write, even if the variable is not declared in the function body itself.
+        """
+        source = inspect.cleandoc(
+            """
+            function modify() {
+                x = 99;
+            }
+            var x = 1;
+            modify();
+            console.log(x);
+            """
+        )
+        result = self._deobfuscate_iterative(source)
+        self.assertIn('x = 99', result)
+
+    def test_truly_undeclared_dead_write_removed(self):
+        """
+        An assignment to a variable that is not declared anywhere and is never read should be
+        removed as dead code.
+        """
+        source = inspect.cleandoc(
+            """
+            function f() {
+              for (var i = 0; i < 3; i++) {
+                deadVar = function() { return 42; };
+              }
+              return i;
+            }
+            f();
+            """
+        )
+        result = self._deobfuscate_iterative(source)
+        self.assertNotIn('deadVar', result)
+
+
+class TestGlobalAliasStripping(TestJsDeobfuscator):
+
+    def test_global_alias_stripped_when_not_shadowed(self):
+        self.assertEqual('y = X;', self._simplify('y = globalThis.X;'))
+
+    def test_global_alias_preserved_when_locally_shadowed(self):
+        source = inspect.cleandoc(
+            """
+            var X = 1;
+            y = globalThis.X;
+            """
+        )
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var X = 1;
+                y = globalThis.X;
+                """
+            ),
+            self._simplify(source),
+        )
+
+    def test_window_alias_stripped_when_not_shadowed(self):
+        self.assertEqual('y = console;', self._simplify('y = window.console;'))
+
+    def test_global_alias_preserved_when_shadowed_by_param(self):
+        source = inspect.cleandoc(
+            """
+            function f(X) {
+                return globalThis.X;
+            }
+            """
+        )
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function f(X) {
+                  return globalThis.X;
+                }
+                """
+            ),
+            self._simplify(source),
+        )
+
+
+class TestOpaquePredicate(TestJsDeobfuscator):
+
+    def test_in_predicate_pruned_without_property_store(self):
+        source = inspect.cleandoc(
+            """
+            function f() {}
+            if ("xyz" in f) {
+                dead();
+            }
+            live();
+            """
+        )
+        self.assertEqual(
+            'live();',
+            self._deobfuscate(source),
+        )
+
+    def test_in_predicate_true_when_property_exists(self):
+        source = inspect.cleandoc(
+            """
+            function f() {}
+            f.xyz = 1;
+            if ("xyz" in f) {
+                console.log("Hello World!");
+            }
+            """
+        )
+        self.assertEqual(
+            'console.log("Hello World!");',
+            self._deobfuscate(source),
+        )
+
+    def test_in_predicate_builtin_on_nonempty_function(self):
+        source = inspect.cleandoc(
+            """
+            function handler(x) { return x + 1; }
+            if ("hasOwnProperty" in handler) {
+                live();
+            } else {
+                dead();
+            }
+            """
+        )
+        self.assertEqual(
+            'live();',
+            self._deobfuscate(source),
+        )
+
+
+class TestParenthesizedExpressionStripping(TestJsDeobfuscator):
+
+    def test_iife_parens_preserved(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                (function() {
+                  var x = 1;
+                  console.log(x);
+                })();
+                """
+            ),
+            self._simplify('(function(){ var x = 1; console.log(x); })();'),
+        )
+
+    def test_bare_identifier_parens_stripped(self):
+        self.assertEqual('var x = y;', self._simplify('var x = (y);'))
+
+
+class TestFunctionEvaluator(TestJsDeobfuscator):
+
+    def _evaluate(self, source: str) -> str:
+        from refinery.lib.scripts.js.deobfuscation.evaluator import JsFunctionEvaluator
+        return self._run_transformer(source, JsFunctionEvaluator)
+
+    def test_simple_arithmetic(self):
+        source = inspect.cleandoc(
+            """
+            function calc(op, a, b) {
+                switch (op) {
+                    case 'add': return a + b;
+                    case 'sub': return a - b;
+                    case 'mul': return a * b;
+                }
+            }
+            var x = calc('add', 10, 20);
+            var y = calc('sub', 100, 42);
+            var z = calc('mul', 3, 7);
+            """
+        )
+        result = self._evaluate(source)
+        self.assertIn('var x = 30;', result)
+        self.assertIn('var y = 58;', result)
+        self.assertIn('var z = 21;', result)
+        self.assertNotIn('function calc', result)
+
+    def test_string_decoder_xor(self):
+        source = inspect.cleandoc(
+            """
+            function decode(encoded, key) {
+                var result = '';
+                for (var i = 0; i < encoded.length; i++) {
+                    result += String.fromCharCode(encoded.charCodeAt(i) ^ key);
+                }
+                return result;
+            }
+            var msg = decode('Kfool', 3);
+            """
+        )
+        result = self._evaluate(source)
+        self.assertIn("'Hello'", result)
+        self.assertNotIn('function decode', result)
+
+    def test_switch_lookup_single_arg(self):
+        source = inspect.cleandoc(
+            """
+            function lookup(key) {
+                switch (key) {
+                    case 'a': return 'alpha';
+                    case 'b': return 'beta';
+                    case 'c': return 'gamma';
+                }
+            }
+            var x = lookup('b');
+            var y = lookup('a');
+            """
+        )
+        result = self._evaluate(source)
+        self.assertIn("var x = 'beta';", result)
+        self.assertIn("var y = 'alpha';", result)
+        self.assertNotIn('function lookup', result)
+
+    def test_irreducible_expression_member_access(self):
+        source = inspect.cleandoc(
+            """
+            function getGlobal(mapping) {
+                switch (mapping) {
+                    case 'a': return globalVar['console'];
+                    case 'b': return globalVar['Object'];
+                }
+            }
+            var x = getGlobal('a');
+            """
+        )
+        result = self._evaluate(source)
+        self.assertIn("globalVar['console']", result)
+        self.assertNotIn('function getGlobal', result)
+
+    def test_iife_evaluation(self):
+        source = inspect.cleandoc(
+            """
+            var x = (function(a, b) { return a + b; })(10, 20);
+            """
+        )
+        result = self._evaluate(source)
+        self.assertEqual('var x = 30;', result)
+
+    def test_iife_arrow_function(self):
+        source = inspect.cleandoc(
+            """
+            var x = ((a, b) => a * b)(6, 7);
+            """
+        )
+        result = self._evaluate(source)
+        self.assertEqual('var x = 42;', result)
+
+    def test_impure_function_not_evaluated(self):
+        source = inspect.cleandoc(
+            """
+            function impure(x) {
+                console.log(x);
+                return x + 1;
+            }
+            var y = impure(5);
+            """
+        )
+        result = self._evaluate(source)
+        self.assertIn('function impure', result)
+        self.assertIn('impure(5)', result)
+
+    def test_non_literal_args_skipped(self):
+        source = inspect.cleandoc(
+            """
+            function add(a, b) { return a + b; }
+            var x = add(1, y);
+            """
+        )
+        result = self._evaluate(source)
+        self.assertIn('add(1, y)', result)
+
+    def test_function_preserved_when_partial_resolution(self):
+        source = inspect.cleandoc(
+            """
+            function add(a, b) { return a + b; }
+            var x = add(1, 2);
+            var y = add(3, z);
+            """
+        )
+        result = self._evaluate(source)
+        self.assertIn('var x = 3;', result)
+        self.assertIn('add(3, z)', result)
+        self.assertIn('function add', result)
+
+    def test_nested_function_calls(self):
+        source = inspect.cleandoc(
+            """
+            function double(x) { return x * 2; }
+            function addDoubles(a, b) { return double(a) + double(b); }
+            var result = addDoubles(3, 4);
+            """
+        )
+        result = self._evaluate(source)
+        self.assertIn('var result = 14;', result)
+
+    def test_string_methods(self):
+        source = inspect.cleandoc(
+            """
+            function upper(s) { return s.toUpperCase(); }
+            var x = upper('hello');
+            """
+        )
+        result = self._evaluate(source)
+        self.assertIn("'HELLO'", result)
+
+    def test_array_operations(self):
+        source = inspect.cleandoc(
+            """
+            function buildAndJoin(a, b, c) {
+                var arr = [a, b, c];
+                return arr.join('-');
+            }
+            var x = buildAndJoin('x', 'y', 'z');
+            """
+        )
+        result = self._evaluate(source)
+        self.assertIn("'x-y-z'", result)
+
+    def test_dead_function_chain_removal(self):
+        source = inspect.cleandoc(
+            """
+            function helper(x) { return x + 1; }
+            function wrapper(x) { return helper(x) * 2; }
+            var result = wrapper(5);
+            """
+        )
+        result = self._evaluate(source)
+        self.assertIn('var result = 12;', result)
+        self.assertNotIn('function helper', result)
+        self.assertNotIn('function wrapper', result)
+
+    def test_loop_safety_limit(self):
+        source = inspect.cleandoc(
+            """
+            function infinite(x) {
+                while (true) { x++; }
+                return x;
+            }
+            var y = infinite(0);
+            """
+        )
+        result = self._evaluate(source)
+        self.assertIn('infinite(0)', result)
+
+    def test_from_char_code(self):
+        source = inspect.cleandoc(
+            """
+            function decode(a, b, c) {
+                return String.fromCharCode(a, b, c);
+            }
+            var x = decode(72, 105, 33);
+            """
+        )
+        result = self._evaluate(source)
+        self.assertIn("'Hi!'", result)
+
+    def test_array_map(self):
+        source = inspect.cleandoc(
+            """
+            function transform(arr) {
+                return arr.map(function(x) { return x * 2; });
+            }
+            var x = transform([1, 2, 3]);
+            """
+        )
+        result = self._evaluate(source)
+        self.assertIn('var x = [2, 4, 6];', result)
+
+    def test_array_filter(self):
+        source = inspect.cleandoc(
+            """
+            function evens(arr) {
+                return arr.filter(function(x) { return x % 2 === 0; });
+            }
+            var x = evens([1, 2, 3, 4, 5, 6]);
+            """
+        )
+        result = self._evaluate(source)
+        self.assertIn('var x = [2, 4, 6];', result)
+
+    def test_array_every(self):
+        source = inspect.cleandoc(
+            """
+            function allPositive(arr) {
+                return arr.every(function(x) { return x > 0; });
+            }
+            var a = allPositive([1, 2, 3]);
+            var b = allPositive([1, -1, 3]);
+            """
+        )
+        result = self._evaluate(source)
+        self.assertIn('var a = true;', result)
+        self.assertIn('var b = false;', result)
+
+    def test_array_some(self):
+        source = inspect.cleandoc(
+            """
+            function hasNegative(arr) {
+                return arr.some(function(x) { return x < 0; });
+            }
+            var a = hasNegative([1, -1, 3]);
+            var b = hasNegative([1, 2, 3]);
+            """
+        )
+        result = self._evaluate(source)
+        self.assertIn('var a = true;', result)
+        self.assertIn('var b = false;', result)
+
+    def test_array_find(self):
+        source = inspect.cleandoc(
+            """
+            function firstBig(arr) {
+                return arr.find(function(x) { return x > 10; });
+            }
+            var x = firstBig([3, 7, 15, 20]);
+            """
+        )
+        result = self._evaluate(source)
+        self.assertIn('var x = 15;', result)
+
+    def test_array_find_index(self):
+        source = inspect.cleandoc(
+            """
+            function indexOfBig(arr) {
+                return arr.findIndex(function(x) { return x > 10; });
+            }
+            var x = indexOfBig([3, 7, 15, 20]);
+            var y = indexOfBig([1, 2, 3]);
+            """
+        )
+        result = self._evaluate(source)
+        self.assertIn('var x = 2;', result)
+        self.assertIn('var y = -1;', result)
+
+    def test_array_reduce(self):
+        source = inspect.cleandoc(
+            """
+            function sum(arr) {
+                return arr.reduce(function(acc, x) { return acc + x; }, 0);
+            }
+            var x = sum([1, 2, 3, 4]);
+            """
+        )
+        result = self._evaluate(source)
+        self.assertIn('var x = 10;', result)
+
+    def test_array_reduce_no_initial(self):
+        source = inspect.cleandoc(
+            """
+            function product(arr) {
+                return arr.reduce(function(acc, x) { return acc * x; });
+            }
+            var x = product([2, 3, 4]);
+            """
+        )
+        result = self._evaluate(source)
+        self.assertIn('var x = 24;', result)
+
+    def test_array_map_with_arrow(self):
+        source = inspect.cleandoc(
+            """
+            function encode(arr) {
+                return arr.map(x => x + 1);
+            }
+            var x = encode([10, 20, 30]);
+            """
+        )
+        result = self._evaluate(source)
+        self.assertIn('var x = [11, 21, 31];', result)
+
+    def test_object_literal_parens_preserved(self):
+        self.assertEqual('var x = ({ a: 1 });', self._simplify('var x = ({a: 1});'))

@@ -537,14 +537,14 @@ class JsParser:
             self._expect(JsTokenKind.COLON)
         else:
             self._advance()
-        consequent: list[Statement] = []
+        body: list[Statement] = []
         while not self._at(
             JsTokenKind.CASE, JsTokenKind.DEFAULT, JsTokenKind.RBRACE, JsTokenKind.EOF,
         ):
             stmt = self._parse_statement()
             if stmt is not None:
-                consequent.append(stmt)
-        return JsSwitchCase(test=test, consequent=consequent, offset=offset)
+                body.append(stmt)
+        return JsSwitchCase(test=test, body=body, offset=offset)
 
     def _parse_try_statement(self) -> JsTryStatement:
         offset = self._current.offset
@@ -1132,6 +1132,20 @@ class JsParser:
                     offset=offset,
                 )
             callee = self._parse_new_expression()
+            while True:
+                if self._eat(JsTokenKind.DOT):
+                    prop_tok = self._advance()
+                    prop = JsIdentifier(name=prop_tok.value, offset=prop_tok.offset)
+                    callee = JsMemberExpression(
+                        object=callee, property=prop, computed=False, offset=callee.offset)
+                elif self._at(JsTokenKind.LBRACKET):
+                    self._advance()
+                    prop = self._parse_expression()
+                    self._expect(JsTokenKind.RBRACKET)
+                    callee = JsMemberExpression(
+                        object=callee, property=prop, computed=True, offset=callee.offset)
+                else:
+                    break
             args: list[Expression] = []
             if self._at(JsTokenKind.LPAREN):
                 self._advance()

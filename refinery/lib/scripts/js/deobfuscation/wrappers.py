@@ -17,7 +17,7 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     ScriptLevelTransformer,
     extract_identifier_params,
     is_closed_expression,
-    is_simple_expression,
+    is_side_effect_free,
     substitute_params,
 )
 from refinery.lib.scripts.js.model import (
@@ -111,7 +111,7 @@ class JsCallWrapperInliner(ScriptLevelTransformer):
                 continue
             if len(ast_node.arguments) != len(info.param_names):
                 continue
-            if not all(is_simple_expression(a) for a in ast_node.arguments):
+            if not all(is_side_effect_free(a) for a in ast_node.arguments):
                 continue
             replacement = substitute_params(
                 info.return_expression,

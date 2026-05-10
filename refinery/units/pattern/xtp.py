@@ -361,7 +361,7 @@ class xtp(PatternExtractor):
             indicators.winpath.name,
             indicators.nixpath.name,
         ):
-            if len(value.split()) + min(self.args.filter, 4) >= 6:
+            if self.args.filter >= 2 and 12 * value.count(0x20) > len(value):
                 self.log_info(F'excluding path because it contains too many spaces: {text}')
                 return None
             if len(value) < 8:

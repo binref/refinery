@@ -331,6 +331,8 @@ def _extract_wrapper_offset(
     if isinstance(idx_arg, JsIdentifier):
         return idx_arg.name, 0
     if isinstance(idx_arg, JsBinaryExpression) and isinstance(idx_arg.left, JsIdentifier):
+        if idx_arg.right is None:
+            return None
         right_val = _resolve_constant(idx_arg.right, prop_maps)
         if right_val is None:
             return None
@@ -443,8 +445,8 @@ def _collect_iife_wrappers(
     """
     Scan the rotation IIFE body for inner wrapper functions and their associated offset objects.
     Returns `(wrappers, prop_maps)` where `wrappers` maps wrapper function names to their
-    `refinery.lib.scripts.js.deobfuscation.AccessorWrapperInfo` and `prop_maps` maps object
-    variable names to their `{key: value}` dicts.
+    `AccessorWrapperInfo` and `prop_maps` maps object variable names to their `{key: value}`
+    dicts.
 
     Inner wrappers follow the pattern::
 
@@ -598,8 +600,7 @@ def _eval_checksum(
     lookups, and numeric literals. When inner wrapper functions are present, wrapper calls are
     resolved to direct accessor calls on the fly without modifying the AST.
 
-    Raises `refinery.lib.scripts.js.deobfuscation.stringarray._EvalError` on any unrecognized
-    pattern.
+    Raises `_EvalError` on any unrecognized pattern.
     """
     recurse = functools.partial(
         _eval_checksum,
@@ -658,7 +659,7 @@ def _resolve_accessor_call(
     """
     Resolve an accessor or wrapper call to `(index, rc4_key)`. Handles both direct accessor calls
     (`accessor(idx, key)`) and inner wrapper calls (`wrapper(obj.key, obj.idx)`). Raises
-    `refinery.lib.scripts.js.deobfuscation.stringarray._EvalError` when the call cannot be resolved.
+    `_EvalError` when the call cannot be resolved.
     """
     callee_name = call.callee.name if isinstance(call.callee, JsIdentifier) else None
     if callee_name is not None and callee_name in local_accessors and len(call.arguments) >= 1:
@@ -757,8 +758,12 @@ _B64_TRANSLATE = str.maketrans(_B64_ALPHABET, _B64_STANDARD)
 def _detect_encoding(accessor_node: JsFunctionDeclaration) -> Encoding:
     """
     Detect the string encoding mode by inspecting the accessor function body. The base64 and RC4
-    variants inject an `if (NAME['...'] === undefined)` init guard that contains the base64
-    alphabet string and one (base64) or two (RC4) inner function definitions.
+    variants inject an init guard:
+
+        if (NAME['...'] === undefined)
+
+    that contains the base64 alphabet string and one (base64) or two (RC4) inner function
+    definitions.
     """
     if accessor_node.body is None:
         return Encoding.NONE
@@ -869,8 +874,8 @@ def _find_remaining_calls(
 ) -> tuple[bool, set[int]]:
     """
     Determine whether unresolved accessor or wrapper calls remain in the AST, excluding calls that
-    are inside dead wrapper function bodies (which will be removed). Returns `(has_remaining,
-    dead_node_ids)` so the dead-node set can be reused during cleanup.
+    are inside dead wrapper function bodies (which will be removed). Returns a `(bool, set)` pair:
+    whether any outstanding calls exist, and the set of dead-node ids for reuse during cleanup.
     """
     dead_nodes: set[int] = set()
     for n in root.walk():
@@ -923,9 +928,9 @@ def _cleanup_infrastructure(
 
 class _CachedResolution(NamedTuple):
     """
-    Cached result of a successful array rotation simulation, stored on the JsScript node to survive
-    across pipeline iterations. This prevents re-simulation failures when the simplifier modifies the
-    checksum expression in the rotation IIFE between string array passes.
+    Cached result of a successful array rotation simulation, stored on the JsScript node to
+    survive across pipeline iterations. This prevents re-simulation failures when the simplifier
+    modifies the checksum expression in the rotation IIFE between string array passes.
     """
     resolved: list[str]
     base_offset: int
