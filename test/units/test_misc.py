@@ -214,6 +214,7 @@ class TestSimpleInvertible(TestUnitBase):
         'hexload',
         'iff',
         'iffc',
+        'iffid',
         'iffp',
         'iffs',
         'iffx',
