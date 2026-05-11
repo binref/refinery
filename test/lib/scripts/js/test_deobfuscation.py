@@ -1459,6 +1459,38 @@ class TestConstantInlining(TestJsDeobfuscator):
             self._inline("var x = 'hello'; ({y: x} = getValues()); console.log(x);"),
         )
 
+    def test_function_declaration_id_not_replaced(self):
+        source = inspect.cleandoc(
+            """
+            function outer() {
+                const x = void 0;
+                function inner() {
+                    function x() { return 1; }
+                    return x();
+                }
+                return inner();
+            }
+            """
+        )
+        result = self._inline(source)
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function outer() {
+                  const x = void 0;
+                  function inner() {
+                    function x() {
+                      return 1;
+                    }
+                    return x();
+                  }
+                  return inner();
+                }
+                """
+            ),
+            result,
+        )
+
 
 class TestConstantPoolIntegration(TestJsDeobfuscator):
 

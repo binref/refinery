@@ -161,7 +161,7 @@ def _is_literal_array(node: Node) -> bool:
     return all(el is not None and is_literal(el) for el in node.elements)
 
 
-def _function_local_names(func: JsFunctionDeclaration) -> set[str]:
+def _function_local_names(func: JsFunctionDeclaration | JsFunctionExpression | JsArrowFunctionExpression) -> set[str]:
     """
     Collect names declared locally inside a function: parameter names, `var` declarations
     (function-scoped), and top-level `let`/`const` declarations. Inner-block `let`/`const`
@@ -687,6 +687,8 @@ class JsConstantInlining(ScopeProcessingTransformer):
                         enclosing = self._enclosing_function_name(obj, func_mods)
                         if enclosing is None:
                             continue
+                        if self._is_shadowed_in_enclosing_function(obj, name):
+                            continue
                         self._apply_index_access_inline(
                             node, cross_candidates[name][0], name, inlined,
                         )
@@ -697,6 +699,8 @@ class JsConstantInlining(ScopeProcessingTransformer):
                             or enclosing not in called_functions
                             or name in func_mods.get(enclosing, set())
                         ):
+                            continue
+                        if self._is_shadowed_in_enclosing_function(obj, name):
                             continue
                         self._try_inline_index(
                             node, name, cross_candidates, seal_points, inlined,
@@ -716,6 +720,8 @@ class JsConstantInlining(ScopeProcessingTransformer):
                 continue
             if isinstance(parent, JsVariableDeclarator) and parent.id is node:
                 continue
+            if isinstance(parent, (JsFunctionDeclaration, JsFunctionExpression)) and parent.id is node:
+                continue
             entry = cross_candidates[name][0]
             if not is_literal(entry.value):
                 continue
@@ -729,9 +735,25 @@ class JsConstantInlining(ScopeProcessingTransformer):
                 or name in func_mods.get(enclosing, set())
             ):
                 continue
+            if self._is_shadowed_in_enclosing_function(node, name):
+                continue
             _replace_in_parent(node, _clone_node(entry.value))
             self.mark_changed()
             inlined[name] = inlined.get(name, 0) + 1
+
+    @staticmethod
+    def _is_shadowed_in_enclosing_function(node: Node, name: str) -> bool:
+        """
+        Check whether *name* is locally declared in the immediately enclosing function of *node*.
+        This prevents inlining when a nested function shadows the outer constant with its own
+        declaration (function declaration, var, let/const at function top level, or parameter).
+        """
+        cursor = node.parent
+        while cursor is not None:
+            if isinstance(cursor, FUNCTION_NODE_TYPES):
+                return name in _function_local_names(cursor)
+            cursor = cursor.parent
+        return False
 
     @staticmethod
     def _enclosing_function_name(
