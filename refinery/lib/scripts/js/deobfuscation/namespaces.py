@@ -338,4 +338,3 @@ class JsNamespaceFlattening(ScopeProcessingTransformer):
             body.remove(decl_stmt)
         else:
             decl_stmt.declarations.remove(declarator)
-
