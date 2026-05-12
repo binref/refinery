@@ -17,12 +17,12 @@ from refinery.lib.scripts.ps1.deobfuscation.data import (
     _resolve_type_name,
 )
 from refinery.lib.scripts.ps1.deobfuscation.helpers import (
+    MutationKind,
     extract_first_positional_string,
     get_command_name,
     get_member_name,
     iter_variable_mutations,
     make_string_literal,
-    MutationKind,
     unwrap_parens,
 )
 from refinery.lib.scripts.ps1.model import (

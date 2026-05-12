@@ -8,6 +8,8 @@ wrappers and substitutes each call site with the inlined return expression.
 """
 from __future__ import annotations
 
+from typing import NamedTuple
+
 from refinery.lib.scripts import (
     Node,
     _remove_from_parent,
@@ -27,8 +29,6 @@ from refinery.lib.scripts.js.model import (
     JsReturnStatement,
     JsScript,
 )
-
-from typing import NamedTuple
 
 
 class _WrapperInfo(NamedTuple):

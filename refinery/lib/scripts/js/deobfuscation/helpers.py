@@ -7,7 +7,7 @@ import math
 import operator
 import re
 
-from typing import Callable, Iterator, Sequence, TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable, Iterator, Sequence
 
 if TYPE_CHECKING:
     from typing import TypeAlias
@@ -47,9 +47,9 @@ from refinery.lib.scripts.js.model import (
     JsSequenceExpression,
     JsStringLiteral,
     JsUnaryExpression,
-    JsVarKind,
     JsVariableDeclaration,
     JsVariableDeclarator,
+    JsVarKind,
     JsWhileStatement,
 )
 from refinery.lib.scripts.js.token import FUTURE_RESERVED, KEYWORDS

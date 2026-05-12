@@ -4,7 +4,7 @@ computed results.
 """
 from __future__ import annotations
 
-from typing import Iterator, TYPE_CHECKING
+from typing import TYPE_CHECKING, Iterator
 
 if TYPE_CHECKING:
     from refinery.lib.scripts.js.deobfuscation.interpreter import Value

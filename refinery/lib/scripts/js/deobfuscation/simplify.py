@@ -25,8 +25,8 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     try_inline_trivial_function,
 )
 from refinery.lib.scripts.js.model import (
-    JsArrowFunctionExpression,
     JsArrayExpression,
+    JsArrowFunctionExpression,
     JsAssignmentExpression,
     JsBinaryExpression,
     JsBlockStatement,
@@ -48,11 +48,10 @@ from refinery.lib.scripts.js.model import (
     JsSequenceExpression,
     JsStringLiteral,
     JsUnaryExpression,
-    JsVarKind,
     JsVariableDeclaration,
     JsVariableDeclarator,
+    JsVarKind,
 )
-
 
 _OBJECT_PROTO_PROPERTIES = frozenset({
     '__defineGetter__',

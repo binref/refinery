@@ -11,11 +11,9 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
     from typing import TypeAlias
 
-    from refinery.lib.scripts.js.model import (
-        JsArrowFunctionExpression as _Arrow,
-        JsFunctionDeclaration as _FuncDecl,
-        JsFunctionExpression as _FuncExpr,
-    )
+    from refinery.lib.scripts.js.model import JsArrowFunctionExpression as _Arrow
+    from refinery.lib.scripts.js.model import JsFunctionDeclaration as _FuncDecl
+    from refinery.lib.scripts.js.model import JsFunctionExpression as _FuncExpr
 
     Value: TypeAlias = str | int | float | bool | list | dict | _FuncDecl | _FuncExpr | _Arrow | None
 

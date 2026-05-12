@@ -4,7 +4,7 @@ import re
 import zlib
 
 from struct import unpack
-from typing import Generator, TYPE_CHECKING
+from typing import TYPE_CHECKING, Generator
 
 from refinery.units import Unit
 
@@ -168,8 +168,8 @@ class meow(Unit):
         from refinery.lib.structures import StructReader
         from refinery.lib.un7z.coders import CODEC_AES256SHA256, decompress_folder
         from refinery.lib.un7z.headers import (
-            ArchiveHeader,
             SIGNATURE_HEADER_SIZE,
+            ArchiveHeader,
             PropertyID,
             parse_encoded_header,
             parse_header,

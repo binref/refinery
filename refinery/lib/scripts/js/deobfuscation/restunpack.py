@@ -32,9 +32,9 @@ from refinery.lib.scripts.js.model import (
     JsScript,
     JsStringLiteral,
     JsUnaryExpression,
-    JsVarKind,
     JsVariableDeclaration,
     JsVariableDeclarator,
+    JsVarKind,
 )
 
 

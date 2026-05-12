@@ -15,8 +15,8 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
 from refinery.lib.scripts.js.model import (
     JsBlockStatement,
     JsIfStatement,
-    JsVarKind,
     JsVariableDeclaration,
+    JsVarKind,
 )
 
 

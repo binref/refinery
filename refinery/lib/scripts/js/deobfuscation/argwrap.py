@@ -6,7 +6,10 @@ call back into individual statements, and removes the wrapper definition.
 from __future__ import annotations
 
 from refinery.lib.scripts import Node, Statement, _remove_from_parent, _replace_in_parent
-from refinery.lib.scripts.js.deobfuscation.helpers import ScriptLevelTransformer, has_remaining_references
+from refinery.lib.scripts.js.deobfuscation.helpers import (
+    ScriptLevelTransformer,
+    has_remaining_references,
+)
 from refinery.lib.scripts.js.model import (
     JsAssignmentExpression,
     JsBlockStatement,

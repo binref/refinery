@@ -38,9 +38,9 @@ from refinery.lib.scripts.js.model import (
     JsStringLiteral,
     JsTaggedTemplateExpression,
     JsUpdateExpression,
-    JsVarKind,
     JsVariableDeclaration,
     JsVariableDeclarator,
+    JsVarKind,
     JsYieldExpression,
 )
 

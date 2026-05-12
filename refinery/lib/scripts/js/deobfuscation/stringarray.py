@@ -13,6 +13,8 @@ import base64
 import enum
 import functools
 
+from typing import NamedTuple, Sequence
+
 from refinery.lib.scripts import (
     Node,
     _remove_from_parent,
@@ -50,8 +52,6 @@ from refinery.lib.scripts.js.model import (
     JsVariableDeclarator,
     JsWhileStatement,
 )
-
-from typing import NamedTuple, Sequence
 
 
 class Encoding(enum.Enum):
