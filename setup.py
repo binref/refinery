@@ -52,7 +52,7 @@ class BuildCommand(_build_ext):
 
 
 __prefix__ = os.getenv('REFINERY_PREFIX') or ''
-__minver__ = '3.8'
+__minver__ = '3.10'
 __github__ = 'https://github.com/binref/refinery/'
 __gitraw__ = 'https://raw.githubusercontent.com/binref/refinery/'
 __author__ = 'Jesko Huettenhain'

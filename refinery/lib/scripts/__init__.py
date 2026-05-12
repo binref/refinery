@@ -13,8 +13,6 @@ import typing
 from dataclasses import dataclass, field
 from typing import Callable, Generator, TypeVar
 
-from refinery.lib.annotations import get_type_hints as _get_type_hints
-
 
 class Kind(enum.IntEnum):
     ChildNode = 1
@@ -40,7 +38,7 @@ def _classify_fields(node_type: type[Node]) -> list[tuple[str, Kind]]:
         pass
     result: list[tuple[str, Kind]] = []
     try:
-        hints = _get_type_hints(node_type)
+        hints = typing.get_type_hints(node_type)
     except Exception:
         _child_fields_cache[node_type] = result
         return result

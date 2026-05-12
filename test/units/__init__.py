@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Type, Dict, Any
+from typing import Any
 
 import importlib
 import functools
@@ -29,7 +29,7 @@ class MissingRequirement(property):
 
 class TestUnitBaseMeta(type):
 
-    def __init__(cls: TestUnitBase, name, bases, namespace: Dict[str, Any]):
+    def __init__(cls: TestUnitBase, name, bases, namespace: dict[str, Any]):
         try:
             unit = cls.unit()
             has_optional_imports = bool(unit.optional_dependencies)
@@ -78,7 +78,7 @@ class TestUnitBase(TestBase, metaclass=TestUnitBaseMeta):
         return '.'.join(path)
 
     @classmethod
-    def unit(cls) -> Type[refinery.Unit]:
+    def unit(cls) -> type[refinery.Unit]:
         name = cls._relative_module_path(cls.__module__)
         try:
             module = importlib.import_module(F'refinery.{name}')

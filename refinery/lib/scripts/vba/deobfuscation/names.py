@@ -5,12 +5,12 @@ deobfuscation transforms.
 from __future__ import annotations
 
 from functools import partial
-from typing import TYPE_CHECKING, Any, Callable, Optional, Union
+from typing import TYPE_CHECKING, Any, Callable
 
 if TYPE_CHECKING:
     from typing import TypeAlias
 
-Value: TypeAlias = Optional[Union[str, int, float, bool]]
+Value: TypeAlias = str | int | float | bool | None
 
 CHR_NAMES = frozenset({'chr', 'chrw', 'chr$', 'chrw$'})
 

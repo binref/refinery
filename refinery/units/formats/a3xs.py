@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import Optional
-
 from refinery.units.formats import Unit
 from refinery.units.formats.a3x import A3xRecord, A3xScript
 
@@ -38,5 +36,5 @@ class a3xs(Unit):
                 yield from record.extract_linewise()
 
     @classmethod
-    def handles(cls, data) -> Optional[bool]:
+    def handles(cls, data) -> bool | None:
         return A3xScript.MAGIC in data or A3xRecord.MAGIC in data

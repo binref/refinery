@@ -1,4 +1,3 @@
-from typing import Optional
 
 import hashlib
 import http.client
@@ -65,17 +64,17 @@ class SampleStore:
             remaining -= time.monotonic() - clock
         raise LookupError(F'Timeout exceeded while looking for {sha256hash}, backed off {backoff} times.')
 
-    def decode(self, data: bytes, key: Optional[str] = None):
+    def decode(self, data: bytes, key: str | None = None):
         if key is None:
             key = 'REFINERYTESTDATA'
         result = data | aes(mode='CBC', key=key.encode('latin1')) | bytearray
         return result
 
-    def download(self, sha256hash: str, key: Optional[str] = None):
+    def download(self, sha256hash: str, key: str | None = None):
         encoded = self._download(sha256hash.lower())
         return self.decode(encoded, key)
 
-    def get(self, sha256hash: str, key: Optional[str] = None):
+    def get(self, sha256hash: str, key: str | None = None):
         sha256hash = sha256hash.lower()
         path = self.root / F'{sha256hash}.enc'
         with self.lock:

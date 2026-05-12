@@ -4,7 +4,7 @@ import datetime
 import re
 
 from enum import Enum
-from typing import Any, Dict, Optional, Tuple
+from typing import Any
 
 
 class EvalStatus(Enum):
@@ -134,7 +134,7 @@ class Cell:
         self.row: int = 0
         self.formula: str | None = None
         self.value: Any = None
-        self.attributes: Dict[str, Any] = {}
+        self.attributes: dict[str, Any] = {}
         self.is_set: bool = False
 
     def __deepcopy__(self, _memodict: dict | None = None) -> Cell:
@@ -175,7 +175,7 @@ class Cell:
     @staticmethod
     def parse_cell_addr(
         cell_addr_str: str,
-    ) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+    ) -> tuple[str | None, str | None, str | None]:
         cell_addr_str = cell_addr_str.strip('"')
         m = Cell._r1c1_abs_re.match(cell_addr_str)
         if m is not None:
@@ -196,7 +196,7 @@ class Cell:
     @staticmethod
     def parse_range_addr(
         range_addr_str: str,
-    ) -> Tuple[Optional[str], ...]:
+    ) -> tuple[str | None, ...]:
         m = Cell._range_re.match(range_addr_str)
         if m is not None:
             sheet_name = m.group('sheetname')
@@ -241,9 +241,9 @@ class Boundsheet:
     def __init__(self, name: str, type: str):
         self.name = name
         self.type = type
-        self.cells: Dict[str, Cell] = {}
-        self.row_attributes: Dict[int, Dict[str, Any]] = {}
-        self.col_attributes: Dict[str, Dict[str, Any]] = {}
+        self.cells: dict[str, Cell] = {}
+        self.row_attributes: dict[int, dict[str, Any]] = {}
+        self.col_attributes: dict[str, dict[str, Any]] = {}
         self.default_height: float | None = None
 
     def add_cell(self, cell: Cell) -> None:

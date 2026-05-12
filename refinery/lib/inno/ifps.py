@@ -16,9 +16,7 @@ from typing import (
     Callable,
     Generator,
     NamedTuple,
-    Type,
     TypeVar,
-    Union,
 )
 from uuid import UUID
 
@@ -26,8 +24,8 @@ from refinery.lib.inno import CaseInsensitiveDict
 from refinery.lib.inno.symbols import IFPSAPI, IFPSClasses, IFPSEvents
 from refinery.lib.structures import Struct, StructReader
 
-_E = TypeVar('_E', bound=Type[enum.Enum])
-_C = TypeVar('_C', bound=Type)
+_E = TypeVar('_E', bound=type[enum.Enum])
+_C = TypeVar('_C', bound=type)
 
 _TAB = '\x20\x20'
 
@@ -545,16 +543,16 @@ class TRecord(IFPSTypeBase):
         return output.getvalue()
 
 
-IFPSType = Union[
-    TRecord,
-    TStaticArray,
-    TArray,
-    TSet,
-    TProcPtr,
-    TClass,
-    TInterface,
-    TPrimitive,
-]
+IFPSType = (
+    TRecord
+    | TStaticArray
+    | TArray
+    | TSet
+    | TProcPtr
+    | TClass
+    | TInterface
+    | TPrimitive
+)
 """
 Represents any of the possible IFPS data types:
 

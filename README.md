@@ -24,7 +24,7 @@ and is an attempt to implement something like [CyberChef](https://github.com/gch
 
 ## Short Version
 
-Make a Python virtual environment. You need Python 3.8 or later. Install refinery like this:
+Make a Python virtual environment. You need Python 3.10 or later. Install refinery like this:
 ```
 python -m pip install -U pip
 python -m pip install -U binary-refinery[extended]
@@ -75,7 +75,7 @@ If you want to do something with it that's not covered by this license, please f
 
 ## Warnings & Advice
 
-The refinery requires at least **Python 3.8**.
+The refinery requires at least **Python 3.10**.
 It is recommended to install it into its own [virtual environment][venv]:
 The package can pull in a **lot** of dependencies,
 and installing it into your global Python is somewhat prone to version conflicts.

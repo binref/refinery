@@ -3,8 +3,6 @@ Date and time related functoins.
 """
 from __future__ import annotations
 
-import sys
-
 from datetime import datetime, timezone
 
 
@@ -29,11 +27,7 @@ def date_from_timestamp(ts: int | float):
     """
     Convert a UTC timestamp to a datetime object.
     """
-    if sys.version_info >= (3, 12):
-        dt = datetime.fromtimestamp(ts, timezone.utc)
-    else:
-        dt = datetime.utcfromtimestamp(ts)
-    return dt.replace(tzinfo=None)
+    return datetime.fromtimestamp(ts, timezone.utc).replace(tzinfo=None)
 
 
 def dostime(stamp: int) -> datetime:

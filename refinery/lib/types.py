@@ -17,30 +17,22 @@ if TYPE_CHECKING:
         Generator,
         Iterable,
         Self,
-        Union,
     )
 
     Param = Annotated
-    JSON = Union[
-        None,
-        str,
-        int,
-        float,
-        bool,
-        dict[str, 'JSON'],
-        list['JSON'],
-        list[int],
-        list[str],
-        list[float],
-        list[bool],
-        dict[str, int],
-        dict[str, str],
-        dict[str, int | str],
-    ]
+    JSON = (
+        None
+        | str
+        | int
+        | float
+        | bool
+        | dict[str, Any]
+        | list[Any]
+    )
     JSONDict = dict[str, JSON]
 
-    buf = Union[bytes, bytearray, memoryview]
-    isq = Union[int, Iterable[int]]
+    buf = bytes | bytearray | memoryview
+    isq = int | Iterable[int]
 
 else:
     class __P:

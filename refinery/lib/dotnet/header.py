@@ -15,12 +15,9 @@ import enum
 import functools
 
 from typing import (
-    Dict,
     Generic,
     NewType,
-    Optional,
     TypeVar,
-    Union,
     get_args,
     get_origin,
     get_type_hints,
@@ -38,7 +35,7 @@ from refinery.lib.structures import (
 from refinery.lib.types import NamedTuple, buf
 
 T = TypeVar('T')
-N = TypeVar('N', str, bytes, Optional[UUID])
+N = TypeVar('N', str, bytes, UUID | None)
 R = TypeVar('R')
 
 
@@ -254,7 +251,7 @@ class NetMetaDataStreamEntry(DotNetStruct):
         self.Name = reader.read_dn_null_terminated_string(align=4)
 
 
-class NetMetaDataStream(Dict[int, N], abc.ABC):
+class NetMetaDataStream(dict[int, N], abc.ABC):
     default: N
 
     def __init__(self, reader: DotNetStructReader):
@@ -306,7 +303,7 @@ class NetMetaDataStreamStrU(NetMetaDataStream[str]):
     default = ''
 
 
-class NetMetaDataStreamGUID(NetMetaDataStream[Optional[UUID]]):
+class NetMetaDataStreamGUID(NetMetaDataStream[UUID | None]):
     def stream_next(self):
         return self._reader.read_guid()
     default = None
@@ -847,87 +844,45 @@ class Index(Generic[R]):
         }
 
 
-TypeDefOrRef = Union[
-    TypeDef,
-    TypeRef,
-    TypeSpec,
-]
-HasConstant = Union[
-    Field,
-    Param,
-    Property,
-]
-HasCustomAttribute = Union[
-    MethodDef,
-    Field,
-    TypeRef,
-    TypeDef,
-    Param,
-    InterfaceImpl,
-    MemberRef,
-    Module,
-    Permission,
-    Property,
-    Event,
-    StandAloneSig,
-    ModuleRef,
-    TypeSpec,
-    Assembly,
-    AssemblyRef,
-    File,
-    ExportedType,
-    ManifestResource,
-]
-HasFieldMarshall = Union[
-    Field,
-    Param,
-]
-HasDeclSecurity = Union[
-    TypeDef,
-    MethodDef,
-    Assembly,
-]
-MemberRefParent = Union[
-    TypeDef,
-    TypeRef,
-    ModuleRef,
-    MethodDef,
-    TypeSpec,
-]
-HasSemantics = Union[
-    Event,
-    Property,
-]
-MethodDefOrRef = Union[
-    MethodDef,
-    MemberRef,
-]
-MemberForwarded = Union[
-    Field,
-    MethodDef,
-]
-Implementation = Union[
-    File,
-    AssemblyRef,
-    ExportedType,
-]
-CustomAttributeType = Union[
-    Unused[1],
-    Unused[2],
-    MethodDef,
-    MemberRef,
-    Unused[3],
-]
-ResolutionScope = Union[
-    Module,
-    ModuleRef,
-    AssemblyRef,
-    TypeRef,
-]
-TypeOrMethodDef = Union[
-    TypeDef,
-    MethodDef,
-]
+TypeDefOrRef = TypeDef | TypeRef | TypeSpec
+HasConstant = Field | Param | Property
+HasCustomAttribute = (
+    MethodDef
+    | Field
+    | TypeRef
+    | TypeDef
+    | Param
+    | InterfaceImpl
+    | MemberRef
+    | Module
+    | Permission
+    | Property
+    | Event
+    | StandAloneSig
+    | ModuleRef
+    | TypeSpec
+    | Assembly
+    | AssemblyRef
+    | File
+    | ExportedType
+    | ManifestResource
+)
+HasFieldMarshall = Field | Param
+HasDeclSecurity = TypeDef | MethodDef | Assembly
+MemberRefParent = TypeDef | TypeRef | ModuleRef | MethodDef | TypeSpec
+HasSemantics = Event | Property
+MethodDefOrRef = MethodDef | MemberRef
+MemberForwarded = Field | MethodDef
+Implementation = File | AssemblyRef | ExportedType
+CustomAttributeType = (
+      Unused[1]  # noqa
+    | Unused[2]  # noqa
+    | MethodDef
+    | MemberRef
+    | Unused[3]
+)
+ResolutionScope = Module | ModuleRef | AssemblyRef | TypeRef
+TypeOrMethodDef = TypeDef | MethodDef
 
 
 class _IndexInfo(NamedTuple):

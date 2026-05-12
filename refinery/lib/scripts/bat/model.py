@@ -5,7 +5,6 @@ import sys
 
 from dataclasses import dataclass, field
 from functools import cached_property
-from typing import Union
 
 from refinery.lib.scripts.bat.util import batchrange
 from refinery.lib.structures import FlagAccessMixin
@@ -94,7 +93,7 @@ class RedirectIO:
         return self
 
 
-Token = Union[Word, Ctrl, RedirectIO]
+Token = Word | Ctrl | RedirectIO
 
 
 class ArgVarFlags(FlagAccessMixin, enum.IntFlag):

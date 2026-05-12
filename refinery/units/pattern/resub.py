@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Match
+from re import Match
 
 from refinery.lib.meta import metavars
 from refinery.lib.types import Param, buf

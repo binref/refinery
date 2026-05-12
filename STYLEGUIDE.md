@@ -4,8 +4,7 @@ This document is the style guide for all code in Binary Refinery.
 
 ## Compatibility
 
-All refinery code must support **Python 3.8** and later versions.
-For example, this means that the `match` statement is currently not supported.
+All refinery code must support **Python 3.10** and later versions.
 
 ## Code Style
 
@@ -25,7 +24,7 @@ First and foremost, all code should pass [flake8], with the following tests disa
 We use `pyflakes` for checking compliance and run the following `isort` command to normalize imports
 inside the refinery code package (tests are not subject to this):
 ```
-isort --py=38 refinery
+isort --py=310 refinery
 ```
 
 ### Type Hints
@@ -35,15 +34,10 @@ The refinery code base uses modern type hints, i.e.:
 - `int | bool` instead of `Union[int, bool]`,
 - `list[bool]` instead of `List[bool]`.
 
-To facilitate this and ensure backwards compatibility with Python 3.8, we prefix all code with
+To enable lazy type hint evaluation, we prefix all code with:
 ```
 from __future__ import annotations
 ```
-In rare cases where a modern type hint would have to be resolved at runtime however,
- it is permissible to import from `typing` and define types compatible with Python 3.8.
-On the other hand, this is very often avoidable by making such definitions only when `TYPE_CHECKING` is true,
- since development happens using a modern Python environment.
-
 The goal for refinery is to be fully typed.
 Use the `pyright` type checker for newly written code and ensure that it reports no problems.
 

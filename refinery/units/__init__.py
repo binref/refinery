@@ -171,16 +171,12 @@ from typing import (
     Iterable,
     Iterator,
     Mapping,
-    Optional,
-    Type,
     TypeVar,
-    Union,
     cast,
     no_type_check,
     overload,
 )
 
-from refinery.lib.annotations import evaluate
 from refinery.lib.argparser import ArgparseError, ArgumentParserWithKeywordHooks, HelpAction
 from refinery.lib.dependencies import dependency_accessor
 from refinery.lib.environment import Logger, LogLevel, environment, logger
@@ -202,13 +198,13 @@ if TYPE_CHECKING:
     from typing import Self
 
     DataType = TypeVar('DataType', bound=buf)
-    ProcType = Callable[['Unit', Chunk], Optional[Union[DataType, Iterable[DataType]]]]
+    ProcType = Callable[['Unit', Chunk], DataType | Iterable[DataType] | None]
 
     ByteIO = MemoryFile[DataType]
 
     _T = TypeVar('_T')
     _F = TypeVar('_F', bound=Callable)
-    _B = TypeVar('_B', bound=Union[BufferedWriter, ByteIO, BinaryIO])
+    _B = TypeVar('_B', bound=BufferedWriter | ByteIO | BinaryIO)
     _E = TypeVar('_E', bound=Enum)
 
 from refinery.lib.argformats import (
@@ -771,7 +767,7 @@ class Arg(Argument):
                 __import__(module)
                 _symbols = sys.modules[module].__dict__
             try:
-                annotation = evaluate(annotation, _symbols)
+                annotation = eval(annotation, _symbols)
             except Exception:
                 pass
 
@@ -924,7 +920,7 @@ def _UnitProcessorBoilerplate(operation: ProcType[buf]) -> ProcType[Chunk]:
         if isinstance(result, Chunk):
             return result
         elif not inspect.isgenerator(result):
-            return Chunk(cast(Optional[bytearray], result))
+            return Chunk(cast(bytearray | None, result))
         return (Chunk.Wrap(r) for r in result)
     return wrapped
 
@@ -1133,7 +1129,7 @@ class Executable(ABCMeta):
         if not abstract and sys.modules[cls.__module__].__name__ == '__main__':
             if not Executable.Entry:
                 Executable.Entry = cls.name
-                cast(Type[Unit], cls).run()
+                cast(type[Unit], cls).run()
 
     def __getitem__(cls, other):
         return cls().__getitem__(other)
@@ -1158,7 +1154,7 @@ class Executable(ABCMeta):
         This property is `True` if and only if the unit has a member function named `reverse`. By convention,
         this member function implements the inverse of `refinery.units.Unit.process`.
         """
-        r = cast(Type[Unit], cls).reverse
+        r = cast(type[Unit], cls).reverse
         if isinstance(r, MissingFunction):
             return False
         return not getattr(r, '__isabstractmethod__', False)
@@ -1884,7 +1880,7 @@ class Unit(UnitBase, abstract=True):
                 _ = self | stream
             return
         if isinstance(stream, type) and issubclass(stream, Entry):
-            stream = cast(Type[Unit], stream)()
+            stream = cast(type[Unit], stream)()
         if isinstance(stream, type(...)):
             def _id(c):
                 return c

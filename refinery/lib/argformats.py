@@ -114,15 +114,13 @@ from typing import (
     TYPE_CHECKING,
     Any,
     Callable,
-    Deque,
     Iterable,
     Mapping,
     TypeVar,
-    Union,
+    get_type_hints,
     overload,
 )
 
-from refinery.lib.annotations import get_type_hints
 from refinery.lib.frame import Chunk
 from refinery.lib.meta import Percentage, is_valid_variable_name, metavars
 from refinery.lib.patterns import formats
@@ -139,7 +137,7 @@ if TYPE_CHECKING:
 
 FinalType = TypeVar('FinalType')
 DelayedType = Callable[[buf], FinalType]
-MaybeDelayedType = Union[DelayedType[FinalType], FinalType]
+MaybeDelayedType = DelayedType[FinalType] | FinalType
 
 _DEFAULT_BITS = 64
 _REVERSE_SIGN = '!'
@@ -938,7 +936,7 @@ class DelayedArgument(LazyEvaluation):
 
             if occurrence < 0:
                 from collections import deque
-                matches: Deque[re.Match] = deque()
+                matches: deque[re.Match] = deque()
                 while len(matches) < -occurrence:
                     try:
                         matches.append(next(it))

@@ -25,7 +25,6 @@ if TYPE_CHECKING:
         ClassVar,
         Generator,
         Iterable,
-        Union,
     )
 
     from capstone import Cs
@@ -35,12 +34,12 @@ if TYPE_CHECKING:
     from lief.PE import Binary as PEBinary
     from smda.common import SmdaReport
 
-    AnyLIEF = Union[
-        MachOBinary,
-        MachOFatBinary,
-        ELFBinary,
-        PEBinary,
-    ]
+    AnyLIEF = (
+        MachOBinary
+        | MachOFatBinary
+        | ELFBinary
+        | PEBinary
+    )
 
 
 class ParsingFailure(ValueError):

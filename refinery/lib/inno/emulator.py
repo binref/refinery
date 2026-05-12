@@ -42,7 +42,6 @@ from typing import (
 )
 from urllib.parse import unquote
 
-from refinery.lib.annotations import evaluate
 from refinery.lib.inno import CaseInsensitiveDict
 from refinery.lib.inno.archive import Flags, InnoArchive
 from refinery.lib.inno.ifps import (
@@ -1141,7 +1140,7 @@ class IFPSEmulator:
             next(specs) # skip self
             for spec in specs:
                 try:
-                    hint = evaluate(spec.annotation, globals(), locals())
+                    hint = eval(spec.annotation, globals(), locals())
                 except Exception as E:
                     raise RuntimeError(F'Invalid signature: {signature}') from E
                 if not isinstance(hint, type):

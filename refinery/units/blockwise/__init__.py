@@ -18,10 +18,10 @@ from refinery.lib.types import INF, Param, asbuffer, buf, isq
 from refinery.units import Arg, Unit
 
 if TYPE_CHECKING:
-    from typing import Generator, Iterable, Iterator, Literal, TypeVar, Union
+    from typing import Generator, Iterable, Iterator, Literal, TypeVar
 
     from numpy import ndarray
-    _I = Union[Iterable[int], list[int], int]
+    _I = Iterable[int] | list[int] | int
     _T = TypeVar('_T', ndarray, int)
 
 

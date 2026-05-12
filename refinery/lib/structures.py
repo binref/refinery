@@ -24,7 +24,6 @@ from typing import (
     NamedTuple,
     Sized,
     TypeVar,
-    Union,
     cast,
     get_origin,
     overload,
@@ -38,9 +37,9 @@ if TYPE_CHECKING:
 
     from refinery.lib.types import JSON, buf
 
-    T = TypeVar('T', bound=Union[bytearray, bytes, memoryview])
-    B = TypeVar('B', bound=Union[bytearray, bytes, memoryview], default=T)
-    C = TypeVar('C', bound=Union[bytearray, bytes, memoryview])
+    T = TypeVar('T', bound=bytearray | bytes | memoryview)
+    B = TypeVar('B', bound=bytearray | bytes | memoryview, default=T)
+    C = TypeVar('C', bound=bytearray | bytes | memoryview)
     R = TypeVar('R', bound=io.IOBase)
 else:
     Protocol = abc.ABC
@@ -61,7 +60,7 @@ class ToJSON(Protocol):
         raise NotImplementedError
 
 
-UnpackType = Union[int, bool, float, bytes]
+UnpackType = int | bool | float | bytes
 
 
 def signed(k: int, bitsize: int):

@@ -15,9 +15,7 @@ class TestStructures(TestBase):
             B'Binary Refinery'
         ]
         buffers.append(memoryview(buffers[0]))
-        if hasattr(memoryview, 'toreadonly'):
-            # Python 3.8 addition
-            buffers.append(memoryview(bytearray(buffers[0])).toreadonly())
+        buffers.append(memoryview(bytearray(buffers[0])).toreadonly())
         for b in buffers:
             with MemoryFile(b) as mem:
                 self.assertFalse(mem.writable())

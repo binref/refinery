@@ -15,8 +15,8 @@ from refinery.lib.types import INF, Callable, Iterable, Param, bounds, buf
 from refinery.units import Arg, Unit
 
 if TYPE_CHECKING:
-    from typing import Mapping, Tuple
-    MT = Tuple[int, re.Match[bytes]]
+    from collections.abc import Mapping
+    MT = tuple[int, re.Match[bytes]]
     MB = re.Match[bytes]
     PT = re.Pattern[bytes]
     MC = Callable[['RefinedMatch'], buf | None]

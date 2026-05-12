@@ -4,7 +4,7 @@ import re
 
 from fnmatch import fnmatch
 from io import BytesIO
-from typing import Any, Dict, List, Tuple
+from typing import Any
 from zipfile import ZipFile
 
 from refinery.lib.thirdparty.xlm.model import (
@@ -20,7 +20,7 @@ _XL_INTERNATIONAL_DEFAULTS = {
     XlApplicationInternational.xlRightBracket : ']',
 }
 
-_XLSM_COLOR_TABLE: List[Tuple[int, int, int, int]] = [
+_XLSM_COLOR_TABLE: list[tuple[int, int, int, int]] = [
     (  0,   0,   0,  1), (255, 255, 255,  2), (255,   0,   0,  3), (  0, 255,   0,  4),
     (  0,   0, 255,  5), (255, 255,   0,  6), (255,   0, 255,  7), (  0, 255, 255,  8),
     (128,   0,   0,  9), (  0, 128,   0, 10), (  0,   0, 128, 11), (128, 128,   0, 12),
@@ -37,7 +37,7 @@ _XLSM_COLOR_TABLE: List[Tuple[int, int, int, int]] = [
     (153,  51,   0, 53), (153,  51, 102, 54), ( 51,  51, 153, 55), ( 51,  51,  51, 56),
 ]
 
-CellInfoResult = Tuple[Any, bool, bool]
+CellInfoResult = tuple[Any, bool, bool]
 
 
 class XLSWrapper:
@@ -46,9 +46,9 @@ class XLSWrapper:
         self._xlrd2 = xlrd2
         self.xls_workbook = xlrd2.open_workbook(file_contents=bytes(data), formatting_info=True)
         self._workbook_name = 'workbook.xls'
-        self._macrosheets: Dict[str, Boundsheet] | None = None
-        self._worksheets: Dict[str, Boundsheet] | None = None
-        self._defined_names: Dict[str, Any] | None = None
+        self._macrosheets: dict[str, Boundsheet] | None = None
+        self._worksheets: dict[str, Boundsheet] | None = None
+        self._defined_names: dict[str, Any] | None = None
         control_chars = ''.join(map(chr, range(0, 32)))
         control_chars += ''.join(map(chr, range(127, 160)))
         control_chars += '\ufefe\uffff\ufeff\ufffe\uffef\ufff0\ufff1\ufff6\ufefd\udddd\ufffd'
@@ -65,7 +65,7 @@ class XLSWrapper:
     def get_workbook_name(self) -> str:
         return self._workbook_name
 
-    def get_defined_names(self) -> Dict[str, Any]:
+    def get_defined_names(self) -> dict[str, Any]:
         if self._defined_names is None:
             self._defined_names = {}
             for name_obj, cells in self.xls_workbook.name_map.items():
@@ -141,7 +141,7 @@ class XLSWrapper:
         except Exception:
             pass
 
-    def get_macrosheets(self) -> Dict[str, Boundsheet]:
+    def get_macrosheets(self) -> dict[str, Boundsheet]:
         if self._macrosheets is None:
             import xlrd2
             self._macrosheets = {}
@@ -152,7 +152,7 @@ class XLSWrapper:
                     self._macrosheets[sheet.name] = macrosheet
         return self._macrosheets
 
-    def get_worksheets(self) -> Dict[str, Boundsheet]:
+    def get_worksheets(self) -> dict[str, Boundsheet]:
         if self._worksheets is None:
             import xlrd2
             self._worksheets = {}
@@ -218,9 +218,9 @@ class XLSBWrapper:
         from pyxlsb2 import open_workbook
         self._xlsb_workbook = open_workbook(BytesIO(data))
         self._workbook_name = 'workbook.xlsb'
-        self._macrosheets: Dict[str, Boundsheet] | None = None
-        self._worksheets: Dict[str, Boundsheet] | None = None
-        self._defined_names: Dict[str, Any] | None = None
+        self._macrosheets: dict[str, Boundsheet] | None = None
+        self._worksheets: dict[str, Boundsheet] | None = None
+        self._defined_names: dict[str, Any] | None = None
 
     def get_xl_international_char(self, flag_name: XlApplicationInternational) -> str | None:
         return _XL_INTERNATIONAL_DEFAULTS.get(flag_name)
@@ -228,9 +228,9 @@ class XLSBWrapper:
     def get_workbook_name(self) -> str:
         return self._workbook_name
 
-    def get_defined_names(self) -> Dict[str, Any]:
+    def get_defined_names(self) -> dict[str, Any]:
         if self._defined_names is None:
-            names: Dict[str, Any] = {}
+            names: dict[str, Any] = {}
             for key, val in self._xlsb_workbook.defined_names.items():
                 names[key.lower()] = key.lower(), val.formula
             self._defined_names = names
@@ -276,7 +276,7 @@ class XLSBWrapper:
                         boundsheet.cells[tmp_cell.get_local_address()] = tmp_cell
                     column_cnt += 1
 
-    def get_macrosheets(self) -> Dict[str, Boundsheet]:
+    def get_macrosheets(self) -> dict[str, Boundsheet]:
         if self._macrosheets is None:
             self._macrosheets = {}
             for xlsb_sheet in self._xlsb_workbook.sheets:
@@ -286,7 +286,7 @@ class XLSBWrapper:
                     self._macrosheets[macrosheet.name] = macrosheet
         return self._macrosheets
 
-    def get_worksheets(self) -> Dict[str, Boundsheet]:
+    def get_worksheets(self) -> dict[str, Boundsheet]:
         if self._worksheets is None:
             self._worksheets = {}
             for xlsb_sheet in self._xlsb_workbook.sheets:
@@ -332,13 +332,13 @@ class XLSMWrapper:
         self._workbook_name = 'workbook.xlsm'
         self._content_types: Any = None
         self._workbook_xml: Any = None
-        self._workbook_rels: Dict[str, Tuple[str, str]] | None = None
-        self._defined_names: Dict[str, str] | None = None
-        self._macrosheets: Dict[str, Boundsheet] | None = None
-        self._worksheets: Dict[str, Boundsheet] | None = None
-        self._shared_strings: List[str] | None = None
+        self._workbook_rels: dict[str, tuple[str, str]] | None = None
+        self._defined_names: dict[str, str] | None = None
+        self._macrosheets: dict[str, Boundsheet] | None = None
+        self._worksheets: dict[str, Boundsheet] | None = None
+        self._shared_strings: list[str] | None = None
         self._style_xml: Any = None
-        self._color_map: Dict[Tuple[int, int, int], int] | None = None
+        self._color_map: dict[tuple[int, int, int], int] | None = None
 
     def get_xl_international_char(self, flag_name: XlApplicationInternational) -> str | None:
         return _XL_INTERNATIONAL_DEFAULTS.get(flag_name)
@@ -346,8 +346,8 @@ class XLSMWrapper:
     def get_workbook_name(self) -> str:
         return self._workbook_name
 
-    def _get_zip_files(self, patterns: List[str] | None = None) -> Dict[str, bytes]:
-        result: Dict[str, bytes] = {}
+    def _get_zip_files(self, patterns: list[str] | None = None) -> dict[str, bytes]:
+        result: dict[str, bytes] = {}
         if not patterns:
             patterns = ['*']
         with ZipFile(self._data) as zf:
@@ -378,7 +378,7 @@ class XLSMWrapper:
             content = re.sub(ignore_pattern, '', content)
         return fromstring(content)
 
-    def _get_workbook_path(self) -> Tuple[str, str, str]:
+    def _get_workbook_path(self) -> tuple[str, str, str]:
         wb_path = 'xl/workbook.xml'
         ct = self._get_content_types()
         if ct is not None:
@@ -407,7 +407,7 @@ class XLSMWrapper:
             self._workbook_xml = self._parse_xml(wb_path)
         return self._workbook_xml
 
-    def _get_rels(self) -> Dict[str, Tuple[str, str]]:
+    def _get_rels(self) -> dict[str, tuple[str, str]]:
         if self._workbook_rels is None:
             self._workbook_rels = {}
             _, base_dir, name = self._get_workbook_path()
@@ -424,7 +424,7 @@ class XLSMWrapper:
                         self._workbook_rels[rid] = (target, rtype)
         return self._workbook_rels
 
-    def _get_sheet_info(self, rid: str) -> Tuple[str | None, str | None]:
+    def _get_sheet_info(self, rid: str) -> tuple[str | None, str | None]:
         rels = self._get_rels()
         if rid not in rels:
             return None, None
@@ -435,7 +435,7 @@ class XLSMWrapper:
             return 'Worksheet', target
         return 'Unknown', target
 
-    def get_defined_names(self) -> Dict[str, str]:
+    def get_defined_names(self) -> dict[str, str]:
         if self._defined_names is None:
             self._defined_names = {}
             wb = self._get_workbook()
@@ -464,7 +464,7 @@ class XLSMWrapper:
                     result.append((defined_name, cell_address))
         return result
 
-    def _get_shared_strings(self) -> List[str] | None:
+    def _get_shared_strings(self) -> list[str] | None:
         if self._shared_strings is None:
             _, base_dir, _ = self._get_workbook_path()
             ss_xml = self._parse_xml(f'{base_dir}/sharedStrings.xml')
@@ -487,8 +487,8 @@ class XLSMWrapper:
                             self._shared_strings.append('')
         return self._shared_strings
 
-    def _get_sheet_infos(self, types: List[str]) -> List[Dict[str, Any]]:
-        result: list[Dict[str, Any]] = []
+    def _get_sheet_infos(self, types: list[str]) -> list[dict[str, Any]]:
+        result: list[dict[str, Any]] = []
         wb = self._get_workbook()
         if wb is None:
             return result
@@ -511,7 +511,7 @@ class XLSMWrapper:
         return result
 
     def _load_macro_cells(
-        self, sheet: Boundsheet, sheet_xml: Any, macrosheet_names: List[str],
+        self, sheet: Boundsheet, sheet_xml: Any, macrosheet_names: list[str],
     ) -> None:
         strings = self._get_shared_strings()
         sn = _OOXML_NS['s']
@@ -525,7 +525,7 @@ class XLSMWrapper:
             return
         for row_el in list(sheet_data):
             row_r = row_el.get('r', '')
-            row_attribs: Dict[RowAttribute, str] = {}
+            row_attribs: dict[RowAttribute, str] = {}
             ht = row_el.get('ht')
             if ht is not None:
                 row_attribs[RowAttribute.Height] = ht
@@ -594,7 +594,7 @@ class XLSMWrapper:
             return
         for row_el in list(sheet_data):
             row_r = row_el.get('r', '')
-            row_attribs: Dict[RowAttribute, str] = {}
+            row_attribs: dict[RowAttribute, str] = {}
             ht = row_el.get('ht')
             if ht is not None:
                 row_attribs[RowAttribute.Height] = ht
@@ -634,7 +634,7 @@ class XLSMWrapper:
                     if attr_name != 'r':
                         cell.attributes[attr_name] = cell_el.get(attr_name)
 
-    def get_macrosheets(self) -> Dict[str, Boundsheet]:
+    def get_macrosheets(self) -> dict[str, Boundsheet]:
         if self._macrosheets is None:
             self._macrosheets = {}
             infos = self._get_sheet_infos(['Macrosheet'])
@@ -654,7 +654,7 @@ class XLSMWrapper:
                 self._macrosheets[info['sheet'].name] = info['sheet']
         return self._macrosheets
 
-    def get_worksheets(self) -> Dict[str, Boundsheet]:
+    def get_worksheets(self) -> dict[str, Boundsheet]:
         if self._worksheets is None:
             self._worksheets = {}
             infos = self._get_sheet_infos(['Worksheet'])

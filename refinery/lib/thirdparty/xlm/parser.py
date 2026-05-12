@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 
-from typing import Any, List
+from typing import Any
 
 
 class Token:
@@ -56,7 +56,7 @@ class Tree:
     """
     __slots__ = ('data', 'children')
 
-    def __init__(self, data: str, children: List[Any]):
+    def __init__(self, data: str, children: list[Any]):
         self.data = data
         self.children = children
 

@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import json
 
-from typing import Dict, Type, Union
+from typing import TYPE_CHECKING
 
 from refinery.lib.structures import Struct, StructReader
 from refinery.units.formats.archive import ArchiveUnit, UnpackResult
 
-JSONDict = Dict[str, Union[int, float, str, Type[None], 'JSONDict']]
+if TYPE_CHECKING:
+    JSONDict = dict[str, int | float | str | type[None] | JSONDict]
 
 
 class AsarHeader(Struct):

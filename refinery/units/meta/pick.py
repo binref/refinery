@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Deque, Iterable, Iterator
+from typing import Iterable, Iterator
 
 from refinery.lib.argformats import sliceobj
 from refinery.lib.tools import begin
@@ -12,7 +12,7 @@ from refinery.units import Arg, Chunk, Unit
 
 @dataclass
 class _PickState:
-    slices: Deque[slice]
+    slices: deque[slice]
     chunks: Iterator[Chunk]
     accessor: slice | None = None
     consumed: bool = False

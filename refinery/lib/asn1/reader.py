@@ -3,7 +3,7 @@ from __future__ import annotations
 import codecs
 
 from collections import OrderedDict
-from typing import TYPE_CHECKING, Any, Union
+from typing import TYPE_CHECKING, Any
 
 from refinery.lib.asn1.schema import (
     _MISSING,
@@ -21,18 +21,18 @@ from refinery.lib.asn1.schema import (
 from refinery.lib.structures import StructReader
 
 if TYPE_CHECKING:
-    ASN1Value = Union[
-        None,
-        bool,
-        int,
-        float,
-        str,
-        bytes,
-        list,
-        dict[str, Any],
-        OrderedDict[str, Any],
-        object,
-    ]
+    ASN1Value = (
+        None
+        | bool
+        | int
+        | float
+        | str
+        | bytes
+        | list
+        | dict[str, Any]
+        | OrderedDict[str, Any]
+        | object
+    )
 
 
 class ASN1Reader(StructReader[memoryview]):

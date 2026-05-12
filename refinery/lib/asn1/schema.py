@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Union
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from typing import Any
@@ -26,8 +26,6 @@ ANY = object()
 CLASS_UNIVERSAL = 0
 CLASS_APPLICATION = 1
 CLASS_CONTEXT = 2
-
-SchemaType = Union[int, 'Seq', 'SeqOf', 'SetOf', 'Choice', object]
 
 
 class Seq:
@@ -72,3 +70,6 @@ class F:
 
 class ASN1SchemaMismatch(Exception):
     pass
+
+
+SchemaType = int | Seq | SeqOf | SetOf | Choice | object

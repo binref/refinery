@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from struct import pack, unpack
-from typing import Tuple
 
 from refinery.lib.crypto import (
     BlockCipher,
@@ -19,7 +18,7 @@ from refinery.units.crypto.cipher import (
 )
 
 _R = 12
-_K = Tuple[int, int, int, int]
+_K = tuple[int, int, int, int]
 
 
 class Chaskey(BlockCipher):
