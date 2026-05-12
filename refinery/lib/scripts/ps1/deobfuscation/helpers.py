@@ -8,10 +8,7 @@ import io
 import re
 
 from collections.abc import Callable, Generator
-from typing import TYPE_CHECKING, NamedTuple, TypeVar
-
-if TYPE_CHECKING:
-    from typing import TypeGuard
+from typing import NamedTuple, TypeVar, TypeGuard
 
 from refinery.lib.scripts import Block, Node, Transformer
 from refinery.lib.scripts.ps1.deobfuscation.data import (
