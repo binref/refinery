@@ -445,8 +445,11 @@ def get_pe_type(data: buf):
         return None
     if data[nt + 0x17] & 0x20:
         return dll
-    subsystem = data[nt + 0x5C] - 1
-    if not 0 <= subsystem <= 2:
+    try:
+        subsystem = data[nt + 0x5C] - 1
+        if not 0 <= subsystem <= 2:
+            return None
+    except IndexError:
         return None
     return sub[subsystem]
 
