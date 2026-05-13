@@ -5,6 +5,11 @@
 > If a release contains only bugfix, it is marked as a 'bugfix release'.
 > Otherwise, the changelog entries highlight only new or changed functionality.
 
+## Version 0.11.0
+- Starting with 0.11.0, binary refinery requires Python 3.10 as the minimum Python version to run.
+- Due to the increased version requirement, the emulator backend for speakeasy now uses the newly released speakeasy 2.0 instead of the haphazard fork it used previously.
+- Otherwise, this version includes several additions to the script deobfuscation engine.
+
 ## Version 0.10.11
 - The entire scripting deobfuscation system was rewritten from scratch.
   The old deobfuscation units (`deob-ps1-*`, `deob-vba-*`, `deob-js-*`) have been replaced by full parsers and emulators for 
