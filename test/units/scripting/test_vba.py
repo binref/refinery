@@ -1,3 +1,5 @@
+import inspect
+
 from .. import TestUnitBase
 
 
@@ -72,3 +74,36 @@ class TestVBAASTDeobfuscator(TestUnitBase):
         )
         result = data | self.load() | str
         self.assertIn('ReDim arr(0 To 10, 1 To 5)', result)
+
+    def test_empty_function_inlined(self):
+        data = (
+            'Function Nop()\n'
+            'End Function\n'
+            'Sub Main()\n'
+            'Debug.Print Nop() & "hello"\n'
+            'End Sub'
+        )
+        result = data | self.load() | str
+        self.assertEqual(result, inspect.cleandoc("""
+            Sub Main()
+              Debug.Print "hello"
+            End Sub
+        """))
+
+    def test_empty_function_junk_removal(self):
+        data = (
+            'Function nop(ByVal a, ByVal b, ByVal c)\n'
+            'End Function\n'
+            'Sub Main()\n'
+            'x = "payload"\n'
+            'x = ((x)) & (nop(nop("a", "@", ""), "a", "@"))\n'
+            'x = ((x)) & (nop(nop("a", "@", ""), "a", "@"))\n'
+            'Debug.Print x\n'
+            'End Sub'
+        )
+        result = data | self.load() | str
+        self.assertEqual(result, inspect.cleandoc("""
+            Sub Main()
+              Debug.Print "payload"
+            End Sub
+        """))

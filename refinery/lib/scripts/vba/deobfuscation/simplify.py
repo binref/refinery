@@ -10,6 +10,8 @@ from typing import Callable
 from refinery.lib.scripts import Transformer
 from refinery.lib.scripts.vba.deobfuscation.builtins import VBA_BUILTIN_CONSTANTS
 from refinery.lib.scripts.vba.deobfuscation.helpers import (
+    apply_removals,
+    body_lists,
     is_literal,
     is_nan_or_inf,
     literal_value,
@@ -22,6 +24,7 @@ from refinery.lib.scripts.vba.deobfuscation.helpers import (
 )
 from refinery.lib.scripts.vba.deobfuscation.names import (
     CHR_NAMES,
+    Value,
     dispatch_builtin,
 )
 from refinery.lib.scripts.vba.model import (
@@ -29,6 +32,7 @@ from refinery.lib.scripts.vba.model import (
     VbaBooleanLiteral,
     VbaCallExpression,
     VbaConstDeclaration,
+    VbaEmptyLiteral,
     VbaForEachStatement,
     VbaForStatement,
     VbaIdentifier,
@@ -38,6 +42,7 @@ from refinery.lib.scripts.vba.model import (
     VbaOnErrorStatement,
     VbaParenExpression,
     VbaProcedureDeclaration,
+    VbaStringLiteral,
     VbaUnaryExpression,
 )
 
@@ -54,26 +59,32 @@ _INTEGER_OPS: dict[str, Callable] = {
 }
 
 
-def _try_evaluate_call(node: VbaCallExpression):
+class _EvaluationFailed(Exception):
+    pass
+
+
+def _try_evaluate_call(node: VbaCallExpression) -> Value:
     """
-    Try to statically evaluate a VBA builtin call with constant arguments. Returns the
-    evaluated Python value, or `None` if evaluation is not possible.
+    Try to statically evaluate a VBA builtin call with constant arguments. Raises `_EvaluationFailed`
+    if the call cannot be evaluated; otherwise returns the evaluated Python value (may be `None` for
+    VBA Empty).
     """
     if not isinstance(node.callee, VbaIdentifier):
-        return None
+        raise _EvaluationFailed
     args = [a for a in node.arguments if a is not None]
-    values: list = []
+    values: list[Value] = []
     for arg in args:
-        v = literal_value(arg)
-        if v is None:
-            return None
-        values.append(v)
+        if not is_literal(arg):
+            raise _EvaluationFailed
+        values.append(literal_value(arg))
     name = node.callee.name.lower()
     try:
         matched, result = dispatch_builtin(name, values)
     except (ValueError, OverflowError, TypeError, IndexError):
-        return None
-    return result if matched else None
+        raise _EvaluationFailed
+    if not matched:
+        raise _EvaluationFailed
+    return result
 
 
 def _has_oern(body: list) -> bool:
@@ -93,6 +104,10 @@ class VbaSimplifications(Transformer):
     def visit(self, node):
         if isinstance(node, VbaModule):
             self._collect_context(node)
+            super().visit(node)
+            if self._remove_self_assignments(node):
+                self.mark_changed()
+            return None
         return super().visit(node)
 
     def _collect_context(self, module: VbaModule):
@@ -117,6 +132,20 @@ class VbaSimplifications(Transformer):
                     self._oern_bodies.add(id(n.body))
         if module.body and _has_oern(module.body):
             self._oern_bodies.add(id(module.body))
+
+    @staticmethod
+    def _remove_self_assignments(module: VbaModule) -> bool:
+        removals: list[tuple[int, list]] = []
+        for body in body_lists(module):
+            for idx, stmt in enumerate(body):
+                if (
+                    isinstance(stmt, VbaLetStatement)
+                    and isinstance(stmt.target, VbaIdentifier)
+                    and isinstance(stmt.value, VbaIdentifier)
+                    and stmt.target.name.lower() == stmt.value.name.lower()
+                ):
+                    removals.append((idx, body))
+        return apply_removals(removals)
 
     def _is_oern_undefined(self, node) -> bool:
         if not isinstance(node, VbaIdentifier):
@@ -143,6 +172,10 @@ class VbaSimplifications(Transformer):
         return self._fold_numeric_binary(node)
 
     def _fold_string_concat(self, node: VbaBinaryExpression):
+        if isinstance(node.right, (VbaEmptyLiteral, VbaStringLiteral)) and not node.right.value:
+            return node.left
+        if isinstance(node.left, (VbaEmptyLiteral, VbaStringLiteral)) and not node.left.value:
+            return node.right
         if self._is_oern_undefined(node.left) and string_value(node.right) is not None:
             return node.right
         if self._is_oern_undefined(node.right) and string_value(node.left) is not None:
@@ -212,8 +245,9 @@ class VbaSimplifications(Transformer):
 
     def visit_VbaCallExpression(self, node: VbaCallExpression):
         self.generic_visit(node)
-        result = _try_evaluate_call(node)
-        if result is None:
+        try:
+            result = _try_evaluate_call(node)
+        except _EvaluationFailed:
             return None
         if isinstance(result, str) and len(result) == 1 and not result.isprintable():
             if (
@@ -234,7 +268,9 @@ class VbaSimplifications(Transformer):
         inner = node.expression
         if inner is None:
             return None
-        if is_literal(inner):
+        if isinstance(node.parent, VbaCallExpression) and node in node.parent.arguments:
+            return None
+        if isinstance(inner, (VbaIdentifier, VbaParenExpression)) or is_literal(inner):
             return inner
         return None
 

@@ -216,9 +216,8 @@ class _VbaInterpreter:
     def _eval(self, expr) -> Value:
         if expr is None:
             return None
-        value = literal_value(expr)
-        if value is not None:
-            return value
+        if is_literal(expr):
+            return expr.value
         if isinstance(expr, VbaIdentifier):
             return self._env.get(expr.name.lower())
         if isinstance(expr, VbaBinaryExpression):
@@ -425,29 +424,17 @@ class VbaFunctionEvaluator(Transformer):
         bindings = self._bind_parameters(funcdef, args)
         if bindings is None:
             return None
-        result = self._try_evaluate(funcdef, bindings)
-        if result is None:
-            return None
-        replacement = value_to_node(result)
-        if replacement is None:
-            return None
-        self._replaced_counts[key] = self._replaced_counts.get(key, 0) + 1
-        return replacement
-
-    def _try_evaluate(
-        self,
-        funcdef: VbaFunctionDeclaration,
-        bindings: dict[str, Value],
-    ) -> Value:
         interpreter = _VbaInterpreter(
             function_name=funcdef.name,
             max_iterations=self.max_iterations,
             max_string_len=self.max_string_len,
         )
         try:
-            return interpreter.execute(funcdef.body, bindings)
+            result = interpreter.execute(funcdef.body, bindings)
         except (_VbaInterpreterError, _UnevaluableError):
             return None
+        self._replaced_counts[key] = self._replaced_counts.get(key, 0) + 1
+        return value_to_node(result)
 
     @staticmethod
     def _extract_constant_args(node: VbaCallExpression) -> list[Value] | None:

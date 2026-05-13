@@ -115,7 +115,7 @@ class VbaNullLiteral(Expression):
 
 @dataclass(repr=False, eq=False)
 class VbaEmptyLiteral(Expression):
-    pass
+    value: None = None
 
 
 @dataclass(repr=False, eq=False)
