@@ -4,6 +4,7 @@ VBA AST deobfuscation transforms.
 from __future__ import annotations
 
 from refinery.lib.scripts.pipeline import DeobfuscationPipeline, TransformerGroup
+from refinery.lib.scripts.vba.deobfuscation.accumulator import VbaStringAccumulatorFolding
 from refinery.lib.scripts.vba.deobfuscation.constants import VbaConstantInlining
 from refinery.lib.scripts.vba.deobfuscation.deadcode import (
     VbaDeadVariableRemoval,
@@ -18,6 +19,7 @@ _pipeline = DeobfuscationPipeline(
         TransformerGroup(
             'fold',
             VbaSimplifications,
+            VbaStringAccumulatorFolding,
             VbaConstantInlining,
             VbaDeadVariableRemoval,
             VbaEmptyProcedureRemoval,

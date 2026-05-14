@@ -581,3 +581,121 @@ class TestVbaDeobfuscation(TestBase):
         )
         result = self._full_deobfuscate(code)
         self.assertIn('4', result)
+
+    def test_accumulator_basic_concat(self):
+        code = (
+            'Sub T()\n'
+            '  x = "hello"\n'
+            '  x = x & " world"\n'
+            '  F x\n'
+            'End Sub'
+        )
+        result = self._deobfuscate(code)
+        self.assertEqual(result, 'Sub T()\n  F "hello world"\nEnd Sub')
+
+    def test_accumulator_long_chain(self):
+        lines = ['Sub T()']
+        lines.append('  x = "a"')
+        for _ in range(50):
+            lines.append('  x = x & "b"')
+        lines.append('  F x')
+        lines.append('End Sub')
+        code = '\n'.join(lines)
+        result = self._deobfuscate(code)
+        self.assertEqual(result, F'Sub T()\n  F "a{"b" * 50}"\nEnd Sub')
+
+    def test_accumulator_with_replace(self):
+        code = (
+            'Sub T()\n'
+            '  x = "aXbXc"\n'
+            '  x = x & "dXe"\n'
+            '  x = Replace(x, "X", "")\n'
+            '  F x\n'
+            'End Sub'
+        )
+        result = self._deobfuscate(code)
+        self.assertEqual(result, 'Sub T()\n  F "abcde"\nEnd Sub')
+
+    def test_accumulator_prepend(self):
+        code = (
+            'Sub T()\n'
+            '  x = "world"\n'
+            '  x = "hello " & x\n'
+            '  F x\n'
+            'End Sub'
+        )
+        result = self._deobfuscate(code)
+        self.assertEqual(result, 'Sub T()\n  F "hello world"\nEnd Sub')
+
+    def test_accumulator_chain_breaks_on_non_assignment(self):
+        code = (
+            'Sub T()\n'
+            '  x = "a"\n'
+            '  F x\n'
+            '  x = x & "b"\n'
+            '  G x\n'
+            'End Sub'
+        )
+        result = self._deobfuscate(code)
+        self.assertEqual(result, 'Sub T()\n  x = "a"\n  F x\n  x = x & "b"\n  G x\nEnd Sub')
+
+    def test_accumulator_chain_breaks_on_different_variable(self):
+        code = (
+            'Sub T()\n'
+            '  x = "a"\n'
+            '  y = "z"\n'
+            '  x = x & "b"\n'
+            '  F x, y\n'
+            'End Sub'
+        )
+        result = self._deobfuscate(code)
+        self.assertEqual(result, 'Sub T()\n  F "ab", "z"\nEnd Sub')
+
+    def test_accumulator_multi_concat_single_stmt(self):
+        code = (
+            'Sub T()\n'
+            '  x = "a"\n'
+            '  x = x & "b" & "c"\n'
+            '  F x\n'
+            'End Sub'
+        )
+        result = self._deobfuscate(code)
+        self.assertEqual(result, 'Sub T()\n  F "abc"\nEnd Sub')
+
+    def test_accumulator_replace_then_concat(self):
+        code = (
+            'Sub T()\n'
+            '  x = "aXb"\n'
+            '  x = Replace(x, "X", "")\n'
+            '  x = x & "c"\n'
+            '  F x\n'
+            'End Sub'
+        )
+        result = self._deobfuscate(code)
+        self.assertEqual(result, 'Sub T()\n  F "abc"\nEnd Sub')
+
+    def test_accumulator_inlined_after_folding(self):
+        code = (
+            'Sub T()\n'
+            '  x = "hel"\n'
+            '  x = x & "lo"\n'
+            '  F x\n'
+            'End Sub'
+        )
+        result = self._full_deobfuscate(code)
+        self.assertEqual(result, 'Sub T()\n  F "hello"\nEnd Sub')
+
+    def test_accumulator_surrogate_recombination(self):
+        hi = '\uD83D'
+        lo = '\uDCC6'
+        combined = '\U0001F4C6'
+        code = (
+            'Sub T()\n'
+            F'  x = "a{hi}"\n'
+            F'  x = x & "{lo}b"\n'
+            F'  x = Replace(x, "{combined}", "")\n'
+            '  F x\n'
+            'End Sub'
+        )
+        result = self._deobfuscate(code)
+        self.assertEqual(result, 'Sub T()\n  F "ab"\nEnd Sub')
