@@ -18,9 +18,12 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     is_side_effect_free,
     property_key,
     string_value,
+    walk_scope,
 )
 from refinery.lib.scripts.js.model import (
+    JsArrowFunctionExpression,
     JsAssignmentExpression,
+    JsAwaitExpression,
     JsBlockStatement,
     JsCallExpression,
     JsExpressionStatement,
@@ -404,6 +407,30 @@ def _is_pack_shaped(node: JsCallExpression) -> bool:
     return len(node.arguments) == 1 and isinstance(node.arguments[0], JsObjectExpression)
 
 
+def _has_top_level_await(stmts: list[Statement]) -> bool:
+    """
+    Return `True` if any `JsAwaitExpression` in `stmts` is at the top level, i.e. not inside a
+    nested function boundary.
+    """
+    return any(isinstance(n, JsAwaitExpression) for s in stmts for n in walk_scope(s))
+
+
+def _wrap_in_async_iife(stmts: list[Statement]) -> list[Statement]:
+    iife = JsExpressionStatement(
+        expression=JsCallExpression(
+            callee=JsParenthesizedExpression(
+                expression=JsArrowFunctionExpression(
+                    is_async=True,
+                    params=[],
+                    body=JsBlockStatement(body=stmts),
+                ),
+            ),
+            arguments=[],
+        ),
+    )
+    return [iife]
+
+
 class JsReflectionInlining(ScriptLevelTransformer):
     """
     Inline reflective code execution: `eval`, `Function` constructor, constructor chains, and
@@ -466,6 +493,9 @@ class JsReflectionInlining(ScriptLevelTransformer):
         if not isinstance(stmt, JsExpressionStatement) or stmt.expression is None:
             return None
         node = stmt.expression
+        had_await = isinstance(node, JsAwaitExpression)
+        if had_await:
+            node = node.argument
         if not isinstance(node, JsCallExpression):
             return None
         pack_result = _try_unpack_function_constructor(node)
@@ -485,7 +515,10 @@ class JsReflectionInlining(ScriptLevelTransformer):
         parsed = _try_parse(code)
         if parsed is None:
             return None
-        return list(parsed.body)
+        result = parsed.body
+        if had_await and _has_top_level_await(result):
+            return _wrap_in_async_iife(result)
+        return result
 
     @staticmethod
     def _try_resolve_expression(node: JsCallExpression) -> Expression | None:

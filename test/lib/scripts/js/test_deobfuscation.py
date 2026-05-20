@@ -2630,6 +2630,76 @@ class TestReflectionInlining(TestJsDeobfuscator):
         )
         self.assertEqual("console.log('hello');", self._deobfuscate(source))
 
+    def test_await_eval_inlined(self):
+        source = inspect.cleandoc(
+            """
+            async function run() {
+              await eval("var a = 1; var b = 2;");
+            }
+            run();
+            """
+        )
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                async function run() {
+                  var a = 1;
+                  var b = 2;
+                }
+                run();
+                """
+            ),
+            self._reflect(source),
+        )
+
+    def test_await_eval_with_top_level_await(self):
+        source = inspect.cleandoc(
+            """
+            async function run() {
+              await eval("await fetch('x'); var a = 1;");
+            }
+            run();
+            """
+        )
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                async function run() {
+                  (async () => {
+                    await fetch('x');
+                    var a = 1;
+                  })();
+                }
+                run();
+                """
+            ),
+            self._reflect(source),
+        )
+
+    def test_await_eval_nested_async_not_wrapped(self):
+        source = inspect.cleandoc(
+            """
+            async function run() {
+              await eval("const g = async () => { await fetch('x'); }; g();");
+            }
+            run();
+            """
+        )
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                async function run() {
+                  const g = async () => {
+                    await fetch('x');
+                  };
+                  g();
+                }
+                run();
+                """
+            ),
+            self._reflect(source),
+        )
+
 
 class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
 
