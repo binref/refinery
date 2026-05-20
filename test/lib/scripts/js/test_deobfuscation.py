@@ -400,6 +400,11 @@ class TestStringArray(TestJsDeobfuscator):
         self.assertIn("'test string'", result)
         self.assertIn("'log'", result)
 
+    def test_string_array_inside_function_body(self):
+        source = 'function wrapper() { var _0xe6abe5=_0x1b07;' + self._DEFAULT_PRESET_BODY + '}'
+        result = self._deobfuscate(source)
+        self.assertEqual("function wrapper() {\n  console.log('test string');\n}", result)
+
 
 class TestCallWrapperInliner(TestJsDeobfuscator):
 

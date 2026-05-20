@@ -22,7 +22,7 @@ from refinery.lib.scripts import (
 )
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     BINARY_OPS,
-    ScriptLevelTransformer,
+    ScopeProcessingTransformer,
     js_parse_int,
     make_string_literal,
     property_key,
@@ -45,12 +45,12 @@ from refinery.lib.scripts.js.model import (
     JsParenthesizedExpression,
     JsProperty,
     JsReturnStatement,
-    JsScript,
     JsStringLiteral,
     JsUnaryExpression,
     JsVariableDeclaration,
     JsVariableDeclarator,
     JsWhileStatement,
+    Statement,
 )
 
 
@@ -868,7 +868,7 @@ def _replace_accessor_calls(
 
 
 def _find_remaining_calls(
-    root: JsScript,
+    root: Node,
     aliases: set[str],
     wrapper_names: set[str],
 ) -> tuple[bool, set[int]]:
@@ -897,7 +897,7 @@ def _find_remaining_calls(
 
 
 def _cleanup_infrastructure(
-    root: JsScript,
+    root: Node,
     body: Sequence[Node],
     array: ArrayFunction,
     accessor: AccessorFunction,
@@ -928,7 +928,7 @@ def _cleanup_infrastructure(
 
 class _CachedResolution(NamedTuple):
     """
-    Cached result of a successful array rotation simulation, stored on the JsScript node to
+    Cached result of a successful array rotation simulation, stored on the scope root node to
     survive across pipeline iterations. This prevents re-simulation failures when the simplifier
     modifies the checksum expression in the rotation IIFE between string array passes.
     """
@@ -940,10 +940,9 @@ class _CachedResolution(NamedTuple):
 _CACHE_ATTR = '_stringarray_cache'
 
 
-class JsStringArrayResolver(ScriptLevelTransformer):
+class JsStringArrayResolver(ScopeProcessingTransformer):
 
-    def _process_script(self, node: JsScript):
-        body = node.body
+    def _process_scope_body(self, scope: Node, body: list[Statement]) -> None:
         array = _find_array_function(body)
         if array is None:
             return
@@ -951,7 +950,7 @@ class JsStringArrayResolver(ScriptLevelTransformer):
         if accessor is None:
             return
         encoding = _detect_encoding(accessor.node)
-        cache: _CachedResolution | None = getattr(node, _CACHE_ATTR, None)
+        cache: _CachedResolution | None = getattr(scope, _CACHE_ATTR, None)
         if (
             cache is not None
             and cache.base_offset == accessor.base_offset
@@ -977,17 +976,17 @@ class JsStringArrayResolver(ScriptLevelTransformer):
             )
             if resolved is None:
                 return
-            setattr(node, _CACHE_ATTR, _CachedResolution(resolved, accessor.base_offset, encoding))
+            setattr(scope, _CACHE_ATTR, _CachedResolution(resolved, accessor.base_offset, encoding))
         aliases = _collect_accessor_aliases(body, accessor.name)
         aliases.add(accessor.name)
         raw_lookup = {i + accessor.base_offset: s for i, s in enumerate(resolved)}
-        all_wrappers = _collect_all_wrappers(node, accessor.name)
+        all_wrappers = _collect_all_wrappers(scope, accessor.name)
         if _replace_accessor_calls(
-            node, aliases, raw_lookup, encoding, all_wrappers,
+            scope, aliases, raw_lookup, encoding, all_wrappers,
         ) == 0:
             return
         wrapper_names = set(all_wrappers)
-        has_remaining, dead_nodes = _find_remaining_calls(node, aliases, wrapper_names)
+        has_remaining, dead_nodes = _find_remaining_calls(scope, aliases, wrapper_names)
         if not has_remaining:
-            _cleanup_infrastructure(node, body, array, accessor, dead_nodes, aliases)
+            _cleanup_infrastructure(scope, body, array, accessor, dead_nodes, aliases)
         self.mark_changed()
