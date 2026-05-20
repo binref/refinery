@@ -802,6 +802,9 @@ class TestExtendedOperatorFolding(TestJsDeobfuscator):
     def test_parseint_unknown_radix_preserved(self):
         self.assertEqual("parseInt('ff', radix);", self._simplify("parseInt('ff', radix);"))
 
+    def test_from_char_code_direct(self):
+        self.assertEqual("'GET';", self._simplify('String.fromCharCode(71, 69, 84);'))
+
     def test_iife_inline_comparison(self):
         self.assertEqual(
             'false;',

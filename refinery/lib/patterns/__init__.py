@@ -464,8 +464,8 @@ _part_url_credentials = (
     R'(?:([^"\'\s\x00-\x20\x7F-\xFF]{1,256})?'
     R'(?::([^"\'\s\x00-\x20\x7F-\xFF]{0,256})?)?@)?'
 )
-_prefix_serrated_url = R'(([a-zA-Z]{2,20}:)?\/\/)' + _part_url_credentials
-_prefix_defanged_url = R'(([a-zA-Z]{2,20}(?:\[:\]|:))?\/\/)' + _part_url_credentials
+_prefix_serrated_url = R'(([a-zA-Z0-9][-a-zA-Z0-9]{0,20}:)?\/\/)' + _part_url_credentials
+_prefix_defanged_url = R'(([a-zA-Z0-9][-a-zA-Z0-9]{0,20}(?:\[:\]|:))?\/\/)' + _part_url_credentials
 _suffix_combined_url = R'([/?#](?:[#/=:;$!?&.,\w\+\%\-\*\'~@()](?![a-zA-Z]{2,20}://))*)?'
 
 _pattern_serrated_url = F'{_prefix_serrated_url}({_pattern_serrated_host}){_suffix_combined_url}'

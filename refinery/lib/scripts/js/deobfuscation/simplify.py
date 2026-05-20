@@ -3,6 +3,10 @@ JavaScript syntax normalization transforms.
 """
 from __future__ import annotations
 
+from typing import TypeGuard
+
+from collections.abc import Sequence
+
 from refinery.lib.scripts import Node, Transformer
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     FUNCTION_NODE_TYPES,
@@ -23,7 +27,9 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     numeric_value,
     string_value,
     try_inline_trivial_function,
+    value_to_node,
 )
+from refinery.lib.scripts.js.deobfuscation.interpreter import BUILTIN_REGISTRY, STATIC_OBJECTS
 from refinery.lib.scripts.js.model import (
     JsArrayExpression,
     JsArrowFunctionExpression,
@@ -201,6 +207,10 @@ def _collect_property_stores(body: list, name: str) -> set[str]:
     return props
 
 
+def _all_numeric_literals(args: Sequence[Node]) -> TypeGuard[list[JsNumericLiteral]]:
+    return all(isinstance(a, JsNumericLiteral) for a in args)
+
+
 class JsSimplifications(Transformer):
 
     def visit_JsBinaryExpression(self, node: JsBinaryExpression):
@@ -260,7 +270,11 @@ class JsSimplifications(Transformer):
             fn = fn.expression
         if isinstance(fn, JsFunctionExpression):
             return self._try_inline_iife(node, fn)
-        return self._try_fold_split(node) or self._try_fold_join(node)
+        return (
+            self._try_fold_static_method(node)
+            or self._try_fold_split(node)
+            or self._try_fold_join(node)
+        )
 
     @staticmethod
     def _fold_parseint(node: JsCallExpression) -> JsNumericLiteral | None:
@@ -284,6 +298,31 @@ class JsSimplifications(Transformer):
         if not all(is_side_effect_free(a) for a in node.arguments):
             return None
         return try_inline_trivial_function(fn, node.arguments)
+
+    @staticmethod
+    def _try_fold_static_method(node: JsCallExpression) -> Node | None:
+        callee = node.callee
+        if not isinstance(callee, JsMemberExpression):
+            return None
+        if not isinstance(callee.object, JsIdentifier):
+            return None
+        static_name = callee.object.name
+        if static_name not in STATIC_OBJECTS:
+            return None
+        method_name = access_key(callee)
+        if method_name is None:
+            return None
+        builtin = BUILTIN_REGISTRY.get((static_name, method_name))
+        if builtin is None:
+            return None
+        if not _all_numeric_literals(node.arguments):
+            return None
+        args = [a.value for a in node.arguments]
+        try:
+            result = builtin(args)
+        except Exception:
+            return None
+        return value_to_node(result)
 
     @staticmethod
     def _try_fold_split(node: JsCallExpression) -> JsArrayExpression | None:
