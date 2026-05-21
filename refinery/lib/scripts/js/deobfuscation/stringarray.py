@@ -785,20 +785,29 @@ def _simulate_rotation(
 
 def _collect_accessor_aliases(body: Sequence[Node], accessor_name: str) -> set[str]:
     """
-    Collect all variable names that are directly assigned the accessor function identifier,
-    walking the entire AST. These aliases are used at the top level (e.g. var _0xcbb5cc = _0x4914)
-    and inside function bodies (e.g. var _0x4bad70 = _0x4914).
+    Collect all variable names that are transitively assigned the accessor function identifier,
+    walking the entire AST. Obfuscator.io creates multi-level alias chains:
+
+        const a0x = a0d;
+        const z = a0x, A = a0x;
     """
-    aliases: set[str] = set()
+    assigned_from: dict[str, set[str]] = {}
     for stmt in body:
         for node in stmt.walk():
             if (
                 isinstance(node, JsVariableDeclarator)
                 and isinstance(node.id, JsIdentifier)
                 and isinstance(node.init, JsIdentifier)
-                and node.init.name == accessor_name
             ):
-                aliases.add(node.id.name)
+                assigned_from.setdefault(node.init.name, set()).add(node.id.name)
+    aliases: set[str] = set()
+    pending = {accessor_name}
+    while pending:
+        current = pending.pop()
+        for name in assigned_from.get(current, ()):
+            if name not in aliases:
+                aliases.add(name)
+                pending.add(name)
     return aliases
 
 

@@ -468,6 +468,31 @@ class TestStringArray(TestJsDeobfuscator):
         result = self._deobfuscate(source)
         self.assertEqual("console.log('test string');", result)
 
+    def test_string_array_transitive_aliases(self):
+        """
+        When a direct alias of the accessor is itself re-aliased inside nested functions
+        (const z = _0x1a where _0x1a = _0xe6abe5 = _0x1b07), the resolver must follow the
+        transitive chain and resolve calls through all alias levels.
+        """
+        source = (
+            r"var _0xe6abe5=_0x1b07;(function(_0x13a108,_0x20b5f6){var _0x2bca43=_0x1b07,_0x36965a=_0x13a108();while"
+            r"(!![]){try{var _0x293699=-parseInt(_0x2bca43(0xa7))/0x1+-parseInt(_0x2bca43(0xa1))/0x2*(-parseInt(_0x2"
+            r"bca43(0xab))/0x3)+parseInt(_0x2bca43(0xa3))/0x4*(-parseInt(_0x2bca43(0xa9))/0x5)+parseInt(_0x2bca43(0x"
+            r"a6))/0x6+parseInt(_0x2bca43(0xaa))/0x7*(parseInt(_0x2bca43(0xa2))/0x8)+-parseInt(_0x2bca43(0xa4))/0x9*"
+            r"(-parseInt(_0x2bca43(0xa5))/0xa)+-parseInt(_0x2bca43(0xa0))/0xb;if(_0x293699===_0x20b5f6)break;else _0"
+            r"x36965a['push'](_0x36965a['shift']());}catch(_0x35acf4){_0x36965a['push'](_0x36965a['shift']());}}}(_0"
+            r"x2fc0,0x827c2));function _0x1b07(_0x3a2c1f,_0x271b5b){_0x3a2c1f=_0x3a2c1f-0xa0;var _0x2fc00e=_0x2fc0()"
+            r";var _0x1b0775=_0x2fc00e[_0x3a2c1f];return _0x1b0775;}function _0x2fc0(){var _0x581e61=['2435007zbgngY"
+            r"','test\x20string','12767458FlCTYp','2BveYOA','96VHQLDe','160CSMRCB','486kcIkKD','183450npXmbZ','40675"
+            r"50xFhrYl','462884STmCds','log','50725EqKMLb','48769HzjsUR'];_0x2fc0=function(){return _0x581e61;};retu"
+            r"rn _0x2fc0();}var _0x1a=_0xe6abe5;function log(){var z=_0x1a,A=_0x1a;console[z(0xa8)](A(0xac));}log();"
+        )
+        result = self._deobfuscate(source)
+        self.assertEqual(
+            "function log() {\n  console.log('test string');\n}\nlog();",
+            result,
+        )
+
 
 class TestCallWrapperInliner(TestJsDeobfuscator):
 
