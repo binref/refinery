@@ -33,6 +33,7 @@ from refinery.lib.scripts.js.model import (
     JsArrayExpression,
     JsAssignmentExpression,
     JsBinaryExpression,
+    JsBreakStatement,
     JsCallExpression,
     JsExpressionStatement,
     JsFunctionDeclaration,
@@ -45,6 +46,7 @@ from refinery.lib.scripts.js.model import (
     JsParenthesizedExpression,
     JsProperty,
     JsReturnStatement,
+    JsSequenceExpression,
     JsStringLiteral,
     JsUnaryExpression,
     JsVariableDeclaration,
@@ -82,9 +84,10 @@ class RotationIIFE(NamedTuple):
     """
     Result of detecting the rotation IIFE pattern.
     """
-    node: JsExpressionStatement
+    node: Node
     target: int
     body: Sequence[Node]
+    target_param: str | None
 
 
 class ChecksumInfo(NamedTuple):
@@ -93,6 +96,7 @@ class ChecksumInfo(NamedTuple):
     """
     node: Node
     local_accessors: frozenset[str]
+    alias_map: dict[str, str]
     wrappers: dict[str, 'AccessorWrapperInfo']
     prop_maps: dict[str, dict[str, int | str]]
 
@@ -147,12 +151,13 @@ def _find_array_function(body: Sequence[Node]) -> ArrayFunction | None:
     return None
 
 
-def _find_accessor_function(
+def _find_all_accessor_functions(
     body: Sequence[Node],
     array_fn_name: str,
-) -> AccessorFunction | None:
+) -> list[AccessorFunction]:
     """
-    Detect the accessor function pattern:
+    Detect all accessor functions for a given array. Obfuscator.io can produce multiple accessors
+    sharing the same array (e.g. one base64 and one RC4), each with the pattern:
 
         function NAME(param, _unused) {
           param = param - BASE_OFFSET;
@@ -160,9 +165,8 @@ def _find_accessor_function(
           var r = v[param];
           return r;
         }
-
-    Returns (node, function_name, base_offset) or None.
     """
+    results: list[AccessorFunction] = []
     for stmt in body:
         if not isinstance(stmt, JsFunctionDeclaration):
             continue
@@ -199,8 +203,8 @@ def _find_accessor_function(
                         if isinstance(decl.init.callee, JsIdentifier) and decl.init.callee.name == array_fn_name:
                             calls_array_fn = True
         if base_offset is not None and calls_array_fn:
-            return AccessorFunction(stmt, fn_name, base_offset)
-    return None
+            results.append(AccessorFunction(stmt, fn_name, base_offset))
+    return results
 
 
 def _find_rotation_iife(
@@ -215,7 +219,8 @@ def _find_rotation_iife(
           while (true) { try { ... parseInt ... push(shift) } catch { push(shift) } }
         })(ARRAY_FN, TARGET_NUMBER);
 
-    Returns (statement_node, target_checksum, iife_body_statements) or None.
+    Returns (statement_node, target_checksum, iife_body_statements) or None. Also handles the case
+    where the rotation call is an element of a comma-separated sequence expression.
     """
     for stmt in body:
         if not isinstance(stmt, JsExpressionStatement):
@@ -223,31 +228,36 @@ def _find_rotation_iife(
         expr = stmt.expression
         if isinstance(expr, JsParenthesizedExpression):
             expr = expr.expression
-        call = expr
-        if not isinstance(call, JsCallExpression):
-            continue
-        if not isinstance(call.callee, JsFunctionExpression):
-            continue
-        if len(call.arguments) != 2:
-            continue
-        first_arg = call.arguments[0]
-        second_arg = call.arguments[1]
-        if not (isinstance(first_arg, JsIdentifier) and first_arg.name == array_fn_name):
-            continue
-        try:
-            target = int(_eval_arithmetic(second_arg))
-        except _EvalError:
-            continue
-        fn_body = call.callee.body
-        if fn_body is None:
-            continue
-        has_while = False
-        for s in fn_body.body:
-            if isinstance(s, JsWhileStatement):
-                has_while = True
-                break
-        if has_while:
-            return RotationIIFE(stmt, target, fn_body.body)
+        candidates: list[tuple[Node, JsCallExpression]] = []
+        if isinstance(expr, JsCallExpression):
+            candidates.append((stmt, expr))
+        elif isinstance(expr, JsSequenceExpression):
+            for sub in expr.expressions:
+                if isinstance(sub, JsCallExpression):
+                    candidates.append((sub, sub))
+        for removable, call in candidates:
+            if not isinstance(call.callee, JsFunctionExpression):
+                continue
+            if len(call.arguments) != 2:
+                continue
+            first_arg = call.arguments[0]
+            second_arg = call.arguments[1]
+            if not (isinstance(first_arg, JsIdentifier) and first_arg.name == array_fn_name):
+                continue
+            try:
+                target = int(_eval_arithmetic(second_arg))
+            except _EvalError:
+                continue
+            fn = call.callee
+            fn_body = fn.body
+            if fn_body is None:
+                continue
+            if not any(isinstance(s, JsWhileStatement) for s in fn_body.body):
+                continue
+            target_param = None
+            if len(fn.params) >= 2 and isinstance(fn.params[1], JsIdentifier):
+                target_param = fn.params[1].name
+            return RotationIIFE(removable, target, fn_body.body, target_param)
     return None
 
 
@@ -438,9 +448,23 @@ def _match_wrapper(
     )
 
 
+def _first_wrapper_match(
+    fn: JsFunctionDeclaration,
+    accessor_names: set[str],
+    prop_maps: dict[str, dict[str, int | str]],
+) -> tuple[str, AccessorWrapperInfo] | None:
+    if fn.id is None:
+        return None
+    for acc_name in accessor_names:
+        info = _match_wrapper(fn, acc_name, prop_maps)
+        if info is not None:
+            return fn.id.name, info
+    return None
+
+
 def _collect_iife_wrappers(
     iife_body: Sequence[Node],
-    accessor_name: str,
+    accessor_names: set[str],
 ) -> tuple[dict[str, AccessorWrapperInfo], dict[str, dict[str, int | str]]]:
     """
     Scan the rotation IIFE body for inner wrapper functions and their associated offset objects.
@@ -471,40 +495,49 @@ def _collect_iife_wrappers(
                     if props:
                         prop_maps[decl.id.name] = props
         if isinstance(s, JsFunctionDeclaration):
-            info = _match_wrapper(s, accessor_name, prop_maps)
-            if info is not None and s.id is not None:
-                wrappers[s.id.name] = info
+            match = _first_wrapper_match(s, accessor_names, prop_maps)
+            if match is not None:
+                name, info = match
+                wrappers[name] = info
     return wrappers, prop_maps
 
 
 def _collect_all_wrappers(
     root: Node,
-    accessor_name: str,
+    accessor_names: set[str],
 ) -> dict[str, AccessorWrapperInfo]:
     """
-    Walk the entire AST to find all function declarations that forward to the accessor with a
-    constant offset. Unlike `_collect_iife_wrappers`, this finds wrappers at any nesting level
-    and handles local offset objects declared inside the wrapper body.
+    Walk the entire AST to find all function declarations that forward to any of the given accessor
+    functions with a constant offset. Unlike `_collect_iife_wrappers`, this finds wrappers at any
+    nesting level and handles local offset objects declared inside the wrapper body.
     """
     wrappers: dict[str, AccessorWrapperInfo] = {}
     for s in root.walk():
         if isinstance(s, JsFunctionDeclaration):
-            info = _match_wrapper(s, accessor_name, {})
-            if info is not None and s.id is not None:
-                wrappers[s.id.name] = info
+            match = _first_wrapper_match(s, accessor_names, {})
+            if match is not None:
+                name, info = match
+                wrappers[name] = info
     return wrappers
 
 
 def _extract_checksum_expression(
     iife_body: Sequence[Node],
-    accessor_name: str,
+    accessor_names: set[str],
+    target_param: str | None = None,
 ) -> ChecksumInfo | None:
     """
     Extract the checksum expression AST node, local accessor aliases, and inner wrapper resolution
-    data from the rotation IIFE body. The wrapper and property-map data allows `_eval_checksum` to
-    evaluate wrapper calls on the fly without mutating the AST.
+    data from the rotation IIFE body. Handles two structural variants:
+
+    1. Variable declaration: `var x = CHECKSUM; if (x === target) break;`
+    2. Inline if-condition: `if (CHECKSUM === target) break;`
+
+    Variant 2 occurs when earlier passes eliminate the intermediate variable or constant-fold the
+    checksum expression to a value equal to the rotation target.
     """
-    local_accessors: set[str] = {accessor_name}
+    alias_map: dict[str, str] = {}
+    local_accessors: set[str] = set(accessor_names)
     for s in iife_body:
         if isinstance(s, JsVariableDeclaration):
             for decl in s.declarations:
@@ -512,27 +545,45 @@ def _extract_checksum_expression(
                     isinstance(decl, JsVariableDeclarator)
                     and isinstance(decl.id, JsIdentifier)
                     and isinstance(decl.init, JsIdentifier)
-                    and decl.init.name == accessor_name
+                    and decl.init.name in accessor_names
                 ):
                     local_accessors.add(decl.id.name)
+                    alias_map[decl.id.name] = decl.init.name
     checksum_node: Node | None = None
     for s in iife_body:
-        if isinstance(s, JsWhileStatement) and s.body is not None:
+        if not isinstance(s, JsWhileStatement) or s.body is None:
+            continue
+        for ws in s.walk():
+            if isinstance(ws, JsVariableDeclaration):
+                for decl in ws.declarations:
+                    if isinstance(decl, JsVariableDeclarator) and decl.init is not None:
+                        checksum_node = decl.init
+                        break
+                if checksum_node is not None:
+                    break
+        if checksum_node is None and target_param is not None:
             for ws in s.walk():
-                if isinstance(ws, JsVariableDeclaration):
-                    for decl in ws.declarations:
-                        if isinstance(decl, JsVariableDeclarator) and decl.init is not None:
-                            checksum_node = decl.init
-                            break
+                if (
+                    isinstance(ws, JsIfStatement)
+                    and isinstance(ws.test, JsBinaryExpression)
+                    and ws.test.operator == '==='
+                    and isinstance(ws.consequent, JsBreakStatement)
+                ):
+                    left, right = ws.test.left, ws.test.right
+                    if isinstance(right, JsIdentifier) and right.name == target_param:
+                        checksum_node = left
+                    elif isinstance(left, JsIdentifier) and left.name == target_param:
+                        checksum_node = right
                     if checksum_node is not None:
                         break
-            break
+        break
     if checksum_node is None:
         return None
-    wrappers, prop_maps = _collect_iife_wrappers(iife_body, accessor_name)
+    wrappers, prop_maps = _collect_iife_wrappers(iife_body, accessor_names)
     return ChecksumInfo(
         checksum_node,
         frozenset(local_accessors),
+        alias_map,
         wrappers,
         prop_maps,
     )
@@ -590,7 +641,7 @@ def _eval_checksum(
     local_accessors: frozenset[str],
     strings: list[str],
     base_offset: int,
-    encoding: Encoding = Encoding.NONE,
+    encoding_map: dict[str, Encoding],
     wrappers: dict[str, AccessorWrapperInfo] | None = None,
     prop_maps: dict[str, dict[str, int | str]] | None = None,
 ) -> float:
@@ -607,7 +658,7 @@ def _eval_checksum(
         local_accessors=local_accessors,
         strings=strings,
         base_offset=base_offset,
-        encoding=encoding,
+        encoding_map=encoding_map,
         wrappers=wrappers,
         prop_maps=prop_maps,
     )
@@ -642,6 +693,7 @@ def _eval_checksum(
                 )
                 if 0 <= (i := idx - base_offset) < len(strings):
                     raw = strings[i]
+                    encoding = encoding_map.get(inner.callee.name, Encoding.NONE)
                     decoded = _decode_string(raw, encoding, key)
                     if (result := js_parse_int(decoded)) is None:
                         raise _EvalError
@@ -708,7 +760,7 @@ def _simulate_rotation(
     checksum_node: Node,
     local_accessors: frozenset[str],
     target: int,
-    encoding: Encoding = Encoding.NONE,
+    encoding_map: dict[str, Encoding],
     wrappers: dict[str, AccessorWrapperInfo] | None = None,
     prop_maps: dict[str, dict[str, int | str]] | None = None,
 ) -> list[str] | None:
@@ -722,7 +774,7 @@ def _simulate_rotation(
     for _ in range(n):
         try:
             if int(_eval_checksum(
-                checksum_node, local_accessors, array, base_offset, encoding, wrappers, prop_maps,
+                checksum_node, local_accessors, array, base_offset, encoding_map, wrappers, prop_maps,
             )) == target:
                 return array
         except _EvalError:
@@ -830,7 +882,7 @@ def _replace_accessor_calls(
     root: Node,
     aliases: set[str],
     raw_lookup: dict[int, str],
-    encoding: Encoding,
+    encoding_map: dict[str, Encoding],
     wrappers: dict[str, AccessorWrapperInfo] | None = None,
     prop_maps: dict[str, dict[str, int | str]] | None = None,
 ) -> int:
@@ -849,7 +901,8 @@ def _replace_accessor_calls(
             continue
         if not isinstance(node.callee, JsIdentifier):
             continue
-        if node.callee.name not in aliases and node.callee.name not in wrapper_names:
+        callee_name = node.callee.name
+        if callee_name not in aliases and callee_name not in wrapper_names:
             continue
         try:
             idx, key = _resolve_accessor_call(node, local_accessors, wrappers, prop_maps)
@@ -858,6 +911,7 @@ def _replace_accessor_calls(
         raw = raw_lookup.get(idx)
         if raw is None:
             continue
+        encoding = encoding_map.get(callee_name, Encoding.NONE)
         try:
             value = _decode_string(raw, encoding, key)
         except _EvalError:
@@ -871,13 +925,17 @@ def _find_remaining_calls(
     root: Node,
     aliases: set[str],
     wrapper_names: set[str],
+    wrappers: dict[str, AccessorWrapperInfo] | None = None,
+    prop_maps: dict[str, dict[str, int | str]] | None = None,
 ) -> tuple[bool, set[int]]:
     """
     Determine whether unresolved accessor or wrapper calls remain in the AST, excluding calls that
-    are inside dead wrapper function bodies (which will be removed). Returns a `(bool, set)` pair:
-    whether any outstanding calls exist, and the set of dead-node ids for reuse during cleanup.
+    are inside dead wrapper function bodies (which will be removed) and calls that cannot possibly
+    be accessor calls (wrong argument structure). Returns a `(bool, set)` pair: whether any
+    outstanding calls exist, and the set of dead-node ids for reuse during cleanup.
     """
     dead_nodes: set[int] = set()
+    local_accessors = frozenset(aliases)
     for n in root.walk():
         if isinstance(n, JsFunctionDeclaration) and n.id is not None and n.id.name in wrapper_names:
             dead_nodes.add(id(n))
@@ -886,6 +944,10 @@ def _find_remaining_calls(
             and isinstance(n.callee, JsIdentifier)
             and (n.callee.name in aliases or n.callee.name in wrapper_names)
         ):
+            try:
+                _resolve_accessor_call(n, local_accessors, wrappers, prop_maps)
+            except _EvalError:
+                continue
             p = n.parent
             while p is not None:
                 if id(p) in dead_nodes:
@@ -898,19 +960,19 @@ def _find_remaining_calls(
 
 def _cleanup_infrastructure(
     root: Node,
-    body: Sequence[Node],
     array: ArrayFunction,
-    accessor: AccessorFunction,
+    accessors: list[AccessorFunction],
+    rotation: RotationIIFE | None,
     dead_nodes: set[int],
     aliases: set[str],
 ) -> None:
     """
-    Remove the string-array infrastructure (array function, accessor function, rotation IIFE, dead
+    Remove the string-array infrastructure (array function, accessor functions, rotation IIFE, dead
     wrapper declarations, and accessor alias declarators) once all calls have been resolved.
     """
     _remove_from_parent(array.node)
-    _remove_from_parent(accessor.node)
-    rotation = _find_rotation_iife(body, array.name)
+    for accessor in accessors:
+        _remove_from_parent(accessor.node)
     if rotation is not None:
         _remove_from_parent(rotation.node)
     for n in list(root.walk()):
@@ -934,7 +996,7 @@ class _CachedResolution(NamedTuple):
     """
     resolved: list[str]
     base_offset: int
-    encoding: Encoding
+    encoding_map: dict[str, Encoding]
 
 
 _CACHE_ATTR = '_stringarray_cache'
@@ -946,47 +1008,67 @@ class JsStringArrayResolver(ScopeProcessingTransformer):
         array = _find_array_function(body)
         if array is None:
             return
-        accessor = _find_accessor_function(body, array.name)
-        if accessor is None:
+        accessors = _find_all_accessor_functions(body, array.name)
+        if not accessors:
             return
-        encoding = _detect_encoding(accessor.node)
+        primary = accessors[0]
+        encoding_map: dict[str, Encoding] = {}
+        for acc in accessors:
+            encoding_map[acc.name] = _detect_encoding(acc.node)
+        accessor_names = set(encoding_map)
+        rotation = _find_rotation_iife(body, array.name)
+        if rotation is None:
+            return
         cache: _CachedResolution | None = getattr(scope, _CACHE_ATTR, None)
         if (
             cache is not None
-            and cache.base_offset == accessor.base_offset
-            and cache.encoding == encoding
+            and cache.base_offset == primary.base_offset
+            and cache.encoding_map == encoding_map
         ):
             resolved = cache.resolved
         else:
-            rotation = _find_rotation_iife(body, array.name)
-            if rotation is None:
-                return
-            checksum = _extract_checksum_expression(rotation.body, accessor.name)
+            checksum = _extract_checksum_expression(
+                rotation.body, accessor_names, rotation.target_param,
+            )
             if checksum is None:
                 return
+            checksum_encoding_map = {
+                name: encoding_map.get(checksum.alias_map.get(name, name), Encoding.NONE)
+                for name in checksum.local_accessors
+            }
             resolved = _simulate_rotation(
                 array.strings,
-                accessor.base_offset,
+                primary.base_offset,
                 checksum.node,
                 checksum.local_accessors,
                 rotation.target,
-                encoding,
-                checksum.wrappers or None,
-                checksum.prop_maps or None,
+                checksum_encoding_map,
+                checksum.wrappers,
+                checksum.prop_maps,
             )
             if resolved is None:
                 return
-            setattr(scope, _CACHE_ATTR, _CachedResolution(resolved, accessor.base_offset, encoding))
-        aliases = _collect_accessor_aliases(body, accessor.name)
-        aliases.add(accessor.name)
-        raw_lookup = {i + accessor.base_offset: s for i, s in enumerate(resolved)}
-        all_wrappers = _collect_all_wrappers(scope, accessor.name)
-        if _replace_accessor_calls(
-            scope, aliases, raw_lookup, encoding, all_wrappers,
-        ) == 0:
-            return
+            setattr(scope, _CACHE_ATTR, _CachedResolution(resolved, primary.base_offset, encoding_map))
+        aliases: set[str] = set()
+        for acc in accessors:
+            aliases.add(acc.name)
+            for alias in _collect_accessor_aliases(body, acc.name):
+                aliases.add(alias)
+                encoding_map[alias] = encoding_map[acc.name]
+        raw_lookup = {i + primary.base_offset: s for i, s in enumerate(resolved)}
+        all_wrappers = _collect_all_wrappers(scope, accessor_names)
+        for wname, winfo in all_wrappers.items():
+            if wname not in encoding_map:
+                encoding_map[wname] = encoding_map.get(winfo.target, Encoding.NONE)
+        replaced = _replace_accessor_calls(
+            scope, aliases, raw_lookup, encoding_map, all_wrappers,
+        )
         wrapper_names = set(all_wrappers)
-        has_remaining, dead_nodes = _find_remaining_calls(scope, aliases, wrapper_names)
+        has_remaining, dead_nodes = _find_remaining_calls(
+            scope, aliases, wrapper_names, all_wrappers, None,
+        )
         if not has_remaining:
-            _cleanup_infrastructure(scope, body, array, accessor, dead_nodes, aliases)
-        self.mark_changed()
+            _cleanup_infrastructure(scope, array, accessors, rotation, dead_nodes, aliases)
+            self.mark_changed()
+        elif replaced > 0:
+            self.mark_changed()
