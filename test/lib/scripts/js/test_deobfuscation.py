@@ -1080,6 +1080,14 @@ class TestObjectFold(TestJsDeobfuscator):
             self._objectfold(source),
         )
 
+    def test_contextual_keyword_as_parameter(self):
+        """
+        The contextual keyword `as` is valid as an identifier. Object fold must inline comparison
+        functions that use `as` as a parameter name.
+        """
+        source = "var o = {'f': function(as, at) { return as < at; }}; var r = o['f'](x, 3);"
+        self.assertEqual('var r = x < 3;', self._objectfold(source))
+
 
 class TestControlFlowUnflattening(TestJsDeobfuscator):
 

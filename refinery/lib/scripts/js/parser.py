@@ -1157,7 +1157,13 @@ class JsParser:
         tok = self._current
         offset = tok.offset
 
-        if self._at(JsTokenKind.IDENTIFIER):
+        if self._at(
+            JsTokenKind.IDENTIFIER,
+            JsTokenKind.AS,
+            JsTokenKind.FROM,
+            JsTokenKind.OF,
+            JsTokenKind.LET,
+        ):
             self._advance()
             if self._at(JsTokenKind.ARROW) and not self._preceded_by_newline:
                 self._advance()
