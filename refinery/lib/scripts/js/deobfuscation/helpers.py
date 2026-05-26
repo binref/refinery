@@ -7,6 +7,7 @@ import math
 import operator
 import re
 
+from collections import Counter
 from typing import TYPE_CHECKING, Callable, Iterator, Sequence
 
 if TYPE_CHECKING:
@@ -584,6 +585,79 @@ def is_closed_expression(node: Node, allowed_names: set[str]) -> bool:
             return node.name in allowed_names
         return is_simple_expression(node)
     return all(is_closed_expression(child, allowed_names) for child in children)
+
+
+def _collect_unconditional_identifiers(expr: Node) -> list[str]:
+    """
+    Walk *expr* in evaluation order, descending only into children that are unconditionally
+    evaluated (not short-circuit branches or ternary arms). Return the identifier names encountered
+    in evaluation order.
+    """
+    names: list[str] = []
+    stack: list[Node] = [expr]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, JsIdentifier):
+            names.append(node.name)
+            continue
+        if isinstance(node, (JsBinaryExpression, JsAssignmentExpression)):
+            children: list[Node] = [c for c in (node.left, node.right) if c is not None]
+        elif isinstance(node, JsUnaryExpression):
+            children = [node.operand] if node.operand is not None else []
+        elif isinstance(node, JsLogicalExpression):
+            children = [node.left] if node.left is not None else []
+        elif isinstance(node, JsConditionalExpression):
+            children = [node.test] if node.test is not None else []
+        elif isinstance(node, JsSequenceExpression):
+            children = list(node.expressions)
+        elif isinstance(node, JsMemberExpression):
+            children = [node.object] if node.object is not None else []
+            if node.computed and node.property is not None:
+                children.append(node.property)
+        else:
+            continue
+        for child in reversed(children):
+            stack.append(child)
+    return names
+
+
+def is_safe_iife_inline(
+    expr: Node,
+    param_names: Sequence[str],
+    call_args: Sequence[Node],
+) -> bool:
+    """
+    Verify that substituting IIFE arguments into the body expression preserves evaluation
+    semantics. An argument that is side-effect-free can be freely moved or omitted. An effectful
+    argument must be used exactly once, in an unconditionally-evaluated position, and in
+    declaration order relative to other effectful arguments.
+    """
+    effectful_indices = [
+        i for i, arg in enumerate(call_args)
+        if not is_side_effect_free(arg)
+    ]
+    if not effectful_indices:
+        return True
+    use_counts = Counter(
+        n.name for n in expr.walk()
+        if isinstance(n, JsIdentifier)
+    )
+    for i in effectful_indices:
+        if use_counts[param_names[i]] != 1:
+            return False
+    unconditional = _collect_unconditional_identifiers(expr)
+    effectful_names = {param_names[i] for i in effectful_indices}
+    effectful_in_eval = [n for n in unconditional if n in effectful_names]
+    if len(effectful_in_eval) != len(effectful_indices):
+        return False
+    param_order = {name: i for i, name in enumerate(param_names)}
+    prev = -1
+    for name in effectful_in_eval:
+        idx = param_order[name]
+        if idx <= prev:
+            return False
+        prev = idx
+    return True
 
 
 def substitute_params(

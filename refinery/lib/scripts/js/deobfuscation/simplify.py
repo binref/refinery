@@ -14,9 +14,11 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     access_key,
     escape_js_string,
     eval_binary_op,
+    extract_identifier_params,
+    is_closed_expression,
     is_literal,
     is_nullish,
-    is_side_effect_free,
+    is_safe_iife_inline,
     is_simple_expression,
     is_statically_evaluable,
     is_truthy,
@@ -26,7 +28,7 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     make_string_literal,
     numeric_value,
     string_value,
-    try_inline_trivial_function,
+    substitute_params,
     value_to_node,
 )
 from refinery.lib.scripts.js.deobfuscation.interpreter import BUILTIN_REGISTRY, STATIC_OBJECTS
@@ -50,6 +52,7 @@ from refinery.lib.scripts.js.model import (
     JsNumericLiteral,
     JsObjectExpression,
     JsParenthesizedExpression,
+    JsReturnStatement,
     JsScript,
     JsSequenceExpression,
     JsStringLiteral,
@@ -295,9 +298,23 @@ class JsSimplifications(Transformer):
 
     @staticmethod
     def _try_inline_iife(node: JsCallExpression, fn: JsFunctionExpression) -> Node | None:
-        if not all(is_side_effect_free(a) for a in node.arguments):
+        if fn.body is None or not isinstance(fn.body, JsBlockStatement):
             return None
-        return try_inline_trivial_function(fn, node.arguments)
+        body = fn.body.body
+        if len(body) != 1:
+            return None
+        stmt = body[0]
+        if not isinstance(stmt, JsReturnStatement) or stmt.argument is None:
+            return None
+        param_names = extract_identifier_params(fn.params)
+        if param_names is None or len(node.arguments) != len(param_names):
+            return None
+        expr = stmt.argument
+        if not is_closed_expression(expr, set(param_names)):
+            return None
+        if not is_safe_iife_inline(expr, param_names, node.arguments):
+            return None
+        return substitute_params(expr, param_names, node.arguments)
 
     @staticmethod
     def _try_fold_static_method(node: JsCallExpression) -> Node | None:

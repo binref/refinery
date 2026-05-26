@@ -911,6 +911,24 @@ class TestExtendedOperatorFolding(TestJsDeobfuscator):
         )
         self.assertEqual('live();', self._deobfuscate(source))
 
+    def test_iife_inline_member_access_arg(self):
+        source = "var r = (function(a, b) { return a < b; })(x, y.length);"
+        self.assertEqual('var r = x < y.length;', self._simplify(source))
+
+    def test_iife_inline_computed_member_arg(self):
+        source = "var r = (function(a, b) { return a <= b; })(arr[0], x);"
+        self.assertEqual('var r = arr[0] <= x;', self._simplify(source))
+
+    def test_iife_preserves_conditional_effectful_arg(self):
+        source = "var r = (function(a, b) { return a || b; })(x, y.z);"
+        expected = 'var r = (function(a, b) {\n  return a || b;\n})(x, y.z);'
+        self.assertEqual(expected, self._simplify(source))
+
+    def test_iife_preserves_reordered_effectful_args(self):
+        source = "var r = (function(a, b) { return b + a; })(x.y, z.w);"
+        expected = 'var r = (function(a, b) {\n  return b + a;\n})(x.y, z.w);'
+        self.assertEqual(expected, self._simplify(source))
+
     def test_nullish_coalescing_undefined(self):
         self.assertEqual("'default';", self._simplify("undefined ?? 'default';"))
 
