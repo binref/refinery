@@ -455,7 +455,12 @@ class JsSynthesizer(Synthesizer):
         self._write(F'{node.kind.value} ')
         for i, decl in enumerate(node.declarations):
             if i > 0:
-                self._write(', ')
+                if self._col > 120:
+                    self._write(',')
+                    self._newline()
+                    self._write(self._indent)
+                else:
+                    self._write(', ')
             self.visit(decl)
         self._write(';')
 

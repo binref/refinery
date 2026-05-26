@@ -366,20 +366,26 @@ class Synthesizer(Visitor):
         self._indent = indent
         self._depth = 0
         self._parts = io.StringIO()
+        self._col = 0
 
     def convert(self, node: Node) -> str:
         self._parts.seek(0)
         self._parts.truncate(0)
         self._depth = 0
+        self._col = 0
         self.visit(node)
         return self._parts.getvalue()
 
     def _write(self, text: str):
         self._parts.write(text)
+        nc = len(text)
+        self._col = (nc - br - 1) if (br := text.rfind('\n')) >= 0 else (self._col + nc)
 
     def _newline(self):
         self._parts.write('\n')
-        self._parts.write(self._indent * self._depth)
+        indent = self._indent * self._depth
+        self._parts.write(indent)
+        self._col = len(indent)
 
     def generic_visit(self, node: Node):
         raise LookupError(F'no synthesizer visit method for {type(node).__name__}')
