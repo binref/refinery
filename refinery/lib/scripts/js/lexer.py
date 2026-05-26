@@ -364,6 +364,10 @@ class JsLexer:
         length = len(src)
         prev_allows_regex = True
 
+        if src.startswith('#!'):
+            end = src.find('\n')
+            self.pos = end if end >= 0 else length
+
         while True:
             self._skip_whitespace()
             if self._at_end():

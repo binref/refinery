@@ -279,3 +279,13 @@ class TestJsLexer(TestBase):
             JsTokenKind.QUESTION_DOT,
             JsTokenKind.IDENTIFIER,
         ])
+
+    def test_shebang_skipped_at_start(self):
+        tokens = self._tokens('#!/usr/bin/env node\nvar x = 1;')
+        self.assertEqual(tokens[0], (JsTokenKind.NEWLINE, '\n'))
+        self.assertEqual(tokens[1], (JsTokenKind.VAR, 'var'))
+
+    def test_shebang_only_at_position_zero(self):
+        tokens = self._tokens('var x;\n#!/usr/bin/env node')
+        kinds = [k for k, _ in tokens]
+        self.assertIn(JsTokenKind.ERROR, kinds)
