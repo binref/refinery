@@ -361,9 +361,10 @@ class Synthesizer(Visitor):
     by all language-specific synthesizers.
     """
 
-    def __init__(self, indent: str = '  '):
+    def __init__(self, indent: str = '  ', line_length: int = 120):
         super().__init__()
         self._indent = indent
+        self._line_length = line_length
         self._depth = 0
         self._parts = io.StringIO()
         self._col = 0

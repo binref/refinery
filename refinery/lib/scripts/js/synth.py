@@ -81,10 +81,11 @@ class JsSynthesizer(Synthesizer):
     def __init__(
         self,
         indent: str = '  ',
+        line_length: int = 120,
         unescape_strings: bool = False,
         strip_comments: bool = False,
     ):
-        super().__init__(indent)
+        super().__init__(indent, line_length)
         self._unescape_strings = unescape_strings
         self._strip_comments = strip_comments
 
@@ -108,9 +109,16 @@ class JsSynthesizer(Synthesizer):
         self._write('}')
 
     def _comma_separated(self, nodes: list):
+        breaking = False
         for i, node in enumerate(nodes):
             if i > 0:
-                self._write(', ')
+                if breaking or self._col >= self._line_length:
+                    breaking = True
+                    self._write(',')
+                    self._newline()
+                    self._write(self._indent)
+                else:
+                    self._write(', ')
             if node is None:
                 continue
             self.visit(node)
@@ -189,12 +197,7 @@ class JsSynthesizer(Synthesizer):
 
     def _emit_array_like(self, node):
         self._write('[')
-        for i, elem in enumerate(node.elements):
-            if i > 0:
-                self._write(', ')
-            if elem is None:
-                continue
-            self.visit(elem)
+        self._comma_separated(node.elements)
         self._write(']')
 
     visit_JsArrayExpression = _emit_array_like
@@ -205,12 +208,24 @@ class JsSynthesizer(Synthesizer):
             self._write('{}')
             return
         self._write('{')
+        breaking = False
         for i, prop in enumerate(node.properties):
             if i > 0:
                 self._write(',')
-            self._write(' ')
+            if not breaking and self._col >= self._line_length:
+                breaking = True
+                self._depth += 1
+            if breaking:
+                self._newline()
+            else:
+                self._write(' ')
             self.visit(prop)
-        self._write(' }')
+        if breaking:
+            self._depth -= 1
+            self._newline()
+            self._write('}')
+        else:
+            self._write(' }')
 
     def visit_JsProperty(self, node: JsProperty):
         if node.kind in (JsPropertyKind.GET, JsPropertyKind.SET):
@@ -453,15 +468,7 @@ class JsSynthesizer(Synthesizer):
 
     def visit_JsVariableDeclaration(self, node: JsVariableDeclaration):
         self._write(F'{node.kind.value} ')
-        for i, decl in enumerate(node.declarations):
-            if i > 0:
-                if self._col > 120:
-                    self._write(',')
-                    self._newline()
-                    self._write(self._indent)
-                else:
-                    self._write(', ')
-            self.visit(decl)
+        self._comma_separated(node.declarations)
         self._write(';')
 
     def visit_JsVariableDeclarator(self, node: JsVariableDeclarator):
