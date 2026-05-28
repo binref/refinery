@@ -4265,6 +4265,53 @@ class TestGlobalAliasStripping(TestJsDeobfuscator):
             self._simplify(source),
         )
 
+    def test_const_alias_to_global_preserves_property_assignment(self):
+        source = inspect.cleandoc(
+            """
+            global['_V'] = "7-4111";
+            (async () => {
+                const c = global;
+                console.log(c._V);
+            })()
+            """
+        )
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                global._V = "7-4111";
+                (async () => {
+                  const c = global;
+                  console.log(_V);
+                })();
+                """
+            ),
+            self._deobfuscate(source),
+        )
+
+    def test_dead_global_property_is_removed(self):
+        source = inspect.cleandoc(
+            """
+            global['_V'] = "7-4111";
+            global['_W'] = "dead";
+            (async () => {
+                const c = global;
+                console.log(c._V);
+            })()
+            """
+        )
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                global._V = "7-4111";
+                (async () => {
+                  const c = global;
+                  console.log(_V);
+                })();
+                """
+            ),
+            self._deobfuscate(source),
+        )
+
 
 class TestOpaquePredicate(TestJsDeobfuscator):
 

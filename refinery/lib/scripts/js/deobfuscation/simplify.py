@@ -8,6 +8,7 @@ from typing import Sequence, TypeGuard
 from refinery.lib.scripts import Node, Transformer
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     FUNCTION_NODE_TYPES,
+    GLOBAL_OBJECT_ALIASES,
     RELATIONAL_OPS,
     access_key,
     escape_js_string,
@@ -88,13 +89,6 @@ _FUNCTION_PROPERTIES = _OBJECT_PROTO_PROPERTIES | frozenset({
 
 _EMPTY_OBJECT_PROPERTIES = _OBJECT_PROTO_PROPERTIES
 
-_GLOBAL_OBJECT_ALIASES: frozenset[str] = frozenset({
-    'globalThis',
-    'global',
-    'window',
-    'self',
-})
-
 
 def _is_locally_shadowed(node: Node, name: str) -> bool:
     """
@@ -125,6 +119,39 @@ def _is_locally_shadowed(node: Node, name: str) -> bool:
                             and decl.id.name == name
                         ):
                             return True
+        parent = parent.parent
+    return False
+
+
+def _is_global_alias(node: Node, name: str) -> bool:
+    """
+    Checks whether *name* is const-bound to a known global object alias in any enclosing scope.
+    Handles `const c = global` making `c` a recognized global alias for property simplification.
+    """
+    parent = node.parent
+    while parent is not None:
+        if isinstance(parent, FUNCTION_NODE_TYPES):
+            for param in getattr(parent, 'params', ()):
+                if isinstance(param, JsIdentifier) and param.name == name:
+                    return False
+                for child in param.walk():
+                    if isinstance(child, JsIdentifier) and child.name == name:
+                        return False
+        if isinstance(parent, (JsBlockStatement, JsScript)):
+            for stmt in parent.body:
+                if not isinstance(stmt, JsVariableDeclaration):
+                    continue
+                if stmt.kind is not JsVarKind.CONST:
+                    continue
+                for decl in stmt.declarations:
+                    if (
+                        isinstance(decl, JsVariableDeclarator)
+                        and isinstance(decl.id, JsIdentifier)
+                        and decl.id.name == name
+                        and isinstance(decl.init, JsIdentifier)
+                        and decl.init.name in GLOBAL_OBJECT_ALIASES
+                    ):
+                        return True
         parent = parent.parent
     return False
 
@@ -442,10 +469,16 @@ class JsSimplifications(Transformer):
         if (
             not node.computed
             and isinstance(node.object, JsIdentifier)
-            and node.object.name in _GLOBAL_OBJECT_ALIASES
             and isinstance(node.property, JsIdentifier)
             and not _is_locally_shadowed(node, node.property.name)
+            and (
+                node.object.name in GLOBAL_OBJECT_ALIASES
+                or _is_global_alias(node, node.object.name)
+            )
         ):
+            p = node.parent
+            if isinstance(p, JsAssignmentExpression) and p.left is node:
+                return None
             return node.property
         if node.computed and node.object is not None and node.property is not None:
             if (
@@ -464,6 +497,7 @@ class JsSimplifications(Transformer):
             if prop_str is not None and is_valid_identifier(prop_str):
                 node.computed = False
                 node.property = JsIdentifier(name=prop_str)
+                node._adopt(node.property)
                 self.mark_changed()
                 return None
         return None

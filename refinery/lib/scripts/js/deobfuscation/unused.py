@@ -16,6 +16,7 @@ from __future__ import annotations
 from refinery.lib.scripts import Node, _remove_from_parent
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     BodyProcessingTransformer,
+    GLOBAL_OBJECT_ALIASES,
     collect_identifier_names,
     is_binding_site,
     is_side_effect_free,
@@ -36,8 +37,42 @@ from refinery.lib.scripts.js.model import (
     JsScript,
     JsVariableDeclaration,
     JsVariableDeclarator,
+    JsVarKind,
     Statement,
 )
+
+
+def _const_global_alias_names(root: Node) -> frozenset[str]:
+    names: set[str] = set()
+    for node in root.walk():
+        if not isinstance(node, JsVariableDeclaration) or node.kind is not JsVarKind.CONST:
+            continue
+        for decl in node.declarations:
+            if (
+                isinstance(decl, JsVariableDeclarator)
+                and isinstance(decl.id, JsIdentifier)
+                and isinstance(decl.init, JsIdentifier)
+                and decl.init.name in GLOBAL_OBJECT_ALIASES
+            ):
+                names.add(decl.id.name)
+    return frozenset(names)
+
+
+def _global_alias_read_names(root: Node, aliases: frozenset[str]) -> frozenset[str]:
+    names: set[str] = set()
+    for node in root.walk():
+        if not isinstance(node, JsMemberExpression) or node.computed:
+            continue
+        if not isinstance(node.property, JsIdentifier):
+            continue
+        if not isinstance(node.object, JsIdentifier):
+            continue
+        p = node.parent
+        if isinstance(p, JsAssignmentExpression) and p.left is node:
+            continue
+        if node.object.name in GLOBAL_OBJECT_ALIASES or node.object.name in aliases:
+            names.add(node.property.name)
+    return frozenset(names)
 
 
 def _reachable_functions(
@@ -162,6 +197,8 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
     def _process_body(self, parent: Node, body: list[Statement]):
         removed_functions = self._remove_dead_functions(body)
         dead_variables, preserved = self._remove_dead_variables(parent, body, removed_functions)
+        if isinstance(parent, JsScript):
+            dead_variables |= self._remove_dead_global_properties(parent, dead_variables)
         self._remove_dead_expressions(body, removed_functions | dead_variables, preserved)
 
     def _remove_dead_functions(self, body: list[Statement]) -> set[str]:
@@ -259,6 +296,61 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
         self._remove_empty_declarators(parent, body, dead)
         self.mark_changed()
         return dead, preserved
+
+    def _remove_dead_global_properties(
+        self, parent: JsScript, defunct: set[str],
+    ) -> set[str]:
+        """
+        Remove global-property write statements (`global.x = value`) where property name `x` is
+        never referenced anywhere in the script (not by any identifier or member expression).
+        """
+        write_stmts: dict[str, list[JsExpressionStatement]] = {}
+        for node in walk_scope(parent):
+            if not isinstance(node, JsExpressionStatement):
+                continue
+            expr = node.expression
+            if not isinstance(expr, JsAssignmentExpression) or expr.operator != '=':
+                continue
+            lhs = expr.left
+            if (
+                isinstance(lhs, JsMemberExpression)
+                and not lhs.computed
+                and isinstance(lhs.object, JsIdentifier)
+                and isinstance(lhs.property, JsIdentifier)
+                and lhs.object.name in GLOBAL_OBJECT_ALIASES
+            ):
+                write_stmts.setdefault(lhs.property.name, []).append(node)
+        if not write_stmts:
+            return set()
+        aliases = _const_global_alias_names(parent)
+        alias_reads = _global_alias_read_names(parent, aliases)
+        bare_refs: set[str] = set()
+        for node in parent.walk():
+            if not isinstance(node, JsIdentifier) or node.name not in write_stmts:
+                continue
+            if is_binding_site(node):
+                continue
+            p = node.parent
+            if isinstance(p, JsMemberExpression) and p.property is node and not p.computed:
+                continue
+            bare_refs.add(node.name)
+        dead: set[str] = set()
+        for name, stmts in write_stmts.items():
+            if name in alias_reads or name in bare_refs:
+                continue
+            dead.add(name)
+            for stmt in stmts:
+                expr = stmt.expression
+                if not isinstance(expr, JsAssignmentExpression) or expr.right is None:
+                    _remove_from_parent(stmt)
+                elif is_side_effect_free(expr.right, defunct | dead):
+                    _remove_from_parent(stmt)
+                else:
+                    stmt.expression = expr.right
+                    expr.right.parent = stmt
+        if dead:
+            self.mark_changed()
+        return dead
 
     def _remove_dead_expressions(
         self, body: list[Statement], defunct: set[str], preserved: set[JsExpressionStatement],
