@@ -1,9 +1,11 @@
 # Binary Refinery Changelog
 
 > [!NOTE]  
-> Almost every release contains bugfixes, but these are not usually included in the changelog.
-> If a release contains only bugfix, it is marked as a 'bugfix release'.
+> Every release contains bugfixes, but these are not included in the changelog unless they are very notable.
+> If a release contains only bugfix, it contains no changelog details.
 > Otherwise, the changelog entries highlight only new or changed functionality.
+
+## Version 0.11.1
 
 ## Version 0.11.0
 - Starting with 0.11.0, binary refinery requires Python 3.10 as the minimum Python version to run.
@@ -29,9 +31,9 @@
 ## Version 0.10.9
 - Improved help text descriptions for `carve` and `xtp` exposing named patterns with description.
 
-## Version 0.10.8 - bugfix release
+## Version 0.10.8
 
-## Version 0.10.7 - bugfix release
+## Version 0.10.7
 
 ## Version 0.10.6
 - The modular dependency system was simplified;
@@ -94,7 +96,7 @@ This includes:
 In most cases, this improves the support of those formats with one exception:
 The `qr` unit can no longer parse arbitrary bar codes but is restricted to QR codes.
 
-## Version 0.10.1 - bugfix release
+## Version 0.10.1
 
 ## Version 0.10.0
 - Switches `-T` in the units `alu` and `pemeta` were removed to add a new global option named `--try`:
@@ -110,7 +112,7 @@ The `qr` unit can no longer parse arbitrary bar codes but is restricted to QR co
 - The unit `carve-tar` for carving TAR files was added.
 - The unit `carve-png` for carving PNG files was added.
 
-## Version 0.9.26 - bugfix release
+## Version 0.9.26
 
 ## Version 0.9.25
 - The `docmeta` unit now exposes more of the embedded metadata of Word documents.
@@ -119,9 +121,9 @@ The `qr` unit can no longer parse arbitrary bar codes but is restricted to QR co
 ## Version 0.9.24
 - Adds the `jpeg` unit for parsing out JPG data streams and some metadata.
 
-## Version 0.9.23 - bugfix release
+## Version 0.9.23
 
-## Version 0.9.22 - bugfix release
+## Version 0.9.22
 
 ## Version 0.9.21
 - The `edit` unit was added which allows overwriting any part of the input data with a binary string.
@@ -134,23 +136,23 @@ The `qr` unit can no longer parse arbitrary bar codes but is restricted to QR co
 - The `xtinno` (and thereby `xt`) now support Inno Setup up to version 6.6.1.
 - The `innopwd` unit has improved logging and can intercept passwords in more cases.
 
-## Version 0.9.18 - bugfix release
+## Version 0.9.18
 
-## Version 0.9.17 - bugfix release
+## Version 0.9.17
 
-## Version 0.9.16 - bugfix release
+## Version 0.9.16
 
-## Version 0.9.15 - bugfix release
+## Version 0.9.15
 
-## Version 0.9.14 - bugfix release
+## Version 0.9.14
 
 ## Version 0.9.13
 - The `xtdmp` unit was added for extracting files from Minidumps.
 - Refinery was extended by a custom ZIP archive parser which can detect data caves and should support all archives (and probably more) than what was previously supported.
 
-## Version 0.9.12 - bugfix release
+## Version 0.9.12
 
-## Version 0.9.11 - bugfix release
+## Version 0.9.11
 
 ## Version 0.9.10
 - The `hlg`, `hls`, and `hlb` units were added for easier access to different style flavors of syntax highlighting.
@@ -171,7 +173,7 @@ The `qr` unit can no longer parse arbitrary bar codes but is restricted to QR co
 ## Version 0.9.7
 - The `d2p` unit was added.
 
-## Version 0.9.6 - bugfix release
+## Version 0.9.6
 
 ## Version 0.9.5
 - The `carve` unit now supports the `strarray` pattern for arrays of strings,
@@ -195,12 +197,12 @@ The `qr` unit can no longer parse arbitrary bar codes but is restricted to QR co
 - Type hints across the refinery code base have undergone massive refactoring and should be
   better compatible with modern type checkers now.
 
-## Version 0.9.3 - bugfix release
+## Version 0.9.3
 
 ## Version 0.9.2
 - The `xtchm` unit was added for extracting CHM (Windows Help) files.
 
-## Version 0.9.1 - bugfix release
+## Version 0.9.1
 
 ## Version 0.9.0
 - The change to `--join-path` from v0.7.4 was reverted;
@@ -221,7 +223,7 @@ The `qr` unit can no longer parse arbitrary bar codes but is restricted to QR co
 ## Version 0.8.28
 - Adds the `pbuf` unit to decode ProtoBuf messages heuristically.
 
-## Version 0.8.27 - bugfix release
+## Version 0.8.27
 
 ## Version 0.8.26
 - The `djb2` unit was added for computing the DJB2 hash.
@@ -230,7 +232,7 @@ The `qr` unit can no longer parse arbitrary bar codes but is restricted to QR co
 ## Version 0.8.25
 -  The `xtinno` unit now supports Inno Setup up to version 6.4.3.
 
-## Version 0.8.24 - bugfix release
+## Version 0.8.24
 
 ## Version 0.8.23
 - The `xt` unit now also extracts AutoIt3 samples.
@@ -261,7 +263,7 @@ The `qr` unit can no longer parse arbitrary bar codes but is restricted to QR co
 - The `b2f` (back to front) unit was added, a shortcut for `pick ::-1`.
 - The `HKDF` key derivation unit was renamed to `hkdf`, in line with all other units now being lowercase.
 
-## Version 0.8.18 - bugfix release
+## Version 0.8.18
 
 ## Version 0.8.17
 
@@ -286,20 +288,20 @@ This is a bit of a botched release, don't use it; use 0.8.17 instead.
 - The `csb` and `csd` shortcuts for `carve` can now use the `--stripspace` argument.
 - Grouping into blocks in `hexload` and `peek` will now add separators in the ASCII preview.
 
-## Version 0.8.13 - bugfix release
+## Version 0.8.13
 
-## Version 0.8.12 - bugfix release
+## Version 0.8.12
 
-## Version 0.8.11 - bugfix release
+## Version 0.8.11
 
-## Version 0.8.10 - bugfix release
+## Version 0.8.10
 
-## Version 0.8.9 - bugfix release
+## Version 0.8.9
 
 ## Version 0.8.8
 - The `innopwd` unit was added. It can emulate an Inno Setup installer in order to extract passwords that are encoded within the IFPS script.
 
-## Version 0.8.7 - bugfix release
+## Version 0.8.7
 
 ## Version 0.8.6
 - The unit `ps1str` has been renamed to `escps` to match it's partner unit `esc`.
@@ -313,7 +315,7 @@ This is a bit of a botched release, don't use it; use 0.8.17 instead.
 - Adds LZX support to the `xtcab` unit. 
 - The `xtcab` unit now also suports multi-disk cabinet archives.
 
-## Version 0.8.4 - bugfix release
+## Version 0.8.4
 
 ## Version 0.8.3
 - The `lzma` unit now supports a lot more (especially custom) LZMA formats.
@@ -329,7 +331,7 @@ This is a bit of a botched release, don't use it; use 0.8.17 instead.
 - The `iff` unit was extended with an `-ne` switch.
 - The `xjl` unit can now also collect the contents of one frame into a JSON list.
 
-## Version 0.8.1 - bugfix release
+## Version 0.8.1
 
 ## Version 0.8.0
 - The `binref` command was changed to use conjunctive search logic by default.
@@ -338,11 +340,11 @@ This is a bit of a botched release, don't use it; use 0.8.17 instead.
   This is somewhat experimental and `unicorn` remains the default. 
 - As part of the changes to `vstack`, the `vmemref` unit was changed to use `smda` rather than `angr`.
 
-## Version 0.7.12 - bugfix release
+## Version 0.7.12
 
-## Version 0.7.11 - bugfix release
+## Version 0.7.11
 
-## Version 0.7.10 - bugfix release
+## Version 0.7.10
 
 ## Version 0.7.9
 - Adds the `morse` unit for Morse code encoding and decoding.
@@ -377,7 +379,7 @@ This is a bit of a botched release, don't use it; use 0.8.17 instead.
 - The key scaling method for `autoxor` was adjusted to produce less false positives when scanning for larger keys.
 - Thanks to [@alphillips-lab][], the `a3x` unit is now capable of decrypting EA05 formatted scripts, previously only EA06 was supported.
 
-## Version 0.7.3 - bugfix release
+## Version 0.7.3
 
 ## Version 0.7.2
 - The `loop` unit was enhanced with more options to abort execution based on regular expression patterns. It now also offers better control over terminating the execution when an error occurs.
@@ -407,20 +409,20 @@ This is a bit of a botched release, don't use it; use 0.8.17 instead.
 ## Version 0.6.43
 - Adds the hash units `sha3-224`, `sha3-256`, `sha3-384`, `sha3-512`, and `keccak256`.
 
-## Version 0.6.42 - bugfix release
+## Version 0.6.42
 
-## Version 0.6.41 - bugfix release
+## Version 0.6.41
 
-## Version 0.6.40 - bugfix release
+## Version 0.6.40
 
 ## Version 0.6.39
 - Adds the `b92` unit for Base92 encoding and decoding.
 - Improves the performance of AutoIt3 unpacking in `a3x`.
 - Adds the `SymHash` field to the `machometa` unit.
 
-## Version 0.6.38 - bugfix release
+## Version 0.6.38
 
-## Version 0.6.37 - bugfix release
+## Version 0.6.37
 
 ## Version 0.6.36
 - Adds the `xtmacho` unit which can unpack MachO fat binaries.
@@ -437,13 +439,13 @@ This is a bit of a botched release, don't use it; use 0.8.17 instead.
 ## Version 0.6.33
 - The `struct` unit was extended with an additional format string character, `g`, for reading GUID values.
 
-## Version 0.6.32 - bugfix release
+## Version 0.6.32
 
-## Version 0.6.31 - bugfix release
+## Version 0.6.31
 
-## Version 0.6.30 - bugfix release
+## Version 0.6.30
 
-## Version 0.6.29 - bugfix release
+## Version 0.6.29
 
 ## Version 0.6.28
 - The `reduce` signature was changed; it is no longer possible to specify an initialization value, instead the first chunk in the frame is always used. Additionally, there is now an option to consume only a limited number of chunks.
@@ -464,7 +466,7 @@ This is a bit of a botched release, don't use it; use 0.8.17 instead.
 - Adds the `sosemanuk` cipher unit.
 - Improves the capabilities of the `vbastr` unit.
 
-## Version 0.6.23 - bugfix release
+## Version 0.6.23
 
 ## Version 0.6.22
 - The `peek` unit in `--decode` mode now truncates long lines by default. Specifying the option twice has the same effect as the previous default, which is to wrap lines.
@@ -481,7 +483,7 @@ This is a bit of a botched release, don't use it; use 0.8.17 instead.
 - The `vsect` unit can now extract "synthesized" sections. This also affects `vsnip`; it can now also extract data from, e.g., the header of an executable based on virtual addresses.
 - The possible extras for the `binary-refinery` Python package have been expanded and the default install has been slimmed even further to avoid having to install too many dependencies for just the core utilities.
 
-## Version 0.6.18 - bugfix release
+## Version 0.6.18
 
 ## Version 0.6.17
 - Adds the `opc` unit and removes the Angr option from `asm`.
@@ -511,7 +513,7 @@ This is a bit of a botched release, don't use it; use 0.8.17 instead.
 - The `yara:` handler for regular expression arguments now has the even shorter shortcut `Y:` because I use it so much.
 - A bug was fixed in the `url` unit which incorrectly decoded when using the `--plus` switch.
 
-## Version 0.6.13 - bugfix release
+## Version 0.6.13
 
 ## Version 0.6.12
 - Adds the `sm4` cipher unit.
@@ -557,9 +559,9 @@ This is a bit of a botched release, don't use it; use 0.8.17 instead.
 - The `xtnode` unit was added for extracting the contents of Node.js executables created with `pkg` or `nexe`.
 - The `xtzip` unit now supports AES-encrypted archives via the `pyzipper` module.
 
-## Version 0.6.2 - bugfix release
+## Version 0.6.2
 
-## Version 0.6.1 - bugfix release
+## Version 0.6.1
 
 ## Version 0.6.0
 - The AutoIt decompiler unit `a3x` was added.
@@ -570,9 +572,9 @@ This is a bit of a botched release, don't use it; use 0.8.17 instead.
 - The `xxtea` unit was re-worked to support being used as a proper block cipher. This is enabled by specifying the block size using the `--block-size` argument. By default, `xxtea` will continue to operate on the input as a single block: This is how XXTEA is often used in malicious samples.
 - The `rc5` and `rc6` units have been updated to support the `--segment-size` option for CFB mode.
 
-## Version 0.5.9 - bugfix release
+## Version 0.5.9
 
-## Version 0.5.8 - bugfix release
+## Version 0.5.8
 
 ## Version 0.5.7
 - The `pestrip` and `peoverlay` default settings are the same again.
@@ -590,7 +592,7 @@ This is a bit of a botched release, don't use it; use 0.8.17 instead.
 - The `xthtml` unit can now extract attributes of HTML tags.
 - The `rijndael` cipher unit was added.
 
-## Version 0.5.3 - bugfix release
+## Version 0.5.3
 
 ## Version 0.5.2
 - The `lzg` unit was added.
@@ -599,7 +601,7 @@ This is a bit of a botched release, don't use it; use 0.8.17 instead.
 - The `vmemref` and `vstack` units were added; both are still experimental and not thoroughly tested.
 - The `min` and `max` units were added to simplify the pattern `sorted [| pick 0 ]` to a single unit.
 
-## Version 0.5.1 - bugfix release
+## Version 0.5.1
 
 ## Version 0.5.0
 This release changes the way in which meta variables are handled, they now have a scope:
@@ -630,9 +632,9 @@ Changes unrelated to meta variable redesign:
 - Adds the `xtnsis` unit to the units used in `xt`.
 - The `pemeta` unit has improved RICH header data and displays RICH header counts.
 
-## Version 0.4.46 - bugfix release
+## Version 0.4.46
 
-## Version 0.4.45 - bugfix release
+## Version 0.4.45
 
 ## Version 0.4.44
 - Adds the `lzf` unit for LZF compression and decompression.
@@ -640,7 +642,7 @@ Changes unrelated to meta variable redesign:
 ## Version 0.4.43
 - Adds the `qlz` unit for QuickLZ decompression.
 
-## Version 0.4.42 - bugfix release
+## Version 0.4.42
 
 ## Version 0.4.41
 - Adds the `carve-lnk` unit to carve Windows Shortcut files.
@@ -650,7 +652,7 @@ Changes unrelated to meta variable redesign:
 - Adds the `xtnsis` unit which can extract files from NSIS archives and provide a rudimentary disassembly of the setup script.
 - Adds the `ifps` and `ifpsstr` units to disassemble and extract strings from compiled Pascal script files.
 
-## Version 0.4.40 - bugfix release
+## Version 0.4.40
 
 ## Version 0.4.39
 - Adds the `vbapc` and `vbastr` units which can extract (decompiled) VBA p-code and VBA strings from (potentially stomped) Word documents.
@@ -667,18 +669,18 @@ Fixes a critical bug in the meta variable propagation logic.
 - Adds the `jcalg` unit.
 - Adds the `byteswap` unit.
 
-## Version 0.4.36 - bugfix release
+## Version 0.4.36
 
 ## Version 0.4.35
 - Adds the `lzip` unit.
 - Reworks the `serpent` unit to work with real-world examples and adds a `--swap` option to change the block byte order to become compatible with other implementations.
 - Changes the `peek` design and fixes problems with colored output on Windows.
 
-## Version 0.4.34 - bugfix release
+## Version 0.4.34
 
-## Version 0.4.33 - bugfix release
+## Version 0.4.33
 
-## Version 0.4.32 - bugfix release
+## Version 0.4.32
 
 ## Version 0.4.31
 - The (still somewhat experimental) `xt` unit was added which attempts to extract data from known archive formats.
@@ -692,7 +694,7 @@ Fixes a critical bug in the meta variable propagation logic.
 - The `base32` unit was made more robust against invalid paddings.
 - The `peek` unit design was changed yet again and colorization was added to the hexdump preview. It can be disabled through the `-g` switch.
 
-## Version 0.4.30 - bugfix release
+## Version 0.4.30
 
 ## Version 0.4.29
 - Unit execution time has been improved significantly.
@@ -711,7 +713,7 @@ Fixes a critical bug in the meta variable propagation logic.
 ## Version 0.4.26
 Adds various convenience output options in the Python REPL and adds documentation for those.
 
-## Version 0.4.25 - bugfix release
+## Version 0.4.25
 
 ## Version 0.4.24
 - Adds the `szdd` decompression unit.
@@ -722,7 +724,7 @@ Adds various convenience output options in the Python REPL and adds documentatio
 - Adds the `isaac` cipher unit.
 - Adds the `bat` unit for deobfuscating batch scripts.
 
-## Version 0.4.23 - bugfix release
+## Version 0.4.23
 
 ## Version 0.4.22
 - Adds the `ripemd160` and `ripemd128` units.
@@ -749,9 +751,9 @@ Improves performance by replacing an import of `pkg_resources` with equivalent f
 ## Version 0.4.18
 Changes the format for the binary formatter used in `struct`, `rex`, `resub`, and `cfmt`. It now uses a reverse multibin handler instead of parsing the modifier like a command-line pipeline.
 
-## Version 0.4.17 - bugfix release
+## Version 0.4.17
 
-## Version 0.4.16 - bugfix release
+## Version 0.4.16
 
 ## Version 0.4.15 
 - Adds the `lzo` unit
@@ -769,14 +771,14 @@ Changes the format for the binary formatter used in `struct`, `rex`, `resub`, an
 - The `xtpyi` unit now extracts Python disassembly when decompilation fails.
 - The `lzma` unit now correctly decompresses output produced by PyLZMA.
 
-## Version 0.4.12 - bugfix release
+## Version 0.4.12
 
 ## Version 0.4.11
 - The `doctxt` unit was added; courtesy of [@baderj][]
 
-## Version 0.4.10 - bugfix release
+## Version 0.4.10
 
-## Version 0.4.9 - bugfix release
+## Version 0.4.9
 
 ## Version 0.4.8
 - Adds the `serpent` unit.
@@ -819,7 +821,7 @@ Changes the format for the binary formatter used in `struct`, `rex`, `resub`, an
 - Adds `xtpyi` unit to extract PyInstaller-packed archives.
 - Logging now uses the Python `logging` module.
 
-## Version 0.4.2 - bugfix release
+## Version 0.4.2
 
 ## Version 0.4.1
 - Significantly improves unit loading time which had regressed due to the changes in 0.4.0.
@@ -827,14 +829,14 @@ Changes the format for the binary formatter used in `struct`, `rex`, `resub`, an
 ## Version 0.4.0
 This release removes the `setup-venv` helper scripts and instead uses a slightly less ugly hack to resolve dependencies before running the refinery setup by declaring every dependency a build dependency in `pyproject.toml`. Any kind of installation should work seamlessly through `pip`.
 
-## Version 0.3.38 - bugfix release
+## Version 0.3.38
 Updates build system.
 
-## Version 0.3.37 - bugfix release
+## Version 0.3.37
 
-## Version 0.3.36 - bugfix release
+## Version 0.3.36
 
-## Version 0.3.35 - bugfix release
+## Version 0.3.35
 
 ## Version 0.3.34
 - Fixes critical bug in deployment.
@@ -897,7 +899,7 @@ Updates build system.
 - Adds the `dnblob` unit.
 - The `drp` unit underwent major refactoring with the goal to improve both speed and quality of results. Two options were added to help control these new settings.
 
-## Version 0.3.25 - bugfix release
+## Version 0.3.25
 
 ## Version 0.3.24
 - Adds the `xtrtf` unit to extract embedded objects from RTF documents.
@@ -967,7 +969,7 @@ Updates build system.
 - The `peslice`, `elfslice`, and `pesect` units have been removed.
 - In their place, the cross-format units `vsnip` and `vsect` can now be used to extract data from virtual addresses and sections of PE, ELF, and MachO files.
 
-## Version 0.3.10 - bugfix release
+## Version 0.3.10
 
 ## Version 0.3.9 
 - adds `md2` and `md4` hashing algorithms
@@ -991,9 +993,9 @@ Updates build system.
 ## Version 0.3.5
 - Using `pip install --install-option=library binary-refinery` or a `REFINERY_PREFIX` environment variable with value `!` will now install the binary refinery without any command line scripts, only as a library.
 
-## Version 0.3.4 - bugfix release
+## Version 0.3.4
 
-## Version 0.3.3 - bugfix release
+## Version 0.3.3
 
 ## Version 0.3.2
 - It is now possible to use local refinery units (i.e. a Python script in the current director which contains a refinery unit that is not abstract) for multibin prefixes and in any other situation where units are dynamically loaded.
@@ -1002,7 +1004,7 @@ Updates build system.
 - The `lz4` unit was added with a pure Python implementation of LZ4 decompression.
 - The `jvdasm` unit for disassembling Java class files was added.
 
-## Version 0.3.1 - bugfix release
+## Version 0.3.1
 
 ## Version 0.3.0
 - The `autoxor` unit was added.
