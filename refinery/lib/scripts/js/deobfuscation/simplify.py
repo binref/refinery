@@ -3,9 +3,7 @@ JavaScript syntax normalization transforms.
 """
 from __future__ import annotations
 
-from typing import TypeGuard
-
-from collections.abc import Sequence
+from typing import Sequence, TypeGuard
 
 from refinery.lib.scripts import Node, Transformer
 from refinery.lib.scripts.js.deobfuscation.helpers import (

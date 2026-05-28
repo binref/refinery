@@ -9,9 +9,8 @@ the state machine, and recovers the original structure.
 from __future__ import annotations
 
 from collections import deque
-from collections.abc import Callable, Generator
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING, Callable, Generator, NamedTuple
 
 from refinery.lib.scripts import Block, Node, Statement, Transformer
 from refinery.lib.scripts.ps1.deobfuscation.data import COMPARISON_OPS

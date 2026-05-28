@@ -8,8 +8,7 @@ import math
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping
-    from typing import TypeAlias
+    from typing import Callable, Mapping, TypeAlias
 
     from refinery.lib.scripts.js.model import JsArrowFunctionExpression as _Arrow
     from refinery.lib.scripts.js.model import JsFunctionDeclaration as _FuncDecl

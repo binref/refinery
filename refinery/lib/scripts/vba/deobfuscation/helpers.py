@@ -4,10 +4,7 @@ Shared AST utilities for VBA deobfuscation transforms.
 from __future__ import annotations
 
 from operator import itemgetter
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from collections.abc import Generator
+from typing import Generator
 
 from refinery.lib.scripts import Expression, Kind, Statement, _classify_fields
 from refinery.lib.scripts.vba.deobfuscation.names import CHR_NAMES, Value

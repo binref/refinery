@@ -7,7 +7,7 @@ import base64
 import codecs
 import re
 
-from collections.abc import Iterator
+from typing import Iterator
 
 from refinery.lib.scripts.ps1.deobfuscation.constants import PS1_ENV_CONSTANTS
 from refinery.lib.scripts.ps1.deobfuscation.data import (

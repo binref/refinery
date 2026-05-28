@@ -5,10 +5,7 @@ deobfuscation transforms.
 from __future__ import annotations
 
 from functools import partial
-from typing import TYPE_CHECKING, Any, Callable
-
-if TYPE_CHECKING:
-    from typing import TypeAlias
+from typing import Any, Callable, TypeAlias
 
 Value: TypeAlias = str | int | float | bool | None
 

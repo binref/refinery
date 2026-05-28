@@ -3,8 +3,8 @@ Functions to help with ANSI colored terminal text.
 """
 from __future__ import annotations
 
-from unicodedata import combining, east_asian_width
 from io import StringIO
+from unicodedata import combining, east_asian_width
 
 from refinery.lib.patterns import AnsiColor as ac
 

@@ -7,8 +7,7 @@ import enum
 import io
 import re
 
-from collections.abc import Callable, Generator
-from typing import NamedTuple, TypeVar, TypeGuard
+from typing import Callable, Generator, NamedTuple, TypeGuard, TypeVar
 
 from refinery.lib.scripts import Block, Node, Transformer
 from refinery.lib.scripts.ps1.deobfuscation.data import (

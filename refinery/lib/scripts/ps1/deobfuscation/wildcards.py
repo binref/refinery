@@ -11,8 +11,8 @@ from __future__ import annotations
 
 import re
 
-from collections.abc import Iterable
 from fnmatch import translate as fnmatch_translate
+from typing import Iterable
 
 from refinery.lib.scripts.ps1.deobfuscation.data import (
     GET_COMMAND_ALIASES,

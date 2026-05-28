@@ -3,8 +3,8 @@ from __future__ import annotations
 import enum
 import re
 
-from collections.abc import Generator
 from dataclasses import dataclass, field
+from typing import Generator
 
 from refinery.lib.scripts.ps1.token import (
     _KEYWORDS,

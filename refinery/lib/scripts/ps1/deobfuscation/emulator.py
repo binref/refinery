@@ -9,8 +9,7 @@ import re
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
-    from typing import TypeAlias
+    from typing import Mapping, TypeAlias
 
     _Value: TypeAlias = str | int | float | bool | list | None
 

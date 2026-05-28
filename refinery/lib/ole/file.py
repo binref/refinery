@@ -11,14 +11,10 @@ import math
 import re
 import struct
 
-from typing import TYPE_CHECKING
+from typing import Any
 from uuid import UUID
 
 from refinery.lib.structures import MemoryFile, StructReader
-
-if TYPE_CHECKING:
-    from typing import Any
-
 
 MAGIC = b'\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1'
 MINIMAL_OLEFILE_SIZE = 1536
