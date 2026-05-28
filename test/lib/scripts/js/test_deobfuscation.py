@@ -2629,6 +2629,11 @@ class TestRegressionBugs(TestJsDeobfuscator):
         ast = JsParser(source).parse()
         self.assertEqual(len(ast.body), 2)
 
+    def test_newline_before_template_does_not_create_tagged_template(self):
+        source = "var x = foo\n`template`"
+        ast = JsParser(source).parse()
+        self.assertEqual(len(ast.body), 2)
+
 
 class TestReflectionInlining(TestJsDeobfuscator):
 

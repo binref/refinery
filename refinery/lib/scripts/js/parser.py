@@ -1084,7 +1084,7 @@ class JsParser:
                         object=expr, property=prop, computed=False, optional=True, offset=expr.offset)
             elif self._at(
                 JsTokenKind.TEMPLATE_FULL, JsTokenKind.TEMPLATE_HEAD,
-            ):
+            ) and not self._preceded_by_newline:
                 quasi = self._parse_template_literal()
                 expr = JsTaggedTemplateExpression(
                     tag=expr, quasi=quasi, offset=expr.offset)
