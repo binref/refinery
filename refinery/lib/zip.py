@@ -11,7 +11,7 @@ import re
 import zlib
 
 from datetime import datetime
-from typing import NamedTuple, Self
+from typing import TYPE_CHECKING, NamedTuple
 
 from refinery.lib.decompression import parse_lzma_properties
 from refinery.lib.dt import dostime
@@ -20,6 +20,9 @@ from refinery.lib.id import buffer_offset
 from refinery.lib.intervals import IntIntervalUnion
 from refinery.lib.structures import FlagAccessMixin, Struct, StructReader, StructReaderBits
 from refinery.lib.types import buf
+
+if TYPE_CHECKING:
+    from typing import Self
 
 
 class PasswordRequired(Exception):

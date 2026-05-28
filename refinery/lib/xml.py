@@ -8,7 +8,7 @@ import re
 import uuid
 import weakref
 
-from typing import Any, Iterable, Self
+from typing import TYPE_CHECKING, Any, Iterable
 from xml.etree.ElementTree import Element, ElementTree
 from xml.parsers import expat
 
@@ -17,6 +17,9 @@ import defusedxml.ElementTree as et
 from refinery.lib.structures import MemoryFile
 from refinery.lib.tools import exception_to_string
 from refinery.lib.types import buf
+
+if TYPE_CHECKING:
+    from typing import Self
 
 
 def ForgivingParse(data: bytes, entities=None) -> ElementTree:
