@@ -76,6 +76,7 @@ EXTENSION_DICT = {
     'refinery.lib.fast.lzw'       : 'refinery/lib/fast/lzw.pyx',
     'refinery.lib.fast.xpress'    : 'refinery/lib/fast/xpress.pyx',
     'refinery.lib.fast.pkware'    : 'refinery/lib/fast/pkware.pyx',
+    'refinery.lib.fast.scramble'  : 'refinery/lib/fast/scramble.pyx',
     'refinery.lib.fast.zipcrypto' : 'refinery/lib/fast/zipcrypto.pyx',
     'refinery.lib.seven.deflate'  : 'refinery/lib/seven/deflate.pyx',
     'refinery.lib.seven.huffman'  : 'refinery/lib/seven/huffman.pyx',

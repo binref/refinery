@@ -44,6 +44,8 @@ class TransformerGroup:
                     steps += 1
                     round_changed = True
                     active = set(range(len(self.transformers)))
+                    if cls.self_converging:
+                        active.discard(i)
                     if max_steps and steps > max_steps:
                         raise DeobfuscationTimeout
                 else:

@@ -67,20 +67,23 @@ def _classify_fields(node_type: type[Node]) -> list[tuple[str, Kind]]:
     return result
 
 
-def _children(node: Node):
-    def _candidates():
-        for name, kind in _classify_fields(type(node)):
-            field = getattr(node, name)
-            if kind == Kind.ChildNode:
-                yield field
-            elif kind == Kind.ChildList:
-                yield from field
-            elif kind == Kind.TupleList:
-                for item in field:
-                    yield from item
-    for item in _candidates():
-        if isinstance(item, Node):
-            yield item
+def _compute_children(node: Node) -> tuple[Node, ...]:
+    result: list[Node] = []
+    for name, kind in _classify_fields(type(node)):
+        field = getattr(node, name)
+        if kind == Kind.ChildNode:
+            if isinstance(field, Node):
+                result.append(field)
+        elif kind == Kind.ChildList:
+            for item in field:
+                if isinstance(item, Node):
+                    result.append(item)
+        elif kind == Kind.TupleList:
+            for item in field:
+                for elem in item:
+                    if isinstance(elem, Node):
+                        result.append(elem)
+    return tuple(result)
 
 
 @dataclass(repr=False, eq=False)
@@ -93,19 +96,18 @@ class Node:
     leading_comments: list[str] = field(default_factory=list, compare=False)
 
     def __post_init__(self):
-        for c in _children(self):
+        for c in _compute_children(self):
             self._adopt(c)
 
-    def children(self) -> Generator[Node, None, None]:
-        yield from _children(self)
+    def children(self) -> tuple[Node, ...]:
+        return _compute_children(self)
 
     def walk(self) -> Generator[Node, None, None]:
         stack: list[Node] = [self]
         while stack:
             node = stack.pop()
             yield node
-            for child in node.children():
-                stack.append(child)
+            stack.extend(_compute_children(node))
 
     def walk_in_order(self) -> Generator[Node, None, None]:
         """
@@ -117,8 +119,7 @@ class Node:
         while stack:
             node = stack.pop()
             yield node
-            children = list(node.children())
-            stack.extend(reversed(children))
+            stack.extend(reversed(_compute_children(node)))
 
     def is_descendant_of(self, ancestor: Node) -> bool:
         cursor = self.parent
@@ -197,6 +198,8 @@ class Transformer(Visitor):
     or `None` to keep the original. Tracks whether any transformation was applied
     via the `changed` flag.
     """
+
+    self_converging: bool = False
 
     def __init__(self):
         super().__init__()

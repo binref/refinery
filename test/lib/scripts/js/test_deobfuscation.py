@@ -4685,21 +4685,8 @@ class TestScrambleStringDecoder(TestJsDeobfuscator):
         )
         expected = inspect.cleandoc(
             """
-            class Scramble {
-              constructor(pw, salt) {
-                this.masterKey = pb(pw, salt, 200000, 32, 'sha256');
-                this.rounds = 3;
-              }
-              decode(input) {
-                return decrypt(input, this.masterKey, this.rounds);
-              }
-            }
             var key = '2aaa9053353088d4d49b5bf32f403f2d85b3df97c9a9beedfcdbb1ecc27ba9c6';
             var salt = 'fec5863b88643968ecff0c2c8afecbaf';
-            var instance = new Scramble(key, salt);
-            function decode(x) {
-              return instance.decode(x);
-            }
             var url = 'https://api.github.com';
             var ua = 'python-requests/2.31.0';
             """

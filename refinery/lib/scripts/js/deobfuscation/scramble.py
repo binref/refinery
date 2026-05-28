@@ -8,14 +8,16 @@ from __future__ import annotations
 
 import base64
 import hashlib
-import struct
+
 from typing import NamedTuple, Sequence
 
-from refinery.lib.scripts import Node, _replace_in_parent
+from refinery.lib.fast.scramble import decrypt_round as _decrypt_round
+from refinery.lib.scripts import Node, _remove_from_parent, _replace_in_parent
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     ScriptLevelTransformer,
     access_key,
     make_string_literal,
+    remove_declarator,
 )
 from refinery.lib.scripts.js.model import (
     JsAssignmentExpression,
@@ -41,68 +43,6 @@ from refinery.lib.scripts.js.model import (
 
 _DEFAULT_ROUNDS = 3
 _DEFAULT_ITERATIONS = 200000
-
-
-class _PRNG:
-    __slots__ = ('_seeded', '_counter', '_buf', '_offset')
-
-    def __init__(self, key: bytes):
-        self._seeded = hashlib.sha256(key)
-        self._counter = 0
-        self._buf = b''
-        self._offset = 0
-
-    def _refill(self):
-        h = self._seeded.copy()
-        h.update(struct.pack('>Q', self._counter))
-        self._counter += 1
-        self._buf = h.digest()
-        self._offset = 0
-
-    def next_byte(self) -> int:
-        if self._offset >= len(self._buf):
-            self._refill()
-        b = self._buf[self._offset]
-        self._offset += 1
-        return b
-
-    def next_u32(self) -> int:
-        return (
-            (self.next_byte() << 24)
-            | (self.next_byte() << 16)
-            | (self.next_byte() << 8)
-            | self.next_byte()
-        ) & 0xFFFFFFFF
-
-
-def _generate_inverse_permutation(seed: bytes) -> bytes:
-    prng = _PRNG(seed)
-    table = bytearray(range(256))
-    for n in range(255, 0, -1):
-        threshold = 0xFFFFFFFF - (0xFFFFFFFF % (n + 1))
-        while True:
-            rand = prng.next_u32()
-            if rand <= threshold:
-                break
-        j = rand % (n + 1)
-        table[n], table[j] = table[j], table[n]
-    inv = bytearray(256)
-    for i, v in enumerate(table):
-        inv[v] = i
-    return bytes(inv)
-
-
-def _decrypt_round(data: bytes, key: bytes, round_idx: int) -> bytes:
-    result = bytearray(len(data))
-    prev = 0
-    round_seeded = hashlib.sha256(key + b'%c' % round_idx)
-    for i, byte in enumerate(data):
-        h = round_seeded.copy()
-        h.update(str(i).encode())
-        inv = _generate_inverse_permutation(h.digest())
-        result[i] = inv[byte] ^ prev
-        prev = byte
-    return bytes(result)
 
 
 class ScrambleCipher:
@@ -268,6 +208,7 @@ class JsScrambleStringDecoder(ScriptLevelTransformer):
         )
         count = self._substitute_calls(node, decode_names, cipher)
         if count > 0:
+            self._remove_infrastructure(body, class_node, instance, decode_names)
             self.mark_changed()
 
     def _find_scramble_class(self, body: Sequence[Node]) -> JsClassDeclaration | None:
@@ -392,3 +333,38 @@ class JsScrambleStringDecoder(ScriptLevelTransformer):
             _replace_in_parent(node, make_string_literal(decoded))
             count += 1
         return count
+
+    def _remove_infrastructure(
+        self,
+        body: Sequence[Node],
+        class_node: JsClassDeclaration,
+        instance: _InstanceInfo,
+        decode_names: set[str],
+    ) -> None:
+        removals: list[Node] = [class_node]
+        declarator_removals: list[JsVariableDeclarator] = []
+        for stmt in body:
+            if isinstance(stmt, JsVariableDeclaration):
+                for decl in stmt.declarations:
+                    if not isinstance(decl, JsVariableDeclarator):
+                        continue
+                    if not isinstance(decl.id, JsIdentifier):
+                        continue
+                    if decl.id.name == instance.name or decl.id.name in decode_names:
+                        declarator_removals.append(decl)
+            elif isinstance(stmt, JsFunctionDeclaration):
+                if stmt.id is not None and stmt.id.name in decode_names:
+                    removals.append(stmt)
+            elif isinstance(stmt, JsExpressionStatement):
+                expr = stmt.expression
+                if (
+                    isinstance(expr, JsAssignmentExpression)
+                    and expr.operator == '='
+                    and isinstance(expr.left, JsIdentifier)
+                    and expr.left.name in decode_names
+                ):
+                    removals.append(stmt)
+        for decl in declarator_removals:
+            remove_declarator(decl)
+        for stmt in removals:
+            _remove_from_parent(stmt)

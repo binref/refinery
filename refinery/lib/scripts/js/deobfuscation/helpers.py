@@ -20,6 +20,7 @@ from refinery.lib.scripts import (
     Statement,
     Transformer,
     _clone_node,
+    _compute_children,
     _remove_from_parent,
     _replace_in_parent,
 )
@@ -732,10 +733,8 @@ def walk_scope(root: Node, *, include_root_body: bool = False) -> Iterator[Node]
         if isinstance(node, (JsFunctionDeclaration, JsFunctionExpression, JsArrowFunctionExpression)):
             if not (include_root_body and node is root):
                 continue
-        children = list(node.children())
-        children.reverse()
-        for child in children:
-            stack.append(child)
+        cc = _compute_children(node)
+        stack.extend(reversed(cc))
 
 
 def collect_identifier_names(node: Node) -> set[str]:
