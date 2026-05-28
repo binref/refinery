@@ -2624,6 +2624,11 @@ class TestRegressionBugs(TestJsDeobfuscator):
         result = self._run_transformer(source, JsUnusedCodeRemoval)
         self.assertEqual(source, result)
 
+    def test_newline_before_paren_does_not_fuse_statements(self):
+        source = 'global["VERSION"] = "9.4533"\n\n(async () => {\n  const c = global;\n})()'
+        ast = JsParser(source).parse()
+        self.assertEqual(len(ast.body), 2)
+
 
 class TestReflectionInlining(TestJsDeobfuscator):
 

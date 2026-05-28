@@ -1055,14 +1055,14 @@ class JsParser:
     def _parse_call_expression(self) -> Expression:
         expr = self._parse_new_expression()
         while True:
-            if self._at(JsTokenKind.LPAREN):
+            if self._at(JsTokenKind.LPAREN) and not self._preceded_by_newline:
                 expr = self._parse_call_arguments(expr, optional=False)
             elif self._eat(JsTokenKind.DOT):
                 prop_tok = self._advance()
                 prop = JsIdentifier(name=prop_tok.value, offset=prop_tok.offset)
                 expr = JsMemberExpression(
                     object=expr, property=prop, computed=False, optional=False, offset=expr.offset)
-            elif self._at(JsTokenKind.LBRACKET):
+            elif self._at(JsTokenKind.LBRACKET) and not self._preceded_by_newline:
                 self._advance()
                 prop = self._parse_expression()
                 self._expect(JsTokenKind.RBRACKET)
