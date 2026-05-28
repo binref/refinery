@@ -81,7 +81,7 @@ class JsSynthesizer(Synthesizer):
     def __init__(
         self,
         indent: str = '  ',
-        line_length: int = 120,
+        line_length: int = 140,
         unescape_strings: bool = False,
         strip_comments: bool = False,
     ):
@@ -108,24 +108,39 @@ class JsSynthesizer(Synthesizer):
             self._newline()
         self._write('}')
 
-    def _comma_separated(self, nodes: list):
-        breaking = False
+    def _comma_separated(self, nodes: list) -> bool:
+        if not nodes:
+            return False
+        save_pos = self._parts.tell()
+        save_col = self._col
+        overflow = False
         for i, node in enumerate(nodes):
             if i > 0:
-                if breaking or self._col >= self._line_length:
-                    breaking = True
-                    self._write(',')
-                    self._newline()
-                    self._write(self._indent)
-                else:
-                    self._write(', ')
-            if node is None:
-                continue
-            self.visit(node)
+                self._write(', ')
+            if node is not None:
+                self.visit(node)
+            if self._col > self._line_length:
+                overflow = True
+                break
+        if not overflow:
+            return False
+        self._parts.seek(save_pos)
+        self._parts.truncate()
+        self._col = save_col
+        self._depth += 1
+        for i, node in enumerate(nodes):
+            self._newline()
+            if node is not None:
+                self.visit(node)
+            if i < len(nodes) - 1:
+                self._write(',')
+        self._depth -= 1
+        return True
 
     def _emit_params(self, params: list):
         self._write('(')
-        self._comma_separated(params)
+        if self._comma_separated(params):
+            self._newline()
         self._write(')')
 
     def _emit_function_prefix(self, is_async: bool, generator: bool):
@@ -197,7 +212,8 @@ class JsSynthesizer(Synthesizer):
 
     def _emit_array_like(self, node):
         self._write('[')
-        self._comma_separated(node.elements)
+        if self._comma_separated(node.elements):
+            self._newline()
         self._write(']')
 
     visit_JsArrayExpression = _emit_array_like
@@ -322,7 +338,8 @@ class JsSynthesizer(Synthesizer):
         if node.optional:
             self._write('?.')
         self._write('(')
-        self._comma_separated(node.arguments)
+        if self._comma_separated(node.arguments):
+            self._newline()
         self._write(')')
 
     def visit_JsNewExpression(self, node: JsNewExpression):
@@ -330,7 +347,8 @@ class JsSynthesizer(Synthesizer):
         if node.callee:
             self.visit(node.callee)
         self._write('(')
-        self._comma_separated(node.arguments)
+        if self._comma_separated(node.arguments):
+            self._newline()
         self._write(')')
 
     def visit_JsSequenceExpression(self, node: JsSequenceExpression):

