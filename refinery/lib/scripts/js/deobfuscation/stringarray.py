@@ -157,13 +157,26 @@ def _find_all_accessor_functions(
 ) -> list[AccessorFunction]:
     """
     Detect all accessor functions for a given array. Obfuscator.io can produce multiple accessors
-    sharing the same array (e.g. one base64 and one RC4), each with the pattern:
+    sharing the same array (e.g. one base64 and one RC4). Two structural variants are recognized:
+
+    Simple pattern::
 
         function NAME(param, _unused) {
           param = param - BASE_OFFSET;
           var v = ARRAY_FN();
           var r = v[param];
           return r;
+        }
+
+    Self-overwriting (memoization) pattern::
+
+        function NAME(B, I) {
+          const Y = ARRAY_FN();
+          NAME = function(Z, o) {
+            Z = Z - BASE_OFFSET;
+            ...
+          };
+          return NAME(B, I);
         }
     """
     results: list[AccessorFunction] = []
@@ -204,7 +217,60 @@ def _find_all_accessor_functions(
                             calls_array_fn = True
         if base_offset is not None and calls_array_fn:
             results.append(AccessorFunction(stmt, fn_name, base_offset))
+            continue
+        if not calls_array_fn:
+            continue
+        base_offset = _extract_self_overwriting_offset(stmt.body.body, fn_name)
+        if base_offset is not None:
+            results.append(AccessorFunction(stmt, fn_name, base_offset))
     return results
+
+
+def _extract_self_overwriting_offset(
+    body: Sequence[Node],
+    fn_name: str,
+) -> int | None:
+    """
+    Detect the self-overwriting accessor variant where the function reassigns itself to an inner
+    function expression containing the offset subtraction. Returns the base offset or None.
+    """
+    for s in body:
+        if not isinstance(s, JsExpressionStatement):
+            continue
+        if not isinstance(s.expression, JsAssignmentExpression):
+            continue
+        assign = s.expression
+        if not isinstance(assign.left, JsIdentifier) or assign.left.name != fn_name:
+            continue
+        if not isinstance(assign.right, JsFunctionExpression):
+            continue
+        inner_fn = assign.right
+        if inner_fn.body is None or len(inner_fn.params) < 2:
+            continue
+        inner_param = inner_fn.params[0]
+        if not isinstance(inner_param, JsIdentifier):
+            continue
+        inner_param_name = inner_param.name
+        for inner_s in inner_fn.body.body:
+            if not isinstance(inner_s, JsExpressionStatement):
+                continue
+            if not isinstance(inner_s.expression, JsAssignmentExpression):
+                continue
+            inner_assign = inner_s.expression
+            if (
+                isinstance(inner_assign.left, JsIdentifier)
+                and inner_assign.left.name == inner_param_name
+                and isinstance(inner_assign.right, JsBinaryExpression)
+                and inner_assign.right.operator == '-'
+                and isinstance(inner_assign.right.left, JsIdentifier)
+                and inner_assign.right.left.name == inner_param_name
+                and inner_assign.right.right is not None
+            ):
+                try:
+                    return int(_eval_arithmetic(inner_assign.right.right))
+                except _EvalError:
+                    pass
+    return None
 
 
 def _find_rotation_iife(
@@ -824,25 +890,39 @@ def _detect_encoding(accessor_node: JsFunctionDeclaration) -> Encoding:
         if (NAME['...'] === undefined)
 
     that contains the base64 alphabet string and one (base64) or two (RC4) inner function
-    definitions.
+    definitions. For the self-overwriting variant, the guard is inside the inner function expression.
     """
     if accessor_node.body is None:
         return Encoding.NONE
-    for stmt in accessor_node.body.body:
-        if not isinstance(stmt, JsIfStatement):
-            continue
-        inner_functions = 0
-        has_alphabet = False
-        for child in stmt.walk():
-            if isinstance(child, JsStringLiteral) and child.value == _B64_ALPHABET:
-                has_alphabet = True
+    search_bodies: list[Sequence[Node]] = [accessor_node.body.body]
+    if accessor_node.id is not None:
+        fn_name = accessor_node.id.name
+        for stmt in accessor_node.body.body:
             if (
-                isinstance(child, JsVariableDeclarator)
-                and isinstance(child.init, JsFunctionExpression)
+                isinstance(stmt, JsExpressionStatement)
+                and isinstance(stmt.expression, JsAssignmentExpression)
+                and isinstance(stmt.expression.left, JsIdentifier)
+                and stmt.expression.left.name == fn_name
+                and isinstance(stmt.expression.right, JsFunctionExpression)
+                and stmt.expression.right.body is not None
             ):
-                inner_functions += 1
-        if has_alphabet:
-            return Encoding.RC4 if inner_functions >= 2 else Encoding.B64
+                search_bodies.append(stmt.expression.right.body.body)
+    for body in search_bodies:
+        for stmt in body:
+            if not isinstance(stmt, JsIfStatement):
+                continue
+            inner_functions = 0
+            has_alphabet = False
+            for child in stmt.walk():
+                if isinstance(child, JsStringLiteral) and child.value == _B64_ALPHABET:
+                    has_alphabet = True
+                if (
+                    isinstance(child, JsVariableDeclarator)
+                    and isinstance(child.init, JsFunctionExpression)
+                ):
+                    inner_functions += 1
+            if has_alphabet:
+                return Encoding.RC4 if inner_functions >= 2 else Encoding.B64
     return Encoding.NONE
 
 

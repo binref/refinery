@@ -494,6 +494,61 @@ class TestStringArray(TestJsDeobfuscator):
             result,
         )
 
+    def test_string_array_self_overwriting_accessor_detected(self):
+        """
+        The self-overwriting (memoization) accessor variant assigns the inner decoder function back
+        to the accessor name on first call. The resolver must recognize this pattern and extract the
+        base offset from the inner function's subtraction statement.
+        """
+        from refinery.lib.scripts.js.deobfuscation.stringarray import (
+            _find_array_function,
+            _find_all_accessor_functions,
+            _detect_encoding,
+            Encoding,
+        )
+        source = (
+            r"function V(){var a=['str0','str1','str2'];V=function(){return a;};return V();}"
+            r"function N(B,I){const Y=V();N=function(Z,o){Z=Z-(0x1*0xb2e+-0x126+0x1*-0x8eb);"
+            r"let R=Y[Z];if(N['\x6f\x76\x46\x70\x6f\x4a']===undefined){"
+            r"var u=function(C){const F='abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+            r"0123456789+/=';return C;};var d=function(s,k){return s;};N['\x63\x61\x74\x55\x4d"
+            r"\x4f']=u;N['\x6f\x76\x46\x70\x6f\x4a']=!![];}return R;};return N(B,I);}"
+        )
+        ast = JsParser(source).parse()
+        arr = _find_array_function(ast.body)
+        self.assertIsNotNone(arr)
+        accs = _find_all_accessor_functions(ast.body, arr.name)
+        self.assertEqual(len(accs), 1)
+        self.assertEqual(accs[0].name, 'N')
+        self.assertEqual(accs[0].base_offset, 0xb2e - 0x126 - 0x8eb)
+        self.assertEqual(_detect_encoding(accs[0].node), Encoding.RC4)
+
+    def test_string_array_self_overwriting_accessor_b64(self):
+        """
+        Same self-overwriting pattern with only base64 (one inner function = B64 encoding).
+        """
+        from refinery.lib.scripts.js.deobfuscation.stringarray import (
+            _find_array_function,
+            _find_all_accessor_functions,
+            _detect_encoding,
+            Encoding,
+        )
+        source = (
+            r"function V(){var a=['str0','str1'];V=function(){return a;};return V();}"
+            r"function N(B,I){const Y=V();N=function(Z,o){Z=Z-0x14c;"
+            r"let R=Y[Z];if(N['init']===undefined){"
+            r"var u=function(C){const F='abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+            r"0123456789+/=';return C;};N['decode']=u;N['init']=!![];}return R;};return N(B,I);}"
+        )
+        ast = JsParser(source).parse()
+        arr = _find_array_function(ast.body)
+        self.assertIsNotNone(arr)
+        accs = _find_all_accessor_functions(ast.body, arr.name)
+        self.assertEqual(len(accs), 1)
+        self.assertEqual(accs[0].name, 'N')
+        self.assertEqual(accs[0].base_offset, 0x14c)
+        self.assertEqual(_detect_encoding(accs[0].node), Encoding.B64)
+
 
 class TestCallWrapperInliner(TestJsDeobfuscator):
 
