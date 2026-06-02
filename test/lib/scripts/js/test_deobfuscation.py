@@ -2830,6 +2830,41 @@ class TestReflectionInlining(TestJsDeobfuscator):
             self._reflect(source),
         )
 
+    def test_eval_atob(self):
+        import base64
+        code = base64.b64encode(b'var x = 1;').decode()
+        self.assertEqual('var x = 1;', self._reflect(F"eval(atob('{code}'));"))
+
+    def test_new_function_atob_invoked(self):
+        import base64
+        code = base64.b64encode(b'return 42').decode()
+        self.assertEqual('42;', self._reflect(F"new Function(atob('{code}'))();"))
+
+    def test_eval_unescape(self):
+        self.assertEqual(
+            'var x = 1;',
+            self._reflect("eval(unescape('%76%61%72%20%78%20%3d%20%31%3b'));"),
+        )
+
+    def test_eval_chained_decode(self):
+        import base64
+        encoded = base64.b64encode('var x = 1;'.encode()).decode()
+        self.assertEqual(
+            'var x = 1;',
+            self._reflect(F"eval(decodeURIComponent(atob('{encoded}')));"),
+        )
+
+    def test_eval_unknown_callee_not_inlined(self):
+        self.assertEqual("eval(decode('abc'));", self._reflect("eval(decode('abc'));"))
+
+    def test_constructor_chain_atob(self):
+        import base64
+        code = base64.b64encode(b'var y = 2;').decode()
+        self.assertEqual(
+            'var y = 2;',
+            self._reflect(F"''.constructor.constructor(atob('{code}'))();"),
+        )
+
 
 class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
 
@@ -4700,6 +4735,16 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
         )
         result = self._evaluate(source)
         self.assertIn('var x = [11, 21, 31];', result)
+
+    def test_atob_in_function(self):
+        source = inspect.cleandoc(
+            """
+            function d(s) { return atob(s); }
+            var x = d('SGVsbG8=');
+            """
+        )
+        result = self._evaluate(source)
+        self.assertEqual("var x = 'Hello';", result)
 
     def test_object_literal_parens_preserved(self):
         self.assertEqual('var x = ({ a: 1 });', self._simplify('var x = ({a: 1});'))

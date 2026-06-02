@@ -3,7 +3,10 @@ Mini-interpreter for executing pure JavaScript functions with concrete arguments
 """
 from __future__ import annotations
 
+import base64
 import math
+import re
+import urllib.parse
 
 from typing import TYPE_CHECKING
 
@@ -681,6 +684,64 @@ def _global_string(args: list[Value]) -> Value:
     if not args:
         return ''
     return to_string(args[0])
+
+
+@_register((None, 'atob'))
+def _global_atob(args: list[Value]) -> Value:
+    if not args:
+        raise InterpreterError
+    s = to_string(args[0])
+    try:
+        return base64.b64decode(re.sub('\\s', '', s), validate=True).decode('latin-1')
+    except Exception:
+        raise InterpreterError
+
+
+@_register((None, 'btoa'))
+def _global_btoa(args: list[Value]) -> Value:
+    if not args:
+        raise InterpreterError
+    s = to_string(args[0])
+    try:
+        return base64.b64encode(s.encode('latin-1')).decode('ascii')
+    except Exception:
+        raise InterpreterError
+
+
+_UNESCAPE_PATTERN = re.compile(r'%u([0-9A-Fa-f]{4})|%([0-9A-Fa-f]{2})')
+
+
+@_register((None, 'unescape'))
+def _global_unescape(args: list[Value]) -> Value:
+    if not args:
+        return 'undefined'
+    s = to_string(args[0])
+    return _UNESCAPE_PATTERN.sub(lambda m: chr(int(m.group(1) or m.group(2), 16)), s)
+
+
+@_register((None, 'decodeURIComponent'))
+def _global_decode_uri_component(args: list[Value]) -> Value:
+    if not args:
+        raise InterpreterError
+    s = to_string(args[0])
+    try:
+        result = urllib.parse.unquote(s, encoding='utf-8', errors='surrogatepass')
+        if any('\uD800' <= c <= '\uDFFF' for c in result):
+            raise InterpreterError
+        return result
+    except Exception:
+        raise InterpreterError
+
+
+@_register((None, 'encodeURIComponent'))
+def _global_encode_uri_component(args: list[Value]) -> Value:
+    if not args:
+        raise InterpreterError
+    s = to_string(args[0])
+    try:
+        return urllib.parse.quote(s, safe="!'()*~-._")
+    except Exception:
+        raise InterpreterError
 
 
 @_register(('Object', 'keys'))
@@ -1423,3 +1484,9 @@ class JsInterpreter:
                 return a == b
             return False
         return a == b
+
+    def eval_expression(self, expr) -> Value:
+        """
+        Evaluate a single expression AST node and return a Python value.
+        """
+        return self._eval(expr)

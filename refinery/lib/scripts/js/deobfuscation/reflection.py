@@ -65,6 +65,21 @@ def _try_parse(code: str) -> JsScript | None:
     return parsed
 
 
+def _try_eval_string_arg(node: Expression) -> str | None:
+    from refinery.lib.scripts.js.deobfuscation.interpreter import (
+        InterpreterError,
+        IrreducibleExpression,
+        JsInterpreter,
+    )
+    try:
+        result = JsInterpreter().eval_expression(node)
+    except (InterpreterError, IrreducibleExpression, RecursionError, ValueError, OverflowError):
+        return None
+    if isinstance(result, str):
+        return result
+    return None
+
+
 def _is_identifier(node: Node, name: str) -> bool:
     return isinstance(node, JsIdentifier) and node.name == name
 
@@ -84,7 +99,7 @@ def _extract_eval_code(node: JsCallExpression) -> str | None:
         return None
     if len(node.arguments) != 1:
         return None
-    return string_value(node.arguments[0])
+    return string_value(node.arguments[0]) or _try_eval_string_arg(node.arguments[0])
 
 
 def _extract_indirect_eval_code(node: JsCallExpression) -> str | None:
@@ -100,7 +115,7 @@ def _extract_indirect_eval_code(node: JsCallExpression) -> str | None:
         exprs = callee.expressions
         if len(exprs) >= 2 and _is_identifier(exprs[-1], 'eval'):
             if all(is_side_effect_free(e) for e in exprs[:-1]):
-                return string_value(node.arguments[0])
+                return string_value(node.arguments[0]) or _try_eval_string_arg(node.arguments[0])
     if (
         isinstance(callee, JsMemberExpression)
         and isinstance(callee.object, JsIdentifier)
@@ -109,7 +124,7 @@ def _extract_indirect_eval_code(node: JsCallExpression) -> str | None:
         and callee.property.name == 'eval'
         and not callee.computed
     ):
-        return string_value(node.arguments[0])
+        return string_value(node.arguments[0]) or _try_eval_string_arg(node.arguments[0])
     return None
 
 
@@ -124,7 +139,7 @@ def _extract_timer_code(node: JsCallExpression) -> str | None:
         return None
     if not node.arguments:
         return None
-    return string_value(node.arguments[0])
+    return string_value(node.arguments[0]) or _try_eval_string_arg(node.arguments[0])
 
 
 def _extract_function_body_code(
@@ -149,11 +164,12 @@ def _extract_function_body_code(
     if not args:
         return None
     last = args[-1]
-    if not isinstance(last, JsStringLiteral):
+    body = string_value(last) or _try_eval_string_arg(last)
+    if body is None:
         return None
-    if not all(isinstance(a, JsStringLiteral) for a in args):
+    if not all(isinstance(a, JsStringLiteral) for a in args[:-1]):
         return None
-    return last.value
+    return body
 
 
 def _is_constructor_chain(node: JsCallExpression | JsNewExpression) -> bool:
@@ -192,7 +208,7 @@ def _extract_constructor_chain_code(node: JsCallExpression) -> str | None:
         return None
     if len(inner_call.arguments) != 1:
         return None
-    return string_value(inner_call.arguments[0])
+    return string_value(inner_call.arguments[0]) or _try_eval_string_arg(inner_call.arguments[0])
 
 
 def _extract_invoked_function_body(node: JsCallExpression) -> str | None:
