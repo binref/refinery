@@ -100,22 +100,11 @@ class __pdoc__(dict):
             unit = _resolve(name)
             if unit is None:
                 continue
-            for base in unit.mro():
-                try:
-                    abstractmethods: list[str] = base.__abstractmethods__
-                except AttributeError:
-                    break
-                for method in abstractmethods:
-                    if method.startswith('_'):
-                        continue
-                    at = getattr(unit, method, NotImplemented)
-                    bt = getattr(unit.mro()[1], method, None)
-                    if at is NotImplemented:
-                        continue
-                    if at is None:
-                        continue
-                    if at is not bt:
-                        self[F'{name}.{method}'] = False
+            for attr_name in dir(unit):
+                if attr_name.startswith('_'):
+                    continue
+                if callable(getattr(unit, attr_name, None)):
+                    self[F'{name}.{attr_name}'] = False
             if hlp := get_help_string(unit, width=97):
                 hlp = hlp.replace('\x60', '')
                 hlp = self._strip_globals(hlp).strip()
