@@ -93,6 +93,7 @@ class __pdoc__(dict):
     def _load(self):
         if self._loaded:
             return
+        self._loaded = True
         from .explore import get_help_string
         self['Unit'] = False
         self['Arg'] = False
@@ -113,14 +114,17 @@ class __pdoc__(dict):
                     F'commandline Interface:\n```text\n{hlp}\n```'
                 )
                 self[name] = hlp
-        self._loaded = True
+
+    def get(self, key, default=None):
+        self._load()
+        return super().get(key, default)
 
     def items(self):
         self._load()
         return super().items()
 
 
-__all__ = list(UNITS) + [Unit.__name__, Arg.__name__, '__pdoc__']
+__all__ = sorted(UNITS) + [Unit.__name__, Arg.__name__, '__pdoc__']
 
 
 def load(name) -> type[Unit] | None:

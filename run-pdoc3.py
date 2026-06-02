@@ -37,12 +37,20 @@ if __name__ == '__main__':
     ))
     args = argp.parse_args()
 
+    _local_venv = os.path.abspath(os.path.join(os.path.dirname(__file__), 'venv'))
+    _using_venv = sys.executable.startswith(_local_venv + os.sep)
+
     if args.venv:
         virtualized = subprocess.Popen([args.venv, __file__, _SAFETY_FLAG])
         sys.exit(virtualized.wait())
-    elif not args.safety:
+    elif not args.safety and not _using_venv:
         argp.error(F'You have to either specify a virtual environment or provide the flag {_SAFETY_FLAG}.')
 
+    warnings.filterwarnings('ignore')
+    try:
+        import defusedxml  # noqa: F401
+    except ImportError:
+        pass
     for second_attempt in (False, True):
         try:
             from pdoc.cli import main as pdoc3_main
@@ -52,9 +60,10 @@ if __name__ == '__main__':
             subprocess.check_call(
                 [sys.executable, '-m', 'pip', 'install', 'pdoc3'])
         else:
-            warnings.filterwarnings('ignore')
+            if not sys.warnoptions:
+                sys.warnoptions.append('ignore')
             sys.argv = [
-                'pdoc3', '--html', '--force', '--template-dir', _TEMPLATEDIR, 'refinery']
+                'pdoc3', '--html', '--force', '--skip-errors', '--template-dir', _TEMPLATEDIR, 'refinery']
             pdoc3_main()
             break
 

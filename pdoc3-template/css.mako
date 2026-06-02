@@ -14,7 +14,7 @@
     color_admonition_neutral = '#054000'
 
     def getfont(module):
-      if module_path := module.obj.__file__:
+      if module_path := getattr(module.obj, '__file__', None):
         path = os.path.dirname(module_path)         
       else:
         path = os.path.abspath(os.path.curdir)

@@ -94,13 +94,13 @@ class PathExtractorUnit(Unit, abstract=True):
     used to filter the extracted items by their path. To view only the paths of all chunks, use the
     listing switch:
 
-        emit something | <this> --list
+        emit data | ... | <this> --list
 
     Otherwise, extracted items are written to the standard output port and usually require a frame
     to properly process. In order to dump all extracted data to disk, the following pipeline can be
     used:
 
-        emit something | <this> [| dump extracted/{path} ]
+        emit data | ... | <this> [| dump extracted/{path} ]
 
     The value `{path}` is a placeholder which is substituted by the virtual path of the extracted
     item. When using <this> to unpack a file on disk, the following pattern can be useful:
