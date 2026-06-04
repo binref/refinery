@@ -470,6 +470,25 @@ def _collect_local_prop_maps(
     return local_props
 
 
+def _collect_all_prop_maps(root: Node) -> dict[str, dict[str, int | str]]:
+    """
+    Walk the entire AST collecting all variable-declared object literals whose properties are
+    integer or string constants. Used to resolve member-expression arguments in accessor calls
+    that appear inside nested scopes (class methods, function bodies).
+    """
+    result: dict[str, dict[str, int | str]] = {}
+    for node in root.walk():
+        if (
+            isinstance(node, JsVariableDeclarator)
+            and isinstance(node.id, JsIdentifier)
+            and isinstance(node.init, JsObjectExpression)
+        ):
+            props = _parse_object_props(node.init, allow_strings=True)
+            if props:
+                result[node.id.name] = props
+    return result
+
+
 def _match_wrapper(
     fn: JsFunctionDeclaration,
     accessor_name: str,
@@ -571,16 +590,18 @@ def _collect_iife_wrappers(
 def _collect_all_wrappers(
     root: Node,
     accessor_names: set[str],
+    prop_maps: dict[str, dict[str, int | str]] | None = None,
 ) -> dict[str, AccessorWrapperInfo]:
     """
     Walk the entire AST to find all function declarations that forward to any of the given accessor
     functions with a constant offset. Unlike `_collect_iife_wrappers`, this finds wrappers at any
     nesting level and handles local offset objects declared inside the wrapper body.
     """
+    outer_props = prop_maps or {}
     wrappers: dict[str, AccessorWrapperInfo] = {}
     for s in root.walk():
         if isinstance(s, JsFunctionDeclaration):
-            match = _first_wrapper_match(s, accessor_names, {})
+            match = _first_wrapper_match(s, accessor_names, outer_props)
             if match is not None:
                 name, info = match
                 wrappers[name] = info
@@ -780,11 +801,14 @@ def _resolve_accessor_call(
     `_EvalError` when the call cannot be resolved.
     """
     callee_name = call.callee.name if isinstance(call.callee, JsIdentifier) else None
+    pm = prop_maps or {}
     if callee_name is not None and callee_name in local_accessors and len(call.arguments) >= 1:
-        idx = int(_eval_arithmetic(call.arguments[0]))
+        idx = _resolve_constant(call.arguments[0], pm)
+        if idx is None:
+            raise _EvalError
         key: str | None = None
-        if len(call.arguments) >= 2 and isinstance(call.arguments[1], JsStringLiteral):
-            key = call.arguments[1].value
+        if len(call.arguments) >= 2:
+            key = _resolve_string_arg(call.arguments[1], pm)
         return idx, key
     if wrappers and callee_name is not None:
         wrapper = wrappers.get(callee_name)
@@ -793,7 +817,6 @@ def _resolve_accessor_call(
             if len(call.arguments) >= n_args:
                 raw_idx = call.arguments[wrapper.idx_param_pos]
                 raw_key = call.arguments[wrapper.key_param_pos]
-                pm = prop_maps or {}
                 idx_value = _resolve_constant(raw_idx, pm)
                 if idx_value is None:
                     raise _EvalError
@@ -1145,16 +1168,17 @@ class JsStringArrayResolver(ScopeProcessingTransformer):
                 aliases.add(alias)
                 encoding_map[alias] = encoding_map[acc.name]
         raw_lookup = {i + primary.base_offset: s for i, s in enumerate(resolved)}
-        all_wrappers = _collect_all_wrappers(scope, accessor_names)
+        all_prop_maps = _collect_all_prop_maps(scope)
+        all_wrappers = _collect_all_wrappers(scope, accessor_names, all_prop_maps)
         for wname, winfo in all_wrappers.items():
             if wname not in encoding_map:
                 encoding_map[wname] = encoding_map.get(winfo.target, Encoding.NONE)
         replaced = _replace_accessor_calls(
-            scope, aliases, raw_lookup, encoding_map, all_wrappers,
+            scope, aliases, raw_lookup, encoding_map, all_wrappers, all_prop_maps,
         )
         wrapper_names = set(all_wrappers)
         has_remaining, dead_nodes = _find_remaining_calls(
-            scope, aliases, wrapper_names, all_wrappers, None,
+            scope, aliases, wrapper_names, all_wrappers, all_prop_maps,
         )
         if not has_remaining:
             _cleanup_infrastructure(scope, array, accessors, rotation, dead_nodes, aliases)

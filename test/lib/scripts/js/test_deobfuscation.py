@@ -24,6 +24,7 @@ from refinery.lib.scripts.js.deobfuscation.restunpack import JsRestArrayUnpackin
 from refinery.lib.scripts.js.deobfuscation.unshuffle import JsArrayUnshuffle
 from refinery.lib.scripts.js.deobfuscation.wrappers import JsCallWrapperInliner
 from refinery.lib.scripts.js.deobfuscation.scramble import JsScrambleStringDecoder
+from refinery.lib.scripts.js.deobfuscation.stringarray import JsStringArrayResolver
 from refinery.lib.scripts.js.model import (
     JsBreakStatement,
     JsContinueStatement,
@@ -548,6 +549,66 @@ class TestStringArray(TestJsDeobfuscator):
         self.assertEqual(accs[0].name, 'N')
         self.assertEqual(accs[0].base_offset, 0x14c)
         self.assertEqual(_detect_encoding(accs[0].node), Encoding.B64)
+
+    def test_string_array_prop_map_accessor_calls(self):
+        """
+        Accessor calls whose index argument is a member expression referencing a local const
+        object must be resolved via prop-map lookup. This is the standard obfuscator.io pattern
+        where local objects map property names to array indices both inside the rotation IIFE
+        checksum and in the main body code.
+        """
+        source = (
+            "function _0x5e03(){var a=['300xyz','800abc','secret_value','another_string','500target'];"
+            "_0x5e03=function(){return a;};return _0x5e03();}"
+            "function _0x1169(p,q){p=p-0x1f0;var arr=_0x5e03();var r=arr[p];return r;}"
+            "(function(a,t){"
+            "var _0x221ff1=_0x1169,_0x5f2282={_0x2bb395:0x1f0,_0x56f5b5:0x1f1};"
+            "var b=a();"
+            "while(true){try{"
+            "var c=parseInt(_0x221ff1(_0x5f2282._0x2bb395))/0x1"
+            "+parseInt(_0x221ff1(_0x5f2282._0x56f5b5))/0x2;"
+            "if(c===t)break;b.push(b.shift());}catch(e){b.push(b.shift());}}}(_0x5e03,0x2bc));"
+            "const _0x5d6bea=_0x1169;"
+            "var _0x14f979={_0x5b48c6:0x1f2,_0x24ce26:0x1f3};"
+            "var x=_0x5d6bea(_0x14f979._0x5b48c6);"
+            "var y=_0x5d6bea(_0x14f979._0x24ce26);"
+        )
+        expected = inspect.cleandoc(
+            """
+            var x = 'secret_value';
+            var y = 'another_string';
+            """
+        )
+        self.assertEqual(self._deobfuscate(source), expected)
+
+    def test_string_array_prop_map_nested_scope(self):
+        source = (
+            "function _0x5e03(){var a=['300xyz','800abc','secret','nested_val','deep_val'];"
+            "_0x5e03=function(){return a;};return _0x5e03();}"
+            "function _0x1169(p,q){p=p-0x1f0;var arr=_0x5e03();var r=arr[p];return r;}"
+            "(function(a,t){"
+            "var _0x221ff1=_0x1169,_0x5f2282={_0x2bb395:0x1f0,_0x56f5b5:0x1f1};"
+            "var b=a();"
+            "while(true){try{"
+            "var c=parseInt(_0x221ff1(_0x5f2282._0x2bb395))/0x1"
+            "+parseInt(_0x221ff1(_0x5f2282._0x56f5b5))/0x2;"
+            "if(c===t)break;b.push(b.shift());}catch(e){b.push(b.shift());}}}(_0x5e03,0x2bc));"
+            "const _0x5d6bea=_0x1169;"
+            "function foo(){"
+            "var _0xabc123={_0xkey1:0x1f2,_0xkey2:0x1f3};"
+            "return _0x5d6bea(_0xabc123._0xkey1)+_0x5d6bea(_0xabc123._0xkey2);}"
+            "var r=foo();"
+        )
+        expected = inspect.cleandoc(
+            """
+            function foo() {
+              var _0xabc123 = { _0xkey1: 0x1f2, _0xkey2: 0x1f3 };
+              return 'secret' + 'nested_val';
+            }
+            var r = foo();
+            """
+        )
+        self.assertEqual(self._run_transformer(source, JsStringArrayResolver), expected)
 
 
 class TestCallWrapperInliner(TestJsDeobfuscator):
@@ -4873,6 +4934,90 @@ class TestScrambleStringDecoder(TestJsDeobfuscator):
             }
             var f = new Foo('hello');
             var r = f.decode('world');
+            """
+        )
+        self.assertEqual(self._run_transformer(source, JsScrambleStringDecoder), expected)
+
+    def test_global_this_alias(self):
+        source = inspect.cleandoc(
+            """
+            class Scramble {
+              constructor(pw, salt) {
+                this.masterKey = pb(pw, salt, 200000, 32, 'sha256');
+                this.rounds = 3;
+              }
+              decode(input) { return decrypt(input, this.masterKey, this.rounds); }
+            }
+            var key = '2aaa9053353088d4d49b5bf32f403f2d85b3df97c9a9beedfcdbb1ecc27ba9c6';
+            var salt = 'fec5863b88643968ecff0c2c8afecbaf';
+            var instance = new Scramble(key, salt);
+            function decode(x) { return instance.decode(x); }
+            var exportName = 'fc2edea72';
+            globalThis[exportName] = decode;
+            var url = fc2edea72('hJQxp9Pvj3X2QId3C4RuMOe1C4EpuSg2b/8JyqzSWjrQm+VgNNg=');
+            var ua = fc2edea72('PdaZMbIlb6aDIHKgEhD+FRU4eXKoDLt3WpefwvGwKH2ZARsbP7s=');
+            """
+        )
+        expected = inspect.cleandoc(
+            """
+            var key = '2aaa9053353088d4d49b5bf32f403f2d85b3df97c9a9beedfcdbb1ecc27ba9c6';
+            var salt = 'fec5863b88643968ecff0c2c8afecbaf';
+            var url = 'https://api.github.com';
+            var ua = 'python-requests/2.31.0';
+            """
+        )
+        self.assertEqual(self._run_transformer(source, JsScrambleStringDecoder), expected)
+
+    def test_global_dot_access_alias(self):
+        source = inspect.cleandoc(
+            """
+            class Scramble {
+              constructor(pw, salt) {
+                this.masterKey = pb(pw, salt, 200000, 32, 'sha256');
+                this.rounds = 3;
+              }
+              decode(input) { return decrypt(input, this.masterKey, this.rounds); }
+            }
+            var key = '2aaa9053353088d4d49b5bf32f403f2d85b3df97c9a9beedfcdbb1ecc27ba9c6';
+            var salt = 'fec5863b88643968ecff0c2c8afecbaf';
+            var instance = new Scramble(key, salt);
+            function decode(x) { return instance.decode(x); }
+            global.decode = decode;
+            var url = decode('hJQxp9Pvj3X2QId3C4RuMOe1C4EpuSg2b/8JyqzSWjrQm+VgNNg=');
+            """
+        )
+        expected = inspect.cleandoc(
+            """
+            var key = '2aaa9053353088d4d49b5bf32f403f2d85b3df97c9a9beedfcdbb1ecc27ba9c6';
+            var salt = 'fec5863b88643968ecff0c2c8afecbaf';
+            var url = 'https://api.github.com';
+            """
+        )
+        self.assertEqual(self._run_transformer(source, JsScrambleStringDecoder), expected)
+
+    def test_global_string_key_alias(self):
+        source = inspect.cleandoc(
+            """
+            class Scramble {
+              constructor(pw, salt) {
+                this.masterKey = pb(pw, salt, 200000, 32, 'sha256');
+                this.rounds = 3;
+              }
+              decode(input) { return decrypt(input, this.masterKey, this.rounds); }
+            }
+            var key = '2aaa9053353088d4d49b5bf32f403f2d85b3df97c9a9beedfcdbb1ecc27ba9c6';
+            var salt = 'fec5863b88643968ecff0c2c8afecbaf';
+            var instance = new Scramble(key, salt);
+            function decode(x) { return instance.decode(x); }
+            globalThis['fc2edea72'] = decode;
+            var url = fc2edea72('hJQxp9Pvj3X2QId3C4RuMOe1C4EpuSg2b/8JyqzSWjrQm+VgNNg=');
+            """
+        )
+        expected = inspect.cleandoc(
+            """
+            var key = '2aaa9053353088d4d49b5bf32f403f2d85b3df97c9a9beedfcdbb1ecc27ba9c6';
+            var salt = 'fec5863b88643968ecff0c2c8afecbaf';
+            var url = 'https://api.github.com';
             """
         )
         self.assertEqual(self._run_transformer(source, JsScrambleStringDecoder), expected)

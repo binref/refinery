@@ -14,6 +14,7 @@ from typing import NamedTuple, Sequence
 from refinery.lib.fast.scramble import decrypt_round as _decrypt_round
 from refinery.lib.scripts import Node, _remove_from_parent, _replace_in_parent
 from refinery.lib.scripts.js.deobfuscation.helpers import (
+    GLOBAL_OBJECT_ALIASES,
     ScriptLevelTransformer,
     access_key,
     make_string_literal,
@@ -305,10 +306,28 @@ class JsScrambleStringDecoder(ScriptLevelTransformer):
                 continue
             if not isinstance(expr.right, JsIdentifier) or expr.right.name not in known:
                 continue
-            if not isinstance(expr.left, JsIdentifier):
-                continue
-            aliases.add(expr.left.name)
+            if isinstance(expr.left, JsIdentifier):
+                aliases.add(expr.left.name)
+            elif isinstance(expr.left, JsMemberExpression):
+                name = self._resolve_global_property_name(expr.left, body)
+                if name is not None:
+                    aliases.add(name)
         return aliases
+
+    @staticmethod
+    def _resolve_global_property_name(
+        member: JsMemberExpression, body: Sequence[Node],
+    ) -> str | None:
+        if not isinstance(member.object, JsIdentifier):
+            return None
+        if member.object.name not in GLOBAL_OBJECT_ALIASES:
+            return None
+        key = access_key(member)
+        if key is not None:
+            return key
+        if member.computed and isinstance(member.property, JsIdentifier):
+            return _resolve_string(member.property, body)
+        return None
 
     def _substitute_calls(
         self, root: Node, decode_names: set[str], cipher: ScrambleCipher,
@@ -343,6 +362,22 @@ class JsScrambleStringDecoder(ScriptLevelTransformer):
     ) -> None:
         removals: list[Node] = [class_node]
         declarator_removals: list[JsVariableDeclarator] = []
+        global_name_vars: set[str] = set()
+        for stmt in body:
+            if not isinstance(stmt, JsExpressionStatement):
+                continue
+            expr = stmt.expression
+            if not isinstance(expr, JsAssignmentExpression) or expr.operator != '=':
+                continue
+            if not isinstance(expr.left, JsMemberExpression):
+                continue
+            if not isinstance(expr.right, JsIdentifier) or expr.right.name not in decode_names:
+                continue
+            name = self._resolve_global_property_name(expr.left, body)
+            if name is not None and name in decode_names:
+                removals.append(stmt)
+                if isinstance(expr.left.property, JsIdentifier) and expr.left.computed:
+                    global_name_vars.add(expr.left.property.name)
         for stmt in body:
             if isinstance(stmt, JsVariableDeclaration):
                 for decl in stmt.declarations:
@@ -351,6 +386,8 @@ class JsScrambleStringDecoder(ScriptLevelTransformer):
                     if not isinstance(decl.id, JsIdentifier):
                         continue
                     if decl.id.name == instance.name or decl.id.name in decode_names:
+                        declarator_removals.append(decl)
+                    elif decl.id.name in global_name_vars:
                         declarator_removals.append(decl)
             elif isinstance(stmt, JsFunctionDeclaration):
                 if stmt.id is not None and stmt.id.name in decode_names:
