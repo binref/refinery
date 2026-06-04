@@ -302,7 +302,10 @@ def _find_rotation_iife(
                 if isinstance(sub, JsCallExpression):
                     candidates.append((sub, sub))
         for removable, call in candidates:
-            if not isinstance(call.callee, JsFunctionExpression):
+            fn = call.callee
+            if isinstance(fn, JsParenthesizedExpression):
+                fn = fn.expression
+            if not isinstance(fn, JsFunctionExpression):
                 continue
             if len(call.arguments) != 2:
                 continue
@@ -314,7 +317,6 @@ def _find_rotation_iife(
                 target = int(_eval_arithmetic(second_arg))
             except _EvalError:
                 continue
-            fn = call.callee
             fn_body = fn.body
             if fn_body is None:
                 continue

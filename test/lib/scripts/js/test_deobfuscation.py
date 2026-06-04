@@ -337,6 +337,19 @@ class TestStringArray(TestJsDeobfuscator):
         self.assertIn('console.log', result)
         self.assertNotIn('_0x2fc0', result)
 
+    def test_string_array_rotation_iife_with_parenthesised_callee(self):
+        preset = self._default_preset()
+        variant = preset.replace(
+            "}(_0x2fc0,0x827c2));",
+            "})(_0x2fc0,0x827c2);",
+            1,
+        )
+        self.assertNotEqual(preset, variant)
+        result = self._deobfuscate(variant)
+        self.assertIn("'test string'", result)
+        self.assertIn('console.log', result)
+        self.assertNotIn('_0x2fc0', result)
+
     def test_string_array_rc4_encoding(self):
         source = (
             r"var _0x28eff0=_0x85f7;function _0x138c(){var _0x3144dc=['W4CnWRpcQKn3W7mbW4OU','W67dOZ3dU0hdS8ktzmom"
