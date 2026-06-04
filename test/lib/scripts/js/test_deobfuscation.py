@@ -4955,6 +4955,185 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
         self.assertEqual('var x = ({ a: 1 });', self._simplify('var x = ({a: 1});'))
 
 
+class TestIIFEAccessorPromoter(TestJsDeobfuscator):
+
+    def _promote(self, source: str) -> str:
+        from refinery.lib.scripts.js.deobfuscation.iifeaccessor import JsIIFEAccessorPromoter
+        return self._run_transformer(source, JsIIFEAccessorPromoter)
+
+    def test_promotes_simple_accessor(self):
+        source = inspect.cleandoc(
+            """
+            var get = function () {
+                var data = [[72, 105], [66, 121, 101]];
+                return function (i) { return data[i]; };
+            }();
+            """
+        )
+        result = self._promote(source)
+        self.assertIn('function get(i)', result)
+        self.assertNotIn('var get =', result)
+
+    def test_fold_xor_accessor_pattern_end_to_end(self):
+        source = inspect.cleandoc(
+            """
+            var get = function () {
+                var data = [[72, 105], [66, 121, 101]];
+                var shift = 28;
+                var mask = 42;
+                return function (i) {
+                    var a = data[i];
+                    if (!a) return "";
+                    var r = "";
+                    for (var j = 0; j < a.length; j++) {
+                        var k = j >> shift & j << mask & (shift ^ shift) & 2047;
+                        r += String.fromCharCode(a[j] ^ k);
+                    }
+                    return r;
+                };
+            }();
+            document.write(get(0));
+            document.write(get(1));
+            """
+        )
+        result = self._deobfuscate_iterative(source)
+        self.assertIn("'Hi'", result)
+        self.assertIn("'Bye'", result)
+        self.assertNotIn('function get', result)
+        self.assertNotIn('var get', result)
+
+    def test_does_not_promote_when_closure_is_mutated(self):
+        source = inspect.cleandoc(
+            """
+            var counter = function () {
+                var n = 0;
+                return function () { n++; return n; };
+            }();
+            """
+        )
+        result = self._promote(source)
+        self.assertNotIn('function counter(', result)
+        self.assertIn('var counter =', result)
+
+    def test_does_not_promote_when_param_collides_with_closure(self):
+        source = inspect.cleandoc(
+            """
+            var get = function () {
+                var data = [1, 2, 3];
+                return function (data) { return data; };
+            }();
+            """
+        )
+        result = self._promote(source)
+        self.assertNotIn('function get(', result)
+
+    def test_does_not_promote_non_literal_closure(self):
+        source = inspect.cleandoc(
+            """
+            var get = function () {
+                var data = computeData();
+                return function (i) { return data[i]; };
+            }();
+            """
+        )
+        result = self._promote(source)
+        self.assertNotIn('function get(', result)
+
+    def test_promotes_through_parenthesised_iife(self):
+        source = inspect.cleandoc(
+            """
+            var get = (function () {
+                var data = [1, 2, 3];
+                return function (i) { return data[i]; };
+            })();
+            """
+        )
+        result = self._promote(source)
+        self.assertIn('function get(i)', result)
+
+    def test_does_not_promote_self_referencing_named_function(self):
+        source = inspect.cleandoc(
+            """
+            var get = function () {
+                var data = [1, 2, 3];
+                return function rec(i) { return i <= 0 ? data[0] : rec(i - 1); };
+            }();
+            """
+        )
+        result = self._promote(source)
+        self.assertNotIn('function get(', result)
+        self.assertIn('var get =', result)
+
+
+class TestParenthesisPreservation(TestJsDeobfuscator):
+
+    def test_paren_preserved_when_inner_has_lower_precedence(self):
+        self.assertEqual('var x = (a | b) & c;', self._simplify('var x = (a | b) & c;'))
+
+    def test_paren_preserved_when_inner_is_ternary_inside_binop(self):
+        self.assertEqual(
+            'var x = (a ? b : c) + d;',
+            self._simplify('var x = (a ? b : c) + d;'),
+        )
+
+    def test_paren_dropped_when_inner_has_higher_precedence(self):
+        self.assertEqual('var x = a + b * c;', self._simplify('var x = a + (b * c);'))
+
+    def test_paren_dropped_around_primary(self):
+        self.assertEqual('var x = a + b;', self._simplify('var x = (a) + (b);'))
+
+    def test_paren_preserved_for_right_side_of_same_precedence(self):
+        self.assertEqual('var x = a - (b - c);', self._simplify('var x = a - (b - c);'))
+
+    def test_paren_dropped_for_left_side_of_same_precedence(self):
+        self.assertEqual('var x = a - b - c;', self._simplify('var x = (a - b) - c;'))
+
+    def test_paren_preserved_for_conditional_as_ternary_test(self):
+        self.assertEqual(
+            'var x = (a ? b : c) ? d : e;',
+            self._simplify('var x = (a ? b : c) ? d : e;'),
+        )
+
+    def test_paren_preserved_for_assignment_as_ternary_test(self):
+        self.assertEqual(
+            'var x = (a = b) ? c : d;',
+            self._simplify('var x = (a = b) ? c : d;'),
+        )
+
+    def test_paren_preserved_for_numeric_literal_member_object(self):
+        self.assertEqual(
+            'var x = (5).toString();',
+            self._simplify('var x = (5).toString();'),
+        )
+
+    def test_paren_dropped_for_numeric_literal_computed_member(self):
+        self.assertEqual('var x = 5[k];', self._simplify('var x = (5)[k];'))
+
+    def test_paren_preserved_for_nested_negation(self):
+        self.assertEqual('var x = -(-a);', self._simplify('var x = -(-a);'))
+
+    def test_paren_preserved_for_nested_unary_plus(self):
+        self.assertEqual('var x = +(+a);', self._simplify('var x = +(+a);'))
+
+    def test_paren_dropped_for_double_logical_not(self):
+        self.assertEqual('var x = !!a;', self._simplify('var x = !(!a);'))
+
+    def test_paren_preserved_for_unary_base_of_exponentiation(self):
+        self.assertEqual('var x = (-a) ** b;', self._simplify('var x = (-a) ** b;'))
+
+    def test_paren_preserved_for_call_as_new_callee(self):
+        self.assertEqual('var x = new (f())();', self._simplify('var x = new (f())();'))
+
+    def test_paren_preserved_for_logical_as_new_callee(self):
+        self.assertEqual('var x = new (a || b)();', self._simplify('var x = new (a || b)();'))
+
+    def test_paren_preserved_for_call_in_new_callee_spine(self):
+        self.assertEqual('var x = new (a().b)();', self._simplify('var x = new (a().b)();'))
+
+    def test_paren_dropped_for_member_chain_new_callee(self):
+        self.assertEqual('var x = new a.b.c();', self._simplify('var x = new (a.b.c)();'))
+
+
 class TestScrambleStringDecoder(TestJsDeobfuscator):
 
     def test_cipher_decode_known_values(self):

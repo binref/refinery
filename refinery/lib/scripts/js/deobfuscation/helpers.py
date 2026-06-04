@@ -66,22 +66,49 @@ VOID_LITERAL_OPERANDS = (JsNumericLiteral, JsStringLiteral, JsBooleanLiteral, Js
 
 
 def _to_int32(v: int | float) -> int:
-    v = int(v) & 0xFFFFFFFF
+    """
+    Replicate the ECMA-262 ToInt32 abstract operation: `NaN`, `+Infinity`, and `-Infinity` all
+    coerce to `0`, finite floats truncate towards zero, the result is taken mod 2^32 and
+    sign-extended to the int32 range.
+    """
+    if isinstance(v, float):
+        if v != v or v == float('inf') or v == float('-inf'):
+            return 0
+        v = int(v) if v >= 0 else -int(-v)
+    v = v & 0xFFFFFFFF
     return v - 0x100000000 if v >= 0x80000000 else v
+
+
+def _js_div(a: int | float, b: int | float) -> int | float:
+    if b == 0:
+        if a == 0 or a != a:
+            return float('nan')
+        return float('inf') if a > 0 else float('-inf')
+    return a / b
+
+
+def _js_mod(a: int | float, b: int | float) -> int | float:
+    if b == 0 or a != a or b != b:
+        return float('nan')
+    if a == float('inf') or a == float('-inf'):
+        return float('nan')
+    if b == float('inf') or b == float('-inf'):
+        return a
+    return math.fmod(a, b)
 
 
 BINARY_OPS: dict[str, Callable] = {
     '+'  : operator.add,
     '-'  : operator.sub,
     '*'  : operator.mul,
-    '/'  : operator.truediv,
-    '%'  : math.fmod,
+    '/'  : _js_div,
+    '%'  : _js_mod,
     '**' : operator.pow,
-    '|'  : lambda a, b: _to_int32(int(a) | int(b)),
-    '&'  : lambda a, b: _to_int32(int(a) & int(b)),
-    '^'  : lambda a, b: _to_int32(int(a) ^ int(b)),
-    '<<' : lambda a, b: _to_int32(int(a) << (int(b) & 0x1F)),
-    '>>' : lambda a, b: _to_int32(_to_int32(int(a)) >> (int(b) & 0x1F)),
+    '|'  : lambda a, b: _to_int32(a) | _to_int32(b),
+    '&'  : lambda a, b: _to_int32(a) & _to_int32(b),
+    '^'  : lambda a, b: _to_int32(a) ^ _to_int32(b),
+    '<<' : lambda a, b: _to_int32(_to_int32(a) << (_to_int32(b) & 0x1F)),
+    '>>' : lambda a, b: _to_int32(a) >> (_to_int32(b) & 0x1F),
 }
 
 RELATIONAL_OPS: dict[str, Callable] = {

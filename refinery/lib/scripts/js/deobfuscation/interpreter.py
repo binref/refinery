@@ -52,6 +52,7 @@ from refinery.lib.scripts.js.model import (
     JsNullLiteral,
     JsNumericLiteral,
     JsObjectExpression,
+    JsParenthesizedExpression,
     JsProperty,
     JsPropertyKind,
     JsReturnStatement,
@@ -1146,6 +1147,8 @@ class JsInterpreter:
             return self._eval_object(expr)
         if isinstance(expr, (JsFunctionExpression, JsArrowFunctionExpression)):
             return expr
+        if isinstance(expr, JsParenthesizedExpression):
+            return self._eval(expr.expression)
         raise InterpreterError
 
     def _eval_identifier(self, node: JsIdentifier) -> Value:
