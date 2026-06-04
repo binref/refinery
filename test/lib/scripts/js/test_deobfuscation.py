@@ -218,6 +218,95 @@ class TestBasicSimplifications(TestJsDeobfuscator):
     def test_split_dot_notation(self):
         self.assertEqual("['a', 'b'];", self._simplify("'a|b'.split('|');"))
 
+    def test_string_slice(self):
+        self.assertEqual("'el';", self._simplify("'hello'.slice(1, 3);"))
+
+    def test_string_char_at(self):
+        self.assertEqual("'h';", self._simplify("'hello'.charAt(0);"))
+
+    def test_string_to_lower_case(self):
+        self.assertEqual("'hello';", self._simplify("'HELLO'.toLowerCase();"))
+
+    def test_string_repeat(self):
+        self.assertEqual("'abcabc';", self._simplify("'abc'.repeat(2);"))
+
+    def test_string_replace(self):
+        self.assertEqual(
+            "'hello there';", self._simplify("'hello world'.replace('world', 'there');"),
+        )
+
+    def test_string_substring(self):
+        self.assertEqual("'ell';", self._simplify("'hello'.substring(1, 4);"))
+
+    def test_array_index_of(self):
+        self.assertEqual("1;", self._simplify("['a', 'b', 'c'].indexOf('b');"))
+
+    def test_array_slice(self):
+        self.assertEqual("['b', 'c'];", self._simplify("['a', 'b', 'c'].slice(1);"))
+
+    def test_atob(self):
+        self.assertEqual("'Hello';", self._simplify("atob('SGVsbG8=');"))
+
+    def test_btoa(self):
+        self.assertEqual("'SGVsbG8=';", self._simplify("btoa('Hello');"))
+
+    def test_unescape(self):
+        self.assertEqual("'Hello';", self._simplify("unescape('%48%65%6C%6C%6F');"))
+
+    def test_number_conversion(self):
+        self.assertEqual("42;", self._simplify("Number('42');"))
+
+    def test_json_parse_string(self):
+        self.assertEqual("'hello';", self._simplify("JSON.parse('\"hello\"');"))
+
+    def test_json_parse_array(self):
+        self.assertEqual("[1, 2, 3];", self._simplify("JSON.parse('[1, 2, 3]');"))
+
+    def test_json_parse_object(self):
+        self.assertEqual("({ 'a': 1 });", self._simplify("JSON.parse('{\"a\": 1}');"))
+
+    def test_no_fold_variable_receiver(self):
+        self.assertEqual("x.slice(1);", self._simplify("x.slice(1);"))
+
+    def test_no_fold_variable_arg(self):
+        self.assertEqual("atob(x);", self._simplify("atob(x);"))
+
+    def test_no_fold_unknown_method(self):
+        self.assertEqual("'hello'.unknownMethod();", self._simplify("'hello'.unknownMethod();"))
+
+    def test_no_fold_length_as_callable(self):
+        self.assertEqual("'hello'.length();", self._simplify("'hello'.length();"))
+
+    def test_no_fold_void_with_side_effect(self):
+        self.assertEqual("atob(void f());", self._simplify("atob(void f());"))
+
+    def test_array_index_of_boolean_strict(self):
+        self.assertEqual("-1;", self._simplify("[1, 2].indexOf(true);"))
+
+    def test_array_includes_boolean_strict(self):
+        self.assertEqual("false;", self._simplify("[1].includes(true);"))
+
+    def test_string_replace_dollar_match(self):
+        self.assertEqual("'[a]bc';", self._simplify("'abc'.replace('a', '[$&]');"))
+
+    def test_string_replace_dollar_escape(self):
+        self.assertEqual("'$bc';", self._simplify("'abc'.replace('a', '$$');"))
+
+    def test_math_max_with_nan_string(self):
+        self.assertEqual("NaN;", self._simplify("Math.max(5, 'abc');"))
+
+    def test_number_empty_array(self):
+        self.assertEqual("0;", self._simplify("Number([]);"))
+
+    def test_number_single_element_array(self):
+        self.assertEqual("5;", self._simplify("Number([5]);"))
+
+    def test_number_underscore_string_is_nan(self):
+        self.assertEqual("NaN;", self._simplify("Number('1_000');"))
+
+    def test_no_fold_json_parse_infinity(self):
+        self.assertEqual("JSON.parse('Infinity');", self._simplify("JSON.parse('Infinity');"))
+
 
 class TestStringArray(TestJsDeobfuscator):
 

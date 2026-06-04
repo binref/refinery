@@ -474,8 +474,14 @@ class JsSynthesizer(Synthesizer):
         self._write(';')
 
     def visit_JsExpressionStatement(self, node: JsExpressionStatement):
-        if node.expression:
-            self.visit(node.expression)
+        expr = node.expression
+        if expr is not None:
+            if isinstance(expr, (JsObjectExpression, JsFunctionExpression)):
+                self._write('(')
+                self.visit(expr)
+                self._write(')')
+            else:
+                self.visit(expr)
         self._write(';')
 
     def visit_JsBlockStatement(self, node: JsBlockStatement):

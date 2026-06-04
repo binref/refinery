@@ -4,6 +4,7 @@ Mini-interpreter for executing pure JavaScript functions with concrete arguments
 from __future__ import annotations
 
 import base64
+import json
 import math
 import re
 import urllib.parse
@@ -120,6 +121,8 @@ def to_number(value: Value) -> int | float:
         s = value.strip()
         if not s:
             return 0
+        if '_' in s:
+            return float('nan')
         try:
             return int(s, 0)
         except ValueError:
@@ -130,6 +133,8 @@ def to_number(value: Value) -> int | float:
             return float('nan')
     if value is None:
         return 0
+    if isinstance(value, list):
+        return to_number(to_string(value))
     return float('nan')
 
 
@@ -167,6 +172,22 @@ def _js_typeof(value: Value) -> str:
     if isinstance(value, str):
         return 'string'
     return 'object'
+
+
+def js_strict_equal(a: Value, b: Value) -> bool:
+    """
+    Compare two interpreter values using JavaScript strict-equality (`===`) semantics. Unlike
+    Python equality this does not conflate booleans with the numbers `1` and `0`.
+    """
+    if isinstance(a, bool) or isinstance(b, bool):
+        return a is b
+    if a is None or b is None:
+        return a is None and b is None
+    if isinstance(a, (int, float)) and isinstance(b, (int, float)):
+        return a == b
+    if type(a) is not type(b):
+        return False
+    return a == b
 
 
 BUILTIN_REGISTRY: dict[tuple, Callable] = {}
@@ -294,13 +315,48 @@ def _str_split(s: str, args: list[Value]) -> Value:
     return result
 
 
+def _expand_replacement(replacement: str, s: str, start: int, matched: str) -> str:
+    """
+    Expand the JavaScript replacement-string patterns ($$, $&, $`, $') for a literal-string match
+    of `matched` at index `start` in `s`. Capture-group patterns ($1..) have no meaning for a
+    string search and are emitted verbatim, as JavaScript does.
+    """
+    out: list[str] = []
+    i = 0
+    n = len(replacement)
+    while i < n:
+        c = replacement[i]
+        if c == '$' and i + 1 < n:
+            nxt = replacement[i + 1]
+            if nxt == '$':
+                out.append('$')
+            elif nxt == '&':
+                out.append(matched)
+            elif nxt == '`':
+                out.append(s[:start])
+            elif nxt == "'":
+                out.append(s[start + len(matched):])
+            else:
+                out.append('$')
+                out.append(nxt)
+            i += 2
+            continue
+        out.append(c)
+        i += 1
+    return ''.join(out)
+
+
 @_register((str, 'replace'))
 def _str_replace(s: str, args: list[Value]) -> Value:
     if len(args) < 2:
         return s
     search = to_string(args[0])
     replacement = to_string(args[1])
-    return s.replace(search, replacement, 1)
+    index = s.find(search)
+    if index < 0:
+        return s
+    expanded = _expand_replacement(replacement, s, index, search)
+    return s[:index] + expanded + s[index + len(search):]
 
 
 @_register((str, 'replaceAll'))
@@ -309,7 +365,19 @@ def _str_replace_all(s: str, args: list[Value]) -> Value:
         return s
     search = to_string(args[0])
     replacement = to_string(args[1])
-    return s.replace(search, replacement)
+    if not search:
+        raise InterpreterError
+    out: list[str] = []
+    pos = 0
+    while True:
+        index = s.find(search, pos)
+        if index < 0:
+            out.append(s[pos:])
+            break
+        out.append(s[pos:index])
+        out.append(_expand_replacement(replacement, s, index, search))
+        pos = index + len(search)
+    return ''.join(out)
 
 
 @_register((str, 'toLowerCase'))
@@ -378,6 +446,20 @@ def _str_at(s: str, args: list[Value]) -> Value:
 @_register(('String', 'fromCharCode'))
 def _string_from_char_code(args: list[Value]) -> Value:
     return ''.join(chr(int(to_number(a)) & 0xFFFF) for a in args)
+
+
+@_register(('JSON', 'parse'))
+def _json_parse(args: list[Value]) -> Value:
+    if not args:
+        raise InterpreterError
+
+    def _reject_constant(_: str) -> Value:
+        raise InterpreterError
+    s = to_string(args[0])
+    try:
+        return json.loads(s, parse_int=float, parse_constant=_reject_constant)
+    except Exception:
+        raise InterpreterError
 
 
 @_register((list, 'length'))
@@ -472,7 +554,7 @@ def _arr_index_of(arr: list, args: list[Value]) -> Value:
     target = args[0]
     start = int(to_number(args[1])) if len(args) > 1 else 0
     for i in range(max(0, start), len(arr)):
-        if arr[i] == target:
+        if js_strict_equal(arr[i], target):
             return i
     return -1
 
@@ -481,7 +563,7 @@ def _arr_index_of(arr: list, args: list[Value]) -> Value:
 def _arr_includes(arr: list, args: list[Value]) -> Value:
     if not args:
         return False
-    return args[0] in arr
+    return any(js_strict_equal(item, args[0]) for item in arr)
 
 
 @_register((list, 'flat'))
@@ -576,14 +658,20 @@ def _math_sqrt(args: list[Value]) -> Value:
 def _math_min(args: list[Value]) -> Value:
     if not args:
         return float('inf')
-    return min(to_number(a) for a in args)
+    values = [to_number(a) for a in args]
+    if any(v != v for v in values):
+        return float('nan')
+    return min(values)
 
 
 @_register(('Math', 'max'))
 def _math_max(args: list[Value]) -> Value:
     if not args:
         return float('-inf')
-    return max(to_number(a) for a in args)
+    values = [to_number(a) for a in args]
+    if any(v != v for v in values):
+        return float('nan')
+    return max(values)
 
 
 @_register(('Math', 'trunc'))
@@ -780,7 +868,7 @@ def _array_is_array(args: list[Value]) -> Value:
     return isinstance(args[0], list) if args else False
 
 
-STATIC_OBJECTS = frozenset({'Math', 'String', 'Object', 'Array', 'Number'})
+STATIC_OBJECTS = frozenset({'Math', 'String', 'Object', 'Array', 'Number', 'JSON'})
 
 
 def is_runtime_name(name: str) -> bool:
@@ -1475,15 +1563,7 @@ class JsInterpreter:
 
     @staticmethod
     def _strict_equal(a: Value, b: Value) -> bool:
-        if a is None and b is None:
-            return True
-        if a is None or b is None:
-            return False
-        if type(a) is not type(b):
-            if isinstance(a, (int, float)) and isinstance(b, (int, float)):
-                return a == b
-            return False
-        return a == b
+        return js_strict_equal(a, b)
 
     def eval_expression(self, expr) -> Value:
         """

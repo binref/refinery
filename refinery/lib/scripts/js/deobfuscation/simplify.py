@@ -3,8 +3,6 @@ JavaScript syntax normalization transforms.
 """
 from __future__ import annotations
 
-from typing import Sequence, TypeGuard
-
 from refinery.lib.scripts import Node, Transformer
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     FUNCTION_NODE_TYPES,
@@ -14,6 +12,7 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     escape_js_string,
     eval_binary_op,
     extract_identifier_params,
+    extract_literal_value,
     is_closed_expression,
     is_literal,
     is_nullish,
@@ -235,8 +234,16 @@ def _collect_property_stores(body: list, name: str) -> set[str]:
     return props
 
 
-def _all_numeric_literals(args: Sequence[Node]) -> TypeGuard[list[JsNumericLiteral]]:
-    return all(isinstance(a, JsNumericLiteral) for a in args)
+_UNCONVERTIBLE = object()
+
+
+def _node_to_value(node: Node) -> object:
+    """
+    Convert an AST expression to its Python equivalent for use with BUILTIN_REGISTRY dispatch.
+    Returns the module-level sentinel `_UNCONVERTIBLE` when the node cannot be statically resolved.
+    """
+    ok, value = extract_literal_value(node)
+    return value if ok else _UNCONVERTIBLE
 
 
 class JsSimplifications(Transformer):
@@ -300,6 +307,8 @@ class JsSimplifications(Transformer):
             return self._try_inline_iife(node, fn)
         return (
             self._try_fold_static_method(node)
+            or self._try_fold_free_function(node)
+            or self._try_fold_instance_method(node)
             or self._try_fold_split(node)
             or self._try_fold_join(node)
         )
@@ -357,11 +366,58 @@ class JsSimplifications(Transformer):
         builtin = BUILTIN_REGISTRY.get((static_name, method_name))
         if builtin is None:
             return None
-        if not _all_numeric_literals(node.arguments):
+        args = [_node_to_value(a) for a in node.arguments]
+        if any(a is _UNCONVERTIBLE for a in args):
             return None
-        args = [a.value for a in node.arguments]
         try:
             result = builtin(args)
+        except Exception:
+            return None
+        return value_to_node(result)
+
+    @staticmethod
+    def _try_fold_free_function(node: JsCallExpression) -> Node | None:
+        callee = node.callee
+        if not isinstance(callee, JsIdentifier):
+            return None
+        builtin = BUILTIN_REGISTRY.get((None, callee.name))
+        if builtin is None:
+            return None
+        args = [_node_to_value(a) for a in node.arguments]
+        if any(a is _UNCONVERTIBLE for a in args):
+            return None
+        try:
+            result = builtin(args)
+        except Exception:
+            return None
+        return value_to_node(result)
+
+    @staticmethod
+    def _try_fold_instance_method(node: JsCallExpression) -> Node | None:
+        callee = node.callee
+        if not isinstance(callee, JsMemberExpression):
+            return None
+        method_name = access_key(callee)
+        if method_name is None or method_name in ('split', 'join', 'length'):
+            return None
+        if callee.object is None:
+            return None
+        receiver = _node_to_value(callee.object)
+        if receiver is _UNCONVERTIBLE:
+            return None
+        if isinstance(receiver, str):
+            builtin = BUILTIN_REGISTRY.get((str, method_name))
+        elif isinstance(receiver, list):
+            builtin = BUILTIN_REGISTRY.get((list, method_name))
+        else:
+            return None
+        if builtin is None:
+            return None
+        args = [_node_to_value(a) for a in node.arguments]
+        if any(a is _UNCONVERTIBLE for a in args):
+            return None
+        try:
+            result = builtin(receiver, args)
         except Exception:
             return None
         return value_to_node(result)

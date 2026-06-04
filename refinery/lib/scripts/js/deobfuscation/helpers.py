@@ -62,6 +62,7 @@ JS_RESERVED = frozenset(set(KEYWORDS) | FUTURE_RESERVED | {'undefined'})
 
 FUNCTION_NODE_TYPES = (JsFunctionDeclaration, JsFunctionExpression, JsArrowFunctionExpression)
 GLOBAL_OBJECT_ALIASES: frozenset[str] = frozenset({'globalThis', 'global', 'window', 'self'})
+VOID_LITERAL_OPERANDS = (JsNumericLiteral, JsStringLiteral, JsBooleanLiteral, JsNullLiteral)
 
 
 def _to_int32(v: int | float) -> int:
@@ -210,7 +211,7 @@ def extract_literal_value(node: Node) -> tuple[bool, LiteralValue]:
     if isinstance(node, JsNullLiteral):
         return True, None
     if isinstance(node, JsUnaryExpression):
-        if node.operator == 'void' and isinstance(node.operand, (JsNumericLiteral, JsStringLiteral)):
+        if node.operator == 'void' and isinstance(node.operand, VOID_LITERAL_OPERANDS):
             return True, None
         if node.operator == '-' and isinstance(node.operand, JsNumericLiteral):
             return True, -node.operand.value
@@ -262,6 +263,16 @@ def value_to_node(value: object) -> Expression | None:
                 return None
             elements.append(el)
         return JsArrayExpression(elements=elements)
+    if isinstance(value, dict):
+        properties = []
+        for k, v in value.items():
+            if not isinstance(k, str):
+                return None
+            val_node = value_to_node(v)
+            if val_node is None:
+                return None
+            properties.append(JsProperty(key=make_string_literal(k), value=val_node))
+        return JsObjectExpression(properties=properties)
     if value is None:
         return JsUnaryExpression(
             operator='void',
@@ -274,7 +285,7 @@ def is_literal(node: Node) -> bool:
     if isinstance(node, (JsStringLiteral, JsNumericLiteral, JsBooleanLiteral, JsNullLiteral)):
         return True
     if isinstance(node, JsUnaryExpression):
-        if node.operator == 'void' and isinstance(node.operand, (JsNumericLiteral, JsStringLiteral)):
+        if node.operator == 'void' and isinstance(node.operand, VOID_LITERAL_OPERANDS):
             return True
         if node.operator == '-' and isinstance(node.operand, JsNumericLiteral):
             return True
