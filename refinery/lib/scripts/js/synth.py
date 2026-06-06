@@ -108,7 +108,7 @@ class JsSynthesizer(Synthesizer):
             self._newline()
         self._write('}')
 
-    def _comma_separated(self, nodes: list) -> bool:
+    def _comma_separated(self, nodes: list, lead_newline: bool = True) -> bool:
         if not nodes:
             return False
         save_pos = self._parts.tell()
@@ -129,7 +129,8 @@ class JsSynthesizer(Synthesizer):
         self._col = save_col
         self._depth += 1
         for i, node in enumerate(nodes):
-            self._newline()
+            if i > 0 or lead_newline:
+                self._newline()
             if node is not None:
                 self.visit(node)
             if i < len(nodes) - 1:
@@ -352,7 +353,7 @@ class JsSynthesizer(Synthesizer):
         self._write(')')
 
     def visit_JsSequenceExpression(self, node: JsSequenceExpression):
-        self._comma_separated(node.expressions)
+        self._comma_separated(node.expressions, lead_newline=False)
 
     def visit_JsYieldExpression(self, node: JsYieldExpression):
         self._write('yield')

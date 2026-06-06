@@ -223,6 +223,18 @@ class TestJsSynthesizer(TestBase):
     def test_return_no_arg(self):
         self._round_trip('function f() { return; }')
 
+    def test_return_wrapping_sequence_no_asi(self):
+        filler = 'A' * 160
+        source = "function f() { return '%s' + tail, sendStorage(value); }" % filler
+        out = self._round_trip(source)
+        self.assertNotRegex(out, r'return[ \t]*\n')
+        self.assertIn('sendStorage(value)', out)
+
+    def test_negative_number_operand_after_newline(self):
+        source = 'x = f(\n  alphaaaaaaaaa,\n  -680876936\n);'
+        out = JsSynthesizer().convert(JsParser(source).parse())
+        self.assertIn('-680876936', out)
+
     def test_break_statement(self):
         self._round_trip('while (true) { break; }')
 

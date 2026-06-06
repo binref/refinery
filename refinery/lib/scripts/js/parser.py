@@ -1021,12 +1021,12 @@ class JsParser:
             operand = self._parse_unary_expression()
             return JsUnaryExpression(
                 operator=tok.value, operand=operand, prefix=True, offset=tok.offset)
-        if self._at(JsTokenKind.PLUS) and not self._preceded_by_newline:
+        if self._at(JsTokenKind.PLUS):
             tok = self._advance()
             operand = self._parse_unary_expression()
             return JsUnaryExpression(
                 operator='+', operand=operand, prefix=True, offset=tok.offset)
-        if self._at(JsTokenKind.MINUS) and not self._preceded_by_newline:
+        if self._at(JsTokenKind.MINUS):
             tok = self._advance()
             operand = self._parse_unary_expression()
             return JsUnaryExpression(
