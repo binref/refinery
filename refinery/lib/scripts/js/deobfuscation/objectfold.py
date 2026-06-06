@@ -26,12 +26,14 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
 from refinery.lib.scripts.js.model import (
     JsAssignmentExpression,
     JsCallExpression,
+    JsFunctionDeclaration,
     JsFunctionExpression,
     JsIdentifier,
     JsMemberExpression,
     JsObjectExpression,
     JsProperty,
     JsPropertyKind,
+    JsThisExpression,
     JsVariableDeclaration,
     JsVariableDeclarator,
 )
@@ -57,6 +59,33 @@ def _build_property_map(
     return result
 
 
+def _value_binds_this(value: Node) -> bool:
+    """
+    Return whether moving *value* out of the object literal would change the meaning of a `this`
+    inside it. Arrow functions inherit `this` lexically, so they are traversed; regular (non-arrow)
+    functions nested inside *value* rebind `this` and are not descended into. A method whose body
+    references the receiver (directly or through an arrow) therefore must not be detached from the
+    object that supplies its `this`.
+    """
+    stack: list[Node] = [value]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, JsThisExpression):
+            return True
+        if isinstance(node, (JsFunctionExpression, JsFunctionDeclaration)) and node is not value:
+            continue
+        stack.extend(node.children())
+    return False
+
+
+def _object_binds_this(prop_map: dict[str, Node]) -> bool:
+    """
+    Return whether any property value depends on `this` being supplied by the object, so that
+    folding the object away would change its meaning.
+    """
+    return any(_value_binds_this(value) for value in prop_map.values())
+
+
 class JsObjectFold(ScopeProcessingTransformer):
     """
     Inline properties of locally-defined constant objects. Processes at function-scope and
@@ -66,6 +95,8 @@ class JsObjectFold(ScopeProcessingTransformer):
     def _process_scope_body(self, scope: Node, body: list[Statement]) -> None:
         for candidate in list(self._find_candidates(body)):
             obj_name, declarator, prop_map = candidate
+            if _object_binds_this(prop_map):
+                continue
             if not self._is_safe_to_fold(scope, obj_name, declarator):
                 continue
             changed, can_remove = self._inline_references(scope, obj_name, prop_map)

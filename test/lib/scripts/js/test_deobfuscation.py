@@ -1211,6 +1211,39 @@ class TestObjectFold(TestJsDeobfuscator):
             self._objectfold("var o = {'f': function(a, b) { return a + b; }}; var r = o['f'](1, 2);"),
         )
 
+    def test_this_method_not_folded(self):
+        source = (
+            "var o = {'k': 'AB', 'f': function(i) { return this.k.charAt(i); }};"
+            " var r = o['f'](0);"
+        )
+        untouched = JsSynthesizer().convert(JsParser(source).parse())
+        self.assertEqual(self._objectfold(source), untouched)
+
+    def test_this_in_nested_function_still_folds(self):
+        source = (
+            "var o = {'f': function(a) { return g(a, function() { return this.x; }); }};"
+            " var r = o['f'](1);"
+        )
+        result = self._objectfold(source)
+        self.assertNotIn('var o =', result)
+        self.assertNotIn("o['f']", result)
+
+    def test_this_in_nested_arrow_not_folded(self):
+        source = (
+            "var o = {'k': 'AB', 'f': function(i) { return (() => this.k.charAt(i))(); }};"
+            " var r = o['f'](0);"
+        )
+        untouched = JsSynthesizer().convert(JsParser(source).parse())
+        self.assertEqual(self._objectfold(source), untouched)
+
+    def test_arrow_property_using_this_not_folded(self):
+        source = (
+            "var o = {'f': () => this.x};"
+            " function h() { return o['f'](); }"
+        )
+        untouched = JsSynthesizer().convert(JsParser(source).parse())
+        self.assertEqual(self._objectfold(source), untouched)
+
     def test_mutated_object_unchanged(self):
         self.assertEqual(
             inspect.cleandoc(
