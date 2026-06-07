@@ -32,6 +32,8 @@ from refinery.lib.scripts.js.model import (
     JsBlockStatement,
     JsBooleanLiteral,
     JsCallExpression,
+    JsClassDeclaration,
+    JsClassExpression,
     JsConditionalExpression,
     JsForInStatement,
     JsForOfStatement,
@@ -48,6 +50,7 @@ from refinery.lib.scripts.js.model import (
     JsScript,
     JsSequenceExpression,
     JsStringLiteral,
+    JsThisExpression,
     JsUnaryExpression,
     JsVariableDeclaration,
     JsVariableDeclarator,
@@ -866,6 +869,35 @@ def _is_shadowed(node: Node, name: str) -> bool:
                 if _body_declares_var(body.body, name):
                     return True
         parent = parent.parent
+    return False
+
+
+def references_receiver_this(root: Node) -> bool:
+    """
+    Return whether relocating *root* would change the meaning of a `this` reference bound to its
+    current receiver. Arrow functions inherit `this` lexically, so they are traversed; regular and
+    generator functions nested below *root* rebind `this` and are not descended into. A class also
+    rebinds `this` for its method bodies and field initializers, but its `extends` clause and any
+    computed member keys are evaluated in the enclosing `this` context, so only those parts of a
+    class are traversed. *root* itself is always traversed, so a method whose body reads `this`
+    (directly or through an arrow) counts.
+    """
+    stack: list[Node] = [root]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, JsThisExpression):
+            return True
+        if isinstance(node, (JsFunctionExpression, JsFunctionDeclaration)) and node is not root:
+            continue
+        if isinstance(node, (JsClassDeclaration, JsClassExpression)):
+            if node.super_class is not None:
+                stack.append(node.super_class)
+            if node.body is not None:
+                for member in node.body.body:
+                    if member.computed and member.key is not None:
+                        stack.append(member.key)
+            continue
+        stack.extend(node.children())
     return False
 
 

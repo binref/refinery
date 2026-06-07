@@ -72,6 +72,7 @@ from refinery.lib.scripts.js.model import (
     JsYieldExpression,
     Statement,
 )
+from refinery.lib.scripts.js.precedence import needs_parens, statement_needs_parens
 
 _WORD_UNARY_OPS = frozenset({'typeof', 'void', 'delete'})
 
@@ -108,7 +109,37 @@ class JsSynthesizer(Synthesizer):
             self._newline()
         self._write('}')
 
-    def _comma_separated(self, nodes: list, lead_newline: bool = True) -> bool:
+    def _emit_child(self, child: Node | None, parent: Node):
+        """
+        Emit *child* in the context of *parent*, wrapping it in parentheses when operator precedence
+        requires it. This makes the printed output correct regardless of whether the tree carries
+        an explicit `JsParenthesizedExpression` node in that position.
+        """
+        if child is None:
+            return
+        if needs_parens(child, parent):
+            self._write('(')
+            self.visit(child)
+            self._write(')')
+        else:
+            self.visit(child)
+
+    def _emit_element(self, node, wrap_sequences: bool):
+        if node is None:
+            return
+        if wrap_sequences and isinstance(node, JsSequenceExpression):
+            self._write('(')
+            self.visit(node)
+            self._write(')')
+        else:
+            self.visit(node)
+
+    def _comma_separated(
+        self,
+        nodes: list,
+        lead_newline: bool = True,
+        wrap_sequences: bool = False,
+    ) -> bool:
         if not nodes:
             return False
         save_pos = self._parts.tell()
@@ -117,8 +148,7 @@ class JsSynthesizer(Synthesizer):
         for i, node in enumerate(nodes):
             if i > 0:
                 self._write(', ')
-            if node is not None:
-                self.visit(node)
+            self._emit_element(node, wrap_sequences)
             if self._col > self._line_length:
                 overflow = True
                 break
@@ -131,8 +161,7 @@ class JsSynthesizer(Synthesizer):
         for i, node in enumerate(nodes):
             if i > 0 or lead_newline:
                 self._newline()
-            if node is not None:
-                self.visit(node)
+            self._emit_element(node, wrap_sequences)
             if i < len(nodes) - 1:
                 self._write(',')
         self._depth -= 1
@@ -213,7 +242,7 @@ class JsSynthesizer(Synthesizer):
 
     def _emit_array_like(self, node):
         self._write('[')
-        if self._comma_separated(node.elements):
+        if self._comma_separated(node.elements, wrap_sequences=True):
             self._newline()
         self._write(']')
 
@@ -260,13 +289,11 @@ class JsSynthesizer(Synthesizer):
         if node.shorthand:
             return
         self._write(': ')
-        if node.value:
-            self.visit(node.value)
+        self._emit_element(node.value, True)
 
     def _emit_spread_like(self, node):
         self._write('...')
-        if node.argument:
-            self.visit(node.argument)
+        self._emit_element(node.argument, True)
 
     visit_JsSpreadElement = _emit_spread_like
     visit_JsRestElement = _emit_spread_like
@@ -276,47 +303,37 @@ class JsSynthesizer(Synthesizer):
             self._write(node.operator)
             if node.operator in _WORD_UNARY_OPS:
                 self._write(' ')
-            if node.operand:
-                self.visit(node.operand)
+            self._emit_child(node.operand, node)
         else:
-            if node.operand:
-                self.visit(node.operand)
+            self._emit_child(node.operand, node)
             self._write(node.operator)
 
     def visit_JsUpdateExpression(self, node: JsUpdateExpression):
         if node.prefix:
             self._write(node.operator)
-            if node.argument:
-                self.visit(node.argument)
+            self._emit_child(node.argument, node)
         else:
-            if node.argument:
-                self.visit(node.argument)
+            self._emit_child(node.argument, node)
             self._write(node.operator)
 
     def _emit_binary_like(self, node):
-        if node.left:
-            self.visit(node.left)
+        self._emit_child(node.left, node)
         self._write(F' {node.operator} ')
-        if node.right:
-            self.visit(node.right)
+        self._emit_child(node.right, node)
 
     visit_JsBinaryExpression = _emit_binary_like
     visit_JsLogicalExpression = _emit_binary_like
     visit_JsAssignmentExpression = _emit_binary_like
 
     def visit_JsConditionalExpression(self, node: JsConditionalExpression):
-        if node.test:
-            self.visit(node.test)
+        self._emit_child(node.test, node)
         self._write(' ? ')
-        if node.consequent:
-            self.visit(node.consequent)
+        self._emit_child(node.consequent, node)
         self._write(' : ')
-        if node.alternate:
-            self.visit(node.alternate)
+        self._emit_child(node.alternate, node)
 
     def visit_JsMemberExpression(self, node: JsMemberExpression):
-        if node.object:
-            self.visit(node.object)
+        self._emit_child(node.object, node)
         if node.computed:
             if node.optional:
                 self._write('?.')
@@ -334,21 +351,19 @@ class JsSynthesizer(Synthesizer):
                 self.visit(node.property)
 
     def visit_JsCallExpression(self, node: JsCallExpression):
-        if node.callee:
-            self.visit(node.callee)
+        self._emit_child(node.callee, node)
         if node.optional:
             self._write('?.')
         self._write('(')
-        if self._comma_separated(node.arguments):
+        if self._comma_separated(node.arguments, wrap_sequences=True):
             self._newline()
         self._write(')')
 
     def visit_JsNewExpression(self, node: JsNewExpression):
         self._write('new ')
-        if node.callee:
-            self.visit(node.callee)
+        self._emit_child(node.callee, node)
         self._write('(')
-        if self._comma_separated(node.arguments):
+        if self._comma_separated(node.arguments, wrap_sequences=True):
             self._newline()
         self._write(')')
 
@@ -361,16 +376,14 @@ class JsSynthesizer(Synthesizer):
             self._write('*')
         if node.argument:
             self._write(' ')
-            self.visit(node.argument)
+            self._emit_element(node.argument, True)
 
     def visit_JsAwaitExpression(self, node: JsAwaitExpression):
         self._write('await ')
-        if node.argument:
-            self.visit(node.argument)
+        self._emit_child(node.argument, node)
 
     def visit_JsTaggedTemplateExpression(self, node: JsTaggedTemplateExpression):
-        if node.tag:
-            self.visit(node.tag)
+        self._emit_child(node.tag, node)
         if node.quasi:
             self.visit(node.quasi)
 
@@ -403,6 +416,10 @@ class JsSynthesizer(Synthesizer):
         if node.body:
             if isinstance(node.body, JsBlockStatement):
                 self._emit_block(node.body.body)
+            elif isinstance(node.body, JsSequenceExpression) or statement_needs_parens(node.body):
+                self._write('(')
+                self.visit(node.body)
+                self._write(')')
             else:
                 self.visit(node.body)
 
@@ -413,7 +430,7 @@ class JsSynthesizer(Synthesizer):
             self.visit(node.id)
         if node.super_class:
             self._write(' extends ')
-            self.visit(node.super_class)
+            self._emit_child(node.super_class, node)
         self._write(' ')
         if node.body:
             self.visit(node.body)
@@ -437,8 +454,7 @@ class JsSynthesizer(Synthesizer):
         if node.left:
             self.visit(node.left)
         self._write(' = ')
-        if node.right:
-            self.visit(node.right)
+        self._emit_element(node.right, True)
 
     def visit_JsClassBody(self, node: JsClassBody):
         self._write('{')
@@ -471,13 +487,13 @@ class JsSynthesizer(Synthesizer):
         self._emit_key(node.key, node.computed)
         if node.value:
             self._write(' = ')
-            self.visit(node.value)
+            self._emit_element(node.value, True)
         self._write(';')
 
     def visit_JsExpressionStatement(self, node: JsExpressionStatement):
         expr = node.expression
         if expr is not None:
-            if isinstance(expr, (JsObjectExpression, JsFunctionExpression)):
+            if statement_needs_parens(expr):
                 self._write('(')
                 self.visit(expr)
                 self._write(')')
@@ -501,7 +517,7 @@ class JsSynthesizer(Synthesizer):
             self.visit(node.id)
         if node.init:
             self._write(' = ')
-            self.visit(node.init)
+            self._emit_element(node.init, True)
 
     def visit_JsIfStatement(self, node: JsIfStatement):
         self._write('if (')

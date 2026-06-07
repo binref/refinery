@@ -39,6 +39,7 @@ from refinery.lib.scripts.js.model import (
     JsBooleanLiteral,
     JsCallExpression,
     JsClassDeclaration,
+    JsClassExpression,
     JsConditionalExpression,
     JsExpressionStatement,
     JsFunctionDeclaration,
@@ -46,7 +47,6 @@ from refinery.lib.scripts.js.model import (
     JsIdentifier,
     JsLogicalExpression,
     JsMemberExpression,
-    JsNewExpression,
     JsNullLiteral,
     JsNumericLiteral,
     JsObjectExpression,
@@ -55,149 +55,12 @@ from refinery.lib.scripts.js.model import (
     JsScript,
     JsSequenceExpression,
     JsStringLiteral,
-    JsThisExpression,
     JsUnaryExpression,
-    JsUpdateExpression,
     JsVariableDeclaration,
     JsVariableDeclarator,
     JsVarKind,
 )
-
-_BINARY_PRECEDENCE = {
-    '||' : 3,  # noqa
-    '??' : 3,  # noqa
-    '&&' : 4,  # noqa
-    '|'  : 5,  # noqa
-    '^'  : 6,  # noqa
-    '&'  : 7,  # noqa
-    '==' : 8,  # noqa
-    '!=' : 8,  # noqa
-    '===': 8,
-    '!==': 8,
-    '<'  : 9,  # noqa
-    '>'  : 9,  # noqa
-    '<=' : 9,  # noqa
-    '>=' : 9,  # noqa
-    'in' : 9,  # noqa
-    'instanceof': 9,
-    '<<' : 10, # noqa
-    '>>' : 10, # noqa
-    '>>>': 10,
-    '+'  : 11, # noqa
-    '-'  : 11, # noqa
-    '*'  : 12, # noqa
-    '/'  : 12, # noqa
-    '%'  : 12, # noqa
-    '**' : 13, # noqa
-}
-
-_ASSIGN_PRECEDENCE = 2
-_CONDITIONAL_PRECEDENCE = 2
-_UNARY_PRECEDENCE = 14
-_PRIMARY_PRECEDENCE = 100
-
-
-def _expression_precedence(node: Node) -> int:
-    """
-    Return the operator precedence of *node* on the JavaScript scale used by `_parens_required`.
-    Primary expressions (literals, identifiers, member access, calls, etc.) return a value high
-    enough that they never need parenthesisation.
-    """
-    if isinstance(node, (JsBinaryExpression, JsLogicalExpression)):
-        return _BINARY_PRECEDENCE.get(node.operator, 0)
-    if isinstance(node, JsAssignmentExpression):
-        return _ASSIGN_PRECEDENCE
-    if isinstance(node, JsConditionalExpression):
-        return _CONDITIONAL_PRECEDENCE
-    if isinstance(node, JsUnaryExpression):
-        return _UNARY_PRECEDENCE
-    return _PRIMARY_PRECEDENCE
-
-
-def _leading_sign(node: Node) -> str | None:
-    """
-    Return `+` or `-` if *node* is synthesized starting with that sign character, otherwise `None`.
-    Such a node cannot directly follow a prefix `+`/`-` operator without an intervening paren,
-    since the synthesizer emits no separator and the two would merge into a `++`/`--` token.
-    """
-    if isinstance(node, JsUnaryExpression) and node.operator in ('+', '-'):
-        return node.operator
-    if isinstance(node, JsUpdateExpression) and node.prefix and node.operator in ('++', '--'):
-        return node.operator[0]
-    return None
-
-
-def _safe_new_callee(node: Node) -> bool:
-    """
-    Return whether *node* may serve as the callee of a `new` expression without parentheses. The
-    callee of `new` is a member-access chain, so a call anywhere in its left spine (or any operator
-    expression) would re-bind the `new` and must keep its parentheses.
-    """
-    while isinstance(node, JsMemberExpression):
-        node = node.object
-    return isinstance(node, (JsIdentifier, JsThisExpression))
-
-
-def _parens_required(inner: Node, parent: Node | None, paren_node: Node) -> bool:
-    """
-    Return whether the `JsParenthesizedExpression` *paren_node* (currently wrapping *inner* inside
-    *parent*) must be kept to preserve the program's meaning. The synthesizer does not add
-    precedence-driven parentheses, so the AST must retain a paren node whenever removing it would
-    let *inner* re-associate with surrounding operators in *parent*.
-    """
-    if parent is None:
-        return False
-    inner_p = _expression_precedence(inner)
-    if isinstance(parent, (JsBinaryExpression, JsLogicalExpression)):
-        outer_p = _BINARY_PRECEDENCE.get(parent.operator, 0)
-        if (
-            parent.operator == '**'
-            and parent.left is paren_node
-            and isinstance(inner, JsUnaryExpression)
-        ):
-            return True
-        if inner_p > outer_p:
-            return False
-        if inner_p < outer_p:
-            return True
-        right_associative = parent.operator == '**'
-        if right_associative:
-            return parent.left is paren_node
-        return parent.right is paren_node
-    if isinstance(parent, JsUnaryExpression):
-        if parent.operator in ('+', '-') and _leading_sign(inner) == parent.operator:
-            return True
-        return inner_p < _UNARY_PRECEDENCE
-    if isinstance(parent, JsConditionalExpression):
-        if parent.test is paren_node:
-            return inner_p <= _CONDITIONAL_PRECEDENCE
-        return False
-    if isinstance(parent, JsAssignmentExpression):
-        if parent.left is paren_node:
-            return False
-        return inner_p < _ASSIGN_PRECEDENCE
-    if isinstance(parent, JsMemberExpression):
-        if parent.object is paren_node:
-            if isinstance(inner, JsNumericLiteral):
-                return not parent.computed
-            if not isinstance(inner, (
-                JsIdentifier,
-                JsMemberExpression,
-                JsCallExpression,
-                JsArrayExpression,
-            )):
-                return inner_p < _PRIMARY_PRECEDENCE
-        return False
-    if isinstance(parent, JsCallExpression):
-        if parent.callee is paren_node:
-            return inner_p < _PRIMARY_PRECEDENCE
-        return False
-    if isinstance(parent, JsNewExpression):
-        if parent.callee is paren_node:
-            return not _safe_new_callee(inner)
-        return False
-    return False
-
+from refinery.lib.scripts.js.precedence import parens_required
 
 _OBJECT_PROTO_PROPERTIES = frozenset({
     '__defineGetter__',
@@ -655,9 +518,10 @@ class JsSimplifications(Transformer):
             JsFunctionExpression,
             JsArrowFunctionExpression,
             JsObjectExpression,
+            JsClassExpression,
         )):
             return None
-        if _parens_required(inner, node.parent, node):
+        if parens_required(inner, node.parent, node):
             return None
         return inner
 

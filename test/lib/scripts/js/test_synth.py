@@ -2,6 +2,39 @@ from __future__ import annotations
 
 from test import TestBase
 
+from refinery.lib.scripts.js.model import (
+    JsArrowFunctionExpression,
+    JsAssignmentExpression,
+    JsAssignmentPattern,
+    JsAwaitExpression,
+    JsBinaryExpression,
+    JsBlockStatement,
+    JsCallExpression,
+    JsClassBody,
+    JsClassExpression,
+    JsConditionalExpression,
+    JsExpressionStatement,
+    JsFunctionExpression,
+    JsIdentifier,
+    JsLogicalExpression,
+    JsMemberExpression,
+    JsNumericLiteral,
+    JsObjectExpression,
+    JsObjectPattern,
+    JsProperty,
+    JsPropertyDefinition,
+    JsScript,
+    JsSequenceExpression,
+    JsSpreadElement,
+    JsTaggedTemplateExpression,
+    JsTemplateElement,
+    JsTemplateLiteral,
+    JsUpdateExpression,
+    JsVariableDeclaration,
+    JsVariableDeclarator,
+    JsVarKind,
+    JsYieldExpression,
+)
 from refinery.lib.scripts.js.parser import JsParser
 from refinery.lib.scripts.js.synth import JsSynthesizer
 
@@ -234,6 +267,228 @@ class TestJsSynthesizer(TestBase):
         source = 'x = f(\n  alphaaaaaaaaa,\n  -680876936\n);'
         out = JsSynthesizer().convert(JsParser(source).parse())
         self.assertIn('-680876936', out)
+
+    def _assert_synth_valid(self, node, expected: str):
+        out = JsSynthesizer().convert(node)
+        self.assertEqual(expected, out)
+        statement = out if out.endswith(';') else out + ';'
+        self.assertEqual(statement, JsSynthesizer().convert(JsParser(out).parse()))
+
+    def test_paren_arrow_in_callee_position(self):
+        arrow = JsArrowFunctionExpression(params=[], body=JsIdentifier(name='x'))
+        self._assert_synth_valid(JsCallExpression(callee=arrow, arguments=[]), '(() => x)()')
+
+    def test_paren_arrow_in_member_object(self):
+        arrow = JsArrowFunctionExpression(params=[], body=JsIdentifier(name='x'))
+        node = JsMemberExpression(object=arrow, property=JsIdentifier(name='foo'), computed=False)
+        self._assert_synth_valid(node, '(() => x).foo')
+
+    def test_paren_binary_in_member_object(self):
+        binop = JsBinaryExpression(
+            left=JsIdentifier(name='a'), operator='+', right=JsIdentifier(name='b'))
+        node = JsMemberExpression(object=binop, property=JsIdentifier(name='c'), computed=False)
+        self._assert_synth_valid(node, '(a + b).c')
+
+    def test_paren_sequence_as_call_argument(self):
+        seq = JsSequenceExpression(
+            expressions=[JsIdentifier(name='a'), JsIdentifier(name='b')])
+        node = JsCallExpression(callee=JsIdentifier(name='f'), arguments=[seq])
+        self._assert_synth_valid(node, 'f((a, b))')
+
+    def test_paren_arrow_object_body(self):
+        node = JsArrowFunctionExpression(params=[], body=JsObjectExpression(properties=[]))
+        self._assert_synth_valid(node, '() => ({})')
+
+    def test_paren_function_expression_at_statement_start(self):
+        fn = JsFunctionExpression(params=[], body=JsBlockStatement(body=[]))
+        call = JsCallExpression(callee=fn, arguments=[])
+        script = JsScript(body=[JsExpressionStatement(expression=call)])
+        self._assert_synth_valid(script, '(function() {}());')
+
+    def test_paren_arrow_body_object_on_left_spine(self):
+        body = JsMemberExpression(
+            object=JsObjectExpression(properties=[]),
+            property=JsIdentifier(name='x'),
+            computed=False,
+        )
+        self._assert_synth_valid(
+            JsArrowFunctionExpression(params=[], body=body), '() => ({}.x)')
+
+    def test_paren_arrow_body_function_on_left_spine(self):
+        fn = JsFunctionExpression(params=[], body=JsBlockStatement(body=[]))
+        body = JsCallExpression(callee=fn, arguments=[])
+        self._assert_synth_valid(
+            JsArrowFunctionExpression(params=[], body=body), '() => (function() {}())')
+
+    def test_paren_await_of_binary(self):
+        node = JsAwaitExpression(argument=JsBinaryExpression(
+            left=JsIdentifier(name='a'), operator='+', right=JsIdentifier(name='b')))
+        self._assert_synth_valid(node, 'await (a + b)')
+
+    def test_paren_member_on_await(self):
+        node = JsMemberExpression(
+            object=JsAwaitExpression(argument=JsIdentifier(name='a')),
+            property=JsIdentifier(name='b'),
+            computed=False,
+        )
+        self._assert_synth_valid(node, '(await a).b')
+
+    def test_paren_sequence_in_conditional_alternate(self):
+        seq = JsSequenceExpression(
+            expressions=[JsIdentifier(name='c'), JsIdentifier(name='d')])
+        node = JsConditionalExpression(
+            test=JsIdentifier(name='a'), consequent=JsIdentifier(name='b'), alternate=seq)
+        self._assert_synth_valid(node, 'a ? b : (c, d)')
+
+    def test_paren_operator_tag_of_tagged_template(self):
+        quasi = JsTemplateLiteral(quasis=[JsTemplateElement(value='x')], expressions=[])
+        tag = JsBinaryExpression(
+            left=JsIdentifier(name='a'), operator='+', right=JsIdentifier(name='b'))
+        self._assert_synth_valid(JsTaggedTemplateExpression(tag=tag, quasi=quasi), '(a + b)`x`')
+
+    def test_paren_nullish_nested_under_logical_or(self):
+        coalesce = JsLogicalExpression(
+            left=JsIdentifier(name='a'), operator='??', right=JsIdentifier(name='b'))
+        node = JsLogicalExpression(left=coalesce, operator='||', right=JsIdentifier(name='c'))
+        self._assert_synth_valid(node, '(a ?? b) || c')
+
+    def test_paren_logical_and_nested_under_nullish(self):
+        conjunction = JsLogicalExpression(
+            left=JsIdentifier(name='b'), operator='&&', right=JsIdentifier(name='c'))
+        node = JsLogicalExpression(left=JsIdentifier(name='a'), operator='??', right=conjunction)
+        self._assert_synth_valid(node, 'a ?? (b && c)')
+
+    def test_no_paren_nullish_chain(self):
+        coalesce = JsLogicalExpression(
+            left=JsIdentifier(name='a'), operator='??', right=JsIdentifier(name='b'))
+        node = JsLogicalExpression(left=coalesce, operator='??', right=JsIdentifier(name='c'))
+        self._assert_synth_valid(node, 'a ?? b ?? c')
+
+    def test_paren_prefix_update_as_exponent_left_operand(self):
+        node = JsBinaryExpression(
+            left=JsUpdateExpression(prefix=True, operator='++', argument=JsIdentifier(name='x')),
+            operator='**',
+            right=JsNumericLiteral(value=2, raw='2'),
+        )
+        self._assert_synth_valid(node, '(++x) ** 2')
+
+    def test_paren_await_as_exponent_left_operand(self):
+        node = JsBinaryExpression(
+            left=JsAwaitExpression(argument=JsIdentifier(name='x')),
+            operator='**',
+            right=JsNumericLiteral(value=2, raw='2'),
+        )
+        self._assert_synth_valid(node, '(await x) ** 2')
+
+    def test_paren_sequence_as_yield_argument(self):
+        seq = JsSequenceExpression(expressions=[JsIdentifier(name='a'), JsIdentifier(name='b')])
+        node = JsYieldExpression(argument=seq, delegate=False)
+        self.assertEqual('yield (a, b)', JsSynthesizer().convert(node))
+
+    def test_paren_sequence_as_spread_argument(self):
+        seq = JsSequenceExpression(expressions=[JsIdentifier(name='a'), JsIdentifier(name='b')])
+        node = JsCallExpression(
+            callee=JsIdentifier(name='f'),
+            arguments=[JsSpreadElement(argument=seq)],
+        )
+        self._assert_synth_valid(node, 'f(...(a, b))')
+
+    def test_paren_sequence_as_variable_init(self):
+        seq = JsSequenceExpression(expressions=[JsIdentifier(name='a'), JsIdentifier(name='b')])
+        node = JsVariableDeclaration(
+            kind=JsVarKind.VAR,
+            declarations=[JsVariableDeclarator(id=JsIdentifier(name='x'), init=seq)],
+        )
+        self._assert_synth_valid(node, 'var x = (a, b);')
+
+    def test_paren_sequence_as_assignment_pattern_default(self):
+        seq = JsSequenceExpression(expressions=[JsIdentifier(name='a'), JsIdentifier(name='b')])
+        node = JsFunctionExpression(
+            params=[JsAssignmentPattern(left=JsIdentifier(name='x'), right=seq)],
+            body=JsBlockStatement(body=[]),
+        )
+        self.assertEqual('function(x = (a, b)) {}', JsSynthesizer().convert(node))
+
+    def test_paren_sequence_as_property_value(self):
+        seq = JsSequenceExpression(expressions=[JsIdentifier(name='a'), JsIdentifier(name='b')])
+        node = JsObjectExpression(properties=[JsProperty(key=JsIdentifier(name='k'), value=seq)])
+        self.assertIn('k: (a, b)', JsSynthesizer().convert(node))
+
+    def test_paren_sequence_as_class_field_value(self):
+        seq = JsSequenceExpression(expressions=[JsIdentifier(name='a'), JsIdentifier(name='b')])
+        node = JsClassExpression(body=JsClassBody(body=[
+            JsPropertyDefinition(key=JsIdentifier(name='x'), value=seq),
+        ]))
+        self.assertIn('x = (a, b);', JsSynthesizer().convert(node))
+
+    def test_paren_prefix_update_in_member_object(self):
+        node = JsMemberExpression(
+            object=JsUpdateExpression(prefix=True, operator='++', argument=JsIdentifier(name='x')),
+            property=JsIdentifier(name='foo'),
+            computed=False,
+        )
+        self._assert_synth_valid(node, '(++x).foo')
+
+    def test_paren_postfix_update_in_member_object(self):
+        node = JsMemberExpression(
+            object=JsUpdateExpression(prefix=False, operator='++', argument=JsIdentifier(name='x')),
+            property=JsIdentifier(name='foo'),
+            computed=False,
+        )
+        self._assert_synth_valid(node, '(x++).foo')
+
+    def test_no_paren_postfix_update_as_exponent_left_operand(self):
+        node = JsBinaryExpression(
+            left=JsUpdateExpression(prefix=False, operator='++', argument=JsIdentifier(name='x')),
+            operator='**',
+            right=JsNumericLiteral(value=2, raw='2'),
+        )
+        self._assert_synth_valid(node, 'x++ ** 2')
+
+    def test_paren_sequence_in_conditional_consequent(self):
+        seq = JsSequenceExpression(
+            expressions=[JsIdentifier(name='b'), JsIdentifier(name='c')])
+        node = JsConditionalExpression(
+            test=JsIdentifier(name='a'), consequent=seq, alternate=JsIdentifier(name='d'))
+        self._assert_synth_valid(node, 'a ? (b, c) : d')
+
+    def test_paren_arrow_as_binary_left_operand(self):
+        arrow = JsArrowFunctionExpression(params=[], body=JsIdentifier(name='x'))
+        node = JsBinaryExpression(left=arrow, operator='+', right=JsIdentifier(name='b'))
+        self._assert_synth_valid(node, '(() => x) + b')
+
+    def test_paren_arrow_as_binary_right_operand(self):
+        arrow = JsArrowFunctionExpression(params=[], body=JsIdentifier(name='x'))
+        node = JsBinaryExpression(
+            left=JsIdentifier(name='a'), operator='&&', right=arrow)
+        self._assert_synth_valid(node, 'a && (() => x)')
+
+    def test_paren_assignment_as_binary_right_operand(self):
+        assign = JsAssignmentExpression(
+            left=JsIdentifier(name='b'), operator='=', right=JsIdentifier(name='c'))
+        node = JsBinaryExpression(left=JsIdentifier(name='a'), operator='+', right=assign)
+        self._assert_synth_valid(node, 'a + (b = c)')
+
+    def test_paren_same_precedence_right_operand(self):
+        inner = JsBinaryExpression(
+            left=JsIdentifier(name='b'), operator='-', right=JsIdentifier(name='c'))
+        node = JsBinaryExpression(left=JsIdentifier(name='a'), operator='-', right=inner)
+        self._assert_synth_valid(node, 'a - (b - c)')
+
+    def test_paren_arrow_body_destructuring_assignment(self):
+        body = JsAssignmentExpression(
+            left=JsObjectPattern(properties=[
+                JsProperty(
+                    key=JsIdentifier(name='a'),
+                    value=JsIdentifier(name='a'),
+                    shorthand=True,
+                ),
+            ]),
+            operator='=',
+            right=JsIdentifier(name='obj'),
+        )
+        node = JsArrowFunctionExpression(params=[], body=body)
+        self._assert_synth_valid(node, '() => ({ a } = obj)')
 
     def test_break_statement(self):
         self._round_trip('while (true) { break; }')

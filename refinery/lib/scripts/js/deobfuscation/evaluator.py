@@ -15,6 +15,7 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     extract_literal_value,
     has_remaining_references,
     is_reference,
+    references_receiver_this,
     value_to_node,
     walk_scope,
 )
@@ -39,7 +40,6 @@ from refinery.lib.scripts.js.model import (
     JsStringLiteral,
     JsSwitchCase,
     JsSwitchStatement,
-    JsThisExpression,
     JsVariableDeclaration,
     JsVariableDeclarator,
 )
@@ -87,11 +87,11 @@ def _is_pure_function(
     if isinstance(func, JsFunctionDeclaration) and isinstance(func.id, JsIdentifier):
         func_own_name = func.id.name
         local_names.add(func_own_name)
+    if references_receiver_this(body):
+        return False
     if _is_switch_return_pattern(body, local_names):
         return True
     for node in walk_scope(body):
-        if isinstance(node, JsThisExpression):
-            return False
         if isinstance(node, JsAssignmentExpression):
             if isinstance(node.left, JsIdentifier) and node.left.name == func_own_name:
                 return False
