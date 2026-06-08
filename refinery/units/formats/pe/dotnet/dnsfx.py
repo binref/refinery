@@ -7,7 +7,7 @@ from refinery.units.compression.zl import zl
 from refinery.units.formats import PathExtractorUnit, UnpackResult
 
 
-class dnsfx(PathExtractorUnit):
+class dnsfx(PathExtractorUnit, docs='{0}{p}{PathExtractorUnit}'):
     """
     Extracts files from .NET single file applications.
     """
