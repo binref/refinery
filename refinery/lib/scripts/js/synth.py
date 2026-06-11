@@ -276,11 +276,14 @@ class JsSynthesizer(Synthesizer):
     def visit_JsProperty(self, node: JsProperty):
         if node.kind in (JsPropertyKind.GET, JsPropertyKind.SET):
             self._write(F'{node.kind.value} ')
+        if node.method and node.value and isinstance(node.value, JsFunctionExpression):
+            if node.value.is_async:
+                self._write('async ')
+            if node.value.generator:
+                self._write('*')
         self._emit_key(node.key, node.computed)
         if node.method:
             if node.value and isinstance(node.value, JsFunctionExpression):
-                if node.value.generator:
-                    self._write('*')
                 self._emit_params(node.value.params)
                 self._write(' ')
                 if node.value.body:
@@ -472,10 +475,13 @@ class JsSynthesizer(Synthesizer):
             self._write('static ')
         if node.kind in (JsMethodKind.GET, JsMethodKind.SET):
             self._write(F'{node.kind.value} ')
-        self._emit_key(node.key, node.computed)
         if node.value and isinstance(node.value, JsFunctionExpression):
+            if node.value.is_async:
+                self._write('async ')
             if node.value.generator:
                 self._write('*')
+        self._emit_key(node.key, node.computed)
+        if node.value and isinstance(node.value, JsFunctionExpression):
             self._emit_params(node.value.params)
             self._write(' ')
             if node.value.body:

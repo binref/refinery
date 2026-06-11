@@ -365,6 +365,10 @@ def is_valid_identifier(name: str) -> bool:
     return bool(SIMPLE_IDENTIFIER.match(name)) and name not in JS_RESERVED
 
 
+def is_valid_property_key(name: str) -> bool:
+    return bool(SIMPLE_IDENTIFIER.match(name))
+
+
 def is_simple_expression(node: Node) -> bool:
     """
     Check whether a node is a side-effect-free leaf expression: a literal value, an identifier, or

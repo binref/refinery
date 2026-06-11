@@ -21,6 +21,7 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     is_statically_evaluable,
     is_truthy,
     is_valid_identifier,
+    is_valid_property_key,
     js_parse_int,
     make_numeric_literal,
     make_string_literal,
@@ -51,6 +52,7 @@ from refinery.lib.scripts.js.model import (
     JsNumericLiteral,
     JsObjectExpression,
     JsParenthesizedExpression,
+    JsProperty,
     JsReturnStatement,
     JsScript,
     JsSequenceExpression,
@@ -561,6 +563,21 @@ class JsSimplifications(Transformer):
                 node._adopt(node.property)
                 self.mark_changed()
                 return None
+        return None
+
+    def visit_JsProperty(self, node: JsProperty):
+        self.generic_visit(node)
+        if node.computed and node.key is not None:
+            key_str = string_value(node.key)
+            if (
+                key_str is not None
+                and is_valid_property_key(key_str)
+                and (node.method or key_str != '__proto__')
+            ):
+                node.computed = False
+                node.key = JsIdentifier(name=key_str)
+                node._adopt(node.key)
+                self.mark_changed()
         return None
 
     def visit_JsUnaryExpression(self, node: JsUnaryExpression):

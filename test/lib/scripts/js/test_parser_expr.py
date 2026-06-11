@@ -23,6 +23,7 @@ from refinery.lib.scripts.js.model import (
     JsObjectExpression,
     JsParenthesizedExpression,
     JsProperty,
+    JsPropertyKind,
     JsRegExpLiteral,
     JsScript,
     JsSequenceExpression,
@@ -365,3 +366,79 @@ class TestJsParserExpressions(TestBase):
         obj = expr.expression
         self.assertIsInstance(obj, JsObjectExpression)
         self.assertTrue(obj.properties[0].computed)
+
+    def test_computed_getter(self):
+        expr = self._parse_expr('({ get ["a"]() { return 1; } })')
+        obj = expr.expression
+        self.assertIsInstance(obj, JsObjectExpression)
+        prop = obj.properties[0]
+        self.assertIsInstance(prop, JsProperty)
+        self.assertTrue(prop.computed)
+        self.assertTrue(prop.method)
+        self.assertEqual(prop.kind, JsPropertyKind.GET)
+        self.assertIsInstance(prop.key, JsStringLiteral)
+        self.assertEqual(prop.key.value, 'a')
+
+    def test_computed_setter(self):
+        expr = self._parse_expr('({ set ["a"](v) {} })')
+        obj = expr.expression
+        prop = obj.properties[0]
+        self.assertTrue(prop.computed)
+        self.assertEqual(prop.kind, JsPropertyKind.SET)
+        self.assertIsInstance(prop.key, JsStringLiteral)
+        self.assertEqual(prop.key.value, 'a')
+
+    def test_computed_async_method(self):
+        expr = self._parse_expr('({ async ["m"]() {} })')
+        obj = expr.expression
+        prop = obj.properties[0]
+        self.assertTrue(prop.computed)
+        self.assertIsInstance(prop.value, JsFunctionExpression)
+        self.assertTrue(prop.value.is_async)
+        self.assertIsInstance(prop.key, JsStringLiteral)
+        self.assertEqual(prop.key.value, 'm')
+
+    def test_method_named_get(self):
+        expr = self._parse_expr('({ get(x) { return x; } })')
+        obj = expr.expression
+        self.assertIsInstance(obj, JsObjectExpression)
+        prop = obj.properties[0]
+        self.assertIsInstance(prop, JsProperty)
+        self.assertTrue(prop.method)
+        self.assertFalse(prop.shorthand)
+        self.assertEqual(prop.kind, JsPropertyKind.INIT)
+        self.assertIsInstance(prop.key, JsIdentifier)
+        self.assertEqual(prop.key.name, 'get')
+        self.assertIsInstance(prop.value, JsFunctionExpression)
+
+    def test_method_named_set(self):
+        expr = self._parse_expr('({ set(v) {} })')
+        obj = expr.expression
+        prop = obj.properties[0]
+        self.assertIsInstance(prop, JsProperty)
+        self.assertTrue(prop.method)
+        self.assertFalse(prop.shorthand)
+        self.assertEqual(prop.kind, JsPropertyKind.INIT)
+        self.assertIsInstance(prop.key, JsIdentifier)
+        self.assertEqual(prop.key.name, 'set')
+
+    def test_generator_method_named_get(self):
+        expr = self._parse_expr('({ *get() { yield 1; } })')
+        obj = expr.expression
+        prop = obj.properties[0]
+        self.assertIsInstance(prop, JsProperty)
+        self.assertTrue(prop.method)
+        self.assertEqual(prop.kind, JsPropertyKind.INIT)
+        self.assertIsInstance(prop.key, JsIdentifier)
+        self.assertEqual(prop.key.name, 'get')
+        self.assertIsInstance(prop.value, JsFunctionExpression)
+        self.assertTrue(prop.value.generator)
+
+    def test_generator_method_named_set(self):
+        expr = self._parse_expr('({ *set() { yield 1; } })')
+        obj = expr.expression
+        prop = obj.properties[0]
+        self.assertEqual(prop.kind, JsPropertyKind.INIT)
+        self.assertIsInstance(prop.key, JsIdentifier)
+        self.assertEqual(prop.key.name, 'set')
+        self.assertTrue(prop.value.generator)

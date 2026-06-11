@@ -140,6 +140,30 @@ class TestJsSynthesizer(TestBase):
     def test_object_shorthand(self):
         self._round_trip('({ x });')
 
+    def test_object_method(self):
+        self._round_trip('({ foo() {} });')
+
+    def test_object_getter(self):
+        self._round_trip('({ get x() {} });')
+
+    def test_object_setter(self):
+        self._round_trip('({ set x(v) {} });')
+
+    def test_object_generator_method(self):
+        self._round_trip('({ *foo() { yield 1; } });')
+
+    def test_object_async_method(self):
+        self._round_trip('({ async foo() { await bar(); } });')
+
+    def test_object_method_named_get(self):
+        self.assertEqual('({ get() {} });', self._round_trip('({ get() {} });'))
+
+    def test_object_method_named_set(self):
+        self.assertEqual('({ set(v) {} });', self._round_trip('({ set(v) {} });'))
+
+    def test_object_generator_method_named_get(self):
+        self.assertEqual('({ *get() {} });', self._round_trip('({ *get() {} });'))
+
     def test_spread_element(self):
         self._round_trip('[...arr];')
 
@@ -196,6 +220,15 @@ class TestJsSynthesizer(TestBase):
 
     def test_class_getter_setter(self):
         self._round_trip('class C { get x() {} set x(v) {} }')
+
+    def test_class_generator_method(self):
+        self._round_trip('class C { *gen() { yield 1; } }')
+
+    def test_class_async_method(self):
+        self._round_trip('class C { async fetch() { await req(); } }')
+
+    def test_class_async_generator_method(self):
+        self._round_trip('class C { async *stream() { yield 1; } }')
 
     def test_variable_var(self):
         self._round_trip('var x = 1;')

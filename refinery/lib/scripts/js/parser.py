@@ -717,6 +717,7 @@ class JsParser:
 
         kind = JsMethodKind.METHOD
         is_generator = False
+        is_async = False
 
         if self._eat(JsTokenKind.STAR):
             is_generator = True
@@ -741,15 +742,11 @@ class JsParser:
             if self._at(JsTokenKind.LPAREN):
                 key = JsIdentifier(name='async', offset=saved.offset)
                 return self._finish_class_member(key, is_static, is_generator, offset)
+            is_async = True
+            if self._eat(JsTokenKind.STAR):
+                is_generator = True
 
-        computed = False
-        if self._at(JsTokenKind.LBRACKET):
-            computed = True
-            self._advance()
-            key = self._parse_assignment_expression()
-            self._expect(JsTokenKind.RBRACKET)
-        else:
-            key = self._parse_property_name()
+        key, computed = self._parse_property_key()
 
         if kind == JsMethodKind.METHOD and not is_generator and not self._at(JsTokenKind.LPAREN):
             value = None
@@ -764,7 +761,7 @@ class JsParser:
                 offset=offset,
             )
 
-        return self._finish_class_member(key, is_static, is_generator, offset, kind, computed)
+        return self._finish_class_member(key, is_static, is_generator, offset, kind, computed, is_async=is_async)
 
     def _finish_class_member(
         self,
@@ -774,6 +771,7 @@ class JsParser:
         offset: int,
         kind: JsMethodKind = JsMethodKind.METHOD,
         computed: bool = False,
+        is_async: bool = False,
     ) -> JsMethodDefinition:
         func_offset = self._current.offset
         params = self._parse_formal_parameters()
@@ -782,6 +780,7 @@ class JsParser:
             params=params,
             body=body,
             generator=is_generator,
+            is_async=is_async,
             offset=func_offset,
         )
         if isinstance(key, JsIdentifier) and key.name == 'constructor' and kind == JsMethodKind.METHOD:
@@ -1341,12 +1340,18 @@ class JsParser:
         offset = self._current.offset
         is_generator = bool(self._eat(JsTokenKind.STAR))
 
-        if self._at(JsTokenKind.IDENTIFIER) and self._current.value in ('get', 'set'):
+        if (
+            self._at(JsTokenKind.IDENTIFIER)
+            and self._current.value in ('get', 'set')
+            and not is_generator
+        ):
             kind_val = _PROP_KIND_MAP[self._current.value]
             saved = self._current
             self._advance()
+            if self._at(JsTokenKind.LPAREN):
+                key = JsIdentifier(name=saved.value, offset=saved.offset)
+                return self._make_method_property(key, JsPropertyKind.INIT, False, offset)
             if self._at(
-                JsTokenKind.LPAREN,
                 JsTokenKind.COLON,
                 JsTokenKind.COMMA,
                 JsTokenKind.RBRACE,
@@ -1354,8 +1359,8 @@ class JsParser:
             ):
                 key = JsIdentifier(name=saved.value, offset=saved.offset)
                 return self._finish_property_value(key, False, offset)
-            key = self._parse_property_name()
-            return self._make_method_property(key, kind_val, False, offset)
+            key, computed = self._parse_property_key()
+            return self._make_method_property(key, kind_val, False, offset, computed=computed)
 
         if self._at(JsTokenKind.ASYNC) and not is_generator:
             saved = self._current
@@ -1373,17 +1378,11 @@ class JsParser:
                 key = JsIdentifier(name='async', offset=saved.offset)
                 return self._finish_property_value(key, False, offset)
             gen = bool(self._eat(JsTokenKind.STAR))
-            key = self._parse_property_name()
-            return self._make_method_property(key, JsPropertyKind.INIT, gen, offset, is_async=True)
+            key, computed = self._parse_property_key()
+            return self._make_method_property(
+                key, JsPropertyKind.INIT, gen, offset, computed=computed, is_async=True)
 
-        computed = False
-        if self._at(JsTokenKind.LBRACKET):
-            computed = True
-            self._advance()
-            key = self._parse_assignment_expression()
-            self._expect(JsTokenKind.RBRACKET)
-        else:
-            key = self._parse_property_name()
+        key, computed = self._parse_property_key()
 
         if is_generator or self._at(JsTokenKind.LPAREN):
             return self._make_method_property(key, JsPropertyKind.INIT, is_generator, offset, computed=computed)
@@ -1423,6 +1422,14 @@ class JsParser:
         return JsProperty(
             key=key, value=value, computed=computed,
             shorthand=False, method=True, kind=kind, offset=offset)
+
+    def _parse_property_key(self) -> tuple[Expression, bool]:
+        if self._at(JsTokenKind.LBRACKET):
+            self._advance()
+            key = self._parse_assignment_expression()
+            self._expect(JsTokenKind.RBRACKET)
+            return key, True
+        return self._parse_property_name(), False
 
     def _parse_property_name(self) -> Expression:
         tok = self._current

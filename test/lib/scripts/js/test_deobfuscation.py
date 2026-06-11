@@ -141,6 +141,30 @@ class TestBasicSimplifications(TestJsDeobfuscator):
     def test_bracket_reserved_word_unchanged(self):
         self.assertEqual('obj["class"];', self._simplify('obj["class"];'))
 
+    def test_computed_property_key_to_identifier(self):
+        self.assertEqual('({ a: 1 });', self._simplify('({ ["a"]: 1 });'))
+
+    def test_computed_getter_key_to_identifier(self):
+        self.assertEqual('({ get a() {} });', self._simplify('({ get ["a"]() {} });'))
+
+    def test_computed_setter_key_to_identifier(self):
+        self.assertEqual('({ set a(v) {} });', self._simplify('({ set ["a"](v) {} });'))
+
+    def test_computed_accessor_proto_key_to_identifier(self):
+        self.assertEqual('({ get __proto__() {} });', self._simplify('({ get ["__proto__"]() {} });'))
+
+    def test_computed_property_non_identifier_unchanged(self):
+        self.assertEqual('({ ["a-b"]: 1 });', self._simplify('({ ["a-b"]: 1 });'))
+
+    def test_computed_property_proto_unchanged(self):
+        self.assertEqual('({ ["__proto__"]: 1 });', self._simplify('({ ["__proto__"]: 1 });'))
+
+    def test_computed_property_reserved_key_to_identifier(self):
+        self.assertEqual('({ class: 1 });', self._simplify('({ ["class"]: 1 });'))
+
+    def test_computed_method_reserved_key_to_identifier(self):
+        self.assertEqual('({ return() {} });', self._simplify('({ ["return"]() {} });'))
+
     def test_paren_unwrap_string(self):
         self.assertEqual('"hello";', self._simplify('("hello");'))
 
