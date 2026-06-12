@@ -81,8 +81,6 @@ class Ps1TypeCasts(Transformer):
         if tn == 'char':
             result = unwrap_integer(node.operand)
             if result is not None:
-                if result.value == 0:
-                    return make_string_literal('')
                 try:
                     ch = chr(result.value)
                 except (ValueError, OverflowError):

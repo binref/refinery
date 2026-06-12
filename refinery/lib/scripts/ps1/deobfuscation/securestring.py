@@ -44,14 +44,14 @@ def _find_key_argument(cmd: Ps1CommandInvocation) -> bytes | None:
         if not isinstance(arg, Ps1CommandArgument):
             continue
         if arg.kind == Ps1CommandArgumentKind.NAMED:
-            if arg.name.lower().startswith('ke') and arg.value is not None:
+            if arg.name.lstrip('-').lower().startswith('ke') and arg.value is not None:
                 return _collect_key_bytes(arg.value)
     for i, arg in enumerate(cmd.arguments):
         if not isinstance(arg, Ps1CommandArgument):
             continue
         if arg.kind != Ps1CommandArgumentKind.SWITCH:
             continue
-        if not arg.name.lower().startswith('ke'):
+        if not arg.name.lstrip('-').lower().startswith('ke'):
             continue
         if i + 1 < len(cmd.arguments):
             next_arg = cmd.arguments[i + 1]
