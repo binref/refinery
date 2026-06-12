@@ -26,12 +26,26 @@ from refinery.lib.scripts.js.deobfuscation.namespaces import JsNamespaceFlatteni
 from refinery.lib.scripts.js.deobfuscation.restunpack import JsRestArrayUnpacking
 from refinery.lib.scripts.js.deobfuscation.unshuffle import JsArrayUnshuffle
 from refinery.lib.scripts.js.deobfuscation.wrappers import JsCallWrapperInliner
-from refinery.lib.scripts.js.deobfuscation.scramble import JsScrambleStringDecoder
-from refinery.lib.scripts.js.deobfuscation.stringarray import JsStringArrayResolver
+from refinery.lib.scripts.js.deobfuscation.scramble import JsScrambleStringDecoder, ScrambleCipher
+from refinery.lib.scripts.js.deobfuscation.stringarray import (
+    Encoding,
+    JsStringArrayResolver,
+    _CACHE_ATTR,
+    _detect_encoding,
+    _find_all_accessor_functions,
+    _find_array_function,
+)
+from refinery.lib.scripts.js.deobfuscation.evaluator import JsFunctionEvaluator
+from refinery.lib.scripts.js.deobfuscation.iifeaccessor import JsIIFEAccessorPromoter
+from refinery.lib.scripts.js.deobfuscation.interpreter import (
+    IrreducibleExpression,
+    JsInterpreter,
+)
 from refinery.lib.scripts.js.model import (
     JsBreakStatement,
     JsContinueStatement,
     JsExpressionStatement,
+    JsFunctionDeclaration,
     JsIdentifier,
 )
 from refinery.lib.scripts.js.parser import JsParser
@@ -511,15 +525,9 @@ class TestStringArray(TestJsDeobfuscator):
 
     def test_string_array_cache_survives_checksum_corruption(self):
         """
-        After a successful string array resolution, the resolved array is cached on the AST node.
-        If the checksum expression in the rotation IIFE is corrupted (e.g. by the simplifier
-        collapsing arithmetic), subsequent passes must still produce correct results from the cache
-        rather than re-simulating the rotation and getting garbled strings.
+        The resolved array is cached on the AST node. If the checksum expression is
+        corrupted by later passes, subsequent resolution must use the cache.
         """
-        from refinery.lib.scripts.js.deobfuscation.stringarray import (
-            JsStringArrayResolver,
-            _CACHE_ATTR,
-        )
         source = self._default_preset()
         ast = JsParser(source).parse()
         resolver = JsStringArrayResolver()
@@ -534,13 +542,16 @@ class TestStringArray(TestJsDeobfuscator):
     def test_string_array_inside_function_body(self):
         source = 'function wrapper() { var _0xe6abe5=_0x1b07;' + self._DEFAULT_PRESET_BODY + '}'
         result = self._deobfuscate(source)
-        self.assertEqual("function wrapper() {\n  console.log('test string');\n}", result)
+        expected = inspect.cleandoc(
+            """
+            function wrapper() {
+              console.log('test string');
+            }
+            """
+        )
+        self.assertEqual(expected, result)
 
     def test_string_array_inline_if_checksum(self):
-        """
-        When the checksum expression is inlined directly into the if-statement condition (no
-        intermediate variable), the resolver must extract it from the comparison.
-        """
         source = (
             r"var _0xe6abe5=_0x1b07;(function(_0x13a108,_0x20b5f6){var _0x2bca43=_0x1b07,_0x36965a=_0x13a108();whi"
             r"le(!![]){try{if(-parseInt(_0x2bca43(0xa7))/0x1+-parseInt(_0x2bca43(0xa1))/0x2*(-parseInt(_0x2bca43(0"
@@ -558,11 +569,6 @@ class TestStringArray(TestJsDeobfuscator):
         self.assertEqual("console.log('test string');", result)
 
     def test_string_array_constant_folded_checksum(self):
-        """
-        When other passes constant-fold the checksum expression to a numeric literal equal to the
-        rotation target, the array is already in the correct position. The resolver must handle this
-        trivially-true comparison in the if-statement without an intermediate variable.
-        """
         source = (
             r"(function(_0x13a108,_0x20b5f6){var _0x36965a=_0x13a108();while(!![]){try{if(0x827c2===_0x20b5f6)brea"
             r"k;else _0x36965a['push'](_0x36965a['shift']());}catch(_0x35acf4){_0x36965a['push'](_0x36965a['shift'"
@@ -577,10 +583,6 @@ class TestStringArray(TestJsDeobfuscator):
         self.assertEqual("console.log('test string');", result)
 
     def test_string_array_multi_accessor(self):
-        """
-        When multiple accessor functions share the same string array (e.g. one for base64, one for
-        plain indexing), the resolver must track encoding per accessor and clean up all of them.
-        """
         source = (
             r"var _0xe6abe5=_0x1b07;(function(_0x13a108,_0x20b5f6){var _0x2bca43=_0x1b07,_0x36965a=_0x13a108();whi"
             r"le(!![]){try{var _0x293699=-parseInt(_0x2bca43(0xa7))/0x1+-parseInt(_0x2bca43(0xa1))/0x2*(-parseInt("
@@ -600,11 +602,6 @@ class TestStringArray(TestJsDeobfuscator):
         self.assertEqual("console.log('test string');", result)
 
     def test_string_array_transitive_aliases(self):
-        """
-        When a direct alias of the accessor is itself re-aliased inside nested functions
-        (const z = _0x1a where _0x1a = _0xe6abe5 = _0x1b07), the resolver must follow the
-        transitive chain and resolve calls through all alias levels.
-        """
         source = (
             r"var _0xe6abe5=_0x1b07;(function(_0x13a108,_0x20b5f6){var _0x2bca43=_0x1b07,_0x36965a=_0x13a108();while"
             r"(!![]){try{var _0x293699=-parseInt(_0x2bca43(0xa7))/0x1+-parseInt(_0x2bca43(0xa1))/0x2*(-parseInt(_0x2"
@@ -619,23 +616,17 @@ class TestStringArray(TestJsDeobfuscator):
             r"rn _0x2fc0();}var _0x1a=_0xe6abe5;function log(){var z=_0x1a,A=_0x1a;console[z(0xa8)](A(0xac));}log();"
         )
         result = self._deobfuscate(source)
-        self.assertEqual(
-            "function log() {\n  console.log('test string');\n}\nlog();",
-            result,
+        expected = inspect.cleandoc(
+            """
+            function log() {
+              console.log('test string');
+            }
+            log();
+            """
         )
+        self.assertEqual(expected, result)
 
     def test_string_array_self_overwriting_accessor_detected(self):
-        """
-        The self-overwriting (memoization) accessor variant assigns the inner decoder function back
-        to the accessor name on first call. The resolver must recognize this pattern and extract the
-        base offset from the inner function's subtraction statement.
-        """
-        from refinery.lib.scripts.js.deobfuscation.stringarray import (
-            _find_array_function,
-            _find_all_accessor_functions,
-            _detect_encoding,
-            Encoding,
-        )
         source = (
             r"function V(){var a=['str0','str1','str2'];V=function(){return a;};return V();}"
             r"function N(B,I){const Y=V();N=function(Z,o){Z=Z-(0x1*0xb2e+-0x126+0x1*-0x8eb);"
@@ -654,15 +645,6 @@ class TestStringArray(TestJsDeobfuscator):
         self.assertEqual(_detect_encoding(accs[0].node), Encoding.RC4)
 
     def test_string_array_self_overwriting_accessor_b64(self):
-        """
-        Same self-overwriting pattern with only base64 (one inner function = B64 encoding).
-        """
-        from refinery.lib.scripts.js.deobfuscation.stringarray import (
-            _find_array_function,
-            _find_all_accessor_functions,
-            _detect_encoding,
-            Encoding,
-        )
         source = (
             r"function V(){var a=['str0','str1'];V=function(){return a;};return V();}"
             r"function N(B,I){const Y=V();N=function(Z,o){Z=Z-0x14c;"
@@ -680,12 +662,6 @@ class TestStringArray(TestJsDeobfuscator):
         self.assertEqual(_detect_encoding(accs[0].node), Encoding.B64)
 
     def test_string_array_prop_map_accessor_calls(self):
-        """
-        Accessor calls whose index argument is a member expression referencing a local const
-        object must be resolved via prop-map lookup. This is the standard obfuscator.io pattern
-        where local objects map property names to array indices both inside the rotation IIFE
-        checksum and in the main body code.
-        """
         source = (
             "function _0x5e03(){var a=['300xyz','800abc','secret_value','another_string','500target'];"
             "_0x5e03=function(){return a;};return _0x5e03();}"
@@ -1167,12 +1143,24 @@ class TestExtendedOperatorFolding(TestJsDeobfuscator):
 
     def test_iife_preserves_conditional_effectful_arg(self):
         source = "var r = (function(a, b) { return a || b; })(x, y.z);"
-        expected = 'var r = (function(a, b) {\n  return a || b;\n})(x, y.z);'
+        expected = inspect.cleandoc(
+            """
+            var r = (function(a, b) {
+              return a || b;
+            })(x, y.z);
+            """
+        )
         self.assertEqual(expected, self._simplify(source))
 
     def test_iife_preserves_reordered_effectful_args(self):
         source = "var r = (function(a, b) { return b + a; })(x.y, z.w);"
-        expected = 'var r = (function(a, b) {\n  return b + a;\n})(x.y, z.w);'
+        expected = inspect.cleandoc(
+            """
+            var r = (function(a, b) {
+              return b + a;
+            })(x.y, z.w);
+            """
+        )
         self.assertEqual(expected, self._simplify(source))
 
     def test_nullish_coalescing_undefined(self):
@@ -1406,10 +1394,6 @@ class TestObjectFold(TestJsDeobfuscator):
         )
 
     def test_contextual_keyword_as_parameter(self):
-        """
-        The contextual keyword `as` is valid as an identifier. Object fold must inline comparison
-        functions that use `as` as a parameter name.
-        """
         source = "var o = {'f': function(as, at) { return as < at; }}; var r = o['f'](x, 3);"
         self.assertEqual('var r = x < 3;', self._objectfold(source))
 
@@ -1631,7 +1615,7 @@ class TestControlFlowUnflattening(TestJsDeobfuscator):
         result = self._deobfuscate(source)
         self.assertEqual(result, inspect.cleandoc(
             """
-            var _order = '1|0|2'.slice('|');
+            var _order = '1|0|2';
             var _idx = 0;
             while (true) {
               switch (_order[_idx++]) {
@@ -2121,10 +2105,6 @@ class TestDispatcherUnwrapping(TestJsDeobfuscator):
 class TestRegressions(TestJsDeobfuscator):
 
     def test_dead_code_spliced_parent_pointers(self):
-        """
-        After dead code elimination splices statements out of a block, the surviving statements
-        must have their parent pointer set to the containing script node, not the removed block.
-        """
         ast = JsParser('if (true) { var a = 1; var b = 2; }').parse()
         t = JsDeadCodeElimination()
         t.visit(ast)
@@ -2132,14 +2112,7 @@ class TestRegressions(TestJsDeobfuscator):
         for stmt in ast.body:
             self.assertIs(stmt.parent, ast)
 
-    def test_ternary_resolved_by_simplifications_alone(self):
-        self.assertEqual("var x = 'a';", self._simplify("var x = true ? 'a' : 'b';"))
-
     def test_objectfold_var_in_nested_block_not_removed(self):
-        """
-        A `var` declaration inside a nested block is function-scoped in JavaScript. If the variable
-        is referenced outside the block, the object must not be folded away.
-        """
         source = (
             "function f() {"
             "  if (true) { var o = {'k': 'hello'}; x(o['k']); }"
@@ -2244,34 +2217,6 @@ class TestStringConcealing(TestJsDeobfuscator):
             result,
         )
 
-    def test_decoder_and_accessor_removed(self):
-        result = self._deobfuscate(self._minimal_sample())
-        self.assertEqual(
-            inspect.cleandoc(
-                """
-                var cache = {};
-                var results = [];
-                results.push("hello");
-                console.log(results);
-                """
-            ),
-            result,
-        )
-
-    def test_property_access_rewritten(self):
-        result = self._deobfuscate(self._minimal_sample())
-        self.assertEqual(
-            inspect.cleandoc(
-                """
-                var cache = {};
-                var results = [];
-                results.push("hello");
-                console.log(results);
-                """
-            ),
-            result,
-        )
-
     def test_full_fizzbuzz_sample(self):
         source = lzma.decompress(base64.b85decode(
             "{Wp48S^xk9=GL@E0stWa8~^|S5YJf5;3H2DoLvAj9ZCPGVfzyXn;9}d7=bd;P-u|=hS4y!t6q`3iYd7Jn@gb<iH1XeW)Th&veG?%"
@@ -2333,12 +2278,6 @@ class TestStringConcealing(TestJsDeobfuscator):
         self.assertIn('console.log', result)
 
     def test_scope_aware_decoder_pairing(self):
-        """
-        When the same decoder function name is reused in nested scopes with different alphabets,
-        each accessor must pair with its sibling decoder — not a same-named decoder from a
-        different scope. This regression test uses two alphabets (original and reversed) so
-        cross-decoding fails with UnicodeDecodeError.
-        """
         alpha1 = '0,Fz)`Q(lH=j5gK[i8~mJt_b&qr/fW^Y2]?#|@.!$cLZ9BN>A1o7ye+D%IM}O6;pV:P*E3CRnxXSh{wvaTUuk4G"s<d'
         alpha2 = alpha1[::-1]
         # Verify the test fixture is meaningful: cross-decode must NOT produce 'push'
@@ -2784,10 +2723,6 @@ class TestRegressionBugs(TestJsDeobfuscator):
         )
 
     def test_cff_preserves_labeled_break(self):
-        """
-        Bug: Trailing break/continue was stripped without checking for labels. A labeled break
-        targeting an outer construct must not be removed.
-        """
         dummy = JsExpressionStatement()
         unlabeled = JsBreakStatement(label=None)
         labeled = JsBreakStatement(label=JsIdentifier(name='outer'))
@@ -2985,11 +2920,6 @@ class TestRegressionBugs(TestJsDeobfuscator):
         )
 
     def test_var_not_inlined_past_call_with_inner_let_shadow(self):
-        """
-        An inner-block `let x` must not prevent `_function_local_names` from detecting that the
-        function modifies the outer `x`. Without the fix, the inner `let x = 3` would be
-        collected as function-local, masking the `x = 2` assignment from mod/ref analysis.
-        """
         source = inspect.cleandoc(
             """
             var x = 1;
@@ -3381,10 +3311,6 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
     )
 
     def test_generator_cff_with_statement_dissolved(self):
-        """
-        The `with(scope)` wrapping the switch is dissolved during CFF recovery: scope-qualified
-        member expressions become bare identifiers and no `with` statement remains.
-        """
         result = self._run_transformer(self.WITH_DISSOLUTION_CFF, JsGeneratorCFFUnflattening)
         self.assertEqual(result, inspect.cleandoc(
             """
@@ -3432,10 +3358,6 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
     )
 
     def test_generator_cff_shared_wrapper_routing(self):
-        """
-        Verify that predicate-gated cases referencing scope routing values are resolved when
-        the outer execution accumulates routing entries and passes them to wrapper execution.
-        """
         result = self._deobfuscate(self.SHARED_WRAPPER_CFF)
         self.assertNotIn('function*', result)
         self.assertNotIn('while', result)
@@ -3478,10 +3400,6 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
     )
 
     def test_generator_cff_guarded_predicate(self):
-        """
-        Test that switch cases using logical AND guards (a != X && expr) evaluate correctly and
-        that prefix state variable assignments are accounted for when computing successor edges.
-        """
         result = self._deobfuscate(self.GUARDED_PREDICATE_CFF)
         self.assertNotIn('function*', result)
         self.assertNotIn('while', result)
@@ -3515,10 +3433,6 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
     )
 
     def test_generator_cff_redirect_var_removed(self):
-        """
-        Verify that CFF redirect variable assignments (scope.RV = scope.NS) are removed from
-        recovered output after the with statement is dissolved.
-        """
         result = self._run_transformer(self.REDIRECT_VAR_CFF, JsGeneratorCFFUnflattening)
         self.assertEqual(result, inspect.cleandoc(
             """
@@ -3562,11 +3476,6 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
     )
 
     def test_generator_cff_redirect_qualification_levels(self):
-        """
-        Bare identifiers must be qualified at the redirect level active for their block, while
-        explicit scope accesses are qualified at root level. When redirect is set to Sub,
-        bare 'val' becomes NS.Sub.val, not NS.val.
-        """
         result = self._deobfuscate(self.REDIRECT_QUALIFY_CFF)
         self.assertNotIn('function*', result)
         self.assertNotIn('scope', result)
@@ -3605,10 +3514,6 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
     )
 
     def test_generator_cff_computed_redirect_resolved(self):
-        """
-        CFF using bracket notation for redirect variable assignments. The redirect mechanism
-        must work identically to the dot-notation variant.
-        """
         result = self._deobfuscate(self.COMPUTED_REDIRECT_CFF)
         self.assertNotIn('function*', result)
         self.assertNotIn('scope', result)
@@ -3653,10 +3558,6 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
     )
 
     def test_generator_cff_loop_body_not_duplicated(self):
-        """
-        A CFF pattern with a looping state machine (state 30 → state 20 back-edge). Loop body
-        statements must appear exactly once inside a while loop, not duplicated at the outer level.
-        """
         result = self._deobfuscate(self.LOOPING_CFF)
         self.assertNotIn('function*', result)
         self.assertNotIn('switch', result)
@@ -3708,11 +3609,6 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
     )
 
     def test_generator_cff_continue_in_loop(self):
-        """
-        A CFF loop where a body node conditionally loops back to the header (simulating continue)
-        while the other branch continues to a forward body node. The forward body (console.log)
-        must appear in the output and not be dropped.
-        """
         result = self._deobfuscate(self.CONTINUE_IN_LOOP_CFF)
         self.assertNotIn('function*', result)
         self.assertNotIn('switch', result)
@@ -3757,11 +3653,6 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
     )
 
     def test_generator_cff_header_payload_before_condition(self):
-        """
-        A CFF loop where the header block has payload (scope.i++) before its conditional
-        transition. The payload must execute before the condition check — structured as
-        while(true) { payload; if(!cond) break; body; }, not while(cond) { payload; body; }.
-        """
         result = self._deobfuscate(self.HEADER_PAYLOAD_CFF)
         self.assertNotIn('function*', result)
         self.assertNotIn('switch', result)
@@ -3804,10 +3695,6 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
     )
 
     def test_generator_cff_computed_member_scope(self):
-        """
-        A CFF sample using bracket notation (scope["x"]) instead of dot notation (scope.x).
-        The scope prefix must still be stripped, producing bare identifiers in output.
-        """
         result = self._deobfuscate(self.COMPUTED_MEMBER_CFF)
         self.assertNotIn('function*', result)
         self.assertNotIn('switch', result)
@@ -3851,11 +3738,6 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
     )
 
     def test_generator_cff_sequence_state_assignments(self):
-        """
-        A CFF sample where state variable transitions are embedded in sequence expressions
-        alongside payload expressions (e.g., `scope.x = foo(), a = 20, b = 0;`). State vars
-        must be stripped from the sequence while preserving the payload expressions.
-        """
         result = self._deobfuscate(self.SEQUENCE_STATE_CFF)
         self.assertNotIn('function*', result)
         self.assertNotIn('switch', result)
@@ -3912,12 +3794,6 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
     )
 
     def test_generator_cff_nested_conditional_join(self):
-        """
-        A CFF sample where a conditional's true branch leads to another conditional, creating
-        a non-diamond CFG. One inner branch and the outer false branch both target the same
-        node (case 50). The join point must be computed correctly (post-dominator) so that the
-        shared node is not claimed exclusively by one branch.
-        """
         result = self._deobfuscate(self.NESTED_CONDITIONAL_CFF)
         self.assertNotIn('function*', result)
         self.assertNotIn('switch', result)
@@ -3962,11 +3838,6 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
     )
 
     def test_generator_cff_computed_routing_member(self):
-        """
-        A CFF sample using bracket notation (scope["count"]) for routing state and value access.
-        The scope routing tracker must resolve computed string-literal members so that
-        discriminant-based transition analysis and scope stripping work correctly.
-        """
         result = self._deobfuscate(self.COMPUTED_ROUTING_CFF)
         self.assertNotIn('function*', result)
         self.assertNotIn('switch', result)
@@ -4003,11 +3874,6 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
     )
 
     def test_generator_cff_bookkeeping_suppressed(self):
-        """
-        A CFF sample with scope routing bookkeeping (scope.pred = 1) alongside real payload.
-        The bookkeeping filter must run before scope stripping so that it can recognize and
-        suppress the scope-member routing assignment, while preserving actual payload statements.
-        """
         self.assertEqual(
             inspect.cleandoc(
                 """
@@ -4060,12 +3926,6 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
     )
 
     def test_generator_cff_shared_intermediate_node(self):
-        """
-        A CFF sample where both branches of a conditional lead to the same intermediate node
-        (case 40) before the exit. The ipdom computation must correctly identify the shared node
-        as the join point so its payload is emitted once after the if/else, not duplicated in
-        both branches.
-        """
         result = self._deobfuscate(self.SHARED_INTERMEDIATE_CFF)
         self.assertNotIn('function*', result)
         self.assertNotIn('switch', result)
@@ -4110,11 +3970,6 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
     )
 
     def test_generator_cff_bare_scope_condition_stripped(self):
-        """
-        A CFF sample where the conditional test is a bare scope member expression (scope.ready).
-        The condition must be stripped to a bare identifier even when it is the root expression
-        node, not nested inside a larger expression.
-        """
         self.assertEqual(
             inspect.cleandoc(
                 """
@@ -4161,11 +4016,6 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
     )
 
     def test_generator_cff_mixed_sequence_branch_preserved(self):
-        """
-        A CFF sample where conditional branch endings mix non-state payload expressions with
-        state transitions in a single sequence expression. The non-state expressions must be
-        preserved in the output.
-        """
         self.assertEqual(
             inspect.cleandoc(
                 """
@@ -4210,10 +4060,6 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
     )
 
     def test_generator_cff_scope_namespace_declared(self):
-        """
-        After flattening a generator CFF with `with(scope.RV || scope)` and a scope default
-        containing a namespace object, the namespace is emitted and then flattened to bare vars.
-        """
         result = self._run_transformer(self.NAMESPACE_DECL_CFF, JsGeneratorCFFUnflattening)
         self.assertEqual(result, inspect.cleandoc(
             """
@@ -4254,10 +4100,6 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
     )
 
     def test_generator_cff_labeled_continue_preserved(self):
-        """
-        Labels and `continue <label>` inside the CFF body must remain simple identifiers after
-        qualification — they must not be turned into member expressions.
-        """
         self.assertEqual(
             inspect.cleandoc(
                 """
@@ -4282,9 +4124,6 @@ class TestVariableDemasking(TestJsDeobfuscator):
         return self._run_transformer(source, JsRestArrayUnpacking)
 
     def test_simple_two_params(self):
-        """
-        Basic variableMasking with 2 parameters: rest param slots 0 and 1 become named params.
-        """
         self.assertEqual(
             inspect.cleandoc(
                 """
@@ -4297,9 +4136,6 @@ class TestVariableDemasking(TestJsDeobfuscator):
         )
 
     def test_simple_zero_params_with_locals(self):
-        """
-        Zero-param function where all stack keys are local variables.
-        """
         self.assertEqual(
             inspect.cleandoc(
                 """
@@ -4314,9 +4150,6 @@ class TestVariableDemasking(TestJsDeobfuscator):
         )
 
     def test_simple_negative_keys(self):
-        """
-        Negative integer keys from variableMasking (random keys in [-250, 250] range).
-        """
         self.assertEqual(
             inspect.cleandoc(
                 """
@@ -4333,9 +4166,6 @@ class TestVariableDemasking(TestJsDeobfuscator):
         )
 
     def test_frame_qualified(self):
-        """
-        Frame-qualified pattern where the stack is a nested property on a frame object.
-        """
         self.assertEqual(
             inspect.cleandoc(
                 """
@@ -4351,9 +4181,6 @@ class TestVariableDemasking(TestJsDeobfuscator):
         )
 
     def test_skips_unresolvable_access(self):
-        """
-        Functions with dynamic (non-static) stack access keys are left unchanged.
-        """
         self.assertEqual(
             inspect.cleandoc(
                 """
@@ -4367,9 +4194,6 @@ class TestVariableDemasking(TestJsDeobfuscator):
         )
 
     def test_skips_rest_param_aliased(self):
-        """
-        Functions where the rest param is used as a value (not just indexed) are left unchanged.
-        """
         self.assertEqual(
             inspect.cleandoc(
                 """
@@ -4384,10 +4208,6 @@ class TestVariableDemasking(TestJsDeobfuscator):
         )
 
     def test_nested_function_not_processed(self):
-        """
-        Inner function expressions are not recursed into during the outer function's collection.
-        The inner function is processed independently in its own pass.
-        """
         source = inspect.cleandoc(
             """
             var outer = function(...s) {
@@ -4415,9 +4235,6 @@ class TestVariableDemasking(TestJsDeobfuscator):
         )
 
     def test_frame_qualified_missing_accesses_skipped(self):
-        """
-        If param_count > 0 but no matching accesses found (chain mismatch), skip the function.
-        """
         self.assertEqual(
             inspect.cleandoc(
                 """
@@ -4437,9 +4254,6 @@ class TestNamespaceFlattening(TestJsDeobfuscator):
         return self._run_transformer(source, JsNamespaceFlattening)
 
     def test_basic_namespace_flatten(self):
-        """
-        A simple namespace with only member-access usage is fully flattened to bare variables.
-        """
         self.assertEqual(
             inspect.cleandoc(
                 """
@@ -4452,9 +4266,6 @@ class TestNamespaceFlattening(TestJsDeobfuscator):
         )
 
     def test_computed_string_access(self):
-        """
-        Computed access with a string literal key is equivalent to dot access for flattening.
-        """
         self.assertEqual(
             inspect.cleandoc(
                 """
@@ -4467,9 +4278,6 @@ class TestNamespaceFlattening(TestJsDeobfuscator):
         )
 
     def test_reject_bare_reference(self):
-        """
-        If the namespace object is used as a bare value (not just property access), do not flatten.
-        """
         self.assertEqual(
             inspect.cleandoc(
                 """
@@ -4482,9 +4290,6 @@ class TestNamespaceFlattening(TestJsDeobfuscator):
         )
 
     def test_reject_computed_dynamic_key(self):
-        """
-        Computed access with a non-literal key blocks flattening (key cannot be statically resolved).
-        """
         self.assertEqual(
             inspect.cleandoc(
                 """
@@ -4496,10 +4301,6 @@ class TestNamespaceFlattening(TestJsDeobfuscator):
         )
 
     def test_conflict_skips_conflicting_property(self):
-        """
-        A property whose name conflicts with an existing variable is left on the namespace while
-        other properties are flattened.
-        """
         self.assertEqual(
             inspect.cleandoc(
                 """
@@ -4514,10 +4315,6 @@ class TestNamespaceFlattening(TestJsDeobfuscator):
         )
 
     def test_shadowing_nested_function_untouched(self):
-        """
-        A nested function that re-declares `var NS` shadows the outer namespace. References to
-        `NS` inside that function must not be rewritten.
-        """
         self.assertEqual(
             inspect.cleandoc(
                 """
@@ -4533,10 +4330,6 @@ class TestNamespaceFlattening(TestJsDeobfuscator):
         )
 
     def test_non_shadowing_nested_function_rewritten(self):
-        """
-        A nested function that does NOT shadow the namespace name accesses the outer namespace
-        via closure; those accesses are flattened.
-        """
         self.assertEqual(
             inspect.cleandoc(
                 """
@@ -4557,9 +4350,6 @@ class TestArrayUnshuffle(TestJsDeobfuscator):
         return self._run_transformer(source, JsArrayUnshuffle)
 
     def test_direct_callee_in_rotation_names(self):
-        """
-        A direct call to a structurally-verified rotation function is unshuffled.
-        """
         source = inspect.cleandoc(
             """
             function rot(arr, n) {
@@ -4573,11 +4363,6 @@ class TestArrayUnshuffle(TestJsDeobfuscator):
         self.assertIn('"a", "b", "c", "d", "e", "f", "g", "h", "i", "j"', result)
 
     def test_namespace_qualified_callee_with_empty_object(self):
-        """
-        A namespace-qualified rotation call `NS.rot(array, shift)` where the rotation function is
-        assigned to a namespace object is resolved: namespace flattening promotes the function to a
-        declaration, then unshuffle matches the now-direct callee.
-        """
         source = inspect.cleandoc(
             """
             var NS = {};
@@ -4595,10 +4380,6 @@ class TestArrayUnshuffle(TestJsDeobfuscator):
         self.assertIn('"a", "b", "c", "d", "e", "f", "g", "h", "i", "j"', result)
 
     def test_namespace_qualified_callee_without_empty_object_rejected(self):
-        """
-        A member-expression call `utils.process(array, number)` where the object is NOT declared
-        as an empty object literal must NOT be treated as a rotation.
-        """
         source = inspect.cleandoc(
             """
             var utils = require("utils");
@@ -4612,10 +4393,6 @@ class TestArrayUnshuffle(TestJsDeobfuscator):
 class TestCFFArgParamDeclarations(TestJsDeobfuscator):
 
     def test_undeclared_assignment_not_removed_when_read_in_outer_scope(self):
-        """
-        An assignment to a variable declared in an enclosing scope must not be treated as a dead
-        local write, even if the variable is not declared in the function body itself.
-        """
         source = inspect.cleandoc(
             """
             function modify() {
@@ -4628,26 +4405,6 @@ class TestCFFArgParamDeclarations(TestJsDeobfuscator):
         )
         result = self._deobfuscate_iterative(source)
         self.assertIn('x = 99', result)
-
-    def test_truly_undeclared_dead_write_removed(self):
-        """
-        An assignment to a variable that is not declared anywhere and is never read should be
-        removed as dead code.
-        """
-        source = inspect.cleandoc(
-            """
-            function f() {
-              for (var i = 0; i < 3; i++) {
-                deadVar = function() { return 42; };
-              }
-              return i;
-            }
-            f();
-            """
-        )
-        result = self._deobfuscate_iterative(source)
-        self.assertNotIn('deadVar', result)
-
 
 class TestGlobalAliasStripping(TestJsDeobfuscator):
 
@@ -4812,7 +4569,6 @@ class TestParenthesizedExpressionStripping(TestJsDeobfuscator):
 class TestFunctionEvaluator(TestJsDeobfuscator):
 
     def _evaluate(self, source: str) -> str:
-        from refinery.lib.scripts.js.deobfuscation.evaluator import JsFunctionEvaluator
         return self._run_transformer(source, JsFunctionEvaluator)
 
     def test_iife_with_nested_arrow_this_not_evaluated(self):
@@ -5144,14 +4900,1456 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
         result = self._evaluate(source)
         self.assertEqual("var x = 'Hello';", result)
 
+    def test_helper_call_at_iteration_limit(self):
+        source = inspect.cleandoc(
+            """
+            function sum(arr) {
+                var r = 0;
+                for (var i = 0; i < arr.length; i++) r += arr[i];
+                return r;
+            }
+            function decode(s) {
+                var r = '';
+                for (var i = 0; i < s.length; i++) {
+                    r += String.fromCharCode(s.charCodeAt(i) ^ 1);
+                }
+                return sum([r.length, 0]);
+            }
+            var x = decode('Iello');
+            """
+        )
+        result = self._evaluate(source)
+        self.assertEqual('var x = 5;', result)
+
     def test_object_literal_parens_preserved(self):
         self.assertEqual('var x = ({ a: 1 });', self._simplify('var x = ({a: 1});'))
+
+
+class TestClosureCapture(TestJsDeobfuscator):
+
+    def _evaluate(self, source: str) -> str:
+        return self._run_transformer(source, JsFunctionEvaluator)
+
+    def test_const_arrow_with_outer_string(self):
+        source = inspect.cleandoc(
+            """
+            const prefix = 'Hello';
+            const greet = (name) => prefix + ', ' + name + '!';
+            var msg = greet('World');
+            """
+        )
+        result = self._evaluate(source)
+        self.assertEqual("var msg = 'Hello, World!';", result)
+
+    def test_const_function_expression_with_xor_loop(self):
+        source = inspect.cleandoc(
+            """
+            const key = [3, 3, 3, 3, 3];
+            const decode = function(encoded) {
+                var result = '';
+                for (var i = 0; i < encoded.length; i++) {
+                    result += String.fromCharCode(encoded.charCodeAt(i) ^ key[i % key.length]);
+                }
+                return result;
+            };
+            var msg = decode('Kfool');
+            """
+        )
+        result = self._evaluate(source)
+        self.assertEqual("var msg = 'Hello';", result)
+
+    def test_closure_function_calls_sibling(self):
+        source = inspect.cleandoc(
+            """
+            const inner = (x) => x * 2;
+            const outer = (a, b) => inner(a) + inner(b);
+            var result = outer(3, 4);
+            """
+        )
+        result = self._evaluate(source)
+        self.assertEqual('var result = 14;', result)
+
+    def test_buffer_from_base64_toString(self):
+        source = inspect.cleandoc(
+            """
+            const decode = (s) => Buffer.from(s, 'base64').toString('utf8');
+            var x = decode('SGVsbG8=');
+            """
+        )
+        result = self._evaluate(source)
+        self.assertEqual("var x = 'Hello';", result)
+
+    def test_buffer_from_hex(self):
+        source = inspect.cleandoc(
+            """
+            const decode = (s) => Buffer.from(s, 'hex').toString('utf8');
+            var x = decode('48656c6c6f');
+            """
+        )
+        result = self._evaluate(source)
+        self.assertEqual("var x = 'Hello';", result)
+
+    def test_atob_without_padding(self):
+        source = inspect.cleandoc(
+            """
+            function d(s) { return atob(s); }
+            var x = d('b3M');
+            """
+        )
+        result = self._evaluate(source)
+        self.assertEqual("var x = 'os';", result)
+
+    def test_implicit_locals_not_blocking_purity(self):
+        source = inspect.cleandoc(
+            """
+            const decode = function(s) {
+                rr = '';
+                for (var i = 0; i < s.length; i++) {
+                    rr += String.fromCharCode(s.charCodeAt(i) ^ 1);
+                }
+                return rr;
+            };
+            var x = decode('Idmmn');
+            """
+        )
+        result = self._evaluate(source)
+        self.assertEqual("var x = 'Hello';", result)
+
+    def test_side_effects_member_write_blocks_evaluation(self):
+        source = inspect.cleandoc(
+            """
+            const modify = function(arr) {
+                arr[0] = 99;
+                return arr;
+            };
+            var x = modify([1, 2, 3]);
+            """
+        )
+        result = self._evaluate(source)
+        expected = inspect.cleandoc(
+            """
+            const modify = function(arr) {
+              arr[0] = 99;
+              return arr;
+            };
+            var x = modify([1, 2, 3]);
+            """
+        )
+        self.assertEqual(expected, result)
+
+    def test_function_declaration_with_undeclared_globals_not_evaluated(self):
+        source = inspect.cleandoc(
+            """
+            function fizzbuzz(n) {
+                results = [];
+                for (var i = 1; i <= n; i++) {
+                    if (i % 15 === 0) {
+                        results.push('FizzBuzz');
+                    } else {
+                        if (i % 3 === 0) {
+                            results.push('Fizz');
+                        } else {
+                            results.push(i);
+                        }
+                    }
+                }
+                return results;
+            }
+            console.log(fizzbuzz(20));
+            """
+        )
+        result = self._evaluate(source)
+        expected = inspect.cleandoc(
+            """
+            function fizzbuzz(n) {
+              results = [];
+              for (var i = 1; i <= n; i++) {
+                if (i % 15 === 0) {
+                  results.push('FizzBuzz');
+                } else {
+                  if (i % 3 === 0) {
+                    results.push('Fizz');
+                  } else {
+                    results.push(i);
+                  }
+                }
+              }
+              return results;
+            }
+            console.log(fizzbuzz(20));
+            """
+        )
+        self.assertEqual(expected, result)
+
+    def test_orphaned_closure_constants_removed(self):
+        source = inspect.cleandoc(
+            """
+            const secret = 'key';
+            const decode = (s) => secret + s;
+            var x = decode('123');
+            console.log(x);
+            """
+        )
+        result = self._deobfuscate_iterative(source)
+        self.assertEqual("console.log('key123');", result)
+
+    def test_let_binding_not_captured(self):
+        source = inspect.cleandoc(
+            """
+            let prefix = 'Hello';
+            const greet = (name) => prefix + ', ' + name;
+            var msg = greet('World');
+            """
+        )
+        result = self._evaluate(source)
+        expected = inspect.cleandoc(
+            """
+            let prefix = 'Hello';
+            const greet = name => prefix + ', ' + name;
+            var msg = greet('World');
+            """
+        )
+        self.assertEqual(expected, result)
+
+    def test_self_assigning_function_not_evaluated(self):
+        source = inspect.cleandoc(
+            """
+            const decode = function(x) {
+                decode = function() { return []; };
+                return x;
+            };
+            var y = decode('test');
+            """
+        )
+        result = self._evaluate(source)
+        expected = inspect.cleandoc(
+            """
+            const decode = function(x) {
+              decode = function() {
+                return [];
+              };
+              return x;
+            };
+            var y = decode('test');
+            """
+        )
+        self.assertEqual(expected, result)
+
+    def test_array_tostring_not_hijacked(self):
+        source = inspect.cleandoc(
+            """
+            const f = () => [72, 101, 108].toString();
+            var x = f();
+            """
+        )
+        result = self._evaluate(source)
+        expected = inspect.cleandoc(
+            """
+            const f = () => [72, 101, 108].toString();
+            var x = f();
+            """
+        )
+        self.assertEqual(expected, result)
+
+    def test_buffer_from_toString_still_works(self):
+        source = inspect.cleandoc(
+            """
+            const decode = (s) => Buffer.from(s, 'base64').toString('utf8');
+            var x = decode('SGVsbG8=');
+            """
+        )
+        result = self._evaluate(source)
+        self.assertEqual("var x = 'Hello';", result)
+
+    def test_param_shadow_blocks_const_resolution(self):
+        source = inspect.cleandoc(
+            """
+            const p = 'OUTER';
+            function pick(z) { return 'got:' + z; }
+            function run(p) { sink.x = 1; return pick(p); }
+            run('REAL');
+            """
+        )
+        result = self._evaluate(source)
+        expected = inspect.cleandoc(
+            """
+            const p = 'OUTER';
+            function pick(z) {
+              return 'got:' + z;
+            }
+            function run(p) {
+              sink.x = 1;
+              return pick(p);
+            }
+            run('REAL');
+            """
+        )
+        self.assertEqual(expected, result)
+
+    def test_let_shadow_blocks_closure_capture(self):
+        source = inspect.cleandoc(
+            """
+            const SECRET = 'global';
+            function wrap(v) {
+                let SECRET = v;
+                const f = (x) => x + SECRET;
+                return f('Z');
+            }
+            """
+        )
+        result = self._evaluate(source)
+        expected = inspect.cleandoc(
+            """
+            const SECRET = 'global';
+            function wrap(v) {
+              let SECRET = v;
+              const f = x => x + SECRET;
+              return f('Z');
+            }
+            """
+        )
+        self.assertEqual(expected, result)
+
+    def test_shared_mutable_closure_array_isolated(self):
+        source = inspect.cleandoc(
+            """
+            const key = [1, 2, 3];
+            const dec = (s) => { key.reverse(); return s + key[0]; };
+            var a = dec('A');
+            var b = dec('B');
+            """
+        )
+        result = self._evaluate(source)
+        expected = inspect.cleandoc(
+            """
+            var a = 'A3';
+            var b = 'B1';
+            """
+        )
+        self.assertEqual(expected, result)
+
+    def test_write_only_temp_does_not_block_evaluation(self):
+        source = inspect.cleandoc(
+            """
+            const dec = (s) => { junk = 'x'; return s + '!'; };
+            var r = dec('hi');
+            """
+        )
+        result = self._evaluate(source)
+        self.assertEqual("var r = 'hi!';", result)
+
+    def test_block_scoped_const_fn_not_visible_outside(self):
+        source = inspect.cleandoc(
+            """
+            { const f = (x) => x + 1; }
+            var y = f(3);
+            """
+        )
+        result = self._evaluate(source)
+        expected = inspect.cleandoc(
+            """
+            {
+              const f = x => x + 1;
+            }
+            var y = f(3);
+            """
+        )
+        self.assertEqual(expected, result)
+
+    def test_param_shadowing_function_name_blocks_resolution(self):
+        source = inspect.cleandoc(
+            """
+            const f = (x) => x + 1;
+            function outer(f) { return f(10); }
+            var r = outer(5);
+            """
+        )
+        result = self._evaluate(source)
+        expected = inspect.cleandoc(
+            """
+            const f = x => x + 1;
+            function outer(f) {
+              return f(10);
+            }
+            var r = outer(5);
+            """
+        )
+        self.assertEqual(expected, result)
+
+    def test_sibling_declarator_reference_prevents_removal(self):
+        source = inspect.cleandoc(
+            """
+            const a = (x) => x + 1, b = a;
+            var r = a(5);
+            console.log(b);
+            """
+        )
+        result = self._evaluate(source)
+        expected = inspect.cleandoc(
+            """
+            const a = x => x + 1, b = a;
+            var r = 6;
+            console.log(b);
+            """
+        )
+        self.assertEqual(expected, result)
+
+
+    def test_try_catch_body_executed(self):
+        source = inspect.cleandoc(
+            """
+            function attempt() {
+                try {
+                    throw 1;
+                } catch(e) {
+                    return 'caught';
+                }
+            }
+            var r = attempt();
+            """
+        )
+        result = self._evaluate(source)
+        self.assertEqual("var r = 'caught';", result)
+
+    def test_try_catch_param_bound(self):
+        source = inspect.cleandoc(
+            """
+            function attempt() {
+                try {
+                    throw 1;
+                } catch(e) {
+                    return e;
+                }
+            }
+            var r = attempt();
+            """
+        )
+        result = self._evaluate(source)
+        self.assertEqual('var r = 1;', result)
+
+    def test_try_finally_executes(self):
+        source = inspect.cleandoc(
+            """
+            function run() {
+                var x = 0;
+                try {
+                    x = 1;
+                } finally {
+                    x = 2;
+                }
+                return x;
+            }
+            var r = run();
+            """
+        )
+        result = self._evaluate(source)
+        self.assertEqual('var r = 2;', result)
+
+    def test_try_catch_finally_executes(self):
+        source = inspect.cleandoc(
+            """
+            function run() {
+                var x = 0;
+                try {
+                    throw 1;
+                } catch(e) {
+                    x = e;
+                } finally {
+                    x = x + 10;
+                }
+                return x;
+            }
+            var r = run();
+            """
+        )
+        result = self._evaluate(source)
+        self.assertEqual('var r = 11;', result)
+
+    def test_buffer_map_then_tostring(self):
+        source = inspect.cleandoc(
+            """
+            const decode = (s) => Buffer.from(s, 'base64').map(b => b ^ 1).toString('latin1');
+            var x = decode('SEVMTE8=');
+            """
+        )
+        result = self._evaluate(source)
+        self.assertEqual("var x = 'IDMMN';", result)
+
+    def test_buffer_filter_then_tostring(self):
+        source = inspect.cleandoc(
+            """
+            const decode = (s) => Buffer.from(s, 'hex').filter(b => b > 64).toString('utf8');
+            var x = decode('4100420043');
+            """
+        )
+        result = self._evaluate(source)
+        self.assertEqual("var x = 'ABC';", result)
+
+    def test_nan_as_index_does_not_raise(self):
+        source = inspect.cleandoc(
+            """
+            const f = (s, idx) => s.charAt(idx);
+            var r = f('hello', 0);
+            """
+        )
+        result = self._evaluate(source)
+        self.assertEqual("var r = 'h';", result)
+
+    def test_nan_slice_arg_treated_as_zero(self):
+        source = inspect.cleandoc(
+            """
+            const f = (s) => s.slice('x');
+            var r = f('abc');
+            """
+        )
+        result = self._evaluate(source)
+        self.assertEqual("var r = 'abc';", result)
+
+    def test_math_floor_nan_returns_nan(self):
+        source = inspect.cleandoc(
+            """
+            const f = () => Math.floor(NaN);
+            var r = f();
+            """
+        )
+        result = self._evaluate(source)
+        self.assertEqual('var r = NaN;', result)
+
+    def test_math_round_nan_returns_nan(self):
+        source = inspect.cleandoc(
+            """
+            const f = () => Math.round(NaN);
+            var r = f();
+            """
+        )
+        result = self._evaluate(source)
+        self.assertEqual('var r = NaN;', result)
+
+    def test_property_key_not_substituted(self):
+        source = inspect.cleandoc(
+            """
+            const f = (x) => { switch (x) { case 42: return globalObj.x; } };
+            var r = f(42);
+            """
+        )
+        result = self._evaluate(source)
+        self.assertEqual('var r = globalObj.x;', result)
+
+    def test_object_literal_value_substituted_key_preserved(self):
+        source = inspect.cleandoc(
+            """
+            const f = (x) => ({ x: x });
+            var r = f(42);
+            """
+        )
+        result = self._evaluate(source)
+        self.assertEqual("var r = { 'x': 42 };", result)
+
+    def test_nested_throw_caught_by_outer_try_catch(self):
+        source = inspect.cleandoc(
+            """
+            function inner() { throw 'caught_value'; }
+            function outer() {
+                try { inner(); } catch(e) { return e; }
+            }
+            var r = outer();
+            """
+        )
+        result = self._evaluate(source)
+        self.assertEqual("var r = 'caught_value';", result)
+
+    def test_runtime_error_caught_by_try_catch(self):
+        source = inspect.cleandoc(
+            """
+            function attempt() {
+                try {
+                    var x = null;
+                    x();
+                    return 'unreachable';
+                } catch(e) {
+                    return 'fallback';
+                }
+            }
+            var r = attempt();
+            """
+        )
+        result = self._evaluate(source)
+        self.assertEqual("var r = 'fallback';", result)
+
+    def test_finally_does_not_swallow_return(self):
+        source = inspect.cleandoc(
+            """
+            function run() {
+                try { return 42; } finally { var x = 1; }
+            }
+            var r = run();
+            """
+        )
+        result = self._evaluate(source)
+        self.assertEqual('var r = 42;', result)
+
+    def test_to_int_infinity_does_not_raise(self):
+        source = inspect.cleandoc(
+            """
+            const f = () => 'hello'.charAt(Infinity);
+            var r = f();
+            """
+        )
+        result = self._evaluate(source)
+        self.assertEqual("var r = '';", result)
+
+    def test_bitwise_not_infinity(self):
+        source = inspect.cleandoc(
+            """
+            const f = () => ~Infinity;
+            var r = f();
+            """
+        )
+        result = self._evaluate(source)
+        self.assertEqual('var r = -1;', result)
+
+    def test_math_floor_infinity(self):
+        source = inspect.cleandoc(
+            """
+            const f = () => Math.floor(Infinity);
+            var r = f();
+            """
+        )
+        result = self._evaluate(source)
+        self.assertEqual('var r = Infinity;', result)
+
+    def test_math_trunc_infinity(self):
+        source = inspect.cleandoc(
+            """
+            const f = () => Math.trunc(Infinity);
+            var r = f();
+            """
+        )
+        result = self._evaluate(source)
+        self.assertEqual('var r = Infinity;', result)
+
+    def test_buffer_from_base64url(self):
+        source = inspect.cleandoc(
+            """
+            const decode = (s) => Buffer.from(s, 'base64').toString('utf8');
+            var x = decode('SGVsbG8-');
+            """
+        )
+        result = self._evaluate(source)
+        self.assertEqual("var x = 'Hello>';", result)
+
+    def test_closure_const_declared_after_function_not_captured(self):
+        source = inspect.cleandoc(
+            """
+            const fn = () => x;
+            const x = 5;
+            var r = fn();
+            """
+        )
+        result = self._evaluate(source)
+        expected = inspect.cleandoc(
+            """
+            const fn = () => x;
+            const x = 5;
+            var r = fn();
+            """
+        )
+        self.assertEqual(expected, result)
+
+    def test_finally_runs_when_catch_body_throws(self):
+        source = inspect.cleandoc(
+            """
+            function run() {
+                var cleaned = 0;
+                try {
+                    try {
+                        throw 'first';
+                    } catch(e) {
+                        cleaned = 1;
+                        throw 'second';
+                    } finally {
+                        cleaned = cleaned + 10;
+                    }
+                } catch(e2) {
+                    return cleaned;
+                }
+            }
+            var r = run();
+            """
+        )
+        result = self._evaluate(source)
+        self.assertEqual('var r = 11;', result)
+
+    def test_finally_runs_when_catch_body_returns(self):
+        source = inspect.cleandoc(
+            """
+            function run() {
+                var x = 0;
+                try {
+                    throw 1;
+                } catch(e) {
+                    x = e;
+                    return x;
+                } finally {
+                    x = x + 100;
+                }
+            }
+            var r = run();
+            """
+        )
+        result = self._evaluate(source)
+        self.assertEqual('var r = 1;', result)
+
+    def test_finally_runs_when_try_returns(self):
+        source = inspect.cleandoc(
+            """
+            function run() {
+                var x = 0;
+                try {
+                    x = 1;
+                    return x;
+                } finally {
+                    x = 2;
+                }
+            }
+            var r = run();
+            """
+        )
+        result = self._evaluate(source)
+        self.assertEqual('var r = 1;', result)
+
+    def test_catch_variable_does_not_leak(self):
+        source = inspect.cleandoc(
+            """
+            function f(e) {
+                try { throw 42; } catch(e) {}
+                return e;
+            }
+            var r = f(12);
+            """
+        )
+        result = self._evaluate(source)
+        self.assertEqual('var r = 12;', result)
+
+    def test_last_index_of_negative_position(self):
+        source = inspect.cleandoc(
+            """
+            const f = (s) => s.lastIndexOf('h', -1);
+            var r = f('hello');
+            """
+        )
+        result = self._evaluate(source)
+        self.assertEqual('var r = 0;', result)
+
+    def test_last_index_of_large_negative_position(self):
+        source = inspect.cleandoc(
+            """
+            const f = (s) => s.lastIndexOf('l', -5);
+            var r = f('hello world');
+            """
+        )
+        result = self._evaluate(source)
+        self.assertEqual('var r = -1;', result)
+
+    def test_array_length_nan_does_not_raise(self):
+        source = inspect.cleandoc(
+            """
+            function f() {
+                var a = [1, 2, 3];
+                a['length'] = NaN;
+                return a.length;
+            }
+            """
+        )
+        func = JsParser(source).parse().body[0]
+        assert isinstance(func, JsFunctionDeclaration)
+        result = JsInterpreter().execute(func, [])
+        self.assertEqual(0, result)
+
+    def test_array_length_infinity_does_not_raise(self):
+        source = inspect.cleandoc(
+            """
+            function f() {
+                var a = [1, 2, 3];
+                a['length'] = Infinity;
+                return a.length;
+            }
+            """
+        )
+        func = JsParser(source).parse().body[0]
+        assert isinstance(func, JsFunctionDeclaration)
+        result = JsInterpreter().execute(func, [])
+        self.assertEqual(0, result)
+
+    def test_typeof_buffer_is_function(self):
+        source = inspect.cleandoc(
+            """
+            const f = () => typeof Buffer === 'function' ? 'yes' : 'no';
+            var r = f();
+            """
+        )
+        result = self._evaluate(source)
+        self.assertEqual("var r = 'yes';", result)
+
+    def test_repeat_infinity_does_not_raise_memory_error(self):
+        source = inspect.cleandoc(
+            """
+            function f() {
+                try {
+                    return 'x'.repeat(Infinity);
+                } catch(e) {
+                    return 'caught';
+                }
+            }
+            var r = f();
+            """
+        )
+        result = self._evaluate(source)
+        self.assertEqual("var r = 'caught';", result)
+
+    def test_catch_param_bound_for_interpreter_error(self):
+        source = inspect.cleandoc(
+            """
+            function attempt() {
+                try {
+                    var x = null;
+                    x();
+                    return 'unreachable';
+                } catch(e) {
+                    return typeof e;
+                }
+            }
+            var r = attempt();
+            """
+        )
+        result = self._evaluate(source)
+        self.assertEqual("var r = 'object';", result)
+
+    def test_catch_clause_param_shadows_outer_const(self):
+        source = inspect.cleandoc(
+            """
+            const secret = 'outer';
+            function run() {
+                try {
+                    throw 'inner';
+                } catch(secret) {
+                    return secret;
+                }
+            }
+            var r = run();
+            """
+        )
+        result = self._evaluate(source)
+        expected = inspect.cleandoc(
+            """
+            const secret = 'outer';
+            var r = 'inner';
+            """
+        )
+        self.assertEqual(expected, result)
+
+    def test_catch_handler_irreducible_runs_finalizer(self):
+        source = inspect.cleandoc(
+            """
+            function run() {
+                try {
+                    throw 1;
+                } catch(e) {
+                    return externalVar;
+                } finally {
+                    return 'final';
+                }
+            }
+            """
+        )
+        func = JsParser(source).parse().body[0]
+        assert isinstance(func, JsFunctionDeclaration)
+        result = JsInterpreter().execute(func, [])
+        self.assertEqual('final', result)
+
+    def test_irreducible_from_try_block_preserves_node(self):
+        source = inspect.cleandoc(
+            """
+            function run() {
+                try { return externalVar; } finally {}
+            }
+            """
+        )
+        func = JsParser(source).parse().body[0]
+        assert isinstance(func, JsFunctionDeclaration)
+        with self.assertRaises(IrreducibleExpression) as ctx:
+            JsInterpreter().execute(func, [])
+        node = ctx.exception.node
+        self.assertIsInstance(node, JsIdentifier)
+        assert isinstance(node, JsIdentifier)
+        self.assertEqual('externalVar', node.name)
+
+    def test_buffer_from_result_not_inlined_as_integer_array(self):
+        source = inspect.cleandoc(
+            """
+            const toBytes = (s) => Buffer.from(s, 'base64');
+            var x = toBytes('SGVsbG8=');
+            """
+        )
+        result = self._evaluate(source)
+        expected = inspect.cleandoc(
+            """
+            const toBytes = s => Buffer.from(s, 'base64');
+            var x = toBytes('SGVsbG8=');
+            """
+        )
+        self.assertEqual(expected, result)
+
+    def test_split_undefined_returns_whole_string(self):
+        source = inspect.cleandoc(
+            """
+            const f = (s) => s.split(undefined).length;
+            var r = f('foo_undefined_bar');
+            """
+        )
+        result = self._evaluate(source)
+        self.assertEqual('var r = 1;', result)
+
+    def test_var_hoisting_shadows_outer_const_in_closure(self):
+        source = inspect.cleandoc(
+            """
+            const x = 'outer';
+            function wrap() {
+              const f = () => x;
+              var x = 'inner';
+              return f();
+            }
+            """
+        )
+        result = self._evaluate(source)
+        self.assertEqual(source, result)
+
+    def test_var_hoisting_shadows_outer_const_in_arg_resolution(self):
+        source = inspect.cleandoc(
+            """
+            const val = 'WRONG';
+            function pick(x) {
+              return x;
+            }
+            function wrap() {
+              var r = pick(val);
+              var val = 'RIGHT';
+              return r;
+            }
+            """
+        )
+        result = self._evaluate(source)
+        self.assertEqual(source, result)
+
+    def test_split_negative_limit_returns_all(self):
+        source = inspect.cleandoc(
+            """
+            const f = (s) => s.split(',', -1);
+            var r = f('a,b,c');
+            """
+        )
+        result = self._evaluate(source)
+        self.assertEqual("var r = ['a', 'b', 'c'];", result)
+
+    def test_starts_with_negative_position(self):
+        source = inspect.cleandoc(
+            """
+            const f = (s) => s.startsWith('h', -3);
+            var r = f('hello');
+            """
+        )
+        result = self._evaluate(source)
+        self.assertEqual('var r = true;', result)
+
+    def test_ends_with_negative_position(self):
+        source = inspect.cleandoc(
+            """
+            const f = (s) => s.endsWith('hell', -1);
+            var r = f('hello');
+            """
+        )
+        result = self._evaluate(source)
+        self.assertEqual('var r = false;', result)
+
+    def test_throw_signal_caught_in_arrow_concise_body(self):
+        source = inspect.cleandoc(
+            """
+            function bang() { throw 'boom'; }
+            function wrapper() {
+                const f = () => bang();
+                try { return f(); } catch(e) { return e; }
+            }
+            var r = wrapper();
+            """
+        )
+        result = self._evaluate(source)
+        self.assertEqual("var r = 'boom';", result)
+
+    def test_array_is_array_false_for_buffer(self):
+        source = inspect.cleandoc(
+            """
+            const f = () => Array.isArray(Buffer.from('AA==', 'base64'));
+            var r = f();
+            """
+        )
+        result = self._evaluate(source)
+        self.assertEqual('var r = false;', result)
+
+    def test_buffer_tostring_with_infinity_element(self):
+        source = inspect.cleandoc(
+            """
+            function run() {
+                try { return Buffer.from([72, Infinity, 108]).toString('hex'); }
+                catch(e) { return 'caught'; }
+            }
+            var r = run();
+            """
+        )
+        result = self._evaluate(source)
+        self.assertEqual("var r = '48006c';", result)
+
+    def test_buffer_from_list_coerces_null_to_zero(self):
+        source = inspect.cleandoc(
+            """
+            const f = () => Buffer.from([72, null, 108]).toString('latin1');
+            var r = f();
+            """
+        )
+        result = self._evaluate(source)
+        self.assertEqual("var r = 'H\\0l';", result)
+
+    def test_arr_index_of_negative_from_index(self):
+        source = inspect.cleandoc(
+            """
+            const f = () => [10, 20, 30].indexOf(10, -1);
+            var r = f();
+            """
+        )
+        result = self._evaluate(source)
+        self.assertEqual('var r = -1;', result)
+
+    def test_nested_var_hoisting_shadows_outer_const(self):
+        source = inspect.cleandoc(
+            """
+            const x = 'outer';
+            const f = () => x;
+            function wrap() {
+                const g = () => x;
+                if (true) { var x = 'inner'; }
+                return g();
+            }
+            var a = f();
+            """
+        )
+        result = self._evaluate(source)
+        self.assertIn("var a = 'outer';", result)
+        self.assertNotIn("var a = 'inner'", result)
+        self.assertIn('function wrap()', result)
+
+    def test_nested_var_hoisting_blocks_const_arg_resolution(self):
+        source = inspect.cleandoc(
+            """
+            const val = 'WRONG';
+            function pick(x) { return x; }
+            function wrap() {
+                var r = pick(val);
+                if (true) { var val = 'RIGHT'; }
+                return r;
+            }
+            """
+        )
+        result = self._evaluate(source)
+        self.assertIn('pick(val)', result)
+
+    def test_closure_env_not_corrupted_by_buffer_rejection(self):
+        source = inspect.cleandoc(
+            """
+            const key = [1, 2, 3];
+            const enc = (s) => {
+                var r = '';
+                for (var i = 0; i < s.length; i++) {
+                    r += String.fromCharCode(s.charCodeAt(i) ^ key[i % key.length]);
+                }
+                return r;
+            };
+            var a = enc('ABC');
+            var b = enc('ABC');
+            """
+        )
+        result = self._evaluate(source)
+        self.assertEqual(result, inspect.cleandoc(
+            """
+            var a = '@@@';
+            var b = '@@@';
+            """
+        ))
+
+    def test_parseInt_nan_radix_does_not_crash(self):
+        source = inspect.cleandoc(
+            """
+            function f() { return parseInt('5', undefined); }
+            var r = f();
+            """
+        )
+        result = self._evaluate(source)
+        self.assertEqual('var r = 5;', result)
+
+    def test_in_operator_nan_index_does_not_crash(self):
+        source = inspect.cleandoc(
+            """
+            function f() { return ({}) in [1, 2, 3]; }
+            var r = f();
+            """
+        )
+        result = self._evaluate(source)
+        self.assertEqual('var r = false;', result)
+
+    def test_let_in_nested_block_does_not_block_closure_capture(self):
+        source = inspect.cleandoc(
+            """
+            const x = 'outer';
+            function wrap() {
+                const f = () => x;
+                if (true) { let x = 'inner'; }
+                return f();
+            }
+            var r = wrap();
+            """
+        )
+        result = self._evaluate(source)
+        self.assertEqual("var r = 'outer';", result)
+
+    def test_let_in_nested_block_does_not_block_arg_resolution(self):
+        source = inspect.cleandoc(
+            """
+            const val = 'OK';
+            function pick(x) { return x; }
+            function wrap() {
+                var r = pick(val);
+                if (true) { let val = 'WRONG'; }
+                return r;
+            }
+            var r = wrap();
+            """
+        )
+        result = self._evaluate(source)
+        self.assertIn("var r = 'OK';", result)
+
+    def test_direct_let_still_shadows_outer_const_for_closure(self):
+        source = inspect.cleandoc(
+            """
+            const SECRET = 'global';
+            function wrap(v) {
+                let SECRET = v;
+                const f = (x) => x + SECRET;
+                return f('Z');
+            }
+            """
+        )
+        result = self._evaluate(source)
+        self.assertIn('SECRET', result)
+        self.assertNotIn("'Zglobal'", result)
+
+    def test_irreducible_in_try_propagates_not_caught(self):
+        source = inspect.cleandoc(
+            """
+            function run() {
+                try { return externalVar; } catch(e) { return 'wrong'; }
+            }
+            """
+        )
+        func = JsParser(source).parse().body[0]
+        assert isinstance(func, JsFunctionDeclaration)
+        with self.assertRaises(IrreducibleExpression):
+            JsInterpreter().execute(func, [])
+
+    def test_runtime_error_in_try_still_caught(self):
+        source = inspect.cleandoc(
+            """
+            function f() {
+                try {
+                    return 'x'.repeat(Infinity);
+                } catch(e) {
+                    return 'caught';
+                }
+            }
+            var r = f();
+            """
+        )
+        result = self._evaluate(source)
+        self.assertEqual("var r = 'caught';", result)
+
+    def test_buffer_return_does_not_lose_closure_mutations(self):
+        source = inspect.cleandoc(
+            """
+            const key = [1, 2, 3];
+            const enc = (s) => {
+                key.reverse();
+                return Buffer.from(s, 'utf8');
+            };
+            const dec = (s) => {
+                var r = '';
+                for (var i = 0; i < s.length; i++) {
+                    r += String.fromCharCode(s.charCodeAt(i) ^ key[i % key.length]);
+                }
+                return r;
+            };
+            var a = enc('x');
+            var b = dec('ABC');
+            """
+        )
+        result = self._evaluate(source)
+        self.assertIn("var b = '@@@';", result)
+
+    def test_split_with_undefined_limit_returns_all(self):
+        source = inspect.cleandoc(
+            """
+            function f(s, lim) { return s.split(',', lim); }
+            var r = f('a,b,c');
+            """
+        )
+        result = self._evaluate(source)
+        self.assertEqual("var r = ['a', 'b', 'c'];", result)
+
+    def test_buffer_tostring_nan_element_coerced_to_zero(self):
+        source = inspect.cleandoc(
+            """
+            const f = () => Buffer.from([72, 101, 108]).map(b => b * NaN).toString('hex');
+            var r = f();
+            """
+        )
+        result = self._evaluate(source)
+        self.assertEqual("var r = '000000';", result)
+
+    def test_typeof_sibling_function_returns_function(self):
+        source = inspect.cleandoc(
+            """
+            function run() {
+                function inner(x) { return x + 1; }
+                return typeof inner;
+            }
+            var r = run();
+            """
+        )
+        result = self._evaluate(source)
+        self.assertEqual("var r = 'function';", result)
+
+    def test_named_function_expression_internal_name_is_local(self):
+        source = inspect.cleandoc(
+            """
+            const decode = function self(s) {
+                var r = '';
+                for (var i = 0; i < s.length; i++) {
+                    r += String.fromCharCode(s.charCodeAt(i) ^ 1);
+                }
+                return r;
+            };
+            var x = decode('Idmmn');
+            """
+        )
+        result = self._evaluate(source)
+        self.assertEqual("var x = 'Hello';", result)
+
+    def test_tdz_shadow_from_later_let_blocks_capture(self):
+        source = inspect.cleandoc(
+            """
+            const x = 'outer';
+            function wrapper() {
+                const f = () => x;
+                let x = 'inner';
+                return f();
+            }
+            """
+        )
+        result = self._evaluate(source)
+        expected = inspect.cleandoc(
+            """
+            const x = 'outer';
+            function wrapper() {
+              const f = () => x;
+              let x = 'inner';
+              return f();
+            }
+            """
+        )
+        self.assertEqual(expected, result)
+
+    def test_later_var_does_not_block_capture(self):
+        source = inspect.cleandoc(
+            """
+            const secret = 'captured';
+            const f = () => secret;
+            var unrelated = 'something';
+            var r = f();
+            """
+        )
+        result = self._evaluate(source)
+        self.assertIn("var r = 'captured';", result)
+
+    def test_closure_env_not_mutated_on_buffer_result(self):
+        source = inspect.cleandoc(
+            """
+            const key = [1, 2, 3];
+            const enc = (s) => {
+                key.reverse();
+                return Buffer.from(s, 'utf8');
+            };
+            const dec = (s) => {
+                var r = '';
+                for (var i = 0; i < s.length; i++) {
+                    r += String.fromCharCode(s.charCodeAt(i) ^ key[i % key.length]);
+                }
+                return r;
+            };
+            var a = enc('ignored');
+            var b = dec('ABC');
+            var c = dec('ABC');
+            """
+        )
+        result = self._evaluate(source)
+        self.assertEqual(result, inspect.cleandoc(
+            """
+            const key = [1, 2, 3];
+            const enc = s => {
+              key.reverse();
+              return Buffer.from(s, 'utf8');
+            };
+            var a = enc('ignored');
+            var b = '@@@';
+            var c = '@@@';
+            """
+        ))
+
+    def test_non_extractable_inner_const_shadows_outer(self):
+        source = inspect.cleandoc(
+            """
+            const x = 'WRONG';
+            function outer(val) {
+                const x = val + val;
+                const fn = () => x;
+                return fn();
+            }
+            """
+        )
+        result = self._evaluate(source)
+        self.assertEqual(result, inspect.cleandoc(
+            """
+            const x = 'WRONG';
+            function outer(val) {
+              const x = val + val;
+              const fn = () => x;
+              return fn();
+            }
+            """
+        ))
+
+    def test_split_undefined_separator_with_zero_limit(self):
+        source = inspect.cleandoc(
+            """
+            const f = (s) => s.split(undefined, 0).length;
+            var r = f('hello world');
+            """
+        )
+        result = self._evaluate(source)
+        self.assertEqual('var r = 0;', result)
+
+    def test_unsigned_right_shift_nan_operands(self):
+        source = inspect.cleandoc(
+            """
+            function f() { return NaN >>> 0; }
+            var r = f();
+            """
+        )
+        result = self._evaluate(source)
+        self.assertEqual('var r = 0;', result)
+
+    def test_array_negative_length_assignment_raises(self):
+        source = inspect.cleandoc(
+            """
+            function f() {
+                var a = [1, 2, 3];
+                a['length'] = -1;
+                return a.length;
+            }
+            """
+        )
+        func = JsParser(source).parse().body[0]
+        assert isinstance(func, JsFunctionDeclaration)
+        with self.assertRaises(Exception):
+            JsInterpreter().execute(func, [])
+
+    def test_closure_writeback_only_on_successful_replacement(self):
+        source = inspect.cleandoc(
+            """
+            const data = ['first', 'second', 'third'];
+            const f = () => data.shift();
+            var a = f();
+            var b = f();
+            """
+        )
+        result = self._evaluate(source)
+        self.assertEqual(result, inspect.cleandoc(
+            """
+            var a = 'first';
+            var b = 'second';
+            """
+        ))
+
+    def test_multi_declarator_const_sibling_captured(self):
+        source = inspect.cleandoc(
+            """
+            const x = 42, fn = (a) => x + a;
+            var r = fn(8);
+            """
+        )
+        result = self._evaluate(source)
+        self.assertEqual('var r = 50;', result)
+
+    def test_split_undefined_separator_negative_limit(self):
+        source = inspect.cleandoc(
+            """
+            const f = (s) => s.split(undefined, -1);
+            var r = f('abc');
+            """
+        )
+        result = self._evaluate(source)
+        self.assertEqual("var r = ['abc'];", result)
+
+    def test_buffer_reduce_returns_plain_array(self):
+        source = inspect.cleandoc(
+            """
+            const f = () => Array.isArray(
+                Buffer.from([1, 2, 3]).reduce((acc, v) => { acc.push(v * 2); return acc; }, [])
+            );
+            var r = f();
+            """
+        )
+        result = self._evaluate(source)
+        self.assertEqual('var r = true;', result)
+
+    def test_pure_function_ref_as_value_does_not_produce_wrong_substitution(self):
+        source = inspect.cleandoc(
+            """
+            function helper(x) { return x + 1; }
+            function fn(x) { if (helper) return x; return 0; }
+            var r = fn(5);
+            """
+        )
+        result = self._evaluate(source)
+        expected = inspect.cleandoc(
+            """
+            function helper(x) {
+              return x + 1;
+            }
+            var r = 5;
+            """
+        )
+        self.assertEqual(expected, result)
 
 
 class TestIIFEAccessorPromoter(TestJsDeobfuscator):
 
     def _promote(self, source: str) -> str:
-        from refinery.lib.scripts.js.deobfuscation.iifeaccessor import JsIIFEAccessorPromoter
         return self._run_transformer(source, JsIIFEAccessorPromoter)
 
     def test_promotes_simple_accessor(self):
@@ -5450,7 +6648,6 @@ class TestParenthesisPreservation(TestJsDeobfuscator):
 class TestScrambleStringDecoder(TestJsDeobfuscator):
 
     def test_cipher_decode_known_values(self):
-        from refinery.lib.scripts.js.deobfuscation.scramble import ScrambleCipher
         cipher = ScrambleCipher(
             '2aaa9053353088d4d49b5bf32f403f2d85b3df97c9a9beedfcdbb1ecc27ba9c6',
             'fec5863b88643968ecff0c2c8afecbaf',

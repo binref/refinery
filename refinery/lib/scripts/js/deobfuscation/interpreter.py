@@ -7,6 +7,7 @@ import base64
 import json
 import math
 import re
+import sys
 import urllib.parse
 
 from typing import TYPE_CHECKING
@@ -97,6 +98,27 @@ class _ContinueSignal(Exception):
     pass
 
 
+class _ThrowSignal(Exception):
+    def __init__(self, value: Value):
+        self.value = value
+
+
+class JsBuffer(list):
+    """
+    Thin wrapper around `list` to distinguish a Node.js Buffer (byte array) from a plain JS Array
+    in the interpreter's type-based method dispatch.
+    """
+    pass
+
+
+def _deep_copy_value(value):
+    if isinstance(value, list):
+        return type(value)(_deep_copy_value(item) for item in value)
+    if isinstance(value, dict):
+        return {k: _deep_copy_value(v) for k, v in value.items()}
+    return value
+
+
 def _truthy(value: Value) -> bool:
     if value is None:
         return False
@@ -110,7 +132,27 @@ def _truthy(value: Value) -> bool:
         return True
     if isinstance(value, dict):
         return True
+    if isinstance(value, (JsFunctionDeclaration, JsFunctionExpression, JsArrowFunctionExpression)):
+        return True
     return False
+
+
+def _to_int(value: Value) -> int:
+    n = to_number(value)
+    if n != n or math.isinf(n):
+        return 0
+    return int(n)
+
+
+def _to_index(value: Value) -> int:
+    n = to_number(value)
+    if n != n:
+        return 0
+    if n == float('inf'):
+        return sys.maxsize
+    if n == float('-inf'):
+        return -sys.maxsize
+    return int(n)
 
 
 def to_number(value: Value) -> int | float:
@@ -172,6 +214,8 @@ def _js_typeof(value: Value) -> str:
         return 'number'
     if isinstance(value, str):
         return 'string'
+    if isinstance(value, (JsFunctionDeclaration, JsFunctionExpression, JsArrowFunctionExpression)):
+        return 'function'
     return 'object'
 
 
@@ -208,7 +252,7 @@ def _str_length(s: str, args: list[Value]) -> Value:
 
 @_register((str, 'charAt'))
 def _str_char_at(s: str, args: list[Value]) -> Value:
-    idx = int(to_number(args[0])) if args else 0
+    idx = _to_index(args[0]) if args else 0
     if 0 <= idx < len(s):
         return s[idx]
     return ''
@@ -216,7 +260,7 @@ def _str_char_at(s: str, args: list[Value]) -> Value:
 
 @_register((str, 'charCodeAt'))
 def _str_char_code_at(s: str, args: list[Value]) -> Value:
-    idx = int(to_number(args[0])) if args else 0
+    idx = _to_index(args[0]) if args else 0
     if 0 <= idx < len(s):
         return ord(s[idx])
     return float('nan')
@@ -227,7 +271,7 @@ def _str_index_of(s: str, args: list[Value]) -> Value:
     if not args:
         return -1
     search = to_string(args[0])
-    start = int(to_number(args[1])) if len(args) > 1 else 0
+    start = _to_index(args[1]) if len(args) > 1 else 0
     return s.find(search, max(0, start))
 
 
@@ -236,8 +280,13 @@ def _str_last_index_of(s: str, args: list[Value]) -> Value:
     if not args:
         return -1
     search = to_string(args[0])
-    end = int(to_number(args[1])) + 1 if len(args) > 1 else len(s)
-    return s.rfind(search, 0, end)
+    n = len(s)
+    if len(args) > 1:
+        pos = to_number(args[1])
+        start = n if pos != pos else max(0, min(_to_index(args[1]), n))
+    else:
+        start = n
+    return s.rfind(search, 0, start + len(search))
 
 
 @_register((str, 'includes'))
@@ -245,7 +294,7 @@ def _str_includes(s: str, args: list[Value]) -> Value:
     if not args:
         return False
     search = to_string(args[0])
-    start = int(to_number(args[1])) if len(args) > 1 else 0
+    start = _to_index(args[1]) if len(args) > 1 else 0
     return s.find(search, max(0, start)) != -1
 
 
@@ -254,7 +303,7 @@ def _str_starts_with(s: str, args: list[Value]) -> Value:
     if not args:
         return False
     prefix = to_string(args[0])
-    start = int(to_number(args[1])) if len(args) > 1 else 0
+    start = max(0, _to_index(args[1])) if len(args) > 1 else 0
     return s[start:].startswith(prefix)
 
 
@@ -263,15 +312,15 @@ def _str_ends_with(s: str, args: list[Value]) -> Value:
     if not args:
         return False
     suffix = to_string(args[0])
-    end = int(to_number(args[1])) if len(args) > 1 else len(s)
+    end = max(0, min(_to_index(args[1]), len(s))) if len(args) > 1 else len(s)
     return s[:end].endswith(suffix)
 
 
 @_register((str, 'slice'))
 def _str_slice(s: str, args: list[Value]) -> Value:
     n = len(s)
-    start = int(to_number(args[0])) if args else 0
-    end = int(to_number(args[1])) if len(args) > 1 else n
+    start = _to_index(args[0]) if args else 0
+    end = _to_index(args[1]) if len(args) > 1 else n
     if start < 0:
         start = max(n + start, 0)
     if end < 0:
@@ -282,8 +331,8 @@ def _str_slice(s: str, args: list[Value]) -> Value:
 @_register((str, 'substring'))
 def _str_substring(s: str, args: list[Value]) -> Value:
     n = len(s)
-    start = int(to_number(args[0])) if args else 0
-    end = int(to_number(args[1])) if len(args) > 1 else n
+    start = _to_index(args[0]) if args else 0
+    end = _to_index(args[1]) if len(args) > 1 else n
     start = max(0, min(start, n))
     end = max(0, min(end, n))
     if start > end:
@@ -294,8 +343,8 @@ def _str_substring(s: str, args: list[Value]) -> Value:
 @_register((str, 'substr'))
 def _str_substr(s: str, args: list[Value]) -> Value:
     n = len(s)
-    start = int(to_number(args[0])) if args else 0
-    length = int(to_number(args[1])) if len(args) > 1 else n
+    start = _to_index(args[0]) if args else 0
+    length = _to_index(args[1]) if len(args) > 1 else n
     if start < 0:
         start = max(n + start, 0)
     return s[start:start + max(0, length)]
@@ -303,16 +352,20 @@ def _str_substr(s: str, args: list[Value]) -> Value:
 
 @_register((str, 'split'))
 def _str_split(s: str, args: list[Value]) -> Value:
-    if not args:
+    if not args or args[0] is None:
+        if len(args) > 1 and args[1] is not None:
+            if _to_index(args[1]) == 0:
+                return []
         return [s]
     sep = to_string(args[0])
     if not sep:
         result = list(s)
     else:
         result = s.split(sep)
-    if len(args) > 1:
-        limit = int(to_number(args[1]))
-        result = result[:limit]
+    if len(args) > 1 and args[1] is not None:
+        limit = _to_index(args[1])
+        if limit >= 0:
+            result = result[:limit]
     return result
 
 
@@ -408,14 +461,14 @@ def _str_trim_end(s: str, args: list[Value]) -> Value:
 
 @_register((str, 'repeat'))
 def _str_repeat(s: str, args: list[Value]) -> Value:
-    count = int(to_number(args[0])) if args else 0
-    if count < 0:
+    count = _to_index(args[0]) if args else 0
+    if count < 0 or count > 0x10000000:
         raise InterpreterError
     return s * count
 
 
 def _str_pad(s: str, args: list[Value], prepend: bool) -> Value:
-    target_len = int(to_number(args[0])) if args else 0
+    target_len = min(_to_index(args[0]), 0x10000000) if args else 0
     fill = to_string(args[1]) if len(args) > 1 else ' '
     needed = target_len - len(s)
     if needed <= 0 or not fill:
@@ -436,7 +489,7 @@ def _str_pad_end(s: str, args: list[Value]) -> Value:
 
 @_register((str, 'at'))
 def _str_at(s: str, args: list[Value]) -> Value:
-    idx = int(to_number(args[0])) if args else 0
+    idx = _to_index(args[0]) if args else 0
     if idx < 0:
         idx += len(s)
     if 0 <= idx < len(s):
@@ -446,7 +499,7 @@ def _str_at(s: str, args: list[Value]) -> Value:
 
 @_register(('String', 'fromCharCode'))
 def _string_from_char_code(args: list[Value]) -> Value:
-    return ''.join(chr(int(to_number(a)) & 0xFFFF) for a in args)
+    return ''.join(chr(_to_int(a) & 0xFFFF) for a in args)
 
 
 @_register(('JSON', 'parse'))
@@ -515,8 +568,8 @@ def _arr_concat(arr: list, args: list[Value]) -> Value:
 @_register((list, 'slice'))
 def _arr_slice(arr: list, args: list[Value]) -> Value:
     n = len(arr)
-    start = int(to_number(args[0])) if args else 0
-    end = int(to_number(args[1])) if len(args) > 1 else n
+    start = _to_index(args[0]) if args else 0
+    end = _to_index(args[1]) if len(args) > 1 else n
     if start < 0:
         start = max(n + start, 0)
     if end < 0:
@@ -528,13 +581,13 @@ def _arr_slice(arr: list, args: list[Value]) -> Value:
 def _arr_splice(arr: list, args: list[Value]) -> Value:
     if not args:
         return []
-    start = int(to_number(args[0]))
+    start = _to_index(args[0])
     n = len(arr)
     if start < 0:
         start = max(n + start, 0)
     else:
         start = min(start, n)
-    delete_count = int(to_number(args[1])) if len(args) > 1 else n - start
+    delete_count = _to_index(args[1]) if len(args) > 1 else n - start
     delete_count = max(0, min(delete_count, n - start))
     removed = arr[start:start + delete_count]
     new_items = list(args[2:])
@@ -553,8 +606,10 @@ def _arr_index_of(arr: list, args: list[Value]) -> Value:
     if not args:
         return -1
     target = args[0]
-    start = int(to_number(args[1])) if len(args) > 1 else 0
-    for i in range(max(0, start), len(arr)):
+    start = _to_index(args[1]) if len(args) > 1 else 0
+    if start < 0:
+        start = max(0, len(arr) + start)
+    for i in range(start, len(arr)):
         if js_strict_equal(arr[i], target):
             return i
     return -1
@@ -569,7 +624,7 @@ def _arr_includes(arr: list, args: list[Value]) -> Value:
 
 @_register((list, 'flat'))
 def _arr_flat(arr: list, args: list[Value]) -> Value:
-    depth = int(to_number(args[0])) if args else 1
+    depth = _to_index(args[0]) if args else 1
 
     def _flatten(lst: list, d: int) -> list:
         result: list = []
@@ -584,7 +639,7 @@ def _arr_flat(arr: list, args: list[Value]) -> Value:
 
 @_register((list, 'at'))
 def _arr_at(arr: list, args: list[Value]) -> Value:
-    idx = int(to_number(args[0])) if args else 0
+    idx = _to_index(args[0]) if args else 0
     if idx < 0:
         idx += len(arr)
     if 0 <= idx < len(arr):
@@ -598,8 +653,8 @@ def _arr_fill(arr: list, args: list[Value]) -> Value:
         return arr
     value = args[0]
     n = len(arr)
-    start = int(to_number(args[1])) if len(args) > 1 else 0
-    end = int(to_number(args[2])) if len(args) > 2 else n
+    start = _to_index(args[1]) if len(args) > 1 else 0
+    end = _to_index(args[2]) if len(args) > 2 else n
     if start < 0:
         start = max(n + start, 0)
     if end < 0:
@@ -613,21 +668,25 @@ _ARRAY_HOF_METHODS = frozenset({
     'every', 'some', 'map', 'filter', 'reduce', 'forEach', 'find', 'findIndex',
 })
 
+_BUFFER_PRESERVING_HOFS = frozenset({'map', 'filter'})
+
 
 @_register(('Math', 'floor'))
 def _math_floor(args: list[Value]) -> Value:
-    return int(math.floor(to_number(args[0]))) if args else 0
+    v = to_number(args[0]) if args else 0.0
+    return float('nan') if v != v else v if math.isinf(v) else int(math.floor(v))
 
 
 @_register(('Math', 'ceil'))
 def _math_ceil(args: list[Value]) -> Value:
-    return int(math.ceil(to_number(args[0]))) if args else 0
+    v = to_number(args[0]) if args else 0.0
+    return float('nan') if v != v else v if math.isinf(v) else int(math.ceil(v))
 
 
 @_register(('Math', 'round'))
 def _math_round(args: list[Value]) -> Value:
-    v = to_number(args[0]) if args else 0
-    return int(math.floor(v + 0.5))
+    v = to_number(args[0]) if args else 0.0
+    return float('nan') if v != v else v if math.isinf(v) else int(math.floor(v + 0.5))
 
 
 @_register(('Math', 'abs'))
@@ -677,7 +736,8 @@ def _math_max(args: list[Value]) -> Value:
 
 @_register(('Math', 'trunc'))
 def _math_trunc(args: list[Value]) -> Value:
-    return int(math.trunc(to_number(args[0]))) if args else 0
+    v = to_number(args[0]) if args else 0.0
+    return float('nan') if v != v else v if math.isinf(v) else int(math.trunc(v))
 
 
 @_register(('Math', 'sign'))
@@ -712,7 +772,7 @@ def _global_parse_int(args: list[Value]) -> Value:
     if not args:
         return float('nan')
     s = to_string(args[0])
-    radix = int(to_number(args[1])) if len(args) > 1 else 10
+    radix = _to_int(args[1]) if len(args) > 1 else 10
     result = js_parse_int(s, radix)
     if result is None:
         return float('nan')
@@ -781,7 +841,9 @@ def _global_atob(args: list[Value]) -> Value:
         raise InterpreterError
     s = to_string(args[0])
     try:
-        return base64.b64decode(re.sub('\\s', '', s), validate=True).decode('latin-1')
+        cleaned = _RE_WHITESPACE.sub('', s)
+        padded = cleaned + '=' * (-len(cleaned) % 4)
+        return base64.b64decode(padded, validate=True).decode('latin-1')
     except Exception:
         raise InterpreterError
 
@@ -798,6 +860,8 @@ def _global_btoa(args: list[Value]) -> Value:
 
 
 _UNESCAPE_PATTERN = re.compile(r'%u([0-9A-Fa-f]{4})|%([0-9A-Fa-f]{2})')
+_RE_WHITESPACE = re.compile(r'\s')
+_RE_NON_BASE64 = re.compile(r'[^A-Za-z0-9+/=]')
 
 
 @_register((None, 'unescape'))
@@ -866,10 +930,65 @@ def _array_from(args: list[Value]) -> Value:
 
 @_register(('Array', 'isArray'))
 def _array_is_array(args: list[Value]) -> Value:
-    return isinstance(args[0], list) if args else False
+    return isinstance(args[0], list) and not isinstance(args[0], JsBuffer) if args else False
 
 
-STATIC_OBJECTS = frozenset({'Math', 'String', 'Object', 'Array', 'Number', 'JSON'})
+@_register(('Buffer', 'from'))
+def _buffer_from(args: list[Value]) -> Value:
+    if not args:
+        raise InterpreterError
+    data = args[0]
+    if isinstance(data, list):
+        return JsBuffer(_to_int(v) & 0xFF for v in data)
+    if not isinstance(data, str):
+        raise InterpreterError
+    encoding = args[1] if len(args) > 1 else 'utf8'
+    if not isinstance(encoding, str):
+        raise InterpreterError
+    try:
+        if encoding == 'base64':
+            normalized = data.replace('-', '+').replace('_', '/')
+            stripped = _RE_NON_BASE64.sub('', normalized)
+            padded = stripped.rstrip('=')
+            padded = padded + '=' * (-len(padded) % 4)
+            return JsBuffer(base64.b64decode(padded))
+        if encoding in ('utf8', 'utf-8'):
+            return JsBuffer(data.encode('utf-8'))
+        if encoding in ('latin1', 'binary'):
+            return JsBuffer(data.encode('latin-1'))
+        if encoding == 'hex':
+            return JsBuffer(bytes.fromhex(data))
+    except Exception:
+        raise InterpreterError
+    raise InterpreterError
+
+
+@_register((JsBuffer, 'toString'))
+def _list_to_string(buf: list, args: list[Value]) -> Value:
+    encoding = args[0] if args else 'utf8'
+    if not isinstance(encoding, str):
+        raise InterpreterError
+    try:
+        raw = bytes(_to_int(v) & 0xFF for v in buf)
+    except (TypeError, ValueError, OverflowError):
+        raise InterpreterError
+    try:
+        if encoding in ('utf8', 'utf-8'):
+            return raw.decode('utf-8')
+        if encoding in ('latin1', 'binary'):
+            return raw.decode('latin-1')
+        if encoding == 'base64':
+            return base64.b64encode(raw).decode('ascii')
+        if encoding == 'hex':
+            return raw.hex()
+        if encoding == 'ascii':
+            return raw.decode('ascii')
+    except Exception:
+        raise InterpreterError
+    raise InterpreterError
+
+
+STATIC_OBJECTS = frozenset({'Math', 'String', 'Object', 'Array', 'Number', 'JSON', 'Buffer'})
 
 
 def is_runtime_name(name: str) -> bool:
@@ -892,13 +1011,17 @@ class JsInterpreter:
         max_iterations: int = MAX_ITERATIONS,
         max_string_len: int = MAX_STRING_LEN,
         max_recursion: int = _MAX_RECURSION,
-        functions: Mapping[str, JsFunctionDeclaration] | None = None,
+        functions: Mapping[str, JsFunctionDeclaration | JsFunctionExpression | JsArrowFunctionExpression] | None = None,
+        closure: Mapping[str, Value] | None = None,
+        closure_env: Mapping[int, Mapping[str, Value]] | None = None,
         depth: int = 0,
     ):
         self.max_iterations = max_iterations
         self.max_string_len = max_string_len
         self.max_recursion = max_recursion
-        self._functions: Mapping[str, JsFunctionDeclaration] = functions or {}
+        self._functions: Mapping[str, JsFunctionDeclaration | JsFunctionExpression | JsArrowFunctionExpression] = functions or {}
+        self._closure: Mapping[str, Value] = closure or {}
+        self._closure_env: Mapping[int, Mapping[str, Value]] = closure_env or {}
         self._env: dict[str, Value] = {}
         self._iterations = 0
         self._depth = depth
@@ -917,6 +1040,9 @@ class JsInterpreter:
         self._env = {}
         for i, name in enumerate(param_names):
             self._env[name] = arguments[i] if i < len(arguments) else None
+        for name, value in self._closure.items():
+            if name not in self._env:
+                self._env[name] = _deep_copy_value(value)
         self._iterations = 0
         body = func.body
         if isinstance(body, JsBlockStatement):
@@ -924,9 +1050,18 @@ class JsInterpreter:
                 self._exec_statements(body.body)
             except _ReturnSignal as r:
                 return r.value
+            except _ThrowSignal:
+                if self._depth == 0:
+                    raise InterpreterError
+                raise
             return None
         if body is not None:
-            return self._eval(body)
+            try:
+                return self._eval(body)
+            except _ThrowSignal:
+                if self._depth == 0:
+                    raise InterpreterError
+                raise
         return None
 
     def _exec_statements(self, stmts: list) -> None:
@@ -957,7 +1092,7 @@ class JsInterpreter:
                 raise _ReturnSignal(None)
             try:
                 value = self._eval(stmt.argument)
-            except InterpreterError:
+            except IrreducibleExpression:
                 raise IrreducibleExpression(stmt.argument)
             raise _ReturnSignal(value)
         elif isinstance(stmt, JsBreakStatement):
@@ -969,7 +1104,8 @@ class JsInterpreter:
         elif isinstance(stmt, JsTryStatement):
             self._exec_try(stmt)
         elif isinstance(stmt, JsThrowStatement):
-            raise InterpreterError
+            value = self._eval(stmt.argument) if stmt.argument else None
+            raise _ThrowSignal(value)
         elif isinstance(stmt, JsFunctionDeclaration):
             if isinstance(stmt.id, JsIdentifier):
                 self._env[stmt.id.name] = stmt
@@ -1080,14 +1216,72 @@ class JsInterpreter:
                 break
 
     def _exec_try(self, node: JsTryStatement) -> None:
+        thrown: _ThrowSignal | None = None
+        aborted: InterpreterError | None = None
+        flow: _ReturnSignal | _BreakSignal | _ContinueSignal | None = None
+        irreducible: IrreducibleExpression | None = None
         try:
             if node.block:
                 self._exec_statements(node.block.body)
-        except InterpreterError:
+        except _ThrowSignal as exc:
+            thrown = exc
+        except IrreducibleExpression as exc:
+            irreducible = exc
+        except InterpreterError as exc:
+            aborted = exc
+        except (_ReturnSignal, _BreakSignal, _ContinueSignal) as exc:
+            flow = exc
+        if irreducible is not None:
+            if node.finalizer:
+                self._exec_statements(node.finalizer.body)
+            raise irreducible
+        if flow is not None:
+            if node.finalizer:
+                self._exec_statements(node.finalizer.body)
+            raise flow
+        if thrown is not None or aborted is not None:
             if node.handler and node.handler.body:
-                self._exec_statements(node.handler.body.body)
-            else:
-                raise
+                param_name: str | None = None
+                had_param: bool = False
+                prev_param: Value = None
+                if isinstance(node.handler.param, JsIdentifier):
+                    param_name = node.handler.param.name
+                    had_param = param_name in self._env
+                    prev_param = self._env.get(param_name)
+                    self._env[param_name] = thrown.value if thrown is not None else {}
+                handler_flow: _ReturnSignal | _BreakSignal | _ContinueSignal | None = None
+                handler_thrown: _ThrowSignal | None = None
+                handler_aborted: InterpreterError | IrreducibleExpression | None = None
+                try:
+                    self._exec_statements(node.handler.body.body)
+                except (_ReturnSignal, _BreakSignal, _ContinueSignal) as exc:
+                    handler_flow = exc
+                except _ThrowSignal as exc:
+                    handler_thrown = exc
+                except (InterpreterError, IrreducibleExpression) as exc:
+                    handler_aborted = exc
+                finally:
+                    if param_name is not None:
+                        if had_param:
+                            self._env[param_name] = prev_param
+                        else:
+                            self._env.pop(param_name, None)
+                if node.finalizer:
+                    self._exec_statements(node.finalizer.body)
+                if handler_flow is not None:
+                    raise handler_flow
+                if handler_thrown is not None:
+                    raise handler_thrown
+                if handler_aborted is not None:
+                    raise handler_aborted
+                return
+            if node.finalizer:
+                self._exec_statements(node.finalizer.body)
+            if thrown is not None:
+                raise thrown
+            raise aborted  # type: ignore[misc]
+        if node.finalizer:
+            self._exec_statements(node.finalizer.body)
 
     def _get_loop_var(self, left) -> str:
         if isinstance(left, JsVariableDeclaration):
@@ -1161,7 +1355,9 @@ class JsInterpreter:
             return float('inf')
         if name in self._env:
             return self._env[name]
-        raise InterpreterError
+        if name in self._functions:
+            return self._functions[name]
+        raise IrreducibleExpression(node)
 
     def _eval_binary(self, node: JsBinaryExpression) -> Value:
         op = node.operator
@@ -1182,8 +1378,12 @@ class JsInterpreter:
             if isinstance(right, dict):
                 return to_string(left) in right
             if isinstance(right, list):
-                idx = int(to_number(left))
-                return 0 <= idx < len(right)
+                key = to_string(left)
+                try:
+                    idx = int(key)
+                except (ValueError, OverflowError):
+                    return False
+                return str(idx) == key and 0 <= idx < len(right)
             raise InterpreterError
         if op == 'instanceof':
             raise InterpreterError
@@ -1201,6 +1401,12 @@ class JsInterpreter:
                 name = node.operand.name
                 if name in self._env:
                     return _js_typeof(self._env[name])
+                if name in self._functions:
+                    return 'function'
+                if name in ('String', 'Number', 'Array', 'Object', 'Buffer'):
+                    return 'function'
+                if name in STATIC_OBJECTS:
+                    return 'object'
                 return 'undefined'
             return _js_typeof(self._eval(node.operand))
         if op == 'void':
@@ -1213,7 +1419,7 @@ class JsInterpreter:
         if op == '+':
             return to_number(operand)
         if op == '~':
-            return _to_int32(~int(to_number(operand)))
+            return _to_int32(~_to_int(operand))
         if op == '!':
             return not _truthy(operand)
         raise InterpreterError
@@ -1279,16 +1485,16 @@ class JsInterpreter:
                 raise InterpreterError
             self._env[name] = math.fmod(to_number(current), divisor)
         elif op == '|=':
-            self._env[name] = _to_int32(int(to_number(current)) | int(to_number(value)))
+            self._env[name] = _to_int32(_to_int(current) | _to_int(value))
         elif op == '&=':
-            self._env[name] = _to_int32(int(to_number(current)) & int(to_number(value)))
+            self._env[name] = _to_int32(_to_int(current) & _to_int(value))
         elif op == '^=':
-            self._env[name] = _to_int32(int(to_number(current)) ^ int(to_number(value)))
+            self._env[name] = _to_int32(_to_int(current) ^ _to_int(value))
         elif op == '<<=':
-            self._env[name] = _to_int32(_to_int32(int(to_number(current))) << (int(to_number(value)) & 0x1F))
+            self._env[name] = _to_int32(_to_int32(_to_int(current)) << (_to_int(value) & 0x1F))
         elif op == '>>=':
             self._env[name] = _to_int32(
-                _to_int32(int(to_number(current))) >> (int(to_number(value)) & 0x1F)
+                _to_int32(_to_int(current)) >> (_to_int(value) & 0x1F)
             )
         else:
             raise InterpreterError
@@ -1339,6 +1545,7 @@ class JsInterpreter:
             target = self._env[name]
             if isinstance(target, (JsFunctionDeclaration, JsFunctionExpression, JsArrowFunctionExpression)):
                 return self._call_function(target, args)
+            raise InterpreterError
         func = self._functions.get(name)
         if func is not None:
             return self._call_function(func, args)
@@ -1364,10 +1571,19 @@ class JsInterpreter:
         args = [self._eval(a) for a in node.arguments]
         obj_type = type(obj)
         builtin = BUILTIN_REGISTRY.get((obj_type, method_name))
+        if builtin is None and obj_type is not list and isinstance(obj, list):
+            builtin = BUILTIN_REGISTRY.get((list, method_name))
         if builtin is not None:
-            return builtin(obj, args)
+            result = builtin(obj, args)
+            if isinstance(obj, JsBuffer) and isinstance(result, list) and not isinstance(result, JsBuffer):
+                result = JsBuffer(result)
+            return result
         if isinstance(obj, list) and method_name in _ARRAY_HOF_METHODS:
-            return self._eval_array_hof(obj, method_name, args)
+            result = self._eval_array_hof(obj, method_name, args)
+            if isinstance(obj, JsBuffer) and method_name in _BUFFER_PRESERVING_HOFS:
+                if isinstance(result, list) and not isinstance(result, JsBuffer):
+                    result = JsBuffer(result)
+            return result
         if isinstance(obj, (JsFunctionExpression, JsArrowFunctionExpression)):
             if method_name == 'call':
                 return self._call_function(obj, args[1:] if len(args) > 1 else [])
@@ -1449,11 +1665,14 @@ class JsInterpreter:
     def _call_function(self, func, args: list[Value]) -> Value:
         if self._depth >= self.max_recursion:
             raise InterpreterError
+        callee_closure = self._closure_env.get(id(func)) or {}
         child = JsInterpreter(
-            max_iterations=self.max_iterations - self._iterations,
+            max_iterations=max(1, self.max_iterations - self._iterations),
             max_string_len=self.max_string_len,
             max_recursion=self.max_recursion,
             functions=self._functions,
+            closure=callee_closure,
+            closure_env=self._closure_env,
             depth=self._depth + 1,
         )
         try:
@@ -1522,7 +1741,10 @@ class JsInterpreter:
                 return None
             except (ValueError, TypeError):
                 pass
-            builtin = BUILTIN_REGISTRY.get((list, key))
+            obj_type = type(obj)
+            builtin = BUILTIN_REGISTRY.get((obj_type, key))
+            if builtin is None and obj_type is not list:
+                builtin = BUILTIN_REGISTRY.get((list, key))
             if builtin is not None:
                 raise InterpreterError
             return None
@@ -1546,7 +1768,9 @@ class JsInterpreter:
             return
         if isinstance(obj, list):
             if key == 'length':
-                new_len = int(to_number(value))
+                new_len = _to_int(value)
+                if new_len < 0:
+                    raise InterpreterError
                 if new_len < len(obj):
                     del obj[new_len:]
                 else:

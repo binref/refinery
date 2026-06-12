@@ -82,6 +82,17 @@ def _to_int32(v: int | float) -> int:
     return v - 0x100000000 if v >= 0x80000000 else v
 
 
+def _to_uint32(v: int | float) -> int:
+    """
+    Replicate the ECMA-262 ToUint32 abstract operation.
+    """
+    if isinstance(v, float):
+        if v != v or v == float('inf') or v == float('-inf'):
+            return 0
+        v = int(v) if v >= 0 else -int(-v)
+    return v & 0xFFFFFFFF
+
+
 def _js_div(a: int | float, b: int | float) -> int | float:
     if b == 0:
         if a == 0 or a != a:
@@ -136,8 +147,8 @@ def eval_binary_op(op: str, left: int | float, right: int | float) -> int | floa
     if rel is not None:
         return rel(left, right)
     if op == '>>>':
-        a = int(left) & 0xFFFFFFFF
-        b = int(right) & 0x1F
+        a = _to_uint32(left)
+        b = _to_uint32(right) & 0x1F
         return (a >> b) & 0xFFFFFFFF
     fn = BINARY_OPS.get(op)
     if fn is None:

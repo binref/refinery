@@ -364,6 +364,8 @@ class JsSimplifications(Transformer):
         static_name = callee.object.name
         if static_name not in STATIC_OBJECTS:
             return None
+        if static_name == 'Buffer':
+            return None
         method_name = access_key(callee)
         if method_name is None:
             return None

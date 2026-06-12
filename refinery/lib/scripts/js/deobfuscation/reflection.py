@@ -70,10 +70,11 @@ def _try_eval_string_arg(node: Expression) -> str | None:
         InterpreterError,
         IrreducibleExpression,
         JsInterpreter,
+        _ThrowSignal,
     )
     try:
         result = JsInterpreter().eval_expression(node)
-    except (InterpreterError, IrreducibleExpression, RecursionError, ValueError, OverflowError):
+    except (InterpreterError, IrreducibleExpression, _ThrowSignal, RecursionError, ValueError, OverflowError):
         return None
     if isinstance(result, str):
         return result
