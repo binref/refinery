@@ -24,8 +24,10 @@ from refinery.lib.scripts.ps1.model import (
     Ps1AssignmentExpression,
     Ps1BinaryExpression,
     Ps1CastExpression,
+    Ps1ClassDefinition,
     Ps1CommandArgument,
     Ps1CommandInvocation,
+    Ps1EnumDefinition,
     Ps1ExpandableString,
     Ps1ExpressionStatement,
     Ps1ForEachLoop,
@@ -41,6 +43,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1PipelineElement,
     Ps1RangeExpression,
     Ps1RealLiteral,
+    Ps1ScopeModifier,
     Ps1ScriptBlock,
     Ps1StringLiteral,
     Ps1TypeExpression,
@@ -79,6 +82,18 @@ _PURE_STATIC_TYPES = frozenset({
     'system.timespan',
     'timespan',
 })
+
+
+def _inside_definition(node: Node) -> bool:
+    """
+    Return `True` when `node` is nested inside a function, class, or enum definition body.
+    """
+    cursor = node.parent
+    while cursor is not None:
+        if isinstance(cursor, (Ps1FunctionDefinition, Ps1ClassDefinition, Ps1EnumDefinition)):
+            return True
+        cursor = cursor.parent
+    return False
 
 _PURE_INSTANCE_METHODS = frozenset({
     'adddays',
@@ -268,6 +283,19 @@ class Ps1UnusedVariableRemoval(Transformer):
                 read_in_assign.setdefault(key, set()).add(enclosing)
             else:
                 has_free_read.add(key)
+        # An outer-scope assignment can still be read through PowerShell's dynamic scoping (from
+        # inside a function body) or through a scope qualifier (`$script:x`, `$global:x`). The
+        # outer-scope walk above misses both, so collect those reads from the full tree by bare name
+        # and treat them as free reads — keeping the assignment alive rather than deleting live code.
+        for n in node.walk():
+            if not isinstance(n, Ps1Variable) or n in write_targets:
+                continue
+            scoped = n.scope not in (Ps1ScopeModifier.NONE, Ps1ScopeModifier.ENV)
+            if not scoped and not _inside_definition(n):
+                continue
+            has_free_read.add(n.name.lower())
+            if n.scope == Ps1ScopeModifier.ENV:
+                has_free_read.add(F'env:{n.name.lower()}')
         dead: set[str] = set()
         for key in write_nodes:
             if key in has_free_read or key in _PS1_SKIP_VARIABLES:
