@@ -166,3 +166,9 @@ class TestPs1Synthesizer(TestBase):
 
     def test_roundtrip_redirection_in_pipeline(self):
         self._round_trip('cmd 2>&1 | Out-File log.txt')
+
+    def test_unary_sign_not_glued_to_signed_operand(self):
+        # `- -5` (negation of a negative literal) must not synthesize to `--5`, which would re-lex
+        # as the decrement operator and change the meaning; a separating space is required.
+        self.assertEqual(Ps1Synthesizer().convert(Ps1Parser('- -5').parse()), '- -5')
+        self.assertEqual(Ps1Synthesizer().convert(Ps1Parser('+ +5').parse()), '+ +5')

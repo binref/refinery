@@ -537,3 +537,25 @@ class TestPs1ParserExpressions(TestBase):
         self.assertIsInstance(expr, Ps1MemberAccess)
         self.assertEqual(expr.access, Ps1AccessKind.STATIC)
         self.assertIsInstance(expr.member, Ps1StringLiteral)
+
+    def test_leading_zero_integer_is_decimal(self):
+        expr = self._parse_expr('007')
+        self.assertIsInstance(expr, Ps1IntegerLiteral)
+        self.assertEqual(expr.value, 7)
+
+    def test_backtick_unicode_escape(self):
+        expr = self._parse_expr('"`u{48}`u{69}"')
+        self.assertIsInstance(expr, Ps1StringLiteral)
+        self.assertEqual(expr.value, 'Hi')
+
+    def test_verbatim_here_string_keeps_smart_quotes(self):
+        content = 'say “hi” don’t'
+        expr = self._parse_expr(F"@'\n{content}\n'@")
+        self.assertIsInstance(expr, Ps1HereString)
+        self.assertEqual(expr.value, content)
+
+    def test_generic_argument_token_is_decoded(self):
+        # The generic argument token `a'b c'd` decodes its embedded quotes to the value `ab cd`.
+        script = Ps1Parser("echo a'b c'd").parse()
+        values = [n.value for n in script.walk() if isinstance(n, Ps1StringLiteral)]
+        self.assertEqual(values, ['ab cd', 'echo'])

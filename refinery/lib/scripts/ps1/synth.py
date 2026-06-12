@@ -114,8 +114,11 @@ class Ps1Synthesizer(Synthesizer):
             self._write(node.raw)
 
     def visit_Ps1ExpandableString(self, node: Ps1ExpandableString):
+        self._emit_expandable_parts(node.parts)
+
+    def _emit_expandable_parts(self, parts):
         self._write('"')
-        for part in node.parts:
+        for part in parts:
             if isinstance(part, Ps1StringLiteral):
                 self._write(self._escape_for_dq(part.value))
             elif isinstance(part, Ps1Variable):
@@ -146,7 +149,10 @@ class Ps1Synthesizer(Synthesizer):
             self._write(node.raw)
 
     def visit_Ps1ExpandableHereString(self, node: Ps1ExpandableHereString):
-        self._write(node.raw)
+        # Emit from the (possibly transform-rewritten) parts rather than the stale `raw`, otherwise
+        # an inlined variable/constant would be lost while its source assignment is removed. A
+        # double-quoted expandable string is semantically equivalent to the here-string.
+        self._emit_expandable_parts(node.parts)
 
     def visit_Ps1BinaryExpression(self, node: Ps1BinaryExpression):
         spine: list[tuple[str, Expression | None]] = []
@@ -166,12 +172,24 @@ class Ps1Synthesizer(Synthesizer):
             self._write(node.operator)
             if node.operator.startswith('-') and len(node.operator) > 1:
                 self._write(' ')
+            elif node.operator in ('+', '-') and self._operand_starts_with_sign(node.operand):
+                # Avoid gluing a unary sign onto an operand that itself starts with the same sign,
+                # which would re-lex as the `++`/`--` operator (e.g. `- -5` must not become `--5`).
+                self._write(' ')
             if node.operand:
                 self.visit(node.operand)
         else:
             if node.operand:
                 self.visit(node.operand)
             self._write(node.operator)
+
+    @staticmethod
+    def _operand_starts_with_sign(operand) -> bool:
+        return (
+            isinstance(operand, Ps1UnaryExpression)
+            and operand.prefix
+            and operand.operator[:1] in ('+', '-')
+        )
 
     def visit_Ps1TypeExpression(self, node: Ps1TypeExpression):
         self._write(F'[{node.name}]')

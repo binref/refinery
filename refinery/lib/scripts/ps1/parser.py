@@ -172,6 +172,36 @@ _MULTIPLIER_SUFFIXES = {
 }
 
 
+def _normalize_string_delimiters(text: str, width: int) -> str:
+    """
+    Normalize unicode smart quotes only in the `width` opening and closing delimiter characters of a
+    string token, leaving the verbatim content untouched so that literal smart quotes inside the
+    string survive byte-for-byte.
+    """
+    if len(text) <= 2 * width:
+        return text.translate(NORMALIZE_QUOTES)
+    head = text[:width].translate(NORMALIZE_QUOTES)
+    tail = text[-width:].translate(NORMALIZE_QUOTES)
+    return head + text[width:-width] + tail
+
+
+def _decode_backtick(text: str, i: int, length: int) -> tuple[str, int]:
+    """
+    Decode the backtick escape at `text[i]` (the backtick). Handles the PowerShell 6+ unicode escape
+    `` `u{XXXX} `` in addition to the single-character escapes in `BACKTICK_ESCAPE`. Returns the
+    decoded text and the index of the first character after the escape.
+    """
+    nc = text[i + 1]
+    if nc in ('u', 'U') and i + 2 < length and text[i + 2] == '{':
+        end = text.find('}', i + 3)
+        if end != -1:
+            try:
+                return chr(int(text[i + 3:end], 16)), end + 1
+            except (ValueError, OverflowError):
+                pass
+    return BACKTICK_ESCAPE.get(nc, nc), i + 2
+
+
 class Ps1Parser:
 
     def __init__(self, source: str):
@@ -353,12 +383,6 @@ class Ps1Parser:
 
     def _is_statement_terminator(self) -> bool:
         return self._current.kind in _STATEMENT_TERMINATORS
-
-    def _eat_statement_terminator(self) -> bool:
-        if self._current.kind in (Ps1TokenKind.NEWLINE, Ps1TokenKind.SEMICOLON):
-            self._advance()
-            return True
-        return self._current.kind in (Ps1TokenKind.RBRACE, Ps1TokenKind.RPAREN, Ps1TokenKind.EOF)
 
     def parse(self) -> Ps1Script:
         return self._parse_script()
@@ -715,22 +739,23 @@ class Ps1Parser:
         return Ps1ArrayLiteral(offset=first.offset, elements=elements)
 
     def _parse_generic_as_string(self, tok: Ps1Token) -> Expression:
-        if tok.kind == Ps1TokenKind.GENERIC_EXPAND:
-            parts = self._split_generic_expandable(tok.value)
-            if len(parts) == 1 and isinstance(parts[0], Ps1StringLiteral):
-                return Ps1StringLiteral(
-                    offset=tok.offset, value=parts[0].value, raw=tok.value)
-            return Ps1ExpandableString(
-                offset=tok.offset, parts=parts, raw=tok.value)
-        return Ps1StringLiteral(
-            offset=tok.offset, value=tok.value, raw=tok.value)
+        # Decode both GENERIC_EXPAND and plain GENERIC_TOKEN through the same splitter so embedded
+        # quotes and backtick escapes (e.g. `echo a'b c'd`) are resolved consistently. A plain
+        # GENERIC_TOKEN never contains a `$` expansion, so the split yields a single literal.
+        parts = self._split_generic_expandable(tok.value)
+        if len(parts) == 1 and isinstance(parts[0], Ps1StringLiteral):
+            return Ps1StringLiteral(
+                offset=tok.offset, value=parts[0].value, raw=tok.value)
+        return Ps1ExpandableString(
+            offset=tok.offset, parts=parts, raw=tok.value)
 
     def _parse_single_argument_value(self) -> Expression | None:
         if self._at(Ps1TokenKind.GENERIC_TOKEN, Ps1TokenKind.GENERIC_EXPAND):
             tok = self._advance()
             result = self._parse_generic_as_string(tok)
             if isinstance(result, Ps1StringLiteral):
-                result, _ = self._absorb_suffix(result, Ps1TokenKind.DOT, '.')
+                result, _ = self._absorb_suffix(
+                    result, Ps1TokenKind.DOT, '.', check_adjacent=True)
             return result
         self._lexer.mode = Ps1LexerMode.EXPRESSION
         if self._current.kind in _EXPRESSION_START_KINDS:
@@ -950,7 +975,12 @@ class Ps1Parser:
         raw = tok.value
         text = raw.rstrip('lL').replace('_', '')
         try:
-            value = int(text, 0)
+            if text[:2].lower() in ('0x', '0b'):
+                value = int(text, 0)
+            else:
+                # Plain decimal: parse with an explicit base so leading zeros (`007`) are accepted
+                # as decimal instead of raising under `int(text, 0)`.
+                value = int(text, 10)
         except ValueError:
             value = 0
         return Ps1IntegerLiteral(offset=tok.offset, value=value, raw=raw)
@@ -984,7 +1014,7 @@ class Ps1Parser:
 
     def _parse_string(self) -> Expression:
         tok = self._advance()
-        raw = tok.value.translate(NORMALIZE_QUOTES)
+        raw = _normalize_string_delimiters(tok.value, 1)
         if tok.kind == Ps1TokenKind.STRING_VERBATIM:
             content = self._unescape_verbatim_string(tok.value[1:-1])
             return Ps1StringLiteral(offset=tok.offset, value=content, raw=raw)
@@ -1066,9 +1096,8 @@ class Ps1Parser:
         while pos < length:
             c = text[pos]
             if c == '`' and pos + 1 < length:
-                nc = text[pos + 1]
-                buf.append(BACKTICK_ESCAPE.get(nc, nc))
-                pos += 2
+                decoded, pos = _decode_backtick(text, pos, length)
+                buf.append(decoded)
                 continue
             if c in SINGLE_QUOTES:
                 pos += 1
@@ -1124,6 +1153,11 @@ class Ps1Parser:
         pos += 2
         while pos < length and depth > 0:
             sc = text[pos]
+            if sc == '`' and pos + 1 < length:
+                # A backtick escapes the next character (including a parenthesis) the same way the
+                # lexer skips it, so the parser and lexer agree on where the subexpression ends.
+                pos += 2
+                continue
             if sc in SINGLE_QUOTES:
                 pos = cls._skip_quoted_raw(text, pos + 1, length, SINGLE_QUOTES)
                 continue
@@ -1155,9 +1189,8 @@ class Ps1Parser:
         while i < length:
             c = text[i]
             if c == '`' and i + 1 < length:
-                nc = text[i + 1]
-                result.append(BACKTICK_ESCAPE.get(nc, nc))
-                i += 2
+                decoded, i = _decode_backtick(text, i, length)
+                result.append(decoded)
             elif c in DOUBLE_QUOTES and i + 1 < length and text[i + 1] in DOUBLE_QUOTES:
                 result.append('"')
                 i += 2
@@ -1208,7 +1241,7 @@ class Ps1Parser:
 
     def _parse_here_string(self) -> Expression:
         tok = self._advance()
-        raw = tok.value.translate(NORMALIZE_QUOTES)
+        raw = _normalize_string_delimiters(tok.value, 2)
         if tok.kind == Ps1TokenKind.HSTRING_VERBATIM:
             inner = self._strip_here_string(raw, "@'", "'@")
             return Ps1HereString(
@@ -1631,6 +1664,7 @@ class Ps1Parser:
             script_body = self._parse_script_block_body(expect_close=True)
             script_body.param_block = Ps1ParamBlock(
                 offset=offset, parameters=params)
+            script_body.param_block.parent = script_body
             return Ps1FunctionDefinition(
                 offset=offset, name=name, is_filter=is_filter, body=script_body)
         body = self._parse_script_block()
@@ -1758,6 +1792,7 @@ class Ps1Parser:
             if params:
                 script_body.param_block = Ps1ParamBlock(
                     offset=offset, parameters=params)
+                script_body.param_block.parent = script_body
             funcdef = Ps1FunctionDefinition(
                 offset=offset,
                 name=method_name,
