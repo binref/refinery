@@ -1,8 +1,32 @@
 from __future__ import annotations
 
+from inspect import cleandoc
+
 from test import TestBase
 
-from refinery.lib.scripts.ps1.deobfuscation import deobfuscate
+from refinery.lib.scripts.pipeline import DeobfuscationTimeout
+from refinery.lib.scripts.ps1.deobfuscation import (
+    deobfuscate,
+    Ps1ConstantFolding,
+    Ps1ControlFlowDeflattening,
+    Ps1DeadCodeElimination,
+    Ps1ExpandableStringHoist,
+    Ps1ForEachPipeline,
+    Ps1FunctionEvaluator,
+    Ps1IexInlining,
+    Ps1JunkStatementRemoval,
+    Ps1Simplifications,
+    Ps1TypeCasts,
+    Ps1UnusedVariableRemoval,
+    Ps1VariableRenaming,
+)
+from refinery.lib.scripts.ps1.deobfuscation.helpers import make_string_literal
+from refinery.lib.scripts.ps1.deobfuscation.securestring import _find_key_argument
+from refinery.lib.scripts.ps1.model import (
+    Ps1CommandInvocation,
+    Ps1HereString,
+    Ps1StringLiteral,
+)
 from refinery.lib.scripts.ps1.parser import Ps1Parser
 from refinery.lib.scripts.ps1.synth import Ps1Synthesizer
 
@@ -19,6 +43,16 @@ class TestPs1(TestBase):
         for _ in range(iterations):
             if not deobfuscate(ast, remove_junk=remove_junk):
                 break
+        return Ps1Synthesizer().convert(ast)
+
+    def _apply(self, source: str, *transforms) -> str:
+        """
+        Run the given transformer passes once each, in order, and return the synthesized result.
+        Lets a test target a single deobfuscation pass in isolation.
+        """
+        ast = Ps1Parser(source).parse()
+        for transform in transforms:
+            transform().visit(ast)
         return Ps1Synthesizer().convert(ast)
 
 
@@ -1250,8 +1284,6 @@ class TestPs1IexInlining(TestPs1):
         self.assertNotIn('|', result)
 
     def test_multiline_string_emitted_as_here_string(self):
-        from refinery.lib.scripts.ps1.deobfuscation.helpers import make_string_literal
-        from refinery.lib.scripts.ps1.model import Ps1HereString, Ps1StringLiteral
         node = make_string_literal('line1\nline2')
         self.assertIsInstance(node, Ps1HereString)
         self.assertEqual(node.value, 'line1\nline2')
@@ -1849,7 +1881,9 @@ class TestPs1CharIntFolding(TestPs1):
     def test_char_int_partial_with_variable(self):
         result = self._deobfuscate_iterative(
             '([Char][int]83 + [Char][int]$x + [Char][int]112)')
-        self.assertIn('Sp', result)
+        # $x is undefined -> $null -> [int]0 -> [char]0, which is a NUL character (not empty), so
+        # the folded result is the three-character string "S\0p".
+        self.assertIn("S`0p", result)
 
 
 class TestPs1DeadBranchInlining(TestPs1):
@@ -2258,6 +2292,45 @@ class TestPs1ControlFlowDeflattening(TestPs1):
         self.assertLess(a_idx, b_idx)
         self.assertLess(b_idx, c_idx)
 
+    def test_statements_between_init_and_loop_preserved(self):
+        # `$keep = Get-Stuff` sits between the state init and the dispatcher loop and must survive
+        # deflattening.
+        code = cleandoc("""
+            $s = 0
+            $keep = Get-Stuff
+            while ($s -NE -1) {
+              switch ($s) {
+                0 { $s = 1 }
+                1 { Write-Host $keep; $s = -1 }
+                default { break }
+              }
+            }
+        """)
+        result = self._apply(code, Ps1ControlFlowDeflattening)
+        self.assertEqual(result, cleandoc("""
+            $keep = Get-Stuff
+            Write-Host $keep
+        """))
+
+    def test_data_variable_not_dropped_as_internal(self):
+        # `$key = 42` is read by emitted code, so it is real data, not a dispatch artifact, and
+        # must not be suppressed.
+        code = cleandoc("""
+            $s = 0
+            while ($s -NE -1) {
+              switch ($s) {
+                0 { $key = 42; $s = 1 }
+                1 { Write-Host $key; $s = -1 }
+                default { break }
+              }
+            }
+        """)
+        result = self._apply(code, Ps1ControlFlowDeflattening)
+        self.assertEqual(result, cleandoc("""
+            $key = 42
+            Write-Host $key
+        """))
+
     def test_conditional_branch_with_join(self):
         code = '\n'.join([
             '$s = 0',
@@ -2591,9 +2664,11 @@ class TestPs1StringMultiplicationFolding(TestPs1):
         self.assertNotIn('*', result)
 
     def test_int_times_string(self):
+        # `int * string` is governed by the integer left operand, so PowerShell coerces the right
+        # side to a number (here a runtime error) rather than repeating the string; it must not be
+        # folded to 'ababab'.
         result = self._deobfuscate("3 * 'ab'")
-        self.assertIn('ababab', result)
-        self.assertNotIn('*', result)
+        self.assertNotIn('ababab', result)
 
     def test_string_multiply_in_expression(self):
         result = self._deobfuscate("$x = 'A' * 3 + 'B'")
@@ -3075,3 +3150,247 @@ class TestPs1VariableRenaming(TestPs1):
         self.assertTrue(lines[0].startswith('$var1'))
         self.assertTrue(lines[1].startswith('$var2'))
         self.assertTrue(lines[2].startswith('$var3'))
+
+
+class TestPs1ReviewRegressions(TestPs1):
+    """
+    Regression tests for defects found in the extra-high-effort code review of the PowerShell
+    deobfuscator. Each test pins behavior that was previously wrong.
+    """
+
+    def test_value_producing_if_assignment_keeps_branches(self):
+        # The branch outputs of an assignment-RHS `if` are observable, so dead-code and junk
+        # removal must leave the `if` untouched.
+        result = self._apply(
+            "$x = if ($c) { 'aaa' } else { 'bbb' }",
+            Ps1DeadCodeElimination, Ps1JunkStatementRemoval)
+        self.assertEqual(result, cleandoc("""
+            $x = if ($c) {
+              'aaa'
+            } else {
+              'bbb'
+            }
+        """))
+
+    def test_expandable_command_subexpr_not_dropped(self):
+        # A command inside an interpolating string contributes its output, so the hoist leaves it.
+        result = self._apply(
+            '$result = "Value: $(Write-Output 42)"', Ps1ExpandableStringHoist)
+        self.assertEqual(result, '$result = "Value: $(Write-Output 42)"')
+
+    def test_piped_iex_keeps_assignment_target(self):
+        result = self._apply("$x = 'Get-Date' | iex", Ps1IexInlining)
+        self.assertEqual(result, '$x = Get-Date')
+
+    def test_expandable_here_string_inlining_not_stale(self):
+        # The constant inlined into the expandable here-string must reach the output, and the
+        # source assignment is then removed cleanly (no dangling $v).
+        result = self._deobfuscate_iterative(cleandoc("""
+            $v = 'SECRET'
+            $h = @"
+            value: $v end
+            "@
+            Write-Host $h
+        """))
+        self.assertEqual(result, cleandoc("""
+            $h = "value: SECRET end"
+            Write-Host $h
+        """))
+
+    def test_function_multiple_outputs_form_array(self):
+        result = self._apply("function f { 'a'; 'b' }; $x = f", Ps1FunctionEvaluator)
+        self.assertEqual(result, "$x = 'a', 'b'")
+
+    def test_function_trailing_assignment_emits_nothing(self):
+        # g only assigns, so it returns $null; the call must not fold to the assigned value, so
+        # `$y = g` is left as-is.
+        result = self._apply("function g { $r = 'hidden' }; $y = g", Ps1FunctionEvaluator)
+        self.assertEqual(result, cleandoc("""
+            function g {
+              $r = 'hidden'
+            }
+            $y = g
+        """))
+
+    def test_foreach_pipeline_yields_array_not_joined_string(self):
+        # Multi-character results stay an array (so indexing selects an element), unlike the
+        # single-character char-build case which is joined.
+        result = self._apply("('foo','bar' | %{ $_ })[1]", Ps1ForEachPipeline)
+        self.assertEqual(result, "('foo', 'bar')[1]")
+
+    def test_switch_executes_all_matching_clauses(self):
+        result = self._apply(
+            "switch (1) { 1 { Write-Host 'A' } 1 { Write-Host 'B' } }", Ps1DeadCodeElimination)
+        self.assertEqual(result, cleandoc("""
+            Write-Host 'A'
+            Write-Host 'B'
+        """))
+
+    def test_switch_case_sensitive_match(self):
+        result = self._apply(
+            "switch -CaseSensitive ('Foo') { 'foo' { Write-Host 'A' } 'Foo' { Write-Host 'B' } }",
+            Ps1DeadCodeElimination)
+        self.assertEqual(result, "Write-Host 'B'")
+
+    def test_integer_division_yields_double(self):
+        self.assertEqual(self._apply('7 / 2', Ps1ConstantFolding), '3.5')
+
+    def test_integer_modulo_keeps_dividend_sign(self):
+        self.assertEqual(self._apply('-7 % 3', Ps1ConstantFolding), '-1')
+
+    def test_replace_expands_group_reference(self):
+        result = self._apply("'aXb' -replace '(a)X','$1Y'", Ps1ConstantFolding)
+        self.assertEqual(result, "'aYb'")
+
+    def test_replace_treats_backslash_literally(self):
+        result = self._apply(r"'aXb' -replace '(a)X','Q\1Z'", Ps1ConstantFolding)
+        self.assertEqual(result, r"'Q\1Zb'")
+
+    def test_format_hex_negative_twos_complement(self):
+        result = self._apply("'{0:X}' -f -1", Ps1ConstantFolding)
+        self.assertEqual(result, "'FFFFFFFF'")
+
+    def test_char_zero_is_nul_character(self):
+        # [char]0 is a NUL character, not an empty string: 'a'+[char]0+'b' is the 3-character
+        # string "a\0b". Verified against PowerShell (.Length == 3, char codes 97, 0, 98); the NUL
+        # is simply not rendered on the console, and is emitted as the `0 escape.
+        result = self._apply("'a' + [char]0 + 'b'", Ps1TypeCasts, Ps1ConstantFolding)
+        self.assertEqual(result, '"a`0b"')
+
+    def test_leading_zero_integer_is_decimal(self):
+        self.assertEqual(self._apply('007 + 1', Ps1ConstantFolding), '8')
+
+    def test_nested_function_reads_enclosing_scope(self):
+        # Plain reads are transitive through the scope chain: C sees A's $g via the call stack.
+        # Verified against PowerShell (returns 'X').
+        result = self._apply(
+            "function A { $g = 'X'; B } function B { C } function C { return $g }; $o = A",
+            Ps1FunctionEvaluator)
+        self.assertEqual(result, cleandoc("""
+            function C {
+              return $g
+            }
+            $o = 'X'
+        """))
+
+    def test_compound_assignment_does_not_read_enclosing_scope(self):
+        # `$acc += 'C'` reads only the local scope, so against an enclosing-scope $acc it starts
+        # from $null. Verified against PowerShell: the result is 'C', not 'ABC'.
+        result = self._apply(
+            "function A { $acc = 'AB'; B } function B { $acc += 'C'; return $acc }; $o = A",
+            Ps1FunctionEvaluator)
+        self.assertEqual(result, "$o = 'C'")
+
+    def test_psitem_is_pipeline_item(self):
+        # $PSItem resolves like $_; the single-character results collapse to a joined string.
+        result = self._apply("(97,98,99) | % { [char]$PSItem }", Ps1ForEachPipeline)
+        self.assertEqual(result, "'abc'")
+
+    def test_foreach_over_string_is_scalar(self):
+        # PowerShell iterates a foreach over a string exactly once (the string is a scalar).
+        result = self._apply(
+            "function f($s){ $n = 0; foreach($c in $s){ $n = $n + 1 }; return $n }; $r = f 'abc'",
+            Ps1FunctionEvaluator)
+        self.assertEqual(result, '$r = 1')
+
+    def test_unused_variable_read_in_function_is_kept(self):
+        # The read inside Run keeps the assignment alive (PowerShell dynamic scoping).
+        result = self._apply(
+            "$x = 'payload'; function Run { iex $x }; Run", Ps1UnusedVariableRemoval)
+        self.assertEqual(result, cleandoc("""
+            $x = 'payload'
+            function Run {
+              iex $x
+            }
+            Run
+        """))
+
+    def test_unused_variable_scoped_read_is_kept(self):
+        # The $script:x read keeps the $x assignment alive.
+        result = self._apply(
+            "$x = 'keepme'; function f { Write-Host $script:x }; f", Ps1UnusedVariableRemoval)
+        self.assertEqual(result, cleandoc("""
+            $x = 'keepme'
+            function f {
+              Write-Host $script:x
+            }
+            f
+        """))
+
+    def test_self_alias_terminates(self):
+        # A self-resolving alias must reach a fixpoint (no infinite mark_changed loop) and leave
+        # the script unchanged.
+        result = self._deobfuscate(cleandoc("""
+            Set-Alias foo foo
+            foo bar
+        """))
+        self.assertEqual(result, cleandoc("""
+            Set-Alias foo foo
+            foo bar
+        """))
+
+    def test_gcm_wildcard_not_substituted_as_name(self):
+        # `gcm` normalizes to `Get-Command`, but a wildcard pattern must not become the command
+        # name verbatim.
+        result = self._apply("& (gcm i*e-e*) 'hi'", Ps1Simplifications)
+        self.assertEqual(result, "& (Get-Command i*e-e*) 'hi'")
+
+    def test_gcm_concrete_name_resolved(self):
+        result = self._apply("& (gcm Write-Output) 'hi'", Ps1Simplifications)
+        self.assertEqual(result, "Write-Output 'hi'")
+
+    def test_iex_in_foreach_pipeline_does_not_crash(self):
+        # The InvokeExpression signal is caught rather than escaping the pipeline; the script is
+        # left unchanged.
+        result = self._deobfuscate("('calc','notepad') | % { iex $_ }")
+        self.assertEqual(result, cleandoc("""
+            ('calc', 'notepad') | ForEach-Object {
+              Invoke-Expression $_
+            }
+        """))
+
+    def test_recursive_function_does_not_crash(self):
+        # Unbounded recursion converts to a graceful bail (no RecursionError); the script is left
+        # unchanged.
+        result = self._deobfuscate("function f($x){ f $x }; f 1")
+        self.assertEqual(result, cleandoc("""
+            function f {
+              Param($x)
+              f $x
+            }
+            f 1
+        """))
+
+    def test_rename_read_only_variables_are_sorted(self):
+        # Read-only variables are numbered in sorted name order ($b -> $var2, $c -> $var3), making
+        # the renaming deterministic across hash seeds.
+        a, b, c = 'a' * 100, 'b' * 100, 'c' * 100
+        result = self._apply(cleandoc(F"""
+            ${a} = ${c} + ${b}
+            Write-Output ${a}
+        """), Ps1VariableRenaming)
+        self.assertEqual(result, cleandoc("""
+            $var1 = $var3 + $var2
+            Write-Output $var1
+        """))
+
+    def test_step_budget_enforced_across_phases(self):
+        # A step budget smaller than the total work must raise rather than letting phase 2 run
+        # unbounded once phase 1 has consumed the budget.
+        source = cleandoc("""
+            $a = 1 + 2
+            $b = 'x' + 'y'
+            $unused = 'dead'
+            Write-Host $a $b
+        """)
+        ast = Ps1Parser(source).parse()
+        with self.assertRaises(DeobfuscationTimeout):
+            deobfuscate(ast, max_steps=1)
+
+    def test_securestring_key_argument_matched(self):
+        # The -Key parameter is stored with its leading dash; the matcher must still find it.
+        script = Ps1Parser("ConvertTo-SecureString 'AAAA' -Key (1..16)").parse()
+        cmd = next(n for n in script.walk() if isinstance(n, Ps1CommandInvocation))
+        key = _find_key_argument(cmd)
+        self.assertIsNotNone(key)
+        self.assertEqual(len(key), 16)
