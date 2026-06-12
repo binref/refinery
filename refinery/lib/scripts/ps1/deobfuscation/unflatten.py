@@ -610,6 +610,22 @@ def _collect_internal_vars(
                         elif _var_key(value) in candidates:
                             candidates.add(key)
                             changed = True
+    # A variable referenced by an emitted (non-suppressed) statement is real data, not a dispatch
+    # artifact: suppressing its assignment would leave the recovered code reading an undefined
+    # variable. Drop such variables from the internal set (the state variable always stays internal).
+    used_by_emitted: set[_VarKey] = set()
+    for sid in loop_states:
+        block = states[sid]
+        for stmts in _all_statement_lists(block):
+            for stmt in stmts:
+                result = _get_simple_assignment(stmt)
+                if result is not None and result[0] in candidates:
+                    continue
+                for node in stmt.walk():
+                    if isinstance(node, Ps1Variable):
+                        used_by_emitted.add(_var_key(node))
+    candidates -= used_by_emitted
+    candidates.add(state_var_key)
     return candidates
 
 
@@ -1234,8 +1250,11 @@ class Ps1ControlFlowDeflattening(Transformer):
                 s for s in recovered
                 if _is_state_assignment(s, match.state_var_name, match.state_var_scope) is None
             ]
+            # Preserve any unrelated statements that sit between the state initialization and the
+            # dispatcher loop; only the loop and its `$state = ...` seed are replaced.
+            intervening = body[init_index + 1:i]
             for s in recovered:
                 s.parent = parent
-            body[init_index:i + 1] = recovered
+            body[init_index:i + 1] = intervening + recovered
             self.mark_changed()
-            i += len(recovered)
+            i = init_index + len(intervening) + len(recovered)
