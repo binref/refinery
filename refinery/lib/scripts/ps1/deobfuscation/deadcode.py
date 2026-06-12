@@ -10,6 +10,7 @@ from refinery.lib.scripts.ps1.deobfuscation.helpers import (
     inside_value_producing_context,
     is_builtin_variable,
     is_truthy,
+    switch_matches,
     unwrap_integer,
     unwrap_parens,
 )
@@ -97,6 +98,42 @@ def _body_breaks_unconditionally(body: list[Statement]) -> bool:
             if isinstance(node, Ps1ContinueStatement):
                 return False
     return True
+
+
+_NO_LITERAL = object()
+
+
+def _switch_literal(node):
+    """
+    Extract the constant `int`/`str`/`bool` value a switch value or clause condition compares with,
+    or `_NO_LITERAL` when it is not a compile-time constant.
+    """
+    node = unwrap_parens(node)
+    if isinstance(node, (Ps1IntegerLiteral, Ps1RealLiteral, Ps1StringLiteral)):
+        return node.value
+    if is_builtin_variable(node, {'true'}):
+        return True
+    if is_builtin_variable(node, {'false'}):
+        return False
+    return _NO_LITERAL
+
+
+def _switch_clause_body(body: list[Statement]) -> tuple[list[Statement], bool] | None:
+    """
+    Return the statements of a matched switch clause together with a flag indicating whether the
+    clause terminates the switch (a trailing `break`). Returns `None` when the body contains a
+    top-level `break`/`continue` that is not a single trailing `break`, since inlining it would
+    retarget the jump to an enclosing loop.
+    """
+    stmts = list(body)
+    stop = False
+    if stmts and isinstance(stmts[-1], Ps1BreakStatement):
+        stmts = stmts[:-1]
+        stop = True
+    for stmt in stmts:
+        if isinstance(stmt, (Ps1BreakStatement, Ps1ContinueStatement)):
+            return None
+    return stmts, stop
 
 
 def _is_pure_constant(node) -> bool:
@@ -242,44 +279,40 @@ class Ps1DeadCodeElimination(Transformer):
         if len(kept_clauses) == len(node.clauses):
             return None
         node.clauses[:] = kept_clauses
-        return None
+        return [node]
 
     @staticmethod
     def _prune_switch(node: Ps1SwitchStatement) -> list[Statement] | None:
-        if node.regex or node.wildcard or node.exact or node.file:
+        if node.regex or node.wildcard or node.file:
             return None
-        value = node.value
-        if isinstance(value, Ps1IntegerLiteral):
-            target_int = value.value
-            target_str = None
-        elif isinstance(value, Ps1StringLiteral):
-            target_str = value.value.lower()
-            target_int = None
-        else:
+        value = _switch_literal(node.value)
+        if value is _NO_LITERAL:
             return None
         default_body: list[Statement] | None = None
+        result: list[Statement] = []
+        matched = False
         for condition, block in node.clauses:
             if condition is None:
-                default_body = list(block.body)
+                default_body = block.body
                 continue
-            if target_int is not None and isinstance(condition, Ps1IntegerLiteral):
-                if condition.value == target_int:
-                    return list(block.body)
-            elif target_str is not None and isinstance(condition, Ps1StringLiteral):
-                if condition.value.lower() == target_str:
-                    return list(block.body)
-            elif target_int is not None and isinstance(condition, Ps1StringLiteral):
-                try:
-                    if int(condition.value) == target_int:
-                        return list(block.body)
-                except ValueError:
-                    pass
-            elif target_str is not None and isinstance(condition, Ps1IntegerLiteral):
-                try:
-                    if int(target_str) == condition.value:
-                        return list(block.body)
-                except ValueError:
-                    pass
+            cond_val = _switch_literal(condition)
+            if cond_val is _NO_LITERAL:
+                # A non-constant clause condition might match at runtime; cannot resolve statically.
+                return None
+            if switch_matches(value, cond_val, case_sensitive=node.case_sensitive):
+                body = _switch_clause_body(block.body)
+                if body is None:
+                    return None
+                stmts, stop = body
+                result.extend(stmts)
+                matched = True
+                if stop:
+                    return result
+        if matched:
+            return result
         if default_body is not None:
-            return default_body
+            body = _switch_clause_body(default_body)
+            if body is None:
+                return None
+            return body[0]
         return []
