@@ -1121,10 +1121,16 @@ class Ps1Parser:
                         pos += 2
                         continue
                     if text[pos] in DOUBLE_QUOTES:
+                        if pos + 1 < length and text[pos + 1] in DOUBLE_QUOTES:
+                            pos += 2
+                            continue
+                        inner_end = pos
                         pos += 1
                         break
                     pos += 1
-                inner = text[inner_start:pos - 1]
+                else:
+                    inner_end = pos
+                inner = text[inner_start:inner_end]
                 sub_parts = self._split_expandable_string(inner)
                 parts.extend(sub_parts)
                 continue

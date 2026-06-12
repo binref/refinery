@@ -654,3 +654,42 @@ class TestPs1ParserStatements(TestBase):
         self.assertEqual(len(cmd.arguments), 1)
         self.assertEqual(len(cmd.redirections), 1)
         self.assertIsInstance(cmd.redirections[0], Ps1MergingRedirection)
+
+    def test_generic_arg_doubled_dquote_escape(self):
+        stmt = self._parse_stmt('Write-Host prefix"abc""def"suffix')
+        self.assertIsInstance(stmt, Ps1ExpressionStatement)
+        cmd = stmt.expression
+        self.assertIsInstance(cmd, Ps1CommandInvocation)
+        self.assertEqual(len(cmd.arguments), 1)
+        arg = cmd.arguments[0]
+        self.assertEqual(arg.kind, Ps1CommandArgumentKind.POSITIONAL)
+        self.assertIsInstance(arg.value, Ps1ExpandableString)
+        dq_part = arg.value.parts[1]
+        self.assertIsInstance(dq_part, Ps1StringLiteral)
+        self.assertEqual(dq_part.value, 'abc"def')
+
+    def test_generic_arg_unclosed_dquote_preserves_all_chars(self):
+        stmt = self._parse_stmt('Write-Host a"bc')
+        self.assertIsInstance(stmt, Ps1ExpressionStatement)
+        cmd = stmt.expression
+        self.assertIsInstance(cmd, Ps1CommandInvocation)
+        self.assertEqual(len(cmd.arguments), 1)
+        arg = cmd.arguments[0]
+        self.assertEqual(arg.kind, Ps1CommandArgumentKind.POSITIONAL)
+        self.assertIsInstance(arg.value, Ps1ExpandableString)
+        last_part = arg.value.parts[-1]
+        self.assertIsInstance(last_part, Ps1StringLiteral)
+        self.assertEqual(last_part.value, 'bc')
+
+    def test_param_block_parent_set_at_script_level(self):
+        p = Ps1Parser('param($x); $x + 1')
+        script = p.parse()
+        self.assertIsNotNone(script.param_block)
+        self.assertIs(script.param_block.parent, script)
+
+    def test_param_block_parent_set_in_function_body(self):
+        stmt = self._parse_stmt('function Foo { param($x, $y); $x + $y }')
+        self.assertIsInstance(stmt, Ps1FunctionDefinition)
+        body = stmt.body
+        self.assertIsNotNone(body.param_block)
+        self.assertIs(body.param_block.parent, body)
