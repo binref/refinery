@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import enum
 import io
+import math
 import re
 
 from typing import Callable, Generator, NamedTuple, TypeGuard, TypeVar
@@ -232,24 +233,38 @@ def get_body(node) -> list | None:
 
 def inside_value_producing_context(node) -> bool:
     """
-    Return `True` when `node` is or is nested inside a `Ps1SubExpression` or `Ps1ScriptBlock`.
-    These are expression contexts whose statement bodies produce return values and must not be
-    pruned as junk or dead code.
+    Return `True` when `node` is or is nested inside a context whose statement bodies produce
+    observable values and must not be pruned as junk or dead code: a `Ps1SubExpression` (`$(...)`),
+    a `Ps1ScriptBlock`, a `Ps1ArrayExpression` (`@(...)`), or the statement-valued right-hand side
+    of an assignment (`$x = if (...) { ... }`).
     """
     cursor = node
+    prev = None
     while cursor is not None:
-        if isinstance(cursor, (Ps1SubExpression, Ps1ScriptBlock)):
+        if isinstance(cursor, (Ps1SubExpression, Ps1ScriptBlock, Ps1ArrayExpression)):
             return True
+        if isinstance(cursor, Ps1AssignmentExpression) and cursor.value is prev:
+            return True
+        prev = cursor
         cursor = cursor.parent
     return False
 
 
 def unwrap_parens(node: Node) -> Node:
     """
-    Unwrap nested `Ps1ParenExpression` wrappers, stopping at an empty-parens node.
+    Unwrap nested `Ps1ParenExpression` wrappers and single-statement `Ps1SubExpression` wrappers,
+    stopping at an empty wrapper.
     """
-    while isinstance(node, Ps1ParenExpression) and node.expression is not None:
-        node = node.expression
+    while True:
+        if isinstance(node, Ps1ParenExpression) and node.expression is not None:
+            node = node.expression
+            continue
+        if isinstance(node, Ps1SubExpression) and len(node.body) == 1:
+            stmt = node.body[0]
+            if isinstance(stmt, Ps1ExpressionStatement) and stmt.expression is not None:
+                node = stmt.expression
+                continue
+        break
     return node
 
 
@@ -385,6 +400,18 @@ def is_builtin_variable(
     )
 
 
+def is_pipeline_item(node: Node | None) -> TypeGuard[Ps1Variable]:
+    """
+    Return `True` when `node` is the current pipeline item variable, written either as `$_` or its
+    full synonym `$PSItem`.
+    """
+    return (
+        isinstance(node, Ps1Variable)
+        and node.scope == Ps1ScopeModifier.NONE
+        and node.name.lower() in ('_', 'psitem')
+    )
+
+
 def is_truthy(node: Node | None) -> bool | None:
     """
     Determine the boolean truth value of a constant expression using PowerShell semantics. Returns
@@ -429,6 +456,176 @@ def is_array_reverse_call(node: Ps1ExpressionStatement) -> Ps1Variable | None:
     if isinstance(arg, Ps1Variable):
         return arg
     return None
+
+
+def ps_divide(a: int | float, b: int | float) -> int | float:
+    """
+    PowerShell division: integer operands yield an `int` only when the division is exact, otherwise
+    a `float`; any float operand yields a `float`. Raises `ZeroDivisionError` on division by zero.
+    """
+    if b == 0:
+        raise ZeroDivisionError
+    if isinstance(a, int) and isinstance(b, int) and a % b == 0:
+        return a // b
+    return a / b
+
+
+def ps_modulo(a: int | float, b: int | float) -> int | float:
+    """
+    PowerShell modulo: the result truncates toward zero and takes the sign of the dividend (unlike
+    Python's floored `%`). Raises `ZeroDivisionError` when `b` is zero.
+    """
+    if b == 0:
+        raise ZeroDivisionError
+    if isinstance(a, int) and isinstance(b, int):
+        r = abs(a) % abs(b)
+        return -r if a < 0 else r
+    return math.fmod(a, b)
+
+
+def switch_matches(value, condition, *, case_sensitive: bool = False) -> bool:
+    """
+    PowerShell `switch` clause matching for already-evaluated scalar values. String comparison is
+    case-insensitive unless `case_sensitive` is set; integers and strings cross-coerce the way
+    PowerShell does.
+    """
+    if isinstance(value, bool) or isinstance(condition, bool):
+        return value is condition
+    if isinstance(value, str) and isinstance(condition, str):
+        return value == condition if case_sensitive else value.lower() == condition.lower()
+    if isinstance(value, (int, float)) and isinstance(condition, (int, float)):
+        return value == condition
+    if isinstance(value, (int, float)) and isinstance(condition, str):
+        try:
+            return value == int(condition)
+        except ValueError:
+            return False
+    if isinstance(value, str) and isinstance(condition, (int, float)):
+        try:
+            return int(value) == condition
+        except ValueError:
+            return False
+    return value is condition
+
+
+def _dotnet_replacement(template: str, text: str) -> Callable[[re.Match], str]:
+    """
+    Build an `re.sub` replacement function that expands .NET substitution tokens (`$1`, `${name}`,
+    `$&`, `` $` ``, `$'`, `$+`, `$_`, `$$`) in `template`. Backslashes are literal, matching .NET.
+    """
+    def repl(m: re.Match) -> str:
+        out: list[str] = []
+        i = 0
+        n = len(template)
+        while i < n:
+            c = template[i]
+            if c != '$' or i + 1 >= n:
+                out.append(c)
+                i += 1
+                continue
+            tok = template[i + 1]
+            if tok == '$':
+                out.append('$')
+                i += 2
+            elif tok == '&':
+                out.append(m.group(0))
+                i += 2
+            elif tok == '`':
+                out.append(text[:m.start()])
+                i += 2
+            elif tok == "'":
+                out.append(text[m.end():])
+                i += 2
+            elif tok == '_':
+                out.append(text)
+                i += 2
+            elif tok == '+':
+                last = ''
+                for g in range(m.re.groups, 0, -1):
+                    if m.group(g) is not None:
+                        last = m.group(g)
+                        break
+                out.append(last)
+                i += 2
+            elif tok == '{':
+                end = template.find('}', i + 2)
+                if end < 0:
+                    out.append('$')
+                    i += 1
+                    continue
+                name = template[i + 2:end]
+                try:
+                    grp = m.group(int(name)) if name.isdigit() else m.group(name)
+                except (IndexError, re.error):
+                    grp = None
+                out.append(grp or '')
+                i = end + 1
+            elif tok.isdigit():
+                j = i + 1
+                while j < n and template[j].isdigit():
+                    j += 1
+                digits = template[i + 1:j]
+                grp = None
+                while digits:
+                    num = int(digits)
+                    if num <= m.re.groups:
+                        grp = m.group(num) or ''
+                        break
+                    digits = digits[:-1]
+                if grp is None:
+                    out.append('$')
+                    i += 1
+                else:
+                    out.append(grp)
+                    i = i + 1 + len(digits)
+            else:
+                out.append('$')
+                i += 1
+        return ''.join(out)
+    return repl
+
+
+def dotnet_regex_replace(pattern: str, replacement: str, text: str, *, flags: int = 0) -> str:
+    """
+    Replace every match of `pattern` in `text` with the .NET-style `replacement`, honoring .NET
+    substitution tokens. Replace-all is direction independent, so the regex `RightToLeft` option
+    does not change the result here.
+    """
+    return re.sub(pattern, _dotnet_replacement(replacement, text), text, flags=flags)
+
+
+_BARE_COMMAND_NAME = re.compile(r'''[^\s'"`(){};|&<>@]+''')
+
+
+def is_bare_command_name(name: str) -> bool:
+    """
+    Return `True` when `name` can be emitted as an unquoted command name, i.e. it contains no
+    whitespace, quotes, or characters that would re-lex into separate tokens.
+    """
+    return bool(name) and _BARE_COMMAND_NAME.fullmatch(name) is not None
+
+
+def set_command_name(node: Ps1CommandInvocation, name: str) -> bool:
+    """
+    Replace the command name of `node` with a literal for `name`, quoting it (and adding the call
+    operator `&`) when the name is not a bare-safe command token. Returns `True` when the name
+    actually changed, so callers should only `mark_changed()` on a `True` result; this guards
+    against self-resolving rewrites that would otherwise loop forever.
+    """
+    if node.name is not None and string_value(node.name) == name:
+        return False
+    offset = node.name.offset if node.name is not None else -1
+    if _BARE_COMMAND_NAME.fullmatch(name):
+        literal: Ps1StringLiteral | Ps1HereString = Ps1StringLiteral(
+            offset=offset, value=name, raw=name)
+    else:
+        literal = make_string_literal(name)
+        literal.offset = offset
+        if not node.invocation_operator:
+            node.invocation_operator = '&'
+    literal.parent = node
+    node.name = literal
+    return True
 
 
 class StringMethodError(Exception):
@@ -551,26 +748,19 @@ def _apply_dotnet_format(value: str | int, spec: str) -> str | None:
         except (ValueError, TypeError):
             return None
     if code_upper == 'X':
+        if value < 0:
+            value &= 0xFFFFFFFF
         raw = format(value, 'X' if code.isupper() else 'x')
         return raw.zfill(width) if width else raw
     if code_upper == 'D':
-        raw = str(value)
-        return raw.zfill(width) if width else raw
-    if code_upper == 'N':
-        assert isinstance(value, int)
         negative = value < 0
-        abs_val = abs(value)
-        int_part = str(abs_val)
-        groups: list[str] = []
-        while int_part:
-            groups.append(int_part[-3:])
-            int_part = int_part[:-3]
-        formatted = ','.join(reversed(groups))
+        digits = str(abs(value))
+        if width:
+            digits = digits.zfill(width)
+        return F'-{digits}' if negative else digits
+    if code_upper == 'N':
         decimal_places = width if width else 2
-        formatted += '.' + '0' * decimal_places
-        if negative:
-            formatted = '-' + formatted
-        return formatted
+        return format(value, F',.{decimal_places}f')
     return None
 
 
