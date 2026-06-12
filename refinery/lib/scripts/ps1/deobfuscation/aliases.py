@@ -7,6 +7,8 @@ from refinery.lib.scripts import Node, Transformer
 from refinery.lib.scripts.ps1.deobfuscation.data import KNOWN_CMDLETS
 from refinery.lib.scripts.ps1.deobfuscation.helpers import (
     get_command_name,
+    make_string_literal,
+    set_command_name,
     string_value,
 )
 from refinery.lib.scripts.ps1.model import (
@@ -134,8 +136,9 @@ class Ps1AliasInlining(Transformer):
                 elif isinstance(arg, Ps1StringLiteral):
                     literal = arg
                 if literal is not None and literal.value.lower() == target_name.lower():
-                    literal.value = normalized
-                    literal.raw = normalized
+                    rebuilt = make_string_literal(normalized)
+                    literal.value = rebuilt.value
+                    literal.raw = rebuilt.raw
                     self.mark_changed()
                     break
 
@@ -163,10 +166,5 @@ class Ps1AliasInlining(Transformer):
             if node.name is None:
                 continue
             normalized = KNOWN_CMDLETS.get(target_name.lower(), target_name)
-            node.name = Ps1StringLiteral(
-                offset=node.name.offset,
-                value=normalized,
-                raw=normalized,
-            )
-            node.name.parent = node
-            self.mark_changed()
+            if set_command_name(node, normalized):
+                self.mark_changed()
