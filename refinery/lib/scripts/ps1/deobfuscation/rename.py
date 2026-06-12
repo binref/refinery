@@ -60,7 +60,7 @@ class Ps1VariableRenaming(Transformer):
             if key is not None and key not in mapping:
                 counter += 1
                 mapping[key] = F'var{counter}'
-        for name in user_names:
+        for name in sorted(user_names):
             if name not in mapping:
                 counter += 1
                 mapping[name] = F'var{counter}'
