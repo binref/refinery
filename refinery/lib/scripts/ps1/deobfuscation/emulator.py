@@ -4,8 +4,10 @@ Evaluate user-defined PowerShell functions called with constant arguments.
 from __future__ import annotations
 
 import base64
+import fnmatch
 import re
 
+from collections import ChainMap
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -24,13 +26,18 @@ from refinery.lib.scripts.ps1.deobfuscation.helpers import (
     apply_format_string,
     apply_string_method,
     detect_encoding_chain,
+    dotnet_regex_replace,
     extract_foreach_scriptblock,
     get_command_name,
     get_member_name,
+    is_pipeline_item,
     make_string_literal,
     normalize_dotnet_type_name,
     normalize_type_expression,
+    ps_divide,
+    ps_modulo,
     string_value,
+    switch_matches,
     unwrap_to_array_literal,
 )
 from refinery.lib.scripts.ps1.model import (
@@ -82,6 +89,7 @@ from refinery.lib.scripts.ps1.model import (
 
 _MAX_INTERPRETER_ITERATIONS = 100_000
 _MAX_INTERPRETER_STRING_LEN = 1_000_000
+_MAX_INTERPRETER_DEPTH = 64
 
 
 class _Ps1InterpreterError(Exception):
@@ -118,14 +126,26 @@ class _Ps1Interpreter:
         max_iterations: int = _MAX_INTERPRETER_ITERATIONS,
         max_string_len: int = _MAX_INTERPRETER_STRING_LEN,
         functions: Mapping[str, Ps1FunctionDefinition] | None = None,
-        parent_env: dict[str, _Value] | None = None,
+        parent_env: Mapping[str, _Value] | None = None,
+        depth: int = 0,
     ):
         self.max_iterations = max_iterations
         self.max_string_len = max_string_len
         self._functions: Mapping[str, Ps1FunctionDefinition] = functions or {}
-        self._parent_env: dict[str, _Value] | None = parent_env
+        self._parent_env: Mapping[str, _Value] | None = parent_env
         self._env: dict[str, _Value] = {}
         self._iterations = 0
+        self._depth = depth
+
+    def _lookup(self, key: str) -> _Value:
+        """
+        Read a variable through the scope chain: the local scope first, then enclosing scopes.
+        """
+        if key in self._env:
+            return self._env[key]
+        if self._parent_env is not None:
+            return self._parent_env.get(key)
+        return None
 
     def execute(
         self,
@@ -144,31 +164,66 @@ class _Ps1Interpreter:
             return r.value
 
     def _exec_statements(self, stmts: list) -> _Value:
-        result: _Value = None
+        """
+        Execute a statement list and return the collapsed success-stream value, mirroring how
+        PowerShell assembles a function/scriptblock result: assignments and redirected pipelines
+        emit nothing, every other statement contributes its value, and the accumulated output
+        collapses to `$null` (none), a scalar (one), or a list (many).
+        """
+        stream: list = []
         for stmt in stmts:
-            result = self._exec_statement(stmt)
-        return result
+            self._emit_stmt(stmt, stream)
+        return self._collapse(stream)
 
-    def _exec_statement(self, stmt) -> _Value:
-        if isinstance(stmt, Ps1Pipeline):
-            return self._exec_pipeline(stmt)
+    @staticmethod
+    def _append(stream: list, value: _Value):
+        if value is None:
+            return
+        if isinstance(value, list):
+            stream.extend(value)
+        else:
+            stream.append(value)
+
+    @staticmethod
+    def _collapse(stream: list) -> _Value:
+        if not stream:
+            return None
+        if len(stream) == 1:
+            return stream[0]
+        return list(stream)
+
+    def _emit_stmt(self, stmt, stream: list):
         if isinstance(stmt, Ps1ExpressionStatement):
-            return self._eval(stmt.expression)
+            if isinstance(stmt.expression, Ps1AssignmentExpression):
+                self._eval(stmt.expression)
+            else:
+                self._append(stream, self._eval(stmt.expression))
+            return
+        if isinstance(stmt, Ps1Pipeline):
+            self._append(stream, self._exec_pipeline(stmt))
+            return
         if isinstance(stmt, Ps1ForLoop):
-            return self._exec_for(stmt)
+            self._exec_for(stmt, stream)
+            return
         if isinstance(stmt, Ps1ForEachLoop):
-            return self._exec_foreach(stmt)
+            self._exec_foreach(stmt, stream)
+            return
         if isinstance(stmt, Ps1WhileLoop):
-            return self._exec_while(stmt)
+            self._exec_while(stmt, stream)
+            return
         if isinstance(stmt, Ps1DoLoop):
-            return self._exec_do_loop(stmt)
+            self._exec_do_loop(stmt, stream)
+            return
         if isinstance(stmt, Ps1IfStatement):
-            return self._exec_if(stmt)
+            self._exec_if(stmt, stream)
+            return
         if isinstance(stmt, Ps1SwitchStatement):
-            return self._exec_switch(stmt)
+            self._exec_switch(stmt, stream)
+            return
         if isinstance(stmt, Ps1ReturnStatement):
-            value = self._eval(stmt.pipeline) if stmt.pipeline else None
-            raise _ReturnSignal(value)
+            if stmt.pipeline:
+                self._append(stream, self._eval(stmt.pipeline))
+            raise _ReturnSignal(self._collapse(stream))
         if isinstance(stmt, Ps1BreakStatement):
             raise _BreakSignal
         if isinstance(stmt, Ps1ContinueStatement):
@@ -186,68 +241,59 @@ class _Ps1Interpreter:
             return None
         return result
 
-    def _exec_for(self, node: Ps1ForLoop) -> _Value:
+    def _exec_for(self, node: Ps1ForLoop, stream: list):
         if node.initializer:
             self._eval(node.initializer)
-        result: _Value = None
         while True:
             self._tick()
             if node.condition:
                 if not self._truthy(self._eval(node.condition)):
                     break
             try:
-                result = self._exec_block(node.body)
+                self._exec_block(node.body, stream)
             except _BreakSignal:
                 break
             except _ContinueSignal:
                 pass
             if node.iterator:
                 self._eval(node.iterator)
-        return result
 
-    def _exec_foreach(self, node: Ps1ForEachLoop) -> _Value:
+    def _exec_foreach(self, node: Ps1ForEachLoop, stream: list):
         if not isinstance(node.variable, Ps1Variable):
             raise _Ps1InterpreterError
         key = node.variable.name.lower()
         iterable = self._eval(node.iterable)
-        if isinstance(iterable, str):
-            items: list = list(iterable)
-        elif isinstance(iterable, list):
-            items = iterable
+        if isinstance(iterable, list):
+            items: list = iterable
         else:
-            raise _Ps1InterpreterError
-        result: _Value = None
+            items = [iterable]
         for item in items:
             self._tick()
             self._env[key] = item
             try:
-                result = self._exec_block(node.body)
+                self._exec_block(node.body, stream)
             except _BreakSignal:
                 break
             except _ContinueSignal:
                 continue
-        return result
 
-    def _exec_while(self, node: Ps1WhileLoop) -> _Value:
-        result: _Value = None
+    def _exec_while(self, node: Ps1WhileLoop, stream: list):
         while True:
             self._tick()
             if not self._truthy(self._eval(node.condition)):
                 break
             try:
-                result = self._exec_block(node.body)
+                self._exec_block(node.body, stream)
             except _BreakSignal:
                 break
             except _ContinueSignal:
                 continue
-        return result
 
-    def _exec_do_loop(self, node: Ps1DoLoop) -> _Value:
-        result: _Value = None
+    def _exec_do_loop(self, node: Ps1DoLoop, stream: list):
         while True:
             self._tick()
             try:
-                result = self._exec_block(node.body)
+                self._exec_block(node.body, stream)
             except _BreakSignal:
                 break
             except _ContinueSignal:
@@ -255,59 +301,45 @@ class _Ps1Interpreter:
             truth = self._truthy(self._eval(node.condition))
             if node.is_until == truth:
                 break
-        return result
 
-    def _exec_if(self, node: Ps1IfStatement) -> _Value:
+    def _exec_if(self, node: Ps1IfStatement, stream: list):
         for condition, body in node.clauses:
             if self._truthy(self._eval(condition)):
-                return self._exec_block(body)
+                self._exec_block(body, stream)
+                return
         if node.else_block:
-            return self._exec_block(node.else_block)
-        return None
+            self._exec_block(node.else_block, stream)
 
-    def _exec_switch(self, node: Ps1SwitchStatement) -> _Value:
+    def _exec_switch(self, node: Ps1SwitchStatement, stream: list):
+        if node.regex or node.wildcard or node.file:
+            raise _Ps1InterpreterError
         value = self._eval(node.value)
         default_block = None
+        matched = False
         for condition, block in node.clauses:
             if condition is None:
                 default_block = block
                 continue
             cond_val = self._eval(condition)
-            if self._switch_matches(value, cond_val):
+            if switch_matches(value, cond_val, case_sensitive=node.case_sensitive):
+                matched = True
                 try:
-                    return self._exec_block(block)
+                    self._exec_block(block, stream)
                 except _BreakSignal:
-                    return None
-        if default_block is not None:
+                    return
+        if not matched and default_block is not None:
             try:
-                return self._exec_block(default_block)
+                self._exec_block(default_block, stream)
             except _BreakSignal:
-                return None
-        return None
+                return
 
-    @staticmethod
-    def _switch_matches(value: _Value, condition: _Value) -> bool:
-        if isinstance(value, str) and isinstance(condition, str):
-            return value.lower() == condition.lower()
-        if isinstance(value, (int, float)) and isinstance(condition, (int, float)):
-            return value == condition
-        if isinstance(value, int) and isinstance(condition, str):
-            try:
-                return value == int(condition)
-            except ValueError:
-                return False
-        if isinstance(value, str) and isinstance(condition, int):
-            try:
-                return int(value) == condition
-            except ValueError:
-                return False
-        return value is condition
-
-    def _exec_block(self, block) -> _Value:
+    def _exec_block(self, block, stream: list):
         if block is None:
-            return None
+            return
         if isinstance(block, Block):
-            return self._exec_statements(block.body)
+            for stmt in block.body:
+                self._emit_stmt(stmt, stream)
+            return
         raise _Ps1InterpreterError
 
     def _tick(self):
@@ -367,12 +399,13 @@ class _Ps1Interpreter:
     def _eval_command(self, node: Ps1CommandInvocation) -> _Value:
         if not isinstance(node.name, Ps1StringLiteral):
             raise _Ps1InterpreterError
-        cmd = node.name.value.lower().replace('-', '')
-        if cmd in ('iex', 'invokeexpression'):
+        name = node.name.value.lower()
+        builtin = name.replace('-', '')
+        if builtin in ('iex', 'invokeexpression'):
             return self._eval_iex(node)
-        if cmd == 'newobject':
+        if builtin == 'newobject':
             return self._eval_new_object(node)
-        return self._eval_user_function_call(node, cmd)
+        return self._eval_user_function_call(node, name)
 
     def _eval_iex(self, node: Ps1CommandInvocation) -> _Value:
         positional = self._collect_positional_args(node)
@@ -389,6 +422,8 @@ class _Ps1Interpreter:
         funcdef = self._functions.get(cmd)
         if funcdef is None:
             raise _Ps1InterpreterError
+        if self._depth >= _MAX_INTERPRETER_DEPTH:
+            raise _Ps1InterpreterError
         body = funcdef.body
         if body is None:
             raise _Ps1InterpreterError
@@ -400,27 +435,29 @@ class _Ps1Interpreter:
         bindings = Ps1FunctionEvaluator._bind_parameters(funcdef, positional)
         if bindings is None:
             raise _Ps1InterpreterError
+        if self._parent_env is None:
+            parent_env: Mapping[str, _Value] = self._env
+        else:
+            parent_env = ChainMap(self._env, self._parent_env)
         child = _Ps1Interpreter(
             max_iterations=self.max_iterations - self._iterations,
             max_string_len=self.max_string_len,
             functions=self._functions,
-            parent_env=self._env,
+            parent_env=parent_env,
+            depth=self._depth + 1,
         )
         try:
             result = child.execute(body, bindings)
         except InvokeExpression as iex:
             return self._resolve_iex_code(iex.code)
-        except _Ps1InterpreterError:
-            raise
         finally:
             self._iterations += child._iterations
         return result
 
     def _resolve_iex_code(self, code: str) -> _Value:
         """
-        When a called function raises `_IexSignal`, the code string may be
-        a simple variable reference like ``$varName``.  Resolve it in the
-        current scope before propagating via `_IexSignal`.
+        When a called function raises `InvokeExpression`, the code string may be a simple variable
+        reference like `$varName`. Resolve it in the current scope before propagating the signal.
         """
         from refinery.lib.scripts.ps1.parser import Ps1Parser
         try:
@@ -486,16 +523,12 @@ class _Ps1Interpreter:
 
     def _eval_array_expression(self, expr: Ps1ArrayExpression) -> list:
         """
-        Evaluate an `@( ... )` array expression by executing its body statements
-        and flattening the results into a list.
+        Evaluate an `@( ... )` array expression by executing its body statements and collecting the
+        emitted success-stream values into a flat list.
         """
         results: list[_Value] = []
         for stmt in expr.body:
-            val = self._exec_statement(stmt)
-            if isinstance(val, list):
-                results.extend(val)
-            elif val is not None:
-                results.append(val)
+            self._emit_stmt(stmt, results)
         return results
 
     def _eval_variable(self, node: Ps1Variable) -> _Value:
@@ -508,11 +541,9 @@ class _Ps1Interpreter:
             return False
         if name == 'null':
             return None
-        if name in self._env:
-            return self._env[name]
-        if self._parent_env is not None:
-            return self._parent_env.get(name)
-        return None
+        if name == 'psitem':
+            name = '_'
+        return self._lookup(name)
 
     def _eval_assignment(self, node: Ps1AssignmentExpression) -> _Value:
         if isinstance(node.target, Ps1IndexExpression):
@@ -527,6 +558,9 @@ class _Ps1Interpreter:
         if op == '=':
             self._env[key] = value
         elif op == '+=':
+            # PowerShell compound assignment reads only the local scope (verified): a `$x += v`
+            # against a variable that exists only in an enclosing scope starts from $null, unlike a
+            # plain read of `$x`. Do NOT look through the scope chain here.
             current = self._env.get(key)
             self._env[key] = self._add(current, value)
         elif op == '-=':
@@ -550,7 +584,7 @@ class _Ps1Interpreter:
         if node.operator != '=':
             raise _Ps1InterpreterError
         key = target.object.name.lower()
-        lst = self._env.get(key)
+        lst = self._lookup(key)
         if not isinstance(lst, list):
             raise _Ps1InterpreterError
         idx = self._to_int(self._eval(target.index))
@@ -577,9 +611,9 @@ class _Ps1Interpreter:
         if op == '*':
             return self._multiply(left, right)
         if op == '/':
-            return self._numeric_op(left, right, int.__floordiv__, float.__truediv__)
+            return self._numeric_op(left, right, ps_divide, ps_divide)
         if op == '%':
-            return self._numeric_op(left, right, int.__mod__, float.__mod__)
+            return self._numeric_op(left, right, ps_modulo, ps_modulo)
         if op == '-band':
             return self._int_op(left, right, int.__and__)
         if op == '-bor':
@@ -631,7 +665,7 @@ class _Ps1Interpreter:
             if not isinstance(node.operand, Ps1Variable):
                 raise _Ps1InterpreterError
             key = node.operand.name.lower()
-            current = self._env.get(key, 0)
+            current = self._lookup(key)
             if not isinstance(current, (int, float)):
                 current = 0
             delta = 1 if op == '++' else -1
@@ -1016,7 +1050,7 @@ class _Ps1Interpreter:
             raise _Ps1InterpreterError
         flags = re.IGNORECASE if op != '-creplace' else 0
         try:
-            return re.sub(pattern, replacement, s, flags=flags)
+            return dotnet_regex_replace(pattern, replacement, s, flags=flags)
         except re.error:
             raise _Ps1InterpreterError
 
@@ -1047,9 +1081,9 @@ class _Ps1Interpreter:
         if not isinstance(left, str) or not isinstance(right, str):
             raise _Ps1InterpreterError
         flags = re.IGNORECASE if op[1] != 'c' else 0
-        pattern = re.escape(right).replace(r'\*', '.*').replace(r'\?', '.')
+        pattern = fnmatch.translate(right)
         try:
-            return re.fullmatch(pattern, left, flags=flags) is not None
+            return re.match(pattern, left, flags=flags) is not None
         except re.error:
             raise _Ps1InterpreterError
 
@@ -1087,10 +1121,12 @@ class _Ps1Interpreter:
 
     @staticmethod
     def _to_int(value: _Value) -> int:
+        if isinstance(value, bool):
+            return int(value)
         if isinstance(value, int):
             return value
         if isinstance(value, float):
-            return int(value)
+            return round(value)
         if isinstance(value, str):
             try:
                 return int(value, 0)
@@ -1349,6 +1385,14 @@ class Ps1FunctionEvaluator(Transformer):
 
     @staticmethod
     def _value_to_node(value: _Value) -> Expression | None:
+        if isinstance(value, list):
+            elements: list[Expression] = []
+            for item in value:
+                node = Ps1FunctionEvaluator._value_to_node(item)
+                if node is None:
+                    return None
+                elements.append(node)
+            return Ps1ArrayLiteral(elements=elements)
         if isinstance(value, str):
             return make_string_literal(value)
         if isinstance(value, int) and not isinstance(value, bool):
@@ -1466,7 +1510,7 @@ class Ps1ForEachPipeline(Transformer):
     for each element and replacing the pipeline with the computed result.
     """
 
-    _BUILTIN_VARS = frozenset({'_', 'true', 'false', 'null'})
+    _BUILTIN_VARS = frozenset({'_', 'psitem', 'true', 'false', 'null'})
 
     def visit_Ps1Pipeline(self, node: Ps1Pipeline):
         self.generic_visit(node)
@@ -1493,7 +1537,7 @@ class Ps1ForEachPipeline(Transformer):
         for item in items:
             try:
                 result = interpreter.execute(script_block, {'_': item})
-            except _Ps1InterpreterError:
+            except (_Ps1InterpreterError, InvokeExpression):
                 return None
             results.append(result)
         return self._results_to_node(results)
@@ -1539,21 +1583,26 @@ class Ps1ForEachPipeline(Transformer):
 
     @staticmethod
     def _results_to_node(results: list[_Value]) -> Expression | None:
-        if all(isinstance(r, str) for r in results):
-            return make_string_literal(''.join(r for r in results if isinstance(r, str)))
-        if all(isinstance(r, int) and not isinstance(r, bool) for r in results):
-            elements: list[Expression] = [
-                Ps1IntegerLiteral(value=v, raw=str(v))
-                for v in results if isinstance(v, int)
-            ]
-            return Ps1ArrayLiteral(elements=elements)
-        if all(isinstance(r, (str, int)) and not isinstance(r, bool) for r in results):
-            try:
-                parts = [chr(r) if isinstance(r, int) else str(r) for r in results]
-                return make_string_literal(''.join(parts))
-            except (ValueError, OverflowError):
-                pass
-        return None
+        """
+        Turn the per-item scriptblock outputs of `<array> | %{ ... }` into a node. A pipeline that
+        produces single characters is the canonical char-building obfuscation, so those are joined
+        into one string (indexing a char string and indexing the equivalent array agree). Results
+        with multi-character or non-string elements stay a `Ps1ArrayLiteral`, so e.g.
+        `('foo','bar' | %{ $_ })[1]` is still the element `'bar'` rather than a joined character.
+        """
+        if not results:
+            return None
+        if all(isinstance(r, str) and len(r) == 1 for r in results):
+            return make_string_literal(''.join(results))
+        if len(results) == 1:
+            return Ps1FunctionEvaluator._value_to_node(results[0])
+        elements: list[Expression] = []
+        for value in results:
+            node = Ps1FunctionEvaluator._value_to_node(value)
+            if node is None:
+                return None
+            elements.append(node)
+        return Ps1ArrayLiteral(elements=elements)
 
 
 def evaluate_truthy(
@@ -1569,5 +1618,5 @@ def evaluate_truthy(
         interp._env = dict(bindings)
         value = interp._eval(condition)
         return _Ps1Interpreter._truthy(value)
-    except _Ps1InterpreterError:
+    except (_Ps1InterpreterError, InvokeExpression):
         return None
