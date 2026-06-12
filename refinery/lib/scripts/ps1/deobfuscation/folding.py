@@ -24,13 +24,17 @@ from refinery.lib.scripts.ps1.deobfuscation.helpers import (
     collect_int_arguments,
     collect_string_arguments,
     detect_encoding_chain,
+    dotnet_regex_replace,
     extract_foreach_scriptblock,
     get_body,
     get_member_name,
     is_array_reverse_call,
+    is_pipeline_item,
     is_static_type_call,
     is_truthy,
     make_string_literal,
+    ps_divide,
+    ps_modulo,
     string_value,
     unwrap_integer,
     unwrap_parens,
@@ -57,6 +61,8 @@ from refinery.lib.scripts.ps1.model import (
     Ps1MemberAccess,
     Ps1Pipeline,
     Ps1RangeExpression,
+    Ps1RealLiteral,
+    Ps1ScopeModifier,
     Ps1ScriptBlock,
     Ps1StringLiteral,
     Ps1UnaryExpression,
@@ -139,14 +145,13 @@ def _iter_regex_matches(node: Ps1InvokeMember) -> Iterator[str] | None:
         flags, right_to_left = options
     else:
         flags, right_to_left = 0, False
-    direction = (
-        lambda m: m,
-        lambda m: m[::-1],
-    )[right_to_left]
     try:
-        return (direction(m[0]) for m in re.finditer(pattern, direction(input), flags))
+        matches = [m[0] for m in re.finditer(pattern, input, flags)]
     except re.error:
         return None
+    if right_to_left:
+        matches.reverse()
+    return iter(matches)
 
 
 def _compute_regex_matches(node: Ps1InvokeMember) -> list[str] | None:
@@ -200,7 +205,7 @@ def _foreach_extracts_value(sb: Ps1ScriptBlock) -> bool:
         if prop is None or prop.lower() not in ('groups', 'captures'):
             return False
         inner = inner.object
-    return isinstance(inner, Ps1Variable) and inner.name == '_'
+    return is_pipeline_item(inner)
 
 
 def _escape_for_expandable(text: str) -> str:
@@ -219,6 +224,15 @@ def _variable_raw(var: Ps1Variable) -> str:
     if scope:
         return F'{prefix}{{{scope}:{var.name}}}'
     return F'{prefix}{{{var.name}}}'
+
+
+def _is_string_typed_variable(node: Expression | None) -> bool:
+    """
+    Return `True` only for a variable whose value is provably a string, so that folding a `+`
+    concatenation into an expandable string cannot change array/number `+` semantics. Environment
+    variables are always strings in PowerShell.
+    """
+    return isinstance(node, Ps1Variable) and node.scope == Ps1ScopeModifier.ENV
 
 
 def _variable_string_to_expandable(
@@ -302,10 +316,6 @@ def _lookup_hashtable(ht: Ps1HashLiteral, index: Expression) -> Expression | Non
 
 
 class Ps1ConstantFolding(LocalFunctionAwareTransformer):
-
-    def visit_Ps1CommandInvocation(self, node: Ps1CommandInvocation):
-        self.generic_visit(node)
-        return None
 
     def visit_Ps1Pipeline(self, node: Ps1Pipeline):
         if len(node.elements) == 2:
@@ -769,20 +779,13 @@ class Ps1ConstantFolding(LocalFunctionAwareTransformer):
         if input_str is None or pattern_str is None or replacement_str is None:
             return None
         flags = 0
-        right_to_left = False
         if len(node.arguments) == 4:
             opts = _parse_regex_options(node.arguments[3])
             if opts is None:
                 return None
-            flags, right_to_left = opts
+            flags, _ = opts
         try:
-            if right_to_left:
-                result = re.sub(
-                    pattern_str, lambda _: replacement_str, input_str[::-1], flags=flags)
-                result = result[::-1]
-            else:
-                result = re.sub(
-                    pattern_str, lambda _: replacement_str, input_str, flags=flags)
+            result = dotnet_regex_replace(pattern_str, replacement_str, input_str, flags=flags)
         except re.error:
             return None
         return make_string_literal(result)
@@ -791,8 +794,8 @@ class Ps1ConstantFolding(LocalFunctionAwareTransformer):
         '+'     : int.__add__,
         '-'     : int.__sub__,
         '*'     : int.__mul__,
-        '/'     : int.__floordiv__,
-        '%'     : int.__mod__,
+        '/'     : ps_divide,
+        '%'     : ps_modulo,
         '-band' : int.__and__,
         '-bor'  : int.__or__,
         '-bxor' : int.__xor__,
@@ -829,15 +832,15 @@ class Ps1ConstantFolding(LocalFunctionAwareTransformer):
             result = fn(left.value, right.value)
         except (ZeroDivisionError, ValueError, OverflowError):
             return None
+        if isinstance(result, float):
+            return Ps1RealLiteral(value=result, raw=repr(result))
         return Ps1IntegerLiteral(value=result, raw=str(result))
 
     @staticmethod
     def _handle_string_multiply(node: Ps1BinaryExpression) -> Expression | None:
+        # PowerShell `*` is governed by the left operand: only `string * int` repeats the string.
         s = string_value(node.left) if node.left else None
         n = unwrap_integer(node.right)
-        if s is None or n is None:
-            s = string_value(node.right) if node.right else None
-            n = unwrap_integer(node.left)
         if s is None or n is None:
             return None
         count = n.value
@@ -893,10 +896,14 @@ class Ps1ConstantFolding(LocalFunctionAwareTransformer):
             and node.parent.left is node
         )
         if not is_inner_concat:
-            if isinstance(node.left, Ps1Variable) and right_str is not None:
-                return _variable_string_to_expandable(node.left, right_str, var_first=True)
+            # `'literal' + $var` is always string concatenation (the string-typed left operand
+            # governs `+`), so it is safe to fold into an expandable string. `$var + 'literal'`
+            # depends on $var's runtime type (array append / numeric add), so only fold it when the
+            # variable is provably a string.
             if isinstance(node.right, Ps1Variable) and left_str is not None:
                 return _variable_string_to_expandable(node.right, left_str, var_first=False)
+            if _is_string_typed_variable(node.left) and right_str is not None:
+                return _variable_string_to_expandable(node.left, right_str, var_first=True)
         return None
 
     def _handle_binary_join(self, node: Ps1BinaryExpression) -> Expression | None:
@@ -930,7 +937,7 @@ class Ps1ConstantFolding(LocalFunctionAwareTransformer):
             return None
         flags = re.IGNORECASE if op != '-creplace' else 0
         try:
-            result = re.sub(needle_str, lambda _: insert_str, haystack, flags=flags)
+            result = dotnet_regex_replace(needle_str, insert_str, haystack, flags=flags)
         except re.error:
             return None
         return make_string_literal(result)
