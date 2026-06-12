@@ -35,6 +35,8 @@ from refinery.lib.scripts.ps1.deobfuscation.helpers import (
     normalize_type_expression,
     ps_divide,
     ps_modulo,
+    ps_shift_left,
+    ps_shift_right,
     string_value,
     switch_matches,
     unwrap_to_array_literal,
@@ -620,9 +622,9 @@ class _Ps1Interpreter:
         if op == '-bxor':
             return self._int_op(left, right, int.__xor__)
         if op == '-shl':
-            return self._int_op(left, right, int.__lshift__)
+            return self._int_op(left, right, ps_shift_left)
         if op == '-shr':
-            return self._int_op(left, right, int.__rshift__)
+            return self._int_op(left, right, ps_shift_right)
         if op in ('-and', '-or', '-xor'):
             lb = self._truthy(left)
             rb = self._truthy(right)
@@ -855,9 +857,11 @@ class _Ps1Interpreter:
                 if isinstance(v, float):
                     return abs(v)
             if method == 'floor' and len(args) == 1:
-                return int(math.floor(float(self._to_int(args[0]))))
+                val = float(args[0]) if isinstance(args[0], (int, float)) else float(self._to_str(args[0]))
+                return int(math.floor(val))
             if method == 'ceiling' and len(args) == 1:
-                return int(math.ceil(float(self._to_int(args[0]))))
+                val = float(args[0]) if isinstance(args[0], (int, float)) else float(self._to_str(args[0]))
+                return int(math.ceil(val))
             if method == 'round' and len(args) in (1, 2):
                 val = float(args[0]) if isinstance(args[0], (int, float)) else float(self._to_str(args[0]))
                 digits = self._to_int(args[1]) if len(args) == 2 else 0
@@ -1113,6 +1117,8 @@ class _Ps1Interpreter:
         if isinstance(value, int):
             return str(value)
         if isinstance(value, float):
+            if value.is_integer():
+                return str(int(value))
             return str(value)
         if isinstance(value, list):
             return ' '.join(_Ps1Interpreter._to_str(item) for item in value)

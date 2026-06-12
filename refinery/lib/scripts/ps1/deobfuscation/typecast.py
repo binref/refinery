@@ -22,20 +22,20 @@ from refinery.lib.scripts.ps1.model import (
     Ps1TypeExpression,
 )
 
-_INTEGER_TYPE_NAMES = frozenset({
-    'byte',
-    'int',
-    'int16',
-    'int32',
-    'int64',
-    'long',
-    'sbyte',
-    'short',
-    'uint16',
-    'uint32',
-    'uint64',
-    'ushort',
-})
+_INTEGER_TYPE_BOUNDS = {
+    'byte'   : (0, 0xFF),
+    'int'    : (-0x80000000, 0x7FFFFFFF),
+    'int16'  : (-0x8000, 0x7FFF),
+    'int32'  : (-0x80000000, 0x7FFFFFFF),
+    'int64'  : (-0x8000000000000000, 0x7FFFFFFFFFFFFFFF),
+    'long'   : (-0x8000000000000000, 0x7FFFFFFFFFFFFFFF),
+    'sbyte'  : (-0x80, 0x7F),
+    'short'  : (-0x8000, 0x7FFF),
+    'uint16' : (0, 0xFFFF),
+    'uint32' : (0, 0xFFFFFFFF),
+    'uint64' : (0, 0xFFFFFFFFFFFFFFFF),
+    'ushort' : (0, 0xFFFF),
+}
 
 
 class Ps1TypeCasts(Transformer):
@@ -56,36 +56,36 @@ class Ps1TypeCasts(Transformer):
     def visit_Ps1CastExpression(self, node: Ps1CastExpression):
         self.generic_visit(node)
         tn = normalize_dotnet_type_name(node.type_name)
-        if tn in ('string', 'char[]'):
+        if tn == 'string':
             if node.operand and string_value(node.operand) is not None:
                 return node.operand
-        if tn == 'string':
             if node.operand is not None:
                 inner = unwrap_single_paren(node.operand)
                 parts = collect_string_arguments(inner)
                 if parts is not None and len(parts) > 1:
                     return make_string_literal(' '.join(parts))
-        if tn in _INTEGER_TYPE_NAMES:
+        bounds = _INTEGER_TYPE_BOUNDS.get(tn)
+        if bounds is not None:
+            lo, hi = bounds
             result = unwrap_integer(node.operand)
             if result is not None:
-                return Ps1IntegerLiteral(value=result.value, raw=str(result.value))
-            sv = string_value(node.operand) if node.operand else None
-            if sv is not None:
-                sv = sv.strip()
-                try:
-                    value = int(sv, 0)
-                except (ValueError, OverflowError):
-                    pass
-                else:
-                    return Ps1IntegerLiteral(value=value, raw=str(value))
+                if lo <= result.value <= hi:
+                    return Ps1IntegerLiteral(value=result.value, raw=str(result.value))
+            else:
+                sv = string_value(node.operand) if node.operand else None
+                if sv is not None:
+                    sv = sv.strip()
+                    try:
+                        value = int(sv, 0)
+                    except (ValueError, OverflowError):
+                        value = None
+                    if value is not None and lo <= value <= hi:
+                        return Ps1IntegerLiteral(value=value, raw=str(value))
         if tn == 'char':
             result = unwrap_integer(node.operand)
-            if result is not None:
-                try:
-                    ch = chr(result.value)
-                except (ValueError, OverflowError):
-                    return None
-                return make_string_literal(ch)
+            if result is not None and 0 <= result.value <= 0xFFFF:
+                return make_string_literal(chr(result.value))
+            return None
         if tn == 'char[]':
             if node.operand is not None:
                 inner = unwrap_single_paren(node.operand)

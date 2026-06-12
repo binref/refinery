@@ -35,6 +35,8 @@ from refinery.lib.scripts.ps1.deobfuscation.helpers import (
     make_string_literal,
     ps_divide,
     ps_modulo,
+    ps_shift_left,
+    ps_shift_right,
     string_value,
     unwrap_integer,
     unwrap_parens,
@@ -709,11 +711,8 @@ class Ps1ConstantFolding(LocalFunctionAwareTransformer):
             return self._fold_convert_int(node, bounds)
         if lower == 'tochar':
             n = unwrap_integer(node.arguments[0]) if len(node.arguments) == 1 else None
-            if n is not None:
-                try:
-                    return make_string_literal(chr(n.value))
-                except (ValueError, OverflowError):
-                    pass
+            if n is not None and 0 <= n.value <= 0xFFFF:
+                return make_string_literal(chr(n.value))
         return None
 
     def _fold_convert_int(
@@ -798,8 +797,8 @@ class Ps1ConstantFolding(LocalFunctionAwareTransformer):
         '-band' : int.__and__,
         '-bor'  : int.__or__,
         '-bxor' : int.__xor__,
-        '-shl'  : int.__lshift__,
-        '-shr'  : int.__rshift__,
+        '-shl'  : ps_shift_left,
+        '-shr'  : ps_shift_right,
     }
 
     def visit_Ps1BinaryExpression(self, node: Ps1BinaryExpression):

@@ -97,7 +97,7 @@ class Ps1ExpandableStringHoist(Transformer):
         """
         before: list = []
         after: list = []
-        for node in list(stmt.walk()):
+        for node in list(stmt.walk_in_order()):
             if not isinstance(node, Ps1ExpandableString):
                 continue
             subs = [p for p in node.parts if isinstance(p, Ps1SubExpression)]

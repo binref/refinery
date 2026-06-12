@@ -1232,6 +1232,7 @@ class Ps1Parser:
         if '`' in name:
             name = _strip_backtick_noop(name)
         scope = Ps1ScopeModifier.NONE
+        drive = ''
         if ':' in name:
             prefix, rest = name.split(':', 1)
             prefix_lower = prefix.lower()
@@ -1239,11 +1240,14 @@ class Ps1Parser:
                 scope = Ps1ScopeModifier(prefix_lower)
             except ValueError:
                 scope = Ps1ScopeModifier.DRIVE
+                drive = prefix
             name = rest
         if not braced and name.startswith('{') and name.endswith('}'):
             braced = True
             name = name[1:-1]
-        return Ps1Variable(offset=-1, name=name, scope=scope, braced=braced, splatted=splatted)
+        return Ps1Variable(
+            offset=-1, name=name, scope=scope, braced=braced, splatted=splatted, drive=drive
+        )
 
     def _parse_here_string(self) -> Expression:
         tok = self._advance()

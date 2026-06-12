@@ -172,3 +172,20 @@ class TestPs1Synthesizer(TestBase):
         # as the decrement operator and change the meaning; a separating space is required.
         self.assertEqual(Ps1Synthesizer().convert(Ps1Parser('- -5').parse()), '- -5')
         self.assertEqual(Ps1Synthesizer().convert(Ps1Parser('+ +5').parse()), '+ +5')
+
+    def test_scoped_braced_variable_keeps_braces_outside(self):
+        # `${env:Path}` must re-emit with the braces around the whole `scope:name`, not as
+        # `$env:{Path}`, which PowerShell parses as `$env:` followed by a `{Path}` script block.
+        self.assertEqual(
+            Ps1Synthesizer().convert(Ps1Parser('${env:Path}').parse()), '${env:Path}')
+
+    def test_drive_qualified_variable_preserves_drive(self):
+        # A drive-qualified variable must keep its drive name; collapsing it to the `DRIVE` enum
+        # value would emit the non-existent variable `$drive:foo`.
+        self.assertEqual(
+            Ps1Synthesizer().convert(Ps1Parser('$c:foo').parse()), '$c:foo')
+
+    def test_catch_multiple_types_comma_separated(self):
+        # Multiple catch type filters must be comma-separated; a space between them is a parse error.
+        out = Ps1Synthesizer().convert(Ps1Parser('try { $x } catch [A],[B] { $y }').parse())
+        self.assertIn('catch [A], [B]', out)

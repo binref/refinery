@@ -93,13 +93,20 @@ class Ps1Synthesizer(Synthesizer):
                 self._newline()
             self.visit(stmt)
 
+    @staticmethod
+    def _variable_scope_prefix(node: Ps1Variable) -> str:
+        if node.scope == Ps1ScopeModifier.NONE:
+            return ''
+        if node.scope == Ps1ScopeModifier.DRIVE:
+            return F'{node.drive}:'
+        return F'{node.scope.value}:'
+
     def visit_Ps1Variable(self, node: Ps1Variable):
         prefix = '@' if node.splatted else '$'
-        scope_str = ''
-        if node.scope != Ps1ScopeModifier.NONE:
-            scope_str = F'{node.scope.value}:'
-        name = F'{{{node.name}}}' if node.braced else node.name
-        self._write(F'{prefix}{scope_str}{name}')
+        body = F'{self._variable_scope_prefix(node)}{node.name}'
+        if node.braced:
+            body = F'{{{body}}}'
+        self._write(F'{prefix}{body}')
 
     def visit_Ps1IntegerLiteral(self, node: Ps1IntegerLiteral):
         self._write(node.raw)
@@ -129,10 +136,7 @@ class Ps1Synthesizer(Synthesizer):
 
     def _emit_variable_in_dq(self, node: Ps1Variable):
         prefix = '@' if node.splatted else '$'
-        scope_str = ''
-        if node.scope != Ps1ScopeModifier.NONE:
-            scope_str = F'{node.scope.value}:'
-        self._write(F'{prefix}{{{scope_str}{node.name}}}')
+        self._write(F'{prefix}{{{self._variable_scope_prefix(node)}{node.name}}}')
 
     @staticmethod
     def _escape_for_dq(value: str) -> str:
@@ -543,7 +547,7 @@ class Ps1Synthesizer(Synthesizer):
             self._write(' catch')
             if clause.types:
                 self._write(' ')
-                self._write(' '.join(F'[{t}]' for t in clause.types))
+                self._write(', '.join(F'[{t}]' for t in clause.types))
             self._write(' ')
             if clause.body:
                 self._emit_block(clause.body)

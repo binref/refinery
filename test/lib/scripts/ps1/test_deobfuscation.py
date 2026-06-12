@@ -20,7 +20,10 @@ from refinery.lib.scripts.ps1.deobfuscation import (
     Ps1UnusedVariableRemoval,
     Ps1VariableRenaming,
 )
-from refinery.lib.scripts.ps1.deobfuscation.helpers import make_string_literal
+from refinery.lib.scripts.ps1.deobfuscation.helpers import (
+    make_string_literal,
+    switch_matches,
+)
 from refinery.lib.scripts.ps1.deobfuscation.securestring import _find_key_argument
 from refinery.lib.scripts.ps1.model import (
     Ps1CommandInvocation,
@@ -3211,6 +3214,63 @@ class TestPs1ReviewRegressions(TestPs1):
             }
             $y = g
         """))
+
+    def test_expandable_hoist_preserves_assignment_order(self):
+        # Void subexpressions hoisted out of expandable strings must keep source execution order;
+        # reversing them would make `$b` read `$a` before it is assigned.
+        result = self._apply(
+            '$z = 1 + "$($a = 1)" + "$($b = $a)"', Ps1ExpandableStringHoist)
+        self.assertLess(result.index('$a = 1'), result.index('$b = $a'))
+
+    def test_junk_removal_keeps_indirectly_called_function(self):
+        # A function reachable only through the call operator on a variable (`& $f`) must survive,
+        # because the dynamic target cannot be proven different from it.
+        result = self._apply(
+            "function Invoke-Payload { Write-Host 'x' }\n& $f", Ps1JunkStatementRemoval)
+        self.assertIn('Invoke-Payload', result)
+
+    def test_junk_removal_keeps_collection_mutation(self):
+        # `.Remove` mutates a collection in place, so a discarded `$list.Remove(...)` is not junk.
+        result = self._apply(
+            "$list = [System.Collections.ArrayList]@(1, 2, 3)\n$list.Remove(2)",
+            Ps1JunkStatementRemoval)
+        self.assertIn('.Remove(2)', result)
+
+    def test_shift_operators_use_int32_semantics(self):
+        # `-shl`/`-shr` fold with .NET Int32 wraparound and shift-count masking.
+        self.assertEqual('-2147483648', self._apply('1 -shl 31', Ps1ConstantFolding))
+        self.assertEqual('1', self._apply('1 -shl 32', Ps1ConstantFolding))
+
+    def test_emulated_shift_uses_int32_semantics(self):
+        # The emulator must shift with the same .NET semantics as constant folding; a raw Python
+        # shift would evaluate `1 -shl 32` to 4294967296 instead of 1.
+        result = self._apply(
+            'function f ($n) { $n -shl 32 }\n$x = f 1', Ps1FunctionEvaluator)
+        self.assertIn('$x = 1', result)
+        self.assertNotIn('4294967296', result)
+
+    def test_char_cast_in_bmp_folds(self):
+        self.assertEqual("'A'", self._apply('[char]65', Ps1TypeCasts))
+
+    def test_char_cast_rejects_above_bmp(self):
+        # `[char]` is a UTF-16 code unit; a code point above U+FFFF is rejected, not folded.
+        result = self._apply('[char]65536', Ps1TypeCasts)
+        self.assertNotIn(chr(65536), result)
+
+    def test_switch_matches_bool_int_coercion(self):
+        # PowerShell coerces between bool and int in switch/`-eq` comparisons, so a `$true` label
+        # matches the integer 1 and `$false` matches 0.
+        self.assertTrue(switch_matches(1, True))
+        self.assertTrue(switch_matches(0, False))
+        self.assertFalse(switch_matches(2, True))
+
+    def test_make_string_literal_avoids_herestring_breakout(self):
+        # A value with a line beginning with the here-string terminator `'@` must not be emitted as
+        # a here-string, or it would close the string early; a safe multi-line value still may.
+        unsafe = make_string_literal("a\n'@\nb")
+        self.assertNotIsInstance(unsafe, Ps1HereString)
+        safe = make_string_literal('a\nb')
+        self.assertIsInstance(safe, Ps1HereString)
 
     def test_foreach_pipeline_yields_array_not_joined_string(self):
         # Multi-character results stay an array (so indexing selects an element), unlike the

@@ -41,6 +41,7 @@ class Ps1Variable(Expression):
     scope: Ps1ScopeModifier = Ps1ScopeModifier.NONE
     braced: bool = False
     splatted: bool = False
+    drive: str = ''
 
 
 @dataclass(repr=False, eq=False)

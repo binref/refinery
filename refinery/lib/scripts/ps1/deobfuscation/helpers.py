@@ -94,7 +94,10 @@ def string_value(node: Node | None) -> str | None:
 def make_string_literal(value: str) -> Ps1StringLiteral | Ps1HereString:
     has_newline = '\n' in value
     has_nonprint = any(c in value for c in NONPRINT_CONTROL)
-    if has_newline and not has_nonprint:
+    # A single-quoted here-string is closed by a line that begins with `'@`; emitting a value that
+    # contains such a line verbatim would terminate the string early and corrupt the script.
+    herestring_safe = not value.startswith("'@") and "\n'@" not in value
+    if has_newline and not has_nonprint and herestring_safe:
         raw = F"@'\n{value}\n'@"
         return Ps1HereString(value=value, raw=raw)
     if has_nonprint or has_newline:
@@ -483,14 +486,36 @@ def ps_modulo(a: int | float, b: int | float) -> int | float:
     return math.fmod(a, b)
 
 
+def ps_shift_left(value: int, count: int) -> int:
+    """
+    PowerShell `-shl`: the left operand is taken as a 32-bit integer unless its magnitude needs 64
+    bits, the shift count is masked to the operand width (5 bits for `Int32`, 6 for `Int64`), and the
+    result wraps within the signed range of that width, matching .NET.
+    """
+    width = 32 if -0x80000000 <= value <= 0x7FFFFFFF else 64
+    span = 1 << width
+    result = (value << (count & (width - 1))) & (span - 1)
+    if result >= span >> 1:
+        result -= span
+    return result
+
+
+def ps_shift_right(value: int, count: int) -> int:
+    """
+    PowerShell `-shr`: an arithmetic, sign-preserving right shift of the left operand taken as a
+    32-bit integer unless its magnitude needs 64 bits, with the shift count masked to the operand
+    width (5 bits for `Int32`, 6 for `Int64`), matching .NET.
+    """
+    width = 32 if -0x80000000 <= value <= 0x7FFFFFFF else 64
+    return value >> (count & (width - 1))
+
+
 def switch_matches(value, condition, *, case_sensitive: bool = False) -> bool:
     """
     PowerShell `switch` clause matching for already-evaluated scalar values. String comparison is
     case-insensitive unless `case_sensitive` is set; integers and strings cross-coerce the way
     PowerShell does.
     """
-    if isinstance(value, bool) or isinstance(condition, bool):
-        return value is condition
     if isinstance(value, str) and isinstance(condition, str):
         return value == condition if case_sensitive else value.lower() == condition.lower()
     if isinstance(value, (int, float)) and isinstance(condition, (int, float)):

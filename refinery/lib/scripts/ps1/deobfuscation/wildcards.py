@@ -308,7 +308,7 @@ def _extract_where_object_wildcard(
         return None
     if not isinstance(left.object, Ps1Variable):
         return None
-    if left.object.name != '_':
+    if left.object.name.lower() not in ('_', 'psitem'):
         return None
     member = left.member
     if isinstance(member, str):

@@ -110,13 +110,10 @@ _PURE_INSTANCE_METHODS = frozenset({
     'gethashcode',
     'gettype',
     'indexof',
-    'insert',
     'lastindexof',
     'length',
     'padleft',
     'padright',
-    'remove',
-    'replace',
     'split',
     'startswith',
     'substring',
@@ -388,20 +385,37 @@ class Ps1JunkStatementRemoval(Transformer):
             self._prune_body(body, parent is node, called)
 
     @staticmethod
+    def _is_dynamic_dispatch(cmd: Ps1CommandInvocation) -> bool:
+        """
+        Return `True` when an invocation may resolve to an arbitrary function name at runtime. A
+        literal command name resolves statically, and a literal scriptblock body (`&{ ... }`) runs
+        inline; any other command expression (a variable like `& $f`, an expandable string, or a
+        subexpression) could dispatch to any defined function.
+        """
+        return not isinstance(cmd.name, (Ps1StringLiteral, Ps1ScriptBlock))
+
+    @staticmethod
     def _reachable_functions(node: Node) -> set[str]:
         """
         Collect all function names transitively reachable from top-level call sites. First gather
-        direct calls from the outer scope, then expand through function bodies until stable.
+        direct calls from the outer scope, then expand through function bodies until stable. When an
+        invocation may dispatch dynamically (see `_is_dynamic_dispatch`), every defined function is
+        treated as reachable so that a function called only through `& $f` is never removed.
         """
         directly_called: set[str] = set()
         functions: dict[str, Ps1FunctionDefinition] = {}
+        dynamic_call = False
         for n in _walk_outer_scope(node):
             if isinstance(n, Ps1CommandInvocation):
                 name = get_command_name(n)
                 if name is not None:
                     directly_called.add(name.lower())
+                elif Ps1JunkStatementRemoval._is_dynamic_dispatch(n):
+                    dynamic_call = True
             elif isinstance(n, Ps1FunctionDefinition):
                 functions[n.name.lower()] = n
+        if dynamic_call:
+            return set(functions.keys()) | directly_called
         reachable = set(directly_called)
         frontier = list(reachable & functions.keys())
         while frontier:
@@ -412,12 +426,15 @@ class Ps1JunkStatementRemoval(Transformer):
             for n in fdef.body.walk():
                 if isinstance(n, Ps1CommandInvocation):
                     name = get_command_name(n)
-                    if name is not None:
-                        key = name.lower()
-                        if key not in reachable:
-                            reachable.add(key)
-                            if key in functions:
-                                frontier.append(key)
+                    if name is None:
+                        if Ps1JunkStatementRemoval._is_dynamic_dispatch(n):
+                            return set(functions.keys()) | reachable
+                        continue
+                    key = name.lower()
+                    if key not in reachable:
+                        reachable.add(key)
+                        if key in functions:
+                            frontier.append(key)
         return reachable
 
     def _prune_body(self, body: list, is_root: bool, called: set[str]):
