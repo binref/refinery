@@ -455,11 +455,39 @@ class Ps1IexInlining(Transformer):
                 if parsed is None:
                     i += 1
                     continue
+                parsed = self._preserve_assignment_target(body[i], parsed)
+                if parsed is None:
+                    i += 1
+                    continue
                 for stmt in parsed:
                     stmt.parent = container
                 body[i:i + 1] = parsed
                 self.mark_changed()
                 i += len(parsed)
+
+    @staticmethod
+    def _preserve_assignment_target(stmt, parsed: list) -> list | None:
+        """
+        When the statement being inlined assigns the (piped) `Invoke-Expression` result to a
+        target, keep the assignment by binding the inlined expression to it. If the resolved code is
+        not a single expression, return `None` so the statement is left untouched rather than
+        silently discarding the assignment target.
+        """
+        if not (
+            isinstance(stmt, Ps1ExpressionStatement)
+            and isinstance(stmt.expression, Ps1AssignmentExpression)
+        ):
+            return parsed
+        assignment = stmt.expression
+        if (
+            len(parsed) == 1
+            and isinstance(parsed[0], Ps1ExpressionStatement)
+            and parsed[0].expression is not None
+        ):
+            assignment.value = parsed[0].expression
+            parsed[0].expression.parent = assignment
+            return [stmt]
+        return None
 
     def _try_resolve_inline(self, stmt) -> list | None:
         code = self._try_extract_iex_string(stmt)

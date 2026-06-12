@@ -3,7 +3,8 @@ Hoist void subexpressions out of expandable strings, replacing the expandable
 string with a plain string literal of its text parts. The hoisted statements
 are inserted around the parent statement preserving their side effects. Only
 operates on expandable strings where ALL subexpressions are void-producing
-(command invocations, assignments).
+(assignments only — a command inside `$( ... )` contributes its output to the
+string, so it is never hoisted).
 
 Safety constraint: subexpressions from leftmost expandable strings are
 inserted BEFORE the parent statement (they were going to run first anyway).
@@ -21,7 +22,6 @@ from refinery.lib.scripts.ps1.model import (
     Ps1AssignmentExpression,
     Ps1BinaryExpression,
     Ps1Code,
-    Ps1CommandInvocation,
     Ps1ExpandableString,
     Ps1ExpressionStatement,
     Ps1StringLiteral,
@@ -58,12 +58,14 @@ class Ps1ExpandableStringHoist(Transformer):
     @staticmethod
     def _is_void_statement(stmt) -> bool:
         """
-        A statement is void when it produces no output value.
+        A statement is void when it contributes nothing to an interpolating string. Only assignments
+        qualify: a command invocation inside `$( ... )` writes its output into the surrounding
+        string, so hoisting it out would drop that interpolated value and leak the command's output
+        to the pipeline.
         """
         if not isinstance(stmt, Ps1ExpressionStatement):
             return False
-        expr = stmt.expression
-        return isinstance(expr, (Ps1CommandInvocation, Ps1AssignmentExpression))
+        return isinstance(stmt.expression, Ps1AssignmentExpression)
 
     @staticmethod
     def _is_leftmost(node) -> bool:
