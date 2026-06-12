@@ -87,13 +87,15 @@ class DeobfuscationPipeline:
             if unknown := targets - all_names:
                 raise ValueError(F'group {name!r} invalidates unknown groups: {unknown}')
 
-    def run(self, ast: Node, max_steps: int = 0) -> int:
+    def run(self, ast: Node, max_steps: int = 0, initial_steps: int = 0) -> int:
         """
-        Execute the pipeline. Returns the number of individual transformer invocations that
-        resulted in a change. A return value of 0 means the entire pipeline was already stable.
+        Execute the pipeline. Returns the total number of transformer invocations that resulted in a
+        change, including `initial_steps` carried over from an earlier phase so that a shared
+        `max_steps` budget is enforced across phases. A return value equal to `initial_steps` means
+        the pipeline was already stable.
         """
         stable: set[str] = set()
-        steps = 0
+        steps = initial_steps
         while True:
             progress = False
             for name in self._pipeline:

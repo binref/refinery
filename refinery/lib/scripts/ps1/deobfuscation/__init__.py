@@ -102,7 +102,7 @@ def deobfuscate(ast: Ps1Script, max_steps: int = 0, remove_junk: bool = True) ->
     steps = _phase1.run(ast, max_steps=max_steps)
     if not remove_junk:
         return steps
-    if max_steps > 0:
-        max_steps -= steps
-    steps = _phase2.run(ast, max_steps=max_steps) + steps
-    return steps
+    # Carry the phase-1 step count into phase 2 so a single `max_steps` budget is enforced across
+    # both phases. Splitting the budget instead lets a phase-1 result of exactly `max_steps` leave a
+    # remaining budget of 0, which the pipeline would read as "unlimited" and run phase 2 unbounded.
+    return _phase2.run(ast, max_steps=max_steps, initial_steps=steps)
