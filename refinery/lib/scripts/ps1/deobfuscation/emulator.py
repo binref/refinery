@@ -30,7 +30,6 @@ from refinery.lib.scripts.ps1.deobfuscation.helpers import (
     extract_foreach_scriptblock,
     get_command_name,
     get_member_name,
-    is_pipeline_item,
     make_string_literal,
     normalize_dotnet_type_name,
     normalize_type_expression,

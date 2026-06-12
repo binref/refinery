@@ -51,7 +51,6 @@ from refinery.lib.scripts.ps1.model import (
     Ps1ArrayLiteral,
     Ps1AssignmentExpression,
     Ps1BinaryExpression,
-    Ps1CommandInvocation,
     Ps1ExpandableString,
     Ps1ExpressionStatement,
     Ps1HashLiteral,

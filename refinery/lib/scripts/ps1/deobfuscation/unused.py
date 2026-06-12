@@ -95,6 +95,7 @@ def _inside_definition(node: Node) -> bool:
         cursor = cursor.parent
     return False
 
+
 _PURE_INSTANCE_METHODS = frozenset({
     'adddays',
     'addhours',
