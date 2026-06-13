@@ -857,23 +857,23 @@ class _Ps1Interpreter:
                 if isinstance(v, float):
                     return abs(v)
             if method == 'floor' and len(args) == 1:
-                val = float(args[0]) if isinstance(args[0], (int, float)) else float(self._to_str(args[0]))
+                val = self._to_float(args[0])
                 return int(math.floor(val))
             if method == 'ceiling' and len(args) == 1:
-                val = float(args[0]) if isinstance(args[0], (int, float)) else float(self._to_str(args[0]))
+                val = self._to_float(args[0])
                 return int(math.ceil(val))
             if method == 'round' and len(args) in (1, 2):
-                val = float(args[0]) if isinstance(args[0], (int, float)) else float(self._to_str(args[0]))
+                val = self._to_float(args[0])
                 digits = self._to_int(args[1]) if len(args) == 2 else 0
                 result = round(val, digits)
                 return int(result) if digits == 0 else result
             if method == 'pow' and len(args) == 2:
-                base = float(args[0]) if isinstance(args[0], (int, float)) else float(self._to_str(args[0]))
-                exp = float(args[1]) if isinstance(args[1], (int, float)) else float(self._to_str(args[1]))
+                base = self._to_float(args[0])
+                exp = self._to_float(args[1])
                 result = math.pow(base, exp)
                 return int(result) if result == int(result) else result
             if method == 'sqrt' and len(args) == 1:
-                val = float(args[0]) if isinstance(args[0], (int, float)) else float(self._to_str(args[0]))
+                val = self._to_float(args[0])
                 return math.sqrt(val)
             if method == 'min' and len(args) == 2:
                 a = args[0] if isinstance(args[0], (int, float)) else self._to_int(args[0])
@@ -1140,6 +1140,12 @@ class _Ps1Interpreter:
         if value is None:
             return 0
         raise _Ps1InterpreterError
+
+    @staticmethod
+    def _to_float(value: _Value) -> float:
+        if isinstance(value, (int, float)):
+            return float(value)
+        return float(_Ps1Interpreter._to_str(value))
 
 
 class Ps1FunctionEvaluator(Transformer):
