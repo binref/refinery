@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from inspect import cleandoc
+
 from test import TestBase
 
 from refinery.lib.scripts.vba.parser import VbaParser
@@ -151,14 +153,20 @@ class TestVbaParserStatements(TestBase):
         self.assertEqual(stmt.declarators[2].type_name, '')
 
     def test_sub_empty(self):
-        ast = self._parse('Sub Test()\nEnd Sub')
+        ast = self._parse(cleandoc("""
+            Sub Test()
+            End Sub
+        """))
         stmt = ast.body[0]
         assert isinstance(stmt, VbaSubDeclaration)
         self.assertEqual(stmt.name, 'Test')
         self.assertEqual(len(stmt.body), 0)
 
     def test_sub_with_params(self):
-        ast = self._parse('Sub Greet(ByVal name As String)\nEnd Sub')
+        ast = self._parse(cleandoc("""
+            Sub Greet(ByVal name As String)
+            End Sub
+        """))
         stmt = ast.body[0]
         assert isinstance(stmt, VbaSubDeclaration)
         self.assertEqual(len(stmt.params), 1)
@@ -167,7 +175,11 @@ class TestVbaParserStatements(TestBase):
         self.assertEqual(stmt.params[0].type_name, 'String')
 
     def test_function_with_return_type(self):
-        ast = self._parse('Function Add(a As Long, b As Long) As Long\nAdd = a + b\nEnd Function')
+        ast = self._parse(cleandoc("""
+            Function Add(a As Long, b As Long) As Long
+            Add = a + b
+            End Function
+        """))
         stmt = ast.body[0]
         assert isinstance(stmt, VbaFunctionDeclaration)
         self.assertEqual(stmt.return_type, 'Long')
@@ -175,7 +187,11 @@ class TestVbaParserStatements(TestBase):
         self.assertEqual(len(stmt.body), 1)
 
     def test_property_get(self):
-        ast = self._parse('Property Get Name() As String\nName = "test"\nEnd Property')
+        ast = self._parse(cleandoc("""
+            Property Get Name() As String
+            Name = "test"
+            End Property
+        """))
         stmt = ast.body[0]
         assert isinstance(stmt, VbaPropertyDeclaration)
         self.assertEqual(stmt.kind, VbaPropertyKind.GET)
@@ -183,13 +199,23 @@ class TestVbaParserStatements(TestBase):
         self.assertEqual(stmt.return_type, 'String')
 
     def test_property_let(self):
-        ast = self._parse('Property Let Name(ByVal v As String)\nm_name = v\nEnd Property')
+        ast = self._parse(cleandoc("""
+            Property Let Name(ByVal v As String)
+            m_name = v
+            End Property
+        """))
         stmt = ast.body[0]
         assert isinstance(stmt, VbaPropertyDeclaration)
         self.assertEqual(stmt.kind, VbaPropertyKind.LET)
 
     def test_if_block(self):
-        code = 'Sub T()\nIf x > 0 Then\ny = 1\nEnd If\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+            If x > 0 Then
+            y = 1
+            End If
+            End Sub
+        """)
         ast = self._parse(code)
         sub = ast.body[0]
         assert isinstance(sub, VbaSubDeclaration)
@@ -198,7 +224,13 @@ class TestVbaParserStatements(TestBase):
         self.assertFalse(if_stmt.single_line)
 
     def test_if_endif_merged(self):
-        code = 'Sub T()\nIf x > 0 Then\ny = 1\nEndIf\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+            If x > 0 Then
+            y = 1
+            EndIf
+            End Sub
+        """)
         ast = self._parse(code)
         sub = ast.body[0]
         assert isinstance(sub, VbaSubDeclaration)
@@ -209,47 +241,93 @@ class TestVbaParserStatements(TestBase):
         self.assertEqual(len(sub.body), 1)
 
     def test_if_else(self):
-        code = 'Sub T()\nIf x > 0 Then\ny = 1\nElse\ny = 0\nEnd If\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+            If x > 0 Then
+            y = 1
+            Else
+            y = 0
+            End If
+            End Sub
+        """)
         ast = self._parse(code)
         if_stmt = ast.body[0].body[0]
         assert isinstance(if_stmt, VbaIfStatement)
         self.assertTrue(len(if_stmt.else_body) > 0)
 
     def test_if_elseif(self):
-        code = 'Sub T()\nIf x = 1 Then\ny = 1\nElseIf x = 2 Then\ny = 2\nElse\ny = 0\nEnd If\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+            If x = 1 Then
+            y = 1
+            ElseIf x = 2 Then
+            y = 2
+            Else
+            y = 0
+            End If
+            End Sub
+        """)
         ast = self._parse(code)
         if_stmt = ast.body[0].body[0]
         assert isinstance(if_stmt, VbaIfStatement)
         self.assertEqual(len(if_stmt.elseif_clauses), 1)
 
     def test_single_line_if(self):
-        code = 'Sub T()\nIf x > 0 Then y = 1 Else y = 0\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+            If x > 0 Then y = 1 Else y = 0
+            End Sub
+        """)
         ast = self._parse(code)
         if_stmt = ast.body[0].body[0]
         assert isinstance(if_stmt, VbaIfStatement)
         self.assertTrue(if_stmt.single_line)
 
     def test_for_next(self):
-        code = 'Sub T()\nFor i = 1 To 10\nDebug.Print i\nNext i\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+            For i = 1 To 10
+            Debug.Print i
+            Next i
+            End Sub
+        """)
         ast = self._parse(code)
         for_stmt = ast.body[0].body[0]
         assert isinstance(for_stmt, VbaForStatement)
 
     def test_for_step(self):
-        code = 'Sub T()\nFor i = 10 To 1 Step -1\nNext\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+            For i = 10 To 1 Step -1
+            Next
+            End Sub
+        """)
         ast = self._parse(code)
         for_stmt = ast.body[0].body[0]
         assert isinstance(for_stmt, VbaForStatement)
         self.assertIsNotNone(for_stmt.step)
 
     def test_for_each(self):
-        code = 'Sub T()\nFor Each item In col\nDebug.Print item\nNext\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+            For Each item In col
+            Debug.Print item
+            Next
+            End Sub
+        """)
         ast = self._parse(code)
         foreach = ast.body[0].body[0]
         assert isinstance(foreach, VbaForEachStatement)
 
     def test_for_next_comma_list(self):
-        code = 'Sub T()\nFor i = 1 To 3\nFor j = 1 To 3\nDebug.Print j\nNext j, i\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+            For i = 1 To 3
+            For j = 1 To 3
+            Debug.Print j
+            Next j, i
+            End Sub
+        """)
         ast = self._parse(code)
         sub = ast.body[0]
         assert isinstance(sub, VbaSubDeclaration)
@@ -261,7 +339,13 @@ class TestVbaParserStatements(TestBase):
         assert isinstance(inner, VbaForStatement)
 
     def test_do_while_pre(self):
-        code = 'Sub T()\nDo While x > 0\nx = x - 1\nLoop\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+            Do While x > 0
+            x = x - 1
+            Loop
+            End Sub
+        """)
         ast = self._parse(code)
         do_stmt = ast.body[0].body[0]
         assert isinstance(do_stmt, VbaDoLoopStatement)
@@ -269,7 +353,13 @@ class TestVbaParserStatements(TestBase):
         self.assertEqual(do_stmt.condition_position, VbaLoopConditionPosition.PRE)
 
     def test_do_until_post(self):
-        code = 'Sub T()\nDo\nx = x + 1\nLoop Until x > 10\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+            Do
+            x = x + 1
+            Loop Until x > 10
+            End Sub
+        """)
         ast = self._parse(code)
         do_stmt = ast.body[0].body[0]
         assert isinstance(do_stmt, VbaDoLoopStatement)
@@ -277,20 +367,43 @@ class TestVbaParserStatements(TestBase):
         self.assertEqual(do_stmt.condition_position, VbaLoopConditionPosition.POST)
 
     def test_do_loop_infinite(self):
-        code = 'Sub T()\nDo\nx = x + 1\nLoop\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+            Do
+            x = x + 1
+            Loop
+            End Sub
+        """)
         ast = self._parse(code)
         do_stmt = ast.body[0].body[0]
         assert isinstance(do_stmt, VbaDoLoopStatement)
         self.assertIsNone(do_stmt.condition)
 
     def test_while_wend(self):
-        code = 'Sub T()\nWhile x > 0\nx = x - 1\nWend\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+            While x > 0
+            x = x - 1
+            Wend
+            End Sub
+        """)
         ast = self._parse(code)
         while_stmt = ast.body[0].body[0]
         assert isinstance(while_stmt, VbaWhileStatement)
 
     def test_select_case(self):
-        code = 'Sub T()\nSelect Case x\nCase 1\ny = "one"\nCase 2, 3\ny = "two or three"\nCase Else\ny = "other"\nEnd Select\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+            Select Case x
+            Case 1
+            y = "one"
+            Case 2, 3
+            y = "two or three"
+            Case Else
+            y = "other"
+            End Select
+            End Sub
+        """)
         ast = self._parse(code)
         sel = ast.body[0].body[0]
         assert isinstance(sel, VbaSelectCaseStatement)
@@ -298,66 +411,108 @@ class TestVbaParserStatements(TestBase):
         self.assertTrue(sel.cases[2].is_else)
 
     def test_with_statement(self):
-        code = 'Sub T()\nWith obj\n.Name = "test"\nEnd With\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+            With obj
+            .Name = "test"
+            End With
+            End Sub
+        """)
         ast = self._parse(code)
         with_stmt = ast.body[0].body[0]
         assert isinstance(with_stmt, VbaWithStatement)
 
     def test_set_statement(self):
-        code = 'Sub T()\nSet x = CreateObject("Scripting.Dictionary")\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+            Set x = CreateObject("Scripting.Dictionary")
+            End Sub
+        """)
         ast = self._parse(code)
         stmt = ast.body[0].body[0]
         assert isinstance(stmt, VbaSetStatement)
 
     def test_let_statement_explicit(self):
-        code = 'Sub T()\nLet x = 5\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+            Let x = 5
+            End Sub
+        """)
         ast = self._parse(code)
         stmt = ast.body[0].body[0]
         assert isinstance(stmt, VbaLetStatement)
         self.assertTrue(stmt.explicit)
 
     def test_implicit_assignment(self):
-        code = 'Sub T()\nx = 5\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+            x = 5
+            End Sub
+        """)
         ast = self._parse(code)
         stmt = ast.body[0].body[0]
         assert isinstance(stmt, VbaLetStatement)
         self.assertFalse(stmt.explicit)
 
     def test_call_statement_explicit(self):
-        code = 'Sub T()\nCall MyFunc(1, 2)\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+            Call MyFunc(1, 2)
+            End Sub
+        """)
         ast = self._parse(code)
         stmt = ast.body[0].body[0]
         assert isinstance(stmt, VbaCallStatement)
 
     def test_implicit_call_no_parens(self):
-        code = 'Sub T()\nMsgBox "Hello"\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+            MsgBox "Hello"
+            End Sub
+        """)
         ast = self._parse(code)
         stmt = ast.body[0].body[0]
         assert isinstance(stmt, VbaExpressionStatement)
         self.assertTrue(len(stmt.arguments) > 0)
 
     def test_goto(self):
-        code = 'Sub T()\nGoTo Cleanup\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+            GoTo Cleanup
+            End Sub
+        """)
         ast = self._parse(code)
         stmt = ast.body[0].body[0]
         assert isinstance(stmt, VbaGotoStatement)
         self.assertEqual(stmt.label, 'Cleanup')
 
     def test_gosub(self):
-        code = 'Sub T()\nGoSub Handler\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+            GoSub Handler
+            End Sub
+        """)
         ast = self._parse(code)
         stmt = ast.body[0].body[0]
         assert isinstance(stmt, VbaGosubStatement)
 
     def test_on_error_resume_next(self):
-        code = 'Sub T()\nOn Error Resume Next\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+            On Error Resume Next
+            End Sub
+        """)
         ast = self._parse(code)
         stmt = ast.body[0].body[0]
         assert isinstance(stmt, VbaOnErrorStatement)
         self.assertEqual(stmt.action, VbaOnErrorAction.RESUME_NEXT)
 
     def test_on_error_goto(self):
-        code = 'Sub T()\nOn Error GoTo Handler\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+            On Error GoTo Handler
+            End Sub
+        """)
         ast = self._parse(code)
         stmt = ast.body[0].body[0]
         assert isinstance(stmt, VbaOnErrorStatement)
@@ -365,14 +520,22 @@ class TestVbaParserStatements(TestBase):
         self.assertEqual(stmt.label, 'Handler')
 
     def test_on_error_goto_0(self):
-        code = 'Sub T()\nOn Error GoTo 0\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+            On Error GoTo 0
+            End Sub
+        """)
         ast = self._parse(code)
         stmt = ast.body[0].body[0]
         assert isinstance(stmt, VbaOnErrorStatement)
         self.assertEqual(stmt.label, '0')
 
     def test_on_error_goto_minus_1(self):
-        code = 'Sub T()\nOn Error GoTo -1\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+            On Error GoTo -1
+            End Sub
+        """)
         ast = self._parse(code)
         stmt = ast.body[0].body[0]
         assert isinstance(stmt, VbaOnErrorStatement)
@@ -380,7 +543,11 @@ class TestVbaParserStatements(TestBase):
         self.assertEqual(stmt.label, '-1')
 
     def test_on_goto_statement(self):
-        code = 'Sub T()\nOn x GoTo 100, 200, 300\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+            On x GoTo 100, 200, 300
+            End Sub
+        """)
         ast = self._parse(code)
         stmt = ast.body[0].body[0]
         assert isinstance(stmt, VbaOnBranchStatement), \
@@ -391,7 +558,11 @@ class TestVbaParserStatements(TestBase):
         self.assertEqual(stmt.labels, ['100', '200', '300'])
 
     def test_on_gosub_statement(self):
-        code = 'Sub T()\nOn n GoSub Label1, Label2\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+            On n GoSub Label1, Label2
+            End Sub
+        """)
         ast = self._parse(code)
         stmt = ast.body[0].body[0]
         assert isinstance(stmt, VbaOnBranchStatement), \
@@ -402,7 +573,11 @@ class TestVbaParserStatements(TestBase):
         self.assertEqual(stmt.labels, ['Label1', 'Label2'])
 
     def test_on_error_not_broken_by_on_goto(self):
-        code = 'Sub T()\nOn Error GoTo Handler\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+            On Error GoTo Handler
+            End Sub
+        """)
         ast = self._parse(code)
         stmt = ast.body[0].body[0]
         assert isinstance(stmt, VbaOnErrorStatement), \
@@ -411,7 +586,12 @@ class TestVbaParserStatements(TestBase):
         self.assertEqual(stmt.label, 'Handler')
 
     def test_goto_two_word_form(self):
-        code = 'Sub T()\nGo To done\ndone:\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+            Go To done
+            done:
+            End Sub
+        """)
         ast = self._parse(code)
         sub = ast.body[0]
         stmt = sub.body[0]
@@ -419,7 +599,12 @@ class TestVbaParserStatements(TestBase):
         self.assertEqual(stmt.label, 'done')
 
     def test_gosub_two_word_form(self):
-        code = 'Sub T()\nGo Sub done\ndone:\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+            Go Sub done
+            done:
+            End Sub
+        """)
         ast = self._parse(code)
         sub = ast.body[0]
         stmt = sub.body[0]
@@ -427,7 +612,11 @@ class TestVbaParserStatements(TestBase):
         self.assertEqual(stmt.label, 'done')
 
     def test_on_error_goto_two_word_form(self):
-        code = 'Sub T()\nOn Error Go To 0\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+            On Error Go To 0
+            End Sub
+        """)
         ast = self._parse(code)
         sub = ast.body[0]
         stmt = sub.body[0]
@@ -436,21 +625,35 @@ class TestVbaParserStatements(TestBase):
         self.assertEqual(stmt.label, '0')
 
     def test_exit_sub(self):
-        code = 'Sub T()\nExit Sub\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+            Exit Sub
+            End Sub
+        """)
         ast = self._parse(code)
         stmt = ast.body[0].body[0]
         assert isinstance(stmt, VbaExitStatement)
         self.assertEqual(stmt.kind, VbaExitKind.SUB)
 
     def test_exit_function(self):
-        code = 'Function T() As Long\nExit Function\nEnd Function'
+        code = cleandoc("""
+            Function T() As Long
+            Exit Function
+            End Function
+        """)
         ast = self._parse(code)
         stmt = ast.body[0].body[0]
         assert isinstance(stmt, VbaExitStatement)
         self.assertEqual(stmt.kind, VbaExitKind.FUNCTION)
 
     def test_exit_for(self):
-        code = 'Sub T()\nFor i = 1 To 10\nExit For\nNext\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+            For i = 1 To 10
+            Exit For
+            Next
+            End Sub
+        """)
         ast = self._parse(code)
         for_stmt = ast.body[0].body[0]
         assert isinstance(for_stmt, VbaForStatement)
@@ -459,7 +662,11 @@ class TestVbaParserStatements(TestBase):
         self.assertEqual(exit_stmt.kind, VbaExitKind.FOR)
 
     def test_exit_unknown_keyword(self):
-        code = 'Sub T()\nExit While\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+            Exit While
+            End Sub
+        """)
         ast = self._parse(code)
         sub = ast.body[0]
         assert isinstance(sub, VbaSubDeclaration)
@@ -469,7 +676,11 @@ class TestVbaParserStatements(TestBase):
         assert isinstance(sub.body[0], VbaErrorNode)
 
     def test_lset_statement(self):
-        code = 'Sub T()\nLSet x = y\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+            LSet x = y
+            End Sub
+        """)
         ast = self._parse(code)
         stmt = ast.body[0].body[0]
         assert isinstance(stmt, VbaLetStatement), \
@@ -482,7 +693,11 @@ class TestVbaParserStatements(TestBase):
             'LSet keyword must be preserved in the AST node')
 
     def test_rset_statement(self):
-        code = 'Sub T()\nRSet a = b\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+            RSet a = b
+            End Sub
+        """)
         ast = self._parse(code)
         stmt = ast.body[0].body[0]
         assert isinstance(stmt, VbaLetStatement), \
@@ -496,8 +711,16 @@ class TestVbaParserStatements(TestBase):
 
     def test_lset_keyword_distinct_from_let(self):
         # LSet and Let must produce different keyword values; previously both produced 'Let'
-        ast_lset = self._parse('Sub T()\nLSet x = y\nEnd Sub')
-        ast_let = self._parse('Sub T()\nLet x = y\nEnd Sub')
+        ast_lset = self._parse(cleandoc("""
+            Sub T()
+            LSet x = y
+            End Sub
+        """))
+        ast_let = self._parse(cleandoc("""
+            Sub T()
+            Let x = y
+            End Sub
+        """))
         stmt_lset = ast_lset.body[0].body[0]
         stmt_let = ast_let.body[0].body[0]
         assert isinstance(stmt_lset, VbaLetStatement)
@@ -506,42 +729,72 @@ class TestVbaParserStatements(TestBase):
             'LSet and Let must have distinct keyword values in the AST')
 
     def test_return_statement(self):
-        code = 'Sub T()\nReturn\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+            Return
+            End Sub
+        """)
         ast = self._parse(code)
         stmt = ast.body[0].body[0]
         assert isinstance(stmt, VbaReturnStatement)
 
     def test_stop_statement(self):
-        code = 'Sub T()\nStop\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+            Stop
+            End Sub
+        """)
         ast = self._parse(code)
         stmt = ast.body[0].body[0]
         assert isinstance(stmt, VbaStopStatement)
 
     def test_end_statement(self):
-        code = 'Sub T()\nEnd\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+            End
+            End Sub
+        """)
         ast = self._parse(code)
         stmt = ast.body[0].body[0]
         assert isinstance(stmt, VbaEndStatement)
 
     def test_resume_next(self):
-        code = 'Sub T()\nResume Next\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+            Resume Next
+            End Sub
+        """)
         ast = self._parse(code)
         stmt = ast.body[0].body[0]
         assert isinstance(stmt, VbaResumeStatement)
         self.assertEqual(stmt.label, 'Next')
 
     def test_label_with_colon(self):
-        code = 'Sub T()\nCleanup:\nExit Sub\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+            Cleanup:
+            Exit Sub
+            End Sub
+        """)
         ast = self._parse(code)
         assert isinstance(ast.body[0].body[0], VbaLabelStatement)
 
     def test_line_number_label(self):
-        code = 'Sub T()\n10 x = 1\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+            10 x = 1
+            End Sub
+        """)
         ast = self._parse(code)
         self.assertTrue(len(ast.body[0].body) >= 1)
 
     def test_type_definition(self):
-        code = 'Type MyType\nx As Long\ny As String\nEnd Type'
+        code = cleandoc("""
+            Type MyType
+            x As Long
+            y As String
+            End Type
+        """)
         ast = self._parse(code)
         stmt = ast.body[0]
         assert isinstance(stmt, VbaTypeDefinition)
@@ -549,7 +802,11 @@ class TestVbaParserStatements(TestBase):
         self.assertEqual(len(stmt.members), 2)
 
     def test_type_definition_fused_end(self):
-        code = 'Type MyType\nx As Long\nEndType'
+        code = cleandoc("""
+            Type MyType
+            x As Long
+            EndType
+        """)
         ast = self._parse(code)
         stmt = ast.body[0]
         assert isinstance(stmt, VbaTypeDefinition)
@@ -557,7 +814,13 @@ class TestVbaParserStatements(TestBase):
         self.assertEqual(len(stmt.members), 1)
 
     def test_enum_definition(self):
-        code = 'Enum Colors\nRed = 1\nGreen = 2\nBlue = 3\nEnd Enum'
+        code = cleandoc("""
+            Enum Colors
+            Red = 1
+            Green = 2
+            Blue = 3
+            End Enum
+        """)
         ast = self._parse(code)
         stmt = ast.body[0]
         assert isinstance(stmt, VbaEnumDefinition)
@@ -565,7 +828,11 @@ class TestVbaParserStatements(TestBase):
         self.assertEqual(len(stmt.members), 3)
 
     def test_enum_definition_fused_end(self):
-        code = 'Enum Colors\nRed = 1\nEndEnum'
+        code = cleandoc("""
+            Enum Colors
+            Red = 1
+            EndEnum
+        """)
         ast = self._parse(code)
         stmt = ast.body[0]
         assert isinstance(stmt, VbaEnumDefinition)
@@ -581,21 +848,33 @@ class TestVbaParserStatements(TestBase):
         self.assertEqual(stmt.name, 'GetTickCount')
 
     def test_redim(self):
-        code = 'Sub T()\nReDim arr(10)\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+            ReDim arr(10)
+            End Sub
+        """)
         ast = self._parse(code)
         stmt = ast.body[0].body[0]
         assert isinstance(stmt, VbaRedimStatement)
         self.assertFalse(stmt.preserve)
 
     def test_redim_preserve(self):
-        code = 'Sub T()\nReDim Preserve arr(20)\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+            ReDim Preserve arr(20)
+            End Sub
+        """)
         ast = self._parse(code)
         stmt = ast.body[0].body[0]
         assert isinstance(stmt, VbaRedimStatement)
         self.assertTrue(stmt.preserve)
 
     def test_redim_member_access(self):
-        code = 'Sub T()\nReDim obj.arr(10)\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+            ReDim obj.arr(10)
+            End Sub
+        """)
         ast = self._parse(code)
         stmt = ast.body[0].body[0]
         assert isinstance(stmt, VbaRedimStatement)
@@ -604,7 +883,11 @@ class TestVbaParserStatements(TestBase):
         self.assertTrue(stmt.declarators[0].is_array)
 
     def test_redim_me_member_access(self):
-        code = 'Sub T()\nReDim Me.data(5)\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+            ReDim Me.data(5)
+            End Sub
+        """)
         ast = self._parse(code)
         stmt = ast.body[0].body[0]
         assert isinstance(stmt, VbaRedimStatement)
@@ -612,7 +895,11 @@ class TestVbaParserStatements(TestBase):
         self.assertTrue(stmt.declarators[0].is_array)
 
     def test_redim_with_expression(self):
-        code = 'Sub T()\nReDim .items(20)\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+            ReDim .items(20)
+            End Sub
+        """)
         ast = self._parse(code)
         stmt = ast.body[0].body[0]
         assert isinstance(stmt, VbaRedimStatement)
@@ -620,7 +907,11 @@ class TestVbaParserStatements(TestBase):
         self.assertTrue(stmt.declarators[0].is_array)
 
     def test_redim_preserve_member_access(self):
-        code = 'Sub T()\nReDim Preserve obj.arr(n + 1)\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+            ReDim Preserve obj.arr(n + 1)
+            End Sub
+        """)
         ast = self._parse(code)
         stmt = ast.body[0].body[0]
         assert isinstance(stmt, VbaRedimStatement)
@@ -629,32 +920,47 @@ class TestVbaParserStatements(TestBase):
         self.assertTrue(stmt.declarators[0].is_array)
 
     def test_public_sub(self):
-        ast = self._parse('Public Sub Test()\nEnd Sub')
+        ast = self._parse(cleandoc("""
+            Public Sub Test()
+            End Sub
+        """))
         stmt = ast.body[0]
         assert isinstance(stmt, VbaSubDeclaration)
         self.assertEqual(stmt.scope, VbaScopeModifier.PUBLIC)
 
     def test_private_function(self):
-        ast = self._parse('Private Function Foo() As Long\nEnd Function')
+        ast = self._parse(cleandoc("""
+            Private Function Foo() As Long
+            End Function
+        """))
         stmt = ast.body[0]
         assert isinstance(stmt, VbaFunctionDeclaration)
         self.assertEqual(stmt.scope, VbaScopeModifier.PRIVATE)
 
     def test_static_sub(self):
-        ast = self._parse('Static Sub Test()\nEnd Sub')
+        ast = self._parse(cleandoc("""
+            Static Sub Test()
+            End Sub
+        """))
         stmt = ast.body[0]
         assert isinstance(stmt, VbaSubDeclaration)
         self.assertTrue(stmt.is_static)
 
     def test_optional_parameter(self):
-        code = 'Sub T(Optional x As Long = 0)\nEnd Sub'
+        code = cleandoc("""
+            Sub T(Optional x As Long = 0)
+            End Sub
+        """)
         ast = self._parse(code)
         param = ast.body[0].params[0]
         self.assertTrue(param.is_optional)
         self.assertIsNotNone(param.default)
 
     def test_param_byval_optional(self):
-        code = 'Sub T(ByVal Optional x As Long = 0)\nEnd Sub'
+        code = cleandoc("""
+            Sub T(ByVal Optional x As Long = 0)
+            End Sub
+        """)
         ast = self._parse(code)
         param = ast.body[0].params[0]
         self.assertTrue(param.is_optional)
@@ -662,7 +968,10 @@ class TestVbaParserStatements(TestBase):
         self.assertEqual(param.name, 'x')
 
     def test_param_byref_optional(self):
-        code = 'Sub T(ByRef Optional y As String)\nEnd Sub'
+        code = cleandoc("""
+            Sub T(ByRef Optional y As String)
+            End Sub
+        """)
         ast = self._parse(code)
         param = ast.body[0].params[0]
         self.assertTrue(param.is_optional)
@@ -670,7 +979,14 @@ class TestVbaParserStatements(TestBase):
         self.assertEqual(param.name, 'y')
 
     def test_select_case_range(self):
-        code = 'Sub T()\nSelect Case x\nCase 1 To 10\ny = "range"\nEnd Select\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+            Select Case x
+            Case 1 To 10
+            y = "range"
+            End Select
+            End Sub
+        """)
         ast = self._parse(code)
         sel = ast.body[0].body[0]
         assert isinstance(sel, VbaSelectCaseStatement)
@@ -683,7 +999,14 @@ class TestVbaParserStatements(TestBase):
         self.assertEqual(test_expr.end.value, 10)
 
     def test_select_case_multiple_ranges(self):
-        code = 'Sub T()\nSelect Case x\nCase 1 To 5, 10 To 20\ny = "range"\nEnd Select\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+            Select Case x
+            Case 1 To 5, 10 To 20
+            y = "range"
+            End Select
+            End Sub
+        """)
         ast = self._parse(code)
         sel = ast.body[0].body[0]
         assert isinstance(sel, VbaSelectCaseStatement)
@@ -693,7 +1016,14 @@ class TestVbaParserStatements(TestBase):
             assert isinstance(test_expr, VbaRangeExpression)
 
     def test_select_case_comparison_bare_operator(self):
-        code = 'Sub T()\nSelect Case x\nCase > 5\ny = "big"\nEnd Select\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+            Select Case x
+            Case > 5
+            y = "big"
+            End Select
+            End Sub
+        """)
         ast = self._parse(code)
         sel = ast.body[0].body[0]
         assert isinstance(sel, VbaSelectCaseStatement)
@@ -709,7 +1039,14 @@ class TestVbaParserStatements(TestBase):
         self.assertEqual(test_expr.right.value, 5)
 
     def test_select_case_comparison_with_is(self):
-        code = 'Sub T()\nSelect Case x\nCase Is >= 10\ny = "big"\nEnd Select\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+            Select Case x
+            Case Is >= 10
+            y = "big"
+            End Select
+            End Sub
+        """)
         ast = self._parse(code)
         sel = ast.body[0].body[0]
         assert isinstance(sel, VbaSelectCaseStatement)
@@ -722,7 +1059,14 @@ class TestVbaParserStatements(TestBase):
         self.assertEqual(test_expr.right.value, 10)
 
     def test_select_case_comparison_equality(self):
-        code = 'Sub T()\nSelect Case x\nCase Is = 3\ny = "three"\nEnd Select\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+            Select Case x
+            Case Is = 3
+            y = "three"
+            End Select
+            End Sub
+        """)
         ast = self._parse(code)
         sel = ast.body[0].body[0]
         assert isinstance(sel, VbaSelectCaseStatement)
@@ -734,7 +1078,14 @@ class TestVbaParserStatements(TestBase):
         self.assertEqual(test_expr.right.value, 3)
 
     def test_select_case_multiple_comparisons(self):
-        code = 'Sub T()\nSelect Case x\nCase < 0, >= 100\ny = "out"\nEnd Select\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+            Select Case x
+            Case < 0, >= 100
+            y = "out"
+            End Select
+            End Sub
+        """)
         ast = self._parse(code)
         sel = ast.body[0].body[0]
         assert isinstance(sel, VbaSelectCaseStatement)
@@ -751,7 +1102,14 @@ class TestVbaParserStatements(TestBase):
         self.assertEqual(t1.right.value, 100)
 
     def test_select_case_fused_endselect(self):
-        code = 'Sub T()\nSelect Case x\nCase 1\ny = 1\nEndSelect\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+            Select Case x
+            Case 1
+            y = 1
+            EndSelect
+            End Sub
+        """)
         ast = self._parse(code)
         sub = ast.body[0]
         stmt = sub.body[0]
@@ -760,7 +1118,14 @@ class TestVbaParserStatements(TestBase):
         self.assertEqual(len(stmt.cases[0].body), 1)
 
     def test_end_statement_in_case_clause(self):
-        code = 'Sub T()\nSelect Case x\nCase 1\nEnd\nEnd Select\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+            Select Case x
+            Case 1
+            End
+            End Select
+            End Sub
+        """)
         ast = self._parse(code)
         sub = ast.body[0]
         assert isinstance(sub, VbaSubDeclaration)
@@ -772,7 +1137,11 @@ class TestVbaParserStatements(TestBase):
         assert isinstance(select.cases[0].body[0], VbaEndStatement)
 
     def test_debug_print_comma_separator(self):
-        code = 'Sub T()\nDebug.Print "a", "b"\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+            Debug.Print "a", "b"
+            End Sub
+        """)
         ast = self._parse(code)
         sub = ast.body[0]
         stmt = sub.body[0]
@@ -781,14 +1150,25 @@ class TestVbaParserStatements(TestBase):
         self.assertEqual(stmt.separators, [','])
 
     def test_attribute_does_not_corrupt_following_code(self):
-        code = 'Attribute VB_Name = "Module1"\nSub T()\nx = 1\nEnd Sub'
+        code = cleandoc("""
+            Attribute VB_Name = "Module1"
+            Sub T()
+            x = 1
+            End Sub
+        """)
         ast = self._parse(code)
         sub = [n for n in ast.body if isinstance(n, VbaSubDeclaration)]
         self.assertEqual(len(sub), 1)
         self.assertEqual(len(sub[0].body), 1)
 
     def test_if_else_with_standalone_end(self):
-        code = 'If x Then\ny = 1\nElse\nEnd\nEnd If'
+        code = cleandoc("""
+            If x Then
+            y = 1
+            Else
+            End
+            End If
+        """)
         ast = self._parse(code)
         stmt = ast.body[0]
         assert isinstance(stmt, VbaIfStatement)
@@ -796,7 +1176,13 @@ class TestVbaParserStatements(TestBase):
         assert isinstance(stmt.else_body[0], VbaEndStatement)
 
     def test_with_dot_member_assignment(self):
-        code = 'Sub T()\nWith obj\n.Name = "test"\nEnd With\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+            With obj
+            .Name = "test"
+            End With
+            End Sub
+        """)
         ast = self._parse(code)
         with_stmt = ast.body[0].body[0]
         assert isinstance(with_stmt, VbaWithStatement)
@@ -810,14 +1196,22 @@ class TestVbaParserStatements(TestBase):
         self.assertEqual(stmt.value.value, 'test')
 
     def test_exit_sub_lowercase(self):
-        code = 'Sub T()\nexit sub\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+            exit sub
+            End Sub
+        """)
         ast = self._parse(code)
         stmt = ast.body[0].body[0]
         assert isinstance(stmt, VbaExitStatement)
         self.assertEqual(stmt.kind, VbaExitKind.SUB)
 
     def test_exit_function_uppercase(self):
-        code = 'Function T() As Long\nEXIT FUNCTION\nEnd Function'
+        code = cleandoc("""
+            Function T() As Long
+            EXIT FUNCTION
+            End Function
+        """)
         ast = self._parse(code)
         stmt = ast.body[0].body[0]
         assert isinstance(stmt, VbaExitStatement)
@@ -831,19 +1225,29 @@ class TestVbaParserStatements(TestBase):
         self.assertEqual(stmt.declarators[0].name, 'x')
 
     def test_public_sub_lowercase(self):
-        ast = self._parse('public Sub Foo()\nEnd Sub')
+        ast = self._parse(cleandoc("""
+            public Sub Foo()
+            End Sub
+        """))
         stmt = ast.body[0]
         assert isinstance(stmt, VbaSubDeclaration)
         self.assertEqual(stmt.scope, VbaScopeModifier.PUBLIC)
 
     def test_property_get_lowercase(self):
-        ast = self._parse('Property get Foo() As Long\nEnd Property')
+        ast = self._parse(cleandoc("""
+            Property get Foo() As Long
+            End Property
+        """))
         stmt = ast.body[0]
         assert isinstance(stmt, VbaPropertyDeclaration)
         self.assertEqual(stmt.kind, VbaPropertyKind.GET)
 
     def test_line_number_label_with_statement(self):
-        code = 'Sub T()\n10 x = 1\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+            10 x = 1
+            End Sub
+        """)
         ast = self._parse(code)
         body = ast.body[0].body
         self.assertEqual(len(body), 2)
@@ -852,7 +1256,12 @@ class TestVbaParserStatements(TestBase):
         assert isinstance(body[1], VbaLetStatement)
 
     def test_single_line_if_implicit_goto_then(self):
-        code = 'Sub T()\nIf x Then 100\n100 x = 1\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+            If x Then 100
+            100 x = 1
+            End Sub
+        """)
         ast = self._parse(code)
         if_stmt = ast.body[0].body[0]
         assert isinstance(if_stmt, VbaIfStatement)
@@ -864,7 +1273,12 @@ class TestVbaParserStatements(TestBase):
         self.assertEqual(goto_stmt.label, '100')
 
     def test_single_line_if_implicit_goto_else(self):
-        code = 'Sub T()\nIf x Then y = 1 Else 200\n200 z = 2\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+            If x Then y = 1 Else 200
+            200 z = 2
+            End Sub
+        """)
         ast = self._parse(code)
         if_stmt = ast.body[0].body[0]
         assert isinstance(if_stmt, VbaIfStatement)
@@ -876,7 +1290,11 @@ class TestVbaParserStatements(TestBase):
         self.assertEqual(goto_stmt.label, '200')
 
     def test_single_line_if_implicit_goto_with_continuation(self):
-        code = 'Sub T()\nIf x Then 100: y = 1\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+            If x Then 100: y = 1
+            End Sub
+        """)
         ast = self._parse(code)
         if_stmt = ast.body[0].body[0]
         assert isinstance(if_stmt, VbaIfStatement)
@@ -889,7 +1307,11 @@ class TestVbaParserStatements(TestBase):
         assert isinstance(if_stmt.body[1], VbaLetStatement)
 
     def test_static_dim_in_body_lowercase(self):
-        code = 'Sub T()\nstatic x As Long\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+            static x As Long
+            End Sub
+        """)
         ast = self._parse(code)
         sub = ast.body[0]
         assert isinstance(sub, VbaSubDeclaration)
@@ -902,7 +1324,11 @@ class TestVbaParserStatements(TestBase):
         self.assertEqual(stmt.declarators[0].type_name, 'Long')
 
     def test_single_line_if_colon_after_then(self):
-        code = 'Sub T()\nIf True Then: MsgBox "hi"\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+            If True Then: MsgBox "hi"
+            End Sub
+        """)
         ast = self._parse(code)
         sub = ast.body[0]
         assert isinstance(sub, VbaSubDeclaration)
@@ -913,7 +1339,13 @@ class TestVbaParserStatements(TestBase):
         self.assertEqual(len(if_stmt.body), 1)
 
     def test_block_if_with_colon_after_then(self):
-        code = 'Sub T()\nIf x Then :\ny = 1\nEnd If\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+            If x Then :
+            y = 1
+            End If
+            End Sub
+        """)
         ast = self._parse(code)
         sub = ast.body[0]
         assert isinstance(sub, VbaSubDeclaration)
@@ -923,7 +1355,11 @@ class TestVbaParserStatements(TestBase):
         self.assertEqual(len(if_stmt.body), 1)
 
     def test_single_line_if_colon_multiple_stmts(self):
-        code = 'Sub T()\nIf x Then: a = 1: b = 2\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+            If x Then: a = 1: b = 2
+            End Sub
+        """)
         ast = self._parse(code)
         sub = ast.body[0]
         assert isinstance(sub, VbaSubDeclaration)
@@ -933,7 +1369,11 @@ class TestVbaParserStatements(TestBase):
         self.assertEqual(len(if_stmt.body), 2)
 
     def test_nested_single_line_if_else_association(self):
-        code = 'Sub T()\nIf a Then If b Then c = 1 Else d = 2 Else e = 3\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+            If a Then If b Then c = 1 Else d = 2 Else e = 3
+            End Sub
+        """)
         ast = self._parse(code)
         outer = ast.body[0].body[0]
         assert isinstance(outer, VbaIfStatement)
@@ -954,7 +1394,11 @@ class TestVbaParserStatements(TestBase):
         self.assertEqual(outer.else_body[0].target.name, 'e')
 
     def test_triple_nested_single_line_if(self):
-        code = 'Sub T()\nIf a Then If b Then If c Then x = 1 Else y = 2 Else z = 3 Else w = 4\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+            If a Then If b Then If c Then x = 1 Else y = 2 Else z = 3 Else w = 4
+            End Sub
+        """)
         ast = self._parse(code)
         outer = ast.body[0].body[0]
         assert isinstance(outer, VbaIfStatement)
@@ -983,7 +1427,11 @@ class TestVbaParserStatements(TestBase):
         self.assertEqual(stmt.declarators[0].type_name, 'String * MAX_LEN')
 
     def test_type_member_fixed_length_string(self):
-        ast = self._parse('Type MyType\nname As String * 50\nEnd Type')
+        ast = self._parse(cleandoc("""
+            Type MyType
+            name As String * 50
+            End Type
+        """))
         stmt = ast.body[0]
         assert isinstance(stmt, VbaTypeDefinition)
         self.assertEqual(len(stmt.members), 1)
@@ -991,7 +1439,10 @@ class TestVbaParserStatements(TestBase):
         self.assertEqual(stmt.members[0].type_name, 'String * 50')
 
     def test_param_fixed_length_string(self):
-        ast = self._parse('Sub Test(s As String * 10)\nEnd Sub')
+        ast = self._parse(cleandoc("""
+            Sub Test(s As String * 10)
+            End Sub
+        """))
         stmt = ast.body[0]
         assert isinstance(stmt, VbaSubDeclaration)
         self.assertEqual(len(stmt.params), 1)
@@ -1016,7 +1467,11 @@ class TestVbaParserStatements(TestBase):
         self.assertEqual(stmt.name, 'Project.Module.IBar')
 
     def test_debug_assert(self):
-        code = 'Sub T()\nDebug.Assert x > 0\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+            Debug.Assert x > 0
+            End Sub
+        """)
         ast = self._parse(code)
         sub = ast.body[0]
         assert isinstance(sub, VbaSubDeclaration)
@@ -1027,7 +1482,11 @@ class TestVbaParserStatements(TestBase):
         self.assertEqual(len(stmt.arguments), 1)
 
     def test_dim_shared(self):
-        code = 'Sub T()\nDim Shared x As Long\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+            Dim Shared x As Long
+            End Sub
+        """)
         ast = self._parse(code)
         sub = ast.body[0]
         assert isinstance(sub, VbaSubDeclaration)
@@ -1038,7 +1497,10 @@ class TestVbaParserStatements(TestBase):
         self.assertEqual(stmt.declarators[0].type_name, 'Long')
 
     def test_friend_sub(self):
-        code = 'Friend Sub MySub()\nEnd Sub'
+        code = cleandoc("""
+            Friend Sub MySub()
+            End Sub
+        """)
         ast = self._parse(code)
         sub = ast.body[0]
         assert isinstance(sub, VbaSubDeclaration)
@@ -1046,7 +1508,11 @@ class TestVbaParserStatements(TestBase):
         self.assertEqual(sub.scope, VbaScopeModifier.FRIEND)
 
     def test_byval_in_call_argument(self):
-        code = 'Sub T()\nCall Foo(ByVal x)\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+            Call Foo(ByVal x)
+            End Sub
+        """)
         ast = self._parse(code)
         sub = ast.body[0]
         assert isinstance(sub, VbaSubDeclaration)
@@ -1062,7 +1528,11 @@ class TestVbaParserStatements(TestBase):
         self.assertEqual(arg.expression.name, 'x')
 
     def test_byval_in_parenthesized_call(self):
-        code = 'Sub T()\nx = Foo(ByVal y)\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+            x = Foo(ByVal y)
+            End Sub
+        """)
         ast = self._parse(code)
         sub = ast.body[0]
         assert isinstance(sub, VbaSubDeclaration)
@@ -1077,7 +1547,11 @@ class TestVbaParserStatements(TestBase):
         self.assertEqual(arg.expression.name, 'y')
 
     def test_byval_in_implicit_call(self):
-        code = 'Sub T()\nFoo ByVal x\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+            Foo ByVal x
+            End Sub
+        """)
         ast = self._parse(code)
         sub = ast.body[0]
         assert isinstance(sub, VbaSubDeclaration)
@@ -1090,7 +1564,11 @@ class TestVbaParserStatements(TestBase):
         self.assertEqual(arg.expression.name, 'x')
 
     def test_named_argument_in_call(self):
-        code = 'Sub T()\nFoo bar:=42\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+            Foo bar:=42
+            End Sub
+        """)
         ast = self._parse(code)
         sub = ast.body[0]
         assert isinstance(sub, VbaSubDeclaration)
@@ -1104,7 +1582,11 @@ class TestVbaParserStatements(TestBase):
         self.assertEqual(arg.expression.value, 42)
 
     def test_named_argument_in_parenthesized_call(self):
-        code = 'Sub T()\nx = Foo(bar:=42)\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+            x = Foo(bar:=42)
+            End Sub
+        """)
         ast = self._parse(code)
         sub = ast.body[0]
         assert isinstance(sub, VbaSubDeclaration)
@@ -1118,7 +1600,11 @@ class TestVbaParserStatements(TestBase):
         self.assertEqual(arg.name, 'bar')
 
     def test_multiple_named_arguments(self):
-        code = 'Sub T()\nMsgBox Prompt:="Hello", Title:="Test"\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+            MsgBox Prompt:="Hello", Title:="Test"
+            End Sub
+        """)
         ast = self._parse(code)
         sub = ast.body[0]
         assert isinstance(sub, VbaSubDeclaration)
@@ -1133,7 +1619,12 @@ class TestVbaParserStatements(TestBase):
     def test_open_statement_does_not_steal_subsequent_body(self):
         # Previously, the For keyword inside "Open f For Input As #1" triggered
         # the For-loop parser, which consumed subsequent statements as loop body.
-        code = 'Sub T()\nOpen "f.txt" For Input As #1\nx = 1\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+            Open "f.txt" For Input As #1
+            x = 1
+            End Sub
+        """)
         ast = self._parse(code)
         sub = ast.body[0]
         assert isinstance(sub, VbaSubDeclaration)
@@ -1148,7 +1639,12 @@ class TestVbaParserStatements(TestBase):
         # Previously "Line Input #1, a" was split: "Line" became a bare expression
         # statement and "Input #1, a" a second statement, with the variable lost
         # to a date-literal tokenisation of "#1, a".
-        code = 'Sub T()\nLine Input #1, a\nx = 1\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+            Line Input #1, a
+            x = 1
+            End Sub
+        """)
         ast = self._parse(code)
         sub = ast.body[0]
         assert isinstance(sub, VbaSubDeclaration)
@@ -1161,7 +1657,15 @@ class TestVbaParserStatements(TestBase):
         # with '#' followed by a keyword.  The lexer must not feed these into
         # _read_date_literal(), which would produce a malformed DATE_LITERAL token
         # and desynchronize the parser.
-        code = 'Sub T()\n#If VBA7 Then\nx = 1\n#Else\nx = 2\n#End If\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+            #If VBA7 Then
+            x = 1
+            #Else
+            x = 2
+            #End If
+            End Sub
+        """)
         ast = self._parse(code)
         sub = ast.body[0]
         assert isinstance(sub, VbaSubDeclaration)
@@ -1172,7 +1676,15 @@ class TestVbaParserStatements(TestBase):
 
     def test_else_if_two_word_form(self):
         # "Else If" (two words) must produce ElseIfClause, not nested If inside else_body.
-        code = 'Sub T()\nIf x = 1 Then\ny = 1\nElse If x = 2 Then\ny = 2\nEnd If\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+            If x = 1 Then
+            y = 1
+            Else If x = 2 Then
+            y = 2
+            End If
+            End Sub
+        """)
         ast = self._parse(code)
         sub = ast.body[0]
         assert isinstance(sub, VbaSubDeclaration)
@@ -1183,7 +1695,11 @@ class TestVbaParserStatements(TestBase):
         self.assertEqual(len(if_stmt.else_body), 0)
 
     def test_not_expression_offset(self):
-        code = 'Sub T()\nx = Not y\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+            x = Not y
+            End Sub
+        """)
         ast = self._parse(code)
         sub = ast.body[0]
         assert isinstance(sub, VbaSubDeclaration)
@@ -1195,7 +1711,11 @@ class TestVbaParserStatements(TestBase):
             'Not expression offset must point at the Not keyword, not the operand')
 
     def test_go_as_variable_name(self):
-        code = 'Sub T()\ngo = 1\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+            go = 1
+            End Sub
+        """)
         ast = self._parse(code)
         sub = ast.body[0]
         assert isinstance(sub, VbaSubDeclaration)
@@ -1205,7 +1725,11 @@ class TestVbaParserStatements(TestBase):
         assert isinstance(stmt, VbaLetStatement)
 
     def test_type_member_offset(self):
-        code = 'Type MyType\nx As Long\nEnd Type'
+        code = cleandoc("""
+            Type MyType
+            x As Long
+            End Type
+        """)
         ast = self._parse(code)
         td = ast.body[0]
         assert isinstance(td, VbaTypeDefinition)
@@ -1213,7 +1737,11 @@ class TestVbaParserStatements(TestBase):
             'Type member offset must point at the member name')
 
     def test_enum_member_offset(self):
-        code = 'Enum Colors\nRed = 1\nEnd Enum'
+        code = cleandoc("""
+            Enum Colors
+            Red = 1
+            End Enum
+        """)
         ast = self._parse(code)
         ed = ast.body[0]
         assert isinstance(ed, VbaEnumDefinition)
@@ -1221,7 +1749,13 @@ class TestVbaParserStatements(TestBase):
             'Enum member offset must point at the member name')
 
     def test_else_if_two_word_offset(self):
-        code = 'If a Then\nx = 1\nElse If b Then\ny = 2\nEnd If'
+        code = cleandoc("""
+            If a Then
+            x = 1
+            Else If b Then
+            y = 2
+            End If
+        """)
         ast = self._parse(code)
         stmt = ast.body[0]
         assert isinstance(stmt, VbaIfStatement)

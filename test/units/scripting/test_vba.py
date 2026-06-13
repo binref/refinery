@@ -1,4 +1,4 @@
-import inspect
+from inspect import cleandoc
 
 from .. import TestUnitBase
 
@@ -27,82 +27,82 @@ class TestVBAASTDeobfuscator(TestUnitBase):
         self.assertIn('ADODB.Stream', result)
 
     def test_for_loop_variable_not_inlined(self):
-        data = (
-            'Function test()\n'
-            'k = 0\n'
-            'For k = 0 To 10\n'
-            'x = x + k\n'
-            'Next k\n'
-            'End Function'
-        )
+        data = cleandoc("""
+            Function test()
+              k = 0
+              For k = 0 To 10
+                x = x + k
+              Next k
+            End Function
+        """)
         result = data | self.load() | str
         self.assertIn('For k =', result)
         self.assertNotIn('For 0', result)
 
     def test_blank_lines_between_toplevel_blocks(self):
-        data = (
-            'Attribute VB_Name = "Module1"\n'
-            'Dim x As Long\n'
-            'Sub Foo()\n'
-            'MsgBox x\n'
-            'End Sub\n'
-            'Function Bar() As Long\n'
-            'Bar = MsgBox(x)\n'
-            'End Function'
-        )
+        data = cleandoc("""
+            Attribute VB_Name = "Module1"
+            Dim x As Long
+            Sub Foo()
+              MsgBox x
+            End Sub
+            Function Bar() As Long
+              Bar = MsgBox(x)
+            End Function
+        """)
         result = data | self.load() | str
         self.assertIn('Module1"\n\nDim', result)
         self.assertIn('Long\n\nSub', result)
         self.assertIn('End Sub\n\nFunction', result)
 
     def test_redim_with_to_range_bounds(self):
-        data = (
-            'Sub Test()\n'
-            'Dim a() As Byte\n'
-            'ReDim a(LBound(x) To UBound(x))\n'
-            'End Sub'
-        )
+        data = cleandoc("""
+            Sub Test()
+              Dim a() As Byte
+              ReDim a(LBound(x) To UBound(x))
+            End Sub
+        """)
         result = data | self.load() | str
         self.assertNotIn(')', result.split('ReDim')[0].split('\n')[-1])
         self.assertIn('ReDim a(LBound(x) To UBound(x))', result)
 
     def test_redim_multidimensional_to_range(self):
-        data = (
-            'Sub Test()\n'
-            'ReDim arr(0 To 10, 1 To 5)\n'
-            'End Sub'
-        )
+        data = cleandoc("""
+            Sub Test()
+              ReDim arr(0 To 10, 1 To 5)
+            End Sub
+        """)
         result = data | self.load() | str
         self.assertIn('ReDim arr(0 To 10, 1 To 5)', result)
 
     def test_empty_function_inlined(self):
-        data = (
-            'Function Nop()\n'
-            'End Function\n'
-            'Sub Main()\n'
-            'Debug.Print Nop() & "hello"\n'
-            'End Sub'
-        )
+        data = cleandoc("""
+            Function Nop()
+            End Function
+            Sub Main()
+              Debug.Print Nop() & "hello"
+            End Sub
+        """)
         result = data | self.load() | str
-        self.assertEqual(result, inspect.cleandoc("""
+        self.assertEqual(result, cleandoc("""
             Sub Main()
               Debug.Print "hello"
             End Sub
         """))
 
     def test_empty_function_junk_removal(self):
-        data = (
-            'Function nop(ByVal a, ByVal b, ByVal c)\n'
-            'End Function\n'
-            'Sub Main()\n'
-            'x = "payload"\n'
-            'x = ((x)) & (nop(nop("a", "@", ""), "a", "@"))\n'
-            'x = ((x)) & (nop(nop("a", "@", ""), "a", "@"))\n'
-            'Debug.Print x\n'
-            'End Sub'
-        )
+        data = cleandoc("""
+            Function nop(ByVal a, ByVal b, ByVal c)
+            End Function
+            Sub Main()
+              x = "payload"
+              x = ((x)) & (nop(nop("a", "@", ""), "a", "@"))
+              x = ((x)) & (nop(nop("a", "@", ""), "a", "@"))
+              Debug.Print x
+            End Sub
+        """)
         result = data | self.load() | str
-        self.assertEqual(result, inspect.cleandoc("""
+        self.assertEqual(result, cleandoc("""
             Sub Main()
               Debug.Print "payload"
             End Sub

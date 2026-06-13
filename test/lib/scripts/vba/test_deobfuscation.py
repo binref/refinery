@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from inspect import cleandoc
+
 from test import TestBase
 
 from refinery.lib.scripts.vba.deobfuscation import deobfuscate
@@ -28,183 +30,332 @@ class TestVbaDeobfuscation(TestBase):
         return VbaSynthesizer().convert(ast)
 
     def test_string_concat_ampersand(self):
-        code = 'Sub T()\nx = "hel" & "lo"\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+              x = "hel" & "lo"
+            End Sub
+        """)
         result = self._fold(code)
         self.assertIn('"hello"', result)
 
     def test_string_concat_plus(self):
-        code = 'Sub T()\nx = "hel" + "lo"\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+              x = "hel" + "lo"
+            End Sub
+        """)
         result = self._fold(code)
         self.assertIn('"hello"', result)
 
     def test_chr_resolution(self):
-        code = 'Sub T()\nx = Chr(72) & Chr(101) & Chr(108) & Chr(108) & Chr(111)\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+              x = Chr(72) & Chr(101) & Chr(108) & Chr(108) & Chr(111)
+            End Sub
+        """)
         result = self._fold(code)
         self.assertIn('"Hello"', result)
 
     def test_chrw_resolution(self):
-        code = 'Sub T()\nx = ChrW(65)\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+              x = ChrW(65)
+            End Sub
+        """)
         result = self._fold(code)
         self.assertIn('"A"', result)
 
     def test_asc_resolution(self):
-        code = 'Sub T()\nx = Asc("A")\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+              x = Asc("A")
+            End Sub
+        """)
         result = self._fold(code)
         self.assertIn('65', result)
 
     def test_numeric_add(self):
-        code = 'Sub T()\nx = 10 + 20\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+              x = 10 + 20
+            End Sub
+        """)
         result = self._fold(code)
         self.assertIn('30', result)
 
     def test_numeric_subtract(self):
-        code = 'Sub T()\nx = 50 - 15\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+              x = 50 - 15
+            End Sub
+        """)
         result = self._fold(code)
         self.assertIn('35', result)
 
     def test_numeric_multiply(self):
-        code = 'Sub T()\nx = 6 * 7\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+              x = 6 * 7
+            End Sub
+        """)
         result = self._fold(code)
         self.assertIn('42', result)
 
     def test_integer_division(self):
-        code = 'Sub T()\nx = 10 \\ 3\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+              x = 10 \\ 3
+            End Sub
+        """)
         result = self._fold(code)
         self.assertIn('3', result)
 
     def test_mod_operation(self):
-        code = 'Sub T()\nx = 10 Mod 3\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+              x = 10 Mod 3
+            End Sub
+        """)
         result = self._fold(code)
         self.assertIn('1', result)
 
     def test_exponentiation(self):
-        code = 'Sub T()\nx = 2 ^ 3\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+              x = 2 ^ 3
+            End Sub
+        """)
         result = self._fold(code)
         self.assertIn('8', result)
 
     def test_unary_minus(self):
-        code = 'Sub T()\nx = -42\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+              x = -42
+            End Sub
+        """)
         result = self._fold(code)
         self.assertIn('-42', result)
 
     def test_not_boolean(self):
-        code = 'Sub T()\nx = Not True\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+              x = Not True
+            End Sub
+        """)
         result = self._fold(code)
         self.assertIn('False', result)
 
     def test_not_integer(self):
-        code = 'Sub T()\nx = Not 0\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+              x = Not 0
+            End Sub
+        """)
         result = self._fold(code)
         self.assertIn('-1', result)
 
     def test_mid_function(self):
-        code = 'Sub T()\nx = Mid("Hello", 2, 3)\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+              x = Mid("Hello", 2, 3)
+            End Sub
+        """)
         result = self._fold(code)
         self.assertIn('"ell"', result)
 
     def test_left_function(self):
-        code = 'Sub T()\nx = Left("Hello", 3)\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+              x = Left("Hello", 3)
+            End Sub
+        """)
         result = self._fold(code)
         self.assertIn('"Hel"', result)
 
     def test_right_function(self):
-        code = 'Sub T()\nx = Right("Hello", 3)\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+              x = Right("Hello", 3)
+            End Sub
+        """)
         result = self._fold(code)
         self.assertIn('"llo"', result)
 
     def test_strreverse(self):
-        code = 'Sub T()\nx = StrReverse("Hello")\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+              x = StrReverse("Hello")
+            End Sub
+        """)
         result = self._fold(code)
         self.assertIn('"olleH"', result)
 
     def test_lcase(self):
-        code = 'Sub T()\nx = LCase("HELLO")\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+              x = LCase("HELLO")
+            End Sub
+        """)
         result = self._fold(code)
         self.assertIn('"hello"', result)
 
     def test_ucase(self):
-        code = 'Sub T()\nx = UCase("hello")\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+              x = UCase("hello")
+            End Sub
+        """)
         result = self._fold(code)
         self.assertIn('"HELLO"', result)
 
     def test_len_function(self):
-        code = 'Sub T()\nx = Len("Hello")\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+              x = Len("Hello")
+            End Sub
+        """)
         result = self._fold(code)
         self.assertIn('5', result)
 
     def test_paren_removal(self):
-        code = 'Sub T()\nx = (42)\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+              x = (42)
+            End Sub
+        """)
         result = self._fold(code)
         self.assertIn('42', result)
         self.assertNotIn('(42)', result)
 
     def test_combined_chr_concat(self):
-        code = 'Sub T()\nx = Chr(87) & Chr(83) & Chr(99) & Chr(114) & Chr(105) & Chr(112) & Chr(116)\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+              x = Chr(87) & Chr(83) & Chr(99) & Chr(114) & Chr(105) & Chr(112) & Chr(116)
+            End Sub
+        """)
         result = self._fold(code)
         self.assertIn('"WScript"', result)
 
     def test_nested_concat(self):
-        code = 'Sub T()\nx = ("a" & "b") & "c"\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+              x = ("a" & "b") & "c"
+            End Sub
+        """)
         result = self._fold(code)
         self.assertIn('"abc"', result)
 
     def test_division_by_zero_safe(self):
-        code = 'Sub T()\nx = 1 / 0\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+              x = 1 / 0
+            End Sub
+        """)
         result = self._fold(code)
         self.assertIn('1 / 0', result)
 
     def test_space_function(self):
-        code = 'Sub T()\nx = Space(5)\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+              x = Space(5)
+            End Sub
+        """)
         result = self._fold(code)
         self.assertIn('"     "', result)
 
     def test_replace_function(self):
-        code = 'Sub T()\nx = Replace("abc", "b", "x")\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+              x = Replace("abc", "b", "x")
+            End Sub
+        """)
         result = self._fold(code)
         self.assertIn('"axc"', result)
 
     def test_replace_empty_insert(self):
-        code = 'Sub T()\nx = Replace("aXbXc", "X", "")\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+              x = Replace("aXbXc", "X", "")
+            End Sub
+        """)
         result = self._fold(code)
         self.assertIn('"abc"', result)
 
     def test_constant_inlining(self):
-        code = 'Sub T()\nConst K = "val"\nF K\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+              Const K = "val"
+              F K
+            End Sub
+        """)
         result = self._deobfuscate(code)
         self.assertIn('"val"', result)
         self.assertNotIn('Const', result)
 
     def test_constant_inline_let(self):
-        code = 'Sub T()\ny = 42\nx = y + 1\nF x\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+              y = 42
+              x = y + 1
+              F x
+            End Sub
+        """)
         result = self._deobfuscate(code)
         self.assertIn('43', result)
         self.assertNotIn('y =', result)
 
     def test_constant_multi_assign(self):
-        code = 'Sub T()\ny = 1\ny = 2\nx = y\nF x\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+              y = 1
+              y = 2
+              x = y
+              F x
+            End Sub
+        """)
         result = self._deobfuscate(code)
         self.assertNotIn('x = 1', result)
         self.assertNotIn('x = 2', result)
         self.assertIn('x = y', result)
 
     def test_negative_constant_inlining(self):
-        code = 'Sub T()\nConst X = -1\ny = X + 5\nF y\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+              Const X = -1
+              y = X + 5
+              F y
+            End Sub
+        """)
         result = self._deobfuscate(code)
         self.assertIn('4', result)
         self.assertNotIn('Const', result)
 
     def test_dead_variable_removal(self):
-        code = 'Sub T()\nx = 1\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+              x = 1
+            End Sub
+        """)
         result = self._deobfuscate(code)
         self.assertNotIn('x = 1', result)
 
     def test_dead_variable_keep_calls(self):
-        code = 'Sub T()\nx = Foo()\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+              x = Foo()
+            End Sub
+        """)
         result = self._deobfuscate(code)
         self.assertIn('Foo()', result)
 
     def test_dead_variable_keep_used(self):
-        code = 'Sub T()\nx = Foo()\ny = x\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+              x = Foo()
+              y = x
+            End Sub
+        """)
         result = self._deobfuscate(code)
         self.assertIn('x = Foo()', result)
         self.assertNotIn('y =', result)
@@ -214,240 +365,265 @@ class TestVbaDeobfuscation(TestBase):
         self.assertEqual(result, 'CLng((0 Xor 0))')
 
     def test_remove_comments(self):
-        result = self._deobfuscate('''
+        result = self._deobfuscate(cleandoc("""
             ' Test
             b = a
-            ' Test''')
+            ' Test
+        """))
         self.assertIn('b = a', result)
         self.assertNotIn("' Test", result)
 
     def test_regression_matchgroup(self):
-        result = self._deobfuscate(r'''
+        result = self._deobfuscate(cleandoc(r"""
             const a = "\3"
             b = a
-        ''')
+        """))
         self.assertIn(r'b = "\3"', result)
 
     def test_regression_overeager_removal(self):
-        data = 'a.Close\nb = z.function(x)\n'
+        data = cleandoc("""
+            a.Close
+            b = z.function(x)
+        """)
         result = self._deobfuscate(data)
         self.assertIn('a.Close', result)
         self.assertIn('b = z.function(x)', result)
 
     def test_regression_multi_assign_no_inline(self):
-        code = (
-            'Function dtiss()\n'
-            '  dtiss = "cellvalue"\n'
-            '  dtiss = dtiss + "if"\n'
-            'End Function\n'
-            'Sub T()\n'
-            '  melb = dtiss\n'
-            '  F melb\n'
-            'End Sub'
-        )
+        code = cleandoc("""
+            Function dtiss()
+              dtiss = "cellvalue"
+              dtiss = dtiss + "if"
+            End Function
+            Sub T()
+              melb = dtiss
+              F melb
+            End Sub
+        """)
         result = self._deobfuscate(code)
         self.assertNotIn('melb = "cellvalue"', result)
         self.assertIn('cellvalueif', result)
 
     def test_emulator_simple_return(self):
-        code = (
-            'Function F()\n'
-            '  F = "hello"\n'
-            'End Function\n'
-            'Sub T()\n'
-            '  x = F()\n'
-            '  G x\n'
-            'End Sub'
-        )
+        code = cleandoc("""
+            Function F()
+              F = "hello"
+            End Function
+            Sub T()
+              x = F()
+              G x
+            End Sub
+        """)
         result = self._full_deobfuscate(code)
         self.assertIn('"hello"', result)
         self.assertNotIn('Function F()', result)
 
     def test_emulator_self_referential_return(self):
-        code = (
-            'Function dtiss()\n'
-            '  dtiss = "cellvalue"\n'
-            '  dtiss = dtiss + "if"\n'
-            'End Function\n'
-            'Sub T()\n'
-            '  melb = dtiss\n'
-            '  F melb\n'
-            'End Sub'
-        )
+        code = cleandoc("""
+            Function dtiss()
+              dtiss = "cellvalue"
+              dtiss = dtiss + "if"
+            End Function
+            Sub T()
+              melb = dtiss
+              F melb
+            End Sub
+        """)
         result = self._full_deobfuscate(code)
         self.assertIn('"cellvalueif"', result)
 
     def test_emulator_with_params(self):
-        code = (
-            'Function XorKey(s As String, k As Integer) As String\n'
-            '  XorKey = s & Chr(k)\n'
-            'End Function\n'
-            'Sub T()\n'
-            '  x = XorKey("AB", 67)\n'
-            '  G x\n'
-            'End Sub'
-        )
+        code = cleandoc("""
+            Function XorKey(s As String, k As Integer) As String
+              XorKey = s & Chr(k)
+            End Function
+            Sub T()
+              x = XorKey("AB", 67)
+              G x
+            End Sub
+        """)
         result = self._full_deobfuscate(code)
         self.assertIn('"ABC"', result)
 
     def test_emulator_nonconstant_arg_preserved(self):
-        code = (
-            'Function F(x)\n'
-            '  F = x & "!"\n'
-            'End Function\n'
-            'Sub T()\n'
-            '  G F(y)\n'
-            'End Sub'
-        )
+        code = cleandoc("""
+            Function F(x)
+              F = x & "!"
+            End Function
+            Sub T()
+              G F(y)
+            End Sub
+        """)
         result = self._full_deobfuscate(code)
         self.assertIn('F(y)', result)
 
     def test_emulator_loop(self):
-        code = (
-            'Function Build()\n'
-            '  For i = 1 To 3\n'
-            '    Build = Build & "x"\n'
-            '  Next\n'
-            'End Function\n'
-            'Sub T()\n'
-            '  G Build()\n'
-            'End Sub'
-        )
+        code = cleandoc("""
+            Function Build()
+              For i = 1 To 3
+                Build = Build & "x"
+              Next
+            End Function
+            Sub T()
+              G Build()
+            End Sub
+        """)
         result = self._full_deobfuscate(code)
         self.assertIn('"xxx"', result)
 
     def test_emulator_impure_not_inlined(self):
-        code = (
-            'Function F()\n'
-            '  F = Application.Name\n'
-            'End Function\n'
-            'Sub T()\n'
-            '  G F()\n'
-            'End Sub'
-        )
+        code = cleandoc("""
+            Function F()
+              F = Application.Name
+            End Function
+            Sub T()
+              G F()
+            End Sub
+        """)
         result = self._full_deobfuscate(code)
         self.assertIn('F()', result)
 
     def test_emulator_do_while_false_skips_body(self):
-        code = (
-            'Function F()\n'
-            '  F = "before"\n'
-            '  Do While False\n'
-            '    F = "inside"\n'
-            '  Loop\n'
-            'End Function\n'
-            'Sub T()\n'
-            '  G F()\n'
-            'End Sub'
-        )
+        code = cleandoc("""
+            Function F()
+              F = "before"
+              Do While False
+                F = "inside"
+              Loop
+            End Function
+            Sub T()
+              G F()
+            End Sub
+        """)
         result = self._full_deobfuscate(code)
         self.assertIn('"before"', result)
         self.assertNotIn('"inside"', result)
 
     def test_emulator_do_until_true_skips_body(self):
-        code = (
-            'Function F()\n'
-            '  F = "before"\n'
-            '  Do Until True\n'
-            '    F = "inside"\n'
-            '  Loop\n'
-            'End Function\n'
-            'Sub T()\n'
-            '  G F()\n'
-            'End Sub'
-        )
+        code = cleandoc("""
+            Function F()
+              F = "before"
+              Do Until True
+                F = "inside"
+              Loop
+            End Function
+            Sub T()
+              G F()
+            End Sub
+        """)
         result = self._full_deobfuscate(code)
         self.assertIn('"before"', result)
         self.assertNotIn('"inside"', result)
 
     def test_emulator_preserves_side_effecting_function(self):
-        code = (
-            'Function Builder()\n'
-            '  On Error Resume Next\n'
-            '  Builder = "payload"\n'
-            '  Shell "cmd " & Chr(80) & Builder, 0\n'
-            'End Function\n'
-            'Sub Autoopen()\n'
-            '  On Error Resume Next\n'
-            '  Builder\n'
-            'End Sub'
-        )
+        code = cleandoc("""
+            Function Builder()
+              On Error Resume Next
+              Builder = "payload"
+              Shell "cmd " & Chr(80) & Builder, 0
+            End Function
+            Sub Autoopen()
+              On Error Resume Next
+              Builder
+            End Sub
+        """)
         result = self._full_deobfuscate(code)
         self.assertIn('Shell', result)
         self.assertIn('Function Builder()', result)
         self.assertIn('"cmd Ppayload"', result)
 
     def test_chr_non_printable_preserved(self):
-        code = 'Sub T()\nx = Chr(13)\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+              x = Chr(13)
+            End Sub
+        """)
         result = self._fold(code)
         self.assertIn('Chr(13)', result)
 
     def test_builtin_constant_in_chr(self):
-        code = 'Sub T()\nx = Chr(vbKeyA)\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+              x = Chr(vbKeyA)
+            End Sub
+        """)
         result = self._fold(code)
         self.assertIn('"A"', result)
 
     def test_builtin_constant_vbobjecterror(self):
-        code = 'Sub T()\nx = vbObjectError\nF x\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+              x = vbObjectError
+              F x
+            End Sub
+        """)
         result = self._deobfuscate(code)
         self.assertIn('-2147221504', result)
 
     def test_builtin_constant_vbcrlf_not_inlined(self):
-        code = 'Sub T()\nx = vbCrLf\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+              x = vbCrLf
+            End Sub
+        """)
         result = self._fold(code)
         self.assertIn('vbCrLf', result)
 
     def test_undefined_var_eliminated_in_concat(self):
-        code = (
-            'Function F()\n'
-            '  On Error Resume Next\n'
-            '  F = junk + "hello"\n'
-            'End Function\n'
-            'Sub T()\n'
-            '  G F()\n'
-            'End Sub'
-        )
+        code = cleandoc("""
+            Function F()
+              On Error Resume Next
+              F = junk + "hello"
+            End Function
+            Sub T()
+              G F()
+            End Sub
+        """)
         result = self._full_deobfuscate(code)
         self.assertIn('"hello"', result)
         self.assertNotIn('junk', result)
 
     def test_undefined_var_kept_without_oern(self):
-        code = 'Sub T()\nx = junk + "hello"\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+              x = junk + "hello"
+            End Sub
+        """)
         result = self._fold(code)
         self.assertIn('junk', result)
 
     def test_return_variable_inlined(self):
-        code = (
-            'Function F()\n'
-            '  F = "hello"\n'
-            '  Shell "cmd " & F, 0\n'
-            'End Function\n'
-        )
+        code = cleandoc("""
+            Function F()
+              F = "hello"
+              Shell "cmd " & F, 0
+            End Function
+        """)
         result = self._full_deobfuscate(code)
         self.assertIn('"cmd hello"', result)
 
     def test_emulator_refuses_nonprintable_result(self):
-        code = (
-            'Function F()\n'
-            '  F = "a" & Chr(13) & "b"\n'
-            'End Function\n'
-            'Sub T()\n'
-            '  G F()\n'
-            'End Sub'
-        )
+        code = cleandoc("""
+            Function F()
+              F = "a" & Chr(13) & "b"
+            End Function
+            Sub T()
+              G F()
+            End Sub
+        """)
         result = self._full_deobfuscate(code)
         self.assertNotIn('F()', result)
         self.assertIn('"a" & Chr(13) & "b"', result)
 
     def test_chr_inlining_in_concat(self):
-        code = (
-            'Sub T()\n'
-            '  On Error Resume Next\n'
-            '  x = Chr(13)\n'
-            '  y = "a" + x + "b"\n'
-            '  F y\n'
-            'End Sub'
-        )
+        code = cleandoc("""
+            Sub T()
+              On Error Resume Next
+              x = Chr(13)
+              y = "a" + x + "b"
+              F y
+            End Sub
+        """)
         result = self._full_deobfuscate(code)
         self.assertNotIn('x =', result)
         self.assertIn('Chr(13)', result)
@@ -455,14 +631,14 @@ class TestVbaDeobfuscation(TestBase):
         self.assertIn('"b"', result)
 
     def test_emulator_nonprintable_result_synthesized(self):
-        code = (
-            'Function F()\n'
-            '  F = Chr(13) & "payload" & Chr(10)\n'
-            'End Function\n'
-            'Sub T()\n'
-            '  G F()\n'
-            'End Sub'
-        )
+        code = cleandoc("""
+            Function F()
+              F = Chr(13) & "payload" & Chr(10)
+            End Function
+            Sub T()
+              G F()
+            End Sub
+        """)
         result = self._full_deobfuscate(code)
         self.assertNotIn('F()', result)
         self.assertIn('Chr(13)', result)
@@ -470,128 +646,204 @@ class TestVbaDeobfuscation(TestBase):
         self.assertIn('Chr(10)', result)
 
     def test_empty_sub_removed(self):
-        code = 'Sub Junk()\nEnd Sub\nSub T()\n  G 1\nEnd Sub'
+        code = cleandoc("""
+            Sub Junk()
+            End Sub
+            Sub T()
+              G 1
+            End Sub
+        """)
         result = self._deobfuscate(code)
         self.assertNotIn('Junk', result)
         self.assertIn('Sub T()', result)
 
     def test_empty_function_removed(self):
-        code = 'Function Junk()\nEnd Function\nSub T()\n  G 1\nEnd Sub'
+        code = cleandoc("""
+            Function Junk()
+            End Function
+            Sub T()
+              G 1
+            End Sub
+        """)
         result = self._deobfuscate(code)
         self.assertNotIn('Junk', result)
         self.assertIn('Sub T()', result)
 
     def test_empty_property_removed(self):
-        code = 'Property Get Junk()\nEnd Property\nSub T()\n  G 1\nEnd Sub'
+        code = cleandoc("""
+            Property Get Junk()
+            End Property
+            Sub T()
+              G 1
+            End Sub
+        """)
         result = self._deobfuscate(code)
         self.assertNotIn('Junk', result)
         self.assertIn('Sub T()', result)
 
     def test_empty_sub_called_preserved(self):
-        code = 'Sub Junk()\nEnd Sub\nSub T()\n  Junk\nEnd Sub'
+        code = cleandoc("""
+            Sub Junk()
+            End Sub
+            Sub T()
+              Junk
+            End Sub
+        """)
         result = self._deobfuscate(code)
         self.assertIn('Sub Junk()', result)
 
     def test_nonempty_sub_uncalled_preserved(self):
-        code = 'Sub Junk()\n  MsgBox "hi"\nEnd Sub\nSub T()\n  G 1\nEnd Sub'
+        code = cleandoc("""
+            Sub Junk()
+              MsgBox "hi"
+            End Sub
+            Sub T()
+              G 1
+            End Sub
+        """)
         result = self._deobfuscate(code)
         self.assertIn('Sub Junk()', result)
 
     def test_mixed_empty_procedures(self):
-        code = (
-            'Sub A()\nEnd Sub\n'
-            'Sub B()\nEnd Sub\n'
-            'Sub T()\n  A\nEnd Sub'
-        )
+        code = cleandoc("""
+            Sub A()
+            End Sub
+            Sub B()
+            End Sub
+            Sub T()
+              A
+            End Sub
+        """)
         result = self._deobfuscate(code)
         self.assertIn('Sub A()', result)
         self.assertNotIn('Sub B()', result)
 
     def test_empty_sub_called_from_other_preserved(self):
-        code = (
-            'Sub Junk()\nEnd Sub\n'
-            'Sub Helper()\n  Junk\nEnd Sub\n'
-            'Sub T()\n  G 1\nEnd Sub'
-        )
+        code = cleandoc("""
+            Sub Junk()
+            End Sub
+            Sub Helper()
+              Junk
+            End Sub
+            Sub T()
+              G 1
+            End Sub
+        """)
         result = self._deobfuscate(code)
         self.assertIn('Sub Junk()', result)
 
     def test_instr_two_args(self):
-        code = 'Sub T()\nx = InStr("abcabc", "bc")\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+              x = InStr("abcabc", "bc")
+            End Sub
+        """)
         result = self._fold(code)
         self.assertIn('x = 2', result)
 
     def test_instr_three_args(self):
-        code = 'Sub T()\nx = InStr(3, "abcabc", "bc")\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+              x = InStr(3, "abcabc", "bc")
+            End Sub
+        """)
         result = self._fold(code)
         self.assertIn('x = 5', result)
 
     def test_instr_not_found(self):
-        code = 'Sub T()\nx = InStr("abc", "z")\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+              x = InStr("abc", "z")
+            End Sub
+        """)
         result = self._fold(code)
         self.assertIn('x = 0', result)
 
     def test_instrrev_two_args(self):
-        code = 'Sub T()\nx = InStrRev("abcabc", "bc")\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+              x = InStrRev("abcabc", "bc")
+            End Sub
+        """)
         result = self._fold(code)
         self.assertIn('x = 5', result)
 
     def test_instrrev_three_args(self):
-        code = 'Sub T()\nx = InStrRev("abcabc", "bc", 4)\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+              x = InStrRev("abcabc", "bc", 4)
+            End Sub
+        """)
         result = self._fold(code)
         self.assertIn('x = 2', result)
 
     def test_strcomp_equal(self):
-        code = 'Sub T()\nx = StrComp("abc", "abc")\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+              x = StrComp("abc", "abc")
+            End Sub
+        """)
         result = self._fold(code)
         self.assertIn('x = 0', result)
 
     def test_strcomp_less(self):
-        code = 'Sub T()\nx = StrComp("abc", "def")\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+              x = StrComp("abc", "def")
+            End Sub
+        """)
         result = self._fold(code)
         self.assertIn('x = -1', result)
 
     def test_strcomp_case_insensitive(self):
-        code = 'Sub T()\nx = StrComp("ABC", "abc", 1)\nEnd Sub'
+        code = cleandoc("""
+            Sub T()
+              x = StrComp("ABC", "abc", 1)
+            End Sub
+        """)
         result = self._fold(code)
         self.assertIn('x = 0', result)
 
     def test_emulator_instr(self):
-        code = (
-            'Function F()\n'
-            '  F = InStr("hello world", "world")\n'
-            'End Function\n'
-            'Sub T()\n'
-            '  x = F()\n'
-            '  G x\n'
-            'End Sub'
-        )
+        code = cleandoc("""
+            Function F()
+              F = InStr("hello world", "world")
+            End Function
+            Sub T()
+              x = F()
+              G x
+            End Sub
+        """)
         result = self._full_deobfuscate(code)
         self.assertIn('7', result)
 
     def test_emulator_instrrev(self):
-        code = (
-            'Function F()\n'
-            '  F = InStrRev("abcabc", "abc")\n'
-            'End Function\n'
-            'Sub T()\n'
-            '  x = F()\n'
-            '  G x\n'
-            'End Sub'
-        )
+        code = cleandoc("""
+            Function F()
+              F = InStrRev("abcabc", "abc")
+            End Function
+            Sub T()
+              x = F()
+              G x
+            End Sub
+        """)
         result = self._full_deobfuscate(code)
         self.assertIn('4', result)
 
     def test_accumulator_basic_concat(self):
-        code = (
-            'Sub T()\n'
-            '  x = "hello"\n'
-            '  x = x & " world"\n'
-            '  F x\n'
-            'End Sub'
-        )
+        code = cleandoc("""
+            Sub T()
+              x = "hello"
+              x = x & " world"
+              F x
+            End Sub
+        """)
         result = self._deobfuscate(code)
-        self.assertEqual(result, 'Sub T()\n  F "hello world"\nEnd Sub')
+        self.assertEqual(result, cleandoc("""
+            Sub T()
+              F "hello world"
+            End Sub
+        """))
 
     def test_accumulator_long_chain(self):
         lines = ['Sub T()']
@@ -605,97 +857,132 @@ class TestVbaDeobfuscation(TestBase):
         self.assertEqual(result, F'Sub T()\n  F "a{"b" * 50}"\nEnd Sub')
 
     def test_accumulator_with_replace(self):
-        code = (
-            'Sub T()\n'
-            '  x = "aXbXc"\n'
-            '  x = x & "dXe"\n'
-            '  x = Replace(x, "X", "")\n'
-            '  F x\n'
-            'End Sub'
-        )
+        code = cleandoc("""
+            Sub T()
+              x = "aXbXc"
+              x = x & "dXe"
+              x = Replace(x, "X", "")
+              F x
+            End Sub
+        """)
         result = self._deobfuscate(code)
-        self.assertEqual(result, 'Sub T()\n  F "abcde"\nEnd Sub')
+        self.assertEqual(result, cleandoc("""
+            Sub T()
+              F "abcde"
+            End Sub
+        """))
 
     def test_accumulator_prepend(self):
-        code = (
-            'Sub T()\n'
-            '  x = "world"\n'
-            '  x = "hello " & x\n'
-            '  F x\n'
-            'End Sub'
-        )
+        code = cleandoc("""
+            Sub T()
+              x = "world"
+              x = "hello " & x
+              F x
+            End Sub
+        """)
         result = self._deobfuscate(code)
-        self.assertEqual(result, 'Sub T()\n  F "hello world"\nEnd Sub')
+        self.assertEqual(result, cleandoc("""
+            Sub T()
+              F "hello world"
+            End Sub
+        """))
 
     def test_accumulator_chain_breaks_on_non_assignment(self):
-        code = (
-            'Sub T()\n'
-            '  x = "a"\n'
-            '  F x\n'
-            '  x = x & "b"\n'
-            '  G x\n'
-            'End Sub'
-        )
+        code = cleandoc("""
+            Sub T()
+              x = "a"
+              F x
+              x = x & "b"
+              G x
+            End Sub
+        """)
         result = self._deobfuscate(code)
-        self.assertEqual(result, 'Sub T()\n  x = "a"\n  F x\n  x = x & "b"\n  G x\nEnd Sub')
+        self.assertEqual(result, cleandoc("""
+            Sub T()
+              x = "a"
+              F x
+              x = x & "b"
+              G x
+            End Sub
+        """))
 
     def test_accumulator_chain_breaks_on_different_variable(self):
-        code = (
-            'Sub T()\n'
-            '  x = "a"\n'
-            '  y = "z"\n'
-            '  x = x & "b"\n'
-            '  F x, y\n'
-            'End Sub'
-        )
+        code = cleandoc("""
+            Sub T()
+              x = "a"
+              y = "z"
+              x = x & "b"
+              F x, y
+            End Sub
+        """)
         result = self._deobfuscate(code)
-        self.assertEqual(result, 'Sub T()\n  F "ab", "z"\nEnd Sub')
+        self.assertEqual(result, cleandoc("""
+            Sub T()
+              F "ab", "z"
+            End Sub
+        """))
 
     def test_accumulator_multi_concat_single_stmt(self):
-        code = (
-            'Sub T()\n'
-            '  x = "a"\n'
-            '  x = x & "b" & "c"\n'
-            '  F x\n'
-            'End Sub'
-        )
+        code = cleandoc("""
+            Sub T()
+              x = "a"
+              x = x & "b" & "c"
+              F x
+            End Sub
+        """)
         result = self._deobfuscate(code)
-        self.assertEqual(result, 'Sub T()\n  F "abc"\nEnd Sub')
+        self.assertEqual(result, cleandoc("""
+            Sub T()
+              F "abc"
+            End Sub
+        """))
 
     def test_accumulator_replace_then_concat(self):
-        code = (
-            'Sub T()\n'
-            '  x = "aXb"\n'
-            '  x = Replace(x, "X", "")\n'
-            '  x = x & "c"\n'
-            '  F x\n'
-            'End Sub'
-        )
+        code = cleandoc("""
+            Sub T()
+              x = "aXb"
+              x = Replace(x, "X", "")
+              x = x & "c"
+              F x
+            End Sub
+        """)
         result = self._deobfuscate(code)
-        self.assertEqual(result, 'Sub T()\n  F "abc"\nEnd Sub')
+        self.assertEqual(result, cleandoc("""
+            Sub T()
+              F "abc"
+            End Sub
+        """))
 
     def test_accumulator_inlined_after_folding(self):
-        code = (
-            'Sub T()\n'
-            '  x = "hel"\n'
-            '  x = x & "lo"\n'
-            '  F x\n'
-            'End Sub'
-        )
+        code = cleandoc("""
+            Sub T()
+              x = "hel"
+              x = x & "lo"
+              F x
+            End Sub
+        """)
         result = self._full_deobfuscate(code)
-        self.assertEqual(result, 'Sub T()\n  F "hello"\nEnd Sub')
+        self.assertEqual(result, cleandoc("""
+            Sub T()
+              F "hello"
+            End Sub
+        """))
 
     def test_accumulator_surrogate_recombination(self):
         hi = '\uD83D'
         lo = '\uDCC6'
         combined = '\U0001F4C6'
-        code = (
-            'Sub T()\n'
-            F'  x = "a{hi}"\n'
-            F'  x = x & "{lo}b"\n'
-            F'  x = Replace(x, "{combined}", "")\n'
-            '  F x\n'
-            'End Sub'
-        )
+        code = cleandoc(F"""
+            Sub T()
+              x = "a{hi}"
+              x = x & "{lo}b"
+              x = Replace(x, "{combined}", "")
+              F x
+            End Sub
+        """)
         result = self._deobfuscate(code)
-        self.assertEqual(result, 'Sub T()\n  F "ab"\nEnd Sub')
+        self.assertEqual(result, cleandoc("""
+            Sub T()
+              F "ab"
+            End Sub
+        """))
