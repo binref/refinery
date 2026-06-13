@@ -40,6 +40,32 @@ def is_nan_or_inf(value) -> bool:
     return isinstance(value, float) and (value != value or abs(value) == float('inf'))
 
 
+def vba_int_div(a: int | float, b: int | float) -> int:
+    """
+    VBA integer division (the `\\` operator): both operands are rounded to integers and the
+    quotient is truncated toward zero, unlike Python `//` which floors. Raises `ZeroDivisionError`
+    when the divisor rounds to zero.
+    """
+    a, b = round(a), round(b)
+    if b == 0:
+        raise ZeroDivisionError
+    quotient = abs(a) // abs(b)
+    return -quotient if (a < 0) != (b < 0) else quotient
+
+
+def vba_mod(a: int | float, b: int | float) -> int:
+    """
+    VBA modulo (the `Mod` operator): both operands are rounded to integers and the remainder takes
+    the sign of the dividend, unlike Python `%` whose result takes the sign of the divisor. Raises
+    `ZeroDivisionError` when the divisor rounds to zero.
+    """
+    a, b = round(a), round(b)
+    if b == 0:
+        raise ZeroDivisionError
+    remainder = abs(a) % abs(b)
+    return -remainder if a < 0 else remainder
+
+
 def make_integer_literal(value: int) -> VbaIntegerLiteral:
     return VbaIntegerLiteral(value=value, raw=str(value))
 

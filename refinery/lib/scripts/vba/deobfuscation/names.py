@@ -25,6 +25,8 @@ def eval_mid(args: list) -> str | None:
         raise ValueError
     if len(args) == 3:
         length = int(args[2])
+        if length < 0:
+            raise ValueError
         return s[start:start + length]
     return s[start:]
 
@@ -32,13 +34,18 @@ def eval_mid(args: list) -> str | None:
 def eval_left(args: list) -> str | None:
     if len(args) != 2:
         return None
-    return str_arg(args)[:int(args[1])]
+    n = int(args[1])
+    if n < 0:
+        raise ValueError
+    return str_arg(args)[:n]
 
 
 def eval_right(args: list) -> str | None:
     if len(args) != 2:
         return None
     n = int(args[1])
+    if n < 0:
+        raise ValueError
     return str_arg(args)[-n:] if n > 0 else ''
 
 
@@ -68,14 +75,22 @@ def eval_space(args: list) -> str | None:
 
 
 def eval_replace(args: list[Value]) -> str | None:
-    if len(args) < 3:
+    if not 3 <= len(args) <= 6:
         return None
     haystack = str_arg(args)
     needle = str_arg(args, 1)
     insert = str_arg(args, 2)
     if not needle:
         raise ValueError
-    return haystack.replace(needle, insert)
+    start = int(args[3]) if len(args) > 3 and args[3] is not None else 1
+    count = int(args[4]) if len(args) > 4 and args[4] is not None else -1
+    compare = int(args[5]) if len(args) > 5 and args[5] is not None else 0
+    if start < 1 or count < -1 or compare != 0:
+        raise ValueError
+    haystack = haystack[start - 1:]
+    if count < 0:
+        return haystack.replace(needle, insert)
+    return haystack.replace(needle, insert, count)
 
 
 def eval_instr(args: list[Value]) -> int | None:
@@ -210,11 +225,24 @@ def _round_to_int(v):
 
 
 def _to_hex(v):
-    return format(int(v), 'X')
+    n = int(v)
+    if n < 0:
+        raise ValueError
+    return format(n, 'X')
 
 
 def _to_oct(v):
-    return format(int(v), 'o')
+    n = int(v)
+    if n < 0:
+        raise ValueError
+    return format(n, 'o')
+
+
+def _to_byte(v):
+    n = int(round(float(v)))
+    if not 0 <= n <= 255:
+        raise ValueError
+    return n
 
 
 SINGLE_ARG_BUILTINS: dict[str, Callable[[Any], Value]] = {
@@ -237,5 +265,5 @@ SINGLE_ARG_BUILTINS: dict[str, Callable[[Any], Value]] = {
     'hex$'  : _to_hex,
     'oct'   : _to_oct,
     'oct$'  : _to_oct,
-    'cbyte' : lambda v: int(v) & 0xFF,
+    'cbyte' : _to_byte,
 }

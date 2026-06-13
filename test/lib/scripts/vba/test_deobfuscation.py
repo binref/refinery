@@ -986,3 +986,167 @@ class TestVbaDeobfuscation(TestBase):
               F "ab"
             End Sub
         """))
+
+    def test_integer_division_truncates_toward_zero(self):
+        code = cleandoc("""
+            Sub T()
+              x = -7 \\ 2
+            End Sub
+        """)
+        result = self._fold(code)
+        self.assertIn('x = -3', result)
+        self.assertNotIn('-4', result)
+
+    def test_mod_takes_sign_of_dividend(self):
+        code = cleandoc("""
+            Sub T()
+              x = -7 Mod 2
+            End Sub
+        """)
+        result = self._fold(code)
+        self.assertIn('x = -1', result)
+
+    def test_mod_dividend_sign_positive_divisor_negative(self):
+        code = cleandoc("""
+            Sub T()
+              x = 7 Mod -2
+            End Sub
+        """)
+        result = self._fold(code)
+        self.assertIn('x = 1', result)
+
+    def test_emulator_string_compare_is_case_sensitive(self):
+        code = cleandoc("""
+            Function F()
+              If "A" = "a" Then
+                F = "same"
+              Else
+                F = "diff"
+              End If
+            End Function
+            Sub T()
+              G F()
+            End Sub
+        """)
+        result = self._full_deobfuscate(code)
+        self.assertIn('"diff"', result)
+        self.assertNotIn('"same"', result)
+
+    def test_power_of_negative_base_keeps_parentheses(self):
+        code = cleandoc("""
+            Sub T()
+              x = (-4) ^ y
+            End Sub
+        """)
+        result = self._fold(code)
+        self.assertIn('(-4) ^ y', result)
+
+    def test_hex_of_positive_folds(self):
+        code = cleandoc("""
+            Sub T()
+              x = Hex(255)
+            End Sub
+        """)
+        result = self._fold(code)
+        self.assertIn('"FF"', result)
+
+    def test_hex_of_negative_not_folded(self):
+        code = cleandoc("""
+            Sub T()
+              x = Hex(-1)
+            End Sub
+        """)
+        result = self._fold(code)
+        self.assertIn('Hex(-1)', result)
+
+    def test_replace_with_start_position(self):
+        code = cleandoc("""
+            Sub T()
+              x = Replace("hello", "l", "L", 3)
+            End Sub
+        """)
+        result = self._fold(code)
+        self.assertIn('"LLo"', result)
+        self.assertNotIn('"heLLo"', result)
+
+    def test_replace_text_compare_not_folded(self):
+        code = cleandoc("""
+            Sub T()
+              x = Replace("aAa", "a", "X", 1, -1, 1)
+            End Sub
+        """)
+        result = self._fold(code)
+        self.assertIn('Replace(', result)
+
+    def test_mid_negative_length_not_folded(self):
+        code = cleandoc("""
+            Sub T()
+              x = Mid("hello", 2, -1)
+            End Sub
+        """)
+        result = self._fold(code)
+        self.assertIn('Mid("hello", 2, -1)', result)
+
+    def test_cbyte_rounds_to_nearest(self):
+        code = cleandoc("""
+            Sub T()
+              x = CByte(2.6)
+            End Sub
+        """)
+        result = self._fold(code)
+        self.assertIn('x = 3', result)
+
+    def test_cbyte_overflow_not_folded(self):
+        code = cleandoc("""
+            Sub T()
+              x = CByte(300)
+            End Sub
+        """)
+        result = self._fold(code)
+        self.assertIn('CByte(300)', result)
+
+    def test_plus_empty_string_not_dropped(self):
+        code = cleandoc("""
+            Sub T()
+              x = 5 + ""
+            End Sub
+        """)
+        result = self._fold(code)
+        self.assertIn('5 + ""', result)
+
+    def test_ampersand_empty_string_dropped(self):
+        code = cleandoc("""
+            Sub T()
+              x = y & ""
+            End Sub
+        """)
+        result = self._fold(code)
+        self.assertIn('x = y', result)
+        self.assertNotIn('& ""', result)
+
+    def test_function_return_value_not_treated_as_dead(self):
+        code = cleandoc("""
+            Function GetKey() As String
+              GetKey = "secret"
+            End Function
+            Sub T()
+              G 1
+            End Sub
+        """)
+        result = self._full_deobfuscate(code)
+        self.assertIn('GetKey = "secret"', result)
+
+    def test_constant_not_inlined_across_procedures(self):
+        code = cleandoc("""
+            Sub A()
+              Const n = 7
+              G n
+            End Sub
+            Sub B(n)
+              H n
+            End Sub
+        """)
+        result = self._deobfuscate(code)
+        self.assertIn('G 7', result)
+        self.assertIn('H n', result)
+        self.assertNotIn('H 7', result)

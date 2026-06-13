@@ -81,6 +81,39 @@ from refinery.lib.scripts.vba.model import (
 from refinery.lib.scripts.vba.token import VbaToken, VbaTokenKind
 
 
+def _radix_literal_value(magnitude: int, suffix: str) -> int:
+    """
+    Reinterpret the unsigned magnitude of a VBA hex or octal literal as a signed integer of the
+    appropriate width. A `%` suffix forces a 16-bit (Integer) and `&` a 32-bit (Long) width; without
+    a suffix VBA uses the smallest width that holds the magnitude. Values with the high bit set are
+    negative two's-complement, so &H8000 is -32768 and &HFFFF is -1.
+    """
+    if suffix == '%':
+        bits = 16
+    elif suffix == '&':
+        bits = 32
+    elif magnitude <= 0xFFFF:
+        bits = 16
+    elif magnitude <= 0xFFFFFFFF:
+        bits = 32
+    else:
+        bits = 64
+    if magnitude >= 1 << (bits - 1):
+        magnitude -= 1 << bits
+    return magnitude
+
+
+def _parse_integer_literal(raw: str) -> int:
+    suffix = raw[-1] if raw and raw[-1] in '%&!#@' else ''
+    core = raw[:-1] if suffix else raw
+    head = core[:2].lower()
+    if head == '&h':
+        return _radix_literal_value(int(core[2:], 16), suffix)
+    if head == '&o':
+        return _radix_literal_value(int(core[2:], 8), suffix)
+    return int(core)
+
+
 class VbaParser:
 
     _PAREN_ARG_STOP = frozenset({VbaTokenKind.RPAREN})
@@ -473,8 +506,12 @@ class VbaParser:
     ) -> VbaPropertyDeclaration:
         offset = self._current.offset
         self._advance()
-        kind = VbaPropertyKind(self._current.value.capitalize())
-        self._advance()
+        try:
+            kind = VbaPropertyKind(self._current.value.capitalize())
+        except ValueError:
+            kind = VbaPropertyKind.GET
+        else:
+            self._advance()
         name, params, return_type, body = self._parse_procedure_body(
             'property', has_return_type=True)
         return VbaPropertyDeclaration(
@@ -1411,14 +1448,7 @@ class VbaParser:
         if self._at(VbaTokenKind.INTEGER):
             self._advance()
             raw = tok.value
-            text = raw.rstrip('%&!#@')
-            if text.lower().startswith('&h'):
-                value = int(text[2:], 16)
-            elif text.lower().startswith('&o'):
-                value = int(text[2:], 8)
-            else:
-                value = int(text)
-            return VbaIntegerLiteral(value=value, raw=raw, offset=offset)
+            return VbaIntegerLiteral(value=_parse_integer_literal(raw), raw=raw, offset=offset)
 
         if self._at(VbaTokenKind.FLOAT):
             self._advance()
@@ -1430,10 +1460,10 @@ class VbaParser:
         if self._at(VbaTokenKind.STRING):
             self._advance()
             raw = tok.value
-            if len(raw) >= 2:
-                value = raw[1:-1].replace('""', '"')
-            else:
-                value = raw
+            body = raw[1:]
+            if body.endswith('"'):
+                body = body[:-1]
+            value = body.replace('""', '"')
             return VbaStringLiteral(value=value, raw=raw, offset=offset)
 
         if self._at(VbaTokenKind.DATE_LITERAL):

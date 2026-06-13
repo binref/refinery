@@ -1242,6 +1242,16 @@ class TestVbaParserStatements(TestBase):
         assert isinstance(stmt, VbaPropertyDeclaration)
         self.assertEqual(stmt.kind, VbaPropertyKind.GET)
 
+    def test_property_missing_kind_does_not_crash(self):
+        ast = self._parse(cleandoc("""
+            Property Foo()
+            End Property
+        """))
+        stmt = ast.body[0]
+        assert isinstance(stmt, VbaPropertyDeclaration)
+        self.assertEqual(stmt.kind, VbaPropertyKind.GET)
+        self.assertEqual(stmt.name, 'Foo')
+
     def test_line_number_label_with_statement(self):
         code = cleandoc("""
             Sub T()

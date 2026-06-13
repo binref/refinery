@@ -13,6 +13,8 @@ from refinery.lib.scripts.vba.deobfuscation.helpers import (
     is_nan_or_inf,
     literal_value,
     value_to_node,
+    vba_int_div,
+    vba_mod,
 )
 from refinery.lib.scripts.vba.deobfuscation.names import (
     Value,
@@ -41,11 +43,6 @@ from refinery.lib.scripts.vba.model import (
     VbaUnaryExpression,
     VbaVariableDeclaration,
 )
-
-_NUMERIC_DIVMOD_OPS = {
-    '\\' : _op.floordiv,
-    'mod': _op.mod,
-}
 
 _NUMERIC_BINARY_OPS = {
     '-'  : _op.sub,
@@ -240,11 +237,10 @@ class _VbaInterpreter:
             if isinstance(left, str) and isinstance(right, str):
                 return self._concat(left, right)
             return self._numeric_op(left, right, _op.add)
-        if fn := _NUMERIC_DIVMOD_OPS.get(op):
-            a, b = self._to_int(left), self._to_int(right)
-            if b == 0:
-                raise _VbaInterpreterError
-            return fn(a, b)
+        if op == '\\':
+            return self._divmod_op(left, right, vba_int_div)
+        if op == 'mod':
+            return self._divmod_op(left, right, vba_mod)
         if fn := _NUMERIC_BINARY_OPS.get(op):
             return self._numeric_op(left, right, fn)
         if fn := _BITWISE_BINARY_OPS.get(op):
@@ -320,10 +316,16 @@ class _VbaInterpreter:
             raise _VbaInterpreterError
         return result
 
+    def _divmod_op(self, left: Value, right: Value, op) -> int:
+        try:
+            return op(self._to_number(left), self._to_number(right))
+        except (ZeroDivisionError, ValueError, OverflowError, ArithmeticError):
+            raise _VbaInterpreterError
+
     @staticmethod
     def _compare(left: Value, right: Value, op) -> bool:
         if isinstance(left, str) and isinstance(right, str):
-            return op(left.lower(), right.lower())
+            return op(left, right)
         if isinstance(left, (int, float)) and isinstance(right, (int, float)):
             return op(left, right)
         raise _VbaInterpreterError

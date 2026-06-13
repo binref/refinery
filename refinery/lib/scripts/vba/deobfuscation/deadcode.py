@@ -8,10 +8,12 @@ from refinery.lib.scripts.vba.deobfuscation.helpers import apply_removals, body_
 from refinery.lib.scripts.vba.deobfuscation.names import SINGLE_ARG_BUILTINS, STRING_BUILTINS
 from refinery.lib.scripts.vba.model import (
     VbaCallExpression,
+    VbaFunctionDeclaration,
     VbaIdentifier,
     VbaLetStatement,
     VbaModule,
     VbaProcedureDeclaration,
+    VbaPropertyDeclaration,
 )
 
 _PURE_BUT_UNEVALUABLE = frozenset({
@@ -76,6 +78,9 @@ class VbaDeadVariableRemoval(Transformer):
                         assignments.setdefault(key, []).append((stmt, body, idx))
         read_names: set[str] = set()
         for node in module.walk():
+            if isinstance(node, (VbaFunctionDeclaration, VbaPropertyDeclaration)) and node.name:
+                read_names.add(node.name.lower())
+                continue
             if not isinstance(node, VbaIdentifier):
                 continue
             if isinstance(node.parent, VbaLetStatement) and node.parent.target is node:

@@ -21,6 +21,8 @@ from refinery.lib.scripts.vba.deobfuscation.helpers import (
     numeric_value,
     string_value,
     value_to_node,
+    vba_int_div,
+    vba_mod,
 )
 from refinery.lib.scripts.vba.deobfuscation.names import (
     CHR_NAMES,
@@ -54,8 +56,8 @@ _BINARY_OPS: dict[str, Callable] = {
 }
 
 _INTEGER_OPS: dict[str, Callable] = {
-    '\\' : lambda a, b: int(a) // int(b),
-    'Mod': lambda a, b: int(a) % int(b),
+    '\\' : vba_int_div,
+    'Mod': vba_mod,
 }
 
 
@@ -172,10 +174,11 @@ class VbaSimplifications(Transformer):
         return self._fold_numeric_binary(node)
 
     def _fold_string_concat(self, node: VbaBinaryExpression):
-        if isinstance(node.right, (VbaEmptyLiteral, VbaStringLiteral)) and not node.right.value:
-            return node.left
-        if isinstance(node.left, (VbaEmptyLiteral, VbaStringLiteral)) and not node.left.value:
-            return node.right
+        if node.operator == '&':
+            if isinstance(node.right, (VbaEmptyLiteral, VbaStringLiteral)) and not node.right.value:
+                return node.left
+            if isinstance(node.left, (VbaEmptyLiteral, VbaStringLiteral)) and not node.left.value:
+                return node.right
         if self._is_oern_undefined(node.left) and string_value(node.right) is not None:
             return node.right
         if self._is_oern_undefined(node.right) and string_value(node.left) is not None:

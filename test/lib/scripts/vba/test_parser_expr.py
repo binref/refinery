@@ -52,6 +52,24 @@ class TestVbaParserExpressions(TestBase):
         assert isinstance(expr, VbaIntegerLiteral)
         self.assertEqual(expr.value, 63)
 
+    def test_hex_literal_high_bit_is_negative(self):
+        for source, expected in (
+            ('&H7FFF', 32767),
+            ('&H8000', -32768),
+            ('&HFFFF', -1),
+            ('&H10000', 65536),
+            ('&HFFFFFFFF', -1),
+            ('&O177777', -1),
+        ):
+            expr = self._parse_expr(source)
+            assert isinstance(expr, VbaIntegerLiteral)
+            self.assertEqual(expr.value, expected, source)
+
+    def test_hex_literal_long_suffix_widens(self):
+        expr = self._parse_expr('&H8000&')
+        assert isinstance(expr, VbaIntegerLiteral)
+        self.assertEqual(expr.value, 32768)
+
     def test_float_literal(self):
         expr = self._parse_expr('3.14')
         assert isinstance(expr, VbaFloatLiteral)
@@ -78,6 +96,11 @@ class TestVbaParserExpressions(TestBase):
         expr = self._parse_expr('"He said ""hi"""')
         assert isinstance(expr, VbaStringLiteral)
         self.assertEqual(expr.value, 'He said "hi"')
+
+    def test_unterminated_string_keeps_last_character(self):
+        expr = self._parse_expr('"abc')
+        assert isinstance(expr, VbaStringLiteral)
+        self.assertEqual(expr.value, 'abc')
 
     def test_boolean_true(self):
         expr = self._parse_expr('True')

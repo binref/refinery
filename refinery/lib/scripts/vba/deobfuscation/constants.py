@@ -19,6 +19,7 @@ from refinery.lib.scripts.vba.model import (
     VbaIdentifier,
     VbaLetStatement,
     VbaModule,
+    VbaProcedureDeclaration,
 )
 
 
@@ -79,10 +80,24 @@ class VbaConstantInlining(Transformer):
         }
 
     @staticmethod
+    def _enclosing_proc(node) -> VbaProcedureDeclaration | None:
+        parent = node.parent
+        while parent is not None:
+            if isinstance(parent, VbaProcedureDeclaration):
+                return parent
+            parent = parent.parent
+        return None
+
+    @classmethod
     def _find_constant_reads(
+        cls,
         module: VbaModule,
         candidates: dict[str, list[InlineCandidate]],
     ) -> dict[str, list[VbaIdentifier]]:
+        scopes = {
+            key: cls._enclosing_proc(entries[0].value)
+            for key, entries in candidates.items()
+        }
         reads: dict[str, list[VbaIdentifier]] = {}
         for node in module.walk():
             if not isinstance(node, VbaIdentifier):
@@ -90,8 +105,12 @@ class VbaConstantInlining(Transformer):
             if not is_identifier_read(node):
                 continue
             key = node.name.lower()
-            if key in candidates:
-                reads.setdefault(key, []).append(node)
+            if key not in candidates:
+                continue
+            scope = scopes[key]
+            if scope is not None and cls._enclosing_proc(node) is not scope:
+                continue
+            reads.setdefault(key, []).append(node)
         return reads
 
     @staticmethod

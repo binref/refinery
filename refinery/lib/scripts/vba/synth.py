@@ -144,9 +144,22 @@ class VbaSynthesizer(Synthesizer):
     def visit_VbaErrorNode(self, node: VbaErrorNode):
         self._write(node.text)
 
+    @staticmethod
+    def _binds_looser_than_power(node) -> bool:
+        if isinstance(node, VbaUnaryExpression) and node.operator == '-':
+            return True
+        if isinstance(node, (VbaIntegerLiteral, VbaFloatLiteral)) and node.value < 0:
+            return True
+        return False
+
     def visit_VbaBinaryExpression(self, node: VbaBinaryExpression):
         if node.left:
-            self.visit(node.left)
+            if node.operator == '^' and self._binds_looser_than_power(node.left):
+                self._write('(')
+                self.visit(node.left)
+                self._write(')')
+            else:
+                self.visit(node.left)
         self._write(F' {node.operator} ')
         if node.right:
             self.visit(node.right)
