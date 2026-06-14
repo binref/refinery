@@ -11,9 +11,10 @@ from refinery.lib.scripts.vba.deobfuscation.helpers import (
     is_literal,
     literal_value,
     make_string_literal,
+    module_compare_mode,
     string_value,
 )
-from refinery.lib.scripts.vba.deobfuscation.names import Value, dispatch_builtin
+from refinery.lib.scripts.vba.deobfuscation.names import CompareMode, Value, dispatch_builtin
 from refinery.lib.scripts.vba.model import (
     VbaBinaryExpression,
     VbaCallExpression,
@@ -59,7 +60,9 @@ def _try_concat_step(expr: Expression | None, var_key: str, accumulator: str) ->
     return None
 
 
-def _try_builtin_step(expr: Expression | None, var_key: str, accumulator: str) -> str | None:
+def _try_builtin_step(
+    expr: Expression | None, var_key: str, accumulator: str, compare_mode: CompareMode,
+) -> str | None:
     if not isinstance(expr, VbaCallExpression):
         return None
     if not isinstance(expr.callee, VbaIdentifier):
@@ -79,7 +82,7 @@ def _try_builtin_step(expr: Expression | None, var_key: str, accumulator: str) -
         literal_args.append(literal_value(arg))
     name = expr.callee.name.lower()
     try:
-        matched, result = dispatch_builtin(name, literal_args)
+        matched, result = dispatch_builtin(name, literal_args, compare_mode)
     except (ValueError, OverflowError, TypeError, IndexError):
         return None
     if not matched:
@@ -90,7 +93,7 @@ def _try_builtin_step(expr: Expression | None, var_key: str, accumulator: str) -
 
 
 def _try_apply_step(
-    stmt: VbaLetStatement, var_key: str, accumulator: str,
+    stmt: VbaLetStatement, var_key: str, accumulator: str, compare_mode: CompareMode,
 ) -> tuple[str, int] | None:
     """
     Attempt to fold one chain step. Returns (new_accumulator, input_bytes_consumed) on success.
@@ -99,7 +102,7 @@ def _try_apply_step(
     result = _try_concat_step(expr, var_key, accumulator)
     if result is not None:
         return result
-    builtin_result = _try_builtin_step(expr, var_key, accumulator)
+    builtin_result = _try_builtin_step(expr, var_key, accumulator, compare_mode)
     if builtin_result is not None:
         assert isinstance(expr, VbaCallExpression)
         input_bytes = sum(
@@ -126,6 +129,7 @@ class VbaStringAccumulatorFolding(Transformer):
         return None
 
     def _fold_accumulators(self, module: VbaModule) -> bool:
+        compare_mode = module_compare_mode(module)
         total_string_size = sum(
             len(n.value) for n in module.walk() if isinstance(n, VbaStringLiteral)
         )
@@ -161,7 +165,7 @@ class VbaStringAccumulatorFolding(Transformer):
                         break
                     if next_stmt.target.name.lower() != var_key:
                         break
-                    step = _try_apply_step(next_stmt, var_key, accumulator)
+                    step = _try_apply_step(next_stmt, var_key, accumulator, compare_mode)
                     if step is None:
                         break
                     accumulator, step_input = step

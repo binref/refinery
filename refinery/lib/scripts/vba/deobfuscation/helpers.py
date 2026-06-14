@@ -7,7 +7,7 @@ from operator import itemgetter
 from typing import Generator
 
 from refinery.lib.scripts import Expression, Kind, Statement, _classify_fields
-from refinery.lib.scripts.vba.deobfuscation.names import CHR_NAMES, Value
+from refinery.lib.scripts.vba.deobfuscation.names import CHR_NAMES, CompareMode, Value
 from refinery.lib.scripts.vba.model import (
     VbaBinaryExpression,
     VbaBooleanLiteral,
@@ -23,6 +23,7 @@ from refinery.lib.scripts.vba.model import (
     VbaIntegerLiteral,
     VbaLetStatement,
     VbaModule,
+    VbaOptionStatement,
     VbaStringLiteral,
     VbaUnaryExpression,
 )
@@ -38,6 +39,24 @@ def make_string_literal(value: str) -> VbaStringLiteral:
 
 def is_nan_or_inf(value) -> bool:
     return isinstance(value, float) and (value != value or abs(value) == float('inf'))
+
+
+def module_compare_mode(module: VbaModule) -> CompareMode:
+    """
+    Return the module's `Option Compare` mode. VBA `Option Compare` is a module-level directive; the
+    default (no directive, or `Binary`) is `CompareMode.BINARY`, `Text` is case-insensitive, and
+    `Database` (Access) uses the database's locale-dependent sort order. The latter cannot be
+    reproduced statically, so the folding transforms refuse to fold comparisons under it.
+    """
+    for stmt in module.body:
+        if isinstance(stmt, VbaOptionStatement) and stmt.keyword.lower() == 'compare':
+            value = stmt.value.lower()
+            if value == 'text':
+                return CompareMode.TEXT
+            if value == 'database':
+                return CompareMode.DATABASE
+            return CompareMode.BINARY
+    return CompareMode.BINARY
 
 
 def vba_int_div(a: int | float, b: int | float) -> int:

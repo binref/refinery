@@ -5,6 +5,7 @@ from inspect import cleandoc
 from test import TestBase
 
 from refinery.lib.scripts.vba.deobfuscation import deobfuscate
+from refinery.lib.scripts.vba.deobfuscation.names import text_compare_safe
 from refinery.lib.scripts.vba.deobfuscation.simplify import VbaSimplifications
 from refinery.lib.scripts.vba.parser import VbaParser
 from refinery.lib.scripts.vba.synth import VbaSynthesizer
@@ -777,6 +778,18 @@ class TestVbaDeobfuscation(TestBase):
         result = self._fold(code)
         self.assertIn('x = 2', result)
 
+    def test_instrrev_start_bounds_match_end(self):
+        # InStrRev's start bounds the END of the match: the match must lie fully within the first
+        # `start` characters. The "abc" beginning at position 4 ends past start=4 and is excluded,
+        # so only the one at position 1 qualifies. Oracle: InStrRev("abcabc","abc",4) = 1 (not 4).
+        code = cleandoc("""
+            Sub T()
+              x = InStrRev("abcabc", "abc", 4)
+            End Sub
+        """)
+        result = self._fold(code)
+        self.assertIn('x = 1', result)
+
     def test_strcomp_equal(self):
         code = cleandoc("""
             Sub T()
@@ -1069,14 +1082,16 @@ class TestVbaDeobfuscation(TestBase):
         self.assertIn('"LLo"', result)
         self.assertNotIn('"heLLo"', result)
 
-    def test_replace_text_compare_not_folded(self):
+    def test_replace_explicit_text_compare_folds(self):
+        # An explicit vbTextCompare (1) with locale-safe operands folds case-insensitively; the
+        # cscript oracle gives Replace("aAa", "a", "X", 1, -1, 1) = "XXX".
         code = cleandoc("""
             Sub T()
               x = Replace("aAa", "a", "X", 1, -1, 1)
             End Sub
         """)
         result = self._fold(code)
-        self.assertIn('Replace(', result)
+        self.assertIn('"XXX"', result)
 
     def test_mid_negative_length_not_folded(self):
         code = cleandoc("""
@@ -1150,3 +1165,235 @@ class TestVbaDeobfuscation(TestBase):
         self.assertIn('G 7', result)
         self.assertIn('H n', result)
         self.assertNotIn('H 7', result)
+
+    def test_text_compare_safe_predicate(self):
+        # Locale-independent case folding holds only for ASCII digits and ASCII letters other than
+        # the Turkic-sensitive I/i; symbols and non-ASCII are unsafe; the empty string is trivial.
+        self.assertTrue(text_compare_safe(''))
+        self.assertTrue(text_compare_safe('AB12'))
+        self.assertFalse(text_compare_safe('FILE'))
+        self.assertFalse(text_compare_safe('file'))
+        self.assertFalse(text_compare_safe('a-b'))
+        self.assertFalse(text_compare_safe('\xe9'))
+
+    def _compare_branch(self, option: str, expr: str) -> str:
+        return self._full_deobfuscate(cleandoc(F"""
+            {option}
+            Function F()
+              If {expr} Then
+                F = "same"
+              Else
+                F = "diff"
+              End If
+            End Function
+            Sub T()
+              G F()
+            End Sub
+        """))
+
+    def test_text_equality_folds_for_safe_operands(self):
+        # Under Option Compare Text the case-insensitive equality "AB" = "ab" is true in every locale
+        # (operands are safe); the emulator must take the True branch. Oracle: StrComp("AB","ab",1)=0.
+        result = self._compare_branch('Option Compare Text', '"AB" = "ab"')
+        self.assertIn('G "same"', result)
+
+    def test_binary_equality_is_case_sensitive(self):
+        # The default (and explicit Binary) keeps "AB" = "ab" false. Oracle: ("AB" = "ab") is False.
+        for option in ('Option Compare Binary', "' no option"):
+            result = self._compare_branch(option, '"AB" = "ab"')
+            self.assertIn('G "diff"', result, option)
+
+    def test_text_equality_bails_on_turkic_letters(self):
+        # "FILE"/"file" contain I/i, whose case folding is locale-dependent (Turkic), so under Text
+        # the comparison must not be folded; the call to F is left intact rather than guessed.
+        result = self._compare_branch('Option Compare Text', '"FILE" = "file"')
+        self.assertIn('G F()', result)
+
+    def test_text_ordering_always_bails(self):
+        # String ordering under Option Compare Text uses locale collation that cannot be reproduced
+        # from the characters, so "<" is never folded; the call to F is left intact.
+        result = self._compare_branch('Option Compare Text', '"b" < "A"')
+        self.assertIn('G F()', result)
+
+    def test_strcomp_text_equal_folds_to_zero(self):
+        # Oracle: StrComp("AB","ab",1) = 0.
+        result = self._fold(cleandoc("""
+            Option Compare Text
+            Sub T()
+              x = StrComp("AB", "ab")
+            End Sub
+        """))
+        self.assertIn('x = 0', result)
+
+    def test_strcomp_binary_folds_to_sign(self):
+        # Oracle: StrComp("AB","ab",0) = -1.
+        result = self._fold(cleandoc("""
+            Option Compare Binary
+            Sub T()
+              x = StrComp("AB", "ab")
+            End Sub
+        """))
+        self.assertIn('x = -1', result)
+
+    def test_strcomp_text_unequal_bails(self):
+        # Under Text the -1/+1 sign is a locale-dependent ordering, so an unequal StrComp does not
+        # fold even though the operands are safe.
+        result = self._fold(cleandoc("""
+            Option Compare Text
+            Sub T()
+              x = StrComp("AB", "ac")
+            End Sub
+        """))
+        self.assertIn('StrComp(', result)
+
+    def test_strcomp_explicit_text_overrides_binary_module(self):
+        # An explicit vbTextCompare argument wins over the module directive.
+        result = self._fold(cleandoc("""
+            Option Compare Binary
+            Sub T()
+              x = StrComp("AB", "ab", 1)
+            End Sub
+        """))
+        self.assertIn('x = 0', result)
+
+    def test_instr_text_finds_case_insensitively(self):
+        # Oracle: InStr(1,"aXbXc","x",1) = 2.
+        result = self._fold(cleandoc("""
+            Option Compare Text
+            Sub T()
+              x = InStr(1, "aXbXc", "x")
+            End Sub
+        """))
+        self.assertIn('x = 2', result)
+
+    def test_instr_explicit_binary_overrides_text_module(self):
+        # Oracle: InStr(1,"aXbXc","x",0) = 0 (no lowercase x in the binary haystack).
+        result = self._fold(cleandoc("""
+            Option Compare Text
+            Sub T()
+              x = InStr(1, "aXbXc", "x", 0)
+            End Sub
+        """))
+        self.assertIn('x = 0', result)
+
+    def test_instr_text_bails_on_turkic_letters(self):
+        result = self._fold(cleandoc("""
+            Option Compare Text
+            Sub T()
+              x = InStr(1, "FILE", "i")
+            End Sub
+        """))
+        self.assertIn('InStr(', result)
+
+    def test_replace_text_module_folds_case_insensitively(self):
+        # Oracle: Replace("aAa","a","X",,,1) = "XXX".
+        result = self._fold(cleandoc("""
+            Option Compare Text
+            Sub T()
+              x = Replace("aAa", "a", "X")
+            End Sub
+        """))
+        self.assertIn('"XXX"', result)
+
+    def test_replace_binary_module_is_case_sensitive(self):
+        # Oracle: Replace("aAa","a","X",,,0) = "XAX".
+        result = self._fold(cleandoc("""
+            Option Compare Binary
+            Sub T()
+              x = Replace("aAa", "a", "X")
+            End Sub
+        """))
+        self.assertIn('"XAX"', result)
+
+    def test_replace_text_bails_on_turkic_letters(self):
+        result = self._fold(cleandoc("""
+            Option Compare Text
+            Sub T()
+              x = Replace("FILE", "i", "Y")
+            End Sub
+        """))
+        self.assertIn('Replace(', result)
+
+    def test_replace_text_count_zero_makes_no_replacement(self):
+        # count=0 performs zero substitutions regardless of compare mode; the result is the input
+        # from start. Oracle: Replace("aAa","a","X",1,0) = "aAa" (the -1 default would give "XXX").
+        result = self._fold(cleandoc("""
+            Option Compare Text
+            Sub T()
+              x = Replace("aAa", "a", "X", 1, 0)
+            End Sub
+        """))
+        self.assertIn('"aAa"', result)
+
+    def test_replace_explicit_text_count_zero_makes_no_replacement(self):
+        result = self._fold(cleandoc("""
+            Sub T()
+              x = Replace("aAa", "a", "X", 1, 0, 1)
+            End Sub
+        """))
+        self.assertIn('"aAa"', result)
+
+    def test_database_equality_not_folded(self):
+        # Option Compare Database uses the database's locale-dependent sort order, which is not
+        # knowable statically, so string equality is not folded; the call to F is left intact.
+        result = self._compare_branch('Option Compare Database', '"AB" = "ab"')
+        self.assertIn('G F()', result)
+
+    def test_database_numeric_comparison_still_folds(self):
+        # Option Compare only governs string comparisons; a numeric comparison folds regardless.
+        result = self._compare_branch('Option Compare Database', '2 > 1')
+        self.assertIn('G "same"', result)
+
+    def test_database_strcomp_not_folded(self):
+        result = self._fold(cleandoc("""
+            Option Compare Database
+            Sub T()
+              x = StrComp("AB", "ab")
+            End Sub
+        """))
+        self.assertIn('StrComp(', result)
+
+    def test_database_instr_not_folded(self):
+        result = self._fold(cleandoc("""
+            Option Compare Database
+            Sub T()
+              x = InStr(1, "aXbXc", "x")
+            End Sub
+        """))
+        self.assertIn('InStr(', result)
+
+    def test_database_replace_not_folded(self):
+        result = self._fold(cleandoc("""
+            Option Compare Database
+            Sub T()
+              x = Replace("aAa", "a", "X")
+            End Sub
+        """))
+        self.assertIn('Replace(', result)
+
+    def test_database_explicit_binary_overrides(self):
+        result = self._fold(cleandoc("""
+            Option Compare Database
+            Sub T()
+              x = StrComp("AB", "ab", 0)
+            End Sub
+        """))
+        self.assertIn('x = -1', result)
+
+    def test_database_explicit_text_overrides(self):
+        result = self._fold(cleandoc("""
+            Option Compare Database
+            Sub T()
+              x = StrComp("AB", "ab", 1)
+            End Sub
+        """))
+        self.assertIn('x = 0', result)
+
+    def test_database_replace_count_zero_still_folds(self):
+        result = self._fold(cleandoc("""
+            Option Compare Database
+            Sub T()
+              x = Replace("aAa", "a", "X", 1, 0)
+            End Sub
+        """))
+        self.assertIn('"aAa"', result)

@@ -12,13 +12,16 @@ from refinery.lib.scripts.vba.deobfuscation.helpers import (
     is_literal,
     is_nan_or_inf,
     literal_value,
+    module_compare_mode,
     value_to_node,
     vba_int_div,
     vba_mod,
 )
 from refinery.lib.scripts.vba.deobfuscation.names import (
+    CompareMode,
     Value,
     dispatch_builtin,
+    text_compare_safe,
 )
 from refinery.lib.scripts.vba.model import (
     VbaBinaryExpression,
@@ -91,10 +94,12 @@ class _VbaInterpreter:
         function_name: str,
         max_iterations: int = 100_000,
         max_string_len: int = 1_000_000,
+        compare_mode: CompareMode = CompareMode.BINARY,
     ):
         self.function_name = function_name.lower()
         self.max_iterations = max_iterations
         self.max_string_len = max_string_len
+        self.compare_mode = compare_mode
         self._env: dict[str, Value] = {}
         self._iterations = 0
         self._on_error_resume_next = False
@@ -267,7 +272,7 @@ class _VbaInterpreter:
         name = node.callee.name.lower()
         args = [self._eval(a) for a in node.arguments if a is not None]
         try:
-            matched, result = dispatch_builtin(name, args)
+            matched, result = dispatch_builtin(name, args, self.compare_mode)
         except (ValueError, OverflowError, TypeError, IndexError):
             raise _VbaInterpreterError
         if not matched:
@@ -322,10 +327,15 @@ class _VbaInterpreter:
         except (ZeroDivisionError, ValueError, OverflowError, ArithmeticError):
             raise _VbaInterpreterError
 
-    @staticmethod
-    def _compare(left: Value, right: Value, op) -> bool:
+    def _compare(self, left: Value, right: Value, op) -> bool:
         if isinstance(left, str) and isinstance(right, str):
-            return op(left, right)
+            if self.compare_mode is CompareMode.BINARY:
+                return op(left, right)
+            if self.compare_mode is CompareMode.TEXT and (op is _op.eq or op is _op.ne):
+                if not (text_compare_safe(left) and text_compare_safe(right)):
+                    raise _VbaInterpreterError
+                return op(left.lower(), right.lower())
+            raise _VbaInterpreterError
         if isinstance(left, (int, float)) and isinstance(right, (int, float)):
             return op(left, right)
         raise _VbaInterpreterError
@@ -351,6 +361,7 @@ class VbaFunctionEvaluator(Transformer):
         self._replaced_counts: dict[str, int] = {}
         self._visiting = False
         self._inside_function: str | None = None
+        self._compare_mode = CompareMode.BINARY
 
     def visit(self, node):
         if self._visiting:
@@ -363,6 +374,7 @@ class VbaFunctionEvaluator(Transformer):
             self._functions.clear()
             self._call_counts.clear()
             self._replaced_counts.clear()
+            self._compare_mode = module_compare_mode(node)
             self._collect_functions(node)
             if not self._functions:
                 return None
@@ -430,6 +442,7 @@ class VbaFunctionEvaluator(Transformer):
             function_name=funcdef.name,
             max_iterations=self.max_iterations,
             max_string_len=self.max_string_len,
+            compare_mode=self._compare_mode,
         )
         try:
             result = interpreter.execute(funcdef.body, bindings)

@@ -18,6 +18,7 @@ from refinery.lib.scripts.vba.deobfuscation.helpers import (
     make_integer_literal,
     make_numeric_literal,
     make_string_literal,
+    module_compare_mode,
     numeric_value,
     string_value,
     value_to_node,
@@ -26,6 +27,7 @@ from refinery.lib.scripts.vba.deobfuscation.helpers import (
 )
 from refinery.lib.scripts.vba.deobfuscation.names import (
     CHR_NAMES,
+    CompareMode,
     Value,
     dispatch_builtin,
 )
@@ -65,11 +67,12 @@ class _EvaluationFailed(Exception):
     pass
 
 
-def _try_evaluate_call(node: VbaCallExpression) -> Value:
+def _try_evaluate_call(node: VbaCallExpression, compare_mode: CompareMode = CompareMode.BINARY) -> Value:
     """
-    Try to statically evaluate a VBA builtin call with constant arguments. Raises `_EvaluationFailed`
-    if the call cannot be evaluated; otherwise returns the evaluated Python value (may be `None` for
-    VBA Empty).
+    Try to statically evaluate a VBA builtin call with constant arguments. Raises
+    `_EvaluationFailed` if the call cannot be evaluated; otherwise returns the evaluated Python
+    value (may be `None` for VBA Empty). The `compare_mode` flag carries the module `Option
+    Compare` mode.
     """
     if not isinstance(node.callee, VbaIdentifier):
         raise _EvaluationFailed
@@ -81,7 +84,7 @@ def _try_evaluate_call(node: VbaCallExpression) -> Value:
         values.append(literal_value(arg))
     name = node.callee.name.lower()
     try:
-        matched, result = dispatch_builtin(name, values)
+        matched, result = dispatch_builtin(name, values, compare_mode)
     except (ValueError, OverflowError, TypeError, IndexError):
         raise _EvaluationFailed
     if not matched:
@@ -102,6 +105,7 @@ class VbaSimplifications(Transformer):
         super().__init__()
         self._assigned_names: set[str] = set()
         self._oern_bodies: set[int] = set()
+        self._compare_mode = CompareMode.BINARY
 
     def visit(self, node):
         if isinstance(node, VbaModule):
@@ -115,6 +119,7 @@ class VbaSimplifications(Transformer):
     def _collect_context(self, module: VbaModule):
         self._assigned_names = set(VBA_BUILTIN_CONSTANTS)
         self._oern_bodies = set()
+        self._compare_mode = module_compare_mode(module)
         for n in module.walk():
             if isinstance(n, VbaLetStatement) and isinstance(n.target, VbaIdentifier):
                 self._assigned_names.add(n.target.name.lower())
@@ -249,7 +254,7 @@ class VbaSimplifications(Transformer):
     def visit_VbaCallExpression(self, node: VbaCallExpression):
         self.generic_visit(node)
         try:
-            result = _try_evaluate_call(node)
+            result = _try_evaluate_call(node, self._compare_mode)
         except _EvaluationFailed:
             return None
         if isinstance(result, str) and len(result) == 1 and not result.isprintable():
