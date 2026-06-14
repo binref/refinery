@@ -347,20 +347,28 @@ class BatchLexer:
             return base
         if '=' in modifier:
             old, _, new = modifier.partition('=')
-            kwargs = {}
-            if old.startswith('~'):
+            if not old:
+                return base
+            if old[0] == '*':
                 old = old[1:]
-                kwargs.update(count=1)
-            return base.replace(old, new, **kwargs)
+                index = base.upper().find(old.upper())
+                if index < 0:
+                    return base
+                return F'{new}{base[index + len(old):]}'
+            return re.sub(re.escape(old), lambda m: new, base, flags=re.IGNORECASE)
         else:
             if not modifier.startswith('~'):
                 raise EmulatorException
             offset, _, length = modifier[1:].partition(',')
-            offset = batchint(offset)
+            offset = batchint(offset, 0)
             if offset < 0:
                 offset = max(0, len(base) + offset)
             if length:
-                end = offset + batchint(length)
+                length = batchint(length, 0)
+                if length < 0:
+                    end = max(0, len(base) + length)
+                else:
+                    end = offset + length
             else:
                 end = len(base)
             return base[offset:end]

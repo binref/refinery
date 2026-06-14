@@ -1,6 +1,9 @@
+import re
+
 from inspect import getdoc
 
 from refinery.lib.scripts.bat import BatchEmulator, BatchLexer, BatchParser, BatchState
+from refinery.lib.scripts.bat.emulator import Error
 from refinery.lib.scripts.bat.synth import SynCommand
 from refinery.lib.scripts.bat.model import AstGroup, AstPipeline, AstSequence, InvalidLabel, EmulatorException, Redirect, RedirectIO
 from refinery.lib.scripts.bat.util import batchrange, batchint, u16, unquote, uncaret, enquote
@@ -363,6 +366,445 @@ class TestBatchEmulator(TestBase):
             '''
         bat.execute()
         self.assertEqual(bat.std.o.getvalue(), '760811\r\n')
+
+    def test_arithmetic_set_reads_variable_values(self):
+        @emulate
+        class bat:
+            '''
+            @echo off
+            set A=10
+            set B=20
+            set /a C=A+B
+            '''
+        bat.execute()
+        self.assertEqual(bat.state.envar('C'), '30')
+
+    def test_arithmetic_set_integer_division(self):
+        @emulate
+        class bat:
+            '''
+            @echo off
+            set /a p=7/2
+            set /a q=-7/2
+            set /a m=7%%3
+            '''
+        bat.execute()
+        self.assertEqual(bat.state.envar('p'), '3')
+        self.assertEqual(bat.state.envar('q'), '-3')
+        self.assertEqual(bat.state.envar('m'), '1')
+
+    def test_arithmetic_set_compound_subtraction(self):
+        @emulate
+        class bat:
+            '''
+            @echo off
+            set /a x=10
+            set /a x-=3
+            '''
+        bat.execute()
+        self.assertEqual(bat.state.envar('x'), '7')
+
+    def test_arithmetic_set_quoted_expression(self):
+        @emulate
+        class bat:
+            '''
+            @echo off
+            set /a "x=1<<8"
+            set /a "y=5*(3+2)"
+            set /a "a=1, b=2, c=a+b"
+            '''
+        bat.execute()
+        self.assertEqual(bat.state.envar('x'), '256')
+        self.assertEqual(bat.state.envar('y'), '25')
+        self.assertEqual(bat.state.envar('c'), '3')
+
+    def test_arithmetic_set_strips_whitespace_around_name(self):
+        @emulate
+        class bat:
+            '''
+            @echo off
+            set /a "a = 1 + 2"
+            set /a "b = a * 2"
+            '''
+        bat.execute()
+        self.assertEqual(bat.state.envar('a'), '3')
+        self.assertEqual(bat.state.envar('b'), '6')
+
+    def test_arithmetic_set_keyword_identifiers_are_variables(self):
+        @emulate
+        class bat:
+            '''
+            @echo off
+            set /a a=True
+            set /a b=False
+            set /a c=None+7
+            '''
+        bat.execute()
+        self.assertEqual(bat.state.envar('a'), '0')
+        self.assertEqual(bat.state.envar('b'), '0')
+        self.assertEqual(bat.state.envar('c'), '7')
+
+    def test_arithmetic_set_no_stdout_when_direct(self):
+        direct = BatchEmulator('set /a x=7/2')
+        direct.execute()
+        self.assertEqual(direct.std.o.getvalue(), '')
+        self.assertEqual(direct.state.envar('x'), '3')
+
+    def test_arithmetic_set_bare_expression(self):
+        direct = BatchEmulator('set /a 7/2')
+        direct.execute()
+        self.assertEqual(direct.std.o.getvalue(), '')
+
+    def test_arithmetic_set_divide_by_zero(self):
+        bat = BatchEmulator('set /a x=1/0')
+        bat.execute()
+        self.assertEqual(bat.std.e.getvalue(), 'Divide by zero error.\r\n')
+
+    def test_arithmetic_set_malformed_expression(self):
+        for expr in ('x=*', 'x=', 'x=)', 'x=1+', 'x=(1', 'x=08'):
+            bat = BatchEmulator(F'set /a {expr}')
+            bat.execute()
+            self.assertEqual(bat.std.e.getvalue(), 'Missing operand.\r\n')
+            self.assertEqual(bat.state.ec, 1073750989)
+
+    def test_arithmetic_set_prints_in_command_line_context(self):
+        bat = BatchEmulator('cmd /c set /a 2+2')
+        bat.execute()
+        self.assertEqual(bat.std.o.getvalue(), '4\r\n')
+
+    def test_arithmetic_set_chained_self_reference(self):
+        @emulate
+        class bat:
+            '''
+            @echo off
+            set /a "a=1, a=a+5, a=a*2"
+            '''
+        bat.execute()
+        self.assertEqual(bat.state.envar('a'), '12')
+
+    def test_arithmetic_set_power_operator_unsupported(self):
+        bat = BatchEmulator('set /a "x=2**3"')
+        bat.execute()
+        self.assertEqual(bat.std.e.getvalue(), 'Missing operand.\r\n')
+        self.assertEqual(bat.state.ec, 1073750989)
+
+    def test_arithmetic_set_oversized_shift_is_bounded(self):
+        bat = BatchEmulator('set /a "x=1<<99999999"')
+        bat.execute()
+        self.assertEqual(bat.state.envar('x'), '0')
+
+    def test_arithmetic_set_negative_shift_count(self):
+        @emulate
+        class bat:
+            '''
+            @echo off
+            set /a "a=1<<-1"
+            set /a "b=256>>-1"
+            set /a "c=-8>>-1"
+            '''
+        bat.execute()
+        self.assertEqual(bat.state.envar('a'), '0')
+        self.assertEqual(bat.state.envar('b'), '0')
+        self.assertEqual(bat.state.envar('c'), '-1')
+
+    def test_arithmetic_set_rejects_non_integer_constant(self):
+        for expr in ('1j', '1e500'):
+            bat = BatchEmulator(F'set /a x={expr}')
+            bat.execute()
+            self.assertEqual(bat.std.e.getvalue(), 'Missing operand.\r\n')
+            self.assertEqual(bat.state.ec, 1073750989)
+
+    def test_substring_negative_length(self):
+        @emulate
+        class bat:
+            '''
+            set v=ABCDE
+            echo %v:~2,-1%
+            '''
+        self.assertEqual(list(bat.emulate_commands()), ['echo CD'])
+
+    def test_substring_empty_offset(self):
+        @emulate
+        class bat:
+            '''
+            set v=ABCDE
+            echo %v:~,3%
+            '''
+        self.assertEqual(list(bat.emulate_commands()), ['echo ABC'])
+
+    def test_substitution_case_insensitive(self):
+        @emulate
+        class bat:
+            '''
+            set v=HelloWorld
+            echo %v:hello=Hi%
+            '''
+        self.assertEqual(list(bat.emulate_commands()), ['echo HiWorld'])
+
+    def test_substitution_star_prefix(self):
+        @emulate
+        class bat:
+            '''
+            set v=abcXYZdef
+            echo %v:*XYZ=_%
+            '''
+        self.assertEqual(list(bat.emulate_commands()), ['echo _def'])
+
+    def test_if_equality_is_string_comparison(self):
+        def _bat(s: str):
+            for e in BatchEmulator(F'if {s} (true) else (false)').emulate_commands(allow_junk=True):
+                return e
+        self.assertEqual(_bat('01==1'), 'false')
+        self.assertEqual(_bat('1==1'), 'true')
+        self.assertEqual(_bat('01 EQU 1'), 'true')
+
+    def test_if_casefold_keeps_numeric_comparison(self):
+        def _bat(s: str):
+            for e in BatchEmulator(F'if {s} (true) else (false)').emulate_commands(allow_junk=True):
+                return e
+        self.assertEqual(_bat('/i 5 GTR 10'), 'false')
+        self.assertEqual(_bat('/i 9 GEQ 9'), 'true')
+        self.assertEqual(_bat('/i abc EQU ABC'), 'true')
+
+    def test_type_outputs_file_contents(self):
+        @emulate
+        class bat:
+            '''
+            type secret.txt
+            '''
+        bat.state.create_file('secret.txt', 'TOPSECRET')
+        bat.execute()
+        self.assertEqual(bat.std.o.getvalue(), 'TOPSECRET')
+
+    def test_pushd_changes_directory(self):
+        @emulate
+        class bat:
+            '''
+            pushd C:\\Windows
+            echo %CD%
+            popd
+            echo %CD%
+            '''
+        cmds = [c.lower() for c in bat.emulate_commands() if c.startswith('echo')]
+        self.assertEqual(cmds, ['echo c:\\windows', 'echo c:\\'])
+
+    def test_endlocal_restores_extensions(self):
+        @emulate
+        class bat:
+            '''
+            setlocal disableextensions
+            endlocal
+            '''
+        bat.execute()
+        self.assertTrue(bat.state.cmdextended)
+        self.assertEqual(len(bat.state.cmdextended_stack), 1)
+
+    def test_findstr_wildcard_match(self):
+        @emulate
+        class bat:
+            '''
+            findstr hello *.txt
+            '''
+        bat.state.create_file('a.txt', 'hello world\r\n')
+        bat.state.create_file('b.log', 'hello there\r\n')
+        bat.execute()
+        self.assertEqual(bat.std.o.getvalue(), 'a.txt:hello world\r\n')
+
+    def test_findstr_wildcard_is_not_recursive(self):
+        state = BatchState()
+        state.create_file('a.txt', 'hit here\r\n')
+        state.create_file('sub\\b.txt', 'hit nested\r\n')
+        bat = BatchEmulator('findstr hit *.txt\n', state)
+        bat.execute()
+        self.assertEqual(bat.std.o.getvalue(), 'a.txt:hit here\r\n')
+
+    def test_findstr_wildcard_match_is_case_insensitive(self):
+        state = BatchState()
+        state.create_file('a.txt', 'hello world\r\n')
+        bat = BatchEmulator('findstr hello *.TXT\n', state)
+        bat.execute()
+        self.assertEqual(bat.std.o.getvalue(), 'a.txt:hello world\r\n')
+
+    def test_findstr_wildcard_match_order_is_sorted(self):
+        state = BatchState()
+        for name in ('mid.txt', 'aaa.txt', 'zzz.txt'):
+            state.create_file(name, 'hit\r\n')
+        bat = BatchEmulator('findstr hit *.txt\n', state)
+        bat.execute()
+        self.assertEqual(
+            bat.std.o.getvalue(), 'aaa.txt:hit\r\nmid.txt:hit\r\nzzz.txt:hit\r\n')
+
+    def _findstr(self, args: str, text: str) -> str:
+        state = BatchState()
+        state.create_file('in.txt', text)
+        bat = BatchEmulator(F'type in.txt|findstr {args}\n', state)
+        bat.execute()
+        return bat.std.o.getvalue()
+
+    def test_findstr_regex_dialect(self):
+        f = self._findstr
+        self.assertEqual(f('"a+"', 'aaab\r\n'), '')
+        self.assertEqual(f('"a+"', 'a+b\r\n'), 'a+b\r\n')
+        self.assertEqual(f('"a(b"', 'a(b\r\n'), 'a(b\r\n')
+        self.assertEqual(f('"a?b"', 'ab\r\n'), '')
+        self.assertEqual(f('"a|b"', 'a\r\n'), '')
+        self.assertEqual(f('"a.c"', 'aXc\r\n'), 'aXc\r\n')
+        self.assertEqual(f('"a.c"', 'ac\r\n'), '')
+        self.assertEqual(f('"ab*c"', 'ac\r\n'), 'ac\r\n')
+        self.assertEqual(f('"*x"', 'x\r\n'), '')
+        self.assertEqual(f('"*x"', '*x\r\n'), '*x\r\n')
+        self.assertEqual(f('"^foo"', 'foox\r\n'), 'foox\r\n')
+        self.assertEqual(f('"^foo"', 'xfoo\r\n'), '')
+        self.assertEqual(f('"bar$"', 'xbar\r\n'), 'xbar\r\n')
+        self.assertEqual(f('"a$b"', 'a$b\r\n'), 'a$b\r\n')
+        self.assertEqual(f('"[0-9]"', 'a1b\r\n'), 'a1b\r\n')
+
+    def test_findstr_flags(self):
+        f = self._findstr
+        self.assertEqual(f('/I FOO', 'fOoBar\r\n'), 'fOoBar\r\n')
+        self.assertEqual(f('FOO', 'fOoBar\r\n'), '')
+        self.assertEqual(f('/V "a b"', 'apple\r\nbbb\r\nzzz\r\n'), 'zzz\r\n')
+        self.assertEqual(f('"foo bar"', 'foo bar baz\r\n'), 'foo bar baz\r\n')
+        self.assertEqual(f('/L "a.c"', 'aXc\r\n'), '')
+        self.assertEqual(f('/L "a.c"', 'a.c\r\n'), 'a.c\r\n')
+        self.assertEqual(f('/X foo', 'foo\r\nfoobar\r\n'), 'foo\r\n')
+        self.assertEqual(f('/B foo', 'foobar\r\nxfoo\r\n'), 'foobar\r\n')
+        self.assertEqual(f('/E bar', 'foobar\r\nbarx\r\n'), 'foobar\r\n')
+        self.assertEqual(f('/N rr', 'apple\r\nberry\r\n'), '2:berry\r\n')
+
+    def test_findstr_to_regex_unit(self):
+        from refinery.lib.scripts.bat.util import findstr_to_regex
+
+        def matches(pattern: str, text: str) -> bool:
+            return bool(re.search(findstr_to_regex(pattern), text))
+        self.assertFalse(matches('a+', 'aaab'))
+        self.assertTrue(matches('a+', 'a+b'))
+        self.assertTrue(matches('a(b', 'a(b'))
+        self.assertFalse(matches('a?b', 'ab'))
+        self.assertTrue(matches('a.c', 'aXc'))
+        self.assertFalse(matches('*x', 'x'))
+        self.assertTrue(matches('^foo', 'foox'))
+        self.assertFalse(matches('^foo', 'xfoo'))
+        self.assertTrue(matches('a$b', 'a$b'))
+        self.assertTrue(matches('\\<cat\\>', 'cat scatter'))
+
+    def test_findstr_offset_and_prefix_order(self):
+        state = BatchState()
+        state.create_file('a.txt', 'x\r\nfoo\r\n')
+        state.create_file('b.txt', 'foo\r\n')
+        bat = BatchEmulator('findstr /N /O foo a.txt b.txt\n', state)
+        bat.execute()
+        self.assertEqual(bat.std.o.getvalue(), 'a.txt:2:3:foo\r\nb.txt:1:0:foo\r\n')
+
+    def test_findstr_filename_only(self):
+        state = BatchState()
+        state.create_file('a.txt', 'foo\r\nfoo\r\n')
+        state.create_file('b.txt', 'nope\r\n')
+        bat = BatchEmulator('findstr /M foo a.txt b.txt\n', state)
+        bat.execute()
+        self.assertEqual(bat.std.o.getvalue(), 'a.txt\r\n')
+
+    def _find(self, args: str, text: str) -> str:
+        state = BatchState()
+        state.create_file('in.txt', text)
+        bat = BatchEmulator(F'type in.txt|find {args}\n', state)
+        bat.execute()
+        return bat.std.o.getvalue()
+
+    def test_find_stdin(self):
+        f = self._find
+        self.assertEqual(f('"world"', 'hello world\r\nbye\r\n'), 'hello world\r\n')
+        self.assertEqual(f('"xyz"', 'hello\r\n'), '')
+        self.assertEqual(f('/N "b"', 'abc\r\nxyz\r\n'), '[1]abc\r\n')
+        self.assertEqual(f('/V "a"', 'apple\r\nzzz\r\n'), 'zzz\r\n')
+        self.assertEqual(f('/C "a"', 'apple\r\nban\r\nzzz\r\n'), '2\r\n')
+        self.assertEqual(f('/I "APPLE"', 'apple\r\n'), 'apple\r\n')
+        self.assertEqual(f('"a b"', 'a b c\r\naxb\r\n'), 'a b c\r\n')
+
+    def test_find_file_banner_and_count(self):
+        state = BatchState()
+        state.create_file('doc.txt', 'hello world\r\nbye\r\n')
+        bat = BatchEmulator('find "world" doc.txt\n', state)
+        bat.execute()
+        self.assertEqual(bat.std.o.getvalue(), '\r\n---------- DOC.TXT\r\nhello world\r\n')
+        state = BatchState()
+        state.create_file('doc.txt', 'hello\r\nworld\r\nxx\r\n')
+        bat = BatchEmulator('find /C "l" doc.txt\n', state)
+        bat.execute()
+        self.assertEqual(bat.std.o.getvalue(), '\r\n---------- DOC.TXT: 2\r\n')
+
+    def test_for_f_reads_matching_files(self):
+        @emulate
+        class bat:
+            '''
+            @echo off
+            for /f %%i in (data.txt) do echo got %%i
+            '''
+        bat.state.create_file('data.txt', 'AAA\r\nBBB\r\n')
+        cmds = [c for c in bat.emulate_commands() if c.startswith('echo')]
+        self.assertEqual(cmds, ['echo got AAA', 'echo got BBB'])
+
+    def test_delayed_expansion_empty(self):
+        @emulate
+        class bat:
+            '''
+            @echo off
+            setlocal enabledelayedexpansion
+            echo a!!b
+            '''
+        cmds = [c for c in bat.emulate_commands() if c.startswith('echo')]
+        self.assertEqual(cmds, ['echo ab'])
+
+    def test_for_l_decreasing(self):
+        @emulate
+        class bat:
+            '''
+            @echo off
+            for /l %%i in (5,-1,1) do echo n%%i
+            '''
+        cmds = [c for c in bat.emulate_commands() if c.startswith('echo')]
+        self.assertEqual(cmds, ['echo n5', 'echo n4', 'echo n3', 'echo n2', 'echo n1'])
+
+    def test_for_l_step_overshoots_stop(self):
+        @emulate
+        class bat:
+            '''
+            @echo off
+            for /l %%i in (1,2,6) do echo n%%i
+            '''
+        cmds = [c for c in bat.emulate_commands() if c.startswith('echo')]
+        self.assertEqual(cmds, ['echo n1', 'echo n3', 'echo n5'])
+
+    def test_for_l_positive_step_start_after_stop(self):
+        @emulate
+        class bat:
+            '''
+            @echo off
+            for /l %%i in (5,1,1) do echo n%%i
+            '''
+        cmds = [c for c in bat.emulate_commands() if c.startswith('echo')]
+        self.assertEqual(cmds, [])
+
+    def test_for_f_command_substitution_reads_set_a(self):
+        @emulate
+        class bat:
+            '''
+            @echo off
+            for /f %%i in ('set /a 1+1') do echo got %%i
+            '''
+        cmds = [c for c in bat.emulate_commands() if c.startswith('echo')]
+        self.assertEqual(cmds, ['echo got 2'])
+
+    def test_for_l_infinite_loop_detected(self):
+        state = BatchState(cmdline=True)
+        bat = BatchEmulator('for /l %i in (1,0,5) do echo %i\n', state)
+        errors = [str(s) for s in bat.trace() if isinstance(s, Error)]
+        self.assertEqual(errors, ['Infinite loop detected in FOR /L loop (1,0,5)'])
+
+    def test_goto_infinite_loop_detected(self):
+        bat = BatchEmulator(':LOOP\ngoto :LOOP\n')
+        errors = [str(s) for s in bat.trace() if isinstance(s, Error)]
+        self.assertEqual(errors, ['Infinite loop detected for label LOOP'])
 
     def test_odd_error_level_after_set_01(self):
         bat = BatchEmulator('set /a||echo %ERRORLEVEL%')
@@ -1324,8 +1766,32 @@ class TestBatchUtil(TestBase):
         self.assertEqual(len(r), 0)
 
     def test_batchrange_zero_step(self):
+        # A step of 0 loops forever while start <= end, exactly like cmd.exe FOR /L; take a
+        # bounded prefix so the test cannot hang. When start > end it yields nothing.
         r = batchrange(1, 0, 5)
         self.assertEqual(len(r), 0)
+        ascending = iter(r)
+        self.assertEqual([next(ascending) for _ in range(4)], ['1', '1', '1', '1'])
+        self.assertEqual(list(batchrange(5, 0, 1)), [])
+
+    def test_batchrange_descending(self):
+        self.assertEqual(list(batchrange(5, -1, 1)), ['5', '4', '3', '2', '1'])
+        self.assertEqual(len(batchrange(5, -1, 1)), 5)
+
+    def test_batchrange_step_overshoots_stop(self):
+        self.assertEqual(list(batchrange(1, 2, 6)), ['1', '3', '5'])
+        self.assertEqual(list(batchrange(5, -2, 0)), ['5', '3', '1'])
+
+    def test_batchrange_step_direction_mismatch(self):
+        self.assertEqual(list(batchrange(5, 1, 1)), [])
+        self.assertEqual(list(batchrange(1, -1, 5)), [])
+
+    def test_batchrange_infinite_property(self):
+        self.assertTrue(batchrange(1, 0, 5).infinite)
+        self.assertTrue(batchrange(1, 0, 1).infinite)
+        self.assertFalse(batchrange(5, 0, 1).infinite)
+        self.assertFalse(batchrange(1, 1, 5).infinite)
+        self.assertFalse(batchrange(5, -1, 1).infinite)
 
     def test_batchrange_negative_step(self):
         r = batchrange(1, -1, 5)

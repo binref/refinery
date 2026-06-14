@@ -9,23 +9,32 @@ if typing.TYPE_CHECKING:
 
 
 class batchrange:
-    def __init__(self, min: int, inc: int, max: int):
-        self.min = min
-        self.inc = inc
-        self.max = max
+    def __init__(self, start: int, step: int, stop: int):
+        self.start = start
+        self.step = step
+        self.stop = stop
+
+    @property
+    def infinite(self) -> bool:
+        return self.step == 0 and self.start <= self.stop
 
     def __len__(self):
-        if self.inc <= 0 or self.max < self.min:
+        if self.step == 0:
             return 0
-        return (self.max - self.min) // self.inc + 1
+        return max(0, (self.stop - self.start) // self.step + 1)
 
     def __iter__(self):
-        val = self.min
-        inc = self.inc
-        max = self.max
-        while val <= max:
-            yield str(val)
-            val += inc
+        index = self.start
+        step = self.step
+        stop = self.stop
+        if step < 0:
+            while index >= stop:
+                yield str(index)
+                index += step
+        else:
+            while index <= stop:
+                yield str(index)
+                index += step
 
 
 def batchint(expr: str, default: int | None = None):
@@ -89,3 +98,78 @@ def uncaret(token: str, ignore_quotes: bool = False) -> tuple[bool, str]:
         for k in range(0, count, 2):
             trailing_caret, parts[k] = uncaret(parts[k], True)
         return trailing_caret, ''.join(parts)
+
+
+def _findstr_class_end(pattern: str, start: int) -> int | None:
+    j = start + 1
+    if j < len(pattern) and pattern[j] == '^':
+        j += 1
+    if j < len(pattern) and pattern[j] == ']':
+        j += 1
+    while j < len(pattern):
+        if pattern[j] == ']':
+            return j
+        j += 1
+    return None
+
+
+def _findstr_class(text: str) -> str:
+    inner = text[1:-1]
+    negate = ''
+    if inner.startswith('^'):
+        negate, inner = '^', inner[1:]
+    inner = inner.replace('\\', '\\\\').replace(']', '\\]')
+    return F'[{negate}{inner}]'
+
+
+def findstr_to_regex(pattern: str) -> str:
+    """
+    Translate a single findstr search expression into an equivalent Python regular
+    expression. The findstr dialect is limited: the only metacharacters are
+    `. * [..] ^ $ \\< \\>` and the backslash escape; everything else, in particular
+    `+ ? { } ( ) |`, is matched literally.
+    """
+    out = []
+    i = 0
+    size = len(pattern)
+    prev_atom = False
+    while i < size:
+        c = pattern[i]
+        if c == '\\':
+            nxt = pattern[i + 1:i + 2]
+            if nxt in ('<', '>'):
+                out.append('\\b')
+                prev_atom = False
+            elif nxt == '':
+                out.append('\\\\')
+                prev_atom = True
+            elif nxt in '.*[]^$\\':
+                out.append(re.escape(nxt))
+                prev_atom = True
+            else:
+                out.append(re.escape(F'\\{nxt}'))
+                prev_atom = True
+            i += 2
+            continue
+        if c == '[' and (end := _findstr_class_end(pattern, i)) is not None:
+            out.append(_findstr_class(pattern[i:end + 1]))
+            prev_atom = True
+            i = end + 1
+            continue
+        if c == '.':
+            out.append('.')
+            prev_atom = True
+        elif c == '*' and prev_atom:
+            out.append('*')
+            prev_atom = False
+        elif c == '^' and i == 0:
+            out.append('^')
+            prev_atom = False
+        elif c == '$' and i == size - 1:
+            out.append('$')
+            prev_atom = False
+        else:
+            out.append(re.escape(c))
+            prev_atom = True
+        i += 1
+    return ''.join(out)
