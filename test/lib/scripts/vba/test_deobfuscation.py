@@ -31,257 +31,92 @@ class TestVbaDeobfuscation(TestBase):
         return VbaSynthesizer().convert(ast)
 
     def test_string_concat_ampersand(self):
-        code = cleandoc("""
-            Sub T()
-              x = "hel" & "lo"
-            End Sub
-        """)
-        result = self._fold(code)
-        self.assertIn('"hello"', result)
+        self.assertEqual(self._fold('x = "hel" & "lo"'), 'x = "hello"')
 
     def test_string_concat_plus(self):
-        code = cleandoc("""
-            Sub T()
-              x = "hel" + "lo"
-            End Sub
-        """)
-        result = self._fold(code)
-        self.assertIn('"hello"', result)
+        self.assertEqual(self._fold('x = "hel" + "lo"'), 'x = "hello"')
 
     def test_chr_resolution(self):
-        code = cleandoc("""
-            Sub T()
-              x = Chr(72) & Chr(101) & Chr(108) & Chr(108) & Chr(111)
-            End Sub
-        """)
-        result = self._fold(code)
-        self.assertIn('"Hello"', result)
+        self.assertEqual(
+            self._fold('x = Chr(72) & Chr(101) & Chr(108) & Chr(108) & Chr(111)'),
+            'x = "Hello"')
 
     def test_chrw_resolution(self):
-        code = cleandoc("""
-            Sub T()
-              x = ChrW(65)
-            End Sub
-        """)
-        result = self._fold(code)
-        self.assertIn('"A"', result)
+        self.assertEqual(self._fold('x = ChrW(65)'), 'x = "A"')
 
     def test_asc_resolution(self):
-        code = cleandoc("""
-            Sub T()
-              x = Asc("A")
-            End Sub
-        """)
-        result = self._fold(code)
-        self.assertIn('65', result)
+        self.assertEqual(self._fold('x = Asc("A")'), 'x = 65')
 
     def test_numeric_add(self):
-        code = cleandoc("""
-            Sub T()
-              x = 10 + 20
-            End Sub
-        """)
-        result = self._fold(code)
-        self.assertIn('30', result)
+        self.assertEqual(self._fold('x = 10 + 20'), 'x = 30')
 
     def test_numeric_subtract(self):
-        code = cleandoc("""
-            Sub T()
-              x = 50 - 15
-            End Sub
-        """)
-        result = self._fold(code)
-        self.assertIn('35', result)
+        self.assertEqual(self._fold('x = 50 - 15'), 'x = 35')
 
     def test_numeric_multiply(self):
-        code = cleandoc("""
-            Sub T()
-              x = 6 * 7
-            End Sub
-        """)
-        result = self._fold(code)
-        self.assertIn('42', result)
+        self.assertEqual(self._fold('x = 6 * 7'), 'x = 42')
 
     def test_integer_division(self):
-        code = cleandoc("""
-            Sub T()
-              x = 10 \\ 3
-            End Sub
-        """)
-        result = self._fold(code)
-        self.assertIn('3', result)
+        self.assertEqual(self._fold('x = 10 \\ 3'), 'x = 3')
 
     def test_mod_operation(self):
-        code = cleandoc("""
-            Sub T()
-              x = 10 Mod 3
-            End Sub
-        """)
-        result = self._fold(code)
-        self.assertIn('1', result)
+        self.assertEqual(self._fold('x = 10 Mod 3'), 'x = 1')
 
     def test_exponentiation(self):
-        code = cleandoc("""
-            Sub T()
-              x = 2 ^ 3
-            End Sub
-        """)
-        result = self._fold(code)
-        self.assertIn('8', result)
+        self.assertEqual(self._fold('x = 2 ^ 3'), 'x = 8')
 
     def test_unary_minus(self):
-        code = cleandoc("""
-            Sub T()
-              x = -42
-            End Sub
-        """)
-        result = self._fold(code)
-        self.assertIn('-42', result)
+        self.assertEqual(self._fold('x = -42'), 'x = -42')
 
     def test_not_boolean(self):
-        code = cleandoc("""
-            Sub T()
-              x = Not True
-            End Sub
-        """)
-        result = self._fold(code)
-        self.assertIn('False', result)
+        self.assertEqual(self._fold('x = Not True'), 'x = False')
 
     def test_not_integer(self):
-        code = cleandoc("""
-            Sub T()
-              x = Not 0
-            End Sub
-        """)
-        result = self._fold(code)
-        self.assertIn('-1', result)
+        self.assertEqual(self._fold('x = Not 0'), 'x = -1')
 
     def test_mid_function(self):
-        code = cleandoc("""
-            Sub T()
-              x = Mid("Hello", 2, 3)
-            End Sub
-        """)
-        result = self._fold(code)
-        self.assertIn('"ell"', result)
+        self.assertEqual(self._fold('x = Mid("Hello", 2, 3)'), 'x = "ell"')
 
     def test_left_function(self):
-        code = cleandoc("""
-            Sub T()
-              x = Left("Hello", 3)
-            End Sub
-        """)
-        result = self._fold(code)
-        self.assertIn('"Hel"', result)
+        self.assertEqual(self._fold('x = Left("Hello", 3)'), 'x = "Hel"')
 
     def test_right_function(self):
-        code = cleandoc("""
-            Sub T()
-              x = Right("Hello", 3)
-            End Sub
-        """)
-        result = self._fold(code)
-        self.assertIn('"llo"', result)
+        self.assertEqual(self._fold('x = Right("Hello", 3)'), 'x = "llo"')
 
     def test_strreverse(self):
-        code = cleandoc("""
-            Sub T()
-              x = StrReverse("Hello")
-            End Sub
-        """)
-        result = self._fold(code)
-        self.assertIn('"olleH"', result)
+        self.assertEqual(self._fold('x = StrReverse("Hello")'), 'x = "olleH"')
 
     def test_lcase(self):
-        code = cleandoc("""
-            Sub T()
-              x = LCase("HELLO")
-            End Sub
-        """)
-        result = self._fold(code)
-        self.assertIn('"hello"', result)
+        self.assertEqual(self._fold('x = LCase("HELLO")'), 'x = "hello"')
 
     def test_ucase(self):
-        code = cleandoc("""
-            Sub T()
-              x = UCase("hello")
-            End Sub
-        """)
-        result = self._fold(code)
-        self.assertIn('"HELLO"', result)
+        self.assertEqual(self._fold('x = UCase("hello")'), 'x = "HELLO"')
 
     def test_len_function(self):
-        code = cleandoc("""
-            Sub T()
-              x = Len("Hello")
-            End Sub
-        """)
-        result = self._fold(code)
-        self.assertIn('5', result)
+        self.assertEqual(self._fold('x = Len("Hello")'), 'x = 5')
 
     def test_paren_removal(self):
-        code = cleandoc("""
-            Sub T()
-              x = (42)
-            End Sub
-        """)
-        result = self._fold(code)
-        self.assertIn('42', result)
-        self.assertNotIn('(42)', result)
+        self.assertEqual(self._fold('x = (42)'), 'x = 42')
 
     def test_combined_chr_concat(self):
-        code = cleandoc("""
-            Sub T()
-              x = Chr(87) & Chr(83) & Chr(99) & Chr(114) & Chr(105) & Chr(112) & Chr(116)
-            End Sub
-        """)
-        result = self._fold(code)
-        self.assertIn('"WScript"', result)
+        self.assertEqual(
+            self._fold('x = Chr(87) & Chr(83) & Chr(99) & Chr(114) & Chr(105) & Chr(112) & Chr(116)'),
+            'x = "WScript"')
 
     def test_nested_concat(self):
-        code = cleandoc("""
-            Sub T()
-              x = ("a" & "b") & "c"
-            End Sub
-        """)
-        result = self._fold(code)
-        self.assertIn('"abc"', result)
+        self.assertEqual(self._fold('x = ("a" & "b") & "c"'), 'x = "abc"')
 
     def test_division_by_zero_safe(self):
-        code = cleandoc("""
-            Sub T()
-              x = 1 / 0
-            End Sub
-        """)
-        result = self._fold(code)
-        self.assertIn('1 / 0', result)
+        self.assertEqual(self._fold('x = 1 / 0'), 'x = 1 / 0')
 
     def test_space_function(self):
-        code = cleandoc("""
-            Sub T()
-              x = Space(5)
-            End Sub
-        """)
-        result = self._fold(code)
-        self.assertIn('"     "', result)
+        self.assertEqual(self._fold('x = Space(5)'), 'x = "     "')
 
     def test_replace_function(self):
-        code = cleandoc("""
-            Sub T()
-              x = Replace("abc", "b", "x")
-            End Sub
-        """)
-        result = self._fold(code)
-        self.assertIn('"axc"', result)
+        self.assertEqual(self._fold('x = Replace("abc", "b", "x")'), 'x = "axc"')
 
     def test_replace_empty_insert(self):
-        code = cleandoc("""
-            Sub T()
-              x = Replace("aXbXc", "X", "")
-            End Sub
-        """)
-        result = self._fold(code)
-        self.assertIn('"abc"', result)
+        self.assertEqual(self._fold('x = Replace("aXbXc", "X", "")'), 'x = "abc"')
 
     def test_constant_inlining(self):
         code = cleandoc("""
@@ -290,9 +125,11 @@ class TestVbaDeobfuscation(TestBase):
               F K
             End Sub
         """)
-        result = self._deobfuscate(code)
-        self.assertIn('"val"', result)
-        self.assertNotIn('Const', result)
+        self.assertEqual(self._deobfuscate(code), cleandoc("""
+            Sub T()
+              F "val"
+            End Sub
+        """))
 
     def test_constant_inline_let(self):
         code = cleandoc("""
@@ -302,9 +139,11 @@ class TestVbaDeobfuscation(TestBase):
               F x
             End Sub
         """)
-        result = self._deobfuscate(code)
-        self.assertIn('43', result)
-        self.assertNotIn('y =', result)
+        self.assertEqual(self._deobfuscate(code), cleandoc("""
+            Sub T()
+              F 43
+            End Sub
+        """))
 
     def test_constant_multi_assign(self):
         code = cleandoc("""
@@ -315,10 +154,7 @@ class TestVbaDeobfuscation(TestBase):
               F x
             End Sub
         """)
-        result = self._deobfuscate(code)
-        self.assertNotIn('x = 1', result)
-        self.assertNotIn('x = 2', result)
-        self.assertIn('x = y', result)
+        self.assertEqual(self._deobfuscate(code), code)
 
     def test_negative_constant_inlining(self):
         code = cleandoc("""
@@ -328,9 +164,11 @@ class TestVbaDeobfuscation(TestBase):
               F y
             End Sub
         """)
-        result = self._deobfuscate(code)
-        self.assertIn('4', result)
-        self.assertNotIn('Const', result)
+        self.assertEqual(self._deobfuscate(code), cleandoc("""
+            Sub T()
+              F 4
+            End Sub
+        """))
 
     def test_dead_variable_removal(self):
         code = cleandoc("""
@@ -338,8 +176,7 @@ class TestVbaDeobfuscation(TestBase):
               x = 1
             End Sub
         """)
-        result = self._deobfuscate(code)
-        self.assertNotIn('x = 1', result)
+        self.assertEqual(self._deobfuscate(code), '')
 
     def test_dead_variable_keep_calls(self):
         code = cleandoc("""
@@ -347,8 +184,7 @@ class TestVbaDeobfuscation(TestBase):
               x = Foo()
             End Sub
         """)
-        result = self._deobfuscate(code)
-        self.assertIn('Foo()', result)
+        self.assertEqual(self._deobfuscate(code), code)
 
     def test_dead_variable_keep_used(self):
         code = cleandoc("""
@@ -357,38 +193,36 @@ class TestVbaDeobfuscation(TestBase):
               y = x
             End Sub
         """)
-        result = self._deobfuscate(code)
-        self.assertIn('x = Foo()', result)
-        self.assertNotIn('y =', result)
+        self.assertEqual(self._deobfuscate(code), cleandoc("""
+            Sub T()
+              x = Foo()
+            End Sub
+        """))
 
     def test_xor_operator(self):
-        result = self._deobfuscate('CLng((0 Xor 0))')
-        self.assertEqual(result, 'CLng((0 Xor 0))')
+        self.assertEqual(self._deobfuscate('CLng((0 Xor 0))'), 'CLng((0 Xor 0))')
 
     def test_remove_comments(self):
-        result = self._deobfuscate(cleandoc("""
+        code = cleandoc("""
             ' Test
             b = a
             ' Test
-        """))
-        self.assertIn('b = a', result)
-        self.assertNotIn("' Test", result)
+        """)
+        self.assertEqual(self._deobfuscate(code), 'b = a')
 
     def test_regression_matchgroup(self):
-        result = self._deobfuscate(cleandoc(r"""
+        code = cleandoc(r"""
             const a = "\3"
             b = a
-        """))
-        self.assertIn(r'b = "\3"', result)
+        """)
+        self.assertEqual(self._deobfuscate(code), r'b = "\3"')
 
     def test_regression_overeager_removal(self):
-        data = cleandoc("""
+        code = cleandoc("""
             a.Close
             b = z.function(x)
         """)
-        result = self._deobfuscate(data)
-        self.assertIn('a.Close', result)
-        self.assertIn('b = z.function(x)', result)
+        self.assertEqual(self._deobfuscate(code), code)
 
     def test_regression_multi_assign_no_inline(self):
         code = cleandoc("""
@@ -401,9 +235,11 @@ class TestVbaDeobfuscation(TestBase):
               F melb
             End Sub
         """)
-        result = self._deobfuscate(code)
-        self.assertNotIn('melb = "cellvalue"', result)
-        self.assertIn('cellvalueif', result)
+        self.assertEqual(self._deobfuscate(code), cleandoc("""
+            Sub T()
+              F "cellvalueif"
+            End Sub
+        """))
 
     def test_emulator_simple_return(self):
         code = cleandoc("""
@@ -415,9 +251,11 @@ class TestVbaDeobfuscation(TestBase):
               G x
             End Sub
         """)
-        result = self._full_deobfuscate(code)
-        self.assertIn('"hello"', result)
-        self.assertNotIn('Function F()', result)
+        self.assertEqual(self._full_deobfuscate(code), cleandoc("""
+            Sub T()
+              G "hello"
+            End Sub
+        """))
 
     def test_emulator_self_referential_return(self):
         code = cleandoc("""
@@ -430,8 +268,11 @@ class TestVbaDeobfuscation(TestBase):
               F melb
             End Sub
         """)
-        result = self._full_deobfuscate(code)
-        self.assertIn('"cellvalueif"', result)
+        self.assertEqual(self._full_deobfuscate(code), cleandoc("""
+            Sub T()
+              F "cellvalueif"
+            End Sub
+        """))
 
     def test_emulator_with_params(self):
         code = cleandoc("""
@@ -443,20 +284,23 @@ class TestVbaDeobfuscation(TestBase):
               G x
             End Sub
         """)
-        result = self._full_deobfuscate(code)
-        self.assertIn('"ABC"', result)
+        self.assertEqual(self._full_deobfuscate(code), cleandoc("""
+            Sub T()
+              G "ABC"
+            End Sub
+        """))
 
     def test_emulator_nonconstant_arg_preserved(self):
         code = cleandoc("""
             Function F(x)
               F = x & "!"
             End Function
+
             Sub T()
               G F(y)
             End Sub
         """)
-        result = self._full_deobfuscate(code)
-        self.assertIn('F(y)', result)
+        self.assertEqual(self._full_deobfuscate(code), code)
 
     def test_emulator_loop(self):
         code = cleandoc("""
@@ -469,20 +313,23 @@ class TestVbaDeobfuscation(TestBase):
               G Build()
             End Sub
         """)
-        result = self._full_deobfuscate(code)
-        self.assertIn('"xxx"', result)
+        self.assertEqual(self._full_deobfuscate(code), cleandoc("""
+            Sub T()
+              G "xxx"
+            End Sub
+        """))
 
     def test_emulator_impure_not_inlined(self):
         code = cleandoc("""
             Function F()
               F = Application.Name
             End Function
+
             Sub T()
               G F()
             End Sub
         """)
-        result = self._full_deobfuscate(code)
-        self.assertIn('F()', result)
+        self.assertEqual(self._full_deobfuscate(code), code)
 
     def test_emulator_do_while_false_skips_body(self):
         code = cleandoc("""
@@ -496,9 +343,11 @@ class TestVbaDeobfuscation(TestBase):
               G F()
             End Sub
         """)
-        result = self._full_deobfuscate(code)
-        self.assertIn('"before"', result)
-        self.assertNotIn('"inside"', result)
+        self.assertEqual(self._full_deobfuscate(code), cleandoc("""
+            Sub T()
+              G "before"
+            End Sub
+        """))
 
     def test_emulator_do_until_true_skips_body(self):
         code = cleandoc("""
@@ -512,9 +361,11 @@ class TestVbaDeobfuscation(TestBase):
               G F()
             End Sub
         """)
-        result = self._full_deobfuscate(code)
-        self.assertIn('"before"', result)
-        self.assertNotIn('"inside"', result)
+        self.assertEqual(self._full_deobfuscate(code), cleandoc("""
+            Sub T()
+              G "before"
+            End Sub
+        """))
 
     def test_emulator_preserves_side_effecting_function(self):
         code = cleandoc("""
@@ -528,28 +379,23 @@ class TestVbaDeobfuscation(TestBase):
               Builder
             End Sub
         """)
-        result = self._full_deobfuscate(code)
-        self.assertIn('Shell', result)
-        self.assertIn('Function Builder()', result)
-        self.assertIn('"cmd Ppayload"', result)
+        self.assertEqual(self._full_deobfuscate(code), cleandoc("""
+            Function Builder()
+              On Error Resume Next
+              Shell "cmd Ppayload", 0
+            End Function
+
+            Sub Autoopen()
+              On Error Resume Next
+              Builder
+            End Sub
+        """))
 
     def test_chr_non_printable_preserved(self):
-        code = cleandoc("""
-            Sub T()
-              x = Chr(13)
-            End Sub
-        """)
-        result = self._fold(code)
-        self.assertIn('Chr(13)', result)
+        self.assertEqual(self._fold('x = Chr(13)'), 'x = Chr(13)')
 
     def test_builtin_constant_in_chr(self):
-        code = cleandoc("""
-            Sub T()
-              x = Chr(vbKeyA)
-            End Sub
-        """)
-        result = self._fold(code)
-        self.assertIn('"A"', result)
+        self.assertEqual(self._fold('x = Chr(vbKeyA)'), 'x = "A"')
 
     def test_builtin_constant_vbobjecterror(self):
         code = cleandoc("""
@@ -558,17 +404,14 @@ class TestVbaDeobfuscation(TestBase):
               F x
             End Sub
         """)
-        result = self._deobfuscate(code)
-        self.assertIn('-2147221504', result)
+        self.assertEqual(self._deobfuscate(code), cleandoc("""
+            Sub T()
+              F -2147221504
+            End Sub
+        """))
 
     def test_builtin_constant_vbcrlf_not_inlined(self):
-        code = cleandoc("""
-            Sub T()
-              x = vbCrLf
-            End Sub
-        """)
-        result = self._fold(code)
-        self.assertIn('vbCrLf', result)
+        self.assertEqual(self._fold('x = vbCrLf'), 'x = vbCrLf')
 
     def test_undefined_var_eliminated_in_concat(self):
         code = cleandoc("""
@@ -580,18 +423,14 @@ class TestVbaDeobfuscation(TestBase):
               G F()
             End Sub
         """)
-        result = self._full_deobfuscate(code)
-        self.assertIn('"hello"', result)
-        self.assertNotIn('junk', result)
+        self.assertEqual(self._full_deobfuscate(code), cleandoc("""
+            Sub T()
+              G "hello"
+            End Sub
+        """))
 
     def test_undefined_var_kept_without_oern(self):
-        code = cleandoc("""
-            Sub T()
-              x = junk + "hello"
-            End Sub
-        """)
-        result = self._fold(code)
-        self.assertIn('junk', result)
+        self.assertEqual(self._fold('x = junk + "hello"'), 'x = junk + "hello"')
 
     def test_return_variable_inlined(self):
         code = cleandoc("""
@@ -600,8 +439,11 @@ class TestVbaDeobfuscation(TestBase):
               Shell "cmd " & F, 0
             End Function
         """)
-        result = self._full_deobfuscate(code)
-        self.assertIn('"cmd hello"', result)
+        self.assertEqual(self._full_deobfuscate(code), cleandoc("""
+            Function F()
+              Shell "cmd hello", 0
+            End Function
+        """))
 
     def test_emulator_refuses_nonprintable_result(self):
         code = cleandoc("""
@@ -612,9 +454,11 @@ class TestVbaDeobfuscation(TestBase):
               G F()
             End Sub
         """)
-        result = self._full_deobfuscate(code)
-        self.assertNotIn('F()', result)
-        self.assertIn('"a" & Chr(13) & "b"', result)
+        self.assertEqual(self._full_deobfuscate(code), cleandoc("""
+            Sub T()
+              G "a" & Chr(13) & "b"
+            End Sub
+        """))
 
     def test_chr_inlining_in_concat(self):
         code = cleandoc("""
@@ -625,11 +469,12 @@ class TestVbaDeobfuscation(TestBase):
               F y
             End Sub
         """)
-        result = self._full_deobfuscate(code)
-        self.assertNotIn('x =', result)
-        self.assertIn('Chr(13)', result)
-        self.assertIn('"a"', result)
-        self.assertIn('"b"', result)
+        self.assertEqual(self._full_deobfuscate(code), cleandoc("""
+            Sub T()
+              On Error Resume Next
+              F "a" + Chr(13) + "b"
+            End Sub
+        """))
 
     def test_emulator_nonprintable_result_synthesized(self):
         code = cleandoc("""
@@ -640,11 +485,11 @@ class TestVbaDeobfuscation(TestBase):
               G F()
             End Sub
         """)
-        result = self._full_deobfuscate(code)
-        self.assertNotIn('F()', result)
-        self.assertIn('Chr(13)', result)
-        self.assertIn('"payload"', result)
-        self.assertIn('Chr(10)', result)
+        self.assertEqual(self._full_deobfuscate(code), cleandoc("""
+            Sub T()
+              G Chr(13) & "payload" & Chr(10)
+            End Sub
+        """))
 
     def test_empty_sub_removed(self):
         code = cleandoc("""
@@ -654,9 +499,11 @@ class TestVbaDeobfuscation(TestBase):
               G 1
             End Sub
         """)
-        result = self._deobfuscate(code)
-        self.assertNotIn('Junk', result)
-        self.assertIn('Sub T()', result)
+        self.assertEqual(self._deobfuscate(code), cleandoc("""
+            Sub T()
+              G 1
+            End Sub
+        """))
 
     def test_empty_function_removed(self):
         code = cleandoc("""
@@ -666,9 +513,11 @@ class TestVbaDeobfuscation(TestBase):
               G 1
             End Sub
         """)
-        result = self._deobfuscate(code)
-        self.assertNotIn('Junk', result)
-        self.assertIn('Sub T()', result)
+        self.assertEqual(self._deobfuscate(code), cleandoc("""
+            Sub T()
+              G 1
+            End Sub
+        """))
 
     def test_empty_property_removed(self):
         code = cleandoc("""
@@ -678,32 +527,34 @@ class TestVbaDeobfuscation(TestBase):
               G 1
             End Sub
         """)
-        result = self._deobfuscate(code)
-        self.assertNotIn('Junk', result)
-        self.assertIn('Sub T()', result)
+        self.assertEqual(self._deobfuscate(code), cleandoc("""
+            Sub T()
+              G 1
+            End Sub
+        """))
 
     def test_empty_sub_called_preserved(self):
         code = cleandoc("""
             Sub Junk()
             End Sub
+
             Sub T()
               Junk
             End Sub
         """)
-        result = self._deobfuscate(code)
-        self.assertIn('Sub Junk()', result)
+        self.assertEqual(self._deobfuscate(code), code)
 
     def test_nonempty_sub_uncalled_preserved(self):
         code = cleandoc("""
             Sub Junk()
               MsgBox "hi"
             End Sub
+
             Sub T()
               G 1
             End Sub
         """)
-        result = self._deobfuscate(code)
-        self.assertIn('Sub Junk()', result)
+        self.assertEqual(self._deobfuscate(code), code)
 
     def test_mixed_empty_procedures(self):
         code = cleandoc("""
@@ -715,107 +566,58 @@ class TestVbaDeobfuscation(TestBase):
               A
             End Sub
         """)
-        result = self._deobfuscate(code)
-        self.assertIn('Sub A()', result)
-        self.assertNotIn('Sub B()', result)
+        self.assertEqual(self._deobfuscate(code), cleandoc("""
+            Sub A()
+            End Sub
+
+            Sub T()
+              A
+            End Sub
+        """))
 
     def test_empty_sub_called_from_other_preserved(self):
         code = cleandoc("""
             Sub Junk()
             End Sub
+
             Sub Helper()
               Junk
             End Sub
+
             Sub T()
               G 1
             End Sub
         """)
-        result = self._deobfuscate(code)
-        self.assertIn('Sub Junk()', result)
+        self.assertEqual(self._deobfuscate(code), code)
 
     def test_instr_two_args(self):
-        code = cleandoc("""
-            Sub T()
-              x = InStr("abcabc", "bc")
-            End Sub
-        """)
-        result = self._fold(code)
-        self.assertIn('x = 2', result)
+        self.assertEqual(self._fold('x = InStr("abcabc", "bc")'), 'x = 2')
 
     def test_instr_three_args(self):
-        code = cleandoc("""
-            Sub T()
-              x = InStr(3, "abcabc", "bc")
-            End Sub
-        """)
-        result = self._fold(code)
-        self.assertIn('x = 5', result)
+        self.assertEqual(self._fold('x = InStr(3, "abcabc", "bc")'), 'x = 5')
 
     def test_instr_not_found(self):
-        code = cleandoc("""
-            Sub T()
-              x = InStr("abc", "z")
-            End Sub
-        """)
-        result = self._fold(code)
-        self.assertIn('x = 0', result)
+        self.assertEqual(self._fold('x = InStr("abc", "z")'), 'x = 0')
 
     def test_instrrev_two_args(self):
-        code = cleandoc("""
-            Sub T()
-              x = InStrRev("abcabc", "bc")
-            End Sub
-        """)
-        result = self._fold(code)
-        self.assertIn('x = 5', result)
+        self.assertEqual(self._fold('x = InStrRev("abcabc", "bc")'), 'x = 5')
 
     def test_instrrev_three_args(self):
-        code = cleandoc("""
-            Sub T()
-              x = InStrRev("abcabc", "bc", 4)
-            End Sub
-        """)
-        result = self._fold(code)
-        self.assertIn('x = 2', result)
+        self.assertEqual(self._fold('x = InStrRev("abcabc", "bc", 4)'), 'x = 2')
 
     def test_instrrev_start_bounds_match_end(self):
-        # InStrRev's start bounds the END of the match: the match must lie fully within the first
-        # `start` characters. The "abc" beginning at position 4 ends past start=4 and is excluded,
-        # so only the one at position 1 qualifies. Oracle: InStrRev("abcabc","abc",4) = 1 (not 4).
-        code = cleandoc("""
-            Sub T()
-              x = InStrRev("abcabc", "abc", 4)
-            End Sub
-        """)
-        result = self._fold(code)
-        self.assertIn('x = 1', result)
+        # InStrRev's start bounds the END of the match: the match must lie within the first `start`
+        # characters, so the "abc" beginning at position 4 is excluded and the result is 1, not 4.
+        self.assertEqual(self._fold('x = InStrRev("abcabc", "abc", 4)'), 'x = 1')
 
     def test_strcomp_equal(self):
-        code = cleandoc("""
-            Sub T()
-              x = StrComp("abc", "abc")
-            End Sub
-        """)
-        result = self._fold(code)
-        self.assertIn('x = 0', result)
+        self.assertEqual(self._fold('x = StrComp("abc", "abc")'), 'x = 0')
 
     def test_strcomp_less(self):
-        code = cleandoc("""
-            Sub T()
-              x = StrComp("abc", "def")
-            End Sub
-        """)
-        result = self._fold(code)
-        self.assertIn('x = -1', result)
+        self.assertEqual(self._fold('x = StrComp("abc", "def")'), 'x = -1')
 
     def test_strcomp_case_insensitive(self):
-        code = cleandoc("""
-            Sub T()
-              x = StrComp("ABC", "abc", 1)
-            End Sub
-        """)
-        result = self._fold(code)
-        self.assertIn('x = 0', result)
+        self.assertEqual(self._fold('x = StrComp("ABC", "abc", 1)'), 'x = 0')
 
     def test_emulator_instr(self):
         code = cleandoc("""
@@ -827,8 +629,11 @@ class TestVbaDeobfuscation(TestBase):
               G x
             End Sub
         """)
-        result = self._full_deobfuscate(code)
-        self.assertIn('7', result)
+        self.assertEqual(self._full_deobfuscate(code), cleandoc("""
+            Sub T()
+              G 7
+            End Sub
+        """))
 
     def test_emulator_instrrev(self):
         code = cleandoc("""
@@ -840,8 +645,11 @@ class TestVbaDeobfuscation(TestBase):
               G x
             End Sub
         """)
-        result = self._full_deobfuscate(code)
-        self.assertIn('4', result)
+        self.assertEqual(self._full_deobfuscate(code), cleandoc("""
+            Sub T()
+              G 4
+            End Sub
+        """))
 
     def test_accumulator_basic_concat(self):
         code = cleandoc("""
@@ -851,8 +659,7 @@ class TestVbaDeobfuscation(TestBase):
               F x
             End Sub
         """)
-        result = self._deobfuscate(code)
-        self.assertEqual(result, cleandoc("""
+        self.assertEqual(self._deobfuscate(code), cleandoc("""
             Sub T()
               F "hello world"
             End Sub
@@ -878,8 +685,7 @@ class TestVbaDeobfuscation(TestBase):
               F x
             End Sub
         """)
-        result = self._deobfuscate(code)
-        self.assertEqual(result, cleandoc("""
+        self.assertEqual(self._deobfuscate(code), cleandoc("""
             Sub T()
               F "abcde"
             End Sub
@@ -893,8 +699,7 @@ class TestVbaDeobfuscation(TestBase):
               F x
             End Sub
         """)
-        result = self._deobfuscate(code)
-        self.assertEqual(result, cleandoc("""
+        self.assertEqual(self._deobfuscate(code), cleandoc("""
             Sub T()
               F "hello world"
             End Sub
@@ -909,15 +714,7 @@ class TestVbaDeobfuscation(TestBase):
               G x
             End Sub
         """)
-        result = self._deobfuscate(code)
-        self.assertEqual(result, cleandoc("""
-            Sub T()
-              x = "a"
-              F x
-              x = x & "b"
-              G x
-            End Sub
-        """))
+        self.assertEqual(self._deobfuscate(code), code)
 
     def test_accumulator_chain_breaks_on_different_variable(self):
         code = cleandoc("""
@@ -928,8 +725,7 @@ class TestVbaDeobfuscation(TestBase):
               F x, y
             End Sub
         """)
-        result = self._deobfuscate(code)
-        self.assertEqual(result, cleandoc("""
+        self.assertEqual(self._deobfuscate(code), cleandoc("""
             Sub T()
               F "ab", "z"
             End Sub
@@ -943,8 +739,7 @@ class TestVbaDeobfuscation(TestBase):
               F x
             End Sub
         """)
-        result = self._deobfuscate(code)
-        self.assertEqual(result, cleandoc("""
+        self.assertEqual(self._deobfuscate(code), cleandoc("""
             Sub T()
               F "abc"
             End Sub
@@ -959,8 +754,7 @@ class TestVbaDeobfuscation(TestBase):
               F x
             End Sub
         """)
-        result = self._deobfuscate(code)
-        self.assertEqual(result, cleandoc("""
+        self.assertEqual(self._deobfuscate(code), cleandoc("""
             Sub T()
               F "abc"
             End Sub
@@ -974,8 +768,7 @@ class TestVbaDeobfuscation(TestBase):
               F x
             End Sub
         """)
-        result = self._full_deobfuscate(code)
-        self.assertEqual(result, cleandoc("""
+        self.assertEqual(self._full_deobfuscate(code), cleandoc("""
             Sub T()
               F "hello"
             End Sub
@@ -993,40 +786,20 @@ class TestVbaDeobfuscation(TestBase):
               F x
             End Sub
         """)
-        result = self._deobfuscate(code)
-        self.assertEqual(result, cleandoc("""
+        self.assertEqual(self._deobfuscate(code), cleandoc("""
             Sub T()
               F "ab"
             End Sub
         """))
 
     def test_integer_division_truncates_toward_zero(self):
-        code = cleandoc("""
-            Sub T()
-              x = -7 \\ 2
-            End Sub
-        """)
-        result = self._fold(code)
-        self.assertIn('x = -3', result)
-        self.assertNotIn('-4', result)
+        self.assertEqual(self._fold('x = -7 \\ 2'), 'x = -3')
 
     def test_mod_takes_sign_of_dividend(self):
-        code = cleandoc("""
-            Sub T()
-              x = -7 Mod 2
-            End Sub
-        """)
-        result = self._fold(code)
-        self.assertIn('x = -1', result)
+        self.assertEqual(self._fold('x = -7 Mod 2'), 'x = -1')
 
     def test_mod_dividend_sign_positive_divisor_negative(self):
-        code = cleandoc("""
-            Sub T()
-              x = 7 Mod -2
-            End Sub
-        """)
-        result = self._fold(code)
-        self.assertIn('x = 1', result)
+        self.assertEqual(self._fold('x = 7 Mod -2'), 'x = 1')
 
     def test_emulator_string_compare_is_case_sensitive(self):
         code = cleandoc("""
@@ -1041,110 +814,54 @@ class TestVbaDeobfuscation(TestBase):
               G F()
             End Sub
         """)
-        result = self._full_deobfuscate(code)
-        self.assertIn('"diff"', result)
-        self.assertNotIn('"same"', result)
+        self.assertEqual(self._full_deobfuscate(code), cleandoc("""
+            Sub T()
+              G "diff"
+            End Sub
+        """))
 
     def test_power_of_negative_base_keeps_parentheses(self):
         # VBA binds ^ tighter than unary minus, so "-4 ^ y" would mean -(4 ^ y).
         self.assertEqual(self._fold('x = (-4) ^ y'), 'x = (-4) ^ y')
 
     def test_hex_of_positive_folds(self):
-        code = cleandoc("""
-            Sub T()
-              x = Hex(255)
-            End Sub
-        """)
-        result = self._fold(code)
-        self.assertIn('"FF"', result)
+        self.assertEqual(self._fold('x = Hex(255)'), 'x = "FF"')
 
     def test_hex_of_negative_not_folded(self):
-        code = cleandoc("""
-            Sub T()
-              x = Hex(-1)
-            End Sub
-        """)
-        result = self._fold(code)
-        self.assertIn('Hex(-1)', result)
+        self.assertEqual(self._fold('x = Hex(-1)'), 'x = Hex(-1)')
 
     def test_replace_with_start_position(self):
-        code = cleandoc("""
-            Sub T()
-              x = Replace("hello", "l", "L", 3)
-            End Sub
-        """)
-        result = self._fold(code)
-        self.assertIn('"LLo"', result)
-        self.assertNotIn('"heLLo"', result)
+        self.assertEqual(self._fold('x = Replace("hello", "l", "L", 3)'), 'x = "LLo"')
 
     def test_replace_explicit_text_compare_folds(self):
-        # An explicit vbTextCompare (1) with locale-safe operands folds case-insensitively; the
-        # cscript oracle gives Replace("aAa", "a", "X", 1, -1, 1) = "XXX".
-        code = cleandoc("""
-            Sub T()
-              x = Replace("aAa", "a", "X", 1, -1, 1)
-            End Sub
-        """)
-        result = self._fold(code)
-        self.assertIn('"XXX"', result)
+        self.assertEqual(self._fold('x = Replace("aAa", "a", "X", 1, -1, 1)'), 'x = "XXX"')
 
     def test_mid_negative_length_not_folded(self):
-        code = cleandoc("""
-            Sub T()
-              x = Mid("hello", 2, -1)
-            End Sub
-        """)
-        result = self._fold(code)
-        self.assertIn('Mid("hello", 2, -1)', result)
+        self.assertEqual(self._fold('x = Mid("hello", 2, -1)'), 'x = Mid("hello", 2, -1)')
 
     def test_cbyte_rounds_to_nearest(self):
-        code = cleandoc("""
-            Sub T()
-              x = CByte(2.6)
-            End Sub
-        """)
-        result = self._fold(code)
-        self.assertIn('x = 3', result)
+        self.assertEqual(self._fold('x = CByte(2.6)'), 'x = 3')
 
     def test_cbyte_overflow_not_folded(self):
-        code = cleandoc("""
-            Sub T()
-              x = CByte(300)
-            End Sub
-        """)
-        result = self._fold(code)
-        self.assertIn('CByte(300)', result)
+        self.assertEqual(self._fold('x = CByte(300)'), 'x = CByte(300)')
 
     def test_plus_empty_string_not_dropped(self):
-        code = cleandoc("""
-            Sub T()
-              x = 5 + ""
-            End Sub
-        """)
-        result = self._fold(code)
-        self.assertIn('5 + ""', result)
+        self.assertEqual(self._fold('x = 5 + ""'), 'x = 5 + ""')
 
     def test_ampersand_empty_string_dropped(self):
-        code = cleandoc("""
-            Sub T()
-              x = y & ""
-            End Sub
-        """)
-        result = self._fold(code)
-        self.assertIn('x = y', result)
-        self.assertNotIn('& ""', result)
+        self.assertEqual(self._fold('x = y & ""'), 'x = y')
 
     def test_function_return_value_not_treated_as_dead(self):
         code = cleandoc("""
             Function GetKey() As String
               GetKey = "secret"
             End Function
+
             Sub T()
               G 1
             End Sub
         """)
-        result = self._full_deobfuscate(code)
-        self.assertIn('GetKey = "secret"', result)
+        self.assertEqual(self._full_deobfuscate(code), code)
 
     def test_constant_not_inlined_across_procedures(self):
         code = cleandoc("""
@@ -1156,14 +873,19 @@ class TestVbaDeobfuscation(TestBase):
               H n
             End Sub
         """)
-        result = self._deobfuscate(code)
-        self.assertIn('G 7', result)
-        self.assertIn('H n', result)
-        self.assertNotIn('H 7', result)
+        self.assertEqual(self._deobfuscate(code), cleandoc("""
+            Sub A()
+              G 7
+            End Sub
+
+            Sub B(n)
+              H n
+            End Sub
+        """))
 
     def test_text_compare_safe_predicate(self):
-        # Locale-independent case folding holds only for ASCII digits and ASCII letters other than
-        # the Turkic-sensitive I/i; symbols and non-ASCII are unsafe; the empty string is trivial.
+        # Case folding is locale-independent only for ASCII digits and ASCII letters other than the
+        # Turkic-sensitive I/i; symbols and non-ASCII are unsafe.
         self.assertTrue(text_compare_safe(''))
         self.assertTrue(text_compare_safe('AB12'))
         self.assertFalse(text_compare_safe('FILE'))
@@ -1187,211 +909,197 @@ class TestVbaDeobfuscation(TestBase):
         """))
 
     def test_text_equality_folds_for_safe_operands(self):
-        # Under Option Compare Text the case-insensitive equality "AB" = "ab" is true in every locale
-        # (operands are safe); the emulator must take the True branch. Oracle: StrComp("AB","ab",1)=0.
-        result = self._compare_branch('Option Compare Text', '"AB" = "ab"')
-        self.assertIn('G "same"', result)
+        self.assertIn('G "same"', self._compare_branch('Option Compare Text', '"AB" = "ab"'))
 
     def test_binary_equality_is_case_sensitive(self):
-        # The default (and explicit Binary) keeps "AB" = "ab" false. Oracle: ("AB" = "ab") is False.
         for option in ('Option Compare Binary', "' no option"):
-            result = self._compare_branch(option, '"AB" = "ab"')
-            self.assertIn('G "diff"', result, option)
+            self.assertIn('G "diff"', self._compare_branch(option, '"AB" = "ab"'), option)
 
     def test_text_equality_bails_on_turkic_letters(self):
-        # "FILE"/"file" contain I/i, whose case folding is locale-dependent (Turkic), so under Text
-        # the comparison must not be folded; the call to F is left intact rather than guessed.
-        result = self._compare_branch('Option Compare Text', '"FILE" = "file"')
-        self.assertIn('G F()', result)
+        self.assertIn('G F()', self._compare_branch('Option Compare Text', '"FILE" = "file"'))
 
     def test_text_ordering_always_bails(self):
-        # String ordering under Option Compare Text uses locale collation that cannot be reproduced
-        # from the characters, so "<" is never folded; the call to F is left intact.
-        result = self._compare_branch('Option Compare Text', '"b" < "A"')
-        self.assertIn('G F()', result)
+        self.assertIn('G F()', self._compare_branch('Option Compare Text', '"b" < "A"'))
 
     def test_strcomp_text_equal_folds_to_zero(self):
-        # Oracle: StrComp("AB","ab",1) = 0.
-        result = self._fold(cleandoc("""
+        code = cleandoc("""
             Option Compare Text
             Sub T()
               x = StrComp("AB", "ab")
             End Sub
-        """))
-        self.assertIn('x = 0', result)
+        """)
+        self.assertIn('x = 0', self._fold(code))
 
     def test_strcomp_binary_folds_to_sign(self):
-        # Oracle: StrComp("AB","ab",0) = -1.
-        result = self._fold(cleandoc("""
+        code = cleandoc("""
             Option Compare Binary
             Sub T()
               x = StrComp("AB", "ab")
             End Sub
-        """))
-        self.assertIn('x = -1', result)
+        """)
+        self.assertIn('x = -1', self._fold(code))
 
     def test_strcomp_text_unequal_bails(self):
-        # Under Text the -1/+1 sign is a locale-dependent ordering, so an unequal StrComp does not
-        # fold even though the operands are safe.
-        result = self._fold(cleandoc("""
+        code = cleandoc("""
             Option Compare Text
+
             Sub T()
               x = StrComp("AB", "ac")
             End Sub
-        """))
-        self.assertIn('StrComp(', result)
+        """)
+        self.assertEqual(self._fold(code), code)
 
     def test_strcomp_explicit_text_overrides_binary_module(self):
-        # An explicit vbTextCompare argument wins over the module directive.
-        result = self._fold(cleandoc("""
+        code = cleandoc("""
             Option Compare Binary
             Sub T()
               x = StrComp("AB", "ab", 1)
             End Sub
-        """))
-        self.assertIn('x = 0', result)
+        """)
+        self.assertIn('x = 0', self._fold(code))
 
     def test_instr_text_finds_case_insensitively(self):
-        # Oracle: InStr(1,"aXbXc","x",1) = 2.
-        result = self._fold(cleandoc("""
+        code = cleandoc("""
             Option Compare Text
             Sub T()
               x = InStr(1, "aXbXc", "x")
             End Sub
-        """))
-        self.assertIn('x = 2', result)
+        """)
+        self.assertIn('x = 2', self._fold(code))
 
     def test_instr_explicit_binary_overrides_text_module(self):
-        # Oracle: InStr(1,"aXbXc","x",0) = 0 (no lowercase x in the binary haystack).
-        result = self._fold(cleandoc("""
+        code = cleandoc("""
             Option Compare Text
             Sub T()
               x = InStr(1, "aXbXc", "x", 0)
             End Sub
-        """))
-        self.assertIn('x = 0', result)
+        """)
+        self.assertIn('x = 0', self._fold(code))
 
     def test_instr_text_bails_on_turkic_letters(self):
-        result = self._fold(cleandoc("""
+        code = cleandoc("""
             Option Compare Text
+
             Sub T()
               x = InStr(1, "FILE", "i")
             End Sub
-        """))
-        self.assertIn('InStr(', result)
+        """)
+        self.assertEqual(self._fold(code), code)
 
     def test_replace_text_module_folds_case_insensitively(self):
-        # Oracle: Replace("aAa","a","X",,,1) = "XXX".
-        result = self._fold(cleandoc("""
+        code = cleandoc("""
             Option Compare Text
             Sub T()
               x = Replace("aAa", "a", "X")
             End Sub
-        """))
-        self.assertIn('"XXX"', result)
+        """)
+        self.assertIn('"XXX"', self._fold(code))
 
     def test_replace_binary_module_is_case_sensitive(self):
-        # Oracle: Replace("aAa","a","X",,,0) = "XAX".
-        result = self._fold(cleandoc("""
+        code = cleandoc("""
             Option Compare Binary
             Sub T()
               x = Replace("aAa", "a", "X")
             End Sub
-        """))
-        self.assertIn('"XAX"', result)
+        """)
+        self.assertIn('"XAX"', self._fold(code))
 
     def test_replace_text_bails_on_turkic_letters(self):
-        result = self._fold(cleandoc("""
+        code = cleandoc("""
             Option Compare Text
+
             Sub T()
               x = Replace("FILE", "i", "Y")
             End Sub
-        """))
-        self.assertIn('Replace(', result)
+        """)
+        self.assertEqual(self._fold(code), code)
 
     def test_replace_text_count_zero_makes_no_replacement(self):
-        # count=0 performs zero substitutions regardless of compare mode; the result is the input
-        # from start. Oracle: Replace("aAa","a","X",1,0) = "aAa" (the -1 default would give "XXX").
-        result = self._fold(cleandoc("""
+        code = cleandoc("""
             Option Compare Text
             Sub T()
               x = Replace("aAa", "a", "X", 1, 0)
             End Sub
-        """))
-        self.assertIn('"aAa"', result)
+        """)
+        self.assertEqual(self._fold(code), cleandoc("""
+            Option Compare Text
 
-    def test_replace_explicit_text_count_zero_makes_no_replacement(self):
-        result = self._fold(cleandoc("""
             Sub T()
-              x = Replace("aAa", "a", "X", 1, 0, 1)
+              x = "aAa"
             End Sub
         """))
-        self.assertIn('"aAa"', result)
+
+    def test_replace_explicit_text_count_zero_makes_no_replacement(self):
+        self.assertEqual(self._fold('x = Replace("aAa", "a", "X", 1, 0, 1)'), 'x = "aAa"')
 
     def test_database_equality_not_folded(self):
-        # Option Compare Database uses the database's locale-dependent sort order, which is not
-        # knowable statically, so string equality is not folded; the call to F is left intact.
-        result = self._compare_branch('Option Compare Database', '"AB" = "ab"')
-        self.assertIn('G F()', result)
+        self.assertIn('G F()', self._compare_branch('Option Compare Database', '"AB" = "ab"'))
 
     def test_database_numeric_comparison_still_folds(self):
-        # Option Compare only governs string comparisons; a numeric comparison folds regardless.
-        result = self._compare_branch('Option Compare Database', '2 > 1')
-        self.assertIn('G "same"', result)
+        self.assertIn('G "same"', self._compare_branch('Option Compare Database', '2 > 1'))
 
     def test_database_strcomp_not_folded(self):
-        result = self._fold(cleandoc("""
+        code = cleandoc("""
             Option Compare Database
+
             Sub T()
               x = StrComp("AB", "ab")
             End Sub
-        """))
-        self.assertIn('StrComp(', result)
+        """)
+        self.assertEqual(self._fold(code), code)
 
     def test_database_instr_not_folded(self):
-        result = self._fold(cleandoc("""
+        code = cleandoc("""
             Option Compare Database
+
             Sub T()
               x = InStr(1, "aXbXc", "x")
             End Sub
-        """))
-        self.assertIn('InStr(', result)
+        """)
+        self.assertEqual(self._fold(code), code)
 
     def test_database_replace_not_folded(self):
-        result = self._fold(cleandoc("""
+        code = cleandoc("""
             Option Compare Database
+
             Sub T()
               x = Replace("aAa", "a", "X")
             End Sub
-        """))
-        self.assertIn('Replace(', result)
+        """)
+        self.assertEqual(self._fold(code), code)
 
     def test_database_explicit_binary_overrides(self):
-        result = self._fold(cleandoc("""
+        code = cleandoc("""
             Option Compare Database
             Sub T()
               x = StrComp("AB", "ab", 0)
             End Sub
-        """))
-        self.assertIn('x = -1', result)
+        """)
+        self.assertIn('x = -1', self._fold(code))
 
     def test_database_explicit_text_overrides(self):
-        result = self._fold(cleandoc("""
+        code = cleandoc("""
             Option Compare Database
             Sub T()
               x = StrComp("AB", "ab", 1)
             End Sub
-        """))
-        self.assertIn('x = 0', result)
+        """)
+        self.assertIn('x = 0', self._fold(code))
 
     def test_database_replace_count_zero_still_folds(self):
-        result = self._fold(cleandoc("""
+        code = cleandoc("""
             Option Compare Database
             Sub T()
               x = Replace("aAa", "a", "X", 1, 0)
             End Sub
+        """)
+        self.assertEqual(self._fold(code), cleandoc("""
+            Option Compare Database
+
+            Sub T()
+              x = "aAa"
+            End Sub
         """))
-        self.assertIn('"aAa"', result)
 
     def test_replace_omitted_start_keeps_count(self):
         self.assertEqual(self._fold('x = Replace("xxxx", "x", "y", , 2)'), 'x = "yyxx"')
