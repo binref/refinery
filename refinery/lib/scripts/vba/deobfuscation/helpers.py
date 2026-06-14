@@ -164,6 +164,22 @@ def literal_value(node: Expression) -> Value:
     return None
 
 
+def constant_args(arguments: list[Expression | None]) -> list[Value] | None:
+    """
+    Collect the constant values of a builtin call's arguments, preserving an omitted argument as
+    `None`. Returns `None` if any argument is a non-literal expression that cannot be folded.
+    """
+    values: list[Value] = []
+    for arg in arguments:
+        if arg is None:
+            values.append(None)
+        elif is_literal(arg):
+            values.append(literal_value(arg))
+        else:
+            return None
+    return values
+
+
 def string_value(node: Expression | None) -> str | None:
     if isinstance(node, VbaStringLiteral):
         return node.value

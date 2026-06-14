@@ -148,8 +148,11 @@ class VbaSynthesizer(Synthesizer):
     def _binds_looser_than_power(node) -> bool:
         if isinstance(node, VbaUnaryExpression) and node.operator == '-':
             return True
-        if isinstance(node, (VbaIntegerLiteral, VbaFloatLiteral)) and node.value < 0:
-            return True
+        if isinstance(node, (VbaIntegerLiteral, VbaFloatLiteral)):
+            # Only a syntactically negative literal (a leading minus, as produced by folding a
+            # negative value) needs parentheses; a hex/octal literal whose value is negative is a
+            # single token (e.g. &HFFFF) and re-parses identically without them.
+            return node.raw.startswith('-')
         return False
 
     def visit_VbaBinaryExpression(self, node: VbaBinaryExpression):

@@ -8,8 +8,7 @@ from refinery.lib.scripts import Expression, Transformer
 from refinery.lib.scripts.vba.deobfuscation.helpers import (
     apply_removals,
     body_lists,
-    is_literal,
-    literal_value,
+    constant_args,
     make_string_literal,
     module_compare_mode,
     string_value,
@@ -67,7 +66,7 @@ def _try_builtin_step(
         return None
     if not isinstance(expr.callee, VbaIdentifier):
         return None
-    args = [a for a in expr.arguments if a is not None]
+    args = expr.arguments
     if not args:
         return None
     first_arg = args[0]
@@ -75,11 +74,10 @@ def _try_builtin_step(
         return None
     if first_arg.name.lower() != var_key:
         return None
-    literal_args: list[Value] = [accumulator]
-    for arg in args[1:]:
-        if not is_literal(arg):
-            return None
-        literal_args.append(literal_value(arg))
+    rest = constant_args(args[1:])
+    if rest is None:
+        return None
+    literal_args: list[Value] = [accumulator, *rest]
     name = expr.callee.name.lower()
     try:
         matched, result = dispatch_builtin(name, literal_args, compare_mode)

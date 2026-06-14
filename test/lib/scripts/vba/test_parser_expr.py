@@ -70,6 +70,23 @@ class TestVbaParserExpressions(TestBase):
         assert isinstance(expr, VbaIntegerLiteral)
         self.assertEqual(expr.value, 32768)
 
+    def test_incomplete_radix_literal_does_not_crash(self):
+        for source in ('&H', '&O', '&H&', '&H%'):
+            expr = self._parse_expr(source)
+            assert isinstance(expr, VbaIntegerLiteral), source
+            self.assertEqual(expr.value, 0, source)
+
+    def test_hex_literal_exceeding_long_keeps_face_value(self):
+        # VBA overflows on a hex literal wider than a Long; the best-effort parser keeps the unsigned
+        # magnitude rather than fabricating a two's-complement negative at a width VBA never uses.
+        for source, expected in (
+            ('&H100000000', 0x100000000),
+            ('&HFFFFFFFFFFFFFFFF', 0xFFFFFFFFFFFFFFFF),
+        ):
+            expr = self._parse_expr(source)
+            assert isinstance(expr, VbaIntegerLiteral), source
+            self.assertEqual(expr.value, expected, source)
+
     def test_float_literal(self):
         expr = self._parse_expr('3.14')
         assert isinstance(expr, VbaFloatLiteral)

@@ -12,9 +12,9 @@ from refinery.lib.scripts.vba.deobfuscation.builtins import VBA_BUILTIN_CONSTANT
 from refinery.lib.scripts.vba.deobfuscation.helpers import (
     apply_removals,
     body_lists,
+    constant_args,
     is_literal,
     is_nan_or_inf,
-    literal_value,
     make_integer_literal,
     make_numeric_literal,
     make_string_literal,
@@ -76,12 +76,9 @@ def _try_evaluate_call(node: VbaCallExpression, compare_mode: CompareMode = Comp
     """
     if not isinstance(node.callee, VbaIdentifier):
         raise _EvaluationFailed
-    args = [a for a in node.arguments if a is not None]
-    values: list[Value] = []
-    for arg in args:
-        if not is_literal(arg):
-            raise _EvaluationFailed
-        values.append(literal_value(arg))
+    values = constant_args(node.arguments)
+    if values is None:
+        raise _EvaluationFailed
     name = node.callee.name.lower()
     try:
         matched, result = dispatch_builtin(name, values, compare_mode)

@@ -30,6 +30,20 @@ def str_arg(args: list[Value], index: int = 0) -> str:
     return str(args[index]) if args[index] is not None else ''
 
 
+def vba_long(value: Value) -> int:
+    """
+    Coerce a value to a VBA Long the way VBA implicitly converts the numeric position, length, and
+    count arguments of its string builtins: round half to even (banker's rounding, matching `CLng`)
+    rather than truncating toward zero. `Boolean` follows VBA where `True` is `-1`. Unlike `Int` and
+    `Fix`, this never floors or truncates.
+    """
+    if isinstance(value, bool):
+        return -1 if value else 0
+    if isinstance(value, int):
+        return value
+    return round(float(value))
+
+
 def text_compare_safe(value: str) -> bool:
     """
     Return `True` if a case-insensitive comparison of `value` is locale-independent. This holds for
@@ -57,7 +71,7 @@ def _use_text_compare(args: list[Value], index: int, default: CompareMode) -> bo
     `CompareMode.DATABASE`.
     """
     if index < len(args) and args[index] is not None:
-        c = int(args[index])
+        c = vba_long(args[index])
         if c == 0:
             return False
         if c == 1:
@@ -74,11 +88,11 @@ def eval_mid(args: list) -> str | None:
     if len(args) not in (2, 3):
         return None
     s = str_arg(args)
-    start = int(args[1]) - 1
+    start = vba_long(args[1]) - 1
     if start < 0:
         raise ValueError
     if len(args) == 3:
-        length = int(args[2])
+        length = vba_long(args[2])
         if length < 0:
             raise ValueError
         return s[start:start + length]
@@ -88,7 +102,7 @@ def eval_mid(args: list) -> str | None:
 def eval_left(args: list) -> str | None:
     if len(args) != 2:
         return None
-    n = int(args[1])
+    n = vba_long(args[1])
     if n < 0:
         raise ValueError
     return str_arg(args)[:n]
@@ -97,7 +111,7 @@ def eval_left(args: list) -> str | None:
 def eval_right(args: list) -> str | None:
     if len(args) != 2:
         return None
-    n = int(args[1])
+    n = vba_long(args[1])
     if n < 0:
         raise ValueError
     return str_arg(args)[-n:] if n > 0 else ''
@@ -112,7 +126,7 @@ def eval_strreverse(args: list[Value]) -> str | None:
 def eval_string_fn(args: list) -> str | None:
     if len(args) != 2:
         return None
-    n = int(args[0])
+    n = vba_long(args[0])
     c = str_arg(args, 1)
     if not c:
         raise ValueError
@@ -122,7 +136,7 @@ def eval_string_fn(args: list) -> str | None:
 def eval_space(args: list) -> str | None:
     if len(args) != 1:
         return None
-    n = int(args[0])
+    n = vba_long(args[0])
     if n < 0 or n > 10000:
         raise ValueError
     return ' ' * n
@@ -136,14 +150,14 @@ def eval_replace(args: list[Value], compare_mode: CompareMode = CompareMode.BINA
     insert = str_arg(args, 2)
     if not needle:
         raise ValueError
-    start = int(args[3]) if len(args) > 3 and args[3] is not None else 1
-    count = int(args[4]) if len(args) > 4 and args[4] is not None else -1
-    use_text = _use_text_compare(args, 5, compare_mode)
+    start = vba_long(args[3]) if len(args) > 3 and args[3] is not None else 1
+    count = vba_long(args[4]) if len(args) > 4 and args[4] is not None else -1
     if start < 1 or count < -1:
         raise ValueError
     haystack = haystack[start - 1:]
     if count == 0:
         return haystack
+    use_text = _use_text_compare(args, 5, compare_mode)
     if use_text:
         if not (text_compare_safe(haystack) and text_compare_safe(needle)):
             raise ValueError
@@ -162,7 +176,7 @@ def eval_instr(args: list[Value], compare_mode: CompareMode = CompareMode.BINARY
         haystack = str_arg(args)
         needle = str_arg(args, 1)
     elif len(args) in (3, 4):
-        start = int(args[0])  # type: ignore
+        start = vba_long(args[0])
         if start < 1:
             raise ValueError
         haystack = str_arg(args, 1)
@@ -186,9 +200,11 @@ def eval_instrrev(args: list[Value], compare_mode: CompareMode = CompareMode.BIN
     needle = str_arg(args, 1)
     end: int | None = None
     if len(args) >= 3 and args[2] is not None:
-        end = int(args[2])
-        if end < 1:
-            raise ValueError
+        start = vba_long(args[2])
+        if start != -1:
+            if start < 1:
+                raise ValueError
+            end = start
     if _use_text_compare(args, 3, compare_mode):
         if not (text_compare_safe(haystack) and text_compare_safe(needle)):
             raise ValueError
@@ -220,7 +236,7 @@ def eval_str(a: list[Value], then: Callable | None = None) -> Value:
     except ValueError:
         return None
     else:
-        value = str(value)
+        value = str(value) if value is not None else ''
     if then is not None:
         value = then(value)
     return value
@@ -302,26 +318,22 @@ def _asc_builtin(v):
     return ord(str(v)[0])
 
 
-def _round_to_int(v):
-    return int(round(float(v)))
-
-
 def _to_hex(v):
-    n = int(v)
+    n = vba_long(v)
     if n < 0:
         raise ValueError
     return format(n, 'X')
 
 
 def _to_oct(v):
-    n = int(v)
+    n = vba_long(v)
     if n < 0:
         raise ValueError
     return format(n, 'o')
 
 
 def _to_byte(v):
-    n = int(round(float(v)))
+    n = vba_long(v)
     if not 0 <= n <= 255:
         raise ValueError
     return n
@@ -334,8 +346,8 @@ SINGLE_ARG_BUILTINS: dict[str, Callable[[Any], Value]] = {
     'chrw$' : _chr_builtin,
     'asc'   : _asc_builtin,
     'ascw'  : _asc_builtin,
-    'cint'  : _round_to_int,
-    'clng'  : _round_to_int,
+    'cint'  : vba_long,
+    'clng'  : vba_long,
     'cdbl'  : float,
     'csng'  : float,
     'cbool' : bool,

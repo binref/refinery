@@ -54,6 +54,23 @@ def _has_side_effects(node) -> bool:
     return False
 
 
+def _enclosing_return_name(node) -> str | None:
+    """
+    Return the lowercased name of the Function or Property that `node` returns into, i.e. the name
+    of its innermost enclosing procedure when that procedure is a Function or Property (whose return
+    value is produced by assigning to its own name). Returns `None` when the innermost procedure is a
+    Sub or there is no enclosing procedure.
+    """
+    parent = node.parent
+    while parent is not None:
+        if isinstance(parent, VbaProcedureDeclaration):
+            if isinstance(parent, (VbaFunctionDeclaration, VbaPropertyDeclaration)) and parent.name:
+                return parent.name.lower()
+            return None
+        parent = parent.parent
+    return None
+
+
 class VbaDeadVariableRemoval(Transformer):
 
     def visit(self, node):
@@ -75,12 +92,11 @@ class VbaDeadVariableRemoval(Transformer):
                 ):
                     if not _has_side_effects(stmt.value):
                         key = stmt.target.name.lower()
+                        if key == _enclosing_return_name(stmt):
+                            continue
                         assignments.setdefault(key, []).append((stmt, body, idx))
         read_names: set[str] = set()
         for node in module.walk():
-            if isinstance(node, (VbaFunctionDeclaration, VbaPropertyDeclaration)) and node.name:
-                read_names.add(node.name.lower())
-                continue
             if not isinstance(node, VbaIdentifier):
                 continue
             if isinstance(node.parent, VbaLetStatement) and node.parent.target is node:

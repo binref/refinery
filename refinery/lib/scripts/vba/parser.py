@@ -86,7 +86,9 @@ def _radix_literal_value(magnitude: int, suffix: str) -> int:
     Reinterpret the unsigned magnitude of a VBA hex or octal literal as a signed integer of the
     appropriate width. A `%` suffix forces a 16-bit (Integer) and `&` a 32-bit (Long) width; without
     a suffix VBA uses the smallest width that holds the magnitude. Values with the high bit set are
-    negative two's-complement, so &H8000 is -32768 and &HFFFF is -1.
+    negative two's-complement, so &H8000 is -32768 and &HFFFF is -1. A magnitude wider than a Long
+    overflows in VBA (there is no unsuffixed 64-bit literal); the best-effort parser keeps the
+    unsigned magnitude rather than fabricating a two's-complement value at a width VBA never uses.
     """
     if suffix == '%':
         bits = 16
@@ -97,7 +99,7 @@ def _radix_literal_value(magnitude: int, suffix: str) -> int:
     elif magnitude <= 0xFFFFFFFF:
         bits = 32
     else:
-        bits = 64
+        return magnitude
     if magnitude >= 1 << (bits - 1):
         magnitude -= 1 << bits
     return magnitude
@@ -108,10 +110,12 @@ def _parse_integer_literal(raw: str) -> int:
     core = raw[:-1] if suffix else raw
     head = core[:2].lower()
     if head == '&h':
-        return _radix_literal_value(int(core[2:], 16), suffix)
+        digits = core[2:]
+        return _radix_literal_value(int(digits, 16), suffix) if digits else 0
     if head == '&o':
-        return _radix_literal_value(int(core[2:], 8), suffix)
-    return int(core)
+        digits = core[2:]
+        return _radix_literal_value(int(digits, 8), suffix) if digits else 0
+    return int(core) if core else 0
 
 
 class VbaParser:

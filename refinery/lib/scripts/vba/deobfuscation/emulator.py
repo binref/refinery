@@ -8,6 +8,7 @@ import operator as _op
 from refinery.lib.scripts import Transformer
 from refinery.lib.scripts.vba.deobfuscation.helpers import (
     apply_removals,
+    constant_args,
     is_identifier_read,
     is_literal,
     is_nan_or_inf,
@@ -270,7 +271,7 @@ class _VbaInterpreter:
         if not isinstance(node.callee, VbaIdentifier):
             raise _VbaInterpreterError
         name = node.callee.name.lower()
-        args = [self._eval(a) for a in node.arguments if a is not None]
+        args = [self._eval(a) for a in node.arguments]
         try:
             matched, result = dispatch_builtin(name, args, self.compare_mode)
         except (ValueError, OverflowError, TypeError, IndexError):
@@ -408,7 +409,7 @@ class VbaFunctionEvaluator(Transformer):
         if funcdef is None:
             return None
         self._call_counts[key] = self._call_counts.get(key, 0) + 1
-        args = self._extract_constant_args(node)
+        args = constant_args(node.arguments)
         if args is None:
             return None
         return self._try_replace(key, funcdef, args)
@@ -450,18 +451,6 @@ class VbaFunctionEvaluator(Transformer):
             return None
         self._replaced_counts[key] = self._replaced_counts.get(key, 0) + 1
         return value_to_node(result)
-
-    @staticmethod
-    def _extract_constant_args(node: VbaCallExpression) -> list[Value] | None:
-        args: list[Value] = []
-        for arg in node.arguments:
-            if arg is None:
-                args.append(None)
-                continue
-            if not is_literal(arg):
-                return None
-            args.append(literal_value(arg))
-        return args
 
     @staticmethod
     def _bind_parameters(

@@ -455,3 +455,8 @@ class TestVbaSynthesizer(TestBase):
         lines = [l.strip() for l in result.splitlines() if l.strip()]
         self.assertIn('End', lines,
             'standalone End statement must survive round-trip inside Select Case')
+
+    def test_negative_hex_literal_base_needs_no_parentheses(self):
+        # &HFFFF is a single-token literal (-1), not a unary minus, so as a ^ base it needs no
+        # parentheses, unlike a folded "-1".
+        self.assertEqual(self._roundtrip('x = &HFFFF ^ 2'), 'x = &HFFFF ^ 2')

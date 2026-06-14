@@ -1046,13 +1046,8 @@ class TestVbaDeobfuscation(TestBase):
         self.assertNotIn('"same"', result)
 
     def test_power_of_negative_base_keeps_parentheses(self):
-        code = cleandoc("""
-            Sub T()
-              x = (-4) ^ y
-            End Sub
-        """)
-        result = self._fold(code)
-        self.assertIn('(-4) ^ y', result)
+        # VBA binds ^ tighter than unary minus, so "-4 ^ y" would mean -(4 ^ y).
+        self.assertEqual(self._fold('x = (-4) ^ y'), 'x = (-4) ^ y')
 
     def test_hex_of_positive_folds(self):
         code = cleandoc("""
@@ -1397,3 +1392,51 @@ class TestVbaDeobfuscation(TestBase):
             End Sub
         """))
         self.assertIn('"aAa"', result)
+
+    def test_replace_omitted_start_keeps_count(self):
+        self.assertEqual(self._fold('x = Replace("xxxx", "x", "y", , 2)'), 'x = "yyxx"')
+
+    def test_replace_omitted_start_and_count_keeps_text_compare(self):
+        self.assertEqual(self._fold('x = Replace("aAa", "a", "X", , , 1)'), 'x = "XXX"')
+
+    def test_instrrev_omitted_start_keeps_text_compare(self):
+        self.assertEqual(self._fold('x = InStrRev("aBcaBc", "b", , 1)'), 'x = 5')
+
+    def test_mid_rounds_fractional_start(self):
+        self.assertEqual(self._fold('x = Mid("abcdef", 7 / 2)'), 'x = "def"')
+
+    def test_left_rounds_fractional_length(self):
+        self.assertEqual(self._fold('x = Left("abcdef", 7 / 2)'), 'x = "abcd"')
+
+    def test_replace_rounds_fractional_count(self):
+        self.assertEqual(self._fold('x = Replace("aaaa", "a", "b", 1, 7 / 2)'), 'x = "bbbb"')
+
+    def test_instrrev_negative_one_searches_from_end(self):
+        self.assertEqual(self._fold('x = InStrRev("abcabc", "abc", -1)'), 'x = 4')
+
+    def test_dead_variable_removed_despite_same_named_function(self):
+        code = cleandoc("""
+            Function Total() As Long
+              Total = 1
+            End Function
+            Sub T()
+              Total = 5
+              G 1
+            End Sub
+        """)
+        self.assertEqual(self._full_deobfuscate(code), cleandoc("""
+            Function Total() As Long
+              Total = 1
+            End Function
+
+            Sub T()
+              G 1
+            End Sub
+        """))
+
+    def test_lcase_of_empty_folds_to_empty_string(self):
+        self.assertEqual(self._fold('x = LCase(Empty)'), 'x = ""')
+
+    def test_clng_of_true_folds_to_negative_one(self):
+        # VBA coerces Boolean True to the Long -1.
+        self.assertEqual(self._fold('x = CLng(True)'), 'x = -1')
