@@ -296,6 +296,10 @@ _IS_AMBIGUOUS = {
     _I(6, 6,  1, 0, IVF.UTF_16): False, # noqa
     _I(6, 7,  0, 0, IVF.UTF_16): False, # noqa
     _I(6, 7,  1, 0, IVF.UTF_16): False, # noqa
+    _I(6, 7,  2, 0, IVF.UTF_16): False, # noqa
+    _I(6, 7,  3, 0, IVF.UTF_16): False, # noqa
+    _I(7, 0,  0, 3, IVF.UTF_16): False, # noqa
+    _I(7, 0,  1, 0, IVF.UTF_16): False, # noqa
 }
 
 _VERSIONS = sorted(_IS_AMBIGUOUS)
@@ -498,6 +502,14 @@ class Architecture(enum.IntFlag):
     IA64    = 0b00100 # noqa
     ARM64   = 0b01000 # noqa
     All     = 0b01111 # noqa
+
+
+class SetupEntryBitness(enum.IntEnum):
+    InstallDefault    = 0           # noqa
+    Bits32            = enum.auto() # noqa
+    Bits64            = enum.auto() # noqa
+    NativeBit         = enum.auto() # noqa
+    CurrentProcessBit = enum.auto() # noqa
 
 
 class PasswordType(enum.IntEnum):
@@ -947,6 +959,11 @@ class SetupHeader(InnoStruct):
             _license_len = 0
             _infhead_len = 0
             _inftail_len = 0
+
+        if version >= (7, 0, 0, 3):
+            self.CompiledCodeVersion = reader.u32()
+        else:
+            self.CompiledCodeVersion = 0
 
         self.WindowsVersion = WinVerRange(reader, version)
 
@@ -1899,6 +1916,11 @@ class SetupFile(InnoStruct):
         else:
             self.Permissions = None
 
+        if version >= (7, 0, 0, 3):
+            self.Bitness = SetupEntryBitness(reader.u8())
+        else:
+            self.Bitness = None
+
         def flagbit(f):
             self.Flags |= f if reader.read_bit() else 0
 
@@ -1949,7 +1971,7 @@ class SetupFile(InnoStruct):
             flagbit(SetupFileFlags.UninsNoSharedFilePrompt)
         if version >= (5, 1, 0):
             flagbit(SetupFileFlags.CreateAllSubDirs)
-        if version >= (5, 1, 2):
+        if (5, 1, 2) <= version < (7, 0, 0, 3):
             flagbit(SetupFileFlags.Bits32)
             flagbit(SetupFileFlags.Bits64)
         if version >= (5, 2, 0):
@@ -2131,6 +2153,11 @@ class SetupRegistryEntry(InnoStruct):
         self.Permissions = reader.u16() if version >= (4, 1, 0) else None
         self.Type = SetupRegistryType(reader.u8())
 
+        if version >= (7, 0, 0, 3):
+            self.Bitness = SetupEntryBitness(reader.u8())
+        else:
+            self.Bitness = None
+
         self.Flags = SetupRegistryFlags.Empty
 
         def flagbit(f):
@@ -2152,7 +2179,7 @@ class SetupRegistryEntry(InnoStruct):
             flagbit(SetupRegistryFlags.NoError)
         if version >= (1, 3, 16):
             flagbit(SetupRegistryFlags.DontCreateKey)
-        if version >= (5, 1, 0):
+        if (5, 1, 0) <= version < (7, 0, 0, 3):
             flagbit(SetupRegistryFlags.Bits32)
             flagbit(SetupRegistryFlags.Bits64)
 
@@ -2219,9 +2246,20 @@ class SetupRunEntry(InnoStruct):
             self.Description = self._read_string()
 
         self.Condition = SetupCondition(reader, version, parent)
+
+        if version >= (7, 0, 0, 3):
+            self.OnLog = self._read_string()
+        else:
+            self.OnLog = None
+
         self.WindowsVersion = WinVerRange(reader, version)
         self.ShowCommand = reader.u32() if version >= (1, 3, 24) else 0
         self.Wait = SetupRunWait(reader.u8())
+
+        if version >= (7, 0, 0, 3):
+            self.Bitness = SetupEntryBitness(reader.u8())
+        else:
+            self.Bitness = None
 
         self.Flags = SetupRunFlags.Empty
 
@@ -2239,7 +2277,7 @@ class SetupRunEntry(InnoStruct):
             flagbit(SetupRunFlags.SkipIfNotSilent)
         if version >= (2, 0, 8):
             flagbit(SetupRunFlags.HideWizard)
-        if version >= (5, 1, 10):
+        if (5, 1, 10) <= version < (7, 0, 0, 3):
             flagbit(SetupRunFlags.Bits32)
             flagbit(SetupRunFlags.Bits64)
         if version >= (5, 2, 0):
