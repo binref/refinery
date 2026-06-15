@@ -187,6 +187,7 @@ class Variable(VariableBase, Generic[_T]):
             TC.U08: +1,
             TC.U16: +1,
             TC.U32: +1,
+            TC.U64: +1,
             TC.S08: -1,
             TC.S16: -1,
             TC.S32: -1,

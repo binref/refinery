@@ -181,6 +181,7 @@ class TC(enum.IntEnum):
     Interface           = 0x1A  # noqa
     NotificationVariant = 0x1B  # noqa
     UnicodeString       = 0x1C  # noqa
+    U64                 = 0x1D  # noqa
     Enum                = 0x81  # noqa
     Type                = 0x82  # noqa
     ExtClass            = 0x83  # noqa
@@ -238,6 +239,7 @@ class TC(enum.IntEnum):
             TC.Pointer       : 0x0C,
             TC.Double        : 0x08,
             TC.S64           : 0x08,
+            TC.U64           : 0x08,
             TC.Extended      : 0x0A,
             TC.ReturnAddress : 0x1C,
         }.get(self, 0)
@@ -345,6 +347,7 @@ class TPrimitive(IFPSTypeBase):
             TC.ResourcePointer     : VariableBase,
             TC.Variant             : object,
             TC.S64                 : int,
+            TC.U64                 : int,
             TC.Char                : str,
             TC.WideString          : str,
             TC.WideChar            : str,
@@ -1186,9 +1189,16 @@ class IFPSFile(Struct):
 
     Magic = B'IFPS'
 
-    def __init__(self, reader: StructReader[memoryview], codec: str = 'latin1', unicode: bool = True):
+    def __init__(
+        self,
+        reader: StructReader[memoryview],
+        codec: str = 'latin1',
+        unicode: bool = True,
+        x64: bool = False,
+    ):
         self.codec = codec
         self.unicode = unicode
+        self.x64 = x64
         self.types: list[IFPSType] = []
         self.functions: list[Function] = []
         self.globals: list[VariableBase] = []
@@ -1220,7 +1230,8 @@ class IFPSFile(Struct):
             TC.U32   : {'LongWord', 'Cardinal', 'HWND', 'TSetupProcessorArchitecture'},
             TC.Char  : {'AnsiChar'},
             TC.PChar : {'PAnsiChar'},
-            TC.S64   : {'Int64'},
+            TC.S64   : {'Int64', 'NativeInt'},
+            TC.U64   : {'UInt64', 'NativeUInt'},
         }
 
         self._load_types()
@@ -1384,9 +1395,10 @@ class IFPSFile(Struct):
             TC.U32           : reader.u32,
             TC.S32           : reader.i32,
             TC.S64           : reader.i64,
+            TC.U64           : reader.u64,
             TC.Single        : reader.f32,
             TC.Double        : reader.f64,
-            TC.Extended      : lambda: extended(reader.read(10)),
+            TC.Extended      : reader.f64 if self.x64 else (lambda: extended(reader.read(10))),
             TC.AnsiString    : lambda: reader.read_length_prefixed(encoding=self.codec),
             TC.PChar         : lambda: reader.read_length_prefixed(encoding=self.codec),
             TC.WideString    : reader.read_length_prefixed_utf16,

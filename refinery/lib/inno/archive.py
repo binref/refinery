@@ -1282,6 +1282,14 @@ class SetupHeader(InnoStruct):
     def get_script(self):
         return self._CompiledCode
 
+    @property
+    def is_64bit(self):
+        """
+        Whether the embedded compiled code was compiled for a 64-bit `Exec`. This is encoded as the
+        high bit of `CompiledCodeVersion`, which is only present since version 7.0.0.3.
+        """
+        return bool(self.CompiledCodeVersion & 0x80000000)
+
     def recode_strings(self, codec: str):
         for coded_string_attribute in [
             'AppComment',
@@ -2720,7 +2728,8 @@ class InnoArchive:
         An `refinery.lib.inno.ifps.IFPSFile` representing the embedded IFPS script, if it exists.
         """
         if script := self.setup_info.Header.get_script():
-            return IFPSFile.Parse(script, self.script_codec, self.version.unicode)
+            return IFPSFile.Parse(
+                script, self.script_codec, self.version.unicode, self.setup_info.Header.is_64bit)
 
     def guess_password(self, timeout: int) -> bool:
         """
