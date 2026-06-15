@@ -4,6 +4,8 @@ from inspect import cleandoc
 
 from test.lib.scripts.vba.deobfuscation import TestVba
 
+from refinery.lib.scripts.vba.deobfuscation.accumulator import VbaStringAccumulatorFolding
+
 
 class TestVbaStringAccumulator(TestVba):
 
@@ -20,6 +22,12 @@ class TestVbaStringAccumulator(TestVba):
               F "hello world"
             End Sub
         """))
+        self.assertEqual(self._apply(code, VbaStringAccumulatorFolding), cleandoc("""
+            Sub T()
+              x = "hello world"
+              F x
+            End Sub
+        """))
 
     def test_accumulator_long_chain(self):
         lines = ['Sub T()']
@@ -29,8 +37,10 @@ class TestVbaStringAccumulator(TestVba):
         lines.append('  F x')
         lines.append('End Sub')
         code = '\n'.join(lines)
-        result = self._deobfuscate(code)
-        self.assertEqual(result, F'Sub T()\n  F "a{"b" * 50}"\nEnd Sub')
+        self.assertEqual(self._deobfuscate(code), F'Sub T()\n  F "a{"b" * 50}"\nEnd Sub')
+        self.assertEqual(
+            self._apply(code, VbaStringAccumulatorFolding),
+            F'Sub T()\n  x = "a{"b" * 50}"\n  F x\nEnd Sub')
 
     def test_accumulator_with_replace(self):
         code = cleandoc("""
@@ -44,6 +54,12 @@ class TestVbaStringAccumulator(TestVba):
         self.assertEqual(self._deobfuscate(code), cleandoc("""
             Sub T()
               F "abcde"
+            End Sub
+        """))
+        self.assertEqual(self._apply(code, VbaStringAccumulatorFolding), cleandoc("""
+            Sub T()
+              x = "abcde"
+              F x
             End Sub
         """))
 
@@ -60,6 +76,12 @@ class TestVbaStringAccumulator(TestVba):
               F "hello world"
             End Sub
         """))
+        self.assertEqual(self._apply(code, VbaStringAccumulatorFolding), cleandoc("""
+            Sub T()
+              x = "hello world"
+              F x
+            End Sub
+        """))
 
     def test_accumulator_chain_breaks_on_non_assignment(self):
         code = cleandoc("""
@@ -70,7 +92,7 @@ class TestVbaStringAccumulator(TestVba):
               G x
             End Sub
         """)
-        self.assertEqual(self._deobfuscate(code), code)
+        self.assertEqual(self._apply(code, VbaStringAccumulatorFolding), code)
 
     def test_accumulator_chain_breaks_on_different_variable(self):
         code = cleandoc("""
@@ -86,6 +108,7 @@ class TestVbaStringAccumulator(TestVba):
               F "ab", "z"
             End Sub
         """))
+        self.assertEqual(self._apply(code, VbaStringAccumulatorFolding), code)
 
     def test_accumulator_multi_concat_single_stmt(self):
         code = cleandoc("""
@@ -98,6 +121,12 @@ class TestVbaStringAccumulator(TestVba):
         self.assertEqual(self._deobfuscate(code), cleandoc("""
             Sub T()
               F "abc"
+            End Sub
+        """))
+        self.assertEqual(self._apply(code, VbaStringAccumulatorFolding), cleandoc("""
+            Sub T()
+              x = "abc"
+              F x
             End Sub
         """))
 
@@ -115,6 +144,12 @@ class TestVbaStringAccumulator(TestVba):
               F "abc"
             End Sub
         """))
+        self.assertEqual(self._apply(code, VbaStringAccumulatorFolding), cleandoc("""
+            Sub T()
+              x = "abc"
+              F x
+            End Sub
+        """))
 
     def test_accumulator_inlined_after_folding(self):
         code = cleandoc("""
@@ -127,6 +162,12 @@ class TestVbaStringAccumulator(TestVba):
         self.assertEqual(self._full_deobfuscate(code), cleandoc("""
             Sub T()
               F "hello"
+            End Sub
+        """))
+        self.assertEqual(self._apply(code, VbaStringAccumulatorFolding), cleandoc("""
+            Sub T()
+              x = "hello"
+              F x
             End Sub
         """))
 
@@ -145,5 +186,11 @@ class TestVbaStringAccumulator(TestVba):
         self.assertEqual(self._deobfuscate(code), cleandoc("""
             Sub T()
               F "ab"
+            End Sub
+        """))
+        self.assertEqual(self._apply(code, VbaStringAccumulatorFolding), cleandoc("""
+            Sub T()
+              x = "ab"
+              F x
             End Sub
         """))

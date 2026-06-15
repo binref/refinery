@@ -26,3 +26,13 @@ class TestVba(TestBase):
             if not deobfuscate(ast):
                 break
         return VbaSynthesizer().convert(ast)
+
+    def _apply(self, source: str, *transforms) -> str:
+        """
+        Run the given transformer passes once each, in order, and return the synthesized result.
+        Lets a test target a single deobfuscation pass in isolation.
+        """
+        ast = VbaParser(source).parse()
+        for transform in transforms:
+            transform().visit(ast)
+        return VbaSynthesizer().convert(ast)

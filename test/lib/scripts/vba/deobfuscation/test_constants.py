@@ -4,6 +4,8 @@ from inspect import cleandoc
 
 from test.lib.scripts.vba.deobfuscation import TestVba
 
+from refinery.lib.scripts.vba.deobfuscation.constants import VbaConstantInlining
+
 
 class TestVbaConstantInlining(TestVba):
 
@@ -14,7 +16,7 @@ class TestVbaConstantInlining(TestVba):
               F K
             End Sub
         """)
-        self.assertEqual(self._deobfuscate(code), cleandoc("""
+        self.assertEqual(self._apply(code, VbaConstantInlining), cleandoc("""
             Sub T()
               F "val"
             End Sub
@@ -29,14 +31,14 @@ class TestVbaConstantInlining(TestVba):
               F x
             End Sub
         """)
-        self.assertEqual(self._deobfuscate(code), code)
+        self.assertEqual(self._apply(code, VbaConstantInlining), code)
 
     def test_regression_matchgroup(self):
         code = cleandoc(r"""
             const a = "\3"
             b = a
         """)
-        self.assertEqual(self._deobfuscate(code), r'b = "\3"')
+        self.assertEqual(self._apply(code, VbaConstantInlining), r'b = "\3"')
 
     def test_constant_not_inlined_across_procedures(self):
         code = cleandoc("""
@@ -48,7 +50,7 @@ class TestVbaConstantInlining(TestVba):
               H n
             End Sub
         """)
-        self.assertEqual(self._deobfuscate(code), cleandoc("""
+        self.assertEqual(self._apply(code, VbaConstantInlining), cleandoc("""
             Sub A()
               G 7
             End Sub

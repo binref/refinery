@@ -4,6 +4,10 @@ from inspect import cleandoc
 
 from test.lib.scripts.vba.deobfuscation import TestVba
 
+from refinery.lib.scripts.vba.deobfuscation.constants import VbaConstantInlining
+from refinery.lib.scripts.vba.deobfuscation.emulator import VbaFunctionEvaluator
+from refinery.lib.scripts.vba.deobfuscation.simplify import VbaSimplifications
+
 
 class TestVbaFunctionEvaluator(TestVba):
 
@@ -20,6 +24,12 @@ class TestVbaFunctionEvaluator(TestVba):
         self.assertEqual(self._full_deobfuscate(code), cleandoc("""
             Sub T()
               G "hello"
+            End Sub
+        """))
+        self.assertEqual(self._apply(code, VbaFunctionEvaluator), cleandoc("""
+            Sub T()
+              x = "hello"
+              G x
             End Sub
         """))
 
@@ -39,6 +49,12 @@ class TestVbaFunctionEvaluator(TestVba):
               F "cellvalueif"
             End Sub
         """))
+        self.assertEqual(self._apply(code, VbaFunctionEvaluator), cleandoc("""
+            Sub T()
+              melb = "cellvalueif"
+              F melb
+            End Sub
+        """))
 
     def test_emulator_with_params(self):
         code = cleandoc("""
@@ -55,6 +71,12 @@ class TestVbaFunctionEvaluator(TestVba):
               G "ABC"
             End Sub
         """))
+        self.assertEqual(self._apply(code, VbaFunctionEvaluator), cleandoc("""
+            Sub T()
+              x = "ABC"
+              G x
+            End Sub
+        """))
 
     def test_emulator_nonconstant_arg_preserved(self):
         code = cleandoc("""
@@ -66,7 +88,7 @@ class TestVbaFunctionEvaluator(TestVba):
               G F(y)
             End Sub
         """)
-        self.assertEqual(self._full_deobfuscate(code), code)
+        self.assertEqual(self._apply(code, VbaFunctionEvaluator), code)
 
     def test_emulator_loop(self):
         code = cleandoc("""
@@ -79,7 +101,7 @@ class TestVbaFunctionEvaluator(TestVba):
               G Build()
             End Sub
         """)
-        self.assertEqual(self._full_deobfuscate(code), cleandoc("""
+        self.assertEqual(self._apply(code, VbaFunctionEvaluator), cleandoc("""
             Sub T()
               G "xxx"
             End Sub
@@ -95,7 +117,7 @@ class TestVbaFunctionEvaluator(TestVba):
               G F()
             End Sub
         """)
-        self.assertEqual(self._full_deobfuscate(code), code)
+        self.assertEqual(self._apply(code, VbaFunctionEvaluator), code)
 
     def test_emulator_do_while_false_skips_body(self):
         code = cleandoc("""
@@ -109,7 +131,7 @@ class TestVbaFunctionEvaluator(TestVba):
               G F()
             End Sub
         """)
-        self.assertEqual(self._full_deobfuscate(code), cleandoc("""
+        self.assertEqual(self._apply(code, VbaFunctionEvaluator), cleandoc("""
             Sub T()
               G "before"
             End Sub
@@ -127,7 +149,7 @@ class TestVbaFunctionEvaluator(TestVba):
               G F()
             End Sub
         """)
-        self.assertEqual(self._full_deobfuscate(code), cleandoc("""
+        self.assertEqual(self._apply(code, VbaFunctionEvaluator), cleandoc("""
             Sub T()
               G "before"
             End Sub
@@ -140,6 +162,7 @@ class TestVbaFunctionEvaluator(TestVba):
               Builder = "payload"
               Shell "cmd " & Chr(80) & Builder, 0
             End Function
+
             Sub Autoopen()
               On Error Resume Next
               Builder
@@ -156,6 +179,7 @@ class TestVbaFunctionEvaluator(TestVba):
               Builder
             End Sub
         """))
+        self.assertEqual(self._apply(code, VbaFunctionEvaluator), code)
 
     def test_emulator_instr(self):
         code = cleandoc("""
@@ -170,6 +194,12 @@ class TestVbaFunctionEvaluator(TestVba):
         self.assertEqual(self._full_deobfuscate(code), cleandoc("""
             Sub T()
               G 7
+            End Sub
+        """))
+        self.assertEqual(self._apply(code, VbaFunctionEvaluator), cleandoc("""
+            Sub T()
+              x = 7
+              G x
             End Sub
         """))
 
@@ -188,6 +218,12 @@ class TestVbaFunctionEvaluator(TestVba):
               G 4
             End Sub
         """))
+        self.assertEqual(self._apply(code, VbaFunctionEvaluator), cleandoc("""
+            Sub T()
+              x = 4
+              G x
+            End Sub
+        """))
 
     def test_emulator_refuses_nonprintable_result(self):
         code = cleandoc("""
@@ -198,7 +234,7 @@ class TestVbaFunctionEvaluator(TestVba):
               G F()
             End Sub
         """)
-        self.assertEqual(self._full_deobfuscate(code), cleandoc("""
+        self.assertEqual(self._apply(code, VbaFunctionEvaluator), cleandoc("""
             Sub T()
               G "a" & Chr(13) & "b"
             End Sub
@@ -213,7 +249,7 @@ class TestVbaFunctionEvaluator(TestVba):
               G F()
             End Sub
         """)
-        self.assertEqual(self._full_deobfuscate(code), cleandoc("""
+        self.assertEqual(self._apply(code, VbaFunctionEvaluator), cleandoc("""
             Sub T()
               G Chr(13) & "payload" & Chr(10)
             End Sub
@@ -232,7 +268,7 @@ class TestVbaFunctionEvaluator(TestVba):
               G F()
             End Sub
         """)
-        self.assertEqual(self._full_deobfuscate(code), cleandoc("""
+        self.assertEqual(self._apply(code, VbaFunctionEvaluator), cleandoc("""
             Sub T()
               G "diff"
             End Sub
@@ -253,6 +289,16 @@ class TestVbaFunctionEvaluator(TestVba):
               G "hello"
             End Sub
         """))
+        self.assertEqual(self._apply(code, VbaSimplifications), cleandoc("""
+            Function F()
+              On Error Resume Next
+              F = "hello"
+            End Function
+
+            Sub T()
+              G F()
+            End Sub
+        """))
 
     def test_return_variable_inlined(self):
         code = cleandoc("""
@@ -264,6 +310,11 @@ class TestVbaFunctionEvaluator(TestVba):
         self.assertEqual(self._full_deobfuscate(code), cleandoc("""
             Function F()
               Shell "cmd hello", 0
+            End Function
+        """))
+        self.assertEqual(self._apply(code, VbaConstantInlining), cleandoc("""
+            Function F()
+              Shell "cmd " & "hello", 0
             End Function
         """))
 
@@ -283,9 +334,15 @@ class TestVbaFunctionEvaluator(TestVba):
               F "cellvalueif"
             End Sub
         """))
+        self.assertEqual(self._apply(code, VbaFunctionEvaluator), cleandoc("""
+            Sub T()
+              melb = "cellvalueif"
+              F melb
+            End Sub
+        """))
 
     def _compare_branch(self, option: str, expr: str) -> str:
-        return self._full_deobfuscate(cleandoc(F"""
+        return self._apply(cleandoc(F"""
             {option}
             Function F()
               If {expr} Then
@@ -297,7 +354,7 @@ class TestVbaFunctionEvaluator(TestVba):
             Sub T()
               G F()
             End Sub
-        """))
+        """), VbaFunctionEvaluator)
 
     def test_text_equality_folds_for_safe_operands(self):
         self.assertIn('G "same"', self._compare_branch('Option Compare Text', '"AB" = "ab"'))

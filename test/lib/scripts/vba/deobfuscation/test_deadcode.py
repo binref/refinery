@@ -4,6 +4,11 @@ from inspect import cleandoc
 
 from test.lib.scripts.vba.deobfuscation import TestVba
 
+from refinery.lib.scripts.vba.deobfuscation.deadcode import (
+    VbaDeadVariableRemoval,
+    VbaEmptyProcedureRemoval,
+)
+
 
 class TestVbaDeadVariableRemoval(TestVba):
 
@@ -14,6 +19,10 @@ class TestVbaDeadVariableRemoval(TestVba):
             End Sub
         """)
         self.assertEqual(self._deobfuscate(code), '')
+        self.assertEqual(self._apply(code, VbaDeadVariableRemoval), cleandoc("""
+            Sub T()
+            End Sub
+        """))
 
     def test_dead_variable_keep_calls(self):
         code = cleandoc("""
@@ -21,7 +30,7 @@ class TestVbaDeadVariableRemoval(TestVba):
               x = Foo()
             End Sub
         """)
-        self.assertEqual(self._deobfuscate(code), code)
+        self.assertEqual(self._apply(code, VbaDeadVariableRemoval), code)
 
     def test_dead_variable_keep_used(self):
         code = cleandoc("""
@@ -30,7 +39,7 @@ class TestVbaDeadVariableRemoval(TestVba):
               y = x
             End Sub
         """)
-        self.assertEqual(self._deobfuscate(code), cleandoc("""
+        self.assertEqual(self._apply(code, VbaDeadVariableRemoval), cleandoc("""
             Sub T()
               x = Foo()
             End Sub
@@ -41,7 +50,7 @@ class TestVbaDeadVariableRemoval(TestVba):
             a.Close
             b = z.function(x)
         """)
-        self.assertEqual(self._deobfuscate(code), code)
+        self.assertEqual(self._apply(code, VbaDeadVariableRemoval), code)
 
     def test_function_return_value_not_treated_as_dead(self):
         code = cleandoc("""
@@ -53,7 +62,7 @@ class TestVbaDeadVariableRemoval(TestVba):
               G 1
             End Sub
         """)
-        self.assertEqual(self._full_deobfuscate(code), code)
+        self.assertEqual(self._apply(code, VbaDeadVariableRemoval), code)
 
     def test_dead_variable_removed_despite_same_named_function(self):
         code = cleandoc("""
@@ -65,7 +74,7 @@ class TestVbaDeadVariableRemoval(TestVba):
               G 1
             End Sub
         """)
-        self.assertEqual(self._full_deobfuscate(code), cleandoc("""
+        self.assertEqual(self._apply(code, VbaDeadVariableRemoval), cleandoc("""
             Function Total() As Long
               Total = 1
             End Function
@@ -86,7 +95,7 @@ class TestVbaEmptyProcedureRemoval(TestVba):
               G 1
             End Sub
         """)
-        self.assertEqual(self._deobfuscate(code), cleandoc("""
+        self.assertEqual(self._apply(code, VbaEmptyProcedureRemoval), cleandoc("""
             Sub T()
               G 1
             End Sub
@@ -100,7 +109,7 @@ class TestVbaEmptyProcedureRemoval(TestVba):
               G 1
             End Sub
         """)
-        self.assertEqual(self._deobfuscate(code), cleandoc("""
+        self.assertEqual(self._apply(code, VbaEmptyProcedureRemoval), cleandoc("""
             Sub T()
               G 1
             End Sub
@@ -114,7 +123,7 @@ class TestVbaEmptyProcedureRemoval(TestVba):
               G 1
             End Sub
         """)
-        self.assertEqual(self._deobfuscate(code), cleandoc("""
+        self.assertEqual(self._apply(code, VbaEmptyProcedureRemoval), cleandoc("""
             Sub T()
               G 1
             End Sub
@@ -129,7 +138,7 @@ class TestVbaEmptyProcedureRemoval(TestVba):
               Junk
             End Sub
         """)
-        self.assertEqual(self._deobfuscate(code), code)
+        self.assertEqual(self._apply(code, VbaEmptyProcedureRemoval), code)
 
     def test_nonempty_sub_uncalled_preserved(self):
         code = cleandoc("""
@@ -141,7 +150,7 @@ class TestVbaEmptyProcedureRemoval(TestVba):
               G 1
             End Sub
         """)
-        self.assertEqual(self._deobfuscate(code), code)
+        self.assertEqual(self._apply(code, VbaEmptyProcedureRemoval), code)
 
     def test_mixed_empty_procedures(self):
         code = cleandoc("""
@@ -153,7 +162,7 @@ class TestVbaEmptyProcedureRemoval(TestVba):
               A
             End Sub
         """)
-        self.assertEqual(self._deobfuscate(code), cleandoc("""
+        self.assertEqual(self._apply(code, VbaEmptyProcedureRemoval), cleandoc("""
             Sub A()
             End Sub
 
@@ -175,4 +184,4 @@ class TestVbaEmptyProcedureRemoval(TestVba):
               G 1
             End Sub
         """)
-        self.assertEqual(self._deobfuscate(code), code)
+        self.assertEqual(self._apply(code, VbaEmptyProcedureRemoval), code)
