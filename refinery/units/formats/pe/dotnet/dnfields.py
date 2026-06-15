@@ -40,9 +40,6 @@ class dnfields(PathExtractorUnit):
         fields = tables.FieldRVA
         cpaths = CodePath(header)
 
-        if not fields:
-            return
-
         icache: dict[bytes, FieldInfo] = {}
         memory = memoryview(data)
 
@@ -155,7 +152,7 @@ class dnfields(PathExtractorUnit):
             return None, None
 
         iwidth = len(str(len(fields)))
-        rwidth = max(len(F'{field.RVA:X}') for field in fields)
+        rwidth = max((len(F'{field.RVA:X}') for field in fields), default=0)
         rwidth = max(rwidth, 4)
         remaining_field_indices = set(range(len(tables.Field)))
 
@@ -232,7 +229,7 @@ class dnfields(PathExtractorUnit):
             for match in token_matches.get(_index, ()):
                 md = match.groupdict()
                 fn_token = md.get('function')
-                fn_index = fn_token and int.from_bytes(fn_token, 'little') or None
+                fn_index = fn_token and int.from_bytes(fn_token, 'little') - 1 or None
                 if fn_index is not None:
                     fn_name = tables.MemberRef[fn_index].Name
                     if fn_name != 'GetBytes':
