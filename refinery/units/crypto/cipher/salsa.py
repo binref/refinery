@@ -29,6 +29,10 @@ class LatinCipher(ABC):
         tuple[int, int, int, int],
     ]
 
+    @staticmethod
+    def _slice_words(s: slice) -> int:
+        return len(range(*s.indices(16)))
+
     @classmethod
     def FromState(cls, state: Sequence[int] | buf):
         if b := asbuffer(state):
@@ -37,17 +41,21 @@ class LatinCipher(ABC):
             state = list(state)
         if len(state) != 16:
             raise ValueError('State must contain 16 DWORDs')
+        nonce_words = cls._slice_words(cls._idx_nonce)
+        count_words = cls._slice_words(cls._idx_count)
         key = struct.pack(
             '<8L', *state[cls._idx_key16], *state[cls._idx_key32])
         nonce = struct.pack(
-            '<2L', *state[cls._idx_nonce])
+            F'<{nonce_words}L', *state[cls._idx_nonce])
         magic = struct.pack(
             '<4L', *state[cls._idx_magic])
         count = int.from_bytes(struct.pack(
-            '<2L', *state[cls._idx_count]), 'little')
+            F'<{count_words}L', *state[cls._idx_count]), 'little')
         return cls(key, nonce, magic, counter=count)
 
     def __init__(self, key: buf, nonce: buf, magic: buf | None = None, rounds: int = 20, counter: int = 0):
+        nonce_words = self._slice_words(self._idx_nonce)
+        nonce_size = 4 * nonce_words
         if len(key) == 16:
             key = 2 * bytes(key)
         elif len(key) != 32:
@@ -55,9 +63,9 @@ class LatinCipher(ABC):
         if rounds % 2:
             raise ValueError('The number of rounds has to be even.')
         if not nonce:
-            nonce = bytearray(8)
-        elif len(nonce) != 8:
-            raise ValueError('The nonce must be of length 8.')
+            nonce = bytearray(nonce_size)
+        elif len(nonce) != nonce_size:
+            raise ValueError(F'The nonce must be of length {nonce_size}.')
         if not magic:
             magic = B'expand %d-byte k' % len(key)
         elif len(magic) != 16:
@@ -66,14 +74,15 @@ class LatinCipher(ABC):
         self.key16 = _key[:4]
         self.key32 = _key[4:]
         self.magic = struct.unpack('<4L', magic)
-        self.nonce = struct.unpack('<2L', nonce)
+        self.nonce = struct.unpack(F'<{nonce_words}L', nonce)
         self.state: list[int] = [0] * 4 * 4
         self.rounds = rounds // 2
         self.reset(counter)
 
     def reset(self, index=0) -> None:
         state = self.state
-        self.counter = [index & 0xFFFFFFFF, index >> 32 & 0xFFFFFFFF]
+        count_words = self._slice_words(self._idx_count)
+        self.counter = [index >> (32 * k) & 0xFFFFFFFF for k in range(count_words)]
         state[self._idx_magic] = self.magic
         state[self._idx_key16] = self.key16
         state[self._idx_key32] = self.key32
@@ -82,11 +91,13 @@ class LatinCipher(ABC):
         assert len(state) == 4 * 4
 
     def count(self):
-        lo, hi = self.counter
-        lo = lo + 1 & 0xFFFFFFFF
-        if not lo:
-            hi = hi + 1 & 0xFFFFFFFF
-        self.state[self._idx_count] = self.counter = lo, hi
+        counter = self.counter
+        for k, value in enumerate(counter):
+            value = value + 1 & 0xFFFFFFFF
+            counter[k] = value
+            if value:
+                break
+        self.state[self._idx_count] = counter
 
     @staticmethod
     @abstractmethod

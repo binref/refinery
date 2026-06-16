@@ -36,6 +36,11 @@ class ChaChaCipher(LatinCipher):
         x[c] = x[c] + x[d] & 0xFFFFFFFF; x[b] = rotl32(x[b] ^ x[c] & 0xFFFFFFFF, 0x07) # noqa
 
 
+class ChaChaCipherIETF(ChaChaCipher):
+    _idx_count = slice(0x0C, 0x0D)
+    _idx_nonce = slice(0x0D, 0x10)
+
+
 class chacha20(LatinCipherStandardUnit, cipher=PyCryptoFactoryWrapper(ChaCha20)):
     """
     ChaCha20 and XChaCha20 encryption and decryption.
@@ -64,18 +69,26 @@ class chacha(LatinCipherUnit):
     """
     ChaCha encryption and decryption.
 
-    The nonce must be 8 bytes long as currently, only the original Bernstein algorithm is
-    implemented. When 64 bytes are provided as the key, this data is interpreted as the initial
-    state box and all other parameters are ignored.
+    The nonce must be 8 bytes long for the original Bernstein algorithm, or 12 bytes long for the
+    IETF variant (RFC 8439) which uses a 32-bit block counter and a 96-bit nonce. When 64 bytes
+    are provided as the key, this data is interpreted as the initial state box and all other
+    parameters are ignored.
     """
     def keystream(self) -> Iterable[int]:
         key = self.args.key
         if len(key) == 64:
             it = ChaChaCipher.FromState(key)
         else:
-            it = ChaChaCipher(
+            nonce = self.args.nonce
+            if len(nonce) == 8:
+                cipher = ChaChaCipher
+            elif len(nonce) == 12:
+                cipher = ChaChaCipherIETF
+            else:
+                raise ValueError(F'The nonce must be 8 or 12 bytes long, got {len(nonce)}.')
+            it = cipher(
                 key,
-                self.args.nonce,
+                nonce,
                 self.args.magic,
                 self.args.rounds,
                 self.args.offset,

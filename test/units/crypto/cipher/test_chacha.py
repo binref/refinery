@@ -3,6 +3,25 @@ from ... import TestUnitBase
 
 class TestChaCha(TestUnitBase):
 
+    def test_chacha20_ietf_rfc8439(self):
+        key = bytes.fromhex(
+            '000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f')
+        nonce = bytes.fromhex('000000000000004a00000000')
+        data = (
+            B'Ladies and Gentlemen of the class of \'99: If I could offer you only one'
+            B' tip for the future, sunscreen would be it.')
+        goal = bytes.fromhex(
+            '6e2e359a2568f98041ba0728dd0d6981'
+            'e97e7aec1d4360c20a27afccfd9fae0b'
+            'f91b65c5524733ab8f593dabcd62b357'
+            '1639d624e65152ab8f530c359f0861d8'
+            '07ca0dbf500d6a6156a38e088a22b65e'
+            '52bc514d16ccf806818ce91ab7793736'
+            '5af90bbf74a35be6b40b8eedf2785e42'
+            '874d')
+        test = data | self.ldu('chacha', offset=1, key=key, nonce=nonce) | bytes
+        self.assertEqual(test, goal)
+
     def test_xchacha(self):
         key = bytes.fromhex(
             '808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9f')
