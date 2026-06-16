@@ -1,0 +1,256 @@
+from __future__ import annotations
+
+import inspect
+
+from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
+
+from refinery.lib.scripts.js.parser import JsParser
+from refinery.lib.scripts.js.synth import JsSynthesizer
+
+
+class TestObjectFold(TestJsDeobfuscator):
+
+    def test_string_property_inlined(self):
+        self.assertEqual(
+            "x('hello');",
+            self._objectfold("var o = {'k': 'hello'}; x(o['k']);"),
+        )
+
+    def test_function_wrapper_inlined(self):
+        self.assertEqual(
+            'var r = 1 + 2;',
+            self._objectfold("var o = {'f': function(a, b) { return a + b; }}; var r = o['f'](1, 2);"),
+        )
+
+    def test_this_method_not_folded(self):
+        source = (
+            "var o = {'k': 'AB', 'f': function(i) { return this.k.charAt(i); }};"
+            " var r = o['f'](0);"
+        )
+        untouched = JsSynthesizer().convert(JsParser(source).parse())
+        self.assertEqual(self._objectfold(source), untouched)
+
+    def test_this_in_nested_function_still_folds(self):
+        source = (
+            "var o = {'f': function(a) { return g(a, function() { return this.x; }); }};"
+            " var r = o['f'](1);"
+        )
+        result = self._objectfold(source)
+        self.assertNotIn('var o =', result)
+        self.assertNotIn("o['f']", result)
+
+    def test_this_in_nested_arrow_not_folded(self):
+        source = (
+            "var o = {'k': 'AB', 'f': function(i) { return (() => this.k.charAt(i))(); }};"
+            " var r = o['f'](0);"
+        )
+        untouched = JsSynthesizer().convert(JsParser(source).parse())
+        self.assertEqual(self._objectfold(source), untouched)
+
+    def test_arrow_property_using_this_not_folded(self):
+        source = (
+            "var o = {'f': () => this.x};"
+            " function h() { return o['f'](); }"
+        )
+        untouched = JsSynthesizer().convert(JsParser(source).parse())
+        self.assertEqual(self._objectfold(source), untouched)
+
+    def test_class_super_class_using_this_not_folded(self):
+        source = (
+            "var o = {'f': function() { return class extends this.Base {}; }};"
+            " var r = o['f']();"
+        )
+        untouched = JsSynthesizer().convert(JsParser(source).parse())
+        self.assertEqual(self._objectfold(source), untouched)
+
+    def test_class_computed_key_using_this_not_folded(self):
+        source = (
+            "var o = {'k': 'm', 'f': function() { return class { [this.k]() {} }; }};"
+            " var r = o['f']();"
+        )
+        untouched = JsSynthesizer().convert(JsParser(source).parse())
+        self.assertEqual(self._objectfold(source), untouched)
+
+    def test_class_method_body_this_still_folds(self):
+        source = (
+            "var o = {'f': function() { return class { m() { return this.x; } }; }};"
+            " var r = o['f']();"
+        )
+        result = self._objectfold(source)
+        self.assertNotIn("o['f']", result)
+
+    def test_arrow_value_folded_into_callee_is_parenthesized(self):
+        source = "var o = {'f': () => g()}; var r = o['f']();"
+        self.assertEqual(self._objectfold(source), 'var r = (() => g())();')
+
+    def test_mutated_object_unchanged(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var o = { 'k': 'hello' };
+                o = other;
+                x(o['k']);
+                """
+            ),
+            self._objectfold("var o = {'k': 'hello'}; o = other; x(o['k']);"),
+        )
+
+    def test_non_literal_key_unchanged(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var o = { [expr]: 'hello' };
+                x(o[expr]);
+                """
+            ),
+            self._objectfold("var o = {[expr]: 'hello'}; x(o[expr]);"),
+        )
+
+    def test_multiple_properties(self):
+        source = (
+            "var o = {'a': 'hello', 'b': ', ', 'c': function(x, y) { return x + y; }};"
+            " var r = o['c'](o['a'], o['b']);"
+        )
+        self.assertEqual(
+            "var r = 'hello' + ', ';",
+            self._objectfold(source),
+        )
+
+    def test_object_with_method_kind_skipped(self):
+        self.assertEqual("'hello';", self._objectfold("var o = {'k': 'hello'}; o.k;"))
+
+    def test_generated_medium_object_fold(self):
+        result = self._objectfold(
+            r"function classify(_0xc9c876){var _0x159b71={'QUMXw':function(_0x794a00,_0x30c617){return _0x794a00<_"
+            r"0x30c617;},'smFRR':function(_0x56d1ff,_0x5094f9){return _0x56d1ff>_0x5094f9;},'KVVfA':'positive','nQ"
+            r"fTZ':function(_0x50e61b,_0x19cfc3){return _0x50e61b<_0x19cfc3;},'YFNps':'negative','uvdVt':'zero'};v"
+            r"ar _0xc3dbcf=[];for(var _0x254ae8=0x0;_0x159b71['QUMXw'](_0x254ae8,_0xc9c876['length']);_0x254ae8++)"
+            r"{var _0xe54f7c=_0xc9c876[_0x254ae8];if(_0x159b71['smFRR'](_0xe54f7c,0x0)){_0xc3dbcf['push'](_0x159b7"
+            r"1['KVVfA']);}else if(_0x159b71['nQfTZ'](_0xe54f7c,0x0)){_0xc3dbcf['push'](_0x159b71['YFNps']);}else{"
+            r"_0xc3dbcf['push'](_0x159b71['uvdVt']);}}var _0x51ec37=_0xc3dbcf['length'];return{'items':_0xc3dbcf,'"
+            r"total':_0x51ec37};}"
+        )
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function classify(_0xc9c876) {
+                  var _0xc3dbcf = [];
+                  for (var _0x254ae8 = 0x0; _0x254ae8 < _0xc9c876['length']; _0x254ae8++) {
+                    var _0xe54f7c = _0xc9c876[_0x254ae8];
+                    if (_0xe54f7c > 0x0) {
+                      _0xc3dbcf['push']('positive');
+                    } else {
+                      if (_0xe54f7c < 0x0) {
+                        _0xc3dbcf['push']('negative');
+                      } else {
+                        _0xc3dbcf['push']('zero');
+                      }
+                    }
+                  }
+                  var _0x51ec37 = _0xc3dbcf['length'];
+                  return { 'items': _0xc3dbcf, 'total': _0x51ec37 };
+                }
+                """
+            ),
+            result,
+        )
+
+    def test_multi_declarator(self):
+        source = "var x = 1, o = {'k': 'hello'}, y = 2; z(o['k']);"
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var x = 1, y = 2;
+                z('hello');
+                """
+            ),
+            self._objectfold(source),
+        )
+
+    def test_partial_key_coverage(self):
+        source = "var o = {'a': 'hello', 'b': 'world'}; x(o['a']); y(o['missing']);"
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                x('hello');
+                y(undefined);
+                """
+            ),
+            self._objectfold(source),
+        )
+
+    def test_dynamic_key_preserves_object(self):
+        source = "var o = {'a': 'hello', 'b': 'world'}; x(o['a']); y(o[z]);"
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var o = { 'a': 'hello', 'b': 'world' };
+                x('hello');
+                y(o[z]);
+                """
+            ),
+            self._objectfold(source),
+        )
+
+    def test_contextual_keyword_as_parameter(self):
+        source = "var o = {'f': function(as, at) { return as < at; }}; var r = o['f'](x, 3);"
+        self.assertEqual('var r = x < 3;', self._objectfold(source))
+
+
+class TestRegressions(TestJsDeobfuscator):
+
+    def test_objectfold_var_in_nested_block_not_removed(self):
+        source = (
+            "function f() {"
+            "  if (true) { var o = {'k': 'hello'}; x(o['k']); }"
+            "  return o['k'];"
+            "}")
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function f() {
+                  if (true) {
+                    var o = { 'k': 'hello' };
+                    x(o['k']);
+                  }
+                  return o['k'];
+                }
+                """
+            ),
+            self._objectfold(source),
+        )
+
+
+class TestRegressionBugs(TestJsDeobfuscator):
+
+    def test_objectfold_no_inline_sideeffect_argument(self):
+        source = inspect.cleandoc(
+            """
+            var o = {fn: function(a) { return a + a; }};
+            o.fn(g());
+            """
+        )
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                (function(a) {
+                  return a + a;
+                }(g()));
+                """
+            ),
+            self._objectfold(source),
+        )
+
+    def test_objectfold_getter_not_folded(self):
+        source = 'var o = { get x() { return 1; } }; o.x;'
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var o = { get x() {
+                  return 1;
+                } };
+                o.x;
+                """
+            ),
+            self._objectfold(source),
+        )

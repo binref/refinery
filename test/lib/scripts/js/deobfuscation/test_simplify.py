@@ -1,0 +1,512 @@
+from __future__ import annotations
+
+import inspect
+
+from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
+
+
+class TestBasicSimplifications(TestJsDeobfuscator):
+
+    def test_string_concat_simple(self):
+        self.assertEqual("'ab';", self._simplify("'a' + 'b';"))
+
+    def test_string_concat_nested(self):
+        self.assertEqual("'abc';", self._simplify("'a' + 'b' + 'c';"))
+
+    def test_arithmetic_add(self):
+        self.assertEqual('5;', self._simplify('2 + 3;'))
+
+    def test_arithmetic_multiply(self):
+        self.assertEqual('20;', self._simplify('10 * 2;'))
+
+    def test_arithmetic_subtract(self):
+        self.assertEqual('7;', self._simplify('10 - 3;'))
+
+    def test_arithmetic_power(self):
+        self.assertEqual('8;', self._simplify('2 ** 3;'))
+
+    def test_arithmetic_modulo(self):
+        self.assertEqual('1;', self._simplify('10 % 3;'))
+
+    def test_arithmetic_bitwise_or(self):
+        self.assertEqual('7;', self._simplify('5 | 3;'))
+
+    def test_arithmetic_bitwise_and(self):
+        self.assertEqual('1;', self._simplify('5 & 3;'))
+
+    def test_arithmetic_bitwise_xor(self):
+        self.assertEqual('6;', self._simplify('5 ^ 3;'))
+
+    def test_arithmetic_left_shift(self):
+        self.assertEqual('8;', self._simplify('1 << 3;'))
+
+    def test_arithmetic_right_shift(self):
+        self.assertEqual('2;', self._simplify('8 >> 2;'))
+
+    def test_arithmetic_unsigned_right_shift(self):
+        self.assertEqual('4294967295;', self._simplify('(-1) >>> 0;'))
+
+    def test_arithmetic_division_by_zero_unchanged(self):
+        self.assertEqual('1 / 0;', self._simplify('1 / 0;'))
+
+    def test_tuple_all_literals(self):
+        self.assertEqual("'c';", self._simplify("'a', 'b', 'c';"))
+
+    def test_tuple_side_effect_free(self):
+        self.assertEqual("'c';", self._simplify("'a', x, 'c';"))
+
+    def test_tuple_with_side_effect(self):
+        self.assertEqual("f(), 'c';", self._simplify("'a', f(), 'c';"))
+
+    def test_array_indexing(self):
+        self.assertEqual('"b";', self._simplify('["a", "b", "c"][1];'))
+
+    def test_array_indexing_first(self):
+        self.assertEqual('"x";', self._simplify('["x", "y"][0];'))
+
+    def test_bracket_to_dot(self):
+        self.assertEqual('obj.prop;', self._simplify('obj["prop"];'))
+
+    def test_bracket_non_identifier_unchanged(self):
+        self.assertEqual('obj["a-b"];', self._simplify('obj["a-b"];'))
+
+    def test_bracket_reserved_word_unchanged(self):
+        self.assertEqual('obj["class"];', self._simplify('obj["class"];'))
+
+    def test_computed_property_key_to_identifier(self):
+        self.assertEqual('({ a: 1 });', self._simplify('({ ["a"]: 1 });'))
+
+    def test_computed_getter_key_to_identifier(self):
+        self.assertEqual('({ get a() {} });', self._simplify('({ get ["a"]() {} });'))
+
+    def test_computed_setter_key_to_identifier(self):
+        self.assertEqual('({ set a(v) {} });', self._simplify('({ set ["a"](v) {} });'))
+
+    def test_computed_accessor_proto_key_to_identifier(self):
+        self.assertEqual('({ get __proto__() {} });', self._simplify('({ get ["__proto__"]() {} });'))
+
+    def test_computed_property_non_identifier_unchanged(self):
+        self.assertEqual('({ ["a-b"]: 1 });', self._simplify('({ ["a-b"]: 1 });'))
+
+    def test_computed_property_proto_unchanged(self):
+        self.assertEqual('({ ["__proto__"]: 1 });', self._simplify('({ ["__proto__"]: 1 });'))
+
+    def test_computed_property_reserved_key_to_identifier(self):
+        self.assertEqual('({ class: 1 });', self._simplify('({ ["class"]: 1 });'))
+
+    def test_computed_method_reserved_key_to_identifier(self):
+        self.assertEqual('({ return() {} });', self._simplify('({ ["return"]() {} });'))
+
+    def test_paren_unwrap_string(self):
+        self.assertEqual('"hello";', self._simplify('("hello");'))
+
+    def test_paren_unwrap_number(self):
+        self.assertEqual('42;', self._simplify('(42);'))
+
+    def test_unary_not_zero(self):
+        self.assertEqual('true;', self._simplify('!0;'))
+
+    def test_unary_not_one(self):
+        self.assertEqual('false;', self._simplify('!1;'))
+
+    def test_typeof_string(self):
+        self.assertEqual("'string';", self._simplify('typeof "x";'))
+
+    def test_typeof_number(self):
+        self.assertEqual("'number';", self._simplify('typeof 42;'))
+
+    def test_typeof_boolean(self):
+        self.assertEqual("'boolean';", self._simplify('typeof true;'))
+
+    def test_unary_negate(self):
+        self.assertEqual('-5;', self._simplify('-(5);'))
+
+    def test_unary_plus(self):
+        self.assertEqual('5;', self._simplify('+(5);'))
+
+    def test_non_constant_unchanged(self):
+        self.assertEqual('a + b;', self._simplify('a + b;'))
+
+    def test_non_constant_member_unchanged(self):
+        self.assertEqual('a[b];', self._simplify('a[b];'))
+
+    def test_combined_deobfuscation(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var x = 'hello';
+                var y = 1;
+                """
+            ),
+            self._simplify('var x = "hel" + "lo"; var y = [1, 2, 3][0];'),
+        )
+
+    def test_unescape_hex_space(self):
+        self.assertEqual("'hello world';", self._simplify("'hello\\x20world';"))
+
+    def test_unescape_hex_mixed(self):
+        self.assertEqual("'AB\\nC';", self._simplify("'A\\x42\\x0a\\x43';"))
+
+    def test_unescape_unicode_short(self):
+        self.assertEqual("'Hi';", self._simplify("'\\u0048\\u0069';"))
+
+    def test_unescape_unicode_full(self):
+        self.assertEqual("'Hello';", self._simplify("'\\u0048\\u0065\\u006c\\u006c\\u006f';"))
+
+    def test_unescape_unicode_non_ascii(self):
+        self.assertEqual("'你好';", self._simplify("'\\u4f60\\u597d';"))
+
+    def test_unescape_preserves_quote(self):
+        self.assertEqual("'don\\'t';", self._simplify("'don\\x27t';"))
+
+    def test_unescape_preserves_backslash(self):
+        self.assertEqual("'back\\\\slash';", self._simplify("'back\\x5cslash';"))
+
+    def test_split_pipe_to_array(self):
+        self.assertEqual("['a', 'b', 'c'];", self._simplify("'a|b|c'['split']('|');"))
+
+    def test_split_dash_separator(self):
+        self.assertEqual("['x', 'y'];", self._simplify("'x-y'['split']('-');"))
+
+    def test_split_dot_notation(self):
+        self.assertEqual("['a', 'b'];", self._simplify("'a|b'.split('|');"))
+
+    def test_string_slice(self):
+        self.assertEqual("'el';", self._simplify("'hello'.slice(1, 3);"))
+
+    def test_string_char_at(self):
+        self.assertEqual("'h';", self._simplify("'hello'.charAt(0);"))
+
+    def test_string_to_lower_case(self):
+        self.assertEqual("'hello';", self._simplify("'HELLO'.toLowerCase();"))
+
+    def test_string_repeat(self):
+        self.assertEqual("'abcabc';", self._simplify("'abc'.repeat(2);"))
+
+    def test_string_replace(self):
+        self.assertEqual(
+            "'hello there';", self._simplify("'hello world'.replace('world', 'there');"),
+        )
+
+    def test_string_substring(self):
+        self.assertEqual("'ell';", self._simplify("'hello'.substring(1, 4);"))
+
+    def test_array_index_of(self):
+        self.assertEqual("1;", self._simplify("['a', 'b', 'c'].indexOf('b');"))
+
+    def test_array_slice(self):
+        self.assertEqual("['b', 'c'];", self._simplify("['a', 'b', 'c'].slice(1);"))
+
+    def test_atob(self):
+        self.assertEqual("'Hello';", self._simplify("atob('SGVsbG8=');"))
+
+    def test_btoa(self):
+        self.assertEqual("'SGVsbG8=';", self._simplify("btoa('Hello');"))
+
+    def test_unescape(self):
+        self.assertEqual("'Hello';", self._simplify("unescape('%48%65%6C%6C%6F');"))
+
+    def test_number_conversion(self):
+        self.assertEqual("42;", self._simplify("Number('42');"))
+
+    def test_json_parse_string(self):
+        self.assertEqual("'hello';", self._simplify("JSON.parse('\"hello\"');"))
+
+    def test_json_parse_array(self):
+        self.assertEqual("[1, 2, 3];", self._simplify("JSON.parse('[1, 2, 3]');"))
+
+    def test_json_parse_object(self):
+        self.assertEqual("({ 'a': 1 });", self._simplify("JSON.parse('{\"a\": 1}');"))
+
+    def test_no_fold_variable_receiver(self):
+        self.assertEqual("x.slice(1);", self._simplify("x.slice(1);"))
+
+    def test_no_fold_variable_arg(self):
+        self.assertEqual("atob(x);", self._simplify("atob(x);"))
+
+    def test_no_fold_unknown_method(self):
+        self.assertEqual("'hello'.unknownMethod();", self._simplify("'hello'.unknownMethod();"))
+
+    def test_no_fold_length_as_callable(self):
+        self.assertEqual("'hello'.length();", self._simplify("'hello'.length();"))
+
+    def test_no_fold_void_with_side_effect(self):
+        self.assertEqual("atob(void f());", self._simplify("atob(void f());"))
+
+    def test_array_index_of_boolean_strict(self):
+        self.assertEqual("-1;", self._simplify("[1, 2].indexOf(true);"))
+
+    def test_array_includes_boolean_strict(self):
+        self.assertEqual("false;", self._simplify("[1].includes(true);"))
+
+    def test_string_replace_dollar_match(self):
+        self.assertEqual("'[a]bc';", self._simplify("'abc'.replace('a', '[$&]');"))
+
+    def test_string_replace_dollar_escape(self):
+        self.assertEqual("'$bc';", self._simplify("'abc'.replace('a', '$$');"))
+
+    def test_math_max_with_nan_string(self):
+        self.assertEqual("NaN;", self._simplify("Math.max(5, 'abc');"))
+
+    def test_number_empty_array(self):
+        self.assertEqual("0;", self._simplify("Number([]);"))
+
+    def test_number_single_element_array(self):
+        self.assertEqual("5;", self._simplify("Number([5]);"))
+
+    def test_number_underscore_string_is_nan(self):
+        self.assertEqual("NaN;", self._simplify("Number('1_000');"))
+
+    def test_no_fold_json_parse_infinity(self):
+        self.assertEqual("JSON.parse('Infinity');", self._simplify("JSON.parse('Infinity');"))
+
+
+class TestDeadCodeElimination(TestJsDeobfuscator):
+
+    def test_ternary_true(self):
+        self.assertEqual(
+            "var x = 'a';",
+            self._simplify("var x = true ? 'a' : 'b';"),
+        )
+
+    def test_ternary_false(self):
+        self.assertEqual(
+            "var x = 'b';",
+            self._simplify("var x = false ? 'a' : 'b';"),
+        )
+
+
+class TestExtendedOperatorFolding(TestJsDeobfuscator):
+
+    def test_strict_equality_true(self):
+        self.assertEqual('true;', self._simplify("'abc' === 'abc';"))
+
+    def test_strict_equality_false(self):
+        self.assertEqual('false;', self._simplify("'abc' === 'xyz';"))
+
+    def test_strict_inequality(self):
+        self.assertEqual('true;', self._simplify("'abc' !== 'xyz';"))
+
+    def test_number_strict_equality(self):
+        self.assertEqual('true;', self._simplify('42 === 42;'))
+
+    def test_less_than_numbers(self):
+        self.assertEqual('true;', self._simplify('3 < 5;'))
+
+    def test_greater_equal_numbers(self):
+        self.assertEqual('true;', self._simplify('5 >= 5;'))
+
+    def test_less_than_strings(self):
+        self.assertEqual('true;', self._simplify("'abc' < 'abd';"))
+
+    def test_greater_than_numbers_false(self):
+        self.assertEqual('false;', self._simplify('3 > 5;'))
+
+    def test_less_equal_numbers(self):
+        self.assertEqual('false;', self._simplify('7 <= 3;'))
+
+    def test_loose_equality_same_type(self):
+        self.assertEqual('true;', self._simplify('42 == 42;'))
+
+    def test_loose_inequality_same_type(self):
+        self.assertEqual('true;', self._simplify("'a' != 'b';"))
+
+    def test_null_equality(self):
+        self.assertEqual('true;', self._simplify('null == null;'))
+
+    def test_logical_and_truthy_left(self):
+        self.assertEqual("'world';", self._simplify("'hello' && 'world';"))
+
+    def test_logical_and_falsy_left(self):
+        self.assertEqual('0;', self._simplify("0 && 'world';"))
+
+    def test_logical_or_truthy_left(self):
+        self.assertEqual("'hello';", self._simplify("'hello' || 'world';"))
+
+    def test_logical_or_falsy_left(self):
+        self.assertEqual("'fallback';", self._simplify("'' || 'fallback';"))
+
+    def test_nullish_coalescing_null(self):
+        self.assertEqual("'default';", self._simplify("null ?? 'default';"))
+
+    def test_nullish_coalescing_value(self):
+        self.assertEqual('42;', self._simplify("42 ?? 'default';"))
+
+    def test_bitwise_not_zero(self):
+        self.assertEqual('-1;', self._simplify('~0;'))
+
+    def test_bitwise_not_negative_one(self):
+        self.assertEqual('0;', self._simplify('~(-1);'))
+
+    def test_logical_not_true(self):
+        self.assertEqual('false;', self._simplify('!true;'))
+
+    def test_logical_not_false(self):
+        self.assertEqual('true;', self._simplify('!false;'))
+
+    def test_logical_not_null(self):
+        self.assertEqual('true;', self._simplify('!null;'))
+
+    def test_logical_not_empty_string(self):
+        self.assertEqual('true;', self._simplify("!'';"))
+
+    def test_logical_not_nonempty_string(self):
+        self.assertEqual('false;', self._simplify("!'hello';"))
+
+    def test_logical_not_undefined(self):
+        self.assertEqual('true;', self._simplify('!undefined;'))
+
+    def test_logical_not_empty_array(self):
+        self.assertEqual('false;', self._simplify('![];'))
+
+    def test_double_bang_array(self):
+        self.assertEqual('true;', self._simplify('!![];'))
+
+    def test_parseint_fold(self):
+        self.assertEqual('3379;', self._simplify("parseInt('3379kkQfix');"))
+
+    def test_parseint_no_leading_digits(self):
+        self.assertEqual("parseInt('abc');", self._simplify("parseInt('abc');"))
+
+    def test_parseint_hex_radix_folded(self):
+        self.assertEqual('255;', self._simplify("parseInt('0xFF', 16);"))
+
+    def test_parseint_binary_radix(self):
+        self.assertEqual('2;', self._simplify("parseInt('10', 2);"))
+
+    def test_parseint_unknown_radix_preserved(self):
+        self.assertEqual("parseInt('ff', radix);", self._simplify("parseInt('ff', radix);"))
+
+    def test_from_char_code_direct(self):
+        self.assertEqual("'GET';", self._simplify('String.fromCharCode(71, 69, 84);'))
+
+    def test_iife_inline_comparison(self):
+        self.assertEqual(
+            'false;',
+            self._deobfuscate("(function(a, b) { return a === b; })('x', 'y');"),
+        )
+
+    def test_iife_inline_nested(self):
+        source = (
+            "if ((function(a, b) { return a !== b; })('VpDUG', 'ULVFR'))"
+            " { live(); } else { dead(); }"
+        )
+        self.assertEqual('live();', self._deobfuscate(source))
+
+    def test_iife_inline_member_access_arg(self):
+        source = "var r = (function(a, b) { return a < b; })(x, y.length);"
+        self.assertEqual('var r = x < y.length;', self._simplify(source))
+
+    def test_iife_inline_computed_member_arg(self):
+        source = "var r = (function(a, b) { return a <= b; })(arr[0], x);"
+        self.assertEqual('var r = arr[0] <= x;', self._simplify(source))
+
+    def test_iife_preserves_conditional_effectful_arg(self):
+        source = "var r = (function(a, b) { return a || b; })(x, y.z);"
+        expected = inspect.cleandoc(
+            """
+            var r = (function(a, b) {
+              return a || b;
+            })(x, y.z);
+            """
+        )
+        self.assertEqual(expected, self._simplify(source))
+
+    def test_iife_preserves_reordered_effectful_args(self):
+        source = "var r = (function(a, b) { return b + a; })(x.y, z.w);"
+        expected = inspect.cleandoc(
+            """
+            var r = (function(a, b) {
+              return b + a;
+            })(x.y, z.w);
+            """
+        )
+        self.assertEqual(expected, self._simplify(source))
+
+    def test_nullish_coalescing_undefined(self):
+        self.assertEqual("'default';", self._simplify("undefined ?? 'default';"))
+
+    def test_logical_and_undefined(self):
+        self.assertEqual('undefined;', self._simplify("undefined && 'world';"))
+
+    def test_logical_or_undefined(self):
+        self.assertEqual("'fallback';", self._simplify("undefined || 'fallback';"))
+
+
+class TestDeadCodeLiteralConditions(TestJsDeobfuscator):
+
+    def test_ternary_zero(self):
+        self.assertEqual("var x = 'b';", self._simplify("var x = 0 ? 'a' : 'b';"))
+
+    def test_ternary_nonempty_string(self):
+        self.assertEqual("var x = 'a';", self._simplify("var x = 'yes' ? 'a' : 'b';"))
+
+    def test_ternary_undefined(self):
+        self.assertEqual("var x = 'b';", self._simplify("var x = undefined ? 'a' : 'b';"))
+
+
+class TestRegressionBugs(TestJsDeobfuscator):
+
+    def test_bitwise_ops_use_signed_32bit(self):
+        cases = [
+            ('0xFFFFFFFF | 0', '-1'),
+            ('0x80000000 | 0', '-2147483648'),
+            ('0x80000000 ^ 0', '-2147483648'),
+            ('       1 << 31', '-2147483648'),
+        ]
+        for expr, expected in cases:
+            source = F'var x = {expr};'
+            self.assertEqual(
+                self._simplify(source),
+                F'var x = {expected};',
+                F'{expr} should fold to {expected}',
+            )
+
+    def test_modulo_uses_truncated_remainder(self):
+        self.assertEqual('var x = -1;', self._simplify('var x = (-7) % 3;'))
+
+    def test_split_empty_separator(self):
+        self.assertEqual(
+            self._simplify('var x = "hello".split("");'),
+            "var x = ['h', 'e', 'l', 'l', 'o'];",
+        )
+
+    def test_void_0_not_replaced_with_undefined(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function f(undefined) {
+                  return void 0 === undefined;
+                }
+                """
+            ),
+            self._simplify('function f(undefined) { return void 0 === undefined; }'),
+        )
+
+    def test_split_empty_sep_emoticon(self):
+        self.assertEqual(
+            self._simplify("var x = '\U0001f600'.split('');"),
+            "var x = ['\\uD83D', '\\uDE00'];",
+        )
+
+    def test_negative_zero_literal(self):
+        self.assertEqual('var x = -0;', self._simplify('var x = -(0);'))
+
+
+class TestParenthesizedExpressionStripping(TestJsDeobfuscator):
+
+    def test_iife_parens_preserved(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                (function() {
+                  var x = 1;
+                  console.log(x);
+                })();
+                """
+            ),
+            self._simplify('(function(){ var x = 1; console.log(x); })();'),
+        )
+
+    def test_bare_identifier_parens_stripped(self):
+        self.assertEqual('var x = y;', self._simplify('var x = (y);'))
