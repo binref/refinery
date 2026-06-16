@@ -40,6 +40,34 @@ class TestWindowsRegistryExtractor(TestUnitBase):
         self.assertEqual(items[B'HKEY_CURRENT_USER/Test/Exp'], B'%AppData%')
         self.assertEqual(items[B'HKEY_CURRENT_USER/Test'], B'Wookie')
 
+    def test_registry_export_negation(self):
+        unit = self.load()
+        data = inspect.cleandoc(
+            R"""
+            Windows Registry Editor Version 5.00
+
+            [HKEY_CURRENT_USER\Test]
+            "Bin"=hex:41,42,43,43,44,44,01,02
+            "Str"="This is a \"string value\"."
+            "u32"=dword:00000032
+            @="Wookie"
+            """
+        ).encode(unit.codec)
+        excluded = B'HKEY_CURRENT_USER/Test/Str'
+
+        def paths(*patterns, **kw):
+            return {chunk['path'] for chunk in data | self.load(*patterns, **kw)}
+
+        everything = paths()
+        self.assertIn(excluded, everything)
+        self.assertEqual(paths(exclude=['*Str']), everything - {excluded})
+        self.assertEqual(paths('*', exclude=['*Str']), everything - {excluded})
+        self.assertEqual(paths(regex=True, exclude=['.*Str']), everything - {excluded})
+
+        # The bare token Str excludes nothing at base fuzziness; it must be escalated to match.
+        self.assertEqual(paths(exclude=['Str']), everything - {excluded})
+        self.assertEqual(paths(exact=True, exclude=['Str']), everything)
+
     def test_commandline_in_registry_file(self):
         unit = self.load()
         data = inspect.cleandoc(
@@ -67,3 +95,16 @@ class TestWindowsRegistryExtractor(TestUnitBase):
             'Store/DefaultAccount/CloudCacheInvalidator/e883117a-be2c-87f4-4b6a-c7d3652038ac'
         ) | self.ldu('u16') | self.ldu('terminate') | json.loads
         self.assertEqual(test['activityStoreId'], 'E883117A-BE2C-87F4-4B6A-C7D3652038AC')
+
+    def test_hive_excluded_pattern(self):
+        token = 'CloudCacheInvalidator'
+        excluded = (
+            'ROOT/SOFTWARE/Microsoft/Windows/CurrentVersion/CloudStore/'
+            'Store/DefaultAccount/CloudCacheInvalidator/e883117a-be2c-87f4-4b6a-c7d3652038ac')
+        data = self.download_sample('af0be95fd8aafc1ae2839995ad6350fe042c5ef1428c703fa9ff9824f15258e3')
+        data = data | self.ldu('lzma') | bytearray
+        full = data | self.load(list=True) | [str]
+        excl = data | self.load(exclude=[F'*{token}*'], list=True) | [str]
+        self.assertIn(excluded, full)
+        self.assertTrue(excl, 'exclusion pruned the entire hive')
+        self.assertEqual(set(excl), {path for path in full if token not in path})

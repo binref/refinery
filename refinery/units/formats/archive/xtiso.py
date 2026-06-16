@@ -10,25 +10,13 @@ class xtiso(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
     Extract files from a ISO archive.
     """
     def __init__(
-        self,
-        *paths, list=False, join_path=False, drop_path=False, fuzzy=0, exact=False, regex=False,
-        path=b'path', date=b'date',
+        self, *paths,
         fs: Param[str, Arg.Option('-s', metavar='TYPE', choices=FileSystemType, help=(
             'Specify a file system ({choices}) extension to use. The default setting {default} will automatically '
-            'detect the first of the other available options and use it.'))] = 'auto'
+            'detect the first of the other available options and use it.'))] = 'auto',
+        **kwargs
     ):
-        super().__init__(
-            *paths,
-            list=list,
-            join_path=join_path,
-            drop_path=drop_path,
-            fuzzy=fuzzy,
-            exact=exact,
-            regex=regex,
-            path=path,
-            date=date,
-            fs=Arg.AsOption(fs, FileSystemType),
-        )
+        super().__init__(*paths, fs=Arg.AsOption(fs, FileSystemType), **kwargs)
 
     def unpack(self, data):
         if not self.handles(data):

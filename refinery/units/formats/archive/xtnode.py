@@ -68,13 +68,11 @@ class xtnode(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
     _PKG_COMMON_JS = B'sourceMappingURL=common.js.map'
 
     def __init__(
-        self, *paths, entry: Param[bool, Arg.Switch('-u', help='Only extract the entry point.')] = False,
-        list=False, join_path=False, drop_path=False, fuzzy=0, exact=False, regex=False,
-        path=b'path', date=b'date',
+        self, *paths,
+        entry: Param[bool, Arg.Switch('-u', help='Only extract the entry point.')] = False,
+        **kwargs
     ):
-        super().__init__(*paths, entry=entry,
-            list=list, join_path=join_path, drop_path=drop_path, fuzzy=fuzzy, exact=exact, regex=regex,
-            path=path, date=date)
+        super().__init__(*paths, entry=entry, **kwargs)
 
     def unpack(self, data: buf) -> Iterable[UnpackResult]:
         if self._is_nexe(data):

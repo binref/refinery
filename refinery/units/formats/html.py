@@ -154,29 +154,10 @@ class xthtml(XMLToPathExtractorUnit):
         self, *paths,
         outer: Param[bool, Arg.Switch('-o', help='Include the HTML tags for an extracted element.')] = False,
         attributes: Param[bool, Arg.Switch('-a', help='Populate chunk metadata with HTML tag attributes.')] = False,
-        list=False,
-        join_path=False,
-        drop_path=False,
-        fuzzy=0,
-        exact=False,
-        regex=False,
-        path=b'path',
         **keywords,
     ):
         keywords.update(format='{tag}')
-        super().__init__(
-            *paths,
-            outer=outer,
-            attributes=attributes,
-            path=path,
-            list=list,
-            join_path=join_path,
-            drop_path=drop_path,
-            fuzzy=fuzzy,
-            exact=exact,
-            regex=regex,
-            **keywords
-        )
+        super().__init__(*paths, outer=outer, attributes=attributes, **keywords)
 
     def unpack(self, data):
         try:

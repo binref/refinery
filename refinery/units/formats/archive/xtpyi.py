@@ -375,8 +375,7 @@ class xtpyi(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
     Extracts and decompiles files from a Python Installer (aka PyInstaller) archive.
     """
     def __init__(
-        self, *paths, list=False, join_path=False, drop_path=False, fuzzy=0, exact=False, regex=False,
-        path=b'path', date=b'date',
+        self, *paths,
         decompile: Param[bool, Arg.Switch('-c', help='Attempt to decompile PYC files.')] = False,
         user_code: Param[bool, Arg.Switch('-u', group='FILTER', help=(
             'Extract only source code files from the root of the archive. These usually implement '
@@ -385,21 +384,15 @@ class xtpyi(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
             '(DANGEROUS) Unmarshal embedded PYZ archives. Warning: Maliciously crafted packages can '
             'potentially exploit this to execute code. It is advised to only use this option inside '
             'an isolated environment. Specify twice to decompile unmarshalled Python bytecode.'
-        ))] = 0
+        ))] = 0,
+        **kwargs
     ):
         super().__init__(
             *paths,
-            list=list,
-            join_path=join_path,
-            drop_path=drop_path,
-            fuzzy=fuzzy,
-            exact=exact,
-            regex=regex,
-            path=path,
-            date=date,
             decompile=decompile,
             unmarshal=unmarshal,
             user_code=user_code,
+            **kwargs
         )
 
     def _search_pyi_start(self, data: memoryview):

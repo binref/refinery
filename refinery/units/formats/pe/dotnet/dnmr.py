@@ -14,20 +14,11 @@ class dnmr(PathExtractorUnit):
     embedded in .NET assemblies.
     """
     def __init__(
-        self, *paths, list=False, join_path=False, drop_path=False, exact=False, fuzzy=0, regex=False, path=b'name',
-        raw: Param[bool, Arg.Switch('-w', help='Do not deserialize the managed resource entry data.')] = False
+        self, *paths, path=b'name',
+        raw: Param[bool, Arg.Switch('-w', help='Do not deserialize the managed resource entry data.')] = False,
+        **kwargs
     ):
-        super().__init__(
-            *paths,
-            list=list,
-            join_path=join_path,
-            drop_path=drop_path,
-            path=path,
-            raw=raw,
-            fuzzy=fuzzy,
-            exact=exact,
-            regex=regex,
-        )
+        super().__init__(*paths, path=path, raw=raw, **kwargs)
 
     def unpack(self, data):
         try:

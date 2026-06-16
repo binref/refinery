@@ -14,6 +14,7 @@ class MultipleArchives(Exception):
 class ArchiveUnit(PathExtractorUnit, abstract=True):
     def __init__(
         self, *paths, list=False, join_path=False, drop_path=False, fuzzy=0, exact=False, regex=False, path=b'path',
+        exclude=None,
         date: Param[buf, Arg('-D', metavar='NAME',
             help='Name of the meta variable to receive the extracted file date. The default value is "{default}".')] = b'date',
         pwd: Param[buf, Arg('-p', help='Optionally specify an extraction password.')] = B'',
@@ -21,6 +22,7 @@ class ArchiveUnit(PathExtractorUnit, abstract=True):
     ):
         super().__init__(
             *paths,
+            exclude=exclude,
             list=list,
             join_path=join_path,
             drop_path=drop_path,

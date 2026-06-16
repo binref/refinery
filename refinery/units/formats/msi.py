@@ -171,22 +171,10 @@ class xtmsi(xtdoc, docs=(
 
     def __init__(
         self, *paths,
-        list=False, path=b'path', join_path=False, drop_path=False, fuzzy=0, exact=False, regex=False,
         nocab: Param[bool, Arg.Switch('-N', help='Do not list and extract embedded CAB archives.')] = False,
         **keywords,
     ):
-        super().__init__(
-            *paths,
-            list=list,
-            path=path,
-            join_path=join_path,
-            drop_path=drop_path,
-            nocab=nocab,
-            fuzzy=fuzzy,
-            exact=exact,
-            regex=regex,
-            **keywords,
-        )
+        super().__init__(*paths, nocab=nocab, **keywords)
 
     def unpack(self, data: buf):
         streams = {

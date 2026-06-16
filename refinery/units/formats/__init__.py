@@ -13,6 +13,7 @@ from collections import Counter
 from zlib import adler32
 
 from refinery.lib import json as libjson
+from refinery.lib.argformats import pathvar
 from refinery.lib.loader import load
 from refinery.lib.meta import ByteStringWrapper, LazyMetaOracle, metavars
 from refinery.lib.tools import exception_to_string, get_terminal_size
@@ -50,14 +51,15 @@ class EndOfStringNotFound(ValueError):
 
 
 class PathPattern:
-    def __init__(self, query: str, regex=False, fuzzy=0):
+    def __init__(self, query: str, regex=False, exclude=False):
         self.query = query
         self.regex = regex
-        self.fuzzy = fuzzy
+        self.exclude = exclude
         self.compile()
 
     def compile(self, **kw):
         query = self.query
+        self.stops = []
         if not self.regex:
             self.stops = re.split(R'([/*?]+)', query)
             query, _, _ = fnmatch.translate(query).partition(r'\Z')
@@ -67,11 +69,18 @@ class PathPattern:
 
     def reach(self, path: str):
         """
-        This is a crude heuristic to determine whether the pattern can likely reach any files
-        that have the given path as a parent.
+        A heuristic over-approximation of whether the pattern can select any file for extraction
+        that has the given path as a parent; it is used to prune subtrees. For exact wildcard
+        matching it is sound: it may return `True` spuriously, but it does not return `False` while
+        a matching file could still exist below `path`. It does not model fuzzy matching (`-z`),
+        under which a multi-component pattern can match a path below one for which this returns
+        `False`. Regular expressions are not analyzed and always return `True`. An exclusion pattern
+        cannot select a file for extraction and therefore always returns `False`. Subtree pruning
+        is driven entirely by the inclusion patterns.
         """
-        if len(self.stops) == 1:
-            # a specific file could always be somewhere
+        if self.exclude:
+            return False
+        if len(self.stops) <= 1:
             return True
         for stop in self.stops[0::2]:
             if fnmatch.fnmatch(path, F'*{stop}*'):
@@ -79,8 +88,8 @@ class PathPattern:
         return False
 
     def check(self, path, fuzzy=0):
-        fuzzy = min(max(fuzzy, self.fuzzy), 2)
-        return self.matchers[fuzzy](path)
+        fuzzy = min(fuzzy, 2)
+        return bool(self.matchers[fuzzy](path))
 
     def __repr__(self):
         return F'<PathPattern:{"".join(self.stops) or "RE"}>'
@@ -88,13 +97,18 @@ class PathPattern:
 
 class PathExtractorUnit(Unit, abstract=True):
     """
-    This unit extracts items with an associated virtual path from a container. Each extracted item
-    is emitted as a separate chunk and has attached to it a meta variable that contains its path
-    within the container format. The positional arguments to the command are patterns that can be
-    used to filter the extracted items by their path. To view only the paths of all chunks, use the
-    listing switch:
+    This unit extracts items with an associated virtual path from a container; each extracted item
+    is emitted as a separate chunk with a corresponding meta variable named "path".
 
-        emit data | ... | <this> --list
+    Positional arguments to <this> are patterns to filter the extracted items. Use the `-x` flag to
+    add an exclusion pattern. To extract all files with a foo or bar extension, but none that has
+    the word "temp" in its path:
+
+        <this> .foo .bar -x temp
+
+    To view only the paths of all chunks, use the listing switch:
+
+        emit data | ... | <this> -l
 
     Otherwise, extracted items are written to the standard output port and usually require a frame
     to properly process. In order to dump all extracted data to disk, the following pipeline can be
@@ -133,12 +147,13 @@ class PathExtractorUnit(Unit, abstract=True):
 
     def __init__(
         self,
-        *paths: Param[str, Arg.FsPath(metavar='path', nargs='*', help=(
-            'Wildcard pattern for the path of the item to be extracted. Each item is returned '
-            'as a separate output of this unit. Paths may contain wildcards; The default '
-            'argument is a single wildcard, which means that every item will be extracted. If '
-            'a given path yields no results, the unit performs increasingly fuzzy searches '
-            'with it. This can be disabled using the --exact switch.'))],
+        *paths: Param[str, Arg.FsPath(metavar='pattern', nargs='*', help=(
+            'A path pattern selecting items to extract; each match becomes a separate output chunk.'
+            ' The default is a single wildcard and extracts everything. Queries that yield no match'
+            ' are retried with increasing fuzziness unless the exact matching option is set.'))],
+        exclude: Param[list | None, Arg('-x', metavar='P', action='append', type=pathvar, help=(
+            'Adds an exclusion pattern P: Matching paths are not emitted at all. Exclusions also '
+            'use increasing fuzziness if they exclude nothing.'))] = None,
         list: Param[bool, Arg.Switch('-l',
             help='Return all matching paths as UTF8-encoded output chunks.')] = False,
         join_path: Param[bool, Arg.Switch('-j', group='PATH', help=(
@@ -146,8 +161,7 @@ class PathExtractorUnit(Unit, abstract=True):
         drop_path: Param[bool, Arg.Switch('-d', group='PATH',
             help='Do not modify the path variable for output chunks.')] = False,
         fuzzy: Param[int, Arg.Counts('-z', group='MATCH', help=(
-            'Specify once to add a leading wildcard to each patterns, twice to also add a '
-            'trailing wildcard.'))] = 0,
+            'Adds a leading wildcard to each pattern, use -zz to also add a trailing one.'))] = 0,
         exact: Param[bool, Arg.Switch('-e', group='MATCH',
             help='Path patterns never match on substrings.')] = False,
         regex: Param[bool, Arg.Switch('-r',
@@ -159,6 +173,7 @@ class PathExtractorUnit(Unit, abstract=True):
     ):
         super().__init__(
             paths=paths,
+            exclude=exclude,
             list=list,
             join=join_path,
             drop=drop_path,
@@ -174,30 +189,39 @@ class PathExtractorUnit(Unit, abstract=True):
 
     @property
     def _patterns(self):
+        def check_pattern(t: str) -> str:
+            try:
+                if len(t) >= 0x1000:
+                    raise OverflowError
+            except Exception as E:
+                raise RefineryPotentialUserError(
+                    F'Invalid path pattern of length {len(t)}.') from E
+            else:
+                return t
         paths = self.args.paths
         if not paths:
-            if self.args.regex:
-                paths = ['.*']
-            else:
-                paths = ['*']
+            paths = ['.*'] if self.args.regex else ['*']
         else:
-            def check_pattern(t: str) -> str:
-                try:
-                    if len(t) >= 0x1000:
-                        raise OverflowError
-                except Exception as E:
-                    raise RefineryPotentialUserError(
-                        F'Invalid path pattern of length {len(t)}.') from E
-                else:
-                    return t
             paths = [check_pattern(p) for p in paths]
-        return [
-            PathPattern(
-                path,
-                self.args.regex,
-                self.args.fuzzy,
-            ) for path in paths
+        patterns = [
+            PathPattern(path, self.args.regex) for path in paths
         ]
+        for query in self.args.exclude or ():
+            patterns.append(PathPattern(check_pattern(query), self.args.regex, exclude=True))
+        return patterns
+
+    def _select(self, pattern: PathPattern, results: list[UnpackResult]) -> list[UnpackResult]:
+        """
+        Returns the results whose path is matched by the given pattern. If the pattern matches
+        nothing and neither exact nor fuzzy matching is configured, its fuzziness is increased
+        until at least one result matches.
+        """
+        matches = []
+        for fuzzy in range(min(self.args.fuzzy, 2), 3):
+            matches = [r for r in results if pattern.check(r.path, fuzzy)]
+            if matches or self.args.exact or self.args.fuzzy:
+                break
+        return matches
 
     @abc.abstractmethod
     def unpack(self, data: Chunk) -> Iterable[UnpackResult]:
@@ -287,33 +311,35 @@ class PathExtractorUnit(Unit, abstract=True):
             for p in patterns:
                 p.compile(flags=re.IGNORECASE)
 
-        for p in patterns:
-            for fuzzy in range(3):
-                done = self.args.exact
-                for result in results:
-                    path = result.path
-                    if not p.check(path, fuzzy):
-                        continue
-                    done = True
-                    if self.args.list:
-                        yield self.labelled(path.encode(self.codec), **result.meta)
-                        continue
-                    if not self.args.drop:
-                        result.meta[metavar] = path
-                    try:
-                        chunk = get_data(result)
-                    except Exception as error:
-                        if self.log_debug():
-                            raise
-                        message = exception_to_string(error)
-                        if path not in message:
-                            message = F'extraction failure for {path}: {exception_to_string(error)}'
-                        self.log_warn(message)
-                    else:
-                        self.log_debug(F'extraction success for {path}')
-                        yield self.labelled(chunk, **result.meta)
-                if done or self.args.fuzzy:
-                    break
+        includes = [p for p in patterns if not p.exclude]
+        excludes = [p for p in patterns if p.exclude]
+
+        if excludes:
+            discard = set()
+            for x in excludes:
+                discard.update(self._select(x, results))
+            results = [r for r in results if r not in discard]
+
+        for p in includes:
+            for result in self._select(p, results):
+                path = result.path
+                if self.args.list:
+                    yield self.labelled(path.encode(self.codec), **result.meta)
+                    continue
+                if not self.args.drop:
+                    result.meta[metavar] = path
+                try:
+                    chunk = get_data(result)
+                except Exception as error:
+                    if self.log_debug():
+                        raise
+                    message = exception_to_string(error)
+                    if path not in message:
+                        message = F'extraction failure for {path}: {exception_to_string(error)}'
+                    self.log_warn(message)
+                else:
+                    self.log_debug(F'extraction success for {path}')
+                    yield self.labelled(chunk, **result.meta)
 
 
 class XMLToPathExtractorUnit(PathExtractorUnit, abstract=True):
@@ -326,11 +352,12 @@ class XMLToPathExtractorUnit(PathExtractorUnit, abstract=True):
             'tree to use for generating paths.'
         ))] = None,
         list=False, join_path=False, drop_path=False, fuzzy=0, exact=False, regex=False,
-        path=b'path', **keywords
+        path=b'path', exclude=None, **keywords
     ):
         super().__init__(
             *paths,
             format=format,
+            exclude=exclude,
             list=list,
             path=path,
             join_path=join_path,
