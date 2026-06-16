@@ -7,6 +7,7 @@ from refinery.lib.scripts.js.deobfuscation import deobfuscate
 from refinery.lib.scripts.js.deobfuscation.argwrap import JsAssignmentsAsFunctionArgs
 from refinery.lib.scripts.js.deobfuscation.constants import JsConstantInlining
 from refinery.lib.scripts.js.deobfuscation.deadcode import JsDeadCodeElimination
+from refinery.lib.scripts.js.deobfuscation.evaluator import JsFunctionEvaluator
 from refinery.lib.scripts.js.deobfuscation.objectfold import JsObjectFold
 from refinery.lib.scripts.js.deobfuscation.simplify import JsSimplifications
 from refinery.lib.scripts.js.parser import JsParser
@@ -46,3 +47,9 @@ class TestJsDeobfuscator(TestBase):
 
     def _unwrap(self, source: str) -> str:
         return self._run_transformer(source, JsAssignmentsAsFunctionArgs)
+
+    def _evaluate(self, source: str) -> str:
+        return self._run_transformer(source, JsFunctionEvaluator)
+
+    def _fold(self, expr: str) -> str:
+        return self._evaluate(F'function f() {{ return {expr}; }} var x = f();')

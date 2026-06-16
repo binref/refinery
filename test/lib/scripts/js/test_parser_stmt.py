@@ -355,3 +355,11 @@ class TestJsParserStatements(TestBase):
     def test_for_in_no_var(self):
         stmt = self._parse_stmt('for (x in obj) { }')
         self.assertIsInstance(stmt, JsForInStatement)
+
+    def test_newline_before_paren_does_not_fuse_statements(self):
+        source = 'global["VERSION"] = "9.4533"\n\n(async () => {\n  const c = global;\n})()'
+        self.assertEqual(len(self._parse_all(source).body), 2)
+
+    def test_newline_before_template_does_not_create_tagged_template(self):
+        source = "var x = foo\n`template`"
+        self.assertEqual(len(self._parse_all(source).body), 2)

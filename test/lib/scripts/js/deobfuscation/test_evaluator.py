@@ -4,22 +4,22 @@ import inspect
 
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 
-from refinery.lib.scripts.js.deobfuscation.evaluator import JsFunctionEvaluator
 from refinery.lib.scripts.js.deobfuscation.interpreter import IrreducibleExpression, JsInterpreter
 from refinery.lib.scripts.js.model import JsFunctionDeclaration, JsIdentifier
 from refinery.lib.scripts.js.parser import JsParser
-from refinery.lib.scripts.js.synth import JsSynthesizer
 
 
 class TestFunctionEvaluator(TestJsDeobfuscator):
 
-    def _evaluate(self, source: str) -> str:
-        return self._run_transformer(source, JsFunctionEvaluator)
-
     def test_iife_with_nested_arrow_this_not_evaluated(self):
-        source = 'var r = (function(n) { return (() => this.x)(); })(1);'
-        untouched = JsSynthesizer().convert(JsParser(source).parse())
-        self.assertEqual(self._evaluate(source), untouched)
+        source = inspect.cleandoc(
+            """
+            var r = (function(n) {
+              return (() => this.x)();
+            })(1);
+            """
+        )
+        self.assertEqual(source, self._evaluate(source))
 
     def test_simple_arithmetic(self):
         source = inspect.cleandoc(
@@ -37,10 +37,16 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
             """
         )
         result = self._evaluate(source)
-        self.assertIn('var x = 30;', result)
-        self.assertIn('var y = 58;', result)
-        self.assertIn('var z = 21;', result)
-        self.assertNotIn('function calc', result)
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var x = 30;
+                var y = 58;
+                var z = 21;
+                """
+            ),
+            result,
+        )
 
     def test_string_decoder_xor(self):
         source = inspect.cleandoc(
@@ -56,8 +62,7 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
             """
         )
         result = self._evaluate(source)
-        self.assertIn("'Hello'", result)
-        self.assertNotIn('function decode', result)
+        self.assertEqual("var msg = 'Hello';", result)
 
     def test_switch_lookup_single_arg(self):
         source = inspect.cleandoc(
@@ -74,9 +79,15 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
             """
         )
         result = self._evaluate(source)
-        self.assertIn("var x = 'beta';", result)
-        self.assertIn("var y = 'alpha';", result)
-        self.assertNotIn('function lookup', result)
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var x = 'beta';
+                var y = 'alpha';
+                """
+            ),
+            result,
+        )
 
     def test_irreducible_expression_member_access(self):
         source = inspect.cleandoc(
@@ -91,8 +102,7 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
             """
         )
         result = self._evaluate(source)
-        self.assertIn("globalVar['console']", result)
-        self.assertNotIn('function getGlobal', result)
+        self.assertEqual("var x = globalVar['console'];", result)
 
     def test_iife_evaluation(self):
         source = inspect.cleandoc(
@@ -116,25 +126,24 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
         source = inspect.cleandoc(
             """
             function impure(x) {
-                console.log(x);
-                return x + 1;
+              console.log(x);
+              return x + 1;
             }
             var y = impure(5);
             """
         )
-        result = self._evaluate(source)
-        self.assertIn('function impure', result)
-        self.assertIn('impure(5)', result)
+        self.assertEqual(source, self._evaluate(source))
 
     def test_non_literal_args_skipped(self):
         source = inspect.cleandoc(
             """
-            function add(a, b) { return a + b; }
+            function add(a, b) {
+              return a + b;
+            }
             var x = add(1, y);
             """
         )
-        result = self._evaluate(source)
-        self.assertIn('add(1, y)', result)
+        self.assertEqual(source, self._evaluate(source))
 
     def test_function_preserved_when_partial_resolution(self):
         source = inspect.cleandoc(
@@ -145,9 +154,18 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
             """
         )
         result = self._evaluate(source)
-        self.assertIn('var x = 3;', result)
-        self.assertIn('add(3, z)', result)
-        self.assertIn('function add', result)
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function add(a, b) {
+                  return a + b;
+                }
+                var x = 3;
+                var y = add(3, z);
+                """
+            ),
+            result,
+        )
 
     def test_nested_function_calls(self):
         source = inspect.cleandoc(
@@ -158,7 +176,7 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
             """
         )
         result = self._evaluate(source)
-        self.assertIn('var result = 14;', result)
+        self.assertEqual("var result = 14;", result)
 
     def test_string_methods(self):
         source = inspect.cleandoc(
@@ -168,7 +186,7 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
             """
         )
         result = self._evaluate(source)
-        self.assertIn("'HELLO'", result)
+        self.assertEqual("var x = 'HELLO';", result)
 
     def test_array_operations(self):
         source = inspect.cleandoc(
@@ -181,7 +199,7 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
             """
         )
         result = self._evaluate(source)
-        self.assertIn("'x-y-z'", result)
+        self.assertEqual("var x = 'x-y-z';", result)
 
     def test_dead_function_chain_removal(self):
         source = inspect.cleandoc(
@@ -192,22 +210,21 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
             """
         )
         result = self._evaluate(source)
-        self.assertIn('var result = 12;', result)
-        self.assertNotIn('function helper', result)
-        self.assertNotIn('function wrapper', result)
+        self.assertEqual("var result = 12;", result)
 
     def test_loop_safety_limit(self):
         source = inspect.cleandoc(
             """
             function infinite(x) {
-                while (true) { x++; }
-                return x;
+              while (true) {
+                x++;
+              }
+              return x;
             }
             var y = infinite(0);
             """
         )
-        result = self._evaluate(source)
-        self.assertIn('infinite(0)', result)
+        self.assertEqual(source, self._evaluate(source))
 
     def test_from_char_code(self):
         source = inspect.cleandoc(
@@ -219,7 +236,7 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
             """
         )
         result = self._evaluate(source)
-        self.assertIn("'Hi!'", result)
+        self.assertEqual("var x = 'Hi!';", result)
 
     def test_array_map(self):
         source = inspect.cleandoc(
@@ -231,7 +248,7 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
             """
         )
         result = self._evaluate(source)
-        self.assertIn('var x = [2, 4, 6];', result)
+        self.assertEqual("var x = [2, 4, 6];", result)
 
     def test_array_filter(self):
         source = inspect.cleandoc(
@@ -243,7 +260,7 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
             """
         )
         result = self._evaluate(source)
-        self.assertIn('var x = [2, 4, 6];', result)
+        self.assertEqual("var x = [2, 4, 6];", result)
 
     def test_array_every(self):
         source = inspect.cleandoc(
@@ -256,8 +273,15 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
             """
         )
         result = self._evaluate(source)
-        self.assertIn('var a = true;', result)
-        self.assertIn('var b = false;', result)
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var a = true;
+                var b = false;
+                """
+            ),
+            result,
+        )
 
     def test_array_some(self):
         source = inspect.cleandoc(
@@ -270,8 +294,15 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
             """
         )
         result = self._evaluate(source)
-        self.assertIn('var a = true;', result)
-        self.assertIn('var b = false;', result)
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var a = true;
+                var b = false;
+                """
+            ),
+            result,
+        )
 
     def test_array_find(self):
         source = inspect.cleandoc(
@@ -283,7 +314,7 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
             """
         )
         result = self._evaluate(source)
-        self.assertIn('var x = 15;', result)
+        self.assertEqual("var x = 15;", result)
 
     def test_array_find_index(self):
         source = inspect.cleandoc(
@@ -296,8 +327,15 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
             """
         )
         result = self._evaluate(source)
-        self.assertIn('var x = 2;', result)
-        self.assertIn('var y = -1;', result)
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var x = 2;
+                var y = -1;
+                """
+            ),
+            result,
+        )
 
     def test_array_reduce(self):
         source = inspect.cleandoc(
@@ -309,7 +347,7 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
             """
         )
         result = self._evaluate(source)
-        self.assertIn('var x = 10;', result)
+        self.assertEqual("var x = 10;", result)
 
     def test_array_reduce_no_initial(self):
         source = inspect.cleandoc(
@@ -321,7 +359,7 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
             """
         )
         result = self._evaluate(source)
-        self.assertIn('var x = 24;', result)
+        self.assertEqual("var x = 24;", result)
 
     def test_array_map_with_arrow(self):
         source = inspect.cleandoc(
@@ -333,7 +371,7 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
             """
         )
         result = self._evaluate(source)
-        self.assertIn('var x = [11, 21, 31];', result)
+        self.assertEqual("var x = [11, 21, 31];", result)
 
     def test_atob_in_function(self):
         source = inspect.cleandoc(
@@ -371,9 +409,6 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
 
 
 class TestClosureCapture(TestJsDeobfuscator):
-
-    def _evaluate(self, source: str) -> str:
-        return self._run_transformer(source, JsFunctionEvaluator)
 
     def test_const_arrow_with_outer_string(self):
         source = inspect.cleandoc(
@@ -464,47 +499,16 @@ class TestClosureCapture(TestJsDeobfuscator):
         source = inspect.cleandoc(
             """
             const modify = function(arr) {
-                arr[0] = 99;
-                return arr;
-            };
-            var x = modify([1, 2, 3]);
-            """
-        )
-        result = self._evaluate(source)
-        expected = inspect.cleandoc(
-            """
-            const modify = function(arr) {
               arr[0] = 99;
               return arr;
             };
             var x = modify([1, 2, 3]);
             """
         )
-        self.assertEqual(expected, result)
+        self.assertEqual(source, self._evaluate(source))
 
     def test_function_declaration_with_undeclared_globals_not_evaluated(self):
         source = inspect.cleandoc(
-            """
-            function fizzbuzz(n) {
-                results = [];
-                for (var i = 1; i <= n; i++) {
-                    if (i % 15 === 0) {
-                        results.push('FizzBuzz');
-                    } else {
-                        if (i % 3 === 0) {
-                            results.push('Fizz');
-                        } else {
-                            results.push(i);
-                        }
-                    }
-                }
-                return results;
-            }
-            console.log(fizzbuzz(20));
-            """
-        )
-        result = self._evaluate(source)
-        expected = inspect.cleandoc(
             """
             function fizzbuzz(n) {
               results = [];
@@ -524,7 +528,7 @@ class TestClosureCapture(TestJsDeobfuscator):
             console.log(fizzbuzz(20));
             """
         )
-        self.assertEqual(expected, result)
+        self.assertEqual(source, self._evaluate(source))
 
     def test_orphaned_closure_constants_removed(self):
         source = inspect.cleandoc(
@@ -542,32 +546,14 @@ class TestClosureCapture(TestJsDeobfuscator):
         source = inspect.cleandoc(
             """
             let prefix = 'Hello';
-            const greet = (name) => prefix + ', ' + name;
-            var msg = greet('World');
-            """
-        )
-        result = self._evaluate(source)
-        expected = inspect.cleandoc(
-            """
-            let prefix = 'Hello';
             const greet = name => prefix + ', ' + name;
             var msg = greet('World');
             """
         )
-        self.assertEqual(expected, result)
+        self.assertEqual(source, self._evaluate(source))
 
     def test_self_assigning_function_not_evaluated(self):
         source = inspect.cleandoc(
-            """
-            const decode = function(x) {
-                decode = function() { return []; };
-                return x;
-            };
-            var y = decode('test');
-            """
-        )
-        result = self._evaluate(source)
-        expected = inspect.cleandoc(
             """
             const decode = function(x) {
               decode = function() {
@@ -578,7 +564,7 @@ class TestClosureCapture(TestJsDeobfuscator):
             var y = decode('test');
             """
         )
-        self.assertEqual(expected, result)
+        self.assertEqual(source, self._evaluate(source))
 
     def test_array_tostring_not_hijacked(self):
         # A plain Array's toString must use Array semantics ('72,101,108'), never the Buffer.toString
@@ -606,15 +592,6 @@ class TestClosureCapture(TestJsDeobfuscator):
         source = inspect.cleandoc(
             """
             const p = 'OUTER';
-            function pick(z) { return 'got:' + z; }
-            function run(p) { sink.x = 1; return pick(p); }
-            run('REAL');
-            """
-        )
-        result = self._evaluate(source)
-        expected = inspect.cleandoc(
-            """
-            const p = 'OUTER';
             function pick(z) {
               return 'got:' + z;
             }
@@ -625,21 +602,10 @@ class TestClosureCapture(TestJsDeobfuscator):
             run('REAL');
             """
         )
-        self.assertEqual(expected, result)
+        self.assertEqual(source, self._evaluate(source))
 
     def test_let_shadow_blocks_closure_capture(self):
         source = inspect.cleandoc(
-            """
-            const SECRET = 'global';
-            function wrap(v) {
-                let SECRET = v;
-                const f = (x) => x + SECRET;
-                return f('Z');
-            }
-            """
-        )
-        result = self._evaluate(source)
-        expected = inspect.cleandoc(
             """
             const SECRET = 'global';
             function wrap(v) {
@@ -649,7 +615,7 @@ class TestClosureCapture(TestJsDeobfuscator):
             }
             """
         )
-        self.assertEqual(expected, result)
+        self.assertEqual(source, self._evaluate(source))
 
     def test_shared_mutable_closure_array_isolated(self):
         source = inspect.cleandoc(
@@ -682,31 +648,16 @@ class TestClosureCapture(TestJsDeobfuscator):
     def test_block_scoped_const_fn_not_visible_outside(self):
         source = inspect.cleandoc(
             """
-            { const f = (x) => x + 1; }
-            var y = f(3);
-            """
-        )
-        result = self._evaluate(source)
-        expected = inspect.cleandoc(
-            """
             {
               const f = x => x + 1;
             }
             var y = f(3);
             """
         )
-        self.assertEqual(expected, result)
+        self.assertEqual(source, self._evaluate(source))
 
     def test_param_shadowing_function_name_blocks_resolution(self):
         source = inspect.cleandoc(
-            """
-            const f = (x) => x + 1;
-            function outer(f) { return f(10); }
-            var r = outer(5);
-            """
-        )
-        result = self._evaluate(source)
-        expected = inspect.cleandoc(
             """
             const f = x => x + 1;
             function outer(f) {
@@ -715,7 +666,7 @@ class TestClosureCapture(TestJsDeobfuscator):
             var r = outer(5);
             """
         )
-        self.assertEqual(expected, result)
+        self.assertEqual(source, self._evaluate(source))
 
     def test_sibling_declarator_reference_prevents_removal(self):
         source = inspect.cleandoc(
@@ -987,15 +938,7 @@ class TestClosureCapture(TestJsDeobfuscator):
             var r = fn();
             """
         )
-        result = self._evaluate(source)
-        expected = inspect.cleandoc(
-            """
-            const fn = () => x;
-            const x = 5;
-            var r = fn();
-            """
-        )
-        self.assertEqual(expected, result)
+        self.assertEqual(source, self._evaluate(source))
 
     def test_finally_runs_when_catch_body_throws(self):
         source = inspect.cleandoc(
@@ -1229,18 +1172,11 @@ class TestClosureCapture(TestJsDeobfuscator):
     def test_buffer_from_result_not_inlined_as_integer_array(self):
         source = inspect.cleandoc(
             """
-            const toBytes = (s) => Buffer.from(s, 'base64');
-            var x = toBytes('SGVsbG8=');
-            """
-        )
-        result = self._evaluate(source)
-        expected = inspect.cleandoc(
-            """
             const toBytes = s => Buffer.from(s, 'base64');
             var x = toBytes('SGVsbG8=');
             """
         )
-        self.assertEqual(expected, result)
+        self.assertEqual(source, self._evaluate(source))
 
     def test_split_undefined_returns_whole_string(self):
         source = inspect.cleandoc(
@@ -1384,24 +1320,40 @@ class TestClosureCapture(TestJsDeobfuscator):
             """
         )
         result = self._evaluate(source)
-        self.assertIn("var a = 'outer';", result)
-        self.assertNotIn("var a = 'inner'", result)
-        self.assertIn('function wrap()', result)
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                const x = 'outer';
+                function wrap() {
+                  const g = () => x;
+                  if (true) {
+                    var x = 'inner';
+                  }
+                  return g();
+                }
+                var a = 'outer';
+                """
+            ),
+            result,
+        )
 
     def test_nested_var_hoisting_blocks_const_arg_resolution(self):
         source = inspect.cleandoc(
             """
             const val = 'WRONG';
-            function pick(x) { return x; }
+            function pick(x) {
+              return x;
+            }
             function wrap() {
-                var r = pick(val);
-                if (true) { var val = 'RIGHT'; }
-                return r;
+              var r = pick(val);
+              if (true) {
+                var val = 'RIGHT';
+              }
+              return r;
             }
             """
         )
-        result = self._evaluate(source)
-        self.assertIn('pick(val)', result)
+        self.assertEqual(source, self._evaluate(source))
 
     def test_closure_env_not_corrupted_by_buffer_rejection(self):
         source = inspect.cleandoc(
@@ -1475,22 +1427,28 @@ class TestClosureCapture(TestJsDeobfuscator):
             """
         )
         result = self._evaluate(source)
-        self.assertIn("var r = 'OK';", result)
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                const val = 'OK';
+                var r = 'OK';
+                """
+            ),
+            result,
+        )
 
     def test_direct_let_still_shadows_outer_const_for_closure(self):
         source = inspect.cleandoc(
             """
             const SECRET = 'global';
             function wrap(v) {
-                let SECRET = v;
-                const f = (x) => x + SECRET;
-                return f('Z');
+              let SECRET = v;
+              const f = x => x + SECRET;
+              return f('Z');
             }
             """
         )
-        result = self._evaluate(source)
-        self.assertIn('SECRET', result)
-        self.assertNotIn("'Zglobal'", result)
+        self.assertEqual(source, self._evaluate(source))
 
     def test_irreducible_in_try_propagates_not_caught(self):
         source = inspect.cleandoc(
@@ -1529,25 +1487,6 @@ class TestClosureCapture(TestJsDeobfuscator):
         source = inspect.cleandoc(
             """
             const key = [1, 2, 3];
-            const enc = (s) => {
-                key.reverse();
-                return Buffer.from(s, 'utf8');
-            };
-            const dec = (s) => {
-                var r = '';
-                for (var i = 0; i < s.length; i++) {
-                    r += String.fromCharCode(s.charCodeAt(i) ^ key[i % key.length]);
-                }
-                return r;
-            };
-            var a = enc('x');
-            var b = dec('ABC');
-            """
-        )
-        result = self._evaluate(source)
-        expected = inspect.cleandoc(
-            """
-            const key = [1, 2, 3];
             const enc = s => {
               key.reverse();
               return Buffer.from(s, 'utf8');
@@ -1563,7 +1502,7 @@ class TestClosureCapture(TestJsDeobfuscator):
             var b = dec('ABC');
             """
         )
-        self.assertEqual(expected, result)
+        self.assertEqual(source, self._evaluate(source))
 
     def test_split_with_undefined_limit_returns_all(self):
         source = inspect.cleandoc(
@@ -1619,24 +1558,13 @@ class TestClosureCapture(TestJsDeobfuscator):
             """
             const x = 'outer';
             function wrapper() {
-                const f = () => x;
-                let x = 'inner';
-                return f();
-            }
-            """
-        )
-        result = self._evaluate(source)
-        expected = inspect.cleandoc(
-            """
-            const x = 'outer';
-            function wrapper() {
               const f = () => x;
               let x = 'inner';
               return f();
             }
             """
         )
-        self.assertEqual(expected, result)
+        self.assertEqual(source, self._evaluate(source))
 
     def test_later_var_does_not_block_capture(self):
         source = inspect.cleandoc(
@@ -1648,33 +1576,21 @@ class TestClosureCapture(TestJsDeobfuscator):
             """
         )
         result = self._evaluate(source)
-        self.assertIn("var r = 'captured';", result)
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var unrelated = 'something';
+                var r = 'captured';
+                """
+            ),
+            result,
+        )
 
     def test_cross_function_mutation_blocks_closure_fold(self):
         # `enc` reverses the shared `key` but is unfoldable (returns a Buffer), so the mutation is
         # not modelled. Real JS yields b == c == 'B@B' (key=[3,2,1] after enc), not '@@@'; folding
         # `dec` against the stale key would be unsound, so both `dec` calls are left unevaluated.
         source = inspect.cleandoc(
-            """
-            const key = [1, 2, 3];
-            const enc = (s) => {
-                key.reverse();
-                return Buffer.from(s, 'utf8');
-            };
-            const dec = (s) => {
-                var r = '';
-                for (var i = 0; i < s.length; i++) {
-                    r += String.fromCharCode(s.charCodeAt(i) ^ key[i % key.length]);
-                }
-                return r;
-            };
-            var a = enc('ignored');
-            var b = dec('ABC');
-            var c = dec('ABC');
-            """
-        )
-        result = self._evaluate(source)
-        self.assertEqual(result, inspect.cleandoc(
             """
             const key = [1, 2, 3];
             const enc = s => {
@@ -1692,21 +1608,11 @@ class TestClosureCapture(TestJsDeobfuscator):
             var b = dec('ABC');
             var c = dec('ABC');
             """
-        ))
+        )
+        self.assertEqual(source, self._evaluate(source))
 
     def test_non_extractable_inner_const_shadows_outer(self):
         source = inspect.cleandoc(
-            """
-            const x = 'WRONG';
-            function outer(val) {
-                const x = val + val;
-                const fn = () => x;
-                return fn();
-            }
-            """
-        )
-        result = self._evaluate(source)
-        self.assertEqual(result, inspect.cleandoc(
             """
             const x = 'WRONG';
             function outer(val) {
@@ -1715,7 +1621,8 @@ class TestClosureCapture(TestJsDeobfuscator):
               return fn();
             }
             """
-        ))
+        )
+        self.assertEqual(source, self._evaluate(source))
 
     def test_split_undefined_separator_with_zero_limit(self):
         source = inspect.cleandoc(

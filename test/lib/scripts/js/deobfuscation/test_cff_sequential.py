@@ -12,24 +12,24 @@ from refinery.lib.scripts.js.model import (
     JsExpressionStatement,
     JsIdentifier,
 )
-from refinery.lib.scripts.js.parser import JsParser
-from refinery.lib.scripts.js.synth import JsSynthesizer
 
 
 class TestControlFlowUnflattening(TestJsDeobfuscator):
 
     def test_simple_sequence(self):
-        source = (
-            "var _order = '1|0|2'['split']('|');"
-            "var _idx = 0;"
-            "while (true) {"
-            "  switch (_order[_idx++]) {"
-            "    case '0': var b = 2; continue;"
-            "    case '1': var a = 1; continue;"
-            "    case '2': var c = 3; continue;"
-            "  }"
-            "  break;"
-            "}"
+        source = inspect.cleandoc(
+            """
+            var _order = '1|0|2'['split']('|');
+            var _idx = 0;
+            while (true) {
+              switch (_order[_idx++]) {
+                case '0': var b = 2; continue;
+                case '1': var a = 1; continue;
+                case '2': var c = 3; continue;
+              }
+              break;
+            }
+            """
         )
         result = self._deobfuscate(source)
         self.assertEqual(result, inspect.cleandoc(
@@ -41,17 +41,19 @@ class TestControlFlowUnflattening(TestJsDeobfuscator):
         ))
 
     def test_array_literal_order(self):
-        source = (
-            "var _order = ['1', '0', '2'];"
-            "var _idx = 0;"
-            "while (true) {"
-            "  switch (_order[_idx++]) {"
-            "    case '0': var b = 2; continue;"
-            "    case '1': var a = 1; continue;"
-            "    case '2': var c = 3; continue;"
-            "  }"
-            "  break;"
-            "}"
+        source = inspect.cleandoc(
+            """
+            var _order = ['1', '0', '2'];
+            var _idx = 0;
+            while (true) {
+              switch (_order[_idx++]) {
+                case '0': var b = 2; continue;
+                case '1': var a = 1; continue;
+                case '2': var c = 3; continue;
+              }
+              break;
+            }
+            """
         )
         result = self._deobfuscate(source)
         self.assertEqual(result, inspect.cleandoc(
@@ -63,16 +65,18 @@ class TestControlFlowUnflattening(TestJsDeobfuscator):
         ))
 
     def test_combined_order_counter_declaration(self):
-        source = (
-            "var _order = ['1', '0', '2'], _idx = 0;"
-            "while (true) {"
-            "  switch (_order[_idx++]) {"
-            "    case '0': var b = 2; continue;"
-            "    case '1': var a = 1; continue;"
-            "    case '2': var c = 3; continue;"
-            "  }"
-            "  break;"
-            "}"
+        source = inspect.cleandoc(
+            """
+            var _order = ['1', '0', '2'], _idx = 0;
+            while (true) {
+              switch (_order[_idx++]) {
+                case '0': var b = 2; continue;
+                case '1': var a = 1; continue;
+                case '2': var c = 3; continue;
+              }
+              break;
+            }
+            """
         )
         result = self._deobfuscate(source)
         self.assertEqual(result, inspect.cleandoc(
@@ -84,15 +88,17 @@ class TestControlFlowUnflattening(TestJsDeobfuscator):
         ))
 
     def test_combined_declaration_preserves_sibling(self):
-        source = (
-            "var keep = 9, _order = ['1', '0'], _idx = 0;"
-            "while (true) {"
-            "  switch (_order[_idx++]) {"
-            "    case '0': var b = 2; continue;"
-            "    case '1': var a = 1; continue;"
-            "  }"
-            "  break;"
-            "}"
+        source = inspect.cleandoc(
+            """
+            var keep = 9, _order = ['1', '0'], _idx = 0;
+            while (true) {
+              switch (_order[_idx++]) {
+                case '0': var b = 2; continue;
+                case '1': var a = 1; continue;
+              }
+              break;
+            }
+            """
         )
         result = self._deobfuscate(source)
         self.assertEqual(result, inspect.cleandoc(
@@ -104,50 +110,62 @@ class TestControlFlowUnflattening(TestJsDeobfuscator):
         ))
 
     def test_referenced_order_var_blocks_unflattening(self):
-        source = (
-            "var _order = ['1', '0'], n = _order.length, _idx = 0;"
-            "while (true) {"
-            "  switch (_order[_idx++]) {"
-            "    case '0': var b = 2; continue;"
-            "    case '1': var a = 1; continue;"
-            "  }"
-            "  break;"
-            "}"
+        source = inspect.cleandoc(
+            """
+            var _order = ['1', '0'], n = _order.length, _idx = 0;
+            while (true) {
+              switch (_order[_idx++]) {
+                case '0':
+                  var b = 2;
+                  continue;
+                case '1':
+                  var a = 1;
+                  continue;
+              }
+              break;
+            }
+            """
         )
-        untouched = JsSynthesizer().convert(JsParser(source).parse())
-        result = self._run_transformer(source, JsControlFlowUnflattening)
-        self.assertEqual(result, untouched)
+        self.assertEqual(source, self._run_transformer(source, JsControlFlowUnflattening))
 
     def test_referenced_counter_var_in_case_body_blocks_unflattening(self):
-        source = (
-            "var _order = ['1', '0'], _idx = 0;"
-            "while (true) {"
-            "  switch (_order[_idx++]) {"
-            "    case '0': var b = 2; continue;"
-            "    case '1': var a = _idx; continue;"
-            "  }"
-            "  break;"
-            "}"
+        source = inspect.cleandoc(
+            """
+            var _order = ['1', '0'], _idx = 0;
+            while (true) {
+              switch (_order[_idx++]) {
+                case '0':
+                  var b = 2;
+                  continue;
+                case '1':
+                  var a = _idx;
+                  continue;
+              }
+              break;
+            }
+            """
         )
-        untouched = JsSynthesizer().convert(JsParser(source).parse())
-        result = self._run_transformer(source, JsControlFlowUnflattening)
-        self.assertEqual(result, untouched)
+        self.assertEqual(source, self._run_transformer(source, JsControlFlowUnflattening))
 
     def test_referenced_counter_var_after_loop_preserves_declaration(self):
-        source = (
-            "var _order = ['1', '0'], _idx = 0;"
-            "while (true) {"
-            "  switch (_order[_idx++]) {"
-            "    case '0': var b = 2; continue;"
-            "    case '1': var a = 1; continue;"
-            "  }"
-            "  break;"
-            "}"
-            "sink(_order, _idx);"
+        source = inspect.cleandoc(
+            """
+            var _order = ['1', '0'], _idx = 0;
+            while (true) {
+              switch (_order[_idx++]) {
+                case '0':
+                  var b = 2;
+                  continue;
+                case '1':
+                  var a = 1;
+                  continue;
+              }
+              break;
+            }
+            sink(_order, _idx);
+            """
         )
-        result = self._deobfuscate_iterative(source)
-        self.assertIn('var _order', result)
-        self.assertIn('sink(_order, _idx)', result)
+        self.assertEqual(source, self._deobfuscate_iterative(source))
 
     def test_generated_simple_greet(self):
         result = self._deobfuscate(
@@ -167,16 +185,18 @@ class TestControlFlowUnflattening(TestJsDeobfuscator):
         ))
 
     def test_preserved_inner_control_flow(self):
-        source = (
-            "var _o = '1|0'['split']('|');"
-            "var _i = 0;"
-            "while (true) {"
-            "  switch (_o[_i++]) {"
-            "    case '0': if (x) { a(); } else { b(); } continue;"
-            "    case '1': var v = 1; continue;"
-            "  }"
-            "  break;"
-            "}"
+        source = inspect.cleandoc(
+            """
+            var _o = '1|0'['split']('|');
+            var _i = 0;
+            while (true) {
+              switch (_o[_i++]) {
+                case '0': if (x) { a(); } else { b(); } continue;
+                case '1': var v = 1; continue;
+              }
+              break;
+            }
+            """
         )
         result = self._deobfuscate(source)
         self.assertEqual(result, inspect.cleandoc(
@@ -191,17 +211,7 @@ class TestControlFlowUnflattening(TestJsDeobfuscator):
         ))
 
     def test_no_match_leaves_unchanged(self):
-        source = (
-            "var x = 0;"
-            "while (x < 10) {"
-            "  switch (x) {"
-            "    case 0: x = 1; break;"
-            "    case 1: x = 2; break;"
-            "  }"
-            "}"
-        )
-        result = self._deobfuscate(source)
-        self.assertEqual(result, inspect.cleandoc(
+        source = inspect.cleandoc(
             """
             var x = 0;
             while (x < 10) {
@@ -215,20 +225,23 @@ class TestControlFlowUnflattening(TestJsDeobfuscator):
               }
             }
             """
-        ))
+        )
+        self.assertEqual(source, self._deobfuscate(source))
 
     def test_non_split_method_unchanged(self):
-        source = (
-            "var _order = '1|0|2'['slice']('|');"
-            "var _idx = 0;"
-            "while (true) {"
-            "  switch (_order[_idx++]) {"
-            "    case '0': var b = 2; continue;"
-            "    case '1': var a = 1; continue;"
-            "    case '2': var c = 3; continue;"
-            "  }"
-            "  break;"
-            "}"
+        source = inspect.cleandoc(
+            """
+            var _order = '1|0|2'['slice']('|');
+            var _idx = 0;
+            while (true) {
+              switch (_order[_idx++]) {
+                case '0': var b = 2; continue;
+                case '1': var a = 1; continue;
+                case '2': var c = 3; continue;
+              }
+              break;
+            }
+            """
         )
         result = self._deobfuscate(source)
         self.assertEqual(result, inspect.cleandoc(
@@ -273,12 +286,11 @@ class TestCFFArgParamDeclarations(TestJsDeobfuscator):
         source = inspect.cleandoc(
             """
             function modify() {
-                x = 99;
+              x = 99;
             }
             var x = 1;
             modify();
             console.log(x);
             """
         )
-        result = self._deobfuscate_iterative(source)
-        self.assertIn('x = 99', result)
+        self.assertEqual(source, self._deobfuscate_iterative(source))

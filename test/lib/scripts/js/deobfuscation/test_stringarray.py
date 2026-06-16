@@ -41,9 +41,7 @@ class TestStringArray(TestJsDeobfuscator):
 
     def test_string_array_default_preset(self):
         result = self._deobfuscate(self._default_preset())
-        self.assertIn("'test string'", result)
-        self.assertIn('console.log', result)
-        self.assertNotIn('_0x2fc0', result)
+        self.assertEqual("console.log('test string');", result)
 
     def test_string_array_rotation_iife_with_parenthesised_callee(self):
         preset = self._default_preset()
@@ -54,9 +52,7 @@ class TestStringArray(TestJsDeobfuscator):
         )
         self.assertNotEqual(preset, variant)
         result = self._deobfuscate(variant)
-        self.assertIn("'test string'", result)
-        self.assertIn('console.log', result)
-        self.assertNotIn('_0x2fc0', result)
+        self.assertEqual("console.log('test string');", result)
 
     def test_string_array_rc4_encoding(self):
         source = (
@@ -114,9 +110,7 @@ class TestStringArray(TestJsDeobfuscator):
             r"ff0(0x158,'q1WL')](msg);"
         )
         result = self._deobfuscate(source)
-        self.assertIn("'test string'", result)
-        self.assertIn('console.log', result)
-        self.assertNotIn('_0x138c', result)
+        self.assertEqual("console.log('test string');", result)
 
     def test_string_array_medium_preset(self):
         source = (
@@ -174,10 +168,16 @@ class TestStringArray(TestJsDeobfuscator):
             r"c03(0x12a)](_0x26c605,_0x3567eb)+_0x3d7991;continue;case'4':var _0x2b506e='!';continue;}break;}}"
         )
         result = self._deobfuscate(source)
-        self.assertIn('Hello', result)
-        self.assertIn("'!'", result)
-        self.assertNotIn('_0x1dce(', result)
-        self.assertNotIn('function _0x287a', result)
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function greet(_0x3d7991) {
+                  return 'Hello, ' + _0x3d7991 + '!';
+                }
+                """
+            ),
+            result,
+        )
 
     def test_string_array_with_wrappers(self):
         source = (
@@ -185,10 +185,7 @@ class TestStringArray(TestJsDeobfuscator):
             + self._default_preset('_0xw')
         )
         result = self._deobfuscate(source)
-        self.assertIn("'test string'", result)
-        self.assertIn('console.log', result)
-        self.assertNotIn('_0xw', result)
-        self.assertNotIn('_0x1b07', result)
+        self.assertEqual("console.log('test string');", result)
 
     def test_string_array_cache_survives_checksum_corruption(self):
         """
@@ -203,8 +200,15 @@ class TestStringArray(TestJsDeobfuscator):
         cache = getattr(ast, _CACHE_ATTR, None)
         self.assertIsNotNone(cache)
         result = JsSynthesizer().convert(ast)
-        self.assertIn("'test string'", result)
-        self.assertIn("'log'", result)
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var msg = 'test string';
+                console['log'](msg);
+                """
+            ),
+            result,
+        )
 
     def test_string_array_inside_function_body(self):
         source = 'function wrapper() { var _0xe6abe5=_0x1b07;' + self._DEFAULT_PRESET_BODY + '}'

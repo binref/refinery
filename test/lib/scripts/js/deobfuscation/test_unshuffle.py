@@ -26,7 +26,20 @@ class TestArrayUnshuffle(TestJsDeobfuscator):
             """
         )
         result = self._unshuffle(source)
-        self.assertIn('"a", "b", "c", "d", "e", "f", "g", "h", "i", "j"', result)
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function rot(arr, n) {
+                  for (var i = 0; i < n; i++) {
+                    arr.push(arr.shift());
+                  }
+                  return arr;
+                }
+                var x = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"];
+                """
+            ),
+            result,
+        )
 
     def test_namespace_qualified_callee_with_empty_object(self):
         source = inspect.cleandoc(
@@ -43,7 +56,20 @@ class TestArrayUnshuffle(TestJsDeobfuscator):
         JsNamespaceFlattening().visit(ast)
         JsArrayUnshuffle().visit(ast)
         result = JsSynthesizer().convert(ast)
-        self.assertIn('"a", "b", "c", "d", "e", "f", "g", "h", "i", "j"', result)
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function rot(arr, n) {
+                  for (var i = 0; i < n; i++) {
+                    arr.push(arr.shift());
+                  }
+                  return arr;
+                }
+                var x = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"];
+                """
+            ),
+            result,
+        )
 
     def test_namespace_qualified_callee_without_empty_object_rejected(self):
         source = inspect.cleandoc(
@@ -52,5 +78,4 @@ class TestArrayUnshuffle(TestJsDeobfuscator):
             var x = utils.process(["b", "c", "d", "e", "f", "g", "h", "i", "j", "a"], 9);
             """
         )
-        result = self._unshuffle(source)
-        self.assertIn('utils.process(', result)
+        self.assertEqual(source, self._unshuffle(source))

@@ -4,18 +4,8 @@ import inspect
 
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 
-from refinery.lib.scripts.js.deobfuscation.evaluator import JsFunctionEvaluator
-from refinery.lib.scripts.js.parser import JsParser
-from refinery.lib.scripts.js.synth import JsSynthesizer
-
 
 class TestInterpreterValueSemantics(TestJsDeobfuscator):
-
-    def _evaluate(self, source: str) -> str:
-        return self._run_transformer(source, JsFunctionEvaluator)
-
-    def _fold(self, expr: str) -> str:
-        return self._evaluate(F'function f() {{ return {expr}; }} var x = f();')
 
     def test_add_array_operands_concatenate(self):
         self.assertEqual("var x = '12';", self._fold('[1] + [2]'))
@@ -199,30 +189,23 @@ class TestInterpreterValueSemantics(TestJsDeobfuscator):
 
 class TestInterpreterThrowSemantics(TestJsDeobfuscator):
 
-    def _evaluate(self, source: str) -> str:
-        return self._run_transformer(source, JsFunctionEvaluator)
-
-    def _fold(self, expr: str) -> str:
-        return self._evaluate(F'function f() {{ return {expr}; }} var x = f();')
-
     def test_unsupported_expression_in_try_does_not_run_catch(self):
         # `new Date()` does not throw in JS, so the catch must not run; the interpreter cannot evaluate
         # it, so it leaves the call untouched rather than wrongly folding to the catch value 'B'.
         source = inspect.cleandoc(
             """
             function f() {
-                try {
-                    var y = new Date();
-                    return 'A';
-                } catch (e) {
-                    return 'B';
-                }
+              try {
+                var y = new Date();
+                return 'A';
+              } catch (e) {
+                return 'B';
+              }
             }
             var r = f();
             """
         )
-        untouched = JsSynthesizer().convert(JsParser(source).parse())
-        self.assertEqual(untouched, self._evaluate(source))
+        self.assertEqual(source, self._evaluate(source))
 
     def test_null_property_access_throws_caught(self):
         source = inspect.cleandoc(
@@ -274,13 +257,12 @@ class TestInterpreterThrowSemantics(TestJsDeobfuscator):
         source = inspect.cleandoc(
             """
             function f() {
-                return null.x;
+              return null.x;
             }
             var r = f();
             """
         )
-        untouched = JsSynthesizer().convert(JsParser(source).parse())
-        self.assertEqual(untouched, self._evaluate(source))
+        self.assertEqual(source, self._evaluate(source))
 
     def test_optional_member_on_null_is_undefined(self):
         self.assertEqual('var x = void 0;', self._fold('null?.b'))
