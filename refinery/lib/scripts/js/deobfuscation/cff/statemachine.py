@@ -151,6 +151,7 @@ class _GeneratorCFFMatch:
     scope_default_props: list[str] = field(default_factory=list)
     scope_default_inits: dict[str, Expression] = field(default_factory=dict)
     arg_params: list[str] = field(default_factory=list)
+    scope_prop_names: set[str] = field(default_factory=set)
 
 
 def _eval_expr(node: Expression, env: _StateEnv) -> int | float | None:
@@ -1030,10 +1031,10 @@ def _process_branch_prefix(
             if params is not None:
                 match.arg_params = params
                 break
+    _collect_scope_props(result, match.scope_param_name, match.scope_prop_names)
     result = [
-        _strip_scope_bookkeeping_from_sequence(s, match.scope_param_name)
-        for s in result
-        if not _is_scope_bookkeeping(s, match.scope_param_name, match.arg_var_name)
+        s for s in result
+        if _extract_arg_param_names(s, match.arg_var_name) is None
     ]
     result = _strip_scope_param_prefix(result, match.scope_param_name, strip_ns)
     result = _qualify_with_identifiers(result, match, redirect_target)
@@ -1127,10 +1128,10 @@ def _build_cfg(
                 if params is not None:
                     match.arg_params = params
                     break
+        _collect_scope_props(payload, match.scope_param_name, match.scope_prop_names)
         payload = [
-            _strip_scope_bookkeeping_from_sequence(s, match.scope_param_name)
-            for s in payload
-            if not _is_scope_bookkeeping(s, match.scope_param_name, match.arg_var_name)
+            s for s in payload
+            if _extract_arg_param_names(s, match.arg_var_name) is None
         ]
         strip_ns = match.scope_default_props[0] if redirect_target and match.scope_default_props else None
         payload = _strip_scope_param_prefix(payload, match.scope_param_name, strip_ns)
@@ -2297,81 +2298,6 @@ def _recover_returns(stmts: list[Statement], did_return_var: str | None) -> list
     return result
 
 
-def _is_scope_bookkeeping(
-    stmt: Statement,
-    scope_param_name: str | None,
-    arg_var_name: str | None = None,
-) -> bool:
-    """
-    Check whether a statement is scope/with-discriminant bookkeeping (predicate initialization,
-    scope object assignment, etc.) that should be suppressed in output. Only depth-1 scope-member
-    assignments (direct slots on the scope parameter) are considered routing; deeper member chains
-    write into nested objects and represent semantic data initialization.
-    """
-    if scope_param_name is None:
-        return False
-    if not isinstance(stmt, JsExpressionStatement):
-        return False
-    expr = stmt.expression
-    if isinstance(expr, JsAssignmentExpression):
-        if _is_direct_scope_member(expr.left, scope_param_name):
-            return True
-        if isinstance(expr.left, (JsArrayExpression, JsArrayPattern)) and expr.left.elements:
-            if all(
-                _is_direct_scope_member(e, scope_param_name)
-                for e in expr.left.elements if e is not None
-            ):
-                return True
-        if (
-            arg_var_name is not None
-            and isinstance(expr.left, (JsArrayExpression, JsArrayPattern))
-            and isinstance(expr.right, JsIdentifier)
-            and expr.right.name == arg_var_name
-        ):
-            return True
-    if isinstance(expr, JsSequenceExpression):
-        if all(
-            isinstance(sub, JsAssignmentExpression)
-            and _is_direct_scope_member(sub.left, scope_param_name)
-            for sub in expr.expressions
-        ):
-            return True
-    return False
-
-
-def _strip_scope_bookkeeping_from_sequence(
-    stmt: Statement,
-    scope_param_name: str | None,
-) -> Statement:
-    """
-    For sequence expressions containing a mix of bookkeeping and non-bookkeeping sub-expressions,
-    return a new statement with only the non-bookkeeping expressions. Returns the original
-    statement unchanged if no stripping is needed.
-    """
-    if scope_param_name is None:
-        return stmt
-    if not isinstance(stmt, JsExpressionStatement):
-        return stmt
-    expr = stmt.expression
-    if not isinstance(expr, JsSequenceExpression):
-        return stmt
-    remaining: list[Expression] = []
-    for sub in expr.expressions:
-        if (
-            isinstance(sub, JsAssignmentExpression)
-            and _is_direct_scope_member(sub.left, scope_param_name)
-        ):
-            continue
-        remaining.append(sub)
-    if len(remaining) == len(expr.expressions):
-        return stmt
-    if not remaining:
-        return stmt
-    if len(remaining) == 1:
-        return JsExpressionStatement(expression=remaining[0])
-    return JsExpressionStatement(expression=JsSequenceExpression(expressions=remaining))
-
-
 def _is_direct_scope_member(node: Expression | None, scope_param_name: str) -> bool:
     """
     Check if an expression is a depth-1 member access on the scope parameter, i.e. `scope.X` or
@@ -2709,6 +2635,164 @@ def _emit_arg_param_declarations(match: _GeneratorCFFMatch) -> list[Statement]:
     return [JsVariableDeclaration(declarations=declarations, kind=JsVarKind.VAR)]
 
 
+def _collect_scope_props(
+    stmts: list[Statement],
+    scope_param_name: str | None,
+    out: set[str],
+) -> None:
+    """
+    Record the property names of depth-1 scope-member accesses (`scope.X` / `scope["X"]`) in *stmts*.
+    These identify which bare identifiers in the recovered code originated as variables stored on the
+    scope object, so the recovery can declare the live ones and drop write-only routing slots.
+    """
+    if scope_param_name is None:
+        return
+    for stmt in stmts:
+        for node in stmt.walk():
+            if _is_direct_scope_member(node, scope_param_name):
+                name = _deepest_property_name(node)
+                if name is not None:
+                    out.add(name)
+
+
+def _collect_read_names(node: Node | None, out: set[str]) -> None:
+    """
+    Collect names of identifiers that are read (appear in a value position) within *node*. Assignment
+    targets, declaration ids, and non-computed member property names do not count as reads.
+    """
+    if node is None:
+        return
+    if isinstance(node, JsAssignmentExpression):
+        if isinstance(node.left, JsIdentifier):
+            if node.operator != '=':
+                out.add(node.left.name)
+        else:
+            _collect_read_names(node.left, out)
+        if node.right is not None:
+            _collect_read_names(node.right, out)
+        return
+    if isinstance(node, JsVariableDeclarator):
+        if node.init is not None:
+            _collect_read_names(node.init, out)
+        return
+    if isinstance(node, JsMemberExpression):
+        _collect_read_names(node.object, out)
+        if node.computed:
+            _collect_read_names(node.property, out)
+        return
+    if isinstance(node, JsProperty):
+        if node.computed:
+            _collect_read_names(node.key, out)
+        _collect_read_names(node.value, out)
+        return
+    if isinstance(node, JsIdentifier):
+        out.add(node.name)
+        return
+    for child in node.children():
+        _collect_read_names(child, out)
+
+
+def _is_pure_rhs(node: Node) -> bool:
+    """
+    Conservative purity check for dead-store removal: the expression must contain no calls or nested
+    assignments, so dropping the statement cannot discard an observable side effect.
+    """
+    for n in node.walk():
+        if isinstance(n, (JsCallExpression, JsAssignmentExpression)):
+            return False
+    return True
+
+
+def _remove_dead_scope_writes(stmts: list[Statement], dead: set[str]) -> list[Statement]:
+    """
+    Remove pure `name = value` writes (and such sub-expressions of sequences) where *name* is a
+    write-only scope slot, i.e. routing bookkeeping that is never read. Writes with side-effecting
+    right-hand sides are preserved.
+    """
+    if not dead:
+        return stmts
+
+    def is_dead_write(e: Expression) -> bool:
+        return (
+            isinstance(e, JsAssignmentExpression)
+            and e.operator == '='
+            and isinstance(e.left, JsIdentifier)
+            and e.left.name in dead
+            and e.right is not None
+            and _is_pure_rhs(e.right)
+        )
+
+    result: list[Statement] = []
+    for stmt in stmts:
+        if isinstance(stmt, JsExpressionStatement) and stmt.expression is not None:
+            expr = stmt.expression
+            if isinstance(expr, JsSequenceExpression):
+                remaining = [e for e in expr.expressions if not is_dead_write(e)]
+                if not remaining:
+                    continue
+                if len(remaining) == 1:
+                    result.append(JsExpressionStatement(expression=remaining[0]))
+                else:
+                    result.append(JsExpressionStatement(
+                        expression=JsSequenceExpression(expressions=remaining),
+                    ))
+                continue
+            if is_dead_write(expr):
+                continue
+        result.append(stmt)
+    return result
+
+
+def _declared_names_in_stmts(stmts: list[Statement]) -> set[str]:
+    """
+    Collect var-declared binding names appearing anywhere in *stmts*.
+    """
+    names: set[str] = set()
+    for stmt in stmts:
+        for node in stmt.walk():
+            if isinstance(node, JsVariableDeclaration):
+                for decl in node.declarations:
+                    if isinstance(decl, JsVariableDeclarator):
+                        _collect_binding_names(decl.id, names)
+    return names
+
+
+def _declare_recovered_scope_vars(
+    recovered: list[Statement],
+    match: _GeneratorCFFMatch,
+) -> list[Statement]:
+    """
+    Hoisted scope variables survive recovery as bare identifiers. Declare the ones that are read as
+    locals of the recovered function, and drop the writes of slots that are pure routing bookkeeping
+    (written but never read). Slots already declared, the namespace defaults, and resolved argument
+    parameters are left to their dedicated emitters.
+    """
+    props = match.scope_prop_names
+    if not props:
+        return recovered
+    reads: set[str] = set()
+    for stmt in recovered:
+        _collect_read_names(stmt, reads)
+    dead = {p for p in props if p not in reads}
+    recovered = _remove_dead_scope_writes(recovered, dead)
+    present: set[str] = set()
+    for stmt in recovered:
+        for node in stmt.walk():
+            if isinstance(node, JsIdentifier):
+                present.add(node.name)
+    exclude = _declared_names_in_stmts(recovered)
+    exclude |= set(match.arg_params)
+    exclude |= set(match.scope_default_props)
+    to_declare = sorted(p for p in props if p in present and p not in exclude)
+    if not to_declare:
+        return recovered
+    decl = JsVariableDeclaration(
+        declarations=[JsVariableDeclarator(id=JsIdentifier(name=n), init=None) for n in to_declare],
+        kind=JsVarKind.VAR,
+    )
+    return [decl] + recovered
+
+
 class JsGeneratorCFFUnflattening(BodyProcessingTransformer):
     """
     Recover original code from generator-based state-machine CFF dispatchers. Handles the pattern
@@ -2735,6 +2819,7 @@ class JsGeneratorCFFUnflattening(BodyProcessingTransformer):
             recovered, outer_state = result
             if match.arg_var_name is not None:
                 recovered = _resolve_shared_wrappers(recovered, machine, match, outer_state)
+            recovered = _declare_recovered_scope_vars(recovered, match)
             if match.scope_default_props:
                 recovered = _emit_scope_namespace_declarations(match) + recovered
             if match.arg_params:

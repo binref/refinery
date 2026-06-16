@@ -78,29 +78,35 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
 
     def test_generator_cff_fizzbuzz(self):
         result = self._deobfuscate(self.FIZZBUZZ_CFF)
-        self.assertNotIn('function*', result)
-        self.assertNotIn('while', result)
-        self.assertNotIn('switch', result)
-        self.assertIn('for', result)
-        self.assertIn('FizzBuzz', result)
-        self.assertIn('Fizz', result)
-        self.assertIn('Buzz', result)
-        self.assertIn('% 15', result)
-        self.assertIn('% 3', result)
-        self.assertIn('% 5', result)
-        self.assertIn('return', result)
-
-    def test_generator_cff_return_recovery(self):
-        result = self._deobfuscate(self.FIZZBUZZ_CFF)
-        self.assertNotIn('DL1uIO3', result)
-        self.assertNotIn('WLHepXQ', result)
-
-    def test_generator_cff_state_substitution(self):
-        result = self._deobfuscate(self.FIZZBUZZ_CFF)
-        self.assertNotIn('eFGm4GL', result)
-        self.assertNotIn('QmFNlk', result)
-        self.assertNotIn('AT7hsy7', result)
-        self.assertIn('=== 0', result)
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function fizzbuzz(n) {
+                  var HwIYcaT, QOwuVkJ, _TkmcFL, n, z947WD2;
+                  [HwIYcaT, _TkmcFL] = [99, 225];
+                  QOwuVkJ = [];
+                  for (z947WD2 = 1; z947WD2 <= n; z947WD2++) {
+                    if (z947WD2 % 15 === 0) {
+                      QOwuVkJ.push('FizzBuzz');
+                    } else {
+                      if (z947WD2 % 3 === 0) {
+                        QOwuVkJ.push('Fizz');
+                      } else {
+                        if (z947WD2 % 5 === 0) {
+                          QOwuVkJ.push('Buzz');
+                        } else {
+                          QOwuVkJ.push(z947WD2);
+                        }
+                      }
+                    }
+                  }
+                  return QOwuVkJ;
+                }
+                console.log(fizzbuzz(20));
+                """
+            ),
+            result,
+        )
 
     WITH_DISSOLUTION_CFF = inspect.cleandoc(
         """
@@ -377,9 +383,22 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
 
     def test_generator_cff_loop_body_not_duplicated(self):
         result = self._deobfuscate(self.LOOPING_CFF)
-        self.assertNotIn('function*', result)
-        self.assertNotIn('switch', result)
-        self.assertEqual(result.count('console.log'), 1)
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function wrapper() {
+                  var i;
+                  i = 0;
+                  while (i < 3) {
+                    console.log(i);
+                    i = i + 1;
+                  }
+                  return "done";
+                }
+                """
+            ),
+            result,
+        )
 
     CONTINUE_IN_LOOP_CFF = inspect.cleandoc(
         """
@@ -428,10 +447,26 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
 
     def test_generator_cff_continue_in_loop(self):
         result = self._deobfuscate(self.CONTINUE_IN_LOOP_CFF)
-        self.assertNotIn('function*', result)
-        self.assertNotIn('switch', result)
-        self.assertIn('console.log', result)
-        self.assertNotIn('scope', result)
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function wrapper() {
+                  var i;
+                  i = 0;
+                  while (i < 5) {
+                    if (i % 2 === 0) {
+                      i = i + 1;
+                    } else {
+                      console.log(i);
+                      i = i + 1;
+                    }
+                  }
+                  return "result";
+                }
+                """
+            ),
+            result,
+        )
 
     HEADER_PAYLOAD_CFF = inspect.cleandoc(
         """
@@ -472,11 +507,25 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
 
     def test_generator_cff_header_payload_before_condition(self):
         result = self._deobfuscate(self.HEADER_PAYLOAD_CFF)
-        self.assertNotIn('function*', result)
-        self.assertNotIn('switch', result)
-        self.assertIn('console.log', result)
-        self.assertEqual(result.count('console.log'), 1)
-        self.assertNotIn('scope', result)
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function wrapper() {
+                  var i;
+                  i = 0;
+                  while (true) {
+                    i = i + 1;
+                    if (!(i < 4)) {
+                      break;
+                    }
+                    console.log(i);
+                  }
+                  return "result";
+                }
+                """
+            ),
+            result,
+        )
 
     COMPUTED_MEMBER_CFF = inspect.cleandoc(
         """
@@ -514,11 +563,25 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
 
     def test_generator_cff_computed_member_scope(self):
         result = self._deobfuscate(self.COMPUTED_MEMBER_CFF)
-        self.assertNotIn('function*', result)
-        self.assertNotIn('switch', result)
-        self.assertNotIn('scope', result)
-        self.assertIn('counter', result)
-        self.assertIn('console.log', result)
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function wrapper() {
+                  var counter;
+                  counter = 0;
+                  while (true) {
+                    counter = counter + 1;
+                    if (!(counter < 3)) {
+                      break;
+                    }
+                  }
+                  console.log(counter);
+                  return counter;
+                }
+                """
+            ),
+            result,
+        )
 
     SEQUENCE_STATE_CFF = inspect.cleandoc(
         """
@@ -557,11 +620,25 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
 
     def test_generator_cff_sequence_state_assignments(self):
         result = self._deobfuscate(self.SEQUENCE_STATE_CFF)
-        self.assertNotIn('function*', result)
-        self.assertNotIn('switch', result)
-        self.assertNotIn('scope', result)
-        self.assertIn('items.push', result)
-        self.assertIn('console.log', result)
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function wrapper() {
+                  var i, items;
+                  items = [], i = 0;
+                  while (true) {
+                    items.push(i), i = i + 1;
+                    if (!(i < 4)) {
+                      break;
+                    }
+                  }
+                  console.log(items);
+                  return items;
+                }
+                """
+            ),
+            result,
+        )
 
     NESTED_CONDITIONAL_CFF = inspect.cleandoc(
         """
@@ -613,12 +690,17 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
 
     def test_generator_cff_nested_conditional_join(self):
         result = self._deobfuscate(self.NESTED_CONDITIONAL_CFF)
-        self.assertNotIn('function*', result)
-        self.assertNotIn('switch', result)
-        self.assertIn('alpha', result)
-        self.assertIn('beta', result)
-        self.assertIn('gamma', result)
-        self.assertNotIn('scope', result)
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function wrapper() {
+                  console.log("gamma");
+                  return "end";
+                }
+                """
+            ),
+            result,
+        )
 
     COMPUTED_ROUTING_CFF = inspect.cleandoc(
         """
@@ -657,12 +739,26 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
 
     def test_generator_cff_computed_routing_member(self):
         result = self._deobfuscate(self.COMPUTED_ROUTING_CFF)
-        self.assertNotIn('function*', result)
-        self.assertNotIn('switch', result)
-        self.assertNotIn('scope[', result)
-        self.assertIn('count', result)
-        self.assertIn('tick', result)
-        self.assertIn('done', result)
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function wrapper() {
+                  var count;
+                  count = 0;
+                  while (true) {
+                    count = count + 1;
+                    console.log("tick");
+                    if (!(count < 3)) {
+                      break;
+                    }
+                  }
+                  console.log("done");
+                  return count;
+                }
+                """
+            ),
+            result,
+        )
 
     BOOKKEEPING_LEAK_CFF = inspect.cleandoc(
         """
@@ -745,13 +841,18 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
 
     def test_generator_cff_shared_intermediate_node(self):
         result = self._deobfuscate(self.SHARED_INTERMEDIATE_CFF)
-        self.assertNotIn('function*', result)
-        self.assertNotIn('switch', result)
-        self.assertNotIn('scope', result)
-        self.assertIn('path-a', result)
-        self.assertIn('path-b', result)
-        self.assertIn('shared', result)
-        self.assertEqual(result.count('shared'), 1)
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function wrapper() {
+                  console.log("path-a");
+                  console.log("shared");
+                  return "done";
+                }
+                """
+            ),
+            result,
+        )
 
     BARE_SCOPE_CONDITION_CFF = inspect.cleandoc(
         """
@@ -792,11 +893,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
             inspect.cleandoc(
                 """
                 function wrapper() {
-                  if (ready) {
-                    console.log("go");
-                  } else {
-                    console.log("wait");
-                  }
+                  console.log("go");
                   return "ok";
                 }
                 """
