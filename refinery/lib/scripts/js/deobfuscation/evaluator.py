@@ -12,6 +12,7 @@ if TYPE_CHECKING:
 from refinery.lib.scripts import Node, _clone_node, _remove_from_parent, _replace_in_parent
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     ScriptLevelTransformer,
+    access_key,
     extract_literal_value,
     has_remaining_references,
     is_reference,
@@ -23,8 +24,8 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
 from refinery.lib.scripts.js.deobfuscation.interpreter import (
     InterpreterError,
     IrreducibleExpression,
-    JsBuffer,
     JsInterpreter,
+    _contains_jsbuffer,
     is_runtime_name,
 )
 from refinery.lib.scripts.js.model import (
@@ -33,6 +34,9 @@ from refinery.lib.scripts.js.model import (
     JsBlockStatement,
     JsCallExpression,
     JsCatchClause,
+    JsForInStatement,
+    JsForOfStatement,
+    JsForStatement,
     JsFunctionDeclaration,
     JsFunctionExpression,
     JsIdentifier,
@@ -45,6 +49,7 @@ from refinery.lib.scripts.js.model import (
     JsSwitchCase,
     JsSwitchStatement,
     JsUnaryExpression,
+    JsUpdateExpression,
     JsVariableDeclaration,
     JsVariableDeclarator,
     JsVarKind,
@@ -55,6 +60,34 @@ MAX_RESULT_ARRAY_LEN = 260
 _FuncNode = JsFunctionDeclaration | JsFunctionExpression | JsArrowFunctionExpression
 
 _MISSING = object()
+
+_MUTATING_ARRAY_METHODS = frozenset({
+    'push', 'pop', 'shift', 'unshift', 'splice', 'reverse', 'sort', 'fill', 'copyWithin',
+})
+
+
+def _is_inplace_mutation(node: JsIdentifier) -> bool:
+    """
+    Return whether the reference *node* mutates the value bound to its name in place: a member-target
+    write (`x[i] = v`, `x.p = v`, `x[i]++`, `delete x.p`) or a call to a known mutating array method
+    (`x.push(...)`, `x.reverse()`, ...). Such mutations are invisible to closure / const-argument
+    capture, which snapshots only the declared initializer value.
+    """
+    parent = node.parent
+    if not isinstance(parent, JsMemberExpression) or parent.object is not node:
+        return False
+    grand = parent.parent
+    if isinstance(grand, JsAssignmentExpression) and grand.left is parent:
+        return True
+    if isinstance(grand, JsUpdateExpression) and grand.argument is parent:
+        return True
+    if isinstance(grand, JsUnaryExpression) and grand.operator == 'delete' and grand.operand is parent:
+        return True
+    if isinstance(grand, (JsForOfStatement, JsForInStatement)) and grand.left is parent:
+        return True
+    if isinstance(grand, JsCallExpression) and grand.callee is parent:
+        return access_key(parent) in _MUTATING_ARRAY_METHODS
+    return False
 
 
 class _Scope:
@@ -282,6 +315,7 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
 
     def __init__(self):
         super().__init__()
+        self._script: JsScript | None = None
         self._scope_map: dict[int, _Scope] = {}
         self._pure_nodes: set[int] = set()
         self._closure_env: dict[int, dict[str, Value]] = {}
@@ -290,6 +324,7 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
         self._failed_counts: dict[int, int] = {}
 
     def _process_script(self, node: JsScript) -> None:
+        self._script = node
         self._build_scope_tree(node)
         self._analyze_purity()
         self._evaluate_calls(node)
@@ -382,6 +417,31 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
         for scope in self._scope_map.values():
             yield from scope.functions.values()
 
+    def _value_safe_to_capture(self, name: str, value: Value, owner: Node | None) -> bool:
+        """
+        Return whether a `const`-bound *value* can be safely inlined for *name*. A `const` binding is
+        immutable, so primitive values are always safe. Arrays and objects, however, are mutated in
+        place even when const-bound, and capture snapshots only the declared initializer — so they
+        are unsafe if *name* is mutated in place anywhere except inside *owner*. The interpreter
+        models *owner*'s own mutations (per-call deep copy plus cross-call writeback); mutations by
+        any other code (a sibling statement, or a different capturing function) are not. When *owner*
+        is None (const-argument resolution), any in-place mutation makes the value unsafe.
+        """
+        if not isinstance(value, (list, dict)):
+            return True
+        script = self._script
+        if script is None:
+            return False
+        for node in script.walk():
+            if not isinstance(node, JsIdentifier) or node.name != name:
+                continue
+            if not is_reference(node) or not _is_inplace_mutation(node):
+                continue
+            if owner is not None and node.is_descendant_of(owner):
+                continue
+            return False
+        return True
+
     def _collect_closure_constants(self, func: _FuncNode) -> dict[str, Value]:
         child: Node | None
         own_declarator: JsVariableDeclarator | None = None
@@ -439,7 +499,7 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
                                         result[name] = init
                                     else:
                                         ok, val = extract_literal_value(init)
-                                        if ok:
+                                        if ok and self._value_safe_to_capture(name, val, func):
                                             result[name] = val
                                         else:
                                             shadowed.add(name)
@@ -465,7 +525,7 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
                                         result[name] = init
                                     else:
                                         ok, val = extract_literal_value(init)
-                                        if ok:
+                                        if ok and self._value_safe_to_capture(name, val, func):
                                             result[name] = val
                                         else:
                                             shadowed.add(name)
@@ -645,7 +705,7 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
             return False
         except InterpreterError:
             return False
-        if isinstance(result, JsBuffer):
+        if _contains_jsbuffer(result):
             return False
         if isinstance(result, list) and len(result) > MAX_RESULT_ARRAY_LEN:
             return False
@@ -777,6 +837,12 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
             if isinstance(current, JsCatchClause) and isinstance(current.param, JsIdentifier):
                 if current.param.name == name:
                     return _MISSING
+            if isinstance(current, (JsForOfStatement, JsForInStatement)):
+                if self._decl_binds_name(current.left, name):
+                    return _MISSING
+            if isinstance(current, JsForStatement):
+                if self._decl_binds_name(current.init, name):
+                    return _MISSING
             if isinstance(current, (JsScript, JsBlockStatement)):
                 body = current.body
                 if self._has_hoisted_var(current, name):
@@ -794,7 +860,7 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
                                     and decl.init is not None
                                 ):
                                     ok, val = extract_literal_value(decl.init)
-                                    if ok:
+                                    if ok and self._value_safe_to_capture(name, val, None):
                                         return val
                                     return _MISSING
                         elif stmt.kind == JsVarKind.LET:
@@ -828,6 +894,21 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
                         and decl.id.name == name
                     ):
                         return True
+        return False
+
+    @staticmethod
+    def _decl_binds_name(node: Node | None, name: str) -> bool:
+        """
+        Return whether *node* is a `JsVariableDeclaration` (e.g. a `for`/`for-of`/`for-in` loop
+        header) that declares *name*. A bare identifier loop target assigns to an outer binding and
+        does not shadow, so it is not treated as a binding here.
+        """
+        if not isinstance(node, JsVariableDeclaration):
+            return False
+        for decl in node.declarations:
+            if isinstance(decl, JsVariableDeclarator) and isinstance(decl.id, JsIdentifier):
+                if decl.id.name == name:
+                    return True
         return False
 
     def _is_unresolved_call(self, node: Node) -> bool:

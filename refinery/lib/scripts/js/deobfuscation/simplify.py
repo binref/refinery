@@ -8,6 +8,7 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     FUNCTION_NODE_TYPES,
     GLOBAL_OBJECT_ALIASES,
     RELATIONAL_OPS,
+    _to_int32,
     access_key,
     escape_js_string,
     eval_binary_op,
@@ -601,14 +602,9 @@ class JsSimplifications(Transformer):
         if op == '+' and isinstance(node.operand, JsNumericLiteral):
             return node.operand
         if op == '~' and isinstance(node.operand, JsNumericLiteral):
-            try:
-                v = int(node.operand.value) & 0xFFFFFFFF
-                v = ~v & 0xFFFFFFFF
-                if v >= 0x80000000:
-                    v -= 0x100000000
-                return make_numeric_literal(v)
-            except (ValueError, OverflowError):
-                pass
+            value = node.operand.value
+            if value == value and value not in (float('inf'), float('-inf')):
+                return make_numeric_literal(_to_int32(~int(value)))
         if op == 'typeof' and is_literal(node.operand):
             if isinstance(node.operand, JsNumericLiteral):
                 return make_string_literal('number')

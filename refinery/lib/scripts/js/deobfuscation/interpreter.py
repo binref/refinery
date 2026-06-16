@@ -10,6 +10,8 @@ import re
 import sys
 import urllib.parse
 
+from decimal import Decimal
+
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -23,10 +25,14 @@ if TYPE_CHECKING:
 
 from refinery.lib.scripts import Node
 from refinery.lib.scripts.js.deobfuscation.helpers import (
+    JS_NULL,
     RELATIONAL_OPS,
+    _js_pow,
     _to_int32,
+    _to_uint32,
     eval_binary_op,
     js_parse_int,
+    walk_scope,
 )
 from refinery.lib.scripts.js.model import (
     JsArrayExpression,
@@ -68,6 +74,7 @@ from refinery.lib.scripts.js.model import (
     JsUpdateExpression,
     JsVariableDeclaration,
     JsVariableDeclarator,
+    JsVarKind,
     JsWhileStatement,
 )
 
@@ -103,12 +110,49 @@ class _ThrowSignal(Exception):
         self.value = value
 
 
+def _js_throw(name: str, message: str = '') -> None:
+    """
+    Signal a genuine JavaScript runtime exception (e.g. a `TypeError` or `RangeError`) that an
+    emulated `try/catch` must be able to catch. The thrown value is a plain object carrying `name`
+    and `message`, so `typeof e` is `'object'` and `e.name` / `e.message` are usable. This is
+    distinct from `InterpreterError`, which means "abort interpretation" and is never caught.
+    """
+    raise _ThrowSignal({'name': name, 'message': message})
+
+
+class _ReturnIrreducible(Exception):
+    """
+    Raised when a function's return value (or an arrow's tail expression) is an irreducible
+    expression. This is distinct from a bare `IrreducibleExpression`, which may surface from a
+    non-return position (a variable initializer, an expression statement, a loop) and therefore does
+    NOT represent the function's value. Only a `_ReturnIrreducible` is converted back into an
+    `IrreducibleExpression` for the evaluator to substitute at the call site.
+    """
+    def __init__(self, node: Node):
+        self.node = node
+
+
 class JsBuffer(list):
     """
     Thin wrapper around `list` to distinguish a Node.js Buffer (byte array) from a plain JS Array
     in the interpreter's type-based method dispatch.
     """
     pass
+
+
+def _contains_jsbuffer(value: Value) -> bool:
+    """
+    Recursively determine whether *value* is, or contains, a `JsBuffer`. A Buffer (even nested
+    inside an array or object) must never be emitted as a plain array literal, which would silently
+    change its type and method dispatch (e.g. `.toString('hex')` would no longer work).
+    """
+    if isinstance(value, JsBuffer):
+        return True
+    if isinstance(value, list):
+        return any(_contains_jsbuffer(v) for v in value)
+    if isinstance(value, dict):
+        return any(_contains_jsbuffer(v) for v in value.values())
+    return False
 
 
 def _deep_copy_value(value):
@@ -120,7 +164,12 @@ def _deep_copy_value(value):
 
 
 def _truthy(value: Value) -> bool:
-    if value is None:
+    """
+    Return the JavaScript truthiness of a runtime value. This is the runtime counterpart of the
+    AST-node `helpers.is_truthy`; the two must agree on which values are falsy (`undefined`, `null`,
+    `0`, `NaN`, `''`) so that interpreted and statically-folded conditionals stay consistent.
+    """
+    if value is None or value is JS_NULL:
         return False
     if isinstance(value, bool):
         return value
@@ -166,6 +215,8 @@ def to_number(value: Value) -> int | float:
             return 0
         if '_' in s:
             return float('nan')
+        if s[0] in '+-' and len(s) > 2 and s[1] == '0' and s[2] in 'xXoObB':
+            return float('nan')
         try:
             return int(s, 0)
         except ValueError:
@@ -174,11 +225,35 @@ def to_number(value: Value) -> int | float:
             return float(s)
         except ValueError:
             return float('nan')
-    if value is None:
+    if value is JS_NULL:
         return 0
     if isinstance(value, list):
         return to_number(to_string(value))
     return float('nan')
+
+
+def _js_float_to_string(value: float) -> str:
+    """
+    Format a finite, non-zero float as JavaScript's `Number.prototype.toString` (the ECMA-262
+    Number::toString algorithm) would: this controls the decimal/exponential cutoff (exponential at
+    magnitudes >= 1e21 or < 1e-6) and the exponent format (`1e-7`, not Python's `1e-07`).
+    """
+    neg = value < 0
+    d = Decimal(repr(abs(value)))
+    s = ''.join(str(digit) for digit in d.as_tuple().digits).rstrip('0') or '0'
+    k = len(s)
+    n = d.adjusted() + 1
+    if k <= n <= 21:
+        result = s + '0' * (n - k)
+    elif 0 < n <= 21:
+        result = s[:n] + '.' + s[n:]
+    elif -6 < n <= 0:
+        result = '0.' + '0' * -n + s
+    else:
+        mantissa = s if k == 1 else s[0] + '.' + s[1:]
+        exponent = n - 1
+        result = F"{mantissa}e{'+' if exponent >= 0 else '-'}{abs(exponent)}"
+    return '-' + result if neg else result
 
 
 def to_string(value: Value) -> str:
@@ -186,6 +261,8 @@ def to_string(value: Value) -> str:
         return value
     if value is None:
         return 'undefined'
+    if value is JS_NULL:
+        return 'null'
     if isinstance(value, bool):
         return 'true' if value else 'false'
     if isinstance(value, int):
@@ -197,12 +274,36 @@ def to_string(value: Value) -> str:
             return 'Infinity'
         if value == float('-inf'):
             return '-Infinity'
-        if value == int(value):
+        if value == 0:
+            return '0'
+        if value == int(value) and abs(value) < 1e21:
             return str(int(value))
-        return str(value)
+        return _js_float_to_string(value)
     if isinstance(value, list):
-        return ','.join(to_string(v) for v in value)
+        return ','.join(_array_element_string(v) for v in value)
     return '[object Object]'
+
+
+def _array_element_string(value: Value) -> str:
+    """
+    Stringify an array element for `Array.prototype.toString` / `join`. JavaScript renders `null` and
+    `undefined` elements as the empty string (e.g. `[1, null, 2].toString()` is `'1,,2'`), unlike a
+    top-level `String(null)` which is `'null'`.
+    """
+    if value is None or value is JS_NULL:
+        return ''
+    return to_string(value)
+
+
+def _to_primitive(value: Value) -> Value:
+    """
+    Replicate the ECMA-262 ToPrimitive abstract operation with the default hint, as used by `+`.
+    Arrays and plain objects have no useful `valueOf`, so they coerce to their string form; all other
+    values are already primitive.
+    """
+    if isinstance(value, (list, dict)):
+        return to_string(value)
+    return value
 
 
 def _js_typeof(value: Value) -> str:
@@ -232,7 +333,9 @@ def js_strict_equal(a: Value, b: Value) -> bool:
         return a == b
     if type(a) is not type(b):
         return False
-    return a == b
+    if isinstance(a, str):
+        return a == b
+    return a is b
 
 
 BUILTIN_REGISTRY: dict[tuple, Callable] = {}
@@ -363,9 +466,8 @@ def _str_split(s: str, args: list[Value]) -> Value:
     else:
         result = s.split(sep)
     if len(args) > 1 and args[1] is not None:
-        limit = _to_index(args[1])
-        if limit >= 0:
-            result = result[:limit]
+        limit = _to_uint32(to_number(args[1]))
+        result = result[:limit]
     return result
 
 
@@ -463,12 +565,14 @@ def _str_trim_end(s: str, args: list[Value]) -> Value:
 def _str_repeat(s: str, args: list[Value]) -> Value:
     count = _to_index(args[0]) if args else 0
     if count < 0 or count > 0x10000000:
-        raise InterpreterError
+        _js_throw('RangeError', 'Invalid count value')
     return s * count
 
 
 def _str_pad(s: str, args: list[Value], prepend: bool) -> Value:
-    target_len = min(_to_index(args[0]), 0x10000000) if args else 0
+    target_len = _to_index(args[0]) if args else 0
+    if target_len > 0x10000000:
+        _js_throw('RangeError', 'Invalid string length')
     fill = to_string(args[1]) if len(args) > 1 else ' '
     needed = target_len - len(s)
     if needed <= 0 or not fill:
@@ -502,6 +606,20 @@ def _string_from_char_code(args: list[Value]) -> Value:
     return ''.join(chr(_to_int(a) & 0xFFFF) for a in args)
 
 
+def _json_nulls_to_jsnull(value):
+    """
+    Replace every decoded JSON `null` (Python `None`) with the `JS_NULL` sentinel, recursively, so
+    parsed JSON uses the interpreter's `null` representation rather than `undefined`.
+    """
+    if value is None:
+        return JS_NULL
+    if isinstance(value, list):
+        return [_json_nulls_to_jsnull(v) for v in value]
+    if isinstance(value, dict):
+        return {k: _json_nulls_to_jsnull(v) for k, v in value.items()}
+    return value
+
+
 @_register(('JSON', 'parse'))
 def _json_parse(args: list[Value]) -> Value:
     if not args:
@@ -511,9 +629,10 @@ def _json_parse(args: list[Value]) -> Value:
         raise InterpreterError
     s = to_string(args[0])
     try:
-        return json.loads(s, parse_int=float, parse_constant=_reject_constant)
+        parsed = json.loads(s, parse_int=float, parse_constant=_reject_constant)
     except Exception:
         raise InterpreterError
+    return _json_nulls_to_jsnull(parsed)
 
 
 @_register((list, 'length'))
@@ -597,8 +716,38 @@ def _arr_splice(arr: list, args: list[Value]) -> Value:
 
 @_register((list, 'join'))
 def _arr_join(arr: list, args: list[Value]) -> Value:
-    sep = to_string(args[0]) if args else ','
-    return sep.join(to_string(v) for v in arr)
+    sep = ',' if not args or args[0] is None else to_string(args[0])
+    return sep.join(_array_element_string(v) for v in arr)
+
+
+@_register((list, 'toString'))
+def _arr_to_string(arr: list, args: list[Value]) -> Value:
+    return to_string(arr)
+
+
+@_register((int, 'toString'))
+@_register((float, 'toString'))
+def _number_to_string(num: int | float, args: list[Value]) -> Value:
+    radix = _to_int(args[0]) if args and args[0] is not None else 10
+    if radix == 10:
+        return to_string(num)
+    if not 2 <= radix <= 36:
+        _js_throw('RangeError', 'toString() radix must be between 2 and 36')
+    value = to_number(num)
+    if value != value or math.isinf(value):
+        return to_string(value)
+    if value != int(value):
+        raise InterpreterError
+    integer = abs(int(value))
+    if integer == 0:
+        return '0'
+    digits = '0123456789abcdefghijklmnopqrstuvwxyz'
+    out: list[str] = []
+    while integer:
+        out.append(digits[integer % radix])
+        integer //= radix
+    text = ''.join(reversed(out))
+    return '-' + text if value < 0 else text
 
 
 @_register((list, 'indexOf'))
@@ -698,12 +847,7 @@ def _math_abs(args: list[Value]) -> Value:
 def _math_pow(args: list[Value]) -> Value:
     if len(args) < 2:
         return float('nan')
-    base = to_number(args[0])
-    exp = to_number(args[1])
-    try:
-        return base ** exp
-    except (OverflowError, ValueError):
-        return float('nan')
+    return _js_pow(to_number(args[0]), to_number(args[1]))
 
 
 @_register(('Math', 'sqrt'))
@@ -1040,16 +1184,22 @@ class JsInterpreter:
         self._env = {}
         for i, name in enumerate(param_names):
             self._env[name] = arguments[i] if i < len(arguments) else None
+        body = func.body
+        for name in self._collect_hoisted_var_names(body):
+            self._env.setdefault(name, None)
         for name, value in self._closure.items():
             if name not in self._env:
                 self._env[name] = _deep_copy_value(value)
         self._iterations = 0
-        body = func.body
         if isinstance(body, JsBlockStatement):
             try:
                 self._exec_statements(body.body)
             except _ReturnSignal as r:
                 return r.value
+            except _ReturnIrreducible as r:
+                raise IrreducibleExpression(r.node)
+            except IrreducibleExpression:
+                raise InterpreterError
             except _ThrowSignal:
                 if self._depth == 0:
                     raise InterpreterError
@@ -1063,6 +1213,24 @@ class JsInterpreter:
                     raise InterpreterError
                 raise
         return None
+
+    @staticmethod
+    def _collect_hoisted_var_names(body) -> list[str]:
+        """
+        Collect the names of all `var` declarations in *body*, which JavaScript hoists to the top of
+        the function scope (initialized to `undefined`). Nested function bodies are not traversed.
+        Reading a hoisted name before its initializer must yield `undefined`, not an unresolved free
+        identifier.
+        """
+        if not isinstance(body, JsBlockStatement):
+            return []
+        names: list[str] = []
+        for node in walk_scope(body, include_root_body=True):
+            if isinstance(node, JsVariableDeclaration) and node.kind == JsVarKind.VAR:
+                for decl in node.declarations:
+                    if isinstance(decl, JsVariableDeclarator) and isinstance(decl.id, JsIdentifier):
+                        names.append(decl.id.name)
+        return names
 
     def _exec_statements(self, stmts: list) -> None:
         for stmt in stmts:
@@ -1093,7 +1261,7 @@ class JsInterpreter:
             try:
                 value = self._eval(stmt.argument)
             except IrreducibleExpression:
-                raise IrreducibleExpression(stmt.argument)
+                raise _ReturnIrreducible(stmt.argument)
             raise _ReturnSignal(value)
         elif isinstance(stmt, JsBreakStatement):
             raise _BreakSignal
@@ -1119,8 +1287,12 @@ class JsInterpreter:
             if not isinstance(decl.id, JsIdentifier):
                 raise InterpreterError
             name = decl.id.name
-            value = self._eval(decl.init) if decl.init else None
-            self._env[name] = value
+            if decl.init is not None:
+                self._env[name] = self._eval(decl.init)
+            elif node.kind == JsVarKind.VAR:
+                self._env.setdefault(name, None)
+            else:
+                self._env[name] = None
 
     def _exec_if(self, node: JsIfStatement) -> None:
         if _truthy(self._eval(node.test)):
@@ -1187,6 +1359,8 @@ class JsInterpreter:
 
     def _exec_for_in(self, node: JsForInStatement) -> None:
         right = self._eval(node.right)
+        if right is None or right is JS_NULL:
+            return
         if isinstance(right, dict):
             keys: list = list(right.keys())
         elif isinstance(right, list):
@@ -1202,6 +1376,8 @@ class JsInterpreter:
 
     def _exec_for_of(self, node: JsForOfStatement) -> None:
         right = self._eval(node.right)
+        if right is None or right is JS_NULL:
+            _js_throw('TypeError', F'{to_string(right)} is not iterable')
         if isinstance(right, list):
             items = right
         elif isinstance(right, str):
@@ -1217,29 +1393,26 @@ class JsInterpreter:
 
     def _exec_try(self, node: JsTryStatement) -> None:
         thrown: _ThrowSignal | None = None
-        aborted: InterpreterError | None = None
-        flow: _ReturnSignal | _BreakSignal | _ContinueSignal | None = None
-        irreducible: IrreducibleExpression | None = None
+        propagate: Exception | None = None
         try:
             if node.block:
                 self._exec_statements(node.block.body)
         except _ThrowSignal as exc:
             thrown = exc
-        except IrreducibleExpression as exc:
-            irreducible = exc
-        except InterpreterError as exc:
-            aborted = exc
-        except (_ReturnSignal, _BreakSignal, _ContinueSignal) as exc:
-            flow = exc
-        if irreducible is not None:
+        except (
+            IrreducibleExpression,
+            InterpreterError,
+            _ReturnSignal,
+            _BreakSignal,
+            _ContinueSignal,
+            _ReturnIrreducible,
+        ) as exc:
+            propagate = exc
+        if propagate is not None:
             if node.finalizer:
                 self._exec_statements(node.finalizer.body)
-            raise irreducible
-        if flow is not None:
-            if node.finalizer:
-                self._exec_statements(node.finalizer.body)
-            raise flow
-        if thrown is not None or aborted is not None:
+            raise propagate
+        if thrown is not None:
             if node.handler and node.handler.body:
                 param_name: str | None = None
                 had_param: bool = False
@@ -1248,18 +1421,20 @@ class JsInterpreter:
                     param_name = node.handler.param.name
                     had_param = param_name in self._env
                     prev_param = self._env.get(param_name)
-                    self._env[param_name] = thrown.value if thrown is not None else {}
-                handler_flow: _ReturnSignal | _BreakSignal | _ContinueSignal | None = None
-                handler_thrown: _ThrowSignal | None = None
-                handler_aborted: InterpreterError | IrreducibleExpression | None = None
+                    self._env[param_name] = thrown.value
+                handler_outcome: Exception | None = None
                 try:
                     self._exec_statements(node.handler.body.body)
-                except (_ReturnSignal, _BreakSignal, _ContinueSignal) as exc:
-                    handler_flow = exc
-                except _ThrowSignal as exc:
-                    handler_thrown = exc
-                except (InterpreterError, IrreducibleExpression) as exc:
-                    handler_aborted = exc
+                except (
+                    _ThrowSignal,
+                    IrreducibleExpression,
+                    InterpreterError,
+                    _ReturnSignal,
+                    _BreakSignal,
+                    _ContinueSignal,
+                    _ReturnIrreducible,
+                ) as exc:
+                    handler_outcome = exc
                 finally:
                     if param_name is not None:
                         if had_param:
@@ -1268,18 +1443,12 @@ class JsInterpreter:
                             self._env.pop(param_name, None)
                 if node.finalizer:
                     self._exec_statements(node.finalizer.body)
-                if handler_flow is not None:
-                    raise handler_flow
-                if handler_thrown is not None:
-                    raise handler_thrown
-                if handler_aborted is not None:
-                    raise handler_aborted
+                if handler_outcome is not None:
+                    raise handler_outcome
                 return
             if node.finalizer:
                 self._exec_statements(node.finalizer.body)
-            if thrown is not None:
-                raise thrown
-            raise aborted  # type: ignore[misc]
+            raise thrown
         if node.finalizer:
             self._exec_statements(node.finalizer.body)
 
@@ -1308,7 +1477,7 @@ class JsInterpreter:
         if isinstance(expr, JsBooleanLiteral):
             return expr.value
         if isinstance(expr, JsNullLiteral):
-            return None
+            return JS_NULL
         if isinstance(expr, JsIdentifier):
             return self._eval_identifier(expr)
         if isinstance(expr, JsBinaryExpression):
@@ -1359,26 +1528,45 @@ class JsInterpreter:
             return self._functions[name]
         raise IrreducibleExpression(node)
 
+    def _js_add(self, left: Value, right: Value) -> Value:
+        """
+        Replicate the JavaScript `+` operator: apply ToPrimitive to both operands, then concatenate
+        as strings if either is a string, otherwise add numerically.
+        """
+        left = _to_primitive(left)
+        right = _to_primitive(right)
+        if isinstance(left, str) or isinstance(right, str):
+            result = to_string(left) + to_string(right)
+            if len(result) > self.max_string_len:
+                raise InterpreterError
+            return result
+        return to_number(left) + to_number(right)
+
     def _eval_binary(self, node: JsBinaryExpression) -> Value:
         op = node.operator
         left = self._eval(node.left)
         right = self._eval(node.right)
-        if op in ('===', '=='):
+        if op == '===':
             return self._strict_equal(left, right)
-        if op in ('!==', '!='):
+        if op == '!==':
             return not self._strict_equal(left, right)
+        if op == '==':
+            return self._loose_equal(left, right)
+        if op == '!=':
+            return not self._loose_equal(left, right)
         if op == '+':
-            if isinstance(left, str) or isinstance(right, str):
-                result = to_string(left) + to_string(right)
-                if len(result) > self.max_string_len:
-                    raise InterpreterError
-                return result
-            return to_number(left) + to_number(right)
+            return self._js_add(left, right)
         if op == 'in':
             if isinstance(right, dict):
                 return to_string(left) in right
             if isinstance(right, list):
                 key = to_string(left)
+                if key == 'length':
+                    return True
+                if (type(right), key) in BUILTIN_REGISTRY or (list, key) in BUILTIN_REGISTRY:
+                    return True
+                if key in _ARRAY_HOF_METHODS:
+                    return True
                 try:
                     idx = int(key)
                 except (ValueError, OverflowError):
@@ -1447,7 +1635,9 @@ class JsInterpreter:
         if node.operator == '||':
             return left if _truthy(left) else self._eval(node.right)
         if node.operator == '??':
-            return left if left is not None else self._eval(node.right)
+            if left is None or left is JS_NULL:
+                return self._eval(node.right)
+            return left
         raise InterpreterError
 
     def _eval_assignment(self, node: JsAssignmentExpression) -> Value:
@@ -1463,13 +1653,7 @@ class JsInterpreter:
             return value
         current = self._env.get(name)
         if op == '+=':
-            if isinstance(current, str) or isinstance(value, str):
-                result = to_string(current) + to_string(value)
-                if len(result) > self.max_string_len:
-                    raise InterpreterError
-                self._env[name] = result
-            else:
-                self._env[name] = to_number(current) + to_number(value)
+            self._env[name] = self._js_add(current, value)
         elif op == '-=':
             self._env[name] = to_number(current) - to_number(value)
         elif op == '*=':
@@ -1510,10 +1694,7 @@ class JsInterpreter:
         if node.operator != '=':
             old = self._get_property(obj, key)
             if node.operator == '+=':
-                if isinstance(old, str) or isinstance(value, str):
-                    value = to_string(old) + to_string(value)
-                else:
-                    value = to_number(old) + to_number(value)
+                value = self._js_add(old, value)
             elif node.operator == '-=':
                 value = to_number(old) - to_number(value)
             elif node.operator == '*=':
@@ -1545,7 +1726,9 @@ class JsInterpreter:
             target = self._env[name]
             if isinstance(target, (JsFunctionDeclaration, JsFunctionExpression, JsArrowFunctionExpression)):
                 return self._call_function(target, args)
-            raise InterpreterError
+            if node.optional and (target is None or target is JS_NULL):
+                return None
+            _js_throw('TypeError', F'{name} is not a function')
         func = self._functions.get(name)
         if func is not None:
             return self._call_function(func, args)
@@ -1567,6 +1750,10 @@ class JsInterpreter:
                 return builtin(args)
             raise InterpreterError
         obj = self._eval(member.object)
+        if obj is None or obj is JS_NULL:
+            if member.optional:
+                return None
+            _js_throw('TypeError', F"Cannot read properties of {to_string(obj)} (reading a method)")
         method_name = self._member_key(member)
         args = [self._eval(a) for a in node.arguments]
         obj_type = type(obj)
@@ -1685,6 +1872,8 @@ class JsInterpreter:
         if isinstance(node.object, JsIdentifier) and node.object.name in STATIC_OBJECTS:
             raise InterpreterError
         obj = self._eval(node.object)
+        if node.optional and (obj is None or obj is JS_NULL):
+            return None
         key = self._member_key(node)
         return self._get_property(obj, key)
 
@@ -1729,6 +1918,8 @@ class JsInterpreter:
         raise InterpreterError
 
     def _get_property(self, obj: Value, key: str) -> Value:
+        if obj is None or obj is JS_NULL:
+            _js_throw('TypeError', F"Cannot read properties of {to_string(obj)} (reading '{key}')")
         if isinstance(obj, dict):
             return obj.get(key)
         if isinstance(obj, list):
@@ -1770,7 +1961,7 @@ class JsInterpreter:
             if key == 'length':
                 new_len = _to_int(value)
                 if new_len < 0:
-                    raise InterpreterError
+                    _js_throw('RangeError', 'Invalid array length')
                 if new_len < len(obj):
                     del obj[new_len:]
                 else:
@@ -1790,6 +1981,35 @@ class JsInterpreter:
 
     @staticmethod
     def _strict_equal(a: Value, b: Value) -> bool:
+        return js_strict_equal(a, b)
+
+    @staticmethod
+    def _loose_equal(a: Value, b: Value) -> bool:
+        """
+        Replicate the ECMA-262 abstract-equality (`==`) algorithm. `null` and `undefined` are equal to
+        each other and to nothing else; booleans and objects coerce to numbers/primitives; a number
+        compared with a string compares by numeric value.
+        """
+        a_nullish = a is None or a is JS_NULL
+        b_nullish = b is None or b is JS_NULL
+        if a_nullish or b_nullish:
+            return a_nullish and b_nullish
+        if isinstance(a, bool):
+            a = 1 if a else 0
+        if isinstance(b, bool):
+            b = 1 if b else 0
+        if isinstance(a, (list, dict)):
+            a = _to_primitive(a)
+        if isinstance(b, (list, dict)):
+            b = _to_primitive(b)
+        if isinstance(a, str) and isinstance(b, str):
+            return a == b
+        a_num = isinstance(a, (int, float))
+        b_num = isinstance(b, (int, float))
+        if a_num and b_num:
+            return a == b
+        if (a_num and isinstance(b, str)) or (isinstance(a, str) and b_num):
+            return to_number(a) == to_number(b)
         return js_strict_equal(a, b)
 
     def eval_expression(self, expr) -> Value:

@@ -68,6 +68,23 @@ GLOBAL_OBJECT_ALIASES: frozenset[str] = frozenset({'globalThis', 'global', 'wind
 VOID_LITERAL_OPERANDS = (JsNumericLiteral, JsStringLiteral, JsBooleanLiteral, JsNullLiteral)
 
 
+class _JsNull:
+    """
+    Singleton sentinel for the JavaScript `null` value. The interpreter uses Python `None` for
+    `undefined` (the value of missing/absent things), so a distinct object is required to keep `null`
+    and `undefined` apart where JavaScript treats them differently: `Number(null)` is `0` but
+    `Number(undefined)` is `NaN`, `typeof null` is `'object'`, `null === undefined` is `false`, and
+    `String(null)` is `'null'`.
+    """
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return 'JS_NULL'
+
+
+JS_NULL = _JsNull()
+
+
 def _to_int32(v: int | float) -> int:
     """
     Replicate the ECMA-262 ToInt32 abstract operation: `NaN`, `+Infinity`, and `-Infinity` all
@@ -111,13 +128,57 @@ def _js_mod(a: int | float, b: int | float) -> int | float:
     return math.fmod(a, b)
 
 
+def _js_pow(base: int | float, exp: int | float) -> int | float:
+    """
+    Replicate JavaScript exponentiation (`**` / `Math.pow`). JavaScript numbers are IEEE-754 doubles,
+    so this diverges from Python in cases that matter: `anything ** 0` is `1` (even `NaN ** 0`); a base
+    of `1` or `-1` with an infinite exponent is `NaN` (Python: `1.0`); a negative base with a
+    non-integer exponent is a complex number in Python (JS: `NaN`); a zero base with a negative
+    exponent is `Infinity` (with the sign rule for `-0`); and a magnitude beyond the double range is
+    `Infinity`, whereas Python's arbitrary-precision `int ** int` returns an exact bignum.
+    """
+    inf = float('inf')
+    if exp == 0:
+        return 1
+    if base != base or exp != exp:
+        return float('nan')
+    if (base == 1 or base == -1) and exp in (inf, -inf):
+        return float('nan')
+    if base == 0 and exp < 0:
+        if (
+            exp not in (inf, -inf)
+            and exp == int(exp)
+            and int(exp) % 2 != 0
+            and math.copysign(1.0, base) < 0
+        ):
+            return -inf
+        return inf
+    is_int_exp = exp not in (inf, -inf) and exp == int(exp)
+    if base < 0 and not is_int_exp:
+        return float('nan')
+    try:
+        result = base ** exp
+    except OverflowError:
+        return -inf if (base < 0 and is_int_exp and int(exp) % 2 != 0) else inf
+    except (ValueError, ZeroDivisionError):
+        return float('nan')
+    if isinstance(result, complex):
+        return float('nan')
+    if isinstance(result, int):
+        try:
+            float(result)
+        except OverflowError:
+            return -inf if result < 0 else inf
+    return result
+
+
 BINARY_OPS: dict[str, Callable] = {
     '+'  : operator.add,
     '-'  : operator.sub,
     '*'  : operator.mul,
     '/'  : _js_div,
     '%'  : _js_mod,
-    '**' : operator.pow,
+    '**' : _js_pow,
     '|'  : lambda a, b: _to_int32(a) | _to_int32(b),
     '&'  : lambda a, b: _to_int32(a) & _to_int32(b),
     '^'  : lambda a, b: _to_int32(a) ^ _to_int32(b),
@@ -250,7 +311,7 @@ def extract_literal_value(node: Node) -> tuple[bool, LiteralValue]:
     if isinstance(node, JsBooleanLiteral):
         return True, node.value
     if isinstance(node, JsNullLiteral):
-        return True, None
+        return True, JS_NULL
     if isinstance(node, JsUnaryExpression):
         if node.operator == 'void' and isinstance(node.operand, VOID_LITERAL_OPERANDS):
             return True, None
@@ -314,6 +375,8 @@ def value_to_node(value: object) -> Expression | None:
                 return None
             properties.append(JsProperty(key=make_string_literal(k), value=val_node))
         return JsObjectExpression(properties=properties)
+    if value is JS_NULL:
+        return JsNullLiteral()
     if value is None:
         return JsUnaryExpression(
             operator='void',
@@ -440,7 +503,8 @@ def is_reference(node: JsIdentifier) -> bool:
 def is_truthy(node: Node) -> bool | None:
     """
     Return the JavaScript truthiness of a literal node, or `None` when the value cannot be
-    determined statically.
+    determined statically. This is the AST-node counterpart of the runtime `interpreter._truthy`;
+    the two must agree on which values are falsy (`undefined`, `null`, `0`, `NaN`, `''`).
     """
     if isinstance(node, JsBooleanLiteral):
         return node.value
