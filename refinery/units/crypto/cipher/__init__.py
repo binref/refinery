@@ -429,8 +429,8 @@ class LatinCipherUnit(StreamCipherUnit, abstract=True):
 
 
 class LatinCipherStandardUnit(StandardCipherUnit):
-    def __init__(self, key, nonce: Param[buf, Arg(help='The nonce. Default is the string {default}.')] = B'REFINERY'):
-        super().__init__(key, nonce=nonce)
+    def __init__(self, key, nonce: Param[buf, Arg(help='The nonce. Default is the string {default}.')] = B'REFINERY', **keywords):
+        super().__init__(key, nonce=nonce, **keywords)
 
     def _new_cipher(self, **optionals) -> Any:
         self.log_info('one-time nonce:', self.args.nonce.hex())

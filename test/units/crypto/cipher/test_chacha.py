@@ -52,3 +52,62 @@ class TestChaCha(TestUnitBase):
         )
         test = data | self.ldu('xchacha', offset=1, key=key, nonce=nonce) | bytes
         self.assertEqual(test, goal)
+
+    def test_rfc8439_aead_vector(self):
+        key = bytes.fromhex(
+            '808182838485868788898a8b8c8d8e8f'
+            '909192939495969798999a9b9c9d9e9f')
+        nonce = bytes.fromhex('070000004041424344454647')
+        aad = bytes.fromhex('50515253c0c1c2c3c4c5c6c7')
+        ciphertext = bytes.fromhex(
+            'd31a8d34648e60db7b86afbc53ef7ec2'
+            'a4aded51296e08fea9e2b5a736ee62d6'
+            '3dbea45e8ca9671282fafb69da92728b'
+            '1a71de0a9e060b2905d6a5b67ecd3b36'
+            '92ddbd7f2d778b8c9803aee328091b58'
+            'fab324e4fad675945585808b4831d7bc'
+            '3ff4def08e4b7a9de576d26586cec64b'
+            '6116')
+        tag = bytes.fromhex('1ae10b594f09e26a7e902ecbd0600691')
+        goal = (
+            b"Ladies and Gentlemen of the class of '99: If I could offer you "
+            b"only one tip for the future, sunscreen would be it.")
+        unit = self.ldu('chacha20poly1305', key=key, nonce=nonce, aad=aad, tag=tag)
+        self.assertEqual(ciphertext | unit | bytes, goal)
+
+    def test_authentication_roundtrip(self):
+        key = bytes.fromhex(
+            '808182838485868788898a8b8c8d8e8f'
+            '909192939495969798999a9b9c9d9e9f')
+        data = B'The binary refinery refines the finest binaries!'
+
+        test = self.load_pipeline('|'.join((
+            F'chacha20poly1305 H:{key.hex()} schokolade12 --aad=refined --tag=16 -R [',
+            F'chacha20poly1305 H:{key.hex()} schokolade12 --aad=refined --tag=v:tag ]',
+        )))
+        self.assertEqual(data, data | test | bytes)
+
+        test = self.load_pipeline('|'.join((
+            F'chacha20poly1305 H:{key.hex()} schokolade12 --aad=refined --tag=16 -R [',
+            F'chacha20poly1305 H:{key.hex()} schokolade12 --aad=refined ]',
+        )))
+        self.assertEqual(data, data | test | bytes)
+
+    def test_wrong_aad_fails(self):
+        key = bytes.fromhex(
+            '808182838485868788898a8b8c8d8e8f'
+            '909192939495969798999a9b9c9d9e9f')
+        data = B'The binary refinery refines the finest binaries!'
+
+        with self.assertRaises(ValueError):
+            _ = data | self.load_pipeline('|'.join((
+                F'chacha20poly1305 H:{key.hex()} schokolade12 --aad=refined --tag=16 -R [',
+                F'chacha20poly1305 H:{key.hex()} schokolade12 --aad=REFYNED --tag=v:tag ]',
+            ))) | None
+
+        with self.assertRaises(ValueError):
+            _ = data | self.load_pipeline('|'.join((
+                F'chacha20poly1305 H:{key.hex()} schokolade12 --aad=refined --tag=16 -R [',
+                'put tag bogusbogustagtag',
+                F'chacha20poly1305 H:{key.hex()} schokolade12 --aad=refined --tag=v:tag ]',
+            ))) | None

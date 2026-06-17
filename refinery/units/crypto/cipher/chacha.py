@@ -7,6 +7,8 @@ from typing import Iterable
 from Cryptodome.Cipher import ChaCha20, ChaCha20_Poly1305
 
 from refinery.lib.crypto import PyCryptoFactoryWrapper, rotl32
+from refinery.lib.types import Param, buf, isbuffer, isq
+from refinery.units import Arg
 from refinery.units.crypto.cipher import LatinCipherStandardUnit, LatinCipherUnit
 from refinery.units.crypto.cipher.salsa import LatinCipher, LatinX
 
@@ -57,12 +59,44 @@ class chacha20poly1305(LatinCipherStandardUnit, cipher=PyCryptoFactoryWrapper(Ch
     ChaCha20-Poly1305 and XChaCha20-Poly1305 encryption and decryption.
 
     For the ChaCha20 variant, the nonce must be 8 or 12 bytes long; for XChaCha20, provide a 24
-    bytes nonce instead.
+    bytes nonce instead. This is an authenticated cipher (AEAD): additional authenticated data
+    can be provided to influence the Poly1305 authentication tag, and the tag itself can be
+    supplied for verification when decrypting.
     """
+    def __init__(
+        self, key, nonce=B'REFINERY', *,
+        tag: Param[isq, Arg.NumSeq('-t', '--tag', metavar='TAG', help=(
+            'The Poly1305 authentication tag to verify the message. For encryption, this '
+            'parameter specifies the tag length, and the tag is provided as a meta variable '
+            'named "tag". The Poly1305 tag is always 16 bytes long.'
+        ))] = (),
+        aad: Param[buf, Arg.Binary('-a', '--aad', metavar='AAD', help=(
+            'Set additional authenticated data for the Poly1305 tag computation.'
+        ))] = B'',
+    ):
+        super().__init__(key, nonce=nonce, tag=tag, aad=aad)
+
     def _get_cipher(self, reset_cache=False):
+        reset_cache = reset_cache or self._cipher_interface is None
         cipher = super()._get_cipher(reset_cache)
         cipher.block_size = 1
+        if reset_cache and (aad := self.args.aad):
+            cipher.update(aad)
         return cipher
+
+    def encrypt(self, data):
+        result = super().encrypt(data)
+        if self.args.tag or self.args.aad:
+            result = self.labelled(result, tag=super()._get_cipher(False).digest())
+        return result
+
+    def decrypt(self, data):
+        result = super().decrypt(data)
+        if tag := self.args.tag:
+            if not isbuffer(tag):
+                raise ValueError('The tag must be a binary string during decryption.')
+            super()._get_cipher(False).verify(tag)
+        return result
 
 
 class chacha(LatinCipherUnit):
