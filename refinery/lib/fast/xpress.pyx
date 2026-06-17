@@ -377,6 +377,8 @@ def xpress_huffman_decompress(data, int target, int max_chunk_size=0x10000) -> b
                             bit_buf = (bit_buf << 16) | <uint64_t>src[pos] | (<uint64_t>src[pos + 1] << 8)
                             bit_cnt += 16
                             pos += 2
+                    if bit_cnt < length:
+                        raise ValueError('negative shift count')
                     top_bits = bit_buf >> (bit_cnt - length)
                     entry = decode_table[sym + <int>(top_bits & ((<uint64_t>1 << length) - 1))]
                     sym = entry >> _SHIFT
@@ -403,6 +405,8 @@ def xpress_huffman_decompress(data, int target, int max_chunk_size=0x10000) -> b
                         pos += 2
 
                 if offsetlog > 0:
+                    if bit_cnt < offsetlog:
+                        raise ValueError('negative shift count')
                     top_bits = bit_buf >> (bit_cnt - offsetlog)
                     offset = (1 << offsetlog) | <int>(top_bits & ((<uint64_t>1 << offsetlog) - 1))
                     bit_cnt -= offsetlog

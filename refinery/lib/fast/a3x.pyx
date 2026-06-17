@@ -173,6 +173,9 @@ def a3x_decompress(data, bint is_current):
                     f'Invalid back-reference: offset={offset}, output_size={cursor}')
             start = cursor - offset
 
+            if length > size - cursor:
+                length = size - cursor
+
             # Back-reference copy using C-level memory operations.
             # When offset >= length, the source and destination regions do not
             # overlap, so we can use a single memcpy. When they do overlap

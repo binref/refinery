@@ -248,6 +248,9 @@ def decrypt_round(data, key, int round_idx):
     cdef const uint8_t[::1] key_view = key_bytes
     cdef int key_len = len(key_bytes)
 
+    if round_idx < 0 or round_idx > 0xFF:
+        raise OverflowError('%c arg not in range(256)')
+
     for i in range(data_len):
         _compute_byte_seed(&key_view[0], key_len, round_idx, i, byte_seed)
         prng_init(&prng, byte_seed)

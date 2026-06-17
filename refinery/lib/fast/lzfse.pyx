@@ -500,6 +500,18 @@ cdef int _decode_lzfse_payload(
         else:
             prev_d = d_value
 
+        if (
+            l_value < 0
+            or m_value < 0
+            or lit_pos + l_value > n_literals + 4
+            or out_pos + written + l_value + m_value > out_cap
+        ):
+            free(literals)
+            return -1
+        if m_value > 0 and (d_value <= 0 or out_pos + written + l_value - d_value < 0):
+            free(literals)
+            return -1
+
         # Copy literals
         if l_value > 0:
             memcpy(&output[out_pos + written], &literals[lit_pos], l_value)
@@ -518,6 +530,9 @@ cdef int _decode_lzfse_payload(
 
     # Remaining literals
     if lit_pos < n_literals:
+        if out_pos + written + (n_literals - lit_pos) > out_cap:
+            free(literals)
+            return -1
         memcpy(&output[out_pos + written], &literals[lit_pos], n_literals - lit_pos)
         written += n_literals - lit_pos
 

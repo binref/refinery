@@ -52,7 +52,7 @@ def lzw_decompress(data, int maxbits, bint block_mode) -> bytearray:
         int code, incode
         int n, p_int
         uint32_t b0, b1, b2
-        uint8_t stack_buf[WSIZE]
+        uint8_t stack_buf[1 << BITS]
         int stack_len
         int i
 

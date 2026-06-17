@@ -80,10 +80,12 @@ def lzjb_compress(data: bytes | bytearray | memoryview) -> bytearray:
             if copy_map is None:
                 raise ValueError
             output[copy_map] |= copymask
-            mlen = min(length - position, _MATCH_MAX)
-            for mlen in range(_MATCH_MIN, mlen):
+            max_mlen = min(length - position, _MATCH_MAX)
+            mlen = _MATCH_MIN
+            while mlen < max_mlen:
                 if src[position + mlen] != src[cpy + mlen]:
                     break
+                mlen += 1
             output.append(((mlen - _MATCH_MIN) << (8 - _MATCH_LEN)) | (offset >> 8))
             output.append(offset & 255)
             position += mlen

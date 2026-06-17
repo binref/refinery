@@ -68,8 +68,8 @@ def pkware_decompress(data) -> bytearray:
         int pos = 2
         uint64_t bbits = 0
         int nbits = 0
-        uint8_t codelit = src[0]
-        uint8_t maxdict = src[1]
+        uint8_t codelit
+        uint8_t maxdict
         uint32_t bit
         uint32_t code, entry
         int bits
@@ -78,6 +78,11 @@ def pkware_decompress(data) -> bytearray:
         uint32_t out_cap
         uint32_t copy_src, copy_len
         uint8_t *out_buf
+
+    if end < 2:
+        raise ValueError('PKWARE stream is too short to contain a header.')
+    codelit = src[0]
+    maxdict = src[1]
 
     if codelit > 1:
         raise ValueError(f'Invalid literal encoding value {codelit}.')
