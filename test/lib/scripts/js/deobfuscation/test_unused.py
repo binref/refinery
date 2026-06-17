@@ -314,6 +314,7 @@ class TestUnusedCodeRemoval(TestJsDeobfuscator):
             function callback() { return 1; }
             function unused() { return 2; }
             var x = callback;
+            console.log(x());
             """
         )
         self.assertEqual(
@@ -323,6 +324,7 @@ class TestUnusedCodeRemoval(TestJsDeobfuscator):
                   return 1;
                 }
                 var x = callback;
+                console.log(x());
                 """
             ),
             self._remove_unused(source),
