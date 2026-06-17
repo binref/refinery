@@ -131,8 +131,8 @@ class TestExplorer(TestBase):
         self.assertNotIn(NOMATCH, output)
         self.assertGreater(len(output.strip()), 0)
 
-    def test_or_flag(self):
-        output = self._run_explorer(['-o', 'base64', 'zzzyyyxxxwwwvvv'])
+    def test_default_or_semantics_matches_any_keyword(self):
+        output = self._run_explorer(['base64', 'zzzyyyxxxwwwvvv'])
         self.assertNotIn(NOMATCH, output)
 
     def test_all_flag_searches_full_help(self):
@@ -165,8 +165,8 @@ class TestExplorer(TestBase):
         output = self._run_explorer(['b64*'])
         self.assertIsInstance(output, str)
 
-    def test_multiple_keywords_all_must_match(self):
-        output = self._run_explorer(['zzzyyyxxx', 'wwwvvvuuu'])
+    def test_and_flag_requires_all_keywords(self):
+        output = self._run_explorer(['-A', 'base64', 'zzzyyyxxxwwwvvv'])
         self.assertIn(NOMATCH, output)
 
     def test_verbose_flag(self):

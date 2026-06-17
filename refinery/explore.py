@@ -142,12 +142,12 @@ def explorer(keyword_color: str = '91', unit_color: str = '93'):
              'a unit, it will be listed.'
     )
     argp.add_argument(
-        '-o', '--or',
+        '-A', '--and',
         dest='quantifier',
         action='store_const',
-        const=any,
-        default=all,
-        help='Any keywords may match rather than requiring all of them to match.'
+        const=all,
+        default=any,
+        help='Require all keywords to match rather than any of them matching.'
     )
     argp.add_argument(
         '-V', '--version',
@@ -305,7 +305,7 @@ def explorer(keyword_color: str = '91', unit_color: str = '93'):
         if info is None:
             continue
 
-        if not args.quantifier(k.search(name) or k.search(info) for k in keywords):
+        if keywords and not args.quantifier(k.search(name) or k.search(info) for k in keywords):
             continue
 
         result = True
