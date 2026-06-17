@@ -4,6 +4,7 @@ import inspect
 
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 
+from refinery.lib.scripts.js.deobfuscation.simplify import JsSimplifications
 from refinery.lib.scripts.js.deobfuscation.unused import JsUnusedCodeRemoval
 
 
@@ -11,6 +12,14 @@ class TestUnusedCodeRemoval(TestJsDeobfuscator):
 
     def _remove_unused(self, source: str) -> str:
         return self._run_transformer(source, JsUnusedCodeRemoval)
+
+    def _remove_unused_unwrapped(self, source: str) -> str:
+        """
+        Statement-level object-pattern destructuring is parenthesized by the parser; the
+        deobfuscation pipeline strips that wrapper before unused-code removal runs. Mirror that by
+        simplifying first so the object-pattern path is actually exercised.
+        """
+        return self._run_transformers(source, JsSimplifications, JsUnusedCodeRemoval)
 
     def test_uncalled_function_removed(self):
         source = inspect.cleandoc(
@@ -31,6 +40,249 @@ class TestUnusedCodeRemoval(TestJsDeobfuscator):
                 """
             ),
         )
+
+    def test_dead_destructuring_removed(self):
+        source = inspect.cleandoc(
+            """
+            function f() {
+                var a, b;
+                [a, b] = [1, 2];
+                return 3;
+            }
+            console.log(f());
+            """
+        )
+        self.assertEqual(
+            self._remove_unused(source),
+            inspect.cleandoc(
+                """
+                function f() {
+                  return 3;
+                }
+                console.log(f());
+                """
+            ),
+        )
+
+    def test_dead_destructuring_with_side_effect_rhs_preserved(self):
+        source = inspect.cleandoc(
+            """
+            function f() {
+                var a, b;
+                [a, b] = effect();
+                return 3;
+            }
+            console.log(f());
+            """
+        )
+        self.assertEqual(
+            self._remove_unused(source),
+            inspect.cleandoc(
+                """
+                function f() {
+                  var a, b;
+                  [a, b] = effect();
+                  return 3;
+                }
+                console.log(f());
+                """
+            ),
+        )
+
+    def test_dead_destructuring_non_iterable_rhs_preserved(self):
+        source = inspect.cleandoc(
+            """
+            function f() {
+              var a, b;
+              [a, b] = 5;
+              return 3;
+            }
+            console.log(f());
+            """
+        )
+        self.assertEqual(self._remove_unused(source), source)
+
+    def test_dead_destructuring_compound_assignment_target_preserved(self):
+        source = inspect.cleandoc(
+            """
+            function f() {
+              var a, b;
+              [a, b] = [1, 2];
+              a += 1;
+              return 3;
+            }
+            console.log(f());
+            """
+        )
+        self.assertEqual(self._remove_unused(source), source)
+
+    def test_dead_destructuring_for_of_target_preserved(self):
+        source = inspect.cleandoc(
+            """
+            function f() {
+              var a, b;
+              [a, b] = [1, 2];
+              for (a of [7, 8]) {}
+              return 3;
+            }
+            console.log(f());
+            """
+        )
+        self.assertEqual(self._remove_unused(source), source)
+
+    def test_dead_destructuring_in_block_read_outside_preserved(self):
+        """
+        The `var a` is function-scoped, so the destructuring inside the `if` block is read by the
+        `return a` that follows the block; removal must account for the whole function scope, not
+        just the immediate block.
+        """
+        source = inspect.cleandoc(
+            """
+            function f(cond) {
+              if (cond) {
+                var a;
+                [a] = [1];
+              }
+              return a;
+            }
+            console.log(f(true));
+            """
+        )
+        self.assertEqual(self._remove_unused(source), source)
+
+    def test_dead_destructuring_in_block_with_surviving_outer_write_keeps_declarator(self):
+        source = inspect.cleandoc(
+            """
+            function f(g, cond) {
+              if (cond) {
+                var a;
+                [a] = [1];
+              }
+              [a] = [g()];
+            }
+            console.log(f());
+            """
+        )
+        self.assertEqual(
+            self._remove_unused(source),
+            inspect.cleandoc(
+                """
+                function f(g, cond) {
+                  if (cond) {
+                    var a;
+                  }
+                  [a] = [g()];
+                }
+                console.log(f());
+                """
+            ),
+        )
+
+    def test_dead_destructuring_target_written_by_surviving_sibling_keeps_declarator(self):
+        source = inspect.cleandoc(
+            """
+            function f() {
+              var a, b;
+              [a] = [1];
+              [a, b] = [2, 3];
+              return b;
+            }
+            console.log(f());
+            """
+        )
+        self.assertEqual(
+            self._remove_unused(source),
+            inspect.cleandoc(
+                """
+                function f() {
+                  var a, b;
+                  [a, b] = [2, 3];
+                  return b;
+                }
+                console.log(f());
+                """
+            ),
+        )
+
+    def test_dead_destructuring_object_getter_rhs_preserved(self):
+        source = inspect.cleandoc(
+            """
+            function f() {
+              var a;
+              ({x: a} = {get x() { return g(); }});
+              return 3;
+            }
+            console.log(f());
+            """
+        )
+        self.assertEqual(self._remove_unused_unwrapped(source), self._simplify(source))
+
+    def test_dead_destructuring_object_computed_key_rhs_preserved(self):
+        source = inspect.cleandoc(
+            """
+            function f() {
+              var a;
+              ({x: a} = {[g()]: 1});
+              return 3;
+            }
+            console.log(f());
+            """
+        )
+        self.assertEqual(self._remove_unused_unwrapped(source), self._simplify(source))
+
+    def test_dead_destructuring_plain_object_removed(self):
+        source = inspect.cleandoc(
+            """
+            function f() {
+              var a;
+              ({x: a} = {x: 1});
+              return 3;
+            }
+            console.log(f());
+            """
+        )
+        self.assertEqual(
+            self._remove_unused_unwrapped(source),
+            inspect.cleandoc(
+                """
+                function f() {
+                  return 3;
+                }
+                console.log(f());
+                """
+            ),
+        )
+
+    def test_dead_destructuring_target_read_by_computed_key_preserved(self):
+        """
+        A computed property key in a surviving destructuring pattern reads its identifier, so the
+        plain `[a] = ...` that feeds it must not be treated as dead.
+        """
+        source = inspect.cleandoc(
+            """
+            function f(obj) {
+              var a, b;
+              [a] = ['k'];
+              ({[a]: b} = obj);
+              return b;
+            }
+            console.log(f({k: 42}));
+            """
+        )
+        self.assertEqual(self._remove_unused_unwrapped(source), self._simplify(source))
+
+    def test_dead_destructuring_object_proto_rhs_preserved(self):
+        source = inspect.cleandoc(
+            """
+            function f(p) {
+              var a;
+              ({y: a} = {__proto__: p});
+              return 3;
+            }
+            console.log(f({}));
+            """
+        )
+        self.assertEqual(self._remove_unused_unwrapped(source), self._simplify(source))
 
     def test_transitive_reachability(self):
         source = inspect.cleandoc(

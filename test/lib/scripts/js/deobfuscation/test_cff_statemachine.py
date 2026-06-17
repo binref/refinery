@@ -72,7 +72,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
             return WLHepXQ;
           }
         }
-        console["log"](fizzbuzz(20));
+        console["log"](fizzbuzz(20000));
         """
     )
 
@@ -82,8 +82,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
             inspect.cleandoc(
                 """
                 function fizzbuzz(n) {
-                  var HwIYcaT, QOwuVkJ, _TkmcFL, n, z947WD2;
-                  [HwIYcaT, _TkmcFL] = [99, 225];
+                  var QOwuVkJ, n, z947WD2;
                   QOwuVkJ = [];
                   for (z947WD2 = 1; z947WD2 <= n; z947WD2++) {
                     if (z947WD2 % 15 === 0) {
@@ -102,7 +101,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
                   }
                   return QOwuVkJ;
                 }
-                console.log(fizzbuzz(20));
+                console.log(fizzbuzz(20000));
                 """
             ),
             result,

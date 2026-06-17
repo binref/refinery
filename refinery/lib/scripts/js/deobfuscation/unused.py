@@ -21,10 +21,13 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     is_binding_site,
     is_side_effect_free,
     is_write_target,
+    property_key,
     remove_declarator,
     walk_scope,
 )
 from refinery.lib.scripts.js.model import (
+    JsArrayExpression,
+    JsArrayPattern,
     JsArrowFunctionExpression,
     JsAssignmentExpression,
     JsExpressionStatement,
@@ -34,6 +37,11 @@ from refinery.lib.scripts.js.model import (
     JsFunctionExpression,
     JsIdentifier,
     JsMemberExpression,
+    JsObjectExpression,
+    JsObjectPattern,
+    JsProperty,
+    JsPropertyKind,
+    JsRestElement,
     JsScript,
     JsVariableDeclaration,
     JsVariableDeclarator,
@@ -182,6 +190,108 @@ def _has_property_read(stmt: Statement, func_name: str) -> bool:
     return False
 
 
+def _pattern_target_names(left: Node) -> list[str] | None:
+    """
+    If *left* is a destructuring pattern composed entirely of plain identifier targets (`[a, b]` or
+    `{a, b}`), return the list of target names. Returns `None` for anything with nesting, defaults,
+    rest elements, holes, computed keys, or member-expression targets.
+    """
+    if isinstance(left, (JsArrayExpression, JsArrayPattern)):
+        names: list[str] = []
+        for elem in left.elements:
+            if not isinstance(elem, JsIdentifier):
+                return None
+            names.append(elem.name)
+        return names or None
+    if isinstance(left, (JsObjectExpression, JsObjectPattern)):
+        names = []
+        for prop in left.properties:
+            if not isinstance(prop, JsProperty) or prop.computed:
+                return None
+            if not isinstance(prop.value, JsIdentifier):
+                return None
+            names.append(prop.value.name)
+        return names or None
+    return None
+
+
+def _destructuring_target_safe(left: Node, right: Node) -> bool:
+    """
+    Whether assigning *right* into the destructuring pattern *left* is guaranteed neither to throw
+    nor to run observable code, even when *right* is side-effect-free as a plain expression. Array
+    patterns require an iterable source, so only an array literal is accepted. Object patterns throw
+    on `null`/`undefined` and additionally *read* their named keys from the source, so only an object
+    literal whose members are all plain, statically-keyed data properties is accepted: a getter or
+    setter, a computed key, or a `__proto__` member could execute code when the pattern is matched
+    (and a computed key is not even covered by `is_side_effect_free`). Any other right-hand side is
+    rejected conservatively.
+    """
+    if isinstance(left, (JsArrayExpression, JsArrayPattern)):
+        return isinstance(right, JsArrayExpression)
+    if isinstance(left, (JsObjectExpression, JsObjectPattern)):
+        if not isinstance(right, JsObjectExpression):
+            return False
+        for prop in right.properties:
+            if not isinstance(prop, JsProperty) or prop.computed:
+                return False
+            if prop.kind is not JsPropertyKind.INIT:
+                return False
+            if property_key(prop) == '__proto__':
+                return False
+        return True
+    return False
+
+
+def _in_assignment_target(node: JsIdentifier) -> bool:
+    """
+    Return whether *node* is a write-only target of a simple (`=`) assignment, including inside a
+    destructuring pattern (`[a] = ...`, `{a} = ...`). Compound assignments (`a += 1`) read the
+    target before writing, and `for-in`/`for-of` loop variables persist the binding into a surviving
+    statement, so neither counts as a pure target here: both keep the name alive as a reference.
+    Within a pattern property only the value position is a write target: a property key is never
+    written, and a computed key (`{[a]: b} = ...`) is itself an ordinary read of `a` that must not
+    be mistaken for a write.
+    """
+    cursor: Node = node
+    parent = cursor.parent
+    while parent is not None:
+        if isinstance(parent, JsAssignmentExpression):
+            return parent.operator == '=' and parent.left is cursor
+        if isinstance(parent, JsProperty):
+            if parent.value is not cursor:
+                return False
+            cursor = parent
+            parent = cursor.parent
+            continue
+        if isinstance(parent, (
+            JsArrayExpression, JsArrayPattern, JsObjectExpression, JsObjectPattern,
+            JsRestElement,
+        )):
+            cursor = parent
+            parent = cursor.parent
+            continue
+        return False
+    return False
+
+
+def _enclosing_scope_root(parent: Node) -> Node:
+    """
+    Return the node whose subtree spans the variable scope that *parent* belongs to: the nearest
+    enclosing function body (a block whose parent is a function) or the script itself. Because `var`
+    bindings are function-scoped, a name assigned inside a nested block (`if`/`for`/`while`/`try` or a
+    bare `{}`) can be read anywhere in this scope, so read- and write-analysis must cover the whole
+    scope rather than just the immediate block.
+    """
+    cursor = parent
+    while True:
+        grandparent = cursor.parent
+        if grandparent is None or isinstance(grandparent, (
+            JsFunctionDeclaration, JsFunctionExpression, JsArrowFunctionExpression,
+        )):
+            return cursor
+        cursor = grandparent
+
+
 class JsUnusedCodeRemoval(BodyProcessingTransformer):
     """
     Remove function declarations that are never referenced from live code, and remove assignments
@@ -197,6 +307,8 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
     def _process_body(self, parent: Node, body: list[Statement]):
         removed_functions = self._remove_dead_functions(body)
         dead_variables, preserved = self._remove_dead_variables(parent, body, removed_functions)
+        dead_variables |= self._remove_dead_destructuring(
+            parent, body, removed_functions | dead_variables)
         if isinstance(parent, JsScript):
             dead_variables |= self._remove_dead_global_properties(parent, dead_variables)
         self._remove_dead_expressions(body, removed_functions | dead_variables, preserved)
@@ -296,6 +408,65 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
         self._remove_empty_declarators(parent, body, dead)
         self.mark_changed()
         return dead, preserved
+
+    def _remove_dead_destructuring(
+        self, parent: Node, body: list[Statement], defunct: set[str],
+    ) -> set[str]:
+        """
+        Remove destructuring-assignment statements (`[a, b] = rhs`) whose every target is a local
+        name that is never read and whose right-hand side is side-effect-free. These arise from CFF
+        recovery of vestigial state variables. Reads are counted across the whole enclosing function
+        scope (including nested functions) so closure references and reads outside the immediate
+        block conservatively keep a target alive.
+        """
+        local_names = self._collect_local_names(parent, body)
+        candidates: list[tuple[JsExpressionStatement, list[str]]] = []
+        for node in walk_scope(parent):
+            if not isinstance(node, JsExpressionStatement):
+                continue
+            expr = node.expression
+            if not isinstance(expr, JsAssignmentExpression) or expr.operator != '=':
+                continue
+            targets = _pattern_target_names(expr.left)
+            if not targets:
+                continue
+            if local_names is not None and any(t not in local_names for t in targets):
+                continue
+            if expr.right is None or not is_side_effect_free(expr.right, defunct):
+                continue
+            if not _destructuring_target_safe(expr.left, expr.right):
+                continue
+            candidates.append((node, targets))
+        if not candidates:
+            return set()
+        scope_root = _enclosing_scope_root(parent)
+        read_names: set[str] = set()
+        for node in scope_root.walk():
+            if not isinstance(node, JsIdentifier):
+                continue
+            if is_binding_site(node) or _in_assignment_target(node):
+                continue
+            read_names.add(node.name)
+        removed: set[str] = set()
+        for stmt, targets in candidates:
+            if any(t in read_names for t in targets):
+                continue
+            _remove_from_parent(stmt)
+            removed.update(targets)
+        if not removed:
+            return set()
+        still_written = {
+            node.name
+            for node in scope_root.walk()
+            if isinstance(node, JsIdentifier)
+            and node.name in removed
+            and _in_assignment_target(node)
+        }
+        dead = removed - still_written
+        if dead:
+            self._remove_empty_declarators(parent, body, dead)
+        self.mark_changed()
+        return dead
 
     def _remove_dead_global_properties(
         self, parent: JsScript, defunct: set[str],

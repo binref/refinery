@@ -33,6 +33,12 @@ class TestJsDeobfuscator(TestBase):
         t().visit(ast)
         return JsSynthesizer().convert(ast)
 
+    def _run_transformers(self, source: str, *transformers: type[Transformer]):
+        ast = JsParser(source).parse()
+        for t in transformers:
+            t().visit(ast)
+        return JsSynthesizer().convert(ast)
+
     def _inline(self, source: str) -> str:
         return self._run_transformer(source, JsConstantInlining)
 
