@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-from refinery.lib.meta import metavars
+from refinery.lib.meta import metavars, STRING_FORMAT_HELP
 from refinery.lib.types import Param, buf
 from refinery.units import Arg, Unit
 
 
 class pf(Unit):
     """
-    Print, format, and transform data using a format string expression.
+    Constructs its output from data, variables, and expressions using string format expressions.
 
     Stands for "Print Format". The positional format string placeholder `{}` will be replaced by
     the incoming data, named placeholders have to exist as meta variables in the current chunk.
@@ -16,8 +16,8 @@ class pf(Unit):
 
         ef ** [| sha256 -t | pf {} {path} ]]
 
-    By default, format string arguments are simply joined along a space character to form a single
-    format string. Backslash escape sequences are unescaped by default.
+    By default, all arguments are joined along a space character to form a single format string.
+    Backslash escape sequences are unescaped by default. %s
     """
 
     def __init__(
@@ -55,3 +55,7 @@ class pf(Unit):
             if variable:
                 result = self.labelled(data, **{variable: result})
             yield result
+
+
+if __d := pf.__doc__:
+    pf.__doc__ = __d % STRING_FORMAT_HELP
