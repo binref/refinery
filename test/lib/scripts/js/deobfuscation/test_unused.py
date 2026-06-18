@@ -6,12 +6,264 @@ from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 
 from refinery.lib.scripts.js.deobfuscation.simplify import JsSimplifications
 from refinery.lib.scripts.js.deobfuscation.unused import JsUnusedCodeRemoval
+from refinery.lib.scripts.js.parser import JsParser
+from refinery.lib.scripts.js.synth import JsSynthesizer
 
 
 class TestUnusedCodeRemoval(TestJsDeobfuscator):
 
     def _remove_unused(self, source: str) -> str:
         return self._run_transformer(source, JsUnusedCodeRemoval)
+
+    def test_block_scoped_var_read_outside_block_preserved(self):
+        source = inspect.cleandoc(
+            """
+            function f(cond) {
+                if (cond) {
+                    var a;
+                    a = 1;
+                }
+                return a;
+            }
+            console.log(f(true));
+            """
+        )
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function f(cond) {
+                  if (cond) {
+                    var a;
+                    a = 1;
+                  }
+                  return a;
+                }
+                console.log(f(true));
+                """
+            ),
+            self._remove_unused(source),
+        )
+
+    def test_local_dead_declaration_removed(self):
+        source = inspect.cleandoc(
+            """
+            function f() {
+                var dead = 1;
+                return 2;
+            }
+            console.log(f());
+            """
+        )
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function f() {
+                  return 2;
+                }
+                console.log(f());
+                """
+            ),
+            self._remove_unused(source),
+        )
+
+    def test_implicit_global_bare_var_removed_at_script_scope(self):
+        source = inspect.cleandoc(
+            """
+            var acc, i, push, dead;
+            dead = 1;
+            function build(n) {
+                acc = [];
+                for (i = 1; i <= n; i++) {
+                    acc.push(i);
+                }
+                return acc;
+            }
+            console.log(build(20));
+            """
+        )
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function build(n) {
+                  acc = [];
+                  for (i = 1; i <= n; i++) {
+                    acc.push(i);
+                  }
+                  return acc;
+                }
+                console.log(build(20));
+                """
+            ),
+            self._remove_unused(source),
+        )
+
+    def test_preserve_globals_keeps_dead_global_declaration(self):
+        source = inspect.cleandoc(
+            """
+            var deadGlobal = 1;
+            console.log(2);
+            """
+        )
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var deadGlobal = 1;
+                console.log(2);
+                """
+            ),
+            self._remove_unused(source),
+        )
+
+    def test_strip_globals_removes_dead_global_declaration(self):
+        source = inspect.cleandoc(
+            """
+            var deadGlobal = 1;
+            console.log(2);
+            """
+        )
+        ast = JsParser(source).parse()
+        JsUnusedCodeRemoval(preserve_globals=False).visit(ast)
+        self.assertEqual('console.log(2);', JsSynthesizer().convert(ast))
+
+    def test_no_init_var_captured_by_closure_preserved(self):
+        source = inspect.cleandoc(
+            """
+            function f() {
+              var x;
+              return function() {
+                return x;
+              };
+            }
+            console.log(f()());
+            """
+        )
+        self.assertEqual(source, self._remove_unused(source))
+
+    def test_dead_function_local_var_not_kept_by_shadowing_closure(self):
+        source = inspect.cleandoc(
+            """
+            function f() {
+              var x;
+              return function(x) {
+                return x;
+              };
+            }
+            console.log(f()(9));
+            """
+        )
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function f() {
+                  return function(x) {
+                    return x;
+                  };
+                }
+                console.log(f()(9));
+                """
+            ),
+            self._remove_unused(source),
+        )
+
+    def test_assigned_var_captured_by_closure_preserved(self):
+        source = inspect.cleandoc(
+            """
+            function f() {
+              var x;
+              x = 5;
+              return function() {
+                return x;
+              };
+            }
+            console.log(f()());
+            """
+        )
+        self.assertEqual(source, self._remove_unused(source))
+
+    def test_block_assigned_var_captured_by_closure_preserved(self):
+        source = inspect.cleandoc(
+            """
+            function f() {
+              var x;
+              if (cond) {
+                x = 5;
+              }
+              return function() {
+                return x;
+              };
+            }
+            console.log(f()(), cond);
+            """
+        )
+        self.assertEqual(source, self._remove_unused(source))
+
+    def test_strip_globals_keeps_global_read_by_closure(self):
+        source = inspect.cleandoc(
+            """
+            var h;
+            function uses() {
+              return h;
+            }
+            uses();
+            """
+        )
+        ast = JsParser(source).parse()
+        JsUnusedCodeRemoval(preserve_globals=False).visit(ast)
+        self.assertEqual(source, JsSynthesizer().convert(ast))
+
+    def test_bare_dead_declaration_reports_change(self):
+        source = inspect.cleandoc(
+            """
+            function f() {
+              var unused;
+              return 1;
+            }
+            console.log(f());
+            """
+        )
+        ast = JsParser(source).parse()
+        transformer = JsUnusedCodeRemoval()
+        transformer.visit(ast)
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function f() {
+                  return 1;
+                }
+                console.log(f());
+                """
+            ),
+            JsSynthesizer().convert(ast),
+        )
+        self.assertTrue(transformer.changed)
+
+    def test_closure_assignment_to_captured_var_preserved(self):
+        source = inspect.cleandoc(
+            """
+            function f() {
+              var x = 0;
+              var setter = function() {
+                x = 2;
+              };
+              setter();
+              return x;
+            }
+            console.log(f());
+            """
+        )
+        self.assertEqual(source, self._remove_unused(source))
+
+    def test_computed_key_initializer_side_effect_preserved(self):
+        source = inspect.cleandoc(
+            """
+            function f() {
+              var x = { [g()]: 1 };
+              return 7;
+            }
+            f();
+            """
+        )
+        self.assertEqual(source, self._remove_unused(source))
 
     def _remove_unused_unwrapped(self, source: str) -> str:
         """

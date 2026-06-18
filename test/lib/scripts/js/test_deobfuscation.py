@@ -314,7 +314,6 @@ class TestGlobalAliasStripping(TestJsDeobfuscator):
                 """
                 global._V = "7-4111";
                 (async () => {
-                  const c = global;
                   console.log(_V);
                 })();
                 """
@@ -338,7 +337,6 @@ class TestGlobalAliasStripping(TestJsDeobfuscator):
                 """
                 global._V = "7-4111";
                 (async () => {
-                  const c = global;
                   console.log(_V);
                 })();
                 """

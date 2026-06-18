@@ -7,9 +7,10 @@ This transformer performs two phases:
    statements, it collects all function names referenced directly or transitively. Function
    declarations not in the reachable set are removed.
 
-2. **Dead variable removal** — collects assignment targets that are never read in the outer scope
-   (excluding function bodies that might shadow the name). Dead assignment statements are removed,
-   along with their hoisted `var` declarators when the declarator has no initializer.
+2. **Dead variable removal** — collects assignment targets that are never read anywhere in the
+   enclosing function scope. Because `var` bindings are function-scoped, a name read through a
+   closure in a nested function stays live unless that function shadows it. Dead assignment
+   statements are removed, along with their hoisted `var` declarators when there is no initializer.
 """
 from __future__ import annotations
 
@@ -18,7 +19,9 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     BodyProcessingTransformer,
     GLOBAL_OBJECT_ALIASES,
     collect_identifier_names,
+    function_binds_name,
     is_binding_site,
+    is_reference,
     is_side_effect_free,
     is_write_target,
     property_key,
@@ -30,6 +33,7 @@ from refinery.lib.scripts.js.model import (
     JsArrayPattern,
     JsArrowFunctionExpression,
     JsAssignmentExpression,
+    JsBlockStatement,
     JsExpressionStatement,
     JsForInStatement,
     JsForOfStatement,
@@ -292,6 +296,97 @@ def _enclosing_scope_root(parent: Node) -> Node:
         cursor = grandparent
 
 
+def _is_shadowed_within(node: Node, name: str, scope_root: Node) -> bool:
+    """
+    Whether *name*, used at *node*, is rebound by a function nested strictly inside *scope_root* —
+    through a parameter, an inner function-declaration name, or a `var` declaration — so that the use
+    resolves to that inner binding rather than to one in *scope_root*'s own scope. Only function
+    boundaries between *node* and *scope_root* are considered: *scope_root*'s own scope is never a
+    shadower, because its bindings are exactly the ones whose references are being counted.
+    """
+    cursor = node.parent
+    while cursor is not None and cursor is not scope_root:
+        if isinstance(cursor, (
+            JsFunctionDeclaration, JsFunctionExpression, JsArrowFunctionExpression,
+        )) and function_binds_name(cursor, name):
+            return True
+        cursor = cursor.parent
+    return False
+
+
+def _within_nested_function(node: Node, scope_root: Node) -> bool:
+    """
+    Whether *node* lies inside a function nested below *scope_root*, i.e. a function boundary is
+    crossed on the path from *node* up to *scope_root*. An identifier in such a position is a
+    closure reference into *scope_root*'s scope rather than a direct use within it, so removing the
+    binding it resolves to would change the closure's meaning.
+    """
+    cursor = node.parent
+    while cursor is not None and cursor is not scope_root:
+        if isinstance(cursor, (
+            JsFunctionDeclaration, JsFunctionExpression, JsArrowFunctionExpression,
+        )):
+            return True
+        cursor = cursor.parent
+    return False
+
+
+def _scope_read_names(scope_root: Node) -> set[str]:
+    """
+    Names that appear in a non-binding position within *scope_root* (plus the targets of any
+    `for-in`/`for-of` statements), restricted to references that resolve to *scope_root*'s own scope.
+    The search descends into nested function bodies, because `var` bindings are function-scoped (and
+    top-level bindings are global): a name captured by a closure stays live. A use that an inner
+    function rebinds for itself is shadowed and therefore ignored.
+    """
+    names: set[str] = set()
+    for node in scope_root.walk():
+        if isinstance(node, JsIdentifier):
+            if not is_binding_site(node) and not _is_shadowed_within(node, node.name, scope_root):
+                names.add(node.name)
+        elif (
+            isinstance(node, (JsForInStatement, JsForOfStatement))
+            and isinstance(node.left, JsIdentifier)
+            and not _is_shadowed_within(node.left, node.left.name, scope_root)
+        ):
+            names.add(node.left.name)
+    return names
+
+
+def _script_scope_keep_names(script: JsScript) -> set[str]:
+    """
+    Names whose bare top-level declaration must be kept when removing unreferenced declarators at the
+    script scope. Unlike `_scope_read_names`, which counts any non-shadowed use inside a nested
+    function, this distinguishes uses that survive the declaration's removal. A name read at the top
+    level is always kept, because execution order there cannot be assumed (a read may precede the
+    write that would re-create it as an implicit global). A name read deep inside a function but never
+    plainly assigned would become a free variable if the declaration went away, so it is kept too. A
+    name that is read deep *and* re-created by a plain assignment is merely a redundant explicit form
+    of an implicit global, so its hoisted declaration may be removed.
+    """
+    keep: set[str] = set()
+    for node in walk_scope(script):
+        if isinstance(node, JsIdentifier) and is_reference(node):
+            keep.add(node.name)
+        elif (
+            isinstance(node, (JsForInStatement, JsForOfStatement))
+            and isinstance(node.left, JsIdentifier)
+        ):
+            keep.add(node.left.name)
+    read: set[str] = set()
+    pure_assigned: set[str] = set()
+    for node in script.walk():
+        if not isinstance(node, JsIdentifier) or not is_reference(node):
+            continue
+        if _is_shadowed_within(node, node.name, script):
+            continue
+        if _in_assignment_target(node):
+            pure_assigned.add(node.name)
+        else:
+            read.add(node.name)
+    return keep | (read - pure_assigned)
+
+
 class JsUnusedCodeRemoval(BodyProcessingTransformer):
     """
     Remove function declarations that are never referenced from live code, and remove assignments
@@ -300,9 +395,10 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
 
     self_converging = True
 
-    def __init__(self):
+    def __init__(self, preserve_globals: bool = True):
         super().__init__()
-        self._enclosing_cache: set[str] | None = None
+        self._enclosing_cache: dict[int, set[str]] = {}
+        self.preserve_globals = preserve_globals
 
     def _process_body(self, parent: Node, body: list[Statement]):
         removed_functions = self._remove_dead_functions(body)
@@ -311,6 +407,8 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
             parent, body, removed_functions | dead_variables)
         if isinstance(parent, JsScript):
             dead_variables |= self._remove_dead_global_properties(parent, dead_variables)
+        if not (self.preserve_globals and isinstance(_enclosing_scope_root(parent), JsScript)):
+            self._remove_empty_declarators(parent, body, set())
         self._remove_dead_expressions(body, removed_functions | dead_variables, preserved)
 
     def _remove_dead_functions(self, body: list[Statement]) -> set[str]:
@@ -342,6 +440,11 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
         simple dead assignments and transitive chains where one dead variable is only read by
         another dead variable's RHS. Returns the set of dead variable names and the set of
         expression statements created by preserving side-effectful RHS expressions.
+
+        Reads are counted across the whole enclosing scope. At a function scope the scan descends
+        into nested functions, so a closure read keeps the binding live. At the script scope it does
+        not: a top-level binding that surviving code only reaches as an implicit-global use inside a
+        function is still removable, matching the way such reads resolve to the global at runtime.
         """
         local_names = self._collect_local_names(parent, body)
         write_stmts: dict[str, list[JsExpressionStatement]] = {}
@@ -361,15 +464,24 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
             return set(), set()
         has_free_read: set[str] = set()
         read_in_assign: dict[str, set[str]] = {}
-        for node in walk_scope(parent):
+        scope_root = _enclosing_scope_root(parent)
+        if isinstance(scope_root, JsScript):
+            read_nodes = walk_scope(scope_root)
+        else:
+            read_nodes = scope_root.walk()
+        for node in read_nodes:
             if not isinstance(node, JsIdentifier):
                 continue
             name = node.name
             if name not in write_stmts:
                 continue
-            if is_write_target(node):
-                continue
             if is_binding_site(node):
+                continue
+            if _within_nested_function(node, scope_root):
+                if not _is_shadowed_within(node, name, scope_root):
+                    has_free_read.add(name)
+                continue
+            if is_write_target(node):
                 continue
             enclosing = self._enclosing_assignment_target(node)
             if enclosing is not None:
@@ -598,9 +710,17 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
     ):
         """
         Remove `var X;` declarators (no initializer) for dead variable names or names that have
-        no references in the outer scope. Also removes initialized declarators whose initializer
-        is side-effect-free and whose name has no reads anywhere in the tree. Variables used as
-        `for-in` or `for-of` iteration targets are always considered referenced.
+        no references in the enclosing scope. Also removes initialized declarators whose initializer
+        is side-effect-free and whose name has no reads anywhere in the tree. Because `var` bindings
+        are function-scoped, a name read inside a function scope is searched for across nested
+        function bodies too, so a binding captured by a closure keeps its declaration. Variables used
+        as `for-in` or `for-of` iteration targets are always considered referenced.
+
+        At a function scope the reference set is the deep `_scope_read_names`. At the script scope the
+        deep read of an implicit global from inside a function does not by itself keep its top-level
+        declaration: `_script_scope_keep_names` keeps only names whose removal would change behavior
+        (read at the top level, or read deep without ever being plainly assigned), so a redundant
+        declaration of an implicit global that a function re-creates by assignment is still removed.
         """
         referenced: set[str] | None = None
         referenced_deep: set[str] | None = None
@@ -616,23 +736,21 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
                 if decl.init is None:
                     if name in dead_names:
                         remove_declarator(decl)
+                        self.mark_changed()
                         continue
                     if referenced is None:
-                        referenced = set()
-                        for node in walk_scope(parent):
-                            if isinstance(node, JsIdentifier) and not is_binding_site(node):
-                                referenced.add(node.name)
-                            if (
-                                isinstance(node, (JsForInStatement, JsForOfStatement))
-                                and isinstance(node.left, JsIdentifier)
-                            ):
-                                referenced.add(node.left.name)
+                        scope_root = _enclosing_scope_root(parent)
+                        if isinstance(scope_root, JsScript):
+                            referenced = _script_scope_keep_names(scope_root)
+                        else:
+                            referenced = _scope_read_names(scope_root)
                     if name not in referenced:
                         remove_declarator(decl)
+                        self.mark_changed()
                 else:
                     if referenced_deep is None:
                         referenced_deep = set()
-                        for node in parent.walk():
+                        for node in _enclosing_scope_root(parent).walk():
                             if isinstance(node, JsIdentifier) and not is_binding_site(node):
                                 referenced_deep.add(node.name)
                     if name not in referenced_deep and is_side_effect_free(decl.init):
@@ -656,19 +774,8 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
             JsArrowFunctionExpression,
         ))
         if is_function_body:
-            for p in func_parent.params:
-                if isinstance(p, JsIdentifier):
-                    names.add(p.name)
-                else:
-                    for n in p.walk():
-                        if isinstance(n, JsIdentifier):
-                            names.add(n.name)
-        for stmt in body:
-            for node in walk_scope(stmt):
-                if isinstance(node, JsVariableDeclaration):
-                    for decl in node.declarations:
-                        if isinstance(decl, JsVariableDeclarator) and isinstance(decl.id, JsIdentifier):
-                            names.add(decl.id.name)
+            names |= self._param_names(func_parent.params)
+        names |= self._declared_names_in_scope(body)
         if is_function_body:
             enclosing = self._gather_enclosing_declarations(func_parent)
             for node in walk_scope(parent):
@@ -683,27 +790,61 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
                         names.add(name)
         return names
 
+    @staticmethod
+    def _param_names(params: list) -> set[str]:
+        """
+        Names bound by a function's parameter list, including destructuring and default patterns.
+        """
+        names: set[str] = set()
+        for p in params:
+            if isinstance(p, JsIdentifier):
+                names.add(p.name)
+            else:
+                for n in p.walk():
+                    if isinstance(n, JsIdentifier):
+                        names.add(n.name)
+        return names
+
+    @staticmethod
+    def _declared_names_in_scope(body: list[Statement]) -> set[str]:
+        """
+        Names of all `var`/`let`/`const` declarators in *body*, descending into nested blocks but
+        not into nested function scopes.
+        """
+        names: set[str] = set()
+        for stmt in body:
+            for node in walk_scope(stmt):
+                if isinstance(node, JsVariableDeclaration):
+                    for decl in node.declarations:
+                        if isinstance(decl, JsVariableDeclarator) and isinstance(decl.id, JsIdentifier):
+                            names.add(decl.id.name)
+        return names
+
     def _gather_enclosing_declarations(self, func: Node) -> set[str]:
         """
-        Collect all variable names declared in scopes enclosing `func` (up to and including the
-        script scope). Used to distinguish truly-undeclared assignment targets from outer-scope
-        variables.
+        Collect the variable names bound in scopes enclosing `func`, up to and including the
+        script scope: parameters and declarations of every enclosing function, plus the
+        script's own declarations. Used to tell a truly-undeclared assignment target from an
+        outer-scope variable a nested assignment writes through, so a closure assigning to a
+        captured outer binding is not mistaken for a fresh local store and removed.
         """
-        if self._enclosing_cache is not None:
-            return self._enclosing_cache
+        cached = self._enclosing_cache.get(id(func))
+        if cached is not None:
+            return cached
         declared: set[str] = set()
         cursor = func.parent
         while cursor is not None:
-            if isinstance(cursor, JsScript):
-                for stmt in cursor.body:
-                    for node in walk_scope(stmt):
-                        if isinstance(node, JsVariableDeclaration):
-                            for decl in node.declarations:
-                                if isinstance(decl, JsVariableDeclarator) and isinstance(decl.id, JsIdentifier):
-                                    declared.add(decl.id.name)
+            if isinstance(cursor, (
+                JsFunctionDeclaration, JsFunctionExpression, JsArrowFunctionExpression,
+            )):
+                declared |= self._param_names(cursor.params)
+                if isinstance(cursor.body, JsBlockStatement):
+                    declared |= self._declared_names_in_scope(cursor.body.body)
+            elif isinstance(cursor, JsScript):
+                declared |= self._declared_names_in_scope(cursor.body)
                 break
             cursor = cursor.parent
-        self._enclosing_cache = declared
+        self._enclosing_cache[id(func)] = declared
         return declared
 
     @staticmethod

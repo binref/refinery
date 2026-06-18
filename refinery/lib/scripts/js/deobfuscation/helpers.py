@@ -608,6 +608,8 @@ def is_side_effect_free(node: Node, defunct: set[str] | None = None) -> bool:
         for prop in node.properties:
             if not isinstance(prop, JsProperty):
                 return False
+            if prop.computed and (prop.key is None or not is_side_effect_free(prop.key, defunct)):
+                return False
             if prop.value is not None and not is_side_effect_free(prop.value, defunct):
                 return False
         return True

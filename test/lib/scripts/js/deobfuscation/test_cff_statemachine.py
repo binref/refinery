@@ -1018,7 +1018,6 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
             inspect.cleandoc(
                 """
                 function wrapper() {
-                  var NS = {};
                   LBL: for (var i = 0; i < 3; i++) {
                     if (i === 1) {
                       continue LBL;
