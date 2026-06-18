@@ -364,3 +364,34 @@ class TestRegressionBugs(TestJsDeobfuscator):
         )
         result = self._inline(source)
         self.assertEqual(source, result)
+
+    def test_const_not_inlined_past_inherited_param_shadow(self):
+        source = inspect.cleandoc(
+            """
+            const k = 5;
+            function A(k) {
+              function B() {
+                return k;
+              }
+              return B();
+            }
+            console.log(A(9));
+            """
+        )
+        self.assertEqual(source, self._inline(source))
+
+    def test_const_not_inlined_past_block_let_shadow(self):
+        source = inspect.cleandoc(
+            """
+            const k = 5;
+            function f(p) {
+              {
+                let k = p;
+                k += 1;
+                return k;
+              }
+            }
+            console.log(f(9));
+            """
+        )
+        self.assertEqual(source, self._inline(source))

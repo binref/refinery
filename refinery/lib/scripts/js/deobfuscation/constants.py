@@ -6,6 +6,7 @@ from __future__ import annotations
 from typing import NamedTuple
 
 from refinery.lib.scripts import Node, _clone_node, _remove_from_parent, _replace_in_parent
+from refinery.lib.scripts.js.analysis.model import build_semantic_model
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     FUNCTION_NODE_TYPES,
     ScopeProcessingTransformer,
@@ -35,6 +36,7 @@ from refinery.lib.scripts.js.model import (
     JsNumericLiteral,
     JsObjectExpression,
     JsObjectPattern,
+    JsScript,
     JsStringLiteral,
     JsTaggedTemplateExpression,
     JsUpdateExpression,
@@ -410,6 +412,11 @@ class JsConstantInlining(ScopeProcessingTransformer):
     def __init__(self, max_inline_length: int = 64):
         super().__init__()
         self.max_inline_length = max_inline_length
+        self._root: JsScript | None = None
+
+    def visit_JsScript(self, node: JsScript):
+        self._root = node
+        return super().visit_JsScript(node)
 
     def _process_scope(self, scope: Node) -> None:
         func_mods = _compute_function_mods(scope)
@@ -680,6 +687,11 @@ class JsConstantInlining(ScopeProcessingTransformer):
         if not cross_candidates:
             return
 
+        assert self._root is not None
+        model = build_semantic_model(self._root)
+        outer = model.scope_of(scope)
+        assert outer is not None
+
         called_functions: set[str] = set()
         for node in walk_scope(scope, include_root_body=True):
             if isinstance(node, JsCallExpression) and isinstance(node.callee, JsIdentifier):
@@ -698,7 +710,7 @@ class JsConstantInlining(ScopeProcessingTransformer):
                         enclosing = self._enclosing_function_name(obj, func_mods)
                         if enclosing is None:
                             continue
-                        if self._is_shadowed_in_enclosing_function(obj, name):
+                        if model.is_shadowed(name, obj, outer):
                             continue
                         self._apply_index_access_inline(
                             node, cross_candidates[name][0], name, inlined,
@@ -711,7 +723,7 @@ class JsConstantInlining(ScopeProcessingTransformer):
                             or name in func_mods.get(enclosing, set())
                         ):
                             continue
-                        if self._is_shadowed_in_enclosing_function(obj, name):
+                        if model.is_shadowed(name, obj, outer):
                             continue
                         self._try_inline_index(
                             node, name, cross_candidates, seal_points, inlined,
@@ -746,25 +758,11 @@ class JsConstantInlining(ScopeProcessingTransformer):
                 or name in func_mods.get(enclosing, set())
             ):
                 continue
-            if self._is_shadowed_in_enclosing_function(node, name):
+            if model.is_shadowed(name, node, outer):
                 continue
             _replace_in_parent(node, _clone_node(entry.value))
             self.mark_changed()
             inlined[name] = inlined.get(name, 0) + 1
-
-    @staticmethod
-    def _is_shadowed_in_enclosing_function(node: Node, name: str) -> bool:
-        """
-        Check whether *name* is locally declared in the immediately enclosing function of *node*.
-        This prevents inlining when a nested function shadows the outer constant with its own
-        declaration (function declaration, var, let/const at function top level, or parameter).
-        """
-        cursor = node.parent
-        while cursor is not None:
-            if isinstance(cursor, FUNCTION_NODE_TYPES):
-                return name in _function_local_names(cursor)
-            cursor = cursor.parent
-        return False
 
     @staticmethod
     def _enclosing_function_name(

@@ -84,6 +84,16 @@ class TestDeobfuscationDifferential(TestBase):
             'var NS = {}; NS.x = 1; var r = [];'
             ' { let x = 9; r.push(x); } r.push(NS.x); console.log(r.join(","));')
 
+    def test_const_not_inlined_past_inherited_param_shadow(self):
+        """
+        `B` reads `k` through the parameter of its enclosing `A`, not the outer `const k`. Constant
+        inlining must respect that inherited shadow rather than substituting the constant's value, so
+        `A(9)` keeps returning the argument.
+        """
+        self._check(
+            'const k = 5; function A(k) { function B() { return k; } return B(); }'
+            ' console.log(A(9));')
+
     def test_nested_closures_share_binding(self):
         """
         `outer` calls a nested `add` that mutates the captured `s`. A nested call runs in an isolated
