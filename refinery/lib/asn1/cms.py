@@ -7,7 +7,7 @@ from collections import OrderedDict
 from datetime import datetime, timedelta, timezone
 
 from refinery.lib.asn1 import ASN1Reader
-from refinery.lib.asn1.defs import ContentInfo, SignedContentInfo, SpcSpOpusInfo
+from refinery.lib.asn1.defs import Certificate, ContentInfo, SignedContentInfo, SpcSpOpusInfo
 
 _TIME_VALUED_ATTRIBUTES = {'signingTime'}
 
@@ -305,7 +305,7 @@ def parse_content_info(data: bytes | bytearray | memoryview) -> OrderedDict:
     best_remaining = len(mv) + 1
     for schema in (SignedContentInfo, ContentInfo):
         try:
-            reader = ASN1Reader(mv, bigendian=True, record_spans=True)
+            reader = ASN1Reader(mv, bigendian=True, span_schema=Certificate)
             result = reader.decode_with_schema(schema)
             remaining = reader.remaining_bytes
             if remaining < best_remaining:

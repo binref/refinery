@@ -25,6 +25,13 @@ class TestPKCS7(TestUnitBase):
             '60ee3fc53d4bdfd1697ae5beae1cab1c0f3ad4e3',
         ])
 
+    def test_span_recording_scoped_to_certificates(self):
+        from refinery.lib.asn1 import ASN1Reader
+        from refinery.lib.asn1.defs import Certificate, SignedContentInfo
+        reader = ASN1Reader(memoryview(self.SIGNATURE1), bigendian=True, span_schema=Certificate)
+        reader.decode_with_schema(SignedContentInfo)
+        self.assertEqual(len(reader.spans), 4)
+
     def test_unsign_negative_serial_recovers_unsigned_byte_value(self):
         from refinery.lib.asn1.cms import _unsign
         self.assertEqual(_unsign(-1), 255)

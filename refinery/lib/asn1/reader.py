@@ -174,10 +174,10 @@ class ASN1Reader(StructReader[memoryview]):
         self,
         data: memoryview | StructReader[memoryview],
         bigendian: bool | None = None,
-        record_spans: bool = False,
+        span_schema: SchemaType | None = None,
     ):
         super().__init__(data, bigendian)
-        self._record_spans = record_spans
+        self._span_schema = span_schema
         self.spans: dict[int, tuple[int, int]] = {}
 
     def _read_tag(self) -> tuple[int, bool, int]:
@@ -576,7 +576,7 @@ class ASN1Reader(StructReader[memoryview]):
         return self.read_tlv()
 
     def decode_with_schema(self, schema: SchemaType) -> ASN1Value:
-        if not self._record_spans:
+        if schema is not self._span_schema:
             return self._decode_with_schema(schema)
         start = self.tell()
         value = self._decode_with_schema(schema)
