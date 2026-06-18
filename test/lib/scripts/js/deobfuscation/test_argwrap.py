@@ -80,6 +80,25 @@ class TestStackUnwrapper(TestJsDeobfuscator):
 
 class TestRegressionBugs(TestJsDeobfuscator):
 
+    def test_wrapper_removed_despite_shadowed_local(self):
+        source = (
+            'function wr() { wr = function() {}; }'
+            ' wr(a(), b()); function other() { var wr = 1; return wr; }'
+        )
+        self.assertEqual(
+            self._unwrap(source),
+            inspect.cleandoc(
+                """
+                a();
+                b();
+                function other() {
+                  var wr = 1;
+                  return wr;
+                }
+                """
+            ),
+        )
+
     def test_argwrap_expression_position_returns_void0(self):
         source = inspect.cleandoc(
             """

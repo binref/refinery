@@ -9,11 +9,11 @@ from __future__ import annotations
 from typing import NamedTuple
 
 from refinery.lib.scripts import Node, Statement
+from refinery.lib.scripts.js.analysis.model import SemanticModel, build_semantic_model
 from refinery.lib.scripts.js.deobfuscation.helpers import (
-    FUNCTION_NODE_TYPES,
     BodyProcessingTransformer,
     access_key,
-    has_remaining_references,
+    binding_has_references,
     is_while_true,
     string_value,
 )
@@ -202,21 +202,8 @@ def _find_order_sequence(
     return _OrderSequenceInfo(order_sequence, first, (order_decl, counter_decl))
 
 
-def _enclosing_scope(node: Node) -> Node:
-    """
-    Return the nearest `JsScript` or function node enclosing *node*, i.e. the scope in which a
-    `var` binding declared at *node* would be visible.
-    """
-    scope = node
-    while not isinstance(scope, (JsScript, *FUNCTION_NODE_TYPES)):
-        if scope.parent is None:
-            break
-        scope = scope.parent
-    return scope
-
-
 def _consumed_only_by_dispatcher(
-    scope: Node,
+    model: SemanticModel,
     match: _DispatcherMatch,
     info: _OrderSequenceInfo,
 ) -> bool:
@@ -228,16 +215,27 @@ def _consumed_only_by_dispatcher(
     """
     removed = (*info.strip_declarators, match.dispatch)
     exclude_ids = {id(n) for node in removed for n in node.walk()}
-    return not any(
-        has_remaining_references(scope, name, exclude_ids=exclude_ids)
-        for name in (match.order_var, match.counter_var)
-    )
+    for declarator in info.strip_declarators:
+        binding = (
+            model.binding_of(declarator.id) if isinstance(declarator.id, JsIdentifier) else None
+        )
+        if binding_has_references(model, binding, exclude_ids=exclude_ids):
+            return False
+    return True
 
 
 class JsControlFlowUnflattening(BodyProcessingTransformer):
     """
     Detect and recover CFF dispatchers in function bodies and script-level code.
     """
+
+    def __init__(self):
+        super().__init__()
+        self._root: JsScript | None = None
+
+    def visit_JsScript(self, node: JsScript):
+        self._root = node
+        return super().visit_JsScript(node)
 
     def _process_body(self, parent: Node, body: list[Statement]) -> None:
         i = 0
@@ -257,8 +255,9 @@ class JsControlFlowUnflattening(BodyProcessingTransformer):
             if not all(label in match.case_map for label in order_info.order_sequence):
                 i += 1
                 continue
-            scope = _enclosing_scope(parent)
-            if not _consumed_only_by_dispatcher(scope, match, order_info):
+            assert self._root is not None
+            model = build_semantic_model(self._root)
+            if not _consumed_only_by_dispatcher(model, match, order_info):
                 i += 1
                 continue
             recovered: list[Statement] = []

@@ -24,6 +24,7 @@ from refinery.lib.scripts import (
     _remove_from_parent,
     _replace_in_parent,
 )
+from refinery.lib.scripts.js.analysis.model import Binding, SemanticModel
 from refinery.lib.scripts.js.model import (
     JsArrayExpression,
     JsArrowFunctionExpression,
@@ -1014,6 +1015,30 @@ def has_remaining_references(
         ):
             continue
         if check_shadowing and _is_shadowed(node, name):
+            continue
+        return True
+    return False
+
+
+def binding_has_references(
+    model: SemanticModel,
+    binding: Binding | None,
+    *,
+    exclude: Node | None = None,
+    exclude_ids: set[int] | None = None,
+) -> bool:
+    """
+    Whether *binding* is still read or written outside an excluded region. Resolution is
+    binding-precise: only references that actually resolve to *binding* count, so a same-named
+    variable in another scope never keeps it alive — this subsumes the name-based shadow check that
+    `has_remaining_references` performs textually. A `None` binding (a name the model cannot resolve
+    to a declaration) is conservatively reported as still referenced. References within the subtree
+    of *exclude*, or whose node identity is in *exclude_ids*, are not counted.
+    """
+    if binding is None:
+        return True
+    for ref in model.references(binding, exclude=exclude):
+        if exclude_ids and id(ref) in exclude_ids:
             continue
         return True
     return False

@@ -12,10 +12,11 @@ from refinery.lib.scripts import (
     Node,
     _replace_in_parent,
 )
+from refinery.lib.scripts.js.analysis.model import build_semantic_model
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     ScopeProcessingTransformer,
     access_key,
-    has_remaining_references,
+    binding_has_references,
     property_key,
     remove_declarator,
 )
@@ -38,6 +39,7 @@ from refinery.lib.scripts.js.model import (
     JsObjectExpression,
     JsProperty,
     JsReturnStatement,
+    JsScript,
     JsSequenceExpression,
     JsStringLiteral,
     JsVariableDeclaration,
@@ -351,6 +353,14 @@ class JsDispatcherUnwrapper(ScopeProcessingTransformer):
     functions, rewrite call sites, and remove the dispatcher scaffolding.
     """
 
+    def __init__(self):
+        super().__init__()
+        self._root: JsScript | None = None
+
+    def visit_JsScript(self, node: JsScript):
+        self._root = node
+        return super().visit_JsScript(node)
+
     def _process_scope_body(self, scope: Node, body: list) -> None:
         for func in list(body):
             if not isinstance(func, JsFunctionDeclaration):
@@ -530,11 +540,12 @@ class JsDispatcherUnwrapper(ScopeProcessingTransformer):
         )
         _replace_in_parent(call, replacement)
 
-    @staticmethod
-    def _remove_boilerplate(scope: Node, body: list, info: _DispatcherInfo) -> None:
+    def _remove_boilerplate(self, scope: Node, body: list, info: _DispatcherInfo) -> None:
         """
         Remove dispatcher-related boilerplate declarations from the scope body.
         """
+        assert self._root is not None
+        model = build_semantic_model(self._root)
         to_remove = []
         for stmt in list(body):
             if isinstance(stmt, JsVariableDeclaration):
@@ -557,7 +568,8 @@ class JsDispatcherUnwrapper(ScopeProcessingTransformer):
                     and not stmt.body.body
                     and not stmt.params
                 ):
-                    if not has_remaining_references(scope, stmt.id.name, exclude=stmt):
+                    binding = model.binding_of(stmt.id)
+                    if not binding_has_references(model, binding, exclude=stmt):
                         to_remove.append(stmt)
         for stmt in to_remove:
             body.remove(stmt)
