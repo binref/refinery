@@ -55,6 +55,15 @@ class TestDeobfuscationDifferential(TestBase):
             'var C = (function(){ var n = 0; return { inc: function(){ return ++n; } }; })();'
             ' console.log(C.inc(), C.inc());')
 
+    def test_dynamic_eval_reading_global_preserved(self):
+        self._check(
+            'var data; data = 123;'
+            ' var name = String.fromCharCode(100, 97, 116, 97);'
+            ' console.log(eval(name));')
+
+    def test_function_called_only_through_eval_preserved(self):
+        self._check("function greet(){ return 'hi'; } console.log(eval('greet()'));")
+
     @unittest.expectedFailure
     def test_nested_closures_share_binding(self):
         """

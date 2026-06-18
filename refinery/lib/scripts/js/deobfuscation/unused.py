@@ -15,6 +15,7 @@ This transformer performs two phases:
 from __future__ import annotations
 
 from refinery.lib.scripts import Node, _remove_from_parent
+from refinery.lib.scripts.js.analysis.model import build_semantic_model
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     BodyProcessingTransformer,
     GLOBAL_OBJECT_ALIASES,
@@ -399,15 +400,25 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
         super().__init__()
         self._enclosing_cache: dict[int, set[str]] = {}
         self.preserve_globals = preserve_globals
+        self._has_reflection = False
+
+    def visit_JsScript(self, node: JsScript):
+        self._has_reflection = build_semantic_model(node).has_reflection_surface()
+        self.generic_visit(node)
+        self._process_body(node, node.body)
+        return None
 
     def _process_body(self, parent: Node, body: list[Statement]):
+        at_script_scope = isinstance(_enclosing_scope_root(parent), JsScript)
+        if self.preserve_globals and self._has_reflection and at_script_scope:
+            return
         removed_functions = self._remove_dead_functions(body)
         dead_variables, preserved = self._remove_dead_variables(parent, body, removed_functions)
         dead_variables |= self._remove_dead_destructuring(
             parent, body, removed_functions | dead_variables)
         if isinstance(parent, JsScript):
             dead_variables |= self._remove_dead_global_properties(parent, dead_variables)
-        if not (self.preserve_globals and isinstance(_enclosing_scope_root(parent), JsScript)):
+        if not (self.preserve_globals and at_script_scope):
             self._remove_empty_declarators(parent, body, set())
         self._remove_dead_expressions(body, removed_functions | dead_variables, preserved)
 

@@ -125,6 +125,37 @@ class TestUnusedCodeRemoval(TestJsDeobfuscator):
         JsUnusedCodeRemoval(preserve_globals=False).visit(ast)
         self.assertEqual('console.log(2);', JsSynthesizer().convert(ast))
 
+    def test_reflection_surface_preserves_dead_split_global(self):
+        source = inspect.cleandoc(
+            """
+            var x;
+            x = 1;
+            eval('x');
+            """
+        )
+        self.assertEqual(source, self._remove_unused(source))
+
+    def test_reflection_surface_preserves_dead_function(self):
+        source = inspect.cleandoc(
+            """
+            function dead() {
+              return 1;
+            }
+            eval('dead()');
+            """
+        )
+        self.assertEqual(source, self._remove_unused(source))
+
+    def test_no_reflection_still_removes_dead_split_global(self):
+        source = inspect.cleandoc(
+            """
+            var x;
+            x = 1;
+            console.log(2);
+            """
+        )
+        self.assertEqual('console.log(2);', self._remove_unused(source))
+
     def test_no_init_var_captured_by_closure_preserved(self):
         source = inspect.cleandoc(
             """
