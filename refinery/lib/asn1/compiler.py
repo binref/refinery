@@ -48,6 +48,7 @@ from refinery.lib.asn1.schema import (
     SchemaType,
     Seq,
     SeqOf,
+    Set,
     SetOf,
 )
 
@@ -281,6 +282,8 @@ class _Parser:
 
             if val == 'SEQUENCE':
                 self._advance()
+                if self._try_consume_ident('SIZE') and self._check_type(_TT.LPAREN):
+                    self._skip_constraint()
                 if self._check_type(_TT.LBRACE):
                     return self._parse_sequence()
                 elif self._check_ident('OF'):
@@ -298,6 +301,8 @@ class _Parser:
 
             if val == 'SET':
                 self._advance()
+                if self._try_consume_ident('SIZE') and self._check_type(_TT.LPAREN):
+                    self._skip_constraint()
                 if self._check_type(_TT.LBRACE):
                     return self._parse_set_body()
                 elif self._check_ident('OF'):
@@ -361,7 +366,7 @@ class _Parser:
                 if self._check_type(_TT.LPAREN):
                     self._skip_constraint()
                 if self._check_type(_TT.LBRACE):
-                    self._skip_braces()
+                    return ('IntNamed', self._parse_named_numbers())
                 return INTEGER
 
             if val == 'NULL':
@@ -457,6 +462,11 @@ class _Parser:
         name = self._expect_type(_TT.IDENT).value
         ftype = self._parse_type()
 
+        named_numbers: dict[str, int] | None = None
+        if isinstance(ftype, tuple) and ftype[0] == 'IntNamed':
+            named_numbers = ftype[1]
+            ftype = INTEGER
+
         optional = False
         default = None
         has_default = False
@@ -468,6 +478,8 @@ class _Parser:
             self._advance()
             has_default = True
             default = self._parse_default_value()
+            if named_numbers and isinstance(default, str) and default in named_numbers:
+                default = named_numbers[default]
 
         return ('Field', name, ftype, optional, has_default, default)
 
@@ -493,6 +505,27 @@ class _Parser:
         # fallback: skip until COMMA/RBRACE
         self._advance()
         return None
+
+    def _parse_named_numbers(self) -> dict[str, int]:
+        self._expect_type(_TT.LBRACE)
+        mapping: dict[str, int] = {}
+        while not self._check_type(_TT.RBRACE) and not self._check_type(_TT.EOF):
+            if self._check_type(_TT.IDENT):
+                key = self._advance().value
+                if self._check_type(_TT.LPAREN):
+                    self._advance()
+                    if self._check_type(_TT.NUMBER):
+                        mapping[key] = int(self._advance().value)
+                    while not self._check_type(_TT.RPAREN) and not self._check_type(_TT.EOF):
+                        self._advance()
+                    if self._check_type(_TT.RPAREN):
+                        self._advance()
+            else:
+                self._advance()
+            if self._check_type(_TT.COMMA):
+                self._advance()
+        self._expect_type(_TT.RBRACE)
+        return mapping
 
     def _parse_choice(self) -> object:
         self._expect_type(_TT.LBRACE)
@@ -569,7 +602,10 @@ class _Parser:
 
                 if tag == 'Set':
                     fields = t[1]
-                    return Seq(*[_resolve_field(f) for f in fields])
+                    return Set(*[_resolve_field(f) for f in fields])
+
+                if tag == 'IntNamed':
+                    return INTEGER
 
                 if tag == 'SeqOf':
                     return SeqOf(resolve_type(t[1]))
@@ -605,6 +641,10 @@ class _Parser:
                     explicit = tag_num
 
             resolved_type = resolve_type(actual_type)
+
+            if implicit is not None and isinstance(resolved_type, Choice):
+                # A CHOICE cannot be implicitly tagged (X.680); the tag is EXPLICIT.
+                explicit, implicit = implicit, None
 
             kwargs: dict[str, object] = {}
             if implicit is not None:

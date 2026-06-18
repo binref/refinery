@@ -587,7 +587,8 @@ class TestASN1(TestUnitBase):
 
     def test_compiler_set_body(self):
         from refinery.lib.asn1.compiler import compile_asn1
-        from refinery.lib.asn1.schema import Seq
+        from refinery.lib.asn1.reader import ASN1Reader
+        from refinery.lib.asn1.schema import Set
         result = compile_asn1("""
             Test DEFINITIONS ::= BEGIN
                 Foo ::= SET {
@@ -596,8 +597,12 @@ class TestASN1(TestUnitBase):
                 }
             END
         """)
-        self.assertIsInstance(result['Foo'], Seq)
+        self.assertIsInstance(result['Foo'], Set)
         self.assertEqual(len(result['Foo'].fields), 2)
+        reader = ASN1Reader(bytes.fromhex('310704026869020105'), bigendian=True)
+        decoded = reader.decode_with_schema(result['Foo'])
+        self.assertEqual(decoded['name'], b'hi')
+        self.assertEqual(decoded['value'], 5)
 
     def test_compiler_sequence_size_constraint_of(self):
         from refinery.lib.asn1.compiler import compile_asn1
@@ -618,6 +623,44 @@ class TestASN1(TestUnitBase):
             END
         """)
         self.assertIsInstance(result['Things'], SetOf)
+
+    def test_compiler_unparenthesized_size_of(self):
+        from refinery.lib.asn1.compiler import compile_asn1
+        from refinery.lib.asn1.schema import SeqOf, SetOf
+        result = compile_asn1("""
+            Test DEFINITIONS ::= BEGIN
+                A ::= SEQUENCE SIZE (1..MAX) OF INTEGER
+                B ::= SET SIZE (1..MAX) OF INTEGER
+            END
+        """)
+        self.assertIsInstance(result['A'], SeqOf)
+        self.assertIsInstance(result['B'], SetOf)
+
+    def test_compiler_implicit_choice_is_explicit(self):
+        from refinery.lib.asn1.compiler import compile_asn1
+        from refinery.lib.asn1.reader import ASN1Reader
+        result = compile_asn1("""
+            Test DEFINITIONS IMPLICIT TAGS ::= BEGIN
+                Inner ::= CHOICE { a INTEGER, b OCTET STRING }
+                Foo ::= SEQUENCE { c [0] Inner OPTIONAL }
+            END
+        """)
+        field = result['Foo'].fields[0]
+        self.assertIsNone(field.implicit)
+        self.assertEqual(field.explicit, 0)
+        reader = ASN1Reader(bytes.fromhex('3005a003020107'), bigendian=True)
+        self.assertEqual(reader.decode_with_schema(result['Foo'])['c'], 7)
+
+    def test_compiler_named_default_resolves_to_int(self):
+        from refinery.lib.asn1.compiler import compile_asn1
+        result = compile_asn1("""
+            Test DEFINITIONS ::= BEGIN
+                Foo ::= SEQUENCE {
+                    v INTEGER { v1(0), v2(1) } DEFAULT v2
+                }
+            END
+        """)
+        self.assertEqual(result['Foo'].fields[0].default, 1)
 
     def test_compiler_typeref_with_constraint(self):
         from refinery.lib.asn1.compiler import compile_asn1

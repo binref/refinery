@@ -30,6 +30,11 @@ class Seq:
         self.fields = fields
 
 
+class Set:
+    def __init__(self, *fields: F):
+        self.fields = fields
+
+
 class SeqOf:
     def __init__(self, element: SchemaType):
         self.element = element
@@ -69,4 +74,4 @@ class ASN1SchemaMismatch(Exception):
     pass
 
 
-SchemaType = int | Seq | SeqOf | SetOf | Choice | object
+SchemaType = int | Seq | Set | SeqOf | SetOf | Choice | object

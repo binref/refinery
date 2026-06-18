@@ -16,6 +16,7 @@ from refinery.lib.asn1.schema import (
     SchemaType,
     Seq,
     SeqOf,
+    Set,
     SetOf,
 )
 from refinery.lib.structures import StructReader
@@ -407,6 +408,8 @@ class ASN1Reader(StructReader[memoryview]):
             return (CLASS_UNIVERSAL, constructed, schema_type)
         if isinstance(schema_type, Seq):
             return (CLASS_UNIVERSAL, True, SEQUENCE)
+        if isinstance(schema_type, Set):
+            return (CLASS_UNIVERSAL, True, SET)
         if isinstance(schema_type, SeqOf):
             return (CLASS_UNIVERSAL, True, SEQUENCE)
         if isinstance(schema_type, SetOf):
@@ -442,7 +445,7 @@ class ASN1Reader(StructReader[memoryview]):
             return [item for child in children for item in child]
         return children
 
-    def _decode_seq(self, schema: Seq, length: int) -> OrderedDict[str, ASN1Value]:
+    def _decode_seq(self, schema: Seq | Set, length: int) -> OrderedDict[str, ASN1Value]:
         indefinite = length < 0
         if indefinite:
             end = self.tell() + self.remaining_bytes
@@ -519,7 +522,7 @@ class ASN1Reader(StructReader[memoryview]):
             if schema_type in (SEQUENCE, SET):
                 return self._decode_constructed_children(length, ANY)
             return self._decode_schema_primitive(schema_type, length)
-        if isinstance(schema_type, Seq):
+        if isinstance(schema_type, (Seq, Set)):
             return self._decode_seq(schema_type, length)
         if isinstance(schema_type, SeqOf):
             return self._decode_constructed_children(length, schema_type.element)
@@ -534,7 +537,7 @@ class ASN1Reader(StructReader[memoryview]):
             if constructed:
                 return self._read_children(length)
             return self._decode_schema_primitive(schema_type, length)
-        if isinstance(schema_type, Seq):
+        if isinstance(schema_type, (Seq, Set)):
             return self._decode_seq(schema_type, length)
         if isinstance(schema_type, SeqOf):
             return self._decode_constructed_children(length, schema_type.element)
@@ -598,6 +601,14 @@ class ASN1Reader(StructReader[memoryview]):
             if tag_class != CLASS_UNIVERSAL or tag_number != SEQUENCE or not constructed:
                 raise ASN1SchemaMismatch(
                     F'expected SEQUENCE, got class={tag_class} constructed={constructed} number={tag_number}')
+            return self._decode_seq(schema, length)
+
+        if isinstance(schema, Set):
+            tag_class, constructed, tag_number = self._read_tag()
+            length = self._read_length()
+            if tag_class != CLASS_UNIVERSAL or tag_number != SET or not constructed:
+                raise ASN1SchemaMismatch(
+                    F'expected SET, got class={tag_class} constructed={constructed} number={tag_number}')
             return self._decode_seq(schema, length)
 
         if isinstance(schema, SeqOf):
