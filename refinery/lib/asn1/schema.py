@@ -73,6 +73,7 @@ class F:
         optional: bool = False,
         default: Any = _MISSING,
         tag_class: int = CLASS_CONTEXT,
+        transform: str | None = None,
     ):
         self.name = name
         self.type = type
@@ -81,6 +82,7 @@ class F:
         self.optional = optional or default is not _MISSING
         self.default = default
         self.tag_class = tag_class
+        self.transform = transform
 
 
 class ASN1SchemaMismatch(Exception):

@@ -485,6 +485,18 @@ OCSPRequest = _ocsp['OCSPRequest']
 OCSPResponse = _ocsp['OCSPResponse']
 LDAPMessage = _ldap['LDAPMessage']
 
+
+def _annotate(schema, **transforms: str):
+    for field in schema.fields:
+        if field.name in transforms:
+            field.transform = transforms[field.name]
+
+
+_annotate(_x509['TBSCertificate'], issuer='name', subject='name')
+_annotate(_x509['Validity'], notBefore='time', notAfter='time')
+_annotate(_cms['IssuerAndSerialNumber'], issuer='name')
+_annotate(_cms['SignerInfo'], signedAttrs='attributes', unsignedAttrs='attributes')
+
 ROOT_SCHEMAS = [
     ('SignedContentInfo', SignedContentInfo, 0),
     ('ContentInfo', ContentInfo, 0),

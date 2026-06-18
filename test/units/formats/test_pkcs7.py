@@ -32,6 +32,12 @@ class TestPKCS7(TestUnitBase):
         reader.decode_with_schema(SignedContentInfo)
         self.assertEqual(len(reader.spans), 4)
 
+    def test_certificate_name_and_time_transforms(self):
+        result = json.loads(self.load()(self.SIGNATURE1))
+        tbs = result['content']['certificates'][0]['tbsCertificate']
+        self.assertEqual(tbs['subject']['commonName'], 'DigiCert Timestamp 2021')
+        self.assertEqual(tbs['validity']['notBefore'], '2021-01-01 00:00:00+00:00')
+
     def test_unsign_negative_serial_recovers_unsigned_byte_value(self):
         from refinery.lib.asn1.cms import _unsign
         self.assertEqual(_unsign(-1), 255)

@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 
 from refinery.lib.asn1 import ASN1Reader
 from refinery.lib.asn1.defs import Certificate, ContentInfo, SignedContentInfo, SpcSpOpusInfo
+from refinery.lib.asn1.schema import Choice, SchemaType, Seq, SeqOf, Set, SetOf
 
 _TIME_VALUED_ATTRIBUTES = {'signingTime'}
 
@@ -151,7 +152,7 @@ def _interpret_counter_signature(value) -> OrderedDict:
             attrs_raw = item.get('value', [])
             if isinstance(attrs_raw, list):
                 result['signedAttrs'] = [
-                    _interpret_generic_attribute(a) for a in attrs_raw]
+                    _postprocess_attribute(_interpret_generic_attribute(a)) for a in attrs_raw]
             break
     return result
 
@@ -220,37 +221,37 @@ def _unsign(data):
     return data
 
 
-def _postprocess(obj, raw: bytes | memoryview | None = None):
+_TRANSFORMS = {
+    'name': _flatten_name,
+    'time': _parse_asn1_time,
+    'attributes': lambda value: (
+        [_postprocess_attribute(attr) for attr in value] if isinstance(value, list) else value),
+}
+
+
+def _choice_alt(choice: Choice, obj: dict) -> SchemaType | None:
+    keys = set(obj)
+    for alt in choice.alternatives:
+        if isinstance(alt.type, (Seq, Set)) and keys <= {f.name for f in alt.type.fields}:
+            return alt.type
+    return None
+
+
+def _postprocess(obj, schema: SchemaType | None = None):
     if isinstance(obj, OrderedDict):
+        if isinstance(schema, Choice):
+            schema = _choice_alt(schema, obj)
+        fields = {f.name: f for f in schema.fields} if isinstance(schema, (Seq, Set)) else {}
         for key in list(obj.keys()):
-            value = obj[key]
-            if key in ('issuer', 'subject'):
-                if isinstance(value, list):
-                    obj[key] = _flatten_name(value)
-                elif isinstance(value, dict):
-                    obj[key] = _postprocess(value)
-            elif key == 'validity' and isinstance(value, dict):
-                obj[key] = OrderedDict(
-                    (k, _parse_asn1_time(_postprocess(v)))
-                    for k, v in value.items()
-                )
-            elif key in ('signedAttrs', 'unsignedAttrs') and isinstance(value, list):
-                obj[key] = [_postprocess_attribute(attr) for attr in value]
-            elif key == 'certificates' and isinstance(value, list):
-                obj[key] = [_postprocess(cert) for cert in value]
-            elif key == 'signerInfos' and isinstance(value, list):
-                obj[key] = [_postprocess(si) for si in value]
-            elif key == 'content' and isinstance(value, dict):
-                obj[key] = _postprocess(value, raw)
-            elif key == 'tbsCertificate' and isinstance(value, dict):
-                obj[key] = _postprocess(value)
-            elif key == 'sid' and isinstance(value, dict):
-                obj[key] = _postprocess(value)
+            field = fields.get(key)
+            if field is not None and field.transform is not None:
+                obj[key] = _TRANSFORMS[field.transform](obj[key])
             else:
-                obj[key] = _postprocess(value)
+                obj[key] = _postprocess(obj[key], field.type if field is not None else None)
         return obj
     if isinstance(obj, list):
-        return [_postprocess(item) for item in obj]
+        element = schema.element if isinstance(schema, (SeqOf, SetOf)) else None
+        return [_postprocess(item, element) for item in obj]
     if isinstance(obj, bytes):
         return obj.hex().upper()
     return obj
@@ -301,6 +302,7 @@ def parse_content_info(data: bytes | bytearray | memoryview) -> OrderedDict:
     """
     mv = memoryview(data)
     best_result = None
+    best_schema: SchemaType | None = None
     best_spans: dict[int, tuple[int, int]] = {}
     best_remaining = len(mv) + 1
     for schema in (SignedContentInfo, ContentInfo):
@@ -310,6 +312,7 @@ def parse_content_info(data: bytes | bytearray | memoryview) -> OrderedDict:
             remaining = reader.remaining_bytes
             if remaining < best_remaining:
                 best_result = result
+                best_schema = schema
                 best_spans = reader.spans
                 best_remaining = remaining
             if remaining == 0:
@@ -317,7 +320,7 @@ def parse_content_info(data: bytes | bytearray | memoryview) -> OrderedDict:
         except Exception:
             continue
     if best_result is not None:
-        result = _unsign(_postprocess(best_result, mv))
+        result = _unsign(_postprocess(best_result, best_schema))
         _attach_certificate_fingerprints(result, mv, best_spans)
     else:
         try:
