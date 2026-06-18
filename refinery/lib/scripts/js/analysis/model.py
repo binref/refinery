@@ -19,6 +19,12 @@ name to a *wider* binding rather than risk treating a live reference as free: a 
 nested in a block is hoisted to the enclosing function scope (legacy/Annex-B semantics), and a name
 used inside a `with` body or any dynamically-scoped region resolves to `None` (unknown) rather than to
 a guessed binding. `has_reflection_surface` likewise errs toward reporting reflection.
+
+A name the program assigns without ever declaring it (an implicit global) is given a synthetic binding
+at script scope so that its whole-program liveness can be reasoned about; a name that is only ever
+*read* without being assigned stays free (`None`), since it denotes an external or built-in global the
+model cannot describe. Writes inside a `with` body do not create such a binding, because the name may
+denote a property of the `with` object rather than a global.
 """
 from __future__ import annotations
 
@@ -96,16 +102,17 @@ class ScopeKind(enum.Enum):
 
 
 class BindingKind(enum.Enum):
-    VAR       = 'var'        # noqa
-    LET       = 'let'        # noqa
-    CONST     = 'const'      # noqa
-    PARAM     = 'param'      # noqa
-    FUNCTION  = 'function'   # noqa
-    CLASS     = 'class'      # noqa
-    CATCH     = 'catch'      # noqa
-    IMPORT    = 'import'     # noqa
-    ARGUMENTS = 'arguments'  # noqa
-    FUNC_NAME = 'func_name'  # noqa  the own name of a named function expression
+    VAR             = 'var'              # noqa
+    LET             = 'let'              # noqa
+    CONST           = 'const'            # noqa
+    PARAM           = 'param'            # noqa
+    FUNCTION        = 'function'         # noqa
+    CLASS           = 'class'            # noqa
+    CATCH           = 'catch'            # noqa
+    IMPORT          = 'import'           # noqa
+    ARGUMENTS       = 'arguments'        # noqa
+    FUNC_NAME       = 'func_name'        # noqa  the own name of a named function expression
+    IMPLICIT_GLOBAL = 'implicit_global'  # noqa  a name assigned but never declared
 
 
 class Role(enum.Enum):
@@ -342,9 +349,9 @@ class SemanticModel:
     def resolve(self, ref: JsIdentifier) -> Binding | None:
         """
         The binding a referencing identifier reads or writes, found by walking outward from its scope.
-        Returns `None` when the name is free (a global or implicit global), when the identifier is not
-        a reference (a property name, key, or label), or when resolution crosses a dynamically-scoped
-        region where the name could be injected at runtime.
+        Returns `None` when the name is free (an external global the program never assigns), when the
+        identifier is not a reference (a property name, key, or label), or when resolution crosses a
+        dynamically-scoped region where the name could be injected at runtime.
         """
         if id(ref) in self._binding_of:
             return None
@@ -411,6 +418,7 @@ class SemanticModel:
         return False
 
     def _build_def_use(self):
+        self._create_implicit_globals()
         for node in self.root.walk():
             if not isinstance(node, JsIdentifier):
                 continue
@@ -426,6 +434,38 @@ class SemanticModel:
                 binding.writes.append(node)
             if _owning_function(self._node_scope.get(id(node))) is not _owning_function(binding.scope):
                 binding.captured = True
+
+    def _create_implicit_globals(self):
+        """
+        Give every implicitly-declared global a binding at script scope, so that the def-use pass that
+        follows resolves its references to it like any other binding. A name becomes an implicit global
+        when the program writes it — an assignment, update, or `for-in`/`for-of` target — without it
+        resolving to any lexical binding, which in sloppy mode creates a property on the global object.
+        A write that resolves through a dynamic scope is skipped: inside a `with` body the target may be
+        a property of the `with` object rather than a global, so the model cannot claim a global binding.
+        """
+        for node in self.root.walk():
+            if not isinstance(node, JsIdentifier) or not is_use_position(node):
+                continue
+            if id(node) in self._binding_of:
+                continue
+            scope = self._node_scope.get(id(node))
+            if reference_role(node) is Role.READ:
+                continue
+            if self.lookup(node.name, scope) is not None or self._crosses_dynamic_scope(scope):
+                continue
+            self.root_scope.bindings.setdefault(
+                node.name, Binding(node.name, BindingKind.IMPLICIT_GLOBAL, self.root_scope))
+
+    def _crosses_dynamic_scope(self, scope: Scope | None) -> bool:
+        """
+        Whether resolving a name from *scope* outward passes through a dynamically-scoped region.
+        """
+        while scope is not None:
+            if scope.is_dynamic:
+                return True
+            scope = scope.parent
+        return False
 
 
 class _ScopeBuilder:

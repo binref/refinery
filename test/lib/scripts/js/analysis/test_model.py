@@ -224,6 +224,66 @@ class TestSemanticModel(TestBase):
         self.assertTrue(model.is_shadowed('x', inner_use, outer_scope))
         self.assertFalse(model.is_shadowed('x', outer_use, outer_scope))
 
+    def test_implicit_global_assignment_creates_script_binding(self):
+        ast, model = self._model('g = 1; g;')
+        g_write, g_read = self._idents(ast, 'g')
+        binding = model.resolve(g_write)
+        self.assertEqual(binding.kind, BindingKind.IMPLICIT_GLOBAL)
+        self.assertEqual(binding.scope.kind, ScopeKind.SCRIPT)
+        self.assertIs(model.resolve(g_read), binding)
+
+    def test_implicit_global_links_write_and_read_across_functions(self):
+        ast, model = self._model('function f(){ s = 4; } function h(){ return s; }')
+        s_write, s_read = self._idents(ast, 's')
+        binding = model.resolve(s_write)
+        self.assertEqual(binding.kind, BindingKind.IMPLICIT_GLOBAL)
+        self.assertIs(model.resolve(s_read), binding)
+        self.assertFalse(binding.is_dead)
+        self.assertEqual(len(binding.writes), 1)
+        self.assertEqual(len(binding.reads), 1)
+
+    def test_read_only_free_name_stays_unresolved(self):
+        ast, model = self._model('console.log(foo);')
+        self.assertIsNone(model.resolve(self._idents(ast, 'foo')[0]))
+        self.assertNotIn('foo', model.root_scope.bindings)
+
+    def test_write_only_implicit_global_is_dead(self):
+        ast, model = self._model('leak = 5;')
+        binding = model.resolve(self._idents(ast, 'leak')[0])
+        self.assertEqual(binding.kind, BindingKind.IMPLICIT_GLOBAL)
+        self.assertTrue(binding.is_dead)
+
+    def test_local_var_is_distinct_from_script_implicit_global(self):
+        ast, model = self._model('function f(){ var x; x = 2; } x = 9; x;')
+        x_decl, x_local_write, x_global_write, x_global_read = self._idents(ast, 'x')
+        local = model.binding_of(x_decl)
+        self.assertEqual(local.kind, BindingKind.VAR)
+        self.assertIs(model.resolve(x_local_write), local)
+        glob = model.resolve(x_global_write)
+        self.assertEqual(glob.kind, BindingKind.IMPLICIT_GLOBAL)
+        self.assertIsNot(glob, local)
+        self.assertIs(model.resolve(x_global_read), glob)
+
+    def test_write_inside_with_does_not_create_implicit_global(self):
+        ast, model = self._model('with (o) { g = 1; }')
+        self.assertNotIn('g', model.root_scope.bindings)
+        self.assertIsNone(model.resolve(self._idents(ast, 'g')[0]))
+
+    def test_for_in_undeclared_target_is_a_live_implicit_global(self):
+        ast, model = self._model('for (k in o) { k; }')
+        k_target, k_read = self._idents(ast, 'k')
+        binding = model.resolve(k_target)
+        self.assertEqual(binding.kind, BindingKind.IMPLICIT_GLOBAL)
+        self.assertFalse(binding.is_dead)
+        self.assertIs(model.resolve(k_read), binding)
+
+    def test_compound_assignment_to_undeclared_name_is_implicit_global(self):
+        ast, model = self._model('g += 1;')
+        binding = model.resolve(self._idents(ast, 'g')[0])
+        self.assertEqual(binding.kind, BindingKind.IMPLICIT_GLOBAL)
+        self.assertEqual(len(binding.reads), 1)
+        self.assertEqual(len(binding.writes), 1)
+
     def test_eval_is_a_reflection_surface(self):
         _, model = self._model('eval(payload);')
         self.assertTrue(model.has_reflection_surface())
