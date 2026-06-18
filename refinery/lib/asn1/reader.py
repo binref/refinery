@@ -266,6 +266,10 @@ class ASN1Reader(StructReader[memoryview]):
             return float('inf')
         if fb == 0x41:
             return float('-inf')
+        if fb == 0x42:
+            return float('nan')
+        if fb == 0x43:
+            return -0.0
         if fb & 0x80:
             sign = -1 if (fb & 0x40) else 1
             base = [2, 8, 16, 2][(fb >> 4) & 3]
@@ -274,18 +278,30 @@ class ASN1Reader(StructReader[memoryview]):
             idx = 1
             if ef < 3:
                 elen = ef + 1
-            else:
+            elif idx < len(content):
                 elen = content[idx]
                 idx += 1
+            else:
+                return 0.0
             exp = int.from_bytes(content[idx:idx + elen], 'big', signed=True)
             idx += elen
             n = int.from_bytes(content[idx:], 'big', signed=False)
-            return float(sign * n * (2 ** scale) * (base ** exp))
-        return float(codecs.decode(content[1:], 'ascii'))
+            if exp * (base.bit_length() - 1) > 1100:
+                return sign * float('inf')
+            if exp * (base.bit_length() - 1) < -1100:
+                return sign * 0.0
+            try:
+                return float(sign * n * (2 ** scale) * (base ** exp))
+            except OverflowError:
+                return sign * float('inf')
+        try:
+            return float(codecs.decode(content[1:], 'ascii').replace(',', '.'))
+        except (ValueError, UnicodeDecodeError):
+            return 0.0
 
     def _decode_universal_primitive(self, tag_number: int, content: bytes | memoryview) -> ASN1Value:
         if tag_number == 1:  # BOOLEAN
-            return bool(content[-1]) if content else False
+            return any(content)
         if tag_number == 2:  # INTEGER
             return int.from_bytes(content, 'big', signed=True) if content else 0
         if tag_number == 3:  # BIT STRING
@@ -314,7 +330,10 @@ class ASN1Reader(StructReader[memoryview]):
             return self._decode_relative_oid(content)
         enc = self._STRING_ENCODINGS.get(tag_number)
         if enc is not None:
-            return bytes(content).decode(enc)
+            try:
+                return bytes(content).decode(enc)
+            except UnicodeDecodeError:
+                return bytes(content)
         return bytes(content)
 
     @staticmethod
@@ -440,7 +459,7 @@ class ASN1Reader(StructReader[memoryview]):
             else:
                 expected = self._expected_tag(field.type)
                 if expected is None:
-                    self.seekrel(-self.tell() + pos)
+                    self.seekset(pos)
                     if isinstance(field.type, Choice):
                         value = self._decode_choice(field.type, end)
                     else:
@@ -451,7 +470,7 @@ class ASN1Reader(StructReader[memoryview]):
                     matched = True
 
             if not matched:
-                self.seekrel(-self.tell() + pos)
+                self.seekset(pos)
                 if field.optional:
                     if field.default is not _MISSING:
                         result[field.name] = field.default
@@ -520,7 +539,7 @@ class ASN1Reader(StructReader[memoryview]):
             raise ASN1SchemaMismatch(
                 F'no CHOICE alternative matched: class={tag_class} number={tag_number}')
 
-        self.seekrel(-self.tell() + pos)
+        self.seekset(pos)
         return self.read_tlv()
 
     def decode_with_schema(self, schema: SchemaType) -> ASN1Value:

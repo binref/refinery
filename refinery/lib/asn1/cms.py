@@ -208,14 +208,15 @@ def _decode_attribute_value(oid: str, values: list) -> list:
 
 
 def _unsign(data):
+    if isinstance(data, bool):
+        return data
     if isinstance(data, int):
-        size = data.bit_length()
         if data < 0:
-            data = (1 << (size + 1)) - ~data - 1
+            nbytes = ((~data).bit_length() + 8) // 8
+            data += 1 << (8 * nbytes)
         if data > 0xFFFFFFFF_FFFFFFFF:
-            size, r = divmod(size, 8)
-            size += bool(r)
-            data = data.to_bytes(size, 'big').hex()
+            nbytes = (data.bit_length() + 7) // 8
+            data = data.to_bytes(nbytes, 'big').hex().upper()
         return data
     elif isinstance(data, dict):
         for key in list(data):

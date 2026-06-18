@@ -15,6 +15,17 @@ class TestTarFileExtractor(TestUnitBase):
         self.assertTrue(all(isinstance(item, dict) for item in result['content']['certificates']),
             'failed parsing at least one certificate')
 
+    def test_unsign_negative_serial_recovers_unsigned_byte_value(self):
+        from refinery.lib.asn1.cms import _unsign
+        self.assertEqual(_unsign(-1), 255)
+        self.assertEqual(_unsign(-128), 128)
+        self.assertEqual(_unsign(-32768), 32768)
+
+    def test_unsign_large_negative_serial_does_not_overflow(self):
+        from refinery.lib.asn1.cms import _unsign
+        serial = int.from_bytes(b'\x80' + bytes(15), 'big', signed=True)
+        self.assertEqual(_unsign(serial), '80000000000000000000000000000000')
+
     SIGNATURE1 = lzma.decompress(base64.b85decode(
         B'{Wp48S^xk9=GL@E0stWa8~^|S5YJf5;5WAvF<k%{AcE^E=O>Sa;=U-fb<qk}DiB}`2VL~3W}sd*dR+R0{)~K^oc2*Lvmqciwus=;'
         B'sm$4Y-e_2Ow%TCECA2H@kVb$F_fq>39qg?kh@!XeN!LYVz`|`5m4QH}oamB5Ty=B+G;#9wtuyzEk=wq~jdMXm;q9B>@72FHwsMEA'

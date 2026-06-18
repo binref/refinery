@@ -39,6 +39,8 @@ from refinery.lib.asn1.schema import (
     OCTET_STRING,
     OID,
     PRINTABLE_STRING,
+    SEQUENCE,
+    SET,
     UTC_TIME,
     UTF8_STRING,
     Choice,

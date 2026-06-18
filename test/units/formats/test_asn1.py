@@ -754,3 +754,47 @@ class TestASN1(TestUnitBase):
             END
         """)
         self.assertEqual(result['DirectoryString'], 12)
+
+    def test_boolean_multibyte_is_true_when_any_byte_nonzero(self):
+        from refinery.lib.asn1.reader import ASN1Reader
+        reader = ASN1Reader(bytes.fromhex('0102ff00'))
+        self.assertIs(reader.read_tlv(), True)
+
+    def test_real_nan(self):
+        import math
+        from refinery.lib.asn1.reader import ASN1Reader
+        reader = ASN1Reader(bytes.fromhex('090142'))
+        self.assertTrue(math.isnan(reader.read_tlv()))
+
+    def test_real_minus_zero(self):
+        import math
+        from refinery.lib.asn1.reader import ASN1Reader
+        reader = ASN1Reader(bytes.fromhex('090143'))
+        self.assertEqual(math.copysign(1.0, reader.read_tlv()), -1.0)
+
+    def test_real_overlarge_exponent_is_infinity(self):
+        from refinery.lib.asn1.reader import ASN1Reader
+        reader = ASN1Reader(bytes.fromhex('090583027fff02'))
+        self.assertEqual(reader.read_tlv(), float('inf'))
+
+    def test_real_truncated_long_exponent_does_not_crash(self):
+        from refinery.lib.asn1.reader import ASN1Reader
+        reader = ASN1Reader(bytes.fromhex('090183'))
+        self.assertIsInstance(reader.read_tlv(), float)
+
+    def test_printable_string_with_undecodable_bytes_falls_back_to_raw(self):
+        self.assertEqual(self._decode('1301e9'), '\xe9')
+
+    def test_compiler_bare_sequence_and_set_field_types(self):
+        from refinery.lib.asn1.compiler import compile_asn1
+        from refinery.lib.asn1.schema import SEQUENCE, SET
+        result = compile_asn1("""
+            Test DEFINITIONS ::= BEGIN
+                Foo ::= SEQUENCE {
+                    a SEQUENCE OPTIONAL,
+                    b SET OPTIONAL
+                }
+            END
+        """)
+        self.assertEqual(result['Foo'].fields[0].type, SEQUENCE)
+        self.assertEqual(result['Foo'].fields[1].type, SET)
