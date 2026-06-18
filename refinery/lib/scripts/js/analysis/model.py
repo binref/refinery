@@ -483,6 +483,7 @@ class _ScopeBuilder:
         self.model._node_scope[id(root)] = scope
         self._hoist(root.body, scope)
         self._collect_imports(root.body, scope)
+        self._collect_lexical(root.body, scope)
         for stmt in root.body:
             self._visit(stmt, scope)
         return scope
@@ -573,6 +574,7 @@ class _ScopeBuilder:
         body = node.body
         if isinstance(body, JsBlockStatement):
             self._hoist(body.body, fscope)
+            self._collect_lexical(body.body, fscope)
         for param in node.params:
             self._visit(param, fscope)
         if isinstance(body, JsBlockStatement):

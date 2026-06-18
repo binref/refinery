@@ -57,6 +57,22 @@ class TestSemanticModel(TestBase):
         self.assertIs(model.resolve(a_inner), binding)
         self.assertIsNone(model.resolve(a_outer))
 
+    def test_const_at_script_scope_is_bound(self):
+        ast, model = self._model('const c = 1; c;')
+        c_decl, c_use = self._idents(ast, 'c')
+        binding = model.binding_of(c_decl)
+        self.assertEqual(binding.kind, BindingKind.CONST)
+        self.assertEqual(binding.scope.kind, ScopeKind.SCRIPT)
+        self.assertIs(model.resolve(c_use), binding)
+
+    def test_lexical_declaration_in_function_body_is_bound(self):
+        ast, model = self._model('function f(){ const c = 1; let d = 2; return c + d; }')
+        for name, kind in (('c', BindingKind.CONST), ('d', BindingKind.LET)):
+            binding = model.binding_of(self._decl(ast, model, name))
+            self.assertEqual(binding.kind, kind, name)
+            self.assertEqual(binding.scope.kind, ScopeKind.FUNCTION, name)
+            self.assertIs(model.resolve(self._use(ast, model, name)), binding, name)
+
     def test_param_shadows_outer_var(self):
         ast, model = self._model('var x; function f(x){ return x; }')
         x_outer_decl, x_param, x_use = self._idents(ast, 'x')
