@@ -64,13 +64,11 @@ class TestDeobfuscationDifferential(TestBase):
     def test_function_called_only_through_eval_preserved(self):
         self._check("function greet(){ return 'hi'; } console.log(eval('greet()'));")
 
-    @unittest.expectedFailure
     def test_nested_closures_share_binding(self):
         """
-        Pre-existing pipeline bug surfaced by the harness: `outer()` is folded to its initial
-        `s = ""`, dropping the mutations that the nested closure `add` makes to the captured `s`, so
-        the deobfuscation prints "" instead of "ab". An unsound purity judgment in function evaluation
-        that the Stage 2 effect/escape analysis is meant to eliminate; tracked here until then.
+        `outer` calls a nested `add` that mutates the captured `s`. A nested call runs in an isolated
+        child interpreter with no write-back, so the evaluator refuses to fold `outer` rather than
+        dropping the mutation — the call is left for the engine and the behavior ("ab") is preserved.
         """
         self._check(
             'function outer(){ var s = ""; function add(x){ s += x; } add("a"); add("b");'
