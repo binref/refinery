@@ -198,16 +198,27 @@ def _function_local_names(func: JsFunctionDeclaration | JsFunctionExpression | J
 
 def _compute_function_mods(scope: Node) -> dict[str, set[str]]:
     """
-    For each function declaration at the top level of *scope*, compute the set of outer-scope
-    variable names it can modify (directly or transitively through calls to other known functions).
+    For each function defined at the top level of *scope* — a function declaration, or a function
+    expression or arrow function bound to a `var`/`let`/`const` declarator — compute the set of
+    outer-scope variable names it can modify (directly or transitively through calls to other known
+    functions). A call to such a function then seals those variables, so a closure assigning to a
+    captured variable (`var set = function(){ x = 2; }; set();`) is not inlined past the call.
     """
-    functions: dict[str, JsFunctionDeclaration] = {}
+    functions: dict[str, JsFunctionDeclaration | JsFunctionExpression | JsArrowFunctionExpression] = {}
     body = getattr(scope, 'body', None)
     if not isinstance(body, list):
         return {}
     for stmt in body:
         if isinstance(stmt, JsFunctionDeclaration) and stmt.id is not None:
             functions[stmt.id.name] = stmt
+        elif isinstance(stmt, JsVariableDeclaration):
+            for decl in stmt.declarations:
+                if (
+                    isinstance(decl, JsVariableDeclarator)
+                    and isinstance(decl.id, JsIdentifier)
+                    and isinstance(decl.init, (JsFunctionExpression, JsArrowFunctionExpression))
+                ):
+                    functions[decl.id.name] = decl.init
     if not functions:
         return {}
 

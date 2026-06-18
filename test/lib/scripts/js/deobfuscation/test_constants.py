@@ -40,6 +40,26 @@ class TestConstantInlining(TestJsDeobfuscator):
             self._inline('var x = 1; x++; console.log(x);'),
         )
 
+    def test_var_bound_closure_mutation_seals_variable(self):
+        """
+        `set` is a function expression bound to a `var`; calling it mutates the captured `x`, so the
+        initializer must not be inlined past the call (the closure reassignment would otherwise be
+        dropped, folding `return x` to `0`).
+        """
+        source = inspect.cleandoc(
+            """
+            function f() {
+              var x = 0;
+              var set = function() {
+                x = 2;
+              };
+              set();
+              return x;
+            }
+            """
+        )
+        self.assertEqual(source, self._inline(source))
+
     def test_single_use_expression_inlined(self):
         self.assertEqual('return a + b;', self._inline('var x = a + b; return x;'))
 
