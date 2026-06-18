@@ -1,0 +1,31 @@
+"""
+Static-analysis substrate for JavaScript deobfuscation. Transforms query a shared, computed model of
+the program here instead of each re-deriving scope, binding, and dataflow facts on their own.
+
+The foundation is `refinery.lib.scripts.js.analysis.model`, a flow-insensitive lexical model of scopes
+and resolved bindings. Later layers (control-flow graphs, effect summaries) attach behind the same
+representation-agnostic surface.
+"""
+from __future__ import annotations
+
+from refinery.lib.scripts.js.analysis.model import (
+    Binding,
+    BindingKind,
+    Scope,
+    ScopeKind,
+    SemanticModel,
+    build_semantic_model,
+    is_use_position,
+    pattern_identifiers,
+)
+
+__all__ = [
+    'Binding',
+    'BindingKind',
+    'Scope',
+    'ScopeKind',
+    'SemanticModel',
+    'build_semantic_model',
+    'is_use_position',
+    'pattern_identifiers',
+]
