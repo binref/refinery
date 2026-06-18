@@ -723,7 +723,7 @@ def lzfse_decompress(src: bytes | bytearray | memoryview) -> bytearray:
     Decompress an LZFSE compressed stream.
 
     The stream consists of a sequence of typed blocks (LZFSE, LZVN, raw, or
-    end-of-stream). Returns the concatenated decompressed output as bytes.
+    end-of-stream). Returns the concatenated decompressed output.
     """
     pos = 0
     end = len(src)

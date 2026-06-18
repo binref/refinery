@@ -67,7 +67,13 @@ class TestDMGExtractor(TestUnitBase):
         self._test_artificial_sample('0f6c189d7e6a17b29a1e281bbecc9f4b545d18e9ade28a19869083150378949a')
 
     def test_sample_decmpfs(self):
-        self._test_artificial_sample('e7b1d7282c86af32e114e9cb4cafe6daa4833323b57e46d979e03682c719d16d')
+        sha256 = 'e7b1d7282c86af32e114e9cb4cafe6daa4833323b57e46d979e03682c719d16d'
+        self._test_artificial_sample(sha256)
+        results = self.download_sample(sha256) | self.load() | {'path': bytes}
+        # _medium.bin is LZVN-compressed inline (decmpfs type 7); _large.bin is LZVN-compressed in
+        # the resource fork (decmpfs type 8). Neither uses a data fork.
+        self.assertEqual(results['TestVol/_medium.bin'], b'TestPattern!' * 1400)
+        self.assertEqual(results['TestVol/_large.bin'], b'RefineryCov!' * 6000)
 
     def test_sample_front_koly(self):
         self._test_artificial_sample('a2f3d66825746ab6f5421efd9dc55616818f2b581e6456fb3b8632516a2f8225')

@@ -896,9 +896,9 @@ cdef int _decode_lzvn_block(
 # Public entry point
 # ---------------------------------------------------------------------------
 
-def lzfse_decompress(data) -> bytes:
+def lzfse_decompress(data) -> bytearray:
     """
-    Decompress an LZFSE compressed stream. Returns the decompressed data as bytes.
+    Decompress an LZFSE compressed stream. Returns the decompressed data as a bytearray.
     """
     cdef:
         const uint8_t[::1] src = memoryview(data)
@@ -974,6 +974,6 @@ def lzfse_decompress(data) -> bytes:
             else:
                 raise ValueError(f'unknown LZFSE block magic: 0x{magic:08X}')
 
-        return bytes(out_buf[:out_pos])
+        return bytearray(out_buf[:out_pos])
     finally:
         free(out_buf)

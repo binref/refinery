@@ -349,12 +349,12 @@ class HFSVolume:
         key_length = reader.u16()
         if key_length < 10 or 2 + key_length > len(rec):
             return
-        reader.skip(4)  # pad16 + record_type in key
+        reader.skip(2)  # pad
         file_id = reader.u32()
         reader.skip(4)  # start_block
         name_length = reader.u16()
         name_byte_len = name_length * 2
-        if 16 + name_byte_len > 2 + key_length:
+        if 14 + name_byte_len > 2 + key_length:
             return
         try:
             attr_name = codecs.decode(reader.read(name_byte_len), 'utf-16-be')
@@ -362,12 +362,12 @@ class HFSVolume:
             return
         reader.seekset(2 + key_length)
         reader.byte_align(2)
-        if reader.tell() + 8 > len(rec):
+        if reader.tell() + 16 > len(rec):
             return
         record_type = reader.u32()
         if record_type != 0x10:
             return
-        reader.skip(4)  # reserved
+        reader.skip(8)  # reserved[2]
         attr_size = reader.u32()
         attr_data = reader.read(attr_size)
         self._attributes[file_id, attr_name] = attr_data
@@ -402,7 +402,7 @@ class HFSVolume:
 
     def _decmpfs_decompress_inline(self, payload: bytes, method: int, size: int) -> bytes:
         if method == 3:
-            if payload[0] == 0x0F:
+            if (payload[0] & 0x0F) == 0x0F:
                 return payload[1:1 + size]
             return zlib.decompress(payload, -15)[:size]
         if method == 7:
@@ -412,6 +412,8 @@ class HFSVolume:
         return payload[:size]
 
     def _decmpfs_decompress_resource(self, rsrc_data: buf, method: int, size: int) -> bytearray:
+        if method in (8, 12):
+            return self._decmpfs_resource_blocks(rsrc_data, method, size)
         out = bytearray()
         mem = memoryview(rsrc_data)
         if len(rsrc_data) < 260:
@@ -443,13 +445,42 @@ class HFSVolume:
                     out.extend(zlib.decompress(chunk, -15))
                 except zlib.error:
                     out.extend(chunk)
-            elif method == 8:
-                out.extend(_lzvn_decompress_attr(chunk, size - len(out)))
-            elif method == 12:
-                from refinery.lib.fast.lzfse import lzfse_decompress
-                out.extend(lzfse_decompress(chunk))
             else:
                 out.extend(chunk)
+        del out[size:]
+        return out
+
+    def _decmpfs_resource_blocks(self, rsrc_data: buf, method: int, size: int) -> bytearray:
+        """
+        Decompress an LZVN (method 8) or LZFSE (method 12) resource fork. These store a table of
+        (num_blocks + 1) little-endian uint32 offsets at the start of the fork; consecutive offsets
+        delimit each compressed block and each block decompresses to at most 0x10000 bytes.
+        """
+        out = bytearray()
+        total = len(rsrc_data)
+        if total < 8:
+            return out
+        mem = memoryview(rsrc_data)
+        table_size = int.from_bytes(mem[:4], 'little')
+        if table_size < 8 or table_size % 4 or table_size > total:
+            return out
+        num_blocks = table_size // 4 - 1
+        offsets = [int.from_bytes(mem[4 * i:4 * i + 4], 'little') for i in range(num_blocks + 1)]
+        for i in range(num_blocks):
+            start, stop = offsets[i], offsets[i + 1]
+            if not 0 < start <= stop <= total:
+                break
+            remaining = size - len(out)
+            if remaining <= 0:
+                break
+            block_size = min(0x10000, remaining)
+            chunk = mem[start:stop]
+            if method == 8:
+                block = _lzvn_decompress_attr(chunk, block_size)
+            else:
+                from refinery.lib.fast.lzfse import lzfse_decompress
+                block = lzfse_decompress(chunk)
+            out.extend(memoryview(block)[:block_size])
         del out[size:]
         return out
 
@@ -569,18 +600,31 @@ class HFSVolume:
             if item.data_fork is not None and item.data_fork.size > 0:
                 data = self._read_fork(item.data_fork, item.item_id, _FORK_DATA)
             if not data and self._attributes:
-                decompressed = self._decompress_decmpfs(item)
+                try:
+                    decompressed = self._decompress_decmpfs(item)
+                except Exception:
+                    decompressed = None
                 if decompressed is not None:
                     data = decompressed
             mtime = _mac_to_datetime(item.modify_time)
             yield path, data, mtime
 
 
-def _lzvn_decompress_attr(payload: bytes, expected_size: int) -> bytearray:
+def _lzvn_decompress_attr(payload: buf, expected_size: int) -> bytearray:
     """
-    Decompress LZVN-compressed data from a decmpfs attribute or resource fork.
+    Decompress LZVN-compressed data from a decmpfs attribute or resource fork. The payload is a raw
+    LZVN bit stream; it is wrapped in an LZVN block frame so that it can be decoded through the public
+    lzfse_decompress entry point, which is the only symbol the compiled lzfse module exports.
     """
-    from refinery.lib.fast.lzfse import _lzvn_decode
-    output = bytearray()
-    _lzvn_decode(payload, 0, len(payload), expected_size, output)
-    return output
+    from refinery.lib.fast.lzfse import lzfse_decompress
+    n_raw_bytes = min(max(expected_size, 0), 0xFFFFFFFF)
+    if n_raw_bytes == 0:
+        return bytearray()
+    block = b''.join((
+        b'bvxn',
+        n_raw_bytes.to_bytes(4, 'little'),
+        len(payload).to_bytes(4, 'little'),
+        bytes(payload),
+        b'bvx$',
+    ))
+    return lzfse_decompress(block)
