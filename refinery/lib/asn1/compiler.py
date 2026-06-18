@@ -50,6 +50,7 @@ from refinery.lib.asn1.schema import (
     SeqOf,
     Set,
     SetOf,
+    Tagged,
 )
 
 
@@ -479,9 +480,11 @@ class _Parser:
         ftype = self._parse_type()
 
         named_numbers: dict[str, int] | None = None
-        if isinstance(ftype, tuple) and ftype[0] == 'IntNamed':
-            named_numbers = ftype[1]
-            ftype = INTEGER
+        probe = ftype[3] if (isinstance(ftype, tuple) and ftype[0] == 'Tagged') else ftype
+        if isinstance(probe, tuple) and probe[0] == 'IntNamed':
+            named_numbers = probe[1]
+            if probe is ftype:
+                ftype = INTEGER
 
         optional = False
         default = None
@@ -642,6 +645,17 @@ class _Parser:
 
             return ANY
 
+        def _resolve_inner_tags(t: object) -> SchemaType:
+            # An EXPLICIT outer tag preserves any further tags on the inner type as Tagged
+            # wrappers; an IMPLICIT outer tag would replace them, so this is only used on the
+            # EXPLICIT path. A CHOICE cannot be implicitly tagged, so its tag stays EXPLICIT.
+            if isinstance(t, tuple) and t[0] == 'Tagged':
+                tag_num, tagging, inner, tag_class_val = t[1], t[2], t[3], t[4]
+                inner_resolved = _resolve_inner_tags(inner)
+                explicit = tagging != 'IMPLICIT' or isinstance(inner_resolved, Choice)
+                return Tagged(inner_resolved, tag_num, explicit, tag_class_val)
+            return resolve_type(t)
+
         def _resolve_tag_kwargs(typ: object) -> tuple[SchemaType, dict[str, object]]:
             implicit: int | None = None
             explicit: int | None = None
@@ -656,7 +670,10 @@ class _Parser:
                 else:
                     explicit = tag_num
 
-            resolved_type = resolve_type(actual_type)
+            if explicit is not None:
+                resolved_type = _resolve_inner_tags(actual_type)
+            else:
+                resolved_type = resolve_type(actual_type)
 
             if implicit is not None and isinstance(resolved_type, Choice):
                 # A CHOICE cannot be implicitly tagged (X.680); the tag is EXPLICIT.

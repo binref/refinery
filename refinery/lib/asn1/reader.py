@@ -18,6 +18,7 @@ from refinery.lib.asn1.schema import (
     SeqOf,
     Set,
     SetOf,
+    Tagged,
 )
 from refinery.lib.structures import StructReader
 
@@ -412,6 +413,8 @@ class ASN1Reader(StructReader[memoryview]):
             return (CLASS_UNIVERSAL, True, SEQUENCE)
         if isinstance(schema_type, SetOf):
             return (CLASS_UNIVERSAL, True, SET)
+        if isinstance(schema_type, Tagged):
+            return (schema_type.tag_class, schema_type.explicit, schema_type.tag_num)
         if isinstance(schema_type, Choice):
             return None
         return None
@@ -622,6 +625,16 @@ class ASN1Reader(StructReader[memoryview]):
             if tag_class != CLASS_UNIVERSAL or tag_number != SET or not constructed:
                 raise ASN1SchemaMismatch('expected SET OF')
             return self._decode_constructed_children(length, schema.element)
+
+        if isinstance(schema, Tagged):
+            tag_class, constructed, tag_number = self._read_tag()
+            length = self._read_length()
+            if tag_class != schema.tag_class or tag_number != schema.tag_num:
+                raise ASN1SchemaMismatch(
+                    F'expected tag [{schema.tag_num}], got class={tag_class} number={tag_number}')
+            if schema.explicit:
+                return self.decode_with_schema(schema.inner)
+            return self._decode_implicit(schema.inner, length, constructed)
 
         if isinstance(schema, Choice):
             return self._decode_choice(schema)

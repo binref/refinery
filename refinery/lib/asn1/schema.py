@@ -50,6 +50,19 @@ class Choice:
         self.alternatives = alternatives
 
 
+class Tagged:
+    """
+    A type wrapped in a single context/application tag, used to represent an inner tag layer that
+    survives an outer EXPLICIT tag (e.g. the [1] in `[0] EXPLICIT [1] IMPLICIT INTEGER`). The
+    field's own outermost tag is carried on `F`; this wraps the remaining inner tag.
+    """
+    def __init__(self, inner: SchemaType, tag_num: int, explicit: bool, tag_class: int = CLASS_CONTEXT):
+        self.inner = inner
+        self.tag_num = tag_num
+        self.explicit = explicit
+        self.tag_class = tag_class
+
+
 class F:
     def __init__(
         self,
@@ -74,4 +87,4 @@ class ASN1SchemaMismatch(Exception):
     pass
 
 
-SchemaType = int | Seq | Set | SeqOf | SetOf | Choice | object
+SchemaType = int | Seq | Set | SeqOf | SetOf | Choice | Tagged | object

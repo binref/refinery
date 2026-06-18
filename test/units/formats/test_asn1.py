@@ -719,6 +719,30 @@ class TestASN1(TestUnitBase):
         self.assertIs(result['A'], ANY)
         self.assertIs(result['B'], ANY)
 
+    def test_compiler_tagged_named_default_resolves_to_int(self):
+        from refinery.lib.asn1.compiler import compile_asn1
+        result = compile_asn1("""
+            Test DEFINITIONS IMPLICIT TAGS ::= BEGIN
+                Foo ::= SEQUENCE { v [0] IMPLICIT INTEGER { a(1), b(2) } DEFAULT b }
+            END
+        """)
+        self.assertEqual(result['Foo'].fields[0].default, 2)
+
+    def test_compiler_double_tagging(self):
+        from refinery.lib.asn1.compiler import compile_asn1
+        from refinery.lib.asn1.reader import ASN1Reader
+        from refinery.lib.asn1.schema import Tagged
+        result = compile_asn1("""
+            Test DEFINITIONS ::= BEGIN
+                Foo ::= SEQUENCE { f [0] EXPLICIT [1] IMPLICIT INTEGER }
+            END
+        """)
+        field = result['Foo'].fields[0]
+        self.assertEqual(field.explicit, 0)
+        self.assertIsInstance(field.type, Tagged)
+        reader = ASN1Reader(bytes.fromhex('3005a003810105'), bigendian=True)
+        self.assertEqual(reader.decode_with_schema(result['Foo'])['f'], 5)
+
     def test_compiler_typeref_with_constraint(self):
         from refinery.lib.asn1.compiler import compile_asn1
         from refinery.lib.asn1.schema import Seq, INTEGER
