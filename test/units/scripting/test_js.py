@@ -382,6 +382,7 @@ class TestJsDeobfuscator(TestUnitBase):
         test = data | self.load() | str
         goal = inspect.cleandoc(
             '''
+            var IgwdlFe, MDNl0th;
             function _Ai5hk(WjSvqA) {
               MDNl0th = [];
               for (IgwdlFe = 0x1; IgwdlFe <= WjSvqA; IgwdlFe++) {

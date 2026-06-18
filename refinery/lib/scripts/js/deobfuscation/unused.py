@@ -15,16 +15,21 @@ This transformer performs two phases:
 from __future__ import annotations
 
 from refinery.lib.scripts import Node, _remove_from_parent
-from refinery.lib.scripts.js.analysis.model import build_semantic_model
+from refinery.lib.scripts.js.analysis.model import (
+    Binding,
+    BindingKind,
+    FUNCTION_NODES,
+    Scope,
+    ScopeKind,
+    SemanticModel,
+    build_semantic_model,
+)
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     BodyProcessingTransformer,
     GLOBAL_OBJECT_ALIASES,
     collect_identifier_names,
-    function_binds_name,
     is_binding_site,
-    is_reference,
     is_side_effect_free,
-    is_write_target,
     property_key,
     remove_declarator,
     walk_scope,
@@ -32,14 +37,10 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
 from refinery.lib.scripts.js.model import (
     JsArrayExpression,
     JsArrayPattern,
-    JsArrowFunctionExpression,
     JsAssignmentExpression,
     JsBlockStatement,
     JsExpressionStatement,
-    JsForInStatement,
-    JsForOfStatement,
     JsFunctionDeclaration,
-    JsFunctionExpression,
     JsIdentifier,
     JsMemberExpression,
     JsObjectExpression,
@@ -195,32 +196,32 @@ def _has_property_read(stmt: Statement, func_name: str) -> bool:
     return False
 
 
-def _pattern_target_names(left: Node) -> list[str] | None:
+def _pattern_target_idents(left: Node | None) -> list[JsIdentifier] | None:
     """
     If *left* is a destructuring pattern composed entirely of plain identifier targets (`[a, b]` or
-    `{a, b}`), return the list of target names. Returns `None` for anything with nesting, defaults,
-    rest elements, holes, computed keys, or member-expression targets.
+    `{a, b}`), return those identifier nodes. Returns `None` for anything with nesting, defaults, rest
+    elements, holes, computed keys, or member-expression targets.
     """
     if isinstance(left, (JsArrayExpression, JsArrayPattern)):
-        names: list[str] = []
+        idents: list[JsIdentifier] = []
         for elem in left.elements:
             if not isinstance(elem, JsIdentifier):
                 return None
-            names.append(elem.name)
-        return names or None
+            idents.append(elem)
+        return idents or None
     if isinstance(left, (JsObjectExpression, JsObjectPattern)):
-        names = []
+        idents = []
         for prop in left.properties:
             if not isinstance(prop, JsProperty) or prop.computed:
                 return None
             if not isinstance(prop.value, JsIdentifier):
                 return None
-            names.append(prop.value.name)
-        return names or None
+            idents.append(prop.value)
+        return idents or None
     return None
 
 
-def _destructuring_target_safe(left: Node, right: Node) -> bool:
+def _destructuring_target_safe(left: Node | None, right: Node | None) -> bool:
     """
     Whether assigning *right* into the destructuring pattern *left* is guaranteed neither to throw
     nor to run observable code, even when *right* is side-effect-free as a plain expression. Array
@@ -279,115 +280,6 @@ def _in_assignment_target(node: JsIdentifier) -> bool:
     return False
 
 
-def _enclosing_scope_root(parent: Node) -> Node:
-    """
-    Return the node whose subtree spans the variable scope that *parent* belongs to: the nearest
-    enclosing function body (a block whose parent is a function) or the script itself. Because `var`
-    bindings are function-scoped, a name assigned inside a nested block (`if`/`for`/`while`/`try` or a
-    bare `{}`) can be read anywhere in this scope, so read- and write-analysis must cover the whole
-    scope rather than just the immediate block.
-    """
-    cursor = parent
-    while True:
-        grandparent = cursor.parent
-        if grandparent is None or isinstance(grandparent, (
-            JsFunctionDeclaration, JsFunctionExpression, JsArrowFunctionExpression,
-        )):
-            return cursor
-        cursor = grandparent
-
-
-def _is_shadowed_within(node: Node, name: str, scope_root: Node) -> bool:
-    """
-    Whether *name*, used at *node*, is rebound by a function nested strictly inside *scope_root* —
-    through a parameter, an inner function-declaration name, or a `var` declaration — so that the use
-    resolves to that inner binding rather than to one in *scope_root*'s own scope. Only function
-    boundaries between *node* and *scope_root* are considered: *scope_root*'s own scope is never a
-    shadower, because its bindings are exactly the ones whose references are being counted.
-    """
-    cursor = node.parent
-    while cursor is not None and cursor is not scope_root:
-        if isinstance(cursor, (
-            JsFunctionDeclaration, JsFunctionExpression, JsArrowFunctionExpression,
-        )) and function_binds_name(cursor, name):
-            return True
-        cursor = cursor.parent
-    return False
-
-
-def _within_nested_function(node: Node, scope_root: Node) -> bool:
-    """
-    Whether *node* lies inside a function nested below *scope_root*, i.e. a function boundary is
-    crossed on the path from *node* up to *scope_root*. An identifier in such a position is a
-    closure reference into *scope_root*'s scope rather than a direct use within it, so removing the
-    binding it resolves to would change the closure's meaning.
-    """
-    cursor = node.parent
-    while cursor is not None and cursor is not scope_root:
-        if isinstance(cursor, (
-            JsFunctionDeclaration, JsFunctionExpression, JsArrowFunctionExpression,
-        )):
-            return True
-        cursor = cursor.parent
-    return False
-
-
-def _scope_read_names(scope_root: Node) -> set[str]:
-    """
-    Names that appear in a non-binding position within *scope_root* (plus the targets of any
-    `for-in`/`for-of` statements), restricted to references that resolve to *scope_root*'s own scope.
-    The search descends into nested function bodies, because `var` bindings are function-scoped (and
-    top-level bindings are global): a name captured by a closure stays live. A use that an inner
-    function rebinds for itself is shadowed and therefore ignored.
-    """
-    names: set[str] = set()
-    for node in scope_root.walk():
-        if isinstance(node, JsIdentifier):
-            if not is_binding_site(node) and not _is_shadowed_within(node, node.name, scope_root):
-                names.add(node.name)
-        elif (
-            isinstance(node, (JsForInStatement, JsForOfStatement))
-            and isinstance(node.left, JsIdentifier)
-            and not _is_shadowed_within(node.left, node.left.name, scope_root)
-        ):
-            names.add(node.left.name)
-    return names
-
-
-def _script_scope_keep_names(script: JsScript) -> set[str]:
-    """
-    Names whose bare top-level declaration must be kept when removing unreferenced declarators at the
-    script scope. Unlike `_scope_read_names`, which counts any non-shadowed use inside a nested
-    function, this distinguishes uses that survive the declaration's removal. A name read at the top
-    level is always kept, because execution order there cannot be assumed (a read may precede the
-    write that would re-create it as an implicit global). A name read deep inside a function but never
-    plainly assigned would become a free variable if the declaration went away, so it is kept too. A
-    name that is read deep *and* re-created by a plain assignment is merely a redundant explicit form
-    of an implicit global, so its hoisted declaration may be removed.
-    """
-    keep: set[str] = set()
-    for node in walk_scope(script):
-        if isinstance(node, JsIdentifier) and is_reference(node):
-            keep.add(node.name)
-        elif (
-            isinstance(node, (JsForInStatement, JsForOfStatement))
-            and isinstance(node.left, JsIdentifier)
-        ):
-            keep.add(node.left.name)
-    read: set[str] = set()
-    pure_assigned: set[str] = set()
-    for node in script.walk():
-        if not isinstance(node, JsIdentifier) or not is_reference(node):
-            continue
-        if _is_shadowed_within(node, node.name, script):
-            continue
-        if _in_assignment_target(node):
-            pure_assigned.add(node.name)
-        else:
-            read.add(node.name)
-    return keep | (read - pure_assigned)
-
-
 class JsUnusedCodeRemoval(BodyProcessingTransformer):
     """
     Remove function declarations that are never referenced from live code, and remove assignments
@@ -398,22 +290,79 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
 
     def __init__(self, preserve_globals: bool = True):
         super().__init__()
-        self._enclosing_cache: dict[int, set[str]] = {}
         self.preserve_globals = preserve_globals
         self._has_reflection = False
+        self._model: SemanticModel | None = None
 
     def visit_JsScript(self, node: JsScript):
-        self._has_reflection = build_semantic_model(node).has_reflection_surface()
-        self.generic_visit(node)
-        self._process_body(node, node.body)
+        """
+        Rebuild the semantic model and sweep the whole script until a fixpoint. The model is computed
+        once per pass and queried by every removal below; mutations within a pass only ever delete
+        references, so a fact taken from the pass-start model can never wrongly classify a live binding
+        as dead, and the next pass — over a freshly-built model — sweeps anything the staleness held
+        back. Transitive deadness therefore falls out of the loop rather than needing the pipeline.
+        """
+        while True:
+            previously_changed = self.changed
+            self.changed = False
+            self._model = build_semantic_model(node)
+            self._has_reflection = self._model.has_reflection_surface()
+            self.generic_visit(node)
+            self._process_body(node, node.body)
+            pass_changed = self.changed
+            self.changed = previously_changed or pass_changed
+            if not pass_changed:
+                break
         return None
 
+    @property
+    def model(self) -> SemanticModel:
+        assert self._model is not None
+        return self._model
+
+    def _at_script_scope(self, parent: Node) -> bool:
+        """
+        Whether *parent* (a body) lies at the script scope rather than inside any function, so the
+        names it binds are globals. When a reflection surface is present these must be preserved,
+        because reflective code could read them by name.
+        """
+        scope = self.model.scope_of(parent)
+        while scope is not None:
+            if scope.kind is ScopeKind.FUNCTION:
+                return False
+            scope = scope.parent
+        return True
+
+    @staticmethod
+    def _owns(scope: Scope, binding: Binding | None) -> bool:
+        """
+        Whether removing dead assignments to *binding* is the responsibility of the variable scope
+        *scope*: a binding declared in this very scope, or an implicit global (which the program may
+        write from anywhere). A *live* binding from an enclosing scope is left alone here — the
+        assignment writes through a closure into a still-reachable outer variable — though a write to a
+        dead enclosing binding is still removable and is admitted separately by the caller.
+        """
+        if binding is None:
+            return False
+        if binding.kind is BindingKind.IMPLICIT_GLOBAL:
+            return True
+        return binding.scope is scope
+
+    @staticmethod
+    def _is_var_scope_root(parent: Node) -> bool:
+        """
+        Whether *parent* is the body that introduces a variable scope — the script, or a function's own
+        body block — as opposed to a nested block. Dead assignments and destructuring are swept once per
+        variable scope from its root, so the whole scope (across its nested blocks, but not nested
+        functions) is considered together and no statement is examined twice. The model maps a nested
+        block to its *enclosing* scope, so a structural test, not `scope_of`, identifies the root.
+        """
+        if isinstance(parent, JsScript):
+            return True
+        return isinstance(parent, JsBlockStatement) and isinstance(parent.parent, FUNCTION_NODES)
+
     def _process_body(self, parent: Node, body: list[Statement]):
-        if (
-            self.preserve_globals
-            and self._has_reflection
-            and isinstance(_enclosing_scope_root(parent), JsScript)
-        ):
+        if self.preserve_globals and self._has_reflection and self._at_script_scope(parent):
             return
         removed_functions = self._remove_dead_functions(body)
         dead_variables, preserved = self._remove_dead_variables(parent, body, removed_functions)
@@ -449,102 +398,123 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
         self, parent: Node, body: list[Statement], defunct: set[str],
     ) -> tuple[set[str], set[JsExpressionStatement]]:
         """
-        Remove assignments to variables that are never read in the outer scope. Handles both
-        simple dead assignments and transitive chains where one dead variable is only read by
-        another dead variable's RHS. Returns the set of dead variable names and the set of
-        expression statements created by preserving side-effectful RHS expressions.
-
-        Reads are counted across the whole enclosing scope. At a function scope the scan descends
-        into nested functions, so a closure read keeps the binding live. At the script scope it does
-        not: a top-level binding that surviving code only reaches as an implicit-global use inside a
-        function is still removable, matching the way such reads resolve to the global at runtime.
+        Remove simple assignments (`T = rhs`) whose target is never read. A target is a candidate when
+        it resolves to a binding this variable scope owns — a local declaration or an implicit global —
+        or to any binding that is already dead everywhere (a write-through to a never-read outer
+        variable). A candidate is removed when it is dead: every read of it lies within the right-hand
+        side of an assignment to another dead target, so nothing observes its value. Reads come from the
+        whole-program model, so a binding read across a function boundary or captured by a closure stays
+        live. A side-effect-free right-hand side is dropped with the statement; an effectful one is kept
+        as a bare expression. Returns the dead target names and the statements kept for their side effects.
         """
-        local_names = self._collect_local_names(parent, body)
-        write_stmts: dict[str, list[JsExpressionStatement]] = {}
+        if not self._is_var_scope_root(parent):
+            return set(), set()
+        scope = self.model.scope_of(parent)
+        assert scope is not None
+        stores: dict[Binding, list[JsExpressionStatement]] = {}
         for node in walk_scope(parent):
             if not isinstance(node, JsExpressionStatement):
                 continue
             expr = node.expression
-            if not isinstance(expr, JsAssignmentExpression):
+            if not isinstance(expr, JsAssignmentExpression) or expr.operator != '=':
                 continue
-            if expr.operator != '=' or not isinstance(expr.left, JsIdentifier):
+            if not isinstance(expr.left, JsIdentifier):
                 continue
-            name = expr.left.name
-            if local_names is not None and name not in local_names:
+            binding = self.model.resolve(expr.left)
+            if binding is None:
                 continue
-            write_stmts.setdefault(name, []).append(node)
-        if not write_stmts:
+            if self._owns(scope, binding) or binding.is_dead:
+                stores.setdefault(binding, []).append(node)
+        if not stores:
             return set(), set()
-        has_free_read: set[str] = set()
-        read_in_assign: dict[str, set[str]] = {}
-        scope_root = _enclosing_scope_root(parent)
-        if isinstance(scope_root, JsScript):
-            read_nodes = walk_scope(scope_root)
-        else:
-            read_nodes = scope_root.walk()
-        for node in read_nodes:
-            if not isinstance(node, JsIdentifier):
-                continue
-            name = node.name
-            if name not in write_stmts:
-                continue
-            if is_binding_site(node):
-                continue
-            if _within_nested_function(node, scope_root):
-                if not _is_shadowed_within(node, name, scope_root):
-                    has_free_read.add(name)
-                continue
-            if is_write_target(node):
-                continue
-            enclosing = self._enclosing_assignment_target(node)
-            if enclosing is not None:
-                read_in_assign.setdefault(name, set()).add(enclosing)
-            else:
-                has_free_read.add(name)
-        dead: set[str] = set()
-        for name in write_stmts:
-            if name not in has_free_read and name not in read_in_assign:
-                dead.add(name)
-        changed = True
-        while changed:
-            changed = False
-            for name, readers in read_in_assign.items():
-                if name in dead or name in has_free_read:
-                    continue
-                if readers.issubset(dead):
-                    dead.add(name)
-                    changed = True
+        dead = self._dead_store_bindings(stores)
         if not dead:
             return set(), set()
-        all_defunct = defunct | dead
+        dead_names = {binding.name for binding in dead}
+        all_defunct = defunct | dead_names
         preserved: set[JsExpressionStatement] = set()
-        for name in dead:
-            for stmt in write_stmts[name]:
+        for binding in dead:
+            for stmt in stores[binding]:
                 expr = stmt.expression
-                if not isinstance(expr, JsAssignmentExpression) or expr.right is None:
-                    _remove_from_parent(stmt)
-                    continue
-                if is_side_effect_free(expr.right, all_defunct):
+                assert isinstance(expr, JsAssignmentExpression)
+                if expr.right is None or is_side_effect_free(expr.right, all_defunct):
                     _remove_from_parent(stmt)
                 else:
                     stmt.expression = expr.right
                     expr.right.parent = stmt
                     preserved.add(stmt)
-        self._remove_empty_declarators(parent, body, dead)
+        self._remove_empty_declarators(parent, body, dead_names)
         self.mark_changed()
-        return dead, preserved
+        return dead_names, preserved
+
+    def _dead_store_bindings(
+        self, stores: dict[Binding, list[JsExpressionStatement]],
+    ) -> set[Binding]:
+        """
+        From candidate bindings mapped to their removable assignments, return those that are dead. A
+        binding is live if it has a read that is *not* contained in the right-hand side of any candidate
+        assignment — a use in live code, in a live function, a closure, or a non-candidate assignment.
+        Liveness then propagates back along right-hand sides: if a live binding's assignment reads another
+        candidate, that candidate is live too. The rest, whose every read sits inside the right-hand side
+        of an assignment that is itself dead, are dead — removing those assignments removes the reads, so
+        nothing observes the value. A read nested arbitrarily deep inside a candidate's right-hand side
+        (for instance within an assigned function body) is covered by the outermost candidate, which is
+        what distinguishes a read inside a dead store from one inside a live function declaration.
+        """
+        candidates = set(stores)
+        rhs_owner: dict[int, Binding] = {}
+        for binding, statements in stores.items():
+            for stmt in statements:
+                expr = stmt.expression
+                if isinstance(expr, JsAssignmentExpression) and expr.right is not None:
+                    rhs_owner[id(expr.right)] = binding
+        readers: dict[Binding, set[Binding]] = {binding: set() for binding in candidates}
+        live: set[Binding] = set()
+        for binding in candidates:
+            for read in binding.reads:
+                owner = self._covering_store(read, rhs_owner)
+                if owner is None or owner is binding:
+                    live.add(binding)
+                else:
+                    readers[binding].add(owner)
+        changed = True
+        while changed:
+            changed = False
+            for binding in candidates - live:
+                if readers[binding] & live:
+                    live.add(binding)
+                    changed = True
+        return candidates - live
+
+    @staticmethod
+    def _covering_store(node: Node, rhs_owner: dict[int, Binding]) -> Binding | None:
+        """
+        The candidate binding whose assignment right-hand side encloses *node*, taken at the outermost
+        such right-hand side, or `None` when *node* lies outside every candidate right-hand side.
+        Removing that binding's assignment would delete *node* along with it.
+        """
+        owner: Binding | None = None
+        cursor: Node | None = node
+        while cursor is not None:
+            found = rhs_owner.get(id(cursor))
+            if found is not None:
+                owner = found
+            cursor = cursor.parent
+        return owner
 
     def _remove_dead_destructuring(
         self, parent: Node, body: list[Statement], defunct: set[str],
     ) -> set[str]:
         """
-        Remove destructuring-assignment statements (`[a, b] = rhs`) whose every target is a local
-        name that is never read and whose right-hand side is side-effect-free. These arise from CFF
-        recovery of vestigial state variables. Reads are counted across the whole enclosing function
-        scope (including nested functions) so closure references and reads outside the immediate
-        block conservatively keep a target alive.
+        Remove destructuring-assignment statements (`[a, b] = rhs`) whose every target the variable
+        scope owns, that are never read, and whose right-hand side is side-effect-free. These arise from
+        CFF recovery of vestigial state variables. Reads are taken over the whole scope including nested
+        functions, so a closure reference or any use other than a plain assignment keeps a target alive.
         """
-        local_names = self._collect_local_names(parent, body)
+        if not self._is_var_scope_root(parent):
+            return set()
+        scope = self.model.scope_of(parent)
+        assert scope is not None
         candidates: list[tuple[JsExpressionStatement, list[str]]] = []
         for node in walk_scope(parent):
             if not isinstance(node, JsExpressionStatement):
@@ -552,21 +522,20 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
             expr = node.expression
             if not isinstance(expr, JsAssignmentExpression) or expr.operator != '=':
                 continue
-            targets = _pattern_target_names(expr.left)
+            targets = _pattern_target_idents(expr.left)
             if not targets:
                 continue
-            if local_names is not None and any(t not in local_names for t in targets):
+            if any(not self._owns(scope, self.model.resolve(t)) for t in targets):
                 continue
             if expr.right is None or not is_side_effect_free(expr.right, defunct):
                 continue
             if not _destructuring_target_safe(expr.left, expr.right):
                 continue
-            candidates.append((node, targets))
+            candidates.append((node, [t.name for t in targets]))
         if not candidates:
             return set()
-        scope_root = _enclosing_scope_root(parent)
         read_names: set[str] = set()
-        for node in scope_root.walk():
+        for node in parent.walk():
             if not isinstance(node, JsIdentifier):
                 continue
             if is_binding_site(node) or _in_assignment_target(node):
@@ -582,7 +551,7 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
             return set()
         still_written = {
             node.name
-            for node in scope_root.walk()
+            for node in parent.walk()
             if isinstance(node, JsIdentifier)
             and node.name in removed
             and _in_assignment_target(node)
@@ -722,157 +691,27 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
         self, parent: Node, body: list[Statement], dead_names: set[str],
     ):
         """
-        Remove `var X;` declarators (no initializer) for dead variable names or names that have
-        no references in the enclosing scope. Also removes initialized declarators whose initializer
-        is side-effect-free and whose name has no reads anywhere in the tree. Because `var` bindings
-        are function-scoped, a name read inside a function scope is searched for across nested
-        function bodies too, so a binding captured by a closure keeps its declaration. Variables used
-        as `for-in` or `for-of` iteration targets are always considered referenced.
-
-        At a function scope the reference set is the deep `_scope_read_names`. At the script scope the
-        deep read of an implicit global from inside a function does not by itself keep its top-level
-        declaration: `_script_scope_keep_names` keeps only names whose removal would change behavior
-        (read at the top level, or read deep without ever being plainly assigned), so a redundant
-        declaration of an implicit global that a function re-creates by assignment is still removed.
+        Remove `var X;` declarators whose binding is wholly unreferenced. A bare declarator (no
+        initializer) is dropped when its name is in *dead_names* — a binding found dead while removing
+        its assignments, whose references the pass-start model may still record because they sat in
+        now-removed statements — or when its binding has no reads and no writes at all. An initialized
+        declarator is dropped only when its binding is wholly unreferenced and the initializer is
+        side-effect-free. A binding still written by a surviving statement keeps its declaration, so it
+        does not silently become an implicit global; a binding read across a function boundary or
+        captured by a closure likewise keeps its declaration.
         """
-        referenced: set[str] | None = None
-        referenced_deep: set[str] | None = None
         for stmt in list(body):
             if not isinstance(stmt, JsVariableDeclaration):
                 continue
             for decl in list(stmt.declarations):
-                if not isinstance(decl, JsVariableDeclarator):
+                if not isinstance(decl, JsVariableDeclarator) or not isinstance(decl.id, JsIdentifier):
                     continue
-                if not isinstance(decl.id, JsIdentifier):
-                    continue
-                name = decl.id.name
+                binding = self.model.binding_of(decl.id)
+                unreferenced = binding is not None and not binding.reads and not binding.writes
                 if decl.init is None:
-                    if name in dead_names:
+                    if decl.id.name in dead_names or unreferenced:
                         remove_declarator(decl)
                         self.mark_changed()
-                        continue
-                    if referenced is None:
-                        scope_root = _enclosing_scope_root(parent)
-                        if isinstance(scope_root, JsScript):
-                            referenced = _script_scope_keep_names(scope_root)
-                        else:
-                            referenced = _scope_read_names(scope_root)
-                    if name not in referenced:
-                        remove_declarator(decl)
-                        self.mark_changed()
-                else:
-                    if referenced_deep is None:
-                        referenced_deep = set()
-                        for node in _enclosing_scope_root(parent).walk():
-                            if isinstance(node, JsIdentifier) and not is_binding_site(node):
-                                referenced_deep.add(node.name)
-                    if name not in referenced_deep and is_side_effect_free(decl.init):
-                        remove_declarator(decl)
-                        self.mark_changed()
-
-    def _collect_local_names(self, parent: Node, body: list[Statement]) -> set[str] | None:
-        """
-        Collect names declared locally in this scope. Returns `None` for `JsScript` (top level)
-        where all variables are local. For function bodies, returns parameter names, `var`, `let`,
-        and `const` declarations, plus undeclared assignment targets that don't shadow any name in
-        enclosing scopes.
-        """
-        if isinstance(parent, JsScript):
-            return None
-        names: set[str] = set()
-        func_parent = parent.parent
-        is_function_body = isinstance(func_parent, (
-            JsFunctionDeclaration,
-            JsFunctionExpression,
-            JsArrowFunctionExpression,
-        ))
-        if is_function_body:
-            names |= self._param_names(func_parent.params)
-        names |= self._declared_names_in_scope(body)
-        if is_function_body:
-            enclosing = self._gather_enclosing_declarations(func_parent)
-            for node in walk_scope(parent):
-                if (
-                    isinstance(node, JsExpressionStatement)
-                    and isinstance(node.expression, JsAssignmentExpression)
-                    and node.expression.operator == '='
-                    and isinstance(node.expression.left, JsIdentifier)
-                ):
-                    name = node.expression.left.name
-                    if name not in names and name not in enclosing:
-                        names.add(name)
-        return names
-
-    @staticmethod
-    def _param_names(params: list) -> set[str]:
-        """
-        Names bound by a function's parameter list, including destructuring and default patterns.
-        """
-        names: set[str] = set()
-        for p in params:
-            if isinstance(p, JsIdentifier):
-                names.add(p.name)
-            else:
-                for n in p.walk():
-                    if isinstance(n, JsIdentifier):
-                        names.add(n.name)
-        return names
-
-    @staticmethod
-    def _declared_names_in_scope(body: list[Statement]) -> set[str]:
-        """
-        Names of all `var`/`let`/`const` declarators in *body*, descending into nested blocks but
-        not into nested function scopes.
-        """
-        names: set[str] = set()
-        for stmt in body:
-            for node in walk_scope(stmt):
-                if isinstance(node, JsVariableDeclaration):
-                    for decl in node.declarations:
-                        if isinstance(decl, JsVariableDeclarator) and isinstance(decl.id, JsIdentifier):
-                            names.add(decl.id.name)
-        return names
-
-    def _gather_enclosing_declarations(self, func: Node) -> set[str]:
-        """
-        Collect the variable names bound in scopes enclosing `func`, up to and including the
-        script scope: parameters and declarations of every enclosing function, plus the
-        script's own declarations. Used to tell a truly-undeclared assignment target from an
-        outer-scope variable a nested assignment writes through, so a closure assigning to a
-        captured outer binding is not mistaken for a fresh local store and removed.
-        """
-        cached = self._enclosing_cache.get(id(func))
-        if cached is not None:
-            return cached
-        declared: set[str] = set()
-        cursor = func.parent
-        while cursor is not None:
-            if isinstance(cursor, (
-                JsFunctionDeclaration, JsFunctionExpression, JsArrowFunctionExpression,
-            )):
-                declared |= self._param_names(cursor.params)
-                if isinstance(cursor.body, JsBlockStatement):
-                    declared |= self._declared_names_in_scope(cursor.body.body)
-            elif isinstance(cursor, JsScript):
-                declared |= self._declared_names_in_scope(cursor.body)
-                break
-            cursor = cursor.parent
-        self._enclosing_cache[id(func)] = declared
-        return declared
-
-    @staticmethod
-    def _enclosing_assignment_target(node: JsIdentifier) -> str | None:
-        """
-        If *node* is read inside an assignment's RHS, return the target variable name.
-        """
-        cursor: Node = node
-        while cursor.parent is not None:
-            parent = cursor.parent
-            if isinstance(parent, JsAssignmentExpression) and cursor is not parent.left:
-                if isinstance(parent.left, JsIdentifier):
-                    return parent.left.name
-                return None
-            if isinstance(parent, JsExpressionStatement):
-                return None
-            cursor = parent
-        return None
+                elif unreferenced and is_side_effect_free(decl.init):
+                    remove_declarator(decl)
+                    self.mark_changed()

@@ -299,13 +299,22 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
     )
 
     def test_generator_cff_redirect_qualification_levels(self):
+        """
+        The generator dissolves and the `with`-redirected namespace flattens all the way down: the
+        qualified `Sub.arr` / `Sub.val` redirects the unflattener produces are promoted to flat
+        variables by the downstream namespace flattening, leaving an equivalent throwing program.
+        """
         result = self._deobfuscate(self.REDIRECT_QUALIFY_CFF)
-        self.assertNotIn('function*', result)
-        self.assertNotIn('scope', result)
-        self.assertNotIn('RV', result)
-        self.assertIn('Sub.arr', result)
-        self.assertIn('Sub.val', result)
-        self.assertIn('extra', result)
+        self.assertEqual(result, inspect.cleandoc(
+            """
+            function wrapper() {
+              var arr, val;
+              var extra;
+              arr = args;
+              return extra + val;
+            }
+            """
+        ))
 
     COMPUTED_REDIRECT_CFF = inspect.cleandoc(
         """

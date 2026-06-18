@@ -66,7 +66,12 @@ class TestUnusedCodeRemoval(TestJsDeobfuscator):
             self._remove_unused(source),
         )
 
-    def test_implicit_global_bare_var_removed_at_script_scope(self):
+    def test_script_scope_declarations_kept_when_written_in_function(self):
+        """
+        A top-level declaration whose global is written inside `build` is kept: flow-insensitively the
+        write cannot be proven to precede every read, so dropping the declaration could leave a read of
+        an undeclared name. Only `push` (never referenced) and `dead` (a dead store) are removed.
+        """
         source = inspect.cleandoc(
             """
             var acc, i, push, dead;
@@ -84,6 +89,7 @@ class TestUnusedCodeRemoval(TestJsDeobfuscator):
         self.assertEqual(
             inspect.cleandoc(
                 """
+                var acc, i;
                 function build(n) {
                   acc = [];
                   for (i = 1; i <= n; i++) {
