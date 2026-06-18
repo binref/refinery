@@ -101,3 +101,51 @@ class TestNamespaceFlattening(TestJsDeobfuscator):
             ),
             self._flatten('var NS = {}; NS.x = 1; function f() { return NS.x; }'),
         )
+
+    def test_block_scoped_shadow_does_not_block_flatten(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var x;
+                x = 1;
+                {
+                  let x = 9;
+                  log(x);
+                }
+                log(x);
+                """
+            ),
+            self._flatten('var NS = {}; NS.x = 1; { let x = 9; log(x); } log(NS.x);'),
+        )
+
+    def test_destructured_param_shadow_does_not_block_flatten(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var x;
+                x = 1;
+                function g([x]) {
+                  return x;
+                }
+                log(x + g([2]));
+                """
+            ),
+            self._flatten('var NS = {}; NS.x = 1; function g([x]) { return x; } log(NS.x + g([2]));'),
+        )
+
+    def test_catch_param_shadow_does_not_block_flatten(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var x;
+                x = 1;
+                try {
+                  h();
+                } catch (x) {
+                  log(x);
+                }
+                log(x);
+                """
+            ),
+            self._flatten('var NS = {}; NS.x = 1; try { h(); } catch (x) { log(x); } log(NS.x);'),
+        )

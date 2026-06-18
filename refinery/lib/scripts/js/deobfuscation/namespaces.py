@@ -6,6 +6,7 @@ from __future__ import annotations
 from typing import Iterator, NamedTuple
 
 from refinery.lib.scripts import Expression, Node, _replace_in_parent
+from refinery.lib.scripts.js.analysis.model import SemanticModel, build_semantic_model
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     FUNCTION_NODE_TYPES,
     ScopeProcessingTransformer,
@@ -20,6 +21,7 @@ from refinery.lib.scripts.js.model import (
     JsIdentifier,
     JsMemberExpression,
     JsObjectExpression,
+    JsScript,
     JsVariableDeclaration,
     JsVariableDeclarator,
     JsVarKind,
@@ -31,21 +33,20 @@ class _PropertyAssignment(NamedTuple):
     stmt_index: int
 
 
-def _is_binding_in_nested_function(node: Node, scope: Node) -> bool:
+def _resolves_to_nested_binding(model: SemanticModel, node: JsIdentifier, scope: Node) -> bool:
     """
-    Return True if `node` is an identifier whose name is locally bound (via `var`, parameter, or
-    function name) inside a function nested within `scope`. Such identifiers reference the local
-    binding, not the outer scope, and do not constitute naming conflicts.
+    Whether *node* names a binding declared strictly inside *scope* — within a nested function,
+    block, catch clause, or other inner scope. Such a reference denotes a local that shadows the
+    flattened property rather than clashing with it, so it is not a naming conflict. A binding owned
+    by *scope* itself, a free name, or a name reachable only across a dynamic scope is not nested and
+    counts as a conflict. Both reference and declaration positions are resolved, since a same-named
+    declaration nested below *scope* is likewise harmless.
     """
-    name = node.name if isinstance(node, JsIdentifier) else None
-    if name is None:
+    binding = model.resolve(node) or model.binding_of(node)
+    if binding is None:
         return False
-    ancestor = node.parent
-    while ancestor is not None and ancestor is not scope:
-        if isinstance(ancestor, FUNCTION_NODE_TYPES):
-            return function_binds_name(ancestor, name)
-        ancestor = ancestor.parent
-    return False
+    owner = binding.scope.node
+    return owner is not scope and owner.is_descendant_of(scope)
 
 
 class JsNamespaceFlattening(ScopeProcessingTransformer):
@@ -56,14 +57,24 @@ class JsNamespaceFlattening(ScopeProcessingTransformer):
     are left on the namespace object.
     """
 
+    def __init__(self):
+        super().__init__()
+        self._root: JsScript | None = None
+
+    def visit_JsScript(self, node: JsScript):
+        self._root = node
+        return super().visit_JsScript(node)
+
     def _process_scope_body(self, scope: Node, body: list) -> None:
+        assert self._root is not None
         for name, declarator, decl_stmt in self._find_candidates(body):
             if not self._is_safe(scope, name, declarator):
                 continue
             props = self._collect_properties(scope, name, declarator)
             if not props:
                 continue
-            conflicts = self._find_conflicting_names(scope, name, props, declarator)
+            model = build_semantic_model(self._root)
+            conflicts = self._find_conflicting_names(model, scope, name, props, declarator)
             flattenable = props - conflicts
             if not flattenable:
                 continue
@@ -158,6 +169,7 @@ class JsNamespaceFlattening(ScopeProcessingTransformer):
 
     @staticmethod
     def _find_conflicting_names(
+        model: SemanticModel,
         scope: Node,
         name: str,
         props: set[str],
@@ -181,7 +193,7 @@ class JsNamespaceFlattening(ScopeProcessingTransformer):
                 continue
             if isinstance(parent, JsMemberExpression) and parent.object is node:
                 continue
-            if _is_binding_in_nested_function(node, scope):
+            if _resolves_to_nested_binding(model, node, scope):
                 continue
             conflicts.add(node.name)
         return conflicts

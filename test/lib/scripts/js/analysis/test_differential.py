@@ -74,6 +74,16 @@ class TestDeobfuscationDifferential(TestBase):
             ' function probe(){ try { throw "caught"; } catch (X) { return globalThis.X; } }'
             ' console.log(probe());')
 
+    def test_namespace_flatten_preserves_block_scoped_shadow(self):
+        """
+        Flattening `NS.x` to a script-level `var x` must respect a `let x` that block-scopes a
+        different value: the inner read stays bound to the block's `x`, the outer read to the
+        flattened one, so the observed sequence is unchanged.
+        """
+        self._check(
+            'var NS = {}; NS.x = 1; var r = [];'
+            ' { let x = 9; r.push(x); } r.push(NS.x); console.log(r.join(","));')
+
     def test_nested_closures_share_binding(self):
         """
         `outer` calls a nested `add` that mutates the captured `s`. A nested call runs in an isolated
