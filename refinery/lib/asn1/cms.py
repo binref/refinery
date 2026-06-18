@@ -39,12 +39,12 @@ def _parse_asn1_time(value):
     hms += [0] * (3 - len(hms))
     hour, minute, second = hms[:3]
     micro = int((frac[1:] + '000000')[:6]) if frac else 0
-    if zone is None or zone == 'Z':
-        tzinfo = timezone.utc
-    else:
-        offset = timedelta(hours=int(zone[1:3]), minutes=int(zone[3:5] or 0))
-        tzinfo = timezone(offset if zone[0] == '+' else -offset)
     try:
+        if zone is None or zone == 'Z':
+            tzinfo = timezone.utc
+        else:
+            offset = timedelta(hours=int(zone[1:3]), minutes=int(zone[3:5] or 0))
+            tzinfo = timezone(offset if zone[0] == '+' else -offset)
         dt = datetime(year, month, day, hour, minute, second, micro, tzinfo=tzinfo)
     except ValueError:
         return value
@@ -105,6 +105,8 @@ def _extract_spc_string(value):
         return _decode_text(value, 'utf-16-be')
     if isinstance(value, dict):
         inner = value.get('value', value)
+        if inner is value:
+            return value
         return _extract_spc_string(inner)
     if isinstance(value, list):
         for item in value:
@@ -318,8 +320,10 @@ def parse_content_info(data: bytes | bytearray | memoryview) -> OrderedDict:
         result = _unsign(_postprocess(best_result, mv))
         _attach_certificate_fingerprints(result, mv, best_spans)
     else:
-        reader = ASN1Reader(mv, bigendian=True)
-        result = reader.read_tlv()
+        try:
+            result = ASN1Reader(mv, bigendian=True).read_tlv()
+        except Exception:
+            result = None
     if not isinstance(result, OrderedDict):
         raise RuntimeError('The ContentInfo data did not parse as a dictionary.')
     return result

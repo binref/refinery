@@ -48,6 +48,20 @@ class TestPKCS7(TestUnitBase):
         from refinery.lib.asn1.cms import _parse_asn1_time
         self.assertEqual(_parse_asn1_time('not-a-valid-time'), 'not-a-valid-time')
 
+    def test_parse_asn1_time_out_of_range_offset_returns_raw(self):
+        from refinery.lib.asn1.cms import _parse_asn1_time
+        self.assertEqual(_parse_asn1_time('20230101120000+9900'), '20230101120000+9900')
+        self.assertEqual(_parse_asn1_time('20230101120000-2400'), '20230101120000-2400')
+
+    def test_extract_spc_string_dict_without_value_terminates(self):
+        from refinery.lib.asn1.cms import _extract_spc_string
+        self.assertEqual(_extract_spc_string({'tag': 'context-0'}), {'tag': 'context-0'})
+
+    def test_unparsable_content_info_raises_runtime_error(self):
+        from refinery.lib.asn1.cms import parse_content_info
+        with self.assertRaises(RuntimeError):
+            parse_content_info(bytes.fromhex('807f41'))
+
     SIGNATURE1 = lzma.decompress(base64.b85decode(
         B'{Wp48S^xk9=GL@E0stWa8~^|S5YJf5;5WAvF<k%{AcE^E=O>Sa;=U-fb<qk}DiB}`2VL~3W}sd*dR+R0{)~K^oc2*Lvmqciwus=;'
         B'sm$4Y-e_2Ow%TCECA2H@kVb$F_fq>39qg?kh@!XeN!LYVz`|`5m4QH}oamB5Ty=B+G;#9wtuyzEk=wq~jdMXm;q9B>@72FHwsMEA'

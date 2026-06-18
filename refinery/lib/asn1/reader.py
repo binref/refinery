@@ -169,8 +169,6 @@ class ASN1Reader(StructReader[memoryview]):
         '1.2.840.113549.2.11'        : 'hmacWithSHA512',
     }
 
-    _OID_NAMES_REV = {v: k for k, v in _OID_NAMES.items()}
-
     def __init__(
         self,
         data: memoryview | StructReader[memoryview],
