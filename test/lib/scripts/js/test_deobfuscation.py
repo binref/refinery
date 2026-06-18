@@ -4,6 +4,8 @@ import inspect
 
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 
+from refinery.lib.scripts.js.deobfuscation.cff import JsControlFlowUnflattening
+
 
 class TestDeadCodeElimination(TestJsDeobfuscator):
 
@@ -77,7 +79,6 @@ class TestDeadCodeElimination(TestJsDeobfuscator):
         )
         self.assertEqual(self._deobfuscate(source), inspect.cleandoc(
             """
-            const sentinel = {};
             live();
             """
         ))
@@ -100,7 +101,6 @@ class TestDeadCodeElimination(TestJsDeobfuscator):
         )
         self.assertEqual(self._deobfuscate(source), inspect.cleandoc(
             """
-            const obj = {};
             live();
             live2();
             """
@@ -231,7 +231,7 @@ class TestRegressionBugs(TestJsDeobfuscator):
                 var b = 2;
                 """
             ),
-            self._deobfuscate(source),
+            self._run_transformer(source, JsControlFlowUnflattening),
         )
 
     def test_free_variable_not_inlined_past_modifying_call(self):

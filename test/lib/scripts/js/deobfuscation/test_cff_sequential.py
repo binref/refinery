@@ -31,7 +31,7 @@ class TestControlFlowUnflattening(TestJsDeobfuscator):
             }
             """
         )
-        result = self._deobfuscate(source)
+        result = self._run_transformer(source, JsControlFlowUnflattening)
         self.assertEqual(result, inspect.cleandoc(
             """
             var a = 1;
@@ -55,7 +55,7 @@ class TestControlFlowUnflattening(TestJsDeobfuscator):
             }
             """
         )
-        result = self._deobfuscate(source)
+        result = self._run_transformer(source, JsControlFlowUnflattening)
         self.assertEqual(result, inspect.cleandoc(
             """
             var a = 1;
@@ -78,7 +78,7 @@ class TestControlFlowUnflattening(TestJsDeobfuscator):
             }
             """
         )
-        result = self._deobfuscate(source)
+        result = self._run_transformer(source, JsControlFlowUnflattening)
         self.assertEqual(result, inspect.cleandoc(
             """
             var a = 1;
@@ -100,7 +100,7 @@ class TestControlFlowUnflattening(TestJsDeobfuscator):
             }
             """
         )
-        result = self._deobfuscate(source)
+        result = self._run_transformer(source, JsControlFlowUnflattening)
         self.assertEqual(result, inspect.cleandoc(
             """
             var keep = 9;
@@ -198,7 +198,7 @@ class TestControlFlowUnflattening(TestJsDeobfuscator):
             }
             """
         )
-        result = self._deobfuscate(source)
+        result = self._run_transformer(source, JsControlFlowUnflattening)
         self.assertEqual(result, inspect.cleandoc(
             """
             var v = 1;

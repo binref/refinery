@@ -97,22 +97,23 @@ class TestUnusedCodeRemoval(TestJsDeobfuscator):
             self._remove_unused(source),
         )
 
-    def test_preserve_globals_keeps_dead_global_declaration(self):
+    def test_dead_global_removed_without_reflection_surface(self):
         source = inspect.cleandoc(
             """
             var deadGlobal = 1;
             console.log(2);
             """
         )
-        self.assertEqual(
-            inspect.cleandoc(
-                """
-                var deadGlobal = 1;
-                console.log(2);
-                """
-            ),
-            self._remove_unused(source),
+        self.assertEqual('console.log(2);', self._remove_unused(source))
+
+    def test_reflection_surface_preserves_dead_init_global(self):
+        source = inspect.cleandoc(
+            """
+            var deadGlobal = 1;
+            eval('deadGlobal');
+            """
         )
+        self.assertEqual(source, self._remove_unused(source))
 
     def test_strip_globals_removes_dead_global_declaration(self):
         source = inspect.cleandoc(

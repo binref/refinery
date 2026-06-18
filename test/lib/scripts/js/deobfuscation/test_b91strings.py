@@ -83,7 +83,6 @@ class TestStringConcealing(TestJsDeobfuscator):
         self.assertEqual(
             inspect.cleandoc(
                 """
-                var cache = {};
                 var results = [];
                 results.push("hello");
                 console.log(results);
@@ -186,7 +185,6 @@ class TestStringConcealing(TestJsDeobfuscator):
         self.assertEqual(
             inspect.cleandoc(
                 """
-                var cache1 = {};
                 var results = [];
                 results.push("hello");
                 console.log(results);
@@ -216,7 +214,6 @@ class TestStringConcealing(TestJsDeobfuscator):
         self.assertEqual(
             inspect.cleandoc(
                 """
-                var cache = {};
                 var results = [];
                 results.push("hello");
                 console.log(results);
@@ -243,7 +240,6 @@ class TestStringConcealing(TestJsDeobfuscator):
         self.assertEqual(
             inspect.cleandoc(
                 """
-                var cache = {};
                 console.log('push');
                 console.log([1, 2, 3]);
                 """

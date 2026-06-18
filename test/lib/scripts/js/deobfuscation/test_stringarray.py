@@ -348,11 +348,11 @@ class TestStringArray(TestJsDeobfuscator):
             "var _0x14f979={_0x5b48c6:0x1f2,_0x24ce26:0x1f3};"
             "var x=_0x5d6bea(_0x14f979._0x5b48c6);"
             "var y=_0x5d6bea(_0x14f979._0x24ce26);"
+            "console.log(x, y);"
         )
         expected = inspect.cleandoc(
             """
-            var x = 'secret_value';
-            var y = 'another_string';
+            console.log('secret_value', 'another_string');
             """
         )
         self.assertEqual(self._deobfuscate(source), expected)

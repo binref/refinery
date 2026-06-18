@@ -409,8 +409,11 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
         return None
 
     def _process_body(self, parent: Node, body: list[Statement]):
-        at_script_scope = isinstance(_enclosing_scope_root(parent), JsScript)
-        if self.preserve_globals and self._has_reflection and at_script_scope:
+        if (
+            self.preserve_globals
+            and self._has_reflection
+            and isinstance(_enclosing_scope_root(parent), JsScript)
+        ):
             return
         removed_functions = self._remove_dead_functions(body)
         dead_variables, preserved = self._remove_dead_variables(parent, body, removed_functions)
@@ -418,8 +421,7 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
             parent, body, removed_functions | dead_variables)
         if isinstance(parent, JsScript):
             dead_variables |= self._remove_dead_global_properties(parent, dead_variables)
-        if not (self.preserve_globals and at_script_scope):
-            self._remove_empty_declarators(parent, body, set())
+        self._remove_empty_declarators(parent, body, set())
         self._remove_dead_expressions(body, removed_functions | dead_variables, preserved)
 
     def _remove_dead_functions(self, body: list[Statement]) -> set[str]:
