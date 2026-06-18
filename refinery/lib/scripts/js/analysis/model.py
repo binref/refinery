@@ -1,7 +1,7 @@
 """
-A lexical semantic model for JavaScript: a tree of scopes with resolved bindings, computed once over
-an AST and then queried by deobfuscation transforms instead of each transform re-deriving scope and
-binding facts on its own.
+A lexical semantic model for JavaScript: a tree of scopes with resolved bindings and def/use sets,
+computed once over an AST and then queried by deobfuscation transforms instead of each transform
+re-deriving scope, binding, and liveness facts on its own.
 
 This is the foundation layer of the analysis substrate. Its public surface is intentionally
 representation-agnostic: callers receive `Scope` and `Binding` objects and ask questions about AST
@@ -9,14 +9,16 @@ nodes by identity, never about how the facts were computed. Later layers (contro
 summaries) attach behind the same surface without changing it.
 
 The model is *flow-insensitive*. It answers lexical questions — which declaration a name resolves to,
-what a scope binds, where a binding lives — but not control-flow questions such as which definition
-reaches a use. Definition/use sets and reflection-surface detection are layered on top separately.
+what a scope binds, where a binding is read or written, whether it is captured by a closure — but not
+control-flow questions such as which definition reaches a use. A read that only ever consumes a value
+that is never observed (a dead store) is still counted as a read; distinguishing those needs a
+control-flow graph and is left to a later layer.
 
 Where JavaScript scoping is genuinely ambiguous the model is deliberately conservative, resolving a
 name to a *wider* binding rather than risk treating a live reference as free: a function declaration
 nested in a block is hoisted to the enclosing function scope (legacy/Annex-B semantics), and a name
 used inside a `with` body or any dynamically-scoped region resolves to `None` (unknown) rather than to
-a guessed binding.
+a guessed binding. `has_reflection_surface` likewise errs toward reporting reflection.
 """
 from __future__ import annotations
 
@@ -27,11 +29,14 @@ from typing import Iterator
 
 from refinery.lib.scripts import Node
 from refinery.lib.scripts.js.model import (
+    JsArrayExpression,
     JsArrayPattern,
     JsArrowFunctionExpression,
+    JsAssignmentExpression,
     JsAssignmentPattern,
     JsBlockStatement,
     JsBreakStatement,
+    JsCallExpression,
     JsCatchClause,
     JsClassDeclaration,
     JsClassExpression,
@@ -49,11 +54,15 @@ from refinery.lib.scripts.js.model import (
     JsImportSpecifier,
     JsLabeledStatement,
     JsMemberExpression,
+    JsNewExpression,
+    JsObjectExpression,
     JsObjectPattern,
     JsProperty,
     JsRestElement,
     JsScript,
+    JsStringLiteral,
     JsSwitchStatement,
+    JsUpdateExpression,
     JsVariableDeclaration,
     JsVariableDeclarator,
     JsVarKind,
@@ -63,6 +72,18 @@ from refinery.lib.scripts.js.model import (
 FUNCTION_NODES = (JsFunctionDeclaration, JsFunctionExpression, JsArrowFunctionExpression)
 
 _FunctionNode = JsFunctionDeclaration | JsFunctionExpression | JsArrowFunctionExpression
+
+GLOBAL_OBJECT_ALIASES = frozenset({'globalThis', 'global', 'window', 'self', 'top', 'frames'})
+
+TIMER_NAMES = frozenset({'setTimeout', 'setInterval', 'setImmediate', 'execScript'})
+
+_PATTERN_CONTAINERS = (
+    JsArrayExpression,
+    JsArrayPattern,
+    JsObjectExpression,
+    JsObjectPattern,
+    JsRestElement,
+)
 
 
 class ScopeKind(enum.Enum):
@@ -87,16 +108,42 @@ class BindingKind(enum.Enum):
     FUNC_NAME = 'func_name'  # noqa  the own name of a named function expression
 
 
+class Role(enum.Enum):
+    READ      = 'read'        # noqa
+    WRITE     = 'write'       # noqa
+    READWRITE = 'readwrite'   # noqa
+
+
 @dataclass(eq=False)
 class Binding:
     """
     A single declared name within one scope. `declarations` holds the binding-site identifier nodes
-    that introduce the name (a name may be introduced more than once, e.g. a repeated `var`).
+    that introduce the name; `reads` and `writes` hold the referencing identifiers that read and write
+    it (a compound assignment or update appears in both). `captured` is set when the name is referenced
+    from a function nested below the one that owns it.
     """
     name: str
     kind: BindingKind
     scope: Scope
     declarations: list[JsIdentifier] = field(default_factory=list)
+    reads: list[JsIdentifier] = field(default_factory=list)
+    writes: list[JsIdentifier] = field(default_factory=list)
+    captured: bool = False
+
+    @property
+    def is_read(self) -> bool:
+        """
+        Whether the binding's value is ever read.
+        """
+        return bool(self.reads)
+
+    @property
+    def is_dead(self) -> bool:
+        """
+        Whether the binding is never read. Definitions of a dead binding can be removed if they carry
+        no other side effect (which the caller decides).
+        """
+        return not self.reads
 
 
 @dataclass(eq=False)
@@ -124,9 +171,9 @@ class Scope:
 
 def is_use_position(node: JsIdentifier) -> bool:
     """
-    Whether an identifier occupies a position where it reads a value, as opposed to naming a property,
-    an object-literal key, a label, or an import/export specifier. Binding sites are not excluded here;
-    callers separate those via `SemanticModel.binding_of`.
+    Whether an identifier occupies a position where it reads or writes a value, as opposed to naming a
+    property, an object-literal key, a label, or an import/export specifier. Binding sites are not
+    excluded here; callers separate those via `SemanticModel.binding_of`.
     """
     p = node.parent
     if p is None:
@@ -172,6 +219,38 @@ def pattern_identifiers(target: Node | None) -> Iterator[JsIdentifier]:
         yield from pattern_identifiers(target.argument)
 
 
+def reference_role(node: JsIdentifier) -> Role:
+    """
+    Classify how a referencing identifier touches its binding: a plain read, a write-only target (the
+    left of a simple `=`, including inside a destructuring pattern, or a `for-in`/`for-of` head), or a
+    read-and-write (compound assignment or `++`/`--`). Climbs through destructuring containers so that
+    a target nested in a pattern is still recognized as a write.
+    """
+    cursor: Node = node
+    parent = cursor.parent
+    while parent is not None:
+        if isinstance(parent, JsAssignmentExpression):
+            if parent.left is cursor:
+                return Role.WRITE if parent.operator == '=' else Role.READWRITE
+            return Role.READ
+        if isinstance(parent, JsUpdateExpression):
+            return Role.READWRITE if parent.argument is cursor else Role.READ
+        if isinstance(parent, (JsForInStatement, JsForOfStatement)):
+            return Role.WRITE if parent.left is cursor else Role.READ
+        if isinstance(parent, JsProperty):
+            if parent.value is cursor:
+                cursor = parent
+                parent = cursor.parent
+                continue
+            return Role.READ
+        if isinstance(parent, _PATTERN_CONTAINERS):
+            cursor = parent
+            parent = cursor.parent
+            continue
+        return Role.READ
+    return Role.READ
+
+
 def _walk_skipping_functions(stmts: list) -> Iterator[Node]:
     """
     Yield the statements in *stmts* and all their descendants, but do not descend into nested function
@@ -186,17 +265,50 @@ def _walk_skipping_functions(stmts: list) -> Iterator[Node]:
         stack.extend(reversed(node.children()))
 
 
+def _owning_function(scope: Scope | None) -> Scope | None:
+    """
+    The nearest enclosing function or script scope of *scope* (the boundary a closure crosses).
+    """
+    while scope is not None and not scope.is_var_scope:
+        scope = scope.parent
+    return scope
+
+
+def _is_global_base(node: Node | None) -> bool:
+    """
+    Whether *node* denotes the global object by a well-known alias, so that a dynamic property access
+    on it could read or write any global by name.
+    """
+    return isinstance(node, JsIdentifier) and node.name in GLOBAL_OBJECT_ALIASES
+
+
+def _is_string_timer(call: JsCallExpression) -> bool:
+    """
+    Whether *call* is a timer/`execScript` invocation whose first argument is not a function literal,
+    so it may evaluate a string of code.
+    """
+    callee = call.callee
+    if not isinstance(callee, JsIdentifier) or callee.name not in TIMER_NAMES:
+        return False
+    if not call.arguments:
+        return False
+    return not isinstance(call.arguments[0], (JsFunctionExpression, JsArrowFunctionExpression))
+
+
 class SemanticModel:
     """
-    The resolved scope/binding model for one script. Build it with `build_semantic_model` and query it
-    through `resolve`, `scope_of`, and `binding_of`.
+    The resolved scope/binding/def-use model for one script. Build it with `build_semantic_model` and
+    query it through `resolve`, `scope_of`, `binding_of`, `references`, `is_shadowed`, and
+    `has_reflection_surface`.
     """
 
     def __init__(self, root: JsScript):
         self.root = root
         self._node_scope: dict[int, Scope] = {}
         self._binding_of: dict[int, Binding] = {}
+        self._reflection_surface: bool | None = None
         self.root_scope: Scope = _ScopeBuilder(self).build(root)
+        self._build_def_use()
 
     def scope_of(self, node: Node) -> Scope | None:
         """
@@ -213,19 +325,11 @@ class SemanticModel:
         """
         return self._binding_of.get(id(decl_id))
 
-    def resolve(self, ref: JsIdentifier) -> Binding | None:
+    def lookup(self, name: str, scope: Scope | None) -> Binding | None:
         """
-        The binding a referencing identifier reads, found by walking outward from its scope. Returns
-        `None` when the name is free (a global or implicit global), when the identifier is not a read
-        (a property name, key, or label), or when resolution crosses a dynamically-scoped region where
-        the name could be injected at runtime.
+        Resolve *name* from *scope* outward through enclosing scopes, stopping at a dynamically-scoped
+        region where the name could be injected at runtime. Returns `None` for a free name.
         """
-        if id(ref) in self._binding_of:
-            return None
-        if not is_use_position(ref):
-            return None
-        scope = self._node_scope.get(id(ref))
-        name = ref.name
         while scope is not None:
             binding = scope.bindings.get(name)
             if binding is not None:
@@ -234,6 +338,94 @@ class SemanticModel:
                 return None
             scope = scope.parent
         return None
+
+    def resolve(self, ref: JsIdentifier) -> Binding | None:
+        """
+        The binding a referencing identifier reads or writes, found by walking outward from its scope.
+        Returns `None` when the name is free (a global or implicit global), when the identifier is not
+        a reference (a property name, key, or label), or when resolution crosses a dynamically-scoped
+        region where the name could be injected at runtime.
+        """
+        if id(ref) in self._binding_of:
+            return None
+        if not is_use_position(ref):
+            return None
+        return self.lookup(ref.name, self._node_scope.get(id(ref)))
+
+    def references(self, binding: Binding, *, exclude: Node | None = None) -> list[JsIdentifier]:
+        """
+        Every referencing identifier (read or write) bound to *binding*, optionally omitting those that
+        lie within the subtree of *exclude*.
+        """
+        nodes = binding.reads + binding.writes
+        if exclude is None:
+            return nodes
+        return [n for n in nodes if n is not exclude and not n.is_descendant_of(exclude)]
+
+    def is_shadowed(self, name: str, at: Node, outer: Scope) -> bool:
+        """
+        Whether *name*, referenced at *at*, resolves to a binding declared strictly inside *outer*
+        rather than in *outer* itself or an enclosing scope. This replaces the various hand-rolled
+        shadowing checks: a name shadowed below *outer* does not refer to *outer*'s binding.
+        """
+        binding = self.lookup(name, self._node_scope.get(id(at)))
+        if binding is None or binding.scope is outer:
+            return False
+        cursor = binding.scope.parent
+        while cursor is not None:
+            if cursor is outer:
+                return True
+            cursor = cursor.parent
+        return False
+
+    def has_reflection_surface(self) -> bool:
+        """
+        Whether the program still contains a construct through which code could reference a global by
+        name at runtime: `eval`, `Function`/`new Function`, a string-valued timer, a dynamic property
+        access on the global object, or a `with` statement. Computed conservatively (over-reporting is
+        safe): while any such surface remains, a dead global must not be removed, because reflective
+        code may read it.
+        """
+        if self._reflection_surface is None:
+            self._reflection_surface = self._detect_reflection()
+        return self._reflection_surface
+
+    def _detect_reflection(self) -> bool:
+        for node in self.root.walk():
+            if isinstance(node, JsWithStatement):
+                return True
+            if isinstance(node, JsMemberExpression):
+                if node.computed:
+                    if _is_global_base(node.object) and not isinstance(node.property, JsStringLiteral):
+                        return True
+                elif isinstance(node.property, JsIdentifier) and node.property.name in (
+                    'eval', 'Function',
+                ):
+                    return True
+            elif isinstance(node, (JsCallExpression, JsNewExpression)):
+                callee = node.callee
+                if isinstance(callee, JsIdentifier) and callee.name in ('eval', 'Function'):
+                    return True
+                if isinstance(node, JsCallExpression) and _is_string_timer(node):
+                    return True
+        return False
+
+    def _build_def_use(self):
+        for node in self.root.walk():
+            if not isinstance(node, JsIdentifier):
+                continue
+            if id(node) in self._binding_of or not is_use_position(node):
+                continue
+            binding = self.lookup(node.name, self._node_scope.get(id(node)))
+            if binding is None:
+                continue
+            role = reference_role(node)
+            if role is not Role.WRITE:
+                binding.reads.append(node)
+            if role is not Role.READ:
+                binding.writes.append(node)
+            if _owning_function(self._node_scope.get(id(node))) is not _owning_function(binding.scope):
+                binding.captured = True
 
 
 class _ScopeBuilder:

@@ -11,21 +11,25 @@ from __future__ import annotations
 from refinery.lib.scripts.js.analysis.model import (
     Binding,
     BindingKind,
+    Role,
     Scope,
     ScopeKind,
     SemanticModel,
     build_semantic_model,
     is_use_position,
     pattern_identifiers,
+    reference_role,
 )
 
 __all__ = [
     'Binding',
     'BindingKind',
+    'Role',
     'Scope',
     'ScopeKind',
     'SemanticModel',
     'build_semantic_model',
     'is_use_position',
     'pattern_identifiers',
+    'reference_role',
 ]

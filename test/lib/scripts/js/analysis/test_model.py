@@ -7,7 +7,7 @@ from refinery.lib.scripts.js.analysis.model import (
     ScopeKind,
     build_semantic_model,
 )
-from refinery.lib.scripts.js.model import JsIdentifier
+from refinery.lib.scripts.js.model import JsIdentifier, JsReturnStatement
 from refinery.lib.scripts.js.parser import JsParser
 
 
@@ -156,3 +156,102 @@ class TestSemanticModel(TestBase):
         binding = model.binding_of(a_decl)
         self.assertEqual(binding.kind, BindingKind.VAR)
         self.assertIs(model.resolve(a_shorthand), binding)
+
+    def _binding(self, ast, model, name: str):
+        return model.binding_of(self._decl(ast, model, name))
+
+    def test_reads_and_writes_are_counted(self):
+        ast, model = self._model('function f(){ var x = 1; x; x = 2; x += 1; }')
+        binding = self._binding(ast, model, 'x')
+        self.assertEqual(len(binding.reads), 2)
+        self.assertEqual(len(binding.writes), 2)
+
+    def test_dead_local_has_no_reads(self):
+        ast, model = self._model('function f(){ var x = 1; return 2; }')
+        self.assertTrue(self._binding(ast, model, 'x').is_dead)
+
+    def test_read_local_is_live(self):
+        ast, model = self._model('function f(){ var x = 1; return x; }')
+        self.assertFalse(self._binding(ast, model, 'x').is_dead)
+
+    def test_simple_assignment_is_write_only(self):
+        ast, model = self._model('function f(){ var x; x = 1; }')
+        binding = self._binding(ast, model, 'x')
+        self.assertEqual(len(binding.writes), 1)
+        self.assertTrue(binding.is_dead)
+
+    def test_compound_assignment_reads_and_writes(self):
+        ast, model = self._model('function f(){ var x = 0; x += 1; }')
+        binding = self._binding(ast, model, 'x')
+        self.assertEqual(len(binding.reads), 1)
+        self.assertEqual(len(binding.writes), 1)
+
+    def test_update_expression_reads_and_writes(self):
+        ast, model = self._model('function f(){ var x = 0; x++; }')
+        binding = self._binding(ast, model, 'x')
+        self.assertEqual(len(binding.reads), 1)
+        self.assertEqual(len(binding.writes), 1)
+
+    def test_destructuring_assignment_target_is_write_only(self):
+        ast, model = self._model('function f(){ var a; [a] = arr; }')
+        binding = self._binding(ast, model, 'a')
+        self.assertEqual(len(binding.writes), 1)
+        self.assertTrue(binding.is_dead)
+
+    def test_closure_read_marks_captured_and_keeps_binding_live(self):
+        ast, model = self._model('function o(){ var x; x = 7; return function(){ return x; }; }')
+        binding = self._binding(ast, model, 'x')
+        self.assertTrue(binding.captured)
+        self.assertFalse(binding.is_dead)
+        self.assertEqual(len(binding.writes), 1)
+
+    def test_local_use_is_not_captured(self):
+        ast, model = self._model('function o(){ var x = 1; return x; }')
+        self.assertFalse(self._binding(ast, model, 'x').captured)
+
+    def test_references_can_exclude_a_subtree(self):
+        ast, model = self._model('function f(){ var x = 1; x; return x; }')
+        binding = self._binding(ast, model, 'x')
+        self.assertEqual(len(model.references(binding)), 2)
+        ret = next(n for n in ast.walk_in_order() if isinstance(n, JsReturnStatement))
+        self.assertEqual(len(model.references(binding, exclude=ret)), 1)
+
+    def test_is_shadowed_by_inner_binding(self):
+        ast, model = self._model(
+            'function outer(){ var x; function inner(){ var x; return x; } return x; }')
+        outer_scope = model.root_scope.children[0]
+        _, _, inner_use, outer_use = self._idents(ast, 'x')
+        self.assertTrue(model.is_shadowed('x', inner_use, outer_scope))
+        self.assertFalse(model.is_shadowed('x', outer_use, outer_scope))
+
+    def test_eval_is_a_reflection_surface(self):
+        _, model = self._model('eval(payload);')
+        self.assertTrue(model.has_reflection_surface())
+
+    def test_function_constructor_is_a_reflection_surface(self):
+        _, model = self._model("var f = Function('return 1'); new Function('a');")
+        self.assertTrue(model.has_reflection_surface())
+
+    def test_string_timer_is_a_reflection_surface(self):
+        _, model = self._model("setTimeout('x()', 10);")
+        self.assertTrue(model.has_reflection_surface())
+
+    def test_function_timer_is_not_a_reflection_surface(self):
+        _, model = self._model('setTimeout(function(){ x(); }, 10);')
+        self.assertFalse(model.has_reflection_surface())
+
+    def test_dynamic_global_access_is_a_reflection_surface(self):
+        _, model = self._model('window[key]();')
+        self.assertTrue(model.has_reflection_surface())
+
+    def test_static_global_access_is_not_a_reflection_surface(self):
+        _, model = self._model("window['x']; self.y;")
+        self.assertFalse(model.has_reflection_surface())
+
+    def test_with_is_a_reflection_surface(self):
+        _, model = self._model('with (o) { z; }')
+        self.assertTrue(model.has_reflection_surface())
+
+    def test_plain_program_has_no_reflection_surface(self):
+        _, model = self._model('var a = 1; console.log(a);')
+        self.assertFalse(model.has_reflection_surface())
