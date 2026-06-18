@@ -8,15 +8,8 @@ from datetime import datetime, timezone
 
 from refinery.lib.asn1 import ASN1Reader
 from refinery.lib.asn1.defs import ContentInfo, SignedContentInfo, SpcSpOpusInfo
-from refinery.lib.structures import StructReader
 
 _TIME_VALUED_ATTRIBUTES = {'signingTime'}
-
-
-def _skip00(sr: StructReader[memoryview]):
-    if (zero := sr.peek(2) == b'\0\0'):
-        sr.skip(2)
-    return zero
 
 
 def _parse_asn1_time(value):
@@ -298,132 +291,25 @@ def _postprocess_attribute(attr) -> OrderedDict:
     return result
 
 
-def _read_tag_length(sr: StructReader) -> tuple[int, int, int]:
-    b = sr.u8()
-    tag_class = (b >> 6) & 3
-    tag_number = b & 0x1F
-    if tag_number == 0x1F:
-        tag_number = 0
-        while True:
-            b = sr.u8()
-            tag_number = (tag_number << 7) | (b & 0x7F)
-            if not (b & 0x80):
-                break
-    b = sr.u8()
-    if b < 0x80:
-        length = b
-    elif b == 0x80:
-        length = -1
-    else:
-        n = b & 0x7F
-        length = 0
-        for _ in range(n):
-            length = (length << 8) | sr.u8()
-    return tag_class, tag_number, length
-
-
-def _skip_tlv_complete(sr: StructReader) -> int:
-    start = sr.tell()
-    b = sr.u8()
-    constructed = bool(b & 0x20)
-    tag_number = b & 0x1F
-    if tag_number == 0x1F:
-        while sr.u8() & 0x80:
-            pass
-    b = sr.u8()
-    if b < 0x80:
-        length = b
-    elif b == 0x80:
-        length = -1
-    else:
-        n = b & 0x7F
-        length = 0
-        for _ in range(n):
-            length = (length << 8) | sr.u8()
-    if length >= 0:
-        sr.seekrel(length)
-    elif constructed:
-        while not _skip00(sr):
-            _skip_tlv_complete(sr)
-    return sr.tell() - start
-
-
-def _find_implicit_set_of_certificates(
-    sr: StructReader,
-) -> list[tuple[int, int]]:
-    _read_tag_length(sr)
-    _skip_tlv_complete(sr)
-    tc, tn, outer_len = _read_tag_length(sr)
-    if tc != 2 or tn != 0:
-        return []
-    if outer_len < 0:
-        outer_end = sr.tell() + sr.remaining_bytes
-    else:
-        outer_end = sr.tell() + outer_len
-    _read_tag_length(sr)
-    _skip_tlv_complete(sr)
-    _skip_tlv_complete(sr)
-    _skip_tlv_complete(sr)
-    positions = []
-    while sr.tell() < outer_end:
-        if sr.remaining_bytes >= 2 and _skip00(sr):
-            break
-        tc, tn, length = _read_tag_length(sr)
-        if tc == 2 and tn == 0:
-            if length < 0:
-                cert_set_end = sr.tell() + sr.remaining_bytes
-            else:
-                cert_set_end = sr.tell() + length
-            while sr.tell() < cert_set_end:
-                if sr.remaining_bytes >= 2 and _skip00(sr):
-                    break
-                cert_start = sr.tell()
-                _skip_tlv_complete(sr)
-                positions.append((cert_start, sr.tell()))
-            break
-        elif tc == 2 and tn == 1:
-            if length >= 0:
-                sr.seekrel(length)
-            else:
-                while not _skip00(sr):
-                    _skip_tlv_complete(sr)
-        else:
-            if length >= 0:
-                sr.seekrel(length)
-            break
-    return positions
-
-
-def _find_certificate_hashes(raw: bytes | memoryview) -> list[str]:
-    hashes: list[str] = []
-    try:
-        sr = StructReader(memoryview(raw), bigendian=True)
-        positions = _find_implicit_set_of_certificates(sr)
-        for cert_start, cert_end in positions:
-            cert_bytes = bytes(raw[cert_start:cert_end])
-            hashes.append(hashlib.sha1(cert_bytes).hexdigest())
-    except Exception:
-        pass
-    return hashes
-
-
 def parse_content_info(data: bytes | bytearray | memoryview) -> OrderedDict:
     """
     Parse a DER-encoded PKCS#7/CMS ContentInfo structure and return a fully post-processed
     OrderedDict ready for JSON serialization. Names are flattened, times are formatted,
-    attribute values are decoded, and negative ASN.1 integers are converted to unsigned
-    representation.
+    attribute values are decoded, negative ASN.1 integers are converted to unsigned
+    representation, and each certificate is annotated with its SHA-1 fingerprint.
     """
     mv = memoryview(data)
     best_result = None
+    best_spans: dict[int, tuple[int, int]] = {}
     best_remaining = len(mv) + 1
     for schema in (SignedContentInfo, ContentInfo):
         try:
-            reader = ASN1Reader(mv, bigendian=True)
+            reader = ASN1Reader(mv, bigendian=True, record_spans=True)
             result = reader.decode_with_schema(schema)
             remaining = reader.remaining_bytes
             if remaining < best_remaining:
                 best_result = result
+                best_spans = reader.spans
                 best_remaining = remaining
             if remaining == 0:
                 break
@@ -431,6 +317,7 @@ def parse_content_info(data: bytes | bytearray | memoryview) -> OrderedDict:
             continue
     if best_result is not None:
         result = _unsign(_postprocess(best_result, mv))
+        _attach_certificate_fingerprints(result, mv, best_spans)
     else:
         reader = ASN1Reader(mv, bigendian=True)
         result = reader.read_tlv()
@@ -439,13 +326,14 @@ def parse_content_info(data: bytes | bytearray | memoryview) -> OrderedDict:
     return result
 
 
-def compute_certificate_fingerprints(
+def _attach_certificate_fingerprints(
     result,
-    raw: bytes | memoryview,
+    raw: memoryview,
+    spans: dict[int, tuple[int, int]],
 ) -> None:
     """
-    Compute SHA-1 fingerprints for each certificate by locating their DER boundaries in the raw
-    data and add them in-place to the result dict.
+    Annotate each parsed certificate with the SHA-1 hash of its exact DER encoding, using the byte
+    spans recorded by the reader during the single decode pass.
     """
     if not isinstance(result, dict):
         return
@@ -455,8 +343,11 @@ def compute_certificate_fingerprints(
     certs = content.get('certificates')
     if not isinstance(certs, list):
         return
-    mv = memoryview(raw)
-    cert_hashes = _find_certificate_hashes(mv)
-    for i, cert in enumerate(certs):
-        if isinstance(cert, dict) and i < len(cert_hashes):
-            cert['fingerprint'] = cert_hashes[i]
+    for cert in certs:
+        if not isinstance(cert, dict):
+            continue
+        span = spans.get(id(cert))
+        if span is None:
+            continue
+        start, end = span
+        cert['fingerprint'] = hashlib.sha1(bytes(raw[start:end])).hexdigest()

@@ -5,7 +5,7 @@ import lzma
 from .. import TestUnitBase
 
 
-class TestTarFileExtractor(TestUnitBase):
+class TestPKCS7(TestUnitBase):
 
     def test_parsing_of_nested_signature(self):
         unit = self.load()
@@ -14,6 +14,16 @@ class TestTarFileExtractor(TestUnitBase):
         self.assertEqual(result['content']['signerInfos'][0]['unsignedAttrs'][1]['type'], 'microsoftNestedSignature')
         self.assertTrue(all(isinstance(item, dict) for item in result['content']['certificates']),
             'failed parsing at least one certificate')
+
+    def test_certificate_fingerprints(self):
+        result = json.loads(self.load()(self.SIGNATURE1))
+        fingerprints = [cert['fingerprint'] for cert in result['content']['certificates']]
+        self.assertEqual(fingerprints, [
+            'e1d782a8e191beef6bca1691b5aab494a6249bf3',
+            '3ba63a6e4841355772debef9cdcf4d5af353a297',
+            'b58e990ff7401dc84eed050b2b6e351c37dad74a',
+            '60ee3fc53d4bdfd1697ae5beae1cab1c0f3ad4e3',
+        ])
 
     def test_unsign_negative_serial_recovers_unsigned_byte_value(self):
         from refinery.lib.asn1.cms import _unsign

@@ -170,6 +170,16 @@ class ASN1Reader(StructReader[memoryview]):
 
     _OID_NAMES_REV = {v: k for k, v in _OID_NAMES.items()}
 
+    def __init__(
+        self,
+        data: memoryview | StructReader[memoryview],
+        bigendian: bool | None = None,
+        record_spans: bool = False,
+    ):
+        super().__init__(data, bigendian)
+        self._record_spans = record_spans
+        self.spans: dict[int, tuple[int, int]] = {}
+
     def _read_tag(self) -> tuple[int, bool, int]:
         b = self.u8()
         tag_class = (b >> 6) & 3
@@ -543,6 +553,15 @@ class ASN1Reader(StructReader[memoryview]):
         return self.read_tlv()
 
     def decode_with_schema(self, schema: SchemaType) -> ASN1Value:
+        if not self._record_spans:
+            return self._decode_with_schema(schema)
+        start = self.tell()
+        value = self._decode_with_schema(schema)
+        if isinstance(value, (dict, list)):
+            self.spans[id(value)] = (start, self.tell())
+        return value
+
+    def _decode_with_schema(self, schema: SchemaType) -> ASN1Value:
         if schema is ANY:
             return self.read_tlv()
 
