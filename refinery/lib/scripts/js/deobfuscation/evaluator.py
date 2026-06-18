@@ -10,11 +10,12 @@ if TYPE_CHECKING:
     from refinery.lib.scripts.js.deobfuscation.interpreter import Value
 
 from refinery.lib.scripts import Node, _clone_node, _remove_from_parent, _replace_in_parent
+from refinery.lib.scripts.js.analysis.model import Binding, SemanticModel, build_semantic_model
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     ScriptLevelTransformer,
     access_key,
+    binding_has_references,
     extract_literal_value,
-    has_remaining_references,
     is_reference,
     references_receiver_this,
     remove_declarator,
@@ -722,40 +723,49 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
 
     def _remove_resolved_definitions(self, script: JsScript) -> None:
         removed: set[int] = set()
-        for func in self._all_functions():
-            func_id = id(func)
-            call_count = self._call_counts.get(func_id, 0)
-            if call_count == 0:
-                continue
-            resolved = self._resolved_counts.get(func_id, 0)
-            failed = self._failed_counts.get(func_id, 0)
-            if (resolved + failed) < call_count:
-                continue
-            name = self._function_name(func)
-            if name is None:
-                continue
-            exclude = self._function_exclude_node(func)
-            if not has_remaining_references(script, name, exclude=exclude, check_shadowing=True):
-                self._remove_function(func)
-                removed.add(func_id)
-                self.mark_changed()
-        for func in self._all_functions():
-            func_id = id(func)
-            if func_id in removed:
-                continue
-            if func_id not in self._pure_nodes:
-                continue
-            name = self._function_name(func)
-            if name is None:
-                continue
-            call_count = self._call_counts.get(func_id, 0)
-            if call_count == 0:
-                continue
-            exclude = self._function_exclude_node(func)
-            if not has_remaining_references(script, name, exclude=exclude, check_shadowing=True):
-                self._remove_function(func)
-                removed.add(func_id)
-                self.mark_changed()
+        while True:
+            model = build_semantic_model(script)
+            before = len(removed)
+            for func in self._all_functions():
+                func_id = id(func)
+                if func_id in removed:
+                    continue
+                call_count = self._call_counts.get(func_id, 0)
+                if call_count == 0:
+                    continue
+                resolved = self._resolved_counts.get(func_id, 0)
+                failed = self._failed_counts.get(func_id, 0)
+                if (resolved + failed) < call_count:
+                    continue
+                name = self._function_name(func)
+                if name is None:
+                    continue
+                exclude = self._function_exclude_node(func)
+                binding = self._function_binding(model, func)
+                if not binding_has_references(model, binding, exclude=exclude):
+                    self._remove_function(func)
+                    removed.add(func_id)
+                    self.mark_changed()
+            for func in self._all_functions():
+                func_id = id(func)
+                if func_id in removed:
+                    continue
+                if func_id not in self._pure_nodes:
+                    continue
+                name = self._function_name(func)
+                if name is None:
+                    continue
+                call_count = self._call_counts.get(func_id, 0)
+                if call_count == 0:
+                    continue
+                exclude = self._function_exclude_node(func)
+                binding = self._function_binding(model, func)
+                if not binding_has_references(model, binding, exclude=exclude):
+                    self._remove_function(func)
+                    removed.add(func_id)
+                    self.mark_changed()
+            if len(removed) == before:
+                break
         self._remove_orphaned_closure_constants(script, removed)
 
     @staticmethod
@@ -775,6 +785,20 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
         if isinstance(declarator, JsVariableDeclarator):
             return declarator
         return func
+
+    @staticmethod
+    def _function_binding(model: SemanticModel, func: _FuncNode) -> Binding | None:
+        """
+        The binding introduced by *func*'s name — the function declaration's own identifier, or the
+        declarator that a named function expression is assigned to — or `None` when the function is
+        anonymous and so has no name to reference.
+        """
+        if isinstance(func, JsFunctionDeclaration):
+            ident = func.id
+        else:
+            declarator = func.parent
+            ident = declarator.id if isinstance(declarator, JsVariableDeclarator) else None
+        return model.binding_of(ident) if isinstance(ident, JsIdentifier) else None
 
     def _remove_function(self, func: _FuncNode) -> None:
         if isinstance(func, JsFunctionDeclaration):
@@ -796,6 +820,7 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
                 closure_names.update(env.keys())
         if not closure_names:
             return
+        model = build_semantic_model(script)
         for node in list(script.walk()):
             if not isinstance(node, JsVariableDeclaration) or node.kind != JsVarKind.CONST:
                 continue
@@ -804,7 +829,8 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
                     continue
                 if decl.id.name not in closure_names:
                     continue
-                if not has_remaining_references(script, decl.id.name, exclude=decl, check_shadowing=True):
+                binding = model.binding_of(decl.id)
+                if not binding_has_references(model, binding, exclude=decl):
                     remove_declarator(decl)
                     self.mark_changed()
 

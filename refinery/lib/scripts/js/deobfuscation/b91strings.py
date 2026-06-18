@@ -10,10 +10,11 @@ from __future__ import annotations
 from typing import NamedTuple, Sequence
 
 from refinery.lib.scripts import Node, _remove_from_parent, _replace_in_parent
+from refinery.lib.scripts.js.analysis.model import build_semantic_model
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     ScriptLevelTransformer,
+    binding_has_references,
     find_enclosing_body,
-    has_remaining_references,
     make_string_literal,
     member_key,
     remove_declarator,
@@ -514,6 +515,8 @@ def _cleanup(
             dead_ids.add(id(t.declarator))
         if t.assignment is not None:
             dead_ids.add(id(t.assignment))
+    assert isinstance(root, JsScript)
+    model = build_semantic_model(root)
     for a in accessors:
         _remove_from_parent(a.node)
     for d in decoders:
@@ -522,8 +525,8 @@ def _cleanup(
         if '.' in t.name:
             if t.assignment is not None:
                 _remove_assignment_table(t)
-        elif not has_remaining_references(
-            root, t.name, exclude_ids=dead_ids, check_shadowing=True,
+        elif not binding_has_references(
+            model, model.lookup(t.name, model.root_scope), exclude_ids=dead_ids,
         ):
             if t.declarator is not None:
                 remove_declarator(t.declarator)
@@ -533,8 +536,8 @@ def _cleanup(
         if isinstance(node, JsVariableDeclarator) and isinstance(node.id, JsIdentifier):
             if node.id.name in cache_names and isinstance(node.init, JsObjectExpression):
                 if not node.init.properties:
-                    if not has_remaining_references(
-                        root, node.id.name, exclude_ids=dead_ids, check_shadowing=True,
+                    if not binding_has_references(
+                        model, model.binding_of(node.id), exclude_ids=dead_ids,
                     ):
                         remove_declarator(node)
     _remove_buffer_infrastructure(root)
@@ -580,6 +583,7 @@ def _remove_buffer_infrastructure(root: Node) -> None:
         _remove_from_parent(buffer_to_string_node)
     if not isinstance(root, JsScript) or get_global_name is None:
         return
+    model = build_semantic_model(root)
     for stmt in list(root.body):
         if isinstance(stmt, JsVariableDeclaration):
             for decl in list(stmt.declarations):
@@ -592,7 +596,7 @@ def _remove_buffer_infrastructure(root: Node) -> None:
                         isinstance(decl.init.callee, JsIdentifier)
                         and decl.init.callee.name == get_global_name
                     ):
-                        if has_remaining_references(root, decl.id.name):
+                        if binding_has_references(model, model.binding_of(decl.id)):
                             decl.init = JsIdentifier(name='globalThis')
                             decl.init.parent = decl
                         else:
@@ -617,7 +621,8 @@ def _remove_buffer_infrastructure(root: Node) -> None:
                 continue
             callee = child.callee
             if isinstance(callee, JsIdentifier) and callee.name == get_global_name:
-                if has_remaining_references(root, name, exclude_ids={id(stmt)}):
+                binding = model.lookup(name, model.root_scope)
+                if binding_has_references(model, binding, exclude_ids={id(stmt)}):
                     expr.right = JsIdentifier(name='globalThis')
                     expr.right.parent = expr
                 else:

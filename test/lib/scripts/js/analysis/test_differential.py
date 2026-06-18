@@ -94,6 +94,18 @@ class TestDeobfuscationDifferential(TestBase):
             'const k = 5; function A(k) { function B() { return k; } return B(); }'
             ' console.log(A(9));')
 
+    def test_dead_const_removed_only_when_truly_unreferenced(self):
+        """
+        Inside `wrap` the `var x` hoists over `g`'s read, so the outer `const x` is referenced only by
+        `f`. Removing `f` and the now-dead `const x` must not disturb `wrap`'s own `x`, so both reads
+        keep their values.
+        """
+        self._check(
+            "const x = 'outer';"
+            ' const f = () => x;'
+            ' function wrap(){ const g = () => x; if (true) { var x = "inner"; } return g(); }'
+            ' console.log(f(), wrap());')
+
     def test_nested_closures_share_binding(self):
         """
         `outer` calls a nested `add` that mutates the captured `s`. A nested call runs in an isolated

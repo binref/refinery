@@ -885,23 +885,6 @@ def find_enclosing_body(node: Node) -> list[Statement] | None:
     return None
 
 
-def _body_declares_var(body: list, name: str) -> bool:
-    """
-    Check whether a function body's statement list contains a `var` declaration that includes a
-    declarator with the given *name*.
-    """
-    for stmt in body:
-        if not isinstance(stmt, JsVariableDeclaration):
-            continue
-        if stmt.kind != JsVarKind.VAR:
-            continue
-        for decl in stmt.declarations:
-            if isinstance(decl, JsVariableDeclarator) and isinstance(decl.id, JsIdentifier):
-                if decl.id.name == name:
-                    return True
-    return False
-
-
 def function_binds_name(func: Node, name: str) -> bool:
     """
     Check if a function creates a local binding for `name` (parameter, function name, or var
@@ -927,30 +910,6 @@ def function_binds_name(func: Node, name: str) -> bool:
                         return True
         for child in node.children():
             stack.append(child)
-    return False
-
-
-def _is_shadowed(node: Node, name: str) -> bool:
-    """
-    Walk up from *node* through all enclosing function boundaries and check whether any of them
-    shadows *name* via a `var` declaration or a function parameter.
-
-    This intentionally checks only function boundaries, NOT block/script-level declarations.
-    `has_remaining_references` relies on this: a script-level `var x = expr` must not be considered
-    "shadowed" at its own declaration site, or the function will incorrectly conclude no references
-    remain.
-    """
-    parent = node.parent
-    while parent is not None:
-        if isinstance(parent, FUNCTION_NODE_TYPES):
-            for param in getattr(parent, 'params', ()):
-                if isinstance(param, JsIdentifier) and param.name == name:
-                    return True
-            body = getattr(parent, 'body', None)
-            if isinstance(body, JsBlockStatement):
-                if _body_declares_var(body.body, name):
-                    return True
-        parent = parent.parent
     return False
 
 
@@ -980,43 +939,6 @@ def references_receiver_this(root: Node) -> bool:
                         stack.append(member.key)
             continue
         stack.extend(node.children())
-    return False
-
-
-def has_remaining_references(
-    root: Node,
-    name: str,
-    exclude: Node | None = None,
-    exclude_ids: set[int] | None = None,
-    check_shadowing: bool = False,
-) -> bool:
-    """
-    Check whether *name* is referenced anywhere in the subtree of *root*, excluding nodes that
-    belong to *exclude* (by identity) or whose `id()` is in *exclude_ids*. When *check_shadowing*
-    is True, identifiers inside function bodies that shadow *name* via `var`/param are skipped.
-    Bare hoisted declarations (`var NAME;` with no initializer) are never counted.
-    """
-    if exclude is not None:
-        if exclude_ids is None:
-            exclude_ids = set()
-        exclude_ids = exclude_ids | {id(n) for n in exclude.walk()}
-    for node in root.walk():
-        if exclude_ids and id(node) in exclude_ids:
-            continue
-        parent = node.parent
-        if exclude_ids and parent is not None and id(parent) in exclude_ids:
-            continue
-        if not isinstance(node, JsIdentifier) or node.name != name:
-            continue
-        if (
-            isinstance(parent, JsVariableDeclarator)
-            and parent.id is node
-            and parent.init is None
-        ):
-            continue
-        if check_shadowing and _is_shadowed(node, name):
-            continue
-        return True
     return False
 
 

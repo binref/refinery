@@ -1307,6 +1307,11 @@ class TestClosureCapture(TestJsDeobfuscator):
         self.assertEqual('var r = -1;', result)
 
     def test_nested_var_hoisting_shadows_outer_const(self):
+        """
+        Inside `wrap`, the `var x` hoists to the function scope, so `g`'s `x` binds to it, not to the
+        outer `const x`. Once `f` is inlined and removed, nothing references the outer `const x`, so it
+        is dead and removed too — `wrap` keeps reading its own local `x`.
+        """
         source = inspect.cleandoc(
             """
             const x = 'outer';
@@ -1323,7 +1328,6 @@ class TestClosureCapture(TestJsDeobfuscator):
         self.assertEqual(
             inspect.cleandoc(
                 """
-                const x = 'outer';
                 function wrap() {
                   const g = () => x;
                   if (true) {

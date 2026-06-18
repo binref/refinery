@@ -4,8 +4,9 @@ import inspect
 
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 
+from refinery.lib.scripts.js.analysis.model import build_semantic_model
 from refinery.lib.scripts.js.deobfuscation.helpers import (
-    has_remaining_references,
+    binding_has_references,
     make_string_literal,
 )
 from refinery.lib.scripts.js.parser import JsParser
@@ -19,14 +20,24 @@ class TestDeobfuscationHelpers(TestJsDeobfuscator):
         self.assertEqual(make_string_literal('p\tq').raw, "'p\\tq'")
         self.assertEqual(make_string_literal('m\0n').raw, "'m\\0n'")
 
-    def test_shadowed_param_does_not_prevent_table_cleanup(self):
+    def test_binding_has_references_ignores_shadowing_param(self):
         source = inspect.cleandoc(
             """
-            function uses_table_param(table) { return table.length; }
-            uses_table_param([1, 2, 3]);
+            var table = pool;
+            function uses(table) { return table.length; }
             """
         )
-        ast = JsParser(source).parse()
-        result = has_remaining_references(ast, 'table', check_shadowing=True)
-        self.assertFalse(result,
-            'all occurrences of table are shadowed by function parameters')
+        model = build_semantic_model(JsParser(source).parse())
+        binding = model.lookup('table', model.root_scope)
+        self.assertFalse(binding_has_references(model, binding))
+
+    def test_binding_has_references_counts_genuine_use(self):
+        source = inspect.cleandoc(
+            """
+            var table = pool;
+            log(table.length);
+            """
+        )
+        model = build_semantic_model(JsParser(source).parse())
+        binding = model.lookup('table', model.root_scope)
+        self.assertTrue(binding_has_references(model, binding))
