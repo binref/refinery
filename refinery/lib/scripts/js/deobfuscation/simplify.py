@@ -4,6 +4,11 @@ JavaScript syntax normalization transforms.
 from __future__ import annotations
 
 from refinery.lib.scripts import Node, Transformer
+from refinery.lib.scripts.js.analysis.model import (
+    BindingKind,
+    SemanticModel,
+    build_semantic_model,
+)
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     FUNCTION_NODE_TYPES,
     GLOBAL_OBJECT_ALIASES,
@@ -92,39 +97,6 @@ _FUNCTION_PROPERTIES = _OBJECT_PROTO_PROPERTIES | frozenset({
 })
 
 _EMPTY_OBJECT_PROPERTIES = _OBJECT_PROTO_PROPERTIES
-
-
-def _is_locally_shadowed(node: Node, name: str) -> bool:
-    """
-    Checks whether ANY scope in the ancestor chain (including script-level) binds the given name.
-    Used for globalThis simplification: `globalThis.x` must not become `x` if `x` is declared
-    anywhere. Must not be confused with `_is_shadowed` from helpers, which by design only checks
-    function boundaries for use with `has_remaining_references`.
-    """
-    parent = node.parent
-    while parent is not None:
-        if isinstance(parent, FUNCTION_NODE_TYPES):
-            for param in getattr(parent, 'params', ()):
-                if isinstance(param, JsIdentifier) and param.name == name:
-                    return True
-                for child in param.walk():
-                    if isinstance(child, JsIdentifier) and child.name == name:
-                        return True
-        if isinstance(parent, (JsBlockStatement, JsScript)):
-            for stmt in parent.body:
-                if isinstance(stmt, JsFunctionDeclaration) and stmt.id is not None:
-                    if stmt.id.name == name:
-                        return True
-                if isinstance(stmt, JsVariableDeclaration):
-                    for decl in stmt.declarations:
-                        if (
-                            isinstance(decl, JsVariableDeclarator)
-                            and isinstance(decl.id, JsIdentifier)
-                            and decl.id.name == name
-                        ):
-                            return True
-        parent = parent.parent
-    return False
 
 
 def _is_global_alias(node: Node, name: str) -> bool:
@@ -252,6 +224,40 @@ def _node_to_value(node: Node) -> object:
 
 
 class JsSimplifications(Transformer):
+
+    def __init__(self):
+        super().__init__()
+        self._model: SemanticModel | None = None
+
+    @property
+    def model(self) -> SemanticModel:
+        assert self._model is not None
+        return self._model
+
+    def visit_JsScript(self, node: JsScript):
+        """
+        Build the semantic model once for the whole script, then rewrite. Simplification only ever
+        removes bindings within a pass, never adds one, so a name the pass-start model reports as
+        locally bound stays bound; reading shadowing from that model can therefore only over-preserve
+        a global-alias access, never collapse one that a local now captures.
+        """
+        self._model = build_semantic_model(node)
+        self.generic_visit(node)
+        return None
+
+    def _resolves_to_local(self, member: JsMemberExpression, name: str) -> bool:
+        """
+        Whether *name*, written as a bare identifier where *member* sits, would bind to a local
+        declaration rather than the global the `<global-alias>.name` access denotes. An implicit
+        global is not a local: the bare name and the property access name the same global, so
+        collapsing them stays sound. An unmapped or dynamically-scoped position is treated as bound,
+        leaving the access untouched where the model cannot prove the name is free.
+        """
+        scope = self.model.scope_of(member)
+        if scope is None:
+            return True
+        binding = self.model.lookup(name, scope)
+        return binding is not None and binding.kind is not BindingKind.IMPLICIT_GLOBAL
 
     def visit_JsBinaryExpression(self, node: JsBinaryExpression):
         self.generic_visit(node)
@@ -536,7 +542,7 @@ class JsSimplifications(Transformer):
             not node.computed
             and isinstance(node.object, JsIdentifier)
             and isinstance(node.property, JsIdentifier)
-            and not _is_locally_shadowed(node, node.property.name)
+            and not self._resolves_to_local(node, node.property.name)
             and (
                 node.object.name in GLOBAL_OBJECT_ALIASES
                 or _is_global_alias(node, node.object.name)

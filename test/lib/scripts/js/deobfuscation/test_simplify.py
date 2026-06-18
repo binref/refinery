@@ -691,3 +691,33 @@ class TestGlobalAliasStripping(TestJsDeobfuscator):
             """
         )
         self.assertEqual(source, self._simplify(source))
+
+    def test_global_alias_preserved_when_shadowed_by_catch_param(self):
+        source = inspect.cleandoc(
+            """
+            try {
+              f();
+            } catch (X) {
+              y = globalThis.X;
+            }
+            """
+        )
+        self.assertEqual(source, self._simplify(source))
+
+    def test_global_alias_preserved_when_shadowed_by_destructuring(self):
+        source = inspect.cleandoc(
+            """
+            var { X } = obj;
+            y = globalThis.X;
+            """
+        )
+        self.assertEqual(source, self._simplify(source))
+
+    def test_global_alias_preserved_when_shadowed_by_class(self):
+        source = inspect.cleandoc(
+            """
+            class X {}
+            y = globalThis.X;
+            """
+        )
+        self.assertEqual(source, self._simplify(source))

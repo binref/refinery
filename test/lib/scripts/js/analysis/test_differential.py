@@ -64,6 +64,16 @@ class TestDeobfuscationDifferential(TestBase):
     def test_function_called_only_through_eval_preserved(self):
         self._check("function greet(){ return 'hi'; } console.log(eval('greet()'));")
 
+    def test_global_alias_not_collapsed_into_catch_binding(self):
+        """
+        `globalThis.X` inside a `catch (X)` names the global property, not the caught exception, so
+        simplification must keep the alias rather than collapse it to the catch-bound `X`.
+        """
+        self._check(
+            "globalThis.X = 'global';"
+            ' function probe(){ try { throw "caught"; } catch (X) { return globalThis.X; } }'
+            ' console.log(probe());')
+
     def test_nested_closures_share_binding(self):
         """
         `outer` calls a nested `add` that mutates the captured `s`. A nested call runs in an isolated
