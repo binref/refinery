@@ -182,7 +182,7 @@ class IntervalUnion(ABC, Generic[Value, Input]):
         values = self._values
         lower, _, _ = self._insertion_point(start)
         upper, b, _ = self._insertion_point(self.endof(start, value))
-        for k in range(lower, upper + bool(b)):
+        for k in range(lower, upper + (b is not None)):
             start = starts[k]
             value = values[start]
             yield (start, value)

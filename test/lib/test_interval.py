@@ -51,3 +51,9 @@ class TestIntervalUnion(TestBase):
         self.assertEqual(list(iu), [(1, B'DDDDAABBEE')])
         iu.addi(2, B'FFFFFFFFFF')
         self.assertEqual(list(iu), [(1, B'DFFFFFFFFFF')])
+
+    def test_overlap_with_interval_starting_at_zero(self):
+        iu = IntIntervalUnion()
+        iu.addi(0, 0x1000)
+        self.assertEqual(list(iu.overlap(0, 0x10)), [(0, 0x1000)])
+        self.assertEqual(list(iu.overlap(0x400, 0x10)), [(0, 0x1000)])
