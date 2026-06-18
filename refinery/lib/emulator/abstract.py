@@ -777,8 +777,11 @@ class RawMetalEmulator(Emulator[_E, _R, _T]):
             if not segment.virtual:
                 continue
             base = self.align(segment.virtual.lower, down=True)
+            need = self.align(segment.virtual.lower + len(segment.physical)) - base
             size = self.align(segment.virtual.upper) - base
-            size = max(size, len(segment.physical))
+            size = max(size, need)
+            if size > self.page_limit:
+                size = need
             if size > self.page_limit:
                 continue
             mem.addi(base, size)
@@ -795,6 +798,8 @@ class RawMetalEmulator(Emulator[_E, _R, _T]):
                 continue
             slice = img[pm.slice()]
             if not any(slice):
+                continue
+            if not self.is_mapped(vm.lower, len(slice)):
                 continue
             self.mem_write(vm.lower, bytes(slice))
 

@@ -1,6 +1,20 @@
+import struct
 import unittest
 
 from ... import TestUnitBase
+
+
+def _corrupt_section_virtual_sizes(data) -> bytes:
+    out = bytearray(data)
+    e_lfanew = struct.unpack_from('<I', out, 0x3C)[0]
+    num_sections = struct.unpack_from('<H', out, e_lfanew + 6)[0]
+    size_opt = struct.unpack_from('<H', out, e_lfanew + 20)[0]
+    sect_table = e_lfanew + 24 + size_opt
+    for i in range(num_sections):
+        off = sect_table + i * 40
+        vaddr = struct.unpack_from('<I', out, off + 12)[0]
+        struct.pack_into('<I', out, off + 8, 0x80000000 + vaddr)
+    return bytes(out)
 
 
 class TestVStack(TestUnitBase):
@@ -31,6 +45,16 @@ class TestVStack(TestUnitBase):
 
     def test_stringcrypt_01(self):
         data = self.download_sample('e7a198902409517fc723d40b79c27b1776509d63c461b8f5daf5bb664f9e0589')
+        test = data | self.load_pipeline(
+            'put b [| rex Y:488D4C[2]E8[4]488BC8E8 | eat b | vaddr offset | vstack -w40 var:offset | xtp | defang ]') | {str}
+        self.assertSetEqual(test, {
+            'https[:]//discord[.]com/channels/1145547606802563172/1154889021567279115/1154889238077263952',
+            'https[:]//raw.githubusercontent[.]com/ToXicVibezz/Galaxy/main/Galaxy.dll',
+        })
+
+    def test_corrupt_section_virtual_size_regression(self):
+        data = self.download_sample('e7a198902409517fc723d40b79c27b1776509d63c461b8f5daf5bb664f9e0589')
+        data = _corrupt_section_virtual_sizes(data)
         test = data | self.load_pipeline(
             'put b [| rex Y:488D4C[2]E8[4]488BC8E8 | eat b | vaddr offset | vstack -w40 var:offset | xtp | defang ]') | {str}
         self.assertSetEqual(test, {
