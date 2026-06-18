@@ -223,7 +223,30 @@ class ASN1Reader(StructReader[memoryview]):
 
     @staticmethod
     def _try_decode_nested(data: bytes) -> ASN1Value | None:
-        if len(data) < 2:
+        n = len(data)
+        if n < 2:
+            return None
+        i = 1
+        if (data[0] & 0x1F) == 0x1F:
+            while i < n and (data[i] & 0x80):
+                i += 1
+            i += 1
+        if i >= n:
+            return None
+        lb = data[i]
+        i += 1
+        if lb < 0x80:
+            total = i + lb
+        elif lb == 0x80:
+            total = -1
+        else:
+            nlen = lb & 0x7F
+            if i + nlen > n:
+                return None
+            total = i + nlen + int.from_bytes(data[i:i + nlen], 'big')
+        if total >= 0 and total != n:
+            # A definite-length TLV that does not frame the whole buffer can never
+            # satisfy the full-consumption check below, so skip the speculative parse.
             return None
         try:
             reader = ASN1Reader(memoryview(data), bigendian=True)
@@ -402,23 +425,19 @@ class ASN1Reader(StructReader[memoryview]):
         return zero
 
     def _decode_constructed_children(self, length: int, element_schema: SchemaType) -> list[ASN1Value]:
+        children: list[ASN1Value] = []
         if length < 0:
-            children: list[ASN1Value] = []
             while True:
-                if self.remaining_bytes >= 2:
-                    if self._skip_u16_padding():
-                        break
+                if self.remaining_bytes >= 2 and self._skip_u16_padding():
+                    break
                 child = self.decode_with_schema(element_schema)
                 if child is self._EOC:
                     break
                 children.append(child)
-            if isinstance(element_schema, (SetOf, SeqOf)):
-                return [item for child in children for item in child]
-            return children
-        end = self.tell() + length
-        children = []
-        while self.tell() < end:
-            children.append(self.decode_with_schema(element_schema))
+        else:
+            end = self.tell() + length
+            while self.tell() < end:
+                children.append(self.decode_with_schema(element_schema))
         if isinstance(element_schema, (SetOf, SeqOf)):
             return [item for child in children for item in child]
         return children

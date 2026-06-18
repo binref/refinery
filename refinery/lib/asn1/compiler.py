@@ -590,18 +590,14 @@ class _Parser:
 
             return ANY
 
-        def _resolve_field(f: object) -> F:
-            assert isinstance(f, tuple) and f[0] == 'Field'
-            _, name, ftype, optional, has_default, default = f
-
+        def _resolve_tag_kwargs(typ: object) -> tuple[SchemaType, dict[str, object]]:
             implicit: int | None = None
             explicit: int | None = None
             tag_class_val: int = CLASS_CONTEXT
 
-            # unwrap tagged type
-            actual_type = ftype
-            if isinstance(ftype, tuple) and ftype[0] == 'Tagged':
-                tag_num, tagging, inner, tag_class_val = ftype[1], ftype[2], ftype[3], ftype[4]
+            actual_type = typ
+            if isinstance(typ, tuple) and typ[0] == 'Tagged':
+                tag_num, tagging, inner, tag_class_val = typ[1], typ[2], typ[3], typ[4]
                 actual_type = inner
                 if tagging == 'IMPLICIT':
                     implicit = tag_num
@@ -617,40 +613,22 @@ class _Parser:
                 kwargs['explicit'] = explicit
             if tag_class_val != CLASS_CONTEXT:
                 kwargs['tag_class'] = tag_class_val
+            return resolved_type, kwargs
+
+        def _resolve_field(f: object) -> F:
+            assert isinstance(f, tuple) and f[0] == 'Field'
+            _, name, ftype, optional, has_default, default = f
+            resolved_type, kwargs = _resolve_tag_kwargs(ftype)
             if has_default:
                 kwargs['default'] = default
             elif optional:
                 kwargs['optional'] = True
-
             return F(name, resolved_type, **kwargs)  # type: ignore
 
         def _resolve_alt(a: object) -> F:
             assert isinstance(a, tuple) and a[0] == 'Alt'
             _, name, atype = a
-
-            implicit: int | None = None
-            explicit: int | None = None
-            tag_class_val: int = CLASS_CONTEXT
-
-            actual_type = atype
-            if isinstance(atype, tuple) and atype[0] == 'Tagged':
-                tag_num, tagging, inner, tag_class_val = atype[1], atype[2], atype[3], atype[4]
-                actual_type = inner
-                if tagging == 'IMPLICIT':
-                    implicit = tag_num
-                else:
-                    explicit = tag_num
-
-            resolved_type = resolve_type(actual_type)
-
-            kwargs: dict[str, object] = {}
-            if implicit is not None:
-                kwargs['implicit'] = implicit
-            if explicit is not None:
-                kwargs['explicit'] = explicit
-            if tag_class_val != CLASS_CONTEXT:
-                kwargs['tag_class'] = tag_class_val
-
+            resolved_type, kwargs = _resolve_tag_kwargs(atype)
             return F(name, resolved_type, **kwargs)  # type: ignore
 
         def _resolve_assignment(name: str) -> SchemaType:

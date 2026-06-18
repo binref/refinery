@@ -51,23 +51,7 @@ def _parse_asn1_time(value):
     return dt.isoformat(sep=' ')
 
 
-def _flatten_name(name: list) -> OrderedDict:
-    result: OrderedDict[str, str] = OrderedDict()
-    if not isinstance(name, list):
-        return result
-    for rdn in name:
-        items = rdn if isinstance(rdn, list) else [rdn]
-        for atv in items:
-            if not isinstance(atv, dict):
-                continue
-            oid = atv.get('type', '')
-            val = atv.get('value', '')
-            if isinstance(oid, str) and oid:
-                result[oid] = val
-    return result
-
-
-def _flatten_generic_name(name) -> OrderedDict:
+def _flatten_name(name) -> OrderedDict:
     result: OrderedDict[str, str] = OrderedDict()
     if not isinstance(name, list):
         return result
@@ -106,14 +90,19 @@ def _interpret_spc_opus(value) -> OrderedDict:
     return result
 
 
+def _decode_text(value, primary: str) -> str:
+    raw = bytes(value)
+    try:
+        return raw.decode(primary)
+    except Exception:
+        return raw.decode('latin-1')
+
+
 def _extract_spc_string(value):
     if isinstance(value, str):
         return value
     if isinstance(value, (bytes, bytearray, memoryview)):
-        try:
-            return bytes(value).decode('utf-16-be')
-        except Exception:
-            return bytes(value).decode('latin-1')
+        return _decode_text(value, 'utf-16-be')
     if isinstance(value, dict):
         inner = value.get('value', value)
         return _extract_spc_string(inner)
@@ -129,27 +118,18 @@ def _extract_spc_link(value):
     if isinstance(value, str):
         return value
     if isinstance(value, (bytes, bytearray, memoryview)):
-        try:
-            return bytes(value).decode('ascii')
-        except Exception:
-            return bytes(value).decode('latin-1')
+        return _decode_text(value, 'ascii')
     if isinstance(value, dict):
         tag = value.get('tag', '')
         inner = value.get('value', value)
         if tag == 'context-0':
             if isinstance(inner, (bytes, bytearray, memoryview)):
-                try:
-                    return bytes(inner).decode('ascii')
-                except Exception:
-                    return bytes(inner).decode('latin-1')
+                return _decode_text(inner, 'ascii')
             return inner
         if tag == 'context-2':
             return _extract_spc_string(inner)
         if isinstance(inner, (bytes, bytearray, memoryview)):
-            try:
-                return bytes(inner).decode('ascii')
-            except Exception:
-                return bytes(inner).decode('latin-1')
+            return _decode_text(inner, 'ascii')
         return _extract_spc_string(inner) if not isinstance(inner, dict) else inner
     return value
 
@@ -161,7 +141,7 @@ def _interpret_counter_signature(value) -> OrderedDict:
     sid_raw = value[1]
     if isinstance(sid_raw, list) and len(sid_raw) == 2:
         sid = OrderedDict()
-        sid['issuer'] = _flatten_generic_name(sid_raw[0])
+        sid['issuer'] = _flatten_name(sid_raw[0])
         sid['serialNumber'] = sid_raw[1]
         result['sid'] = sid
     for item in value:
