@@ -35,7 +35,7 @@ class ISOFile:
         is_dir: bool,
         extents: list[tuple[int, int]],
         key: tuple[FileSystemType, ISORef | UDFRef],
-        inline: bytes | None = None,
+        inline: bytes | memoryview | None = None,
     ):
         self.path = path
         self.size = size

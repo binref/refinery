@@ -108,9 +108,8 @@ class BootCatalog:
         if not catalog._parse_validation_entry(data[:32]):
             return None
         initial = catalog._parse_initial_entry(data[32:64])
-        if initial:
-            initial.platform_id = catalog.validation_platform_id
-            catalog.entries.append(initial)
+        initial.platform_id = catalog.validation_platform_id
+        catalog.entries.append(initial)
         pos = 64
         current_platform = catalog.validation_platform_id
         while pos + 32 <= len(data):
@@ -119,14 +118,19 @@ class BootCatalog:
                 current_platform = data[pos + 1]
                 num_entries, = struct.unpack_from('<H', data, pos + 2)
                 pos += 32
-                for _ in range(num_entries):
-                    if pos + 32 > len(data):
-                        break
+                entries_read = 0
+                while entries_read < num_entries and pos + 32 <= len(data):
                     entry = catalog._parse_section_entry(data[pos:pos + 32])
-                    if entry:
-                        entry.platform_id = current_platform
-                        catalog.entries.append(entry)
                     pos += 32
+                    entries_read += 1
+                    entry.platform_id = current_platform
+                    catalog.entries.append(entry)
+                    if entry.media_type & 0x20:
+                        while pos + 32 <= len(data) and data[pos] == 0x44:
+                            more = data[pos + 1] & 0x20
+                            pos += 32
+                            if not more:
+                                break
                 if header_id == 0x91:
                     break
             else:
@@ -136,7 +140,7 @@ class BootCatalog:
         return catalog
 
     def _parse_validation_entry(self, data: bytes) -> bool:
-        if data[0] != 0x01:
+        if data[0] != 0x01 or data[30] != 0x55 or data[31] != 0xAA:
             return False
         self.validation_platform_id = data[1]
         checksum = 0
@@ -144,7 +148,7 @@ class BootCatalog:
             checksum += struct.unpack_from('<H', data, i)[0]
         return (checksum & 0xFFFF) == 0
 
-    def _parse_initial_entry(self, data: bytes) -> BootEntry | None:
+    def _parse_initial_entry(self, data: bytes) -> BootEntry:
         entry = BootEntry()
         entry.is_bootable = (data[0] == 0x88)
         entry.media_type = data[1]
@@ -154,7 +158,7 @@ class BootCatalog:
         entry.load_rba, = struct.unpack_from('<I', data, 8)
         return entry
 
-    def _parse_section_entry(self, data: bytes) -> BootEntry | None:
+    def _parse_section_entry(self, data: bytes) -> BootEntry:
         entry = BootEntry()
         entry.is_bootable = (data[0] == 0x88)
         entry.media_type = data[1]

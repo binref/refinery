@@ -185,9 +185,10 @@ def _get_name_rr(
     susp_offset: int,
     data: memoryview
 ) -> str | None:
-    parts: list[bytes] = []
+    parts: list[bytes | memoryview] = []
     su = system_use
     su_off = susp_offset
+    visited_ce: set[int] = set()
     while True:
         nm = _find_susp_entry(su, SUSP_TAG_NM, su_off)
         if nm is None or len(nm) < 5:
@@ -206,7 +207,8 @@ def _get_name_rr(
         if ce:
             block, off, length = ce
             ce_pos = block * BLOCK_SIZE + off
-            if ce_pos + length <= len(data):
+            if ce_pos not in visited_ce and ce_pos + length <= len(data):
+                visited_ce.add(ce_pos)
                 su = data[ce_pos:ce_pos + length]
                 su_off = 0
                 continue
@@ -411,10 +413,7 @@ class ISO9660Archive:
             if vd.is_supplementary and vd.is_joliet:
                 joliet = vd
             elif not vd.is_supplementary:
-                if primary is None:
-                    primary = vd
-                else:
-                    primary = vd
+                primary = vd
 
         self._primary_vd = primary
         self._joliet_vd = joliet

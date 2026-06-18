@@ -9,6 +9,8 @@ import struct
 from datetime import datetime, timedelta, timezone
 from typing import Iterator
 
+from refinery.lib.types import buf
+
 DEFAULT_SECTOR_SIZE = 2048
 ANCHOR_SECTOR = 256
 
@@ -80,19 +82,19 @@ class UDFRef:
         return sum(s for _, s in self.extents)
 
 
-def _read_u16(data: bytes | memoryview, offset: int) -> int:
+def _read_u16(data: buf, offset: int) -> int:
     return struct.unpack_from('<H', data, offset)[0]
 
 
-def _read_u32(data: bytes | memoryview, offset: int) -> int:
+def _read_u32(data: buf, offset: int) -> int:
     return struct.unpack_from('<I', data, offset)[0]
 
 
-def _read_u64(data: bytes | memoryview, offset: int) -> int:
+def _read_u64(data: buf, offset: int) -> int:
     return struct.unpack_from('<Q', data, offset)[0]
 
 
-def _verify_tag(data: bytes | memoryview, offset: int = 0) -> int | None:
+def _verify_tag(data: buf, offset: int = 0) -> int | None:
     if offset + 16 > len(data):
         return None
     tag_id = _read_u16(data, offset)
@@ -106,7 +108,7 @@ def _verify_tag(data: bytes | memoryview, offset: int = 0) -> int | None:
     return tag_id
 
 
-def _parse_timestamp(data: bytes | memoryview, offset: int) -> datetime | None:
+def _parse_timestamp(data: buf, offset: int) -> datetime | None:
     if offset + 12 > len(data):
         return None
     type_and_tz = _read_u16(data, offset)
@@ -131,13 +133,13 @@ def _parse_timestamp(data: bytes | memoryview, offset: int) -> datetime | None:
         return None
 
 
-def _parse_short_ad(data: bytes | memoryview, offset: int) -> tuple[int, int]:
+def _parse_short_ad(data: buf, offset: int) -> tuple[int, int]:
     length = _read_u32(data, offset) & 0x3FFFFFFF
     position = _read_u32(data, offset + 4)
     return (position, length)
 
 
-def _parse_long_ad(data: bytes | memoryview, offset: int) -> tuple[int, int, int]:
+def _parse_long_ad(data: buf, offset: int) -> tuple[int, int, int]:
     length = _read_u32(data, offset) & 0x3FFFFFFF
     location = _read_u32(data, offset + 4)
     partition = _read_u16(data, offset + 8)
@@ -176,8 +178,11 @@ class UDFArchive:
         return sector * self._sector_size
 
     def _partition_offset(self, partition_num: int, block: int) -> int:
-        if partition_num in self._partitions:
-            start_sector, _ = self._partitions[partition_num]
+        partition = self._partitions.get(partition_num)
+        if partition is None and len(self._partitions) == 1:
+            (partition,) = self._partitions.values()
+        if partition is not None:
+            start_sector, _ = partition
             return (start_sector + block) * self._sector_size
         return block * self._sector_size
 
@@ -212,7 +217,7 @@ class UDFArchive:
                 self._parse_logical_volume_descriptor(sector_data)
             sector += 1
 
-    def _parse_partition_descriptor(self, data: bytes | memoryview) -> None:
+    def _parse_partition_descriptor(self, data: buf) -> None:
         if len(data) < 264:
             return
         partition_number = _read_u16(data, 22)
@@ -220,7 +225,7 @@ class UDFArchive:
         length = _read_u32(data, 192)
         self._partitions[partition_number] = (start_location, length)
 
-    def _parse_logical_volume_descriptor(self, data: bytes | memoryview) -> None:
+    def _parse_logical_volume_descriptor(self, data: buf) -> None:
         if len(data) < 248:
             return
         block_size = _read_u32(data, 212)
@@ -288,7 +293,7 @@ class UDFArchive:
 
     def _parse_file_identifier(
         self,
-        data: bytes | memoryview,
+        data: buf,
         offset: int,
         parent_path: str,
         visited: set[int],
@@ -331,143 +336,103 @@ class UDFArchive:
             self.refs.append(ref)
             self._read_directory(icb_loc, icb_part, full_path, visited, depth + 1)
         else:
-            file_data, file_date, file_size = self._read_file_entry_metadata(icb_loc, icb_part)
+            inline, extents, file_date, file_size = self._read_file_payload(icb_loc, icb_part)
             ref = UDFRef(full_path, file_date)
             ref.file_version = file_version
             ref._info_length = file_size
-            if file_data is not None:
-                ref.inline_data = file_data
+            if inline is not None:
+                ref.inline_data = inline
             else:
-                extents = self._read_file_entry_extents(icb_loc, icb_part)
                 ref.extents = extents
             self.refs.append(ref)
 
         return total_len
 
-    def _decode_name(self, raw: bytes | memoryview) -> str:
+    def _decode_name(self, raw: buf) -> str:
         if not raw:
             return ''
         if raw[0] == 8:
-            try:
-                return bytes(raw[1:]).decode('utf-8', errors='replace')
-            except Exception:
-                return bytes(raw[1:]).decode('latin-1')
+            name = bytes(raw[1:]).decode('latin-1')
         elif raw[0] == 16:
-            try:
-                return bytes(raw[1:]).decode('utf-16-be', errors='replace')
-            except Exception:
-                return bytes(raw[1:]).decode('latin-1')
-        return bytes(raw).decode('latin-1', errors='replace')
+            name = bytes(raw[1:]).decode('utf-16-be', errors='replace')
+        else:
+            return bytes(raw).decode('latin-1', errors='replace')
+        nul = name.find('\x00')
+        return name if nul < 0 else name[:nul]
+
+    def _read_file_entry_raw(
+        self,
+        icb_loc: int,
+        icb_part: int,
+    ) -> tuple[memoryview, int, int, datetime | None, int, int] | None:
+        """
+        Parse the common header of a (possibly extended) File Entry and return the tuple
+        (entry_data, desc_type, info_length, date, ad_offset, ad_length). Returns None when
+        no valid File Entry is present at the given location.
+        """
+        offset = self._partition_offset(icb_part, icb_loc)
+        if offset + 176 > len(self._data):
+            return None
+        entry_data = self._data[offset:offset + self._sector_size]
+        tag_id = _verify_tag(entry_data)
+        is_extended = (tag_id == TAG_ID_EXTENDED_FILE_ENTRY)
+        if tag_id != TAG_ID_FILE_ENTRY and not is_extended:
+            return None
+        if is_extended and len(entry_data) < 212:
+            return None
+
+        icb_flags = _read_u16(entry_data, 34) if len(entry_data) > 36 else 0
+        desc_type = icb_flags & 0x07
+        info_length = _read_u64(entry_data, 56)
+
+        if is_extended:
+            ea_length = _read_u32(entry_data, 204)
+            ad_length = _read_u32(entry_data, 208)
+            ad_offset = 212 + ea_length
+        else:
+            ea_length = _read_u32(entry_data, 168)
+            ad_length = _read_u32(entry_data, 172)
+            ad_offset = 176 + ea_length
+
+        date = _parse_timestamp(entry_data, 92 if is_extended else 84) if len(entry_data) > 96 else None
+
+        if ad_offset + ad_length > len(entry_data):
+            ad_length = max(0, len(entry_data) - ad_offset)
+
+        return entry_data, desc_type, info_length, date, ad_offset, ad_length
 
     def _read_file_entry(
         self,
         icb_loc: int,
         icb_part: int
     ) -> tuple[bytes | bytearray | memoryview | None, datetime | None]:
-        offset = self._partition_offset(icb_part, icb_loc)
-        if offset + 176 > len(self._data):
+        parsed = self._read_file_entry_raw(icb_loc, icb_part)
+        if parsed is None:
             return None, None
-        entry_data = self._data[offset:offset + self._sector_size]
-        tag_id = _verify_tag(entry_data)
-        is_extended = (tag_id == TAG_ID_EXTENDED_FILE_ENTRY)
-        if tag_id != TAG_ID_FILE_ENTRY and not is_extended:
-            return None, None
-
-        icb_flags = _read_u16(entry_data, 34) if len(entry_data) > 36 else 0
-        desc_type = icb_flags & 0x07
-        info_length = _read_u64(entry_data, 56)
-
-        if is_extended:
-            ea_length = _read_u32(entry_data, 204)
-            ad_length = _read_u32(entry_data, 208)
-            ad_offset = 212 + ea_length
-        else:
-            ea_length = _read_u32(entry_data, 168)
-            ad_length = _read_u32(entry_data, 172)
-            ad_offset = 176 + ea_length
-
-        date = _parse_timestamp(entry_data, 92 if is_extended else 84) if len(entry_data) > 96 else None
-
-        if ad_offset + ad_length > len(entry_data):
-            ad_length = max(0, len(entry_data) - ad_offset)
-
+        entry_data, desc_type, info_length, date, ad_offset, ad_length = parsed
         if desc_type == ICB_DESC_TYPE_INLINE:
             inline = entry_data[ad_offset:ad_offset + ad_length]
             return inline[:info_length], date
-
         result = self._resolve_allocations(entry_data, ad_offset, ad_length, desc_type, icb_part)
         return result[:info_length], date
 
-    def _read_file_entry_metadata(
+    def _read_file_payload(
         self,
         icb_loc: int,
         icb_part: int
-    ) -> tuple[bytes | bytearray | memoryview | None, datetime | None, int]:
-        offset = self._partition_offset(icb_part, icb_loc)
-        if offset + 176 > len(self._data):
-            return None, None, 0
-        entry_data = self._data[offset:offset + self._sector_size]
-        tag_id = _verify_tag(entry_data)
-        is_extended = (tag_id == TAG_ID_EXTENDED_FILE_ENTRY)
-        if tag_id != TAG_ID_FILE_ENTRY and not is_extended:
-            return None, None, 0
-
-        icb_flags = _read_u16(entry_data, 34) if len(entry_data) > 36 else 0
-        desc_type = icb_flags & 0x07
-        info_length = _read_u64(entry_data, 56)
-
-        if is_extended:
-            ea_length = _read_u32(entry_data, 204)
-            ad_length = _read_u32(entry_data, 208)
-            ad_offset = 212 + ea_length
-        else:
-            ea_length = _read_u32(entry_data, 168)
-            ad_length = _read_u32(entry_data, 172)
-            ad_offset = 176 + ea_length
-
-        date = _parse_timestamp(entry_data, 92 if is_extended else 84) if len(entry_data) > 96 else None
-
+    ) -> tuple[memoryview | None, list[tuple[int, int]], datetime | None, int]:
+        parsed = self._read_file_entry_raw(icb_loc, icb_part)
+        if parsed is None:
+            return None, [], None, 0
+        entry_data, desc_type, info_length, date, ad_offset, ad_length = parsed
         if desc_type == ICB_DESC_TYPE_INLINE:
-            if ad_offset + ad_length <= len(entry_data):
-                return entry_data[ad_offset:ad_offset + ad_length], date, info_length
-            return b'', date, info_length
-
-        return None, date, info_length
-
-    def _read_file_entry_extents(
-        self,
-        icb_loc: int,
-        icb_part: int
-    ) -> list[tuple[int, int]]:
-        offset = self._partition_offset(icb_part, icb_loc)
-        if offset + 176 > len(self._data):
-            return []
-        entry_data = self._data[offset:offset + self._sector_size]
-        tag_id = _verify_tag(entry_data)
-        is_extended = (tag_id == TAG_ID_EXTENDED_FILE_ENTRY)
-        if tag_id != TAG_ID_FILE_ENTRY and not is_extended:
-            return []
-
-        icb_flags = _read_u16(entry_data, 34) if len(entry_data) > 36 else 0
-        desc_type = icb_flags & 0x07
-
-        if is_extended:
-            ea_length = _read_u32(entry_data, 204)
-            ad_length = _read_u32(entry_data, 208)
-            ad_offset = 212 + ea_length
-        else:
-            ea_length = _read_u32(entry_data, 168)
-            ad_length = _read_u32(entry_data, 172)
-            ad_offset = 176 + ea_length
-
-        if ad_offset + ad_length > len(entry_data):
-            ad_length = max(0, len(entry_data) - ad_offset)
-
-        return self._collect_extents(entry_data, ad_offset, ad_length, desc_type, icb_part)
+            return entry_data[ad_offset:ad_offset + ad_length], [], date, info_length
+        extents = self._collect_extents(entry_data, ad_offset, ad_length, desc_type, icb_part)
+        return None, extents, date, info_length
 
     def _resolve_allocations(
         self,
-        entry_data: bytes | memoryview,
+        entry_data: buf,
         ad_offset: int,
         ad_length: int,
         desc_type: int,
@@ -487,7 +452,7 @@ class UDFArchive:
 
     def _collect_extents(
         self,
-        entry_data: bytes | memoryview,
+        entry_data: buf,
         ad_offset: int,
         ad_length: int,
         desc_type: int,
