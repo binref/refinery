@@ -662,6 +662,63 @@ class TestASN1(TestUnitBase):
         """)
         self.assertEqual(result['Foo'].fields[0].default, 1)
 
+    def test_compiler_self_recursive_type(self):
+        from refinery.lib.asn1.compiler import compile_asn1
+        from refinery.lib.asn1.reader import ASN1Reader
+        result = compile_asn1("""
+            Test DEFINITIONS ::= BEGIN
+                Node ::= SEQUENCE { value INTEGER, next Node OPTIONAL }
+            END
+        """)
+        node = result['Node']
+        self.assertIs(node.fields[1].type, node)
+        reader = ASN1Reader(bytes.fromhex('30080201013003020102'), bigendian=True)
+        self.assertEqual(reader.decode_with_schema(node), {'value': 1, 'next': {'value': 2}})
+
+    def test_compiler_mutually_recursive_types(self):
+        from refinery.lib.asn1.compiler import compile_asn1
+        from refinery.lib.asn1.reader import ASN1Reader
+        result = compile_asn1("""
+            Test DEFINITIONS ::= BEGIN
+                A ::= SEQUENCE { b B OPTIONAL }
+                B ::= SEQUENCE { a A OPTIONAL }
+            END
+        """)
+        self.assertIs(result['A'].fields[0].type, result['B'])
+        self.assertIs(result['B'].fields[0].type, result['A'])
+        reader = ASN1Reader(bytes.fromhex('3004300230 00'.replace(' ', '')), bigendian=True)
+        self.assertEqual(reader.decode_with_schema(result['A']), {'b': {'a': {}}})
+
+    def test_compiler_recursive_sequence_of(self):
+        from refinery.lib.asn1.compiler import compile_asn1
+        result = compile_asn1("""
+            Test DEFINITIONS ::= BEGIN
+                List ::= SEQUENCE OF List
+            END
+        """)
+        self.assertIs(result['List'].element, result['List'])
+
+    def test_compiler_implicit_choice_under_cycle_is_explicit(self):
+        from refinery.lib.asn1.compiler import compile_asn1
+        from refinery.lib.asn1.schema import Choice
+        result = compile_asn1("""
+            Test DEFINITIONS IMPLICIT TAGS ::= BEGIN
+                A ::= CHOICE { x [0] B, y BOOLEAN }
+                B ::= SEQUENCE { z [1] A }
+            END
+        """)
+        field = result['B'].fields[0]
+        self.assertIsNone(field.implicit)
+        self.assertEqual(field.explicit, 1)
+        self.assertIsInstance(field.type, Choice)
+
+    def test_compiler_alias_cycle_resolves_to_any(self):
+        from refinery.lib.asn1.compiler import compile_asn1
+        from refinery.lib.asn1.schema import ANY
+        result = compile_asn1('Test DEFINITIONS ::= BEGIN A ::= B B ::= A END')
+        self.assertIs(result['A'], ANY)
+        self.assertIs(result['B'], ANY)
+
     def test_compiler_typeref_with_constraint(self):
         from refinery.lib.asn1.compiler import compile_asn1
         from refinery.lib.asn1.schema import Seq, INTEGER

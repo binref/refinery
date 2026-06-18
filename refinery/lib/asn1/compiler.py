@@ -161,6 +161,22 @@ _BUILTIN_TYPE_MAP: dict[str, int] = {
 }
 
 
+_RESOLVING = object()
+
+
+class _Ref:
+    """
+    A forward reference to a not-yet-resolved type, emitted when a type definition refers to
+    itself (or to another type currently being resolved). It is replaced with the resolved schema
+    object by the back-patch pass in `_Parser._resolve`, producing a cyclic schema graph that the
+    byte-driven decoder traverses safely.
+    """
+    __slots__ = ('name',)
+
+    def __init__(self, name: str):
+        self.name = name
+
+
 class _Parser:
     def __init__(self, tokens: list[_Token], externals: dict[str, SchemaType] | None = None):
         self._tokens = tokens
@@ -588,10 +604,10 @@ class _Parser:
                 if tag == 'TypeRef':
                     name = t[1]
                     if name in resolved:
-                        return resolved[name]
+                        target = resolved[name]
+                        return _Ref(name) if target is _RESOLVING else target
                     if name in self._assignments:
-                        resolved[name] = _resolve_assignment(name)
-                        return resolved[name]
+                        return _resolve_assignment(name)
                     if name in _BUILTIN_TYPE_MAP:
                         return _BUILTIN_TYPE_MAP[name]
                     return ANY
@@ -673,17 +689,50 @@ class _Parser:
 
         def _resolve_assignment(name: str) -> SchemaType:
             if name in resolved:
-                return resolved[name]
-            raw = self._assignments[name]
-            # place a sentinel to detect cycles
-            resolved[name] = ANY
-            result = resolve_type(raw)
+                target = resolved[name]
+                return _Ref(name) if target is _RESOLVING else target
+            resolved[name] = _RESOLVING
+            result = resolve_type(self._assignments[name])
             resolved[name] = result
             return result
+
+        def _deref(t: object) -> SchemaType:
+            chain: set[str] = set()
+            while isinstance(t, _Ref):
+                if t.name in chain:
+                    return ANY
+                chain.add(t.name)
+                t = resolved.get(t.name, ANY)
+            return t
+
+        def _backpatch(schema: object, seen: set[int]) -> None:
+            if id(schema) in seen:
+                return
+            seen.add(id(schema))
+            if isinstance(schema, (Seq, Set)):
+                fields = schema.fields
+            elif isinstance(schema, Choice):
+                fields = schema.alternatives
+            elif isinstance(schema, (SeqOf, SetOf)):
+                schema.element = _deref(schema.element)
+                _backpatch(schema.element, seen)
+                return
+            else:
+                return
+            for fld in fields:
+                fld.type = _deref(fld.type)
+                if fld.implicit is not None and isinstance(fld.type, Choice):
+                    fld.explicit, fld.implicit = fld.implicit, None
+                _backpatch(fld.type, seen)
 
         for name in self._assignments:
             if name not in resolved:
                 _resolve_assignment(name)
+
+        seen: set[int] = set()
+        for name in self._assignments:
+            resolved[name] = _deref(resolved[name])
+            _backpatch(resolved[name], seen)
 
         return resolved
 
