@@ -1,5 +1,5 @@
 __pycache__
-.claude
+.claude/settings.local.json
 /refinery/**/*.c
 /refinery/**/*.pyd
 /refinery/**/*.pyd.old
