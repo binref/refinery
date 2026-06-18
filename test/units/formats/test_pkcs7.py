@@ -36,6 +36,18 @@ class TestPKCS7(TestUnitBase):
         serial = int.from_bytes(b'\x80' + bytes(15), 'big', signed=True)
         self.assertEqual(_unsign(serial), '80000000000000000000000000000000')
 
+    def test_parse_asn1_time_forms(self):
+        from refinery.lib.asn1.cms import _parse_asn1_time
+        self.assertEqual(_parse_asn1_time('210101120000Z'), '2021-01-01 12:00:00+00:00')
+        self.assertEqual(_parse_asn1_time('20210101120000Z'), '2021-01-01 12:00:00+00:00')
+        self.assertEqual(_parse_asn1_time('20230101120000.123Z'), '2023-01-01 12:00:00.123000+00:00')
+        self.assertEqual(_parse_asn1_time('20230101120000+0500'), '2023-01-01 12:00:00+05:00')
+        self.assertEqual(_parse_asn1_time('2301011200Z'), '2023-01-01 12:00:00+00:00')
+
+    def test_parse_asn1_time_malformed_returns_raw(self):
+        from refinery.lib.asn1.cms import _parse_asn1_time
+        self.assertEqual(_parse_asn1_time('not-a-valid-time'), 'not-a-valid-time')
+
     SIGNATURE1 = lzma.decompress(base64.b85decode(
         B'{Wp48S^xk9=GL@E0stWa8~^|S5YJf5;5WAvF<k%{AcE^E=O>Sa;=U-fb<qk}DiB}`2VL~3W}sd*dR+R0{)~K^oc2*Lvmqciwus=;'
         B'sm$4Y-e_2Ow%TCECA2H@kVb$F_fq>39qg?kh@!XeN!LYVz`|`5m4QH}oamB5Ty=B+G;#9wtuyzEk=wq~jdMXm;q9B>@72FHwsMEA'

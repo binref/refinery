@@ -4,7 +4,7 @@ import hashlib
 import re
 
 from collections import OrderedDict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from refinery.lib.asn1 import ASN1Reader
 from refinery.lib.asn1.defs import ContentInfo, SignedContentInfo, SpcSpOpusInfo
@@ -13,23 +13,42 @@ _TIME_VALUED_ATTRIBUTES = {'signingTime'}
 
 
 def _parse_asn1_time(value):
+    """
+    Normalize an ASN.1 UTCTime or GeneralizedTime string to an ISO 8601 timestamp. Supports
+    optional seconds, fractional seconds, and a Z or +/-HHMM timezone suffix. The input is
+    returned unchanged if it does not match either grammar.
+    """
     if not isinstance(value, str):
         return value
-    if m := re.fullmatch(r'(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})Z', value):
-        yy = int(m[1])
+    m = re.fullmatch(r'(\d{8,14})([.,]\d+)?(Z|[+-]\d{2}(?:\d{2})?)?', value)
+    if m is None:
+        return value
+    digits, frac, zone = m[1], m[2], m[3]
+    if frac is None and len(digits) in (10, 12):
+        # UTCTime: two-digit year with the conventional 1950..2049 pivot.
+        yy = int(digits[:2])
         year = 2000 + yy if yy < 50 else 1900 + yy
-        try:
-            dt = datetime(year, int(m[2]), int(m[3]), int(m[4]), int(m[5]), int(m[6]), tzinfo=timezone.utc)
-            return dt.isoformat(sep=' ')
-        except ValueError:
-            return value
-    if m := re.fullmatch(r'(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})Z', value):
-        try:
-            dt = datetime(int(m[1]), int(m[2]), int(m[3]), int(m[4]), int(m[5]), int(m[6]), tzinfo=timezone.utc)
-            return dt.isoformat(sep=' ')
-        except ValueError:
-            return value
-    return value
+        rest = digits[2:]
+    else:
+        # GeneralizedTime: four-digit year.
+        year = int(digits[:4])
+        rest = digits[4:]
+    if len(rest) < 4 or len(rest) % 2:
+        return value
+    month, day, *hms = (int(rest[i:i + 2]) for i in range(0, len(rest), 2))
+    hms += [0] * (3 - len(hms))
+    hour, minute, second = hms[:3]
+    micro = int((frac[1:] + '000000')[:6]) if frac else 0
+    if zone is None or zone == 'Z':
+        tzinfo = timezone.utc
+    else:
+        offset = timedelta(hours=int(zone[1:3]), minutes=int(zone[3:5] or 0))
+        tzinfo = timezone(offset if zone[0] == '+' else -offset)
+    try:
+        dt = datetime(year, month, day, hour, minute, second, micro, tzinfo=tzinfo)
+    except ValueError:
+        return value
+    return dt.isoformat(sep=' ')
 
 
 def _flatten_name(name: list) -> OrderedDict:
