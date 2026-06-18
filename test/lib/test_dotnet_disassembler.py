@@ -4,6 +4,7 @@ from typing import List, Tuple
 
 from refinery.lib.dotnet.disassembler import Disassembler, Instruction, OpRepository
 from refinery.lib.dotnet.disassembler.factory import OutputFactory
+from refinery.lib.dotnet.disassembler.model import DisassemblerException, UnknownInstruction
 from .. import TestBase
 
 
@@ -197,6 +198,31 @@ class TestDotNetDisassembler(TestBase):
 /* 0x00000279 26           */ IL_001D: pop
 /* 0x0000027A 2A           */ IL_001E: ret
 ''')
+
+    def test_unaligned_prefix_consumes_alignment_operand(self):
+        lst = list(Disassembler().disasm(bytes.fromhex('FE1202002A')))
+        self.assertTrue(lst[0].op.mnemonic.startswith('unaligned'))
+        self.assertEqual(lst[0].arguments[0].value, 2)
+        self.assertEqual([ins.offset for ins in lst], [0, 3, 4])
+        self.assertEqual([ins.op.mnemonic for ins in lst[1:]], ['nop', 'ret'])
+
+    def test_no_prefix_consumes_flags_operand(self):
+        lst = list(Disassembler().disasm(bytes.fromhex('FE1901002A')))
+        self.assertTrue(lst[0].op.mnemonic.startswith('no.'))
+        self.assertEqual(lst[0].arguments[0].value, 1)
+        self.assertEqual([ins.offset for ins in lst], [0, 3, 4])
+
+    def test_switch_truncated_last_case(self):
+        with self.assertRaises(DisassemblerException):
+            list(Disassembler().disasm(bytes.fromhex('4501000000000000')))
+
+    def test_unknown_opcode_raises_unknown_instruction(self):
+        with self.assertRaises(UnknownInstruction):
+            list(Disassembler().disasm(bytes.fromhex('F0')))
+
+    def test_count_zero_disassembles_nothing(self):
+        asm = bytes.fromhex('007201000070280700000A002A')
+        self.assertEqual(0, len(list(Disassembler().disasm(asm, 0))))
 
     def test_unbox(self):
         self.assertSimilarDnSpyOutput('''

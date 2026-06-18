@@ -89,6 +89,26 @@ class DotNetStructReader(StructReader[memoryview]):
         else:
             self._dn_raise('Invalid length prefix.')
 
+    def read_dn_signed_compressed(self):
+        b = self.u8fast()
+        if not b & 0x80:
+            value, sign = b, 0x40
+        elif not b & 0x40:
+            value = (b & 0x3f) << 8 | self.u8fast()
+            sign = 0x2000
+        elif not b & 0x20:
+            value = (b & 0x1f) << 24
+            value = value | self.u8fast() << 16
+            value = value | self.u8fast() << 8
+            value = value | self.u8fast()
+            sign = 0x10000000
+        else:
+            self._dn_raise('Invalid compressed integer.')
+        result = value >> 1
+        if value & 1:
+            result -= sign
+        return result
+
     def _decode(self, data: memoryview, codec: str):
         try:
             return codecs.decode(data, codec).rstrip('\0')
@@ -133,24 +153,20 @@ class DotNetStructReader(StructReader[memoryview]):
         return int.from_bytes(self.read_exactly(size), 'big')
 
     def read_dn_time_span(self):
-        return datetime.timedelta(microseconds=0.1 * self.u64())
+        return datetime.timedelta(microseconds=0.1 * self.i64())
 
     def read_dn_date_time(self):
         x = self.u64()
-        hi_byte = x >> 56
-        lo_part = x & 0xFFFFFF_FFFFFFFF
-        kind = hi_byte & 0b11
-        time = (hi_byte >> 2) << 56 | lo_part
-        assert kind < 3, 'invalid date kind'
-        if kind == 0:
-            tz = None
-        elif kind == 1:
+        kind = x >> 62
+        ticks = x & ((1 << 62) - 1)
+        if kind == 1:
             tz = datetime.timezone.utc
         elif kind == 2:
             tz = datetime.datetime.now().astimezone().tzinfo
         else:
-            self._dn_raise(F'Invalid date kind {kind}.')
-        return datetime.datetime.fromtimestamp(time, tz)
+            tz = None
+        epoch = datetime.datetime(1, 1, 1, tzinfo=tz)
+        return epoch + datetime.timedelta(microseconds=ticks // 10)
 
     def read_dn_null(self):
         return None
@@ -213,10 +229,6 @@ class BitMask:
         return repr(self)
 
 
-def bits_required(n: int):
-    return 0 if not n else (n - 1).bit_length()
-
-
 class NetMetaData(DotNetStruct):
     @property
     def resources(self):
@@ -274,7 +286,7 @@ class NetMetaDataStream(dict[int, N], abc.ABC):
         try:
             self._reader.seek(offset)
             item = self.stream_next()
-        except (EOFError, ParserException):
+        except (EOFError, IndexError, ParserException):
             pass
         else:
             self[offset] = item
@@ -866,6 +878,9 @@ HasCustomAttribute = (
     | File
     | ExportedType
     | ManifestResource
+    | GenericParam
+    | GenericParamConstraint
+    | MethodSpec
 )
 HasFieldMarshall = Field | Param
 HasDeclSecurity = TypeDef | MethodDef | Assembly
@@ -946,10 +961,10 @@ class NetMetaDataTables(DotNetStruct):
         rows = tuple(NetTable[t.__name__] for t in options)
         row_count = self.Header.RowCount
         row_max_len = max(row_count.get(t, 0) for t in rows)
-        bits_index = bits_required(len(rows))
-        bits_total = bits_index + bits_required(row_max_len)
+        bits_index = max(len(rows) - 1, 0).bit_length()
         mask = (1 << bits_index) - 1
-        return _IndexInfo(rows, bits_index, mask, bits_total > 16)
+        large = (row_max_len << bits_index) > 0xFFFF
+        return _IndexInfo(rows, bits_index, mask, large)
 
     def __init__(self, reader: DotNetStructReader, streams: NetMetaDataStreams):
         self.Header: NetMetaDataTablesHeader = NetMetaDataTablesHeader(reader)
@@ -1113,11 +1128,10 @@ class NetMetaDataTables(DotNetStruct):
 
     def __getitem__(self, k):
         if isinstance(k, Index):
-            if row := k.Table:
-                if row is NetTable.Unused:
-                    raise KeyError
-                return self[row.name][k.Index - 1]
-            raise KeyError
+            row = k.Table
+            if row is None or row is NetTable.Unused or k.Index < 1:
+                raise KeyError
+            return self[row.name][k.Index - 1]
         if isinstance(k, int):
             k = self.TypesByID[k].__name__
         return getattr(self, k)

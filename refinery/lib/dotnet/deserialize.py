@@ -477,7 +477,6 @@ class BinaryFormatterParser(list):
                     header_found = True
                 record = RecordType.Parse(reader, context)
             except EOF as eof:
-                raise
                 if eof.rest:
                     self.append(Overflow(reader, eof))
                 break

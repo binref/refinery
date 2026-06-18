@@ -18,7 +18,7 @@ class Disassembler:
     def disasm(self, data: bytes, max_byte_count: int | None = None) -> Iterator[Instruction]:
         i = 0
         while i < len(data):
-            if max_byte_count and i >= max_byte_count:
+            if max_byte_count is not None and i >= max_byte_count:
                 break
             op = self._op_repository.lookup(data[i:])
             if op is None:

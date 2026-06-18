@@ -14,14 +14,12 @@ class DotnetDisassemblerUnit(Unit, abstract=True):
     def __init__(
         self,
         *,
-        count: Param[int, Arg.Number(
-            '-c',
-            help='Maximum number of bytes to disassemble, infinite by default.',
-        )] = None,
-        until: Param[str, Arg.String(
-            '-u',
-            help='Disassemble until the given string appears among the disassembly.',
-        )] = None,
+        count: Param[int | None, Arg.Number('-c', help=(
+            'Maximum number of bytes to disassemble, infinite by default.'
+        ))] = None,
+        until: Param[str | None, Arg.String('-u', help=(
+            'Disassemble until the given string appears among the disassembly.'
+        ))] = None,
         **more
     ):
         super().__init__(count=count, until=until, **more)
@@ -46,20 +44,17 @@ class dnopc(DotnetDisassemblerUnit):
         *,
         count=None,
         until=None,
-        nvar: Param[str, Arg.String(
-            '-n',
-            help='Variable to receive the disassembled mnemonic. Default is "{default}".',
-        )] = 'name',
-        avar: Param[str, Arg.String(
-            '-a',
-            help='Variable to receive the address of the instruction. Default is "{default}".',
-        )] = 'addr',
-        ovar: Param[str, Arg.String(
-            '-o',
-            help=('Variable prefix for instruction operands. Default is "{default}". The complete operand '
-                  'string will be in {default}s, the first argument in {default}1, the second in {default}2, '
-                  'and so on.'),
-        )] = 'arg',
+        nvar: Param[str, Arg.String('-n', help=(
+            'Variable to receive the disassembled mnemonic. Default is "{default}".'
+        ))] = 'name',
+        avar: Param[str, Arg.String('-a', help=(
+            'Variable to receive the address of the instruction. Default is "{default}".'
+        ))] = 'addr',
+        ovar: Param[str, Arg.String('-o', help=(
+            'Variable prefix for instruction operands. Default is "{default}". The complete '
+            'operand string will be in {default}s, the first argument in {default}1, the second '
+            'in {default}2, and so on.'
+        ))] = 'arg',
         **more
     ):
         super().__init__(

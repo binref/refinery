@@ -1278,7 +1278,7 @@ class OpRepository:
             OpType.OBJECT_MODEL,
             b'\xfe\x12',
             'unaligned. (alignment)',
-            [],
+            [UInt8(is_num=True, is_arg_num=False)],
             'Subsequent pointer instruction might be unaligned.',
         ),
         Op(
@@ -1292,7 +1292,7 @@ class OpRepository:
             OpType.OBJECT_MODEL,
             b'\xfe\x19',
             'no. {typecheck, rangecheck, nullcheck }',
-            [],
+            [UInt8(is_num=True, is_arg_num=False)],
             'The specified fault check(s) normally performed as part of the execution of the subsequent '
             'instruction can/shall be skipped.',
         ),
@@ -1659,10 +1659,10 @@ class OpRepository:
         ),
     ]
 
-    def lookup(self, data: bytes, include_alias: bool = False) -> Op:
+    def lookup(self, data: bytes, include_alias: bool = False) -> Op | None:
         for op in self.INSTRUCTIONS:
             if not include_alias and op.is_alias:
                 continue
             if data[: len(op.code)] == op.code:
                 return op
-        raise ValueError(f'Cannot find Op for data={data.hex()}')
+        return None

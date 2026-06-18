@@ -39,11 +39,13 @@ class InstructionFactory:
     def switch(data: bytes, i: int, op: Op) -> Instruction:
         assert data[0] == 69
         case_count_arg = op.arguments[0]
+        if len(data) < 5:
+            raise DisassemblerException(F'Switch instruction truncated: {len(data)} < 5 bytes for case count.')
         case_data = data[1:5]
         cases = case_count_arg.unpack(case_data)
         end_offset = (cases + 1) * 4
-        if len(data) < end_offset:
-            raise DisassemblerException(F'Check failed during switch disassembly: {len(data)} < ({cases} + 1) * 4')
+        if len(data) < 1 + end_offset:
+            raise DisassemblerException(F'Check failed during switch disassembly: {len(data)} < 1 + ({cases} + 1) * 4')
         if op.arguments[2] is not ...:
             raise DisassemblerException('Last argument for switch op must be ellipsis.')
 

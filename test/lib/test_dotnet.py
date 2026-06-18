@@ -1,5 +1,15 @@
-from refinery.lib.dotnet.deserialize import BinaryFormatterParser, ClassWithMembersAndTypes
+import datetime
+
+from refinery.lib.dotnet.deserialize import BinaryFormatterParser, ClassWithMembersAndTypes, Overflow
+from refinery.lib.dotnet.header import Index, NetMetaDataTables, NetTable
 from refinery.lib.dotnet.resources import NetManifestResource, DotNetStructReader
+from refinery.lib.dotnet.signatures import (
+    ArrayTypeSig,
+    FieldSig,
+    MethodSig,
+    SentinelTypeSig,
+    parse_signature,
+)
 
 from .. import TestBase
 
@@ -342,3 +352,44 @@ class TestDotNetParser(TestBase):
         guid_text = 'AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE'
         guid = DotNetStructReader(memoryview(b'\xAA\xAA\xAA\xAA\xBB\xBB\xCC\xCC\xDD\xDD\xEE\xEE\xEE\xEE\xEE\xEE')).read_dn_guid()
         self.assertEqual(str(guid), guid_text)
+
+    def test_date_time_utc(self):
+        moment = datetime.datetime(2021, 6, 15, 12, 30, 45)
+        delta = moment - datetime.datetime(1, 1, 1)
+        ticks = (delta.days * 86400 + delta.seconds) * 10 ** 7
+        encoded = (ticks | (1 << 62)).to_bytes(8, 'little')
+        result = DotNetStructReader(memoryview(encoded)).read_dn_date_time()
+        self.assertEqual(result, moment.replace(tzinfo=datetime.timezone.utc))
+
+    def test_truncated_stream_yields_overflow(self):
+        truncated = bytes.fromhex('00010000000200000003')
+        result = BinaryFormatterParser(truncated, dereference=False)
+        self.assertEqual(len(result), 1)
+        self.assertIsInstance(result[0], Overflow)
+
+
+class TestDotNetTables(TestBase):
+
+    def test_index_resolution(self):
+        tables = NetMetaDataTables.__new__(NetMetaDataTables)
+        tables.Module = ['the-module']
+        tables.TypeRef = ['ref-one', 'ref-two']
+        self.assertEqual(tables[Index(NetTable.Module, 1)], 'the-module')
+        self.assertEqual(tables[Index(NetTable.TypeRef, 2)], 'ref-two')
+        with self.assertRaises(KeyError):
+            tables[Index(NetTable.TypeRef, 0)]
+
+
+class TestDotNetSignatures(TestBase):
+
+    def test_array_signed_lower_bound(self):
+        sig = parse_signature(bytes.fromhex('0614080100017F'))
+        self.assertIsInstance(sig, FieldSig)
+        self.assertIsInstance(sig.field_type, ArrayTypeSig)
+        self.assertEqual(sig.field_type.lower_bounds, [-1])
+
+    def test_vararg_sentinel_param_count(self):
+        sig = parse_signature(bytes.fromhex('05020108410E'))
+        self.assertIsInstance(sig, MethodSig)
+        self.assertEqual([p.name for p in sig.param_types], ['Int32', '...', 'String'])
+        self.assertIsInstance(sig.param_types[1], SentinelTypeSig)

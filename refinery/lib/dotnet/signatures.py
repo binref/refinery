@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import enum
 
-from refinery.lib.dotnet.header import DotNetStructReader
+from refinery.lib.dotnet.header import DotNetStructReader, ParserException
 
 
 class ElementType(enum.IntEnum):
@@ -377,7 +377,7 @@ def _read_type_def_or_ref_coded(reader: DotNetStructReader) -> tuple[int, int]:
 def _read_type(reader: DotNetStructReader) -> TypeSig:
     et = reader.u8fast()
 
-    while et in (ElementType.CModReqD, ElementType.CModOpt):
+    if et in (ElementType.CModReqD, ElementType.CModOpt):
         required = et == ElementType.CModReqD
         tag, row = _read_type_def_or_ref_coded(reader)
         modifier = TypeDefOrRefSig(ElementType(et), tag, row)
@@ -404,7 +404,7 @@ def _read_type(reader: DotNetStructReader) -> TypeSig:
         sizes = [reader.read_dn_length_prefix() for _ in range(num_sizes)]
         num_lo = reader.read_dn_length_prefix()
         lower_bounds = [
-            reader.read_dn_length_prefix() for _ in range(num_lo)
+            reader.read_dn_signed_compressed() for _ in range(num_lo)
         ]
         return ArrayTypeSig(element, rank, sizes, lower_bounds)
 
@@ -449,7 +449,13 @@ def _read_method_sig(reader: DotNetStructReader) -> MethodSig:
         generic_param_count = reader.read_dn_length_prefix()
     param_count = reader.read_dn_length_prefix()
     return_type = _read_type(reader)
-    param_types = [_read_type(reader) for _ in range(param_count)]
+    param_types = []
+    params_read = 0
+    while params_read < param_count:
+        param = _read_type(reader)
+        param_types.append(param)
+        if not isinstance(param, SentinelTypeSig):
+            params_read += 1
     return MethodSig(attributes, return_type, param_types, generic_param_count)
 
 
@@ -485,6 +491,8 @@ def parse_signature(
     method, property, local variables, etc.) and the remaining bytes encode type information
     per ECMA-335 II.23.2.
     """
+    if not data:
+        raise ParserException('Cannot parse an empty signature blob.')
     reader = DotNetStructReader(memoryview(bytearray(data)))
     first = data[0]
     kind = first & 0x0F
