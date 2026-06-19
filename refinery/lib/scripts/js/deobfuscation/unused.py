@@ -1,7 +1,7 @@
 """
 Remove unreachable function declarations and unused variable assignments.
 
-This transformer performs two phases:
+This transformer performs three phases:
 
 1. **Dead function removal** — transitive reachability analysis: starting from non-function
    statements, it collects all function names referenced directly or transitively. Function
@@ -11,11 +11,17 @@ This transformer performs two phases:
    enclosing function scope. Because `var` bindings are function-scoped, a name read through a
    closure in a nested function stays live unless that function shadows it. Dead assignment
    statements are removed, along with their hoisted `var` declarators when there is no initializer.
+
+3. **Dead store removal** — a flow-sensitive sweep that drops an individual write whose stored value
+   the liveness analysis proves is never read, even when the binding is read elsewhere (so phase 2
+   keeps it). Only an uncaptured function-local `var`/`let` store qualifies; the side effects of the
+   value expression are preserved.
 """
 from __future__ import annotations
 
 from refinery.lib.scripts import Node, _remove_from_parent
 from refinery.lib.scripts.js.analysis.effects import EffectModel, build_effects
+from refinery.lib.scripts.js.analysis.liveness import LivenessModel, build_liveness
 from refinery.lib.scripts.js.analysis.model import (
     Binding,
     BindingKind,
@@ -297,6 +303,7 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
         self._has_reflection = False
         self._model: SemanticModel | None = None
         self._effects: EffectModel | None = None
+        self._liveness: LivenessModel | None = None
 
     def visit_JsScript(self, node: JsScript):
         """
@@ -311,7 +318,9 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
             self.changed = False
             self._model = build_semantic_model(node)
             self._effects = build_effects(self._model)
+            self._liveness = build_liveness(self._model)
             self._has_reflection = self._model.has_reflection_surface()
+            self._remove_dead_stores(node)
             self.generic_visit(node)
             self._process_body(node, node.body)
             pass_changed = self.changed
@@ -329,6 +338,70 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
     def effects(self) -> EffectModel:
         assert self._effects is not None
         return self._effects
+
+    @property
+    def liveness(self) -> LivenessModel:
+        assert self._liveness is not None
+        return self._liveness
+
+    def _remove_dead_stores(self, root: JsScript):
+        """
+        Drop writes whose stored value the flow-sensitive liveness proves dead while the binding is
+        still read elsewhere — the case the binding-level sweep in `_remove_dead_variables` cannot see,
+        because it reasons per binding rather than per store. Only an unconditional store to an
+        uncaptured function-local `var`/`let` qualifies (the liveness model enforces this and reports
+        nothing under any reflection surface); a fully dead binding is left to the binding-level sweep.
+
+        Candidates are collected over the pristine tree before any removal, which keeps the verdicts
+        mutually consistent: removing a dead store deletes no read, so it cannot revive another store's
+        value. A dead assignment statement is dropped when its right-hand side is itself removable and
+        otherwise kept as a bare expression for its effect; a dead declarator initializer is dropped
+        only when removable, leaving `var x;` so the still-live binding keeps its declaration.
+        """
+        assignments: list[JsExpressionStatement] = []
+        declarators: list[JsVariableDeclarator] = []
+        for node in root.walk():
+            if isinstance(node, JsExpressionStatement):
+                expr = node.expression
+                if (
+                    isinstance(expr, JsAssignmentExpression)
+                    and expr.operator == '='
+                    and isinstance(expr.left, JsIdentifier)
+                    and self._is_flow_dead_store(expr.left)
+                ):
+                    assignments.append(node)
+            elif isinstance(node, JsVariableDeclarator):
+                if (
+                    isinstance(node.id, JsIdentifier)
+                    and node.init is not None
+                    and self._is_flow_dead_store(node.id)
+                ):
+                    declarators.append(node)
+        for stmt in assignments:
+            expr = stmt.expression
+            assert isinstance(expr, JsAssignmentExpression)
+            if expr.right is None or self._is_removable(expr.right):
+                if _remove_from_parent(stmt):
+                    self.mark_changed()
+            else:
+                stmt.expression = expr.right
+                expr.right.parent = stmt
+                self.mark_changed()
+        for decl in declarators:
+            if decl.init is not None and self._is_removable(decl.init):
+                decl.init = None
+                self.mark_changed()
+
+    def _is_flow_dead_store(self, write: JsIdentifier) -> bool:
+        """
+        Whether *write* is a dead store the binding-level sweep would miss: its value is dead by
+        flow-sensitive liveness, yet the binding is still read somewhere (a binding with no read at all
+        is left to `_remove_dead_variables`, which also removes its declaration).
+        """
+        if not self.liveness.is_dead_store(write):
+            return False
+        binding = self.model.binding_of(write) or self.model.resolve(write)
+        return binding is not None and binding.is_read
 
     def _is_removable(self, node: Node, defunct: set[str] | None = None) -> bool:
         """

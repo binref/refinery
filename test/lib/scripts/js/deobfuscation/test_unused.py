@@ -103,6 +103,95 @@ class TestUnusedCodeRemoval(TestJsDeobfuscator):
             self._remove_unused(source),
         )
 
+    def test_dead_initializer_stripped_when_overwritten_before_read(self):
+        source = 'function f() { var x = 1; x = 2; return x; }'
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function f() {
+                  var x;
+                  x = 2;
+                  return x;
+                }
+                """
+            ),
+            self._remove_unused(source),
+        )
+
+    def test_dead_pure_call_initializer_stripped(self):
+        source = 'function f() { var x = String.fromCharCode(65); x = pick(); return x; }'
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function f() {
+                  var x;
+                  x = pick();
+                  return x;
+                }
+                """
+            ),
+            self._remove_unused(source),
+        )
+
+    def test_dead_pure_call_assignment_removed(self):
+        source = 'function f() { var x; x = String.fromCharCode(65); x = read(); return x; }'
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function f() {
+                  var x;
+                  x = read();
+                  return x;
+                }
+                """
+            ),
+            self._remove_unused(source),
+        )
+
+    def test_dead_store_with_effectful_rhs_kept_as_bare_expression(self):
+        source = 'function f() { var x; x = sideEffect(); x = 2; return x; }'
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function f() {
+                  var x;
+                  sideEffect();
+                  x = 2;
+                  return x;
+                }
+                """
+            ),
+            self._remove_unused(source),
+        )
+
+    def test_store_to_captured_binding_is_kept(self):
+        source = inspect.cleandoc(
+            """
+            function f() {
+              var x = 1;
+              x = 2;
+              return function() {
+                return x;
+              };
+            }
+            """
+        )
+        self.assertEqual(source, self._remove_unused(source))
+
+    def test_conditionally_overwritten_store_is_kept(self):
+        source = inspect.cleandoc(
+            """
+            function f(c) {
+              var x = 1;
+              if (c) {
+                x = 2;
+              }
+              return x;
+            }
+            """
+        )
+        self.assertEqual(source, self._remove_unused(source))
+
     def test_dead_global_removed_without_reflection_surface(self):
         source = inspect.cleandoc(
             """

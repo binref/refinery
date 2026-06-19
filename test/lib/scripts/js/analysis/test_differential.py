@@ -37,6 +37,20 @@ class TestDeobfuscationDifferential(TestBase):
     def test_dead_variable_and_constant_folding(self):
         self._check('var a = 1 + 2; var unused = 5; console.log(a * 2);')
 
+    def test_dead_store_overwritten_before_read(self):
+        self._check('function f(){ var x = 1; x = 5; return x; } console.log(f());')
+
+    def test_dead_store_effectful_rhs_preserved(self):
+        self._check(
+            'var log = [];'
+            ' function f(){ var x; x = (log.push("a"), 1); x = 2; return x; }'
+            ' console.log(f(), log.length);')
+
+    def test_dead_store_in_loop_function(self):
+        self._check(
+            'function f(n){ var s = 0; s = []; for (var i = 0; i < n; i++) { s.push(i * i); }'
+            ' return s.join(","); } console.log(f(4));')
+
     def test_block_scoped_for_let(self):
         self._check('var out = []; for (let i = 0; i < 3; i++) { out.push(i); }'
                     ' console.log(out.join(","));')
