@@ -282,7 +282,7 @@ def rar5_pbkdf2(password: str, salt: buf, lg2_count: int) -> tuple[bytes, bytes,
             for k in range(32):
                 fn[k] ^= u[k]
         results.append(bytes(fn))
-    return tuple(results)
+    return results[0], results[1], results[2]
 
 
 def rar5_psw_check(psw_check_value: bytes) -> bytes:
