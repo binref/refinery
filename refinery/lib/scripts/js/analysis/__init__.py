@@ -8,6 +8,12 @@ representation-agnostic surface.
 """
 from __future__ import annotations
 
+from refinery.lib.scripts.js.analysis.cfg import (
+    CfgNode,
+    ControlFlowGraph,
+    build_cfg,
+    build_control_flow,
+)
 from refinery.lib.scripts.js.analysis.effects import (
     EffectModel,
     EffectSummary,
@@ -29,12 +35,16 @@ from refinery.lib.scripts.js.analysis.model import (
 __all__ = [
     'Binding',
     'BindingKind',
+    'CfgNode',
+    'ControlFlowGraph',
     'EffectModel',
     'EffectSummary',
     'Role',
     'Scope',
     'ScopeKind',
     'SemanticModel',
+    'build_cfg',
+    'build_control_flow',
     'build_effects',
     'build_semantic_model',
     'is_use_position',
