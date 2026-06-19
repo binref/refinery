@@ -238,6 +238,9 @@ class Unpack20(RarUnpacker):
         while remaining >= 0:
             self._unp_ptr &= mask
 
+            if inp.overread:
+                self._raise_corrupt('RAR2.0 stream consumed past end of input.')
+
             if ((self._wr_ptr - self._unp_ptr) & mask) < 270 and self._wr_ptr != self._unp_ptr:
                 self._write_buf()
 
@@ -245,6 +248,8 @@ class Unpack20(RarUnpacker):
                 audio_number = decode_number(inp, self._md[self._cur_channel])
                 if audio_number == 256:
                     if not self._read_tables():
+                        if inp.overread:
+                            self._raise_corrupt('RAR2.0 truncated table block.')
                         break
                     continue
                 win[self._unp_ptr] = self._decode_audio(audio_number)
@@ -287,10 +292,14 @@ class Unpack20(RarUnpacker):
 
             if number == 269:
                 if not self._read_tables():
+                    if inp.overread:
+                        self._raise_corrupt('RAR2.0 truncated table block.')
                     break
                 continue
 
             if number == 256:
+                if self._last_length == 0:
+                    self._raise_corrupt('RAR2.0 repeat with no preceding match.')
                 self._copy_string(self._last_length, self._last_dist)
                 remaining -= self._last_length
                 continue

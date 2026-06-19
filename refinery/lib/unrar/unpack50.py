@@ -411,6 +411,8 @@ class Unpack50(RarUnpacker):
             self._unp_ptr &= mask
 
             if inp.in_addr >= inp_len:
+                if self._written + ((self._unp_ptr - self._wr_ptr) & mask) < self._dest_size:
+                    self._raise_corrupt('RAR5.0 stream consumed past end of input.')
                 break
 
             while (inp.in_addr > hdr.block_start + hdr.block_size - 1
@@ -420,6 +422,8 @@ class Unpack50(RarUnpacker):
                     self._write_buf()
                     return self._output
                 if not read_block_header(inp, hdr) or not read_tables(inp, hdr, tbl):
+                    if self._written + ((self._unp_ptr - self._wr_ptr) & mask) < self._dest_size:
+                        self._raise_corrupt('RAR5.0 truncated or corrupt block header.')
                     self._write_buf()
                     return self._output
 

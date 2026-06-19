@@ -53,6 +53,10 @@ cdef class BitInput:
         cdef int r = self._buf_len - self.in_addr
         return r if r > 0 else 0
 
+    @property
+    def overread(self):
+        return self.in_addr > self._buf_len + 4
+
     def init(self):
         self.in_addr = 0
         self.in_bit = 0
@@ -604,6 +608,9 @@ class Unpack50(RarUnpacker):
             unp_ptr &= mask
 
             if inp.in_addr >= inp_len:
+                if self._written + ((unp_ptr - self._wr_ptr) & mask) < self._dest_size:
+                    self._unp_ptr = unp_ptr
+                    self._raise_corrupt('RAR5.0 stream consumed past end of input.')
                 break
 
             while (inp.in_addr > hdr.block_start + hdr.block_size - 1
@@ -619,6 +626,9 @@ class Unpack50(RarUnpacker):
                     self._write_buf()
                     return self._output
                 if not _read_block_header(inp, hdr) or not _read_tables(inp, hdr, tbl):
+                    if self._written + ((unp_ptr - self._wr_ptr) & mask) < self._dest_size:
+                        self._unp_ptr = unp_ptr
+                        self._raise_corrupt('RAR5.0 truncated or corrupt block header.')
                     self._old_dist[0] = old0
                     self._old_dist[1] = old1
                     self._old_dist[2] = old2
@@ -676,6 +686,10 @@ class Unpack50(RarUnpacker):
                         length += 1
                         if distance > 0x40000:
                             length += 1
+
+                if distance > <unsigned int>win_size:
+                    self._unp_ptr = unp_ptr
+                    self._raise_corrupt('RAR5.0 LZ back-reference distance exceeds the window size.')
 
                 old3 = old2
                 old2 = old1

@@ -1583,6 +1583,8 @@ class Unpack30(RarUnpacker):
             self._unp_ptr &= mask
 
             if inp.in_addr >= inp_len:
+                if self._written + ((self._unp_ptr - self._wr_ptr) & mask) < self._dest_size:
+                    self._raise_corrupt('RAR3.0 stream consumed past end of input.')
                 break
 
             if ((self._wr_ptr - self._unp_ptr) & mask) < 260 and self._wr_ptr != self._unp_ptr:

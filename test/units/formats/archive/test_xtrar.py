@@ -3,7 +3,7 @@ from __future__ import annotations
 from ... import TestUnitBase
 
 from test.units.compression import KADATH1, KADATH2
-from refinery.lib.unrar import RarInvalidPassword, RarMissingPassword
+from refinery.lib.unrar import RarCorruptArchive, RarFile, RarInvalidPassword, RarMissingPassword
 
 import pytest
 
@@ -561,3 +561,32 @@ class TestRAR15(TestUnitBase):
         unit = self.load(pwd='refinery')
         self.assertEqual(data[:90] | unit | str, '')
         self.assertEqual(data | unit | str, KADATH2)
+
+
+@pytest.mark.cythonized
+class TestTruncatedStream(TestUnitBase):
+    """
+    A compressed stream that ends before the declared output size must raise
+    RarCorruptArchive carrying the correctly decoded prefix, rather than silently
+    returning truncated data.
+    """
+    def _read_truncated(self, name: str):
+        data = bytes(TEST_RAR_ARCHIVES[name])
+        whole = RarFile(data)
+        entry = next(e for e in whole.entries if not e.is_dir and e.method != 0)
+        full = bytes(whole.read(entry))
+        cut = entry._data_offset + entry._data_size // 2
+        broken = RarFile(data[:cut])
+        target = next(e for e in broken.entries if e.name == entry.name)
+        with self.assertRaises(RarCorruptArchive) as ctx:
+            broken.read(target)
+        return bytes(ctx.exception.partial or b''), full
+
+    def test_rar3_truncated_stream_yields_prefix(self):
+        partial, full = self._read_truncated('testfile.rar3.rar')
+        self.assertGreater(len(partial), 0)
+        self.assertEqual(partial, full[:len(partial)])
+
+    def test_rar5_truncated_stream_raises(self):
+        partial, full = self._read_truncated('testfile.rar5.solid.rar')
+        self.assertEqual(partial, full[:len(partial)])

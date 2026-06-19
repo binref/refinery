@@ -11,6 +11,8 @@ class BitInput:
     """
     __slots__ = ('buf', 'in_addr', 'in_bit')
 
+    OVERREAD_SLACK = 4
+
     def __init__(self, data: bytes | bytearray | memoryview):
         self.buf = data
         self.in_addr = 0
@@ -69,3 +71,12 @@ class BitInput:
         Return approximate number of bytes remaining.
         """
         return max(0, len(self.buf) - self.in_addr)
+
+    @property
+    def overread(self) -> bool:
+        """
+        Whether the reader has advanced more than a small slack of bytes past the end of the
+        input. Valid streams routinely read a few bytes past the end because getbits reads
+        ahead; only advancing beyond the slack indicates a malformed or truncated stream.
+        """
+        return self.in_addr > len(self.buf) + self.OVERREAD_SLACK

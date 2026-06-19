@@ -74,8 +74,12 @@ class RarInvalidChecksum(RarException):
 
 class RarCorruptArchive(RarException):
     """
-    Raised when the archive structure is corrupted.
+    Raised when the archive structure is corrupted. When the corruption is detected while
+    decompressing an entry, the partial attribute carries the output decoded up to that point.
     """
+    def __init__(self, message: str = 'The archive structure is corrupted.', partial: bytes | None = None):
+        super().__init__(message)
+        self.partial = partial
 
 
 class RarVolumeMissing(RarException):

@@ -152,6 +152,7 @@ class Unpack15(RarUnpacker):
         _corr_huff(self._ch_set_b, self._n_to_pl_b)
 
     def _copy_string(self, distance: int, length: int):
+        self._check_distance(distance)
         mask = self._win_mask
         win = self._window
         while length > 0:
@@ -423,6 +424,8 @@ class Unpack15(RarUnpacker):
                     distance = _decode_num(inp, inp.getbits(), _STARTHF2, _DecHf2, _PosHf2)
                     distance = (distance << 5) | (inp.getbits() >> 11)
                     inp.addbits(5)
+                    if distance == 0:
+                        self._raise_corrupt('RAR1.5 zero-distance back-reference.')
                     self._copy_string(distance, length)
                     self._dest_size -= length
                     return
@@ -485,6 +488,9 @@ class Unpack15(RarUnpacker):
 
         while self._dest_size >= 0:
             self._unp_ptr &= self._win_mask
+
+            if self._inp.overread:
+                self._raise_corrupt('RAR1.5 stream consumed past end of input.')
 
             if ((self._wr_ptr - self._unp_ptr) & self._win_mask) < 270 and self._wr_ptr != self._unp_ptr:
                 self._write_buf()

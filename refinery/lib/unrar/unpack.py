@@ -31,7 +31,30 @@ class RarUnpacker:
         self._old_dist[1] = self._old_dist[0]
         self._old_dist[0] = distance
 
+    def _raise_corrupt(self, message: str):
+        """
+        Flush the window into the output buffer and raise a corruption error that carries the
+        output decoded so far, so the caller can recover the partial result.
+        """
+        from refinery.lib.unrar import RarCorruptArchive
+        self._write_buf()
+        raise RarCorruptArchive(message, partial=bytes(self._output))
+
+    def _check_distance(self, distance: int):
+        """
+        Reject an LZ back-reference whose distance points outside the window or, for a
+        non-solid stream, beyond the bytes decoded so far, matching the reference decoders
+        which abort instead of reading uninitialized dictionary memory.
+        """
+        if distance > self._win_size:
+            self._raise_corrupt(F'LZ back-reference distance {distance} exceeds the window size.')
+        if not self._solid:
+            produced = self._written + ((self._unp_ptr - self._wr_ptr) & self._win_mask)
+            if distance > produced:
+                self._raise_corrupt(F'LZ back-reference distance {distance} exceeds the decoded size.')
+
     def _copy_string(self, length: int, distance: int):
+        self._check_distance(distance)
         mask = self._win_mask
         win = self._window
         win_size = self._win_size

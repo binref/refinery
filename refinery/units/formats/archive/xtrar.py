@@ -8,6 +8,7 @@ from refinery.lib.unrar import (
     RAR_HEADER_V14,
     RAR_HEADER_V15,
     RAR_HEADER_V50,
+    RarCorruptArchive,
     RarFile,
     RarInvalidChecksum,
     RarInvalidPassword,
@@ -81,6 +82,8 @@ class xtrar(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
                     return r.read(e, p)
                 except RarInvalidChecksum as check:
                     raise RefineryPartialResult(str(check), check.data) from check
+                except RarCorruptArchive as exc:
+                    raise RefineryPartialResult(str(exc), exc.partial or b'') from exc
                 except RarInvalidPassword as E:
                     raise ValueError(F'invalid password: {entry.name}') from E
                 except RarMissingPassword as E:
