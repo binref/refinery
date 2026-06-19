@@ -50,6 +50,10 @@ class HeaderType(enum.IntEnum):
     HEAD3_SERVICE = 0x7A
     HEAD3_ENDARC = 0x7B
 
+    @classmethod
+    def _missing_(cls, value):
+        return cls.HEAD_UNKNOWN
+
 
 _HEAD3_TO_5 = {
     HeaderType.HEAD3_MAIN: HeaderType.HEAD_MAIN,

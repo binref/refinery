@@ -35,6 +35,23 @@ class TestPBKDF2(TestBase):
         self.assertEqual(key, expected)
 
 
+class TestHeaderType(TestBase):
+    """
+    An unknown header type byte must resolve to HEAD_UNKNOWN rather than raising
+    ValueError, so that a single malformed or truncated type field does not abort
+    parsing of an entire archive.
+    """
+    def test_unknown_header_type_is_unknown(self):
+        from refinery.lib.unrar.headers import HeaderType
+        self.assertEqual(HeaderType(0x99), HeaderType.HEAD_UNKNOWN)
+        self.assertEqual(HeaderType(0x10), HeaderType.HEAD_UNKNOWN)
+
+    def test_known_header_types_preserved(self):
+        from refinery.lib.unrar.headers import HeaderType
+        self.assertEqual(HeaderType(0x02), HeaderType.HEAD_FILE)
+        self.assertEqual(HeaderType(0x74), HeaderType.HEAD3_FILE)
+
+
 @pytest.mark.cythonized
 class TestItaniumFilter(TestBase):
     """
