@@ -50,6 +50,19 @@ def gf_poly_mul(p: list[int], q: list[int]) -> list[int]:
     return result
 
 
+def gf_poly_scale(poly: list[int], scalar: int) -> list[int]:
+    return [gf_mul(coeff, scalar) for coeff in poly]
+
+
+def gf_poly_add(p: list[int], q: list[int]) -> list[int]:
+    result = [0] * max(len(p), len(q))
+    for i, coeff in enumerate(p):
+        result[i + len(result) - len(p)] = coeff
+    for i, coeff in enumerate(q):
+        result[i + len(result) - len(q)] ^= coeff
+    return result
+
+
 def rs_calc_syndromes(
     data: bytes | bytearray | memoryview,
     nsym: int,
@@ -67,15 +80,11 @@ def rs_find_error_locator(syndromes: list[int], nsym: int) -> list[int]:
         old_locator.append(0)
         if delta != 0:
             if len(old_locator) > len(error_locator):
-                new_locator = [gf_mul(c, delta) for c in old_locator]
-                old_locator = [gf_mul(c, gf_div(1, delta))
-                    for c in error_locator]
+                new_locator = gf_poly_scale(old_locator, delta)
+                old_locator = gf_poly_scale(error_locator, gf_div(1, delta))
                 error_locator = new_locator
-            error_locator = [
-                error_locator[k] ^ gf_mul(delta, old_locator[k])
-                if k < len(old_locator) else error_locator[k]
-                for k in range(len(error_locator))
-            ]
+            error_locator = gf_poly_add(
+                error_locator, gf_poly_scale(old_locator, delta))
     return error_locator
 
 
@@ -101,15 +110,15 @@ def rs_correct(
     Returns the corrected data (without EC codewords) as a bytearray.
     """
     output = bytearray(data)
+    if nsym <= 0:
+        return output
     syndromes = rs_calc_syndromes(output, nsym)
     if max(syndromes) == 0:
         return bytearray(output[:len(output) - nsym])
     error_locator = rs_find_error_locator(syndromes, nsym)
-    positions = rs_find_errors(error_locator, len(output))
-    if not positions:
-        raise ValueError('could not locate errors')
-    error_evaluator = gf_poly_mul(syndromes + [0], error_locator)
-    error_evaluator = error_evaluator[len(error_evaluator) - nsym:]
+    reversed_locator = error_locator[::-1]
+    positions = rs_find_errors(reversed_locator, len(output))
+    error_evaluator = gf_poly_mul(syndromes, reversed_locator)[:nsym]
     x_list = [gf_pow(2, len(output) - 1 - p) for p in positions]
     for i, xi in enumerate(x_list):
         xi_inv = gf_div(1, xi)

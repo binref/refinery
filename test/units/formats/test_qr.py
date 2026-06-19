@@ -339,12 +339,10 @@ class TestQRLibrary(unittest.TestCase):
         from refinery.lib.qr.correct import rs_correct
         data = [0x40, 0x44, 0x56, 0x56, 0xF0, 0xEC, 0x11, 0xEC, 0x11]
         nsym = 7
-        ec = _rs_encode(data, nsym)
-        block = bytearray(data + ec)
+        block = bytearray(data + _rs_encode(data, nsym))
         block[0] ^= 0xFF
         block[3] ^= 0x42
-        with self.assertRaises(ValueError):
-            rs_correct(block, nsym)
+        self.assertEqual(list(rs_correct(block, nsym)), data)
 
     def test_rs_uncorrectable_raises(self):
         from refinery.lib.qr.correct import rs_correct
@@ -423,14 +421,9 @@ class TestQRLibrary(unittest.TestCase):
         from refinery.lib.qr.correct import rs_correct
         data = [0x40, 0x44, 0x56, 0x56, 0xF0, 0xEC, 0x11, 0xEC, 0x11]
         nsym = 7
-        ec = _rs_encode(data, nsym)
-        block = bytearray(data + ec)
+        block = bytearray(data + _rs_encode(data, nsym))
         block[4] ^= 0x33
-        try:
-            corrected = rs_correct(block, nsym)
-            self.assertEqual(list(corrected), data)
-        except ValueError:
-            pass
+        self.assertEqual(list(rs_correct(block, nsym)), data)
 
     def test_numeric_single_remainder(self):
         from refinery.lib.qr.tables import ECLevel
@@ -687,3 +680,59 @@ class TestQRLibrary(unittest.TestCase):
         bl = FinderPattern(3.5, 17.5, 1.0)
         grid = _sample_grid(matrix, tl, tr, bl, 1)
         self.assertEqual(grid.version, 1)
+
+    def test_error_correction_recovers_flipped_data_modules(self):
+        from refinery.lib.qr.decode import (
+            decode_qr_grid, _build_function_pattern_mask)
+        from refinery.lib.qr.locate import locate_qr_codes
+        grids = locate_qr_codes(_png(_NUMERIC_V1_M))
+        self.assertEqual(len(grids), 1)
+        grid = grids[0]
+        function_mask = _build_function_pattern_mask(grid.version, grid.size)
+        modules = [row[:] for row in grid.modules]
+        flips = 0
+        for r in range(grid.size):
+            for c in range(grid.size):
+                if not function_mask[r][c]:
+                    modules[r][c] = not modules[r][c]
+                    flips += 1
+                    if flips >= 4:
+                        break
+            if flips >= 4:
+                break
+        self.assertEqual(
+            decode_qr_grid(modules, grid.version), b'01234567890123')
+
+    def test_version_info_misread_overridden_by_grid(self):
+        from refinery.lib.qr.decode import decode_qr_grid, read_version_info
+        from refinery.lib.qr.locate import locate_qr_codes
+        from refinery.lib.qr.tables import VERSION_INFO_STRINGS
+        grids = locate_qr_codes(_png(_BYTE_V7_M))
+        self.assertEqual(len(grids), 1)
+        grid = grids[0]
+        size = grid.size
+        modules = [row[:] for row in grid.modules]
+        code = VERSION_INFO_STRINGS[8]
+        for i in range(6):
+            for j in range(3):
+                modules[i][size - 11 + j] = bool(code & (1 << (i * 3 + j)))
+        for i in range(3):
+            for j in range(6):
+                modules[size - 11 + i][j] = bool(code & (1 << (j * 3 + i)))
+        self.assertEqual(read_version_info(modules, size), 8)
+        self.assertEqual(decode_qr_grid(modules, grid.version), b'A' * 120)
+
+    def test_decode_high_resolution_with_alignment(self):
+        from PIL import Image
+        base = _png(_BYTE_V7_M).convert('L')
+        big = base.resize((base.width * 8, base.height * 8), Image.NEAREST)
+        self.assertEqual(_decode_qr_image(big), [b'A' * 120])
+
+    def test_alphanumeric_out_of_range_is_safe(self):
+        from refinery.lib.qr.tables import ECLevel
+        from refinery.lib.qr.decode import decode_qr_grid
+        bits = _encode_bits(0b0010, (2, 9))
+        for bp in range(10, -1, -1):
+            bits.append((2025 >> bp) & 1)
+        modules = _build_synthetic_qr(1, ECLevel.L, 0, bits)
+        self.assertEqual(decode_qr_grid(modules, 1), b'')

@@ -300,20 +300,14 @@ def _cluster_candidates(
                 break
         if not merged:
             groups.append([c])
+    strong = [g for g in groups if len(g) >= 2]
+    chosen = strong if len(strong) >= 3 else groups
     result: list[FinderPattern] = []
-    for g in groups:
-        if len(g) < 2:
-            continue
+    for g in chosen:
         avg_x = sum(p.x for p in g) / len(g)
         avg_y = sum(p.y for p in g) / len(g)
         avg_ms = sum(p.estimated_module_size for p in g) / len(g)
         result.append(FinderPattern(avg_x, avg_y, avg_ms))
-    if not result:
-        for g in groups:
-            avg_x = sum(p.x for p in g) / len(g)
-            avg_y = sum(p.y for p in g) / len(g)
-            avg_ms = sum(p.estimated_module_size for p in g) / len(g)
-            result.append(FinderPattern(avg_x, avg_y, avg_ms))
     return result
 
 
@@ -438,19 +432,20 @@ def _find_alignment_pattern(
             ny = iy_int + dy
             nx = ix_int + dx
             if 0 <= ny < height and 0 <= nx < width and matrix[ny][nx]:
-                if _check_alignment_at(matrix, nx, ny):
+                if _check_alignment_at(matrix, nx, ny, module_size):
                     return (float(nx), float(ny))
     return None
 
 
 def _check_alignment_at(
-    matrix: list[list[bool]], cx: int, cy: int,
+    matrix: list[list[bool]], cx: int, cy: int, module_size: float = 1.0,
 ) -> bool:
     height = len(matrix)
     width = len(matrix[0])
+    step = max(1, round(module_size))
     for dx in range(-2, 3):
         for dy in range(-2, 3):
-            nx, ny = cx + dx, cy + dy
+            nx, ny = cx + dx * step, cy + dy * step
             if nx < 0 or nx >= width or ny < 0 or ny >= height:
                 return False
             is_dark = matrix[ny][nx]
@@ -497,8 +492,8 @@ def _sample_grid(
     if version >= 2:
         positions = ALIGNMENT_POSITIONS[version]
         if len(positions) >= 2:
-            ax_expected = float(positions[-1])
-            ay_expected = float(positions[-1])
+            ax_expected = positions[-1] + 0.5
+            ay_expected = positions[-1] + 0.5
             found = _find_alignment_pattern(
                 matrix, coeffs, ax_expected, ay_expected, avg_module)
             if found:

@@ -311,13 +311,16 @@ def _decode_alphanumeric(
     charset = ALPHANUMERIC_CHARSET
     while count >= 2:
         pair = stream.read(11)
-        c1 = pair // 45
-        c2 = pair % 45
+        c1, c2 = divmod(pair, 45)
+        if c1 >= len(charset):
+            return
         result.append(ord(charset[c1]))
         result.append(ord(charset[c2]))
         count -= 2
     if count == 1:
         val = stream.read(6)
+        if val >= len(charset):
+            return
         result.append(ord(charset[val]))
 
 
@@ -357,10 +360,14 @@ def _decode_eci(stream: _BitStream) -> None:
 
 def decode_qr_grid(modules: list[list[bool]], version: int) -> bytes:
     size = len(modules)
-    actual_version = read_version_info(modules, size)
-    if actual_version != version:
-        version = actual_version
-        size = version_size(version)
+    detected = read_version_info(modules, size)
+    if version_size(detected) == size:
+        version = detected
+    elif version_size(version) != size:
+        version = (size - 17) // 4
+    size = version_size(version)
+    if size != len(modules):
+        raise ValueError('unsupported QR module grid size')
     ec_level, mask_pattern = read_format_info(modules)
     function_mask = _build_function_pattern_mask(version, size)
     unmasked = _unmask(modules, mask_pattern, function_mask)
