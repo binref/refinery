@@ -8,7 +8,7 @@ import itertools
 import struct
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import NamedTuple
 
 from refinery.lib.types import buf
@@ -733,6 +733,8 @@ def _parse_ext_time(raw: RawHeaderReader, hd: RarFileEntry, file_time: int):
         for j in range(count):
             b = raw.get1()
             reminder |= b << ((j + 3 - count) * 8)
+
+        dt = dt + timedelta(seconds=1 if (rmode & 4) else 0, microseconds=reminder // 10)
 
         if i == 0:
             hd.date = dt
