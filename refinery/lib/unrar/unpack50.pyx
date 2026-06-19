@@ -566,7 +566,8 @@ class Unpack50(RarUnpacker):
         cdef BitInput inp = self._inp
         cdef int mask = self._win_mask
         cdef int inp_len
-        cdef int main_slot, length, dist_slot, d_bits, distance
+        cdef int main_slot, length, dist_slot, d_bits
+        cdef unsigned int distance
         cdef int length_slot, dist_num
         cdef int low_dist
 
@@ -656,7 +657,7 @@ class Unpack50(RarUnpacker):
                     distance = 1 + dist_slot
                 else:
                     d_bits = dist_slot // 2 - 1
-                    distance = 1 + ((2 | (dist_slot & 1)) << d_bits)
+                    distance = 1 + ((<unsigned int>(2 | (dist_slot & 1))) << d_bits)
 
                 if d_bits > 0:
                     if d_bits >= 4:
