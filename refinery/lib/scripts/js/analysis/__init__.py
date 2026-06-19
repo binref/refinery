@@ -19,6 +19,10 @@ from refinery.lib.scripts.js.analysis.effects import (
     EffectSummary,
     build_effects,
 )
+from refinery.lib.scripts.js.analysis.liveness import (
+    LivenessModel,
+    build_liveness,
+)
 from refinery.lib.scripts.js.analysis.model import (
     Binding,
     BindingKind,
@@ -39,6 +43,7 @@ __all__ = [
     'ControlFlowGraph',
     'EffectModel',
     'EffectSummary',
+    'LivenessModel',
     'Role',
     'Scope',
     'ScopeKind',
@@ -46,6 +51,7 @@ __all__ = [
     'build_cfg',
     'build_control_flow',
     'build_effects',
+    'build_liveness',
     'build_semantic_model',
     'is_use_position',
     'pattern_identifiers',

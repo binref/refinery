@@ -87,6 +87,7 @@ class ControlFlowGraph:
         self.exit = CfgNode(None, is_exit=True)
         self.nodes: list[CfgNode] = [self.entry, self.exit]
         self._node_of: dict[int, CfgNode] = {}
+        self.exceptional_edges: set[tuple[int, int]] = set()
 
     def node_of(self, element: Node) -> CfgNode | None:
         """
@@ -94,6 +95,14 @@ class ControlFlowGraph:
         node the graph does not represent on its own, such as a plain expression inside a statement).
         """
         return self._node_of.get(id(element))
+
+    def is_exceptional(self, source: CfgNode, target: CfgNode) -> bool:
+        """
+        Whether the edge from *source* to *target* is taken only when *source* throws rather than
+        completing normally. A definition *source* makes is not guaranteed to have happened along such
+        an edge, so a flow-sensitive analysis must not treat it as a kill there.
+        """
+        return (id(source), id(target)) in self.exceptional_edges
 
 
 @dataclass
@@ -144,13 +153,17 @@ class _Builder:
         self.cfg.nodes.append(node)
         self.cfg._node_of[id(element)] = node
         if self._handlers:
-            self._add_edge(node, self._handlers[-1])
+            self._exceptional_edge(node, self._handlers[-1])
         return node
 
     @staticmethod
     def _add_edge(source: CfgNode, target: CfgNode):
         source.successors.append(target)
         target.predecessors.append(source)
+
+    def _exceptional_edge(self, source: CfgNode, target: CfgNode):
+        self._add_edge(source, target)
+        self.cfg.exceptional_edges.add((id(source), id(target)))
 
     def _link(self, frontier: list[CfgNode], target: CfgNode):
         for node in frontier:
@@ -188,7 +201,7 @@ class _Builder:
         if isinstance(statement, JsThrowStatement):
             node = self._node(statement)
             self._link(frontier, node)
-            self._add_edge(node, self._handlers[-1] if self._handlers else self.cfg.exit)
+            self._exceptional_edge(node, self._handlers[-1] if self._handlers else self.cfg.exit)
             return []
         if isinstance(statement, JsBreakStatement):
             return self._break(statement, frontier)
@@ -334,7 +347,8 @@ class _Builder:
             self._link(normal_exits, finalizer_entry)
             self.cfg._node_of[id(statement.finalizer)] = finalizer_entry
             final_exits = self._sequence(list(statement.finalizer.body), [finalizer_entry])
-            self._add_edge(finalizer_entry, self._handlers[-1] if self._handlers else self.cfg.exit)
+            self._exceptional_edge(
+                finalizer_entry, self._handlers[-1] if self._handlers else self.cfg.exit)
             return final_exits
         return normal_exits
 

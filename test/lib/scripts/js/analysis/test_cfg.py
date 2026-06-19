@@ -152,6 +152,15 @@ class TestControlFlowGraph(TestBase):
         assert a is not None and handler is not None
         self.assertIn(handler, a.successors)
 
+    def test_exceptional_edge_is_distinguished_from_normal_flow(self):
+        ast, cfg = self._cfg('try { a; } catch (e) { b; } c;')
+        a, _, c = (n for n in ast.walk_in_order() if isinstance(n, JsExpressionStatement))
+        handler = cfg.node_of(self._first(ast, JsCatchClause))
+        na, nc = cfg.node_of(a), cfg.node_of(c)
+        assert na is not None and nc is not None and handler is not None
+        self.assertTrue(cfg.is_exceptional(na, handler))
+        self.assertFalse(cfg.is_exceptional(na, nc))
+
     def test_nested_function_has_its_own_graph(self):
         ast = JsParser('function f() { a; return b; } g();').parse()
         graphs = build_control_flow(ast)
