@@ -122,14 +122,15 @@ class CryptRar20:
 
     def _set_key(self, password: str):
         crc_tab = _get_crc_table()
-        pw_bytes = password.encode('latin-1', errors='replace')
+        pw_bytes = password.encode('latin-1', errors='replace')[:127]
         pw_len = len(pw_bytes)
+        psw = bytearray(128)
+        psw[:pw_len] = pw_bytes
 
         for j in range(256):
             for i in range(0, pw_len, 2):
-                n1 = crc_tab[(pw_bytes[i] - j) & 0xFF] & 0xFF
-                i1 = i + 1 if i + 1 < pw_len else i
-                n2 = crc_tab[(pw_bytes[i1] + j) & 0xFF] & 0xFF
+                n1 = crc_tab[(psw[i] - j) & 0xFF] & 0xFF
+                n2 = crc_tab[(psw[i + 1] + j) & 0xFF] & 0xFF
                 k = 1
                 while n1 != n2:
                     self._subst[n1], self._subst[(n1 + i + k) & 0xFF] = (
@@ -137,12 +138,7 @@ class CryptRar20:
                     n1 = (n1 + 1) & 0xFF
                     k += 1
 
-        psw = bytearray(pw_bytes)
-        if pw_len & (CRYPT_BLOCK_SIZE - 1):
-            padded = (pw_len | (CRYPT_BLOCK_SIZE - 1)) + 1
-            psw.extend(b'\x00' * (padded - pw_len))
-
-        for i in range(0, len(psw), CRYPT_BLOCK_SIZE):
+        for i in range(0, pw_len, CRYPT_BLOCK_SIZE):
             self._encrypt_block(psw, i)
 
     def _subst_long(self, val: int) -> int:
@@ -205,6 +201,22 @@ class CryptRar20:
             self._key[3] ^= crc_tab[block[i + 3] & 0xFF]
 
 
+def _update_psw_data_sha1(data: bytearray, offset: int):
+    """
+    Reproduce RAR's in-place rewrite of the password+salt buffer that its SHA-1
+    implementation performs whenever the hashed data crosses a 64-byte block boundary.
+    The 16 message words of the block are read big-endian, expanded to 80 words, and
+    the final 16 expanded words are written back little-endian.
+    """
+    w = [0] * 80
+    for i in range(16):
+        w[i] = int.from_bytes(data[offset + i * 4:offset + i * 4 + 4], 'big')
+    for i in range(16, 80):
+        w[i] = _rotl32(w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16], 1)
+    for i in range(16):
+        data[offset + i * 4:offset + i * 4 + 4] = w[64 + i].to_bytes(4, 'little')
+
+
 def rar3_kdf(password: str, salt: buf) -> tuple[bytes, bytes]:
     """
     RAR 3.0 key derivation function.
@@ -215,14 +227,26 @@ def rar3_kdf(password: str, salt: buf) -> tuple[bytes, bytes]:
 
     pw_utf16 = password.encode('utf-16-le')
 
-    raw_data = pw_utf16 + bytes(salt)
+    raw_data = bytearray(pw_utf16 + bytes(salt))
+    raw_size = len(raw_data)
 
     iv = bytearray(16)
     sha1 = hashlib.sha1()
+    pos = 0
 
     for i in range(ROUNDS):
         sha1.update(raw_data)
+        end_pos = (pos + raw_size) & ~0x3F
+        if end_pos > pos + 64:
+            cur_pos = (pos & ~0x3F) + 64
+            while True:
+                _update_psw_data_sha1(raw_data, cur_pos - pos)
+                cur_pos += 64
+                if cur_pos == end_pos:
+                    break
+        pos += raw_size
         sha1.update(struct.pack('<I', i)[:3])
+        pos += 3
 
         if i % (ROUNDS // 16) == 0:
             iv_idx = i // (ROUNDS // 16)
