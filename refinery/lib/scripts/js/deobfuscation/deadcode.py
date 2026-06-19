@@ -2,18 +2,22 @@
 Eliminate dead code branches guarded by constant conditions.
 
 This transformer prunes unreachable branches from `if`/`else` statements when the test is a
-literal whose truthiness can be determined statically.
+literal whose truthiness can be determined statically. When the discarded test is not provably
+free of side effects, it is kept as a leading expression statement so that pruning never changes
+observable behavior.
 """
 from __future__ import annotations
 
 from refinery.lib.scripts import Node, Statement
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     BodyProcessingTransformer,
+    is_side_effect_free,
     is_statically_evaluable,
     is_truthy,
 )
 from refinery.lib.scripts.js.model import (
     JsBlockStatement,
+    JsExpressionStatement,
     JsIfStatement,
     JsVariableDeclaration,
     JsVarKind,
@@ -49,9 +53,11 @@ class JsDeadCodeElimination(BodyProcessingTransformer):
         truthy = is_truthy(stmt.test)
         if truthy is None:
             return None
-        if truthy:
-            return JsDeadCodeElimination._unwrap_branch(stmt.consequent)
-        return JsDeadCodeElimination._unwrap_branch(stmt.alternate)
+        taken = stmt.consequent if truthy else stmt.alternate
+        result = JsDeadCodeElimination._unwrap_branch(taken)
+        if not is_side_effect_free(stmt.test):
+            result.insert(0, JsExpressionStatement(expression=stmt.test))
+        return result
 
     @staticmethod
     def _unwrap_branch(branch: Statement | None) -> list[Statement]:

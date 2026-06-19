@@ -60,6 +60,29 @@ class TestDeadCodeLiteralConditions(TestJsDeobfuscator):
         )
 
 
+class TestEffectfulConstantCondition(TestJsDeobfuscator):
+
+    def test_effectful_array_test_kept_when_branches_empty(self):
+        self.assertEqual(
+            '[v6(), false];',
+            self._deadcode('if ([v6(), false]) {} else {}'),
+        )
+
+    def test_effectful_array_test_kept_before_consequent(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                [v6()];
+                keep();
+                """
+            ),
+            self._deadcode('if ([v6()]) { keep(); }'),
+        )
+
+    def test_pure_array_test_dropped(self):
+        self.assertEqual('a();', self._deadcode('if ([1, 2]) { a(); } else { b(); }'))
+
+
 class TestRegressions(TestJsDeobfuscator):
 
     def test_dead_code_spliced_parent_pointers(self):

@@ -208,3 +208,13 @@ class TestDeobfuscationDifferential(TestBase):
             'function tag(x){ return "<" + x + ">"; }'
             ' var dead = tag("a");'
             ' console.log("result");')
+
+    def test_constant_if_preserves_effectful_test(self):
+        """
+        An `if` whose test has statically-known truthiness is pruned to the taken branch, but the
+        test still runs for its side effects: `[v6(), false]` is truthy, so the empty branches
+        collapse, yet the call `v6()` it evaluates must survive.
+        """
+        self._check(
+            'function v6(){ console.log(-1); }'
+            ' if ([v6(), false]) {} else {}')
