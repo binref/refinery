@@ -115,3 +115,46 @@ class TestDeobfuscationDifferential(TestBase):
         self._check(
             'function outer(){ var s = ""; function add(x){ s += x; } add("a"); add("b");'
             ' return s; } console.log(outer());')
+
+    def test_function_constructor_return_this_is_global_object(self):
+        """
+        `new Function("return this")()` yields the global object (a Function-constructed function is
+        sloppy and called with no receiver), so reflection inlining must resolve it to `globalThis`
+        rather than the caller's `this`, which under Node is the empty module export object.
+        """
+        self._check(
+            'var g = new Function("return this")();'
+            ' console.log(g === globalThis, typeof g.Array);')
+
+    def test_function_constructor_body_var_does_not_capture_caller_scope(self):
+        """
+        A `Function`-constructed body runs in its own scope, so its `var x` is local to the constructed
+        function and never reaches the caller; inlining it must not redeclare the caller's `x`, which
+        would change the value observed after the call.
+        """
+        self._check('var x = 1; new Function("var x = 2;")(); console.log(x);')
+
+    def test_function_constructor_body_lexical_does_not_redeclare_caller_block(self):
+        """
+        A `let` in a `Function`-constructed body is local to it; inlining it into the caller's block
+        where a same-named `let` already lives would be a duplicate-declaration SyntaxError rather than
+        the original's two independent bindings.
+        """
+        self._check(
+            '{ let y = 1; new Function("let y = 2; console.log(y);")(); console.log(y); }')
+
+    def test_function_constructor_body_var_does_not_cross_block_let(self):
+        """
+        A `Function`-constructed body's `var x` is local to the constructed function; a `var` spliced
+        into a block that already lexically binds `x` would hoist across that `let`, a redeclaration
+        SyntaxError rather than the original's two independent bindings.
+        """
+        self._check('{ let x = 9; new Function("var x = 2;")(); console.log(x); }')
+
+    def test_function_constructor_in_strict_caller_not_inlined(self):
+        """
+        A `Function`-constructed body is always sloppy, so its octal literal is legal; splicing the
+        body into a strict-mode caller would subject the octal to strict mode, a SyntaxError. The body
+        must stay an un-inlined call so the caller's strictness never reaches it.
+        """
+        self._check('function f(){ "use strict"; return new Function("return 010")(); } console.log(f());')

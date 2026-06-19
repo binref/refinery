@@ -11,12 +11,21 @@ from __future__ import annotations
 from typing import NamedTuple
 
 from refinery.lib.scripts import Expression, Node, _clone_node, _replace_in_parent
+from refinery.lib.scripts.js.analysis.model import (
+    BindingKind,
+    FUNCTION_NODES,
+    Scope,
+    SemanticModel,
+    build_semantic_model,
+    is_use_position,
+)
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     ScriptLevelTransformer,
     access_key,
     get_body,
     is_side_effect_free,
     property_key,
+    references_receiver_this,
     string_value,
     walk_scope,
 )
@@ -26,6 +35,8 @@ from refinery.lib.scripts.js.model import (
     JsAwaitExpression,
     JsBlockStatement,
     JsCallExpression,
+    JsClassDeclaration,
+    JsClassExpression,
     JsExpressionStatement,
     JsFunctionExpression,
     JsIdentifier,
@@ -39,6 +50,7 @@ from refinery.lib.scripts.js.model import (
     JsScript,
     JsSequenceExpression,
     JsStringLiteral,
+    JsThisExpression,
     JsUnaryExpression,
     Statement,
 )
@@ -212,18 +224,24 @@ def _extract_constructor_chain_code(node: JsCallExpression) -> str | None:
     return string_value(inner_call.arguments[0]) or _try_eval_string_arg(inner_call.arguments[0])
 
 
-def _extract_invoked_function_body(node: JsCallExpression) -> str | None:
+def _invoked_function_constructor_code(node: JsCallExpression) -> tuple[str, bool] | None:
     """
-    Extract code from immediately-invoked Function constructors:
-
-        Function("code")()
-        new Function("code")()
-        Function("a", "b", "code")(args)
+    If *node* immediately invokes a `Function` constructor — `Function("code")()`,
+    `new Function("code")()`, or the `<x>.constructor.constructor("code")()` chain — return its body
+    code together with whether the constructor binds parameters or is passed call arguments. A
+    `Function`-constructed function runs in the global scope with `this` bound to the global object and
+    its parameters bound to the call arguments, so inlining its body into the caller is sound only when
+    it binds neither.
     """
     inner = node.callee
-    if not isinstance(inner, (JsCallExpression, JsNewExpression)):
-        return None
-    return _extract_function_body_code(inner)
+    if isinstance(inner, (JsCallExpression, JsNewExpression)):
+        code = _extract_function_body_code(inner)
+        if code is not None:
+            return code, len(inner.arguments) > 1 or bool(node.arguments)
+    chain = _extract_constructor_chain_code(node)
+    if chain is not None:
+        return chain, bool(node.arguments)
+    return None
 
 
 def _extract_getter_target(func: Expression | None) -> str | JsUnaryExpression | None:
@@ -448,13 +466,191 @@ def _wrap_in_async_iife(stmts: list[Statement]) -> list[Statement]:
     return [iife]
 
 
+def _scope_strictly_within(inner: Scope, outer: Scope) -> bool:
+    """
+    Whether *inner* is a scope nested strictly below *outer*.
+    """
+    cursor = inner.parent
+    while cursor is not None:
+        if cursor is outer:
+            return True
+        cursor = cursor.parent
+    return False
+
+
+def _has_use_strict_directive(stmts: list[Statement]) -> bool:
+    """
+    Whether *stmts* opens with a `"use strict"` directive prologue. A strict `Function`-constructed
+    body cannot be spliced into a possibly-sloppy caller without changing meaning: an assignment to an
+    undeclared name throws under strict but silently creates a global under sloppy, and the directive
+    stops governing the code once the body is no longer the first thing its scope runs.
+    """
+    for stmt in stmts:
+        if not isinstance(stmt, JsExpressionStatement):
+            return False
+        if not isinstance(stmt.expression, JsStringLiteral):
+            return False
+        if stmt.expression.value == 'use strict':
+            return True
+    return False
+
+
+def _site_in_strict_context(site: Node, root: JsScript) -> bool:
+    """
+    Whether *site* runs in strict mode, because the script opens with a `"use strict"` directive, an
+    enclosing function does, or an enclosing class body (always strict) contains it. A
+    `Function`-constructed body is always sloppy, so splicing it into a strict context could turn
+    sloppy-only code — an octal literal, an unqualified `delete`, an assignment to an undeclared name
+    or to `eval`/`arguments` — into a strict-mode SyntaxError or a behavior change; declining keeps
+    the inlining sound.
+    """
+    if _has_use_strict_directive(root.body):
+        return True
+    cursor = site.parent
+    while cursor is not None:
+        if isinstance(cursor, (JsClassDeclaration, JsClassExpression)):
+            return True
+        if isinstance(cursor, FUNCTION_NODES):
+            body = cursor.body
+            if isinstance(body, JsBlockStatement) and _has_use_strict_directive(body.body):
+                return True
+        cursor = cursor.parent
+    return False
+
+
+def _references_new_target(root: Node) -> bool:
+    """
+    Whether *root* reads the `new.target` meta-property, which the parser models as a member access
+    whose object is the reserved word `new`. A `Function`-constructed function is invoked as a call,
+    so its `new.target` is always `undefined`; splicing the body into a real function would rebind
+    `new.target` to the caller's, so a body that reads it cannot be inlined.
+    """
+    for node in root.walk():
+        if (
+            isinstance(node, JsMemberExpression)
+            and isinstance(node.object, JsIdentifier)
+            and node.object.name == 'new'
+        ):
+            return True
+    return False
+
+
+def _body_free_names(body_model: SemanticModel, parsed: JsScript) -> set[str]:
+    """
+    The names *parsed* reads or writes without binding them locally — the names a
+    `Function`-constructed body resolves against the global scope. A name bound inside the body is
+    excluded (inlining carries its binding along), as is a property name or key; an implicit-global
+    write the body performs is included, since it targets a global rather than a local binding.
+    """
+    free: set[str] = set()
+    for ident in parsed.walk():
+        if not isinstance(ident, JsIdentifier) or not is_use_position(ident):
+            continue
+        if body_model.binding_of(ident) is not None:
+            continue
+        binding = body_model.resolve(ident)
+        if binding is None or binding.kind is BindingKind.IMPLICIT_GLOBAL:
+            free.add(ident.name)
+    return free
+
+
+def _body_declared_names(body_model: SemanticModel) -> set[str]:
+    """
+    The names a `Function`-constructed body declares at its top level — the `var`, function, `let`,
+    `const`, and `class` bindings that inlining would hoist into the caller's scope. Implicit globals
+    are excluded: those are writes to globals, covered by the free-name check rather than introduced as
+    new bindings.
+    """
+    return {
+        name for name, binding in body_model.root_scope.bindings.items()
+        if binding.kind is not BindingKind.IMPLICIT_GLOBAL
+    }
+
+
+def _names_uncaptured_in(names: set[str], scope: Scope, root_model: SemanticModel) -> bool:
+    """
+    Whether introducing a binding for each of *names* into *scope* would capture no identifier already
+    present there: every occurrence of those names anywhere within *scope* (including nested functions
+    that would close over the new binding) must already resolve to a binding nested strictly below
+    *scope*. An occurrence that is free, inherited from an enclosing scope, or bound in *scope* itself
+    would be rebound by the introduced declaration.
+    """
+    for node in scope.node.walk():
+        if not isinstance(node, JsIdentifier) or node.name not in names:
+            continue
+        if not is_use_position(node):
+            continue
+        binding = root_model.binding_of(node) or root_model.resolve(node)
+        if binding is None or not _scope_strictly_within(binding.scope, scope):
+            return False
+    return True
+
+
+def _hoist_path_is_clear(names: set[str], site_scope: Scope, var_scope: Scope) -> bool:
+    """
+    Whether each hoisted `var`/function name can rise from the call site to *var_scope* without
+    crossing a lexical binding of the same name. A `var` spliced into a block still hoists to the
+    enclosing function or script, but it is a redeclaration SyntaxError if any block it passes
+    through — from the site's own scope up to, but not including, *var_scope* — lexically binds the
+    same name. Conflicts with a binding declared directly in *var_scope* are already caught by the
+    capture check.
+    """
+    scope: Scope | None = site_scope
+    while scope is not None and scope is not var_scope:
+        if any(name in scope.bindings for name in names):
+            return False
+        scope = scope.parent
+    return True
+
+
+def _inlined_declarations_safe(
+    body_model: SemanticModel,
+    root_model: SemanticModel,
+    site_scope: Scope,
+) -> bool:
+    """
+    Whether the names a `Function`-constructed body declares at its top level can be introduced at the
+    call site without capturing an identifier already meaningful there. Such declarations are local to
+    the constructed function; inlining lifts `var` and function declarations into the caller's function
+    or script scope and `let`/`const`/`class` into the caller's immediate block, where a same-named
+    reference, an inherited binding, or a redeclaration would silently rebind to the inlined declaration
+    or produce a duplicate lexical declaration. Each name is checked against the scope it would actually
+    land in.
+    """
+    bindings = body_model.root_scope.bindings
+    hoisted = {
+        name for name, binding in bindings.items()
+        if binding.kind in (BindingKind.VAR, BindingKind.FUNCTION)
+    }
+    lexical = {
+        name for name, binding in bindings.items()
+        if binding.kind not in (BindingKind.VAR, BindingKind.FUNCTION, BindingKind.IMPLICIT_GLOBAL)
+    }
+    if hoisted:
+        var_scope = site_scope
+        while var_scope is not None and not var_scope.is_var_scope:
+            var_scope = var_scope.parent
+        if var_scope is None or not _names_uncaptured_in(hoisted, var_scope, root_model):
+            return False
+        if not _hoist_path_is_clear(hoisted, site_scope, var_scope):
+            return False
+    if lexical and not _names_uncaptured_in(lexical, site_scope, root_model):
+        return False
+    return True
+
+
 class JsReflectionInlining(ScriptLevelTransformer):
     """
     Inline reflective code execution: `eval`, `Function` constructor, constructor chains, and
     indirect invocation via `setTimeout` and `setInterval`.
     """
 
+    def __init__(self):
+        super().__init__()
+        self._root: JsScript | None = None
+
     def _process_script(self, node: JsScript) -> None:
+        self._root = node
         self._inline_statements(node)
         self._inline_expressions(node)
 
@@ -520,16 +716,17 @@ class JsReflectionInlining(ScriptLevelTransformer):
             return pack_result
         if _is_pack_shaped(node):
             return None
-        code = (
-            _extract_eval_code(node)
-            or _extract_indirect_eval_code(node)
-            or _extract_invoked_function_body(node)
-            or _extract_constructor_chain_code(node)
-            or _extract_timer_code(node)
-        )
-        if code is None:
-            return None
-        parsed = _try_parse(code)
+        constructor = _invoked_function_constructor_code(node)
+        if constructor is not None:
+            code, binds = constructor
+            parsed = self._resolve_constructor_body(code, binds, stmt)
+        else:
+            code = (
+                _extract_eval_code(node)
+                or _extract_indirect_eval_code(node)
+                or _extract_timer_code(node)
+            )
+            parsed = _try_parse(code) if code is not None else None
         if parsed is None:
             return None
         result = parsed.body
@@ -537,17 +734,14 @@ class JsReflectionInlining(ScriptLevelTransformer):
             return _wrap_in_async_iife(result)
         return result
 
-    @staticmethod
-    def _try_resolve_expression(node: JsCallExpression) -> Expression | None:
-        code = (
-            _extract_eval_code(node)
-            or _extract_indirect_eval_code(node)
-            or _extract_invoked_function_body(node)
-            or _extract_constructor_chain_code(node)
-        )
-        if code is None:
-            return None
-        parsed = _try_parse(code)
+    def _try_resolve_expression(self, node: JsCallExpression) -> Expression | None:
+        constructor = _invoked_function_constructor_code(node)
+        if constructor is not None:
+            code, binds = constructor
+            parsed = self._resolve_constructor_body(code, binds, node)
+        else:
+            code = _extract_eval_code(node) or _extract_indirect_eval_code(node)
+            parsed = _try_parse(code) if code is not None else None
         if parsed is None:
             return None
         body = parsed.body
@@ -558,3 +752,53 @@ class JsReflectionInlining(ScriptLevelTransformer):
             if isinstance(stmt, JsReturnStatement) and stmt.argument is not None:
                 return stmt.argument
         return None
+
+    def _resolve_constructor_body(self, code: str, binds: bool, site: Node) -> JsScript | None:
+        """
+        Parse a `Function`-constructor body and decide whether inlining it at *site* preserves meaning.
+        The exact global-accessor idiom `return this` becomes `return globalThis`, since a
+        `Function`-constructed function's `this` is always the global object; the rewritten `globalThis`
+        is then held to the same free-name check as any other global reference, so a binding named
+        `globalThis` in scope at *site* declines the inlining. Otherwise the body must run in the global
+        sloppy mode the constructed function has: a strict context at *site* declines the inlining (the
+        always-sloppy body would inherit the caller's strictness), as does a `"use strict"` prologue in
+        the body itself. The body must also be self-contained in both directions: it binds no parameters
+        or arguments and references no `this`, `arguments`, or `new.target`; every free name it reads
+        still denotes the same global at *site*; and every name it declares can be hoisted into the scope
+        at *site* without capturing an identifier already meaningful there. Anything else is left intact
+        (returns `None`) — declining is always sound.
+        """
+        if binds:
+            return None
+        assert self._root is not None
+        if _site_in_strict_context(site, self._root):
+            return None
+        parsed = _try_parse(code)
+        if parsed is None:
+            return None
+        if _has_use_strict_directive(parsed.body):
+            return None
+        if len(parsed.body) == 1:
+            only = parsed.body[0]
+            if isinstance(only, JsReturnStatement) and isinstance(only.argument, JsThisExpression):
+                _replace_in_parent(only.argument, JsIdentifier(name='globalThis'))
+        if references_receiver_this(parsed) or _references_new_target(parsed):
+            return None
+        body_model = build_semantic_model(parsed)
+        free = _body_free_names(body_model, parsed)
+        if 'arguments' in free:
+            return None
+        declared = _body_declared_names(body_model)
+        if not free and not declared:
+            return parsed
+        root_model = build_semantic_model(self._root)
+        site_scope = root_model.scope_of(site)
+        if site_scope is None:
+            return None
+        for name in free:
+            binding = root_model.lookup(name, site_scope)
+            if binding is not None and binding.kind is not BindingKind.IMPLICIT_GLOBAL:
+                return None
+        if declared and not _inlined_declarations_safe(body_model, root_model, site_scope):
+            return None
+        return parsed
