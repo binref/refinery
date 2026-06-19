@@ -376,3 +376,52 @@ class TestLNK(TestUnitBase):
         reader = StructReader(memoryview(bytearray(data)))
         li = LinkInfo(reader)
         self.assertEqual(li.volume_id.drive_type, DriveType.Unknown)
+
+    def test_target_id_list_file_entries(self):
+        data = _load_sample('basic.lnk')
+        result = data | self.load(details=True) | json.loads
+        files = [
+            item for item in result['target_id_list']
+            if item.get('type') == 'file_entry'
+        ]
+        self.assertEqual(
+            [item['primary_name'] for item in files], ['Windows', 'notepad.exe'])
+        windows, notepad = files
+        self.assertEqual(windows['is_directory'], True)
+        self.assertEqual(windows['file_size'], 0)
+        self.assertEqual(windows['file_attributes'], 0x10)
+        self.assertEqual(notepad['is_directory'], False)
+        self.assertEqual(notepad['file_size'], 360448)
+        self.assertEqual(notepad['file_attributes'], 0x20)
+
+    def test_truncation_does_not_crash(self):
+        clsid = str(_LNK_CLSID)
+        for name in (
+            'basic.lnk',
+            'pylnk3_unicode_strings.lnk',
+            'pylnk3_cnrl.lnk',
+        ):
+            data = _load_sample(name)
+            for n in range(0x4C, len(data) + 1):
+                result = LnkFile(data[:n]).__json__()
+                self.assertEqual(result['header']['clsid'], clsid)
+
+    def test_extra_block_below_minimum_size(self):
+        data = bytearray(_u32(5)) + _u32(0xA0000001) + b'\x00\x00\x00\x00'
+        ed = ExtraData.parse(StructReader(memoryview(data)))
+        self.assertEqual(len(ed.blocks), 0)
+
+    def test_linkinfo_suffix_undecodable_byte(self):
+        header_size = 0x1C
+        suffix = b'\x81\x00'
+        link_info_header = bytearray()
+        link_info_header += _u32(header_size)
+        link_info_header += _u32(0)
+        link_info_header += _u32(0)
+        link_info_header += _u32(0)
+        link_info_header += _u32(0)
+        link_info_header += _u32(header_size)
+        total = 4 + len(link_info_header) + len(suffix)
+        data = bytearray(_u32(total)) + link_info_header + suffix
+        li = LinkInfo(StructReader(memoryview(data)))
+        self.assertEqual(li.common_path_suffix, '81')

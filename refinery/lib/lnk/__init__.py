@@ -15,13 +15,18 @@ class LnkFile:
         self.header = ShellLinkHeader(reader)
         flags = self.header.link_flags
         self.targets: LinkTargetIDList | None = None
-        if flags & LinkFlags.HasTargetIDList:
-            self.targets = LinkTargetIDList(reader)
         self.link_info: LinkInfo | None = None
-        if flags & LinkFlags.HasLinkInfo:
-            self.link_info = LinkInfo(reader)
-        self.string_data = StringData.parse(reader, flags)
-        self.extra_data = ExtraData.parse(reader)
+        self.string_data = StringData()
+        self.extra_data = ExtraData()
+        try:
+            if flags & LinkFlags.HasTargetIDList:
+                self.targets = LinkTargetIDList(reader)
+            if flags & LinkFlags.HasLinkInfo:
+                self.link_info = LinkInfo(reader)
+            self.string_data = StringData.parse(reader, flags)
+            self.extra_data = ExtraData.parse(reader)
+        except EOFError:
+            pass
         self._size = reader.tell()
 
     @property

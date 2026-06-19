@@ -34,16 +34,21 @@ _BLOCK_NAMES = {
 }
 
 
+def _text(raw: bytes, encoding: str) -> str:
+    try:
+        return codecs.decode(raw, encoding)
+    except Exception:
+        return raw.hex()
+
+
 class EnvironmentVariableDataBlock(Struct[memoryview]):
     def __init__(self, reader: StructReader[memoryview]):
         raw_ansi = reader.read_bytes(260)
         raw_unicode = reader.read_bytes(520)
-        self.target_unicode = codecs.decode(
-            raw_unicode.split(b'\0\0')[0].rstrip(b'\0'), 'utf-16-le'
-        ) or None
-        self.target_ansi = codecs.decode(
-            raw_ansi.split(b'\0')[0], 'cp1252'
-        ) or None
+        self.target_unicode = _text(
+            raw_unicode.split(b'\0\0')[0].rstrip(b'\0'), 'utf-16-le') or None
+        self.target_ansi = _text(
+            raw_ansi.split(b'\0')[0], 'cp1252') or None
 
     def __json__(self) -> dict:
         result: dict = {'type': 'environment_variable'}
@@ -69,9 +74,8 @@ class ConsoleDataBlock(Struct[memoryview]):
         self.font_family = reader.u32()
         self.font_weight = reader.u32()
         raw_face = reader.read_bytes(64)
-        self.face_name = codecs.decode(
-            raw_face.split(b'\0\0')[0].rstrip(b'\0'), 'utf-16-le'
-        )
+        self.face_name = _text(
+            raw_face.split(b'\0\0')[0].rstrip(b'\0'), 'utf-16-le')
         self.cursor_size = reader.u32()
         self.full_screen = reader.u32()
         self.quick_edit = reader.u32()
@@ -87,9 +91,8 @@ class TrackerDataBlock(Struct[memoryview]):
     def __init__(self, reader: StructReader[memoryview]):
         reader.skip(8)
         raw_machine = reader.read_bytes(16)
-        self.machine_id = codecs.decode(
-            raw_machine.split(b'\0')[0], 'ascii'
-        )
+        self.machine_id = _text(
+            raw_machine.split(b'\0')[0], 'ascii')
         self.droid_volume = str(reader.read_guid())
         self.droid_file = str(reader.read_guid())
         self.droid_birth_volume = str(reader.read_guid())
@@ -111,12 +114,10 @@ class DarwinDataBlock(Struct[memoryview]):
     def __init__(self, reader: StructReader[memoryview]):
         raw_ansi = reader.read_bytes(260)
         raw_unicode = reader.read_bytes(520)
-        self.darwin_data_unicode = codecs.decode(
-            raw_unicode.split(b'\0\0')[0].rstrip(b'\0'), 'utf-16-le'
-        ) or None
-        self.darwin_data_ansi = codecs.decode(
-            raw_ansi.split(b'\0')[0], 'cp1252'
-        ) or None
+        self.darwin_data_unicode = _text(
+            raw_unicode.split(b'\0\0')[0].rstrip(b'\0'), 'utf-16-le') or None
+        self.darwin_data_ansi = _text(
+            raw_ansi.split(b'\0')[0], 'cp1252') or None
 
     def __json__(self) -> dict:
         result: dict = {'type': 'darwin'}
@@ -130,12 +131,10 @@ class IconEnvironmentDataBlock(Struct[memoryview]):
     def __init__(self, reader: StructReader[memoryview]):
         raw_ansi = reader.read_bytes(260)
         raw_unicode = reader.read_bytes(520)
-        self.target_unicode = codecs.decode(
-            raw_unicode.split(b'\0\0')[0].rstrip(b'\0'), 'utf-16-le'
-        ) or None
-        self.target_ansi = codecs.decode(
-            raw_ansi.split(b'\0')[0], 'cp1252'
-        ) or None
+        self.target_unicode = _text(
+            raw_unicode.split(b'\0\0')[0].rstrip(b'\0'), 'utf-16-le') or None
+        self.target_ansi = _text(
+            raw_ansi.split(b'\0')[0], 'cp1252') or None
 
     def __json__(self) -> dict:
         result: dict = {'type': 'icon_environment'}
@@ -149,9 +148,7 @@ class IconEnvironmentDataBlock(Struct[memoryview]):
 class ShimDataBlock(Struct[memoryview]):
     def __init__(self, reader: StructReader[memoryview], block_data_size: int):
         raw = reader.read_bytes(block_data_size)
-        self.layer_name = codecs.decode(
-            raw.rstrip(b'\0').rstrip(b'\0'), 'utf-16-le'
-        )
+        self.layer_name = _text(raw.rstrip(b'\0'), 'utf-16-le')
 
 
 class PropertyStoreDataBlock(Struct[memoryview]):
@@ -199,7 +196,7 @@ class ExtraData:
         result = cls()
         while reader.remaining_bytes >= 4:
             block_size = reader.u32()
-            if block_size < 4:
+            if block_size < 8:
                 break
             if reader.remaining_bytes < 4:
                 break

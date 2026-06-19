@@ -37,15 +37,14 @@ class StringData:
         for flag, attr in entries:
             if not flags & flag:
                 continue
+            if reader.remaining_bytes < 2:
+                break
             count = reader.u16()
-            if is_unicode:
-                raw = reader.read(count * 2)
-                value = codecs.decode(raw, 'utf-16-le')
-            else:
-                raw = reader.read(count)
-                try:
-                    value = codecs.decode(raw, 'cp1252')
-                except Exception:
-                    value = bytes(raw).hex()
+            raw = reader.read(count * 2 if is_unicode else count)
+            encoding = 'utf-16-le' if is_unicode else 'cp1252'
+            try:
+                value = codecs.decode(raw, encoding)
+            except Exception:
+                value = bytes(raw).hex()
             setattr(result, attr, value)
         return result

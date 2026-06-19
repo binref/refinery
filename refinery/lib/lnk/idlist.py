@@ -10,20 +10,23 @@ class ItemID:
         self.data = bytes(data)
 
     def __json__(self) -> dict:
-        reader = StructReader(memoryview(self.data))
         if len(self.data) < 1:
             return {'raw': self.data.hex()}
+        reader = StructReader(memoryview(self.data))
         type_id = self.data[0]
-        if type_id == 0x1F:
-            return self._parse_root_folder(reader)
-        if 0x20 <= type_id <= 0x2F:
-            return self._parse_volume(reader)
-        if 0x30 <= type_id <= 0x3F:
-            return self._parse_file_entry(reader, type_id)
-        if 0x40 <= type_id <= 0x4F:
-            return self._parse_network_location(reader)
-        if type_id == 0x61:
-            return self._parse_uri(reader)
+        try:
+            if type_id == 0x1F:
+                return self._parse_root_folder(reader)
+            if 0x20 <= type_id <= 0x2F:
+                return self._parse_volume(reader)
+            if 0x30 <= type_id <= 0x3F:
+                return self._parse_file_entry(reader, type_id)
+            if 0x40 <= type_id <= 0x4F:
+                return self._parse_network_location(reader)
+            if type_id == 0x61:
+                return self._parse_uri(reader)
+        except EOFError:
+            pass
         return {'type': F'0x{type_id:02X}', 'raw': self.data.hex()}
 
     @staticmethod
@@ -57,7 +60,7 @@ class ItemID:
         is_directory = bool(type_id & 0x01)
         is_unicode = bool(type_id & 0x04)
         result['is_directory'] = is_directory
-        reader.skip(1)
+        reader.skip(2)
         if reader.remaining_bytes < 4:
             result['raw'] = bytes(reader.read()).hex()
             return result
@@ -140,14 +143,14 @@ class LinkTargetIDList(Struct[memoryview]):
         id_list_size = reader.u16()
         end_position = reader.tell() + id_list_size
         self.items: list[ItemID] = []
-        while reader.tell() < end_position:
+        while reader.remaining_bytes >= 2 and reader.tell() + 2 <= end_position:
             item_size = reader.u16()
-            if item_size == 0:
-                break
             if item_size < 2:
                 break
-            item_data = reader.read(item_size - 2)
+            available = end_position - reader.tell()
+            item_data = reader.read(min(item_size - 2, available))
             self.items.append(ItemID(item_data))
+        reader.seekset(end_position)
 
     @property
     def path(self) -> str:

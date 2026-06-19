@@ -11,6 +11,24 @@ from refinery.lib.lnk.flags import (
 from refinery.lib.structures import Struct, StructReader, struct_to_json
 
 
+def _read_ansi(reader: StructReader[memoryview]) -> str | None:
+    try:
+        raw = reader.read_c_string()
+    except EOFError:
+        return None
+    try:
+        return codecs.decode(raw, 'cp1252')
+    except Exception:
+        return bytes(raw).hex()
+
+
+def _read_unicode(reader: StructReader[memoryview]) -> str | None:
+    try:
+        return reader.read_w_string('utf-16-le')
+    except (EOFError, UnicodeDecodeError):
+        return None
+
+
 class VolumeID(Struct[memoryview]):
     def __init__(self, reader: StructReader[memoryview]):
         start = reader.tell()
@@ -28,14 +46,10 @@ class VolumeID(Struct[memoryview]):
             volume_label_offset_unicode = 0
         if volume_label_offset_unicode:
             reader.seekset(start + volume_label_offset_unicode)
-            self.volume_label = reader.read_w_string('utf-16-le')
+            self.volume_label = _read_unicode(reader)
         else:
             reader.seekset(start + volume_label_offset)
-            raw = reader.read_c_string()
-            try:
-                self.volume_label = codecs.decode(raw, 'cp1252')
-            except Exception:
-                self.volume_label = bytes(raw).hex()
+            self.volume_label = _read_ansi(reader)
         reader.seekset(start + size)
 
 
@@ -59,25 +73,17 @@ class CommonNetworkRelativeLink(Struct[memoryview]):
             device_name_offset_unicode = 0
         if net_name_offset_unicode:
             reader.seekset(start + net_name_offset_unicode)
-            self.net_name = reader.read_w_string('utf-16-le')
+            self.net_name = _read_unicode(reader)
         else:
             reader.seekset(start + net_name_offset)
-            raw = reader.read_c_string()
-            try:
-                self.net_name = codecs.decode(raw, 'cp1252')
-            except Exception:
-                self.net_name = bytes(raw).hex()
+            self.net_name = _read_ansi(reader)
         if self.flags.ValidDevice:
             if device_name_offset_unicode:
                 reader.seekset(start + device_name_offset_unicode)
-                self.device_name = reader.read_w_string('utf-16-le')
+                self.device_name = _read_unicode(reader)
             else:
                 reader.seekset(start + device_name_offset)
-                raw = reader.read_c_string()
-                try:
-                    self.device_name = codecs.decode(raw, 'cp1252')
-                except Exception:
-                    self.device_name = bytes(raw).hex()
+                self.device_name = _read_ansi(reader)
         else:
             self.device_name = None
         reader.seekset(start + size)
@@ -109,25 +115,19 @@ class LinkInfo(Struct[memoryview]):
             self.volume_id = VolumeID(reader)
             if has_unicode and local_base_path_offset_unicode:
                 reader.seekset(start + local_base_path_offset_unicode)
-                self.local_base_path = reader.read_w_string('utf-16-le')
+                self.local_base_path = _read_unicode(reader)
             else:
                 reader.seekset(start + local_base_path_offset)
-                raw = reader.read_c_string()
-                try:
-                    self.local_base_path = codecs.decode(raw, 'cp1252')
-                except Exception:
-                    self.local_base_path = bytes(raw).hex()
+                self.local_base_path = _read_ansi(reader)
         if self.flags.CommonNetworkRelativeLinkAndPathSuffix:
             reader.seekset(start + cnrl_offset)
             self.common_network_relative_link = CommonNetworkRelativeLink(reader)
         if has_unicode and common_path_suffix_offset_unicode:
             reader.seekset(start + common_path_suffix_offset_unicode)
-            self.common_path_suffix = reader.read_w_string('utf-16-le')
+            self.common_path_suffix = _read_unicode(reader)
         elif common_path_suffix_offset:
             reader.seekset(start + common_path_suffix_offset)
-            raw = reader.read_c_string()
-            suffix = codecs.decode(raw, 'cp1252')
-            self.common_path_suffix = suffix if suffix else None
+            self.common_path_suffix = _read_ansi(reader) or None
         reader.seekset(start + size)
 
     def __json__(self) -> dict:
