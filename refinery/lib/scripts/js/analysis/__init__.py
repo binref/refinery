@@ -8,6 +8,11 @@ representation-agnostic surface.
 """
 from __future__ import annotations
 
+from refinery.lib.scripts.js.analysis.effects import (
+    EffectModel,
+    EffectSummary,
+    build_effects,
+)
 from refinery.lib.scripts.js.analysis.model import (
     Binding,
     BindingKind,
@@ -24,10 +29,13 @@ from refinery.lib.scripts.js.analysis.model import (
 __all__ = [
     'Binding',
     'BindingKind',
+    'EffectModel',
+    'EffectSummary',
     'Role',
     'Scope',
     'ScopeKind',
     'SemanticModel',
+    'build_effects',
     'build_semantic_model',
     'is_use_position',
     'pattern_identifiers',
