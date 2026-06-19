@@ -380,29 +380,8 @@ class TestJsDeobfuscator(TestUnitBase):
             '00Fd8f%pOdp@`YsvBYQl0ssI200dcD'
         ))
         test = data | self.load() | str
-        goal = inspect.cleandoc(
-            '''
-            var IgwdlFe, MDNl0th;
-            function _Ai5hk(WjSvqA) {
-              MDNl0th = [];
-              for (IgwdlFe = 0x1; IgwdlFe <= WjSvqA; IgwdlFe++) {
-                if (IgwdlFe % 0xf === 0) {
-                  MDNl0th.push('FizzBuzz');
-                } else {
-                  if (IgwdlFe % 0x3 === 0) {
-                    MDNl0th.push('Fizz');
-                  } else {
-                    if (IgwdlFe % 5 === 0) {
-                      MDNl0th.push('Buzz');
-                    } else {
-                      MDNl0th.push(IgwdlFe);
-                    }
-                  }
-                }
-              }
-              return MDNl0th;
-            }
-            console.log(_Ai5hk(0x14));
-            '''
+        self.assertEqual(
+            "console.log([1, 2, 'Fizz', 4, 'Buzz', 'Fizz', 7, 8, 'Fizz', 'Buzz',"
+            " 11, 'Fizz', 13, 14, 'FizzBuzz', 16, 17, 'Fizz', 19, 'Buzz']);",
+            test,
         )
-        self.assertEqual(test, goal)

@@ -51,6 +51,18 @@ class TestDeobfuscationDifferential(TestBase):
             'function f(n){ var s = 0; s = []; for (var i = 0; i < n; i++) { s.push(i * i); }'
             ' return s.join(","); } console.log(f(4));')
 
+    def test_pseudo_global_localized_into_function(self):
+        self._check(
+            'var acc, i;'
+            ' function build(n){ acc = []; for (i = 1; i <= n; i++) { acc.push(i * i); } return acc; }'
+            ' console.log(build(4).join(","));')
+
+    def test_pseudo_global_with_cross_call_state_preserved(self):
+        self._check(
+            'var n;'
+            ' function tick(){ n = (n || 0) + 1; return n; }'
+            ' console.log(tick(), tick(), tick());')
+
     def test_block_scoped_for_let(self):
         self._check('var out = []; for (let i = 0; i < 3; i++) { out.push(i); }'
                     ' console.log(out.join(","));')

@@ -66,11 +66,12 @@ class TestUnusedCodeRemoval(TestJsDeobfuscator):
             self._remove_unused(source),
         )
 
-    def test_script_scope_declarations_kept_when_written_in_function(self):
+    def test_script_scope_vars_localized_into_their_function(self):
         """
-        A top-level declaration whose global is written inside `build` is kept: flow-insensitively the
-        write cannot be proven to precede every read, so dropping the declaration could leave a read of
-        an undeclared name. Only `push` (never referenced) and `dead` (a dead store) are removed.
+        `acc` and `i` are script-scope `var`s referenced only inside `build`, which overwrites each
+        before reading it, so they behave as locals of `build` and are relocated there, tightening
+        globals the obfuscator hoisted. The move observes no value carried across calls or from load, so
+        behaviour is unchanged. `push` (never referenced) and `dead` (a dead store) are removed.
         """
         source = inspect.cleandoc(
             """
@@ -89,8 +90,8 @@ class TestUnusedCodeRemoval(TestJsDeobfuscator):
         self.assertEqual(
             inspect.cleandoc(
                 """
-                var acc, i;
                 function build(n) {
+                  var acc, i;
                   acc = [];
                   for (i = 1; i <= n; i++) {
                     acc.push(i);
@@ -102,6 +103,24 @@ class TestUnusedCodeRemoval(TestJsDeobfuscator):
             ),
             self._remove_unused(source),
         )
+
+    def test_script_scope_var_read_before_write_is_not_localized(self):
+        """
+        `counter` is read before it is written inside `next`, so a value carried across calls is
+        observed; relocating it into `next` would give each call a fresh local and change behaviour. It
+        stays at script scope unchanged.
+        """
+        source = inspect.cleandoc(
+            """
+            var counter;
+            function next() {
+              counter = counter + 1;
+              return counter;
+            }
+            console.log(next(), next());
+            """
+        )
+        self.assertEqual(source, self._remove_unused(source))
 
     def test_dead_initializer_stripped_when_overwritten_before_read(self):
         source = 'function f() { var x = 1; x = 2; return x; }'

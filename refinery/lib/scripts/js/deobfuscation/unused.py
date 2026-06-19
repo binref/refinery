@@ -1,7 +1,7 @@
 """
 Remove unreachable function declarations and unused variable assignments.
 
-This transformer performs three phases:
+This transformer performs four phases:
 
 1. **Dead function removal** — transitive reachability analysis: starting from non-function
    statements, it collects all function names referenced directly or transitively. Function
@@ -16,6 +16,12 @@ This transformer performs three phases:
    the liveness analysis proves is never read, even when the binding is read elsewhere (so phase 2
    keeps it). Only an uncaptured function-local `var`/`let` store qualifies; the side effects of the
    value expression are preserved.
+
+4. **Pseudo-global localization** — a script-scope `var` whose every reference is owned by one
+   function, and which that function overwrites before any read, is relocated into that function as a
+   true local, tightening a global the obfuscator hoisted back to where it is used. The liveness model
+   proves the move observes no value carried across calls or from load; the later sweeps then act on
+   the tightened scope.
 """
 from __future__ import annotations
 
@@ -321,6 +327,7 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
             self._liveness = build_liveness(self._model)
             self._has_reflection = self._model.has_reflection_surface()
             self._remove_dead_stores(node)
+            self._localize_pseudo_globals(node)
             self.generic_visit(node)
             self._process_body(node, node.body)
             pass_changed = self.changed
@@ -402,6 +409,57 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
             return False
         binding = self.model.binding_of(write) or self.model.resolve(write)
         return binding is not None and binding.is_read
+
+    def _localize_pseudo_globals(self, root: JsScript):
+        """
+        Relocate a script-scope `var` that behaves as one function's local into that function. The
+        liveness model identifies a binding every reference of which is owned by a single function that
+        overwrites it before any read and whose declaration carries no initializer — a global the
+        obfuscator hoisted that observes no value across calls or from load. Its script-scope declarator
+        is removed and a bare `var` for the name is hoisted into the function body, where the later
+        sweeps act on the tightened scope; the next pass, over a fresh model, sees it as a local.
+
+        Targets are gathered from the pass-start liveness before any mutation. Relocating one binding
+        removes no reference to another, and a localization candidate is never a dead-store candidate
+        (one is script-scope, the other strictly function-local), so the batch stays mutually consistent.
+        """
+        relocations: dict[int, tuple[JsBlockStatement, list[str]]] = {}
+        declarators: list[JsVariableDeclarator] = []
+        for binding, function in self.liveness.localizable_bindings():
+            body = getattr(function, 'body', None)
+            if not isinstance(body, JsBlockStatement):
+                continue
+            sites = self._declarators_of(binding)
+            if sites is None:
+                continue
+            declarators.extend(sites)
+            relocations.setdefault(id(body), (body, []))[1].append(binding.name)
+        if not declarators:
+            return
+        for declarator in declarators:
+            remove_declarator(declarator)
+        for body, names in relocations.values():
+            declaration = JsVariableDeclaration(
+                kind=JsVarKind.VAR,
+                declarations=[JsVariableDeclarator(id=JsIdentifier(name=name)) for name in names],
+            )
+            declaration.parent = body
+            body.body.insert(0, declaration)
+        self.mark_changed()
+
+    @staticmethod
+    def _declarators_of(binding: Binding) -> list[JsVariableDeclarator] | None:
+        """
+        The `var` declarators that introduce *binding* at script scope, or `None` if any declaration
+        site is not a plain declarator, so the binding cannot be cleanly relocated.
+        """
+        declarators: list[JsVariableDeclarator] = []
+        for site in binding.declarations:
+            declarator = site.parent
+            if not isinstance(declarator, JsVariableDeclarator):
+                return None
+            declarators.append(declarator)
+        return declarators or None
 
     def _is_removable(self, node: Node, defunct: set[str] | None = None) -> bool:
         """
