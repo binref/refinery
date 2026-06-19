@@ -68,6 +68,15 @@ class TestDeobfuscationDifferential(TestBase):
             'function f(){ var x = 1; x = 2; return x; }'
             " var t = eval('6 * 7'); console.log(f(), t);")
 
+    def test_local_read_only_by_in_function_eval_preserved(self):
+        self._check(
+            'function f(){ var x; x = 41; return eval("x + 1"); } console.log(f());')
+
+    def test_outer_local_read_by_eval_in_nested_function_preserved(self):
+        self._check(
+            'function f(){ var x; x = 41; function g(){ return eval("x"); } return g(); }'
+            ' console.log(f());')
+
     def test_block_scoped_for_let(self):
         self._check('var out = []; for (let i = 0; i < 3; i++) { out.push(i); }'
                     ' console.log(out.join(","));')

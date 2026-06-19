@@ -476,6 +476,16 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
             )
         return False
 
+    def _reflection_reachable(self, binding: Binding | None) -> bool:
+        """
+        Whether reflection could read *binding* by name without a reference the model records, so its
+        declaration and assignments must be kept even when no static reference remains. A function-local
+        is at risk only from a `with` or direct `eval` inside its own function; a global, from any
+        surface. The model decides; a `None` binding (a synthesized node the model never saw) is treated
+        as not reachable, matching the surrounding removal logic.
+        """
+        return binding is not None and self.model.reflection_can_reach(binding)
+
     def _at_script_scope(self, parent: Node) -> bool:
         """
         Whether *parent* (a body) lies at the script scope rather than inside any function, so the
@@ -537,7 +547,12 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
         if not functions:
             return set()
         reachable, write_only_stmts = _reachable_functions(body, functions)
-        unreachable = set(functions.keys()) - reachable
+        kept_by_reflection = {
+            name for name, func in functions.items()
+            if isinstance(func.id, JsIdentifier)
+            and self._reflection_reachable(self.model.binding_of(func.id))
+        }
+        unreachable = (set(functions.keys()) - reachable) - kept_by_reflection
         if not unreachable:
             return set()
         non_func_stmts = [s for s in body if not isinstance(s, JsFunctionDeclaration)]
@@ -577,7 +592,7 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
             if not isinstance(expr.left, JsIdentifier):
                 continue
             binding = self.model.resolve(expr.left)
-            if binding is None:
+            if binding is None or self._reflection_reachable(binding):
                 continue
             if self._owns(scope, binding) or binding.is_dead:
                 stores.setdefault(binding, []).append(node)
@@ -682,6 +697,8 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
             if not targets:
                 continue
             if any(not self._owns(scope, self.model.resolve(t)) for t in targets):
+                continue
+            if any(self._reflection_reachable(self.model.resolve(t)) for t in targets):
                 continue
             if expr.right is None or not is_side_effect_free(expr.right, defunct):
                 continue
@@ -863,6 +880,8 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
                 if not isinstance(decl, JsVariableDeclarator) or not isinstance(decl.id, JsIdentifier):
                     continue
                 binding = self.model.binding_of(decl.id)
+                if self._reflection_reachable(binding):
+                    continue
                 unreferenced = binding is not None and not binding.reads and not binding.writes
                 if decl.init is None:
                     if decl.id.name in dead_names or unreferenced:

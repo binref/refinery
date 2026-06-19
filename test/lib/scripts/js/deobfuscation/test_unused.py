@@ -261,6 +261,81 @@ class TestUnusedCodeRemoval(TestJsDeobfuscator):
         )
         self.assertEqual(source, self._remove_unused(source))
 
+    def test_function_local_read_only_by_in_function_eval_is_kept(self):
+        """
+        `x` has no static reference — `eval('x')` names it only at runtime — but the eval lies inside
+        `f`, so it could read the local. The declaration and its store must both be kept.
+        """
+        source = inspect.cleandoc(
+            """
+            function f() {
+              var x;
+              x = 7;
+              eval('x');
+            }
+            f();
+            """
+        )
+        self.assertEqual(source, self._remove_unused(source))
+
+    def test_function_local_const_read_only_by_in_function_eval_is_kept(self):
+        source = inspect.cleandoc(
+            """
+            function f() {
+              const x = 5;
+              eval('x');
+            }
+            f();
+            """
+        )
+        self.assertEqual(source, self._remove_unused(source))
+
+    def test_nested_function_read_only_by_in_function_eval_is_kept(self):
+        source = inspect.cleandoc(
+            """
+            function f() {
+              function g() {
+                return 1;
+              }
+              eval('g()');
+            }
+            f();
+            """
+        )
+        self.assertEqual(source, self._remove_unused(source))
+
+    def test_destructured_local_read_only_by_in_function_eval_is_kept(self):
+        source = inspect.cleandoc(
+            """
+            function f() {
+              var a;
+              [a] = [1];
+              eval('a');
+            }
+            f();
+            """
+        )
+        self.assertEqual(source, self._remove_unused(source))
+
+    def test_function_local_read_in_a_with_block_is_kept(self):
+        """
+        Inside `with (o)` the name `x` may resolve to `o.x` or, failing that, the local, so removing the
+        local would change which it binds. The `with` makes the function dynamic, and `x` is kept.
+        """
+        source = inspect.cleandoc(
+            """
+            function f(o) {
+              var x;
+              x = 7;
+              with (o) {
+                x;
+              }
+            }
+            f({});
+            """
+        )
+        self.assertEqual(source, self._remove_unused(source))
+
     def test_no_reflection_still_removes_dead_split_global(self):
         source = inspect.cleandoc(
             """
