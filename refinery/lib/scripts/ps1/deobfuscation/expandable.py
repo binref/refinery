@@ -70,12 +70,11 @@ class Ps1ExpandableStringHoist(Transformer):
     @staticmethod
     def _is_leftmost(node) -> bool:
         """
-        Check whether *node* sits in the leftmost evaluation position of its
-        enclosing expression tree. An expandable string is leftmost when every
-        ancestor `Ps1BinaryExpression` has it (or the subtree containing it)
-        as its `left` operand. This guarantees the subexpressions would have
-        been the first thing evaluated, so hoisting them before the statement
-        does not change execution order.
+        Check whether *node* sits in the leftmost evaluation position of its enclosing expression
+        tree. An expandable string is leftmost when every ancestor
+        `refinery.lib.scripts.ps1.model.Ps1BinaryExpression` has it (or the subtree containing it)
+        as its `left` operand. This guarantees the subexpressions would have been the first thing
+        evaluated, so hoisting them before the statement does not change execution order.
         """
         child = node
         parent = node.parent

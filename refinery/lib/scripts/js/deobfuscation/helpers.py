@@ -677,8 +677,9 @@ def get_body(node: Node) -> list[Statement] | None:
 
 def remove_declarator(declarator: JsVariableDeclarator) -> None:
     """
-    Remove a `JsVariableDeclarator` from its parent `JsVariableDeclaration`. If the declaration
-    has no remaining declarators afterward, remove it from the body as well.
+    Remove a `refinery.lib.scripts.js.model.JsVariableDeclarator` from its parent
+    `refinery.lib.scripts.js.model.JsVariableDeclaration`. If the declaration has no remaining
+    declarators afterward, remove it from the body as well.
     """
     var_decl = declarator.parent
     _remove_from_parent(declarator)
@@ -689,7 +690,8 @@ def remove_declarator(declarator: JsVariableDeclarator) -> None:
 def extract_identifier_params(params: list) -> list[str] | None:
     """
     Extract plain identifier names from a function's parameter list. Returns `None` if any parameter
-    is not a simple `JsIdentifier` (e.g. destructuring or rest patterns).
+    is not a simple `refinery.lib.scripts.js.model.JsIdentifier` (e.g. destructuring or rest
+    patterns).
     """
     names: list[str] = []
     for p in params:
@@ -791,8 +793,9 @@ def substitute_params(
     arguments: Sequence[Node],
 ) -> Node:
     """
-    Deep-clone *expression* and replace every `JsIdentifier` whose name appears in *param_names*
-    with a clone of the positionally corresponding node from *arguments*.
+    Deep-clone *expression* and replace every `refinery.lib.scripts.js.model.JsIdentifier` whose
+    name appears in *param_names* with a clone of the positionally corresponding node from
+    *arguments*.
     """
     cloned = _clone_node(expression)
     mapping = dict(zip(param_names, arguments))
@@ -863,16 +866,18 @@ def walk_scope(root: Node, *, include_root_body: bool = False) -> Iterator[Node]
 
 def collect_identifier_names(node: Node) -> set[str]:
     """
-    Collect the names of all `JsIdentifier` nodes in the subtree rooted at *node*.
+    Collect the names of all `refinery.lib.scripts.js.model.JsIdentifier` nodes in the subtree
+    rooted at *node*.
     """
     return {n.name for n in node.walk() if isinstance(n, JsIdentifier)}
 
 
 def find_enclosing_body(node: Node) -> list[Statement] | None:
     """
-    Walk up parent pointers from *node* to find the body list that directly contains it. Returns
-    the `body` attribute of the nearest `JsBlockStatement` or `JsScript` ancestor whose body
-    list includes *node* (or an ancestor of *node*).
+    Walk up parent pointers from *node* to find the body list that directly contains it. Returns the
+    `body` attribute of the nearest `refinery.lib.scripts.js.model.JsBlockStatement` or
+    `refinery.lib.scripts.js.model.JsScript` ancestor whose body list includes *node* (or an
+    ancestor of *node*).
     """
     child = node
     parent = node.parent
@@ -969,8 +974,8 @@ def binding_has_references(
 class BodyProcessingTransformer(Transformer):
     """
     Intermediate base for JS deobfuscation transformers that process the statement list (body) of
-    `JsScript` and `JsBlockStatement` nodes after visiting children. Subclasses override
-    `_process_body`.
+    `refinery.lib.scripts.js.model.JsScript` and `refinery.lib.scripts.js.model.JsBlockStatement`
+    nodes after visiting children. Subclasses override `_process_body`.
     """
 
     def visit_JsScript(self, node: JsScript):
@@ -1005,9 +1010,12 @@ class BodyProcessingTransformer(Transformer):
 
 class ScopeProcessingTransformer(Transformer):
     """
-    Base for transforms that process at function-scope boundaries. Visits `JsScript` and each
-    function body (`JsFunctionDeclaration`, `JsFunctionExpression`, `JsArrowFunctionExpression`).
-    Subclasses may override either `_process_scope` or `_process_scope_body`.
+    Base for transforms that process at function-scope boundaries. Visits
+    `refinery.lib.scripts.js.model.JsScript` and each function body
+    (`refinery.lib.scripts.js.model.JsFunctionDeclaration`,
+    `refinery.lib.scripts.js.model.JsFunctionExpression`,
+    `refinery.lib.scripts.js.model.JsArrowFunctionExpression`). Subclasses may override either
+    `_process_scope` or `_process_scope_body`.
     """
 
     def visit_JsScript(self, node: JsScript):
@@ -1035,7 +1043,8 @@ class ScopeProcessingTransformer(Transformer):
 
     def _process_scope(self, scope: Node) -> None:
         """
-        Receives the raw scope node (`JsScript` or `JsBlockStatement`).
+        Receives the raw scope node (`refinery.lib.scripts.js.model.JsScript` or
+        `refinery.lib.scripts.js.model.JsBlockStatement`).
         """
         body = get_body(scope)
         if body is not None:

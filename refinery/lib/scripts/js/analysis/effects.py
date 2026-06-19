@@ -1,8 +1,9 @@
 """
-Per-function effect summaries for JavaScript, computed over the `SemanticModel`'s resolved bindings and
-call graph. A summary records, conservatively, what observable effects *one call* of a function may
-have — writing a global, mutating a binding captured from an enclosing scope, throwing, or invoking
-code the analysis cannot account for — from which a single `is_pure` verdict follows.
+Per-function effect summaries for JavaScript, computed over the
+`refinery.lib.scripts.js.analysis.model.SemanticModel`'s resolved bindings and call graph. A summary
+records, conservatively, what observable effects *one call* of a function may have — writing a
+global, mutating a binding captured from an enclosing scope, throwing, or invoking code the analysis
+cannot account for — from which a single `is_pure` verdict follows.
 
 This is the second layer of the analysis substrate. Like the model it sits on, it is *flow-insensitive*
 and conservative by construction: every effect is an over-approximation (when in doubt, an effect is
@@ -166,9 +167,9 @@ def _is_member_write(member: JsMemberExpression) -> bool:
 
 class EffectModel:
     """
-    Per-function effect summaries for one script, built over a `SemanticModel`. Query a function's
-    summary with `summary_of` and a call expression's purity with `is_pure_call`. Build through
-    `build_effects`.
+    Per-function effect summaries for one script, built over a
+    `refinery.lib.scripts.js.analysis.model.SemanticModel`. Query a function's summary with
+    `summary_of` and a call expression's purity with `is_pure_call`. Build through `build_effects`.
     """
 
     def __init__(self, model: SemanticModel):
@@ -405,6 +406,6 @@ def _intrinsics_pristine(model: SemanticModel) -> bool:
 
 def build_effects(model: SemanticModel) -> EffectModel:
     """
-    Build the `EffectModel` for a script's `SemanticModel`.
+    Build the `EffectModel` for a script's `refinery.lib.scripts.js.analysis.model.SemanticModel`.
     """
     return EffectModel(model)

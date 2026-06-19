@@ -17,14 +17,14 @@ and rewrites it as
         ... uses c1, c2 ...
     }
 
-This is a common obfuscator pattern where a string-decoding accessor is built once and bound
-to a variable through the result of an IIFE that closes over a constant lookup table and a few
-scalar parameters. `refinery.lib.scripts.js.deobfuscation.evaluator.JsFunctionEvaluator` only
-registers `JsFunctionDeclaration` nodes in its scope tree, so call sites like `X(0x3a2)` are
-otherwise never folded. The rewrite is only applied when the captured closure variables are
-read-only inside the returned function; under that condition the hoisting is semantically
-equivalent because the closure values are re-initialised to identical literals on every call.
-After the rewrite, the function evaluator folds each call site to its computed string literal.
+This is a common obfuscator pattern where a string-decoding accessor is built once and bound to a
+variable through the result of an IIFE that closes over a constant lookup table and a few scalar
+parameters. `refinery.lib.scripts.js.deobfuscation.evaluator.JsFunctionEvaluator` only registers
+`refinery.lib.scripts.js.model.JsFunctionDeclaration` nodes in its scope tree, so call sites like
+`X(0x3a2)` are otherwise never folded. The rewrite is only applied when the captured closure
+variables are read-only inside the returned function; under that condition the hoisting is
+semantically equivalent because the closure values are re-initialised to identical literals on every
+call. After the rewrite, the function evaluator folds each call site to its computed string literal.
 """
 from __future__ import annotations
 

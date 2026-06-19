@@ -925,9 +925,9 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
     @staticmethod
     def _decl_binds_name(node: Node | None, name: str) -> bool:
         """
-        Return whether *node* is a `JsVariableDeclaration` (e.g. a `for`/`for-of`/`for-in` loop
-        header) that declares *name*. A bare identifier loop target assigns to an outer binding and
-        does not shadow, so it is not treated as a binding here.
+        Return whether *node* is a `refinery.lib.scripts.js.model.JsVariableDeclaration` (e.g. a
+        `for`/`for-of`/`for-in` loop header) that declares *name*. A bare identifier loop target
+        assigns to an outer binding and does not shadow, so it is not treated as a binding here.
         """
         if not isinstance(node, JsVariableDeclaration):
             return False

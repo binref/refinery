@@ -44,8 +44,9 @@ def is_nan_or_inf(value) -> bool:
 def module_compare_mode(module: VbaModule) -> CompareMode:
     """
     Return the module's `Option Compare` mode. VBA `Option Compare` is a module-level directive; the
-    default (no directive, or `Binary`) is `CompareMode.BINARY`, `Text` is case-insensitive, and
-    `Database` (Access) uses the database's locale-dependent sort order. The latter cannot be
+    default (no directive, or `Binary`) is
+    `refinery.lib.scripts.vba.deobfuscation.names.CompareMode.BINARY`, `Text` is case-insensitive,
+    and `Database` (Access) uses the database's locale-dependent sort order. The latter cannot be
     reproduced statically, so the folding transforms refuse to fold comparisons under it.
     """
     for stmt in module.body:

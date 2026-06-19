@@ -428,7 +428,7 @@ def _parse_object_props(
     """
     Extract `{key: value}` pairs from an object expression. Keys are identifier names or string
     literal values. Values are integers (via `_eval_arithmetic`) and optionally strings (via
-    `string_value`) when `allow_strings` is True.
+    `refinery.lib.scripts.js.deobfuscation.helpers.string_value`) when `allow_strings` is True.
     """
     props: dict[str, int | str] = {}
     for prop in obj.properties:
@@ -556,8 +556,7 @@ def _collect_iife_wrappers(
     """
     Scan the rotation IIFE body for inner wrapper functions and their associated offset objects.
     Returns `(wrappers, prop_maps)` where `wrappers` maps wrapper function names to their
-    `AccessorWrapperInfo` and `prop_maps` maps object variable names to their `{key: value}`
-    dicts.
+    `AccessorWrapperInfo` and `prop_maps` maps object variable names to their `{key: value}` dicts.
 
     Inner wrappers follow the pattern::
 

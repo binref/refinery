@@ -221,7 +221,8 @@ def _constant_value_key(node: Node) -> tuple | None:
 
 def _get_array_literal(node: Node) -> Ps1ArrayLiteral | None:
     """
-    Return the indexable `Ps1ArrayLiteral` from either a bare literal or `@(...)`.
+    Return the indexable `refinery.lib.scripts.ps1.model.Ps1ArrayLiteral` from either a bare literal
+    or `@(...)`.
     """
     if isinstance(node, Expression):
         return unwrap_to_array_literal(node)

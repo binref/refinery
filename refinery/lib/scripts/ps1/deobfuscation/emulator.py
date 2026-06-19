@@ -1598,8 +1598,9 @@ class Ps1ForEachPipeline(Transformer):
         Turn the per-item scriptblock outputs of `<array> | %{ ... }` into a node. A pipeline that
         produces single characters is the canonical char-building obfuscation, so those are joined
         into one string (indexing a char string and indexing the equivalent array agree). Results
-        with multi-character or non-string elements stay a `Ps1ArrayLiteral`, so e.g.
-        `('foo','bar' | %{ $_ })[1]` is still the element `'bar'` rather than a joined character.
+        with multi-character or non-string elements stay a
+        `refinery.lib.scripts.ps1.model.Ps1ArrayLiteral`, so e.g. `('foo','bar' | %{ $_ })[1]` is
+        still the element `'bar'` rather than a joined character.
         """
         if not results:
             return None

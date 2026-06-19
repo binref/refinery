@@ -1,10 +1,11 @@
 """
 JavaScript operator precedence and parenthesization rules.
 
-The synthesizer does not rely on `JsParenthesizedExpression` nodes for correctness: it consults
-`needs_parens` to decide, from operator precedence, whether a child expression must be wrapped in its
-parent context. The `JsSimplifications` paren-removal pass uses the same rules (via `parens_required`)
-so it never strips a paren that is actually required.
+The synthesizer does not rely on `refinery.lib.scripts.js.model.JsParenthesizedExpression` nodes for
+correctness: it consults `needs_parens` to decide, from operator precedence, whether a child
+expression must be wrapped in its parent context. The
+`refinery.lib.scripts.js.deobfuscation.simplify.JsSimplifications` paren-removal pass uses the same
+rules (via `parens_required`) so it never strips a paren that is actually required.
 """
 from __future__ import annotations
 
@@ -243,7 +244,8 @@ def needs_parens(child: Node, parent: Node | None) -> bool:
     """
     Return whether *child*, which currently occupies a slot in *parent*, must be wrapped in
     parentheses to preserve precedence. Used by the synthesizer at print time so that correctness
-    does not depend on `JsParenthesizedExpression` nodes being present in the tree.
+    does not depend on `refinery.lib.scripts.js.model.JsParenthesizedExpression` nodes being present
+    in the tree.
     """
     if isinstance(child, JsParenthesizedExpression):
         return False

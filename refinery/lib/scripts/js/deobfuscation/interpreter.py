@@ -166,8 +166,9 @@ def _deep_copy_value(value):
 def _truthy(value: Value) -> bool:
     """
     Return the JavaScript truthiness of a runtime value. This is the runtime counterpart of the
-    AST-node `helpers.is_truthy`; the two must agree on which values are falsy (`undefined`, `null`,
-    `0`, `NaN`, `''`) so that interpreted and statically-folded conditionals stay consistent.
+    AST-node `refinery.lib.scripts.js.deobfuscation.helpers.is_truthy`; the two must agree on which
+    values are falsy (`undefined`, `null`, `0`, `NaN`, `''`) so that interpreted and
+    statically-folded conditionals stay consistent.
     """
     if value is None or value is JS_NULL:
         return False

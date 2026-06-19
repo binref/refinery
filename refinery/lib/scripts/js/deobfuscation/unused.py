@@ -241,11 +241,12 @@ def _destructuring_target_safe(left: Node | None, right: Node | None) -> bool:
     Whether assigning *right* into the destructuring pattern *left* is guaranteed neither to throw
     nor to run observable code, even when *right* is side-effect-free as a plain expression. Array
     patterns require an iterable source, so only an array literal is accepted. Object patterns throw
-    on `null`/`undefined` and additionally *read* their named keys from the source, so only an object
-    literal whose members are all plain, statically-keyed data properties is accepted: a getter or
-    setter, a computed key, or a `__proto__` member could execute code when the pattern is matched
-    (and a computed key is not even covered by `is_side_effect_free`). Any other right-hand side is
-    rejected conservatively.
+    on `null`/`undefined` and additionally *read* their named keys from the source, so only an
+    object literal whose members are all plain, statically-keyed data properties is accepted: a
+    getter or setter, a computed key, or a `__proto__` member could execute code when the pattern is
+    matched (and a computed key is not even covered by
+    `refinery.lib.scripts.js.deobfuscation.helpers.is_side_effect_free`). Any other right-hand side
+    is rejected conservatively.
     """
     if isinstance(left, (JsArrayExpression, JsArrayPattern)):
         return isinstance(right, JsArrayExpression)
@@ -463,10 +464,11 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
 
     def _is_removable(self, node: Node, defunct: set[str] | None = None) -> bool:
         """
-        Whether evaluating *node* can be dropped without losing an observable effect. This extends the
-        syntactic `is_side_effect_free` with the effect model: a call to a function proven pure under a
-        pristine intrinsic surface is removable when its arguments are too, so a dead binding whose
-        initializer is a pure decoder or factory can be dropped even though it is a call.
+        Whether evaluating *node* can be dropped without losing an observable effect. This extends
+        the syntactic `refinery.lib.scripts.js.deobfuscation.helpers.is_side_effect_free` with the
+        effect model: a call to a function proven pure under a pristine intrinsic surface is
+        removable when its arguments are too, so a dead binding whose initializer is a pure decoder
+        or factory can be dropped even though it is a call.
         """
         if is_side_effect_free(node, defunct):
             return True

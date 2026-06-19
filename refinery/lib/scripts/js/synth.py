@@ -113,7 +113,7 @@ class JsSynthesizer(Synthesizer):
         """
         Emit *child* in the context of *parent*, wrapping it in parentheses when operator precedence
         requires it. This makes the printed output correct regardless of whether the tree carries
-        an explicit `JsParenthesizedExpression` node in that position.
+        an explicit `refinery.lib.scripts.js.model.JsParenthesizedExpression` node in that position.
         """
         if child is None:
             return

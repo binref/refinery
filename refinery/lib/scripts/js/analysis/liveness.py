@@ -1,13 +1,15 @@
 """
-Flow-sensitive live-variable analysis for JavaScript, computed over the per-function control-flow graphs
-and the resolved bindings of the `SemanticModel`. For each program point it answers which local bindings
-are *live* — may still be read before being overwritten — and from that derives a *dead-store* query: a
-write whose value no execution can observe.
+Flow-sensitive live-variable analysis for JavaScript, computed over the per-function control-flow
+graphs and the resolved bindings of the `refinery.lib.scripts.js.analysis.model.SemanticModel`. For
+each program point it answers which local bindings are *live* — may still be read before being
+overwritten — and from that derives a *dead-store* query: a write whose value no execution can
+observe.
 
 This is the flow-sensitive layer of the analysis substrate. It sharpens the model's flow-insensitive
-`Binding.is_dead` (a binding never read anywhere) into `is_dead_store` (this particular write is never
-read on any path). Where the model must keep a binding that is written, then read, then written again,
-the liveness solution sees that the first write is dead even though the binding is read elsewhere.
+`refinery.lib.scripts.js.analysis.model.Binding.is_dead` (a binding never read anywhere) into
+`is_dead_store` (this particular write is never read on any path). Where the model must keep a
+binding that is written, then read, then written again, the liveness solution sees that the first
+write is dead even though the binding is read elsewhere.
 
 Soundness is the governing concern, because a later pass removes the stores this layer reports: the
 analysis over-approximates liveness, so the reported dead stores are a *subset* of the truly dead ones.
@@ -72,9 +74,9 @@ _CANDIDATE_KINDS = (BindingKind.VAR, BindingKind.LET)
 class LivenessModel:
     """
     Flow-sensitive live-variable sets and dead-store verdicts for one script, built over a
-    `SemanticModel`. Query a control-flow node's live sets with `live_in` and `live_out`, find the node
-    standing for an AST element with `node_of`, and ask whether a write is dead with `is_dead_store`.
-    Build through `build_liveness`.
+    `refinery.lib.scripts.js.analysis.model.SemanticModel`. Query a control-flow node's live sets
+    with `live_in` and `live_out`, find the node standing for an AST element with `node_of`, and ask
+    whether a write is dead with `is_dead_store`. Build through `build_liveness`.
     """
 
     def __init__(self, model: SemanticModel):
@@ -513,6 +515,6 @@ class LivenessModel:
 
 def build_liveness(model: SemanticModel) -> LivenessModel:
     """
-    Build the `LivenessModel` for a script's `SemanticModel`.
+    Build the `LivenessModel` for a script's `refinery.lib.scripts.js.analysis.model.SemanticModel`.
     """
     return LivenessModel(model)

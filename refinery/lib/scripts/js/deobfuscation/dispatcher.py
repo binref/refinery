@@ -69,8 +69,9 @@ def _extract_fns_table(
 
         var fns = { ... }
 
-    where every property value is a zero-parameter `JsFunctionExpression`. Returns the declarator
-    node and a map from string key to function.
+    where every property value is a zero-parameter
+    `refinery.lib.scripts.js.model.JsFunctionExpression`. Returns the declarator node and a map from
+    string key to function.
     """
     for stmt in body:
         if not isinstance(stmt, JsVariableDeclaration):
@@ -291,8 +292,9 @@ def _build_extracted_function(
     payload_id: str,
 ) -> JsFunctionDeclaration | None:
     """
-    Convert a dispatcher function-table entry into a standalone `JsFunctionDeclaration`. Extracts
-    parameters from the payload destructuring and removes that statement.
+    Convert a dispatcher function-table entry into a standalone
+    `refinery.lib.scripts.js.model.JsFunctionDeclaration`. Extracts parameters from the payload
+    destructuring and removes that statement.
     """
     params = _extract_params(fn, payload_id)
     if params is None:

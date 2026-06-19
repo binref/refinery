@@ -5,10 +5,11 @@ the body evaluates, connected by the order in which control may pass between the
 the branches of `if`/`switch`, loop back-edges, the non-local jumps of `break`/`continue`/`return`, and
 *exceptional* edges from any point inside a `try` to the handler that would catch a throw.
 
-This is a third layer of the analysis substrate, built on the same AST the `SemanticModel` describes
-and keyed to AST node identity (`node_of`). The graph is a disposable, per-function view — the tree
-stays the spine — that a later pass walks for flow-sensitive questions such as which definitions reach
-a use and which stores are dead.
+This is a third layer of the analysis substrate, built on the same AST the
+`refinery.lib.scripts.js.analysis.model.SemanticModel` describes and keyed to AST node identity
+(`node_of`). The graph is a disposable, per-function view — the tree stays the spine — that a later
+pass walks for flow-sensitive questions such as which definitions reach a use and which stores are
+dead.
 
 It is *conservative by construction*: where modelling control flow precisely would be intricate (the
 order of evaluation inside an expression, the exact point a statement throws, `finally` on an
@@ -406,8 +407,8 @@ class _Builder:
 
 def build_cfg(owner: Node) -> ControlFlowGraph:
     """
-    Build the control-flow graph of *owner*, a `JsScript` or a function node, over its own body without
-    descending into nested function bodies.
+    Build the control-flow graph of *owner*, a `refinery.lib.scripts.js.model.JsScript` or a
+    function node, over its own body without descending into nested function bodies.
     """
     return _Builder(owner).build()
 

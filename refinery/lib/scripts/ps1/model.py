@@ -72,7 +72,7 @@ class _Ps1Expandable(Expression):
 class Ps1ExpandableString(_Ps1Expandable):
     """
     An expandable (double-quoted) string with interleaved text and expression parts. Text segments
-    are `Ps1StringLiteral`, expression segments are any `Expression` node.
+    are `Ps1StringLiteral`, expression segments are any `refinery.lib.scripts.Expression` node.
     """
     raw: str = '""'
 

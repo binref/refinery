@@ -112,7 +112,7 @@ class Node:
     def walk_in_order(self) -> Generator[Node, None, None]:
         """
         Pre-order left-to-right traversal that preserves source order:
-        The regular `refinery.lib.scripts.Node.walk` method uses a LIFO stack which reverses child
+        The regular `Node.walk` method uses a LIFO stack which reverses child
         order; this variant pushes children in reverse so that the first child is popped first.
         """
         stack: list[Node] = [self]

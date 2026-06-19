@@ -163,8 +163,9 @@ def collect_int_arguments(node: Expression) -> list[int] | None:
 
 def collect_byte_array(node: Expression) -> bytes | None:
     """
-    Extract an integer array from `node` and convert to `bytes`. Handles `Ps1ArrayLiteral`,
-    `Ps1ArrayExpression`, and parenthesized wrappers.
+    Extract an integer array from `node` and convert to `bytes`. Handles
+    `refinery.lib.scripts.ps1.model.Ps1ArrayLiteral`,
+    `refinery.lib.scripts.ps1.model.Ps1ArrayExpression`, and parenthesized wrappers.
     """
     array = unwrap_to_array_literal(node)
     if array is not None:
@@ -237,9 +238,11 @@ def get_body(node) -> list | None:
 def inside_value_producing_context(node) -> bool:
     """
     Return `True` when `node` is or is nested inside a context whose statement bodies produce
-    observable values and must not be pruned as junk or dead code: a `Ps1SubExpression` (`$(...)`),
-    a `Ps1ScriptBlock`, a `Ps1ArrayExpression` (`@(...)`), or the statement-valued right-hand side
-    of an assignment (`$x = if (...) { ... }`).
+    observable values and must not be pruned as junk or dead code: a
+    `refinery.lib.scripts.ps1.model.Ps1SubExpression` (`$(...)`), a
+    `refinery.lib.scripts.ps1.model.Ps1ScriptBlock`, a
+    `refinery.lib.scripts.ps1.model.Ps1ArrayExpression` (`@(...)`), or the statement-valued
+    right-hand side of an assignment (`$x = if (...) { ... }`).
     """
     cursor = node
     prev = None
@@ -255,8 +258,8 @@ def inside_value_producing_context(node) -> bool:
 
 def unwrap_parens(node: Node) -> Node:
     """
-    Unwrap nested `Ps1ParenExpression` wrappers and single-statement `Ps1SubExpression` wrappers,
-    stopping at an empty wrapper.
+    Unwrap nested `refinery.lib.scripts.ps1.model.Ps1ParenExpression` wrappers and single-statement
+    `refinery.lib.scripts.ps1.model.Ps1SubExpression` wrappers, stopping at an empty wrapper.
     """
     while True:
         if isinstance(node, Ps1ParenExpression) and node.expression is not None:
@@ -273,7 +276,8 @@ def unwrap_parens(node: Node) -> Node:
 
 def unwrap_to_array_literal(node: Node) -> Ps1ArrayLiteral | None:
     """
-    Unwrap parentheses and array expressions to find an inner `Ps1ArrayLiteral`.
+    Unwrap parentheses and array expressions to find an inner
+    `refinery.lib.scripts.ps1.model.Ps1ArrayLiteral`.
     """
     node = unwrap_parens(node)
     if isinstance(node, Ps1ArrayLiteral):
@@ -393,8 +397,8 @@ def is_builtin_variable(
     names: set[str] | frozenset[str] = BUILTIN_VARIABLES,
 ) -> TypeGuard[Ps1Variable]:
     """
-    Return `True` when `node` is an unscoped `Ps1Variable` whose lowered name is in `names` (defaults
-    to `$Null`, `$True`, `$False`).
+    Return `True` when `node` is an unscoped `refinery.lib.scripts.ps1.model.Ps1Variable` whose
+    lowered name is in `names` (defaults to `$Null`, `$True`, `$False`).
     """
     return (
         isinstance(node, Ps1Variable)

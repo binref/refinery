@@ -248,7 +248,7 @@ def _extract_getter_target(func: Expression | None) -> str | JsUnaryExpression |
     """
     Extract the value returned by a getter. Expected patterns:
     - `{ return <identifier>; }` -> returns the identifier name as `str`
-    - a `typeof` expression -> returns a `JsUnaryExpression` clone
+    - a `typeof` expression -> returns a `refinery.lib.scripts.js.model.JsUnaryExpression` clone
     """
     if not isinstance(func, JsFunctionExpression):
         return None
@@ -444,8 +444,8 @@ def _is_pack_shaped(node: JsCallExpression) -> bool:
 
 def _has_top_level_await(stmts: list[Statement]) -> bool:
     """
-    Return `True` if any `JsAwaitExpression` in `stmts` is at the top level, i.e. not inside a
-    nested function boundary.
+    Return `True` if any `refinery.lib.scripts.js.model.JsAwaitExpression` in `stmts` is at the top
+    level, i.e. not inside a nested function boundary.
     """
     return any(isinstance(n, JsAwaitExpression) for s in stmts for n in walk_scope(s))
 

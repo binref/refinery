@@ -87,11 +87,11 @@ def _candidate_decl_ids(candidates: dict[str, list[_CandidateEntry]]) -> set[int
 
 def _is_primitive_and_pure(node: Node) -> bool:
     """
-    Return whether evaluating *node* is guaranteed to produce no observable side effects and
-    the result is a primitive value (not an object, array, or function). This is stricter than
-    `is_side_effect_free` — it rejects expressions that allocate objects or access properties,
-    because inlining such expressions into a new location can change reference identity or
-    trigger getters at a different point in execution.
+    Return whether evaluating *node* is guaranteed to produce no observable side effects and the
+    result is a primitive value (not an object, array, or function). This is stricter than
+    `refinery.lib.scripts.js.deobfuscation.helpers.is_side_effect_free` — it rejects expressions
+    that allocate objects or access properties, because inlining such expressions into a new
+    location can change reference identity or trigger getters at a different point in execution.
     """
     for n in node.walk():
         if isinstance(n, (
@@ -156,7 +156,8 @@ def _count_scope_references(
 
 def _is_literal_array(node: Node) -> bool:
     """
-    Return whether *node* is a `JsArrayExpression` where every element is a literal.
+    Return whether *node* is a `refinery.lib.scripts.js.model.JsArrayExpression` where every element
+    is a literal.
     """
     if not isinstance(node, JsArrayExpression):
         return False

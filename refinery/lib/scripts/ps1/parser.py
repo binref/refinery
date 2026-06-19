@@ -1078,7 +1078,7 @@ class Ps1Parser:
     def _split_generic_expandable(self, text: str) -> list[Expression]:
         """
         Split a GENERIC_EXPAND token value into interleaved literal and expression parts. Unlike
-        `refinery.lib.scripts.ps1.parser.Ps1Parser._split_expandable_string` (for double-quoted
+        `Ps1Parser._split_expandable_string` (for double-quoted
         strings), this operates on raw source text that may contain embedded single/double-quoted
         strings and backtick escapes.
         """
