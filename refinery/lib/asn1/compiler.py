@@ -734,6 +734,10 @@ class _Parser:
                 schema.element = _deref(schema.element)
                 _backpatch(schema.element, seen)
                 return
+            elif isinstance(schema, Tagged):
+                schema.inner = _deref(schema.inner)
+                _backpatch(schema.inner, seen)
+                return
             else:
                 return
             for fld in fields:

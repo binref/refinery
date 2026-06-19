@@ -175,26 +175,6 @@ _cms = compile_asn1("""
     END
 """, externals=_x509)
 
-_tsp = compile_asn1("""
-    TSP DEFINITIONS IMPLICIT TAGS ::= BEGIN
-
-        MessageImprint ::= SEQUENCE {
-            hashAlgorithm AlgorithmIdentifier,
-            hashedMessage OCTET STRING
-        }
-
-        TimeStampReq ::= SEQUENCE {
-            version        INTEGER,
-            messageImprint MessageImprint,
-            reqPolicy      OBJECT IDENTIFIER OPTIONAL,
-            nonce          INTEGER OPTIONAL,
-            certReq        BOOLEAN DEFAULT FALSE,
-            extensions     [0] IMPLICIT Extensions OPTIONAL
-        }
-
-    END
-""", externals=_x509)
-
 _pkcs8 = compile_asn1("""
     PKCS8 DEFINITIONS EXPLICIT TAGS ::= BEGIN
 

@@ -922,3 +922,49 @@ class TestASN1(TestUnitBase):
         """)
         self.assertEqual(result['Foo'].fields[0].type, SEQUENCE)
         self.assertEqual(result['Foo'].fields[1].type, SET)
+
+    def test_real_zero_mantissa_large_exponent_is_zero(self):
+        from refinery.lib.asn1.reader import ASN1Reader
+        # 82 7fffff: binary REAL, 3-octet exponent 0x7FFFFF, no mantissa octets -> value 0
+        reader = ASN1Reader(bytes.fromhex('0904827fffff'))
+        self.assertEqual(reader.read_tlv(), 0.0)
+
+    def test_compiler_double_tagged_recursive_type(self):
+        from refinery.lib.asn1.compiler import compile_asn1
+        from refinery.lib.asn1.reader import ASN1Reader
+        from refinery.lib.asn1.schema import Tagged
+        foo = compile_asn1("""
+            Test DEFINITIONS ::= BEGIN
+                Foo ::= SEQUENCE { v INTEGER, f [0] EXPLICIT [1] IMPLICIT Foo OPTIONAL }
+            END
+        """)['Foo']
+        tagged = foo.fields[1].type
+        self.assertIsInstance(tagged, Tagged)
+        self.assertIs(tagged.inner, foo)
+        reader = ASN1Reader(bytes.fromhex('300a020101a005a103020102'), bigendian=True)
+        self.assertEqual(reader.decode_with_schema(foo), {'v': 1, 'f': {'v': 2}})
+
+    def test_implicit_any_indefinite_length_is_consumed(self):
+        from refinery.lib.asn1.compiler import compile_asn1
+        from refinery.lib.asn1.reader import ASN1Reader
+        schema = compile_asn1("""
+            Test DEFINITIONS ::= BEGIN
+                Foo ::= SEQUENCE { a [1] IMPLICIT ANY, b INTEGER }
+            END
+        """)['Foo']
+        # a is an indefinite-length [1] holding INTEGER 7, terminated by 00 00; b is INTEGER 9
+        reader = ASN1Reader(bytes.fromhex('300aa1800201070000020109'), bigendian=True)
+        self.assertEqual(reader.decode_with_schema(schema), {'a': [7], 'b': 9})
+
+    def test_indefinite_seq_trailing_optional_does_not_absorb_sibling(self):
+        from refinery.lib.asn1.compiler import compile_asn1
+        from refinery.lib.asn1.reader import ASN1Reader
+        schema = compile_asn1("""
+            Test DEFINITIONS ::= BEGIN
+                Inner ::= SEQUENCE { a INTEGER, b INTEGER OPTIONAL, c INTEGER OPTIONAL }
+                Root  ::= SEQUENCE { inner Inner, d INTEGER OPTIONAL }
+            END
+        """)['Root']
+        # Inner is indefinite with only a=1 present (00 00 ends it); d=9 belongs to Root
+        reader = ASN1Reader(bytes.fromhex('300a30800201010000020109'), bigendian=True)
+        self.assertEqual(reader.decode_with_schema(schema), {'inner': {'a': 1}, 'd': 9})

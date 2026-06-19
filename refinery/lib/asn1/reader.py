@@ -319,9 +319,12 @@ class ASN1Reader(StructReader[memoryview]):
             exp = int.from_bytes(content[idx:idx + elen], 'big', signed=True)
             idx += elen
             n = int.from_bytes(content[idx:], 'big', signed=False)
-            if exp * (base.bit_length() - 1) > 1100:
+            if n == 0:
+                return sign * 0.0
+            magnitude = exp * (base.bit_length() - 1)
+            if magnitude > 1100:
                 return sign * float('inf')
-            if exp * (base.bit_length() - 1) < -1100:
+            if magnitude < -1100:
                 return sign * 0.0
             try:
                 return float(sign * n * (2 ** scale) * (base ** exp))
@@ -454,23 +457,19 @@ class ASN1Reader(StructReader[memoryview]):
             end = self.tell() + length
         result: OrderedDict[str, ASN1Value] = OrderedDict()
 
-        for field in schema.fields:
-            if self.tell() >= end:
-                if field.optional:
-                    if field.default is not _MISSING:
-                        result[field.name] = field.default
-                    continue
-                raise ASN1SchemaMismatch(
-                    F'required field {field.name!r} missing: no more data')
-
-            if indefinite and self.remaining_bytes >= 2:
-                if self._skip_u16_padding():
-                    if field.optional:
-                        if field.default is not _MISSING:
-                            result[field.name] = field.default
-                        continue
-                    raise ASN1SchemaMismatch(
-                        F'required field {field.name!r} missing: end of contents')
+        eoc = False
+        for index, field in enumerate(schema.fields):
+            exhausted = self.tell() >= end
+            if not exhausted and indefinite and self.remaining_bytes >= 2:
+                exhausted = eoc = self._skip_u16_padding()
+            if exhausted:
+                for missing in schema.fields[index:]:
+                    if missing.default is not _MISSING:
+                        result[missing.name] = missing.default
+                    elif not missing.optional:
+                        raise ASN1SchemaMismatch(
+                            F'required field {missing.name!r} missing: no more data')
+                break
 
             pos = self.tell()
             tag_class, constructed, tag_number = self._read_tag()
@@ -513,7 +512,7 @@ class ASN1Reader(StructReader[memoryview]):
 
             result[field.name] = value
 
-        if indefinite and self.remaining_bytes >= 2:
+        if indefinite and not eoc and self.remaining_bytes >= 2:
             self._skip_u16_padding()
 
         return result
@@ -529,6 +528,8 @@ class ASN1Reader(StructReader[memoryview]):
             return self._decode_constructed_children(length, schema_type.element)
         if isinstance(schema_type, SetOf):
             return self._decode_constructed_children(length, schema_type.element)
+        if length < 0:
+            return self._read_children(length)
         content = bytes(self.read_exactly(length)) if length > 0 else b''
         nested = self._try_decode_nested(content)
         return nested if nested is not None else content
