@@ -14,6 +14,10 @@ runs:
       uses: actions/setup-python@v6
       with:
         python-version: ${{ inputs.py }}
+    - name: Set up Node.js
+      uses: actions/setup-node@v6
+      with:
+        node-version: 'lts/*'
     - name: Install Dependencies (Linux)
       if: ${{ contains(inputs.os, 'ubuntu') }}
       shell: ${{ contains(inputs.os, 'windows') && 'cmd' || 'bash' }}
