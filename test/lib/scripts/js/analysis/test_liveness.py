@@ -6,6 +6,7 @@ from refinery.lib.scripts.js.analysis.liveness import build_liveness
 from refinery.lib.scripts.js.analysis.model import build_semantic_model
 from refinery.lib.scripts.js.model import (
     JsAssignmentExpression,
+    JsFunctionDeclaration,
     JsIdentifier,
     JsReturnStatement,
     JsVariableDeclaration,
@@ -49,6 +50,21 @@ class TestLiveness(TestBase):
     @staticmethod
     def _names(bindings) -> set[str]:
         return {binding.name for binding in bindings}
+
+    @staticmethod
+    def _func(ast, name: str) -> JsFunctionDeclaration:
+        for node in ast.walk_in_order():
+            if (
+                isinstance(node, JsFunctionDeclaration)
+                and node.id is not None
+                and node.id.name == name
+            ):
+                return node
+        raise AssertionError(name)
+
+    @staticmethod
+    def _binding(lv, name: str):
+        return lv.model.root_scope.bindings[name]
 
     def test_store_overwritten_before_read_is_dead(self):
         ast, lv = self._build('function f() { var x = 1; x = 2; return x; }')
@@ -139,3 +155,52 @@ class TestLiveness(TestBase):
         ast, lv = self._build('function f(o) { var x = 1; with (o) { x; } x = 2; return x; }')
         self.assertFalse(lv.is_dead_store(self._decl(ast, 'x')))
         self.assertEqual(lv.dead_stores(), [])
+
+    def test_pseudo_global_used_in_one_function_localizes_there(self):
+        source = (
+            'var x;'
+            ' function f(n) { x = []; for (var i = 0; i < n; i++) { x.push(i); } return x; }'
+            ' console.log(f(3));')
+        ast, lv = self._build(source)
+        self.assertIs(lv.localization_target(self._binding(lv, 'x')), self._func(ast, 'f'))
+
+    def test_pseudo_global_read_before_write_is_not_localizable(self):
+        ast, lv = self._build('var x; function f() { x = (x || 0) + 1; return x; } f(); f();')
+        self.assertIsNone(lv.localization_target(self._binding(lv, 'x')))
+
+    def test_pseudo_global_referenced_in_two_functions_is_not_localizable(self):
+        ast, lv = self._build('var x; function f() { x = 1; } function g() { return x; } f(); g();')
+        self.assertIsNone(lv.localization_target(self._binding(lv, 'x')))
+
+    def test_pseudo_global_also_written_at_script_scope_is_not_localizable(self):
+        ast, lv = self._build('var x; x = 1; function f() { x = 2; return x; } f();')
+        self.assertIsNone(lv.localization_target(self._binding(lv, 'x')))
+
+    def test_initialized_pseudo_global_is_not_localizable(self):
+        ast, lv = self._build('var x = compute(); function f() { x = 1; return x; } f();')
+        self.assertIsNone(lv.localization_target(self._binding(lv, 'x')))
+
+    def test_pseudo_global_captured_by_nested_closure_is_not_localizable(self):
+        ast, lv = self._build('var x; function f() { x = 1; return function () { return x; }; } f()();')
+        self.assertIsNone(lv.localization_target(self._binding(lv, 'x')))
+
+    def test_reflection_surface_disables_localization(self):
+        ast, lv = self._build('var x; function f() { x = 1; return x; } eval(payload);')
+        self.assertIsNone(lv.localization_target(self._binding(lv, 'x')))
+
+    def test_script_scope_dead_store_is_still_not_reported(self):
+        ast, lv = self._build('var x; function f() { x = 1; x = 2; return x; } f();')
+        self.assertFalse(lv.is_dead_store(self._store(ast, 'x', 0)))
+        self.assertEqual(lv.dead_stores(), [])
+
+    def test_localizable_bindings_lists_each_pseudo_global_with_its_function(self):
+        source = (
+            'var a, b;'
+            ' function f() { a = []; b = 0; while (b < 3) { a.push(b); b = b + 1; } return a; }'
+            ' f();')
+        ast, lv = self._build(source)
+        f = self._func(ast, 'f')
+        self.assertEqual(lv.localizable_bindings(), [
+            (self._binding(lv, 'a'), f),
+            (self._binding(lv, 'b'), f),
+        ])

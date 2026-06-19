@@ -18,8 +18,16 @@ a conditional write, or one on a path that may throw before it runs (an exceptio
 does not mask an earlier live store. Only a function's own, uncaptured `var`/`let` bindings are analysed
 — anything a closure or another scope might read is conservatively kept.
 
+Beyond the dead-store query, the same liveness answers a scope-tightening question. A script-scope
+`var` whose every reference is owned by one function, and which that function overwrites before reading,
+behaves as a local of it: no value carried into the call from a previous invocation or from load is ever
+observed, so the declaration can be relocated into the function. `localization_target` reports that
+function. The tracking this needs is kept separate from `is_dead_store`, which retains its strict
+function-local candidacy, so widening the dataflow never widens what counts as a removable dead store.
+
 The public surface — `LivenessModel.live_in`, `live_out`, `node_of`, `is_dead_store`, `dead_stores`,
-`build_liveness` — is keyed to AST node identity, matching the contract of the model and effect layers.
+`is_dead_on_entry`, `localization_target`, `localizable_bindings`, `build_liveness` — is keyed to AST
+node identity, matching the contract of the model and effect layers.
 """
 from __future__ import annotations
 
@@ -75,7 +83,9 @@ class LivenessModel:
         self._element_graph: dict[int, ControlFlowGraph] = {}
         self._live_in: dict[int, frozenset[Binding]] = {}
         self._live_out: dict[int, frozenset[Binding]] = {}
+        self._pseudo_locals: dict[int, frozenset[Binding]] = {}
         self._index_elements()
+        self._index_pseudo_locals()
         for graph in self._graphs.values():
             self._compute_graph(graph)
 
@@ -141,11 +151,70 @@ class LivenessModel:
                     result.append(node)
         return result
 
+    def is_dead_on_entry(self, binding: Binding, function: Node) -> bool:
+        """
+        Whether *function* writes *binding* before reading it on every path, so no value carried into the
+        call — from a previous invocation or from load — is ever observed. Answered from the liveness at
+        the function's control-flow entry; a binding not tracked in *function* returns `False`.
+        """
+        graph = self._graphs.get(id(function))
+        if graph is None:
+            return False
+        return binding not in self.live_in(graph.entry)
+
+    def localization_target(self, binding: Binding) -> Node | None:
+        """
+        The function into which *binding*, a script-scope `var`, can be soundly relocated, or `None`. A
+        binding qualifies when every reference is owned by one function, that function writes it before
+        any read (so a value carried across calls or from load is never observed), it has no initializer
+        whose load-time effect the move would strand, and the program keeps no reflection surface that
+        could read it by name. Relocating it tightens a pseudo-global into the local it behaves as.
+        """
+        if self.model.has_reflection_surface():
+            return None
+        if binding.kind is not BindingKind.VAR or binding.scope is not self.model.root_scope:
+            return None
+        if self._has_initializer(binding):
+            return None
+        function = self._sole_owning_function(binding)
+        if function is None:
+            return None
+        if not self.is_dead_on_entry(binding, function):
+            return None
+        return function
+
+    def localizable_bindings(self) -> list[tuple[Binding, Node]]:
+        """
+        Every script-scope `var` binding that can be relocated into a function, each paired with that
+        function, in the order the script declares them.
+        """
+        result: list[tuple[Binding, Node]] = []
+        for binding in self.model.root_scope.bindings.values():
+            function = self.localization_target(binding)
+            if function is not None:
+                result.append((binding, function))
+        return result
+
     def _index_elements(self):
         for graph in self._graphs.values():
             for node in graph.nodes:
                 if node.element is not None:
                     self._element_graph[id(node.element)] = graph
+
+    def _index_pseudo_locals(self):
+        """
+        Group the script-scope `var` bindings that each behave as a single function's locals, keyed by
+        that function, so the dataflow can track them inside it. A binding qualifies when every reference
+        lies in one function and none at script scope or in a function nested below it.
+        """
+        grouped: dict[int, set[Binding]] = {}
+        for binding in self.model.root_scope.bindings.values():
+            if binding.kind is not BindingKind.VAR:
+                continue
+            function = self._sole_owning_function(binding)
+            if function is not None:
+                grouped.setdefault(id(function), set()).add(binding)
+        self._pseudo_locals = {owner: frozenset(bindings) for owner, bindings in grouped.items()}
 
     def _compute_graph(self, graph: ControlFlowGraph):
         owner_scope = self._function_scope(graph.owner)
@@ -192,7 +261,7 @@ class LivenessModel:
             if not is_use_position(ident):
                 continue
             binding = self.model.resolve(ident)
-            if binding is None or not self._trackable(binding, owner_scope):
+            if binding is None or not self._analysable(graph, binding, owner_scope):
                 continue
             role = reference_role(ident)
             if role is not Role.WRITE:
@@ -364,6 +433,56 @@ class LivenessModel:
             and owner_scope.kind is ScopeKind.FUNCTION
             and self._owning_var_scope(binding.scope) is owner_scope
         )
+
+    def _analysable(
+        self, graph: ControlFlowGraph, binding: Binding, owner_scope: Scope | None,
+    ) -> bool:
+        """
+        Whether *binding* is tracked in *graph*: either an uncaptured function-local of the graph's own
+        function (the strict store candidate) or a script-scope `var` whose every reference is owned by
+        that function and so behaves as one of its locals. The second case feeds only the entry-liveness
+        `localization_target` reads; it never reaches `is_dead_store`, which keeps the strict candidacy.
+        """
+        if self._trackable(binding, owner_scope):
+            return True
+        return binding in self._pseudo_locals.get(id(graph.owner), frozenset())
+
+    def _sole_owning_function(self, binding: Binding) -> Node | None:
+        """
+        The one function whose body lexically contains every reference to *binding*, or `None` when the
+        references span more than one function, include one at script scope, or do not exist. A reference
+        inside a function nested below the candidate counts as a separate owner, so a binding captured by
+        such a nested closure is rejected.
+        """
+        owner: Node | None = None
+        for ref in (*binding.reads, *binding.writes):
+            function = self._owning_function(ref)
+            if function is None:
+                return None
+            if owner is None:
+                owner = function
+            elif function is not owner:
+                return None
+        return owner
+
+    @staticmethod
+    def _owning_function(node: Node) -> Node | None:
+        """
+        The innermost function node that lexically contains *node*, or `None` if it sits at script scope.
+        """
+        cursor = node.parent
+        while cursor is not None:
+            if isinstance(cursor, FUNCTION_NODES):
+                return cursor
+            cursor = cursor.parent
+        return None
+
+    def _has_initializer(self, binding: Binding) -> bool:
+        for declaration in binding.declarations:
+            declarator = self._enclosing_declarator(declaration)
+            if declarator is not None and declarator.init is not None:
+                return True
+        return False
 
     @staticmethod
     def _owning_var_scope(scope: Scope | None) -> Scope | None:
