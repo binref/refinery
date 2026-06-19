@@ -173,7 +173,7 @@ class Unpack15(RarUnpacker):
         """
         inp = self._inp
         flags_place = _decode_num(inp, inp.getbits(), _STARTHF2, _DecHf2, _PosHf2)
-        if (flags_place & 0xFF) >= 256:
+        if flags_place >= 256:
             return
 
         flags_place &= 0xFF
