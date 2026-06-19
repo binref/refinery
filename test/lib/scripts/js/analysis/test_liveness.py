@@ -156,6 +156,17 @@ class TestLiveness(TestBase):
         self.assertFalse(lv.is_dead_store(self._decl(ast, 'x')))
         self.assertEqual(lv.dead_stores(), [])
 
+    def test_eval_outside_function_does_not_block_inner_dead_store(self):
+        ast, lv = self._build('function f() { var x = 1; x = 2; return x; } eval(payload);')
+        self.assertTrue(lv.is_dead_store(self._decl(ast, 'x')))
+        self.assertFalse(lv.is_dead_store(self._store(ast, 'x')))
+
+    def test_global_scope_surface_does_not_block_inner_dead_store(self):
+        ast, lv = self._build(
+            'function f() { var x = 1; x = 2; return x; }'
+            " setTimeout('y()', 1); var g = Function('return 1');")
+        self.assertTrue(lv.is_dead_store(self._decl(ast, 'x')))
+
     def test_pseudo_global_used_in_one_function_localizes_there(self):
         source = (
             'var x;'

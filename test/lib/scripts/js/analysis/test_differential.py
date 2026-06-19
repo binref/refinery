@@ -63,6 +63,11 @@ class TestDeobfuscationDifferential(TestBase):
             ' function tick(){ n = (n || 0) + 1; return n; }'
             ' console.log(tick(), tick(), tick());')
 
+    def test_dead_store_removed_with_reflection_outside_its_function(self):
+        self._check(
+            'function f(){ var x = 1; x = 2; return x; }'
+            " var t = eval('6 * 7'); console.log(f(), t);")
+
     def test_block_scoped_for_let(self):
         self._check('var out = []; for (let i = 0; i < 3; i++) { out.push(i); }'
                     ' console.log(out.join(","));')

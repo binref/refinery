@@ -121,11 +121,10 @@ class LivenessModel:
         return `False`, the conservative verdict. The verdict concerns the stored *value* alone: a
         caller removing the store must still preserve any side effect of the expression producing it.
 
-        While the program retains a reflection surface (`eval`, `with`, ...) no store is reported,
-        because such a construct can read a local by name without a reference the model can see.
+        No store is reported while a `with` or direct `eval` lexically inside the owning function could
+        read the local by name without a reference the model sees. A reflective surface elsewhere in the
+        program runs in the global scope and cannot reach a local, so it does not suppress the report.
         """
-        if self.model.has_reflection_surface():
-            return False
         located = self._locate(write)
         if located is None:
             return False
@@ -135,6 +134,8 @@ class LivenessModel:
         if binding is None or construct is None:
             return False
         if not self._trackable(binding, owner_scope):
+            return False
+        if self.model.reflection_can_reach(binding):
             return False
         if binding in self.live_out(node):
             return False
