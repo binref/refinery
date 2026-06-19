@@ -47,6 +47,8 @@ from refinery.lib.scripts.js.model import (
     JsNewExpression,
     JsNumericLiteral,
     JsObjectExpression,
+    JsProperty,
+    JsPropertyKind,
     JsScript,
     JsStringLiteral,
     JsThrowStatement,
@@ -223,10 +225,13 @@ class EffectModel:
                 if reference_role(node) is not Role.READ:
                     self._account_write(summary, node, func_scope)
             elif isinstance(node, JsMemberExpression):
-                if node.object is not None and not self._base_is_safe(node.object):
+                base = node.object
+                if base is not None and not self._base_is_safe(base):
                     summary.throws = True
                 if _is_member_write(node):
                     summary.writes_global = True
+                elif base is not None and not self._base_getter_safe(base):
+                    summary.calls_unknown = True
             elif isinstance(node, (JsCallExpression, JsNewExpression)):
                 self._account_call(summary, node)
         return summary
@@ -307,6 +312,32 @@ class EffectModel:
             return node.name in _PURE_INTRINSIC_ROOTS and self._is_global_intrinsic(node)
         if isinstance(node, JsMemberExpression):
             return node.object is not None and self._base_is_safe(node.object)
+        return False
+
+    def _base_getter_safe(self, node: Node) -> bool:
+        """
+        Whether reading a property of *node* cannot run a user-defined getter, so the read carries no
+        hidden effect: a freshly built value with no accessor of its own, a primitive, or a pristine
+        intrinsic root. Unlike `_base_is_safe`, the global object does not qualify — a global property
+        such as `location` may be an accessor — so a read through it is treated as an unknown call.
+        """
+        if isinstance(node, (
+            JsArrayExpression,
+            JsFunctionExpression,
+            JsStringLiteral,
+            JsNumericLiteral,
+            JsBooleanLiteral,
+        )):
+            return True
+        if isinstance(node, JsObjectExpression):
+            return not any(
+                isinstance(prop, JsProperty) and prop.kind in (JsPropertyKind.GET, JsPropertyKind.SET)
+                for prop in node.properties
+            )
+        if isinstance(node, JsIdentifier):
+            return node.name in _PURE_INTRINSIC_ROOTS and self._is_global_intrinsic(node)
+        if isinstance(node, JsMemberExpression):
+            return node.object is not None and self._base_getter_safe(node.object)
         return False
 
     def _function_scope(self, func: Node) -> Scope | None:

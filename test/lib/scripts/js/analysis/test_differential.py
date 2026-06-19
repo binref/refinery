@@ -158,3 +158,13 @@ class TestDeobfuscationDifferential(TestBase):
         must stay an un-inlined call so the caller's strictness never reaches it.
         """
         self._check('function f(){ "use strict"; return new Function("return 010")(); } console.log(f());')
+
+    def test_dead_pure_call_binding_removal_preserves_behavior(self):
+        """
+        `tag` is pure and its result is unused, so dropping the dead binding and the now-uncalled `tag`
+        changes nothing observable; only the surviving `console.log` is what the run prints.
+        """
+        self._check(
+            'function tag(x){ return "<" + x + ">"; }'
+            ' var dead = tag("a");'
+            ' console.log("result");')

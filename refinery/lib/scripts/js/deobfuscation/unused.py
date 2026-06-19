@@ -15,6 +15,7 @@ This transformer performs two phases:
 from __future__ import annotations
 
 from refinery.lib.scripts import Node, _remove_from_parent
+from refinery.lib.scripts.js.analysis.effects import EffectModel, build_effects
 from refinery.lib.scripts.js.analysis.model import (
     Binding,
     BindingKind,
@@ -39,10 +40,12 @@ from refinery.lib.scripts.js.model import (
     JsArrayPattern,
     JsAssignmentExpression,
     JsBlockStatement,
+    JsCallExpression,
     JsExpressionStatement,
     JsFunctionDeclaration,
     JsIdentifier,
     JsMemberExpression,
+    JsNewExpression,
     JsObjectExpression,
     JsObjectPattern,
     JsProperty,
@@ -293,6 +296,7 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
         self.preserve_globals = preserve_globals
         self._has_reflection = False
         self._model: SemanticModel | None = None
+        self._effects: EffectModel | None = None
 
     def visit_JsScript(self, node: JsScript):
         """
@@ -306,6 +310,7 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
             previously_changed = self.changed
             self.changed = False
             self._model = build_semantic_model(node)
+            self._effects = build_effects(self._model)
             self._has_reflection = self._model.has_reflection_surface()
             self.generic_visit(node)
             self._process_body(node, node.body)
@@ -319,6 +324,26 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
     def model(self) -> SemanticModel:
         assert self._model is not None
         return self._model
+
+    @property
+    def effects(self) -> EffectModel:
+        assert self._effects is not None
+        return self._effects
+
+    def _is_removable(self, node: Node, defunct: set[str] | None = None) -> bool:
+        """
+        Whether evaluating *node* can be dropped without losing an observable effect. This extends the
+        syntactic `is_side_effect_free` with the effect model: a call to a function proven pure under a
+        pristine intrinsic surface is removable when its arguments are too, so a dead binding whose
+        initializer is a pure decoder or factory can be dropped even though it is a call.
+        """
+        if is_side_effect_free(node, defunct):
+            return True
+        if isinstance(node, (JsCallExpression, JsNewExpression)):
+            return self.effects.is_pure_call(node) and all(
+                self._is_removable(arg, defunct) for arg in node.arguments
+            )
+        return False
 
     def _at_script_scope(self, parent: Node) -> bool:
         """
@@ -437,7 +462,7 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
             for stmt in stores[binding]:
                 expr = stmt.expression
                 assert isinstance(expr, JsAssignmentExpression)
-                if expr.right is None or is_side_effect_free(expr.right, all_defunct):
+                if expr.right is None or self._is_removable(expr.right, all_defunct):
                     _remove_from_parent(stmt)
                 else:
                     stmt.expression = expr.right
@@ -679,7 +704,7 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
                 continue
             if isinstance(stmt.expression, JsAssignmentExpression):
                 continue
-            if is_side_effect_free(stmt.expression, defunct):
+            if self._is_removable(stmt.expression, defunct):
                 _remove_from_parent(stmt)
                 self.mark_changed()
         for name in defunct:
@@ -712,6 +737,6 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
                     if decl.id.name in dead_names or unreferenced:
                         remove_declarator(decl)
                         self.mark_changed()
-                elif unreferenced and is_side_effect_free(decl.init):
+                elif unreferenced and self._is_removable(decl.init):
                     remove_declarator(decl)
                     self.mark_changed()

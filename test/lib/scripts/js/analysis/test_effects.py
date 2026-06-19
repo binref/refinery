@@ -89,6 +89,12 @@ class TestEffectModel(TestBase):
         self.assertTrue(summary.throws)
         self.assertFalse(summary.is_pure)
 
+    def test_property_read_through_global_object_may_run_getter(self):
+        summary = self._summary('function f(){ return globalThis.foo; }', 'f')
+        self.assertFalse(summary.throws)
+        self.assertTrue(summary.calls_unknown)
+        self.assertFalse(summary.is_pure)
+
     def test_unknown_call_is_impure(self):
         summary = self._summary('function f(){ return ext(); }', 'f')
         self.assertTrue(summary.calls_unknown)
