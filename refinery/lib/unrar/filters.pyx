@@ -60,7 +60,7 @@ def apply_filter(
     return data
 
 
-cdef bytearray _filter_e8(bytearray data, bint include_e9, int file_offset):
+cdef bytearray _filter_e8(bytearray data, bint include_e9, size_t file_offset):
     cdef unsigned char *ptr = <unsigned char *>PyByteArray_AS_STRING(data)
     cdef int data_size = len(data)
     cdef int file_size = 0x1000000
