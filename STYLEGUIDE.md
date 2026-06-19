@@ -141,8 +141,26 @@ The docstrings for refinery units should be written with keyword search in mind.
 A short paragraph at the beginning should give a quick overview of what the unit does,
 followed by a lengthy explanation including the possible keywords that would help users discover it.
 
-For generating documentation, we use pdoc3.
-You can include references to other functions or classes in the project by using their full module path in backticks.
+For generating documentation, we use [pdoc3]. In a docstring, any identifier wrapped in single
+backticks that pdoc3 can resolve is rendered as a hyperlink to that object's documentation. This is
+the only mechanism for cross-referencing other code, and it follows strict resolution rules:
+
+- **Identifiers outside the current module must be fully qualified** with their complete dotted path.
+  Write `refinery.lib.structures.StructReader`, never just `StructReader`, to link to that class from another module.
+- **Within the same module, prefer the relative name.** A fully-qualified path still resolves,
+  but it is verbose and reads poorly as plain text in the rendered prose.
+  Inside `refinery.lib.structures`, reference `StructReader` or its member `StructReader.read`
+  rather than spelling out the whole `refinery.lib.structures.` prefix.
+  Use the shortest form that still resolves unambiguously.
+- **Append member names to the qualified path** to link to a method, attribute, or nested class,
+  for example `refinery.lib.argformats.PythonExpression.parse`.
+- **Reference a unit by its short, top-level name.** Every unit is re-exported from the `refinery` package,
+  so write `refinery.xor` or `refinery.b64`, not the internal module path beneath `refinery.units`.
+- **Unresolved references fail silently.** When pdoc3 cannot resolve the name,
+  it renders the text as plain inline code with no link and no warning.
+  A typo, a stale path, or a missing qualification therefore produces a dead reference that still looks correct in the source.
+  Use the exact, current dotted path every time.
+
 For example:
 ```python
 def parse_foo_header(data: bytes):
@@ -171,6 +189,36 @@ def parse_foo_header(data: bytes):
   Each of these items is a 32-bit unsigned integer.
   """
 ```
+
+### pdoc3 Documentation Features
+
+Beyond cross-references, a handful of pdoc3 features are worth knowing:
+
+- **Module docstrings.** A string literal at the very top of a module becomes that module's documentation.
+  Use it to summarize the module and to link the principal classes and units it provides.
+- **Docstring inheritance.** A method that has no docstring of its own inherits the docstring of the method it overrides.
+  Do not paste a base-class docstring onto an override whose contract is unchanged;
+  leave the override undocumented and let pdoc3 inherit the description.
+- **`__pdoc__` overrides.** A module may define a module-level dict named `__pdoc__` keyed by identifier names relative to the module,
+  such as `ClassName.member`.
+  Map a key to `False` to hide that object from the documentation, or to a string to replace its docstring.
+  Refinery uses this to suppress forwarded names and to inject generated command-line help.
+- **Variable docstrings.** Variables have no `__doc__` attribute.
+  Document a variable either with a string literal placed immediately after its assignment (PEP 224):
+  ```python
+  timeout = 30
+  """
+  The timeout in seconds.
+  """
+  ```
+  or with `#:` comment lines placed immediately before or on the assignment:
+  ```python
+  #: The number of retry attempts.
+  retries = 3
+  ```
+- **Code blocks:** pdoc3 renders docstrings as Markdown.
+  Both fenced code blocks and the 4-space-indented blocks described above work;
+  prefer the indented form for the short snippets typical of refinery docstrings.
 
 ### Dictionaries
 
@@ -268,3 +316,4 @@ message = F'Hello, {world}\n'
 ```
 
 [flake8]: https://pypi.org/project/flake8/
+[pdoc3]: https://pdoc3.github.io/pdoc/
