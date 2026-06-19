@@ -313,8 +313,8 @@ cdef bytearray _v3_filter_rgb(bytearray data, int data_size, list init_r):
         for i in range(cur_channel, data_size, channels):
             predicted = prev_byte
             upper_pos = i - width
-            if upper_pos >= channels:
-                upper_left = dst_ptr[upper_pos - channels] if upper_pos >= channels else 0
+            if channels <= upper_pos < data_size:
+                upper_left = dst_ptr[upper_pos - channels]
                 upper = dst_ptr[upper_pos]
                 predicted = <int>prev_byte + <int>upper - <int>upper_left
                 pa = predicted - <int>prev_byte

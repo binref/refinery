@@ -249,8 +249,8 @@ def _v3_filter_rgb(data: bytearray, data_size: int, init_r: list[int] | None) ->
         for i in range(cur_channel, data_size, channels):
             predicted = prev_byte
             upper_pos = i - width
-            if upper_pos >= channels:
-                upper_left = dst[upper_pos - channels] if upper_pos >= channels else 0
+            if channels <= upper_pos < data_size:
+                upper_left = dst[upper_pos - channels]
                 upper = dst[upper_pos]
                 predicted = prev_byte + upper - upper_left
                 pa = abs(predicted - prev_byte)
