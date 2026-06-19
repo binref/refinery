@@ -233,6 +233,18 @@ def dos_datetime(dostime: int) -> datetime | None:
         return None
 
 
+def filetime_datetime(filetime: int) -> datetime | None:
+    """
+    Convert a Windows FILETIME (100-nanosecond intervals since 1601-01-01 UTC) to a datetime.
+    """
+    if not filetime:
+        return None
+    try:
+        return datetime.fromtimestamp(filetime / 10_000_000 - 11644473600, tz=timezone.utc)
+    except (OSError, OverflowError, ValueError):
+        return None
+
+
 def decode_rar4_filename(name_bytes: bytes, enc_data: bytes) -> str:
     """
     Decode a RAR 4.x Unicode filename from the encoded representation.
@@ -616,9 +628,6 @@ def parse_header15(raw: RawHeaderReader) -> tuple:
         hd.unp_ver = raw.get1()
         hd.method = raw.get1() - 0x30
 
-        if hd.unp_ver < 20 and (raw.data[raw.pos - 1] if raw.pos > 0 else 0):
-            pass  # handled below
-
         name_size = raw.get2()
         hd.file_flags = raw.get4()
 
@@ -924,7 +933,7 @@ def _parse_extra50(
                     except (OSError, OverflowError, ValueError):
                         pass
                 else:
-                    raw.get8()
+                    hd.date = filetime_datetime(raw.get8())
             if time_flags & FHEXTRA_HTIME_CTIME:
                 if is_unix:
                     ts = raw.get4()
@@ -933,7 +942,7 @@ def _parse_extra50(
                     except (OSError, OverflowError, ValueError):
                         pass
                 else:
-                    raw.get8()
+                    hd.ctime = filetime_datetime(raw.get8())
             if time_flags & FHEXTRA_HTIME_ATIME:
                 if is_unix:
                     ts = raw.get4()
@@ -942,7 +951,7 @@ def _parse_extra50(
                     except (OSError, OverflowError, ValueError):
                         pass
                 else:
-                    raw.get8()
+                    hd.atime = filetime_datetime(raw.get8())
 
         elif field_type == FHEXTRA_REDIR:
             hd.redir_type = raw.getv()
