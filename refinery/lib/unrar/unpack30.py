@@ -933,9 +933,11 @@ class _ModelPPM:
                 tmp_sym = hp.st_symbol(stats)
                 tmp_freq = hp.st_freq(stats)
                 tmp_succ = hp.st_successor(stats)
-                while tmp_freq > 1 and esc_freq > 1:
+                while True:
                     tmp_freq -= tmp_freq >> 1
                     esc_freq >>= 1
+                    if esc_freq <= 1:
+                        break
                 old_nu = ((num_stats + zero_count) + 1) >> 1
                 sa.free_units(stats, old_nu)
                 os = hp.ctx_one_state(ctx)
@@ -1408,11 +1410,10 @@ class Unpack30(RarUnpacker):
         else:
             stack_filter.parent_filter = filt_pos
 
-        empty_count = sum(1 for x in self._prgstack if x is None)
+        before = len(self._prgstack)
         self._prgstack = [x for x in self._prgstack if x is not None]
-        if not empty_count:
-            if len(self._prgstack) > MAX3_UNPACK_FILTERS:
-                return False
+        if len(self._prgstack) == before and len(self._prgstack) > MAX3_UNPACK_FILTERS:
+            return False
         self._prgstack.append(stack_filter)
 
         block_start = vm_read_data(vm_inp)
