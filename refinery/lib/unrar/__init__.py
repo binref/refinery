@@ -289,6 +289,9 @@ class RarFile:
         entry_index = self._file_entries.index(fe)
 
         if fe.solid and entry_index > 0:
+            if self._solid_index >= entry_index:
+                self._solid_engine = None
+                self._solid_index = -1
             for i in range(self._solid_index + 1, entry_index):
                 prev = self._file_entries[i]
                 if prev.is_dir:
