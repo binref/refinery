@@ -289,6 +289,24 @@ def _is_global_base(node: Node | None) -> bool:
     return isinstance(node, JsIdentifier) and node.name in GLOBAL_OBJECT_ALIASES
 
 
+def _has_local_reflection(function: Node) -> bool:
+    """
+    Whether *function*'s body contains a `with` or a direct `eval` call, either of which can read or
+    write the function's own locals by name at runtime. Nested functions are included, since a direct
+    `eval` in a closure inherits the enclosing locals. Indirect eval (`o.eval`), `Function`, string
+    timers, and dynamic global access all run in the global scope and so cannot name a local; they are
+    not counted here, which is what makes this sharper than the whole-program surface for a local.
+    """
+    for node in function.walk():
+        if isinstance(node, JsWithStatement):
+            return True
+        if isinstance(node, JsCallExpression):
+            callee = node.callee
+            if isinstance(callee, JsIdentifier) and callee.name == 'eval':
+                return True
+    return False
+
+
 def _is_string_timer(call: JsCallExpression) -> bool:
     """
     Whether *call* is a timer/`execScript` invocation whose first argument is not a function literal,
@@ -314,6 +332,7 @@ class SemanticModel:
         self._node_scope: dict[int, Scope] = {}
         self._binding_of: dict[int, Binding] = {}
         self._reflection_surface: bool | None = None
+        self._function_dynamic: dict[int, bool] = {}
         self.root_scope: Scope = _ScopeBuilder(self).build(root)
         self._build_def_use()
 
@@ -396,6 +415,28 @@ class SemanticModel:
         if self._reflection_surface is None:
             self._reflection_surface = self._detect_reflection()
         return self._reflection_surface
+
+    def reflection_can_reach(self, binding: Binding) -> bool:
+        """
+        Whether a runtime name lookup could read or write *binding* without a reference this model
+        records. A global is reachable through any reflective surface — `eval`, `Function`, a string
+        timer, dynamic global access, `with` — all of which run in the global scope; a function-local is
+        reachable only through a `with` or a direct `eval` lexically inside the function that owns it,
+        because reflective code running in the global scope cannot name a local. This sharpens the
+        whole-program `has_reflection_surface` into the precise question of whether one binding could be
+        touched reflectively; like it, it over-approximates, so a `True` verdict is the conservative one.
+        """
+        owner = _owning_function(binding.scope)
+        if owner is None or owner.kind is ScopeKind.SCRIPT:
+            return self.has_reflection_surface()
+        return self._function_has_dynamic_scope(owner.node)
+
+    def _function_has_dynamic_scope(self, function: Node) -> bool:
+        cached = self._function_dynamic.get(id(function))
+        if cached is None:
+            cached = _has_local_reflection(function)
+            self._function_dynamic[id(function)] = cached
+        return cached
 
     def _detect_reflection(self) -> bool:
         for node in self.root.walk():

@@ -331,3 +331,37 @@ class TestSemanticModel(TestBase):
     def test_plain_program_has_no_reflection_surface(self):
         _, model = self._model('var a = 1; console.log(a);')
         self.assertFalse(model.has_reflection_surface())
+
+    def test_local_reachable_by_eval_inside_its_function(self):
+        ast, model = self._model("function f(){ var x; eval('x'); }")
+        self.assertTrue(model.reflection_can_reach(model.binding_of(self._decl(ast, model, 'x'))))
+
+    def test_local_not_reachable_by_eval_outside_its_function(self):
+        ast, model = self._model('function f(){ var x; } eval(payload);')
+        self.assertFalse(model.reflection_can_reach(model.binding_of(self._decl(ast, model, 'x'))))
+
+    def test_local_reachable_by_with_inside_its_function(self):
+        ast, model = self._model('function f(o){ var x; with (o) { x; } }')
+        self.assertTrue(model.reflection_can_reach(model.binding_of(self._decl(ast, model, 'x'))))
+
+    def test_local_reachable_by_eval_in_nested_function(self):
+        ast, model = self._model("function f(){ var x; function g(){ eval('x'); } }")
+        self.assertTrue(model.reflection_can_reach(model.binding_of(self._decl(ast, model, 'x'))))
+
+    def test_local_not_reachable_by_global_scope_surfaces(self):
+        ast, model = self._model(
+            'function f(){ var x; }'
+            " var g = Function('return 1'); setTimeout('y()', 1); window[k]();")
+        self.assertFalse(model.reflection_can_reach(model.binding_of(self._decl(ast, model, 'x'))))
+
+    def test_local_not_reachable_by_indirect_eval_inside_its_function(self):
+        ast, model = self._model("function f(o){ var x; o.eval('x'); }")
+        self.assertFalse(model.reflection_can_reach(model.binding_of(self._decl(ast, model, 'x'))))
+
+    def test_global_reachable_by_any_surface(self):
+        ast, model = self._model('var x; eval(payload);')
+        self.assertTrue(model.reflection_can_reach(model.binding_of(self._decl(ast, model, 'x'))))
+
+    def test_global_not_reachable_without_surface(self):
+        ast, model = self._model('var x = 1; console.log(x);')
+        self.assertFalse(model.reflection_can_reach(model.binding_of(self._decl(ast, model, 'x'))))
