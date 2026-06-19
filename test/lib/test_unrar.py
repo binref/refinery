@@ -36,6 +36,38 @@ class TestPBKDF2(TestBase):
 
 
 @pytest.mark.cythonized
+class TestItaniumFilter(TestBase):
+    """
+    Test the RAR3 standard Itanium filter (VMSF_ITANIUM) against vectors produced by the 7-Zip
+    22.01 reference implementation in CPP/7zip/Compress/Rar3Vm.cpp (ItaniumDecode).
+    """
+    _VECTORS = [(
+        'b68b02cd335541cd31e927313d98865cb88a34982d0b60e682b0b8681d9803bb',
+        0x40,
+        'b68bf2cc335541cd31e92731fd97865cb88a34982d0b60e682b0b8681d9803bb',
+    ), (
+        'f6ac96a69014df44092eaaff12cc3850185117990d703c45cc4ada8f3f62fb30',
+        0x12340,
+        'f6acc65d9014dfa4772daaffd2a83750185117990d703c45cc4ada8f3f62fb30',
+    )]
+
+    def test_itanium_reference_vectors(self):
+        from refinery.lib.unrar.filters import V3FilterType, execute_v3_filter
+        for src_hex, file_offset, expected_hex in self._VECTORS:
+            src = bytearray.fromhex(src_hex)
+            regs = [0, 0, 0, 0, 0, 0, file_offset]
+            result = execute_v3_filter(V3FilterType.VMSF_ITANIUM, src, len(src), regs)
+            with self.subTest(file_offset=file_offset):
+                self.assertEqual(bytes(result), bytes.fromhex(expected_hex))
+
+    def test_itanium_min_size_is_noop(self):
+        from refinery.lib.unrar.filters import V3FilterType, execute_v3_filter
+        data = bytes([0x16]) + bytes(range(1, 21))
+        result = execute_v3_filter(V3FilterType.VMSF_ITANIUM, bytearray(data), len(data), [0] * 7)
+        self.assertEqual(bytes(result), data)
+
+
+@pytest.mark.cythonized
 class TestMultiVolumeArchive(TestBase):
     """
     Test a mutli-volume archive.

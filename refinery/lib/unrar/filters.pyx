@@ -240,46 +240,44 @@ cdef bytearray _v3_filter_e8(
 
 cdef bytearray _v3_filter_itanium(bytearray data, int data_size, list init_r):
     cdef unsigned char *ptr = <unsigned char *>PyByteArray_AS_STRING(data)
-    cdef int file_offset = 0
-    cdef int aligned_size
-    cdef int i, j, start_pos, bit_pos, idx
-    cdef unsigned int mask_index, cmd_mask
-    cdef int data_len = len(data)
+    cdef unsigned int file_offset = 0
+    cdef unsigned int end, m, raw, v
+    cdef int pos = 0, p
 
     if init_r is not None:
-        file_offset = <int>init_r[6]
-    aligned_size = data_size & ~0xF
+        file_offset = <unsigned int>init_r[6]
+    if data_size <= 21:
+        return data
+    file_offset >>= 4
+    end = (<unsigned int>(data_size - 21 + 15) >> 4) + file_offset
 
-    byte_masks = (4, 4, 6, 6, 0, 0, 7, 7, 4, 4, 0, 0, 4, 4, 0, 0)
-
-    for i in range(0, aligned_size, 16):
-        mask_index = ptr[i] & 0x1F
-        if mask_index >= 16:
-            continue
-        cmd_mask = byte_masks[mask_index]
-        if cmd_mask == 0:
-            continue
-        for j in range(3):
-            if not (cmd_mask & (1 << j)):
-                continue
-            start_pos = i + 5 * j + 5
-            if start_pos + 4 > data_size:
-                break
-            bit_pos = (start_pos & 0xF) * 8
-            idx = start_pos & ~0xF
-            if idx + 16 > data_len:
-                break
-            val = int.from_bytes(data[idx:idx + 16], 'little')
-            op_code = (val >> bit_pos) & 0xFFFFFFFFFF
-            if ((op_code >> 37) & 0xF) == 5:
-                addr = (((op_code >> 13) & 0xFFFFF) | ((op_code >> 36) & 1) << 20) << 4
-                addr -= file_offset + i
-                addr = (addr >> 4) & 0x1FFFFF
-                raw = op_code & ~(0x1FFFFF << 13)
-                raw |= ((addr & 0xFFFFF) << 13) | ((addr >> 20) << 36)
-                mask = ((1 << 41) - 1) << bit_pos
-                val = (val & ~mask) | ((raw & ((1 << 41) - 1)) << bit_pos)
-                data[idx:idx + 16] = val.to_bytes(16, 'little')
+    while True:
+        m = (<unsigned int>0x334B0000 >> (ptr[pos] & 0x1E)) & 3
+        if m:
+            m += 1
+            while True:
+                p = pos + <int>m * 5 - 8
+                if ((ptr[p + 3] >> m) & 0xF) == 5:
+                    raw = (
+                        <unsigned int>ptr[p]
+                        | (<unsigned int>ptr[p + 1] << 8)
+                        | (<unsigned int>ptr[p + 2] << 16)
+                        | (<unsigned int>ptr[p + 3] << 24)
+                    )
+                    v = ((raw >> m) - file_offset) & 0xFFFFF
+                    raw &= ~(<unsigned int>0xFFFFF << m)
+                    raw |= v << m
+                    ptr[p] = raw & 0xFF
+                    ptr[p + 1] = (raw >> 8) & 0xFF
+                    ptr[p + 2] = (raw >> 16) & 0xFF
+                    ptr[p + 3] = (raw >> 24) & 0xFF
+                m += 1
+                if m > 4:
+                    break
+        pos += 16
+        file_offset += 1
+        if file_offset == end:
+            break
     return data
 
 

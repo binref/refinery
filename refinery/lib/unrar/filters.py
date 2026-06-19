@@ -200,39 +200,30 @@ def _v3_filter_itanium(data: bytearray, data_size: int, init_r: list[int] | None
     RAR3 Itanium filter: IA-64 branch address conversion.
     """
     file_offset = init_r[6] if init_r else 0
-    aligned_size = data_size & ~0xF
-    byte_masks = (4, 4, 6, 6, 0, 0, 7, 7, 4, 4, 0, 0, 4, 4, 0, 0)
-
-    for i in range(0, aligned_size, 16):
-        mask_index = data[i] & 0x1F
-        if mask_index >= 16:
-            continue
-        cmd_mask = byte_masks[mask_index]
-        if cmd_mask == 0:
-            continue
-        for j in range(3):
-            if not (cmd_mask & (1 << j)):
-                continue
-            start_pos = i + 5 * j + 5
-            if start_pos + 4 > data_size:
-                break
-            bit_pos = (start_pos & 0xF) * 8
-            # Extract bits from the 128-bit bundle
-            idx = start_pos & ~0xF
-            if idx + 16 > len(data):
-                break
-            val = int.from_bytes(data[idx:idx + 16], 'little')
-            op_code = (val >> bit_pos) & 0xFFFFFFFFFF  # 41-bit instruction
-            if ((op_code >> 37) & 0xF) == 5:
-                addr = (((op_code >> 13) & 0xFFFFF) | ((op_code >> 36) & 1) << 20) << 4
-                addr -= file_offset + i
-                addr = (addr >> 4) & 0x1FFFFF
-                raw = op_code & ~(0x1FFFFF << 13)
-                raw |= ((addr & 0xFFFFF) << 13) | ((addr >> 20) << 36)
-                # Write back
-                mask = ((1 << 41) - 1) << bit_pos
-                val = (val & ~mask) | ((raw & ((1 << 41) - 1)) << bit_pos)
-                data[idx:idx + 16] = val.to_bytes(16, 'little')
+    if data_size <= 21:
+        return data
+    file_offset >>= 4
+    end = ((data_size - 21 + 15) >> 4) + file_offset
+    pos = 0
+    while True:
+        m = (0x334B0000 >> (data[pos] & 0x1E)) & 3
+        if m:
+            m += 1
+            while True:
+                p = pos + m * 5 - 8
+                if ((data[p + 3] >> m) & 0xF) == 5:
+                    raw = int.from_bytes(data[p:p + 4], 'little')
+                    v = ((raw >> m) - file_offset) & 0xFFFFF
+                    raw &= ~(0xFFFFF << m) & 0xFFFFFFFF
+                    raw |= v << m
+                    data[p:p + 4] = (raw & 0xFFFFFFFF).to_bytes(4, 'little')
+                m += 1
+                if m > 4:
+                    break
+        pos += 16
+        file_offset += 1
+        if file_offset == end:
+            break
     return data
 
 
