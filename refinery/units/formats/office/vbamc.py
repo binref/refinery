@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from refinery.lib.access import is_access_database
 from refinery.lib.id import buffer_contains
 from refinery.lib.ole.vba import FileOpenError, VBAParser
 from refinery.units.formats import PathExtractorUnit, UnpackResult
@@ -7,7 +8,8 @@ from refinery.units.formats import PathExtractorUnit, UnpackResult
 
 class vbamc(PathExtractorUnit):
     """
-    Extract VBA macro code from Office documents such as Word and Excel.
+    Extract VBA macro code from Office documents such as Word and Excel, as well as from Microsoft
+    Access databases (.mdb and .accdb).
     """
     def unpack(self, data):
         try:
@@ -23,6 +25,8 @@ class vbamc(PathExtractorUnit):
     @classmethod
     def handles(cls, data):
         if data[:8] == b'\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1':
+            return True
+        if is_access_database(data):
             return True
         if data[:2] == B'PK':
             return buffer_contains(data, B'xl/vbaProject.bin')

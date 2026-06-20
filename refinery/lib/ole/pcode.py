@@ -24,7 +24,7 @@ import struct as _struct
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, NamedTuple
 
-from refinery.lib.ole.file import OleFile
+from refinery.lib.ole.file import OleFile, OleFileLike
 from refinery.lib.ole.vba import _codepage_to_codec, _find_vba_projects, decompress_stream
 
 logger = logging.getLogger(__name__)
@@ -1510,7 +1510,12 @@ class DisassemblyContext:
                 else:
                     op_type -= 16
             elif mnemonic == 'Option':
-                parts.append(_OPTIONS[op_type])
+                if op_type < len(_OPTIONS):
+                    parts.append(_OPTIONS[op_type])
+                elif op_type == 7:
+                    parts.append('Compare Database')
+                else:
+                    parts.append(str(op_type))
             elif mnemonic in ('Redim', 'RedimAs'):
                 if op_type & 16:
                     parts.append('(Preserve)')
@@ -1936,13 +1941,23 @@ class PCodeDisassembler:
         """
         Yield PCodeModule objects for each VBA module.
         """
+        data = self._data
+        from refinery.lib.access import AccessDatabase, is_access_database
+        if is_access_database(data):
+            try:
+                ole = AccessDatabase(bytes(data)).open_vba()
+            except Exception:
+                ole = None
+            if ole is not None:
+                yield from self._iter_project_modules(ole)
+            return
         for ole_data in self._get_ole_streams():
             ole = OleFile(ole_data)
             yield from self._iter_project_modules(ole)
 
     def _iter_project_modules(
         self,
-        ole: OleFile,
+        ole: OleFileLike,
     ):
         """
         Iterate over VBA modules in an OLE file, yielding PCodeModule per module.
@@ -1990,7 +2005,7 @@ class PCodeDisassembler:
 
     def _process_dir(
         self,
-        ole: OleFile,
+        ole: OleFileLike,
         dir_path: str,
     ) -> tuple[str, list[str], bool]:
         """
@@ -2031,7 +2046,7 @@ class PCodeDisassembler:
 
     def _process_vba_project(
         self,
-        ole: OleFile,
+        ole: OleFileLike,
         vba_project_path: str,
     ) -> bytes | bytearray | memoryview:
         """

@@ -18,7 +18,7 @@ from typing import IO, TYPE_CHECKING, Generator, TypeVar
 from refinery.lib.structures import FlagAccessMixin
 
 if TYPE_CHECKING:
-    from refinery.lib.ole.file import OleFile
+    from refinery.lib.ole.file import OleFileLike
     _T = TypeVar('_T', bound=IntFlag)
 
 
@@ -281,7 +281,7 @@ class ExtendedStream:
         self._next_jump: tuple[str, object] | None = None
 
     @classmethod
-    def open(cls, ole_file: OleFile, path: str) -> ExtendedStream:
+    def open(cls, ole_file: OleFileLike, path: str) -> ExtendedStream:
         stream = ole_file.openstream(path)
         return cls(stream, path)
 
@@ -725,7 +725,7 @@ def consume_ScrollBarControl(stream: ExtendedStream) -> None:
 
 
 def extract_OleFormVariables(
-    ole_file: OleFile,
+    ole_file: OleFileLike,
     stream_dir: str,
 ) -> list[dict[str, object]]:
     """

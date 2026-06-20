@@ -783,6 +783,125 @@ class OleFile:
                 break
 
 
+class _VirtualEntry:
+    """
+    A single node in a `refinery.lib.ole.file.VirtualOleFile` tree, mirroring the subset of
+    `refinery.lib.ole.file.DirectoryEntry` that the VBA pipeline consumes.
+    """
+    __slots__ = (
+        'name',
+        'entry_type',
+        'data',
+        'kids',
+    )
+
+    def __init__(self, name: str, entry_type: int, data: bytes | None = None):
+        self.name = name
+        self.entry_type = entry_type
+        self.data = data
+        self.kids: dict[str, _VirtualEntry] = {}
+
+
+class VirtualOleFile:
+    """
+    A read-only, format-agnostic view that presents an in-memory storage tree through the same
+    interface as `refinery.lib.ole.file.OleFile`. It is constructed from an explicit list of
+    entries rather than from a serialized OLE2 compound file, which makes it suitable for sources
+    that store the OLE directory structure in a different container, such as the VBA project
+    inside the MSysAccessStorage table of a Microsoft Access database.
+
+    Each entry is a tuple of a path, a `refinery.lib.ole.file.STGTY` storage type, and the stream
+    data (or None for storages). Missing ancestor storages are synthesized automatically so that
+    every stream has the chain of parent storages required by directory traversal.
+    """
+
+    def __init__(self, entries: list[tuple[str, int, bytes | None]]):
+        self._root = _VirtualEntry('Root Entry', STGTY.ROOT)
+        for path, entry_type, data in entries:
+            self._insert(path, entry_type, data)
+
+    @staticmethod
+    def _split(path: str) -> list[str]:
+        return [part for part in re.split(r'[\\/]+', path) if part]
+
+    def _insert(self, path: str, entry_type: int, data: bytes | None):
+        parts = self._split(path)
+        if not parts:
+            return
+        node = self._root
+        for part in parts[:-1]:
+            key = part.lower()
+            child = node.kids.get(key)
+            if child is None:
+                child = _VirtualEntry(part, STGTY.STORAGE)
+                node.kids[key] = child
+            node = child
+        leaf = parts[-1]
+        key = leaf.lower()
+        existing = node.kids.get(key)
+        if existing is None:
+            node.kids[key] = _VirtualEntry(leaf, entry_type, data)
+        elif entry_type == STGTY.STREAM:
+            existing.entry_type = entry_type
+            existing.data = data
+
+    def _find(self, path: str) -> _VirtualEntry | None:
+        node = self._root
+        for part in self._split(path):
+            node = node.kids.get(part.lower())
+            if node is None:
+                return None
+        return node
+
+    def listdir(self, streams: bool = True, storages: bool = False) -> list[list[str]]:
+        result: list[list[str]] = []
+        self._list_recursive(self._root, [], result, streams, storages)
+        return result
+
+    def _list_recursive(
+        self,
+        node: _VirtualEntry,
+        path: list[str],
+        result: list[list[str]],
+        streams: bool,
+        storages: bool,
+    ):
+        for kid in node.kids.values():
+            current_path = path + [kid.name]
+            if kid.entry_type == STGTY.STREAM:
+                if streams:
+                    result.append(current_path)
+            elif kid.entry_type in (STGTY.STORAGE, STGTY.ROOT):
+                if storages:
+                    result.append(current_path)
+                self._list_recursive(kid, current_path, result, streams, storages)
+
+    def openstream(self, filename: str) -> MemoryFile[memoryview]:
+        entry = self._find(filename)
+        if entry is None:
+            raise OleFileError(F'Stream not found: {filename!r}')
+        if entry.entry_type != STGTY.STREAM:
+            raise OleFileError(F'Not a stream: {filename!r}')
+        return MemoryFile(memoryview(entry.data or b''))
+
+    def exists(self, filename: str) -> bool:
+        return self._find(filename) is not None
+
+    def get_type(self, path: str) -> int:
+        entry = self._find(path)
+        if entry is None:
+            return STGTY.EMPTY
+        return entry.entry_type
+
+
+OleFileLike = OleFile | VirtualOleFile
+"""
+The duck-typed interface shared by `refinery.lib.ole.file.OleFile` and
+`refinery.lib.ole.file.VirtualOleFile`: any consumer that only reads streams and walks the
+directory tree accepts either.
+"""
+
+
 def _parse_property_set(
     data: memoryview,
     convert_time: bool,

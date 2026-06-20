@@ -23,7 +23,7 @@ from io import BytesIO
 from typing import Generator, NamedTuple
 
 from refinery.lib.ole.file import MAGIC as OLE_MAGIC
-from refinery.lib.ole.file import STGTY, OleFile
+from refinery.lib.ole.file import STGTY, OleFile, OleFileLike
 from refinery.lib.structures import Struct, StructReader
 
 MODULE_EXTENSION = 'bas'
@@ -134,7 +134,7 @@ def _codepage_to_codec(cp: int) -> str:
 
 
 def _find_vba_projects(
-    ole: OleFile,
+    ole: OleFileLike,
 ) -> list[tuple[str, str, str]]:
     """
     Find all VBA project root storages in an OLE file. Returns a list of (vba_root,
@@ -456,7 +456,7 @@ class _VBAProject(Struct[memoryview]):
     def __init__(
         self,
         reader: StructReader[memoryview],
-        ole: OleFile,
+        ole: OleFileLike,
         vba_root: str,
         project_path: str,
     ):
@@ -643,6 +643,7 @@ class DocumentFormat(enum.Enum):
     WORD2003_XML = 'Word2003/XML'
     FLATOPC_XML  = 'FlatOPC/XML'  # noqa: E221
     MHTML        = 'MHTML'        # noqa: E221
+    ACCESS       = 'Access'       # noqa: E221
 
 
 class VBAParser:
@@ -655,7 +656,7 @@ class VBAParser:
         if isinstance(data, memoryview):
             data = bytes(data)
         self._data = data
-        self._ole: OleFile | None = None
+        self._ole: OleFileLike | None = None
         self._ole_subfiles: list[tuple[str, bytes]] = []
         self._type: DocumentFormat | None = None
         self._vba_projects: list[tuple[str, str, str]] | None = None
@@ -671,6 +672,8 @@ class VBAParser:
             return
         if self._try_mhtml(data):
             return
+        if self._try_access(data):
+            return
 
         raise FileOpenError('data is not a supported file type for VBA extraction')
 
@@ -683,6 +686,20 @@ class VBAParser:
             return True
         except Exception:
             return False
+
+    def _try_access(self, data: bytes | bytearray) -> bool:
+        from refinery.lib.access import AccessDatabase, is_access_database
+        if not is_access_database(data):
+            return False
+        try:
+            ole = AccessDatabase(bytes(data)).open_vba()
+        except Exception:
+            return False
+        if ole is None:
+            return False
+        self._ole = ole
+        self._type = DocumentFormat.ACCESS
+        return True
 
     def _try_zip(self, data: bytes | bytearray) -> bool:
         if data[:2] != b'PK':
@@ -813,7 +830,7 @@ class VBAParser:
 
     def _find_vba_forms(
         self,
-        ole: OleFile,
+        ole: OleFileLike,
     ) -> list[str]:
         """
         Find form storages containing 'f' and 'o' streams.
@@ -832,7 +849,7 @@ class VBAParser:
 
     def _extract_vba(
         self,
-        ole: OleFile,
+        ole: OleFileLike,
         vba_root: str,
         project_path: str,
         dir_path: str,
@@ -863,7 +880,7 @@ class VBAParser:
     def _extract_macros_from_ole(
         self,
         subfilename: str,
-        ole: OleFile,
+        ole: OleFileLike,
     ) -> Generator[VBAMacro, None, None]:
         """
         Extract macros from a single OLE file object.
@@ -904,7 +921,7 @@ class VBAParser:
     def _extract_form_strings_from_ole(
         self,
         filename: str,
-        ole: OleFile,
+        ole: OleFileLike,
     ) -> Generator[VBAFormString, None, None]:
         forms = self._find_vba_forms(ole)
         for form_storage in forms:
@@ -935,7 +952,7 @@ class VBAParser:
     def _extract_form_strings_extended_from_ole(
         self,
         filename: str,
-        ole: OleFile,
+        ole: OleFileLike,
     ) -> Generator[VBAFormVariable, None, None]:
         from refinery.lib.ole.forms import (
             OleFormParsingError,

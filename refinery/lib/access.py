@@ -29,6 +29,17 @@ _DATA_MAGIC = b'\x01\x01'
 
 _SYSTEM_FLAGS = {-0x80000000, -2, 0x80000000, 2}
 
+_ACCESS_MAGIC = b'\x00\x01\x00\x00'
+_ACCESS_ENGINES = (b'Standard ACE DB', b'Standard Jet DB')
+
+
+def is_access_database(data: bytes | bytearray | memoryview) -> bool:
+    """
+    Check whether the given data begins with the magic of a Microsoft Access database (.mdb or
+    .accdb), i.e. the Jet or ACE database engine signature.
+    """
+    return data[:4] == _ACCESS_MAGIC and bytes(data[4:19]) in _ACCESS_ENGINES
+
 
 class JetVersion(enum.IntEnum):
     V3 = 0x00
@@ -499,6 +510,90 @@ class AccessDatabase:
             else:
                 return {}
         return self._do_parse_table(table_obj)
+
+    def _parse_system_table(self, name: str) -> dict[str, list]:
+        """
+        Parse a system table by name. Access keeps system tables such as MSysAccessStorage out of
+        the user-facing `catalog`, so this resolves the table id from MSysObjects when necessary.
+        """
+        if name in self.catalog:
+            return self.parse_table(name)
+        objects = self.parse_table('MSysObjects')
+        names = objects.get('Name', [])
+        ids = objects.get('Id', [])
+        for i, candidate in enumerate(names):
+            if candidate == name and i < len(ids):
+                table_offset = ids[i] * self._page_size
+                table_obj = self._tables_with_data.get(table_offset)
+                if table_obj is None:
+                    table_def = self._table_defs.get(table_offset)
+                    if table_def is None:
+                        return {}
+                    table_obj = _TableObj(table_offset, table_def)
+                return self._do_parse_table(table_obj)
+        return {}
+
+    def open_vba(self):
+        """
+        Reconstruct the VBA project storage tree from the MSysAccessStorage system table and
+        return it as a `refinery.lib.ole.file.VirtualOleFile`. Access stores the streams that
+        would normally live inside an OLE VBA project as individual rows of MSysAccessStorage,
+        with the storage hierarchy encoded by the ParentId column. Returns None when no VBA
+        storage is present.
+        """
+        from refinery.lib.ole.file import STGTY, VirtualOleFile
+
+        table = self._parse_system_table('MSysAccessStorage')
+        ids = table.get('Id')
+        if not ids:
+            return None
+        names = table.get('Name', [])
+        parents = table.get('ParentId', [])
+        types = table.get('Type', [])
+        values = table.get('Lv', [])
+
+        name_of: dict[int, str] = {}
+        parent_of: dict[int, int] = {}
+        for i, node_id in enumerate(ids):
+            name = names[i] if i < len(names) else None
+            if not isinstance(name, str):
+                continue
+            name_of[node_id] = name
+            parent = parents[i] if i < len(parents) else None
+            if isinstance(parent, int):
+                parent_of[node_id] = parent
+
+        def full_path(node_id: int) -> str | None:
+            parts = [name_of[node_id]]
+            seen = {node_id}
+            parent = parent_of.get(node_id)
+            while parent is not None and parent in name_of and parent not in seen:
+                seen.add(parent)
+                parent_name = name_of[parent]
+                if parent_name.endswith('_ROOT') or parent_name.endswith('_SCRATCH'):
+                    break
+                parts.append(parent_name)
+                parent = parent_of.get(parent)
+            return '/'.join(reversed(parts))
+
+        entries: list[tuple[str, int, bytes | None]] = []
+        for i, node_id in enumerate(ids):
+            name = name_of.get(node_id)
+            if name is None or name.endswith('_ROOT') or name.endswith('_SCRATCH'):
+                continue
+            path = full_path(node_id)
+            if not path:
+                continue
+            kind = types[i] if i < len(types) else None
+            value = values[i] if i < len(values) else None
+            if kind == 1:
+                entries.append((path, STGTY.STORAGE, None))
+            elif kind == 2 and isinstance(value, (bytes, bytearray, memoryview)):
+                entries.append((path, STGTY.STREAM, bytes(value)))
+
+        if not entries:
+            return None
+        return VirtualOleFile(entries)
 
     def _do_parse_table(self, table_obj: _TableObj) -> dict[str, list]:
         try:

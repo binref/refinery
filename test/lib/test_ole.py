@@ -14,7 +14,7 @@ import unittest
 
 from refinery.lib.ole.file import (
     OleFile, OleFileError, NotOleFileError, OleMetadata,
-    STGTY, MAGIC, filetime_to_datetime, is_ole_file, _clsid,
+    STGTY, MAGIC, VirtualOleFile, filetime_to_datetime, is_ole_file, _clsid,
 )
 from refinery.lib.structures import MemoryFile
 
@@ -585,3 +585,61 @@ class TestOleCorruptedData(unittest.TestCase):
         data = data[:-200]
         ole = OleFile(data)
         self.assertTrue(ole.exists('SmallStream') or ole.exists('BigStream'))
+
+
+class TestVirtualOleFile(unittest.TestCase):
+    """
+    Tests for the in-memory OLE view, exercised through hand-built entry lists rather than a
+    serialized compound file.
+    """
+
+    def _build(self):
+        return VirtualOleFile([
+            ('Root/PROJECT', STGTY.STREAM, b'project-data'),
+            ('Root/VBA/dir', STGTY.STREAM, b'dir-data'),
+            ('Root/VBA/Module1', STGTY.STREAM, b'module-data'),
+            ('Root/VBA', STGTY.STORAGE, None),
+        ])
+
+    def test_streams_and_storages_listed(self):
+        ole = self._build()
+        streams = ole.listdir(streams=True, storages=False)
+        storages = ole.listdir(streams=False, storages=True)
+        self.assertEqual(
+            sorted(streams),
+            [['Root', 'PROJECT'], ['Root', 'VBA', 'Module1'], ['Root', 'VBA', 'dir']])
+        self.assertEqual(sorted(storages), [['Root'], ['Root', 'VBA']])
+
+    def test_ancestor_storages_synthesized(self):
+        ole = self._build()
+        self.assertEqual(ole.get_type('Root'), STGTY.STORAGE)
+        self.assertEqual(ole.get_type('Root/VBA'), STGTY.STORAGE)
+
+    def test_get_type_stream_and_missing(self):
+        ole = self._build()
+        self.assertEqual(ole.get_type('Root/VBA/dir'), STGTY.STREAM)
+        self.assertEqual(ole.get_type('Root/Nope'), STGTY.EMPTY)
+
+    def test_openstream_returns_data(self):
+        ole = self._build()
+        self.assertEqual(ole.openstream('Root/VBA/Module1').read(), b'module-data')
+
+    def test_openstream_case_insensitive_and_separators(self):
+        ole = self._build()
+        self.assertEqual(ole.openstream('root\\vba\\module1').read(), b'module-data')
+
+    def test_openstream_missing_raises(self):
+        ole = self._build()
+        with self.assertRaises(OleFileError):
+            ole.openstream('Root/VBA/Nope')
+
+    def test_openstream_on_storage_raises(self):
+        ole = self._build()
+        with self.assertRaises(OleFileError):
+            ole.openstream('Root/VBA')
+
+    def test_exists(self):
+        ole = self._build()
+        self.assertTrue(ole.exists('Root/PROJECT'))
+        self.assertTrue(ole.exists('Root/VBA'))
+        self.assertFalse(ole.exists('Root/PROJECTwm'))
