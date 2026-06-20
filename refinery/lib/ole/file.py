@@ -202,29 +202,30 @@ class DirectoryEntry:
         return _clsid(self.clsid)
 
     def build_storage_tree(self, entries: list[DirectoryEntry | None]):
-        if self.sid_child != NOSTREAM:
-            child = entries[self.sid_child] if self.sid_child < len(entries) else None
-            if child is not None:
-                self._walk_tree(child, entries)
-                self.kids.sort(key=lambda e: e.name.lower())
-        for kid in self.kids:
-            if kid.entry_type in (STGTY.STORAGE, STGTY.ROOT):
-                kid.build_storage_tree(entries)
+        pending: list[DirectoryEntry] = [self]
+        while pending:
+            storage = pending.pop()
+            if storage.sid_child != NOSTREAM and storage.sid_child < len(entries):
+                child = entries[storage.sid_child]
+                if child is not None:
+                    storage._walk_tree(child, entries)
+                    storage.kids.sort(key=lambda e: e.name.lower())
+            for kid in storage.kids:
+                if kid.entry_type in (STGTY.STORAGE, STGTY.ROOT):
+                    pending.append(kid)
 
     def _walk_tree(self, node: DirectoryEntry, entries: list[DirectoryEntry | None]):
-        if node.used:
-            return
-        node.used = True
-        if node.sid_left != NOSTREAM and node.sid_left < len(entries):
-            left = entries[node.sid_left]
-            if left is not None:
-                self._walk_tree(left, entries)
-        self.kids.append(node)
-        self.kids_dict[node.name.lower()] = node
-        if node.sid_right != NOSTREAM and node.sid_right < len(entries):
-            right = entries[node.sid_right]
-            if right is not None:
-                self._walk_tree(right, entries)
+        stack: list[DirectoryEntry | None] = [node]
+        while stack:
+            current = stack.pop()
+            if current is None or current.used:
+                continue
+            current.used = True
+            self.kids.append(current)
+            self.kids_dict[current.name.lower()] = current
+            for sid in (current.sid_left, current.sid_right):
+                if sid != NOSTREAM and sid < len(entries):
+                    stack.append(entries[sid])
 
 
 def _read_chain(
@@ -988,6 +989,8 @@ def _parse_vector_property(
 
     result = []
     for _ in range(count):
+        if value_offset >= len(data):
+            break
         if base_type == VT_VARIANT:
             if value_offset + 4 > len(data):
                 break
@@ -1002,6 +1005,8 @@ def _parse_vector_property(
                 data, value_offset, base_type, prop_id,
                 convert_time, no_conversion, codepage)
             size = _property_size(data, value_offset, base_type, codepage)
+            if size <= 0:
+                break
             value_offset += size
         result.append(val)
         pad = (4 - (value_offset % 4)) % 4

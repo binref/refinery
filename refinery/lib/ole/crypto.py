@@ -368,6 +368,8 @@ class DocumentXOR:
                     xor_idx = (data_index + count) % 16
                 for _ in range(count):
                     b = ibuf.read(1)
+                    if not b:
+                        break
                     dec = DocumentXOR._ror(b[0] ^ xor_array[xor_idx], 5, 8)
                     obuf.write_byte(dec)
                     xor_idx = (xor_idx + 1) % 16
@@ -391,12 +393,6 @@ _BLK_KEY_ENCRYPTED_KEY_VALUE = bytearray(
 
 def _get_hash_func(algorithm: str):
     return _ALGORITHM_HASH.get(algorithm, sha1)
-
-
-def _normalize_key(key: bytes, n: int) -> bytes:
-    if len(key) >= n:
-        return key[:n]
-    return key + b'\x36' * (n - len(key))
 
 
 def _decrypt_aes_cbc(data: bytes, key: bytes, iv: bytes) -> bytes:
@@ -942,7 +938,7 @@ class Xls97File:
             _num, size = workbook.skip_to(_BIFF_FILEPASS)
 
             enc_type = unpack('<H', workbook._data.read(2))[0]
-            enc_info = MemoryFile(workbook._data.read(size - 2))
+            enc_info = MemoryFile(workbook._data.read(max(size - 2, 0)))
 
             if enc_type == 0x0000:
                 key, verification_bytes = unpack('<HH', enc_info.read(4))
@@ -1321,7 +1317,10 @@ class Ppt97File:
                 continue
             if rh.rec_type in (0x0FF5, 0x1772):
                 continue
-            rec_len = directory_items[i + 1][1] - offset - 8
+            if i + 1 < len(directory_items):
+                rec_len = directory_items[i + 1][1] - offset - 8
+            else:
+                rec_len = len(dec_ba) - offset - 8
             enc_buf = MemoryFile(mv[offset:offset + 8 + rec_len])
             blocksize = self._key_size * ((8 + rec_len) // self._key_size + 1)
             dec = DocumentRC4CryptoAPI.decrypt(

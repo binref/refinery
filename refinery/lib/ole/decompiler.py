@@ -364,8 +364,8 @@ class VBADecompiler:
     def _collect_print_elements(self) -> str:
         elmts = self._stack.drain()
         val = elmts[0]
-        for elmt in elmts[1:]:
-            if elmt in (';', ',') and elmts.index(elmt) != 1:
+        for pos, elmt in enumerate(elmts[1:], 1):
+            if elmt in (';', ',') and pos != 1:
                 val += elmt
             else:
                 val += F' {elmt}'
@@ -728,16 +728,11 @@ class VBADecompiler:
         val = F'{obj}.Circle ({params[0]}, {params[1]}), {params[2]}'
 
         trailing = params[3:]
-        if all(p == '0' for p in trailing):
-            self._stack.push(val)
-        else:
-            for p in trailing:
-                if p == '0':
-                    val += ', <tbr>'
-                else:
-                    val += F', {p}'
-            val = val.replace(', <tbr>', '')
-            self._stack.push(val)
+        while trailing and trailing[-1] == '0':
+            trailing.pop()
+        for p in trailing:
+            val += ', ' if p == '0' else F', {p}'
+        self._stack.push(val)
 
     def _op_close(self, numparams: str) -> None:
         params = self._pop_params(numparams)

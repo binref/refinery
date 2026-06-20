@@ -586,6 +586,25 @@ class TestOleCorruptedData(unittest.TestCase):
         ole = OleFile(data)
         self.assertTrue(ole.exists('SmallStream') or ole.exists('BigStream'))
 
+    def test_vector_property_huge_count_is_bounded(self):
+        """A forged vector element count must not drive an unbounded parse loop."""
+        from refinery.lib.ole.file import _parse_property_set
+        ole = OleFile(TestOleSamples.RICH_PROPERTIES)
+        raw = bytearray(ole.openstream('\x05DocumentSummaryInformation').read())
+        section_offset = struct.unpack_from('<I', raw, 44)[0]
+        num_props = struct.unpack_from('<I', raw, section_offset + 4)[0]
+        value_offset = None
+        for i in range(num_props):
+            pid, poff = struct.unpack_from('<II', raw, section_offset + 8 + i * 8)
+            if pid == 12:
+                value_offset = section_offset + poff
+                break
+        assert value_offset is not None
+        struct.pack_into('<I', raw, value_offset + 4, 0xFFFFFFFF)
+        props = _parse_property_set(memoryview(raw), False, [])
+        self.assertIsInstance(props[12], list)
+        self.assertLess(len(props[12]), len(raw))
+
 
 class TestVirtualOleFile(unittest.TestCase):
     """

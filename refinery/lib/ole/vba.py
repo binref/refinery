@@ -175,8 +175,10 @@ def copytoken_help(
     offset_mask, bit_count, maximum_length).
     """
     difference = decompressed_current - decompressed_chunk_start
-    bit_count = int(math.ceil(math.log(difference, 2)))
-    bit_count = max(bit_count, 4)
+    if difference < 2:
+        bit_count = 4
+    else:
+        bit_count = max(int(math.ceil(math.log(difference, 2))), 4)
     length_mask = 0xFFFF >> bit_count
     offset_mask = ~length_mask & 0xFFFF
     maximum_length = (0xFFFF >> bit_count) + 3

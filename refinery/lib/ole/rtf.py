@@ -4,6 +4,7 @@ and extracts OLE 1.0 objects and OLE Package streams without requiring oletools 
 """
 from __future__ import annotations
 
+import binascii
 import enum
 import re
 
@@ -644,7 +645,6 @@ class RtfObjParser(RtfParser):
 
     def bin_data(self, bindata: bytes) -> None:
         if self.current_destination.cword == b'objdata':
-            import binascii
             self.current_destination.data.extend(binascii.hexlify(bindata))
 
     def control_symbol(self, matchobject: re.Match) -> None:

@@ -4,6 +4,7 @@ import lzma
 import functools
 
 from refinery.lib.ole.decompiler import vba_string_literal
+from refinery.lib.ole.vba import copytoken_help
 
 from ... import TestUnitBase
 
@@ -258,3 +259,13 @@ class TestVBAStringLiteral(TestUnitBase):
 
     def test_multiple_segments(self):
         self.assertEqual(vba_string_literal('a\nb\tc'), '"a" & vbLf & "b" & vbTab & "c"')
+
+
+class TestCopyTokenHelp(TestUnitBase):
+    def test_zero_difference_clamps_to_minimum(self):
+        # A CopyToken appearing before any literal in a chunk yields difference 0;
+        # the bit count must clamp to the 4-bit minimum instead of raising on log(0).
+        self.assertEqual(copytoken_help(0, 0), (0x0FFF, 0xF000, 4, 0x1002))
+
+    def test_one_difference_clamps_to_minimum(self):
+        self.assertEqual(copytoken_help(1, 0), (0x0FFF, 0xF000, 4, 0x1002))
