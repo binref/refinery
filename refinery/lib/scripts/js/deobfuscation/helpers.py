@@ -119,6 +119,18 @@ def _js_div(a: int | float, b: int | float) -> int | float:
     return a / b
 
 
+def _js_mul(a: int | float, b: int | float) -> int | float:
+    """
+    Multiply two JavaScript numbers, preserving the IEEE-754 sign of a zero product: a product of
+    magnitude zero is negative zero exactly when the operands have opposite signs. Python integer
+    multiplication cannot represent `-0`, so `0 * -5` would otherwise silently lose the sign.
+    """
+    result = a * b
+    if result == 0 and (math.copysign(1.0, a) < 0) != (math.copysign(1.0, b) < 0):
+        return -0.0
+    return result
+
+
 def _js_mod(a: int | float, b: int | float) -> int | float:
     if b == 0 or a != a or b != b:
         return float('nan')
@@ -176,7 +188,7 @@ def _js_pow(base: int | float, exp: int | float) -> int | float:
 BINARY_OPS: dict[str, Callable] = {
     '+'  : operator.add,
     '-'  : operator.sub,
-    '*'  : operator.mul,
+    '*'  : _js_mul,
     '/'  : _js_div,
     '%'  : _js_mod,
     '**' : _js_pow,

@@ -19,6 +19,18 @@ class TestInterpreterValueSemantics(TestJsDeobfuscator):
     def test_add_array_and_number_concatenate(self):
         self.assertEqual("var x = '12';", self._fold('[1] + 2'))
 
+    def test_unary_minus_on_zero_coercion_is_negative_zero(self):
+        source = inspect.cleandoc(
+            """
+            function f() {
+                var a = false;
+                return -a;
+            }
+            var x = f();
+            """
+        )
+        self.assertEqual('var x = -0;', self._evaluate(source))
+
     def test_add_object_operand_concatenates_object_tag(self):
         self.assertEqual("var x = '[object Object]1';", self._fold('({ a: 1 }) + 1'))
 

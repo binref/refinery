@@ -488,6 +488,18 @@ class TestRegressionBugs(TestJsDeobfuscator):
     def test_negative_zero_literal(self):
         self.assertEqual('var x = -0;', self._simplify('var x = -(0);'))
 
+    def test_zero_times_negative_is_negative_zero(self):
+        self.assertEqual('-0;', self._simplify('0 * -5;'))
+
+    def test_negative_times_zero_is_negative_zero(self):
+        self.assertEqual('-0;', self._simplify('-3 * 0;'))
+
+    def test_like_signed_zero_product_is_positive_zero(self):
+        self.assertEqual('0;', self._simplify('-0 * -5;'))
+
+    def test_positive_zero_product_is_unsigned(self):
+        self.assertEqual('0;', self._simplify('0 * 5;'))
+
 
 class TestParenthesizedExpressionStripping(TestJsDeobfuscator):
 

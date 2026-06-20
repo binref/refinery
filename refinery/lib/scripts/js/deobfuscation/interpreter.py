@@ -1604,7 +1604,7 @@ class JsInterpreter:
         operand = self._eval(node.operand)
         if op == '-':
             v = to_number(operand)
-            return -v if v != 0 else (-0.0 if isinstance(v, float) else 0)
+            return -v if v != 0 else -float(v)
         if op == '+':
             return to_number(operand)
         if op == '~':

@@ -218,3 +218,19 @@ class TestDeobfuscationDifferential(TestBase):
         self._check(
             'function v6(){ console.log(-1); }'
             ' if ([v6(), false]) {} else {}')
+
+    def test_unary_minus_preserves_negative_zero(self):
+        """
+        Negating a value that coerces to zero yields IEEE-754 negative zero, observable as `[ -0 ]`.
+        The evaluator must not collapse it to a positive-zero literal when it inlines the function.
+        """
+        self._check(
+            'function f(){ var x = -false; return x; } console.log([f()]);')
+
+    def test_multiplication_preserves_negative_zero(self):
+        """
+        `0 * -5` is negative zero, so `1 / (0 * -5)` is `-Infinity`. Folding the product must keep
+        the sign of the zero rather than collapse it to a positive zero.
+        """
+        self._check(
+            'function f(){ return 0 * -5; } console.log(1 / f());')
