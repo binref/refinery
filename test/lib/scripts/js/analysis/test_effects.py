@@ -150,3 +150,45 @@ class TestEffectModel(TestBase):
     def test_locally_shadowed_intrinsic_is_not_trusted(self):
         source = 'function f(){ var Math = { floor: 0 }; return Math.floor; }'
         self.assertFalse(self._summary(source, 'f').is_pure)
+
+    def test_global_intrinsic_read_is_pure(self):
+        self.assertTrue(self._summary('function f(){ return globalThis.Uint8Array; }', 'f').is_pure)
+
+    def test_global_intrinsic_read_through_window_alias_is_pure(self):
+        self.assertTrue(self._summary('function f(){ return window.String; }', 'f').is_pure)
+
+    def test_host_global_intrinsic_read_is_pure(self):
+        self.assertTrue(self._summary('function f(){ return globalThis.TextDecoder; }', 'f').is_pure)
+
+    def test_non_intrinsic_global_read_stays_impure(self):
+        summary = self._summary('function f(){ return globalThis.location; }', 'f')
+        self.assertTrue(summary.calls_unknown)
+        self.assertFalse(summary.is_pure)
+
+    def test_computed_global_intrinsic_read_stays_impure(self):
+        summary = self._summary("function f(){ return globalThis['String']; }", 'f')
+        self.assertTrue(summary.calls_unknown)
+        self.assertFalse(summary.is_pure)
+
+    def test_global_read_voided_by_accessor_install(self):
+        source = (
+            "Object.defineProperty(globalThis, 'String', { get: function(){ return 0; } });"
+            ' function f(){ return globalThis.Uint8Array; }'
+        )
+        ast, effects = self._effects(source)
+        self.assertFalse(effects.global_pristine)
+        self.assertFalse(effects.summary_of(self._func(ast, 'f')).is_pure)
+
+    def test_global_read_voided_by_reflection_surface(self):
+        source = "function f(){ return globalThis.Uint8Array; } eval('1');"
+        ast, effects = self._effects(source)
+        self.assertFalse(effects.global_pristine)
+        self.assertFalse(effects.summary_of(self._func(ast, 'f')).is_pure)
+
+    def test_shadowed_global_alias_read_is_not_trusted(self):
+        source = 'function f(){ var globalThis = { String: 0 }; return globalThis.String; }'
+        self.assertFalse(self._summary(source, 'f').is_pure)
+
+    def test_clean_program_is_global_pristine(self):
+        _, effects = self._effects('function f(){ return globalThis.Uint8Array; }')
+        self.assertTrue(effects.global_pristine)

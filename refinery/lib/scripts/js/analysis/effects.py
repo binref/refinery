@@ -14,7 +14,10 @@ freedom from observable effects, not a guarantee that the call returns.
 Purity of a call to a built-in (for example `String.fromCharCode`) is asserted only under a verified
 *pristine-intrinsics precondition*: the whole program must not reassign or monkeypatch any intrinsic the
 registry trusts, nor contain a reflection surface through which one could be replaced at runtime. When
-that precondition fails the registry is disregarded and such calls are treated as unknown.
+that precondition fails the registry is disregarded and such calls are treated as unknown. A read of a
+trusted intrinsic-named property off the global object (for example `globalThis.Uint8Array`) is treated
+likewise, under a parallel *pristine-global precondition*: no reflective surface and no accessor installed
+on the global object, so the read cannot run a user getter.
 
 The public surface — `EffectSummary`, `EffectModel.summary_of`, `EffectModel.is_pure_call`,
 `build_effects` — is representation-agnostic and keyed to AST node identity, matching the model's
@@ -94,6 +97,72 @@ _PURE_GLOBAL_FUNCTIONS = frozenset({
 _PURE_INTRINSIC_ROOTS = (
     frozenset(name.split('.', 1)[0] for name in _PURE_INTRINSIC_METHODS) | _PURE_GLOBAL_FUNCTIONS
 )
+
+_SPEC_GLOBAL_INTRINSICS = frozenset({
+    'Object',
+    'Boolean',
+    'Symbol',
+    'BigInt',
+    'Number',
+    'Math',
+    'Date',
+    'String',
+    'RegExp',
+    'Array',
+    'JSON',
+    'Promise',
+    'Reflect',
+    'Proxy',
+    'Map',
+    'Set',
+    'WeakMap',
+    'WeakSet',
+    'ArrayBuffer',
+    'SharedArrayBuffer',
+    'DataView',
+    'Int8Array',
+    'Uint8Array',
+    'Uint8ClampedArray',
+    'Int16Array',
+    'Uint16Array',
+    'Int32Array',
+    'Uint32Array',
+    'Float32Array',
+    'Float64Array',
+    'BigInt64Array',
+    'BigUint64Array',
+    'Error',
+    'EvalError',
+    'RangeError',
+    'ReferenceError',
+    'SyntaxError',
+    'TypeError',
+    'URIError',
+})
+"""
+Global properties the ECMAScript specification mandates as writable, configurable *data* properties of
+the global object. A read of one runs no user getter and so carries no observable effect, soundly and
+without any host assumption.
+"""
+
+_HOST_GLOBAL_INTRINSICS = frozenset({
+    'TextDecoder',
+    'TextEncoder',
+    'Buffer',
+})
+"""
+Global intrinsics a standard, non-adversarial host (Node, browsers) exposes as data properties. Trusted
+like `_SPEC_GLOBAL_INTRINSICS`, but resting on that host assumption rather than the language standard.
+"""
+
+_GLOBAL_DATA_PROPERTIES = _SPEC_GLOBAL_INTRINSICS | _HOST_GLOBAL_INTRINSICS
+
+_ACCESSOR_INSTALL_METHODS = frozenset({
+    'defineProperty',
+    'defineProperties',
+    '__defineGetter__',
+    '__defineSetter__',
+})
 
 
 class _PureCall:
@@ -175,6 +244,7 @@ class EffectModel:
     def __init__(self, model: SemanticModel):
         self.model = model
         self.intrinsics_pristine = _intrinsics_pristine(model)
+        self.global_pristine = _global_pristine(model)
         self._summaries: dict[int, EffectSummary] = {}
         self._functions: list[Node] = self._collect_functions()
         self._compute()
@@ -231,7 +301,11 @@ class EffectModel:
                     summary.throws = True
                 if _is_member_write(node):
                     summary.writes_global = True
-                elif base is not None and not self._base_getter_safe(base):
+                elif (
+                    base is not None
+                    and not self._base_getter_safe(base)
+                    and not self._is_trusted_global_read(node)
+                ):
                     summary.calls_unknown = True
             elif isinstance(node, (JsCallExpression, JsNewExpression)):
                 self._account_call(summary, node)
@@ -292,6 +366,29 @@ class EffectModel:
         if not self.intrinsics_pristine:
             return False
         return self.model.lookup(name.name, self.model.scope_of(name)) is None
+
+    def _is_trusted_global_read(self, member: JsMemberExpression) -> bool:
+        """
+        Whether reading *member* off the global object runs no user getter, so the read carries no
+        observable effect: a non-computed access of a trusted intrinsic-named data property on the global
+        object, sound only under the `global_pristine` precondition. This mirrors the intrinsic-call trust
+        of `_resolve_callee`, lifted from methods to global data-property reads.
+        """
+        if not self.global_pristine or member.computed:
+            return False
+        prop = member.property
+        if not isinstance(prop, JsIdentifier) or prop.name not in _GLOBAL_DATA_PROPERTIES:
+            return False
+        return member.object is not None and self._base_is_global_object(member.object)
+
+    def _base_is_global_object(self, node: Node) -> bool:
+        """
+        Whether *node* denotes the global object itself. The syntactic base case is an unshadowed
+        global-object alias identifier; a later value-provenance layer may prove more expressions global.
+        """
+        if isinstance(node, JsIdentifier) and node.name in GLOBAL_OBJECT_ALIASES:
+            return self.model.lookup(node.name, self.model.scope_of(node)) is None
+        return False
 
     def _base_is_safe(self, node: Node) -> bool:
         """
@@ -400,6 +497,23 @@ def _intrinsics_pristine(model: SemanticModel) -> bool:
                 and isinstance(target.object, JsIdentifier)
                 and target.object.name in _PURE_INTRINSIC_ROOTS
             ):
+                return False
+    return True
+
+
+def _global_pristine(model: SemanticModel) -> bool:
+    """
+    Whether a property read on the global object is free of user getters: the program exposes no
+    reflective surface through which an accessor could be installed at runtime, and installs none
+    statically through `Object.defineProperty`, `defineProperties`, or the legacy `__define[GS]etter__`.
+    Only under this precondition may a read of a trusted global data property be treated as effect-free.
+    """
+    if model.has_reflection_surface():
+        return False
+    for node in model.root.walk():
+        if isinstance(node, JsMemberExpression) and not node.computed:
+            prop = node.property
+            if isinstance(prop, JsIdentifier) and prop.name in _ACCESSOR_INSTALL_METHODS:
                 return False
     return True
 
