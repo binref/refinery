@@ -234,3 +234,16 @@ class TestDeobfuscationDifferential(TestBase):
         """
         self._check(
             'function f(){ return 0 * -5; } console.log(1 / f());')
+
+    def test_dead_store_effectful_call_keeps_orphan_function(self):
+        """
+        `leak` mutates the observed `SINK` and is reached only through a dead store, whose removal
+        preserves the call as a bare statement. Dropping the now-orphan `leak` and that call would
+        discard the push, so the printed `SINK` must still contain it.
+        """
+        self._check(
+            'var SINK = [];'
+            ' function leak() { SINK.push("x"); }'
+            ' var dead;'
+            ' dead = leak();'
+            ' console.log(SINK.join(","));')

@@ -799,7 +799,9 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
         Remove standalone expression statements that are side-effect-free given the set of
         known-removed names. Also iteratively discovers orphan functions: functions whose only
         live references are from preserved RHS statements (created by dead variable removal)
-        that would be side-effect-free if the function were defunct.
+        that would be side-effect-free if the function were defunct. A reference that *calls* the
+        function only counts as removable when the function is itself pure — dropping a call to an
+        impure function would discard its effect — whereas a bare reference is removable regardless.
         """
         functions: dict[str, JsFunctionDeclaration] = {}
         for stmt in body:
@@ -818,6 +820,9 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
                 for name, func in list(functions.items()):
                     if name in defunct:
                         continue
+                    assumed_pure = defunct
+                    if self.effects.summary_of(func).is_pure:
+                        assumed_pure = defunct | {name}
                     orphan = True
                     has_reference = False
                     for stmt in body:
@@ -838,7 +843,7 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
                         if (
                             stmt.expression is None
                             or isinstance(stmt.expression, JsAssignmentExpression)
-                            or not is_side_effect_free(stmt.expression, defunct | {name})
+                            or not is_side_effect_free(stmt.expression, assumed_pure)
                         ):
                             orphan = False
                             break

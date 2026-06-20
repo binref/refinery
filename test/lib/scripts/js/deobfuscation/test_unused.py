@@ -1018,3 +1018,27 @@ class TestRegressionBugs(TestJsDeobfuscator):
             """
         )
         self.assertEqual(source, self._run_transformer(source, JsUnusedCodeRemoval))
+
+    def test_impure_orphan_function_kept_when_dead_store_preserves_call(self):
+        source = inspect.cleandoc(
+            """
+            var SINK = [];
+            function leak() { SINK.push("x"); }
+            var dead;
+            dead = leak();
+            console.log(SINK.join(","));
+            """
+        )
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var SINK = [];
+                function leak() {
+                  SINK.push("x");
+                }
+                leak();
+                console.log(SINK.join(","));
+                """
+            ),
+            self._run_transformer(source, JsUnusedCodeRemoval),
+        )
