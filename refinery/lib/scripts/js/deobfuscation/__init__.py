@@ -14,6 +14,7 @@ from refinery.lib.scripts.js.deobfuscation.constants import JsConstantInlining
 from refinery.lib.scripts.js.deobfuscation.deadcode import JsDeadCodeElimination
 from refinery.lib.scripts.js.deobfuscation.dispatcher import JsDispatcherUnwrapper
 from refinery.lib.scripts.js.deobfuscation.evaluator import JsFunctionEvaluator
+from refinery.lib.scripts.js.deobfuscation.globalfinder import JsGlobalFinderInlining
 from refinery.lib.scripts.js.deobfuscation.iifeaccessor import JsIIFEAccessorPromoter
 from refinery.lib.scripts.js.deobfuscation.namespaces import JsNamespaceFlattening
 from refinery.lib.scripts.js.deobfuscation.objectfold import JsObjectFold
@@ -53,6 +54,7 @@ _pipeline = DeobfuscationPipeline(
             JsRestArrayUnpacking,
             JsArrayUnshuffle,
             JsConstantInlining,
+            JsGlobalFinderInlining,
         ),
         TransformerGroup(
             'resolve',
