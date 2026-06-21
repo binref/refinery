@@ -82,6 +82,19 @@ class TestEffectfulConstantCondition(TestJsDeobfuscator):
     def test_pure_array_test_dropped(self):
         self.assertEqual('a();', self._deadcode('if ([1, 2]) { a(); } else { b(); }'))
 
+    def test_pure_call_array_test_dropped(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function p() {
+                  return 1;
+                }
+                a();
+                """
+            ),
+            self._deadcode('function p() { return 1; } if ([p(), false]) { a(); } else { b(); }'),
+        )
+
 
 class TestRegressions(TestJsDeobfuscator):
 
