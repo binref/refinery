@@ -7,12 +7,13 @@ import ctypes
 import enum
 import os
 
-from pathlib import Path
+from pathlib import PureWindowsPath
 from typing import TextIO
 
-from refinery.lib.environment import environment
+from refinery.lib.environment import environment, logger
 
 _PS1_MAGIC = B'[BRPS1]:'
+_INVALID_HANDLE_VALUE = ctypes.c_void_p(-1).value
 
 
 class TH32CS(enum.IntEnum):
@@ -74,49 +75,98 @@ def get_parent_processes(__cache: list[list[str]] = []):
     except AttributeError:
         raise NotWindows
 
+    HANDLE = ctypes.c_void_p
+    BOOL = ctypes.c_int
+    DWORD = ctypes.c_uint32
+
+    k32.CreateToolhelp32Snapshot.restype = HANDLE
+    k32.CreateToolhelp32Snapshot.argtypes = DWORD, DWORD
+    k32.Process32First.restype = BOOL
+    k32.Process32First.argtypes = HANDLE, ctypes.POINTER(PROCESSENTRY32)
+    k32.Process32Next.restype = BOOL
+    k32.Process32Next.argtypes = HANDLE, ctypes.POINTER(PROCESSENTRY32)
+    k32.Module32First.restype = BOOL
+    k32.Module32First.argtypes = HANDLE, ctypes.POINTER(MODULEENTRY32)
+    k32.CloseHandle.restype = BOOL
+    k32.CloseHandle.argtypes = HANDLE,
+
+    def resolve_path(pid: int, name: bytes) -> str:
+        modsnap = k32.CreateToolhelp32Snapshot(TH32CS.SNAPMODULE, pid)
+        if modsnap and modsnap != _INVALID_HANDLE_VALUE:
+            mod = MODULEENTRY32()
+            mod.dwSize = ctypes.sizeof(MODULEENTRY32)
+            if k32.Module32First(modsnap, ctypes.byref(mod)):
+                name = mod.szExePath
+            k32.CloseHandle(modsnap)
+        return bytes(name).decode('latin1')
+
+    processes: dict[int, tuple[int, bytes]] = {}
     entry = PROCESSENTRY32()
     entry.dwSize = ctypes.sizeof(PROCESSENTRY32)
     snap = k32.CreateToolhelp32Snapshot(TH32CS.SNAPPROCESS, 0)
 
-    def FullPath():
-        path = entry.szExeFile
-        procsnap = k32.CreateToolhelp32Snapshot(TH32CS.SNAPMODULE, entry.th32ProcessID)
-        if procsnap:
-            mod = MODULEENTRY32()
-            mod.dwSize = ctypes.sizeof(MODULEENTRY32)
-            if k32.Module32First(procsnap, ctypes.byref(mod)):
-                path = mod.szExePath
-            k32.CloseHandle(procsnap)
-        return path
+    if snap and snap != _INVALID_HANDLE_VALUE:
+        try:
+            running = k32.Process32First(snap, ctypes.byref(entry))
+            while running:
+                cpid = entry.th32ProcessID
+                ppid = entry.th32ParentProcessID
+                if cpid != ppid:
+                    processes[cpid] = ppid, bytes(entry.szExeFile)
+                running = k32.Process32Next(snap, ctypes.byref(entry))
+        finally:
+            k32.CloseHandle(snap)
 
-    def NextProcess():
-        return k32.Process32Next(snap, ctypes.byref(entry))
-
-    if not snap:
-        raise RuntimeError('could not create snapshot')
-    try:
-        if not k32.Process32First(snap, ctypes.byref(entry)):
-            raise RuntimeError('could not iterate processes')
-        processes = {}
-        for _ in iter(NextProcess, 0):
-            cpid = entry.th32ProcessID
-            ppid = entry.th32ParentProcessID
-            if cpid == ppid:
-                continue
-            processes[cpid] = ppid, bytes(FullPath()).decode('latin1')
-    finally:
-        k32.CloseHandle(snap)
     pid = os.getpid()
     loop_detection = set()
     paths: list[str] = []
-    while pid in processes:
-        if pid in loop_detection:
-            break
+    while pid in processes and pid not in loop_detection:
         loop_detection.add(pid)
-        pid, path = processes[pid]
-        paths.append(path)
+        ppid, name = processes[pid]
+        paths.append(resolve_path(pid, name))
+        pid = ppid
     __cache.append(paths)
     return paths
+
+
+def _detect_powershell(paths: list[str]) -> bool:
+    """
+    Classifies a parent-process path chain (nearest ancestor first) and returns whether the
+    controlling shell is powershell.
+    """
+    for path in paths:
+        stem = PureWindowsPath(path.lower()).stem
+        if stem in ('cmd', 'bash'):
+            return False
+        if stem in ('powershell', 'pwsh'):
+            return True
+    return False
+
+
+def _detect_binref_support(paths: list[str]) -> bool:
+    """
+    Classifies a parent-process path chain (nearest ancestor first) and returns whether the
+    controlling shell is known to support binary refinery pipelines natively. PowerShell only
+    does so starting with version 7.4; the version is read from the WindowsApps package
+    directory name when it is available.
+    """
+    for path in paths:
+        path = PureWindowsPath(path.lower())
+        stem = path.stem
+        if stem in ('cmd', 'bash'):
+            return True
+        for part in path.parts:
+            if not part.startswith('microsoft.powershell'):
+                continue
+            try:
+                version = tuple(map(int, part.split('_')[1].split('.')))
+            except Exception:
+                continue
+            if version[:2] >= (7, 4):
+                return True
+        if stem in ('powershell', 'pwsh'):
+            return False
+    return True
 
 
 def is_powershell(__cache: list[bool] = []) -> bool:
@@ -128,13 +178,7 @@ def is_powershell(__cache: list[bool] = []) -> bool:
     result = False
     if os.name == 'nt':
         try:
-            for path in get_parent_processes():
-                stem = Path(path.lower()).stem
-                if stem in ('cmd', 'bash'):
-                    break
-                if stem in ('powershell', 'pwsh'):
-                    result = True
-                    break
+            result = _detect_powershell(get_parent_processes())
         except NotWindows:
             pass
     __cache.append(result)
@@ -151,30 +195,9 @@ def shell_supports_binref(__cache: list[bool] = []) -> bool:
     if __cache:
         return __cache[0]
     result = True
-    pwsh74 = False
     if os.name == 'nt':
         try:
-            for path in get_parent_processes():
-                path = Path(path.lower())
-                stem = path.stem
-                if stem == 'cmd':
-                    break
-                for part in path.parts:
-                    if not part.startswith('microsoft.powershell'):
-                        continue
-                    try:
-                        version = part.split('_')[1]
-                        version = tuple(map(int, version.split('.')))
-                    except Exception:
-                        continue
-                    if version[:2] >= (7, 4):
-                        pwsh74 = True
-                        break
-                if pwsh74:
-                    break
-                elif stem in ('powershell', 'pwsh'):
-                    result = False
-                    break
+            result = _detect_binref_support(get_parent_processes())
         except NotWindows:
             pass
     __cache.append(result)
@@ -185,7 +208,7 @@ class Ps1Wrapper:
     """
     Boilerplace for the STDIN and STDOUT wrappers.
     """
-    WRAPPED = False
+    WRAPPED: bool = False
 
     def __new__(cls, stream: TextIO):
         sb = stream.buffer
@@ -194,8 +217,6 @@ class Ps1Wrapper:
         return super().__new__(cls)
 
     def __init__(self, stream: TextIO):
-        if self is stream:
-            return
         self.stream = stream.buffer
 
     def __getattr__(self, key):
@@ -218,14 +239,13 @@ class PS1OutputWrapper(Ps1Wrapper):
 
     def write(self, data):
         if not data:
-            return
+            return 0
         import base64
         if not self._header_written:
             self.stream.write(_PS1_MAGIC)
             self._header_written = True
             if not Ps1Wrapper.WRAPPED and not environment.silence_ps1_warning.value:
-                import logging
-                logging.getLogger('root').critical(
+                logger(__name__).critical(
                     'WARNING: PowerShell has no support for binary pipelines or streaming. Binary Refinery '
                     'uses an unreliable and slow workaround: It is strongly recommended to use the command '
                     'processor instead. Proceed at your own peril!\n'
@@ -237,6 +257,7 @@ class PS1OutputWrapper(Ps1Wrapper):
         size = 1 << 15
         for k in range(0, len(view), size):
             self.stream.write(base64.b16encode(view[k:k + size]))
+        return len(data)
 
 
 class PS1InputWrapper(Ps1Wrapper):
@@ -267,7 +288,7 @@ class PS1InputWrapper(Ps1Wrapper):
             if size > 0:
                 size *= 2
             import base64
-            return base64.b16decode(self.stream.read(size).strip())
+            return base64.b16decode(self.stream.read(size).translate(None, b' \t\r\n\v\f'))
         else:
             return self.stream.read(size)
 
