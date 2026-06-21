@@ -77,6 +77,15 @@ class TestEffectModel(TestBase):
         self.assertFalse(effects.global_pristine)
         self.assertFalse(effects.summary_of(self._func(ast, 'f')).is_pure)
 
+    def test_write_to_function_confined_global_is_pure(self):
+        self.assertTrue(self._summary('function f(n){ acc = 0; acc = acc + n; return acc; }', 'f').is_pure)
+
+    def test_confined_global_read_in_another_function_is_impure(self):
+        source = 'function f(n){ acc = 0; acc = acc + n; return acc; } function g(){ return acc; }'
+        summary = self._summary(source, 'f')
+        self.assertTrue(summary.writes_global)
+        self.assertFalse(summary.is_pure)
+
     def test_global_object_property_write_is_a_global_write(self):
         summary = self._summary('function f(){ globalThis.cache = 1; }', 'f')
         self.assertTrue(summary.writes_global)
@@ -89,7 +98,12 @@ class TestEffectModel(TestBase):
         self.assertFalse(summary.is_pure)
 
     def test_closure_mutation_is_a_captured_write(self):
-        source = 'function outer(){ var c = 0; function inc(){ c += 1; } return inc; }'
+        source = (
+            'function outer(){ var c = 0;'
+            ' function inc(){ c += 1; }'
+            ' function read(){ return c; }'
+            ' return [inc, read]; }'
+        )
         summary = self._summary(source, 'inc')
         self.assertTrue(summary.writes_captured)
         self.assertFalse(summary.writes_global)

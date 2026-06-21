@@ -19,6 +19,12 @@ trusted intrinsic-named property off the global object (for example `globalThis.
 likewise, under a parallel *pristine-global precondition*: no reflective surface and no accessor installed
 on the global object, so the read cannot run a user getter.
 
+Symmetrically, an assignment is not counted as a write when nothing can observe it: the assigned binding
+is read nowhere, or every reference to it is confined to the assigning function so it never escapes. Both
+rest on the same pristine-global precondition, since a reflective surface or an installed setter could
+otherwise observe the assignment. This is what lets a function whose only effect is an obfuscator's
+scratch temporary — a write-only global, or an accumulator local to one function — be judged pure.
+
 The public surface — `EffectSummary`, `EffectModel.summary_of`, `EffectModel.is_pure_call`,
 `build_effects` — is representation-agnostic and keyed to AST node identity, matching the model's
 contract so a later control-flow layer can sharpen the same answers without changing callers.
@@ -220,6 +226,19 @@ def _scope_contains(outer: Scope, inner: Scope) -> bool:
     return False
 
 
+def _enclosing_function(node: Node) -> Node | None:
+    """
+    The nearest function node (declaration, expression, or arrow) that lexically encloses *node*, or
+    `None` when *node* sits at the top level below no function.
+    """
+    cursor = node.parent
+    while cursor is not None:
+        if isinstance(cursor, FUNCTION_NODES):
+            return cursor
+        cursor = cursor.parent
+    return None
+
+
 def _is_member_write(member: JsMemberExpression) -> bool:
     """
     Whether *member* is the target of a mutation — the left of an assignment, the operand of `++`/`--`,
@@ -247,6 +266,7 @@ class EffectModel:
         self.intrinsics_pristine = _intrinsics_pristine(model)
         self.global_pristine = _global_pristine(model)
         self._summaries: dict[int, EffectSummary] = {}
+        self._confine_cache: dict[int, Node | None] = {}
         self._functions: list[Node] = self._collect_functions()
         self._compute()
 
@@ -295,7 +315,7 @@ class EffectModel:
                 summary.throws = True
             elif isinstance(node, JsIdentifier):
                 if reference_role(node) is not Role.READ:
-                    self._account_write(summary, node, func_scope)
+                    self._account_write(summary, node, func_scope, func)
             elif isinstance(node, JsMemberExpression):
                 base = node.object
                 if base is not None and not self._base_is_safe(base):
@@ -312,12 +332,14 @@ class EffectModel:
                 self._account_call(summary, node)
         return summary
 
-    def _account_write(self, summary: EffectSummary, target: JsIdentifier, func_scope: Scope | None):
+    def _account_write(
+        self, summary: EffectSummary, target: JsIdentifier, func_scope: Scope | None, func: Node
+    ):
         binding = self.model.resolve(target)
         if binding is None:
             summary.writes_global = True
             return
-        if self._write_unobservable(binding):
+        if self._write_unobservable(binding, func):
             return
         if binding.kind is BindingKind.IMPLICIT_GLOBAL or binding.scope is self.model.root_scope:
             summary.writes_global = True
@@ -326,16 +348,52 @@ class EffectModel:
         else:
             summary.writes_captured = True
 
-    def _write_unobservable(self, binding: Binding) -> bool:
+    def _write_unobservable(self, binding: Binding, func: Node) -> bool:
         """
-        Whether assigning *binding* has no observable consumer, so a function whose only effect is the
-        assignment is pure. The value must be read nowhere (`Binding.is_read` is false) and the program
-        must be `global_pristine`: it exposes no reflection surface through which the name could be read
-        and installs no accessor that an assignment to a global property could trigger as a setter. This
-        ports the one sound permissiveness of the evaluator's retired purity analysis — a scratch binding
-        an obfuscator writes but never consumes.
+        Whether assigning *binding* within *func* has no observable consumer, so a function whose only
+        effect is the assignment is pure. The program must be `global_pristine`: it exposes no reflection
+        surface through which the name could be read and installs no accessor that an assignment to a
+        global property could trigger as a setter. Then the write is unobservable when either the value
+        is read nowhere (`Binding.is_read` is false), or every reference to it is `_confined_to` *func* so
+        no outside code can see it. This ports the evaluator's sound permissiveness for an obfuscator's
+        scratch binding — whether a write-only global or an accumulator local to a single function.
         """
-        return self.global_pristine and not binding.is_read
+        if not self.global_pristine:
+            return False
+        return not binding.is_read or self._confined_to(binding, func)
+
+    def _confined_to(self, binding: Binding, func: Node) -> bool:
+        """
+        Whether every reference to *binding* lies within *func*, which must be a function rather than the
+        script, so the binding does not escape: no code outside *func* can read it, and a write to it is
+        unobservable past the single call.
+        """
+        if not isinstance(func, FUNCTION_NODES):
+            return False
+        return self._confining_function(binding) is func
+
+    def _confining_function(self, binding: Binding) -> Node | None:
+        """
+        The single function that lexically encloses every reference to *binding*, or `None` when the
+        references do not share one — they span sibling functions or reach the top level. Cached per
+        binding, since the binding's reference set is fixed for the lifetime of the model.
+        """
+        key = id(binding)
+        if key not in self._confine_cache:
+            self._confine_cache[key] = self._scan_confining_function(binding)
+        return self._confine_cache[key]
+
+    def _scan_confining_function(self, binding: Binding) -> Node | None:
+        refs = self.model.references(binding)
+        if not refs:
+            return None
+        enclosing = _enclosing_function(refs[0])
+        if enclosing is None:
+            return None
+        for ref in refs[1:]:
+            if _enclosing_function(ref) is not enclosing:
+                return None
+        return enclosing
 
     def _account_call(self, summary: EffectSummary, call: JsCallExpression | JsNewExpression):
         callee = self._resolve_callee(call)
