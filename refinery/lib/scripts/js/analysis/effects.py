@@ -30,6 +30,7 @@ from typing import Iterator
 
 from refinery.lib.scripts import Node
 from refinery.lib.scripts.js.analysis.model import (
+    Binding,
     BindingKind,
     FUNCTION_NODES,
     GLOBAL_OBJECT_ALIASES,
@@ -313,14 +314,28 @@ class EffectModel:
 
     def _account_write(self, summary: EffectSummary, target: JsIdentifier, func_scope: Scope | None):
         binding = self.model.resolve(target)
-        if binding is None or binding.kind is BindingKind.IMPLICIT_GLOBAL:
+        if binding is None:
             summary.writes_global = True
-        elif binding.scope is self.model.root_scope:
+            return
+        if self._write_unobservable(binding):
+            return
+        if binding.kind is BindingKind.IMPLICIT_GLOBAL or binding.scope is self.model.root_scope:
             summary.writes_global = True
         elif func_scope is not None and _scope_contains(func_scope, binding.scope):
             pass
         else:
             summary.writes_captured = True
+
+    def _write_unobservable(self, binding: Binding) -> bool:
+        """
+        Whether assigning *binding* has no observable consumer, so a function whose only effect is the
+        assignment is pure. The value must be read nowhere (`Binding.is_read` is false) and the program
+        must be `global_pristine`: it exposes no reflection surface through which the name could be read
+        and installs no accessor that an assignment to a global property could trigger as a setter. This
+        ports the one sound permissiveness of the evaluator's retired purity analysis — a scratch binding
+        an obfuscator writes but never consumes.
+        """
+        return self.global_pristine and not binding.is_read
 
     def _account_call(self, summary: EffectSummary, call: JsCallExpression | JsNewExpression):
         callee = self._resolve_callee(call)

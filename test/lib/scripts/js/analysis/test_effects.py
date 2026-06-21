@@ -47,15 +47,35 @@ class TestEffectModel(TestBase):
         self.assertTrue(summary.is_pure)
 
     def test_global_assignment_is_a_global_write(self):
-        summary = self._summary('function f(){ leaked = 1; }', 'f')
+        source = 'function f(){ leaked = 1; } function r(){ return leaked; }'
+        summary = self._summary(source, 'f')
         self.assertTrue(summary.writes_global)
         self.assertFalse(summary.writes_captured)
         self.assertFalse(summary.is_pure)
 
     def test_assignment_to_declared_global_is_a_global_write(self):
-        summary = self._summary('var g; function f(){ g = 2; }', 'f')
+        source = 'var g; function f(){ g = 2; } function r(){ return g; }'
+        summary = self._summary(source, 'f')
         self.assertTrue(summary.writes_global)
         self.assertFalse(summary.is_pure)
+
+    def test_write_to_never_read_global_is_unobservable(self):
+        self.assertTrue(self._summary('function f(){ scratch = 1; }', 'f').is_pure)
+
+    def test_write_to_never_read_global_under_reflection_is_impure(self):
+        source = "function f(){ scratch = 1; } eval('1');"
+        ast, effects = self._effects(source)
+        self.assertFalse(effects.global_pristine)
+        self.assertFalse(effects.summary_of(self._func(ast, 'f')).is_pure)
+
+    def test_write_to_never_read_global_under_accessor_install_is_impure(self):
+        source = (
+            "Object.defineProperty(globalThis, 'scratch', { set: function(v){} });"
+            ' function f(){ scratch = 1; }'
+        )
+        ast, effects = self._effects(source)
+        self.assertFalse(effects.global_pristine)
+        self.assertFalse(effects.summary_of(self._func(ast, 'f')).is_pure)
 
     def test_global_object_property_write_is_a_global_write(self):
         summary = self._summary('function f(){ globalThis.cache = 1; }', 'f')
@@ -74,6 +94,10 @@ class TestEffectModel(TestBase):
         self.assertTrue(summary.writes_captured)
         self.assertFalse(summary.writes_global)
         self.assertFalse(summary.is_pure)
+
+    def test_write_to_never_read_capture_is_unobservable(self):
+        source = 'function outer(){ var c; function inner(){ c = 1; } return inner; }'
+        self.assertTrue(self._summary(source, 'inner').is_pure)
 
     def test_defining_a_mutating_closure_is_itself_pure(self):
         source = 'function outer(){ var c = 0; function inc(){ c += 1; } return inc; }'
@@ -105,7 +129,7 @@ class TestEffectModel(TestBase):
         self.assertTrue(self._summary(source, 'f').is_pure)
 
     def test_call_to_impure_local_function_propagates_its_effect(self):
-        source = 'function w(){ leaked = 1; } function f(){ w(); }'
+        source = 'function w(){ leaked = 1; } function f(){ w(); } function r(){ return leaked; }'
         summary = self._summary(source, 'f')
         self.assertTrue(summary.writes_global)
         self.assertFalse(summary.is_pure)
@@ -115,7 +139,7 @@ class TestEffectModel(TestBase):
         self.assertTrue(self._summary(source, 'f').is_pure)
 
     def test_mutual_recursion_propagates_effect_to_fixpoint(self):
-        source = 'function a(){ b(); } function b(){ leaked = 1; a(); }'
+        source = 'function a(){ b(); } function b(){ leaked = 1; a(); } function r(){ return leaked; }'
         self.assertTrue(self._summary(source, 'a').writes_global)
         self.assertFalse(self._summary(source, 'a').is_pure)
 

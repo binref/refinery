@@ -88,11 +88,15 @@ class TestGlobalFinderInlining(TestJsDeobfuscator):
         ))
 
     def test_function_writing_a_global_is_not_a_finder(self):
-        self.assertEqual(self._find('function g() { leaked = 1; return self; } g();'), inspect.cleandoc(
+        source = 'function g() { leaked = 1; return self; } function r() { return leaked; } g();'
+        self.assertEqual(self._find(source), inspect.cleandoc(
             '''
             function g() {
               leaked = 1;
               return self;
+            }
+            function r() {
+              return leaked;
             }
             g();
             '''
