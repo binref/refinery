@@ -694,16 +694,19 @@ def is_safe_iife_inline(
     expr: Node,
     param_names: Sequence[str],
     call_args: Sequence[Node],
+    call_pure: Callable[..., bool] | None = None,
 ) -> bool:
     """
     Verify that substituting IIFE arguments into the body expression preserves evaluation
     semantics. An argument that is side-effect-free can be freely moved or omitted. An effectful
     argument must be used exactly once, in an unconditionally-evaluated position, and in
-    declaration order relative to other effectful arguments.
+    declaration order relative to other effectful arguments. When *call_pure* is given (an
+    `refinery.lib.scripts.js.analysis.effects.EffectModel.is_pure_call`), a call argument it proves
+    pure also counts as side-effect-free.
     """
     effectful_indices = [
         i for i, arg in enumerate(call_args)
-        if not is_side_effect_free(arg)
+        if not side_effect_free(arg, call_pure=call_pure)
     ]
     if not effectful_indices:
         return True

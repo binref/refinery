@@ -27,6 +27,24 @@ class TestCallWrapperInliner(TestJsDeobfuscator):
             ),
         )
 
+    def test_pure_call_argument_does_not_block_inlining(self):
+        source = (
+            "function target(a) { return a + 1; }"
+            "function wrapper(x) { return target(x); }"
+            "var r = wrapper(String.fromCharCode(65));"
+        )
+        self.assertEqual(
+            self._run_transformer(source, JsCallWrapperInliner),
+            inspect.cleandoc(
+                """
+                function target(a) {
+                  return a + 1;
+                }
+                var r = target(String.fromCharCode(65));
+                """
+            ),
+        )
+
     def test_wrapper_preserves_non_wrapper_functions(self):
         source = (
             "function real(x) { console.log(x); return x * 2; }"

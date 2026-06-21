@@ -15,11 +15,12 @@ from refinery.lib.scripts import (
     _remove_from_parent,
     _replace_in_parent,
 )
+from refinery.lib.scripts.js.analysis.effects import build_effects
+from refinery.lib.scripts.js.analysis.model import build_semantic_model
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     ScriptLevelTransformer,
     extract_identifier_params,
     is_closed_expression,
-    is_side_effect_free,
     substitute_params,
 )
 from refinery.lib.scripts.js.model import (
@@ -100,6 +101,7 @@ class JsCallWrapperInliner(ScriptLevelTransformer):
         wrappers = _collect_wrappers(node)
         if not wrappers:
             return
+        effects = build_effects(build_semantic_model(node))
         inlined = False
         for ast_node in list(node.walk()):
             if not isinstance(ast_node, JsCallExpression):
@@ -111,7 +113,7 @@ class JsCallWrapperInliner(ScriptLevelTransformer):
                 continue
             if len(ast_node.arguments) != len(info.param_names):
                 continue
-            if not all(is_side_effect_free(a) for a in ast_node.arguments):
+            if not all(effects.is_side_effect_free(a) for a in ast_node.arguments):
                 continue
             replacement = substitute_params(
                 info.return_expression,

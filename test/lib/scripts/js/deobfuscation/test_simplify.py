@@ -421,6 +421,23 @@ class TestExtendedOperatorFolding(TestJsDeobfuscator):
         )
         self.assertEqual(source, self._simplify(source))
 
+    def test_pure_call_argument_can_duplicate_into_iife(self):
+        source = (
+            'function p() { return 1; }'
+            ' var r = (function(x) { return x + x; })(p());'
+        )
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function p() {
+                  return 1;
+                }
+                var r = p() + p();
+                """
+            ),
+            self._simplify(source),
+        )
+
     def test_nullish_coalescing_undefined(self):
         self.assertEqual("'default';", self._simplify("undefined ?? 'default';"))
 

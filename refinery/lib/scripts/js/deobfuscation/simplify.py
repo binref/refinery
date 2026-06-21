@@ -3,7 +3,10 @@ JavaScript syntax normalization transforms.
 """
 from __future__ import annotations
 
+from typing import Callable
+
 from refinery.lib.scripts import Node, Transformer
+from refinery.lib.scripts.js.analysis.effects import EffectModel, build_effects
 from refinery.lib.scripts.js.analysis.model import (
     BindingKind,
     SemanticModel,
@@ -228,11 +231,18 @@ class JsSimplifications(Transformer):
     def __init__(self):
         super().__init__()
         self._model: SemanticModel | None = None
+        self._effects: EffectModel | None = None
 
     @property
     def model(self) -> SemanticModel:
         assert self._model is not None
         return self._model
+
+    @property
+    def effects(self) -> EffectModel:
+        if self._effects is None:
+            self._effects = build_effects(self.model)
+        return self._effects
 
     def visit_JsScript(self, node: JsScript):
         """
@@ -242,6 +252,7 @@ class JsSimplifications(Transformer):
         a global-alias access, never collapse one that a local now captures.
         """
         self._model = build_semantic_model(node)
+        self._effects = None
         self.generic_visit(node)
         return None
 
@@ -315,7 +326,7 @@ class JsSimplifications(Transformer):
         if isinstance(fn, JsParenthesizedExpression):
             fn = fn.expression
         if isinstance(fn, JsFunctionExpression):
-            return self._try_inline_iife(node, fn)
+            return self._try_inline_iife(node, fn, lambda call: self.effects.is_pure_call(call))
         return (
             self._try_fold_static_method(node)
             or self._try_fold_free_function(node)
@@ -342,7 +353,11 @@ class JsSimplifications(Transformer):
         return None
 
     @staticmethod
-    def _try_inline_iife(node: JsCallExpression, fn: JsFunctionExpression) -> Node | None:
+    def _try_inline_iife(
+        node: JsCallExpression,
+        fn: JsFunctionExpression,
+        call_pure: Callable[..., bool],
+    ) -> Node | None:
         if fn.body is None or not isinstance(fn.body, JsBlockStatement):
             return None
         body = fn.body.body
@@ -357,7 +372,7 @@ class JsSimplifications(Transformer):
         expr = stmt.argument
         if not is_closed_expression(expr, set(param_names)):
             return None
-        if not is_safe_iife_inline(expr, param_names, node.arguments):
+        if not is_safe_iife_inline(expr, param_names, node.arguments, call_pure):
             return None
         return substitute_params(expr, param_names, node.arguments)
 
