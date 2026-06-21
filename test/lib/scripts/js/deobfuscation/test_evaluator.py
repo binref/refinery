@@ -21,6 +21,27 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
         )
         self.assertEqual(source, self._evaluate(source))
 
+    def test_call_with_nested_implicit_global_write_not_folded(self):
+        source = inspect.cleandoc(
+            """
+            var SINK = [];
+            function v1() {
+              function v2() {
+                v0 = 12;
+              }
+              return v2();
+            }
+            function v5() {
+              for (let i = 0; i < 1; i++) {
+                SINK.push(v1());
+              }
+              return v0;
+            }
+            SINK.push(v5());
+            """
+        )
+        self.assertEqual(source, self._evaluate(source))
+
     def test_simple_arithmetic(self):
         source = inspect.cleandoc(
             """

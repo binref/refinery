@@ -255,3 +255,16 @@ class TestDeobfuscationDifferential(TestBase):
         (false). Folding the comparison must not numerically coerce an array operand that stringifies.
         """
         self._check('console.log([false] <= ("op" + 7), (["ef", true] >= "cd") + 4);')
+
+    def test_nested_implicit_global_write_read_elsewhere_is_kept(self):
+        """
+        `v1` calls a nested `v2` that writes the implicit global `v0`, which `v5` later reads. The
+        evaluator must not fold `v1()` to its `undefined` result while dropping the nested write, or
+        the later read throws instead of seeing 12.
+        """
+        self._check(
+            'var SINK = [];'
+            ' function v1() { function v2() { v0 = 12; } return v2(); }'
+            ' function v5() { for (let i = 0; i < 1; i++) { SINK.push(v1()); } return v0; }'
+            ' SINK.push(v5());'
+            ' console.log(SINK.join(","));')

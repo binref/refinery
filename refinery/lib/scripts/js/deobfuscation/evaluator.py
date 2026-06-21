@@ -138,6 +138,10 @@ def _is_pure_function(
     if _is_switch_return_pattern(body, local_names):
         return True
     for node in walk_scope(body):
+        if isinstance(node, (JsFunctionDeclaration, JsFunctionExpression, JsArrowFunctionExpression)):
+            if node is not func and not _is_pure_function(node, known_pure | local_names):
+                return False
+            continue
         if isinstance(node, JsAssignmentExpression):
             if isinstance(node.left, JsIdentifier) and node.left.name == func_own_name:
                 return False
