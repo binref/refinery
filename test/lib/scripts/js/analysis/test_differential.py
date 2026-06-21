@@ -268,3 +268,18 @@ class TestDeobfuscationDifferential(TestBase):
             ' function v5() { for (let i = 0; i < 1; i++) { SINK.push(v1()); } return v0; }'
             ' SINK.push(v5());'
             ' console.log(SINK.join(","));')
+
+    def test_reassigned_global_not_inlined_as_initial_value(self):
+        """
+        `v0` starts at 7 but is reassigned to an array before `v3` (which reads `-v0`) ever runs, so
+        inlining the initial 7 into `v3` is unsound: the real reads must see the array (`-['ij']` is
+        NaN), not -7.
+        """
+        self._check(
+            'var SINK = [];'
+            ' var v0 = 7;'
+            ' function v3(v4) { return [-5, -v0, ["ij", "gh"]]; }'
+            ' function v6() { v0 = ["ij"]; return v3(true ? v0 : v0); }'
+            ' SINK.push(v6());'
+            ' SINK.push((!v0) === v3(3));'
+            ' console.log(SINK.join("|"));')

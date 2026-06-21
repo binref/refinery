@@ -28,6 +28,31 @@ class TestConstantInlining(TestJsDeobfuscator):
             self._inline("var x = 'a'; x = 'b'; console.log(x);"),
         )
 
+    def test_global_reassigned_in_called_function_not_inlined(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var v0 = 7;
+                function reads() {
+                  return -v0;
+                }
+                function writes() {
+                  v0 = 9;
+                  return reads();
+                }
+                SINK.push(writes());
+                SINK.push(reads());
+                """
+            ),
+            self._inline(
+                'var v0 = 7;'
+                ' function reads() { return -v0; }'
+                ' function writes() { v0 = 9; return reads(); }'
+                ' SINK.push(writes());'
+                ' SINK.push(reads());'
+            ),
+        )
+
     def test_mutated_variable_not_inlined(self):
         self.assertEqual(
             inspect.cleandoc(

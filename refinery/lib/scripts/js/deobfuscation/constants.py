@@ -698,6 +698,14 @@ class JsConstantInlining(ScopeProcessingTransformer):
             if isinstance(node, JsCallExpression) and isinstance(node.callee, JsIdentifier):
                 called_functions.add(node.callee.name)
 
+        for name in [
+            candidate for candidate in cross_candidates
+            if any(candidate in func_mods.get(callee, set()) for callee in called_functions)
+        ]:
+            del cross_candidates[name]
+        if not cross_candidates:
+            return
+
         for node in list(scope.walk()):
             if isinstance(node, JsMemberExpression) and node.computed:
                 obj = node.object
