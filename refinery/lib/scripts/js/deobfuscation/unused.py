@@ -42,7 +42,6 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     GLOBAL_OBJECT_ALIASES,
     collect_identifier_names,
     is_binding_site,
-    is_side_effect_free,
     property_key,
     remove_declarator,
     walk_scope,
@@ -52,12 +51,10 @@ from refinery.lib.scripts.js.model import (
     JsArrayPattern,
     JsAssignmentExpression,
     JsBlockStatement,
-    JsCallExpression,
     JsExpressionStatement,
     JsFunctionDeclaration,
     JsIdentifier,
     JsMemberExpression,
-    JsNewExpression,
     JsObjectExpression,
     JsObjectPattern,
     JsProperty,
@@ -464,19 +461,12 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
 
     def _is_removable(self, node: Node, defunct: set[str] | None = None) -> bool:
         """
-        Whether evaluating *node* can be dropped without losing an observable effect. This extends
-        the syntactic `refinery.lib.scripts.js.deobfuscation.helpers.is_side_effect_free` with the
-        effect model: a call to a function proven pure under a pristine intrinsic surface is
-        removable when its arguments are too, so a dead binding whose initializer is a pure decoder
-        or factory can be dropped even though it is a call.
+        Whether evaluating *node* can be dropped without losing an observable effect, via
+        `refinery.lib.scripts.js.analysis.effects.EffectModel.is_side_effect_free`: a call proven pure
+        under a pristine intrinsic surface is removable when its arguments are, so a dead binding whose
+        initializer is a pure decoder or factory can be dropped even though it is a call.
         """
-        if is_side_effect_free(node, defunct):
-            return True
-        if isinstance(node, (JsCallExpression, JsNewExpression)):
-            return self.effects.is_pure_call(node) and all(
-                self._is_removable(arg, defunct) for arg in node.arguments
-            )
-        return False
+        return self.effects.is_side_effect_free(node, defunct)
 
     def _reflection_reachable(self, binding: Binding | None) -> bool:
         """
@@ -702,7 +692,7 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
                 continue
             if any(self._reflection_reachable(self.model.resolve(t)) for t in targets):
                 continue
-            if expr.right is None or not is_side_effect_free(expr.right, defunct):
+            if expr.right is None or not self._is_removable(expr.right, defunct):
                 continue
             if not _destructuring_target_safe(expr.left, expr.right):
                 continue
@@ -783,7 +773,7 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
                 expr = stmt.expression
                 if not isinstance(expr, JsAssignmentExpression) or expr.right is None:
                     _remove_from_parent(stmt)
-                elif is_side_effect_free(expr.right, defunct | dead):
+                elif self._is_removable(expr.right, defunct | dead):
                     _remove_from_parent(stmt)
                 else:
                     stmt.expression = expr.right
@@ -843,7 +833,7 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
                         if (
                             stmt.expression is None
                             or isinstance(stmt.expression, JsAssignmentExpression)
-                            or not is_side_effect_free(stmt.expression, assumed_pure)
+                            or not self._is_removable(stmt.expression, assumed_pure)
                         ):
                             orphan = False
                             break

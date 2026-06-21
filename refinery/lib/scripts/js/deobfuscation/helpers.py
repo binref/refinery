@@ -24,6 +24,7 @@ from refinery.lib.scripts import (
     _remove_from_parent,
     _replace_in_parent,
 )
+from refinery.lib.scripts.js.analysis.effects import side_effect_free
 from refinery.lib.scripts.js.analysis.model import Binding, SemanticModel
 from refinery.lib.scripts.js.model import (
     JsArrayExpression,
@@ -32,7 +33,6 @@ from refinery.lib.scripts.js.model import (
     JsBinaryExpression,
     JsBlockStatement,
     JsBooleanLiteral,
-    JsCallExpression,
     JsClassDeclaration,
     JsClassExpression,
     JsConditionalExpression,
@@ -558,86 +558,16 @@ def is_nullish(node: Node) -> bool:
     return False
 
 
-def _is_safe_property_base(node: Node, defunct: set[str] | None = None) -> bool:
-    """
-    Check whether property access on *node* is guaranteed to be side-effect-free. Returns `True`
-    when the object is a value that cannot have custom getters: literals, fresh
-    object/array/function expressions, or identifiers in the *defunct* set (being removed, so
-    their getters are irrelevant to live code). Chained member expressions are safe when their
-    root base is safe.
-    """
-    if isinstance(node, (JsStringLiteral, JsNumericLiteral, JsBooleanLiteral, JsNullLiteral)):
-        return True
-    if isinstance(node, (JsObjectExpression, JsArrayExpression, JsFunctionExpression)):
-        return True
-    if isinstance(node, JsIdentifier):
-        return bool(defunct) and node.name in defunct
-    if isinstance(node, JsMemberExpression) and node.object is not None:
-        return _is_safe_property_base(node.object, defunct)
-    return False
-
-
 def is_side_effect_free(node: Node, defunct: set[str] | None = None) -> bool:
     """
-    Conservative check for whether an expression can be removed without observable side effects.
-    When *defunct* is provided, calls to identifiers in that set are treated as side-effect-free
-    (the function no longer exists in scope).
+    Conservative, model-free check for whether an expression can be removed without observable side
+    effects; a call is free only for a *defunct* identifier or an inline function expression. Code
+    that holds a `refinery.lib.scripts.js.analysis.effects.EffectModel` should prefer
+    `refinery.lib.scripts.js.analysis.effects.EffectModel.is_side_effect_free`, which additionally
+    clears calls proven pure. Thin wrapper over
+    `refinery.lib.scripts.js.analysis.effects.side_effect_free`.
     """
-    if isinstance(node, (JsStringLiteral, JsNumericLiteral, JsBooleanLiteral, JsNullLiteral)):
-        return True
-    if isinstance(node, JsIdentifier):
-        return True
-    if isinstance(node, JsFunctionExpression):
-        return True
-    if isinstance(node, JsUnaryExpression):
-        if node.operator == 'delete':
-            return False
-        return node.operand is not None and is_side_effect_free(node.operand, defunct)
-    if isinstance(node, JsMemberExpression):
-        if node.object is None:
-            return False
-        if not is_side_effect_free(node.object, defunct):
-            return False
-        if node.property is not None and not is_side_effect_free(node.property, defunct):
-            return False
-        return _is_safe_property_base(node.object, defunct)
-    if isinstance(node, (JsBinaryExpression, JsLogicalExpression)):
-        return (
-            node.left is not None
-            and is_side_effect_free(node.left, defunct)
-            and node.right is not None
-            and is_side_effect_free(node.right, defunct)
-        )
-    if isinstance(node, JsConditionalExpression):
-        return (
-            node.test is not None
-            and is_side_effect_free(node.test, defunct)
-            and node.consequent is not None
-            and is_side_effect_free(node.consequent, defunct)
-            and node.alternate is not None
-            and is_side_effect_free(node.alternate, defunct)
-        )
-    if isinstance(node, JsObjectExpression):
-        for prop in node.properties:
-            if not isinstance(prop, JsProperty):
-                return False
-            if prop.computed and (prop.key is None or not is_side_effect_free(prop.key, defunct)):
-                return False
-            if prop.value is not None and not is_side_effect_free(prop.value, defunct):
-                return False
-        return True
-    if isinstance(node, JsArrayExpression):
-        return all(
-            elem is None or is_side_effect_free(elem, defunct) for elem in node.elements
-        )
-    if isinstance(node, JsSequenceExpression):
-        return all(is_side_effect_free(e, defunct) for e in node.expressions)
-    if isinstance(node, JsCallExpression):
-        if defunct and isinstance(node.callee, JsIdentifier) and node.callee.name in defunct:
-            return all(is_side_effect_free(arg, defunct) for arg in node.arguments)
-        if isinstance(node.callee, JsFunctionExpression):
-            return all(is_side_effect_free(arg, defunct) for arg in node.arguments)
-    return False
+    return side_effect_free(node, defunct)
 
 
 def js_parse_int(s: str, radix: int = 10) -> int | None:

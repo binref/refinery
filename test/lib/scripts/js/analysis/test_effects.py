@@ -4,7 +4,12 @@ from test import TestBase
 
 from refinery.lib.scripts.js.analysis.effects import build_effects
 from refinery.lib.scripts.js.analysis.model import build_semantic_model
-from refinery.lib.scripts.js.model import JsCallExpression, JsFunctionDeclaration
+from refinery.lib.scripts.js.model import (
+    JsArrayExpression,
+    JsBinaryExpression,
+    JsCallExpression,
+    JsFunctionDeclaration,
+)
 from refinery.lib.scripts.js.parser import JsParser
 
 
@@ -230,3 +235,26 @@ class TestEffectModel(TestBase):
     def test_clean_program_is_global_pristine(self):
         _, effects = self._effects('function f(){ return globalThis.Uint8Array; }')
         self.assertTrue(effects.global_pristine)
+
+    def test_call_to_parameter_is_not_pure(self):
+        summary = self._summary('function f(g){ return g(); }', 'f')
+        self.assertTrue(summary.calls_unknown)
+        self.assertFalse(summary.is_pure)
+
+    def test_side_effect_free_clears_pure_intrinsic_call(self):
+        ast, effects = self._effects('String.fromCharCode(65);')
+        self.assertTrue(effects.is_side_effect_free(self._only_call(ast)))
+
+    def test_side_effect_free_rejects_unknown_call(self):
+        ast, effects = self._effects('ext();')
+        self.assertFalse(effects.is_side_effect_free(self._only_call(ast)))
+
+    def test_side_effect_free_composes_pure_call_inside_expression(self):
+        ast, effects = self._effects('1 + String.fromCharCode(65);')
+        expr = next(n for n in ast.walk_in_order() if isinstance(n, JsBinaryExpression))
+        self.assertTrue(effects.is_side_effect_free(expr))
+
+    def test_side_effect_free_rejects_array_holding_parameter_call(self):
+        ast, effects = self._effects('function f(g){ return [g()]; }')
+        array = next(n for n in ast.walk_in_order() if isinstance(n, JsArrayExpression))
+        self.assertFalse(effects.is_side_effect_free(array))
