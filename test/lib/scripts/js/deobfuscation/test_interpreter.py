@@ -34,6 +34,12 @@ class TestInterpreterValueSemantics(TestJsDeobfuscator):
     def test_add_object_operand_concatenates_object_tag(self):
         self.assertEqual("var x = '[object Object]1';", self._fold('({ a: 1 }) + 1'))
 
+    def test_relational_array_and_string_compare_as_strings(self):
+        self.assertEqual('var x = true;', self._fold("[false] <= 'op7'"))
+
+    def test_relational_array_ge_string_compares_as_strings(self):
+        self.assertEqual('var x = true;', self._fold("['ef', true] >= 'cd'"))
+
     def test_compound_add_array_operand_concatenates(self):
         source = inspect.cleandoc(
             """

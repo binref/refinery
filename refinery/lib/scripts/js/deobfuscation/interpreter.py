@@ -1576,8 +1576,11 @@ class JsInterpreter:
             raise InterpreterError
         if op == 'instanceof':
             raise InterpreterError
-        if op in RELATIONAL_OPS and isinstance(left, str) and isinstance(right, str):
-            return RELATIONAL_OPS[op](left, right)
+        if op in RELATIONAL_OPS:
+            left = _to_primitive(left)
+            right = _to_primitive(right)
+            if isinstance(left, str) and isinstance(right, str):
+                return RELATIONAL_OPS[op](left, right)
         result = eval_binary_op(op, to_number(left), to_number(right))
         if result is None:
             raise InterpreterError

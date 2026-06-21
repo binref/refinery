@@ -247,3 +247,11 @@ class TestDeobfuscationDifferential(TestBase):
             ' var dead;'
             ' dead = leak();'
             ' console.log(SINK.join(","));')
+
+    def test_relational_comparison_of_non_numeric_strings(self):
+        """
+        Relational operators ToPrimitive both operands first and compare as strings when both results
+        are strings: `[false] <= "op7"` is `"false" <= "op7"` (true), not a numeric `NaN <= NaN`
+        (false). Folding the comparison must not numerically coerce an array operand that stringifies.
+        """
+        self._check('console.log([false] <= ("op" + 7), (["ef", true] >= "cd") + 4);')
