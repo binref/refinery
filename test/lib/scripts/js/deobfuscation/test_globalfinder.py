@@ -66,18 +66,18 @@ class TestGlobalFinderInlining(TestJsDeobfuscator):
         ))
 
     def test_non_finder_returning_constant_is_unchanged(self):
-        self.assertEqual(self._find('function g() { return 1; } g();'), inspect.cleandoc(
+        source = inspect.cleandoc(
             '''
             function g() {
               return 1;
             }
             g();
             '''
-        ))
+        )
+        self.assertEqual(source, self._find(source))
 
     def test_external_call_keeps_function_opaque(self):
-        source = 'function g() { console.log(1); return window; } g();'
-        self.assertEqual(self._find(source), inspect.cleandoc(
+        source = inspect.cleandoc(
             '''
             function g() {
               console.log(1);
@@ -85,11 +85,11 @@ class TestGlobalFinderInlining(TestJsDeobfuscator):
             }
             g();
             '''
-        ))
+        )
+        self.assertEqual(source, self._find(source))
 
     def test_function_writing_a_global_is_not_a_finder(self):
-        source = 'function g() { leaked = 1; return self; } function r() { return leaked; } g();'
-        self.assertEqual(self._find(source), inspect.cleandoc(
+        source = inspect.cleandoc(
             '''
             function g() {
               leaked = 1;
@@ -100,21 +100,22 @@ class TestGlobalFinderInlining(TestJsDeobfuscator):
             }
             g();
             '''
-        ))
+        )
+        self.assertEqual(source, self._find(source))
 
     def test_call_with_arguments_is_not_substituted(self):
-        self.assertEqual(self._find('function g() { return window; } g(1);'), inspect.cleandoc(
+        source = inspect.cleandoc(
             '''
             function g() {
               return window;
             }
             g(1);
             '''
-        ))
+        )
+        self.assertEqual(source, self._find(source))
 
     def test_shadowed_globalthis_declines_substitution(self):
-        source = 'function g() { return window; } function h() { var globalThis; return g(); }'
-        self.assertEqual(self._find(source), inspect.cleandoc(
+        source = inspect.cleandoc(
             '''
             function g() {
               return window;
@@ -124,10 +125,11 @@ class TestGlobalFinderInlining(TestJsDeobfuscator):
               return g();
             }
             '''
-        ))
+        )
+        self.assertEqual(source, self._find(source))
 
     def test_returning_a_parameter_is_not_a_finder(self):
-        self.assertEqual(self._find('function g(o) { var x = window; return o; } g();'), inspect.cleandoc(
+        source = inspect.cleandoc(
             '''
             function g(o) {
               var x = window;
@@ -135,4 +137,5 @@ class TestGlobalFinderInlining(TestJsDeobfuscator):
             }
             g();
             '''
-        ))
+        )
+        self.assertEqual(source, self._find(source))
