@@ -6,9 +6,13 @@ from __future__ import annotations
 from typing import NamedTuple
 
 from refinery.lib.scripts import Node, _clone_node, _remove_from_parent, _replace_in_parent
-from refinery.lib.scripts.js.analysis.model import build_semantic_model
+from refinery.lib.scripts.js.analysis.model import (
+    Role,
+    Scope,
+    build_semantic_model,
+    reference_role,
+)
 from refinery.lib.scripts.js.deobfuscation.helpers import (
-    FUNCTION_NODE_TYPES,
     ScopeProcessingTransformer,
     collect_identifier_names,
     get_body,
@@ -22,7 +26,6 @@ from refinery.lib.scripts.js.model import (
     JsArrowFunctionExpression,
     JsAssignmentExpression,
     JsAwaitExpression,
-    JsBlockStatement,
     JsCallExpression,
     JsClassExpression,
     JsExpressionStatement,
@@ -164,48 +167,17 @@ def _is_literal_array(node: Node) -> bool:
     return all(el is not None and is_literal(el) for el in node.elements)
 
 
-def _function_local_names(func: JsFunctionDeclaration | JsFunctionExpression | JsArrowFunctionExpression) -> set[str]:
-    """
-    Collect names declared locally inside a function: parameter names, `var` declarations
-    (function-scoped), and top-level `let`/`const` declarations. Inner-block `let`/`const`
-    are block-scoped and do not shadow variables at the function level.
-    """
-    local_names: set[str] = set()
-    for p in func.params:
-        if isinstance(p, JsIdentifier):
-            local_names.add(p.name)
-        else:
-            for n in p.walk():
-                if isinstance(n, JsIdentifier):
-                    local_names.add(n.name)
-    if func.body is not None:
-        for n in func.body.walk():
-            if isinstance(n, JsVariableDeclaration) and n.kind is JsVarKind.VAR:
-                for d in n.declarations:
-                    if isinstance(d, JsVariableDeclarator) and isinstance(d.id, JsIdentifier):
-                        local_names.add(d.id.name)
-            if isinstance(n, FUNCTION_NODE_TYPES) and n is not func:
-                if isinstance(n, JsFunctionDeclaration) and n.id is not None:
-                    local_names.add(n.id.name)
-        if isinstance(func.body, JsBlockStatement):
-            for stmt in func.body.body:
-                if (
-                    isinstance(stmt, JsVariableDeclaration)
-                    and stmt.kind in (JsVarKind.LET, JsVarKind.CONST)
-                ):
-                    for d in stmt.declarations:
-                        if isinstance(d, JsVariableDeclarator) and isinstance(d.id, JsIdentifier):
-                            local_names.add(d.id.name)
-    return local_names
-
-
-def _compute_function_mods(scope: Node) -> dict[str, set[str]]:
+def _compute_function_mods(scope: Node, root: JsScript) -> dict[str, set[str]]:
     """
     For each function defined at the top level of *scope* — a function declaration, or a function
     expression or arrow function bound to a `var`/`let`/`const` declarator — compute the set of
     outer-scope variable names it can modify (directly or transitively through calls to other known
     functions). A call to such a function then seals those variables, so a closure assigning to a
     captured variable (`var set = function(){ x = 2; }; set();`) is not inlined past the call.
+
+    Write targets are resolved through the `refinery.lib.scripts.js.analysis.model.SemanticModel`, so a
+    name assigned inside the function counts only when it resolves to a binding the function does not
+    own — a write to the function's own local, or to a local of a nested function, is excluded.
     """
     functions: dict[str, JsFunctionDeclaration | JsFunctionExpression | JsArrowFunctionExpression] = {}
     body = getattr(scope, 'body', None)
@@ -225,35 +197,26 @@ def _compute_function_mods(scope: Node) -> dict[str, set[str]]:
     if not functions:
         return {}
 
+    model = build_semantic_model(root)
     direct_mods: dict[str, set[str]] = {}
     calls: dict[str, set[str]] = {}
 
     for fname, func in functions.items():
-        locals_ = _function_local_names(func)
         mods: set[str] = set()
         callees: set[str] = set()
         if func.body is None:
             direct_mods[fname] = mods
             calls[fname] = callees
             continue
+        func_scope = model.scope_of(func.body)
         for node in func.body.walk():
-            if isinstance(node, JsAssignmentExpression) and isinstance(node.left, JsIdentifier):
-                name = node.left.name
-                if name not in locals_:
-                    mods.add(name)
-            elif isinstance(node, JsAssignmentExpression) and isinstance(
-                node.left, (JsArrayPattern, JsObjectPattern),
-            ):
-                for name in _pattern_identifiers(node.left):
-                    if name not in locals_:
-                        mods.add(name)
-            elif isinstance(node, JsUpdateExpression) and isinstance(node.argument, JsIdentifier):
-                if node.argument.name not in locals_:
-                    mods.add(node.argument.name)
-            elif isinstance(node, (JsForInStatement, JsForOfStatement)):
-                if isinstance(node.left, JsIdentifier) and node.left.name not in locals_:
-                    mods.add(node.left.name)
-            if isinstance(node, JsCallExpression) and isinstance(node.callee, JsIdentifier):
+            if isinstance(node, JsIdentifier) and reference_role(node) is not Role.READ:
+                binding = model.resolve(node)
+                if binding is None:
+                    mods.add(node.name)
+                elif not _scope_within(binding.scope, func_scope):
+                    mods.add(binding.name)
+            elif isinstance(node, JsCallExpression) and isinstance(node.callee, JsIdentifier):
                 callee_name = node.callee.name
                 if callee_name in functions and callee_name != fname:
                     callees.add(callee_name)
@@ -272,6 +235,22 @@ def _compute_function_mods(scope: Node) -> dict[str, set[str]]:
                 changed = True
 
     return result
+
+
+def _scope_within(inner: Scope | None, outer: Scope | None) -> bool:
+    """
+    Whether scope *inner* is *outer* or lexically nested within it, so a binding owned by *inner* is
+    owned by *outer* as well. Used to separate a function's own (and nested) locals from the outer
+    variables a write reaches.
+    """
+    if outer is None:
+        return False
+    cursor = inner
+    while cursor is not None:
+        if cursor is outer:
+            return True
+        cursor = cursor.parent
+    return False
 
 
 def _is_member_array_safe(scope: Node, prefix_name: str, prop_name: str) -> bool:
@@ -420,7 +399,8 @@ class JsConstantInlining(ScopeProcessingTransformer):
         return super().visit_JsScript(node)
 
     def _process_scope(self, scope: Node) -> None:
-        func_mods = _compute_function_mods(scope)
+        assert self._root is not None
+        func_mods = _compute_function_mods(scope, self._root)
         while True:
             candidates, seal_points, mutated = self._collect_candidates(scope, func_mods)
             member_arrays = self._collect_member_array_candidates(scope)
