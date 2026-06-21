@@ -10,6 +10,7 @@ if TYPE_CHECKING:
     from refinery.lib.scripts.js.deobfuscation.interpreter import Value
 
 from refinery.lib.scripts import Node, _clone_node, _remove_from_parent, _replace_in_parent
+from refinery.lib.scripts.js.analysis.effects import EffectModel, build_effects
 from refinery.lib.scripts.js.analysis.model import Binding, SemanticModel, build_semantic_model
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     ScriptLevelTransformer,
@@ -108,16 +109,19 @@ class _Scope:
         return None
 
 
-def _is_pure_function(
+def _is_value_closed(
     func: JsFunctionDeclaration | JsFunctionExpression | JsArrowFunctionExpression,
     known_pure: set[str],
 ) -> bool:
     """
-    Check whether a function is eligible for evaluation. A function is eligible if its body is
-    closed — it only references its own parameters, variables declared within its body, functions
-    in the known-pure set, built-in methods from the registry, or well-known globals. Functions
-    whose body is a single switch-return pattern (globalConcealing shape) are also eligible even
-    if their return expressions reference external names — the irreducible fallback handles those.
+    Check whether a function's body is closed enough for the interpreter to evaluate a call to it: it
+    references only its own parameters, names declared within its body, functions in the known-pure
+    set, registry built-ins, and well-known globals. This is the *value* precondition — every name the
+    interpreter needs is resolvable — and is deliberately separate from the *effect* precondition that a
+    call writes no observable state, which `refinery.lib.scripts.js.analysis.effects.EffectModel`
+    decides. A body that is a single switch-return (globalConcealing shape) qualifies even when its
+    return expressions reference external names, because the irreducible fallback substitutes the
+    parameters into them.
     """
     for param in func.params:
         if not isinstance(param, JsIdentifier):
@@ -127,10 +131,8 @@ def _is_pure_function(
         return True
     local_names = {p.name for p in func.params if isinstance(p, JsIdentifier)}
     _collect_declared_names(body, local_names)
-    func_own_name: str | None = None
     if isinstance(func, JsFunctionDeclaration) and isinstance(func.id, JsIdentifier):
-        func_own_name = func.id.name
-        local_names.add(func_own_name)
+        local_names.add(func.id.name)
     elif isinstance(func, JsFunctionExpression) and isinstance(func.id, JsIdentifier):
         local_names.add(func.id.name)
     if references_receiver_this(body):
@@ -138,25 +140,11 @@ def _is_pure_function(
     if _is_switch_return_pattern(body, local_names):
         return True
     for node in walk_scope(body):
-        if isinstance(node, (JsFunctionDeclaration, JsFunctionExpression, JsArrowFunctionExpression)):
-            if node is not func and not _is_pure_function(node, known_pure | local_names):
-                return False
-            continue
-        if isinstance(node, JsAssignmentExpression):
-            if isinstance(node.left, JsIdentifier) and node.left.name == func_own_name:
-                return False
-            if isinstance(node.left, JsMemberExpression):
-                return False
-        if isinstance(node, JsIdentifier):
-            if is_reference(node) and node.name not in local_names:
-                name = node.name
-                if name in known_pure:
-                    continue
-                if name in ('undefined', 'NaN', 'Infinity'):
-                    continue
-                if is_runtime_name(name):
-                    continue
-                return False
+        if isinstance(node, JsIdentifier) and is_reference(node) and node.name not in local_names:
+            name = node.name
+            if name in known_pure or name in ('undefined', 'NaN', 'Infinity') or is_runtime_name(name):
+                continue
+            return False
     return True
 
 
@@ -223,40 +211,6 @@ def _collect_declared_names(body, names: set[str]) -> None:
             names.add(node.param.name)
 
 
-def _has_external_side_effects(
-    func: JsFunctionDeclaration | JsFunctionExpression | JsArrowFunctionExpression,
-) -> bool:
-    """
-    Return whether *func* performs observable side effects beyond simple identifier assignments.
-    Member-expression writes (e.g. `obj.prop = x`), delete expressions, and self-assignment
-    (reassigning the function's own name) are considered external side effects. Simple identifier
-    assignments (e.g. `rr = x`) to undeclared names are treated as harmless obfuscator temporaries.
-    """
-    body = func.body
-    if body is None:
-        return False
-    func_own_name: str | None = None
-    if isinstance(func, JsFunctionDeclaration) and isinstance(func.id, JsIdentifier):
-        func_own_name = func.id.name
-    elif isinstance(func, (JsFunctionExpression, JsArrowFunctionExpression)):
-        declarator = func.parent
-        if isinstance(declarator, JsVariableDeclarator) and isinstance(declarator.id, JsIdentifier):
-            func_own_name = declarator.id.name
-    for node in walk_scope(body, include_root_body=True):
-        if isinstance(node, JsAssignmentExpression):
-            if isinstance(node.left, JsMemberExpression):
-                return True
-            if (
-                func_own_name is not None
-                and isinstance(node.left, JsIdentifier)
-                and node.left.name == func_own_name
-            ):
-                return True
-        if isinstance(node, JsUnaryExpression) and node.operator == 'delete':
-            return True
-    return False
-
-
 def _unwrap_callee(node: Node) -> Node:
     while isinstance(node, JsParenthesizedExpression):
         if node.expression is None:
@@ -321,6 +275,7 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
     def __init__(self):
         super().__init__()
         self._script: JsScript | None = None
+        self._effects: EffectModel | None = None
         self._scope_map: dict[int, _Scope] = {}
         self._pure_nodes: set[int] = set()
         self._closure_env: dict[int, dict[str, Value]] = {}
@@ -331,11 +286,12 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
     def _process_script(self, node: JsScript) -> None:
         self._script = node
         self._build_scope_tree(node)
-        self._analyze_purity()
+        self._analyze_purity(node)
         self._evaluate_calls(node)
         self._remove_resolved_definitions(node)
 
     def _build_scope_tree(self, script: JsScript) -> None:
+        self._effects = None
         self._scope_map.clear()
         self._pure_nodes.clear()
         self._closure_env.clear()
@@ -564,7 +520,8 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
                     if isinstance(decl, JsVariableDeclarator) and isinstance(decl.id, JsIdentifier):
                         shadowed.add(decl.id.name)
 
-    def _analyze_purity(self) -> None:
+    def _analyze_purity(self, script: JsScript) -> None:
+        self._effects = build_effects(build_semantic_model(script))
         closure_cache: dict[int, dict[str, Value]] = {
             id(func): self._collect_closure_constants(func)
             for func in self._all_functions()
@@ -579,6 +536,8 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
                 scope = self._scope_map.get(id(func))
                 if scope is None:
                     continue
+                if not self._effects.summary_of(func).is_value_replaceable:
+                    continue
                 visible_pure: set[str] = set()
                 s: _Scope | None = scope
                 while s is not None:
@@ -586,13 +545,12 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
                         if id(f) in self._pure_nodes:
                             visible_pure.add(name)
                     s = s.parent
-                if _is_pure_function(func, visible_pure):
+                if _is_value_closed(func, visible_pure):
                     self._pure_nodes.add(id(func))
                     changed = True
                     continue
                 if (
                     not isinstance(func, JsFunctionDeclaration)
-                    and not _has_external_side_effects(func)
                     and func.body is not None
                     and not references_receiver_this(func.body)
                 ):
@@ -651,6 +609,8 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
         node: JsCallExpression,
         func: JsFunctionExpression | JsArrowFunctionExpression,
     ) -> None:
+        if self._effects is None or not self._effects.summary_of(func).is_value_replaceable:
+            return
         pure_names: set[str] = set()
         scope = self._scope_for_node(node)
         while scope is not None:
@@ -658,15 +618,14 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
                 if id(f) in self._pure_nodes:
                     pure_names.add(name)
             scope = scope.parent
-        if _is_pure_function(func, pure_names):
+        if _is_value_closed(func, pure_names):
             args = self._extract_constant_args(node.arguments, node)
             if args is None:
                 return
             self._evaluate_and_replace(node, func, args, gate_unresolved=False)
             return
         if (
-            not _has_external_side_effects(func)
-            and func.body is not None
+            func.body is not None
             and not references_receiver_this(func.body)
         ):
             unresolved = _unresolved_names(func, pure_names)

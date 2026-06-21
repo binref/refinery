@@ -204,6 +204,18 @@ class EffectSummary:
         """
         return not (self.writes_global or self.writes_captured or self.throws or self.calls_unknown)
 
+    @property
+    def is_value_replaceable(self) -> bool:
+        """
+        Whether replacing a call to the summarized function with its computed return value drops no
+        observable effect. This holds when the call writes no state visible after it returns — neither a
+        global nor a captured binding. Unlike `is_pure`, a call that may throw or read unknown state
+        still qualifies: an evaluator that actually executes the call to a value reproduces those, and
+        only a *write* would be silently lost. `is_pure`, which additionally forbids throwing and
+        unknown reads, is the right test for removing a call outright rather than replacing it.
+        """
+        return not (self.writes_global or self.writes_captured)
+
     def absorb(self, other: EffectSummary):
         """
         Union *other*'s effects into this summary, used to fold a callee's effects into its caller.

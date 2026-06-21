@@ -283,3 +283,15 @@ class TestDeobfuscationDifferential(TestBase):
             ' SINK.push(v6());'
             ' SINK.push((!v0) === v3(3));'
             ' console.log(SINK.join("|"));')
+
+    def test_escaping_global_temp_write_is_preserved(self):
+        """
+        The function `dec` writes the implicit global `rr` and returns a constant. Because `rr` is read
+        after the call, folding `dec("hi")` to its constant result would drop the write and the later
+        read would see `undefined`; the effect model marks the escaping write observable, so the call
+        is kept and the read still sees "hi".
+        """
+        self._check(
+            'const dec = function(s){ rr = s; return "x"; };'
+            ' var y = dec("hi");'
+            ' console.log(y, rr);')

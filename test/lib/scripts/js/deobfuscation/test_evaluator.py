@@ -666,6 +666,19 @@ class TestClosureCapture(TestJsDeobfuscator):
         result = self._evaluate(source)
         self.assertEqual("var r = 'hi!';", result)
 
+    def test_global_temp_read_outside_blocks_evaluation(self):
+        source = inspect.cleandoc(
+            """
+            const dec = function(s) {
+              rr = s;
+              return 'x';
+            };
+            var y = dec('hi');
+            console.log(rr);
+            """
+        )
+        self.assertEqual(source, self._evaluate(source))
+
     def test_block_scoped_const_fn_not_visible_outside(self):
         source = inspect.cleandoc(
             """
