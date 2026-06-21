@@ -4,7 +4,11 @@ import unittest
 
 from test import TestBase
 
-from test.lib.scripts.js.analysis.differential import behavior, node_executable
+from test.lib.scripts.js.analysis.differential import (
+    behavior,
+    deobfuscate_source,
+    node_executable,
+)
 from test.lib.scripts.js.analysis.jsgen import generate
 
 
@@ -44,4 +48,32 @@ class TestFuzzGeneratorRunsInNode(TestBase):
                 first,
                 behavior(source),
                 F'seed {seed} is not deterministic in node:\n{source}',
+            )
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestDeobfuscationFuzzSweep(TestBase):
+    """
+    The differential sweep itself: over a fixed seed range, a generated program and its deobfuscation
+    must behave identically in Node.js, and deobfuscation must not raise. Node is the oracle — no
+    expected output is asserted. This is the permanent regression gate that keeps the three fixed
+    semantics-preservation P0s closed (an effectful `if` test, negative zero, and an effectful call
+    dropped with a dead store). Generator soundness is the precondition checked above, so a failure
+    here is a deobfuscator bug, not a spurious input.
+    """
+
+    def test_deobfuscation_preserves_behavior_across_seeds(self):
+        for seed in range(64):
+            source = generate(seed)
+            original = behavior(source)
+            self.assertIsNone(
+                original[1],
+                F'seed {seed} did not run cleanly in node:\n{source}',
+            )
+            deobfuscated = deobfuscate_source(source)
+            self.assertEqual(
+                original,
+                behavior(deobfuscated),
+                F'seed {seed}: deobfuscation changed observable behavior\n'
+                F'--- source ---\n{source}\n--- deobfuscated ---\n{deobfuscated}',
             )
