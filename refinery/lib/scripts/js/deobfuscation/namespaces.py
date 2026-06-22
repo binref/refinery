@@ -6,7 +6,7 @@ from __future__ import annotations
 from typing import Iterator, NamedTuple
 
 from refinery.lib.scripts import Expression, Node, _replace_in_parent
-from refinery.lib.scripts.js.analysis.model import SemanticModel, build_semantic_model
+from refinery.lib.scripts.js.analysis.model import Scope, SemanticModel, build_semantic_model
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     FUNCTION_NODE_TYPES,
     ScopeProcessingTransformer,
@@ -31,22 +31,6 @@ from refinery.lib.scripts.js.model import (
 class _PropertyAssignment(NamedTuple):
     rhs: Expression
     stmt_index: int
-
-
-def _resolves_to_nested_binding(model: SemanticModel, node: JsIdentifier, scope: Node) -> bool:
-    """
-    Whether *node* names a binding declared strictly inside *scope* — within a nested function,
-    block, catch clause, or other inner scope. Such a reference denotes a local that shadows the
-    flattened property rather than clashing with it, so it is not a naming conflict. A binding owned
-    by *scope* itself, a free name, or a name reachable only across a dynamic scope is not nested and
-    counts as a conflict. Both reference and declaration positions are resolved, since a same-named
-    declaration nested below *scope* is likewise harmless.
-    """
-    binding = model.resolve(node) or model.binding_of(node)
-    if binding is None:
-        return False
-    owner = binding.scope.node
-    return owner is not scope and owner.is_descendant_of(scope)
 
 
 class JsNamespaceFlattening(ScopeProcessingTransformer):
@@ -74,7 +58,10 @@ class JsNamespaceFlattening(ScopeProcessingTransformer):
             if not props:
                 continue
             model = build_semantic_model(self._root)
-            conflicts = self._find_conflicting_names(model, scope, name, props, declarator)
+            scope_obj = model.scope_of(scope)
+            if scope_obj is None:
+                continue
+            conflicts = self._find_conflicting_names(model, scope, scope_obj, name, props, declarator)
             flattenable = props - conflicts
             if not flattenable:
                 continue
@@ -171,13 +158,15 @@ class JsNamespaceFlattening(ScopeProcessingTransformer):
     def _find_conflicting_names(
         model: SemanticModel,
         scope: Node,
+        scope_obj: Scope,
         name: str,
         props: set[str],
         declarator: JsVariableDeclarator,
     ) -> set[str]:
         """
         Return the subset of property names that cannot be flattened because they already appear
-        as variable references in the scope.
+        as variable references in the scope. An occurrence that resolves to a binding strictly
+        nested below *scope_obj* shadows the would-be declaration and is therefore not a conflict.
         """
         decl_id = declarator.id
         conflicts: set[str] = set()
@@ -193,7 +182,7 @@ class JsNamespaceFlattening(ScopeProcessingTransformer):
                 continue
             if isinstance(parent, JsMemberExpression) and parent.object is node:
                 continue
-            if _resolves_to_nested_binding(model, node, scope):
+            if model.is_shadowed(node.name, node, scope_obj):
                 continue
             conflicts.add(node.name)
         return conflicts
