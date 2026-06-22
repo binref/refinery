@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 from refinery.lib.scripts import Node, _clone_node, _remove_from_parent, _replace_in_parent
 from refinery.lib.scripts.js.analysis.cache import model_cache
 from refinery.lib.scripts.js.analysis.effects import EffectModel
-from refinery.lib.scripts.js.analysis.model import Binding, SemanticModel, build_semantic_model
+from refinery.lib.scripts.js.analysis.model import Binding, SemanticModel
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     ScriptLevelTransformer,
     access_key,
@@ -688,7 +688,7 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
     def _remove_resolved_definitions(self, script: JsScript) -> None:
         removed: set[int] = set()
         while True:
-            model = build_semantic_model(script)
+            model = model_cache(self, script).model
             before = len(removed)
             for func in self._all_functions():
                 func_id = id(func)
@@ -784,7 +784,7 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
                 closure_names.update(env.keys())
         if not closure_names:
             return
-        model = build_semantic_model(script)
+        model = model_cache(self, script).model
         for node in list(script.walk()):
             if not isinstance(node, JsVariableDeclaration) or node.kind != JsVarKind.CONST:
                 continue
