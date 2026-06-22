@@ -323,8 +323,8 @@ def _is_string_timer(call: JsCallExpression) -> bool:
 class SemanticModel:
     """
     The resolved scope/binding/def-use model for one script. Build it with `build_semantic_model` and
-    query it through `resolve`, `scope_of`, `binding_of`, `references`, `is_shadowed`, and
-    `has_reflection_surface`.
+    query it through `resolve`, `scope_of`, `binding_of`, `references`, `is_shadowed`,
+    `would_capture`, and `has_reflection_surface`.
     """
 
     def __init__(self, root: JsScript):
@@ -402,6 +402,24 @@ class SemanticModel:
             if cursor is outer:
                 return True
             cursor = cursor.parent
+        return False
+
+    def would_capture(self, names: set[str], scope: Scope) -> bool:
+        """
+        Whether introducing a binding for any of *names* directly in *scope* would capture an
+        identifier already meaningful there. Every use-position occurrence of one of *names* within
+        *scope*, including in a nested function that would close over the new binding, must already
+        resolve to a binding strictly nested below *scope* (see `is_shadowed`); otherwise that
+        occurrence — free, inherited from an enclosing scope, or bound in *scope* itself — would be
+        rebound by the introduced declaration.
+        """
+        for node in scope.node.walk():
+            if not isinstance(node, JsIdentifier) or node.name not in names:
+                continue
+            if not is_use_position(node):
+                continue
+            if not self.is_shadowed(node.name, node, scope):
+                return True
         return False
 
     def has_reflection_surface(self) -> bool:

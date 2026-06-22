@@ -240,6 +240,33 @@ class TestSemanticModel(TestBase):
         self.assertTrue(model.is_shadowed('x', inner_use, outer_scope))
         self.assertFalse(model.is_shadowed('x', outer_use, outer_scope))
 
+    def test_would_capture_is_false_when_all_occurrences_are_shadowed(self):
+        _, model = self._model(
+            'function outer(){ function inner(){ var x; return x; } }')
+        outer_scope = model.root_scope.children[0]
+        self.assertFalse(model.would_capture({'x'}, outer_scope))
+
+    def test_would_capture_is_true_for_a_free_reference(self):
+        _, model = self._model('function outer(){ return x; }')
+        outer_scope = model.root_scope.children[0]
+        self.assertTrue(model.would_capture({'x'}, outer_scope))
+
+    def test_would_capture_is_true_for_a_reference_bound_in_the_scope(self):
+        _, model = self._model('function outer(){ var x; return x; }')
+        outer_scope = model.root_scope.children[0]
+        self.assertTrue(model.would_capture({'x'}, outer_scope))
+
+    def test_would_capture_is_true_for_a_nested_closure_reference(self):
+        _, model = self._model(
+            'function outer(){ function inner(){ return x; } }')
+        outer_scope = model.root_scope.children[0]
+        self.assertTrue(model.would_capture({'x'}, outer_scope))
+
+    def test_would_capture_is_false_when_the_name_is_absent(self):
+        _, model = self._model('function outer(){ return y; }')
+        outer_scope = model.root_scope.children[0]
+        self.assertFalse(model.would_capture({'x'}, outer_scope))
+
     def test_implicit_global_assignment_creates_script_binding(self):
         ast, model = self._model('g = 1; g;')
         g_write, g_read = self._idents(ast, 'g')

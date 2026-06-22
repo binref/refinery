@@ -466,18 +466,6 @@ def _wrap_in_async_iife(stmts: list[Statement]) -> list[Statement]:
     return [iife]
 
 
-def _scope_strictly_within(inner: Scope, outer: Scope) -> bool:
-    """
-    Whether *inner* is a scope nested strictly below *outer*.
-    """
-    cursor = inner.parent
-    while cursor is not None:
-        if cursor is outer:
-            return True
-        cursor = cursor.parent
-    return False
-
-
 def _has_use_strict_directive(stmts: list[Statement]) -> bool:
     """
     Whether *stmts* opens with a `"use strict"` directive prologue. A strict `Function`-constructed
@@ -567,25 +555,6 @@ def _body_declared_names(body_model: SemanticModel) -> set[str]:
     }
 
 
-def _names_uncaptured_in(names: set[str], scope: Scope, root_model: SemanticModel) -> bool:
-    """
-    Whether introducing a binding for each of *names* into *scope* would capture no identifier already
-    present there: every occurrence of those names anywhere within *scope* (including nested functions
-    that would close over the new binding) must already resolve to a binding nested strictly below
-    *scope*. An occurrence that is free, inherited from an enclosing scope, or bound in *scope* itself
-    would be rebound by the introduced declaration.
-    """
-    for node in scope.node.walk():
-        if not isinstance(node, JsIdentifier) or node.name not in names:
-            continue
-        if not is_use_position(node):
-            continue
-        binding = root_model.binding_of(node) or root_model.resolve(node)
-        if binding is None or not _scope_strictly_within(binding.scope, scope):
-            return False
-    return True
-
-
 def _hoist_path_is_clear(names: set[str], site_scope: Scope, var_scope: Scope) -> bool:
     """
     Whether each hoisted `var`/function name can rise from the call site to *var_scope* without
@@ -630,11 +599,11 @@ def _inlined_declarations_safe(
         var_scope = site_scope
         while var_scope is not None and not var_scope.is_var_scope:
             var_scope = var_scope.parent
-        if var_scope is None or not _names_uncaptured_in(hoisted, var_scope, root_model):
+        if var_scope is None or root_model.would_capture(hoisted, var_scope):
             return False
         if not _hoist_path_is_clear(hoisted, site_scope, var_scope):
             return False
-    if lexical and not _names_uncaptured_in(lexical, site_scope, root_model):
+    if lexical and root_model.would_capture(lexical, site_scope):
         return False
     return True
 
