@@ -401,6 +401,14 @@ class TestExtendedOperatorFolding(TestJsDeobfuscator):
         source = "var r = (function(a, b) { return a <= b; })(arr[0], x);"
         self.assertEqual('var r = arr[0] <= x;', self._simplify(source))
 
+    def test_iife_inline_leaves_param_named_property_key(self):
+        source = 'var r = (function(a, b) { return b.a; })(1, obj);'
+        self.assertEqual('var r = obj.a;', self._simplify(source))
+
+    def test_iife_inline_substitutes_computed_property(self):
+        source = 'var r = (function(a, b) { return b[a]; })(0, arr);'
+        self.assertEqual('var r = arr[0];', self._simplify(source))
+
     def test_iife_preserves_conditional_effectful_arg(self):
         source = inspect.cleandoc(
             """

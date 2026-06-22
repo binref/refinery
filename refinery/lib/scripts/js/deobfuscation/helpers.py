@@ -25,7 +25,7 @@ from refinery.lib.scripts import (
     _replace_in_parent,
 )
 from refinery.lib.scripts.js.analysis.effects import side_effect_free
-from refinery.lib.scripts.js.analysis.model import Binding, SemanticModel
+from refinery.lib.scripts.js.analysis.model import Binding, SemanticModel, is_use_position
 from refinery.lib.scripts.js.model import (
     JsArrayExpression,
     JsArrowFunctionExpression,
@@ -700,7 +700,7 @@ def is_safe_iife_inline(
         return True
     use_counts = Counter(
         n.name for n in expr.walk()
-        if isinstance(n, JsIdentifier)
+        if isinstance(n, JsIdentifier) and is_use_position(n)
     )
     for i in effectful_indices:
         if use_counts[param_names[i]] != 1:
@@ -726,14 +726,15 @@ def substitute_params(
     arguments: Sequence[Node],
 ) -> Node:
     """
-    Deep-clone *expression* and replace every `refinery.lib.scripts.js.model.JsIdentifier` whose
-    name appears in *param_names* with a clone of the positionally corresponding node from
-    *arguments*.
+    Deep-clone *expression* and replace every use-position `refinery.lib.scripts.js.model.JsIdentifier`
+    whose name appears in *param_names* with a clone of the positionally corresponding node from
+    *arguments*. A non-computed property key (the `a` in `b.a`) names a property rather than the
+    parameter, so it is left untouched even when it happens to share a parameter's name.
     """
     cloned = _clone_node(expression)
     mapping = dict(zip(param_names, arguments))
     for node in list(cloned.walk()):
-        if isinstance(node, JsIdentifier) and node.name in mapping:
+        if isinstance(node, JsIdentifier) and node.name in mapping and is_use_position(node):
             _replace_in_parent(node, _clone_node(mapping[node.name]))
     return cloned
 
@@ -771,7 +772,10 @@ def try_inline_trivial_function(
         return None
     if relaxed:
         for i, name in enumerate(param_names):
-            uses = sum(1 for n in expr.walk() if isinstance(n, JsIdentifier) and n.name == name)
+            uses = sum(
+                1 for n in expr.walk()
+                if isinstance(n, JsIdentifier) and n.name == name and is_use_position(n)
+            )
             if uses > 1 and not is_simple_expression(call_args[i]):
                 return None
     return substitute_params(expr, param_names, call_args)
