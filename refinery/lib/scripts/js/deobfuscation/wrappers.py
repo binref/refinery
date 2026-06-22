@@ -15,8 +15,7 @@ from refinery.lib.scripts import (
     _remove_from_parent,
     _replace_in_parent,
 )
-from refinery.lib.scripts.js.analysis.effects import build_effects
-from refinery.lib.scripts.js.analysis.model import build_semantic_model
+from refinery.lib.scripts.js.analysis.cache import model_cache
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     ScriptLevelTransformer,
     extract_identifier_params,
@@ -101,7 +100,7 @@ class JsCallWrapperInliner(ScriptLevelTransformer):
         wrappers = _collect_wrappers(node)
         if not wrappers:
             return
-        effects = build_effects(build_semantic_model(node))
+        effects = model_cache(self, node).effects
         inlined = False
         for ast_node in list(node.walk()):
             if not isinstance(ast_node, JsCallExpression):

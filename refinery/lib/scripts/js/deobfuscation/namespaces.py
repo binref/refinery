@@ -6,7 +6,8 @@ from __future__ import annotations
 from typing import Iterator, NamedTuple
 
 from refinery.lib.scripts import Expression, Node, _replace_in_parent
-from refinery.lib.scripts.js.analysis.model import Scope, SemanticModel, build_semantic_model
+from refinery.lib.scripts.js.analysis.cache import model_cache
+from refinery.lib.scripts.js.analysis.model import Scope, SemanticModel
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     FUNCTION_NODE_TYPES,
     ScopeProcessingTransformer,
@@ -57,7 +58,7 @@ class JsNamespaceFlattening(ScopeProcessingTransformer):
             props = self._collect_properties(scope, name, declarator)
             if not props:
                 continue
-            model = build_semantic_model(self._root)
+            model = model_cache(self, self._root).model
             scope_obj = model.scope_of(scope)
             if scope_obj is None:
                 continue

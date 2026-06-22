@@ -9,7 +9,8 @@ from __future__ import annotations
 from typing import NamedTuple
 
 from refinery.lib.scripts import Node, Statement
-from refinery.lib.scripts.js.analysis.model import SemanticModel, build_semantic_model
+from refinery.lib.scripts.js.analysis.cache import model_cache
+from refinery.lib.scripts.js.analysis.model import SemanticModel
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     BodyProcessingTransformer,
     access_key,
@@ -256,7 +257,7 @@ class JsControlFlowUnflattening(BodyProcessingTransformer):
                 i += 1
                 continue
             assert self._root is not None
-            model = build_semantic_model(self._root)
+            model = model_cache(self, self._root).model
             if not _consumed_only_by_dispatcher(model, match, order_info):
                 i += 1
                 continue

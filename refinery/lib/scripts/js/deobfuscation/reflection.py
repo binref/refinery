@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import NamedTuple
 
 from refinery.lib.scripts import Expression, Node, _clone_node, _replace_in_parent
+from refinery.lib.scripts.js.analysis.cache import model_cache
 from refinery.lib.scripts.js.analysis.effects import side_effect_free
 from refinery.lib.scripts.js.analysis.model import (
     BindingKind,
@@ -760,7 +761,7 @@ class JsReflectionInlining(ScriptLevelTransformer):
         declared = _body_declared_names(body_model)
         if not free and not declared:
             return parsed
-        root_model = build_semantic_model(self._root)
+        root_model = model_cache(self, self._root).model
         site_scope = root_model.scope_of(site)
         if site_scope is None:
             return None

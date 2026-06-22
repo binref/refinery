@@ -6,9 +6,10 @@ from __future__ import annotations
 from typing import NamedTuple
 
 from refinery.lib.scripts import Node, _clone_node, _remove_from_parent, _replace_in_parent
+from refinery.lib.scripts.js.analysis.cache import model_cache
 from refinery.lib.scripts.js.analysis.model import (
     Role,
-    build_semantic_model,
+    SemanticModel,
     reference_role,
 )
 from refinery.lib.scripts.js.deobfuscation.helpers import (
@@ -166,7 +167,7 @@ def _is_literal_array(node: Node) -> bool:
     return all(el is not None and is_literal(el) for el in node.elements)
 
 
-def _compute_function_mods(scope: Node, root: JsScript) -> dict[str, set[str]]:
+def _compute_function_mods(scope: Node, model: SemanticModel) -> dict[str, set[str]]:
     """
     For each function defined at the top level of *scope* — a function declaration, or a function
     expression or arrow function bound to a `var`/`let`/`const` declarator — compute the set of
@@ -196,7 +197,6 @@ def _compute_function_mods(scope: Node, root: JsScript) -> dict[str, set[str]]:
     if not functions:
         return {}
 
-    model = build_semantic_model(root)
     direct_mods: dict[str, set[str]] = {}
     calls: dict[str, set[str]] = {}
 
@@ -383,7 +383,7 @@ class JsConstantInlining(ScopeProcessingTransformer):
 
     def _process_scope(self, scope: Node) -> None:
         assert self._root is not None
-        func_mods = _compute_function_mods(scope, self._root)
+        func_mods = _compute_function_mods(scope, model_cache(self, self._root).model)
         while True:
             candidates, seal_points, mutated = self._collect_candidates(scope, func_mods)
             member_arrays = self._collect_member_array_candidates(scope)
@@ -652,7 +652,7 @@ class JsConstantInlining(ScopeProcessingTransformer):
             return
 
         assert self._root is not None
-        model = build_semantic_model(self._root)
+        model = model_cache(self, self._root).model
         outer = model.scope_of(scope)
         assert outer is not None
 

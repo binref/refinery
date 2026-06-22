@@ -23,12 +23,12 @@ from __future__ import annotations
 from typing import Iterator
 
 from refinery.lib.scripts import Node, _replace_in_parent
-from refinery.lib.scripts.js.analysis.effects import EffectModel, build_effects
+from refinery.lib.scripts.js.analysis.cache import model_cache
+from refinery.lib.scripts.js.analysis.effects import EffectModel
 from refinery.lib.scripts.js.analysis.model import (
     Binding,
     GLOBAL_OBJECT_ALIASES,
     SemanticModel,
-    build_semantic_model,
 )
 from refinery.lib.scripts.js.deobfuscation.helpers import ScriptLevelTransformer
 from refinery.lib.scripts.js.model import (
@@ -63,8 +63,9 @@ class JsGlobalFinderInlining(ScriptLevelTransformer):
     self_converging = True
 
     def _process_script(self, node: JsScript) -> None:
-        model = build_semantic_model(node)
-        finders = _collect_finders(node, model)
+        cache = model_cache(self, node)
+        model = cache.model
+        finders = _collect_finders(node, model, cache.effects)
         if not finders:
             return
         finder_ids = {id(f) for f in finders}
@@ -84,8 +85,11 @@ class JsGlobalFinderInlining(ScriptLevelTransformer):
             self.mark_changed()
 
 
-def _collect_finders(root: JsScript, model: SemanticModel) -> list[JsFunctionDeclaration]:
-    effects = build_effects(model)
+def _collect_finders(
+    root: JsScript,
+    model: SemanticModel,
+    effects: EffectModel,
+) -> list[JsFunctionDeclaration]:
     return [
         node for node in root.walk()
         if isinstance(node, JsFunctionDeclaration)
