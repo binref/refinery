@@ -330,7 +330,9 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
             self.generic_visit(node)
             self._process_body(node, node.body)
             pass_changed = self.changed
-            self.changed = previously_changed or pass_changed
+            # Carry the cumulative change flag without going through the setter: this is bookkeeping,
+            # not a tree mutation, so it must not drop the shared model cache.
+            self._changed = previously_changed or pass_changed
             if not pass_changed:
                 break
         return None

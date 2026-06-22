@@ -287,6 +287,25 @@ class Transformer(Visitor):
         return None
 
 
+_tree_version = 0
+
+
+def tree_version() -> int:
+    """
+    The current value of the monotonic AST-mutation counter. Every structural mutation routed through
+    `_replace_in_parent` or `_remove_from_parent` advances it. `ModelCache` records the value its
+    models were built at and rebuilds once the counter moves, so a transform observes models that are
+    consistent with the current tree even when an earlier mutation in the same pass has not yet been
+    announced through `Transformer.changed`.
+    """
+    return _tree_version
+
+
+def _bump_tree_version() -> None:
+    global _tree_version
+    _tree_version += 1
+
+
 def _replace_in_parent(old: Node, new: Node):
     """
     Replace `old` with `new` in `old`'s parent node. Sets `new.parent` and handles direct fields,
@@ -302,11 +321,13 @@ def _replace_in_parent(old: Node, new: Node):
         value = getattr(parent, attr_name)
         if value is old:
             setattr(parent, attr_name, new)
+            _bump_tree_version()
             return
         if isinstance(value, list):
             for i, item in enumerate(value):
                 if item is old:
                     value[i] = new
+                    _bump_tree_version()
                     return
                 if isinstance(item, tuple):
                     lst = list(item)
@@ -314,6 +335,7 @@ def _replace_in_parent(old: Node, new: Node):
                         if elem is old:
                             lst[j] = new
                             value[i] = tuple(lst)
+                            _bump_tree_version()
                             return
 
 
@@ -333,6 +355,7 @@ def _remove_from_parent(node: Node) -> bool:
             for i, item in enumerate(value):
                 if item is node:
                     del value[i]
+                    _bump_tree_version()
                     return True
     return False
 

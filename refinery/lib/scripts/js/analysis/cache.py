@@ -6,7 +6,7 @@ instead of each transform rebuilding from scratch on every pass.
 """
 from __future__ import annotations
 
-from refinery.lib.scripts import Transformer
+from refinery.lib.scripts import Transformer, tree_version
 from refinery.lib.scripts.js.analysis.effects import EffectModel, build_effects
 from refinery.lib.scripts.js.analysis.liveness import LivenessModel, build_liveness
 from refinery.lib.scripts.js.analysis.model import SemanticModel, build_semantic_model
@@ -18,13 +18,17 @@ class ModelCache:
     Lazily builds and memoizes the `refinery.lib.scripts.js.analysis.model.SemanticModel` and the
     `refinery.lib.scripts.js.analysis.effects.EffectModel` and
     `refinery.lib.scripts.js.analysis.liveness.LivenessModel` layered on it, for one root script.
-    `invalidate` drops the memoized models so the next access rebuilds them; the effect and liveness
-    models are always built on the current semantic model, so a single `invalidate` keeps the three
-    consistent.
+    The memoized models are dropped whenever the global AST-mutation counter
+    (`refinery.lib.scripts.tree_version`) advances past the value they were built at, so a transform
+    that reads the cache after an earlier mutation in the same pass — even one not yet announced
+    through `refinery.lib.scripts.Transformer.changed` — observes models consistent with the current
+    tree. `invalidate` forces the same drop explicitly. The effect and liveness models are always
+    built on the current semantic model, so dropping the three together keeps them consistent.
     """
 
     def __init__(self, root: JsScript):
         self.root = root
+        self._version = tree_version()
         self._model: SemanticModel | None = None
         self._effects: EffectModel | None = None
         self._liveness: LivenessModel | None = None
@@ -34,20 +38,29 @@ class ModelCache:
         self._effects = None
         self._liveness = None
 
+    def _ensure_fresh(self) -> None:
+        version = tree_version()
+        if version != self._version:
+            self._version = version
+            self.invalidate()
+
     @property
     def model(self) -> SemanticModel:
+        self._ensure_fresh()
         if self._model is None:
             self._model = build_semantic_model(self.root)
         return self._model
 
     @property
     def effects(self) -> EffectModel:
+        self._ensure_fresh()
         if self._effects is None:
             self._effects = build_effects(self.model)
         return self._effects
 
     @property
     def liveness(self) -> LivenessModel:
+        self._ensure_fresh()
         if self._liveness is None:
             self._liveness = build_liveness(self.model)
         return self._liveness
