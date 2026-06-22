@@ -26,8 +26,9 @@ This transformer performs four phases:
 from __future__ import annotations
 
 from refinery.lib.scripts import Node, _remove_from_parent
-from refinery.lib.scripts.js.analysis.effects import EffectModel, build_effects
-from refinery.lib.scripts.js.analysis.liveness import LivenessModel, build_liveness
+from refinery.lib.scripts.js.analysis.cache import model_cache
+from refinery.lib.scripts.js.analysis.effects import EffectModel
+from refinery.lib.scripts.js.analysis.liveness import LivenessModel
 from refinery.lib.scripts.js.analysis.model import (
     Binding,
     BindingKind,
@@ -35,7 +36,6 @@ from refinery.lib.scripts.js.analysis.model import (
     Scope,
     ScopeKind,
     SemanticModel,
-    build_semantic_model,
 )
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     BodyProcessingTransformer,
@@ -320,9 +320,10 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
         while True:
             previously_changed = self.changed
             self.changed = False
-            self._model = build_semantic_model(node)
-            self._effects = build_effects(self._model)
-            self._liveness = build_liveness(self._model)
+            cache = model_cache(self, node)
+            self._model = cache.model
+            self._effects = cache.effects
+            self._liveness = cache.liveness
             self._has_reflection = self._model.has_reflection_surface()
             self._remove_dead_stores(node)
             self._localize_pseudo_globals(node)

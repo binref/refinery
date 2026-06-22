@@ -6,11 +6,11 @@ from __future__ import annotations
 from typing import Callable
 
 from refinery.lib.scripts import Node, Transformer
+from refinery.lib.scripts.js.analysis.cache import model_cache
 from refinery.lib.scripts.js.analysis.effects import EffectModel, build_effects
 from refinery.lib.scripts.js.analysis.model import (
     BindingKind,
     SemanticModel,
-    build_semantic_model,
 )
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     FUNCTION_NODE_TYPES,
@@ -251,7 +251,7 @@ class JsSimplifications(Transformer):
         locally bound stays bound; reading shadowing from that model can therefore only over-preserve
         a global-alias access, never collapse one that a local now captures.
         """
-        self._model = build_semantic_model(node)
+        self._model = model_cache(self, node).model
         self._effects = None
         self.generic_visit(node)
         return None

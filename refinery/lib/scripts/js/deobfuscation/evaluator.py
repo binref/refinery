@@ -10,7 +10,8 @@ if TYPE_CHECKING:
     from refinery.lib.scripts.js.deobfuscation.interpreter import Value
 
 from refinery.lib.scripts import Node, _clone_node, _remove_from_parent, _replace_in_parent
-from refinery.lib.scripts.js.analysis.effects import EffectModel, build_effects
+from refinery.lib.scripts.js.analysis.cache import model_cache
+from refinery.lib.scripts.js.analysis.effects import EffectModel
 from refinery.lib.scripts.js.analysis.model import Binding, SemanticModel, build_semantic_model
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     ScriptLevelTransformer,
@@ -521,7 +522,7 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
                         shadowed.add(decl.id.name)
 
     def _analyze_purity(self, script: JsScript) -> None:
-        self._effects = build_effects(build_semantic_model(script))
+        self._effects = model_cache(self, script).effects
         closure_cache: dict[int, dict[str, Value]] = {
             id(func): self._collect_closure_constants(func)
             for func in self._all_functions()

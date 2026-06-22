@@ -11,7 +11,7 @@ import io
 import typing
 
 from dataclasses import dataclass, field
-from typing import Callable, Generator, TypeVar
+from typing import Callable, Generator, Protocol, TypeVar
 
 
 class Kind(enum.IntEnum):
@@ -192,18 +192,41 @@ class Visitor:
             self.visit(child)
 
 
+class AnalysisCache(Protocol):
+    """
+    The minimal surface the transformer base needs from a per-run analysis cache: a hook to drop its
+    memoized analyses when the tree changes. A concrete cache adds the model accessors its consumers
+    use; see `refinery.lib.scripts.js.analysis.cache.ModelCache`.
+    """
+    def invalidate(self) -> None: ...
+
+
 class Transformer(Visitor):
     """
     In-place tree rewriter. Each visit method may return a replacement node
     or `None` to keep the original. Tracks whether any transformation was applied
     via the `changed` flag.
+
+    When a `models` cache is attached by the pipeline, setting `changed` truthy invalidates it, so a
+    transform that mutates the tree never leaves a stale model behind for the next consumer.
     """
 
     self_converging: bool = False
 
     def __init__(self):
         super().__init__()
-        self.changed = False
+        self._changed = False
+        self.models: AnalysisCache | None = None
+
+    @property
+    def changed(self) -> bool:
+        return self._changed
+
+    @changed.setter
+    def changed(self, value: bool):
+        self._changed = value
+        if value and self.models is not None:
+            self.models.invalidate()
 
     def mark_changed(self):
         self.changed = True

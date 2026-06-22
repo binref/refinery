@@ -7,7 +7,7 @@ any group makes changes, all other groups are marked unstable.
 """
 from __future__ import annotations
 
-from refinery.lib.scripts import Node, Transformer
+from refinery.lib.scripts import AnalysisCache, Node, Transformer
 
 
 class DeobfuscationTimeout(Exception):
@@ -25,11 +25,18 @@ class TransformerGroup:
         self.name = name
         self.transformers = transformers
 
-    def run(self, ast: Node, steps: int = 0, max_steps: int = 0) -> tuple[bool, int]:
+    def run(
+        self,
+        ast: Node,
+        steps: int = 0,
+        max_steps: int = 0,
+        models: AnalysisCache | None = None,
+    ) -> tuple[bool, int]:
         """
         Run all transformers in a loop until none report changes. Returns (changed, steps) where
         changed indicates whether any transformation was applied and steps is the updated step
-        counter.
+        counter. Each transformer instance shares the *models* cache so it reuses the run's analysis
+        models instead of rebuilding them, and invalidates that cache when it changes the tree.
         """
         changed = False
         active = set(range(len(self.transformers)))
@@ -39,6 +46,7 @@ class TransformerGroup:
                 if i not in active:
                     continue
                 t = cls()
+                t.models = models
                 t.visit(ast)
                 if t.changed:
                     steps += 1
@@ -87,12 +95,19 @@ class DeobfuscationPipeline:
             if unknown := targets - all_names:
                 raise ValueError(F'group {name!r} invalidates unknown groups: {unknown}')
 
-    def run(self, ast: Node, max_steps: int = 0, initial_steps: int = 0) -> int:
+    def run(
+        self,
+        ast: Node,
+        max_steps: int = 0,
+        initial_steps: int = 0,
+        models: AnalysisCache | None = None,
+    ) -> int:
         """
         Execute the pipeline. Returns the total number of transformer invocations that resulted in a
         change, including `initial_steps` carried over from an earlier phase so that a shared
         `max_steps` budget is enforced across phases. A return value equal to `initial_steps` means
-        the pipeline was already stable.
+        the pipeline was already stable. When *models* is given, every transformer in the run shares
+        that analysis cache.
         """
         stable: set[str] = set()
         steps = initial_steps
@@ -104,7 +119,7 @@ class DeobfuscationPipeline:
                 if (d := self._dependencies.get(name)) and not d <= stable:
                     continue
                 group = self._groups[name]
-                changed, steps = group.run(ast, steps, max_steps)
+                changed, steps = group.run(ast, steps, max_steps, models)
                 stable.add(name)
                 if changed:
                     targets = self._invalidators.get(name)

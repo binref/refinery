@@ -26,6 +26,7 @@ from refinery.lib.scripts.js.deobfuscation.stringarray import JsStringArrayResol
 from refinery.lib.scripts.js.deobfuscation.unshuffle import JsArrayUnshuffle
 from refinery.lib.scripts.js.deobfuscation.unused import JsUnusedCodeRemoval
 from refinery.lib.scripts.js.deobfuscation.wrappers import JsCallWrapperInliner
+from refinery.lib.scripts.js.analysis.cache import ModelCache
 from refinery.lib.scripts.js.model import JsScript
 from refinery.lib.scripts.pipeline import DeobfuscationPipeline, TransformerGroup
 
@@ -88,4 +89,4 @@ def deobfuscate(ast: JsScript, max_steps: int = 0) -> int:
     """
     Apply all available deobfuscators to the input.
     """
-    return _pipeline.run(ast, max_steps=max_steps)
+    return _pipeline.run(ast, max_steps=max_steps, models=ModelCache(ast))

@@ -10,12 +10,11 @@ model, so a test that only invokes proven-pure functions or intrinsics is droppe
 from __future__ import annotations
 
 from refinery.lib.scripts import Node, Statement
+from refinery.lib.scripts.js.analysis.cache import model_cache
 from refinery.lib.scripts.js.analysis.effects import (
     EffectModel,
-    build_effects,
     side_effect_free,
 )
-from refinery.lib.scripts.js.analysis.model import build_semantic_model
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     BodyProcessingTransformer,
     is_statically_evaluable,
@@ -51,7 +50,7 @@ class JsDeadCodeElimination(BodyProcessingTransformer):
         if self._root is None:
             return None
         if self._effects is None:
-            self._effects = build_effects(build_semantic_model(self._root))
+            self._effects = model_cache(self, self._root).effects
         return self._effects
 
     def visit_JsScript(self, node: JsScript):
