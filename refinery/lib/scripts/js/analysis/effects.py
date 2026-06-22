@@ -43,6 +43,7 @@ from refinery.lib.scripts.js.analysis.model import (
     Role,
     Scope,
     SemanticModel,
+    enclosing_function,
     reference_role,
 )
 from refinery.lib.scripts.js.model import (
@@ -231,31 +232,6 @@ class EffectSummary:
         self.calls_unknown = self.calls_unknown or other.calls_unknown
 
 
-def _scope_contains(outer: Scope, inner: Scope) -> bool:
-    """
-    Whether *inner* is *outer* itself or a scope nested below it.
-    """
-    cursor: Scope | None = inner
-    while cursor is not None:
-        if cursor is outer:
-            return True
-        cursor = cursor.parent
-    return False
-
-
-def _enclosing_function(node: Node) -> Node | None:
-    """
-    The nearest function node (declaration, expression, or arrow) that lexically encloses *node*, or
-    `None` when *node* sits at the top level below no function.
-    """
-    cursor = node.parent
-    while cursor is not None:
-        if isinstance(cursor, FUNCTION_NODES):
-            return cursor
-        cursor = cursor.parent
-    return None
-
-
 def _is_member_write(member: JsMemberExpression) -> bool:
     """
     Whether *member* is the target of a mutation — the left of an assignment, the operand of `++`/`--`,
@@ -429,7 +405,7 @@ class EffectModel:
 
     def _scan(self, func: Node) -> EffectSummary:
         summary = EffectSummary()
-        func_scope = self._function_scope(func)
+        func_scope = self.model.function_scope(func)
         for node in _body_nodes(func):
             if isinstance(node, JsThrowStatement):
                 summary.throws = True
@@ -463,7 +439,7 @@ class EffectModel:
             return
         if binding.kind is BindingKind.IMPLICIT_GLOBAL or binding.scope is self.model.root_scope:
             summary.writes_global = True
-        elif func_scope is not None and _scope_contains(func_scope, binding.scope):
+        elif func_scope is not None and func_scope.contains(binding.scope):
             pass
         else:
             summary.writes_captured = True
@@ -507,11 +483,11 @@ class EffectModel:
         refs = self.model.references(binding)
         if not refs:
             return None
-        enclosing = _enclosing_function(refs[0])
+        enclosing = enclosing_function(refs[0])
         if enclosing is None:
             return None
         for ref in refs[1:]:
-            if _enclosing_function(ref) is not enclosing:
+            if enclosing_function(ref) is not enclosing:
                 return None
         return enclosing
 
@@ -630,14 +606,6 @@ class EffectModel:
         if isinstance(node, JsMemberExpression):
             return node.object is not None and self._base_getter_safe(node.object)
         return False
-
-    def _function_scope(self, func: Node) -> Scope | None:
-        if isinstance(func, JsScript):
-            return self.model.root_scope
-        body = getattr(func, 'body', None)
-        if body is None:
-            return None
-        return self.model.scope_of(body)
 
 
 def _body_nodes(func: Node) -> Iterator[Node]:

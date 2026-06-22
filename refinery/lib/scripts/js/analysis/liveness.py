@@ -45,6 +45,7 @@ from refinery.lib.scripts.js.analysis.model import (
     Scope,
     ScopeKind,
     SemanticModel,
+    enclosing_function,
     is_use_position,
     reference_role,
 )
@@ -58,7 +59,6 @@ from refinery.lib.scripts.js.model import (
     JsObjectPattern,
     JsProperty,
     JsRestElement,
-    JsScript,
     JsVariableDeclarator,
 )
 
@@ -131,7 +131,7 @@ class LivenessModel:
         if located is None:
             return False
         graph, node = located
-        owner_scope = self._function_scope(graph.owner)
+        owner_scope = self.model.function_scope(graph.owner)
         binding, construct = self._store_target(write)
         if binding is None or construct is None:
             return False
@@ -220,7 +220,7 @@ class LivenessModel:
         self._pseudo_locals = {owner: frozenset(bindings) for owner, bindings in grouped.items()}
 
     def _compute_graph(self, graph: ControlFlowGraph):
-        owner_scope = self._function_scope(graph.owner)
+        owner_scope = self.model.function_scope(graph.owner)
         use: dict[int, set[Binding]] = {}
         kill: dict[int, set[Binding]] = {}
         for node in graph.nodes:
@@ -434,7 +434,7 @@ class LivenessModel:
             and not binding.captured
             and owner_scope is not None
             and owner_scope.kind is ScopeKind.FUNCTION
-            and self._owning_var_scope(binding.scope) is owner_scope
+            and binding.scope.var_scope is owner_scope
         )
 
     def _analysable(
@@ -459,7 +459,7 @@ class LivenessModel:
         """
         owner: Node | None = None
         for ref in (*binding.reads, *binding.writes):
-            function = self._owning_function(ref)
+            function = enclosing_function(ref)
             if function is None:
                 return None
             if owner is None:
@@ -468,38 +468,12 @@ class LivenessModel:
                 return None
         return owner
 
-    @staticmethod
-    def _owning_function(node: Node) -> Node | None:
-        """
-        The innermost function node that lexically contains *node*, or `None` if it sits at script scope.
-        """
-        cursor = node.parent
-        while cursor is not None:
-            if isinstance(cursor, FUNCTION_NODES):
-                return cursor
-            cursor = cursor.parent
-        return None
-
     def _has_initializer(self, binding: Binding) -> bool:
         for declaration in binding.declarations:
             declarator = self._enclosing_declarator(declaration)
             if declarator is not None and declarator.init is not None:
                 return True
         return False
-
-    @staticmethod
-    def _owning_var_scope(scope: Scope | None) -> Scope | None:
-        while scope is not None and not scope.is_var_scope:
-            scope = scope.parent
-        return scope
-
-    def _function_scope(self, owner: Node) -> Scope | None:
-        if isinstance(owner, JsScript):
-            return self.model.root_scope
-        body = getattr(owner, 'body', None)
-        if body is None:
-            return None
-        return self.model.scope_of(body)
 
     def _locate(self, write: JsIdentifier) -> tuple[ControlFlowGraph, CfgNode] | None:
         cursor: Node | None = write

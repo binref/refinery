@@ -247,16 +247,8 @@ def _root_is_local(expr: Node | None, func: Node, model: SemanticModel) -> bool:
 def _binding_within(binding: Binding | None, func: Node, model: SemanticModel) -> bool:
     if binding is None:
         return False
-    body = getattr(func, 'body', None)
-    func_scope = model.scope_of(body) if body is not None else None
-    if func_scope is None:
-        return False
-    scope = binding.scope
-    while scope is not None:
-        if scope is func_scope:
-            return True
-        scope = scope.parent
-    return False
+    func_scope = model.function_scope(func)
+    return func_scope is not None and func_scope.contains(binding.scope)
 
 
 def _is_global_alias(node: Node, model: SemanticModel) -> bool:

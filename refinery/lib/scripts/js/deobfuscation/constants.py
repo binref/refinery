@@ -8,7 +8,6 @@ from typing import NamedTuple
 from refinery.lib.scripts import Node, _clone_node, _remove_from_parent, _replace_in_parent
 from refinery.lib.scripts.js.analysis.model import (
     Role,
-    Scope,
     build_semantic_model,
     reference_role,
 )
@@ -214,7 +213,7 @@ def _compute_function_mods(scope: Node, root: JsScript) -> dict[str, set[str]]:
                 binding = model.resolve(node)
                 if binding is None:
                     mods.add(node.name)
-                elif not _scope_within(binding.scope, func_scope):
+                elif func_scope is None or not func_scope.contains(binding.scope):
                     mods.add(binding.name)
             elif isinstance(node, JsCallExpression) and isinstance(node.callee, JsIdentifier):
                 callee_name = node.callee.name
@@ -235,22 +234,6 @@ def _compute_function_mods(scope: Node, root: JsScript) -> dict[str, set[str]]:
                 changed = True
 
     return result
-
-
-def _scope_within(inner: Scope | None, outer: Scope | None) -> bool:
-    """
-    Whether scope *inner* is *outer* or lexically nested within it, so a binding owned by *inner* is
-    owned by *outer* as well. Used to separate a function's own (and nested) locals from the outer
-    variables a write reaches.
-    """
-    if outer is None:
-        return False
-    cursor = inner
-    while cursor is not None:
-        if cursor is outer:
-            return True
-        cursor = cursor.parent
-    return False
 
 
 def _is_member_array_safe(scope: Node, prefix_name: str, prop_name: str) -> bool:

@@ -175,6 +175,31 @@ class Scope:
         """
         return self.kind is ScopeKind.FUNCTION or self.kind is ScopeKind.SCRIPT
 
+    @property
+    def var_scope(self) -> Scope | None:
+        """
+        The function or script scope that governs `var`/function-declaration hoisting for this scope:
+        this scope itself when it is already a var-scope, otherwise the nearest enclosing one (the
+        boundary a closure crosses).
+        """
+        scope: Scope | None = self
+        while scope is not None and not scope.is_var_scope:
+            scope = scope.parent
+        return scope
+
+    def contains(self, other: Scope, *, strict: bool = False) -> bool:
+        """
+        Whether this scope lexically contains *other*: *other* itself or any scope nested below it.
+        With *strict*, the reflexive case is excluded, so only a scope nested strictly below this one
+        qualifies — the shape of the shadowing test in `SemanticModel.is_shadowed`.
+        """
+        cursor: Scope | None = other.parent if strict else other
+        while cursor is not None:
+            if cursor is self:
+                return True
+            cursor = cursor.parent
+        return False
+
 
 def is_use_position(node: JsIdentifier) -> bool:
     """
@@ -272,13 +297,17 @@ def _walk_skipping_functions(stmts: list) -> Iterator[Node]:
         stack.extend(reversed(node.children()))
 
 
-def _owning_function(scope: Scope | None) -> Scope | None:
+def enclosing_function(node: Node) -> Node | None:
     """
-    The nearest enclosing function or script scope of *scope* (the boundary a closure crosses).
+    The nearest function node — declaration, expression, or arrow — that lexically encloses *node*, or
+    `None` when *node* sits at the top level below no function.
     """
-    while scope is not None and not scope.is_var_scope:
-        scope = scope.parent
-    return scope
+    cursor = node.parent
+    while cursor is not None:
+        if isinstance(cursor, FUNCTION_NODES):
+            return cursor
+        cursor = cursor.parent
+    return None
 
 
 def _is_global_base(node: Node | None) -> bool:
@@ -343,6 +372,18 @@ class SemanticModel:
         """
         return self._node_scope.get(id(node))
 
+    def function_scope(self, func: Node) -> Scope | None:
+        """
+        The scope a function (or the script) introduces for its body: the script's `root_scope`, or
+        the body block's scope for a function node, and `None` when *func* has no body block.
+        """
+        if isinstance(func, JsScript):
+            return self.root_scope
+        body = getattr(func, 'body', None)
+        if body is None:
+            return None
+        return self.scope_of(body)
+
     def binding_of(self, decl_id: JsIdentifier) -> Binding | None:
         """
         The binding introduced by a binding-site identifier (a declarator id, parameter, function or
@@ -395,14 +436,9 @@ class SemanticModel:
         shadowing checks: a name shadowed below *outer* does not refer to *outer*'s binding.
         """
         binding = self.lookup(name, self._node_scope.get(id(at)))
-        if binding is None or binding.scope is outer:
+        if binding is None:
             return False
-        cursor = binding.scope.parent
-        while cursor is not None:
-            if cursor is outer:
-                return True
-            cursor = cursor.parent
-        return False
+        return outer.contains(binding.scope, strict=True)
 
     def would_capture(self, names: set[str], scope: Scope) -> bool:
         """
@@ -444,7 +480,7 @@ class SemanticModel:
         whole-program `has_reflection_surface` into the precise question of whether one binding could be
         touched reflectively; like it, it over-approximates, so a `True` verdict is the conservative one.
         """
-        owner = _owning_function(binding.scope)
+        owner = binding.scope.var_scope
         if owner is None or owner.kind is ScopeKind.SCRIPT:
             return self.has_reflection_surface()
         return self._function_has_dynamic_scope(owner.node)
@@ -483,7 +519,8 @@ class SemanticModel:
                 continue
             if id(node) in self._binding_of or not is_use_position(node):
                 continue
-            binding = self.lookup(node.name, self._node_scope.get(id(node)))
+            ref_scope = self._node_scope.get(id(node))
+            binding = self.lookup(node.name, ref_scope)
             if binding is None:
                 continue
             role = reference_role(node)
@@ -491,7 +528,7 @@ class SemanticModel:
                 binding.reads.append(node)
             if role is not Role.READ:
                 binding.writes.append(node)
-            if _owning_function(self._node_scope.get(id(node))) is not _owning_function(binding.scope):
+            if ref_scope is None or ref_scope.var_scope is not binding.scope.var_scope:
                 binding.captured = True
 
     def _create_implicit_globals(self):
