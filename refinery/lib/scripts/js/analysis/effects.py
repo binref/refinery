@@ -403,8 +403,8 @@ class EffectModel:
         the call leaf resolved through this model's `is_pure_call`: a call to a proven-pure function or
         trusted intrinsic is free, recursing into its arguments. *defunct* names bindings being removed,
         whose calls and property reads are treated as free. This is the model-aware form of the
-        standalone `refinery.lib.scripts.js.deobfuscation.helpers.is_side_effect_free`, which clears
-        only calls to a defunct name or an inline function.
+        model-free `side_effect_free` in this module, which clears only calls to a defunct name or an
+        inline function.
         """
         return side_effect_free(node, defunct, self.is_pure_call)
 

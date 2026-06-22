@@ -92,7 +92,7 @@ def _is_primitive_and_pure(node: Node) -> bool:
     """
     Return whether evaluating *node* is guaranteed to produce no observable side effects and the
     result is a primitive value (not an object, array, or function). This is stricter than
-    `refinery.lib.scripts.js.deobfuscation.helpers.is_side_effect_free` — it rejects expressions
+    `refinery.lib.scripts.js.analysis.effects.side_effect_free` — it rejects expressions
     that allocate objects or access properties, because inlining such expressions into a new
     location can change reference identity or trigger getters at a different point in execution.
     """

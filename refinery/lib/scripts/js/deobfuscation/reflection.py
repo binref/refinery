@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import NamedTuple
 
 from refinery.lib.scripts import Expression, Node, _clone_node, _replace_in_parent
+from refinery.lib.scripts.js.analysis.effects import side_effect_free
 from refinery.lib.scripts.js.analysis.model import (
     BindingKind,
     FUNCTION_NODES,
@@ -23,7 +24,6 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     ScriptLevelTransformer,
     access_key,
     get_body,
-    is_side_effect_free,
     property_key,
     references_receiver_this,
     string_value,
@@ -127,7 +127,7 @@ def _extract_indirect_eval_code(node: JsCallExpression) -> str | None:
     if isinstance(callee, JsSequenceExpression):
         exprs = callee.expressions
         if len(exprs) >= 2 and _is_identifier(exprs[-1], 'eval'):
-            if all(is_side_effect_free(e) for e in exprs[:-1]):
+            if all(side_effect_free(e) for e in exprs[:-1]):
                 return string_value(node.arguments[0]) or _try_eval_string_arg(node.arguments[0])
     if (
         isinstance(callee, JsMemberExpression)
@@ -204,7 +204,7 @@ def _is_constructor_chain(node: JsCallExpression | JsNewExpression) -> bool:
     base = inner.object
     if base is None:
         return False
-    return isinstance(base, (JsStringLiteral, JsIdentifier)) or is_side_effect_free(base)
+    return isinstance(base, (JsStringLiteral, JsIdentifier)) or side_effect_free(base)
 
 
 def _extract_constructor_chain_code(node: JsCallExpression) -> str | None:

@@ -242,7 +242,7 @@ def _destructuring_target_safe(left: Node | None, right: Node | None) -> bool:
     object literal whose members are all plain, statically-keyed data properties is accepted: a
     getter or setter, a computed key, or a `__proto__` member could execute code when the pattern is
     matched (and a computed key is not even covered by
-    `refinery.lib.scripts.js.deobfuscation.helpers.is_side_effect_free`). Any other right-hand side
+    `refinery.lib.scripts.js.analysis.effects.side_effect_free`). Any other right-hand side
     is rejected conservatively.
     """
     if isinstance(left, (JsArrayExpression, JsArrayPattern)):

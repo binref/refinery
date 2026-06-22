@@ -558,18 +558,6 @@ def is_nullish(node: Node) -> bool:
     return False
 
 
-def is_side_effect_free(node: Node, defunct: set[str] | None = None) -> bool:
-    """
-    Conservative, model-free check for whether an expression can be removed without observable side
-    effects; a call is free only for a *defunct* identifier or an inline function expression. Code
-    that holds a `refinery.lib.scripts.js.analysis.effects.EffectModel` should prefer
-    `refinery.lib.scripts.js.analysis.effects.EffectModel.is_side_effect_free`, which additionally
-    clears calls proven pure. Thin wrapper over
-    `refinery.lib.scripts.js.analysis.effects.side_effect_free`.
-    """
-    return side_effect_free(node, defunct)
-
-
 def js_parse_int(s: str, radix: int = 10) -> int | None:
     """
     Replicate the semantics of JavaScript's `parseInt(string, radix)`. Strips leading whitespace,
