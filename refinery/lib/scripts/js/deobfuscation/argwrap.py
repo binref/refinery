@@ -6,7 +6,7 @@ call back into individual statements, and removes the wrapper definition.
 from __future__ import annotations
 
 from refinery.lib.scripts import Node, Statement, _remove_from_parent, _replace_in_parent
-from refinery.lib.scripts.js.analysis.model import build_semantic_model
+from refinery.lib.scripts.js.analysis.cache import model_cache
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     ScriptLevelTransformer,
     binding_has_references,
@@ -146,7 +146,8 @@ class JsAssignmentsAsFunctionArgs(ScriptLevelTransformer):
                 unwrapped = True
         if not unwrapped:
             return
-        model = build_semantic_model(node)
+        self.mark_changed()
+        model = model_cache(self, node).model
         for ast_node in list(node.walk()):
             if not isinstance(ast_node, JsFunctionDeclaration):
                 continue
@@ -157,4 +158,3 @@ class JsAssignmentsAsFunctionArgs(ScriptLevelTransformer):
             binding = model.binding_of(ast_node.id)
             if not binding_has_references(model, binding, exclude=ast_node):
                 _remove_from_parent(ast_node)
-        self.mark_changed()

@@ -12,7 +12,7 @@ from refinery.lib.scripts import (
     Node,
     _replace_in_parent,
 )
-from refinery.lib.scripts.js.analysis.model import build_semantic_model
+from refinery.lib.scripts.js.analysis.cache import model_cache
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     ScopeProcessingTransformer,
     access_key,
@@ -390,8 +390,8 @@ class JsDispatcherUnwrapper(ScopeProcessingTransformer):
         for i, (key, decl) in enumerate(extracted.items()):
             decl.parent = scope
             body.insert(insert_idx + i, decl)
-        self._remove_boilerplate(scope, body, info)
         self.mark_changed()
+        self._remove_boilerplate(scope, body, info)
 
     def _rewrite_call_sites(
         self,
@@ -547,7 +547,7 @@ class JsDispatcherUnwrapper(ScopeProcessingTransformer):
         Remove dispatcher-related boilerplate declarations from the scope body.
         """
         assert self._root is not None
-        model = build_semantic_model(self._root)
+        model = model_cache(self, self._root).model
         to_remove = []
         for stmt in list(body):
             if isinstance(stmt, JsVariableDeclaration):

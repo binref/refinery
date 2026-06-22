@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import NamedTuple, Sequence
 
 from refinery.lib.scripts import Node, _remove_from_parent, _replace_in_parent
-from refinery.lib.scripts.js.analysis.model import build_semantic_model
+from refinery.lib.scripts.js.analysis.cache import ModelCache, model_cache
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     ScriptLevelTransformer,
     binding_has_references,
@@ -500,6 +500,7 @@ def _cleanup(
     decoders: list[_DecoderInfo],
     tables: list[_StringTableInfo],
     cache_names: set[str],
+    cache: ModelCache,
 ) -> None:
     """
     Remove accessor functions, decoder functions, string tables, cache objects, and the global
@@ -516,7 +517,7 @@ def _cleanup(
         if t.assignment is not None:
             dead_ids.add(id(t.assignment))
     assert isinstance(root, JsScript)
-    model = build_semantic_model(root)
+    model = cache.model
     for a in accessors:
         _remove_from_parent(a.node)
     for d in decoders:
@@ -540,10 +541,10 @@ def _cleanup(
                         model, model.binding_of(node.id), exclude_ids=dead_ids,
                     ):
                         remove_declarator(node)
-    _remove_buffer_infrastructure(root)
+    _remove_buffer_infrastructure(root, cache)
 
 
-def _remove_buffer_infrastructure(root: Node) -> None:
+def _remove_buffer_infrastructure(root: Node, cache: ModelCache) -> None:
     """
     Remove the bufferToString function, utf8ArrayToStr IIFE, getGlobal function, and related
     scaffolding. Detection is structural: the getGlobal function contains `globalThis` and
@@ -583,7 +584,7 @@ def _remove_buffer_infrastructure(root: Node) -> None:
         _remove_from_parent(buffer_to_string_node)
     if not isinstance(root, JsScript) or get_global_name is None:
         return
-    model = build_semantic_model(root)
+    model = cache.model
     for stmt in list(root.body):
         if isinstance(stmt, JsVariableDeclaration):
             for decl in list(stmt.declarations):
@@ -667,5 +668,6 @@ class JsBase91StringDecoder(ScriptLevelTransformer):
         resolved_accessors = [a for a in accessors if id(a.node) in resolved_accessor_nodes]
         resolved_decoder_names = {a.decoder_name for a in resolved_accessors}
         resolved_decoders = [d for d in decoders if d.name in resolved_decoder_names]
-        _cleanup(node, resolved_accessors, resolved_decoders, tables, cache_names)
+        cache = model_cache(self, node)
+        _cleanup(node, resolved_accessors, resolved_decoders, tables, cache_names, cache)
         self.mark_changed()
