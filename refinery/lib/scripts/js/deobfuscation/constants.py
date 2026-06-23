@@ -169,58 +169,50 @@ def _is_literal_array(node: Node) -> bool:
 
 def _compute_function_mods(scope: Node, model: SemanticModel) -> dict[str, set[str]]:
     """
-    For each function defined at the top level of *scope* — a function declaration, or a function
-    expression or arrow function bound to a `var`/`let`/`const` declarator — compute the set of
-    outer-scope variable names it can modify (directly or transitively through calls to other known
-    functions). A call to such a function then seals those variables, so a closure assigning to a
-    captured variable (`var set = function(){ x = 2; }; set();`) is not inlined past the call.
+    For each function defined anywhere within *scope* — at the top level or inside a nested block such
+    as a loop or `if`, but not inside another function (a function declaration, or a function expression
+    or arrow function bound to a `var`/`let`/`const` declarator) — compute the set of outer-scope
+    variable names it can modify (directly or transitively through calls to other known functions). A
+    call to such a function then seals those variables, so a closure assigning to a captured variable
+    (`var set = function(){ x = 2; }; set();`) is not inlined past the call. Modifications are unioned
+    across every function sharing a name, so a name reused across blocks seals conservatively.
 
     Write targets are resolved through the `refinery.lib.scripts.js.analysis.model.SemanticModel`, so a
     name assigned inside the function counts only when it resolves to a binding the function does not
     own — a write to the function's own local, or to a local of a nested function, is excluded.
     """
-    functions: dict[str, JsFunctionDeclaration | JsFunctionExpression | JsArrowFunctionExpression] = {}
-    body = getattr(scope, 'body', None)
-    if not isinstance(body, list):
-        return {}
-    for stmt in body:
-        if isinstance(stmt, JsFunctionDeclaration) and stmt.id is not None:
-            functions[stmt.id.name] = stmt
-        elif isinstance(stmt, JsVariableDeclaration):
-            for decl in stmt.declarations:
-                if (
-                    isinstance(decl, JsVariableDeclarator)
-                    and isinstance(decl.id, JsIdentifier)
-                    and isinstance(decl.init, (JsFunctionExpression, JsArrowFunctionExpression))
-                ):
-                    functions[decl.id.name] = decl.init
+    functions: list[tuple[str, JsFunctionDeclaration | JsFunctionExpression | JsArrowFunctionExpression]] = []
+    for node in walk_scope(scope, include_root_body=True):
+        if isinstance(node, JsFunctionDeclaration) and node.id is not None:
+            functions.append((node.id.name, node))
+        elif (
+            isinstance(node, JsVariableDeclarator)
+            and isinstance(node.id, JsIdentifier)
+            and isinstance(node.init, (JsFunctionExpression, JsArrowFunctionExpression))
+        ):
+            functions.append((node.id.name, node.init))
     if not functions:
         return {}
 
-    direct_mods: dict[str, set[str]] = {}
-    calls: dict[str, set[str]] = {}
+    func_names = {name for name, _ in functions}
+    direct_mods: dict[str, set[str]] = {name: set() for name in func_names}
+    calls: dict[str, set[str]] = {name: set() for name in func_names}
 
-    for fname, func in functions.items():
-        mods: set[str] = set()
-        callees: set[str] = set()
+    for fname, func in functions:
         if func.body is None:
-            direct_mods[fname] = mods
-            calls[fname] = callees
             continue
         func_scope = model.scope_of(func.body)
         for node in func.body.walk():
             if isinstance(node, JsIdentifier) and reference_role(node) is not Role.READ:
                 binding = model.resolve(node)
                 if binding is None:
-                    mods.add(node.name)
+                    direct_mods[fname].add(node.name)
                 elif func_scope is None or not func_scope.contains(binding.scope):
-                    mods.add(binding.name)
+                    direct_mods[fname].add(binding.name)
             elif isinstance(node, JsCallExpression) and isinstance(node.callee, JsIdentifier):
                 callee_name = node.callee.name
-                if callee_name in functions and callee_name != fname:
-                    callees.add(callee_name)
-        direct_mods[fname] = mods
-        calls[fname] = callees
+                if callee_name in func_names and callee_name != fname:
+                    calls[fname].add(callee_name)
 
     result: dict[str, set[str]] = {fname: set(mods) for fname, mods in direct_mods.items()}
     changed = True

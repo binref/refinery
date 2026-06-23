@@ -85,6 +85,26 @@ class TestConstantInlining(TestJsDeobfuscator):
         )
         self.assertEqual(source, self._inline(source))
 
+    def test_block_nested_closure_mutation_seals_variable(self):
+        """
+        `f` is declared inside the loop block, not at the scope top level; calling it still mutates the
+        captured `v`, so `v` must not be inlined past the call — otherwise `console.log(v)` folds to
+        `console.log(1)`, dropping the reassignment.
+        """
+        source = inspect.cleandoc(
+            """
+            var v = 1;
+            for (let i = 0; i < 1; i++) {
+              function f() {
+                v = 2;
+              }
+              f();
+            }
+            console.log(v);
+            """
+        )
+        self.assertEqual(source, self._inline(source))
+
     def test_single_use_expression_inlined(self):
         self.assertEqual('return a + b;', self._inline('var x = a + b; return x;'))
 
