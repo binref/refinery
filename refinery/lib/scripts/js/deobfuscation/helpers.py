@@ -753,7 +753,7 @@ def substitute_params(
     if not _introduces_nested_scope(expression):
         for node in list(cloned.walk()):
             if isinstance(node, JsIdentifier) and node.name in mapping and is_use_position(node):
-                _replace_in_parent(node, _clone_node(mapping[node.name]))
+                _substitute_use_position(node, _clone_node(mapping[node.name]))
         return cloned
     root = expression
     while root.parent is not None:
@@ -772,7 +772,7 @@ def substitute_params(
         if binding is None or model.resolve(original) is not binding:
             continue
         if isinstance(clone, JsIdentifier) and clone.name == original.name:
-            _replace_in_parent(clone, _clone_node(mapping[original.name]))
+            _substitute_use_position(clone, _clone_node(mapping[original.name]))
     return cloned
 
 
@@ -793,6 +793,24 @@ def _introduces_nested_scope(node: Node) -> bool:
         ))
         for child in node.walk()
     )
+
+
+def _substitute_use_position(node: JsIdentifier, replacement: Node) -> None:
+    """
+    Replace use-position identifier *node* with *replacement*. In an object-literal shorthand (`{a}`),
+    one identifier serves as both the property name and the read of the variable, so a plain replacement
+    would rename the property — or emit invalid syntax for a non-identifier argument. Keep the name in
+    that case: never substitute a non-computed property key, and clear the shorthand flag when replacing
+    its value so the property is written out in full. Guarding the key makes the result independent of
+    which of the two cloned occurrences is visited first.
+    """
+    parent = node.parent
+    if isinstance(parent, JsProperty) and not parent.computed:
+        if parent.key is node:
+            return
+        if parent.shorthand and parent.value is node:
+            parent.shorthand = False
+    _replace_in_parent(node, replacement)
 
 
 def try_inline_trivial_function(

@@ -417,6 +417,15 @@ class TestExtendedOperatorFolding(TestJsDeobfuscator):
         source = 'var r = (function(a) { return a; })(7);'
         self.assertEqual('var r = 7;', self._simplify(source))
 
+    def test_iife_object_shorthand_substitutes_value_not_property_name(self):
+        source = 'var r = (function(a) { return {a}; })(7);'
+        self.assertEqual('var r = { a: 7 };', self._simplify(source))
+
+    def test_iife_object_shorthand_substitutes_value_with_nested_scope(self):
+        source = 'var r = (function(a) { return [{a}, function() { return a; }]; })(7);'
+        self.assertEqual(
+            'var r = [{ a: 7 }, function() {\n  return 7;\n}];', self._simplify(source))
+
     def test_iife_preserves_conditional_effectful_arg(self):
         source = inspect.cleandoc(
             """
