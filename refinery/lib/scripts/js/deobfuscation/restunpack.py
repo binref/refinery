@@ -286,7 +286,7 @@ class JsRestArrayUnpacking(ScriptLevelTransformer):
         if not isinstance(param.argument, JsIdentifier):
             return False
         binding = model.binding_of(param.argument)
-        if binding is None or binding.captured:
+        if binding is None or binding.captured or model.reflection_can_reach(binding):
             return False
         rest_name = param.argument.name
         if fn.body is None or not isinstance(fn.body, JsBlockStatement):

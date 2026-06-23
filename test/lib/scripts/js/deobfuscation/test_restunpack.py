@@ -149,3 +149,15 @@ class TestVariableDemasking(TestJsDeobfuscator):
             """
         )
         self.assertEqual(source, self._demask(source))
+
+    def test_skips_rest_param_named_by_eval(self):
+        source = inspect.cleandoc(
+            """
+            var f = function(...s) {
+              s.length = 1;
+              eval("s[2] = 9");
+              return s[0];
+            };
+            """
+        )
+        self.assertEqual(source, self._demask(source))
