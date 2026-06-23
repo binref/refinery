@@ -9,7 +9,6 @@ from datetime import date, datetime, time
 from enum import IntEnum, IntFlag
 from typing import Iterable, NamedTuple
 
-from refinery.lib import chunks
 from refinery.lib.seven.lzx import LzxDecoder
 from refinery.lib.seven.quantum import QuantumDecoder
 from refinery.lib.structures import Struct, StructReader
@@ -46,9 +45,25 @@ class CabVolumeCorrupt(ValueError):
 
 
 def cab_data_checksum(content: memoryview, checksum: int = 0) -> int:
-    for chunk in chunks.unpack(content, 4):
-        checksum ^= chunk
-    if k := len(content) % 4:
+    """
+    Computes the CAB data block checksum: the XOR of all little-endian 32-bit words in `content`,
+    combined with the big-endian value of the trailing one to three bytes. The words are XOR-folded
+    in halves so the reduction is a handful of big-integer operations rather than one Python-level
+    iteration per word.
+    """
+    k = len(content) % 4
+    if body := len(content) - k:
+        words = body >> 2
+        padded = 1
+        while padded < words:
+            padded <<= 1
+        value = int.from_bytes(content[:body], 'little')
+        half = padded << 5
+        while half > 32:
+            half >>= 1
+            value = (value >> half) ^ (value & ((1 << half) - 1))
+        checksum ^= value & 0xFFFFFFFF
+    if k:
         checksum ^= int.from_bytes(content[-k:], 'big')
     return checksum
 
