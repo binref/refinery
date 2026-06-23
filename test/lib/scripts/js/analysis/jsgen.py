@@ -19,10 +19,11 @@ every generated program upholds four invariants:
   push, and it is logged at the end, so a dropped effect, a mis-evaluation, or a reorder shows up.
 
 The observable output deliberately excludes two things a deobfuscator may change without altering
-meaning, so they cannot masquerade as divergences: a function's source text (functions are only
-called, never used as first-class values, since `Function.prototype.toString` reflects the very
-source the deobfuscator rewrites) and a self-referential structure (`SINK` is only pushed to and
-joined once at the end, never nested into itself).
+meaning, so they cannot masquerade as divergences: a function's source text (a function is never
+logged or kept as data — it is only called, including a function returned by another function, which
+is invoked immediately, since `Function.prototype.toString` reflects the very source the deobfuscator
+rewrites) and a self-referential structure (`SINK` is only pushed to and joined once at the end,
+never nested into itself).
 
 `generate(seed)` is a pure function of its integer seed, so any divergence reproduces from its
 seed.
@@ -177,7 +178,7 @@ class _Generator:
     def _expr(self, scope: _Scope, depth: int) -> str:
         if depth <= 0:
             return self._atom(scope)
-        kinds = ['atom', 'binary', 'unary', 'ternary', 'array']
+        kinds = ['atom', 'binary', 'unary', 'ternary', 'array', 'curry']
         funcs = scope.all_funcs()
         if funcs:
             kinds.append('call')
@@ -196,9 +197,33 @@ class _Generator:
         if kind == 'array':
             items = [self._expr(scope, depth - 1) for _ in range(self.rng.randint(0, 3))]
             return F'[{", ".join(items)}]'
+        if kind == 'curry':
+            return self._curry(scope, depth)
         name, arity = self.rng.choice(funcs)
         args = [self._expr(scope, depth - 1) for _ in range(arity)]
         return F'{name}({", ".join(args)})'
+
+    def _curry(self, scope: _Scope, depth: int) -> str:
+        """
+        A curried IIFE `(function (p) { return function (q) { return BODY; }; })(arg)(arg)`. With even
+        odds the inner parameter reuses the outer's name, so the inner function shadows it: inlining
+        must keep the inner binding distinct. The returned function is invoked immediately, so only the
+        final value — never a function — is observed.
+        """
+        outer = self._fresh()
+        inner = outer if self.rng.random() < 0.5 else self._fresh()
+        outer_scope = scope.child()
+        outer_scope.readable.append(outer)
+        outer_scope.mutable.add(outer)
+        inner_scope = outer_scope.child()
+        inner_scope.readable.append(inner)
+        inner_scope.mutable.add(inner)
+        body = self._expr(inner_scope, depth - 1)
+        arg1 = self._expr(scope, depth - 1)
+        arg2 = self._expr(scope, depth - 1)
+        return (
+            F'(function ({outer}) {{ return function ({inner}) {{ return {body}; }}; }})'
+            F'({arg1})({arg2})')
 
     def _atom(self, scope: _Scope) -> str:
         names = scope.all_readable()

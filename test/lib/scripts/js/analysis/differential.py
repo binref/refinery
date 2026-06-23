@@ -41,16 +41,19 @@ def deobfuscate_source(source: str) -> str:
 def _normalize_error(stderr: str) -> str:
     match = _ERROR_RE.search(stderr)
     if match is not None:
-        return F'{match.group(1)}: {match.group(2)}'
+        return match.group(1)
     return 'ERROR'
 
 
 def behavior(source: str, *, timeout: float = 15.0) -> tuple[str, str | None]:
     """
     Execute *source* in Node.js and return its observable behavior as a pair: the captured standard
-    output, and a normalized error signature (`Name: message`) when execution terminated with an
-    uncaught exception, or `None` on success. Stack traces and file paths are deliberately dropped so
-    that an original snippet and its deobfuscation compare equal whenever they behave the same.
+    output, and the error type (`TypeError`, `ReferenceError`, …) when execution terminated with an
+    uncaught exception, or `None` on success. Only the type is kept, not the message: the message
+    describes the offending expression, which a semantics-preserving rewrite may legitimately reshape
+    (e.g. folding `(function(){})(x)` to `void 0` turns "(intermediate value) is not a function" into
+    "(void 0) is not a function" — the same `TypeError`). Stack traces and file paths are dropped too,
+    so an original snippet and its deobfuscation compare equal whenever they throw the same way.
     """
     node = node_executable()
     if node is None:
