@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Iterator
 if TYPE_CHECKING:
     from refinery.lib.scripts.js.deobfuscation.interpreter import Value
 
-from refinery.lib.scripts import Node, _clone_node, _remove_from_parent, _replace_in_parent
+from refinery.lib.scripts import Node, _remove_from_parent, _replace_in_parent
 from refinery.lib.scripts.js.analysis.cache import model_cache
 from refinery.lib.scripts.js.analysis.effects import EffectModel
 from refinery.lib.scripts.js.analysis.model import Binding, SemanticModel
@@ -21,6 +21,7 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     is_reference,
     references_receiver_this,
     remove_declarator,
+    substitute_params,
     value_to_node,
     walk_scope,
 )
@@ -663,11 +664,9 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
             if gate_unresolved and self._is_unresolved_call(irr.node):
                 return False
             replacement = self._substitute_params_in_clone(irr.node, func, args)
-            if replacement is not None:
-                _replace_in_parent(node, replacement)
-                self.mark_changed()
-                return True
-            return False
+            _replace_in_parent(node, replacement)
+            self.mark_changed()
+            return True
         except InterpreterError:
             return False
         if _contains_jsbuffer(result):
@@ -917,16 +916,15 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
         node: Node,
         func: JsFunctionDeclaration | JsFunctionExpression | JsArrowFunctionExpression,
         args: list[Value],
-    ) -> Node | None:
-        param_map: dict[str, Value] = {
-            p.name: args[i] if i < len(args) else None
-            for i, p in enumerate(func.params)
-            if isinstance(p, JsIdentifier)
-        }
-        cloned = _clone_node(node)
-        for n in list(cloned.walk()):
-            if isinstance(n, JsIdentifier) and is_reference(n) and n.name in param_map:
-                replacement = value_to_node(param_map[n.name])
-                if replacement is not None:
-                    _replace_in_parent(n, replacement)
-        return cloned
+    ) -> Node:
+        params: list[Node] = []
+        arguments: list[Node] = []
+        for i, p in enumerate(func.params):
+            if not isinstance(p, JsIdentifier):
+                continue
+            arg_node = value_to_node(args[i] if i < len(args) else None)
+            if arg_node is None:
+                continue
+            params.append(p)
+            arguments.append(arg_node)
+        return substitute_params(node, params, arguments)

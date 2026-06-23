@@ -125,6 +125,15 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
         result = self._evaluate(source)
         self.assertEqual("var x = globalVar['console'];", result)
 
+    def test_irreducible_object_shorthand_substitutes_param(self):
+        source = inspect.cleandoc(
+            """
+            function f(a) { return JSON && { a }; }
+            var x = f(7);
+            """
+        )
+        self.assertEqual('var x = JSON && { a: 7 };', self._evaluate(source))
+
     def test_iife_evaluation(self):
         source = inspect.cleandoc(
             """
