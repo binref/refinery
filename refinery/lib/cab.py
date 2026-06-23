@@ -9,6 +9,7 @@ from datetime import date, datetime, time
 from enum import IntEnum, IntFlag
 from typing import Iterable, NamedTuple
 
+from refinery.lib.fast.cab import cab_data_checksum
 from refinery.lib.seven.lzx import LzxDecoder
 from refinery.lib.seven.quantum import QuantumDecoder
 from refinery.lib.structures import Struct, StructReader
@@ -42,30 +43,6 @@ class CabSequenceMismatch(ValueError):
 
 class CabVolumeCorrupt(ValueError):
     pass
-
-
-def cab_data_checksum(content: memoryview, checksum: int = 0) -> int:
-    """
-    Computes the CAB data block checksum: the XOR of all little-endian 32-bit words in `content`,
-    combined with the big-endian value of the trailing one to three bytes. The words are XOR-folded
-    in halves so the reduction is a handful of big-integer operations rather than one Python-level
-    iteration per word.
-    """
-    k = len(content) % 4
-    if body := len(content) - k:
-        words = body >> 2
-        padded = 1
-        while padded < words:
-            padded <<= 1
-        value = int.from_bytes(content[:body], 'little')
-        half = padded << 5
-        while half > 32:
-            half >>= 1
-            value = (value >> half) ^ (value & ((1 << half) - 1))
-        checksum ^= value & 0xFFFFFFFF
-    if k:
-        checksum ^= int.from_bytes(content[-k:], 'big')
-    return checksum
 
 
 class CabFlags(IntFlag):
@@ -133,12 +110,15 @@ class CabFolder(Struct):
         if self.decompressed is not None:
             return memoryview(self.decompressed)
 
-        dst = bytearray()
         cm = self.compression
+        dst = bytearray(sum(block.decompressed_size for block in self.blocks))
+        pos = 0
 
         if cm == CabMethod.Nothing:
             for block in self.blocks:
-                dst.extend(block.data)
+                chunk = block.data
+                pos += len(chunk)
+                dst[pos - len(chunk):pos] = chunk
         elif cm == CabMethod.Deflate:
             zdict = B''
             for _, data in self.iter_block_data():
@@ -149,20 +129,27 @@ class CabFolder(Struct):
                     zdict = inflate.decompress(data[2:]) + inflate.flush()
                 except zlib.error:
                     raise RuntimeError('Failed to inflate CAB data block.')
-                else:
-                    dst.extend(zdict)
+                pos += len(zdict)
+                dst[pos - len(zdict):pos] = zdict
         elif cm == CabMethod.LZX:
             lzx = LzxDecoder(False)
             lzx.set_params_and_alloc(self.method[1])
             for size, data in self.iter_block_data():
-                dst.extend(lzx.decompress(data, size))
+                out = lzx.decompress(data, size)
+                pos += len(out)
+                dst[pos - len(out):pos] = out
                 lzx.keep_history = True
         elif cm == CabMethod.Quantum:
             qd = QuantumDecoder(self.method[1] & 0x1F)
-            for size, data in self.iter_block_data():
-                dst.extend(qd.decompress(data, size, keep_history=bool(dst)))
+            for k, (size, data) in enumerate(self.iter_block_data()):
+                out = qd.decompress(data, size, keep_history=k > 0)
+                pos += len(out)
+                dst[pos - len(out):pos] = out
         else:
             raise ValueError(F'Unknown decompression method: {cm!r}')
+
+        if pos != len(dst):
+            dst = dst[:pos]
         self.decompressed = dst
         return memoryview(dst)
 

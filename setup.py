@@ -71,6 +71,7 @@ EXTENSION_DICT = {
     'refinery.lib.fast.aplib'     : 'refinery/lib/fast/aplib.pyx',
     'refinery.lib.fast.argon2'    : 'refinery/lib/fast/argon2.pyx',
     'refinery.lib.fast.blz'       : 'refinery/lib/fast/blz.pyx',
+    'refinery.lib.fast.cab'       : 'refinery/lib/fast/cab.pyx',
     'refinery.lib.fast.lzfse'     : 'refinery/lib/fast/lzfse.pyx',
     'refinery.lib.fast.lzjb'      : 'refinery/lib/fast/lzjb.pyx',
     'refinery.lib.fast.lzw'       : 'refinery/lib/fast/lzw.pyx',

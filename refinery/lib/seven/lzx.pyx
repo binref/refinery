@@ -736,6 +736,8 @@ cdef class LzxDecoder:
                         src_pos += 1
                         if <uint32_t>src_pos == win_size:
                             src_pos = 0
+                elif dist >= length:
+                    memcpy(&win[dst_pos], &win[src_pos], length)
                 else:
                     for i in range(<int>length):
                         win[dst_pos + i] = win[src_pos + i]
