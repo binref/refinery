@@ -4,6 +4,8 @@ import inspect
 
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 
+from refinery.lib.scripts.js.deobfuscation.antidbg import JsRemoveReDoS
+
 
 class TestAntiDebug(TestJsDeobfuscator):
 
@@ -61,4 +63,25 @@ class TestAntiDebug(TestJsDeobfuscator):
                 """
             ),
             self._deobfuscate(source),
+        )
+
+    def test_factory_removed_despite_same_name_in_other_scope(self):
+        source = (
+            'var fac = function() { return 1; };'
+            " var g = fac('(((.+)+)+)+$');"
+            ' g();'
+            ' function other() { var fac = 7; return fac; }'
+            ' console.log(other());'
+        )
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function other() {
+                  var fac = 7;
+                  return fac;
+                }
+                console.log(other());
+                """
+            ),
+            self._run_transformer(source, JsRemoveReDoS),
         )

@@ -13,7 +13,12 @@ guard call, its variable declarator, and the associated factory function.
 from __future__ import annotations
 
 from refinery.lib.scripts import _remove_from_parent
-from refinery.lib.scripts.js.deobfuscation.helpers import ScriptLevelTransformer, remove_declarator
+from refinery.lib.scripts.js.analysis.cache import model_cache
+from refinery.lib.scripts.js.deobfuscation.helpers import (
+    ScriptLevelTransformer,
+    binding_has_references,
+    remove_declarator,
+)
 from refinery.lib.scripts.js.model import (
     JsBlockStatement,
     JsCallExpression,
@@ -40,9 +45,9 @@ class JsRemoveReDoS(ScriptLevelTransformer):
                 isinstance(literal, JsStringLiteral)
                 and _REDOS_SIGNATURE in literal.value
             ):
-                self._remove_pattern(literal)
+                self._remove_pattern(literal, node)
 
-    def _remove_pattern(self, redos_literal: JsStringLiteral) -> None:
+    def _remove_pattern(self, redos_literal: JsStringLiteral, root: JsScript) -> None:
         guard_decl = redos_literal.parent
         while guard_decl is not None and not isinstance(guard_decl, JsVariableDeclarator):
             guard_decl = guard_decl.parent
@@ -85,22 +90,17 @@ class JsRemoveReDoS(ScriptLevelTransformer):
         remove_declarator(guard_decl)
         cleanup_names = {factory_name} if factory_name is not None else co_names
         for name in cleanup_names:
-            referenced = False
-            for n in body_parent.walk():
-                if isinstance(n, JsIdentifier) and n.name == name:
-                    if isinstance(n.parent, JsVariableDeclarator) and n.parent.id is n:
-                        continue
-                    referenced = True
-                    break
-            if not referenced:
-                for stmt in list(body):
-                    if not isinstance(stmt, JsVariableDeclaration):
-                        continue
-                    for d in list(stmt.declarations):
-                        if (
-                            isinstance(d, JsVariableDeclarator)
-                            and isinstance(d.id, JsIdentifier)
-                            and d.id.name == name
-                        ):
+            model = model_cache(self, root).model
+            for stmt in list(body):
+                if not isinstance(stmt, JsVariableDeclaration):
+                    continue
+                for d in list(stmt.declarations):
+                    if (
+                        isinstance(d, JsVariableDeclarator)
+                        and isinstance(d.id, JsIdentifier)
+                        and d.id.name == name
+                    ):
+                        binding = model.binding_of(d.id)
+                        if not binding_has_references(model, binding):
                             remove_declarator(d)
         self.mark_changed()
