@@ -690,23 +690,30 @@ def is_safe_iife_inline(
     call_pure: Callable[..., bool] | None = None,
 ) -> bool:
     """
-    Verify that substituting IIFE arguments into the body expression preserves evaluation
-    semantics. An argument that is side-effect-free can be freely moved or omitted. An effectful
-    argument must be used exactly once, in an unconditionally-evaluated position, and in
-    declaration order relative to other effectful arguments. When *call_pure* is given (an
-    `refinery.lib.scripts.js.analysis.effects.EffectModel.is_pure_call`), a call argument it proves
-    pure also counts as side-effect-free.
+    Verify that substituting IIFE arguments into the body expression preserves evaluation semantics.
+    An argument used more than once must be a simple, identity-stable expression — a literal or a bare
+    identifier: duplicating a fresh array/object/function literal (or a call) would split one value into
+    distinct copies and break an identity comparison such as `x === x`. An effectful argument must
+    additionally be used exactly once, in an unconditionally-evaluated position, and in declaration
+    order relative to other effectful arguments, so its side effect is neither dropped, duplicated, nor
+    reordered. When *call_pure* is given (an
+    `refinery.lib.scripts.js.analysis.effects.EffectModel.is_pure_call`), a call argument it proves pure
+    counts as side-effect-free for the ordering rules — but, being a call, is not simple, so it is still
+    not duplicated.
     """
+    use_counts = Counter(
+        n.name for n in expr.walk()
+        if isinstance(n, JsIdentifier) and is_use_position(n)
+    )
+    for i, arg in enumerate(call_args):
+        if use_counts[param_names[i]] > 1 and not is_simple_expression(arg):
+            return False
     effectful_indices = [
         i for i, arg in enumerate(call_args)
         if not side_effect_free(arg, call_pure=call_pure)
     ]
     if not effectful_indices:
         return True
-    use_counts = Counter(
-        n.name for n in expr.walk()
-        if isinstance(n, JsIdentifier) and is_use_position(n)
-    )
     for i in effectful_indices:
         if use_counts[param_names[i]] != 1:
             return False

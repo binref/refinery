@@ -446,22 +446,39 @@ class TestExtendedOperatorFolding(TestJsDeobfuscator):
         )
         self.assertEqual(source, self._simplify(source))
 
-    def test_pure_call_argument_can_duplicate_into_iife(self):
-        source = (
-            'function p() { return 1; }'
-            ' var r = (function(x) { return x + x; })(p());'
+    def test_pure_call_argument_used_twice_not_duplicated(self):
+        """
+        `x` is used twice, so substituting would duplicate the argument. Only a simple literal or
+        identifier may be duplicated; a call (or a fresh array/object) could split one value into
+        distinct copies — flipping an identity comparison — so the IIFE is left intact even though `p`
+        here is pure.
+        """
+        source = inspect.cleandoc(
+            """
+            function p() {
+              return 1;
+            }
+            var r = (function(x) {
+              return x + x;
+            })(p());
+            """
         )
-        self.assertEqual(
-            inspect.cleandoc(
-                """
-                function p() {
-                  return 1;
-                }
-                var r = p() + p();
-                """
-            ),
-            self._simplify(source),
+        self.assertEqual(source, self._simplify(source))
+
+    def test_iife_does_not_duplicate_array_argument_used_twice(self):
+        """
+        `a` is used twice and the argument `[1]` is a fresh array, so substituting it would compare two
+        distinct arrays (`[1] === [1]` is false) instead of one array with itself; the IIFE is left
+        intact.
+        """
+        source = inspect.cleandoc(
+            """
+            var r = (function(a) {
+              return a === a;
+            })([1]);
+            """
         )
+        self.assertEqual(source, self._simplify(source))
 
     def test_nullish_coalescing_undefined(self):
         self.assertEqual("'default';", self._simplify("undefined ?? 'default';"))
