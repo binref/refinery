@@ -12,6 +12,7 @@ import typing
 
 from dataclasses import dataclass, field
 from typing import Callable, Generator, Protocol, TypeVar
+from weakref import WeakKeyDictionary
 
 
 class Kind(enum.IntEnum):
@@ -287,23 +288,28 @@ class Transformer(Visitor):
         return None
 
 
-_tree_version = 0
+_tree_versions: WeakKeyDictionary[Node, int] = WeakKeyDictionary()
 
 
-def tree_version() -> int:
+def tree_version(root: Node) -> int:
     """
-    The current value of the monotonic AST-mutation counter. Every structural mutation routed through
-    `_replace_in_parent` or `_remove_from_parent` advances it. `ModelCache` records the value its
-    models were built at and rebuilds once the counter moves, so a transform observes models that are
-    consistent with the current tree even when an earlier mutation in the same pass has not yet been
-    announced through `Transformer.changed`.
+    The AST-mutation counter for the tree rooted at *root*. Every structural mutation made through
+    `_replace_in_parent` or `_remove_from_parent` advances the counter of the one tree it mutates,
+    found by walking from the mutation site up to its topmost ancestor, and leaves every other tree
+    untouched. `ModelCache` records the value its own root stood at when its models were built and
+    rebuilds once that root's counter moves, so a transform observes models consistent with the
+    current tree even when an earlier mutation in the same pass has not yet been announced through
+    `Transformer.changed`. Mutations to unrelated trees — parsed snippets or clones probed during
+    analysis — never advance this root's counter and so never force a needless rebuild.
     """
-    return _tree_version
+    return _tree_versions.get(root, 0)
 
 
-def _bump_tree_version() -> None:
-    global _tree_version
-    _tree_version += 1
+def _bump_tree_version(site: Node) -> None:
+    root = site
+    while root.parent is not None:
+        root = root.parent
+    _tree_versions[root] = _tree_versions.get(root, 0) + 1
 
 
 def _replace_in_parent(old: Node, new: Node):
@@ -321,13 +327,13 @@ def _replace_in_parent(old: Node, new: Node):
         value = getattr(parent, attr_name)
         if value is old:
             setattr(parent, attr_name, new)
-            _bump_tree_version()
+            _bump_tree_version(parent)
             return
         if isinstance(value, list):
             for i, item in enumerate(value):
                 if item is old:
                     value[i] = new
-                    _bump_tree_version()
+                    _bump_tree_version(parent)
                     return
                 if isinstance(item, tuple):
                     lst = list(item)
@@ -335,7 +341,7 @@ def _replace_in_parent(old: Node, new: Node):
                         if elem is old:
                             lst[j] = new
                             value[i] = tuple(lst)
-                            _bump_tree_version()
+                            _bump_tree_version(parent)
                             return
 
 
@@ -355,7 +361,7 @@ def _remove_from_parent(node: Node) -> bool:
             for i, item in enumerate(value):
                 if item is node:
                     del value[i]
-                    _bump_tree_version()
+                    _bump_tree_version(parent)
                     return True
     return False
 

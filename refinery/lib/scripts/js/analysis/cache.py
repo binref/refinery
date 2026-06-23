@@ -1,8 +1,10 @@
 """
 A per-run cache of the JavaScript analysis models. The deobfuscation pipeline builds one cache over
-the script being transformed and shares it across every transform in a run, rebuilding the models only
-after a transform changes the tree (signalled through `refinery.lib.scripts.Transformer.changed`),
-instead of each transform rebuilding from scratch on every pass.
+the script being transformed and shares it across every transform in a run, rebuilding the models
+only after that script's tree changes — whether a transform announces the change through
+`refinery.lib.scripts.Transformer.changed` or an in-pass mutation advances the script's
+`refinery.lib.scripts.tree_version` counter — instead of each transform rebuilding from scratch on
+every pass.
 """
 from __future__ import annotations
 
@@ -18,7 +20,7 @@ class ModelCache:
     Lazily builds and memoizes the `refinery.lib.scripts.js.analysis.model.SemanticModel` and the
     `refinery.lib.scripts.js.analysis.effects.EffectModel` and
     `refinery.lib.scripts.js.analysis.liveness.LivenessModel` layered on it, for one root script.
-    The memoized models are dropped whenever the global AST-mutation counter
+    The memoized models are dropped whenever this root's AST-mutation counter
     (`refinery.lib.scripts.tree_version`) advances past the value they were built at, so a transform
     that reads the cache after an earlier mutation in the same pass — even one not yet announced
     through `refinery.lib.scripts.Transformer.changed` — observes models consistent with the current
@@ -28,7 +30,7 @@ class ModelCache:
 
     def __init__(self, root: JsScript):
         self.root = root
-        self._version = tree_version()
+        self._version = tree_version(root)
         self._model: SemanticModel | None = None
         self._effects: EffectModel | None = None
         self._liveness: LivenessModel | None = None
@@ -39,7 +41,7 @@ class ModelCache:
         self._liveness = None
 
     def _ensure_fresh(self) -> None:
-        version = tree_version()
+        version = tree_version(self.root)
         if version != self._version:
             self._version = version
             self.invalidate()
