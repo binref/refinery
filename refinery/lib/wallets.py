@@ -10,11 +10,14 @@ into each address format:
 - CashAddr addresses (Bitcoin Cash) carry a wider 40 bit `BCH` code checksum.
 - EVM addresses optionally carry an `EIP55` mixed case checksum derived from `Keccak256`.
 - Stellar addresses are Base32 encoded with a trailing `CRC16` (XMODEM) checksum.
+- Algorand addresses are Base32 encoded with a trailing `SHA512/256` checksum.
 - TON addresses are Base64 encoded with a trailing `CRC16` (XMODEM) checksum.
 - NEM addresses are Base32 encoded with a trailing `Keccak256` checksum.
 - Monero addresses use a block based Base58 encoding with a trailing `Keccak256` checksum.
 - Substrate addresses (Polkadot) carry a `Blake2b` checksum over an `SS58PRE` prefixed payload.
 - Cardano Shelley addresses are Bech32; Byron addresses are `CBOR` with a `CRC32` checksum.
+- Tezos addresses are Base58Check encoded with a multi byte version prefix that selects the key
+  type (`tz1`, `tz2`, `tz3`) or an originated contract (`KT1`).
 - Solana addresses are a raw 32 byte public key and are validated by their decoded length.
 - WIF private keys are Base58Check encoded with a `0x80` version byte; `xtw` surfaces them as a
   leaked secret rather than as a destination address.
@@ -374,6 +377,37 @@ def _nem_valid(data: buf) -> bool:
     return keccak.new(digest_bits=256, data=payload).digest()[:4] == checksum
 
 
+_TEZOS_PREFIXES = (
+    bytes((6, 161, 159)),
+    bytes((6, 161, 161)),
+    bytes((6, 161, 164)),
+    bytes((2, 90, 121)),
+)
+
+
+def _tezos_valid(data: buf) -> bool:
+    payload = base58check(data)
+    if payload is None or len(payload) != 23:
+        return False
+    return payload[:3] in _TEZOS_PREFIXES
+
+
+def _algorand_valid(data: buf) -> bool:
+    import base64
+    body = bytes(data)
+    if len(body) != 58:
+        return False
+    try:
+        raw = base64.b32decode(body + B'=' * 6)
+    except Exception:
+        return False
+    if len(raw) != 36:
+        return False
+    from Cryptodome.Hash import SHA512
+    payload, checksum = raw[:32], raw[32:]
+    return SHA512.new(truncate='256', data=payload).digest()[-4:] == checksum
+
+
 VALIDATORS: dict[str, Callable[[buf], bool]] = {
     'BTC'    : _bitcoin_valid,
     'LTC'    : _litecoin_valid,
@@ -401,6 +435,8 @@ VALIDATORS: dict[str, Callable[[buf], bool]] = {
     'XMR'    : _monero_valid,
     'XEM'    : _nem_valid,
     'WIF'    : _wif_valid,
+    'XTZ'    : _tezos_valid,
+    'ALGO'   : _algorand_valid,
 }
 
 

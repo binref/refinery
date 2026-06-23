@@ -133,3 +133,13 @@ class TestWalletValidation(TestBase):
         addr = b'NABHFGE5ORQD3LE4O6B7JUFN47ECOFBFASC3SCAC'
         self.assertTrue(validate('XEM', addr))
         self.assertFalse(validate('XEM', addr[:-1] + b'A'))
+
+    def test_validate_tezos(self):
+        addr = b'tz1gvF4cD2dDtqitL3ZTraggSR1Mju2BKFEM'
+        self.assertTrue(validate('XTZ', addr))
+        self.assertFalse(validate('XTZ', b'tz1gvF4cD2dDtqitL3ZTraggSR1Mju2BKFEN'))
+
+    def test_validate_algorand(self):
+        addr = b'PNWOET7LLOWMBMLE4KOCELCX6X3D3Q4H2Q4QJASYIEOF7YIPPQBG3YQ5YI'
+        self.assertTrue(validate('ALGO', addr))
+        self.assertFalse(validate('ALGO', addr[:-1] + b'A'))

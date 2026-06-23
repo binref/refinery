@@ -75,3 +75,15 @@ class TestXTW(TestUnitBase):
         data = b'key ' + wif + b' end'
         labels = {bytes(chunk): chunk.meta['kind'] for chunk in data | self.load()}
         self.assertEqual(labels, {wif: 'WIF'})
+
+    def test_tezos_address_labeled_xtz(self):
+        xtz = b'tz1gvF4cD2dDtqitL3ZTraggSR1Mju2BKFEM'
+        data = b'pay to ' + xtz + b' now'
+        labels = {bytes(chunk): chunk.meta['kind'] for chunk in data | self.load()}
+        self.assertEqual(labels, {xtz: 'XTZ'})
+
+    def test_algorand_address_labeled_algo(self):
+        algo = b'PNWOET7LLOWMBMLE4KOCELCX6X3D3Q4H2Q4QJASYIEOF7YIPPQBG3YQ5YI'
+        data = b'pay to ' + algo + b' now'
+        labels = {bytes(chunk): chunk.meta['kind'] for chunk in data | self.load()}
+        self.assertEqual(labels, {algo: 'ALGO'})

@@ -661,6 +661,7 @@ class formats(_PatternEnum):
 class wallets(_PatternEnum):
     # https://gist.github.com/etherx-dev/76559d9e6d916917a960e33ceea91481
     ADA = pattern("addr1[a-z0-9]{98}|(Ae2|DdzFF)[1-9A-HJ-NP-Za-km-z]{50,104}")
+    ALGO = pattern("[A-Z2-7]{58}")
     ATOM = pattern("cosmos[-\\w\\.]{10,}")
     AVAX = pattern("(X-|P-)avax1[0ac-hj-np-z2-9]{38}")
     BCH = pattern("(bitcoincash:)?(q|p)[0ac-hj-np-z2-9]{41}|(BITCOINCASH:)?(Q|P)[0AC-HJ-NP-Z2-9]{41}")
@@ -686,6 +687,7 @@ class wallets(_PatternEnum):
     XLM = pattern("G[A-D][A-Z2-7]{54}")
     XMR = pattern("4[0-9AB][1-9A-HJ-NP-Za-km-z]{90,120}")
     XRP = pattern("r[0-9a-zA-Z]{24,34}|X[1-9A-HJ-NP-Za-km-z]{46}")
+    XTZ = pattern("(?:tz[123]|KT1)[1-9A-HJ-NP-Za-km-z]{33}")
     ZCASH = pattern("(t[13][1-9A-HJ-NP-Za-km-z]{33}|z[cs][1-9A-HJ-NP-Za-km-z]{76,93}|u[1-9A-HJ-NP-Za-km-z]{100,1000})")
 
 
