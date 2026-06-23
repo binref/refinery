@@ -19,7 +19,7 @@ from refinery.lib.scripts.js.deobfuscation import deobfuscate
 from refinery.lib.scripts.js.parser import JsParser
 from refinery.lib.scripts.js.synth import JsSynthesizer
 
-_ERROR_RE = re.compile(r'^([A-Za-z]+Error): (.*)$', re.MULTILINE)
+_ERROR_RE = re.compile(r'^([A-Za-z]+Error): .*$', re.MULTILINE)
 
 
 def node_executable() -> str | None:
