@@ -12,10 +12,15 @@ logger = logging.getLogger(__name__)
 
 
 class LinkType(IntEnum):
+    UNKNOWN = -1
     NULL = 0
     ETHERNET = 1
     LINUX_SLL = 113
     RAW_IP = 228
+
+    @classmethod
+    def _missing_(cls, value):
+        return cls.UNKNOWN
 
 
 class EtherType(IntEnum):
@@ -78,7 +83,10 @@ def _read_pcap_global_header(reader: StructReader) -> LinkType:
 
 
 def _iter_pcap_classic(reader: StructReader):
-    link_type = _read_pcap_global_header(reader)
+    try:
+        link_type = _read_pcap_global_header(reader)
+    except EOF:
+        return
     while not reader.eof:
         try:
             reader.u32()  # ts_sec
@@ -108,63 +116,56 @@ def _iter_pcap_ng(reader: StructReader):
         if body_length < 0:
             break
 
-        if block_type == 0x0A0D0D0A:
-            bom = reader.u32()
-            if bom == 0x1A2B3C4D:
-                needs_swap = reader.bigendian
-                reader.bigendian = False
-            elif bom == 0x4D3C2B1A:
-                needs_swap = not reader.bigendian
-                reader.bigendian = True
-            else:
-                raise ValueError(F'invalid PCAP-NG byte order magic: 0x{bom:08X}')
-            if needs_swap:
-                block_length = int.from_bytes(
-                    block_length.to_bytes(4, 'big'), 'little')
-            body_length = block_length - 12
-            reader.u16()  # version_major
-            reader.u16()  # version_minor
-            reader.u64()  # section_length
-            remaining = body_length - (reader.tell() - block_start - 8)
-            if remaining > 0:
-                reader.read_exactly(remaining)
-        elif block_type == 0x00000001:
-            lt = LinkType(reader.u16())
-            reader.u16()  # reserved
-            reader.u32()  # snap_len
-            interfaces.append(lt)
-            remaining = body_length - 8
-            if remaining > 0:
-                reader.read_exactly(remaining)
-        elif block_type == 0x00000006:
-            iface_id = reader.u32()
-            reader.u32()  # timestamp_high
-            reader.u32()  # timestamp_low
-            captured_len = reader.u32()
-            reader.u32()  # original_len
-            if iface_id < len(interfaces):
-                lt = interfaces[iface_id]
-            else:
-                lt = LinkType.ETHERNET
-            try:
-                packet_data = reader.read_exactly(captured_len)
-            except EOF:
-                break
-            yield lt, memoryview(packet_data)
-            padded = (captured_len + 3) & ~3
-            skip = padded - captured_len
-            remaining = body_length - 20 - padded
-            if skip > 0:
-                reader.read_exactly(skip)
-            if remaining > 0:
-                reader.read_exactly(remaining)
-        else:
-            try:
-                reader.read_exactly(body_length)
-            except EOF:
-                break
-
         try:
+            if block_type == 0x0A0D0D0A:
+                bom = reader.u32()
+                if bom == 0x1A2B3C4D:
+                    needs_swap = reader.bigendian
+                    reader.bigendian = False
+                elif bom == 0x4D3C2B1A:
+                    needs_swap = not reader.bigendian
+                    reader.bigendian = True
+                else:
+                    raise ValueError(F'invalid PCAP-NG byte order magic: 0x{bom:08X}')
+                if needs_swap:
+                    block_length = int.from_bytes(
+                        block_length.to_bytes(4, 'big'), 'little')
+                body_length = block_length - 12
+                reader.u16()  # version_major
+                reader.u16()  # version_minor
+                reader.u64()  # section_length
+                remaining = body_length - (reader.tell() - block_start - 8)
+                if remaining > 0:
+                    reader.read_exactly(remaining)
+            elif block_type == 0x00000001:
+                lt = LinkType(reader.u16())
+                reader.u16()  # reserved
+                reader.u32()  # snap_len
+                interfaces.append(lt)
+                remaining = body_length - 8
+                if remaining > 0:
+                    reader.read_exactly(remaining)
+            elif block_type == 0x00000006:
+                iface_id = reader.u32()
+                reader.u32()  # timestamp_high
+                reader.u32()  # timestamp_low
+                captured_len = reader.u32()
+                reader.u32()  # original_len
+                if iface_id < len(interfaces):
+                    lt = interfaces[iface_id]
+                else:
+                    lt = LinkType.ETHERNET
+                packet_data = reader.read_exactly(captured_len)
+                yield lt, memoryview(packet_data)
+                padded = (captured_len + 3) & ~3
+                skip = padded - captured_len
+                remaining = body_length - 20 - padded
+                if skip > 0:
+                    reader.read_exactly(skip)
+                if remaining > 0:
+                    reader.read_exactly(remaining)
+            else:
+                reader.read_exactly(body_length)
             reader.u32()  # trailing block length
         except EOF:
             break
@@ -258,7 +259,7 @@ class _IPv6Header(Struct[memoryview]):
         self.dst = str(ipaddress.IPv6Address(reader.read_bytes(16)))
         payload_size = min(payload_length, reader.remaining_bytes)
         payload_start = reader.tell()
-        extension_headers = {0, 43, 44, 50, 51, 60, 135, 139, 140}
+        extension_headers = {0, 43, 44, 60, 135, 139, 140}
         while next_header in extension_headers:
             if next_header == 44:
                 raise ValueError
@@ -366,8 +367,7 @@ def reassemble_tcp_streams(data: bytes | bytearray | memoryview) -> list[TcpData
     for key, stream in flows.items():
         payload = stream.reassemble()
         if payload:
-            first_idx = flow_first_packet.get(
-                key, min(s.packet_index for s in stream.segments))
+            first_idx = flow_first_packet[key]
             datagrams.append(TcpDatagram(
                 key.src_addr, key.dst_addr, key.src_port, key.dst_port,
                 payload, first_idx,
