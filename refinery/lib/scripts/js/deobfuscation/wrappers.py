@@ -116,7 +116,7 @@ class JsCallWrapperInliner(ScriptLevelTransformer):
                 continue
             replacement = substitute_params(
                 info.return_expression,
-                info.param_names,
+                info.node.params,
                 ast_node.arguments,
             )
             _replace_in_parent(ast_node, replacement)

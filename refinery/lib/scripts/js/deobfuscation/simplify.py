@@ -374,7 +374,7 @@ class JsSimplifications(Transformer):
             return None
         if not is_safe_iife_inline(expr, param_names, node.arguments, call_pure):
             return None
-        return substitute_params(expr, param_names, node.arguments)
+        return substitute_params(expr, fn.params, node.arguments)
 
     @staticmethod
     def _try_fold_static_method(node: JsCallExpression) -> Node | None:

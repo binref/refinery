@@ -25,7 +25,12 @@ from refinery.lib.scripts import (
     _replace_in_parent,
 )
 from refinery.lib.scripts.js.analysis.effects import side_effect_free
-from refinery.lib.scripts.js.analysis.model import Binding, SemanticModel, is_use_position
+from refinery.lib.scripts.js.analysis.model import (
+    Binding,
+    SemanticModel,
+    build_semantic_model,
+    is_use_position,
+)
 from refinery.lib.scripts.js.model import (
     JsArrayExpression,
     JsArrowFunctionExpression,
@@ -722,21 +727,72 @@ def is_safe_iife_inline(
 
 def substitute_params(
     expression: Node,
-    param_names: Sequence[str],
+    params: Sequence[Node],
     arguments: Sequence[Node],
 ) -> Node:
     """
-    Deep-clone *expression* and replace every use-position `refinery.lib.scripts.js.model.JsIdentifier`
-    whose name appears in *param_names* with a clone of the positionally corresponding node from
-    *arguments*. A non-computed property key (the `a` in `b.a`) names a property rather than the
-    parameter, so it is left untouched even when it happens to share a parameter's name.
+    Deep-clone *expression* and replace every reference to one of the function parameters *params* with
+    a clone of the positionally corresponding node from *arguments*. Only identifiers the parameter
+    actually binds are replaced: a non-computed property key (the `a` in `b.a`) names a property, and a
+    function or class nested in *expression* that reintroduces a parameter's name keeps its own
+    identifiers rather than the outer parameter's. When *expression* nests no scope, no name under it
+    can be rebound, so a parameter's references are exactly the use-position identifiers carrying its
+    name and are substituted directly; only when it does nest a scope is a semantic model built to
+    resolve each occurrence against the binding it reads.
     """
     cloned = _clone_node(expression)
-    mapping = dict(zip(param_names, arguments))
-    for node in list(cloned.walk()):
-        if isinstance(node, JsIdentifier) and node.name in mapping and is_use_position(node):
-            _replace_in_parent(node, _clone_node(mapping[node.name]))
+    mapping = {
+        param.name: argument
+        for param, argument in zip(params, arguments)
+        if isinstance(param, JsIdentifier)
+    }
+    if isinstance(expression, JsIdentifier):
+        if expression.name in mapping and is_use_position(expression):
+            return _clone_node(mapping[expression.name])
+        return cloned
+    if not _introduces_nested_scope(expression):
+        for node in list(cloned.walk()):
+            if isinstance(node, JsIdentifier) and node.name in mapping and is_use_position(node):
+                _replace_in_parent(node, _clone_node(mapping[node.name]))
+        return cloned
+    root = expression
+    while root.parent is not None:
+        root = root.parent
+    assert isinstance(root, JsScript)
+    model = build_semantic_model(root)
+    bindings = {
+        param.name: model.binding_of(param)
+        for param in params
+        if isinstance(param, JsIdentifier)
+    }
+    for original, clone in zip(list(expression.walk()), list(cloned.walk())):
+        if not isinstance(original, JsIdentifier) or original.name not in mapping:
+            continue
+        binding = bindings.get(original.name)
+        if binding is None or model.resolve(original) is not binding:
+            continue
+        if isinstance(clone, JsIdentifier) and clone.name == original.name:
+            _replace_in_parent(clone, _clone_node(mapping[original.name]))
     return cloned
+
+
+def _introduces_nested_scope(node: Node) -> bool:
+    """
+    Whether the subtree at *node* contains a function or class — a scope in which an enclosing
+    function's parameter name could be rebound. When it does not, no identifier under *node* can shadow
+    such a parameter, so the parameter's references are exactly the use-position identifiers that carry
+    its name.
+    """
+    return any(
+        isinstance(child, (
+            JsFunctionExpression,
+            JsArrowFunctionExpression,
+            JsFunctionDeclaration,
+            JsClassExpression,
+            JsClassDeclaration,
+        ))
+        for child in node.walk()
+    )
 
 
 def try_inline_trivial_function(
@@ -778,7 +834,7 @@ def try_inline_trivial_function(
             )
             if uses > 1 and not is_simple_expression(call_args[i]):
                 return None
-    return substitute_params(expr, param_names, call_args)
+    return substitute_params(expr, func.params, call_args)
 
 
 def walk_scope(root: Node, *, include_root_body: bool = False) -> Iterator[Node]:

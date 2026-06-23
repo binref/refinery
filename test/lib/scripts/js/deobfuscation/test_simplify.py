@@ -409,6 +409,14 @@ class TestExtendedOperatorFolding(TestJsDeobfuscator):
         source = 'var r = (function(a, b) { return b[a]; })(0, arr);'
         self.assertEqual('var r = arr[0];', self._simplify(source))
 
+    def test_iife_returning_shadowing_function_keeps_inner_parameter(self):
+        source = 'var r = (function(a) { return function(a) { return a; }; })(5);'
+        self.assertEqual('var r = function(a) {\n  return a;\n};', self._simplify(source))
+
+    def test_iife_inlines_bare_parameter_return(self):
+        source = 'var r = (function(a) { return a; })(7);'
+        self.assertEqual('var r = 7;', self._simplify(source))
+
     def test_iife_preserves_conditional_effectful_arg(self):
         source = inspect.cleandoc(
             """
