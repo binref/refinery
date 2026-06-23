@@ -2,6 +2,11 @@ from __future__ import annotations
 
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 
+from refinery.lib.scripts.js.analysis.cache import ModelCache
+from refinery.lib.scripts.js.deobfuscation.dispatcher import JsDispatcherUnwrapper
+from refinery.lib.scripts.js.model import JsFunctionDeclaration
+from refinery.lib.scripts.js.parser import JsParser
+
 
 class TestDispatcherUnwrapping(TestJsDeobfuscator):
 
@@ -75,3 +80,44 @@ class TestDispatcherUnwrapping(TestJsDeobfuscator):
         )
         result = self._deobfuscate(source)
         self.assertEqual('console.log(42);', result)
+
+    def test_unwrapping_invalidates_shared_model_cache(self):
+        """
+        Unwrapping removes the dispatcher's empty stub function through the shared analysis cache.
+        When neither the payload nor the cache declarator is in removable form, that stub deletion
+        is the unwrapper's only boilerplate removal, so the removal itself must invalidate the shared
+        cache: a later transform sharing the cache must not observe a model that still declares the
+        already-deleted stub.
+        """
+        source = '\n'.join((
+            'var c = {};',
+            'var p = 0;',
+            'function d(name, flag, rtype, lengths) {',
+            '  var output;',
+            '  var fns = {',
+            '    "k": function() { return 42; }',
+            '  };',
+            '  if (flag === "initF") { p = []; }',
+            '  if (flag === "createF") {',
+            '    output = c[name] || (c[name] = fns[name]);',
+            '  } else {',
+            '    output = fns[name]();',
+            '  }',
+            '  if (rtype === "wrapF") { return { "wk": output }; }',
+            '  else { return output; }',
+            '}',
+            'function stub() {}',
+            'console.log(d("k"));',
+        ))
+        ast = JsParser(source).parse()
+        cache = ModelCache(ast)
+        transformer = JsDispatcherUnwrapper()
+        transformer.models = cache
+        transformer.visit(ast)
+        remaining = sorted(
+            node.id.name
+            for node in ast.walk()
+            if isinstance(node, JsFunctionDeclaration) and node.id is not None
+        )
+        self.assertEqual(['k'], remaining)
+        self.assertIsNone(cache.model.lookup('stub', cache.model.root_scope))

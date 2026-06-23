@@ -10,6 +10,7 @@ from dataclasses import dataclass
 
 from refinery.lib.scripts import (
     Node,
+    _remove_from_parent,
     _replace_in_parent,
 )
 from refinery.lib.scripts.js.analysis.cache import model_cache
@@ -574,4 +575,4 @@ class JsDispatcherUnwrapper(ScopeProcessingTransformer):
                     if not binding_has_references(model, binding, exclude=stmt):
                         to_remove.append(stmt)
         for stmt in to_remove:
-            body.remove(stmt)
+            _remove_from_parent(stmt)
