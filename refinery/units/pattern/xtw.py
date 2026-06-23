@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from refinery.lib.patterns import wallets
+from refinery.lib.wallets import validate
 from refinery.units import RefineryCriticalException
 from refinery.units.pattern import PatternExtractor, RefinedMatch
 
@@ -8,7 +9,9 @@ from refinery.units.pattern import PatternExtractor, RefinedMatch
 class xtw(PatternExtractor):
     """
     Extract Wallets: Extracts anything that looks like a cryptocurrency wallet address.
-    This works similar to the `refinery.xtp` unit.
+
+    The units works similar to `refinery.xtp`. Each candidate is verified against the checksum of
+    its address format and discarded when the check fails.
     """
 
     def __init__(self, stripspace=False, duplicates=False, longest=False, take=0):
@@ -24,6 +27,8 @@ class xtw(PatternExtractor):
                     break
             else:
                 raise RefineryCriticalException('Received empty match.')
+            if not validate(name, value):
+                return None
             return self.labelled(value, kind=name)
 
         yield from self.matches_filtered(memoryview(data), pattern, check)
