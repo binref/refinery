@@ -14,6 +14,8 @@ from __future__ import annotations
 from typing import NamedTuple
 
 from refinery.lib.scripts import Node, _replace_in_parent
+from refinery.lib.scripts.js.analysis.cache import model_cache
+from refinery.lib.scripts.js.analysis.model import SemanticModel
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     ScriptLevelTransformer,
     member_key,
@@ -262,21 +264,29 @@ class JsRestArrayUnpacking(ScriptLevelTransformer):
 
     def _process_script(self, node: JsScript) -> None:
         count = 0
+        model = model_cache(self, node).model
         for fn_node in node.walk():
             if not isinstance(fn_node, (JsFunctionExpression, JsFunctionDeclaration)):
                 continue
-            if self._demask_function(fn_node):
+            if self._demask_function(fn_node, model):
                 count += 1
         if count > 0:
             self.mark_changed()
 
-    def _demask_function(self, fn: JsFunctionExpression | JsFunctionDeclaration) -> bool:
+    def _demask_function(
+        self,
+        fn: JsFunctionExpression | JsFunctionDeclaration,
+        model: SemanticModel,
+    ) -> bool:
         if len(fn.params) != 1:
             return False
         param = fn.params[0]
         if not isinstance(param, JsRestElement):
             return False
         if not isinstance(param.argument, JsIdentifier):
+            return False
+        binding = model.binding_of(param.argument)
+        if binding is None or binding.captured:
             return False
         rest_name = param.argument.name
         if fn.body is None or not isinstance(fn.body, JsBlockStatement):

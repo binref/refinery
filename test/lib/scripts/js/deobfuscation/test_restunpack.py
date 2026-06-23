@@ -135,3 +135,17 @@ class TestVariableDemasking(TestJsDeobfuscator):
             ),
             self._demask('var f = function(...r) { A.B.C.length = 2; return A.X.C[0]; }'),
         )
+
+    def test_skips_rest_param_captured_by_closure(self):
+        source = inspect.cleandoc(
+            """
+            var f = function(...s) {
+              s.length = 1;
+              var g = function() {
+                return s[0] + 1;
+              };
+              return s[0] + g();
+            };
+            """
+        )
+        self.assertEqual(source, self._demask(source))
