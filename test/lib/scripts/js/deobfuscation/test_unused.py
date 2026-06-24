@@ -44,6 +44,50 @@ class TestUnusedCodeRemoval(TestJsDeobfuscator):
             self._remove_unused(source),
         )
 
+    def test_aliased_object_mutated_through_alias_is_kept(self):
+        source = inspect.cleandoc(
+            """
+            function f() {
+              var a = { p0: 1 };
+              var b = a;
+              b.p0 = 2;
+              return a.p0;
+            }
+            console.log(f());
+            """
+        )
+        self.assertEqual(source, self._remove_unused(source))
+
+    def test_object_mutated_by_callee_is_kept(self):
+        source = inspect.cleandoc(
+            """
+            function m(x) {
+              x.p0 = 9;
+            }
+            function f() {
+              var a = { p0: 1 };
+              m(a);
+              return a.p0;
+            }
+            console.log(f());
+            """
+        )
+        self.assertEqual(source, self._remove_unused(source))
+
+    def test_aliased_array_mutated_through_alias_is_kept(self):
+        source = inspect.cleandoc(
+            """
+            function f() {
+              var a = [1, 2];
+              var b = a;
+              b[0] = 9;
+              return a[0];
+            }
+            console.log(f());
+            """
+        )
+        self.assertEqual(source, self._remove_unused(source))
+
     def test_local_dead_declaration_removed(self):
         source = inspect.cleandoc(
             """
