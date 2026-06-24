@@ -67,6 +67,7 @@ from refinery.lib.scripts.js.model import (
     JsProperty,
     JsRestElement,
     JsScript,
+    JsSpreadElement,
     JsStringLiteral,
     JsSwitchStatement,
     JsTaggedTemplateExpression,
@@ -92,6 +93,7 @@ _PATTERN_CONTAINERS = (
     JsObjectExpression,
     JsObjectPattern,
     JsRestElement,
+    JsSpreadElement,
 )
 
 
@@ -311,17 +313,21 @@ def _enclosing_operator(node: Node) -> Node | None:
 
 def _governing_target(node: Node) -> tuple[Node | None, Node]:
     """
-    Climb outward from *node* through the destructuring containers and parentheses that keep it in an
-    assignment or binding target position — array and object patterns (and the literal-shaped forms a
-    destructuring assignment target is parsed as), their rest elements, the value side of a pattern
-    property, and the target side of a default pattern (`[a = d] = ...`, climbing the `a` side only,
-    never into the default `d`) — then return the construct whose operator governs the target together
-    with the operand that construct sees: the outermost container the climb carried *node* up to. The
-    governor is the nearest enclosing assignment, update, `delete`, `for-in`/`for-of` head, or
-    declarator, or `None` past the top of the tree; a caller classifies it by asking whether the
-    returned operand is its write side. Centralizing the climb keeps the pattern-and-parenthesis
-    handling identical for every def-use, write-target, and liveness query, so a case one copy forgot —
-    such as the array-default `JsAssignmentPattern` target — cannot be missed by one and not another.
+    Climb outward from *node* through the destructuring containers and parentheses that keep it in
+    an assignment or binding target position — array and object patterns (and the literal-shaped
+    forms a destructuring assignment or `for-in`/`for-of` target is parsed as), their rest and
+    spread elements, the value side of a pattern property, and the target side of a default pattern
+    (`[a = d] = ...`, climbing the `a` side only, never into the default `d`) — then return the
+    first ancestor that does not continue the target, together with the operand it sees: the
+    outermost container the climb carried *node* up to. That ancestor is the construct whose
+    operator governs the target; when *node* really sits in a target it is an assignment, update,
+    `delete`, `for-in`/`for-of` head, or declarator, but it is some other node (a call, an operand)
+    when *node* is not a target, and `None` past the top of the tree — so a caller decides a write
+    by asking whether the returned operand is the governor's write side, never from the governor's
+    type alone. Centralizing the climb keeps the pattern-and-parenthesis handling identical for
+    every def-use, write-target, and liveness query, so a case one copy forgot — such as the
+    array-default `JsAssignmentPattern` target or a `for-of` rest element — cannot be missed by one
+    and not another.
     """
     cursor: Node = node
     parent = _enclosing_operator(cursor)

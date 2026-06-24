@@ -225,6 +225,13 @@ class TestSemanticModel(TestBase):
         self.assertEqual(len(binding.reads), 0)
         self.assertTrue(binding.is_dead)
 
+    def test_for_of_rest_target_is_write_only(self):
+        ast, model = self._model('function f(){ var a; for ([...a] of xs) {} }')
+        binding = self._binding(ast, model, 'a')
+        self.assertEqual(len(binding.writes), 1)
+        self.assertEqual(len(binding.reads), 0)
+        self.assertTrue(binding.is_dead)
+
     def test_closure_read_marks_captured_and_keeps_binding_live(self):
         ast, model = self._model('function o(){ var x; x = 7; return function(){ return x; }; }')
         binding = self._binding(ast, model, 'x')
@@ -388,6 +395,12 @@ class TestSemanticModel(TestBase):
     def test_container_for_in_target_is_member_write(self):
         self.assertEqual(self._role('var a = {}; for (a.k in xs) {}'), ContainerRole.MEMBER_WRITE)
 
+    def test_container_for_of_rest_member_target_is_member_write(self):
+        self.assertEqual(self._role('var a = {}; for ([...a.b] of xs) {}'), ContainerRole.MEMBER_WRITE)
+
+    def test_container_spread_member_in_array_literal_is_member_read(self):
+        self.assertEqual(self._role('var a = {}; y = [...a.b];'), ContainerRole.MEMBER_READ)
+
     def test_container_array_destructuring_target_is_member_write(self):
         self.assertEqual(self._role('var a = [1]; [a[0]] = xs;'), ContainerRole.MEMBER_WRITE)
 
@@ -431,6 +444,15 @@ class TestSemanticModel(TestBase):
 
     def test_reference_role_object_destructuring_default_is_write(self):
         self.assertEqual(self._ref_role('var a = 1; ({k: a = 9} = obj);'), Role.WRITE)
+
+    def test_reference_role_for_of_rest_target_is_write(self):
+        self.assertEqual(self._ref_role('var a = 1; for ([b, ...a] of xs) {}'), Role.WRITE)
+
+    def test_reference_role_for_of_object_rest_target_is_write(self):
+        self.assertEqual(self._ref_role('var a = 1; for ({...a} of xs) {}'), Role.WRITE)
+
+    def test_reference_role_array_spread_argument_is_read(self):
+        self.assertEqual(self._ref_role('var a = 1; f(...a);'), Role.READ)
 
     def test_eval_is_a_reflection_surface(self):
         _, model = self._model('eval(payload);')
