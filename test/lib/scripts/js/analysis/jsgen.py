@@ -25,6 +25,20 @@ is invoked immediately, since `Function.prototype.toString` reflects the very so
 rewrites) and a self-referential structure (`SINK` is only pushed to and joined once at the end,
 never nested into itself).
 
+The generator also builds objects and arrays and mutates them in place, so the deobfuscator's
+member-write reasoning is exercised: a fresh array or object is bound to a local, its elements are
+assigned, incremented, and deleted, and the object is aliased to a second binding, passed to a
+function that mutates it, and stored inside another object — the escape and aliasing shapes under
+which a member-write is observable. Only primitive property reads ever reach `SINK`; an object is
+never pushed into it, so the no-self-referential-structure invariant still holds, and a function
+remains something only ever called.
+
+A `for-of` loop also reassigns outer bindings by destructuring each element of a constant array of
+arrays through a rest target in its head (`for ([w0, ...w1] of ...)`). Because the head carries no
+`var`/`let`/`const`, the rest target is an assignment target that parses as an array literal with a
+spread — a different node shape than the array pattern a plain `[w0, ...w1] = xs` uses — so the
+deobfuscator's write-target classification of a spread in a literal-shaped for-head is exercised.
+
 `generate(seed)` is a pure function of its integer seed, so any divergence reproduces from its
 seed.
 """
@@ -43,13 +57,17 @@ class _Scope:
     """
     The names visible while generating one lexical region. `readable` is every name that may be
     referenced; `mutable` is the subset a plain assignment may target, so a `const` is never
-    reassigned; `funcs` maps a callable function name to its arity. A child scope sees its parent's
-    names through `parent`, modelling JS closure so nested functions may read outer variables.
+    reassigned; `funcs` maps a callable function name to its arity. `objects` records each name bound
+    to a fresh array or object together with its kind, so member accesses pick a valid key; `mutators`
+    lists functions that mutate an object passed to them. A child scope sees its parent's names
+    through `parent`, modelling JS closure so nested functions may read outer variables.
     """
     parent: _Scope | None = None
     readable: list[str] = field(default_factory=list)
     mutable: set[str] = field(default_factory=set)
     funcs: list[tuple[str, int]] = field(default_factory=list)
+    objects: list[tuple[str, str]] = field(default_factory=list)
+    mutators: list[str] = field(default_factory=list)
 
     def child(self) -> _Scope:
         return _Scope(parent=self)
@@ -72,6 +90,18 @@ class _Scope:
             items += self.parent.all_funcs()
         return items
 
+    def all_objects(self) -> list[tuple[str, str]]:
+        items = list(self.objects)
+        if self.parent is not None:
+            items += self.parent.all_objects()
+        return items
+
+    def all_mutators(self) -> list[str]:
+        items = list(self.mutators)
+        if self.parent is not None:
+            items += self.parent.all_mutators()
+        return items
+
 
 class _Generator:
     def __init__(self, seed: int):
@@ -92,11 +122,19 @@ class _Generator:
         return name
 
     def _statement(self, scope: _Scope, depth: int) -> list[str]:
-        choices = ['decl', 'sink', 'log', 'expr']
+        choices = ['decl', 'sink', 'log', 'expr', 'obj']
         if depth < 2:
-            choices += ['if', 'for', 'func', 'try']
+            choices += ['if', 'for', 'for_destructure', 'func', 'try', 'objfunc']
         if scope.all_mutable():
             choices.append('assign')
+            choices.append('destructure')
+        objects = scope.all_objects()
+        if objects:
+            choices += ['member_write', 'alias']
+            if len(objects) >= 2:
+                choices.append('member_store')
+            if scope.all_mutators():
+                choices.append('mutate_call')
         kind = self.rng.choice(choices)
         return getattr(self, F'_stmt_{kind}')(scope, depth)
 
@@ -112,6 +150,18 @@ class _Generator:
     def _stmt_assign(self, scope: _Scope, depth: int) -> list[str]:
         name = self.rng.choice(scope.all_mutable())
         return [F'{name} = {self._expr(scope, 2)};']
+
+    def _stmt_destructure(self, scope: _Scope, depth: int) -> list[str]:
+        """
+        An array-destructuring assignment with a default, `[name = d] = [items];`, exercising the
+        deobfuscator's write-target classification of a destructuring default: *name* is reassigned to
+        the first element of the fresh array, or to *d* when the array is too short, and a later read of
+        the mutable *name* observes whichever it became.
+        """
+        name = self.rng.choice(scope.all_mutable())
+        default = self._expr(scope, 1)
+        items = [self._expr(scope, 1) for _ in range(self.rng.randint(0, 2))]
+        return [F'[{name} = {default}] = [{", ".join(items)}];']
 
     def _stmt_sink(self, scope: _Scope, depth: int) -> list[str]:
         return [F'SINK.push({self._expr(scope, 2)});']
@@ -142,6 +192,36 @@ class _Generator:
         lines.append('}')
         return lines
 
+    def _stmt_for_destructure(self, scope: _Scope, depth: int) -> list[str]:
+        """
+        A `for-of` loop whose head is a destructuring-assignment target ending in a rest element,
+        `for ([w0, ...w1] of [[..], ..]) { ... }`. The head carries no `var`/`let`/`const`, so its
+        targets are assignment targets that parse as an array literal with a spread — the literal-shaped
+        form whose write-target classification the deobfuscator must get right — and each iteration
+        reassigns the outer bindings. The rest binding is tracked as an array so it is only ever read
+        through a member, and a body read of an element and of the rest observes the writes.
+        """
+        leading = [self._fresh() for _ in range(self.rng.randint(0, 2))]
+        rest = self._fresh()
+        rows: list[str] = []
+        for _ in range(self.rng.randint(1, 3)):
+            width = self.rng.randint(len(leading), len(leading) + 2)
+            rows.append(F'[{", ".join(self._atom(scope) for _ in range(width))}]')
+        inits = [F'var {name} = {self._expr(scope, 1)};' for name in leading]
+        for name in leading:
+            scope.readable.append(name)
+            scope.mutable.add(name)
+        scope.objects.append((rest, 'array'))
+        inner = scope.child()
+        body = [F'SINK.push({self._member(rest, "array")});']
+        body += [F'SINK.push({name});' for name in leading]
+        body += self._body(inner, depth + 1)
+        targets = ', '.join([*leading, F'...{rest}'])
+        lines = [*inits, F'var {rest} = [];', F'for ([{targets}] of [{", ".join(rows)}]) {{']
+        lines += self._indent(body)
+        lines.append('}')
+        return lines
+
     def _stmt_try(self, scope: _Scope, depth: int) -> list[str]:
         lines = ['try {']
         lines += self._indent(self._body(scope.child(), depth + 1))
@@ -161,13 +241,79 @@ class _Generator:
         for param in params:
             body_scope.readable.append(param)
             body_scope.mutable.add(param)
-        body = self._body(body_scope, depth + 1)
+        signature = list(params)
+        prefix: list[str] = []
+        if self.rng.random() < 0.4:
+            rest = self._fresh()
+            body_scope.objects.append((rest, 'array'))
+            signature.append(F'...{rest}')
+            prefix.append(F'{rest}[0] = {self._expr(body_scope, 1)};')
+        body = prefix + self._body(body_scope, depth + 1)
         body.append(F'return {self._expr(body_scope, 2)};')
-        lines = [F'function {name}({", ".join(params)}) {{']
+        lines = [F'function {name}({", ".join(signature)}) {{']
         lines += self._indent(body)
         lines.append('}')
         scope.funcs.append((name, arity))
         return lines
+
+    def _stmt_obj(self, scope: _Scope, depth: int) -> list[str]:
+        name = self._fresh()
+        kind = self.rng.choice(('array', 'object'))
+        if kind == 'array':
+            items = [self._expr(scope, 1) for _ in range(self.rng.randint(0, 3))]
+            init = F'[{", ".join(items)}]'
+        else:
+            parts = [F'{key}: {self._expr(scope, 1)}' for key in ('p0', 'p1', 'p2')]
+            init = F'{{{", ".join(parts)}}}'
+        scope.objects.append((name, kind))
+        return [F'var {name} = {init};']
+
+    def _stmt_member_write(self, scope: _Scope, depth: int) -> list[str]:
+        name, kind = self.rng.choice(scope.all_objects())
+        target = self._member(name, kind)
+        form = self.rng.choice(('assign', 'incr', 'decr', 'delete'))
+        if form == 'assign':
+            return [F'{target} = {self._expr(scope, 2)};']
+        if form == 'incr':
+            return [F'{target}++;']
+        if form == 'decr':
+            return [F'--{target};']
+        return [F'delete {target};']
+
+    def _stmt_alias(self, scope: _Scope, depth: int) -> list[str]:
+        name, kind = self.rng.choice(scope.all_objects())
+        alias = self._fresh()
+        scope.objects.append((alias, kind))
+        return [F'var {alias} = {name};']
+
+    def _stmt_member_store(self, scope: _Scope, depth: int) -> list[str]:
+        objects = scope.all_objects()
+        container, kind = self.rng.choice(objects)
+        value, _ = self.rng.choice([entry for entry in objects if entry[0] != container])
+        return [F'{self._member(container, kind)} = {value};']
+
+    def _stmt_objfunc(self, scope: _Scope, depth: int) -> list[str]:
+        name = self._fresh()
+        param = self._fresh()
+        body_scope = scope.child()
+        body_scope.objects.append((param, 'array'))
+        body = [F'{param}[0] = {self._expr(body_scope, 1)};']
+        for _ in range(self.rng.randint(0, 2)):
+            body.extend(self._statement(body_scope, depth + 1))
+        body.append(F'return {self._member(param, "array")};')
+        lines = [F'function {name}({param}) {{']
+        lines += self._indent(body)
+        lines.append('}')
+        scope.mutators.append(name)
+        return lines
+
+    def _stmt_mutate_call(self, scope: _Scope, depth: int) -> list[str]:
+        name, kind = self.rng.choice(scope.all_objects())
+        mutator = self.rng.choice(scope.all_mutators())
+        return [
+            F'{mutator}({name});',
+            F'SINK.push({name}[0]);',
+        ]
 
     def _body(self, scope: _Scope, depth: int) -> list[str]:
         lines: list[str] = []
@@ -225,11 +371,24 @@ class _Generator:
             F'(function ({outer}) {{ return function ({inner}) {{ return {body}; }}; }})'
             F'({arg1})({arg2})')
 
+    def _member(self, name: str, kind: str) -> str:
+        """
+        A member access on object *name*: a bracketed integer index for an array, a dotted property
+        for an object. Reads and writes share this one small key space, so a write to a name is
+        observable through a later read of the same name.
+        """
+        if kind == 'array':
+            return F'{name}[{self.rng.randint(0, 2)}]'
+        return F'{name}.{self.rng.choice(("p0", "p1", "p2"))}'
+
     def _atom(self, scope: _Scope) -> str:
         names = scope.all_readable()
+        objects = scope.all_objects()
         kinds = ['int', 'string', 'bool']
         if names:
             kinds += ['name', 'name']
+        if objects:
+            kinds.append('member')
         kind = self.rng.choice(kinds)
         if kind == 'int':
             return str(self.rng.randint(0, 12))
@@ -237,6 +396,9 @@ class _Generator:
             return F"'{self.rng.choice(_WORDS)}'"
         if kind == 'bool':
             return self.rng.choice(('true', 'false'))
+        if kind == 'member':
+            name, okind = self.rng.choice(objects)
+            return self._member(name, okind)
         return self.rng.choice(names)
 
     @staticmethod
