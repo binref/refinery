@@ -14,6 +14,7 @@ from refinery.lib.emulator.abstract import (
     Register,
 )
 from refinery.lib.executable import Arch
+from refinery.lib.shared.capstone import capstone
 from refinery.lib.shared.icicle import icicle as ic
 
 if TYPE_CHECKING:
@@ -71,6 +72,16 @@ class IcicleEmulator(RawMetalEmulator[Ic, str, _T]):
     def _disable_single_step(self):
         self._single_step = False
 
+    def _fault_access_size(self, insn) -> int:
+        """
+        The width of a faulting memory access is the size of the instruction's memory operand;
+        an x86 instruction has at most one. When none is present, fall back to the address size.
+        """
+        for op in insn.operands:
+            if op.type == capstone.CS_OP_MEM:
+                return op.size
+        return insn.addr_size
+
     def _emulate(self, start: int, end: int | None = None):
         RS = ic.RunStatus
         MP = ic.MemoryProtection
@@ -97,6 +108,7 @@ class IcicleEmulator(RawMetalEmulator[Ic, str, _T]):
         self.ip = ip = start
         mprotect: list[tuple[int, int, MP]] = []
         retrying = 0
+        last_fault: tuple[object, int] | None = None
 
         while True:
             if end is not None and ip == end:
@@ -116,16 +128,19 @@ class IcicleEmulator(RawMetalEmulator[Ic, str, _T]):
             if mprotect:
                 ice.mem_protect(*mprotect[-1])
             if (status := step()) == RS.InstructionLimit:
-                for p in mprotect:
-                    addr, size, prot = p
+                stop = False
+                for addr, size, prot in mprotect:
                     ice.mem_protect(addr, size, MP.ExecuteOnly)
                     if mm_w_hooked and prot == MP.ExecuteReadWrite:
                         value = self.mem_read_int(addr, size)
                         if self.hook_mem_write(ice, MemAccess.Write, addr, size, value, self.state) is False:
-                            break
+                            stop = True
                 mprotect.clear()
                 retrying = 0
+                last_fault = None
                 ip = self.ip
+                if stop:
+                    break
             elif status in (
                 RS.Breakpoint,
                 RS.Halt,
@@ -134,10 +149,13 @@ class IcicleEmulator(RawMetalEmulator[Ic, str, _T]):
                 break
             elif status == RS.UnhandledException:
                 insn = insn or next(dasm.disasm(self.mem_read(ip, 20), ip, 1))
-                size = max((op.size for op in insn.operands), default=insn.addr_size)
                 EC = ic.ExceptionCode
                 ea = ice.exception_value
                 ec = ice.exception_code
+                if (ec, ea) == last_fault:
+                    raise EmulationError(F'no forward progress at {ea:#x} handling {ec!r}')
+                last_fault = (ec, ea)
+                size = self._fault_access_size(insn)
                 xs = None
                 if ec == EC.ReadUnmapped:
                     xs = MemAccess.Unmapped | MemAccess.Read

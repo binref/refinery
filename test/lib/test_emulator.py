@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from refinery.lib.emulator import CC, Arch, Hook, UnicornEmulator, SpeakeasyEmulator, IcicleEmulator
+from refinery.lib.emulator import CC, Arch, Hook, EmulationError, UnicornEmulator, SpeakeasyEmulator, IcicleEmulator
 from .. import TestBase
 
 
@@ -180,3 +180,51 @@ class TestEmulator(TestBase):
 
     def test_push_register_ic(self):
         self._test_push_register(IcicleEmulator)
+
+    def test_fault_access_size_ic(self):
+        sizes = []
+
+        class Emu(IcicleEmulator):
+            def hook_mem_error(self, emu, access, address, size, value, state=None):
+                sizes.append(size)
+                self.map(self.align(address, down=True), self.alloc_size)
+                return True
+
+        code = bytes.fromhex(
+            '0F B6 05 00 00 66 06'   # movzx eax, byte ptr [0x6660000]
+        )
+        emu = Emu(code, arch=Arch.X32, hooks=Hook.MemoryError)
+        emu.reset()
+        emu.step(emu.base)
+        self.assertEqual(sizes, [1])
+
+    def test_no_progress_guard_ic(self):
+        class Emu(IcicleEmulator):
+            def hook_mem_error(self, emu, access, address, size, value, state=None):
+                return True
+
+        code = bytes.fromhex(
+            '0F B6 05 00 00 66 06'   # movzx eax, byte ptr [0x6660000]
+        )
+        emu = Emu(code, arch=Arch.X32, hooks=Hook.MemoryError)
+        emu.reset()
+        with self.assertRaises(EmulationError):
+            emu.step(emu.base)
+
+    def test_write_hook_stop_ic(self):
+        class Emu(IcicleEmulator):
+            def hook_mem_error(self, emu, access, address, size, value, state=None):
+                self.map(self.align(address, down=True), self.alloc_size)
+                return True
+
+            def hook_mem_write(self, emu, access, address, size, value, state=None):
+                return False
+
+        code = bytes.fromhex(
+            'C6 05 00 00 66 06 11'   # mov byte ptr [0x6660000], 0x11
+            'C6 05 00 00 66 06 22'   # mov byte ptr [0x6660000], 0x22
+        )
+        emu = Emu(code, arch=Arch.X32, hooks=Hook.Memory | Hook.CodeExecute)
+        emu.reset()
+        emu.emulate(emu.base, emu.base + len(code))
+        self.assertEqual(emu.mem_read(0x6660000, 1), b'\x11')
