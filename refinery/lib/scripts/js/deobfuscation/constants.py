@@ -474,10 +474,18 @@ class JsConstantInlining(ScopeProcessingTransformer):
                 candidates.pop(name, None)
 
             if isinstance(node, (JsForInStatement, JsForOfStatement)):
-                if isinstance(node.left, JsIdentifier):
-                    name = node.left.name
+                left = node.left
+                if isinstance(left, JsIdentifier):
+                    name = left.name
                     rejected.add(name)
                     candidates.pop(name, None)
+                elif isinstance(left, (
+                    JsArrayExpression, JsObjectExpression, JsArrayPattern, JsObjectPattern,
+                )):
+                    for name in _pattern_identifiers(left):
+                        rejected.add(name)
+                        candidates.pop(name, None)
+                        uninitialized.pop(name, None)
 
             if isinstance(node, JsCallExpression) and isinstance(node.callee, JsIdentifier):
                 callee_name = node.callee.name

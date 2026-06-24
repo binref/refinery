@@ -362,6 +362,30 @@ class TestConstantInlining(TestJsDeobfuscator):
             self._inline("var x = 'initial'; for (x of arr) {} console.log(x);"),
         )
 
+    def test_forof_destructuring_target_not_inlined(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var x = 'initial';
+                for ([x] of rows) {}
+                console.log(x);
+                """
+            ),
+            self._inline("var x = 'initial'; for ([x] of rows) {} console.log(x);"),
+        )
+
+    def test_forof_rest_destructuring_target_not_inlined(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var x = 'initial';
+                for ([...x] of rows) {}
+                console.log(x);
+                """
+            ),
+            self._inline("var x = 'initial'; for ([...x] of rows) {} console.log(x);"),
+        )
+
     def test_array_destructuring_marks_mutated(self):
         self.assertEqual(
             inspect.cleandoc(
