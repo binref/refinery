@@ -5,5 +5,6 @@ from refinery.lib.shared import dependency
 def speakeasy():
     import speakeasy
     import speakeasy.profiler
+    import speakeasy.winenv.defs.registry.reg
     import speakeasy.windows.objman
     return speakeasy

@@ -3,7 +3,7 @@ Implements `refinery.lib.emulator.interface.Emulator` for the speakeasy backend.
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from refinery.lib.emulator.abstract import EmulationError, Emulator, MemAccess, Register
 from refinery.lib.emulator.uc_shared import get_access_map
@@ -38,6 +38,7 @@ class SpeakeasyEmulator(Emulator[Se, str, _T]):
 
     def _init(self):
         self._regs: dict[str, Register[str]] = {}
+        self._module: Any = None
 
     class _singlestep:
         def __init__(self):
@@ -69,9 +70,11 @@ class SpeakeasyEmulator(Emulator[Se, str, _T]):
             db = bytes(exe.data)
             vf = vfs.new(db)
             if exe.blob:
+                self._module = None
                 self.base = emu.load_shellcode(vf.path, data=db, arch=arch)
             else:
-                self.base = emu.load_module(vf.path, data=db).get_base()
+                self._module = emu.load_module(vf.path, data=db)
+                self.base = self._module.base
 
         if emu.emu is None:
             raise RuntimeError('emulator failed to initialize')
@@ -83,11 +86,15 @@ class SpeakeasyEmulator(Emulator[Se, str, _T]):
         self._single_step_hook_d = emu.add_dyn_code_hook(self._singlestep())
         self._disable_single_step()
 
-        emu.emu.timeout = 0
+        emu.emu.config = emu.emu.config.model_copy(update={'timeout': 0})
 
-        # prevent memory hook from being overridden, this is a bug in speakeasy
+        # Speakeasy's builtin memory hook overrides ours (a bug in speakeasy); suppress it.
         emu.emu.add_interrupt_hook(cb=emu.emu._hook_interrupt)
         emu.emu.builtin_hooks_set = True
+
+        # With the builtin handler suppressed, detect the run-ending fetch into Speakeasy's
+        # unmapped return_hook ourselves so a module/driver run stops when its entry returns.
+        emu.add_mem_invalid_hook(self._uc_hook_return)
 
         self._access_map = get_access_map()
 
@@ -118,6 +125,13 @@ class SpeakeasyEmulator(Emulator[Se, str, _T]):
     def _uc_hook_mem_error(self, emu: Se, access: int, address: int, size: int, value: int, state: _T | None = None) -> bool:
         access = self._access_map.get(access, MemAccess.Unknown)
         return self.hook_mem_error(emu, access, address, size, value, state)
+
+    def _uc_hook_return(self, emu: Se, access: int, address: int, size: int, value: int, state: _T | None = None):
+        inner = self.speakeasy.emu
+        if inner is not None and address in (inner.return_hook, inner.exit_hook):
+            inner.stop()
+            return True
+        return None
 
     def _enable_single_step(self):
         hd = self._single_step_hook_d
@@ -234,39 +248,46 @@ class SpeakeasyEmulator(Emulator[Se, str, _T]):
                 raise ValueError(F'invalid offset 0x{start:X} specified; base address is 0x{self.base:X}')
             spk.run_shellcode(self.base, offset=offset)
         else:
-            inner.stack_base, _ = inner.alloc_stack(self.stack_size)
-            inner.set_func_args(inner.stack_base, inner.return_hook)
-
+            module = self._module
             run = se.profiler.Run()
-            run.type = 'thread'         # type:ignore
-            run.start_addr = start      # type:ignore
-            run.instr_cnt = 0           # type:ignore
-            run.args = ()               # type:ignore
-
-            inner.add_run(run)
-
+            run.start_addr = start          # type:ignore
             if win32:
-                if not (process := inner.init_container_process()):
-                    process = se.windows.objman.Process(inner)
-                inner.processes.append(process)
-                inner.curr_process = process
+                run.type = 'thread'         # type:ignore
+                run.args = ()               # type:ignore
+                inner.add_run(run)
+                if not inner.processes:
+                    process = se.windows.objman.Process(
+                        inner,
+                        path=module.emu_path,
+                        base=module.base,
+                        pe=module,
+                        cmdline=inner.command_line,
+                    )
+                    inner.curr_process = process
+                    inner.om.objects.update({process.address: process})
+                    if mm := inner.get_address_map(module.base): # type:ignore
+                        mm: MemMap
+                        mm.process = process
+                thread = se.windows.objman.Thread(
+                    inner, stack_base=inner.stack_base, stack_commit=module.stack_commit)
+                inner.om.objects.update({thread.address: thread})
+                inner.curr_process.threads.append(thread)
+                inner.curr_thread = thread
+                run.thread = thread         # type:ignore
+                peb = inner.alloc_peb(inner.curr_process)
+                inner.init_teb(thread, peb)
             else:
-                process = None
-
-            if mm := inner.get_address_map(start): # type:ignore
-                mm: MemMap
-                mm.set_process(inner.curr_process)
-
-            t = se.windows.objman.Thread(inner, stack_base=inner.stack_base, stack_commit=self.stack_size)
-
-            inner.om.objects.update({t.address: t})
-            inner.curr_process.threads.append(t)
-            inner.curr_thread = t
-
-            if win32:
-                peb = inner.alloc_peb(process)
-                inner.init_teb(t, peb)
-
+                regdefs = se.winenv.defs.registry.reg
+                drv = inner.create_driver_object(pe=module)
+                svc = inner.regman.create_key(drv.reg_path)
+                svc.create_value('ImagePath', regdefs.REG_EXPAND_SZ, module.emu_path)
+                svc.create_value('Type', regdefs.REG_DWORD, 0x1)
+                svc.create_value('Start', regdefs.REG_DWORD, 0x3)
+                svc.create_value('ErrorControl', regdefs.REG_DWORD, 0x1)
+                inner.regman.create_key(drv.reg_path + '\\Parameters')
+                run.type = 'driver'         # type:ignore
+                run.args = [drv.address, drv.reg_path_ptr]  # type:ignore
+                inner.add_run(run)
             inner.start()
 
     def halt(self):

@@ -173,12 +173,12 @@ class VirtualFileSystem:
             else:
                 return vf.open(args[0])
 
-        def hook_stat(file):
+        def hook_stat(file, *args, **kwargs):
             try:
                 with self._lock:
                     vf = self._by_name[os.path.basename(file)]
             except BaseException:
-                return self._os_stat(file)
+                return self._os_stat(file, *args, **kwargs)
             else:
                 return vf.stat()
 

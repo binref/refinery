@@ -1,9 +1,40 @@
 from __future__ import annotations
 
+import base64
+import lzma
 import unittest
 
 from refinery.lib.emulator import CC, Arch, Hook, EmulationError, UnicornEmulator, SpeakeasyEmulator, IcicleEmulator
 from .. import TestBase
+
+# An x64 native-subsystem kernel driver whose DriverEntry returns STATUS_SUCCESS, stored
+# lzma-compressed and base85-encoded. It is never loaded, only parsed and emulated. It was built
+# with MSVC alone (no WDK) and can be regenerated from the following source:
+#
+#   tiny.c:
+#     typedef long NTSTATUS; typedef void *PVOID;
+#     __declspec(dllimport) unsigned long DbgPrint(const char *Format, ...);
+#     NTSTATUS DriverEntry(PVOID DriverObject, PVOID RegistryPath) {
+#         volatile PVOID keep = (PVOID)(&DbgPrint);   /* forces an ntoskrnl.exe import */
+#         (void)DriverObject; (void)RegistryPath; (void)keep; return 0; }
+#   ntoskrnl.def:  "LIBRARY ntoskrnl.exe" / "EXPORTS" / "DbgPrint"
+#   lib  /def:ntoskrnl.def /machine:x64 /out:ntoskrnl.lib
+#   cl   /c /GS- /O1 tiny.c
+#   link tiny.obj ntoskrnl.lib /OUT:tiny.sys /SUBSYSTEM:NATIVE /DRIVER /ENTRY:DriverEntry \
+#        /NODEFAULTLIB /MACHINE:X64
+_DRIVER_SYS = (
+    b'{Wp48S^xk9=GL@E0stWa8~^|S5YJf5;0gZ$m0bWPmX2@$7x(N1yXy4+lmRb9?|kO<p8YTc%hBk2*4dwEXwB>N8E~_-?jlNPn'
+    b'42$#*Cx&K8g59$s3aFyb>fH#6c|$*{{=&9WT1&Y=77Z%;O6gvI*7rr106)`)eW}k=YV;+;Fb!!Ko{nuHngLtr|X2sR^xRAOq'
+    b'{#gU#(_0u6k_mUFY0Ip*do7bxkk*6q&8L+ck`_R}DoN;2qfTDrb5MOw(<0P-=S*%3;<jh^l$9BJ`v)blE~RAjO)vBp8Qtoeu'
+    b'SmYF6Ns4@(M&iMJLgvtFKoEE|jsr;-a@Wg7_-{TP9pCFV&gmR!K)A$Bv6<Xiz`#hD_d3GjG)vg8J<5~`5Uso)t9t+0H-M+E?'
+    b'Gb>5VIHQt5Tn=hY?dbLRo;05LXlzp|9`!B}e-QP_BuwwCAj>!2AijP~d+XZ8ylInraJn<Xq5E;o*){vjg;vVsM3?U_Mb}x)$'
+    b'#<sX7<bXFkH44h&?3~ltL0e48vj5F2sieHtB^i=f^&zkmC5N5XNSTcv!BjVJ2%W(I00000?y^e6p6vW<00FTBfD`}#O4Ajiv'
+    b'BYQl0ssI200dcD'
+)
+
+
+def _driver_sys() -> bytes:
+    return lzma.decompress(base64.b85decode(_DRIVER_SYS))
 
 
 def _makeEmulator(e: type[UnicornEmulator]):
@@ -228,3 +259,10 @@ class TestEmulator(TestBase):
         emu.reset()
         emu.emulate(emu.base, emu.base + len(code))
         self.assertEqual(emu.mem_read(0x6660000, 1), b'\x11')
+
+    def test_driver_entry_se(self):
+        emu = SpeakeasyEmulator(_driver_sys())
+        emu.reset()
+        emu.emulate(emu._module.base + emu._module.ep)
+        self.assertEqual(emu.rv, 0)
+        self.assertEqual(emu.ip, emu.speakeasy.emu.return_hook)
