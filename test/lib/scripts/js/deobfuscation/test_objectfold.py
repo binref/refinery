@@ -250,6 +250,19 @@ class TestObjectFold(TestJsDeobfuscator):
         )
         self.assertEqual(source, self._objectfold(source))
 
+    def test_mutable_variable_property_value_not_folded(self):
+        source = inspect.cleandoc(
+            """
+            function f(x) {
+              var o = { p: x };
+              x = 99;
+              return o.p;
+            }
+            SINK(f(1));
+            """
+        )
+        self.assertEqual(source, self._objectfold(source))
+
     def test_dynamic_key_preserves_object(self):
         source = "var o = {'a': 'hello', 'b': 'world'}; x(o['a']); y(o[z]);"
         self.assertEqual(

@@ -18,7 +18,7 @@ from refinery.lib.scripts import (
     _replace_in_parent,
 )
 from refinery.lib.scripts.js.analysis.cache import model_cache
-from refinery.lib.scripts.js.analysis.model import Binding, SemanticModel
+from refinery.lib.scripts.js.analysis.model import Binding, SemanticModel, is_use_position
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     ScopeProcessingTransformer,
     access_key,
@@ -119,6 +119,8 @@ class JsObjectFold(ScopeProcessingTransformer):
                 continue
             if self._self_referential(model, binding, init):
                 continue
+            if any(not self._value_is_stable(model, value) for value in prop_map.values()):
+                continue
             changed, can_remove = self._inline_references(model, binding, prop_map, self)
             if changed:
                 if can_remove:
@@ -140,6 +142,32 @@ class JsObjectFold(ScopeProcessingTransformer):
             for decl in stmt.declarations:
                 if isinstance(decl, JsVariableDeclarator) and isinstance(decl.init, JsObjectExpression):
                     yield decl
+
+    @staticmethod
+    def _value_is_stable(model: SemanticModel, value: Node) -> bool:
+        """
+        Whether *value* evaluates to the same result wherever it is inlined — the precondition for
+        moving a property value from the object literal to each access site. It holds when every binding
+        the value reads as a free variable is immutable: a property whose value reads a local that is
+        reassigned (`{ p: x }` where `x` is later written) would, once inlined past the reassignment,
+        read the new value instead of the one the object captured at the literal. Identifiers bound
+        inside *value* itself (a function's own parameters) and free references that resolve to no
+        binding (external globals) place no constraint, so a string, a numeric literal, a `const`
+        reference, or a self-contained function wrapper all remain foldable.
+        """
+        local_nodes = {id(node) for node in value.walk()}
+        for node in value.walk():
+            if not isinstance(node, JsIdentifier) or model.binding_of(node) is not None:
+                continue
+            if not is_use_position(node):
+                continue
+            binding = model.resolve(node)
+            if binding is None or not binding.writes:
+                continue
+            if any(id(decl) in local_nodes for decl in binding.declarations):
+                continue
+            return False
+        return True
 
     @staticmethod
     def _self_referential(model: SemanticModel, binding: Binding, init: JsObjectExpression) -> bool:
