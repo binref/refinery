@@ -37,6 +37,24 @@ def _driver_sys() -> bytes:
     return lzma.decompress(base64.b85decode(_DRIVER_SYS))
 
 
+# A minimal user-mode x64 console EXE (no CRT) whose entry point returns 0x1337, stored
+# lzma-compressed and base85-encoded; never executed, only parsed and emulated. Regenerate with:
+#   exe.c:  int entry(void) { return 0x1337; }
+#   cl   /c /GS- /O1 exe.c
+#   link exe.obj /OUT:tiny.exe /SUBSYSTEM:CONSOLE /ENTRY:entry /NODEFAULTLIB /MACHINE:X64
+_MODULE_EXE = (
+    b'{Wp48S^xk9=GL@E0stWa8~^|S5YJf5;06By99;k=mX2@$7x(N1yXy4+lmRb9?|kO<WM^LnoW$=mf=y$E9fj#W?9z4(=N#bMZ'
+    b'p@wgn7lHMzd|-nF^bQr>wCR;c{C}@o`_1_{5LD3krrSU4KsNnN79+HlRdlk$|!9Lme6+IEu?=~3q=!R240~g)Q%sgu*^mV29'
+    b'!hgAj~wyDa0XXJHy9<dxpAdm{-=wDh17q@Z!&Do(`BVCXDAl5r?hBKq*UDI+~72uQJQ9t)5W4r&J&z=~b#bx4I%%wg{>Cc5D'
+    b'^{E0(iAJ%EuGSUc%4(@1bMZt^46m?W+Sm1RnYyuC$gW}T5#KhS;w{2iu0YG{0lx@Q081l)5l61H8XYYKF@n*oZ_tR*K{23<<'
+    b'aIH6|0L7D&nL~=N&G)l7000FoHfD8Zt`dLq_vBYQl0ssI200dcD'
+)
+
+
+def _module_exe() -> bytes:
+    return lzma.decompress(base64.b85decode(_MODULE_EXE))
+
+
 def _makeEmulator(e: type[UnicornEmulator]):
     class Emu(e):
         writes = []
@@ -265,4 +283,11 @@ class TestEmulator(TestBase):
         emu.reset()
         emu.emulate(emu._module.base + emu._module.ep)
         self.assertEqual(emu.rv, 0)
+        self.assertEqual(emu.ip, emu.speakeasy.emu.return_hook)
+
+    def test_module_entry_se(self):
+        emu = SpeakeasyEmulator(_module_exe())
+        emu.reset()
+        emu.emulate(emu._module.base + emu._module.ep)
+        self.assertEqual(emu.rv, 0x1337)
         self.assertEqual(emu.ip, emu.speakeasy.emu.return_hook)

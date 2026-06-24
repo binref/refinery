@@ -39,6 +39,7 @@ class SpeakeasyEmulator(Emulator[Se, str, _T]):
     def _init(self):
         self._regs: dict[str, Register[str]] = {}
         self._module: Any = None
+        self._driver: Any = None
 
     class _singlestep:
         def __init__(self):
@@ -65,6 +66,7 @@ class SpeakeasyEmulator(Emulator[Se, str, _T]):
             raise NotImplementedError(F'Speakeasy cannot handle executables of arch {exe.arch().name}') from KE
 
         emu = self.speakeasy = se.Speakeasy()
+        self._driver = None
 
         with VirtualFileSystem() as vfs:
             db = bytes(exe.data)
@@ -86,14 +88,20 @@ class SpeakeasyEmulator(Emulator[Se, str, _T]):
         self._single_step_hook_d = emu.add_dyn_code_hook(self._singlestep())
         self._disable_single_step()
 
+        # Speakeasy's wall-clock run timeout (config.timeout) is a frozen pydantic field with no
+        # public setter; copy the config to disable it. Termination is instead governed by the
+        # return_hook, an explicit end address, or config.max_instructions.
         emu.emu.config = emu.emu.config.model_copy(update={'timeout': 0})
 
-        # Speakeasy's builtin memory hook overrides ours (a bug in speakeasy); suppress it.
+        # Speakeasy registers one native dispatch hook per event that stops at the first callback
+        # returning False, with its builtin _hook_mem_unmapped added last; that builtin clobbers
+        # our memory hooks (and single-stepping). 2.0.0b3 has no way to make consumer hooks coexist
+        # with the builtins, so we suppress them and replace the interrupt handler ourselves.
         emu.emu.add_interrupt_hook(cb=emu.emu._hook_interrupt)
         emu.emu.builtin_hooks_set = True
 
-        # With the builtin handler suppressed, detect the run-ending fetch into Speakeasy's
-        # unmapped return_hook ourselves so a module/driver run stops when its entry returns.
+        # The suppressed builtin was also what detected the run-ending fetch into the unmapped
+        # return_hook, so we detect it ourselves (_uc_hook_return) to stop a run when it returns.
         emu.add_mem_invalid_hook(self._uc_hook_return)
 
         self._access_map = get_access_map()
@@ -164,11 +172,10 @@ class SpeakeasyEmulator(Emulator[Se, str, _T]):
 
     def _map_update(self):
         self._memorymap.clear()
-        if (e := self.speakeasy.emu) and (eng := e.emu_eng) and (emu := eng.emu):
-            for a, b, _ in emu.mem_regions():
-                self._memorymap.addi(a, b - a + 1)
-        else:
+        if self.speakeasy.emu is None:
             raise SpeakeasyNotInitialized
+        for mm in self.speakeasy.get_mem_maps():
+            self._memorymap.addi(mm.base, mm.size)
 
     def malloc(self, size: int) -> int:
         return self.speakeasy.mem_alloc(size)
@@ -184,7 +191,10 @@ class SpeakeasyEmulator(Emulator[Se, str, _T]):
         easy.set_stack_ptr(sp)
 
     def morestack(self):
-        raise NotImplementedError
+        # Speakeasy manages its own stack; grow it downward by one page when asked. push() is
+        # overridden below and does not need this, so it is only a best-effort safety net.
+        region = self.stack_region
+        self.map(region.base - self.alloc_size, self.alloc_size)
 
     class _stop:
         hook: SeHook | None
@@ -230,13 +240,49 @@ class SpeakeasyEmulator(Emulator[Se, str, _T]):
             self._end_hook_d = h = self._stop(end)
             h.hook = self.speakeasy.add_dyn_code_hook(h)
 
+    def _ensure_context(self) -> list:
+        """
+        Idempotently establish the process (Win32) or driver (kernel) context required to run the
+        loaded module at an arbitrary address through the public `Speakeasy.call`, and return the
+        argument list for its entry. The facade exposes no way to set up a run context without
+        also executing the module's entry point, so this reaches into Speakeasy 2.0.0b3 internals.
+        """
+        inner = self.speakeasy.emu
+        assert inner is not None
+        module = self._module
+        if isinstance(inner, se.WinKernelEmulator):
+            if self._driver is None:
+                regdefs = se.winenv.defs.registry.reg
+                drv = self._driver = inner.create_driver_object(pe=module)
+                svc = inner.regman.create_key(drv.reg_path)
+                svc.create_value('ImagePath', regdefs.REG_EXPAND_SZ, module.emu_path)
+                svc.create_value('Type', regdefs.REG_DWORD, 0x1)
+                svc.create_value('Start', regdefs.REG_DWORD, 0x3)
+                svc.create_value('ErrorControl', regdefs.REG_DWORD, 0x1)
+                inner.regman.create_key(drv.reg_path + '\\Parameters')
+            return [self._driver.address, self._driver.reg_path_ptr]
+        if not inner.processes:
+            process = se.windows.objman.Process(
+                inner,
+                path=module.emu_path,
+                base=module.base,
+                pe=module,
+                cmdline=inner.command_line,
+            )
+            inner.curr_process = process
+            inner.om.objects.update({process.address: process})
+            if mm := inner.get_address_map(module.base):
+                mm: MemMap
+                mm.process = process
+            inner.alloc_peb(process)
+        return []
+
     def _emulate(self, start: int, end: int | None = None):
         spk = self.speakeasy
 
         if (inner := spk.emu) is None:
             raise SpeakeasyNotInitialized
 
-        win32 = isinstance(inner, se.Win32Emulator)
         self._set_end(end)
 
         if inner.get_current_run():
@@ -248,47 +294,7 @@ class SpeakeasyEmulator(Emulator[Se, str, _T]):
                 raise ValueError(F'invalid offset 0x{start:X} specified; base address is 0x{self.base:X}')
             spk.run_shellcode(self.base, offset=offset)
         else:
-            module = self._module
-            run = se.profiler.Run()
-            run.start_addr = start          # type:ignore
-            if win32:
-                run.type = 'thread'         # type:ignore
-                run.args = ()               # type:ignore
-                inner.add_run(run)
-                if not inner.processes:
-                    process = se.windows.objman.Process(
-                        inner,
-                        path=module.emu_path,
-                        base=module.base,
-                        pe=module,
-                        cmdline=inner.command_line,
-                    )
-                    inner.curr_process = process
-                    inner.om.objects.update({process.address: process})
-                    if mm := inner.get_address_map(module.base): # type:ignore
-                        mm: MemMap
-                        mm.process = process
-                thread = se.windows.objman.Thread(
-                    inner, stack_base=inner.stack_base, stack_commit=module.stack_commit)
-                inner.om.objects.update({thread.address: thread})
-                inner.curr_process.threads.append(thread)
-                inner.curr_thread = thread
-                run.thread = thread         # type:ignore
-                peb = inner.alloc_peb(inner.curr_process)
-                inner.init_teb(thread, peb)
-            else:
-                regdefs = se.winenv.defs.registry.reg
-                drv = inner.create_driver_object(pe=module)
-                svc = inner.regman.create_key(drv.reg_path)
-                svc.create_value('ImagePath', regdefs.REG_EXPAND_SZ, module.emu_path)
-                svc.create_value('Type', regdefs.REG_DWORD, 0x1)
-                svc.create_value('Start', regdefs.REG_DWORD, 0x3)
-                svc.create_value('ErrorControl', regdefs.REG_DWORD, 0x1)
-                inner.regman.create_key(drv.reg_path + '\\Parameters')
-                run.type = 'driver'         # type:ignore
-                run.args = [drv.address, drv.reg_path_ptr]  # type:ignore
-                inner.add_run(run)
-            inner.start()
+            spk.call(start, self._ensure_context())
 
     def halt(self):
         return self.speakeasy.stop()
