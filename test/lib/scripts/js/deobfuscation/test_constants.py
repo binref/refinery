@@ -287,6 +287,57 @@ class TestConstantInlining(TestJsDeobfuscator):
             self._inline('const p = [1, 2]; f(p[x]);'),
         )
 
+    def test_mutating_method_call_blocks_index_inline(self):
+        source = inspect.cleandoc(
+            """
+            const a = [3, 1, 2];
+            a.sort();
+            f(a[0]);
+            """
+        )
+        self.assertEqual(source, self._inline(source))
+
+    def test_push_mutation_blocks_index_inline(self):
+        source = inspect.cleandoc(
+            """
+            const a = [1, 2];
+            a.push(3);
+            f(a[1]);
+            """
+        )
+        self.assertEqual(source, self._inline(source))
+
+    def test_parenthesized_index_write_blocks_inline(self):
+        source = inspect.cleandoc(
+            """
+            const a = [1, 2];
+            (a[0]) = 9;
+            f(a[0]);
+            f(a[1]);
+            """
+        )
+        self.assertEqual(source, self._inline(source))
+
+    def test_parenthesized_method_call_blocks_inline(self):
+        source = inspect.cleandoc(
+            """
+            const a = [10, 20];
+            (a.reverse)();
+            f(a[0]);
+            """
+        )
+        self.assertEqual(source, self._inline(source))
+
+    def test_tagged_template_call_blocks_inline(self):
+        source = inspect.cleandoc(
+            """
+            const a = [1, 2];
+            a.f`x`;
+            f(a[0]);
+            """
+        )
+        self.assertEqual(source, self._inline(source))
+
     def test_forin_target_not_inlined(self):
         self.assertEqual(
             inspect.cleandoc(

@@ -63,11 +63,14 @@ from refinery.lib.scripts.js.model import (
     JsNewExpression,
     JsObjectExpression,
     JsObjectPattern,
+    JsParenthesizedExpression,
     JsProperty,
     JsRestElement,
     JsScript,
     JsStringLiteral,
     JsSwitchStatement,
+    JsTaggedTemplateExpression,
+    JsUnaryExpression,
     JsUpdateExpression,
     JsVariableDeclaration,
     JsVariableDeclarator,
@@ -119,6 +122,20 @@ class Role(enum.Enum):
     READ      = 'read'        # noqa
     WRITE     = 'write'       # noqa
     READWRITE = 'readwrite'   # noqa
+
+
+class ContainerRole(enum.Enum):
+    """
+    How a reference touches the container value (object or array) its binding holds — a finer
+    distinction than `Role`, which describes how a reference touches the *binding* itself. `obj.k = v`
+    reads the binding `obj` (so `reference_role` reports `READ`) yet writes the container it holds, so
+    here it is a `MEMBER_WRITE`.
+    """
+    MEMBER_READ  = 'member_read'   # noqa  read through the container: `obj.k`, `obj[i]`
+    MEMBER_WRITE = 'member_write'  # noqa  write through it: `obj.k = v`, `obj[i]++`, `delete obj[i]`
+    MEMBER_CALL  = 'member_call'   # noqa  method invoked on it: `obj.m(...)`, which may mutate it
+    REBIND       = 'rebind'        # noqa  plain reassignment of the name: `obj = ...`
+    ESCAPE       = 'escape'        # noqa  any other use, through which the container could be aliased
 
 
 @dataclass(eq=False)
@@ -255,32 +272,136 @@ def reference_role(node: JsIdentifier) -> Role:
     """
     Classify how a referencing identifier touches its binding: a plain read, a write-only target (the
     left of a simple `=`, including inside a destructuring pattern, or a `for-in`/`for-of` head), or a
-    read-and-write (compound assignment or `++`/`--`). Climbs through destructuring containers so that
-    a target nested in a pattern is still recognized as a write.
+    read-and-write (compound assignment or `++`/`--`). Climbs through destructuring containers, and
+    looks through parentheses, so that a target nested in a pattern or a grouping (`(x)++`, `(o) = v`)
+    is still recognized as a write.
     """
     cursor: Node = node
-    parent = cursor.parent
+    parent = _enclosing_operator(cursor)
     while parent is not None:
         if isinstance(parent, JsAssignmentExpression):
-            if parent.left is cursor:
+            if _strip_parens(parent.left) is cursor:
                 return Role.WRITE if parent.operator == '=' else Role.READWRITE
             return Role.READ
         if isinstance(parent, JsUpdateExpression):
-            return Role.READWRITE if parent.argument is cursor else Role.READ
+            return Role.READWRITE if _strip_parens(parent.argument) is cursor else Role.READ
         if isinstance(parent, (JsForInStatement, JsForOfStatement)):
-            return Role.WRITE if parent.left is cursor else Role.READ
+            return Role.WRITE if _strip_parens(parent.left) is cursor else Role.READ
         if isinstance(parent, JsProperty):
-            if parent.value is cursor:
+            if _strip_parens(parent.value) is cursor:
                 cursor = parent
-                parent = cursor.parent
+                parent = _enclosing_operator(cursor)
                 continue
             return Role.READ
         if isinstance(parent, _PATTERN_CONTAINERS):
             cursor = parent
-            parent = cursor.parent
+            parent = _enclosing_operator(cursor)
             continue
         return Role.READ
     return Role.READ
+
+
+def _strip_parens(node: Node | None) -> Node | None:
+    """
+    The expression *node* denotes once any enclosing parentheses are removed, so that a parenthesized
+    operand is classified by the operator that actually applies to it rather than by the redundant
+    grouping the parser preserves.
+    """
+    while isinstance(node, JsParenthesizedExpression):
+        node = node.expression
+    return node
+
+
+def _enclosing_operator(node: Node) -> Node | None:
+    """
+    The nearest ancestor of *node* that is not merely a parenthesization of it — the construct whose
+    operator actually governs *node*.
+    """
+    parent = node.parent
+    while isinstance(parent, JsParenthesizedExpression):
+        parent = parent.parent
+    return parent
+
+
+def container_reference_role(node: JsIdentifier) -> ContainerRole:
+    """
+    Classify how the reference *node* touches the container value (object or array) its binding holds.
+    A member access based on *node* is a `MEMBER_READ` unless the outermost member of the chain it
+    begins is being written — the left of an assignment, the operand of `++`/`--` or `delete`, or a
+    target of a `for-in`/`for-of` head or a destructuring pattern — which makes it a `MEMBER_WRITE` (a
+    write through `a.b.c = v` mutates the object `a` holds), or is invoked as a method (`a.m(...)`, also
+    as a template tag `` a.m`...` ``), which makes it a `MEMBER_CALL` since the call may mutate the
+    receiver. A plain `node = ...` reassignment is a `REBIND`; anything else — passed as an argument,
+    aliased to another binding, returned, used as an operand or a computed key — is an `ESCAPE`, through
+    which an alias could mutate the container. Parentheses are looked through throughout, so a grouped
+    write or call (`(a.b) = v`, `(a.sort)()`) is classified by the operator that applies, not as a bare
+    read. This is the per-reference primitive the EffectModel composes over a binding's whole reference
+    set (with alias-following and callee summaries) to decide container immutability.
+    """
+    parent = _enclosing_operator(node)
+    if isinstance(parent, JsMemberExpression) and _strip_parens(parent.object) is node:
+        member: Node = parent
+        while True:
+            outer = _enclosing_operator(member)
+            if isinstance(outer, JsMemberExpression) and _strip_parens(outer.object) is member:
+                member = outer
+                continue
+            break
+        if _is_invocation_of(_enclosing_operator(member), member):
+            return ContainerRole.MEMBER_CALL
+        return ContainerRole.MEMBER_WRITE if _member_is_write_target(member) else ContainerRole.MEMBER_READ
+    if isinstance(parent, JsAssignmentExpression) and _strip_parens(parent.left) is node and parent.operator == '=':
+        return ContainerRole.REBIND
+    return ContainerRole.ESCAPE
+
+
+def _is_invocation_of(node: Node | None, callee: Node) -> bool:
+    """
+    Whether *node* invokes *callee* — a call `callee(...)` or a tagged template `` callee`...` `` —
+    looking through parentheses around the callee.
+    """
+    if isinstance(node, JsCallExpression):
+        return _strip_parens(node.callee) is callee
+    if isinstance(node, JsTaggedTemplateExpression):
+        return _strip_parens(node.tag) is callee
+    return False
+
+
+def _member_is_write_target(member: Node) -> bool:
+    """
+    Whether the outermost *member* of a container's access chain is being written rather than read: the
+    left of an assignment, the operand of `++`/`--` or `delete`, or a target of a `for-in`/`for-of` head
+    or a destructuring pattern. Climbs through destructuring containers — array/object patterns, a
+    property whose value is the target, and a default-valued target (`[a.b = d] = ...`, climbing only on
+    the target side, not into the default) — and looks through parentheses (`(a.b) = v`), so a member
+    nested in a pattern or a grouping is still recognized as a write, mirroring `reference_role` and the
+    binding-target climb in the liveness model.
+    """
+    cursor: Node = member
+    parent = _enclosing_operator(cursor)
+    while parent is not None:
+        if isinstance(parent, JsAssignmentExpression):
+            return _strip_parens(parent.left) is cursor
+        if isinstance(parent, JsUpdateExpression):
+            return _strip_parens(parent.argument) is cursor
+        if isinstance(parent, JsUnaryExpression):
+            return parent.operator == 'delete' and _strip_parens(parent.operand) is cursor
+        if isinstance(parent, (JsForInStatement, JsForOfStatement)):
+            return _strip_parens(parent.left) is cursor
+        if isinstance(parent, JsProperty) and _strip_parens(parent.value) is cursor:
+            cursor = parent
+            parent = _enclosing_operator(cursor)
+            continue
+        if isinstance(parent, JsAssignmentPattern) and _strip_parens(parent.left) is cursor:
+            cursor = parent
+            parent = _enclosing_operator(cursor)
+            continue
+        if isinstance(parent, _PATTERN_CONTAINERS):
+            cursor = parent
+            parent = _enclosing_operator(cursor)
+            continue
+        return False
+    return False
 
 
 def _walk_skipping_functions(stmts: list) -> Iterator[Node]:

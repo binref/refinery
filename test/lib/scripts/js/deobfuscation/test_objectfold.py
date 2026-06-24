@@ -231,9 +231,118 @@ class TestObjectFold(TestJsDeobfuscator):
             self._objectfold(source),
         )
 
+    def test_shadowing_inner_binding_not_folded(self):
+        source = inspect.cleandoc(
+            """
+            function W() {
+              var o = { p: 1 };
+              g(o.p);
+              function inner() {
+                var o = { p: 2 };
+                f(o);
+                g(o.p);
+              }
+            }
+            """
+        )
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function W() {
+                  g(1);
+                  function inner() {
+                    var o = { p: 2 };
+                    f(o);
+                    g(o.p);
+                  }
+                }
+                """
+            ),
+            self._objectfold(source),
+        )
+
+    def test_benign_alias_keeps_declaration(self):
+        source = "var o = {k: 'X'}; var b = o; SINK(o.k); SINK(b.k);"
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var o = { k: 'X' };
+                var b = o;
+                SINK('X');
+                SINK(b.k);
+                """
+            ),
+            self._objectfold(source),
+        )
+
+    def test_for_of_member_target_unchanged(self):
+        source = inspect.cleandoc(
+            """
+            var o = { k: 1 };
+            for (o.k of xs) {}
+            SINK(o.k);
+            """
+        )
+        self.assertEqual(source, self._objectfold(source))
+
+    def test_destructuring_member_target_unchanged(self):
+        source = inspect.cleandoc(
+            """
+            var o = { k: 1 };
+            [o.k] = [9];
+            SINK(o.k);
+            """
+        )
+        self.assertEqual(source, self._objectfold(source))
+
+    def test_destructuring_default_member_target_unchanged(self):
+        source = inspect.cleandoc(
+            """
+            var o = { k: 1 };
+            [o.k = 9] = xs;
+            SINK(o.k);
+            """
+        )
+        self.assertEqual(source, self._objectfold(source))
+
     def test_contextual_keyword_as_parameter(self):
         source = "var o = {'f': function(as, at) { return as < at; }}; var r = o['f'](x, 3);"
         self.assertEqual('var r = x < 3;', self._objectfold(source))
+
+    def test_parenthesized_member_write_unchanged(self):
+        source = inspect.cleandoc(
+            """
+            var o = { k: 1 };
+            (o.k) = 9;
+            SINK(o.k);
+            """
+        )
+        self.assertEqual(source, self._objectfold(source))
+
+    def test_parenthesized_rebind_unchanged(self):
+        source = inspect.cleandoc(
+            """
+            var o = { k: 1 };
+            (o) = newobj;
+            SINK(o.k);
+            """
+        )
+        self.assertEqual(source, self._objectfold(source))
+
+    def test_var_redeclaration_unchanged(self):
+        source = inspect.cleandoc(
+            """
+            var o = { k: 1 };
+            SINK(o.k);
+            var o = other;
+            SINK(o.k);
+            """
+        )
+        self.assertEqual(source, self._objectfold(source))
+
+    def test_chained_object_properties_fold_consistently(self):
+        source = 'var a = {x: 7}; var b = {y: a.x}; SINK(a.x); SINK(b.y);'
+        self.assertEqual('SINK(7);\nSINK(7);', self._objectfold(source))
 
 
 class TestRegressions(TestJsDeobfuscator):

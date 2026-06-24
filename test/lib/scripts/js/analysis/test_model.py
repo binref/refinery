@@ -4,8 +4,12 @@ from test import TestBase
 
 from refinery.lib.scripts.js.analysis.model import (
     BindingKind,
+    ContainerRole,
+    Role,
     ScopeKind,
     build_semantic_model,
+    container_reference_role,
+    reference_role,
 )
 from refinery.lib.scripts.js.model import JsIdentifier, JsReturnStatement
 from refinery.lib.scripts.js.parser import JsParser
@@ -326,6 +330,94 @@ class TestSemanticModel(TestBase):
         self.assertEqual(binding.kind, BindingKind.IMPLICIT_GLOBAL)
         self.assertEqual(len(binding.reads), 1)
         self.assertEqual(len(binding.writes), 1)
+
+    def _role(self, source: str, name: str = 'a') -> ContainerRole:
+        ast, model = self._model(source)
+        ref = next(n for n in self._idents(ast, name) if model.binding_of(n) is None)
+        return container_reference_role(ref)
+
+    def test_container_indexed_read_is_member_read(self):
+        self.assertEqual(self._role('var a = [1]; a[0];'), ContainerRole.MEMBER_READ)
+
+    def test_container_dotted_read_is_member_read(self):
+        self.assertEqual(self._role('var a = {k: 1}; a.k;'), ContainerRole.MEMBER_READ)
+
+    def test_container_indexed_write_is_member_write(self):
+        self.assertEqual(self._role('var a = [1]; a[0] = 9;'), ContainerRole.MEMBER_WRITE)
+
+    def test_container_property_write_is_member_write(self):
+        self.assertEqual(self._role('var a = {}; a.k = 9;'), ContainerRole.MEMBER_WRITE)
+
+    def test_container_deep_chain_write_is_member_write(self):
+        self.assertEqual(self._role('var a = {}; a.b.c = 9;'), ContainerRole.MEMBER_WRITE)
+
+    def test_container_delete_element_is_member_write(self):
+        self.assertEqual(self._role('var a = [1]; delete a[0];'), ContainerRole.MEMBER_WRITE)
+
+    def test_container_element_update_is_member_write(self):
+        self.assertEqual(self._role('var a = [1]; a[0]++;'), ContainerRole.MEMBER_WRITE)
+
+    def test_container_reassignment_is_rebind(self):
+        self.assertEqual(self._role('var a; a = [1];'), ContainerRole.REBIND)
+
+    def test_container_call_argument_is_escape(self):
+        self.assertEqual(self._role('var a = [1]; f(a);'), ContainerRole.ESCAPE)
+
+    def test_container_alias_initializer_is_escape(self):
+        self.assertEqual(self._role('var a = [1]; var b = a;'), ContainerRole.ESCAPE)
+
+    def test_container_deep_chain_read_is_member_read(self):
+        self.assertEqual(self._role('var a = {}; a.b.c;'), ContainerRole.MEMBER_READ)
+
+    def test_container_method_call_is_member_call(self):
+        self.assertEqual(self._role('var a = [1]; a.push(2);'), ContainerRole.MEMBER_CALL)
+
+    def test_container_chained_method_call_is_member_call(self):
+        self.assertEqual(self._role('var a = []; a.b.c();'), ContainerRole.MEMBER_CALL)
+
+    def test_container_for_of_target_is_member_write(self):
+        self.assertEqual(self._role('var a = [1]; for (a[0] of xs) {}'), ContainerRole.MEMBER_WRITE)
+
+    def test_container_for_in_target_is_member_write(self):
+        self.assertEqual(self._role('var a = {}; for (a.k in xs) {}'), ContainerRole.MEMBER_WRITE)
+
+    def test_container_array_destructuring_target_is_member_write(self):
+        self.assertEqual(self._role('var a = [1]; [a[0]] = xs;'), ContainerRole.MEMBER_WRITE)
+
+    def test_container_destructuring_default_target_is_member_write(self):
+        self.assertEqual(self._role('var a = [1]; [a[0] = 9] = xs;'), ContainerRole.MEMBER_WRITE)
+
+    def test_container_destructuring_default_value_is_member_read(self):
+        self.assertEqual(self._role('var a = [1]; [x = a[0]] = xs;'), ContainerRole.MEMBER_READ)
+
+    def test_container_iterable_in_for_of_is_escape(self):
+        self.assertEqual(self._role('var a = [1]; for (k of a) {}'), ContainerRole.ESCAPE)
+
+    def test_container_parenthesized_member_write_is_member_write(self):
+        self.assertEqual(self._role('var a = [1]; (a[0]) = 9;'), ContainerRole.MEMBER_WRITE)
+
+    def test_container_parenthesized_element_update_is_member_write(self):
+        self.assertEqual(self._role('var a = [1]; (a[0])++;'), ContainerRole.MEMBER_WRITE)
+
+    def test_container_parenthesized_delete_is_member_write(self):
+        self.assertEqual(self._role('var a = [1]; delete (a[0]);'), ContainerRole.MEMBER_WRITE)
+
+    def test_container_parenthesized_method_call_is_member_call(self):
+        self.assertEqual(self._role('var a = [1]; (a.sort)();'), ContainerRole.MEMBER_CALL)
+
+    def test_container_tagged_template_call_is_member_call(self):
+        self.assertEqual(self._role('var a = [1]; a.tag`x`;'), ContainerRole.MEMBER_CALL)
+
+    def _ref_role(self, source: str, name: str = 'a') -> Role:
+        ast, model = self._model(source)
+        ref = next(n for n in self._idents(ast, name) if model.binding_of(n) is None)
+        return reference_role(ref)
+
+    def test_reference_role_parenthesized_assignment_is_write(self):
+        self.assertEqual(self._ref_role('var a; (a) = 1;'), Role.WRITE)
+
+    def test_reference_role_parenthesized_update_is_readwrite(self):
+        self.assertEqual(self._ref_role('var a = 0; (a)++;'), Role.READWRITE)
 
     def test_eval_is_a_reflection_surface(self):
         _, model = self._model('eval(payload);')

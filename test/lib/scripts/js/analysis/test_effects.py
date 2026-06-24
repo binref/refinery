@@ -9,6 +9,7 @@ from refinery.lib.scripts.js.model import (
     JsBinaryExpression,
     JsCallExpression,
     JsFunctionDeclaration,
+    JsIdentifier,
 )
 from refinery.lib.scripts.js.parser import JsParser
 
@@ -258,3 +259,87 @@ class TestEffectModel(TestBase):
         ast, effects = self._effects('function f(g){ return [g()]; }')
         array = next(n for n in ast.walk_in_order() if isinstance(n, JsArrayExpression))
         self.assertFalse(effects.is_side_effect_free(array))
+
+    @staticmethod
+    def _container(source: str, name: str = 'a', *, member_calls_mutate: bool = True) -> bool:
+        ast = JsParser(F'function W(){{ {source} }}').parse()
+        model = build_semantic_model(ast)
+        effects = build_effects(model)
+        binding = None
+        for node in ast.walk_in_order():
+            if isinstance(node, JsIdentifier) and node.name == name:
+                binding = model.resolve(node) or model.binding_of(node)
+                if binding is not None:
+                    break
+        assert binding is not None
+        return effects.binding_is_immutable_container(binding, member_calls_mutate=member_calls_mutate)
+
+    def test_read_only_array_is_immutable(self):
+        self.assertTrue(self._container('var a = [1, 2, 3]; SINK(a[0]);'))
+
+    def test_read_only_object_is_immutable(self):
+        self.assertTrue(self._container('var o = {p: 1}; SINK(o.p);', 'o'))
+
+    def test_element_write_is_mutable(self):
+        self.assertFalse(self._container('var a = [1, 2]; a[0] = 9;'))
+
+    def test_delete_element_is_mutable(self):
+        self.assertFalse(self._container('var a = [1, 2]; delete a[0];'))
+
+    def test_element_update_is_mutable(self):
+        self.assertFalse(self._container('var a = [1, 2]; a[0]++;'))
+
+    def test_object_property_write_is_mutable(self):
+        self.assertFalse(self._container('var o = {p: 1}; SINK(o.p); o.p = 2;', 'o'))
+
+    def test_escape_via_call_is_mutable(self):
+        self.assertFalse(self._container('var a = [1, 2]; f(a); SINK(a[0]);'))
+
+    def test_escape_via_return_is_mutable(self):
+        self.assertFalse(self._container('var a = [1, 2]; return a;'))
+
+    def test_benign_alias_is_immutable(self):
+        self.assertTrue(self._container('var a = [1, 2]; var b = a; SINK(b[0]);'))
+
+    def test_alias_then_mutated_alias_is_mutable(self):
+        self.assertFalse(self._container('var a = [1, 2]; var b = a; b[0] = 9;'))
+
+    def test_transitive_alias_mutation_is_mutable(self):
+        self.assertFalse(self._container('var a = [1, 2]; var b = a; var c = b; c[0] = 9;'))
+
+    def test_reassigned_then_read_is_immutable(self):
+        self.assertTrue(self._container('var a; a = [1, 2]; SINK(a[0]);'))
+
+    def test_reassigned_and_benignly_aliased_is_immutable(self):
+        self.assertTrue(self._container('var a; a = [1, 2]; var b = a; SINK(a[0]); SINK(b[1]);'))
+
+    def test_mutating_method_call_is_mutable(self):
+        self.assertFalse(self._container('var a = [1, 2]; a.push(3); SINK(a[0]);'))
+
+    def test_sort_method_call_is_mutable(self):
+        self.assertFalse(self._container('var a = [3, 1, 2]; a.sort(); SINK(a[0]);'))
+
+    def test_captured_method_call_is_mutable(self):
+        self.assertFalse(self._container('var a = [1, 2]; function g(){ a.push(3); } g(); SINK(a[0]);'))
+
+    def test_aliased_method_call_is_mutable(self):
+        self.assertFalse(self._container('var a = [1, 2]; var b = a; b.push(3); SINK(a[0]);'))
+
+    def test_method_call_permitted_when_calls_do_not_mutate(self):
+        self.assertTrue(self._container(
+            'var o = {f: 1}; o.toString(); SINK(o.f);', 'o', member_calls_mutate=False))
+
+    def test_for_of_member_target_is_mutable(self):
+        self.assertFalse(self._container('var a = [1, 2]; for (a[0] of xs) {} SINK(a[1]);'))
+
+    def test_destructuring_member_target_is_mutable(self):
+        self.assertFalse(self._container('var a = [1, 2]; [a[0]] = ys; SINK(a[1]);'))
+
+    def test_destructuring_default_member_target_is_mutable(self):
+        self.assertFalse(self._container('var a = [1, 2]; [a[0] = 9] = ys; SINK(a[1]);'))
+
+    def test_parenthesized_element_write_is_mutable(self):
+        self.assertFalse(self._container('var a = [1, 2]; (a[0]) = 9; SINK(a[1]);'))
+
+    def test_parenthesized_method_call_is_mutable(self):
+        self.assertFalse(self._container('var a = [1, 2]; (a.sort)(); SINK(a[0]);'))

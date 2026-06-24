@@ -38,11 +38,13 @@ from refinery.lib.scripts import Node
 from refinery.lib.scripts.js.analysis.model import (
     Binding,
     BindingKind,
+    ContainerRole,
     FUNCTION_NODES,
     GLOBAL_OBJECT_ALIASES,
     Role,
     Scope,
     SemanticModel,
+    container_reference_role,
     enclosing_function,
     reference_role,
 )
@@ -383,6 +385,73 @@ class EffectModel:
         inline function.
         """
         return side_effect_free(node, defunct, self.is_pure_call)
+
+    def binding_is_immutable_container(self, binding: Binding, *, member_calls_mutate: bool = True) -> bool:
+        """
+        Whether *binding* holds a container — an object or array — whose element and property values are
+        stable after construction, so that an access into it may be soundly inlined at its read sites.
+        Every reference must read through the container (`obj.k`, `obj[i]`) or plainly rebind the name
+        (`obj = ...`, whose value the caller resolves by domination); a write through the container
+        (`obj.k = v`, `obj[i]++`, `delete obj[i]`, a `for-of` or destructuring target) makes it mutable.
+        A method invoked on the container (`obj.m(...)`) may mutate it — an array's `sort`/`push`/`splice`
+        and so on — so by default it too counts as mutable; a caller that knows the container's methods
+        cannot mutate it (an object literal with no `this`-bound property) may pass *member_calls_mutate*
+        false to permit such calls. A reference that escapes is safe only when it aliases another binding
+        that is itself an immutable container — alias-following the textual predicates this replaces could
+        not do, and the reason a reassigned-and-aliased lookup array stays inlinable. Any other escape —
+        passed to a call, returned, stored as a property — is treated conservatively as mutable for now;
+        resolving those precisely needs interprocedural argument-write summaries (the member-write purity
+        work this model is growing toward). A mutation hidden behind a dynamic scope — a write through a
+        name a `with` body or direct `eval` resolves at runtime — is NOT modelled here: such a reference
+        resolves to no binding, so it never enters the reference set and the container is wrongly judged
+        immutable. A known narrow gap; the precise fix needs dynamic-scope unresolved-write tracking, and a
+        blunt reflection guard over-blocks real samples (it regresses the b91 lookup arrays).
+
+        The query is over a *resolved binding*, so it is shadowing-correct, and it descends through
+        alias chains and nested functions, so a capturing closure that mutates the container is caught.
+        """
+        return self._immutable_container(binding, set(), member_calls_mutate)
+
+    def _immutable_container(self, binding: Binding, visiting: set[int], member_calls_mutate: bool) -> bool:
+        key = id(binding)
+        if key in visiting:
+            return True
+        visiting = visiting | {key}
+        for ref in self.model.references(binding):
+            role = container_reference_role(ref)
+            if role is ContainerRole.MEMBER_WRITE:
+                return False
+            if role is ContainerRole.MEMBER_CALL and member_calls_mutate:
+                return False
+            if role is ContainerRole.ESCAPE and not self._escape_keeps_container(ref, visiting, member_calls_mutate):
+                return False
+        return True
+
+    def _escape_keeps_container(self, ref: JsIdentifier, visiting: set[int], member_calls_mutate: bool) -> bool:
+        """
+        Whether an escaping reference leaves the container unmutated: true only when it aliases another
+        binding (`var x = ref` or `x = ref`) that is itself an immutable container. Every other escape
+        is conservatively unsafe.
+        """
+        alias = self._alias_target(ref)
+        if alias is None:
+            return False
+        return self._immutable_container(alias, visiting, member_calls_mutate)
+
+    def _alias_target(self, ref: JsIdentifier) -> Binding | None:
+        parent = ref.parent
+        if isinstance(parent, JsVariableDeclarator) and parent.init is ref:
+            if isinstance(parent.id, JsIdentifier):
+                return self.model.binding_of(parent.id)
+            return None
+        if (
+            isinstance(parent, JsAssignmentExpression)
+            and parent.right is ref
+            and parent.operator == '='
+            and isinstance(parent.left, JsIdentifier)
+        ):
+            return self.model.resolve(parent.left)
+        return None
 
     def _collect_functions(self) -> list[Node]:
         functions: list[Node] = [self.model.root]

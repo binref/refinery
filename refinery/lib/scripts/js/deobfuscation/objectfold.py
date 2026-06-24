@@ -17,6 +17,8 @@ from refinery.lib.scripts import (
     _clone_node,
     _replace_in_parent,
 )
+from refinery.lib.scripts.js.analysis.cache import model_cache
+from refinery.lib.scripts.js.analysis.model import Binding, SemanticModel
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     ScopeProcessingTransformer,
     access_key,
@@ -26,7 +28,6 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     try_inline_trivial_function,
 )
 from refinery.lib.scripts.js.model import (
-    JsAssignmentExpression,
     JsCallExpression,
     JsFunctionExpression,
     JsIdentifier,
@@ -34,6 +35,7 @@ from refinery.lib.scripts.js.model import (
     JsObjectExpression,
     JsProperty,
     JsPropertyKind,
+    JsScript,
     JsVariableDeclaration,
     JsVariableDeclarator,
 )
@@ -73,103 +75,91 @@ class JsObjectFold(ScopeProcessingTransformer):
     script-scope boundaries because JavaScript `var` declarations are function-scoped.
     """
 
+    def __init__(self):
+        super().__init__()
+        self._root: JsScript | None = None
+
+    def visit_JsScript(self, node: JsScript):
+        self._root = node
+        return super().visit_JsScript(node)
+
     def _process_scope_body(self, scope: Node, body: list[Statement]) -> None:
-        for candidate in list(self._find_candidates(body)):
-            obj_name, declarator, prop_map = candidate
-            if _object_binds_this(prop_map):
+        assert self._root is not None
+        cache = model_cache(self, self._root)
+        for declarator in list(self._find_candidates(body)):
+            name = declarator.id
+            init = declarator.init
+            if not isinstance(name, JsIdentifier) or not isinstance(init, JsObjectExpression):
                 continue
-            if not self._is_safe_to_fold(scope, obj_name, declarator):
+            prop_map = _build_property_map(init)
+            if prop_map is None or _object_binds_this(prop_map):
                 continue
-            changed, can_remove = self._inline_references(scope, obj_name, prop_map, self)
+            model = cache.model
+            binding = model.binding_of(name)
+            if binding is None or binding.writes or len(binding.declarations) != 1:
+                continue
+            if not cache.effects.binding_is_immutable_container(binding, member_calls_mutate=False):
+                continue
+            changed, can_remove = self._inline_references(model, binding, prop_map, self)
             if changed:
                 if can_remove:
                     remove_declarator(declarator)
                 self.mark_changed()
 
     @staticmethod
-    def _find_candidates(body: list[Statement]) -> Iterator[tuple[str, JsVariableDeclarator, dict[str, Node]]]:
+    def _find_candidates(body: list[Statement]) -> Iterator[JsVariableDeclarator]:
         """
-        Yield tuples of (name, declarator_node, property_map) for each variable declarator in
-        *body* that initializes a variable to an object literal with all statically-keyed
-        properties.
+        Yield each variable declarator in *body* that initializes a variable to an object literal — the
+        syntactic precondition for folding. Whether the literal is actually foldable (every key static,
+        the name a single immutable binding) is decided per candidate by the caller against a model
+        rebuilt after any earlier fold in the same body, and its property map is read from the live
+        initializer at that point, so an earlier fold into this initializer is reflected.
         """
         for stmt in body:
             if not isinstance(stmt, JsVariableDeclaration):
                 continue
             for decl in stmt.declarations:
-                if not isinstance(decl, JsVariableDeclarator):
-                    continue
-                if not isinstance(decl.id, JsIdentifier):
-                    continue
-                if not isinstance(decl.init, JsObjectExpression):
-                    continue
-                prop_map = _build_property_map(decl.init)
-                if prop_map is None:
-                    continue
-                yield decl.id.name, decl, prop_map
-
-    @staticmethod
-    def _is_safe_to_fold(root: Node, name: str, declarator: JsVariableDeclarator) -> bool:
-        """
-        Verify that the variable is never reassigned, passed as an argument, or used in any
-        context other than `obj['key']` or `obj.key` member access. Also reject objects that are
-        mutated via property assignment at any nesting depth (e.g. `obj.x = val` or
-        `obj.x.y = val`).
-        """
-        decl_name_node = declarator.id
-        for node in root.walk():
-            if node is decl_name_node:
-                continue
-            if not isinstance(node, JsIdentifier) or node.name != name:
-                continue
-            p = node.parent
-            if not isinstance(p, JsMemberExpression) or p.object is not node:
-                return False
-            ancestor = p
-            while True:
-                ap = ancestor.parent
-                if isinstance(ap, JsAssignmentExpression) and ap.left is ancestor:
-                    return False
-                if not isinstance(ap, JsMemberExpression) or ap.object is not ancestor:
-                    break
-                ancestor = ap
-        return True
+                if isinstance(decl, JsVariableDeclarator) and isinstance(decl.init, JsObjectExpression):
+                    yield decl
 
     @staticmethod
     def _inline_references(
-        root: Node,
-        name: str,
+        model: SemanticModel,
+        binding: Binding,
         prop_map: dict[str, Node],
         transformer: Transformer,
     ) -> tuple[bool, bool]:
         """
-        Replace all `obj['key']` accesses with the corresponding property value. For function-valued
-        properties called as `obj['key'](args)`, inline the call. When a key is statically known
-        but absent from the property map, the access provably evaluates to `undefined` and is
-        replaced accordingly. Returns a pair `(changed, can_remove)` where *changed* is True when
-        any replacement was made and *can_remove* is True when no unresolvable member accesses
-        remain on the object (i.e. every access had a statically extractable key).
+        Replace each `obj['key']` access through *binding* with the corresponding property value. For
+        function-valued properties called as `obj['key'](args)`, inline the call. When a key is
+        statically known but absent from the property map, the access provably evaluates to `undefined`
+        and is replaced accordingly. Iterating the binding's resolved references (not every textual
+        occurrence of the name) keeps a shadowing inner binding of the same name untouched. Returns a
+        pair `(changed, can_remove)` where *changed* is True when any replacement was made and
+        *can_remove* is True when every reference was a member access with a statically extractable key,
+        so no use of the binding survives — a bare reference (an alias such as `var b = obj`) leaves
+        *can_remove* False so the declaration is kept.
         """
         changed = False
         can_remove = True
-        for node in list(root.walk()):
-            if not isinstance(node, JsMemberExpression):
+        for ref in list(model.references(binding)):
+            member = ref.parent
+            if not isinstance(member, JsMemberExpression) or member.object is not ref:
+                can_remove = False
                 continue
-            if not isinstance(node.object, JsIdentifier) or node.object.name != name:
-                continue
-            key = access_key(node)
+            key = access_key(member)
             if key is None:
                 can_remove = False
                 continue
             if key not in prop_map:
-                _replace_in_parent(node, JsIdentifier(name='undefined'))
+                _replace_in_parent(member, JsIdentifier(name='undefined'))
                 changed = True
                 continue
             value = prop_map[key]
-            parent = node.parent
+            parent = member.parent
             if (
                 isinstance(parent, JsCallExpression)
-                and parent.callee is node
+                and parent.callee is member
                 and isinstance(value, JsFunctionExpression)
             ):
                 replacement = try_inline_trivial_function(
@@ -182,6 +172,6 @@ class JsObjectFold(ScopeProcessingTransformer):
                     _replace_in_parent(parent, replacement)
                     changed = True
                     continue
-            _replace_in_parent(node, _clone_node(value))
+            _replace_in_parent(member, _clone_node(value))
             changed = True
         return changed, can_remove

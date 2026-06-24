@@ -7,6 +7,7 @@ from typing import NamedTuple
 
 from refinery.lib.scripts import Node, _clone_node, _remove_from_parent, _replace_in_parent
 from refinery.lib.scripts.js.analysis.cache import model_cache
+from refinery.lib.scripts.js.analysis.effects import EffectModel
 from refinery.lib.scripts.js.analysis.model import (
     Role,
     SemanticModel,
@@ -525,6 +526,10 @@ class JsConstantInlining(ScopeProcessingTransformer):
         if not constant_names:
             return inlined
 
+        assert self._root is not None
+        effects = model_cache(self, self._root).effects
+        index_safe: dict[int, bool] = {}
+
         for node in list(walk_scope(scope, include_root_body=True)):
             if isinstance(node, JsMemberExpression) and node.computed:
                 obj = node.object
@@ -533,6 +538,7 @@ class JsConstantInlining(ScopeProcessingTransformer):
                     and id(obj) not in decl_ids
                     and obj.name in constant_names
                     and obj.name not in bloat_blocked
+                    and self._index_array_immutable(obj, effects, index_safe)
                 ):
                     self._try_inline_index(
                         node, obj.name, candidates, seal_points, inlined,
@@ -563,9 +569,30 @@ class JsConstantInlining(ScopeProcessingTransformer):
 
         self._substitute_const_across_functions(
             scope, candidates, seal_points, decl_ids, bloat_blocked, func_mods, inlined,
+            effects, index_safe,
         )
 
         return inlined
+
+    @staticmethod
+    def _index_array_immutable(
+        obj: JsIdentifier,
+        effects: EffectModel,
+        cache: dict[int, bool],
+    ) -> bool:
+        """
+        Whether the array binding referenced by *obj* is an immutable, non-escaping container, so that
+        `obj[idx]` may be inlined to its literal element. Resolved through the binding (not the textual
+        name), so shadowing is respected, and cached per binding for the duration of the pass. A name
+        that does not resolve to a local binding (a free or global array) is treated as unsafe.
+        """
+        binding = effects.model.resolve(obj)
+        if binding is None:
+            return False
+        key = id(binding)
+        if key not in cache:
+            cache[key] = effects.binding_is_immutable_container(binding)
+        return cache[key]
 
     def _try_inline_index(
         self,
@@ -615,6 +642,8 @@ class JsConstantInlining(ScopeProcessingTransformer):
         bloat_blocked: set[str],
         func_mods: dict[str, set[str]],
         inlined: dict[str, int],
+        effects: EffectModel,
+        index_safe: dict[int, bool],
     ) -> None:
         """
         For constant-valued candidates, walk the full subtree to inline references inside nested
@@ -668,6 +697,7 @@ class JsConstantInlining(ScopeProcessingTransformer):
                     isinstance(obj, JsIdentifier)
                     and id(obj) not in decl_ids
                     and obj.name in cross_candidates
+                    and self._index_array_immutable(obj, effects, index_safe)
                 ):
                     name = obj.name
                     if name in const_names:
