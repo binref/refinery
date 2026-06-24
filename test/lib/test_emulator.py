@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from refinery.lib.emulator import Arch, Hook, UnicornEmulator, SpeakeasyEmulator, IcicleEmulator
+from refinery.lib.emulator import CC, Arch, Hook, UnicornEmulator, SpeakeasyEmulator, IcicleEmulator
 from .. import TestBase
 
 
@@ -150,3 +150,33 @@ class TestEmulator(TestBase):
     @unittest.skip('Fails for unknown reasons')
     def test_register_se(self):
         self._test_registers(SpeakeasyEmulator)
+
+    def _test_call_with_stack_argument(self, base_emu):
+        code = bytes.fromhex(
+            '8B 44 24 04'   # mov     eax, [esp + 4]
+            'C3'            # ret
+        )
+        emulator = base_emu(code, arch=Arch.X32)
+        emulator.reset()
+        self.assertEqual(emulator.call(emulator.base, 0x4243A1B0, cc=CC.CDecl), 0x4243A1B0)
+
+    def test_call_with_stack_argument_uc(self):
+        self._test_call_with_stack_argument(UnicornEmulator)
+
+    def test_call_with_stack_argument_ic(self):
+        self._test_call_with_stack_argument(IcicleEmulator)
+
+    def _test_push_register(self, base_emu):
+        emulator = base_emu(bytes.fromhex('90'), arch=Arch.X32)  # nop
+        emulator.reset()
+        emulator.set_register('eax', 0xBAADF00D)
+        tos = emulator.sp
+        emulator.push_register('eax')
+        self.assertEqual(emulator.sp, tos - 4)
+        self.assertEqual(emulator.mem_read_int(emulator.sp, 4), 0xBAADF00D)
+
+    def test_push_register_uc(self):
+        self._test_push_register(UnicornEmulator)
+
+    def test_push_register_ic(self):
+        self._test_push_register(IcicleEmulator)

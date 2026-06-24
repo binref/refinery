@@ -163,7 +163,6 @@ class SpeakeasyEmulator(Emulator[Se, str, _T]):
         if size is None:
             size = self.exe.pointer_size_in_bytes
         easy = self.speakeasy
-        easy.push_stack
         sp = easy.get_stack_ptr()
         bv = val.to_bytes(size, self.exe.byte_order().value)
         sp -= size
@@ -181,7 +180,7 @@ class SpeakeasyEmulator(Emulator[Se, str, _T]):
             self.address = address
             self.hook = None
 
-        def __call__(self, spky: Se, address: int, size: int, ctx: list):
+        def __call__(self, spky: Se, address: int | None = None, *_):
             if hook := self.hook:
                 if address == self.address:
                     spky.stop()
@@ -248,7 +247,7 @@ class SpeakeasyEmulator(Emulator[Se, str, _T]):
 
             if win32:
                 if not (process := inner.init_container_process()):
-                    process = se.windows.objman.Process(self)
+                    process = se.windows.objman.Process(inner)
                 inner.processes.append(process)
                 inner.curr_process = process
             else:
@@ -304,7 +303,7 @@ class SpeakeasyEmulator(Emulator[Se, str, _T]):
             map_size = mm.size
             map_base = mm.base
             _new_size = size - map_size + address - map_base
-            _new_base = address + map_size
+            _new_base = map_base + map_size
             if _new_size > 0 and self._map(_new_base, _new_size) != _new_base:
                 raise RuntimeError(F'Attempting to remain rest of size 0x{_new_size:X} at 0x{_new_base:X} failed.')
             return address

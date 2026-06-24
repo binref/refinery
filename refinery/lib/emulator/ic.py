@@ -81,7 +81,7 @@ class IcicleEmulator(RawMetalEmulator[Ic, str, _T]):
         mm_e_hooked = self.hooks.MemoryError
         mm_w_hooked = self.hooks.MemoryWrite
         mm_r_hooked = self.hooks.MemoryRead
-        mm_x_hooked = mm_r_hooked or mm_r_hooked
+        mm_x_hooked = mm_r_hooked or mm_w_hooked
 
         halt = self._single_step
         dasm = self.exe.disassembler()

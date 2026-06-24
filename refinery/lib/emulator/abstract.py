@@ -94,7 +94,7 @@ class Register(Generic[_R]):
     def __repr__(self):
         return self.name
 
-    def __init__(self, name: str, code: _R, size: int | None = 0):
+    def __init__(self, name: str, code: _R, size: int | None = None):
         self.name = name
         self.code = code
         self.size = size
@@ -285,7 +285,7 @@ class Emulator(ABC, Generic[_E, _R, _T]):
         try:
             reg = regs[index]
         except IndexError:
-            address = self.sp + (index - len(regs)) * self.exe.pointer_size_in_bytes
+            address = self.sp + (index - len(regs) + 1) * self.exe.pointer_size_in_bytes
             if value is None:
                 return self.mem_read_int(address)
             else:
@@ -381,7 +381,7 @@ class Emulator(ABC, Generic[_E, _R, _T]):
 
     def mem_write_int(self, address: int, value: int, size: int | None = None):
         """
-        Read an integer from memory at the given address. The default for the size parameter is
+        Write an integer to memory at the given address. The default for the size parameter is
         the pointer size of the emulated executable.
         """
         if size is None:
@@ -516,8 +516,8 @@ class Emulator(ABC, Generic[_E, _R, _T]):
         Can be used to test whether a certain amount of memory at a given address is already mapped.
         """
         self._map_update()
-        for interval in self._memorymap.overlap(address, size):
-            if sum(interval) >= address + size:
+        for start, length in self._memorymap.overlap(address, size):
+            if start <= address and start + length >= address + size:
                 return True
         return False
 
@@ -591,10 +591,11 @@ class Emulator(ABC, Generic[_E, _R, _T]):
         """
         val = self._get_register(reg)
         self._set_register(reg, (1 << 512) - 1)
-        q, r = divmod(self._get_register(reg).bit_length(), 8)
-        assert r == 0
+        size, remainder = divmod(self._get_register(reg).bit_length(), 8)
+        if remainder:
+            size += 1
         self._set_register(reg, val)
-        return q
+        return size
 
     def set_return_address(self, address: int):
         if (arch := self.exe.arch()) in (Arch.X32, Arch.X64):
@@ -606,7 +607,7 @@ class Emulator(ABC, Generic[_E, _R, _T]):
         elif arch in (Arch.PPC32, Arch.PPC64):
             self.set_register('lr', address)
         elif arch in (Arch.MIPS16, Arch.MIPS32, Arch.MIPS64):
-            self.set_register('re', address)
+            self.set_register('ra', address)
         elif arch in (Arch.SPARC32, Arch.SPARC64):
             self.set_register('i7', address)
 
@@ -814,7 +815,7 @@ class RawMetalEmulator(Emulator[_E, _R, _T]):
     def _install_api_trampoline(self):
         if self.trampoline is None:
             symbol_count = len(self.imports)
-            t = self.malloc(symbol_count)
+            t = self.malloc(symbol_count * RetCodeMaxLen)
             c = RetCodeByArch[self.exe.arch()].ljust(RetCodeMaxLen, B'\0')
             self.mem_write(t, c * symbol_count)
             for k, symbol in enumerate(self.imports):
