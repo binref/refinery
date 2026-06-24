@@ -24,6 +24,7 @@ from refinery.lib.scripts import (
     _remove_from_parent,
     _replace_in_parent,
 )
+from refinery.lib.scripts.js.analysis.cache import model_cache
 from refinery.lib.scripts.js.analysis.effects import side_effect_free
 from refinery.lib.scripts.js.analysis.model import (
     Binding,
@@ -736,6 +737,7 @@ def substitute_params(
     expression: Node,
     params: Sequence[Node],
     arguments: Sequence[Node],
+    transformer: Transformer | None = None,
 ) -> Node:
     """
     Deep-clone *expression* and replace every reference to one of the function parameters *params* with
@@ -745,7 +747,8 @@ def substitute_params(
     identifiers rather than the outer parameter's. When *expression* nests no scope, no name under it
     can be rebound, so a parameter's references are exactly the use-position identifiers carrying its
     name and are substituted directly; only when it does nest a scope is a semantic model built to
-    resolve each occurrence against the binding it reads.
+    resolve each occurrence against the binding it reads. When *transformer* is given, that model is
+    taken from its shared analysis cache; otherwise it is built standalone.
     """
     cloned = _clone_node(expression)
     mapping = {
@@ -766,7 +769,10 @@ def substitute_params(
     while root.parent is not None:
         root = root.parent
     assert isinstance(root, JsScript)
-    model = build_semantic_model(root)
+    if transformer is None:
+        model = build_semantic_model(root)
+    else:
+        model = model_cache(transformer, root).model
     bindings = {
         param.name: model.binding_of(param)
         for param in params
@@ -825,6 +831,7 @@ def try_inline_trivial_function(
     call_args: list,
     *,
     relaxed: bool = False,
+    transformer: Transformer | None = None,
 ) -> Node | None:
     """
     If *func* is a trivial wrapper (single return whose expression uses only the function's
@@ -859,7 +866,7 @@ def try_inline_trivial_function(
             )
             if uses > 1 and not is_simple_expression(call_args[i]):
                 return None
-    return substitute_params(expr, func.params, call_args)
+    return substitute_params(expr, func.params, call_args, transformer=transformer)
 
 
 def walk_scope(root: Node, *, include_root_body: bool = False) -> Iterator[Node]:

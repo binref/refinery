@@ -326,7 +326,7 @@ class JsSimplifications(Transformer):
         if isinstance(fn, JsParenthesizedExpression):
             fn = fn.expression
         if isinstance(fn, JsFunctionExpression):
-            return self._try_inline_iife(node, fn, lambda call: self.effects.is_pure_call(call))
+            return self._try_inline_iife(node, fn, lambda call: self.effects.is_pure_call(call), self)
         return (
             self._try_fold_static_method(node)
             or self._try_fold_free_function(node)
@@ -357,6 +357,7 @@ class JsSimplifications(Transformer):
         node: JsCallExpression,
         fn: JsFunctionExpression,
         call_pure: Callable[..., bool],
+        transformer: Transformer,
     ) -> Node | None:
         if fn.body is None or not isinstance(fn.body, JsBlockStatement):
             return None
@@ -374,7 +375,7 @@ class JsSimplifications(Transformer):
             return None
         if not is_safe_iife_inline(expr, param_names, node.arguments, call_pure):
             return None
-        return substitute_params(expr, fn.params, node.arguments)
+        return substitute_params(expr, fn.params, node.arguments, transformer=transformer)
 
     @staticmethod
     def _try_fold_static_method(node: JsCallExpression) -> Node | None:

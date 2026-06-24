@@ -118,6 +118,7 @@ class JsCallWrapperInliner(ScriptLevelTransformer):
                 info.return_expression,
                 info.node.params,
                 ast_node.arguments,
+                transformer=self,
             )
             _replace_in_parent(ast_node, replacement)
             inlined = True

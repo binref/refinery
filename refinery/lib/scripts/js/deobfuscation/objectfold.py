@@ -13,6 +13,7 @@ from typing import Iterator
 from refinery.lib.scripts import (
     Node,
     Statement,
+    Transformer,
     _clone_node,
     _replace_in_parent,
 )
@@ -79,7 +80,7 @@ class JsObjectFold(ScopeProcessingTransformer):
                 continue
             if not self._is_safe_to_fold(scope, obj_name, declarator):
                 continue
-            changed, can_remove = self._inline_references(scope, obj_name, prop_map)
+            changed, can_remove = self._inline_references(scope, obj_name, prop_map, self)
             if changed:
                 if can_remove:
                     remove_declarator(declarator)
@@ -139,6 +140,7 @@ class JsObjectFold(ScopeProcessingTransformer):
         root: Node,
         name: str,
         prop_map: dict[str, Node],
+        transformer: Transformer,
     ) -> tuple[bool, bool]:
         """
         Replace all `obj['key']` accesses with the corresponding property value. For function-valued
@@ -170,7 +172,12 @@ class JsObjectFold(ScopeProcessingTransformer):
                 and parent.callee is node
                 and isinstance(value, JsFunctionExpression)
             ):
-                replacement = try_inline_trivial_function(value, parent.arguments, relaxed=True)
+                replacement = try_inline_trivial_function(
+                    value,
+                    parent.arguments,
+                    relaxed=True,
+                    transformer=transformer,
+                )
                 if replacement is not None:
                     _replace_in_parent(parent, replacement)
                     changed = True

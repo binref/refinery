@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Iterator
 if TYPE_CHECKING:
     from refinery.lib.scripts.js.deobfuscation.interpreter import Value
 
-from refinery.lib.scripts import Node, _remove_from_parent, _replace_in_parent
+from refinery.lib.scripts import Node, Transformer, _remove_from_parent, _replace_in_parent
 from refinery.lib.scripts.js.analysis.cache import model_cache
 from refinery.lib.scripts.js.analysis.effects import EffectModel
 from refinery.lib.scripts.js.analysis.model import Binding, SemanticModel
@@ -663,7 +663,7 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
         except IrreducibleExpression as irr:
             if gate_unresolved and self._is_unresolved_call(irr.node):
                 return False
-            replacement = self._substitute_params_in_clone(irr.node, func, args)
+            replacement = self._substitute_params_in_clone(irr.node, func, args, self)
             _replace_in_parent(node, replacement)
             self.mark_changed()
             return True
@@ -916,6 +916,7 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
         node: Node,
         func: JsFunctionDeclaration | JsFunctionExpression | JsArrowFunctionExpression,
         args: list[Value],
+        transformer: Transformer,
     ) -> Node:
         params: list[Node] = []
         arguments: list[Node] = []
@@ -927,4 +928,4 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
                 continue
             params.append(p)
             arguments.append(arg_node)
-        return substitute_params(node, params, arguments)
+        return substitute_params(node, params, arguments, transformer=transformer)
