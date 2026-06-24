@@ -227,6 +227,29 @@ class TestObjectFold(TestJsDeobfuscator):
             self._objectfold(source),
         )
 
+    def test_absent_non_inherited_key_folds_to_undefined(self):
+        self.assertEqual('SINK(undefined);', self._objectfold('var o = { a: 1 }; SINK(o.b);'))
+
+    def test_inherited_member_access_not_folded(self):
+        source = inspect.cleandoc(
+            """
+            var o = { a: 1 };
+            SINK(o.toString());
+            """
+        )
+        self.assertEqual(source, self._objectfold(source))
+
+    def test_self_referential_object_not_folded(self):
+        source = inspect.cleandoc(
+            """
+            var o = { a: 1, f: function() {
+              return o.a;
+            } };
+            SINK(o.f());
+            """
+        )
+        self.assertEqual(source, self._objectfold(source))
+
     def test_dynamic_key_preserves_object(self):
         source = "var o = {'a': 'hello', 'b': 'world'}; x(o['a']); y(o[z]);"
         self.assertEqual(

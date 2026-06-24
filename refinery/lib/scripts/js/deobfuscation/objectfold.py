@@ -40,6 +40,21 @@ from refinery.lib.scripts.js.model import (
     JsVariableDeclarator,
 )
 
+_OBJECT_PROTOTYPE_MEMBERS = frozenset({
+    'constructor',
+    'hasOwnProperty',
+    'isPrototypeOf',
+    'propertyIsEnumerable',
+    'toLocaleString',
+    'toString',
+    'valueOf',
+    '__proto__',
+    '__defineGetter__',
+    '__defineSetter__',
+    '__lookupGetter__',
+    '__lookupSetter__',
+})
+
 
 def _build_property_map(
     obj: JsObjectExpression,
@@ -102,6 +117,8 @@ class JsObjectFold(ScopeProcessingTransformer):
                 continue
             if not cache.effects.binding_is_immutable_container(binding, member_calls_mutate=False):
                 continue
+            if self._self_referential(model, binding, init):
+                continue
             changed, can_remove = self._inline_references(model, binding, prop_map, self)
             if changed:
                 if can_remove:
@@ -125,6 +142,18 @@ class JsObjectFold(ScopeProcessingTransformer):
                     yield decl
 
     @staticmethod
+    def _self_referential(model: SemanticModel, binding: Binding, init: JsObjectExpression) -> bool:
+        """
+        Whether any reference to *binding* lies within its own initializer *init* — the object names
+        itself in one of its property values (`var o = { f: function() { return o.x; } }`). Inlining
+        such a value into a use site re-introduces a reference to the object there, so removing the
+        declaration would leave it dangling; the caller skips folding the object rather than fold it
+        into invalid code.
+        """
+        init_nodes = {id(node) for node in init.walk()}
+        return any(id(ref) in init_nodes for ref in model.references(binding))
+
+    @staticmethod
     def _inline_references(
         model: SemanticModel,
         binding: Binding,
@@ -134,13 +163,15 @@ class JsObjectFold(ScopeProcessingTransformer):
         """
         Replace each `obj['key']` access through *binding* with the corresponding property value. For
         function-valued properties called as `obj['key'](args)`, inline the call. When a key is
-        statically known but absent from the property map, the access provably evaluates to `undefined`
-        and is replaced accordingly. Iterating the binding's resolved references (not every textual
-        occurrence of the name) keeps a shadowing inner binding of the same name untouched. Returns a
-        pair `(changed, can_remove)` where *changed* is True when any replacement was made and
-        *can_remove* is True when every reference was a member access with a statically extractable key,
-        so no use of the binding survives — a bare reference (an alias such as `var b = obj`) leaves
-        *can_remove* False so the declaration is kept.
+        statically known, absent from the property map, and not the name of a member every object
+        inherits from `Object.prototype` (`toString`, `hasOwnProperty`, …), the access provably
+        evaluates to `undefined` and is replaced accordingly; an inherited-member access is left intact
+        (folding `o.toString` to `undefined` would turn `o.toString()` into `undefined()`). Iterating
+        the binding's resolved references (not every textual occurrence of the name) keeps a shadowing
+        inner binding of the same name untouched. Returns a pair `(changed, can_remove)` where *changed*
+        is True when any replacement was made and *can_remove* is True when every reference was folded
+        away, so no use of the binding survives — a bare reference (an alias such as `var b = obj`) or a
+        retained inherited-member access leaves *can_remove* False so the declaration is kept.
         """
         changed = False
         can_remove = True
@@ -154,6 +185,9 @@ class JsObjectFold(ScopeProcessingTransformer):
                 can_remove = False
                 continue
             if key not in prop_map:
+                if key in _OBJECT_PROTOTYPE_MEMBERS or '__proto__' in prop_map:
+                    can_remove = False
+                    continue
                 _replace_in_parent(member, JsIdentifier(name='undefined'))
                 changed = True
                 continue
