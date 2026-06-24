@@ -286,7 +286,7 @@ def side_effect_free(
         return True
     if isinstance(node, JsIdentifier):
         return True
-    if isinstance(node, JsFunctionExpression):
+    if isinstance(node, (JsFunctionExpression, JsArrowFunctionExpression)):
         return True
     if isinstance(node, JsUnaryExpression):
         if node.operator == 'delete':

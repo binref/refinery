@@ -19,6 +19,15 @@ class TestObjectFold(TestJsDeobfuscator):
             self._objectfold("var o = {'f': function(a, b) { return a + b; }}; var r = o['f'](1, 2);"),
         )
 
+    def test_side_effecting_property_value_not_folded(self):
+        source = inspect.cleandoc(
+            """
+            var o = { a: 1, b: f() };
+            console.log(o.a);
+            """
+        )
+        self.assertEqual(source, self._objectfold(source))
+
     def test_this_method_not_folded(self):
         source = inspect.cleandoc(
             """

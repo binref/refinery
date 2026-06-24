@@ -94,6 +94,8 @@ class JsObjectFold(ScopeProcessingTransformer):
             prop_map = _build_property_map(init)
             if prop_map is None or _object_binds_this(prop_map):
                 continue
+            if not cache.effects.is_side_effect_free(init, {name.name}):
+                continue
             model = cache.model
             binding = model.binding_of(name)
             if binding is None or binding.writes or len(binding.declarations) != 1:
