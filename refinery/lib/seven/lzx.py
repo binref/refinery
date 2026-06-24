@@ -380,6 +380,8 @@ class LzxDecoder:
                     raise BitsReaderEOF('reading an uncompressed block')
                 if next > rem:
                     next = rem
+                if self._pos + next > self._win_size:
+                    raise OutOfBounds('decompressing LZX', 'output position', self._pos + next, self._win_size)
                 bits.copy_to(win[self._pos:], next)
                 self._pos += next
                 cur_size -= next
@@ -390,6 +392,8 @@ class LzxDecoder:
                         raise NonZeroSkippedByte
                 continue
             log_phase = 'reading compressed block'
+            if self._pos + next > self._win_size:
+                raise OutOfBounds('decompressing LZX', 'output position', self._pos + next, self._win_size)
             cur_size -= next
             self._unpack_block_size -= next
             while next > 0:

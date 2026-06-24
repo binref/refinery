@@ -2,6 +2,39 @@ from .. import TestUnitBase
 
 import pytest
 
+from refinery.lib.seven.huffman import OutOfBounds
+from refinery.lib.seven.lzx import LzxDecoder
+
+
+def _lzx_uncompressed_block(payload_len: int) -> bytes:
+    """
+    Hand-build a minimal non-WIM LZX stream with a single uncompressed block whose header declares
+    `payload_len` output bytes, followed by that many raw bytes. The bitstream packs bits MSB-first
+    into little-endian 16-bit words; an uncompressed block is block type 3 with a 24-bit size and
+    three 32-bit repeat-offset slots before the raw payload.
+    """
+    bits = []
+
+    def put(value, nbits):
+        for k in range(nbits - 1, -1, -1):
+            bits.append((value >> k) & 1)
+
+    put(0, 1)
+    put(3, 3)
+    put((payload_len >> 8) & 0xFFFF, 16)
+    put(payload_len & 0xFF, 8)
+    while len(bits) % 16:
+        bits.append(0)
+    header = bytearray()
+    for w in range(0, len(bits), 16):
+        word = 0
+        for j in range(16):
+            word = (word << 1) | bits[w + j]
+        header += word.to_bytes(2, 'little')
+    payload = bytes((0x41 + i % 26) for i in range(payload_len))
+    return bytes(header) + bytes(12) + payload + bytes(64)
+
+
 _LZX_TEST_DATA = bytes.fromhex(
     '5b80808d051016f200002243002600005f006b6aacc506aac58430929583328aae22fedf92b498ad'
     '4744f564855a453e7f79019401df3990f2bbf7c9c16063cfdc616fecb08d839b668295bfa995f554'
@@ -277,3 +310,11 @@ class TestLZX(TestUnitBase):
         self.assertEqual(len(test), 0x8000)
         self.assertEqual(test[:60], B'@echo off\r\n\r\n@powershell.exe Add-MpPreference -ExclusionPath')
         self.assertEqual(test[461:500], B'This program cannot be run in DOS mode.')
+
+    def test_block_larger_than_window_is_rejected(self):
+        window_bits = 15
+        stream = _lzx_uncompressed_block((1 << window_bits) + 4096)
+        decoder = LzxDecoder(False)
+        decoder.set_params_and_alloc(window_bits)
+        with self.assertRaises(OutOfBounds):
+            decoder.decompress(memoryview(bytearray(stream)))

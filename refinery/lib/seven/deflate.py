@@ -70,9 +70,6 @@ kLevelDirectBits = B'\02\03\07'
 kCodeLengthAlphabetOrder = B'\x10\x11\x12\x00\x08\x07\x09\x06\x0a\x05\x0b\x04\x0c\x03\x0d\x02\x0e\x01\x0f'
 
 kMatchMinLen = 3
-kMatchMaxLen32 = kNumLenSymbols32 + kMatchMinLen - 1 // 256 + 2
-kMatchMaxLen64 = kNumLenSymbols64 + kMatchMinLen - 1 // 255 + 2
-kMatchMaxLen = kMatchMaxLen32
 
 kFinalBlockFieldSize = 1
 
@@ -463,6 +460,8 @@ class Deflate:
                     if sym >= self._num_dist_levels:
                         return False
                     sym = kDistStart[sym] + bits.read_bits(kDistDirectBits[sym])
+                    if sym + 1 > len(dst):
+                        return False
                     replay(dst, sym + 1, loc)
                     size -= loc
                     length -= loc

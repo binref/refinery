@@ -288,3 +288,17 @@ class TestCabExtractor(TestUnitBase):
             hashlib.sha256(bytes(chunk)).hexdigest(),
             'd17dc7b0898c16b9e7ead2c8e450269f972e3044cb6756974b0504a105ce4e4e',
         )
+
+    def test_quantum_block_demanding_excess_output_is_rejected(self):
+        from refinery.lib.cab import Cabinet
+        from refinery.lib.seven.quantum import QuantumDecoder
+        cabinet = Cabinet(memoryview(_MSZIP_LZX_QTM_CAB)).process()
+        folder = next(
+            f.folder for f in cabinet.get_files() if f.folder.compression.name == 'Quantum')
+        size, data = next(folder.iter_block_data())
+        decoder = QuantumDecoder(folder.method[1] & 0x1F)
+        with self.assertRaises(ValueError) as ctx:
+            decoder.decompress(data, size + 64)
+        self.assertEqual(
+            str(ctx.exception),
+            'Quantum block is truncated; the decoder ran past the end of input.')

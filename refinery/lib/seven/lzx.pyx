@@ -654,6 +654,8 @@ cdef class LzxDecoder:
                     raise BitsReaderEOF('reading an uncompressed block')
                 if next_val > rem:
                     next_val = rem
+                if <long long>pos + next_val > <long long>win_size:
+                    raise OutOfBounds('decompressing LZX', 'output position', <long long>pos + next_val, <long long>win_size)
                 bits.copy_to_ptr(win + pos, <int>next_val)
                 pos += <int>next_val
                 cur_size -= next_val
@@ -663,6 +665,8 @@ cdef class LzxDecoder:
                     if bits.direct_read_byte() != 0:
                         raise NonZeroSkippedByte
                 continue
+            if <long long>pos + next_val > <long long>win_size:
+                raise OutOfBounds('decompressing LZX', 'output position', <long long>pos + next_val, <long long>win_size)
             cur_size -= next_val
             self._unpack_block_size -= <uint32_t>next_val
 

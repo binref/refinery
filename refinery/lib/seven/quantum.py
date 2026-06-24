@@ -45,6 +45,11 @@ class _BitStream:
 
     @property
     def overread(self) -> bool:
+        """
+        Whether the reader has been forced to fabricate bytes past the end of the input. This mirrors
+        the `_extra` flag of the 7-Zip Quantum bit decoder: a valid block consumes its input exactly,
+        so any read past the end signals a truncated or corrupt block.
+        """
         return self._pos > self._end
 
 
@@ -228,6 +233,8 @@ class QuantumDecoder:
         except AttributeError as AE:
             raise RuntimeError('Quantum decompressor was not initialized.') from AE
         while remaining > 0:
+            if stream.overread:
+                raise ValueError('Quantum block is truncated; the decoder ran past the end of input.')
             selector = selector_model.decode(rc)
             if selector < _NUM_LIT_SELECTORS:
                 win[win_pos] = literal_models[selector].decode(rc)
@@ -269,6 +276,8 @@ class QuantumDecoder:
                     win[win_pos] = win[src]
                     win_pos += 1
                     src += 1
+        if stream.overread:
+            raise ValueError('Quantum block is truncated; the decoder ran past the end of input.')
         self._window_pos = win_pos
         view = memoryview(win)
         return view[out_start:win_pos]
