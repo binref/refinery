@@ -271,33 +271,19 @@ def pattern_identifiers(target: Node | None) -> Iterator[JsIdentifier]:
 def reference_role(node: JsIdentifier) -> Role:
     """
     Classify how a referencing identifier touches its binding: a plain read, a write-only target (the
-    left of a simple `=`, including inside a destructuring pattern, or a `for-in`/`for-of` head), or a
-    read-and-write (compound assignment or `++`/`--`). Climbs through destructuring containers, and
-    looks through parentheses, so that a target nested in a pattern or a grouping (`(x)++`, `(o) = v`)
-    is still recognized as a write.
+    left of a simple `=`, including inside a destructuring pattern or a destructuring default, or a
+    `for-in`/`for-of` head), or a read-and-write (compound assignment or `++`/`--`). The shared
+    `_governing_target` climb looks through destructuring containers, default patterns, and
+    parentheses, so a target nested in a pattern or a grouping (`[x = 9] = xs`, `(x)++`, `(o) = v`) is
+    still recognized as a write.
     """
-    cursor: Node = node
-    parent = _enclosing_operator(cursor)
-    while parent is not None:
-        if isinstance(parent, JsAssignmentExpression):
-            if _strip_parens(parent.left) is cursor:
-                return Role.WRITE if parent.operator == '=' else Role.READWRITE
-            return Role.READ
-        if isinstance(parent, JsUpdateExpression):
-            return Role.READWRITE if _strip_parens(parent.argument) is cursor else Role.READ
-        if isinstance(parent, (JsForInStatement, JsForOfStatement)):
-            return Role.WRITE if _strip_parens(parent.left) is cursor else Role.READ
-        if isinstance(parent, JsProperty):
-            if _strip_parens(parent.value) is cursor:
-                cursor = parent
-                parent = _enclosing_operator(cursor)
-                continue
-            return Role.READ
-        if isinstance(parent, _PATTERN_CONTAINERS):
-            cursor = parent
-            parent = _enclosing_operator(cursor)
-            continue
-        return Role.READ
+    governor, target = _governing_target(node)
+    if isinstance(governor, JsAssignmentExpression) and _strip_parens(governor.left) is target:
+        return Role.WRITE if governor.operator == '=' else Role.READWRITE
+    if isinstance(governor, JsUpdateExpression) and _strip_parens(governor.argument) is target:
+        return Role.READWRITE
+    if isinstance(governor, (JsForInStatement, JsForOfStatement)) and _strip_parens(governor.left) is target:
+        return Role.WRITE
     return Role.READ
 
 
@@ -321,6 +307,36 @@ def _enclosing_operator(node: Node) -> Node | None:
     while isinstance(parent, JsParenthesizedExpression):
         parent = parent.parent
     return parent
+
+
+def _governing_target(node: Node) -> tuple[Node | None, Node]:
+    """
+    Climb outward from *node* through the destructuring containers and parentheses that keep it in an
+    assignment or binding target position — array and object patterns (and the literal-shaped forms a
+    destructuring assignment target is parsed as), their rest elements, the value side of a pattern
+    property, and the target side of a default pattern (`[a = d] = ...`, climbing the `a` side only,
+    never into the default `d`) — then return the construct whose operator governs the target together
+    with the operand that construct sees: the outermost container the climb carried *node* up to. The
+    governor is the nearest enclosing assignment, update, `delete`, `for-in`/`for-of` head, or
+    declarator, or `None` past the top of the tree; a caller classifies it by asking whether the
+    returned operand is its write side. Centralizing the climb keeps the pattern-and-parenthesis
+    handling identical for every def-use, write-target, and liveness query, so a case one copy forgot —
+    such as the array-default `JsAssignmentPattern` target — cannot be missed by one and not another.
+    """
+    cursor: Node = node
+    parent = _enclosing_operator(cursor)
+    while parent is not None:
+        if isinstance(parent, JsProperty):
+            if _strip_parens(parent.value) is not cursor:
+                break
+        elif isinstance(parent, JsAssignmentPattern):
+            if _strip_parens(parent.left) is not cursor:
+                break
+        elif not isinstance(parent, _PATTERN_CONTAINERS):
+            break
+        cursor = parent
+        parent = _enclosing_operator(cursor)
+    return parent, cursor
 
 
 def container_reference_role(node: JsIdentifier) -> ContainerRole:
@@ -371,36 +387,20 @@ def _member_is_write_target(member: Node) -> bool:
     """
     Whether the outermost *member* of a container's access chain is being written rather than read: the
     left of an assignment, the operand of `++`/`--` or `delete`, or a target of a `for-in`/`for-of` head
-    or a destructuring pattern. Climbs through destructuring containers — array/object patterns, a
-    property whose value is the target, and a default-valued target (`[a.b = d] = ...`, climbing only on
-    the target side, not into the default) — and looks through parentheses (`(a.b) = v`), so a member
-    nested in a pattern or a grouping is still recognized as a write, mirroring `reference_role` and the
-    binding-target climb in the liveness model.
+    or a destructuring pattern (including a destructuring default, `[a.b = d] = ...`). The shared
+    `_governing_target` climb looks through destructuring containers and parentheses (`(a.b) = v`), so a
+    member nested in a pattern or a grouping is still recognized as a write, mirroring `reference_role`
+    and the binding-target climb in the liveness model.
     """
-    cursor: Node = member
-    parent = _enclosing_operator(cursor)
-    while parent is not None:
-        if isinstance(parent, JsAssignmentExpression):
-            return _strip_parens(parent.left) is cursor
-        if isinstance(parent, JsUpdateExpression):
-            return _strip_parens(parent.argument) is cursor
-        if isinstance(parent, JsUnaryExpression):
-            return parent.operator == 'delete' and _strip_parens(parent.operand) is cursor
-        if isinstance(parent, (JsForInStatement, JsForOfStatement)):
-            return _strip_parens(parent.left) is cursor
-        if isinstance(parent, JsProperty) and _strip_parens(parent.value) is cursor:
-            cursor = parent
-            parent = _enclosing_operator(cursor)
-            continue
-        if isinstance(parent, JsAssignmentPattern) and _strip_parens(parent.left) is cursor:
-            cursor = parent
-            parent = _enclosing_operator(cursor)
-            continue
-        if isinstance(parent, _PATTERN_CONTAINERS):
-            cursor = parent
-            parent = _enclosing_operator(cursor)
-            continue
-        return False
+    governor, target = _governing_target(member)
+    if isinstance(governor, JsAssignmentExpression):
+        return _strip_parens(governor.left) is target
+    if isinstance(governor, JsUpdateExpression):
+        return _strip_parens(governor.argument) is target
+    if isinstance(governor, JsUnaryExpression):
+        return governor.operator == 'delete' and _strip_parens(governor.operand) is target
+    if isinstance(governor, (JsForInStatement, JsForOfStatement)):
+        return _strip_parens(governor.left) is target
     return False
 
 

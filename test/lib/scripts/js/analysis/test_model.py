@@ -218,6 +218,13 @@ class TestSemanticModel(TestBase):
         self.assertEqual(len(binding.writes), 1)
         self.assertTrue(binding.is_dead)
 
+    def test_destructuring_default_target_is_write_only(self):
+        ast, model = self._model('function f(){ var a; [a = 9] = arr; }')
+        binding = self._binding(ast, model, 'a')
+        self.assertEqual(len(binding.writes), 1)
+        self.assertEqual(len(binding.reads), 0)
+        self.assertTrue(binding.is_dead)
+
     def test_closure_read_marks_captured_and_keeps_binding_live(self):
         ast, model = self._model('function o(){ var x; x = 7; return function(){ return x; }; }')
         binding = self._binding(ast, model, 'x')
@@ -418,6 +425,12 @@ class TestSemanticModel(TestBase):
 
     def test_reference_role_parenthesized_update_is_readwrite(self):
         self.assertEqual(self._ref_role('var a = 0; (a)++;'), Role.READWRITE)
+
+    def test_reference_role_array_destructuring_default_is_write(self):
+        self.assertEqual(self._ref_role('var a = 1; [a = 9] = xs;'), Role.WRITE)
+
+    def test_reference_role_object_destructuring_default_is_write(self):
+        self.assertEqual(self._ref_role('var a = 1; ({k: a = 9} = obj);'), Role.WRITE)
 
     def test_eval_is_a_reflection_surface(self):
         _, model = self._model('eval(payload);')

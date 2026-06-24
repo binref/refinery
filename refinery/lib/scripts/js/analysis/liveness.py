@@ -45,27 +45,18 @@ from refinery.lib.scripts.js.analysis.model import (
     Scope,
     ScopeKind,
     SemanticModel,
+    _governing_target,
     enclosing_function,
     is_use_position,
     reference_role,
 )
 from refinery.lib.scripts.js.model import (
-    JsArrayPattern,
     JsAssignmentExpression,
     JsAssignmentPattern,
     JsConditionalExpression,
     JsIdentifier,
     JsLogicalExpression,
-    JsObjectPattern,
-    JsProperty,
-    JsRestElement,
     JsVariableDeclarator,
-)
-
-_PATTERN_CONTAINERS = (
-    JsArrayPattern,
-    JsObjectPattern,
-    JsRestElement,
 )
 
 _CANDIDATE_KINDS = (BindingKind.VAR, BindingKind.LET)
@@ -371,40 +362,17 @@ class LivenessModel:
         return declarator is not None and declarator.init is not None
 
     def _enclosing_declarator(self, ident: JsIdentifier) -> JsVariableDeclarator | None:
-        cursor: Node = ident
-        parent = cursor.parent
-        while parent is not None:
-            if isinstance(parent, JsVariableDeclarator):
-                return parent
-            if not self._climbs_binding_target(parent, cursor):
-                return None
-            cursor = parent
-            parent = cursor.parent
-        return None
+        governor, _ = _governing_target(ident)
+        return governor if isinstance(governor, JsVariableDeclarator) else None
 
     def _governor(self, ident: JsIdentifier) -> Node | None:
         """
-        The nearest ancestor of *ident* that is not a destructuring container, i.e. the assignment,
-        declarator, or loop head that governs the binding target *ident* sits in.
+        The construct that governs the binding target *ident* sits in — the assignment, declarator, or
+        loop head reached by climbing out through any destructuring containers and parentheses around
+        it, or `None` past the top of the tree.
         """
-        cursor: Node = ident
-        parent = cursor.parent
-        while parent is not None:
-            if not self._climbs_binding_target(parent, cursor):
-                return parent
-            cursor = parent
-            parent = cursor.parent
-        return None
-
-    @staticmethod
-    def _climbs_binding_target(parent: Node, cursor: Node) -> bool:
-        if isinstance(parent, _PATTERN_CONTAINERS):
-            return True
-        if isinstance(parent, JsAssignmentPattern):
-            return parent.left is cursor
-        if isinstance(parent, JsProperty):
-            return parent.value is cursor
-        return False
+        governor, _ = _governing_target(ident)
+        return governor
 
     @staticmethod
     def _is_unconditional(ident: JsIdentifier, element: Node) -> bool:

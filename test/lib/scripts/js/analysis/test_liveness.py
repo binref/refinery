@@ -75,6 +75,10 @@ class TestLiveness(TestBase):
         ast, lv = self._build('function f() { var x = 1; g(x); x = 2; return x; }')
         self.assertFalse(lv.is_dead_store(self._decl(ast, 'x')))
 
+    def test_parenthesized_store_kills_prior_store(self):
+        ast, lv = self._build('function f() { var x = 1; (x) = 2; return x; }')
+        self.assertTrue(lv.is_dead_store(self._decl(ast, 'x')))
+
     def test_value_never_read_is_dead(self):
         ast, lv = self._build('function f() { var t = compute(); return 0; }')
         self.assertTrue(lv.is_dead_store(self._decl(ast, 't')))
