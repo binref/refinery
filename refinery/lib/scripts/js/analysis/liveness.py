@@ -362,8 +362,10 @@ class LivenessModel:
         return declarator is not None and declarator.init is not None
 
     def _enclosing_declarator(self, ident: JsIdentifier) -> JsVariableDeclarator | None:
-        governor, _ = _governing_target(ident)
-        return governor if isinstance(governor, JsVariableDeclarator) else None
+        governor, target = _governing_target(ident)
+        if isinstance(governor, JsVariableDeclarator) and governor.id is target:
+            return governor
+        return None
 
     def _governor(self, ident: JsIdentifier) -> Node | None:
         """
