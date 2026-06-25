@@ -434,6 +434,19 @@ class TestEffectModel(TestBase):
         self.assertFalse(self._container(
             'function f(p){ arguments[1][0] = 9; } var a = [1, 2]; f(0, a); SINK(a[0]);'))
 
+    def test_over_passed_argument_into_callee_with_eval_is_mutable(self):
+        self.assertFalse(self._container(
+            'function f(){ eval("arguments[0][0]=9"); } var a = [1, 2]; f(a); SINK(a[0]);'))
+
+    def test_over_passed_argument_reached_via_nested_arrow_eval_is_mutable(self):
+        self.assertFalse(self._container(
+            'function f(){ const g = () => { eval("arguments[0][0]=9"); }; g(); }'
+            ' var a = [1, 2]; f(a); SINK(a[0]);'))
+
+    def test_over_passed_argument_into_arrow_callee_with_eval_is_immutable(self):
+        self.assertTrue(self._container(
+            'var f = () => { eval("arguments[0][0]=9"); }; var a = [1, 2]; f(a); SINK(a[0]);'))
+
     def test_escape_into_callee_invoking_nested_method_is_mutable_with_trusted_methods(self):
         self.assertFalse(self._container(
             'function f(x){ x.a.unshift(9); } var o = { a: [1, 2] }; f(o); SINK(o.a[0]);',

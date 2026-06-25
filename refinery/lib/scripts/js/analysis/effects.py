@@ -463,7 +463,8 @@ class EffectModel:
         parameter, or the parameter is reachable through a `with` or direct `eval` in the callee that
         resolves a name at runtime (an unrecorded write the parameter's reference set cannot rule out).
         An argument with no parameter to bind — passed beyond the declared parameters of a function with
-        no rest collector and no `arguments` use — is safe, since the callee cannot name it.
+        no rest collector and no `arguments` reach, textual or reflective — is safe, since the callee
+        cannot name it.
         """
         parent = ref.parent
         if not isinstance(parent, JsCallExpression) or ref not in parent.arguments:
@@ -496,10 +497,13 @@ class EffectModel:
         Whether a non-arrow callee can reach its call's arguments through its own `arguments` object,
         which aliases the positional arguments — including any passed beyond the declared parameters — so
         that `arguments[i][...] = v` mutates a container the by-position parameter reasoning in
-        `_argument_keeps_container` would otherwise miss. An arrow has no `arguments` of its own (a
-        reference inside it binds the enclosing function's, unrelated to the arrow's parameters), so it
-        is exempt. When the callee names `arguments`, the escape is treated as mutable. The answer is a
-        structural property of the callee, so it is memoized per function.
+        `_argument_keeps_container` would otherwise miss. It is reached either by naming `arguments`
+        directly, or reflectively: a `with` or a direct `eval` in the callee — or in a closure nested
+        inside it, which inherits the callee's `arguments` — can read that object with no textual
+        reference, so a reflectively reachable `arguments` counts too. An arrow has no `arguments` of its
+        own (a reference inside it binds the enclosing function's, unrelated to the arrow's parameters),
+        so it is exempt. When the callee can reach `arguments`, the escape is treated as mutable. The
+        answer is a structural property of the callee, so it is memoized per function.
         """
         cached = self._uses_arguments_cache.get(id(func))
         if cached is None:
@@ -514,7 +518,11 @@ class EffectModel:
         if func_scope is None:
             return False
         binding = func_scope.bindings.get('arguments')
-        return binding is not None and bool(self.model.references(binding))
+        if binding is None:
+            return False
+        if self.model.references(binding):
+            return True
+        return self.model.reflection_can_reach(binding)
 
     def _static_callee(
         self, call: JsCallExpression
