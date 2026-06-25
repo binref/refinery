@@ -429,8 +429,11 @@ class EffectModel:
                 return False
             if role is ContainerRole.MEMBER_CALL and member_calls_mutate:
                 return False
-            if role is ContainerRole.ESCAPE and not self._escape_keeps_container(ref, visiting, member_calls_mutate):
-                return False
+            if role is ContainerRole.ESCAPE:
+                if not isinstance(ref, JsIdentifier) or not self._escape_keeps_container(
+                    ref, visiting, member_calls_mutate,
+                ):
+                    return False
         return True
 
     def _escape_keeps_container(self, ref: JsIdentifier, visiting: set[int], member_calls_mutate: bool) -> bool:

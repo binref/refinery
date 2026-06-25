@@ -345,6 +345,48 @@ class TestSemanticModel(TestBase):
         self.assertEqual(len(binding.reads), 1)
         self.assertEqual(len(binding.writes), 1)
 
+    def test_global_alias_member_write_creates_implicit_global(self):
+        ast, model = self._model('globalThis.g = 99; g;')
+        prop_g, read_g = self._idents(ast, 'g')
+        binding = model.root_scope.bindings['g']
+        self.assertEqual(binding.kind, BindingKind.IMPLICIT_GLOBAL)
+        self.assertEqual(len(binding.writes), 1)
+        self.assertIs(model.resolve(read_g), binding)
+
+    def test_global_alias_computed_string_member_write_creates_implicit_global(self):
+        ast, model = self._model("globalThis['g'] = 99; g;")
+        binding = model.root_scope.bindings['g']
+        self.assertEqual(binding.kind, BindingKind.IMPLICIT_GLOBAL)
+        self.assertEqual(len(binding.writes), 1)
+        self.assertIs(model.resolve(self._idents(ast, 'g')[0]), binding)
+
+    def test_global_alias_member_write_records_on_declared_global_var(self):
+        ast, model = self._model('var g; globalThis.g = 99;')
+        binding = self._binding(ast, model, 'g')
+        self.assertEqual(binding.kind, BindingKind.VAR)
+        self.assertEqual(len(binding.writes), 1)
+
+    def test_non_alias_member_write_does_not_create_global(self):
+        ast, model = self._model('obj.g = 99; g;')
+        self.assertNotIn('g', model.root_scope.bindings)
+        self.assertIsNone(model.resolve(self._idents(ast, 'g')[-1]))
+
+    def test_shadowed_alias_member_write_does_not_create_global(self):
+        ast, model = self._model('function f(){ var window = {}; window.g = 99; }')
+        self.assertNotIn('g', model.root_scope.bindings)
+
+    def test_alias_member_read_does_not_create_global(self):
+        ast, model = self._model('var x = globalThis.g;')
+        self.assertNotIn('g', model.root_scope.bindings)
+
+    def test_alias_member_write_inside_with_does_not_create_global(self):
+        ast, model = self._model('with (o) { globalThis.g = 99; }')
+        self.assertNotIn('g', model.root_scope.bindings)
+
+    def test_dynamic_alias_member_write_does_not_create_named_global(self):
+        ast, model = self._model('globalThis[k] = 99;')
+        self.assertNotIn('k', model.root_scope.bindings)
+
     def _role(self, source: str, name: str = 'a') -> ContainerRole:
         ast, model = self._model(source)
         ref = next(n for n in self._idents(ast, name) if model.binding_of(n) is None)

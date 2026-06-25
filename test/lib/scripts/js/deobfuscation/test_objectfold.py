@@ -317,6 +317,64 @@ class TestObjectFold(TestJsDeobfuscator):
         )
         self.assertEqual(source, self._objectfold(source))
 
+    def test_global_alias_member_write_value_not_folded(self):
+        source = inspect.cleandoc(
+            """
+            var o = { p: g };
+            globalThis.g = 99;
+            SINK(o.p);
+            """
+        )
+        self.assertEqual(source, self._objectfold(source))
+
+    def test_global_alias_computed_member_write_value_not_folded(self):
+        source = inspect.cleandoc(
+            """
+            var o = { p: g };
+            globalThis['g'] = 99;
+            SINK(o.p);
+            """
+        )
+        self.assertEqual(source, self._objectfold(source))
+
+    def test_window_alias_member_write_value_not_folded(self):
+        source = inspect.cleandoc(
+            """
+            var o = { p: g };
+            window.g = 99;
+            SINK(o.p);
+            """
+        )
+        self.assertEqual(source, self._objectfold(source))
+
+    def test_free_global_property_value_still_folded(self):
+        self.assertEqual(
+            'SINK(encodeURIComponent);',
+            self._objectfold('var o = { e: encodeURIComponent }; SINK(o.e);'),
+        )
+
+    def test_local_alias_member_write_does_not_block_fold(self):
+        source = inspect.cleandoc(
+            """
+            function f() {
+              var window = {};
+              var o = { p: g };
+              window.g = 99;
+              return o.p;
+            }
+            """
+        )
+        expected = inspect.cleandoc(
+            """
+            function f() {
+              var window = {};
+              window.g = 99;
+              return g;
+            }
+            """
+        )
+        self.assertEqual(expected, self._objectfold(source))
+
     def test_nested_property_method_mutation_not_folded(self):
         source = inspect.cleandoc(
             """
