@@ -199,12 +199,16 @@ class EffectSummary:
     `writes_captured` covers assignment to a binding owned by an enclosing function (a closure mutation
     visible after the call returns); `throws` covers a `throw` or an operation that may throw on a
     value the analysis cannot prove safe; `calls_unknown` covers invoking a callee that cannot be
-    resolved and summarized. A summary with none of these set is `is_pure`.
+    resolved and summarized. A summary with none of these set is `is_pure`. `wraps_return` is separate:
+    it does not bear on purity but records that a call to the function yields a wrapper (a promise from
+    an `async` function, an iterator from a generator) rather than the value of its return expression,
+    so the call cannot be replaced by that expression.
     """
     writes_global: bool = False
     writes_captured: bool = False
     throws: bool = False
     calls_unknown: bool = False
+    wraps_return: bool = False
 
     @property
     def is_pure(self) -> bool:
@@ -219,12 +223,15 @@ class EffectSummary:
         """
         Whether replacing a call to the summarized function with its computed return value drops no
         observable effect. This holds when the call writes no state visible after it returns — neither a
-        global nor a captured binding. Unlike `is_pure`, a call that may throw or read unknown state
-        still qualifies: an evaluator that actually executes the call to a value reproduces those, and
-        only a *write* would be silently lost. `is_pure`, which additionally forbids throwing and
-        unknown reads, is the right test for removing a call outright rather than replacing it.
+        global nor a captured binding — and the call returns its value directly rather than wrapped: an
+        `async` function's call is a promise and a generator's is an iterator, neither equal to the
+        return expression, so `wraps_return` disqualifies it. Unlike `is_pure`, a call that may throw or
+        read unknown state still qualifies: an evaluator that actually executes the call to a value
+        reproduces those, and only a *write* would be silently lost. `is_pure`, which additionally
+        forbids throwing and unknown reads, is the right test for removing a call outright rather than
+        replacing it.
         """
-        return not (self.writes_global or self.writes_captured)
+        return not (self.writes_global or self.writes_captured or self.wraps_return)
 
     def absorb(self, other: EffectSummary):
         """
@@ -358,6 +365,7 @@ class EffectModel:
         self._confine_cache: dict[int, Node | None] = {}
         self._immutable_cache: dict[tuple[int, bool], bool] = {}
         self._member_write_cache: dict[int, bool] = {}
+        self._uses_arguments_cache: dict[int, bool] = {}
         self._functions: list[Node] = self._collect_functions()
         self._compute()
 
@@ -465,9 +473,11 @@ class EffectModel:
         may mutate it. False, conservatively, when the call cannot be analysed: the callee is not a
         single known function, it can reach the argument through its own `arguments` object, the argument
         is spread, a spread precedes it (so its runtime position shifts past the textual index and the
-        parameter it binds cannot be pinned down), or the slot it lands in is a rest or destructuring
-        parameter. An argument with no parameter to bind — passed beyond the declared parameters of a
-        function with no rest collector and no `arguments` use — is safe, since the callee cannot name it.
+        parameter it binds cannot be pinned down), the slot it lands in is a rest or destructuring
+        parameter, or the parameter is reachable through a `with` or direct `eval` in the callee that
+        resolves a name at runtime (an unrecorded write the parameter's reference set cannot rule out).
+        An argument with no parameter to bind — passed beyond the declared parameters of a function with
+        no rest collector and no `arguments` use — is safe, since the callee cannot name it.
         """
         parent = ref.parent
         if not isinstance(parent, JsCallExpression) or ref not in parent.arguments:
@@ -491,6 +501,8 @@ class EffectModel:
         binding = self.model.binding_of(param)
         if binding is None:
             return False
+        if self.model.reflection_can_reach(binding):
+            return False
         return self._immutable_container(binding, visiting, True)
 
     def _callee_uses_arguments(self, func: Node) -> bool:
@@ -500,8 +512,16 @@ class EffectModel:
         that `arguments[i][...] = v` mutates a container the by-position parameter reasoning in
         `_argument_keeps_container` would otherwise miss. An arrow has no `arguments` of its own (a
         reference inside it binds the enclosing function's, unrelated to the arrow's parameters), so it
-        is exempt. When the callee names `arguments`, the escape is treated as mutable.
+        is exempt. When the callee names `arguments`, the escape is treated as mutable. The answer is a
+        structural property of the callee, so it is memoized per function.
         """
+        cached = self._uses_arguments_cache.get(id(func))
+        if cached is None:
+            cached = self._compute_callee_uses_arguments(func)
+            self._uses_arguments_cache[id(func)] = cached
+        return cached
+
+    def _compute_callee_uses_arguments(self, func: Node) -> bool:
         if isinstance(func, JsArrowFunctionExpression):
             return False
         func_scope = self.model.function_scope(func)
@@ -573,6 +593,8 @@ class EffectModel:
 
     def _scan(self, func: Node) -> EffectSummary:
         summary = EffectSummary()
+        if getattr(func, 'is_async', False) or getattr(func, 'generator', False):
+            summary.wraps_return = True
         func_scope = self.model.function_scope(func)
         for node in _body_nodes(func):
             if isinstance(node, JsThrowStatement):

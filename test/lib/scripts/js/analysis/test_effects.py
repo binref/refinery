@@ -52,6 +52,15 @@ class TestEffectModel(TestBase):
         summary = self._summary('function f(n){ return String.fromCharCode(n); }', 'f')
         self.assertTrue(summary.is_pure)
 
+    def test_async_function_is_pure_but_not_value_replaceable(self):
+        summary = self._summary('async function f(){ return 1; }', 'f')
+        self.assertTrue(summary.is_pure)
+        self.assertFalse(summary.is_value_replaceable)
+
+    def test_generator_function_is_not_value_replaceable(self):
+        summary = self._summary('function* f(){ return 1; }', 'f')
+        self.assertFalse(summary.is_value_replaceable)
+
     def test_global_assignment_is_a_global_write(self):
         source = 'function f(){ leaked = 1; } function r(){ return leaked; }'
         summary = self._summary(source, 'f')
@@ -414,6 +423,14 @@ class TestEffectModel(TestBase):
     def test_escape_as_argument_after_spread_is_mutable(self):
         self.assertFalse(self._container(
             'function keep(p, q){ p[0] = 9; } var pre = [1]; var a = [1, 2]; keep(...pre, a); SINK(a[0]);'))
+
+    def test_escape_into_eval_containing_callee_is_mutable(self):
+        self.assertFalse(self._container(
+            'function f(x){ eval("x[0]=9"); } var a = [1, 2]; f(a); SINK(a[0]);'))
+
+    def test_escape_into_with_containing_callee_is_mutable(self):
+        self.assertFalse(self._container(
+            'function f(x){ with (o) { x[0] = 9; } } var a = [1, 2]; f(a); SINK(a[0]);'))
 
     def test_benign_alias_is_immutable(self):
         self.assertTrue(self._container('var a = [1, 2]; var b = a; SINK(b[0]);'))

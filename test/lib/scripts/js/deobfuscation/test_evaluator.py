@@ -21,6 +21,30 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
         )
         self.assertEqual(source, self._evaluate(source))
 
+    def test_async_function_call_not_evaluated_to_value(self):
+        source = inspect.cleandoc(
+            """
+            async function m() {
+              return 1;
+            }
+            var p = m();
+            SINK(p);
+            """
+        )
+        self.assertEqual(source, self._evaluate(source))
+
+    def test_generator_function_call_not_evaluated_to_value(self):
+        source = inspect.cleandoc(
+            """
+            function* m() {
+              return 1;
+            }
+            var p = m();
+            SINK(p);
+            """
+        )
+        self.assertEqual(source, self._evaluate(source))
+
     def test_call_with_nested_implicit_global_write_not_folded(self):
         source = inspect.cleandoc(
             """

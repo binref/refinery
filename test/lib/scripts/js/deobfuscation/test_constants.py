@@ -282,6 +282,34 @@ class TestConstantInlining(TestJsDeobfuscator):
         )
         self.assertEqual(source, self._inline(source))
 
+    def test_const_array_passed_to_eval_containing_callee_not_inlined(self):
+        source = inspect.cleandoc(
+            """
+            const p = ['a', 'b'];
+            function f(x) {
+              eval("x[0]='Z';");
+            }
+            f(p);
+            g(p[0]);
+            """
+        )
+        self.assertEqual(source, self._inline(source))
+
+    def test_const_array_passed_to_with_containing_callee_not_inlined(self):
+        source = inspect.cleandoc(
+            """
+            const p = ['a', 'b'];
+            function f(x) {
+              with (o) {
+                x[0] = sneaky;
+              }
+            }
+            f(p);
+            g(p[0]);
+            """
+        )
+        self.assertEqual(source, self._inline(source))
+
     def test_non_literal_array_not_inlined(self):
         self.assertEqual(
             inspect.cleandoc(
