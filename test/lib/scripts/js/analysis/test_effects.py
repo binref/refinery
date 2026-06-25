@@ -103,6 +103,51 @@ class TestEffectModel(TestBase):
         self.assertTrue(summary.writes_global)
         self.assertFalse(summary.is_pure)
 
+    def test_write_to_fresh_rest_param_is_not_a_global_write(self):
+        summary = self._summary('function f(...xs){ xs[0] = 9; return xs[1]; }', 'f')
+        self.assertFalse(summary.writes_global)
+        self.assertFalse(summary.writes_captured)
+
+    def test_write_to_fresh_local_array_is_not_a_global_write(self):
+        summary = self._summary('function f(){ var o = []; o[0] = 9; return o[0]; }', 'f')
+        self.assertFalse(summary.writes_global)
+        self.assertFalse(summary.writes_captured)
+
+    def test_write_to_fresh_local_object_is_not_a_global_write(self):
+        summary = self._summary('function f(){ var o = {}; o.k = 9; return o.k; }', 'f')
+        self.assertFalse(summary.writes_global)
+        self.assertFalse(summary.writes_captured)
+
+    def test_write_to_plain_param_is_a_global_write(self):
+        summary = self._summary('function f(a){ a[0] = 99; return a; }', 'f')
+        self.assertTrue(summary.writes_global)
+        self.assertFalse(summary.is_pure)
+
+    def test_write_to_local_aliasing_a_param_is_a_global_write(self):
+        summary = self._summary('function f(a){ var o = a; o[0] = 9; return o[0]; }', 'f')
+        self.assertTrue(summary.writes_global)
+
+    def test_fresh_local_returned_after_write_is_a_global_write(self):
+        summary = self._summary('function f(){ var o = []; o[0] = 9; return o; }', 'f')
+        self.assertTrue(summary.writes_global)
+
+    def test_fresh_local_passed_to_call_after_write_is_a_global_write(self):
+        summary = self._summary('function f(){ var o = []; o[0] = 9; sink(o); return 1; }', 'f')
+        self.assertTrue(summary.writes_global)
+
+    def test_fresh_local_aliased_after_write_is_a_global_write(self):
+        summary = self._summary('function f(){ var o = []; o[0] = 9; var b = o; return b[0]; }', 'f')
+        self.assertTrue(summary.writes_global)
+
+    def test_rest_param_returned_after_write_is_a_global_write(self):
+        summary = self._summary('function f(...xs){ xs[0] = 9; return xs; }', 'f')
+        self.assertTrue(summary.writes_global)
+
+    def test_write_to_fresh_array_literal_base_is_pure(self):
+        summary = self._summary('function f(){ [1, 2][0] = 9; return 1; }', 'f')
+        self.assertFalse(summary.writes_global)
+        self.assertTrue(summary.is_pure)
+
     def test_closure_mutation_is_a_captured_write(self):
         source = (
             'function outer(){ var c = 0;'

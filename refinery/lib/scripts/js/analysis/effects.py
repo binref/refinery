@@ -67,6 +67,7 @@ from refinery.lib.scripts.js.model import (
     JsObjectExpression,
     JsProperty,
     JsPropertyKind,
+    JsRestElement,
     JsScript,
     JsSequenceExpression,
     JsStringLiteral,
@@ -486,7 +487,8 @@ class EffectModel:
                 if base is not None and not self._base_is_safe(base):
                     summary.throws = True
                 if _is_member_write(node):
-                    summary.writes_global = True
+                    if not self._member_write_unobservable(node, func):
+                        summary.writes_global = True
                 elif (
                     base is not None
                     and not self._base_getter_safe(base)
@@ -536,6 +538,89 @@ class EffectModel:
         if not isinstance(func, FUNCTION_NODES):
             return False
         return self._confining_function(binding) is func
+
+    def _member_write_unobservable(self, member: JsMemberExpression, func: Node) -> bool:
+        """
+        Whether the container written by *member* (`base.k = v`, `base[i]++`, `delete base[i]`) is a
+        value built inside *func* that never escapes it, so no caller can observe the write and a
+        function whose only effect is the mutation is pure. The base must be a fresh value — written
+        directly on an object/array/function literal, or resolving to a binding local to *func* whose
+        value is always freshly built: a rest parameter, which the language guarantees is a new array,
+        or a local initialized only to an object/array/function literal. A plain parameter does NOT
+        qualify — it aliases the caller's object, so `function modify(a){ a[0] = 9; }` mutates the
+        argument observably — which is the soundness boundary this rests on. Every reference to the
+        binding must keep the container contained: only member reads and writes, never an escape that
+        could alias it out (returned, passed to a call, stored as a property, aliased to another name)
+        or a method call that might leak or mutate-and-return it, and never a capture by a nested
+        function that could outlive the call.
+
+        A write hidden behind a dynamic scope — through a name a `with` body or direct `eval` resolves
+        at runtime — is not modelled: the base resolves to no binding, so the write is conservatively
+        kept. The matching narrow limitation, a prototype accessor installed through reflection
+        observing the write, is the dynamic-scope gap already documented on
+        `binding_is_immutable_container`; a blunt reflection guard here would refuse the obfuscator
+        idioms this is meant to see through, so it is deliberately omitted.
+        """
+        base = member.object
+        if isinstance(base, (JsArrayExpression, JsObjectExpression, JsFunctionExpression)):
+            return True
+        if not isinstance(base, JsIdentifier):
+            return False
+        binding = self.model.resolve(base)
+        if binding is None or binding.captured:
+            return False
+        if not self._confined_to(binding, func):
+            return False
+        if not self._fresh_container_origin(binding):
+            return False
+        return self._container_non_escaping(binding)
+
+    def _fresh_container_origin(self, binding: Binding) -> bool:
+        """
+        Whether *binding* only ever holds a freshly built container: a rest parameter (always a new
+        array) or a `var`/`let`/`const` whose every declaration initializes it to an object, array, or
+        function literal. A plain parameter, a catch binding, or a local initialized from anything that
+        could alias an external object fails, since a write through it could then be observed elsewhere.
+        """
+        if self._is_rest_param(binding):
+            return True
+        if binding.kind not in (BindingKind.VAR, BindingKind.LET, BindingKind.CONST):
+            return False
+        if not binding.declarations:
+            return False
+        for decl in binding.declarations:
+            declarator = decl.parent
+            if not isinstance(declarator, JsVariableDeclarator):
+                return False
+            if not isinstance(declarator.init, (
+                JsArrayExpression, JsObjectExpression, JsFunctionExpression, JsArrowFunctionExpression,
+            )):
+                return False
+        return True
+
+    @staticmethod
+    def _is_rest_param(binding: Binding) -> bool:
+        """
+        Whether *binding* is a function's rest parameter (`function f(...xs)`), whose value the language
+        guarantees is a fresh array on every call.
+        """
+        return binding.kind is BindingKind.PARAM and any(
+            isinstance(decl.parent, JsRestElement) for decl in binding.declarations
+        )
+
+    def _container_non_escaping(self, binding: Binding) -> bool:
+        """
+        Whether every reference to *binding* keeps its container contained: each is a member read or
+        write (`obj.k`, `obj[i] = v`), never an escape, rebinding, or method call through which the
+        container could be aliased out, mutated by other code, or replaced. The tightest form of the
+        escape check, since a mutation only stays unobservable while no other code can reach the object.
+        """
+        for ref in self.model.references(binding):
+            if container_reference_role(ref) not in (
+                ContainerRole.MEMBER_READ, ContainerRole.MEMBER_WRITE,
+            ):
+                return False
+        return True
 
     def _confining_function(self, binding: Binding) -> Node | None:
         """
