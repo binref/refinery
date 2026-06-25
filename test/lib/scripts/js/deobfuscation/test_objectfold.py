@@ -28,6 +28,16 @@ class TestObjectFold(TestJsDeobfuscator):
         )
         self.assertEqual(source, self._objectfold(source))
 
+    def test_proto_setting_object_not_folded(self):
+        source = inspect.cleandoc(
+            """
+            var o = { __proto__: base, a: 1 };
+            SINK(o.__proto__);
+            SINK(o.a);
+            """
+        )
+        self.assertEqual(source, self._objectfold(source))
+
     def test_this_method_not_folded(self):
         source = inspect.cleandoc(
             """

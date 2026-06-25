@@ -913,7 +913,7 @@ def _object_has_own_accessor(obj: JsObjectExpression) -> bool:
     )
 
 
-def _object_sets_prototype(obj: JsObjectExpression) -> bool:
+def object_sets_prototype(obj: JsObjectExpression) -> bool:
     """
     Whether the object literal *obj* installs a custom prototype through the special `__proto__:`
     property form (`{ __proto__: p }`, `{ '__proto__': p }`) — a plain, non-computed data property
@@ -944,7 +944,7 @@ def _object_member_access_runs_accessor(obj: JsObjectExpression) -> bool:
     with neither behaves as a plain field container, so an access on it is observable only as the field
     it names.
     """
-    return _object_has_own_accessor(obj) or _object_sets_prototype(obj)
+    return _object_has_own_accessor(obj) or object_sets_prototype(obj)
 
 
 def _body_nodes(func: Node) -> Iterator[Node]:

@@ -18,6 +18,7 @@ from refinery.lib.scripts import (
     _replace_in_parent,
 )
 from refinery.lib.scripts.js.analysis.cache import model_cache
+from refinery.lib.scripts.js.analysis.effects import object_sets_prototype
 from refinery.lib.scripts.js.analysis.model import Binding, Scope, SemanticModel, is_use_position
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     OBJECT_PROTOTYPE_MEMBERS,
@@ -131,7 +132,7 @@ class JsObjectFold(ScopeProcessingTransformer):
             if not isinstance(name, JsIdentifier) or not isinstance(init, JsObjectExpression):
                 continue
             prop_map = _build_property_map(init)
-            if prop_map is None or _object_binds_this(prop_map):
+            if prop_map is None or _object_binds_this(prop_map) or object_sets_prototype(init):
                 continue
             if self._has_freshly_allocating_value(prop_map):
                 continue
@@ -296,7 +297,7 @@ class JsObjectFold(ScopeProcessingTransformer):
                 can_remove = False
                 continue
             if key not in prop_map:
-                if key in OBJECT_PROTOTYPE_MEMBERS or '__proto__' in prop_map:
+                if key in OBJECT_PROTOTYPE_MEMBERS:
                     can_remove = False
                     continue
                 _replace_in_parent(member, JsIdentifier(name='undefined'))
