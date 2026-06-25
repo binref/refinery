@@ -287,6 +287,7 @@ class JsObjectFold(ScopeProcessingTransformer):
         """
         changed = False
         can_remove = True
+        consistent: dict[tuple[int, int], bool] = {}
         for ref in list(model.references(binding)):
             member = ref.parent
             if not isinstance(member, JsMemberExpression) or member.object is not ref:
@@ -324,7 +325,13 @@ class JsObjectFold(ScopeProcessingTransformer):
             if isinstance(value, (JsFunctionExpression, JsArrowFunctionExpression)) and not called_here:
                 can_remove = False
                 continue
-            if not _resolves_consistently(model, value, model.scope_of(member)):
+            dest = model.scope_of(member)
+            ckey = (id(value), id(dest))
+            cached = consistent.get(ckey)
+            if cached is None:
+                cached = _resolves_consistently(model, value, dest)
+                consistent[ckey] = cached
+            if not cached:
                 can_remove = False
                 continue
             _replace_in_parent(member, _clone_node(value))
