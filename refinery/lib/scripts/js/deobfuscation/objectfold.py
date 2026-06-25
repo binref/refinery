@@ -247,8 +247,7 @@ class JsObjectFold(ScopeProcessingTransformer):
         declaration would leave it dangling; the caller skips folding the object rather than fold it
         into invalid code.
         """
-        init_nodes = {id(node) for node in init.walk()}
-        return any(id(ref) in init_nodes for ref in model.references(binding))
+        return any(ref.is_descendant_of(init) for ref in model.references(binding))
 
     @staticmethod
     def _inline_references(
