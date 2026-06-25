@@ -20,6 +20,7 @@ from refinery.lib.scripts import (
 from refinery.lib.scripts.js.analysis.cache import model_cache
 from refinery.lib.scripts.js.analysis.model import Binding, SemanticModel, is_use_position
 from refinery.lib.scripts.js.deobfuscation.helpers import (
+    OBJECT_PROTOTYPE_MEMBERS,
     ScopeProcessingTransformer,
     access_key,
     property_key,
@@ -34,29 +35,12 @@ from refinery.lib.scripts.js.model import (
     JsIdentifier,
     JsMemberExpression,
     JsObjectExpression,
-    JsParenthesizedExpression,
     JsProperty,
     JsPropertyKind,
     JsScript,
-    JsTaggedTemplateExpression,
     JsVariableDeclaration,
     JsVariableDeclarator,
 )
-
-_OBJECT_PROTOTYPE_MEMBERS = frozenset({
-    'constructor',
-    'hasOwnProperty',
-    'isPrototypeOf',
-    'propertyIsEnumerable',
-    'toLocaleString',
-    'toString',
-    'valueOf',
-    '__proto__',
-    '__defineGetter__',
-    '__defineSetter__',
-    '__lookupGetter__',
-    '__lookupSetter__',
-})
 
 
 def _build_property_map(
@@ -87,43 +71,6 @@ def _object_binds_this(prop_map: dict[str, Node]) -> bool:
     return any(references_receiver_this(value) for value in prop_map.values())
 
 
-def _strip(node: Node | None) -> Node | None:
-    while isinstance(node, JsParenthesizedExpression):
-        node = node.expression
-    return node
-
-
-def _invokes(node: Node | None, callee: Node) -> bool:
-    """
-    Whether *node* invokes *callee* — a call `callee(...)` or a tagged template `` callee`...` `` —
-    looking through parentheses around the callee.
-    """
-    if isinstance(node, JsCallExpression):
-        return _strip(node.callee) is callee
-    if isinstance(node, JsTaggedTemplateExpression):
-        return _strip(node.tag) is callee
-    return False
-
-
-def _is_method_receiver(access: JsMemberExpression) -> bool:
-    """
-    Whether *access* (a property access `o.k`) is the receiver a method is invoked on, as in
-    `o.k.m(...)` — the access is the object of a further member that is then called. Parentheses are
-    looked through at every level.
-    """
-    cursor: Node = access
-    parent = cursor.parent
-    while isinstance(parent, JsParenthesizedExpression):
-        cursor = parent
-        parent = cursor.parent
-    if not isinstance(parent, JsMemberExpression) or _strip(parent.object) is not cursor:
-        return False
-    outer = parent.parent
-    while isinstance(outer, JsParenthesizedExpression):
-        outer = outer.parent
-    return _invokes(outer, parent)
-
-
 class JsObjectFold(ScopeProcessingTransformer):
     """
     Inline properties of locally-defined constant objects. Processes at function-scope and
@@ -149,6 +96,8 @@ class JsObjectFold(ScopeProcessingTransformer):
             prop_map = _build_property_map(init)
             if prop_map is None or _object_binds_this(prop_map):
                 continue
+            if self._has_mutable_container_value(prop_map):
+                continue
             if not cache.effects.is_side_effect_free(init, {name.name}):
                 continue
             model = cache.model
@@ -158,8 +107,6 @@ class JsObjectFold(ScopeProcessingTransformer):
             if not cache.effects.binding_is_immutable_container(binding, member_calls_mutate=False):
                 continue
             if self._self_referential(model, binding, init):
-                continue
-            if self._mutates_nested_container(model, binding, prop_map):
                 continue
             if any(not self._value_is_stable(model, value) for value in prop_map.values()):
                 continue
@@ -212,29 +159,20 @@ class JsObjectFold(ScopeProcessingTransformer):
         return True
 
     @staticmethod
-    def _mutates_nested_container(
-        model: SemanticModel, binding: Binding, prop_map: dict[str, Node],
-    ) -> bool:
+    def _has_mutable_container_value(prop_map: dict[str, Node]) -> bool:
         """
-        Whether a reference invokes a method on a property whose value is itself a mutable container —
-        `o.arr.unshift(...)` where `o.arr` holds an array or object literal. Such a call may mutate the
-        nested container, so folding `o.arr` to that literal at the read sites would drop the mutation
-        (`o.arr[0]` would read the original element, not the mutated one). A method call on a property
-        holding an immutable primitive — a string, number, or boolean — cannot mutate it (`o.s.split(...)`
-        on a string returns a new value), so it does not block folding. A direct method call on the
-        object itself (`o.m(...)`) is governed separately by the immutable-container judgment.
+        Whether any property value is a mutable container literal — an array or object. Folding clones
+        the value into every access site, so for a container-valued property two `o.arr` reads that
+        name one shared array would become two distinct arrays, diverging on identity (`o.arr === o.arr`
+        flips from true to false), on a mutation made through one access (or an alias, argument, or
+        method call that reaches it) and observed through another, and on element identity one level
+        down. Deciding precisely which container-valued folds are safe is nested-container escape
+        analysis the model does not yet provide, so such an object is left unfolded. A primitive-valued
+        property places no constraint, since duplicating an immutable value is observationally identical.
         """
-        for ref in model.references(binding):
-            access = ref.parent
-            if not isinstance(access, JsMemberExpression) or _strip(access.object) is not ref:
-                continue
-            if not isinstance(prop_map.get(access_key(access) or ''), (
-                JsArrayExpression, JsObjectExpression,
-            )):
-                continue
-            if _is_method_receiver(access):
-                return True
-        return False
+        return any(
+            isinstance(value, (JsArrayExpression, JsObjectExpression)) for value in prop_map.values()
+        )
 
     @staticmethod
     def _self_referential(model: SemanticModel, binding: Binding, init: JsObjectExpression) -> bool:
@@ -280,7 +218,7 @@ class JsObjectFold(ScopeProcessingTransformer):
                 can_remove = False
                 continue
             if key not in prop_map:
-                if key in _OBJECT_PROTOTYPE_MEMBERS or '__proto__' in prop_map:
+                if key in OBJECT_PROTOTYPE_MEMBERS or '__proto__' in prop_map:
                     can_remove = False
                     continue
                 _replace_in_parent(member, JsIdentifier(name='undefined'))

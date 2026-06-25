@@ -74,6 +74,26 @@ FUNCTION_NODE_TYPES = (JsFunctionDeclaration, JsFunctionExpression, JsArrowFunct
 GLOBAL_OBJECT_ALIASES: frozenset[str] = frozenset({'globalThis', 'global', 'window', 'self'})
 VOID_LITERAL_OPERANDS = (JsNumericLiteral, JsStringLiteral, JsBooleanLiteral, JsNullLiteral)
 
+OBJECT_PROTOTYPE_MEMBERS = frozenset({
+    '__defineGetter__',
+    '__defineSetter__',
+    '__lookupGetter__',
+    '__lookupSetter__',
+    '__proto__',
+    'constructor',
+    'hasOwnProperty',
+    'isPrototypeOf',
+    'propertyIsEnumerable',
+    'toLocaleString',
+    'toString',
+    'valueOf',
+})
+"""
+The members every plain object inherits from `Object.prototype`. An access of one of these names on
+an object that does not own it resolves through the prototype rather than to `undefined`, so a fold
+that treats an absent own-property as `undefined` must leave these intact.
+"""
+
 
 class _JsNull:
     """

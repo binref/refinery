@@ -297,6 +297,39 @@ class TestObjectFold(TestJsDeobfuscator):
         )
         self.assertEqual(source, self._objectfold(source))
 
+    def test_identity_compared_container_property_not_folded(self):
+        source = inspect.cleandoc(
+            """
+            var o = { arr: [1, 2] };
+            SINK(o.arr === o.arr);
+            """
+        )
+        self.assertEqual(source, self._objectfold(source))
+
+    def test_aliased_container_property_not_folded(self):
+        source = inspect.cleandoc(
+            """
+            var o = { arr: [1, 2] };
+            var b = o.arr;
+            b.unshift(9);
+            SINK(o.arr[0]);
+            """
+        )
+        self.assertEqual(source, self._objectfold(source))
+
+    def test_argument_escaped_container_property_not_folded(self):
+        source = inspect.cleandoc(
+            """
+            function mut(a) {
+              a.unshift(9);
+            }
+            var o = { arr: [1, 2] };
+            mut(o.arr);
+            SINK(o.arr[0]);
+            """
+        )
+        self.assertEqual(source, self._objectfold(source))
+
     def test_dynamic_key_preserves_object(self):
         source = "var o = {'a': 'hello', 'b': 'world'}; x(o['a']); y(o[z]);"
         self.assertEqual(

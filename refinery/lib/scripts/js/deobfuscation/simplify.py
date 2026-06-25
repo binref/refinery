@@ -15,6 +15,7 @@ from refinery.lib.scripts.js.analysis.model import (
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     FUNCTION_NODE_TYPES,
     GLOBAL_OBJECT_ALIASES,
+    OBJECT_PROTOTYPE_MEMBERS,
     RELATIONAL_OPS,
     _to_int32,
     access_key,
@@ -73,20 +74,7 @@ from refinery.lib.scripts.js.model import (
 )
 from refinery.lib.scripts.js.precedence import parens_required
 
-_OBJECT_PROTO_PROPERTIES = frozenset({
-    '__defineGetter__',
-    '__defineSetter__',
-    '__lookupGetter__',
-    '__lookupSetter__',
-    '__proto__',
-    'constructor',
-    'hasOwnProperty',
-    'isPrototypeOf',
-    'propertyIsEnumerable',
-    'toLocaleString',
-    'toString',
-    'valueOf',
-})
+_OBJECT_PROTO_PROPERTIES = OBJECT_PROTOTYPE_MEMBERS
 
 _FUNCTION_PROPERTIES = _OBJECT_PROTO_PROPERTIES | frozenset({
     'apply',
