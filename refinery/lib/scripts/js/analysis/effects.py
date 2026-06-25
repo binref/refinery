@@ -644,13 +644,14 @@ class EffectModel:
         function whose only effect is the mutation is pure. The base must be a fresh value — written
         directly on an object/array/function literal, or resolving to a binding local to *func* whose
         value is always freshly built: a rest parameter, which the language guarantees is a new array,
-        or a local initialized only to an object/array/function literal. A plain parameter does NOT
-        qualify — it aliases the caller's object, so `function modify(a){ a[0] = 9; }` mutates the
-        argument observably — which is the soundness boundary this rests on. Every reference to the
-        binding must keep the container contained: only member reads and writes, never an escape that
-        could alias it out (returned, passed to a call, stored as a property, aliased to another name)
-        or a method call that might leak or mutate-and-return it, and never a capture by a nested
-        function that could outlive the call.
+        or a local initialized only to an object/array/function literal. An object literal with an own
+        setter does NOT qualify, since the write runs the setter — an effect a caller can observe. A
+        plain parameter does NOT qualify either — it aliases the caller's object, so
+        `function modify(a){ a[0] = 9; }` mutates the argument observably — which is the soundness
+        boundary this rests on. Every reference to the binding must keep the container contained: only
+        member reads and writes, never an escape that could alias it out (returned, passed to a call,
+        stored as a property, aliased to another name) or a method call that might leak or
+        mutate-and-return it, and never a capture by a nested function that could outlive the call.
 
         A write hidden behind a dynamic scope — through a name a `with` body or direct `eval` resolves
         at runtime — is not modelled: the base resolves to no binding, so the write is conservatively
@@ -670,8 +671,10 @@ class EffectModel:
 
     def _fresh_local_member_write(self, member: JsMemberExpression, func: Node) -> bool:
         base = member.object
-        if isinstance(base, (JsArrayExpression, JsObjectExpression, JsFunctionExpression)):
+        if isinstance(base, (JsArrayExpression, JsFunctionExpression)):
             return True
+        if isinstance(base, JsObjectExpression):
+            return not _object_has_own_accessor(base)
         if not isinstance(base, JsIdentifier):
             return False
         binding = self.model.resolve(base)
@@ -689,6 +692,8 @@ class EffectModel:
         array) or a `var`/`let`/`const` whose every declaration initializes it to an object, array, or
         function literal. A plain parameter, a catch binding, or a local initialized from anything that
         could alias an external object fails, since a write through it could then be observed elsewhere.
+        An object literal that declares its own getter or setter also fails: a member write to such a
+        container runs the setter, an effect a caller can observe, so the write is not unobservable.
         """
         if self._is_rest_param(binding):
             return True
@@ -700,9 +705,12 @@ class EffectModel:
             declarator = decl.parent
             if not isinstance(declarator, JsVariableDeclarator):
                 return False
-            if not isinstance(declarator.init, (
+            init = declarator.init
+            if not isinstance(init, (
                 JsArrayExpression, JsObjectExpression, JsFunctionExpression, JsArrowFunctionExpression,
             )):
+                return False
+            if isinstance(init, JsObjectExpression) and _object_has_own_accessor(init):
                 return False
         return True
 
@@ -859,15 +867,25 @@ class EffectModel:
         )):
             return True
         if isinstance(node, JsObjectExpression):
-            return not any(
-                isinstance(prop, JsProperty) and prop.kind in (JsPropertyKind.GET, JsPropertyKind.SET)
-                for prop in node.properties
-            )
+            return not _object_has_own_accessor(node)
         if isinstance(node, JsIdentifier):
             return node.name in _PURE_INTRINSIC_ROOTS and self._is_global_intrinsic(node)
         if isinstance(node, JsMemberExpression):
             return node.object is not None and self._base_getter_safe(node.object)
         return False
+
+
+def _object_has_own_accessor(obj: JsObjectExpression) -> bool:
+    """
+    Whether the object literal *obj* declares an own getter or setter (`{ get k(){...} }`,
+    `{ set k(v){...} }`). A read of such a property runs the getter and a write to it runs the setter,
+    so a member access on an otherwise fresh literal that has one carries a hidden effect rather than a
+    plain field read or store.
+    """
+    return any(
+        isinstance(prop, JsProperty) and prop.kind in (JsPropertyKind.GET, JsPropertyKind.SET)
+        for prop in obj.properties
+    )
 
 
 def _body_nodes(func: Node) -> Iterator[Node]:

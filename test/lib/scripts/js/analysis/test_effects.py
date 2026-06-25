@@ -148,6 +148,11 @@ class TestEffectModel(TestBase):
         self.assertFalse(summary.writes_global)
         self.assertTrue(summary.is_pure)
 
+    def test_write_to_fresh_object_with_setter_is_a_global_write(self):
+        summary = self._summary(
+            'function f(){ var o = { set k(v){ g = v; } }; o.k = 9; } var g;', 'f')
+        self.assertTrue(summary.writes_global)
+
     def test_closure_mutation_is_a_captured_write(self):
         source = (
             'function outer(){ var c = 0;'
