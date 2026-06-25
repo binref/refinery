@@ -28,6 +28,7 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     references_receiver_this,
     remove_declarator,
     try_inline_trivial_function,
+    walk_scope,
 )
 from refinery.lib.scripts.js.model import (
     JsArrayExpression,
@@ -108,7 +109,12 @@ def _free_external_bindings(
         yield node, binding
 
 
-def _resolves_consistently(model: SemanticModel, value: Node, dest: Scope | None) -> bool:
+def _resolves_consistently(
+    model: SemanticModel,
+    value: Node,
+    dest: Scope | None,
+    free: list[tuple[JsIdentifier, Binding | None]] | None = None,
+) -> bool:
     """
     Whether every free identifier in *value* resolves, from *dest* — the scope the value would be
     folded into — to the same binding it reads at the object literal. A value moved into a use site
@@ -116,11 +122,13 @@ def _resolves_consistently(model: SemanticModel, value: Node, dest: Scope | None
     `arguments` of a nested function) would silently rebind there and read a different value than the
     object captured. This is the spatial counterpart to the temporal `_value_is_stable`; an identifier
     bound inside *value* itself places no constraint, since the clone carries its binding with it.
+
+    *free* is the precomputed `_free_external_bindings` list for *value*; it does not depend on *dest*,
+    so a caller checking one value against several destinations passes it once to avoid re-walking.
     """
-    return all(
-        binding is model.lookup(node.name, dest)
-        for node, binding in _free_external_bindings(model, value)
-    )
+    if free is None:
+        free = list(_free_external_bindings(model, value))
+    return all(binding is model.lookup(node.name, dest) for node, binding in free)
 
 
 class JsObjectFold(ScopeProcessingTransformer):
@@ -231,12 +239,8 @@ class JsObjectFold(ScopeProcessingTransformer):
         """
         if isinstance(value, (JsFunctionExpression, JsArrowFunctionExpression)):
             return False
-        stack = [value]
-        while stack:
-            node = stack.pop()
-            if node is not value and isinstance(node, (JsFunctionExpression, JsArrowFunctionExpression)):
-                continue
-            if isinstance(node, (
+        return any(
+            isinstance(node, (
                 JsArrayExpression,
                 JsObjectExpression,
                 JsCallExpression,
@@ -244,10 +248,9 @@ class JsObjectFold(ScopeProcessingTransformer):
                 JsNewExpression,
                 JsRegExpLiteral,
                 JsTaggedTemplateExpression,
-            )):
-                return True
-            stack.extend(node.children())
-        return False
+            ))
+            for node in walk_scope(value)
+        )
 
     @staticmethod
     def _self_referential(model: SemanticModel, binding: Binding, init: JsObjectExpression) -> bool:
@@ -294,6 +297,7 @@ class JsObjectFold(ScopeProcessingTransformer):
         changed = False
         can_remove = True
         consistent: dict[tuple[int, int], bool] = {}
+        free_external: dict[int, list[tuple[JsIdentifier, Binding | None]]] = {}
         for ref in list(model.references(binding)):
             member = ref.parent
             if not isinstance(member, JsMemberExpression) or member.object is not ref:
@@ -312,30 +316,30 @@ class JsObjectFold(ScopeProcessingTransformer):
                 continue
             value = prop_map[key]
             parent = member.parent
-            if (
-                isinstance(parent, JsCallExpression)
-                and parent.callee is member
-                and isinstance(value, JsFunctionExpression)
-            ):
+            call = parent if isinstance(parent, JsCallExpression) and parent.callee is member else None
+            if call is not None and isinstance(value, JsFunctionExpression):
                 replacement = try_inline_trivial_function(
                     value,
-                    parent.arguments,
+                    call.arguments,
                     relaxed=True,
                     transformer=transformer,
                 )
                 if replacement is not None:
-                    _replace_in_parent(parent, replacement)
+                    _replace_in_parent(call, replacement)
                     changed = True
                     continue
-            called_here = isinstance(parent, JsCallExpression) and parent.callee is member
-            if isinstance(value, (JsFunctionExpression, JsArrowFunctionExpression)) and not called_here:
+            if isinstance(value, (JsFunctionExpression, JsArrowFunctionExpression)) and call is None:
                 can_remove = False
                 continue
             dest = model.scope_of(member)
             ckey = (id(value), id(dest))
             cached = consistent.get(ckey)
             if cached is None:
-                cached = _resolves_consistently(model, value, dest)
+                free = free_external.get(id(value))
+                if free is None:
+                    free = list(_free_external_bindings(model, value))
+                    free_external[id(value)] = free
+                cached = _resolves_consistently(model, value, dest, free)
                 consistent[ckey] = cached
             if not cached:
                 can_remove = False
