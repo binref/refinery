@@ -430,14 +430,77 @@ class EffectModel:
 
     def _escape_keeps_container(self, ref: JsIdentifier, visiting: set[int], member_calls_mutate: bool) -> bool:
         """
-        Whether an escaping reference leaves the container unmutated: true only when it aliases another
-        binding (`var x = ref` or `x = ref`) that is itself an immutable container. Every other escape
-        is conservatively unsafe.
+        Whether an escaping reference leaves the container unmutated. Two escapes are precise: an alias
+        (`var x = ref` or `x = ref`) keeps it when the aliased binding is itself an immutable container,
+        and an argument passed to a statically known function (`f(ref)`) keeps it when the parameter it
+        binds is itself an immutable container — interprocedural Case B, the parameter's own references
+        decide whether the callee mutates or further-escapes it. Every other escape is conservatively
+        unsafe.
         """
         alias = self._alias_target(ref)
-        if alias is None:
+        if alias is not None:
+            return self._immutable_container(alias, visiting, member_calls_mutate)
+        return self._argument_keeps_container(ref, visiting, member_calls_mutate)
+
+    def _argument_keeps_container(
+        self, ref: JsIdentifier, visiting: set[int], member_calls_mutate: bool
+    ) -> bool:
+        """
+        Case B: whether an argument *ref* passed to a statically known function leaves the container it
+        holds unmutated — true when the parameter it binds is itself an immutable container, judged
+        recursively from that parameter's own references, so the callee neither member-writes the
+        argument nor lets it escape mutably. False, conservatively, when the call cannot be analysed:
+        the callee is not a single known function, the argument is spread, or the slot it lands in is a
+        rest or destructuring parameter. An argument with no parameter to bind — passed beyond the
+        declared parameters of a function with no rest collector — is safe, since the callee cannot name
+        it.
+        """
+        parent = ref.parent
+        if not isinstance(parent, JsCallExpression) or ref not in parent.arguments:
             return False
-        return self._immutable_container(alias, visiting, member_calls_mutate)
+        func = self._static_callee(parent)
+        if func is None:
+            return False
+        params = func.params
+        if any(isinstance(param, JsRestElement) for param in params):
+            return False
+        index = parent.arguments.index(ref)
+        if index >= len(params):
+            return True
+        param = params[index]
+        if not isinstance(param, JsIdentifier):
+            return False
+        binding = self.model.binding_of(param)
+        if binding is None:
+            return False
+        return self._immutable_container(binding, visiting, member_calls_mutate)
+
+    def _static_callee(
+        self, call: JsCallExpression
+    ) -> JsFunctionDeclaration | JsFunctionExpression | JsArrowFunctionExpression | None:
+        """
+        The function a call invokes when it is statically a single, never-reassigned function: a direct
+        function or arrow expression callee, or an identifier bound once to a function declaration or a
+        function/arrow initializer. `None` for anything else — a method call, a parameter, a reassigned
+        binding, or an unresolved name — whose target cannot be pinned down.
+        """
+        callee = call.callee
+        if isinstance(callee, (JsFunctionExpression, JsArrowFunctionExpression)):
+            return callee
+        if not isinstance(callee, JsIdentifier):
+            return None
+        binding = self.model.resolve(callee)
+        if binding is None or binding.writes or len(binding.declarations) != 1:
+            return None
+        decl = binding.declarations[0]
+        parent = decl.parent
+        if isinstance(parent, JsFunctionDeclaration) and parent.id is decl:
+            return parent
+        if isinstance(parent, JsVariableDeclarator) and parent.id is decl and isinstance(
+            parent.init, (JsFunctionExpression, JsArrowFunctionExpression)
+        ):
+            return parent.init
+        return None
 
     def _alias_target(self, ref: JsIdentifier) -> Binding | None:
         parent = ref.parent

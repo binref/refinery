@@ -254,6 +254,34 @@ class TestConstantInlining(TestJsDeobfuscator):
             self._inline("const p = ['a']; function f() { return p[0]; }"),
         )
 
+    def test_const_array_passed_to_non_mutating_callee_is_inlined(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                const p = ['a', 'b'];
+                function read(i) {
+                  return i[0];
+                }
+                read(p);
+                f('b');
+                """
+            ),
+            self._inline("const p = ['a', 'b']; function read(i){ return i[0]; } read(p); f(p[1]);"),
+        )
+
+    def test_const_array_passed_to_mutating_callee_not_inlined(self):
+        source = inspect.cleandoc(
+            """
+            const p = ['a', 'b'];
+            function mut(i) {
+              i[0] = 'x';
+            }
+            mut(p);
+            f(p[1]);
+            """
+        )
+        self.assertEqual(source, self._inline(source))
+
     def test_non_literal_array_not_inlined(self):
         self.assertEqual(
             inspect.cleandoc(

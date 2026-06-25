@@ -343,6 +343,43 @@ class TestEffectModel(TestBase):
     def test_escape_via_return_is_mutable(self):
         self.assertFalse(self._container('var a = [1, 2]; return a;'))
 
+    def test_escape_into_non_mutating_callee_is_immutable(self):
+        self.assertTrue(self._container(
+            'function read(x){ return x[0]; } var a = [1, 2]; read(a); SINK(a[0]);'))
+
+    def test_escape_into_mutating_callee_is_mutable(self):
+        self.assertFalse(self._container(
+            'function mut(x){ x[0] = 9; } var a = [1, 2]; mut(a); SINK(a[0]);'))
+
+    def test_escape_into_returning_callee_is_mutable(self):
+        self.assertFalse(self._container(
+            'function ret(x){ return x; } var a = [1, 2]; ret(a); SINK(a[0]);'))
+
+    def test_escape_into_transitive_mutator_is_mutable(self):
+        self.assertFalse(self._container(
+            'function mut(y){ y[0] = 9; } function pass(x){ mut(x); }'
+            ' var a = [1, 2]; pass(a); SINK(a[0]);'))
+
+    def test_escape_into_transitive_reader_is_immutable(self):
+        self.assertTrue(self._container(
+            'function rd(y){ return y[0]; } function pass(x){ return rd(x); }'
+            ' var a = [1, 2]; pass(a); SINK(a[0]);'))
+
+    def test_argument_beyond_declared_parameters_is_immutable(self):
+        self.assertTrue(self._container(
+            'function nop(){} var a = [1, 2]; nop(a); SINK(a[0]);'))
+
+    def test_escape_into_rest_parameter_callee_is_mutable(self):
+        self.assertFalse(self._container(
+            'function r(...xs){} var a = [1, 2]; r(a); SINK(a[0]);'))
+
+    def test_escape_into_method_callee_is_mutable(self):
+        self.assertFalse(self._container('var a = [1, 2]; obj.m(a); SINK(a[0]);'))
+
+    def test_escape_into_reassigned_callee_is_mutable(self):
+        self.assertFalse(self._container(
+            'function f(x){ return x[0]; } f = g; var a = [1, 2]; f(a); SINK(a[0]);'))
+
     def test_benign_alias_is_immutable(self):
         self.assertTrue(self._container('var a = [1, 2]; var b = a; SINK(b[0]);'))
 
