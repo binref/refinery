@@ -87,14 +87,15 @@ def _binding_inside(binding: Binding, value: Node) -> bool:
     return node is value or node.is_descendant_of(value)
 
 
-def _resolves_consistently(model: SemanticModel, value: Node, dest: Scope | None) -> bool:
+def _free_external_bindings(
+    model: SemanticModel, value: Node
+) -> Iterator[tuple[JsIdentifier, Binding | None]]:
     """
-    Whether every free identifier in *value* resolves, from *dest* — the scope the value would be
-    folded into — to the same binding it reads at the object literal. A value moved into a use site
-    that binds one of its free names anew (a parameter, a block-scoped `let`, or the per-call
-    `arguments` of a nested function) would silently rebind there and read a different value than the
-    object captured. This is the spatial counterpart to the temporal `_value_is_stable`; an identifier
-    bound inside *value* itself places no constraint, since the clone carries its binding with it.
+    Yield each free identifier in *value* that is in a use position, paired with the binding it
+    resolves to (or `None` for an unresolved external name) — every reference a clone of *value*
+    would re-resolve at its destination, excluding the ones bound inside *value* itself, which the
+    clone carries along. The shared traversal behind `_value_is_stable` (does any such binding get
+    reassigned) and `_resolves_consistently` (does any such name rebind at the fold site).
     """
     for node in value.walk():
         if not isinstance(node, JsIdentifier) or not is_use_position(node):
@@ -104,9 +105,22 @@ def _resolves_consistently(model: SemanticModel, value: Node, dest: Scope | None
         binding = model.resolve(node)
         if binding is not None and _binding_inside(binding, value):
             continue
-        if binding is not model.lookup(node.name, dest):
-            return False
-    return True
+        yield node, binding
+
+
+def _resolves_consistently(model: SemanticModel, value: Node, dest: Scope | None) -> bool:
+    """
+    Whether every free identifier in *value* resolves, from *dest* — the scope the value would be
+    folded into — to the same binding it reads at the object literal. A value moved into a use site
+    that binds one of its free names anew (a parameter, a block-scoped `let`, or the per-call
+    `arguments` of a nested function) would silently rebind there and read a different value than the
+    object captured. This is the spatial counterpart to the temporal `_value_is_stable`; an identifier
+    bound inside *value* itself places no constraint, since the clone carries its binding with it.
+    """
+    return all(
+        binding is model.lookup(node.name, dest)
+        for node, binding in _free_external_bindings(model, value)
+    )
 
 
 class JsObjectFold(ScopeProcessingTransformer):
@@ -134,13 +148,13 @@ class JsObjectFold(ScopeProcessingTransformer):
             prop_map = _build_property_map(init)
             if prop_map is None or _object_binds_this(prop_map) or object_sets_prototype(init):
                 continue
-            if self._has_freshly_allocating_value(prop_map):
-                continue
-            if not cache.effects.is_side_effect_free(init, {name.name}):
-                continue
             model = cache.model
             binding = model.binding_of(name)
             if binding is None or binding.writes or len(binding.declarations) != 1:
+                continue
+            if self._has_freshly_allocating_value(prop_map):
+                continue
+            if not cache.effects.is_side_effect_free(init, {name.name}):
                 continue
             if not cache.effects.binding_is_immutable_container(binding, member_calls_mutate=False):
                 continue
@@ -182,18 +196,10 @@ class JsObjectFold(ScopeProcessingTransformer):
         binding (external globals) place no constraint, so a string, a numeric literal, a `const`
         reference, or a self-contained function wrapper all remain foldable.
         """
-        for node in value.walk():
-            if not isinstance(node, JsIdentifier) or model.binding_of(node) is not None:
-                continue
-            if not is_use_position(node):
-                continue
-            binding = model.resolve(node)
-            if binding is None or not binding.writes:
-                continue
-            if _binding_inside(binding, value):
-                continue
-            return False
-        return True
+        return all(
+            binding is None or not binding.writes
+            for _, binding in _free_external_bindings(model, value)
+        )
 
     @staticmethod
     def _has_freshly_allocating_value(prop_map: dict[str, Node]) -> bool:
