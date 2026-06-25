@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import base64
 import lzma
-import unittest
 
 from refinery.lib.emulator import CC, Arch, Hook, EmulationError, UnicornEmulator, SpeakeasyEmulator, IcicleEmulator
 from .. import TestBase
@@ -186,7 +185,7 @@ class TestEmulator(TestBase):
         emulator = _makeEmulator(base_emu)(code, arch=Arch.X64)
         emulator.reset()
         emulator.set_register('edx', 1)
-        emulator.emulate(emulator.base, len(code))
+        emulator.emulate(emulator.base, emulator.base + len(code))
         value = emulator.pop().to_bytes(8, 'little')
         self.assertEqual(value, B'REFINERY')
 
@@ -196,7 +195,6 @@ class TestEmulator(TestBase):
     def test_register_uc(self):
         self._test_registers(UnicornEmulator)
 
-    @unittest.skip('Fails for unknown reasons')
     def test_register_se(self):
         self._test_registers(SpeakeasyEmulator)
 
@@ -291,3 +289,22 @@ class TestEmulator(TestBase):
         emu.emulate(emu._module.base + emu._module.ep)
         self.assertEqual(emu.rv, 0x1337)
         self.assertEqual(emu.ip, emu.speakeasy.emu.return_hook)
+
+    def test_code_hook_se(self):
+        seen = []
+
+        class Emu(SpeakeasyEmulator):
+            def hook_code_execute(self, emu, address, size, state=None):
+                seen.append((address - self.base, size))
+                return True
+
+        code = bytes.fromhex(
+            'B8 02 00 00 00'   # mov eax, 2
+            '90'               # nop
+        )
+        emu = Emu(code, arch=Arch.X64, hooks=Hook.CodeExecute)
+        emu.reset()
+        emu.emulate(emu.base, emu.base + len(code))
+        self.assertEqual(emu.get_register('eax'), 2)
+        self.assertEqual(seen[0], (0, 5))
+        self.assertEqual(seen[1], (5, 1))

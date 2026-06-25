@@ -3,6 +3,7 @@ Implements `refinery.lib.emulator.interface.Emulator` for the speakeasy backend.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from refinery.lib.emulator.abstract import EmulationError, Emulator, MemAccess, Register
@@ -107,8 +108,8 @@ class SpeakeasyEmulator(Emulator[Se, str, _T]):
         self._access_map = get_access_map()
 
         if self.hooks.CodeExecute:
-            emu.add_code_hook(self.hook_code_execute, ctx=self.state)
-            emu.add_dyn_code_hook(self.hook_code_execute, ctx=self.state)
+            emu.add_code_hook(self._uc_hook_code)
+            emu.add_dyn_code_hook(self._uc_hook_code)
 
         if self.hooks.MemoryRead:
             emu.add_mem_read_hook(self._uc_hook_mem_read)
@@ -121,6 +122,9 @@ class SpeakeasyEmulator(Emulator[Se, str, _T]):
 
         if self.hooks.ApiCall:
             emu.add_api_hook(self.hook_api_call, '*', '*')
+
+    def _uc_hook_code(self, emu: Se, address: int, size: int, *_) -> bool:
+        return self.hook_code_execute(emu, address, size, self.state)
 
     def _uc_hook_mem_read(self, emu: Se, access: int, address: int, size: int, value: int, state: _T | None = None) -> bool:
         access = self._access_map.get(access, MemAccess.Unknown)
@@ -216,7 +220,14 @@ class SpeakeasyEmulator(Emulator[Se, str, _T]):
     def _remove_hook(self, hook: SeHook | None):
         if hook is None:
             return
-        hook.emu_eng.hook_del(hook.handle)
+        try:
+            hook.emu_eng.hook_remove(hook.handle)
+        except KeyError:
+            # Speakeasy installs its Unicorn hooks by calling uc_hook_add directly, bypassing the
+            # binding's own callback table; uc_hook_del then unhooks the native hook successfully
+            # but the binding's redundant bookkeeping delete raises KeyError. Speakeasy's own
+            # close() swallows this the same way; the native hook is already gone at this point.
+            pass
         emu = self.speakeasy.emu
         assert emu is not None
         for hooklist in emu.hooks.values():
@@ -277,6 +288,34 @@ class SpeakeasyEmulator(Emulator[Se, str, _T]):
             inner.alloc_peb(process)
         return []
 
+    @contextmanager
+    def _preserve_cpu_state(self, start: int):
+        """
+        Speakeasy resets the stack pointer and the argument registers (via reset_stack and
+        set_func_args) when it kicks off a run, discarding whatever CPU state the caller set up
+        before emulate(). Snapshot the general purpose registers and stack pointer and reinstate
+        them with a one-shot code hook at the run's first instruction, so a shellcode run continues
+        from the current CPU state like the unicorn and icicle backends do.
+        """
+        registers = [reg.code for reg in self.general_purpose_registers()]
+        registers.append(self._reg_sp)
+        snapshot = {reg: self._get_register(reg) for reg in registers}
+        restored = False
+
+        def restore(spky: Se, address: int, size: int, *_):
+            nonlocal restored
+            if not restored and address == start:
+                restored = True
+                for reg, value in snapshot.items():
+                    self._set_register(reg, value)
+            return True
+
+        hook = self.speakeasy.add_code_hook(restore, start, start + 1)
+        try:
+            yield
+        finally:
+            self._remove_hook(hook)
+
     def _emulate(self, start: int, end: int | None = None):
         spk = self.speakeasy
 
@@ -292,7 +331,8 @@ class SpeakeasyEmulator(Emulator[Se, str, _T]):
             offset = start - self.base
             if offset < 0:
                 raise ValueError(F'invalid offset 0x{start:X} specified; base address is 0x{self.base:X}')
-            spk.run_shellcode(self.base, offset=offset)
+            with self._preserve_cpu_state(start):
+                spk.run_shellcode(self.base, offset=offset)
         else:
             spk.call(start, self._ensure_context())
 
