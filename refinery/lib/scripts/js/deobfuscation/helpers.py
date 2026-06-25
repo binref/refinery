@@ -861,7 +861,13 @@ def try_inline_trivial_function(
     When *relaxed* is False (default), all arguments must be side-effect-free simple expressions.
     When *relaxed* is True, only arguments used more than once in the return expression need to be
     simple (prevents duplicating side effects while allowing complex single-use arguments).
+
+    An async or generator function is never inlined: calling it produces a promise or an iterator, not
+    the bare value of its return expression, so substituting the expression in for the call would drop
+    that wrapping and change the value's type.
     """
+    if func.is_async or func.generator:
+        return None
     if func.body is None or not isinstance(func.body, JsBlockStatement):
         return None
     body = func.body.body
@@ -965,18 +971,22 @@ def function_binds_name(func: Node, name: str) -> bool:
 
 def references_receiver_this(root: Node) -> bool:
     """
-    Return whether relocating *root* would change the meaning of a `this` reference bound to its
-    current receiver. Arrow functions inherit `this` lexically, so they are traversed; regular and
-    generator functions nested below *root* rebind `this` and are not descended into. A class also
-    rebinds `this` for its method bodies and field initializers, but its `extends` clause and any
-    computed member keys are evaluated in the enclosing `this` context, so only those parts of a
-    class are traversed. *root* itself is always traversed, so a method whose body reads `this`
-    (directly or through an arrow) counts.
+    Return whether relocating *root* would change the meaning of a `this` or `super` reference bound
+    to its current receiver. Both are receiver-bound: `this` to the call's receiver and `super` to the
+    method's home object, and `super` is a syntax error outside a method, so a value that uses either
+    cannot be detached from its containing method. Arrow functions inherit both lexically, so they are
+    traversed; regular and generator functions nested below *root* rebind `this` (and cannot name the
+    outer `super`) and are not descended into. A class also rebinds `this` for its method bodies and
+    field initializers, but its `extends` clause and any computed member keys are evaluated in the
+    enclosing `this` context, so only those parts of a class are traversed. *root* itself is always
+    traversed, so a method whose body reads `this` or `super` (directly or through an arrow) counts.
     """
     stack: list[Node] = [root]
     while stack:
         node = stack.pop()
         if isinstance(node, JsThisExpression):
+            return True
+        if isinstance(node, JsIdentifier) and node.name == 'super':
             return True
         if isinstance(node, (JsFunctionExpression, JsFunctionDeclaration)) and node is not root:
             continue

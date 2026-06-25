@@ -39,6 +39,50 @@ class TestObjectFold(TestJsDeobfuscator):
         )
         self.assertEqual(source, self._objectfold(source))
 
+    def test_super_method_not_folded(self):
+        source = inspect.cleandoc(
+            """
+            var o = { m() {
+              return super.toString();
+            } };
+            SINK(o.m());
+            """
+        )
+        self.assertEqual(source, self._objectfold(source))
+
+    def test_async_method_call_keeps_async_wrapper(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var p = async function() {
+                  return 1;
+                }();
+                """
+            ),
+            self._objectfold('var o = { async m() { return 1; } }; var p = o.m();'),
+        )
+
+    def test_generator_method_call_keeps_generator_wrapper(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var p = function*() {
+                  return 1;
+                }();
+                """
+            ),
+            self._objectfold('var o = { *m() { return 1; } }; var p = o.m();'),
+        )
+
+    def test_regex_valued_property_not_folded(self):
+        source = inspect.cleandoc(
+            """
+            var o = { p: /abc/ };
+            SINK(o.p === o.p);
+            """
+        )
+        self.assertEqual(source, self._objectfold(source))
+
     def test_this_in_nested_function_still_folds(self):
         source = inspect.cleandoc(
             """
