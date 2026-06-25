@@ -306,6 +306,44 @@ class TestObjectFold(TestJsDeobfuscator):
         )
         self.assertEqual(source, self._objectfold(source))
 
+    def test_function_valued_property_read_by_identity_not_folded(self):
+        source = inspect.cleandoc(
+            """
+            var o = { f: function() {
+              return 1;
+            } };
+            SINK(o.f === o.f);
+            """
+        )
+        self.assertEqual(source, self._objectfold(source))
+
+    def test_value_folded_into_shadowing_scope_not_folded(self):
+        source = inspect.cleandoc(
+            """
+            function A() {
+              const n = 'OUTER';
+              var o = { p: n };
+              return function B(n) {
+                return o.p;
+              };
+            }
+            """
+        )
+        self.assertEqual(source, self._objectfold(source))
+
+    def test_value_reading_arguments_folded_into_nested_function_not_folded(self):
+        source = inspect.cleandoc(
+            """
+            function A() {
+              var o = { p: arguments };
+              return function B() {
+                return o.p;
+              };
+            }
+            """
+        )
+        self.assertEqual(source, self._objectfold(source))
+
     def test_aliased_container_property_not_folded(self):
         source = inspect.cleandoc(
             """

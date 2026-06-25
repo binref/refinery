@@ -18,7 +18,7 @@ from refinery.lib.scripts import (
     _replace_in_parent,
 )
 from refinery.lib.scripts.js.analysis.cache import model_cache
-from refinery.lib.scripts.js.analysis.model import Binding, SemanticModel, is_use_position
+from refinery.lib.scripts.js.analysis.model import Binding, Scope, SemanticModel, is_use_position
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     OBJECT_PROTOTYPE_MEMBERS,
     ScopeProcessingTransformer,
@@ -30,6 +30,7 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
 )
 from refinery.lib.scripts.js.model import (
     JsArrayExpression,
+    JsArrowFunctionExpression,
     JsCallExpression,
     JsFunctionExpression,
     JsIdentifier,
@@ -69,6 +70,38 @@ def _object_binds_this(prop_map: dict[str, Node]) -> bool:
     folding the object away (detaching the value from its receiver) would change its meaning.
     """
     return any(references_receiver_this(value) for value in prop_map.values())
+
+
+def _binding_inside(binding: Binding, value: Node) -> bool:
+    """
+    Whether *binding* is declared inside *value* — its scope is introduced by *value* or a node nested
+    within it — so that a clone of *value* carries the binding along and a reference to it stays bound
+    to the same declaration wherever the clone lands.
+    """
+    node = binding.scope.node
+    return node is value or node.is_descendant_of(value)
+
+
+def _resolves_consistently(model: SemanticModel, value: Node, dest: Scope | None) -> bool:
+    """
+    Whether every free identifier in *value* resolves, from *dest* — the scope the value would be
+    folded into — to the same binding it reads at the object literal. A value moved into a use site
+    that binds one of its free names anew (a parameter, a block-scoped `let`, or the per-call
+    `arguments` of a nested function) would silently rebind there and read a different value than the
+    object captured. This is the spatial counterpart to the temporal `_value_is_stable`; an identifier
+    bound inside *value* itself places no constraint, since the clone carries its binding with it.
+    """
+    for node in value.walk():
+        if not isinstance(node, JsIdentifier) or not is_use_position(node):
+            continue
+        if model.binding_of(node) is not None:
+            continue
+        binding = model.resolve(node)
+        if binding is not None and _binding_inside(binding, value):
+            continue
+        if binding is not model.lookup(node.name, dest):
+            return False
+    return True
 
 
 class JsObjectFold(ScopeProcessingTransformer):
@@ -201,10 +234,21 @@ class JsObjectFold(ScopeProcessingTransformer):
         evaluates to `undefined` and is replaced accordingly; an inherited-member access is left intact
         (folding `o.toString` to `undefined` would turn `o.toString()` into `undefined()`). Iterating
         the binding's resolved references (not every textual occurrence of the name) keeps a shadowing
-        inner binding of the same name untouched. Returns a pair `(changed, can_remove)` where *changed*
-        is True when any replacement was made and *can_remove* is True when every reference was folded
-        away, so no use of the binding survives — a bare reference (an alias such as `var b = obj`) or a
-        retained inherited-member access leaves *can_remove* False so the declaration is kept.
+        inner binding of the same name untouched.
+
+        Two per-reference conditions block a fold that would change meaning at the destination, leaving
+        the access intact. A function-valued property is folded only where it is immediately called
+        (the value's identity never escapes); a bare read of it is kept, since cloning it into two sites
+        would make `o.f === o.f` two distinct functions. And a value is folded into a use site only when
+        each of its free identifiers resolves to the same binding there as at the literal, so a value
+        read inside a nested function that rebinds one of those names — a parameter, a block `let`, or
+        that function's own `arguments` — is not silently recaptured.
+
+        Returns a pair `(changed, can_remove)` where *changed* is True when any replacement was made and
+        *can_remove* is True when every reference was folded away, so no use of the binding survives — a
+        bare reference (an alias such as `var b = obj`), a retained inherited-member access, or a
+        reference one of the two conditions above kept leaves *can_remove* False so the declaration is
+        kept.
         """
         changed = False
         can_remove = True
@@ -241,6 +285,13 @@ class JsObjectFold(ScopeProcessingTransformer):
                     _replace_in_parent(parent, replacement)
                     changed = True
                     continue
+            called_here = isinstance(parent, JsCallExpression) and parent.callee is member
+            if isinstance(value, (JsFunctionExpression, JsArrowFunctionExpression)) and not called_here:
+                can_remove = False
+                continue
+            if not _resolves_consistently(model, value, model.scope_of(member)):
+                can_remove = False
+                continue
             _replace_in_parent(member, _clone_node(value))
             changed = True
         return changed, can_remove
