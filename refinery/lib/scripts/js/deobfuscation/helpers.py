@@ -980,13 +980,15 @@ def references_receiver_this(root: Node) -> bool:
     field initializers, but its `extends` clause and any computed member keys are evaluated in the
     enclosing `this` context, so only those parts of a class are traversed. *root* itself is always
     traversed, so a method whose body reads `this` or `super` (directly or through an arrow) counts.
+    An identifier `super` that merely names a property (`x.super`) or an object-literal key is not a
+    receiver-bound reference, so it is gated on `is_use_position` and does not count.
     """
     stack: list[Node] = [root]
     while stack:
         node = stack.pop()
         if isinstance(node, JsThisExpression):
             return True
-        if isinstance(node, JsIdentifier) and node.name == 'super':
+        if isinstance(node, JsIdentifier) and node.name == 'super' and is_use_position(node):
             return True
         if isinstance(node, (JsFunctionExpression, JsFunctionDeclaration)) and node is not root:
             continue
