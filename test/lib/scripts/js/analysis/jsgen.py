@@ -29,9 +29,10 @@ The generator also builds objects and arrays and mutates them in place, so the d
 member-write reasoning is exercised: a fresh array or object is bound to a local, its elements are
 assigned, incremented, and deleted, and the object is aliased to a second binding, passed to a
 function that mutates it, and stored inside another object — the escape and aliasing shapes under
-which a member-write is observable. Only primitive property reads ever reach `SINK`; an object is
-never pushed into it, so the no-self-referential-structure invariant still holds, and a function
-remains something only ever called.
+which a member-write is observable. A stored property may hold another object, so an object
+reference can itself reach `SINK`; the final `join` stringifies it identically on both runs, so it
+cannot masquerade as a divergence, and `SINK` — never one of the pooled objects — is still never
+nested into itself. A function remains something only ever called.
 
 A `for-of` loop also reassigns outer bindings by destructuring each element of a constant array of
 arrays through a rest target in its head (`for ([w0, ...w1] of ...)`). Because the head carries no
