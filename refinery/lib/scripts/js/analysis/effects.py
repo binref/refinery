@@ -355,6 +355,7 @@ class EffectModel:
         self.global_pristine = _global_pristine(model)
         self._summaries: dict[int, EffectSummary] = {}
         self._confine_cache: dict[int, Node | None] = {}
+        self._immutable_cache: dict[tuple[int, bool], bool] = {}
         self._functions: list[Node] = self._collect_functions()
         self._compute()
 
@@ -397,21 +398,29 @@ class EffectModel:
         A method invoked on the container (`obj.m(...)`) may mutate it — an array's `sort`/`push`/`splice`
         and so on — so by default it too counts as mutable; a caller that knows the container's methods
         cannot mutate it (an object literal with no `this`-bound property) may pass *member_calls_mutate*
-        false to permit such calls. A reference that escapes is safe only when it aliases another binding
-        that is itself an immutable container — alias-following the textual predicates this replaces could
-        not do, and the reason a reassigned-and-aliased lookup array stays inlinable. Any other escape —
-        passed to a call, returned, stored as a property — is treated conservatively as mutable for now;
-        resolving those precisely needs interprocedural argument-write summaries (the member-write purity
-        work this model is growing toward). A mutation hidden behind a dynamic scope — a write through a
-        name a `with` body or direct `eval` resolves at runtime — is NOT modelled here: such a reference
-        resolves to no binding, so it never enters the reference set and the container is wrongly judged
-        immutable. A known narrow gap; the precise fix needs dynamic-scope unresolved-write tracking, and a
-        blunt reflection guard over-blocks real samples (it regresses the b91 lookup arrays).
+        false to permit such calls. A reference that escapes is safe in two cases: it aliases another
+        binding that is itself an immutable container (alias-following the textual predicates this
+        replaces could not do, and the reason a reassigned-and-aliased lookup array stays inlinable), or
+        it is passed to a statically known function as an argument whose parameter is itself an immutable
+        container (so the callee neither mutates nor further-escapes it). Any other escape — returned,
+        stored as a property, passed to a call that cannot be resolved — is treated conservatively as
+        mutable. A mutation hidden behind a dynamic scope — a write through a name a `with` body or direct
+        `eval` resolves at runtime — is NOT modelled here: such a reference resolves to no binding, so it
+        never enters the reference set and the container is wrongly judged immutable. A known narrow gap;
+        the precise fix needs dynamic-scope unresolved-write tracking, and a blunt reflection guard
+        over-blocks real samples (it regresses the b91 lookup arrays).
 
         The query is over a *resolved binding*, so it is shadowing-correct, and it descends through
-        alias chains and nested functions, so a capturing closure that mutates the container is caught.
+        alias chains, callee parameters, and nested functions, so a capturing closure that mutates the
+        container is caught. The answer is fixed for the model's lifetime — a binding's reference set does
+        not change — so it is memoized per `(binding, member_calls_mutate)`.
         """
-        return self._immutable_container(binding, set(), member_calls_mutate)
+        key = (id(binding), member_calls_mutate)
+        cached = self._immutable_cache.get(key)
+        if cached is None:
+            cached = self._immutable_container(binding, set(), member_calls_mutate)
+            self._immutable_cache[key] = cached
+        return cached
 
     def _immutable_container(self, binding: Binding, visiting: set[int], member_calls_mutate: bool) -> bool:
         key = id(binding)
