@@ -380,6 +380,19 @@ class TestEffectModel(TestBase):
         self.assertFalse(self._container(
             'function f(x){ return x[0]; } f = g; var a = [1, 2]; f(a); SINK(a[0]);'))
 
+    def test_escape_into_callee_reaching_arg_via_arguments_is_mutable(self):
+        self.assertFalse(self._container(
+            'function f(x){ arguments[0][0] = 9; } var a = [1, 2]; f(a); SINK(a[0]);'))
+
+    def test_escape_as_extra_argument_into_arguments_callee_is_mutable(self):
+        self.assertFalse(self._container(
+            'function f(p){ arguments[1][0] = 9; } var a = [1, 2]; f(0, a); SINK(a[0]);'))
+
+    def test_escape_into_callee_invoking_nested_method_is_mutable_with_trusted_methods(self):
+        self.assertFalse(self._container(
+            'function f(x){ x.a.unshift(9); } var o = { a: [1, 2] }; f(o); SINK(o.a[0]);',
+            'o', member_calls_mutate=False))
+
     def test_benign_alias_is_immutable(self):
         self.assertTrue(self._container('var a = [1, 2]; var b = a; SINK(b[0]);'))
 

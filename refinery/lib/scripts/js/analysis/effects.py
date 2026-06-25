@@ -356,6 +356,7 @@ class EffectModel:
         self._summaries: dict[int, EffectSummary] = {}
         self._confine_cache: dict[int, Node | None] = {}
         self._immutable_cache: dict[tuple[int, bool], bool] = {}
+        self._member_write_cache: dict[int, bool] = {}
         self._functions: list[Node] = self._collect_functions()
         self._compute()
 
@@ -449,26 +450,30 @@ class EffectModel:
         alias = self._alias_target(ref)
         if alias is not None:
             return self._immutable_container(alias, visiting, member_calls_mutate)
-        return self._argument_keeps_container(ref, visiting, member_calls_mutate)
+        return self._argument_keeps_container(ref, visiting)
 
-    def _argument_keeps_container(
-        self, ref: JsIdentifier, visiting: set[int], member_calls_mutate: bool
-    ) -> bool:
+    def _argument_keeps_container(self, ref: JsIdentifier, visiting: set[int]) -> bool:
         """
         Case B: whether an argument *ref* passed to a statically known function leaves the container it
         holds unmutated — true when the parameter it binds is itself an immutable container, judged
         recursively from that parameter's own references, so the callee neither member-writes the
-        argument nor lets it escape mutably. False, conservatively, when the call cannot be analysed:
-        the callee is not a single known function, the argument is spread, or the slot it lands in is a
-        rest or destructuring parameter. An argument with no parameter to bind — passed beyond the
-        declared parameters of a function with no rest collector — is safe, since the callee cannot name
-        it.
+        argument nor lets it escape mutably. The parameter is judged under the conservative
+        `member_calls_mutate=True`: a relaxed `member_calls_mutate=False` is the *caller*'s promise that
+        the container's own methods cannot mutate it at the original site, and does not carry to a method
+        the callee invokes on the argument or on one of its nested containers (`x.a.push(...)`), which
+        may mutate it. False, conservatively, when the call cannot be analysed: the callee is not a
+        single known function, it can reach the argument through its own `arguments` object, the argument
+        is spread, or the slot it lands in is a rest or destructuring parameter. An argument with no
+        parameter to bind — passed beyond the declared parameters of a function with no rest collector
+        and no `arguments` use — is safe, since the callee cannot name it.
         """
         parent = ref.parent
         if not isinstance(parent, JsCallExpression) or ref not in parent.arguments:
             return False
         func = self._static_callee(parent)
         if func is None:
+            return False
+        if self._callee_uses_arguments(func):
             return False
         params = func.params
         if any(isinstance(param, JsRestElement) for param in params):
@@ -482,7 +487,24 @@ class EffectModel:
         binding = self.model.binding_of(param)
         if binding is None:
             return False
-        return self._immutable_container(binding, visiting, member_calls_mutate)
+        return self._immutable_container(binding, visiting, True)
+
+    def _callee_uses_arguments(self, func: Node) -> bool:
+        """
+        Whether a non-arrow callee can reach its call's arguments through its own `arguments` object,
+        which aliases the positional arguments — including any passed beyond the declared parameters — so
+        that `arguments[i][...] = v` mutates a container the by-position parameter reasoning in
+        `_argument_keeps_container` would otherwise miss. An arrow has no `arguments` of its own (a
+        reference inside it binds the enclosing function's, unrelated to the arrow's parameters), so it
+        is exempt. When the callee names `arguments`, the escape is treated as mutable.
+        """
+        if isinstance(func, JsArrowFunctionExpression):
+            return False
+        func_scope = self.model.function_scope(func)
+        if func_scope is None:
+            return False
+        binding = func_scope.bindings.get('arguments')
+        return binding is not None and bool(self.model.references(binding))
 
     def _static_callee(
         self, call: JsCallExpression
@@ -632,7 +654,17 @@ class EffectModel:
         observing the write, is the dynamic-scope gap already documented on
         `binding_is_immutable_container`; a blunt reflection guard here would refuse the obfuscator
         idioms this is meant to see through, so it is deliberately omitted.
+
+        The judgment is structural — fixed by the binding's declarations and reference set — so it is
+        invariant across the fixpoint passes that recompute the summaries, and is memoized per member.
         """
+        cached = self._member_write_cache.get(id(member))
+        if cached is None:
+            cached = self._fresh_local_member_write(member, func)
+            self._member_write_cache[id(member)] = cached
+        return cached
+
+    def _fresh_local_member_write(self, member: JsMemberExpression, func: Node) -> bool:
         base = member.object
         if isinstance(base, (JsArrayExpression, JsObjectExpression, JsFunctionExpression)):
             return True
