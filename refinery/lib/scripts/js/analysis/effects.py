@@ -645,8 +645,9 @@ class EffectModel:
         directly on an object/array/function literal, or resolving to a binding local to *func* whose
         value is always freshly built: a rest parameter, which the language guarantees is a new array,
         or a local initialized only to an object/array/function literal. An object literal with an own
-        setter does NOT qualify, since the write runs the setter — an effect a caller can observe. A
-        plain parameter does NOT qualify either — it aliases the caller's object, so
+        setter — or one that installs a custom prototype through `__proto__:`, which may carry an
+        inherited setter — does NOT qualify, since the write then runs an accessor, an effect a caller
+        can observe. A plain parameter does NOT qualify either — it aliases the caller's object, so
         `function modify(a){ a[0] = 9; }` mutates the argument observably — which is the soundness
         boundary this rests on. Every reference to the binding must keep the container contained: only
         member reads and writes, never an escape that could alias it out (returned, passed to a call,
@@ -674,7 +675,7 @@ class EffectModel:
         if isinstance(base, (JsArrayExpression, JsFunctionExpression)):
             return True
         if isinstance(base, JsObjectExpression):
-            return not _object_has_own_accessor(base)
+            return not _object_member_access_runs_accessor(base)
         if not isinstance(base, JsIdentifier):
             return False
         binding = self.model.resolve(base)
@@ -692,8 +693,9 @@ class EffectModel:
         array) or a `var`/`let`/`const` whose every declaration initializes it to an object, array, or
         function literal. A plain parameter, a catch binding, or a local initialized from anything that
         could alias an external object fails, since a write through it could then be observed elsewhere.
-        An object literal that declares its own getter or setter also fails: a member write to such a
-        container runs the setter, an effect a caller can observe, so the write is not unobservable.
+        An object literal that declares its own getter or setter — or installs a custom prototype
+        through `__proto__:`, which may carry an inherited one — also fails: a member write to such a
+        container can run an accessor, an effect a caller can observe, so the write is not unobservable.
         """
         if self._is_rest_param(binding):
             return True
@@ -710,7 +712,7 @@ class EffectModel:
                 JsArrayExpression, JsObjectExpression, JsFunctionExpression, JsArrowFunctionExpression,
             )):
                 return False
-            if isinstance(init, JsObjectExpression) and _object_has_own_accessor(init):
+            if isinstance(init, JsObjectExpression) and _object_member_access_runs_accessor(init):
                 return False
         return True
 
@@ -854,9 +856,10 @@ class EffectModel:
     def _base_getter_safe(self, node: Node) -> bool:
         """
         Whether reading a property of *node* cannot run a user-defined getter, so the read carries no
-        hidden effect: a freshly built value with no accessor of its own, a primitive, or a pristine
-        intrinsic root. Unlike `_base_is_safe`, the global object does not qualify — a global property
-        such as `location` may be an accessor — so a read through it is treated as an unknown call.
+        hidden effect: a freshly built value with no accessor of its own and no installed prototype, a
+        primitive, or a pristine intrinsic root. Unlike `_base_is_safe`, the global object does not
+        qualify — a global property such as `location` may be an accessor — so a read through it is
+        treated as an unknown call.
         """
         if isinstance(node, (
             JsArrayExpression,
@@ -867,7 +870,7 @@ class EffectModel:
         )):
             return True
         if isinstance(node, JsObjectExpression):
-            return not _object_has_own_accessor(node)
+            return not _object_member_access_runs_accessor(node)
         if isinstance(node, JsIdentifier):
             return node.name in _PURE_INTRINSIC_ROOTS and self._is_global_intrinsic(node)
         if isinstance(node, JsMemberExpression):
@@ -886,6 +889,40 @@ def _object_has_own_accessor(obj: JsObjectExpression) -> bool:
         isinstance(prop, JsProperty) and prop.kind in (JsPropertyKind.GET, JsPropertyKind.SET)
         for prop in obj.properties
     )
+
+
+def _object_sets_prototype(obj: JsObjectExpression) -> bool:
+    """
+    Whether the object literal *obj* installs a custom prototype through the special `__proto__:`
+    property form (`{ __proto__: p }`, `{ '__proto__': p }`) — a plain, non-computed data property
+    whose key is `__proto__`. Such an object no longer inherits from `Object.prototype` alone, so a
+    plain-looking member read or write on it may run a getter or setter the installed prototype
+    carries rather than touch a data slot. A computed key (`{ ['__proto__']: p }`), a shorthand
+    (`{ __proto__ }`), a method, or an own `__proto__` accessor define an ordinary own property and do
+    not set the prototype.
+    """
+    for prop in obj.properties:
+        if not isinstance(prop, JsProperty):
+            continue
+        if prop.kind is not JsPropertyKind.INIT or prop.computed or prop.shorthand or prop.method:
+            continue
+        key = prop.key
+        if isinstance(key, JsIdentifier) and key.name == '__proto__':
+            return True
+        if isinstance(key, JsStringLiteral) and key.value == '__proto__':
+            return True
+    return False
+
+
+def _object_member_access_runs_accessor(obj: JsObjectExpression) -> bool:
+    """
+    Whether a plain member read or write on the object literal *obj* may run a user-defined accessor
+    instead of touching a data slot: it declares its own getter or setter, or it installs a custom
+    prototype through the `__proto__:` literal form that may carry an inherited one. A fresh literal
+    with neither behaves as a plain field container, so an access on it is observable only as the field
+    it names.
+    """
+    return _object_has_own_accessor(obj) or _object_sets_prototype(obj)
 
 
 def _body_nodes(func: Node) -> Iterator[Node]:

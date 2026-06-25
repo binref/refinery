@@ -153,6 +153,19 @@ class TestEffectModel(TestBase):
             'function f(){ var o = { set k(v){ g = v; } }; o.k = 9; } var g;', 'f')
         self.assertTrue(summary.writes_global)
 
+    def test_write_through_object_literal_setting_proto_is_a_global_write(self):
+        summary = self._summary('function f(){ return { __proto__: proto }.k = 9; }', 'f')
+        self.assertTrue(summary.writes_global)
+
+    def test_read_through_object_literal_setting_proto_is_not_pure(self):
+        summary = self._summary('function f(){ return { __proto__: proto }.k; }', 'f')
+        self.assertFalse(summary.is_pure)
+
+    def test_write_to_plain_object_literal_base_is_pure(self):
+        summary = self._summary('function f(){ return { a: 1 }.k = 9; }', 'f')
+        self.assertFalse(summary.writes_global)
+        self.assertTrue(summary.is_pure)
+
     def test_closure_mutation_is_a_captured_write(self):
         source = (
             'function outer(){ var c = 0;'
