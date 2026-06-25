@@ -393,6 +393,10 @@ class TestEffectModel(TestBase):
             'function f(x){ x.a.unshift(9); } var o = { a: [1, 2] }; f(o); SINK(o.a[0]);',
             'o', member_calls_mutate=False))
 
+    def test_escape_as_argument_after_spread_is_mutable(self):
+        self.assertFalse(self._container(
+            'function keep(p, q){ p[0] = 9; } var pre = [1]; var a = [1, 2]; keep(...pre, a); SINK(a[0]);'))
+
     def test_benign_alias_is_immutable(self):
         self.assertTrue(self._container('var a = [1, 2]; var b = a; SINK(b[0]);'))
 

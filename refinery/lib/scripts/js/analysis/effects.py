@@ -70,6 +70,7 @@ from refinery.lib.scripts.js.model import (
     JsRestElement,
     JsScript,
     JsSequenceExpression,
+    JsSpreadElement,
     JsStringLiteral,
     JsThrowStatement,
     JsUnaryExpression,
@@ -463,9 +464,10 @@ class EffectModel:
         the callee invokes on the argument or on one of its nested containers (`x.a.push(...)`), which
         may mutate it. False, conservatively, when the call cannot be analysed: the callee is not a
         single known function, it can reach the argument through its own `arguments` object, the argument
-        is spread, or the slot it lands in is a rest or destructuring parameter. An argument with no
-        parameter to bind — passed beyond the declared parameters of a function with no rest collector
-        and no `arguments` use — is safe, since the callee cannot name it.
+        is spread, a spread precedes it (so its runtime position shifts past the textual index and the
+        parameter it binds cannot be pinned down), or the slot it lands in is a rest or destructuring
+        parameter. An argument with no parameter to bind — passed beyond the declared parameters of a
+        function with no rest collector and no `arguments` use — is safe, since the callee cannot name it.
         """
         parent = ref.parent
         if not isinstance(parent, JsCallExpression) or ref not in parent.arguments:
@@ -479,6 +481,8 @@ class EffectModel:
         if any(isinstance(param, JsRestElement) for param in params):
             return False
         index = parent.arguments.index(ref)
+        if any(isinstance(arg, JsSpreadElement) for arg in parent.arguments[:index]):
+            return False
         if index >= len(params):
             return True
         param = params[index]
