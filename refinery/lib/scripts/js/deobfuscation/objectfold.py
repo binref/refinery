@@ -18,7 +18,7 @@ from refinery.lib.scripts import (
     _replace_in_parent,
 )
 from refinery.lib.scripts.js.analysis.cache import model_cache
-from refinery.lib.scripts.js.analysis.effects import object_sets_prototype
+from refinery.lib.scripts.js.analysis.effects import EffectModel, object_sets_prototype
 from refinery.lib.scripts.js.analysis.model import Binding, Scope, SemanticModel, is_use_position
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     OBJECT_PROTOTYPE_MEMBERS,
@@ -170,6 +170,11 @@ class JsObjectFold(ScopeProcessingTransformer):
                 continue
             if any(not self._value_is_stable(model, value) for value in prop_map.values()):
                 continue
+            if any(
+                self._eagerly_reads_mutable_container(model, cache.effects, value)
+                for value in prop_map.values()
+            ):
+                continue
             changed, can_remove = self._inline_references(model, binding, prop_map, self)
             if changed:
                 if can_remove:
@@ -208,6 +213,38 @@ class JsObjectFold(ScopeProcessingTransformer):
             binding is None or not binding.writes
             for _, binding in _free_external_bindings(model, value)
         )
+
+    @staticmethod
+    def _eagerly_reads_mutable_container(
+        model: SemanticModel, effects: EffectModel, value: Node,
+    ) -> bool:
+        """
+        Whether *value* eagerly reads the contents of a mutable container — a binding holding an object
+        or array whose contents are not stable after construction (`{ p: arr + '' }` followed by a later
+        `arr.push(9)`). Folding clones the value into every access site, re-evaluating the read there, so
+        a mutation made between the object's construction and a later read would be observed at the read
+        but not at the literal. A bare-identifier value is exempt: folding it relocates a reference to the
+        same binding, so the container's identity — and every mutation through it — stays equally visible
+        at each site. A read inside a nested function is not eager: it runs only when the function is
+        later called, resolving the container by reference then, so `walk_scope` does not enter one.
+        Immutability is judged with the value's own read excluded, so coercing a primitive, or a container
+        never mutated elsewhere — whose binding carries no other mutating reference — stays stable and
+        still folds. This is the state-reading counterpart to `_value_is_stable`, which guards only against
+        the binding being rebound, not against its container's contents being mutated in place.
+        """
+        if isinstance(value, JsIdentifier):
+            return False
+        for node in walk_scope(value):
+            if not isinstance(node, JsIdentifier) or not is_use_position(node):
+                continue
+            if model.binding_of(node) is not None:
+                continue
+            binding = model.resolve(node)
+            if binding is None or _binding_inside(binding, value):
+                continue
+            if not effects.binding_is_immutable_container(binding, member_calls_mutate=True, exclude=value):
+                return True
+        return False
 
     @staticmethod
     def _has_freshly_allocating_value(prop_map: dict[str, Node]) -> bool:

@@ -375,6 +375,85 @@ class TestObjectFold(TestJsDeobfuscator):
         )
         self.assertEqual(expected, self._objectfold(source))
 
+    def test_coercion_of_mutated_container_not_folded(self):
+        source = inspect.cleandoc(
+            """
+            var arr = [1, 2];
+            var o = { p: arr + '' };
+            arr.push(9);
+            SINK(o.p);
+            """
+        )
+        self.assertEqual(source, self._objectfold(source))
+
+    def test_unary_coercion_of_mutated_container_not_folded(self):
+        source = inspect.cleandoc(
+            """
+            var arr = [1, 2];
+            var o = { p: +arr };
+            arr.push(9);
+            SINK(o.p);
+            """
+        )
+        self.assertEqual(source, self._objectfold(source))
+
+    def test_coercion_of_container_mutated_by_callee_not_folded(self):
+        source = inspect.cleandoc(
+            """
+            function m(z) {
+              z.push(9);
+            }
+            var arr = [1, 2];
+            var o = { p: arr + '' };
+            m(arr);
+            SINK(o.p);
+            """
+        )
+        self.assertEqual(source, self._objectfold(source))
+
+    def test_primitive_coercion_still_folded(self):
+        expected = inspect.cleandoc(
+            """
+            var x = 5;
+            SINK(x + '');
+            """
+        )
+        self.assertEqual(expected, self._objectfold("var x = 5; var o = { p: x + '' }; SINK(o.p);"))
+
+    def test_identity_read_of_mutated_container_still_folded(self):
+        source = inspect.cleandoc(
+            """
+            var arr = [1, 2];
+            var o = { p: arr };
+            arr.push(9);
+            SINK(o.p);
+            """
+        )
+        expected = inspect.cleandoc(
+            """
+            var arr = [1, 2];
+            arr.push(9);
+            SINK(arr);
+            """
+        )
+        self.assertEqual(expected, self._objectfold(source))
+
+    def test_coercion_of_unmutated_container_still_folded(self):
+        source = inspect.cleandoc(
+            """
+            var arr = [1, 2];
+            var o = { p: arr + '' };
+            SINK(o.p);
+            """
+        )
+        expected = inspect.cleandoc(
+            """
+            var arr = [1, 2];
+            SINK(arr + '');
+            """
+        )
+        self.assertEqual(expected, self._objectfold(source))
+
     def test_nested_property_method_mutation_not_folded(self):
         source = inspect.cleandoc(
             """

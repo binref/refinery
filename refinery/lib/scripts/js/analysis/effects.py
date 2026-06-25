@@ -384,7 +384,9 @@ class EffectModel:
         """
         return side_effect_free(node, defunct, self.is_pure_call)
 
-    def binding_is_immutable_container(self, binding: Binding, *, member_calls_mutate: bool = True) -> bool:
+    def binding_is_immutable_container(
+        self, binding: Binding, *, member_calls_mutate: bool = True, exclude: Node | None = None,
+    ) -> bool:
         """
         Whether *binding* holds a container — an object or array — whose element and property values are
         stable after construction, so that an access into it may be soundly inlined at its read sites.
@@ -409,8 +411,13 @@ class EffectModel:
         The query is over a *resolved binding*, so it is shadowing-correct, and it descends through
         alias chains, callee parameters, and nested functions, so a capturing closure that mutates the
         container is caught. The answer is fixed for the model's lifetime — a binding's reference set does
-        not change — so it is memoized per `(binding, member_calls_mutate)`.
+        not change — so it is memoized per `(binding, member_calls_mutate)`. A caller may pass *exclude*
+        to disregard references within that subtree — asking whether the container is stable across the
+        rest of the program, ignoring a read site about to be relocated into it; such a query is not
+        memoized, since the answer depends on the excluded region.
         """
+        if exclude is not None:
+            return self._immutable_container(binding, set(), member_calls_mutate, exclude)
         key = (id(binding), member_calls_mutate)
         cached = self._immutable_cache.get(key)
         if cached is None:
@@ -418,12 +425,14 @@ class EffectModel:
             self._immutable_cache[key] = cached
         return cached
 
-    def _immutable_container(self, binding: Binding, visiting: set[int], member_calls_mutate: bool) -> bool:
+    def _immutable_container(
+        self, binding: Binding, visiting: set[int], member_calls_mutate: bool, exclude: Node | None = None,
+    ) -> bool:
         key = id(binding)
         if key in visiting:
             return True
         visiting = visiting | {key}
-        for ref in self.model.references(binding):
+        for ref in self.model.references(binding, exclude=exclude):
             role = container_reference_role(ref)
             if role is ContainerRole.MEMBER_WRITE:
                 return False
