@@ -479,6 +479,7 @@ class JsConstantInlining(ScopeProcessingTransformer):
                     name = left.name
                     rejected.add(name)
                     candidates.pop(name, None)
+                    uninitialized.pop(name, None)
                 elif isinstance(left, (
                     JsArrayExpression, JsObjectExpression, JsArrayPattern, JsObjectPattern,
                 )):

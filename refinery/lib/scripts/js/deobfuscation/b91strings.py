@@ -503,8 +503,8 @@ def _cleanup(
     cache: ModelCache,
 ) -> None:
     """
-    Remove accessor functions, decoder functions, string tables, cache objects, and the global
-    bufferToString / utf8ArrayToStr / getGlobal infrastructure once all strings have been resolved.
+    Remove accessor functions, decoder functions, string tables, and emptied cache objects once all
+    strings have been resolved.
     """
     dead_ids: set[int] = set()
     for a in accessors:
