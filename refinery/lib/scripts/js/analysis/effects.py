@@ -44,6 +44,7 @@ from refinery.lib.scripts.js.analysis.model import (
     Role,
     Scope,
     SemanticModel,
+    _member_is_write_target,
     container_reference_role,
     enclosing_function,
     reference_role,
@@ -241,21 +242,6 @@ class EffectSummary:
         self.writes_captured = self.writes_captured or other.writes_captured
         self.throws = self.throws or other.throws
         self.calls_unknown = self.calls_unknown or other.calls_unknown
-
-
-def _is_member_write(member: JsMemberExpression) -> bool:
-    """
-    Whether *member* is the target of a mutation — the left of an assignment, the operand of `++`/`--`,
-    or the operand of `delete` — so the property it names is being written rather than read.
-    """
-    parent = member.parent
-    if isinstance(parent, JsAssignmentExpression):
-        return parent.left is member
-    if isinstance(parent, JsUpdateExpression):
-        return parent.argument is member
-    if isinstance(parent, JsUnaryExpression):
-        return parent.operator == 'delete' and parent.operand is member
-    return False
 
 
 def _is_safe_property_base(node: Node, defunct: set[str] | None = None) -> bool:
@@ -606,7 +592,7 @@ class EffectModel:
                 base = node.object
                 if base is not None and not self._base_is_safe(base):
                     summary.throws = True
-                if _is_member_write(node):
+                if _member_is_write_target(node):
                     if not self._member_write_unobservable(node, func):
                         summary.writes_global = True
                 elif (

@@ -175,6 +175,25 @@ class TestEffectModel(TestBase):
         self.assertFalse(summary.writes_global)
         self.assertTrue(summary.is_pure)
 
+    def test_parenthesized_member_write_to_global_is_not_value_replaceable(self):
+        summary = self._summary('function f(){ (g.x) = 9; return 7; }', 'f')
+        self.assertTrue(summary.writes_global)
+        self.assertFalse(summary.is_value_replaceable)
+
+    def test_destructuring_member_write_to_global_is_not_value_replaceable(self):
+        summary = self._summary('function f(){ [g.x] = arr; return 7; }', 'f')
+        self.assertTrue(summary.writes_global)
+        self.assertFalse(summary.is_value_replaceable)
+
+    def test_for_in_member_target_to_global_is_a_global_write(self):
+        summary = self._summary('function f(){ for (g.x in obj) {} return 7; }', 'f')
+        self.assertTrue(summary.writes_global)
+
+    def test_parenthesized_member_write_to_fresh_local_is_not_a_global_write(self):
+        summary = self._summary('function f(){ var o = {}; (o.x) = 9; return o.x; }', 'f')
+        self.assertFalse(summary.writes_global)
+        self.assertFalse(summary.writes_captured)
+
     def test_closure_mutation_is_a_captured_write(self):
         source = (
             'function outer(){ var c = 0;'
