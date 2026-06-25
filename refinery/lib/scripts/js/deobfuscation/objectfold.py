@@ -32,6 +32,7 @@ from refinery.lib.scripts.js.model import (
     JsArrayExpression,
     JsArrowFunctionExpression,
     JsCallExpression,
+    JsClassExpression,
     JsFunctionExpression,
     JsIdentifier,
     JsMemberExpression,
@@ -39,6 +40,7 @@ from refinery.lib.scripts.js.model import (
     JsObjectExpression,
     JsProperty,
     JsPropertyKind,
+    JsRegExpLiteral,
     JsScript,
     JsTaggedTemplateExpression,
     JsVariableDeclaration,
@@ -179,7 +181,6 @@ class JsObjectFold(ScopeProcessingTransformer):
         binding (external globals) place no constraint, so a string, a numeric literal, a `const`
         reference, or a self-contained function wrapper all remain foldable.
         """
-        local_nodes = {id(node) for node in value.walk()}
         for node in value.walk():
             if not isinstance(node, JsIdentifier) or model.binding_of(node) is not None:
                 continue
@@ -188,7 +189,7 @@ class JsObjectFold(ScopeProcessingTransformer):
             binding = model.resolve(node)
             if binding is None or not binding.writes:
                 continue
-            if any(id(decl) in local_nodes for decl in binding.declarations):
+            if _binding_inside(binding, value):
                 continue
             return False
         return True
@@ -215,10 +216,11 @@ class JsObjectFold(ScopeProcessingTransformer):
     def _value_allocates(value: Node) -> bool:
         """
         Whether evaluating *value* may allocate a fresh object — a container literal it builds directly,
-        or one a call, `new`, or tagged template in its evaluation may return. A function or arrow
-        literal value is excluded, since its own identity is handled where it is folded; a nested
-        function inside the value is not entered, as its body runs only when the function is later
-        called, not when the value the object captured is evaluated.
+        a regular-expression or class literal (each evaluation mints a new object), or one a call,
+        `new`, or tagged template in its evaluation may return. A function or arrow literal value is
+        excluded, since its own identity is handled where it is folded; a nested function inside the
+        value is not entered, as its body runs only when the function is later called, not when the
+        value the object captured is evaluated.
         """
         if isinstance(value, (JsFunctionExpression, JsArrowFunctionExpression)):
             return False
@@ -231,7 +233,9 @@ class JsObjectFold(ScopeProcessingTransformer):
                 JsArrayExpression,
                 JsObjectExpression,
                 JsCallExpression,
+                JsClassExpression,
                 JsNewExpression,
+                JsRegExpLiteral,
                 JsTaggedTemplateExpression,
             )):
                 return True
