@@ -11,6 +11,7 @@ from refinery.lib.scripts.js.analysis.effects import EffectModel
 from refinery.lib.scripts.js.analysis.model import (
     Role,
     SemanticModel,
+    _strip_parens,
     reference_role,
 )
 from refinery.lib.scripts.js.deobfuscation.helpers import (
@@ -444,8 +445,9 @@ class JsConstantInlining(ScopeProcessingTransformer):
                     uninitialized.pop(name, None)
 
             if isinstance(node, JsAssignmentExpression):
-                if isinstance(node.left, JsIdentifier):
-                    name = node.left.name
+                left = _strip_parens(node.left)
+                if isinstance(left, JsIdentifier):
+                    name = left.name
                     if name in uninitialized and name not in candidates and name not in rejected:
                         decl = uninitialized.pop(name)
                         rhs = node.right
@@ -462,19 +464,21 @@ class JsConstantInlining(ScopeProcessingTransformer):
                         rejected.add(name)
                         candidates.pop(name, None)
                         uninitialized.pop(name, None)
-                elif isinstance(node.left, (JsArrayPattern, JsObjectPattern)):
-                    for name in _pattern_identifiers(node.left):
+                elif isinstance(left, (JsArrayPattern, JsObjectPattern)):
+                    for name in _pattern_identifiers(left):
                         rejected.add(name)
                         candidates.pop(name, None)
                         uninitialized.pop(name, None)
 
-            if isinstance(node, JsUpdateExpression) and isinstance(node.argument, JsIdentifier):
-                name = node.argument.name
-                rejected.add(name)
-                candidates.pop(name, None)
+            if isinstance(node, JsUpdateExpression):
+                target = _strip_parens(node.argument)
+                if isinstance(target, JsIdentifier):
+                    name = target.name
+                    rejected.add(name)
+                    candidates.pop(name, None)
 
             if isinstance(node, (JsForInStatement, JsForOfStatement)):
-                left = node.left
+                left = _strip_parens(node.left)
                 if isinstance(left, JsIdentifier):
                     name = left.name
                     rejected.add(name)
