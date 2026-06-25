@@ -317,6 +317,34 @@ class TestObjectFold(TestJsDeobfuscator):
         )
         self.assertEqual(source, self._objectfold(source))
 
+    def test_fresh_array_returning_call_value_not_folded(self):
+        source = inspect.cleandoc(
+            """
+            function mk(v) {
+              return [v];
+            }
+            var inp = get();
+            var o = { p: mk(inp) };
+            SINK(o.p === o.p);
+            """
+        )
+        self.assertEqual(source, self._objectfold(source))
+
+    def test_fresh_object_returning_call_value_not_folded(self):
+        source = inspect.cleandoc(
+            """
+            function mk(v) {
+              return { v: v };
+            }
+            var inp = get();
+            var o = { p: mk(inp) };
+            var a = o.p;
+            a.x = 1;
+            SINK(o.p.x);
+            """
+        )
+        self.assertEqual(source, self._objectfold(source))
+
     def test_value_folded_into_shadowing_scope_not_folded(self):
         source = inspect.cleandoc(
             """

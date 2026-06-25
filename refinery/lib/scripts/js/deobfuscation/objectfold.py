@@ -35,10 +35,12 @@ from refinery.lib.scripts.js.model import (
     JsFunctionExpression,
     JsIdentifier,
     JsMemberExpression,
+    JsNewExpression,
     JsObjectExpression,
     JsProperty,
     JsPropertyKind,
     JsScript,
+    JsTaggedTemplateExpression,
     JsVariableDeclaration,
     JsVariableDeclarator,
 )
@@ -129,7 +131,7 @@ class JsObjectFold(ScopeProcessingTransformer):
             prop_map = _build_property_map(init)
             if prop_map is None or _object_binds_this(prop_map):
                 continue
-            if self._has_mutable_container_value(prop_map):
+            if self._has_freshly_allocating_value(prop_map):
                 continue
             if not cache.effects.is_side_effect_free(init, {name.name}):
                 continue
@@ -192,20 +194,49 @@ class JsObjectFold(ScopeProcessingTransformer):
         return True
 
     @staticmethod
-    def _has_mutable_container_value(prop_map: dict[str, Node]) -> bool:
+    def _has_freshly_allocating_value(prop_map: dict[str, Node]) -> bool:
         """
-        Whether any property value is a mutable container literal — an array or object. Folding clones
-        the value into every access site, so for a container-valued property two `o.arr` reads that
-        name one shared array would become two distinct arrays, diverging on identity (`o.arr === o.arr`
-        flips from true to false), on a mutation made through one access (or an alias, argument, or
-        method call that reaches it) and observed through another, and on element identity one level
-        down. Deciding precisely which container-valued folds are safe is nested-container escape
-        analysis the model does not yet provide, so such an object is left unfolded. A primitive-valued
-        property places no constraint, since duplicating an immutable value is observationally identical.
+        Whether any property value, when evaluated, may allocate a fresh object whose identity folding
+        would duplicate. Folding clones the value into every access site, so a value that builds a new
+        array or object — directly as a container literal, or by returning one from a call or `new`
+        (only a side-effect-free, hence pure, one reaches this far) — would become a distinct object at
+        each site: two `o.arr` reads that name one shared array become two arrays, diverging on identity
+        (`o.arr === o.arr` flips from true to false), on a mutation made through one access (or an alias,
+        argument, or method call that reaches it) and observed through another, and on element identity
+        one level down. Deciding precisely which such folds are safe is the nested-container escape
+        analysis the model does not yet provide, so such an object is left unfolded. A function or arrow
+        literal value is judged per reference instead — folded only where it is immediately called, so
+        its identity is never observed — and a primitive, a binding, a member read, or an operator over
+        them duplicates without a fresh identity, so none of those constrains the fold.
         """
-        return any(
-            isinstance(value, (JsArrayExpression, JsObjectExpression)) for value in prop_map.values()
-        )
+        return any(JsObjectFold._value_allocates(value) for value in prop_map.values())
+
+    @staticmethod
+    def _value_allocates(value: Node) -> bool:
+        """
+        Whether evaluating *value* may allocate a fresh object — a container literal it builds directly,
+        or one a call, `new`, or tagged template in its evaluation may return. A function or arrow
+        literal value is excluded, since its own identity is handled where it is folded; a nested
+        function inside the value is not entered, as its body runs only when the function is later
+        called, not when the value the object captured is evaluated.
+        """
+        if isinstance(value, (JsFunctionExpression, JsArrowFunctionExpression)):
+            return False
+        stack = [value]
+        while stack:
+            node = stack.pop()
+            if node is not value and isinstance(node, (JsFunctionExpression, JsArrowFunctionExpression)):
+                continue
+            if isinstance(node, (
+                JsArrayExpression,
+                JsObjectExpression,
+                JsCallExpression,
+                JsNewExpression,
+                JsTaggedTemplateExpression,
+            )):
+                return True
+            stack.extend(node.children())
+        return False
 
     @staticmethod
     def _self_referential(model: SemanticModel, binding: Binding, init: JsObjectExpression) -> bool:
