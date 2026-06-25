@@ -263,6 +263,16 @@ class TestObjectFold(TestJsDeobfuscator):
         )
         self.assertEqual(source, self._objectfold(source))
 
+    def test_nested_property_method_mutation_not_folded(self):
+        source = inspect.cleandoc(
+            """
+            var o = { arr: [1, 2] };
+            o.arr.unshift(9);
+            SINK(o.arr[0]);
+            """
+        )
+        self.assertEqual(source, self._objectfold(source))
+
     def test_dynamic_key_preserves_object(self):
         source = "var o = {'a': 'hello', 'b': 'world'}; x(o['a']); y(o[z]);"
         self.assertEqual(
