@@ -479,18 +479,21 @@ class JsConstantInlining(ScopeProcessingTransformer):
 
             if isinstance(node, (JsForInStatement, JsForOfStatement)):
                 left = _strip_parens(node.left)
-                if isinstance(left, JsIdentifier):
-                    name = left.name
-                    rejected.add(name)
-                    candidates.pop(name, None)
-                    uninitialized.pop(name, None)
+                loop_targets: set[str] = set()
+                if isinstance(left, JsVariableDeclaration):
+                    for decl in left.declarations:
+                        if isinstance(decl, JsVariableDeclarator) and decl.id is not None:
+                            loop_targets |= _pattern_identifiers(decl.id)
+                elif isinstance(left, JsIdentifier):
+                    loop_targets.add(left.name)
                 elif isinstance(left, (
                     JsArrayExpression, JsObjectExpression, JsArrayPattern, JsObjectPattern,
                 )):
-                    for name in _pattern_identifiers(left):
-                        rejected.add(name)
-                        candidates.pop(name, None)
-                        uninitialized.pop(name, None)
+                    loop_targets |= _pattern_identifiers(left)
+                for name in loop_targets:
+                    rejected.add(name)
+                    candidates.pop(name, None)
+                    uninitialized.pop(name, None)
 
             if isinstance(node, JsCallExpression) and isinstance(node.callee, JsIdentifier):
                 callee_name = node.callee.name

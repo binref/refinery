@@ -414,6 +414,50 @@ class TestConstantInlining(TestJsDeobfuscator):
             self._inline("var x = 'initial'; for ([...x] of rows) {} console.log(x);"),
         )
 
+    def test_forof_var_declaration_target_not_inlined(self):
+        source = inspect.cleandoc(
+            """
+            var x = 5;
+            for (var x of xs) {
+              sink(x);
+            }
+            """
+        )
+        self.assertEqual(source, self._inline(source))
+
+    def test_forin_var_declaration_target_not_inlined(self):
+        source = inspect.cleandoc(
+            """
+            var x = 5;
+            for (var x in xs) {
+              sink(x);
+            }
+            """
+        )
+        self.assertEqual(source, self._inline(source))
+
+    def test_forof_const_declaration_target_not_inlined(self):
+        source = inspect.cleandoc(
+            """
+            var x = 5;
+            for (const x of xs) {
+              sink(x);
+            }
+            """
+        )
+        self.assertEqual(source, self._inline(source))
+
+    def test_forof_var_destructuring_declaration_target_not_inlined(self):
+        source = inspect.cleandoc(
+            """
+            var x = 5;
+            for (var [x] of rows) {
+              sink(x);
+            }
+            """
+        )
+        self.assertEqual(source, self._inline(source))
+
     def test_parenthesized_assignment_target_not_inlined(self):
         self.assertEqual(
             inspect.cleandoc(
