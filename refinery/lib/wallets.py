@@ -109,7 +109,6 @@ def _monero_base58_decode(data: buf) -> bytes | None:
     return bytes(out)
 
 
-
 def _bech32_polymod(values: list[int]) -> int:
     generator = (0x3B6A57B2, 0x26508E6D, 0x1EA119FA, 0x3D4233DD, 0x2A1462B3)
     checksum = 1
