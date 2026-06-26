@@ -1650,12 +1650,13 @@ class JsInterpreter:
         if not isinstance(node.left, JsIdentifier):
             raise InterpreterError
         name = node.left.name
-        value = self._eval(node.right)
         op = node.operator
         if op == '=':
+            value = self._eval(node.right)
             self._env[name] = value
             return value
         current = self._env.get(name)
+        value = self._eval(node.right)
         if op == '+=':
             self._env[name] = self._js_add(current, value)
         elif op == '-=':
@@ -1694,15 +1695,17 @@ class JsInterpreter:
             raise InterpreterError
         obj = self._eval(member.object)
         key = self._member_key(member)
-        value = self._eval(node.right)
-        if node.operator != '=':
+        if node.operator == '=':
+            value = self._eval(node.right)
+        else:
             old = self._get_property(obj, key)
+            rhs = self._eval(node.right)
             if node.operator == '+=':
-                value = self._js_add(old, value)
+                value = self._js_add(old, rhs)
             elif node.operator == '-=':
-                value = to_number(old) - to_number(value)
+                value = to_number(old) - to_number(rhs)
             elif node.operator == '*=':
-                value = to_number(old) * to_number(value)
+                value = to_number(old) * to_number(rhs)
             else:
                 raise InterpreterError
         self._set_property(obj, key, value)

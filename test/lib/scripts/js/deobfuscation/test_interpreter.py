@@ -31,6 +31,11 @@ class TestInterpreterValueSemantics(TestJsDeobfuscator):
         )
         self.assertEqual('var x = -0;', self._evaluate(source))
 
+    def test_compound_assignment_reads_target_before_evaluating_rhs(self):
+        self.assertEqual(
+            'var r = 15;',
+            self._evaluate('var r = (function(v) { v += (v = 10); return v; })(5);'))
+
     def test_add_object_operand_concatenates_object_tag(self):
         self.assertEqual("var x = '[object Object]1';", self._fold('({ a: 1 }) + 1'))
 
