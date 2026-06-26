@@ -5,7 +5,11 @@ import inspect
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 
 from refinery.lib.scripts.js.deobfuscation.simplify import JsSimplifications
-from refinery.lib.scripts.js.deobfuscation.unused import JsUnusedCodeRemoval
+from refinery.lib.scripts.js.deobfuscation.unused import (
+    JsUnusedCodeRemoval,
+    _destructuring_target_safe,
+)
+from refinery.lib.scripts.js.model import JsAssignmentExpression
 from refinery.lib.scripts.js.parser import JsParser
 from refinery.lib.scripts.js.synth import JsSynthesizer
 
@@ -360,6 +364,32 @@ class TestUnusedCodeRemoval(TestJsDeobfuscator):
             """
         )
         self.assertEqual(source, self._remove_unused(source))
+
+    @staticmethod
+    def _destructuring_parts(source: str):
+        ast = JsParser(source).parse()
+        assign = next(n for n in ast.walk_in_order() if isinstance(n, JsAssignmentExpression))
+        return assign.left, assign.right
+
+    def test_destructuring_array_literal_source_is_safe(self):
+        left, right = self._destructuring_parts('[a] = [1];')
+        self.assertTrue(_destructuring_target_safe(left, right))
+
+    def test_destructuring_non_array_source_is_unsafe(self):
+        left, right = self._destructuring_parts('[a] = xs;')
+        self.assertFalse(_destructuring_target_safe(left, right))
+
+    def test_destructuring_object_proto_method_source_is_safe(self):
+        left, right = self._destructuring_parts('({k: a} = {__proto__(){}});')
+        self.assertTrue(_destructuring_target_safe(left, right))
+
+    def test_destructuring_object_getter_source_is_unsafe(self):
+        left, right = self._destructuring_parts('({k: a} = {get x(){}});')
+        self.assertFalse(_destructuring_target_safe(left, right))
+
+    def test_destructuring_object_spread_source_is_unsafe(self):
+        left, right = self._destructuring_parts('({k: a} = {...o});')
+        self.assertFalse(_destructuring_target_safe(left, right))
 
     def test_function_local_read_in_a_with_block_is_kept(self):
         """

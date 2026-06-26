@@ -27,7 +27,7 @@ from __future__ import annotations
 
 from refinery.lib.scripts import Node, _remove_from_parent
 from refinery.lib.scripts.js.analysis.cache import model_cache
-from refinery.lib.scripts.js.analysis.effects import EffectModel
+from refinery.lib.scripts.js.analysis.effects import EffectModel, object_member_access_runs_accessor
 from refinery.lib.scripts.js.analysis.liveness import LivenessModel
 from refinery.lib.scripts.js.analysis.model import (
     Binding,
@@ -43,7 +43,6 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     GLOBAL_OBJECT_ALIASES,
     collect_identifier_names,
     is_binding_site,
-    property_key,
     remove_declarator,
     walk_scope,
 )
@@ -59,7 +58,6 @@ from refinery.lib.scripts.js.model import (
     JsObjectExpression,
     JsObjectPattern,
     JsProperty,
-    JsPropertyKind,
     JsScript,
     JsVariableDeclaration,
     JsVariableDeclarator,
@@ -238,12 +236,15 @@ def _destructuring_target_safe(left: Node | None, right: Node | None) -> bool:
     Whether assigning *right* into the destructuring pattern *left* is guaranteed neither to throw
     nor to run observable code, even when *right* is side-effect-free as a plain expression. Array
     patterns require an iterable source, so only an array literal is accepted. Object patterns throw
-    on `null`/`undefined` and additionally *read* their named keys from the source, so only an
-    object literal whose members are all plain, statically-keyed data properties is accepted: a
-    getter or setter, a computed key, or a `__proto__` member could execute code when the pattern is
-    matched (and a computed key is not even covered by
-    `refinery.lib.scripts.js.analysis.effects.side_effect_free`). Any other right-hand side
-    is rejected conservatively.
+    on `null`/`undefined` and additionally *read* their named keys from the source, so only an object
+    literal on which a plain member access can run no user-defined accessor is accepted: a getter or
+    setter, or a `__proto__:` data property that installs a custom prototype (which may carry an
+    inherited accessor), could execute code when the pattern matches, and a computed key — not even
+    covered by `refinery.lib.scripts.js.analysis.effects.side_effect_free` — or a spread element could
+    too. A `__proto__` method or shorthand defines an ordinary own property and stays safe. The
+    accessor-and-prototype test is the shared `object_member_access_runs_accessor` the effect model
+    uses; the spread and computed-key rejections it does not cover are kept explicit. Any other
+    right-hand side is rejected conservatively.
     """
     if isinstance(left, (JsArrayExpression, JsArrayPattern)):
         return isinstance(right, JsArrayExpression)
@@ -253,11 +254,7 @@ def _destructuring_target_safe(left: Node | None, right: Node | None) -> bool:
         for prop in right.properties:
             if not isinstance(prop, JsProperty) or prop.computed:
                 return False
-            if prop.kind is not JsPropertyKind.INIT:
-                return False
-            if property_key(prop) == '__proto__':
-                return False
-        return True
+        return not object_member_access_runs_accessor(right)
     return False
 
 

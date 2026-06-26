@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from test import TestBase
 
-from refinery.lib.scripts.js.analysis.effects import build_effects
+from refinery.lib.scripts.js.analysis.effects import build_effects, object_member_access_runs_accessor
 from refinery.lib.scripts.js.analysis.model import build_semantic_model
 from refinery.lib.scripts.js.model import (
     JsArrayExpression,
@@ -10,6 +10,7 @@ from refinery.lib.scripts.js.model import (
     JsCallExpression,
     JsFunctionDeclaration,
     JsIdentifier,
+    JsObjectExpression,
 )
 from refinery.lib.scripts.js.parser import JsParser
 
@@ -174,6 +175,29 @@ class TestEffectModel(TestBase):
         summary = self._summary('function f(){ return { a: 1 }.k = 9; }', 'f')
         self.assertFalse(summary.writes_global)
         self.assertTrue(summary.is_pure)
+
+    @staticmethod
+    def _object(source: str) -> JsObjectExpression:
+        ast = JsParser(source).parse()
+        return next(n for n in ast.walk_in_order() if isinstance(n, JsObjectExpression))
+
+    def test_object_with_getter_runs_accessor(self):
+        self.assertTrue(object_member_access_runs_accessor(self._object('x = { get k(){} };')))
+
+    def test_object_with_setter_runs_accessor(self):
+        self.assertTrue(object_member_access_runs_accessor(self._object('x = { set k(v){} };')))
+
+    def test_object_setting_prototype_runs_accessor(self):
+        self.assertTrue(object_member_access_runs_accessor(self._object('x = { __proto__: p };')))
+
+    def test_object_with_proto_method_does_not_run_accessor(self):
+        self.assertFalse(object_member_access_runs_accessor(self._object('x = { __proto__(){} };')))
+
+    def test_object_with_proto_shorthand_does_not_run_accessor(self):
+        self.assertFalse(object_member_access_runs_accessor(self._object('x = { __proto__ };')))
+
+    def test_plain_data_object_does_not_run_accessor(self):
+        self.assertFalse(object_member_access_runs_accessor(self._object('x = { a: 1 };')))
 
     def test_parenthesized_member_write_to_global_is_not_value_replaceable(self):
         summary = self._summary('function f(){ (g.x) = 9; return 7; }', 'f')

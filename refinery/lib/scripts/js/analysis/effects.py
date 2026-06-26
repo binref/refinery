@@ -703,7 +703,7 @@ class EffectModel:
         if isinstance(base, (JsArrayExpression, JsFunctionExpression)):
             return True
         if isinstance(base, JsObjectExpression):
-            return not _object_member_access_runs_accessor(base)
+            return not object_member_access_runs_accessor(base)
         if not isinstance(base, JsIdentifier):
             return False
         binding = self.model.resolve(base)
@@ -740,7 +740,7 @@ class EffectModel:
                 JsArrayExpression, JsObjectExpression, JsFunctionExpression, JsArrowFunctionExpression,
             )):
                 return False
-            if isinstance(init, JsObjectExpression) and _object_member_access_runs_accessor(init):
+            if isinstance(init, JsObjectExpression) and object_member_access_runs_accessor(init):
                 return False
         return True
 
@@ -898,7 +898,7 @@ class EffectModel:
         )):
             return True
         if isinstance(node, JsObjectExpression):
-            return not _object_member_access_runs_accessor(node)
+            return not object_member_access_runs_accessor(node)
         if isinstance(node, JsIdentifier):
             return node.name in _PURE_INTRINSIC_ROOTS and self._is_global_intrinsic(node)
         if isinstance(node, JsMemberExpression):
@@ -942,7 +942,7 @@ def object_sets_prototype(obj: JsObjectExpression) -> bool:
     return False
 
 
-def _object_member_access_runs_accessor(obj: JsObjectExpression) -> bool:
+def object_member_access_runs_accessor(obj: JsObjectExpression) -> bool:
     """
     Whether a plain member read or write on the object literal *obj* may run a user-defined accessor
     instead of touching a data slot: it declares its own getter or setter, or it installs a custom
