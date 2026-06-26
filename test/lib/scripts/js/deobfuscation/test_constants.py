@@ -91,6 +91,19 @@ class TestConstantInlining(TestJsDeobfuscator):
             self._inline(source),
         )
 
+    def test_constant_mutated_in_anonymous_iife_not_inlined(self):
+        source = inspect.cleandoc(
+            """
+            var SINK = [];
+            var v = 1;
+            (function() {
+              v++;
+            })();
+            SINK.push(v);
+            """
+        )
+        self.assertEqual(source, self._inline(source))
+
     def test_global_reassigned_in_called_function_not_inlined(self):
         self.assertEqual(
             inspect.cleandoc(

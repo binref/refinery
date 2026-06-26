@@ -172,6 +172,30 @@ def _is_literal_array(node: Node) -> bool:
     return all(el is not None and is_literal(el) for el in node.elements)
 
 
+def _names_mutated_in_anonymous_functions(scope: Node) -> set[str]:
+    """
+    Names assigned or updated inside a function EXPRESSION or arrow nested in *scope* that is not bound
+    to a variable. `_compute_function_mods` attributes writes only to named function declarations and
+    var-bound function expressions (whose calls it seals by name); an anonymous IIFE or callback that
+    mutates a captured outer variable is invisible to it and its call site carries no seal point. Such
+    a variable is not a stable constant — invoking the closure can change it between reads — so it must
+    not be inlined.
+    """
+    result: set[str] = set()
+    for node in scope.walk():
+        if not isinstance(node, JsIdentifier) or reference_role(node) is Role.READ:
+            continue
+        cursor = node.parent
+        while cursor is not None and cursor is not scope:
+            if isinstance(cursor, (JsFunctionExpression, JsArrowFunctionExpression)):
+                owner = cursor.parent
+                if not (isinstance(owner, JsVariableDeclarator) and owner.init is cursor):
+                    result.add(node.name)
+                    break
+            cursor = cursor.parent
+    return result
+
+
 def _compute_function_mods(scope: Node, model: SemanticModel) -> dict[str, set[str]]:
     """
     For each function defined anywhere within *scope* — at the top level or inside a nested block such
@@ -510,6 +534,12 @@ class JsConstantInlining(ScopeProcessingTransformer):
                     for modified_var in mods:
                         if modified_var in candidates:
                             seal_points.setdefault(modified_var, []).extend(call_entries)
+
+        for name in _names_mutated_in_anonymous_functions(scope):
+            if name in candidates or name in uninitialized:
+                rejected.add(name)
+                candidates.pop(name, None)
+                uninitialized.pop(name, None)
 
         return candidates, seal_points, rejected
 
