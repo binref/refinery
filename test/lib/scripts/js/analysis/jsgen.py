@@ -317,9 +317,12 @@ class _Generator:
     def _stmt_member_write(self, scope: _Scope, depth: int) -> list[str]:
         name, kind = self.rng.choice(scope.all_objects())
         target = self._member(name, kind)
-        form = self.rng.choice(('assign', 'incr', 'decr', 'delete'))
+        form = self.rng.choice(('assign', 'compound', 'incr', 'decr', 'delete'))
         if form == 'assign':
             return [F'{target} = {self._expr(scope, 2)};']
+        if form == 'compound':
+            op = self.rng.choice(('+=', '-=', '*=', '|=', '&='))
+            return [F'{target} {op} {self._expr(scope, 2)};']
         if form == 'incr':
             return [F'{target}++;']
         if form == 'decr':
