@@ -398,6 +398,8 @@ class _Generator:
         funcs = scope.all_funcs()
         if funcs:
             kinds.append('call')
+        if scope.all_mutable():
+            kinds.append('assign')
         kind = self.rng.choice(kinds)
         if kind == 'atom':
             return self._atom(scope)
@@ -415,6 +417,9 @@ class _Generator:
             return F'[{", ".join(items)}]'
         if kind == 'curry':
             return self._curry(scope, depth)
+        if kind == 'assign':
+            name = self.rng.choice(scope.all_mutable())
+            return F'({name} = {self._expr(scope, depth - 1)})'
         name, arity = self.rng.choice(funcs)
         args = [self._expr(scope, depth - 1) for _ in range(arity)]
         return F'{name}({", ".join(args)})'
