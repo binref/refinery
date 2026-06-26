@@ -150,8 +150,15 @@ class _Generator:
         return [F'{keyword} {name} = {value};']
 
     def _stmt_assign(self, scope: _Scope, depth: int) -> list[str]:
+        """
+        A simple or compound assignment to a mutable binding (`name = e`, `name += e`, ...). A
+        compound form makes *name* a READWRITE reference — read and written in one operation —
+        exercising the deobfuscator's classification of a target that is both, which a plain `=`
+        (write-only) does not.
+        """
         name = self.rng.choice(scope.all_mutable())
-        return [F'{name} = {self._expr(scope, 2)};']
+        op = self.rng.choice(('=', '=', '+=', '-=', '*=', '|=', '&=', '**=', '<<='))
+        return [F'{name} {op} {self._expr(scope, 2)};']
 
     def _stmt_destructure(self, scope: _Scope, depth: int) -> list[str]:
         """
