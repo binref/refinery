@@ -28,6 +28,18 @@ class TestConstantInlining(TestJsDeobfuscator):
             self._inline("var x = 'a'; x = 'b'; console.log(x);"),
         )
 
+    def test_constant_reassigned_by_object_destructuring_not_inlined(self):
+        source = inspect.cleandoc(
+            """
+            var c = false;
+            function f() {
+              ({ c = 2 } = {});
+            }
+            f();
+            """
+        )
+        self.assertEqual(source, self._inline(source))
+
     def test_global_reassigned_in_called_function_not_inlined(self):
         self.assertEqual(
             inspect.cleandoc(

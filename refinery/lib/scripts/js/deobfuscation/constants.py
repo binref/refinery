@@ -567,7 +567,7 @@ class JsConstantInlining(ScopeProcessingTransformer):
             if name not in constant_names or name in bloat_blocked:
                 continue
             parent = node.parent
-            if isinstance(parent, JsAssignmentExpression) and parent.left is node:
+            if reference_role(node) is not Role.READ:
                 continue
             if isinstance(parent, JsMemberExpression) and parent.object is node and parent.computed:
                 continue
@@ -738,7 +738,7 @@ class JsConstantInlining(ScopeProcessingTransformer):
             if name not in cross_candidates:
                 continue
             parent = node.parent
-            if isinstance(parent, JsAssignmentExpression) and parent.left is node:
+            if reference_role(node) is not Role.READ:
                 continue
             if isinstance(parent, JsMemberExpression) and parent.object is node and parent.computed:
                 continue
@@ -827,8 +827,7 @@ class JsConstantInlining(ScopeProcessingTransformer):
             name = node.name
             if name not in to_inline:
                 continue
-            parent = node.parent
-            if isinstance(parent, JsAssignmentExpression) and parent.left is node:
+            if reference_role(node) is not Role.READ:
                 continue
             entry = to_inline[name]
             if entry.scope is not None:
