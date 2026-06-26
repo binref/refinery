@@ -394,7 +394,7 @@ class _Generator:
     def _expr(self, scope: _Scope, depth: int) -> str:
         if depth <= 0:
             return self._atom(scope)
-        kinds = ['atom', 'binary', 'unary', 'ternary', 'array', 'curry']
+        kinds = ['atom', 'binary', 'unary', 'ternary', 'array', 'curry', 'sequence']
         funcs = scope.all_funcs()
         if funcs:
             kinds.append('call')
@@ -418,6 +418,8 @@ class _Generator:
             return F'[{", ".join(items)}]'
         if kind == 'curry':
             return self._curry(scope, depth)
+        if kind == 'sequence':
+            return F'({self._expr(scope, depth - 1)}, {self._expr(scope, depth - 1)})'
         if kind == 'assign':
             name = self.rng.choice(scope.all_mutable())
             return F'({name} = {self._expr(scope, depth - 1)})'
