@@ -123,7 +123,7 @@ class _Generator:
         return name
 
     def _statement(self, scope: _Scope, depth: int) -> list[str]:
-        choices = ['decl', 'sink', 'log', 'expr', 'obj']
+        choices = ['decl', 'sink', 'log', 'expr', 'obj', 'object_destructure_decl']
         if depth < 2:
             choices += ['if', 'for', 'for_destructure', 'func', 'try', 'objfunc']
         if scope.all_mutable():
@@ -167,10 +167,11 @@ class _Generator:
 
     def _stmt_object_destructure(self, scope: _Scope, depth: int) -> list[str]:
         """
-        An object-destructuring assignment with a shorthand default, `({name = d} = src);`, exercising
-        the parser's CoverInitializedName handling and the synthesizer's shorthand-default emission:
-        *name* is reassigned to the source's matching property, or to *d* when the property is absent,
-        and a later read of the mutable *name* observes whichever it became.
+        An object-destructuring assignment with a shorthand default, `({name = d} = src);`,
+        exercising the parser's CoverInitializedName handling and the synthesizer's
+        shorthand-default emission: *name* is reassigned to the source's matching property, or to
+        *d* when the property is absent, and a later read of the mutable *name* observes whichever
+        it became.
         """
         name = self.rng.choice(scope.all_mutable())
         default = self._expr(scope, 1)
@@ -179,6 +180,27 @@ class _Generator:
         else:
             source = '{}'
         return [F'({{{name} = {default}}} = {source});']
+
+    def _stmt_object_destructure_decl(self, scope: _Scope, depth: int) -> list[str]:
+        """
+        A destructuring DECLARATION with a shorthand default that re-declares (with `var`) a name
+        first bound to a constant — `var name = <lit>; var {name = d} = src;` — exercising
+        constant-inlining's handling of a constant rebound by a destructuring binding target (rather
+        than an assignment target). The re-declaration sets *name* to the source's property or to
+        *d*, which a later read of the mutable *name* observes.
+        """
+        name = self._fresh()
+        scope.readable.append(name)
+        scope.mutable.add(name)
+        default = self._expr(scope, 1)
+        if self.rng.random() < 0.5:
+            source = F'{{{name}: {self._expr(scope, 1)}}}'
+        else:
+            source = '{}'
+        return [
+            F'var {name} = {self.rng.randint(0, 12)};',
+            F'var {{{name} = {default}}} = {source};',
+        ]
 
     def _stmt_sink(self, scope: _Scope, depth: int) -> list[str]:
         return [F'SINK.push({self._expr(scope, 2)});']
