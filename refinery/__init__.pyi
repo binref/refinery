@@ -190,6 +190,7 @@ from refinery.units.formats.archive.xtsf import xtsf as xtsf
 from refinery.units.formats.archive.xtsim import xtsim as xtsim
 from refinery.units.formats.archive.xtsql import xtsql as xtsql
 from refinery.units.formats.archive.xttar import xttar as xttar
+from refinery.units.formats.archive.xtvhd import xtvhd as xtvhd
 from refinery.units.formats.archive.xtzip import xtzip as xtzip
 from refinery.units.formats.archive.xtzpaq import xtzpaq as xtzpaq
 from refinery.units.formats.asn1 import asn1 as asn1

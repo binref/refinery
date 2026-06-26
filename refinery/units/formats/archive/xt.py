@@ -29,6 +29,7 @@ class xt(ArchiveUnit, docs='{0}{p}{PathExtractorUnit}'):
         from refinery.units.formats.archive.xtdmp import xtdmp        ; yield xtdmp     # noqa
         from refinery.units.formats.archive.xttar import xttar        ; yield xttar     # noqa
         from refinery.units.formats.archive.xtiso import xtiso        ; yield xtiso     # noqa
+        from refinery.units.formats.archive.xtvhd import xtvhd        ; yield xtvhd     # noqa
         from refinery.units.formats.archive.xtchm import xtchm        ; yield xtchm     # noqa
         from refinery.units.formats.archive.xtcab import xtcab        ; yield xtcab     # noqa
         from refinery.units.formats.archive.xtace import xtace        ; yield xtace     # noqa

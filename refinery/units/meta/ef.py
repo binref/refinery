@@ -251,12 +251,14 @@ class ef(Unit):
                         if do_meta:
                             atime = stat.st_atime
                             mtime = stat.st_mtime
+                            ctime = stat.st_ctime
                             try:
-                                ctime = stat.st_birthtime
+                                btime = stat.st_birthtime
                             except AttributeError:
-                                ctime = stat.st_ctime
+                                btime = ctime
                             kwargs.update(
                                 fsize=filesize,
+                                btime=datetime.fromtimestamp(btime).isoformat(' ', 'seconds'),
                                 atime=datetime.fromtimestamp(atime).isoformat(' ', 'seconds'),
                                 ctime=datetime.fromtimestamp(ctime).isoformat(' ', 'seconds'),
                                 mtime=datetime.fromtimestamp(mtime).isoformat(' ', 'seconds')
