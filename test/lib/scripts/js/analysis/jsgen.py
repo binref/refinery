@@ -129,6 +129,7 @@ class _Generator:
         if scope.all_mutable():
             choices.append('assign')
             choices.append('destructure')
+            choices.append('object_destructure')
         objects = scope.all_objects()
         if objects:
             choices += ['member_write', 'alias']
@@ -163,6 +164,21 @@ class _Generator:
         default = self._expr(scope, 1)
         items = [self._expr(scope, 1) for _ in range(self.rng.randint(0, 2))]
         return [F'[{name} = {default}] = [{", ".join(items)}];']
+
+    def _stmt_object_destructure(self, scope: _Scope, depth: int) -> list[str]:
+        """
+        An object-destructuring assignment with a shorthand default, `({name = d} = src);`, exercising
+        the parser's CoverInitializedName handling and the synthesizer's shorthand-default emission:
+        *name* is reassigned to the source's matching property, or to *d* when the property is absent,
+        and a later read of the mutable *name* observes whichever it became.
+        """
+        name = self.rng.choice(scope.all_mutable())
+        default = self._expr(scope, 1)
+        if self.rng.random() < 0.5:
+            source = F'{{{name}: {self._expr(scope, 1)}}}'
+        else:
+            source = '{}'
+        return [F'({{{name} = {default}}} = {source});']
 
     def _stmt_sink(self, scope: _Scope, depth: int) -> list[str]:
         return [F'SINK.push({self._expr(scope, 2)});']
