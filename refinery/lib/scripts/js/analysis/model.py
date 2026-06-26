@@ -413,6 +413,23 @@ def _member_is_write_target(member: Node) -> bool:
     return False
 
 
+def is_simple_assignment_target(node: Node) -> bool:
+    """
+    Whether *node* is the write-only target of a simple (`=`) assignment — the left of `=`, looking
+    through destructuring patterns, destructuring defaults, and parentheses — but not a compound
+    assignment (`+=`, `++`), a `delete`, or a `for-in`/`for-of` head, each of which keeps the name
+    live as a read instead of overwriting it outright. Built on the shared `_governing_target` climb,
+    so the pattern, default, and parenthesis handling matches every other write-target query rather
+    than a hand-rolled copy that a later case could drift away from.
+    """
+    governor, target = _governing_target(node)
+    return (
+        isinstance(governor, JsAssignmentExpression)
+        and governor.operator == '='
+        and _strip_parens(governor.left) is target
+    )
+
+
 def _walk_skipping_functions(stmts: list) -> Iterator[Node]:
     """
     Yield the statements in *stmts* and all their descendants, but do not descend into nested function

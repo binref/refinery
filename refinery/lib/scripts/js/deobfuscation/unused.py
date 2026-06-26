@@ -36,6 +36,7 @@ from refinery.lib.scripts.js.analysis.model import (
     Scope,
     ScopeKind,
     SemanticModel,
+    is_simple_assignment_target,
 )
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     BodyProcessingTransformer,
@@ -59,7 +60,6 @@ from refinery.lib.scripts.js.model import (
     JsObjectPattern,
     JsProperty,
     JsPropertyKind,
-    JsRestElement,
     JsScript,
     JsVariableDeclaration,
     JsVariableDeclarator,
@@ -258,38 +258,6 @@ def _destructuring_target_safe(left: Node | None, right: Node | None) -> bool:
             if property_key(prop) == '__proto__':
                 return False
         return True
-    return False
-
-
-def _in_assignment_target(node: JsIdentifier) -> bool:
-    """
-    Return whether *node* is a write-only target of a simple (`=`) assignment, including inside a
-    destructuring pattern (`[a] = ...`, `{a} = ...`). Compound assignments (`a += 1`) read the
-    target before writing, and `for-in`/`for-of` loop variables persist the binding into a surviving
-    statement, so neither counts as a pure target here: both keep the name alive as a reference.
-    Within a pattern property only the value position is a write target: a property key is never
-    written, and a computed key (`{[a]: b} = ...`) is itself an ordinary read of `a` that must not
-    be mistaken for a write.
-    """
-    cursor: Node = node
-    parent = cursor.parent
-    while parent is not None:
-        if isinstance(parent, JsAssignmentExpression):
-            return parent.operator == '=' and parent.left is cursor
-        if isinstance(parent, JsProperty):
-            if parent.value is not cursor:
-                return False
-            cursor = parent
-            parent = cursor.parent
-            continue
-        if isinstance(parent, (
-            JsArrayExpression, JsArrayPattern, JsObjectExpression, JsObjectPattern,
-            JsRestElement,
-        )):
-            cursor = parent
-            parent = cursor.parent
-            continue
-        return False
     return False
 
 
@@ -706,7 +674,7 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
         for node in parent.walk():
             if not isinstance(node, JsIdentifier):
                 continue
-            if is_binding_site(node) or _in_assignment_target(node):
+            if is_binding_site(node) or is_simple_assignment_target(node):
                 continue
             read_names.add(node.name)
         removed: set[str] = set()
@@ -722,7 +690,7 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
             for node in parent.walk()
             if isinstance(node, JsIdentifier)
             and node.name in removed
-            and _in_assignment_target(node)
+            and is_simple_assignment_target(node)
         }
         dead = removed - still_written
         if dead:

@@ -9,6 +9,7 @@ from refinery.lib.scripts.js.analysis.model import (
     ScopeKind,
     build_semantic_model,
     container_reference_role,
+    is_simple_assignment_target,
     reference_role,
 )
 from refinery.lib.scripts.js.model import JsIdentifier, JsReturnStatement
@@ -495,6 +496,44 @@ class TestSemanticModel(TestBase):
 
     def test_reference_role_array_spread_argument_is_read(self):
         self.assertEqual(self._ref_role('var a = 1; f(...a);'), Role.READ)
+
+    def _is_simple_target(self, source: str, name: str = 'a') -> bool:
+        ast, model = self._model(source)
+        ref = next(n for n in self._idents(ast, name) if model.binding_of(n) is None)
+        return is_simple_assignment_target(ref)
+
+    def test_simple_assignment_target_is_simple(self):
+        self.assertTrue(self._is_simple_target('var a; a = 1;'))
+
+    def test_parenthesized_assignment_target_is_simple(self):
+        self.assertTrue(self._is_simple_target('var a; (a) = 1;'))
+
+    def test_array_destructuring_target_is_simple(self):
+        self.assertTrue(self._is_simple_target('var a; [a] = xs;'))
+
+    def test_array_destructuring_default_target_is_simple(self):
+        self.assertTrue(self._is_simple_target('var a; [a = 9] = xs;'))
+
+    def test_object_destructuring_default_target_is_simple(self):
+        self.assertTrue(self._is_simple_target('var a; ({k: a = 9} = obj);'))
+
+    def test_for_of_head_target_is_not_simple(self):
+        self.assertFalse(self._is_simple_target('var a; for (a of xs) {}'))
+
+    def test_for_in_head_target_is_not_simple(self):
+        self.assertFalse(self._is_simple_target('var a; for (a in o) {}'))
+
+    def test_compound_assignment_target_is_not_simple(self):
+        self.assertFalse(self._is_simple_target('var a = 0; a += 1;'))
+
+    def test_update_target_is_not_simple(self):
+        self.assertFalse(self._is_simple_target('var a = 0; a++;'))
+
+    def test_plain_read_is_not_simple(self):
+        self.assertFalse(self._is_simple_target('var a = 1; f(a);'))
+
+    def test_destructuring_default_value_is_not_simple(self):
+        self.assertFalse(self._is_simple_target('var a = 1; [x = a] = xs;'))
 
     def test_eval_is_a_reflection_surface(self):
         _, model = self._model('eval(payload);')
