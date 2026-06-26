@@ -539,7 +539,7 @@ class TestSemanticModel(TestBase):
         self.assertFalse(self._is_simple_target('({a = d} = o);', 'd'))
 
     def test_object_assignment_shorthand_default_target_is_a_write(self):
-        ast, model = self._model('({a = d} = o);')
+        ast, _ = self._model('({a = d} = o);')
         target = self._idents(ast, 'a')[0]
         self.assertEqual(reference_role(target), Role.WRITE)
         self.assertTrue(is_simple_assignment_target(target))

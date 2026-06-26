@@ -320,20 +320,19 @@ def _governing_target(node: Node) -> tuple[Node | None, Node]:
     an assignment or binding target position — array and object patterns (and the literal-shaped
     forms a destructuring assignment or `for-in`/`for-of` target is parsed as), their rest and
     spread elements, the value side of a pattern property, and the target side of a default pattern
-    (`[a = d] = ...`, climbing the `a` side only, never into the default `d`) — including an object
-    shorthand-default `({a = d} = ...)`, whose key node the parser reuses as that default's target,
-    so the climb follows the shared key as the write it also is instead of stopping at it as a bare
-    property key — then return the
+    (`[a = d] = ...`, climbing the `a` side only, never into the default `d`) — then return the
     first ancestor that does not continue the target, together with the operand it sees: the
-    outermost container the climb carried *node* up to. That ancestor is the construct whose
-    operator governs the target; when *node* really sits in a target it is an assignment, update,
-    `delete`, `for-in`/`for-of` head, or declarator, but it is some other node (a call, an operand)
-    when *node* is not a target, and `None` past the top of the tree — so a caller decides a write
-    by asking whether the returned operand is the governor's write side, never from the governor's
-    type alone. Centralizing the climb keeps the pattern-and-parenthesis handling identical for
-    every def-use, write-target, and liveness query, so a case one copy forgot — such as the
-    array-default `JsAssignmentPattern` target or a `for-of` rest element — cannot be missed by one
-    and not another.
+    outermost container the climb carried *node* up to. An object shorthand-default
+    (`({a = d} = ...)`) is one such default: the parser reuses its key node as that default's
+    target, so the climb follows the shared key as the write it also is instead of stopping at it as
+    a bare property key. That ancestor is the construct whose operator governs the target; when
+    *node* really sits in a target it is an assignment, update, `delete`, `for-in`/`for-of` head, or
+    declarator, but it is some other node (a call, an operand) when *node* is not a target, and
+    `None` past the top of the tree — so a caller decides a write by asking whether the returned
+    operand is the governor's write side, never from the governor's type alone. Centralizing the
+    climb keeps the pattern-and-parenthesis handling identical for every def-use, write-target, and
+    liveness query, so a case one copy forgot — such as the array-default `JsAssignmentPattern`
+    target or a `for-of` rest element — cannot be missed by one and not another.
     """
     cursor: Node = node
     parent = _enclosing_operator(cursor)
