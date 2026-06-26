@@ -604,6 +604,9 @@ class TestJsSynthesizer(TestBase):
     def test_object_pattern_shorthand_default_nested(self):
         self.assertEqual(self._round_trip('var {a: {b = d}} = o;'), 'var { a: { b = d } } = o;')
 
+    def test_object_assignment_pattern_shorthand_default(self):
+        self.assertEqual(self._round_trip('({a = d} = o);'), '({ a = d } = o);')
+
     def test_property_definition(self):
         self._round_trip('class C { x = 5; }')
 

@@ -1400,6 +1400,12 @@ class JsParser:
             return JsProperty(
                 key=key, value=value, computed=computed,
                 shorthand=False, offset=offset)
+        if not computed and self._eat(JsTokenKind.EQUALS):
+            right = self._parse_assignment_expression()
+            value = JsAssignmentPattern(left=key, right=right, offset=key.offset)
+            return JsProperty(
+                key=key, value=value, computed=computed,
+                shorthand=True, offset=offset)
         return JsProperty(
             key=key, value=key, computed=computed,
             shorthand=True, offset=offset)

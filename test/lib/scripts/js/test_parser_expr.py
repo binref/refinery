@@ -7,6 +7,7 @@ from refinery.lib.scripts.js.model import (
     JsArrayExpression,
     JsArrowFunctionExpression,
     JsAssignmentExpression,
+    JsAssignmentPattern,
     JsBigIntLiteral,
     JsBinaryExpression,
     JsBooleanLiteral,
@@ -21,6 +22,7 @@ from refinery.lib.scripts.js.model import (
     JsNullLiteral,
     JsNumericLiteral,
     JsObjectExpression,
+    JsObjectPattern,
     JsParenthesizedExpression,
     JsProperty,
     JsPropertyKind,
@@ -283,6 +285,20 @@ class TestJsParserExpressions(TestBase):
         prop = obj.properties[0]
         self.assertIsInstance(prop, JsProperty)
         self.assertTrue(prop.shorthand)
+
+    def test_object_assignment_pattern_shorthand_default(self):
+        expr = self._parse_expr('({a = d} = o)')
+        self.assertIsInstance(expr, JsParenthesizedExpression)
+        assign = expr.expression
+        self.assertIsInstance(assign, JsAssignmentExpression)
+        pattern = assign.left
+        self.assertIsInstance(pattern, JsObjectPattern)
+        self.assertEqual(len(pattern.properties), 1)
+        prop = pattern.properties[0]
+        self.assertIsInstance(prop, JsProperty)
+        self.assertTrue(prop.shorthand)
+        self.assertIsInstance(prop.value, JsAssignmentPattern)
+        self.assertEqual(prop.value.right.name, 'd')
 
     def test_spread(self):
         expr = self._parse_expr('[...a]')
