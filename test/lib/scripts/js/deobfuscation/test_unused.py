@@ -383,6 +383,14 @@ class TestUnusedCodeRemoval(TestJsDeobfuscator):
         left, right = self._destructuring_parts('({k: a} = {__proto__(){}});')
         self.assertTrue(_destructuring_target_safe(left, right))
 
+    def test_destructuring_object_proto_shorthand_source_is_safe(self):
+        left, right = self._destructuring_parts('({k: a} = {__proto__});')
+        self.assertTrue(_destructuring_target_safe(left, right))
+
+    def test_destructuring_object_proto_colon_source_is_unsafe(self):
+        left, right = self._destructuring_parts('({k: a} = {__proto__: p});')
+        self.assertFalse(_destructuring_target_safe(left, right))
+
     def test_destructuring_object_getter_source_is_unsafe(self):
         left, right = self._destructuring_parts('({k: a} = {get x(){}});')
         self.assertFalse(_destructuring_target_safe(left, right))
@@ -830,6 +838,29 @@ class TestUnusedCodeRemoval(TestJsDeobfuscator):
             """
         )
         self.assertEqual(self._remove_unused_unwrapped(source), self._simplify(source))
+
+    def test_dead_destructuring_object_proto_method_rhs_removed(self):
+        source = inspect.cleandoc(
+            """
+            function f() {
+              var a;
+              ({y: a} = {__proto__() {}});
+              return 3;
+            }
+            console.log(f());
+            """
+        )
+        self.assertEqual(
+            self._remove_unused_unwrapped(source),
+            inspect.cleandoc(
+                """
+                function f() {
+                  return 3;
+                }
+                console.log(f());
+                """
+            ),
+        )
 
     def test_transitive_reachability(self):
         source = inspect.cleandoc(
