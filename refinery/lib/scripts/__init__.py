@@ -199,7 +199,8 @@ class AnalysisCache(Protocol):
     memoized analyses when the tree changes. A concrete cache adds the model accessors its consumers
     use; see `refinery.lib.scripts.js.analysis.cache.ModelCache`.
     """
-    def invalidate(self) -> None: ...
+    def invalidate(self) -> None:
+        ...
 
 
 class Transformer(Visitor):
