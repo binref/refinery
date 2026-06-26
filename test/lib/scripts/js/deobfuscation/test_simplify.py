@@ -426,6 +426,19 @@ class TestExtendedOperatorFolding(TestJsDeobfuscator):
         self.assertEqual(
             'var r = [{ a: 7 }, function() {\n  return 7;\n}];', self._simplify(source))
 
+    def test_iife_not_inlined_when_parameter_is_assigned(self):
+        self.assertEqual(
+            '(function(v) {\n  return v = 1;\n})(2);',
+            self._simplify('(function (v) { return (v = 1); })(2);'))
+
+    def test_iife_not_inlined_when_parameter_is_compound_assigned(self):
+        self.assertEqual(
+            '(function(v) {\n  return v += 1;\n})(2);',
+            self._simplify('(function (v) { return (v += 1); })(2);'))
+
+    def test_iife_inlined_when_parameter_only_read(self):
+        self.assertEqual('2 + 1;', self._simplify('(function (v) { return (v + 1); })(2);'))
+
     def test_iife_preserves_conditional_effectful_arg(self):
         source = inspect.cleandoc(
             """

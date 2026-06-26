@@ -28,9 +28,11 @@ from refinery.lib.scripts.js.analysis.cache import model_cache
 from refinery.lib.scripts.js.analysis.effects import side_effect_free
 from refinery.lib.scripts.js.analysis.model import (
     Binding,
+    Role,
     SemanticModel,
     build_semantic_model,
     is_use_position,
+    reference_role,
 )
 from refinery.lib.scripts.js.model import (
     JsArrayExpression,
@@ -704,6 +706,22 @@ def _collect_unconditional_identifiers(expr: Node) -> list[str]:
     return names
 
 
+def _param_written(expr: Node, param_names: set[str]) -> bool:
+    """
+    Whether any of *param_names* occurs at a write position — an assignment, compound-assignment, or
+    update target — within *expr*. Such a parameter is not read-only, so substituting the call
+    argument for it would place the argument at a write target: assigning to a value (`(11 = 'x')`)
+    or, for an lvalue argument, mutating the caller's binding. A wrapper with a written parameter is
+    therefore not a pure function of its arguments and must not be inlined by substitution.
+    """
+    return any(
+        isinstance(node, JsIdentifier)
+        and node.name in param_names
+        and reference_role(node) is not Role.READ
+        for node in expr.walk()
+    )
+
+
 def is_safe_iife_inline(
     expr: Node,
     param_names: Sequence[str],
@@ -722,6 +740,8 @@ def is_safe_iife_inline(
     counts as side-effect-free for the ordering rules — but, being a call, is not simple, so it is still
     not duplicated.
     """
+    if _param_written(expr, set(param_names)):
+        return False
     use_counts = Counter(
         n.name for n in expr.walk()
         if isinstance(n, JsIdentifier) and is_use_position(n)
@@ -883,6 +903,8 @@ def try_inline_trivial_function(
         return None
     expr = stmt.argument
     if not is_closed_expression(expr, set(param_names)):
+        return None
+    if _param_written(expr, set(param_names)):
         return None
     if relaxed:
         for i, name in enumerate(param_names):
