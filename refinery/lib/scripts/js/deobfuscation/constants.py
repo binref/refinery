@@ -12,6 +12,7 @@ from refinery.lib.scripts.js.analysis.model import (
     Role,
     SemanticModel,
     _strip_parens,
+    pattern_identifiers,
     reference_role,
 )
 from refinery.lib.scripts.js.deobfuscation.helpers import (
@@ -422,6 +423,10 @@ class JsConstantInlining(ScopeProcessingTransformer):
                     if not isinstance(decl, JsVariableDeclarator):
                         continue
                     if not isinstance(decl.id, JsIdentifier):
+                        for ident in pattern_identifiers(decl.id):
+                            rejected.add(ident.name)
+                            candidates.pop(ident.name, None)
+                            uninitialized.pop(ident.name, None)
                         continue
                     name = decl.id.name
                     if name in rejected:

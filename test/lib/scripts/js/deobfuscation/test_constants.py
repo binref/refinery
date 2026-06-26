@@ -40,6 +40,30 @@ class TestConstantInlining(TestJsDeobfuscator):
         )
         self.assertEqual(source, self._inline(source))
 
+    def test_constant_rebound_by_object_destructuring_default_declaration_not_inlined(self):
+        source = inspect.cleandoc(
+            """
+            var c = 1;
+            var { c = d } = o;
+            """
+        )
+        self.assertEqual(source, self._inline(source))
+
+    def test_constant_rebound_by_object_destructuring_declaration_not_inlined(self):
+        source = inspect.cleandoc(
+            """
+            var c = 1;
+            var { c } = o;
+            """
+        )
+        self.assertEqual(source, self._inline(source))
+
+    def test_constant_default_in_object_destructuring_declaration_is_inlined(self):
+        self.assertEqual(
+            'var { a = 2 } = o;',
+            self._inline('var b = 2; var { a = b } = o;'),
+        )
+
     def test_global_reassigned_in_called_function_not_inlined(self):
         self.assertEqual(
             inspect.cleandoc(
