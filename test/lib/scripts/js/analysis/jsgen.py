@@ -125,7 +125,7 @@ class _Generator:
     def _statement(self, scope: _Scope, depth: int) -> list[str]:
         choices = ['decl', 'sink', 'log', 'expr', 'obj', 'object_destructure_decl']
         if depth < 2:
-            choices += ['if', 'for', 'for_destructure', 'func', 'try', 'objfunc']
+            choices += ['if', 'for', 'while', 'for_destructure', 'func', 'try', 'objfunc']
         if scope.all_mutable():
             choices.append('assign')
             choices.append('destructure')
@@ -238,6 +238,24 @@ class _Generator:
         inner.readable.append(counter)
         lines = [F'for (let {counter} = 0; {counter} < {bound}; {counter}++) {{']
         lines += self._indent(self._body(inner, depth + 1))
+        lines.append('}')
+        return lines
+
+    def _stmt_while(self, scope: _Scope, depth: int) -> list[str]:
+        """
+        A `while` loop over a bounded counter that terminates via an explicit increment at the end of
+        the body, so the generated program always halts. The counter is read-only to the body (it is
+        not in *mutable*), so only the trailing increment advances it. Exercises the control-flow and
+        dead-code transforms on a loop form other than `for`.
+        """
+        counter = self._fresh()
+        bound = self.rng.randint(0, 4)
+        inner = scope.child()
+        inner.readable.append(counter)
+        body = self._body(inner, depth + 1)
+        body.append(F'{counter}++;')
+        lines = [F'var {counter} = 0;', F'while ({counter} < {bound}) {{']
+        lines += self._indent(body)
         lines.append('}')
         return lines
 
