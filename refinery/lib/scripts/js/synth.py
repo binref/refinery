@@ -290,6 +290,9 @@ class JsSynthesizer(Synthesizer):
                     self._emit_block(node.value.body.body)
             return
         if node.shorthand:
+            if isinstance(node.value, JsAssignmentPattern):
+                self._write(' = ')
+                self._emit_element(node.value.right, True)
             return
         self._write(': ')
         self._emit_element(node.value, True)

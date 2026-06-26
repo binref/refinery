@@ -589,6 +589,21 @@ class TestJsSynthesizer(TestBase):
     def test_assignment_pattern_default(self):
         self._round_trip('function f(a = 1) {}')
 
+    def test_object_pattern_shorthand_default_var(self):
+        self.assertEqual(self._round_trip('var {a = d} = o;'), 'var { a = d } = o;')
+
+    def test_object_pattern_shorthand_default_const(self):
+        self.assertEqual(self._round_trip('const {a = d} = o;'), 'const { a = d } = o;')
+
+    def test_object_pattern_shorthand_default_param(self):
+        self.assertEqual(self._round_trip('function f({a = d}) {}'), 'function f({ a = d }) {}')
+
+    def test_object_pattern_shorthand_default_mixed_with_plain(self):
+        self.assertEqual(self._round_trip('var {a = d, b} = o;'), 'var { a = d, b } = o;')
+
+    def test_object_pattern_shorthand_default_nested(self):
+        self.assertEqual(self._round_trip('var {a: {b = d}} = o;'), 'var { a: { b = d } } = o;')
+
     def test_property_definition(self):
         self._round_trip('class C { x = 5; }')
 
