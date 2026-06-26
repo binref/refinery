@@ -64,6 +64,33 @@ class TestConstantInlining(TestJsDeobfuscator):
             self._inline('var b = 2; var { a = b } = o;'),
         )
 
+    def test_compound_assignment_in_nested_function_keeps_declaration(self):
+        source = inspect.cleandoc(
+            """
+            var SINK = [];
+            let v = true;
+            SINK.push(v ? 1 : 2);
+            function f() {
+              v <<= 1;
+            }
+            f();
+            """
+        )
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var SINK = [];
+                let v = true;
+                SINK.push(true ? 1 : 2);
+                function f() {
+                  v <<= 1;
+                }
+                f();
+                """
+            ),
+            self._inline(source),
+        )
+
     def test_global_reassigned_in_called_function_not_inlined(self):
         self.assertEqual(
             inspect.cleandoc(

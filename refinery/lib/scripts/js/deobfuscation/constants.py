@@ -129,7 +129,9 @@ def _count_scope_references(
 ) -> dict[str, int]:
     """
     Count identifier references within *scope* for each name in *names*, excluding declaration
-    sites in *decl_ids* and assignment write targets. When *walk_full* is True, the entire subtree
+    sites in *decl_ids* and simple (`=`) assignment write targets. A compound assignment (`x += e`,
+    `x <<= e`) reads its target, so its left side is counted as a reference and the variable stays
+    live. When *walk_full* is True, the entire subtree
     is traversed (including nested function bodies); otherwise only the current scope is walked.
     When *count_member_access* is True, computed member accesses like `name[idx]` are counted
     separately (the identifier inside the member is counted and the walk continues so the member
@@ -151,7 +153,7 @@ def _count_scope_references(
         if name not in names:
             continue
         parent = node.parent
-        if isinstance(parent, JsAssignmentExpression) and parent.left is node:
+        if isinstance(parent, JsAssignmentExpression) and parent.left is node and parent.operator == '=':
             continue
         if count_member_access:
             if isinstance(parent, JsMemberExpression) and parent.object is node and parent.computed:
