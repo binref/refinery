@@ -295,3 +295,48 @@ class TestDeobfuscationDifferential(TestBase):
             'const dec = function(s){ rr = s; return "x"; };'
             ' var y = dec("hi");'
             ' console.log(y, rr);')
+
+    def test_uninitialized_var_promoted_constant_not_inlined_before_assignment(self):
+        """
+        `g` reads the outer `x`, which is `undefined` until a later `x = 5`. The first `g()` runs
+        before that assignment, so promoting `x` to the constant `5` and inlining it into `g` would
+        change the first call's result from `undefined` to `5`. Cross-function inlining must keep the
+        value un-inlined where a call can observe it before the assignment establishes it.
+        """
+        self._check(
+            'var SINK = [];'
+            ' var x;'
+            ' function g(){ return x; }'
+            ' SINK.push(g());'
+            ' x = 5;'
+            ' SINK.push(g());'
+            " console.log(SINK.join('|'));")
+
+    def test_var_initializer_declared_after_call_not_inlined(self):
+        """
+        `var x = 5` hoists as `undefined` and is assigned only when its declaration runs, after the
+        first `g()`. Inlining the constant into `g` would make the first call return 5 instead of the
+        undefined the hoisted-but-unassigned binding holds.
+        """
+        self._check(
+            'var SINK = [];'
+            ' function g(){ return x; }'
+            ' SINK.push(g());'
+            ' var x = 5;'
+            ' SINK.push(g());'
+            " console.log(SINK.join('|'));")
+
+    def test_const_declared_after_call_not_inlined_past_tdz(self):
+        """
+        `g` reads `const x` from the temporal dead zone at the first `g()`, which throws; only after
+        the declaration does it read 5. Inlining the constant into `g` would replace the throw with a
+        value, so the const must not be substituted into a function a visible call reaches before the
+        declaration.
+        """
+        self._check(
+            'var SINK = [];'
+            ' function g(){ return x; }'
+            ' try { SINK.push(g()); } catch (e) { SINK.push(e.name); }'
+            ' const x = 5;'
+            ' SINK.push(g());'
+            " console.log(SINK.join('|'));")

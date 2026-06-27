@@ -683,6 +683,30 @@ class JsConstantInlining(ScopeProcessingTransformer):
         self.mark_changed()
         inlined[name] = inlined.get(name, 0) + 1
 
+    @staticmethod
+    def _any_call_precedes_value(s_entry: _BodyEntry | None, calls: list[Node]) -> bool:
+        """
+        TEMPORARY ordering stopgap, pending the Phase-2 reaching-definition domination analysis on the
+        control-flow graph. Whether any call in *calls* is positioned at or before the value-establishing
+        statement *s_entry* within *s_entry*'s own statement list — a visible invocation that would read
+        the value before it is set: a stale read for a `var`, a temporal-dead-zone throw for a `const`.
+        Only a call sharing a statement list with *s_entry* is compared, where textual order is execution
+        order; a call reached through a nested or indirect path cannot be ordered without a control-flow
+        graph and is left to Phase 2. So this refuses cross-function inlining on a *demonstrated*
+        misordering, not on every unprovable one — a fully conservative refusal regresses the obfuscator
+        idioms (a hoisted lookup value assigned once, then read through a chain of calls) the inliner
+        exists to see through.
+        """
+        if s_entry is None:
+            return False
+        for call in calls:
+            if any(
+                entry.body is s_entry.body and entry.stmt_index <= s_entry.stmt_index
+                for entry in _find_all_body_entries(call)
+            ):
+                return True
+        return False
+
     def _substitute_const_across_functions(
         self,
         scope: Node,
@@ -695,11 +719,15 @@ class JsConstantInlining(ScopeProcessingTransformer):
     ) -> None:
         """
         For constant-valued candidates, walk the full subtree to inline references inside nested
-        function bodies. `const`-qualified candidates are inlined unconditionally (they cannot be
-        reassigned). `var`/`let`-qualified candidates are inlined only into named function declarations
-        that are actually called in the current scope and that do not modify the variable (per the
-        effect model's per-binding mutation query). The call-site requirement prevents inlining into
-        functions that may be invoked from elsewhere with a different value for the variable.
+        function bodies. A `const`-qualified candidate, or an uninitialized `var` later assigned a
+        single constant, is inlined into a function unless a visible call to that function runs before
+        the value is established (`_any_call_precedes_value`) — a stale read for the `var` form, a
+        temporal-dead-zone read for the `const` form. A `var`/`let` candidate that carries its own
+        initializer is inlined only into a named function declaration actually called in the current
+        scope that the effect model proves does not mutate the binding, and again only when no visible
+        call precedes the value. The ordering check is a temporary stopgap until the Phase-2
+        reaching-definition analysis replaces statement-position comparison with control-flow domination;
+        it refuses on a demonstrated misordering rather than risk inlining a value a call reads early.
         """
         model = effects.model
         cross_candidates: dict[str, list[_CandidateEntry]] = {}
@@ -729,14 +757,17 @@ class JsConstantInlining(ScopeProcessingTransformer):
         outer = model.scope_of(scope)
         assert outer is not None
 
+        call_sites: dict[int, list[Node]] = {}
         called_ids: set[int] = set()
         called_funcs: list[Node] = []
         for node in walk_scope(scope, include_root_body=True):
             if isinstance(node, JsCallExpression):
                 target = effects.static_callee(node)
-                if target is not None and id(target) not in called_ids:
-                    called_ids.add(id(target))
-                    called_funcs.append(target)
+                if target is not None:
+                    if id(target) not in called_ids:
+                        called_ids.add(id(target))
+                        called_funcs.append(target)
+                    call_sites.setdefault(id(target), []).append(node)
 
         for name in [
             candidate for candidate, binding in cross_bindings.items()
@@ -758,14 +789,10 @@ class JsConstantInlining(ScopeProcessingTransformer):
                 ):
                     name = obj.name
                     enclosing = enclosing_function(obj)
+                    s_entry = cross_candidates[name][0].scope
                     if name in const_names:
                         if enclosing is None:
                             continue
-                        if model.is_shadowed(name, obj, outer):
-                            continue
-                        self._apply_index_access_inline(
-                            node, cross_candidates[name][0], name, inlined,
-                        )
                     else:
                         if (
                             not isinstance(enclosing, JsFunctionDeclaration)
@@ -773,8 +800,15 @@ class JsConstantInlining(ScopeProcessingTransformer):
                             or effects.function_can_mutate(enclosing, cross_bindings[name])
                         ):
                             continue
-                        if model.is_shadowed(name, obj, outer):
-                            continue
+                    if self._any_call_precedes_value(s_entry, call_sites.get(id(enclosing), [])):
+                        continue
+                    if model.is_shadowed(name, obj, outer):
+                        continue
+                    if name in const_names:
+                        self._apply_index_access_inline(
+                            node, cross_candidates[name][0], name, inlined,
+                        )
+                    else:
                         self._try_inline_index(
                             node, name, cross_candidates, seal_points, inlined,
                         )
@@ -807,6 +841,8 @@ class JsConstantInlining(ScopeProcessingTransformer):
                 or id(enclosing) not in called_ids
                 or effects.function_can_mutate(enclosing, cross_bindings[name])
             ):
+                continue
+            if self._any_call_precedes_value(entry.scope, call_sites.get(id(enclosing), [])):
                 continue
             if model.is_shadowed(name, node, outer):
                 continue
