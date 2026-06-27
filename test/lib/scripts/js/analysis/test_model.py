@@ -497,6 +497,12 @@ class TestSemanticModel(TestBase):
     def test_reference_role_array_spread_argument_is_read(self):
         self.assertEqual(self._ref_role('var a = 1; f(...a);'), Role.READ)
 
+    def test_reference_role_delete_target_is_readwrite(self):
+        self.assertEqual(self._ref_role('var a = 1; delete a;'), Role.READWRITE)
+
+    def test_reference_role_delete_member_base_is_read(self):
+        self.assertEqual(self._ref_role('var a = []; delete a[0];'), Role.READ)
+
     def _is_simple_target(self, source: str, name: str = 'a') -> bool:
         ast, model = self._model(source)
         ref = next(n for n in self._idents(ast, name) if model.binding_of(n) is None)

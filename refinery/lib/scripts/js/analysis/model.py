@@ -277,7 +277,8 @@ def reference_role(node: JsIdentifier) -> Role:
     """
     Classify how a referencing identifier touches its binding: a plain read, a write-only target (the
     left of a simple `=`, including inside a destructuring pattern or a destructuring default, or a
-    `for-in`/`for-of` head), or a read-and-write (compound assignment or `++`/`--`). The shared
+    `for-in`/`for-of` head), or a read-and-write (compound assignment, `++`/`--`, or a `delete`, each
+    of which keeps the name live as a read rather than overwriting it outright). The shared
     `_governing_target` climb looks through destructuring containers, default patterns, and
     parentheses, so a target nested in a pattern or a grouping (`[x = 9] = xs`, `(x)++`, `(o) = v`) is
     still recognized as a write.
@@ -286,6 +287,12 @@ def reference_role(node: JsIdentifier) -> Role:
     if isinstance(governor, JsAssignmentExpression) and _strip_parens(governor.left) is target:
         return Role.WRITE if governor.operator == '=' else Role.READWRITE
     if isinstance(governor, JsUpdateExpression) and _strip_parens(governor.argument) is target:
+        return Role.READWRITE
+    if (
+        isinstance(governor, JsUnaryExpression)
+        and governor.operator == 'delete'
+        and _strip_parens(governor.operand) is target
+    ):
         return Role.READWRITE
     if isinstance(governor, (JsForInStatement, JsForOfStatement)) and _strip_parens(governor.left) is target:
         return Role.WRITE

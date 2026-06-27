@@ -111,3 +111,14 @@ class TestCallWrapperInliner(TestJsDeobfuscator):
             """
         )
         self.assertEqual(source, self._run_transformer(source, JsCallWrapperInliner))
+
+    def test_wrapper_deleting_parameter_not_inlined(self):
+        source = inspect.cleandoc(
+            """
+            function w(p) {
+              return g(delete p);
+            }
+            w(7);
+            """
+        )
+        self.assertEqual(source, self._run_transformer(source, JsCallWrapperInliner))
