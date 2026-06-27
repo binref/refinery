@@ -401,6 +401,7 @@ class _Generator:
         if scope.all_mutable():
             kinds.append('assign')
             kinds.append('update')
+            kinds.append('delete')
         kind = self.rng.choice(kinds)
         if kind == 'atom':
             return self._atom(scope)
@@ -427,6 +428,9 @@ class _Generator:
             name = self.rng.choice(scope.all_mutable())
             op = self.rng.choice(('++', '--'))
             return F'({name}{op})' if self.rng.random() < 0.5 else F'({op}{name})'
+        if kind == 'delete':
+            name = self.rng.choice(scope.all_mutable())
+            return F'(delete {name})'
         name, arity = self.rng.choice(funcs)
         args = [self._expr(scope, depth - 1) for _ in range(arity)]
         return F'{name}({", ".join(args)})'
