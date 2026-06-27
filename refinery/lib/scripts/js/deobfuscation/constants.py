@@ -257,6 +257,36 @@ def _compute_function_mods(scope: Node, model: SemanticModel) -> dict[str, set[s
     return result
 
 
+def _names_mutated_by_escaping_functions(scope: Node, func_mods: dict[str, set[str]]) -> set[str]:
+    """
+    Outer-scope names a named function declaration or var-bound function expression mutates, when that
+    function's binding escapes — appears anywhere other than its own declaration or the callee of a
+    direct `name(...)` call. `_compute_function_mods` seals such a write only at direct by-name call
+    sites, so a closure that mutates a captured variable and is then invoked through any other channel
+    (passed as a callback, `f.call(...)`, `(f)()`, stored and called later) is never sealed: the write
+    can land between any two reads, so the variable is not a stable constant and must not be inlined.
+    """
+    mutators = {name for name, mods in func_mods.items() if mods}
+    if not mutators:
+        return set()
+    escaped: set[str] = set()
+    for node in scope.walk():
+        if not isinstance(node, JsIdentifier) or node.name not in mutators:
+            continue
+        parent = node.parent
+        if isinstance(parent, JsFunctionDeclaration) and parent.id is node:
+            continue
+        if isinstance(parent, JsVariableDeclarator) and parent.id is node:
+            continue
+        if isinstance(parent, JsCallExpression) and parent.callee is node:
+            continue
+        escaped.add(node.name)
+    result: set[str] = set()
+    for name in escaped:
+        result |= func_mods[name]
+    return result
+
+
 def _is_member_array_safe(scope: Node, prefix_name: str, prop_name: str) -> bool:
     """
     Verify that `prefix.prop` (a member-expression array) is never mutated after its initial
@@ -535,7 +565,11 @@ class JsConstantInlining(ScopeProcessingTransformer):
                         if modified_var in candidates:
                             seal_points.setdefault(modified_var, []).extend(call_entries)
 
-        for name in _names_mutated_in_anonymous_functions(scope):
+        unsealed = (
+            _names_mutated_in_anonymous_functions(scope)
+            | _names_mutated_by_escaping_functions(scope, func_mods)
+        )
+        for name in unsealed:
             if name in candidates or name in uninitialized:
                 rejected.add(name)
                 candidates.pop(name, None)

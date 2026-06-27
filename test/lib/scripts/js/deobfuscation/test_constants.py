@@ -181,6 +181,41 @@ class TestConstantInlining(TestJsDeobfuscator):
         )
         self.assertEqual(source, self._inline(source))
 
+    def test_var_bound_closure_mutation_via_indirect_call_not_inlined(self):
+        """
+        `f` mutates the captured `x`, but invoking it through `f.call(...)` rather than a direct `f()`
+        is not a recognized seal point, so the write could land between the assignment and the read;
+        `x` is not a stable constant and must not be inlined.
+        """
+        source = inspect.cleandoc(
+            """
+            var x = 1;
+            var f = function() {
+              x = 2;
+            };
+            f.call(null);
+            SINK.push(x);
+            """
+        )
+        self.assertEqual(source, self._inline(source))
+
+    def test_named_closure_mutation_when_passed_as_callback_not_inlined(self):
+        """
+        `f` escapes as a callback argument, so the call that mutates the captured `x` happens at an
+        unknown point; `x` is therefore not a stable constant and must not be inlined.
+        """
+        source = inspect.cleandoc(
+            """
+            var x = 1;
+            function f() {
+              x = 2;
+            }
+            [0].forEach(f);
+            SINK.push(x);
+            """
+        )
+        self.assertEqual(source, self._inline(source))
+
     def test_single_use_expression_inlined(self):
         self.assertEqual('return a + b;', self._inline('var x = a + b; return x;'))
 
