@@ -172,27 +172,46 @@ def _is_literal_array(node: Node) -> bool:
     return all(el is not None and is_literal(el) for el in node.elements)
 
 
-def _names_mutated_in_anonymous_functions(scope: Node) -> set[str]:
+def _is_inside_anonymous_function(node: Node, scope: Node) -> bool:
     """
-    Names assigned or updated inside a function EXPRESSION or arrow nested in *scope* that is not bound
-    to a variable. `_compute_function_mods` attributes writes only to named function declarations and
-    var-bound function expressions (whose calls it seals by name); an anonymous IIFE or callback that
-    mutates a captured outer variable is invisible to it and its call site carries no seal point. Such
-    a variable is not a stable constant — invoking the closure can change it between reads — so it must
-    not be inlined.
+    Whether *node* lies inside a function expression or arrow nested in *scope* that is not bound to
+    a variable: an IIFE or callback whose invocation point is unknown, unlike a named declaration or
+    a var-bound function whose calls `_compute_function_mods` seals by name.
+    """
+    cursor = node.parent
+    while cursor is not None and cursor is not scope:
+        if isinstance(cursor, (JsFunctionExpression, JsArrowFunctionExpression)):
+            owner = cursor.parent
+            if not (isinstance(owner, JsVariableDeclarator) and owner.init is cursor):
+                return True
+        cursor = cursor.parent
+    return False
+
+
+def _names_mutated_in_anonymous_functions(scope: Node, func_mods: dict[str, set[str]]) -> set[str]:
+    """
+    Outer-scope names mutated from inside a function expression or arrow nested in *scope* that is
+    not bound to a variable. `_compute_function_mods` attributes writes only to named declarations
+    and var-bound function expressions, whose calls it seals by name; an anonymous IIFE or callback
+    is invisible to it and seals nothing, so a captured variable it can change between two reads is
+    not a stable constant and must not be inlined. Such a closure mutates a name directly, through
+    an assignment or update, or transitively, by calling a known mutator whose captured writes
+    `func_mods` already records — the accounting `_compute_function_mods` performs for named ones,
+    without which a mutator reached only through an anonymous closure seals nothing yet still runs.
     """
     result: set[str] = set()
     for node in scope.walk():
-        if not isinstance(node, JsIdentifier) or reference_role(node) is Role.READ:
+        if not isinstance(node, JsIdentifier):
             continue
-        cursor = node.parent
-        while cursor is not None and cursor is not scope:
-            if isinstance(cursor, (JsFunctionExpression, JsArrowFunctionExpression)):
-                owner = cursor.parent
-                if not (isinstance(owner, JsVariableDeclarator) and owner.init is cursor):
-                    result.add(node.name)
-                    break
-            cursor = cursor.parent
+        if reference_role(node) is not Role.READ:
+            payload: set[str] = {node.name}
+        else:
+            parent = node.parent
+            if not (isinstance(parent, JsCallExpression) and parent.callee is node):
+                continue
+            payload = func_mods.get(node.name, set())
+        if payload and _is_inside_anonymous_function(node, scope):
+            result |= payload
     return result
 
 
@@ -571,7 +590,7 @@ class JsConstantInlining(ScopeProcessingTransformer):
                             seal_points.setdefault(modified_var, []).extend(call_entries)
 
         unsealed = (
-            _names_mutated_in_anonymous_functions(scope)
+            _names_mutated_in_anonymous_functions(scope, func_mods)
             | _names_mutated_by_escaping_functions(scope, func_mods)
         )
         for name in unsealed:

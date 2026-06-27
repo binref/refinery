@@ -230,6 +230,40 @@ class TestConstantInlining(TestJsDeobfuscator):
         )
         self.assertEqual(source, self._inline(source))
 
+    def test_named_mutator_called_inside_anonymous_callback_not_inlined(self):
+        """
+        `f` mutates the captured `x` from inside an anonymous callback, so the mutating call runs at
+        an unknown point that no seal covers; `x` is not a stable constant and must not be inlined.
+        """
+        source = inspect.cleandoc(
+            """
+            var x = 1;
+            function f() {
+              x = 2;
+            }
+            [0].forEach(function() {
+              f();
+            });
+            SINK.push(x);
+            """
+        )
+        self.assertEqual(source, self._inline(source))
+
+    def test_named_mutator_called_inside_iife_not_inlined(self):
+        source = inspect.cleandoc(
+            """
+            var x = 1;
+            function f() {
+              x = 2;
+            }
+            (function() {
+              f();
+            })();
+            SINK.push(x);
+            """
+        )
+        self.assertEqual(source, self._inline(source))
+
     def test_single_use_expression_inlined(self):
         self.assertEqual('return a + b;', self._inline('var x = a + b; return x;'))
 
