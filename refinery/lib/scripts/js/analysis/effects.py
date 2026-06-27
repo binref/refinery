@@ -31,7 +31,7 @@ contract so a later control-flow layer can sharpen the same answers without chan
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable, Iterator
 
 from refinery.lib.scripts import Node
@@ -203,13 +203,18 @@ class EffectSummary:
     resolved and summarized. A summary with none of these set is `is_pure`. `wraps_return` is separate:
     it does not bear on purity but records that a call to the function yields a wrapper (a promise from
     an `async` function, an iterator from a generator) rather than the value of its return expression,
-    so the call cannot be replaced by that expression.
+    so the call cannot be replaced by that expression. `written_bindings` names, by identity, the
+    specific outer bindings those write flags cover where the write resolves to one, so a caller can ask
+    which binding a call mutates rather than only whether it mutates some; a coarse write with no
+    resolvable binding (a dynamic-scope or `globalThis.x =` member write) still sets `writes_global` but
+    adds nothing here.
     """
     writes_global: bool = False
     writes_captured: bool = False
     throws: bool = False
     calls_unknown: bool = False
     wraps_return: bool = False
+    written_bindings: set[Binding] = field(default_factory=set)
 
     @property
     def is_pure(self) -> bool:
@@ -242,6 +247,7 @@ class EffectSummary:
         self.writes_captured = self.writes_captured or other.writes_captured
         self.throws = self.throws or other.throws
         self.calls_unknown = self.calls_unknown or other.calls_unknown
+        self.written_bindings |= other.written_bindings
 
 
 def _is_safe_property_base(node: Node, defunct: set[str] | None = None) -> bool:
@@ -360,6 +366,21 @@ class EffectModel:
         The effect summary of a function node (or the script). An unknown node is reported as impure.
         """
         return self._summaries.get(id(func), EffectSummary(calls_unknown=True))
+
+    def mutated_bindings(self, func: Node) -> frozenset[Binding]:
+        """
+        The outer bindings (captured locals and globals) a call to *func* may write, directly or through
+        any function it transitively calls, each identified by its `Binding` rather than its name so a
+        caller can ask whether one specific binding is mutated. Empty for a function with no such writes
+        and for an unknown node alike — use `summary_of(func).calls_unknown` to tell those apart.
+        """
+        return frozenset(self.summary_of(func).written_bindings)
+
+    def function_can_mutate(self, func: Node, binding: Binding) -> bool:
+        """
+        Whether a call to *func* may write *binding*, itself or through a transitive callee.
+        """
+        return binding in self.summary_of(func).written_bindings
 
     def is_pure_call(self, call: JsCallExpression | JsNewExpression) -> bool:
         """
@@ -481,7 +502,7 @@ class EffectModel:
         parent = ref.parent
         if not isinstance(parent, JsCallExpression) or ref not in parent.arguments:
             return False
-        func = self._static_callee(parent)
+        func = self.static_callee(parent)
         if func is None:
             return False
         if self._callee_uses_arguments(func):
@@ -536,7 +557,7 @@ class EffectModel:
             return True
         return self.model.reflection_can_reach(binding)
 
-    def _static_callee(
+    def static_callee(
         self, call: JsCallExpression
     ) -> JsFunctionDeclaration | JsFunctionExpression | JsArrowFunctionExpression | None:
         """
@@ -636,10 +657,12 @@ class EffectModel:
             return
         if binding.kind is BindingKind.IMPLICIT_GLOBAL or binding.scope is self.model.root_scope:
             summary.writes_global = True
+            summary.written_bindings.add(binding)
         elif func_scope is not None and func_scope.contains(binding.scope):
             pass
         else:
             summary.writes_captured = True
+            summary.written_bindings.add(binding)
 
     def _write_unobservable(self, binding: Binding, func: Node) -> bool:
         """

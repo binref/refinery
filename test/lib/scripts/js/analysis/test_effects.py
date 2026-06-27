@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from test import TestBase
 
-from refinery.lib.scripts.js.analysis.effects import build_effects, object_member_access_runs_accessor
+from refinery.lib.scripts.js.analysis.effects import EffectSummary, build_effects, object_member_access_runs_accessor
 from refinery.lib.scripts.js.analysis.model import build_semantic_model
 from refinery.lib.scripts.js.model import (
     JsArrayExpression,
@@ -36,6 +36,14 @@ class TestEffectModel(TestBase):
     def _summary(self, source: str, name: str):
         ast, effects = self._effects(source)
         return effects.summary_of(self._func(ast, name))
+
+    def _binding(self, ast, model, name: str):
+        for node in ast.walk():
+            if isinstance(node, JsIdentifier) and node.name == name:
+                binding = model.resolve(node)
+                if binding is not None:
+                    return binding
+        raise AssertionError(F'no resolvable binding named {name}')
 
     def test_return_literal_is_pure(self):
         self.assertTrue(self._summary('function f(){ return 42; }', 'f').is_pure)
@@ -74,6 +82,57 @@ class TestEffectModel(TestBase):
         summary = self._summary(source, 'f')
         self.assertTrue(summary.writes_global)
         self.assertFalse(summary.is_pure)
+
+    def test_mutated_bindings_records_captured_write(self):
+        ast, effects = self._effects('function f(){ var x = 0; function g(){ x = 2; } g(); return x; }')
+        x = self._binding(ast, effects.model, 'x')
+        self.assertEqual(effects.mutated_bindings(self._func(ast, 'g')), frozenset({x}))
+
+    def test_mutated_bindings_is_transitive_through_calls(self):
+        ast, effects = self._effects(
+            'var x = 1; function w(){ x = 2; } function f(){ w(); } function r(){ return x; }')
+        x = self._binding(ast, effects.model, 'x')
+        self.assertTrue(effects.function_can_mutate(self._func(ast, 'f'), x))
+
+    def test_mutated_bindings_excludes_own_local(self):
+        ast, effects = self._effects('function f(){ var s = 0; s = s + 1; return s; }')
+        self.assertEqual(effects.mutated_bindings(self._func(ast, 'f')), frozenset())
+
+    def test_mutated_bindings_distinguishes_same_named_bindings(self):
+        source = (
+            'function a(){ var x = 1; function w(){ x = 2; } w(); return x; }'
+            ' function b(){ var x = 9; return x; }'
+        )
+        ast, effects = self._effects(source)
+        model = effects.model
+        x_a = model.lookup('x', model.function_scope(self._func(ast, 'a')))
+        x_b = model.lookup('x', model.function_scope(self._func(ast, 'b')))
+        w = self._func(ast, 'w')
+        self.assertTrue(effects.function_can_mutate(w, x_a))
+        self.assertFalse(effects.function_can_mutate(w, x_b))
+
+    def test_mutated_bindings_handles_mutual_recursion(self):
+        source = 'var x = 0; function f(){ x = 1; g(); } function g(){ x = 2; f(); } function r(){ return x; }'
+        ast, effects = self._effects(source)
+        x = self._binding(ast, effects.model, 'x')
+        self.assertTrue(effects.function_can_mutate(self._func(ast, 'f'), x))
+        self.assertTrue(effects.function_can_mutate(self._func(ast, 'g'), x))
+
+    def test_write_only_unobservable_global_is_pure_with_no_mutated_bindings(self):
+        """
+        A write-only global in a reflection-free program is an unobservable scratch write, so it neither
+        makes the function impure nor names a mutated binding.
+        """
+        ast, effects = self._effects('function f(){ scratch = 1; }')
+        f = self._func(ast, 'f')
+        self.assertTrue(effects.summary_of(f).is_pure)
+        self.assertEqual(effects.mutated_bindings(f), frozenset())
+
+    def test_summary_equality_accounts_for_written_bindings(self):
+        ast, effects = self._effects('var x = 0; function f(){ x = 1; } function r(){ return x; }')
+        populated = effects.summary_of(self._func(ast, 'f'))
+        self.assertTrue(populated.written_bindings)
+        self.assertNotEqual(populated, EffectSummary(writes_global=True))
 
     def test_write_to_never_read_global_is_unobservable(self):
         self.assertTrue(self._summary('function f(){ scratch = 1; }', 'f').is_pure)
