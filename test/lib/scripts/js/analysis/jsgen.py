@@ -301,8 +301,23 @@ class _Generator:
         return lines
 
     def _stmt_func(self, scope: _Scope, depth: int) -> list[str]:
+        """
+        One named function declaration, or — with low odds — two declarations of the same name and
+        arity. A redeclaration is legal: the later body wins at runtime (function declarations hoist and
+        the second overwrites the binding), so a call to the name runs the second body, while the name
+        is bound more than once. This is the shape the deobfuscator must not pin to a single body: the
+        effect model treats a call through a multiply-declared name as an unknown callee, and constant
+        inlining must reject a candidate such a body could mutate rather than trust the first definition.
+        """
         name = self._fresh()
         arity = self.rng.randint(0, 2)
+        lines = self._one_function(scope, depth, name, arity)
+        if self.rng.random() < 0.15:
+            lines += self._one_function(scope, depth, name, arity)
+        scope.funcs.append((name, arity))
+        return lines
+
+    def _one_function(self, scope: _Scope, depth: int, name: str, arity: int) -> list[str]:
         params = [self._fresh() for _ in range(arity)]
         body_scope = scope.child()
         for param in params:
@@ -320,7 +335,6 @@ class _Generator:
         lines = [F'function {name}({", ".join(signature)}) {{']
         lines += self._indent(body)
         lines.append('}')
-        scope.funcs.append((name, arity))
         return lines
 
     def _stmt_obj(self, scope: _Scope, depth: int) -> list[str]:
