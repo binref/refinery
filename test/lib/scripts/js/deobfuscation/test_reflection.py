@@ -112,6 +112,18 @@ class TestReflectionInlining(TestJsDeobfuscator):
             self._reflect("Function('o', 'o.x;')({ get 'a'() { return something(); } });"),
         )
 
+    def test_pack_compound_assignment_through_proxy_not_inlined(self):
+        source = inspect.cleandoc(
+            """
+            Function('o', "o['b'] += 1;")({ set 'b'(v) {
+              return s = v;
+            }, get 'b'() {
+              return g;
+            } });
+            """
+        )
+        self.assertEqual(source, self._reflect(source))
+
     def test_eval_multi_statement_inlined_in_statement_position(self):
         self.assertEqual(
             inspect.cleandoc(

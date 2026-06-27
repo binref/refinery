@@ -19,6 +19,8 @@ from refinery.lib.scripts.js.analysis.model import (
     Scope,
     SemanticModel,
     build_semantic_model,
+    is_member_write_target,
+    is_simple_assignment_target,
     is_use_position,
 )
 from refinery.lib.scripts.js.deobfuscation.helpers import (
@@ -350,7 +352,10 @@ def _substitute_proxy_accesses(
 ) -> bool:
     """
     Replace all `param[key]` accesses in the parsed code with the resolved globals from the proxy
-    mapping. Returns `True` if every access was resolved successfully.
+    mapping. A plain read resolves to the getter target and a simple `key = v` write to the setter
+    target; a compound, update, or delete access reads via the getter AND writes via the setter, which
+    no single global substitution preserves, so it makes resolution fail. Returns `True` if every
+    access was resolved successfully.
     """
     for node in list(parsed.walk()):
         if not isinstance(node, JsMemberExpression):
@@ -360,15 +365,12 @@ def _substitute_proxy_accesses(
         key = access_key(node)
         if key is None:
             return False
-        parent = node.parent
-        if (
-            isinstance(parent, JsAssignmentExpression)
-            and parent.left is node
-            and parent.operator == '='
-        ):
+        if is_simple_assignment_target(node):
             if key not in setters:
                 return False
             _replace_in_parent(node, JsIdentifier(name=setters[key]))
+        elif is_member_write_target(node):
+            return False
         else:
             if key not in getters:
                 return False
