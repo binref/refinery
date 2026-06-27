@@ -264,6 +264,92 @@ class TestConstantInlining(TestJsDeobfuscator):
         )
         self.assertEqual(source, self._inline(source))
 
+    def test_constant_mutated_through_with_not_inlined(self):
+        """
+        A write inside a `with` body resolves to no binding — it could hit the outer `x` or a property
+        of the `with` object — so the constant is not stable and must not be inlined.
+        """
+        source = inspect.cleandoc(
+            """
+            var x = 1;
+            with (o) {
+              x = 2;
+            }
+            SINK.push(x);
+            """
+        )
+        self.assertEqual(source, self._inline(source))
+
+    def test_constant_written_through_global_alias_not_inlined(self):
+        """
+        `globalThis.x = 2` writes the script-level `x` through a member expression the effect model's
+        per-binding accounting does not see, so the constant is rejected directly.
+        """
+        source = inspect.cleandoc(
+            """
+            var x = 1;
+            globalThis.x = 2;
+            SINK.push(x);
+            """
+        )
+        self.assertEqual(source, self._inline(source))
+
+    def test_constant_mutated_by_transitively_called_function_not_inlined(self):
+        """
+        `outer` does not write `x` itself but calls `inner`, which does; the effect model rolls the
+        transitive write into `outer`'s summary, so the call to `outer` seals the constant.
+        """
+        source = inspect.cleandoc(
+            """
+            var x = 1;
+            function inner() {
+              x = 2;
+            }
+            function outer() {
+              inner();
+            }
+            outer();
+            SINK.push(x);
+            """
+        )
+        self.assertEqual(source, self._inline(source))
+
+    def test_constant_not_over_rejected_by_same_named_escaping_mutation(self):
+        """
+        The escaping closure mutates `make`'s local `x`, a different binding from the script-level
+        constant `x`; the name-based predecessor rejected every `x` on the shared name, but the
+        binding-resolved analysis sees the mutated binding is not the constant and inlines it.
+        """
+        source = inspect.cleandoc(
+            """
+            var x = 7;
+            function make() {
+              var x = 0;
+              return function() {
+                x = 1;
+              };
+            }
+            sink(make());
+            SINK.push(x);
+            """
+        )
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var x = 7;
+                function make() {
+                  var x = 0;
+                  return function() {
+                    x = 1;
+                  };
+                }
+                sink(make());
+                SINK.push(7);
+                """
+            ),
+            self._inline(source),
+        )
+
     def test_single_use_expression_inlined(self):
         self.assertEqual('return a + b;', self._inline('var x = a + b; return x;'))
 

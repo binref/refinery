@@ -9,6 +9,8 @@ from refinery.lib.scripts import Node, _clone_node, _remove_from_parent, _replac
 from refinery.lib.scripts.js.analysis.cache import model_cache
 from refinery.lib.scripts.js.analysis.effects import EffectModel
 from refinery.lib.scripts.js.analysis.model import (
+    Binding,
+    FUNCTION_NODES,
     Role,
     SemanticModel,
     _strip_parens,
@@ -172,138 +174,65 @@ def _is_literal_array(node: Node) -> bool:
     return all(el is not None and is_literal(el) for el in node.elements)
 
 
-def _is_inside_anonymous_function(node: Node, scope: Node) -> bool:
+def _enclosing_function(node: Node) -> Node | None:
     """
-    Whether *node* lies inside a function expression or arrow nested in *scope* that is not bound to
-    a variable: an IIFE or callback whose invocation point is unknown, unlike a named declaration or
-    a var-bound function whose calls `_compute_function_mods` seals by name.
+    The innermost function declaration, function expression, or arrow that lexically encloses *node*,
+    or `None` when *node* is not inside any function.
     """
     cursor = node.parent
-    while cursor is not None and cursor is not scope:
-        if isinstance(cursor, (JsFunctionExpression, JsArrowFunctionExpression)):
-            owner = cursor.parent
-            if not (isinstance(owner, JsVariableDeclarator) and owner.init is cursor):
-                return True
+    while cursor is not None:
+        if isinstance(cursor, FUNCTION_NODES):
+            return cursor
         cursor = cursor.parent
+    return None
+
+
+def _function_name_binding(func: Node, model: SemanticModel) -> Binding | None:
+    """
+    The binding that names *func* when it is a named function declaration or a function/arrow expression
+    bound to a single `var`/`let`/`const` declarator, or `None` for an anonymous function whose
+    invocation point cannot be pinned to a name.
+    """
+    if isinstance(func, JsFunctionDeclaration) and func.id is not None:
+        return model.binding_of(func.id)
+    parent = func.parent
+    if (
+        isinstance(parent, JsVariableDeclarator)
+        and parent.init is func
+        and isinstance(parent.id, JsIdentifier)
+    ):
+        return model.binding_of(parent.id)
+    return None
+
+
+def _function_escapes(func: Node, model: SemanticModel) -> bool:
+    """
+    Whether *func* may be invoked at a point the surrounding scope cannot see: an anonymous function
+    (an IIFE, a callback, stored and called later), or a named function whose binding is referenced
+    anywhere other than as the callee of a direct `name(...)` call (aliased, passed as an argument,
+    `f.call(...)`). A call to such a function can land between any two reads of a variable it mutates,
+    so that variable is not a stable constant; a function only ever called directly by name seals
+    instead at its call sites.
+    """
+    binding = _function_name_binding(func, model)
+    if binding is None:
+        return True
+    for ref in model.references(binding):
+        parent = ref.parent
+        if isinstance(parent, JsCallExpression) and parent.callee is ref:
+            continue
+        return True
     return False
 
 
-def _names_mutated_in_anonymous_functions(scope: Node, func_mods: dict[str, set[str]]) -> set[str]:
+def _has_global_member_write(binding: Binding) -> bool:
     """
-    Outer-scope names mutated from inside a function expression or arrow nested in *scope* that is
-    not bound to a variable. `_compute_function_mods` attributes writes only to named declarations
-    and var-bound function expressions, whose calls it seals by name; an anonymous IIFE or callback
-    is invisible to it and seals nothing, so a captured variable it can change between two reads is
-    not a stable constant and must not be inlined. Such a closure mutates a name directly, through
-    an assignment or update, or transitively, by calling a known mutator whose captured writes
-    `func_mods` already records — the accounting `_compute_function_mods` performs for named ones,
-    without which a mutator reached only through an anonymous closure seals nothing yet still runs.
+    Whether *binding* is written through a global-object-alias member (`globalThis.x = ...`), a write
+    that bypasses the effect model's per-binding accounting — it targets a member expression rather than
+    the name — and so must reject the binding from inlining directly. Only a global ever carries such a
+    write, so a lexical candidate (whose writes are all identifiers) is unaffected.
     """
-    result: set[str] = set()
-    for node in scope.walk():
-        if not isinstance(node, JsIdentifier):
-            continue
-        if reference_role(node) is not Role.READ:
-            payload: set[str] = {node.name}
-        else:
-            parent = node.parent
-            if not (isinstance(parent, JsCallExpression) and parent.callee is node):
-                continue
-            payload = func_mods.get(node.name, set())
-        if payload and _is_inside_anonymous_function(node, scope):
-            result |= payload
-    return result
-
-
-def _compute_function_mods(scope: Node, model: SemanticModel) -> dict[str, set[str]]:
-    """
-    For each function defined anywhere within *scope* — at the top level or inside a nested block such
-    as a loop or `if`, but not inside another function (a function declaration, or a function expression
-    or arrow function bound to a `var`/`let`/`const` declarator) — compute the set of outer-scope
-    variable names it can modify (directly or transitively through calls to other known functions). A
-    call to such a function then seals those variables, so a closure assigning to a captured variable
-    (`var set = function(){ x = 2; }; set();`) is not inlined past the call. Modifications are unioned
-    across every function sharing a name, so a name reused across blocks seals conservatively.
-
-    Write targets are resolved through the `refinery.lib.scripts.js.analysis.model.SemanticModel`, so a
-    name assigned inside the function counts only when it resolves to a binding the function does not
-    own — a write to the function's own local, or to a local of a nested function, is excluded.
-    """
-    functions: list[tuple[str, JsFunctionDeclaration | JsFunctionExpression | JsArrowFunctionExpression]] = []
-    for node in walk_scope(scope, include_root_body=True):
-        if isinstance(node, JsFunctionDeclaration) and node.id is not None:
-            functions.append((node.id.name, node))
-        elif (
-            isinstance(node, JsVariableDeclarator)
-            and isinstance(node.id, JsIdentifier)
-            and isinstance(node.init, (JsFunctionExpression, JsArrowFunctionExpression))
-        ):
-            functions.append((node.id.name, node.init))
-    if not functions:
-        return {}
-
-    func_names = {name for name, _ in functions}
-    direct_mods: dict[str, set[str]] = {name: set() for name in func_names}
-    calls: dict[str, set[str]] = {name: set() for name in func_names}
-
-    for fname, func in functions:
-        if func.body is None:
-            continue
-        func_scope = model.scope_of(func.body)
-        for node in func.body.walk():
-            if isinstance(node, JsIdentifier) and reference_role(node) is not Role.READ:
-                binding = model.resolve(node)
-                if binding is None:
-                    direct_mods[fname].add(node.name)
-                elif func_scope is None or not func_scope.contains(binding.scope):
-                    direct_mods[fname].add(binding.name)
-            elif isinstance(node, JsCallExpression) and isinstance(node.callee, JsIdentifier):
-                callee_name = node.callee.name
-                if callee_name in func_names and callee_name != fname:
-                    calls[fname].add(callee_name)
-
-    result: dict[str, set[str]] = {fname: set(mods) for fname, mods in direct_mods.items()}
-    changed = True
-    while changed:
-        changed = False
-        for fname, callees in calls.items():
-            before = len(result[fname])
-            for callee in callees:
-                result[fname] |= result.get(callee, set())
-            if len(result[fname]) > before:
-                changed = True
-
-    return result
-
-
-def _names_mutated_by_escaping_functions(scope: Node, func_mods: dict[str, set[str]]) -> set[str]:
-    """
-    Outer-scope names a named function declaration or var-bound function expression mutates, when that
-    function's binding escapes — appears anywhere other than its own declaration or the callee of a
-    direct `name(...)` call. `_compute_function_mods` seals such a write only at direct by-name call
-    sites, so a closure that mutates a captured variable and is then invoked through any other channel
-    (passed as a callback, `f.call(...)`, `(f)()`, stored and called later) is never sealed: the write
-    can land between any two reads, so the variable is not a stable constant and must not be inlined.
-    """
-    mutators = {name for name, mods in func_mods.items() if mods}
-    if not mutators:
-        return set()
-    escaped: set[str] = set()
-    for node in scope.walk():
-        if not isinstance(node, JsIdentifier) or node.name not in mutators:
-            continue
-        parent = node.parent
-        if isinstance(parent, JsFunctionDeclaration) and parent.id is node:
-            continue
-        if isinstance(parent, JsVariableDeclarator) and parent.id is node:
-            continue
-        if isinstance(parent, JsCallExpression) and parent.callee is node:
-            continue
-        escaped.add(node.name)
-    result: set[str] = set()
-    for name in escaped:
-        result |= func_mods[name]
-    return result
+    return any(isinstance(write, JsMemberExpression) for write in binding.writes)
 
 
 def _is_member_array_safe(scope: Node, prefix_name: str, prop_name: str) -> bool:
@@ -453,13 +382,13 @@ class JsConstantInlining(ScopeProcessingTransformer):
 
     def _process_scope(self, scope: Node) -> None:
         assert self._root is not None
-        func_mods = _compute_function_mods(scope, model_cache(self, self._root).model)
+        effects = model_cache(self, self._root).effects
         while True:
-            candidates, seal_points, mutated = self._collect_candidates(scope, func_mods)
+            candidates, seal_points, mutated = self._collect_candidates(scope, effects)
             member_arrays = self._collect_member_array_candidates(scope)
             if not candidates and not member_arrays:
                 return
-            inlined = self._substitute_constants(scope, candidates, seal_points, func_mods)
+            inlined = self._substitute_constants(scope, candidates, seal_points)
             if member_arrays:
                 self._substitute_member_arrays(scope, member_arrays, inlined)
             if inlined:
@@ -477,7 +406,7 @@ class JsConstantInlining(ScopeProcessingTransformer):
     @staticmethod
     def _collect_candidates(
         scope: Node,
-        func_mods: dict[str, set[str]],
+        effects: EffectModel,
     ) -> tuple[dict[str, list[_CandidateEntry]], dict[str, list[_BodyEntry]], set[str]]:
         """
         Collect constant declaration entries per variable. Each entry is a `_CandidateEntry` of
@@ -580,24 +509,58 @@ class JsConstantInlining(ScopeProcessingTransformer):
                     candidates.pop(name, None)
                     uninitialized.pop(name, None)
 
-            if isinstance(node, JsCallExpression) and isinstance(node.callee, JsIdentifier):
-                callee_name = node.callee.name
-                mods = func_mods.get(callee_name)
-                if mods:
-                    call_entries = _find_all_body_entries(node)
-                    for modified_var in mods:
-                        if modified_var in candidates:
-                            seal_points.setdefault(modified_var, []).extend(call_entries)
+        model = effects.model
+        candidate_bindings: dict[str, Binding] = {}
+        for cand_name, cand_entries in candidates.items():
+            decl = cand_entries[0].declarator
+            if decl is not None and isinstance(decl.id, JsIdentifier):
+                binding = model.binding_of(decl.id)
+                if binding is not None:
+                    candidate_bindings[cand_name] = binding
 
-        unsealed = (
-            _names_mutated_in_anonymous_functions(scope, func_mods)
-            | _names_mutated_by_escaping_functions(scope, func_mods)
-        )
-        for name in unsealed:
-            if name in candidates or name in uninitialized:
-                rejected.add(name)
-                candidates.pop(name, None)
-                uninitialized.pop(name, None)
+        def _reject(target_name: str) -> None:
+            rejected.add(target_name)
+            candidates.pop(target_name, None)
+            uninitialized.pop(target_name, None)
+            candidate_bindings.pop(target_name, None)
+
+        unresolved_writes: set[str] = set()
+        for node in scope.walk():
+            if (
+                isinstance(node, JsIdentifier)
+                and reference_role(node) is not Role.READ
+                and model.resolve(node) is None
+            ):
+                unresolved_writes.add(node.name)
+
+        for cand_name, binding in list(candidate_bindings.items()):
+            if cand_name in unresolved_writes or _has_global_member_write(binding):
+                _reject(cand_name)
+
+        call_sites: dict[int, list[Node]] = {}
+        for node in walk_scope(scope, include_root_body=True):
+            if isinstance(node, JsCallExpression):
+                target = effects.static_callee(node)
+                if target is not None:
+                    call_sites.setdefault(id(target), []).append(node)
+
+        functions = [node for node in scope.walk() if isinstance(node, FUNCTION_NODES)]
+        for func in functions:
+            if not _function_escapes(func, model):
+                continue
+            mutated = effects.mutated_bindings(func)
+            for cand_name, binding in list(candidate_bindings.items()):
+                if binding in mutated:
+                    _reject(cand_name)
+        for func in functions:
+            mutated = effects.mutated_bindings(func)
+            touched = [n for n, binding in candidate_bindings.items() if binding in mutated]
+            if not touched:
+                continue
+            for call in call_sites.get(id(func), ()):
+                call_entries = _find_all_body_entries(call)
+                for cand_name in touched:
+                    seal_points.setdefault(cand_name, []).extend(call_entries)
 
         return candidates, seal_points, rejected
 
@@ -606,7 +569,6 @@ class JsConstantInlining(ScopeProcessingTransformer):
         scope: Node,
         candidates: dict[str, list[_CandidateEntry]],
         seal_points: dict[str, list[_BodyEntry]],
-        func_mods: dict[str, set[str]],
     ) -> dict[str, int]:
         """
         Inline constant (literal and literal-array) variable references using domination. Handles
@@ -678,8 +640,7 @@ class JsConstantInlining(ScopeProcessingTransformer):
             inlined[name] = inlined.get(name, 0) + 1
 
         self._substitute_const_across_functions(
-            scope, candidates, seal_points, decl_ids, bloat_blocked, func_mods, inlined,
-            effects,
+            scope, candidates, seal_points, decl_ids, bloat_blocked, inlined, effects,
         )
 
         return inlined
@@ -743,19 +704,20 @@ class JsConstantInlining(ScopeProcessingTransformer):
         seal_points: dict[str, list[_BodyEntry]],
         decl_ids: set[int],
         bloat_blocked: set[str],
-        func_mods: dict[str, set[str]],
         inlined: dict[str, int],
         effects: EffectModel,
     ) -> None:
         """
         For constant-valued candidates, walk the full subtree to inline references inside nested
         function bodies. `const`-qualified candidates are inlined unconditionally (they cannot be
-        reassigned). `var`/`let`-qualified candidates are inlined only into functions that are
-        actually called in the current scope and that do not modify the variable (per the mod/ref
-        analysis). The call-site requirement prevents inlining into functions that may be invoked
-        from elsewhere with a different value for the variable.
+        reassigned). `var`/`let`-qualified candidates are inlined only into named function declarations
+        that are actually called in the current scope and that do not modify the variable (per the
+        effect model's per-binding mutation query). The call-site requirement prevents inlining into
+        functions that may be invoked from elsewhere with a different value for the variable.
         """
+        model = effects.model
         cross_candidates: dict[str, list[_CandidateEntry]] = {}
+        cross_bindings: dict[str, Binding] = {}
         const_names: set[str] = set()
         for name, entries in candidates.items():
             if name in bloat_blocked:
@@ -763,32 +725,39 @@ class JsConstantInlining(ScopeProcessingTransformer):
             if len(entries) != 1:
                 continue
             entry = entries[0]
-            if entry.declarator is None:
+            if entry.declarator is None or not isinstance(entry.declarator.id, JsIdentifier):
                 continue
             if not _is_constant_value(entry.value):
                 continue
+            binding = model.binding_of(entry.declarator.id)
+            if binding is None:
+                continue
             cross_candidates[name] = entries
+            cross_bindings[name] = binding
             if _is_const_qualified(entry.declarator) or entry.declarator.init is None:
                 const_names.add(name)
 
         if not cross_candidates:
             return
 
-        assert self._root is not None
-        model = model_cache(self, self._root).model
         outer = model.scope_of(scope)
         assert outer is not None
 
-        called_functions: set[str] = set()
+        called_ids: set[int] = set()
+        called_funcs: list[Node] = []
         for node in walk_scope(scope, include_root_body=True):
-            if isinstance(node, JsCallExpression) and isinstance(node.callee, JsIdentifier):
-                called_functions.add(node.callee.name)
+            if isinstance(node, JsCallExpression):
+                target = effects.static_callee(node)
+                if target is not None and id(target) not in called_ids:
+                    called_ids.add(id(target))
+                    called_funcs.append(target)
 
         for name in [
-            candidate for candidate in cross_candidates
-            if any(candidate in func_mods.get(callee, set()) for callee in called_functions)
+            candidate for candidate, binding in cross_bindings.items()
+            if any(effects.function_can_mutate(func, binding) for func in called_funcs)
         ]:
             del cross_candidates[name]
+            del cross_bindings[name]
         if not cross_candidates:
             return
 
@@ -802,8 +771,8 @@ class JsConstantInlining(ScopeProcessingTransformer):
                     and self._index_array_immutable(obj, effects)
                 ):
                     name = obj.name
+                    enclosing = _enclosing_function(obj)
                     if name in const_names:
-                        enclosing = self._enclosing_function_name(obj, func_mods)
                         if enclosing is None:
                             continue
                         if model.is_shadowed(name, obj, outer):
@@ -812,11 +781,10 @@ class JsConstantInlining(ScopeProcessingTransformer):
                             node, cross_candidates[name][0], name, inlined,
                         )
                     else:
-                        enclosing = self._enclosing_function_name(obj, func_mods)
                         if (
-                            enclosing is None
-                            or enclosing not in called_functions
-                            or name in func_mods.get(enclosing, set())
+                            not isinstance(enclosing, JsFunctionDeclaration)
+                            or id(enclosing) not in called_ids
+                            or effects.function_can_mutate(enclosing, cross_bindings[name])
                         ):
                             continue
                         if model.is_shadowed(name, obj, outer):
@@ -844,14 +812,14 @@ class JsConstantInlining(ScopeProcessingTransformer):
             entry = cross_candidates[name][0]
             if not is_literal(entry.value):
                 continue
-            enclosing = self._enclosing_function_name(node, func_mods)
+            enclosing = _enclosing_function(node)
             if name in const_names:
                 if enclosing is None:
                     continue
             elif (
-                enclosing is None
-                or enclosing not in called_functions
-                or name in func_mods.get(enclosing, set())
+                not isinstance(enclosing, JsFunctionDeclaration)
+                or id(enclosing) not in called_ids
+                or effects.function_can_mutate(enclosing, cross_bindings[name])
             ):
                 continue
             if model.is_shadowed(name, node, outer):
@@ -859,27 +827,6 @@ class JsConstantInlining(ScopeProcessingTransformer):
             _replace_in_parent(node, _clone_node(entry.value))
             self.mark_changed()
             inlined[name] = inlined.get(name, 0) + 1
-
-    @staticmethod
-    def _enclosing_function_name(
-        node: Node,
-        func_mods: dict[str, set[str]],
-    ) -> str | None:
-        """
-        Walk upward from *node* to find the innermost enclosing function whose name appears in
-        *func_mods*. For unnamed function expressions, returns a sentinel to indicate the reference
-        is inside a nested function body (enabling const-qualified cross-function inlining).
-        """
-        cursor = node.parent
-        while cursor is not None:
-            if isinstance(cursor, JsFunctionDeclaration) and cursor.id is not None:
-                if cursor.id.name in func_mods:
-                    return cursor.id.name
-                return ''
-            if isinstance(cursor, (JsFunctionExpression, JsArrowFunctionExpression)):
-                return ''
-            cursor = cursor.parent
-        return None
 
     def _substitute_expressions(
         self,
