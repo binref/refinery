@@ -45,6 +45,33 @@ class TestCallWrapperInliner(TestJsDeobfuscator):
             ),
         )
 
+    def test_redeclared_wrapper_is_not_inlined(self):
+        """
+        The first `v` is a trivial constant wrapper, but `v` is redeclared by a second body that wins
+        at runtime, so the call resolves to no single function. The inliner must leave the call intact
+        rather than substitute the first body's `return 1`.
+        """
+        source = (
+            "function v() { return 1; }"
+            "function v() { SINK.push('x'); return 2; }"
+            "SINK.push(v());"
+        )
+        self.assertEqual(
+            self._run_transformer(source, JsCallWrapperInliner),
+            inspect.cleandoc(
+                """
+                function v() {
+                  return 1;
+                }
+                function v() {
+                  SINK.push('x');
+                  return 2;
+                }
+                SINK.push(v());
+                """
+            ),
+        )
+
     def test_wrapper_preserves_non_wrapper_functions(self):
         source = (
             "function real(x) { console.log(x); return x * 2; }"

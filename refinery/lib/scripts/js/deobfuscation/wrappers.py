@@ -104,13 +104,15 @@ class JsCallWrapperInliner(ScriptLevelTransformer):
         if not wrappers:
             return
         effects = model_cache(self, node).effects
+        by_node = {id(info.node): info for info in wrappers.values()}
         inlined = False
         for ast_node in list(node.walk()):
             if not isinstance(ast_node, JsCallExpression):
                 continue
-            if not isinstance(ast_node.callee, JsIdentifier):
+            target = effects.static_callee(ast_node)
+            if target is None:
                 continue
-            info = wrappers.get(ast_node.callee.name)
+            info = by_node.get(id(target))
             if info is None:
                 continue
             if len(ast_node.arguments) != len(info.param_names):

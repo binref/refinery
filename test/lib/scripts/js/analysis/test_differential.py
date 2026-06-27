@@ -340,3 +340,17 @@ class TestDeobfuscationDifferential(TestBase):
             ' const x = 5;'
             ' SINK.push(g());'
             " console.log(SINK.join('|'));")
+
+    def test_redeclared_wrapper_is_not_inlined(self):
+        """
+        The first `v` is a trivial constant wrapper, but `v` is redeclared, so a call runs the second
+        body (which pushes to `SINK` and returns 2). Wrapper inlining resolves the call through the
+        binding and must refuse to substitute the first body, or the push is dropped and the value is
+        wrong.
+        """
+        self._check(
+            'var SINK = [];'
+            ' function v(){ return 1; }'
+            ' function v(){ SINK.push("x"); return 2; }'
+            ' SINK.push(v());'
+            " console.log(SINK.join('|'));")
