@@ -14,6 +14,7 @@ from refinery.lib.scripts.js.analysis.model import (
     Role,
     SemanticModel,
     _strip_parens,
+    enclosing_function,
     pattern_identifiers,
     reference_role,
 )
@@ -174,19 +175,6 @@ def _is_literal_array(node: Node) -> bool:
     return all(el is not None and is_literal(el) for el in node.elements)
 
 
-def _enclosing_function(node: Node) -> Node | None:
-    """
-    The innermost function declaration, function expression, or arrow that lexically encloses *node*,
-    or `None` when *node* is not inside any function.
-    """
-    cursor = node.parent
-    while cursor is not None:
-        if isinstance(cursor, FUNCTION_NODES):
-            return cursor
-        cursor = cursor.parent
-    return None
-
-
 def _function_name_binding(func: Node, model: SemanticModel) -> Binding | None:
     """
     The binding that names *func* when it is a named function declaration or a function/arrow expression
@@ -213,9 +201,16 @@ def _function_escapes(func: Node, model: SemanticModel) -> bool:
     `f.call(...)`). A call to such a function can land between any two reads of a variable it mutates,
     so that variable is not a stable constant; a function only ever called directly by name seals
     instead at its call sites.
+
+    A name bound more than once (a redeclared function, or a `var f` co-declared with `function f`) or
+    reassigned also escapes: its calls cannot be pinned to this body — `EffectModel.static_callee`, the
+    seal logic's resolver, declines exactly these — so a mutation it performs could not otherwise be
+    sealed and the candidate must be rejected outright.
     """
     binding = _function_name_binding(func, model)
     if binding is None:
+        return True
+    if binding.writes or len(binding.declarations) != 1:
         return True
     for ref in model.references(binding):
         parent = ref.parent
@@ -223,16 +218,6 @@ def _function_escapes(func: Node, model: SemanticModel) -> bool:
             continue
         return True
     return False
-
-
-def _has_global_member_write(binding: Binding) -> bool:
-    """
-    Whether *binding* is written through a global-object-alias member (`globalThis.x = ...`), a write
-    that bypasses the effect model's per-binding accounting — it targets a member expression rather than
-    the name — and so must reject the binding from inlining directly. Only a global ever carries such a
-    write, so a lexical candidate (whose writes are all identifiers) is unaffected.
-    """
-    return any(isinstance(write, JsMemberExpression) for write in binding.writes)
 
 
 def _is_member_array_safe(scope: Node, prefix_name: str, prop_name: str) -> bool:
@@ -525,8 +510,11 @@ class JsConstantInlining(ScopeProcessingTransformer):
             candidate_bindings.pop(target_name, None)
 
         unresolved_writes: set[str] = set()
+        functions: list[Node] = []
         for node in scope.walk():
-            if (
+            if isinstance(node, FUNCTION_NODES):
+                functions.append(node)
+            elif (
                 isinstance(node, JsIdentifier)
                 and reference_role(node) is not Role.READ
                 and model.resolve(node) is None
@@ -534,7 +522,7 @@ class JsConstantInlining(ScopeProcessingTransformer):
                 unresolved_writes.add(node.name)
 
         for cand_name, binding in list(candidate_bindings.items()):
-            if cand_name in unresolved_writes or _has_global_member_write(binding):
+            if cand_name in unresolved_writes or binding.has_global_member_write:
                 _reject(cand_name)
 
         call_sites: dict[int, list[Node]] = {}
@@ -544,18 +532,16 @@ class JsConstantInlining(ScopeProcessingTransformer):
                 if target is not None:
                     call_sites.setdefault(id(target), []).append(node)
 
-        functions = [node for node in scope.walk() if isinstance(node, FUNCTION_NODES)]
         for func in functions:
-            if not _function_escapes(func, model):
+            written = effects.mutated_bindings(func)
+            if not written:
                 continue
-            mutated = effects.mutated_bindings(func)
-            for cand_name, binding in list(candidate_bindings.items()):
-                if binding in mutated:
-                    _reject(cand_name)
-        for func in functions:
-            mutated = effects.mutated_bindings(func)
-            touched = [n for n, binding in candidate_bindings.items() if binding in mutated]
+            touched = [n for n, binding in candidate_bindings.items() if binding in written]
             if not touched:
+                continue
+            if _function_escapes(func, model):
+                for cand_name in touched:
+                    _reject(cand_name)
                 continue
             for call in call_sites.get(id(func), ()):
                 call_entries = _find_all_body_entries(call)
@@ -771,7 +757,7 @@ class JsConstantInlining(ScopeProcessingTransformer):
                     and self._index_array_immutable(obj, effects)
                 ):
                     name = obj.name
-                    enclosing = _enclosing_function(obj)
+                    enclosing = enclosing_function(obj)
                     if name in const_names:
                         if enclosing is None:
                             continue
@@ -812,7 +798,7 @@ class JsConstantInlining(ScopeProcessingTransformer):
             entry = cross_candidates[name][0]
             if not is_literal(entry.value):
                 continue
-            enclosing = _enclosing_function(node)
+            enclosing = enclosing_function(node)
             if name in const_names:
                 if enclosing is None:
                     continue

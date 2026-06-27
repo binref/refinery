@@ -350,6 +350,43 @@ class TestConstantInlining(TestJsDeobfuscator):
             self._inline(source),
         )
 
+    def test_constant_mutated_in_function_with_confined_reads_not_inlined(self):
+        """
+        Every read of `x` is confined to `f`, which reassigns it between two of them. The write is
+        unobservable outside `f`, so `f` is pure, but it still changes `x` between the reads, so the
+        constant is not stable inside `f` and neither read may be inlined.
+        """
+        source = inspect.cleandoc(
+            """
+            var x = 1;
+            function f() {
+              sink(x);
+              x = 2;
+              sink(x);
+            }
+            f();
+            """
+        )
+        self.assertEqual(source, self._inline(source))
+
+    def test_constant_mutated_by_redeclared_function_not_inlined(self):
+        """
+        `f` is declared twice; the later definition wins at runtime and reassigns `x`. A redeclared name
+        cannot be pinned to one body, so the mutating call cannot be sealed and the constant is rejected.
+        """
+        source = inspect.cleandoc(
+            """
+            var x = 1;
+            function f() {}
+            function f() {
+              x = 2;
+            }
+            f();
+            sink(x);
+            """
+        )
+        self.assertEqual(source, self._inline(source))
+
     def test_single_use_expression_inlined(self):
         self.assertEqual('return a + b;', self._inline('var x = a + b; return x;'))
 

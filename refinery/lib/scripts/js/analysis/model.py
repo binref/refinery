@@ -174,6 +174,16 @@ class Binding:
         """
         return not self.reads
 
+    @property
+    def has_global_member_write(self) -> bool:
+        """
+        Whether the binding is written through a member access on a global-object alias
+        (`globalThis.x = ...`), recorded as a `JsMemberExpression` write site rather than a referencing
+        identifier (see the class docstring). Only a global ever carries such a write, so the answer is
+        always false for a lexical binding whose writes are all identifiers.
+        """
+        return any(isinstance(write, JsMemberExpression) for write in self.writes)
+
 
 @dataclass(eq=False)
 class Scope:
