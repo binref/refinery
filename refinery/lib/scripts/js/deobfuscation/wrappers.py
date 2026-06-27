@@ -68,12 +68,12 @@ def _detect_wrapper(node: JsFunctionDeclaration) -> _WrapperInfo | None:
             return None
         if not isinstance(expr.callee, JsIdentifier):
             return None
-        allowed_names = set(param_names)
-        allowed_names.add(expr.callee.name)
+        param_set = set(param_names)
+        allowed_names = param_set | {expr.callee.name}
         for arg in expr.arguments:
             if not is_closed_expression(arg, allowed_names):
                 return None
-        if _param_written(expr, set(param_names)):
+        if _param_written(expr, param_set):
             return None
     else:
         if not is_closed_expression(expr, set()):
