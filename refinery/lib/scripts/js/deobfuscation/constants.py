@@ -509,7 +509,12 @@ class JsConstantInlining(ScopeProcessingTransformer):
                 left = _strip_parens(node.left)
                 if isinstance(left, JsIdentifier):
                     name = left.name
-                    if name in uninitialized and name not in candidates and name not in rejected:
+                    if (
+                        node.operator == '='
+                        and name in uninitialized
+                        and name not in candidates
+                        and name not in rejected
+                    ):
                         decl = uninitialized.pop(name)
                         rhs = node.right
                         if rhs is None:

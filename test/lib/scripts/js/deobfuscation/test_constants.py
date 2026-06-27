@@ -181,6 +181,20 @@ class TestConstantInlining(TestJsDeobfuscator):
         )
         self.assertEqual(source, self._inline(source))
 
+    def test_uninitialized_var_compound_assignment_not_inlined(self):
+        """
+        `x` is declared without an initializer, so `x += 5` reads `undefined` and stores `NaN`; the
+        compound assignment is a read-modify-write, not a constant definition, so `x` is not `5`.
+        """
+        source = inspect.cleandoc(
+            """
+            var x;
+            x += 5;
+            SINK.push(x);
+            """
+        )
+        self.assertEqual(source, self._inline(source))
+
     def test_var_bound_closure_mutation_via_indirect_call_not_inlined(self):
         """
         `f` mutates the captured `x`, but invoking it through `f.call(...)` rather than a direct `f()`
