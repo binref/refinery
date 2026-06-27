@@ -84,3 +84,30 @@ class TestCallWrapperInliner(TestJsDeobfuscator):
                 """
             ),
         )
+
+    def test_wrapper_assigning_parameter_not_inlined(self):
+        """
+        Substituting the call argument for a written parameter would place it at a write target
+        (`g(7 = 5)`), so a wrapper that assigns its own parameter is not a pure function of its
+        arguments and must not be inlined.
+        """
+        source = inspect.cleandoc(
+            """
+            function w(p) {
+              return g(p = 5);
+            }
+            w(7);
+            """
+        )
+        self.assertEqual(source, self._run_transformer(source, JsCallWrapperInliner))
+
+    def test_wrapper_updating_parameter_not_inlined(self):
+        source = inspect.cleandoc(
+            """
+            function w(p) {
+              return g(p++);
+            }
+            w(7);
+            """
+        )
+        self.assertEqual(source, self._run_transformer(source, JsCallWrapperInliner))

@@ -18,6 +18,7 @@ from refinery.lib.scripts import (
 from refinery.lib.scripts.js.analysis.cache import model_cache
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     ScriptLevelTransformer,
+    _param_written,
     extract_identifier_params,
     is_closed_expression,
     substitute_params,
@@ -72,6 +73,8 @@ def _detect_wrapper(node: JsFunctionDeclaration) -> _WrapperInfo | None:
         for arg in expr.arguments:
             if not is_closed_expression(arg, allowed_names):
                 return None
+        if _param_written(expr, set(param_names)):
+            return None
     else:
         if not is_closed_expression(expr, set()):
             return None
