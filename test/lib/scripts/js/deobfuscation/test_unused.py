@@ -268,6 +268,15 @@ class TestUnusedCodeRemoval(TestJsDeobfuscator):
         )
         self.assertEqual('console.log(2);', self._remove_unused(source))
 
+    def test_global_alias_compound_read_preserves_prior_write(self):
+        source = inspect.cleandoc(
+            """
+            globalThis.X = 1;
+            globalThis.X += 2;
+            """
+        )
+        self.assertEqual(source, self._remove_unused(source))
+
     def test_reflection_surface_preserves_dead_init_global(self):
         source = inspect.cleandoc(
             """

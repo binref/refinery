@@ -91,8 +91,7 @@ def _global_alias_read_names(root: Node, aliases: frozenset[str]) -> frozenset[s
             continue
         if not isinstance(node.object, JsIdentifier):
             continue
-        p = node.parent
-        if isinstance(p, JsAssignmentExpression) and p.left is node:
+        if is_simple_assignment_target(node):
             continue
         if node.object.name in GLOBAL_OBJECT_ALIASES or node.object.name in aliases:
             names.add(node.property.name)
