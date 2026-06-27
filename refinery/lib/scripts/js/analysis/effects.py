@@ -44,9 +44,9 @@ from refinery.lib.scripts.js.analysis.model import (
     Role,
     Scope,
     SemanticModel,
-    _member_is_write_target,
     container_reference_role,
     enclosing_function,
+    is_member_write_target,
     reference_role,
 )
 from refinery.lib.scripts.js.model import (
@@ -612,7 +612,7 @@ class EffectModel:
                 base = node.object
                 if base is not None and not self._base_is_safe(base):
                     summary.throws = True
-                if _member_is_write_target(node):
+                if is_member_write_target(node):
                     if not self._member_write_unobservable(node, func):
                         summary.writes_global = True
                 elif (

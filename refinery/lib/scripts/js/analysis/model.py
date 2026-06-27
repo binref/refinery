@@ -388,7 +388,7 @@ def container_reference_role(node: JsIdentifier | JsMemberExpression) -> Contain
             break
         if _is_invocation_of(_enclosing_operator(member), member):
             return ContainerRole.MEMBER_CALL
-        return ContainerRole.MEMBER_WRITE if _member_is_write_target(member) else ContainerRole.MEMBER_READ
+        return ContainerRole.MEMBER_WRITE if is_member_write_target(member) else ContainerRole.MEMBER_READ
     if isinstance(parent, JsAssignmentExpression) and _strip_parens(parent.left) is node and parent.operator == '=':
         return ContainerRole.REBIND
     return ContainerRole.ESCAPE
@@ -406,7 +406,7 @@ def _is_invocation_of(node: Node | None, callee: Node) -> bool:
     return False
 
 
-def _member_is_write_target(member: Node) -> bool:
+def is_member_write_target(member: Node) -> bool:
     """
     Whether the outermost *member* of a container's access chain is being written rather than read: the
     left of an assignment, the operand of `++`/`--` or `delete`, or a target of a `for-in`/`for-of` head
@@ -750,7 +750,7 @@ class SemanticModel:
         base = member.object
         if not isinstance(base, JsIdentifier) or base.name not in GLOBAL_OBJECT_ALIASES:
             return
-        if not _member_is_write_target(member):
+        if not is_member_write_target(member):
             return
         name = _global_member_name(member)
         if name is None:
