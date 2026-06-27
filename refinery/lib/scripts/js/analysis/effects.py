@@ -203,11 +203,14 @@ class EffectSummary:
     resolved and summarized. A summary with none of these set is `is_pure`. `wraps_return` is separate:
     it does not bear on purity but records that a call to the function yields a wrapper (a promise from
     an `async` function, an iterator from a generator) rather than the value of its return expression,
-    so the call cannot be replaced by that expression. `written_bindings` names, by identity, the
-    specific outer bindings those write flags cover where the write resolves to one, so a caller can ask
-    which binding a call mutates rather than only whether it mutates some; a coarse write with no
-    resolvable binding (a dynamic-scope or `globalThis.x =` member write) still sets `writes_global` but
-    adds nothing here.
+    so the call cannot be replaced by that expression. `written_bindings` names, by identity, the outer
+    bindings — captured locals and globals — a call may write where the write resolves to one, so a
+    caller can ask which binding a call mutates rather than only whether it mutates some. It is decided
+    independently of purity: a write the purity analysis deems unobservable because the binding never
+    escapes the function is still recorded here, since a consumer reasoning about a read *inside* that
+    function must still see the mutation. A binding written but never read anywhere adds nothing, as no
+    read can observe the change; likewise a coarse write with no resolvable binding (a dynamic-scope or
+    `globalThis.x =` member write) sets `writes_global` but adds nothing here.
     """
     writes_global: bool = False
     writes_captured: bool = False
@@ -653,16 +656,17 @@ class EffectModel:
         if binding is None:
             summary.writes_global = True
             return
+        is_global = binding.kind is BindingKind.IMPLICIT_GLOBAL or binding.scope is self.model.root_scope
+        if not is_global and func_scope is not None and func_scope.contains(binding.scope):
+            return
+        if binding.is_read:
+            summary.written_bindings.add(binding)
         if self._write_unobservable(binding, func):
             return
-        if binding.kind is BindingKind.IMPLICIT_GLOBAL or binding.scope is self.model.root_scope:
+        if is_global:
             summary.writes_global = True
-            summary.written_bindings.add(binding)
-        elif func_scope is not None and func_scope.contains(binding.scope):
-            pass
         else:
             summary.writes_captured = True
-            summary.written_bindings.add(binding)
 
     def _write_unobservable(self, binding: Binding, func: Node) -> bool:
         """
@@ -842,12 +846,16 @@ class EffectModel:
     def _function_of(self, binding) -> Node | None:
         if binding is None:
             return None
-        for decl in binding.declarations:
-            parent = decl.parent
-            if isinstance(parent, JsFunctionDeclaration) and parent.id is decl:
-                return parent
-            if isinstance(parent, JsVariableDeclarator) and isinstance(parent.init, FUNCTION_NODES):
-                return parent.init
+        if binding.writes or len(binding.declarations) != 1:
+            return None
+        decl = binding.declarations[0]
+        parent = decl.parent
+        if isinstance(parent, JsFunctionDeclaration) and parent.id is decl:
+            return parent
+        if isinstance(parent, JsVariableDeclarator) and parent.id is decl and isinstance(
+            parent.init, FUNCTION_NODES
+        ):
+            return parent.init
         return None
 
     def _is_global_intrinsic(self, name: JsIdentifier) -> bool:

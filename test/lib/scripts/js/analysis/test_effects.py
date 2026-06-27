@@ -107,6 +107,7 @@ class TestEffectModel(TestBase):
         model = effects.model
         x_a = model.lookup('x', model.function_scope(self._func(ast, 'a')))
         x_b = model.lookup('x', model.function_scope(self._func(ast, 'b')))
+        assert x_a is not None and x_b is not None
         w = self._func(ast, 'w')
         self.assertTrue(effects.function_can_mutate(w, x_a))
         self.assertFalse(effects.function_can_mutate(w, x_b))
@@ -133,6 +134,25 @@ class TestEffectModel(TestBase):
         populated = effects.summary_of(self._func(ast, 'f'))
         self.assertTrue(populated.written_bindings)
         self.assertNotEqual(populated, EffectSummary(writes_global=True))
+
+    def test_mutated_bindings_records_confined_but_read_write(self):
+        """
+        Every reference to `x` is confined to `f`, so the write is unobservable outside it and `f` stays
+        pure; the write still changes `x` between the two reads inside `f`, so `x` is a mutated binding.
+        """
+        ast, effects = self._effects('var x = 1; function f(){ var a = x; x = 2; var b = x; }')
+        f = self._func(ast, 'f')
+        x = self._binding(ast, effects.model, 'x')
+        self.assertTrue(effects.summary_of(f).is_pure)
+        self.assertEqual(effects.mutated_bindings(f), frozenset({x}))
+
+    def test_call_to_redeclared_function_is_unknown(self):
+        """
+        A name bound by two function declarations resolves to no single body — the later declaration
+        wins at runtime — so a call through it is an unknown callee, not silently the first definition.
+        """
+        ast, effects = self._effects('function g(){} function g(){} function h(){ g(); }')
+        self.assertTrue(effects.summary_of(self._func(ast, 'h')).calls_unknown)
 
     def test_write_to_never_read_global_is_unobservable(self):
         self.assertTrue(self._summary('function f(){ scratch = 1; }', 'f').is_pure)
