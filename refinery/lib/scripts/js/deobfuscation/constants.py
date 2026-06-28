@@ -7,7 +7,7 @@ from typing import NamedTuple
 
 from refinery.lib.scripts import Node, _clone_node, _remove_from_parent, _replace_in_parent
 from refinery.lib.scripts.js.analysis.cache import model_cache
-from refinery.lib.scripts.js.analysis.dominance import build_dominance
+from refinery.lib.scripts.js.analysis.dominance import DominanceModel, build_dominance
 from refinery.lib.scripts.js.analysis.effects import EffectModel
 from refinery.lib.scripts.js.analysis.model import (
     Binding,
@@ -22,7 +22,6 @@ from refinery.lib.scripts.js.analysis.model import (
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     ScopeProcessingTransformer,
     collect_identifier_names,
-    get_body,
     is_literal,
     remove_declarator,
     walk_scope,
@@ -65,21 +64,14 @@ def _pattern_identifiers(pattern: Node) -> set[str]:
     return {n.name for n in pattern.walk() if isinstance(n, JsIdentifier)}
 
 
-class _BodyEntry(NamedTuple):
-    body: list
-    stmt_index: int
-
-
 class _CandidateEntry(NamedTuple):
     declarator: JsVariableDeclarator | None
     value: Node
-    scope: _BodyEntry | None
 
 
 class _MemberArrayEntry(NamedTuple):
     assignment: JsAssignmentExpression
     array: JsArrayExpression
-    scope: _BodyEntry | None
 
 
 def _candidate_decl_ids(candidates: dict[str, list[_CandidateEntry]]) -> set[int]:
@@ -256,81 +248,6 @@ def _is_const_qualified(declarator: JsVariableDeclarator) -> bool:
     return isinstance(parent, JsVariableDeclaration) and parent.kind is JsVarKind.CONST
 
 
-def _find_body_entry(node: Node) -> _BodyEntry | None:
-    """
-    Walk upward from *node* and return the first `_BodyEntry` where the node (or an ancestor)
-    appears as an entry in a parent's body list.
-    """
-    entries = _find_all_body_entries(node)
-    return entries[0] if entries else None
-
-
-def _find_all_body_entries(node: Node) -> list[_BodyEntry]:
-    """
-    Walk upward from *node* and return a body-list position at every ancestor level.
-    """
-    result: list[_BodyEntry] = []
-    cursor = node
-    while cursor.parent is not None:
-        parent = cursor.parent
-        body = get_body(parent)
-        if body is not None:
-            for idx, entry in enumerate(body):
-                if entry is cursor:
-                    result.append(_BodyEntry(body, idx))
-                    break
-        cursor = parent
-    return result
-
-
-def _find_dominating_entry(
-    node: Node,
-    entries: list[_CandidateEntry],
-    seal_points: list[_BodyEntry] | None = None,
-) -> _CandidateEntry | None:
-    """
-    For a variable reference, find the assignment entry that dominates it. When multiple constant
-    assignments exist, pick the latest one whose scope position precedes the reference without any
-    seal point intervening.
-    """
-    cursor = node
-    while cursor.parent is not None:
-        parent = cursor.parent
-        body = get_body(parent)
-        if body is None:
-            cursor = parent
-            continue
-        ref_idx: int | None = None
-        for idx, entry in enumerate(body):
-            if entry is cursor:
-                ref_idx = idx
-                break
-        if ref_idx is not None:
-            best: _CandidateEntry | None = None
-            best_idx = -1
-            for candidate_entry in entries:
-                scope = candidate_entry.scope
-                if scope is None:
-                    continue
-                if scope.body is body and scope.stmt_index < ref_idx and scope.stmt_index > best_idx:
-                    best = candidate_entry
-                    best_idx = scope.stmt_index
-            if best is not None and seal_points:
-                for sp in seal_points:
-                    if sp.body is body and best_idx < sp.stmt_index <= ref_idx:
-                        best = None
-                        break
-            if best is not None:
-                return best
-        cursor = parent
-    if not entries:
-        return None
-    for candidate_entry in entries:
-        if candidate_entry.scope is None:
-            return candidate_entry
-    return None
-
-
 def _collect_call_sites(
     scope: Node,
     effects: EffectModel,
@@ -397,17 +314,17 @@ class JsConstantInlining(ScopeProcessingTransformer):
     def _collect_candidates(
         scope: Node,
         effects: EffectModel,
-    ) -> tuple[dict[str, list[_CandidateEntry]], dict[str, list[_BodyEntry]], set[str]]:
+    ) -> tuple[dict[str, list[_CandidateEntry]], dict[str, list[Node]], set[str]]:
         """
         Collect constant declaration entries per variable. Each entry is a `_CandidateEntry` of
 
-            (declarator, constant_value, scope_entry)
+            (declarator, constant_value)
 
-        Also returns seal points (positions of non-constant `=` assignments) and the set of fully
-        rejected (mutated) names.
+        Also returns barrier nodes (the call sites of non-escaping functions that mutate the candidate's
+        binding, past which the value no longer holds) and the set of fully rejected (mutated) names.
         """
         candidates: dict[str, list[_CandidateEntry]] = {}
-        seal_points: dict[str, list[_BodyEntry]] = {}
+        seal_points: dict[str, list[Node]] = {}
         rejected: set[str] = set()
         uninitialized: dict[str, JsVariableDeclarator] = {}
 
@@ -434,13 +351,7 @@ class JsConstantInlining(ScopeProcessingTransformer):
                         candidates.pop(name, None)
                         uninitialized.pop(name, None)
                         continue
-                    if _is_constant_value(decl.init):
-                        entry = _find_body_entry(node)
-                        candidates[name] = [_CandidateEntry(decl, decl.init, entry)]
-                    else:
-                        entry = _find_body_entry(node)
-                        seal_points.setdefault(name, []).extend(_find_all_body_entries(node))
-                        candidates[name] = [_CandidateEntry(decl, decl.init, entry)]
+                    candidates[name] = [_CandidateEntry(decl, decl.init)]
                     uninitialized.pop(name, None)
 
             if isinstance(node, JsAssignmentExpression):
@@ -457,13 +368,8 @@ class JsConstantInlining(ScopeProcessingTransformer):
                         rhs = node.right
                         if rhs is None:
                             rejected.add(name)
-                        elif _is_constant_value(rhs):
-                            entry = _find_body_entry(node)
-                            candidates[name] = [_CandidateEntry(decl, rhs, entry)]
                         else:
-                            entry = _find_body_entry(node)
-                            seal_points.setdefault(name, []).extend(_find_all_body_entries(node))
-                            candidates[name] = [_CandidateEntry(decl, rhs, entry)]
+                            candidates[name] = [_CandidateEntry(decl, rhs)]
                     else:
                         rejected.add(name)
                         candidates.pop(name, None)
@@ -544,9 +450,8 @@ class JsConstantInlining(ScopeProcessingTransformer):
                     _reject(cand_name)
                 continue
             for call in call_sites.get(id(func), ()):
-                call_entries = _find_all_body_entries(call)
                 for cand_name in touched:
-                    seal_points.setdefault(cand_name, []).extend(call_entries)
+                    seal_points.setdefault(cand_name, []).append(call)
 
         return candidates, seal_points, rejected
 
@@ -554,7 +459,7 @@ class JsConstantInlining(ScopeProcessingTransformer):
         self,
         scope: Node,
         candidates: dict[str, list[_CandidateEntry]],
-        seal_points: dict[str, list[_BodyEntry]],
+        seal_points: dict[str, list[Node]],
     ) -> dict[str, int]:
         """
         Inline constant (literal and literal-array) variable references using domination. Handles
@@ -587,6 +492,7 @@ class JsConstantInlining(ScopeProcessingTransformer):
 
         assert self._root is not None
         effects = model_cache(self, self._root).effects
+        dominance = build_dominance(effects.model)
 
         for node in list(walk_scope(scope, include_root_body=True)):
             if isinstance(node, JsMemberExpression) and node.computed:
@@ -598,9 +504,9 @@ class JsConstantInlining(ScopeProcessingTransformer):
                     and obj.name not in bloat_blocked
                     and self._index_array_immutable(obj, effects)
                 ):
-                    self._try_inline_index(
-                        node, obj.name, candidates, seal_points, inlined,
-                    )
+                    entry = candidates[obj.name][0]
+                    if dominance.holds_through(entry.value, node, seal_points.get(obj.name, [])):
+                        self._apply_index_access_inline(node, entry, obj.name, inlined)
                     continue
             if not isinstance(node, JsIdentifier):
                 continue
@@ -614,19 +520,17 @@ class JsConstantInlining(ScopeProcessingTransformer):
                 continue
             if isinstance(parent, JsMemberExpression) and parent.object is node and parent.computed:
                 continue
-            entries = candidates[name]
-            if not any(is_literal(e.value) for e in entries):
+            entry = candidates[name][0]
+            if not is_literal(entry.value):
                 continue
-            sp = seal_points.get(name)
-            entry = _find_dominating_entry(node, entries, sp)
-            if entry is None or not is_literal(entry.value):
+            if not dominance.holds_through(entry.value, node, seal_points.get(name, [])):
                 continue
             _replace_in_parent(node, _clone_node(entry.value))
             self.mark_changed()
             inlined[name] = inlined.get(name, 0) + 1
 
         self._substitute_const_across_functions(
-            scope, candidates, seal_points, decl_ids, bloat_blocked, inlined, effects,
+            scope, candidates, decl_ids, bloat_blocked, inlined, effects, dominance,
         )
 
         return inlined
@@ -643,22 +547,6 @@ class JsConstantInlining(ScopeProcessingTransformer):
         if binding is None:
             return False
         return effects.binding_is_immutable_container(binding)
-
-    def _try_inline_index(
-        self,
-        member: JsMemberExpression,
-        name: str,
-        candidates: dict[str, list[_CandidateEntry]],
-        seal_points: dict[str, list[_BodyEntry]],
-        inlined: dict[str, int],
-    ) -> None:
-        """
-        Try to resolve `name[numericLiteral]` to the corresponding array element.
-        """
-        sp = seal_points.get(name)
-        entry = _find_dominating_entry(member, candidates[name], sp)
-        if entry is not None:
-            self._apply_index_access_inline(member, entry, name, inlined)
 
     def _apply_index_access_inline(
         self,
@@ -687,11 +575,11 @@ class JsConstantInlining(ScopeProcessingTransformer):
         self,
         scope: Node,
         candidates: dict[str, list[_CandidateEntry]],
-        seal_points: dict[str, list[_BodyEntry]],
         decl_ids: set[int],
         bloat_blocked: set[str],
         inlined: dict[str, int],
         effects: EffectModel,
+        dominance: DominanceModel,
     ) -> None:
         """
         For constant-valued candidates, walk the full subtree to inline references inside nested
@@ -709,7 +597,6 @@ class JsConstantInlining(ScopeProcessingTransformer):
         binding is reassigned or redeclared, or it lies on a call cycle).
         """
         model = effects.model
-        dominance = build_dominance(model)
         cross_candidates: dict[str, list[_CandidateEntry]] = {}
         cross_bindings: dict[str, Binding] = {}
         const_names: set[str] = set()
@@ -774,14 +661,9 @@ class JsConstantInlining(ScopeProcessingTransformer):
                         continue
                     if model.is_shadowed(name, obj, outer):
                         continue
-                    if name in const_names:
-                        self._apply_index_access_inline(
-                            node, cross_candidates[name][0], name, inlined,
-                        )
-                    else:
-                        self._try_inline_index(
-                            node, name, cross_candidates, seal_points, inlined,
-                        )
+                    self._apply_index_access_inline(
+                        node, cross_candidates[name][0], name, inlined,
+                    )
                     continue
             if not isinstance(node, JsIdentifier):
                 continue
@@ -826,11 +708,13 @@ class JsConstantInlining(ScopeProcessingTransformer):
         scope: Node,
         candidates: dict[str, list[_CandidateEntry]],
         mutated: set[str],
-        seal_points: dict[str, list[_BodyEntry]],
+        seal_points: dict[str, list[Node]],
     ) -> dict[str, int]:
         """
-        Inline single-use, side-effect-free, non-literal expressions. This is the second pass that
-        runs after constant inlining and preserves the existing behavior.
+        Inline single-use, side-effect-free, non-literal expressions. The use must be reached from the
+        definition with the value intact (`DominanceModel.holds_through`); the `_is_primitive_and_pure`
+        and `mutated` gates additionally guard the inlined expression's own free variables, which the
+        ordering query does not cover.
         """
         decl_ids = _candidate_decl_ids(candidates)
         ref_counts = _count_scope_references(scope, set(candidates), decl_ids)
@@ -853,6 +737,9 @@ class JsConstantInlining(ScopeProcessingTransformer):
         if not to_inline:
             return {}
 
+        assert self._root is not None
+        dominance = build_dominance(model_cache(self, self._root).effects.model)
+
         inlined: dict[str, int] = {}
         for node in list(walk_scope(scope, include_root_body=True)):
             if not isinstance(node, JsIdentifier):
@@ -865,20 +752,8 @@ class JsConstantInlining(ScopeProcessingTransformer):
             if reference_role(node) is not Role.READ:
                 continue
             entry = to_inline[name]
-            if entry.scope is not None:
-                assign_body, assign_idx = entry.scope
-                ref_entry = _find_body_entry(node)
-                if ref_entry is None or ref_entry[0] is not assign_body or ref_entry[1] <= assign_idx:
-                    continue
-                sp = seal_points.get(name)
-                if sp is not None:
-                    ref_idx = ref_entry[1]
-                    sealed = any(
-                        sp_body is assign_body and assign_idx < sp_idx <= ref_idx
-                        for sp_body, sp_idx in sp
-                    )
-                    if sealed:
-                        continue
+            if not dominance.holds_through(entry.value, node, seal_points.get(name, [])):
+                continue
             _replace_in_parent(node, _clone_node(entry.value))
             self.mark_changed()
             inlined[name] = inlined.get(name, 0) + 1
@@ -944,8 +819,7 @@ class JsConstantInlining(ScopeProcessingTransformer):
                 rejected.add(key)
                 candidates.pop(key)
                 continue
-            entry = _find_body_entry(node)
-            candidates[key] = _MemberArrayEntry(node, rhs, entry)
+            candidates[key] = _MemberArrayEntry(node, rhs)
 
         if not candidates:
             return candidates

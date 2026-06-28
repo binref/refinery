@@ -161,6 +161,32 @@ class TestConstantInlining(TestJsDeobfuscator):
         )
         self.assertEqual(source, self._inline(source))
 
+    def test_read_before_mutating_call_inlines_read_after_does_not(self):
+        """
+        `f` reassigns the captured `x`, so the read before the call still sees `5` and is inlined, while
+        the read after the call sees `9` and must be left alone — the value holds up to the barrier only.
+        """
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var x = 5;
+                var f = function() {
+                  x = 9;
+                };
+                SINK.push(5);
+                f();
+                SINK.push(x);
+                """
+            ),
+            self._inline(
+                'var x = 5;'
+                ' var f = function() { x = 9; };'
+                ' SINK.push(x);'
+                ' f();'
+                ' SINK.push(x);'
+            ),
+        )
+
     def test_block_nested_closure_mutation_seals_variable(self):
         """
         `f` is declared inside the loop block, not at the scope top level; calling it still mutates the
@@ -576,6 +602,23 @@ class TestConstantInlining(TestJsDeobfuscator):
                 """
             ),
             self._inline("var p = ['a']; function f() { return p[0]; }"),
+        )
+
+    def test_var_array_inlined_into_called_function_after_definition(self):
+        """
+        `f` is called after `p` is assigned, so every read of `p[0]` inside it sees the literal array;
+        the runs-before check orders the call against the definition where statement position could not.
+        """
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function f() {
+                  return 'a';
+                }
+                f();
+                """
+            ),
+            self._inline("var p = ['a']; function f() { return p[0]; } f();"),
         )
 
     def test_const_array_inlined_across_functions(self):

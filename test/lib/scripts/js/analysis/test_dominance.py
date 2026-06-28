@@ -5,6 +5,7 @@ from test import TestBase
 from refinery.lib.scripts.js.analysis.dominance import build_dominance
 from refinery.lib.scripts.js.analysis.model import build_semantic_model
 from refinery.lib.scripts.js.model import (
+    JsCallExpression,
     JsFunctionDeclaration,
     JsFunctionExpression,
     JsIdentifier,
@@ -190,3 +191,58 @@ class TestDominance(TestBase):
         ast, dom = self._dominance(
             'const c = 5; function f(){ return c; } function inner(a = f()){ return a; } inner();')
         self.assertTrue(dom.runs_before_function(self._def(ast, 'c'), self._func(ast, 'f')))
+
+    @staticmethod
+    def _call(ast, callee: str) -> JsCallExpression:
+        for node in ast.walk_in_order():
+            if isinstance(node, JsCallExpression) and isinstance(node.callee, JsIdentifier) \
+                    and node.callee.name == callee:
+                return node
+        raise AssertionError(F'no call to {callee}')
+
+    def test_holds_through_with_no_barrier(self):
+        ast, dom = self._dominance('var x = 1; x;')
+        decl, use = self._idents(ast, 'x')
+        self.assertTrue(dom.holds_through(decl, use, []))
+
+    def test_does_not_hold_through_when_use_not_dominated(self):
+        ast, dom = self._dominance('if (c) { var x = 1; } x;')
+        decl, use = self._idents(ast, 'x')
+        self.assertFalse(dom.holds_through(decl, use, []))
+
+    def test_does_not_hold_through_loop_back_edge_barrier(self):
+        """
+        `mutate()` runs at the end of each iteration and the loop edge carries control back to the use,
+        so a later iteration reads the mutated value — the barrier is on a path back to the use.
+        """
+        ast, dom = self._dominance('var x = 1; while (c) { x; mutate(); }')
+        decl, use = self._idents(ast, 'x')
+        self.assertFalse(dom.holds_through(decl, use, [self._call(ast, 'mutate')]))
+
+    def test_holds_through_sibling_branch_barrier(self):
+        """
+        `mutate()` is on the branch the use is not on and cannot reach it, so the value still holds at
+        the use — a precision the statement-position check did not have.
+        """
+        ast, dom = self._dominance('var x = 1; if (c) { mutate(); } else { x; }')
+        decl, use = self._idents(ast, 'x')
+        self.assertTrue(dom.holds_through(decl, use, [self._call(ast, 'mutate')]))
+
+    def test_does_not_hold_through_barrier_sharing_definition_statement(self):
+        ast, dom = self._dominance('var x = 1, y = mutate(); x;')
+        decl, use = self._idents(ast, 'x')
+        self.assertFalse(dom.holds_through(decl, use, [self._call(ast, 'mutate')]))
+
+    def test_does_not_hold_through_barrier_sharing_use_statement(self):
+        ast, dom = self._dominance('var x = 1; foo(mutate(), x);')
+        decl, use = self._idents(ast, 'x')
+        self.assertFalse(dom.holds_through(decl, use, [self._call(ast, 'mutate')]))
+
+    def test_does_not_hold_through_exceptional_edge_barrier_into_catch(self):
+        """
+        `mutate()` may throw after changing the value, and the only path from it to the catch-bound use
+        is the exceptional edge — which the reachability follows, so the barrier is between.
+        """
+        ast, dom = self._dominance('var x = 1; try { mutate(); } catch (e) { x; }')
+        decl, use = self._idents(ast, 'x')
+        self.assertFalse(dom.holds_through(decl, use, [self._call(ast, 'mutate')]))
