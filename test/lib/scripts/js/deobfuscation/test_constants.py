@@ -387,6 +387,60 @@ class TestConstantInlining(TestJsDeobfuscator):
         )
         self.assertEqual(source, self._inline(source))
 
+    def test_constant_not_inlined_into_own_function_before_declaration(self):
+        """
+        `c` is read in the temporal dead zone, before its own `const` declaration runs, so the read
+        throws. The cross-function pass must leave a reference in the declaring function's own body to
+        the in-scope domination pass, which already declines this pre-declaration read, rather than
+        inlining the value and replacing the throw with it.
+        """
+        source = inspect.cleandoc(
+            """
+            function f() {
+              log(c);
+              const c = 5;
+            }
+            """
+        )
+        self.assertEqual(source, self._inline(source))
+
+    def test_uninitialized_var_not_inlined_into_own_function_before_assignment(self):
+        """
+        `x` is read before its hoisted `var` is assigned, so the read sees `undefined`. Promoting `x`
+        to its eventual constant and inlining that read in the same function would turn `undefined`
+        into the value.
+        """
+        source = inspect.cleandoc(
+            """
+            function f() {
+              log(x);
+              var x;
+              x = 5;
+            }
+            """
+        )
+        self.assertEqual(source, self._inline(source))
+
+    def test_constant_not_inlined_into_same_named_free_reference(self):
+        """
+        `read` returns a free `v` that resolves to no local binding; the only `v` is a block-scoped
+        `const` invisible to the function. Matching by name alone would inline the const into a
+        reference that never reads it, so the inline is gated on the reference resolving to the
+        candidate binding.
+        """
+        source = inspect.cleandoc(
+            """
+            function read() {
+              return v;
+            }
+            if (cond) {
+              const v = 9;
+            }
+            sink(read());
+            """
+        )
+        self.assertEqual(source, self._inline(source))
+
     def test_single_use_expression_inlined(self):
         self.assertEqual('return a + b;', self._inline('var x = a + b; return x;'))
 

@@ -797,6 +797,7 @@ class JsConstantInlining(ScopeProcessingTransformer):
 
         outer = model.scope_of(scope)
         assert outer is not None
+        owner = enclosing_function(scope)
 
         call_sites, called_funcs = _collect_call_sites(scope, effects)
 
@@ -820,17 +821,17 @@ class JsConstantInlining(ScopeProcessingTransformer):
                 ):
                     name = obj.name
                     enclosing = enclosing_function(obj)
+                    if enclosing is owner:
+                        continue
+                    if model.resolve(obj) is not cross_bindings[name]:
+                        continue
                     s_entry = cross_candidates[name][0].scope
-                    if name in const_names:
-                        if enclosing is None:
-                            continue
-                    else:
-                        if (
-                            not isinstance(enclosing, JsFunctionDeclaration)
-                            or id(enclosing) not in call_sites
-                            or effects.function_can_mutate(enclosing, cross_bindings[name])
-                        ):
-                            continue
+                    if name not in const_names and (
+                        not isinstance(enclosing, JsFunctionDeclaration)
+                        or id(enclosing) not in call_sites
+                        or effects.function_can_mutate(enclosing, cross_bindings[name])
+                    ):
+                        continue
                     if self._enclosing_invocation_unordered(enclosing, model):
                         continue
                     if self._any_call_precedes_value(s_entry, call_sites.get(id(enclosing), [])):
@@ -866,10 +867,11 @@ class JsConstantInlining(ScopeProcessingTransformer):
             if not is_literal(entry.value):
                 continue
             enclosing = enclosing_function(node)
-            if name in const_names:
-                if enclosing is None:
-                    continue
-            elif (
+            if enclosing is owner:
+                continue
+            if model.resolve(node) is not cross_bindings[name]:
+                continue
+            if name not in const_names and (
                 not isinstance(enclosing, JsFunctionDeclaration)
                 or id(enclosing) not in call_sites
                 or effects.function_can_mutate(enclosing, cross_bindings[name])

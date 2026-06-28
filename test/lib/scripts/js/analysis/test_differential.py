@@ -445,3 +445,43 @@ class TestDeobfuscationDifferential(TestBase):
             ' function c(){ return 0; }'
             ' SINK.push(c());'
             " console.log(SINK.join('|'));")
+
+    def test_const_not_inlined_into_own_function_before_declaration(self):
+        """
+        `f` reads `c` in its own body before the `const c` declaration runs — the temporal dead zone,
+        which throws. The cross-function pass walks the whole subtree, including `f`'s own body, but a
+        reference in the declaring function itself belongs to the domination-aware in-scope pass;
+        inlining it here would replace the dead-zone throw with the value.
+        """
+        self._check(
+            'var SINK = [];'
+            ' function f(){ try { SINK.push(c); } catch (e) { SINK.push(e.name); } const c = 5;'
+            ' SINK.push(c); }'
+            ' f();'
+            " console.log(SINK.join('|'));")
+
+    def test_uninitialized_var_not_inlined_into_own_function_before_assignment(self):
+        """
+        `f` reads its hoisted `var x` before the assignment runs, so the read sees `undefined`.
+        Inlining the eventual constant into that same-function read would change the first push from
+        `undefined` to the value.
+        """
+        self._check(
+            'var SINK = [];'
+            ' function f(){ SINK.push(x); var x; x = 5; SINK.push(x); }'
+            ' f();'
+            " console.log(SINK.join('|'));")
+
+    def test_const_not_inlined_into_same_named_free_reference(self):
+        """
+        `read` returns a free `secret` that resolves to no local binding (a reference error), while
+        the only `secret` is a block-scoped `const` invisible to `read`. Inlining by name alone would
+        turn the reference error into the const's value; the inline must require the reference to
+        resolve to the candidate binding.
+        """
+        self._check(
+            'var SINK = [];'
+            ' { const secret = "X"; SINK.push(secret); }'
+            ' function read(){ try { return secret; } catch (e) { return e.name; } }'
+            ' SINK.push(read());'
+            " console.log(SINK.join('|'));")
