@@ -348,6 +348,28 @@ def _find_dominating_entry(
     return None
 
 
+def _collect_call_sites(
+    scope: Node,
+    effects: EffectModel,
+) -> tuple[dict[int, list[Node]], list[Node]]:
+    """
+    Map each statically resolvable callee within *scope* to the call expressions that target it,
+    and list those callees once each in first-seen order. A call whose target
+    `EffectModel.static_callee` cannot pin down (a method, a reassigned or redeclared binding, an
+    unresolved name) contributes nothing.
+    """
+    call_sites: dict[int, list[Node]] = {}
+    called_funcs: list[Node] = []
+    for node in walk_scope(scope, include_root_body=True):
+        if isinstance(node, JsCallExpression):
+            target = effects.static_callee(node)
+            if target is not None:
+                if id(target) not in call_sites:
+                    called_funcs.append(target)
+                call_sites.setdefault(id(target), []).append(node)
+    return call_sites, called_funcs
+
+
 class JsConstantInlining(ScopeProcessingTransformer):
     """
     Inline variables that are assigned once and never mutated. Literal-valued variables are inlined
@@ -525,12 +547,7 @@ class JsConstantInlining(ScopeProcessingTransformer):
             if cand_name in unresolved_writes or binding.has_global_member_write:
                 _reject(cand_name)
 
-        call_sites: dict[int, list[Node]] = {}
-        for node in walk_scope(scope, include_root_body=True):
-            if isinstance(node, JsCallExpression):
-                target = effects.static_callee(node)
-                if target is not None:
-                    call_sites.setdefault(id(target), []).append(node)
+        call_sites, _ = _collect_call_sites(scope, effects)
 
         for func in functions:
             written = effects.mutated_bindings(func)
@@ -686,25 +703,33 @@ class JsConstantInlining(ScopeProcessingTransformer):
     @staticmethod
     def _any_call_precedes_value(s_entry: _BodyEntry | None, calls: list[Node]) -> bool:
         """
-        TEMPORARY ordering stopgap, pending the Phase-2 reaching-definition domination analysis on the
-        control-flow graph. Whether any call in *calls* is positioned at or before the value-establishing
-        statement *s_entry* within *s_entry*'s own statement list — a visible invocation that would read
-        the value before it is set: a stale read for a `var`, a temporal-dead-zone throw for a `const`.
-        Only a call sharing a statement list with *s_entry* is compared, where textual order is execution
-        order; a call reached through a nested or indirect path cannot be ordered without a control-flow
-        graph and is left to Phase 2. So this refuses cross-function inlining on a *demonstrated*
-        misordering, not on every unprovable one — a fully conservative refusal regresses the obfuscator
-        idioms (a hoisted lookup value assigned once, then read through a chain of calls) the inliner
-        exists to see through.
+        TEMPORARY ordering stopgap, pending the Phase-2 reaching-definition analysis on the
+        control-flow graph. Whether any call in *calls* runs at or before the statement that
+        establishes the value at *s_entry* — a visible invocation that would read the value early:
+        a stale read for a `var`, a temporal-dead-zone throw for a `const`. The call and the value
+        statement are ordered at their nearest common ancestor body, where textual order is
+        execution order, so a value nested in a block is still compared against an outer call that
+        precedes it. A call reached only through a nested or indirect path shares no body with the
+        value and cannot be ordered without a control-flow graph; it is left to Phase 2. So this
+        refuses on a demonstrated misordering, not on every unprovable one — a fully conservative
+        refusal regresses the obfuscator idioms (a hoisted lookup value assigned once, then read
+        through a chain of calls) the inliner exists to see through.
         """
         if s_entry is None:
             return False
+        value_stmt = s_entry.body[s_entry.stmt_index]
+        value_at = {
+            id(entry.body): entry.stmt_index
+            for entry in _find_all_body_entries(value_stmt)
+        }
         for call in calls:
-            if any(
-                entry.body is s_entry.body and entry.stmt_index <= s_entry.stmt_index
-                for entry in _find_all_body_entries(call)
-            ):
-                return True
+            for entry in _find_all_body_entries(call):
+                value_index = value_at.get(id(entry.body))
+                if value_index is None:
+                    continue
+                if entry.stmt_index <= value_index:
+                    return True
+                break
         return False
 
     def _substitute_const_across_functions(
@@ -757,17 +782,7 @@ class JsConstantInlining(ScopeProcessingTransformer):
         outer = model.scope_of(scope)
         assert outer is not None
 
-        call_sites: dict[int, list[Node]] = {}
-        called_ids: set[int] = set()
-        called_funcs: list[Node] = []
-        for node in walk_scope(scope, include_root_body=True):
-            if isinstance(node, JsCallExpression):
-                target = effects.static_callee(node)
-                if target is not None:
-                    if id(target) not in called_ids:
-                        called_ids.add(id(target))
-                        called_funcs.append(target)
-                    call_sites.setdefault(id(target), []).append(node)
+        call_sites, called_funcs = _collect_call_sites(scope, effects)
 
         for name in [
             candidate for candidate, binding in cross_bindings.items()
@@ -796,7 +811,7 @@ class JsConstantInlining(ScopeProcessingTransformer):
                     else:
                         if (
                             not isinstance(enclosing, JsFunctionDeclaration)
-                            or id(enclosing) not in called_ids
+                            or id(enclosing) not in call_sites
                             or effects.function_can_mutate(enclosing, cross_bindings[name])
                         ):
                             continue
@@ -838,7 +853,7 @@ class JsConstantInlining(ScopeProcessingTransformer):
                     continue
             elif (
                 not isinstance(enclosing, JsFunctionDeclaration)
-                or id(enclosing) not in called_ids
+                or id(enclosing) not in call_sites
                 or effects.function_can_mutate(enclosing, cross_bindings[name])
             ):
                 continue

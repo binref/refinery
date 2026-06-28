@@ -354,3 +354,48 @@ class TestDeobfuscationDifferential(TestBase):
             ' function v(){ SINK.push("x"); return 2; }'
             ' SINK.push(v());'
             " console.log(SINK.join('|'));")
+
+    def test_uninitialized_var_assigned_in_block_not_inlined_before_call(self):
+        """
+        `x = 5` sits in a nested block, so it does not share a statement list with the first `g()`,
+        yet that call still runs before the assignment and reads the hoisted `undefined`. The ordering
+        check must compare the call against the value at their common ancestor body, not only within
+        the value's own block, or the first call's result changes from `undefined` to `5`.
+        """
+        self._check(
+            'var SINK = [];'
+            ' var x;'
+            ' function g(){ return x; }'
+            ' SINK.push(g());'
+            ' { x = 5; }'
+            ' SINK.push(g());'
+            " console.log(SINK.join('|'));")
+
+    def test_var_initializer_in_block_not_inlined_before_call(self):
+        """
+        `var x = 5` is nested in a `try`, so its assignment runs after the first `g()`, which reads the
+        hoisted-but-unassigned `x`. Inlining the constant into `g` would make that first call return 5
+        instead of `undefined`, so the value nested in the block must still be ordered after the call.
+        """
+        self._check(
+            'var SINK = [];'
+            ' function g(){ return x; }'
+            ' SINK.push(g());'
+            ' try { var x = 5; } catch (e) {}'
+            ' SINK.push(g());'
+            " console.log(SINK.join('|'));")
+
+    def test_array_index_not_inlined_before_assignment(self):
+        """
+        `A` holds its array only after the first `read()`, so `A[0]` is an access on `undefined` at
+        that call — a TypeError. Inlining the element into `read` would replace the throw with 1, so
+        the index access must not be substituted where a call observes it before the array is set.
+        """
+        self._check(
+            'var SINK = [];'
+            ' var A;'
+            ' function read(){ return A[0]; }'
+            ' try { SINK.push(read()); } catch (e) { SINK.push(e.name); }'
+            ' A = [1, 2, 3];'
+            ' SINK.push(read());'
+            " console.log(SINK.join('|'));")
