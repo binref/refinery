@@ -21,8 +21,19 @@ head) that evaluates it, the granularity at which the graph reasons.
 from __future__ import annotations
 
 from refinery.lib.scripts import Node
-from refinery.lib.scripts.js.analysis.cfg import CfgNode, ControlFlowGraph, build_control_flow
-from refinery.lib.scripts.js.analysis.model import SemanticModel
+from refinery.lib.scripts.js.analysis.cfg import (
+    FUNCTION_NODES,
+    CfgNode,
+    ControlFlowGraph,
+    build_control_flow,
+)
+from refinery.lib.scripts.js.analysis.model import Binding, SemanticModel
+from refinery.lib.scripts.js.model import (
+    JsCallExpression,
+    JsFunctionDeclaration,
+    JsIdentifier,
+    JsVariableDeclarator,
+)
 
 
 class DominanceModel:
@@ -68,6 +79,65 @@ class DominanceModel:
         """
         located = self._locate(element)
         return located[1] if located is not None else None
+
+    def runs_before_function(self, definition: Node, function: Node) -> bool:
+        """
+        Whether *definition* is guaranteed to have executed before any invocation of *function* — so a
+        value established at *definition* holds throughout every call of *function*, and may be inlined
+        into its body. True when every reference to *function* is a direct `name(...)` call and each such
+        call runs after *definition*: a call in *definition*'s own function is ordered by dominance, and a
+        call inside another function is ordered by that function, in turn, running after *definition*
+        (the same question, applied up the call graph). This is the interprocedural counterpart of
+        `dominates`, and the sound replacement for ordering a cross-function inline by statement position.
+
+        Conservatively `False` when the invocations cannot be enumerated or ordered: *function* is
+        anonymous, redeclared, or reassigned (its calls cannot be pinned to this body), it escapes
+        (referenced as anything other than a direct callee — aliased, passed, stored), or it lies on a
+        call cycle (a recursion the walk cannot bottom out). A function never called is vacuously safe.
+        """
+        return self._runs_before_function(definition, function, set())
+
+    def _runs_before_function(self, definition: Node, function: Node, visiting: set[int]) -> bool:
+        if id(function) in visiting:
+            return False
+        binding = self._naming_binding(function)
+        if binding is None or binding.writes or len(binding.declarations) != 1:
+            return False
+        visiting = visiting | {id(function)}
+        for ref in self.model.references(binding):
+            parent = ref.parent
+            if not (isinstance(parent, JsCallExpression) and parent.callee is ref):
+                return False
+            if not self._runs_after(definition, parent, visiting):
+                return False
+        return True
+
+    def _runs_after(self, definition: Node, call: JsCallExpression, visiting: set[int]) -> bool:
+        owner = self._owner_of(call)
+        definition_owner = self._owner_of(definition)
+        if owner is None or definition_owner is None:
+            return False
+        if owner is definition_owner:
+            return self.dominates(definition, call)
+        if isinstance(owner, FUNCTION_NODES):
+            return self._runs_before_function(definition, owner, visiting)
+        return False
+
+    def _owner_of(self, element: Node) -> Node | None:
+        located = self._locate(element)
+        return located[0].owner if located is not None else None
+
+    def _naming_binding(self, function: Node) -> Binding | None:
+        if isinstance(function, JsFunctionDeclaration) and function.id is not None:
+            return self.model.binding_of(function.id)
+        parent = function.parent
+        if (
+            isinstance(parent, JsVariableDeclarator)
+            and parent.init is function
+            and isinstance(parent.id, JsIdentifier)
+        ):
+            return self.model.binding_of(parent.id)
+        return None
 
     def _index_elements(self):
         for graph in self._graphs.values():
