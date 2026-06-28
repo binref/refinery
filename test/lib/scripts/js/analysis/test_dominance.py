@@ -6,6 +6,7 @@ from refinery.lib.scripts.js.analysis.dominance import build_dominance
 from refinery.lib.scripts.js.analysis.model import build_semantic_model
 from refinery.lib.scripts.js.model import (
     JsFunctionDeclaration,
+    JsFunctionExpression,
     JsIdentifier,
     JsVariableDeclarator,
 )
@@ -107,8 +108,20 @@ class TestDominance(TestBase):
             'function f(){ return c; } function main(){ return f(); } main(); const c = 5;')
         self.assertFalse(dom.runs_before_function(self._def(ast, 'c'), self._func(ast, 'f')))
 
-    def test_does_not_run_before_escaping_function(self):
+    def test_runs_before_function_passed_as_argument_after_definition(self):
+        """
+        `f` escapes into `g`, which may call it at any later point, but the value it captures is
+        established before `f` is even passed — so every invocation still runs after the definition.
+        """
         ast, dom = self._dominance('const c = 5; function f(){ return c; } g(f);')
+        self.assertTrue(dom.runs_before_function(self._def(ast, 'c'), self._func(ast, 'f')))
+
+    def test_does_not_run_before_function_passed_before_definition(self):
+        """
+        `f` is handed to `g` before the definition runs, so `g` could invoke it while the value is
+        still unset; the reference that lets it escape is not dominated by the definition.
+        """
+        ast, dom = self._dominance('function f(){ return c; } g(f); const c = 5;')
         self.assertFalse(dom.runs_before_function(self._def(ast, 'c'), self._func(ast, 'f')))
 
     def test_uncalled_function_is_vacuously_safe(self):
@@ -119,3 +132,34 @@ class TestDominance(TestBase):
         ast, dom = self._dominance(
             'const c = 5; function f(){ return g(); } function g(){ return f(); } f();')
         self.assertFalse(dom.runs_before_function(self._def(ast, 'c'), self._func(ast, 'f')))
+
+    @staticmethod
+    def _func_expr(ast) -> JsFunctionExpression:
+        for node in ast.walk_in_order():
+            if isinstance(node, JsFunctionExpression):
+                return node
+        raise AssertionError('no function expression')
+
+    def test_runs_before_directly_invoked_iife_after_definition(self):
+        ast, dom = self._dominance('const c = 5; (function(){ return c; })();')
+        self.assertTrue(dom.runs_before_function(self._def(ast, 'c'), self._func_expr(ast)))
+
+    def test_does_not_run_before_iife_before_definition(self):
+        ast, dom = self._dominance('(function(){ return c; })(); const c = 5;')
+        self.assertFalse(dom.runs_before_function(self._def(ast, 'c'), self._func_expr(ast)))
+
+    def test_runs_before_callback_created_after_definition(self):
+        """
+        A callback escapes into `forEach`, which invokes it synchronously or not at all, but the value
+        it reads is established before the callback is even created — so no invocation precedes it.
+        """
+        ast, dom = self._dominance('const c = 5; [0].forEach(function(){ return c; });')
+        self.assertTrue(dom.runs_before_function(self._def(ast, 'c'), self._func_expr(ast)))
+
+    def test_does_not_run_before_callback_created_before_definition(self):
+        """
+        The callback is created — and could be invoked — before the definition runs, so the value it
+        reads is not yet established; its creation point is not dominated by the definition.
+        """
+        ast, dom = self._dominance('[0].forEach(function(){ return c; }); const c = 5;')
+        self.assertFalse(dom.runs_before_function(self._def(ast, 'c'), self._func_expr(ast)))

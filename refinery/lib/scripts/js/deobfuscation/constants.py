@@ -7,6 +7,7 @@ from typing import NamedTuple
 
 from refinery.lib.scripts import Node, _clone_node, _remove_from_parent, _replace_in_parent
 from refinery.lib.scripts.js.analysis.cache import model_cache
+from refinery.lib.scripts.js.analysis.dominance import build_dominance
 from refinery.lib.scripts.js.analysis.effects import EffectModel
 from refinery.lib.scripts.js.analysis.model import (
     Binding,
@@ -700,54 +701,6 @@ class JsConstantInlining(ScopeProcessingTransformer):
         self.mark_changed()
         inlined[name] = inlined.get(name, 0) + 1
 
-    @staticmethod
-    def _any_call_precedes_value(s_entry: _BodyEntry | None, calls: list[Node]) -> bool:
-        """
-        TEMPORARY ordering stopgap, pending the Phase-2 reaching-definition analysis on the
-        control-flow graph. Whether any call in *calls* runs at or before the statement that
-        establishes the value at *s_entry* — a visible invocation that would read the value early:
-        a stale read for a `var`, a temporal-dead-zone throw for a `const`. The call and the value
-        statement are ordered at their nearest common ancestor body, where textual order is
-        execution order, so a value nested in a block is still compared against an outer call that
-        precedes it. A call reached only through a nested or indirect path shares no body with the
-        value and cannot be ordered without a control-flow graph; it is left to Phase 2. So this
-        refuses on a demonstrated misordering, not on every unprovable one — a fully conservative
-        refusal regresses the obfuscator idioms (a hoisted lookup value assigned once, then read
-        through a chain of calls) the inliner exists to see through.
-        """
-        if s_entry is None:
-            return False
-        value_stmt = s_entry.body[s_entry.stmt_index]
-        value_at = {
-            id(entry.body): entry.stmt_index
-            for entry in _find_all_body_entries(value_stmt)
-        }
-        for call in calls:
-            for entry in _find_all_body_entries(call):
-                value_index = value_at.get(id(entry.body))
-                if value_index is None:
-                    continue
-                if entry.stmt_index <= value_index:
-                    return True
-                break
-        return False
-
-    @staticmethod
-    def _enclosing_invocation_unordered(enclosing: Node | None, model: SemanticModel) -> bool:
-        """
-        Whether the function a constant would be inlined into may be invoked at a point the ordering
-        stopgap cannot see. A NAMED function that escapes — referenced as more than a direct callee,
-        reassigned, or redeclared — can be reached through an alias, a callback, or a method before the
-        value is established, and that invocation is not among its resolvable direct call sites, so
-        `_any_call_precedes_value` never sees it; inlining a value into such a function is unsound. An
-        anonymous function is excluded: its only invocation is the call it is the callee of, which the
-        ordering check can already place. A sound order for the escaping case needs the Phase-2
-        reaching-definition analysis; until then the value is conservatively not inlined.
-        """
-        if enclosing is None:
-            return False
-        return _function_name_binding(enclosing, model) is not None and _function_escapes(enclosing, model)
-
     def _substitute_const_across_functions(
         self,
         scope: Node,
@@ -761,16 +714,20 @@ class JsConstantInlining(ScopeProcessingTransformer):
         """
         For constant-valued candidates, walk the full subtree to inline references inside nested
         function bodies. A `const`-qualified candidate, or an uninitialized `var` later assigned a
-        single constant, is inlined into a function unless a visible call to that function runs before
-        the value is established (`_any_call_precedes_value`) — a stale read for the `var` form, a
-        temporal-dead-zone read for the `const` form. A `var`/`let` candidate that carries its own
-        initializer is inlined only into a named function declaration actually called in the current
-        scope that the effect model proves does not mutate the binding, and again only when no visible
-        call precedes the value. The ordering check is a temporary stopgap until the Phase-2
-        reaching-definition analysis replaces statement-position comparison with control-flow domination;
-        it refuses on a demonstrated misordering rather than risk inlining a value a call reads early.
+        single constant, is inlined into a function only when the value provably runs before every
+        invocation of that function (`DominanceModel.runs_before_function`) — otherwise a call could
+        read the value early: a stale read for the `var` form, a temporal-dead-zone throw for the
+        `const` form. A `var`/`let` candidate that carries its own initializer is additionally
+        restricted to a named function declaration actually called in the current scope that the effect
+        model proves does not mutate the binding. The interprocedural runs-before check subsumes the
+        earlier escape and statement-position heuristics: a function cannot be invoked before a reference
+        to it has been evaluated, so it orders the value against every point the function is referenced —
+        recursing up the call graph for a reference that lies inside another function — and inlines only
+        when the value dominates all of them, refusing whenever a reference cannot be ordered (its
+        binding is reassigned or redeclared, or it lies on a call cycle).
         """
         model = effects.model
+        dominance = build_dominance(model)
         cross_candidates: dict[str, list[_CandidateEntry]] = {}
         cross_bindings: dict[str, Binding] = {}
         const_names: set[str] = set()
@@ -821,20 +778,17 @@ class JsConstantInlining(ScopeProcessingTransformer):
                 ):
                     name = obj.name
                     enclosing = enclosing_function(obj)
-                    if enclosing is owner:
+                    if enclosing is None or enclosing is owner:
                         continue
                     if model.resolve(obj) is not cross_bindings[name]:
                         continue
-                    s_entry = cross_candidates[name][0].scope
                     if name not in const_names and (
                         not isinstance(enclosing, JsFunctionDeclaration)
                         or id(enclosing) not in call_sites
                         or effects.function_can_mutate(enclosing, cross_bindings[name])
                     ):
                         continue
-                    if self._enclosing_invocation_unordered(enclosing, model):
-                        continue
-                    if self._any_call_precedes_value(s_entry, call_sites.get(id(enclosing), [])):
+                    if not dominance.runs_before_function(cross_candidates[name][0].value, enclosing):
                         continue
                     if model.is_shadowed(name, obj, outer):
                         continue
@@ -867,7 +821,7 @@ class JsConstantInlining(ScopeProcessingTransformer):
             if not is_literal(entry.value):
                 continue
             enclosing = enclosing_function(node)
-            if enclosing is owner:
+            if enclosing is None or enclosing is owner:
                 continue
             if model.resolve(node) is not cross_bindings[name]:
                 continue
@@ -877,9 +831,7 @@ class JsConstantInlining(ScopeProcessingTransformer):
                 or effects.function_can_mutate(enclosing, cross_bindings[name])
             ):
                 continue
-            if self._enclosing_invocation_unordered(enclosing, model):
-                continue
-            if self._any_call_precedes_value(entry.scope, call_sites.get(id(enclosing), [])):
+            if not dominance.runs_before_function(entry.value, enclosing):
                 continue
             if model.is_shadowed(name, node, outer):
                 continue

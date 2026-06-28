@@ -14,9 +14,12 @@ a definition is reported as dominating a use only when it runs before that use o
 including the ones that leave a `try` by throwing. A use a definition does not dominate, or one in a
 different function's graph, is answered conservatively as not-dominated.
 
-The public surface — `DominanceModel.dominates`, `DominanceModel.cfg_node_of`, `build_dominance` — is
-keyed to AST nodes: an arbitrary node is located to the control-flow node of the statement (or loop
-head) that evaluates it, the granularity at which the graph reasons.
+The public surface — `DominanceModel.dominates`, `DominanceModel.cfg_node_of`,
+`DominanceModel.runs_before_function`, `build_dominance` — is keyed to AST nodes: an arbitrary node is
+located to the control-flow node of the statement (or loop head) that evaluates it, the granularity at
+which the graph reasons. `runs_before_function` lifts dominance across calls: it answers whether a
+definition runs before every invocation of a function, which a single graph cannot, by ordering the
+definition against the points the function is referenced and recursing up the call graph.
 """
 from __future__ import annotations
 
@@ -29,7 +32,6 @@ from refinery.lib.scripts.js.analysis.cfg import (
 )
 from refinery.lib.scripts.js.analysis.model import Binding, SemanticModel
 from refinery.lib.scripts.js.model import (
-    JsCallExpression,
     JsFunctionDeclaration,
     JsIdentifier,
     JsVariableDeclarator,
@@ -84,41 +86,54 @@ class DominanceModel:
         """
         Whether *definition* is guaranteed to have executed before any invocation of *function* — so a
         value established at *definition* holds throughout every call of *function*, and may be inlined
-        into its body. True when every reference to *function* is a direct `name(...)` call and each such
-        call runs after *definition*: a call in *definition*'s own function is ordered by dominance, and a
-        call inside another function is ordered by that function, in turn, running after *definition*
-        (the same question, applied up the call graph). This is the interprocedural counterpart of
-        `dominates`, and the sound replacement for ordering a cross-function inline by statement position.
+        into its body. The reasoning rests on one fact: a function cannot be invoked before a reference
+        to it has been evaluated. Its reference points are its own creation, for an anonymous function
+        expression, or the uses of its name, for a named binding; no invocation can precede the earliest
+        of them. So *definition* runs before every invocation exactly when it runs before every reference
+        point — and that, per point, is `dominates` when the point lies in *definition*'s own function,
+        or the same question applied to the function the point lies in, recursing up the call graph. This
+        is the interprocedural counterpart of `dominates`, and the sound replacement for ordering a
+        cross-function inline by statement position.
 
-        Conservatively `False` when the invocations cannot be enumerated or ordered: *function* is
-        anonymous, redeclared, or reassigned (its calls cannot be pinned to this body), it escapes
-        (referenced as anything other than a direct callee — aliased, passed, stored), or it lies on a
-        call cycle (a recursion the walk cannot bottom out). A function never called is vacuously safe.
+        Conservatively `False` when a reference point cannot be ordered or enumerated: the named binding
+        is reassigned or redeclared (its references no longer pin one function), a reference lies in a
+        function that itself runs too late or escapes, or the walk meets a call cycle it cannot bottom
+        out. A function never referenced is vacuously safe.
         """
         return self._runs_before_function(definition, function, set())
 
     def _runs_before_function(self, definition: Node, function: Node, visiting: set[int]) -> bool:
         if id(function) in visiting:
             return False
-        binding = self._naming_binding(function)
-        if binding is None or binding.writes or len(binding.declarations) != 1:
+        points = self._reference_points(function)
+        if points is None:
             return False
         visiting = visiting | {id(function)}
-        for ref in self.model.references(binding):
-            parent = ref.parent
-            if not (isinstance(parent, JsCallExpression) and parent.callee is ref):
-                return False
-            if not self._runs_after(definition, parent, visiting):
-                return False
-        return True
+        return all(self._runs_after(definition, point, visiting) for point in points)
 
-    def _runs_after(self, definition: Node, call: JsCallExpression, visiting: set[int]) -> bool:
-        owner = self._owner_of(call)
+    def _reference_points(self, function: Node) -> list[Node] | None:
+        """
+        The points no invocation of *function* can precede, or `None` when they cannot be enumerated.
+        For a named function these are the references to its binding — a use of the name must be
+        evaluated before the value it denotes can be called — unless the binding is reassigned or
+        redeclared, in which case a reference no longer pins this one function and the points are
+        unknowable. For an anonymous function the single point is the function expression itself: the
+        closure cannot be invoked before it is created.
+        """
+        binding = self._naming_binding(function)
+        if binding is not None:
+            if binding.writes or len(binding.declarations) != 1:
+                return None
+            return list(self.model.references(binding))
+        return [function]
+
+    def _runs_after(self, definition: Node, point: Node, visiting: set[int]) -> bool:
+        owner = self._owner_of(point)
         definition_owner = self._owner_of(definition)
         if owner is None or definition_owner is None:
             return False
         if owner is definition_owner:
-            return self.dominates(definition, call)
+            return self.dominates(definition, point)
         if isinstance(owner, FUNCTION_NODES):
             return self._runs_before_function(definition, owner, visiting)
         return False
