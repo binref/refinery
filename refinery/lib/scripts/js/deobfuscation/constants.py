@@ -732,6 +732,22 @@ class JsConstantInlining(ScopeProcessingTransformer):
                 break
         return False
 
+    @staticmethod
+    def _enclosing_invocation_unordered(enclosing: Node | None, model: SemanticModel) -> bool:
+        """
+        Whether the function a constant would be inlined into may be invoked at a point the ordering
+        stopgap cannot see. A NAMED function that escapes — referenced as more than a direct callee,
+        reassigned, or redeclared — can be reached through an alias, a callback, or a method before the
+        value is established, and that invocation is not among its resolvable direct call sites, so
+        `_any_call_precedes_value` never sees it; inlining a value into such a function is unsound. An
+        anonymous function is excluded: its only invocation is the call it is the callee of, which the
+        ordering check can already place. A sound order for the escaping case needs the Phase-2
+        reaching-definition analysis; until then the value is conservatively not inlined.
+        """
+        if enclosing is None:
+            return False
+        return _function_name_binding(enclosing, model) is not None and _function_escapes(enclosing, model)
+
     def _substitute_const_across_functions(
         self,
         scope: Node,
@@ -815,6 +831,8 @@ class JsConstantInlining(ScopeProcessingTransformer):
                             or effects.function_can_mutate(enclosing, cross_bindings[name])
                         ):
                             continue
+                    if self._enclosing_invocation_unordered(enclosing, model):
+                        continue
                     if self._any_call_precedes_value(s_entry, call_sites.get(id(enclosing), [])):
                         continue
                     if model.is_shadowed(name, obj, outer):
@@ -856,6 +874,8 @@ class JsConstantInlining(ScopeProcessingTransformer):
                 or id(enclosing) not in call_sites
                 or effects.function_can_mutate(enclosing, cross_bindings[name])
             ):
+                continue
+            if self._enclosing_invocation_unordered(enclosing, model):
                 continue
             if self._any_call_precedes_value(entry.scope, call_sites.get(id(enclosing), [])):
                 continue

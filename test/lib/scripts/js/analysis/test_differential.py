@@ -399,3 +399,32 @@ class TestDeobfuscationDifferential(TestBase):
             ' A = [1, 2, 3];'
             ' SINK.push(read());'
             " console.log(SINK.join('|'));")
+
+    def test_const_not_inlined_into_escaping_function_before_value(self):
+        """
+        `g` escapes — it is passed to `forEach`, not called directly — so it can run before `const x`
+        is established. That invocation is not among g's resolvable direct call sites, so the ordering
+        check cannot see it; the const must not be inlined into g, or the temporal-dead-zone throw at
+        the first call becomes the value 5.
+        """
+        self._check(
+            'var SINK = [];'
+            ' function g(){ return x; }'
+            ' try { [g].forEach(function(h){ SINK.push(h()); }); } catch (e) { SINK.push(e.name); }'
+            ' const x = 5;'
+            " console.log(SINK.join('|'));")
+
+    def test_const_not_inlined_into_aliased_function_before_value(self):
+        """
+        `g` is aliased to `p` and called through the alias before `const x` exists, so that call is not
+        among g's resolvable direct call sites. Inlining the const into g would turn the alias call's
+        temporal-dead-zone throw into a value.
+        """
+        self._check(
+            'var SINK = [];'
+            ' function g(){ return x; }'
+            ' var p = g;'
+            ' try { SINK.push(p()); } catch (e) { SINK.push(e.name); }'
+            ' const x = 5;'
+            ' SINK.push(g());'
+            " console.log(SINK.join('|'));")
