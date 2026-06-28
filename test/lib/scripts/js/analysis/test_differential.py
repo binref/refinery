@@ -428,3 +428,20 @@ class TestDeobfuscationDifferential(TestBase):
             ' const x = 5;'
             ' SINK.push(g());'
             " console.log(SINK.join('|'));")
+
+    def test_wrapper_referenced_only_inside_surviving_wrapper_is_kept(self):
+        """
+        `u` is a wrapper called only from inside `v`, which survives un-inlined (its call is
+        arity-mismatched). After `c` inlines and triggers wrapper removal, `u` must be kept — removing
+        it would leave `v`'s body calling a missing function. The keep-set is grown to a fixpoint so a
+        wrapper reached only through another surviving wrapper is retained.
+        """
+        self._check(
+            'var SINK = [];'
+            ' function ext(z){ SINK.push("e"); return z; }'
+            ' function u(x){ return ext(x); }'
+            ' function v(x){ return u(x, x); }'
+            ' SINK.push(v(3, 4));'
+            ' function c(){ return 0; }'
+            ' SINK.push(c());'
+            " console.log(SINK.join('|'));")

@@ -129,17 +129,37 @@ class JsCallWrapperInliner(ScriptLevelTransformer):
             inlined = True
         if not inlined:
             return
-        exclude_ids: set[int] = set()
-        for info in wrappers.values():
-            for n in info.node.walk():
-                exclude_ids.add(id(n))
-        referenced: set[str] = set()
-        for n in node.walk():
-            if id(n) in exclude_ids:
-                continue
-            if isinstance(n, JsIdentifier) and n.name in wrappers:
-                referenced.add(n.name)
+        kept = self._wrappers_to_keep(node, wrappers)
         for name, info in wrappers.items():
-            if name not in referenced:
+            if name not in kept:
                 _remove_from_parent(info.node)
         self.mark_changed()
+
+    @staticmethod
+    def _wrappers_to_keep(
+        node: JsScript, wrappers: dict[str, _WrapperInfo]
+    ) -> set[str]:
+        """
+        The wrapper names still referenced after inlining, so the rest may be removed. A wrapper is
+        kept when its name is referenced from live code: code outside every wrapper body, or the body
+        of a wrapper that is itself kept. The keep-set is grown to a fixpoint so that a wrapper reached
+        only from another surviving (un-inlined, e.g. arity-mismatched) wrapper is retained rather than
+        deleted into a dangling call. A reference inside a body that will itself be removed does not
+        count, since that body goes away with it.
+        """
+        kept: set[str] = set()
+        changed = True
+        while changed:
+            changed = False
+            dead_body_ids: set[int] = set()
+            for name, info in wrappers.items():
+                if name not in kept:
+                    for n in info.node.walk():
+                        dead_body_ids.add(id(n))
+            for n in node.walk():
+                if id(n) in dead_body_ids:
+                    continue
+                if isinstance(n, JsIdentifier) and n.name in wrappers and n.name not in kept:
+                    kept.add(n.name)
+                    changed = True
+        return kept
