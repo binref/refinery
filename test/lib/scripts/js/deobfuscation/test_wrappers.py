@@ -5,9 +5,32 @@ import inspect
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 
 from refinery.lib.scripts.js.deobfuscation.wrappers import JsCallWrapperInliner
+from refinery.lib.scripts.js.parser import JsParser
 
 
 class TestCallWrapperInliner(TestJsDeobfuscator):
+
+    def test_self_forwarding_wrapper_not_inlined(self):
+        """
+        `W` forwards to itself, so inlining its call substitutes a body that calls `W` again,
+        regenerating an equivalent call on every pass. Inlining it must be refused, or the fold loop
+        never reaches a fixpoint. The single-pass output is unchanged either way, so the change flag is
+        what distinguishes the refusal from the non-terminating inline.
+        """
+        ast = JsParser('function W(a) { return W(a); } W(1);').parse()
+        t = JsCallWrapperInliner()
+        t.visit(ast)
+        self.assertFalse(t.changed)
+
+    def test_mutually_forwarding_wrappers_not_inlined(self):
+        """
+        `W` forwards to `V` and `V` back to `W`; inlining either regenerates a call into the cycle, so
+        neither bottoms out. Both are left intact.
+        """
+        ast = JsParser('function W(a) { return V(a); } function V(a) { return W(a); } W(1);').parse()
+        t = JsCallWrapperInliner()
+        t.visit(ast)
+        self.assertFalse(t.changed)
 
     def test_simple_wrapper_inlining(self):
         source = (

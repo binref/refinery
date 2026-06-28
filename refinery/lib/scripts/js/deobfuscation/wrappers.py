@@ -16,6 +16,7 @@ from refinery.lib.scripts import (
     _replace_in_parent,
 )
 from refinery.lib.scripts.js.analysis.cache import model_cache
+from refinery.lib.scripts.js.analysis.effects import EffectModel
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     ScriptLevelTransformer,
     _param_written,
@@ -105,6 +106,8 @@ class JsCallWrapperInliner(ScriptLevelTransformer):
             return
         effects = model_cache(self, node).effects
         by_node = {id(info.node): info for info in wrappers.values()}
+        for dead in self._self_forwarding_wrappers(wrappers, by_node, effects):
+            del by_node[dead]
         inlined = False
         for ast_node in list(node.walk()):
             if not isinstance(ast_node, JsCallExpression):
@@ -134,6 +137,42 @@ class JsCallWrapperInliner(ScriptLevelTransformer):
             if name not in kept:
                 _remove_from_parent(info.node)
         self.mark_changed()
+
+    @staticmethod
+    def _self_forwarding_wrappers(
+        wrappers: dict[str, _WrapperInfo],
+        by_node: dict[int, _WrapperInfo],
+        effects: EffectModel,
+    ) -> set[int]:
+        """
+        The wrapper declaration nodes that lie on a cycle of wrapper-to-wrapper forwarding, where
+        inlining would never bottom out: a wrapper whose body forwards to itself, directly or through
+        a chain of other wrappers (`W -> V -> W`). Each call wrapper forwards to at most one statically
+        resolvable callee, so the forwarding graph is functional and a node lies on a cycle exactly
+        when following its single edge returns to it. Such a wrapper is left un-inlined; inlining it
+        would regenerate an equivalent call on every pass and the fold loop would never terminate.
+        """
+        edge: dict[int, int | None] = {}
+        for info in wrappers.values():
+            expr = info.return_expression
+            target = effects.static_callee(expr) if isinstance(expr, JsCallExpression) else None
+            edge[id(info.node)] = id(target) if target is not None and id(target) in by_node else None
+        on_cycle: set[int] = set()
+        visited: set[int] = set()
+        for start in edge:
+            if start in visited:
+                continue
+            path: list[int] = []
+            index: dict[int, int] = {}
+            cursor: int | None = start
+            while cursor is not None and cursor not in visited:
+                visited.add(cursor)
+                index[cursor] = len(path)
+                path.append(cursor)
+                cursor = edge.get(cursor)
+            if cursor is not None and cursor in index:
+                on_cycle.update(path[index[cursor]:])
+        return on_cycle
 
     @staticmethod
     def _wrappers_to_keep(
