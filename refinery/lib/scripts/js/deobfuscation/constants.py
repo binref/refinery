@@ -176,24 +176,6 @@ def _is_literal_array(node: Node) -> bool:
     return all(el is not None and is_literal(el) for el in node.elements)
 
 
-def _function_name_binding(func: Node, model: SemanticModel) -> Binding | None:
-    """
-    The binding that names *func* when it is a named function declaration or a function/arrow expression
-    bound to a single `var`/`let`/`const` declarator, or `None` for an anonymous function whose
-    invocation point cannot be pinned to a name.
-    """
-    if isinstance(func, JsFunctionDeclaration) and func.id is not None:
-        return model.binding_of(func.id)
-    parent = func.parent
-    if (
-        isinstance(parent, JsVariableDeclarator)
-        and parent.init is func
-        and isinstance(parent.id, JsIdentifier)
-    ):
-        return model.binding_of(parent.id)
-    return None
-
-
 def _function_escapes(func: Node, model: SemanticModel) -> bool:
     """
     Whether *func* may be invoked at a point the surrounding scope cannot see: an anonymous function
@@ -208,7 +190,7 @@ def _function_escapes(func: Node, model: SemanticModel) -> bool:
     seal logic's resolver, declines exactly these — so a mutation it performs could not otherwise be
     sealed and the candidate must be rejected outright.
     """
-    binding = _function_name_binding(func, model)
+    binding = model.naming_binding(func)
     if binding is None:
         return True
     if binding.writes or len(binding.declarations) != 1:

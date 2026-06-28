@@ -163,3 +163,30 @@ class TestDominance(TestBase):
         """
         ast, dom = self._dominance('[0].forEach(function(){ return c; }); const c = 5;')
         self.assertFalse(dom.runs_before_function(self._def(ast, 'c'), self._func_expr(ast)))
+
+    def test_does_not_run_before_call_sharing_the_definition_statement(self):
+        """
+        The earlier declarator `x = f()` calls `f` before the later `c = 5` runs, so `f` reads `c` while
+        it is unset; the call and the definition share one statement, which statement-granularity
+        dominance cannot order, so the definition must not be treated as running before the call.
+        """
+        ast, dom = self._dominance('var x = f(), c = 5; function f(){ return c; }')
+        self.assertFalse(dom.runs_before_function(self._def(ast, 'c'), self._func(ast, 'f')))
+
+    def test_does_not_run_before_caller_default_parameter_evaluated_before_definition(self):
+        """
+        `f` is referenced only in `inner`'s default parameter, which runs when `inner` is invoked; the
+        hoisted `inner()` runs before the definition, so that invocation reads `c` early.
+        """
+        ast, dom = self._dominance(
+            'inner(); const c = 5; function f(){ return c; } function inner(a = f()){ return a; }')
+        self.assertFalse(dom.runs_before_function(self._def(ast, 'c'), self._func(ast, 'f')))
+
+    def test_runs_before_caller_default_parameter_evaluated_after_definition(self):
+        """
+        `f` is referenced only in `inner`'s default parameter, and `inner` is called after the
+        definition, so every evaluation of that parameter — and hence every call of `f` — runs after it.
+        """
+        ast, dom = self._dominance(
+            'const c = 5; function f(){ return c; } function inner(a = f()){ return a; } inner();')
+        self.assertTrue(dom.runs_before_function(self._def(ast, 'c'), self._func(ast, 'f')))

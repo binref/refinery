@@ -616,6 +616,24 @@ class SemanticModel:
             return nodes
         return [n for n in nodes if n is not exclude and not n.is_descendant_of(exclude)]
 
+    def naming_binding(self, function: Node) -> Binding | None:
+        """
+        The binding that gives *function* a name through which it can be invoked: the declared name of a
+        named function declaration, or the single `var`/`let`/`const` declarator a function or arrow
+        expression is the initializer of. `None` for an anonymous function whose invocation point cannot
+        be pinned to a name — an IIFE, a callback, a function stored through any other expression.
+        """
+        if isinstance(function, JsFunctionDeclaration) and function.id is not None:
+            return self.binding_of(function.id)
+        parent = function.parent
+        if (
+            isinstance(parent, JsVariableDeclarator)
+            and parent.init is function
+            and isinstance(parent.id, JsIdentifier)
+        ):
+            return self.binding_of(parent.id)
+        return None
+
     def is_shadowed(self, name: str, at: Node, outer: Scope) -> bool:
         """
         Whether *name*, referenced at *at*, resolves to a binding declared strictly inside *outer*

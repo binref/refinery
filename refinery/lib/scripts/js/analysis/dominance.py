@@ -30,12 +30,7 @@ from refinery.lib.scripts.js.analysis.cfg import (
     ControlFlowGraph,
     build_control_flow,
 )
-from refinery.lib.scripts.js.analysis.model import Binding, SemanticModel
-from refinery.lib.scripts.js.model import (
-    JsFunctionDeclaration,
-    JsIdentifier,
-    JsVariableDeclarator,
-)
+from refinery.lib.scripts.js.analysis.model import SemanticModel, enclosing_function
 
 
 class DominanceModel:
@@ -90,9 +85,14 @@ class DominanceModel:
         to it has been evaluated. Its reference points are its own creation, for an anonymous function
         expression, or the uses of its name, for a named binding; no invocation can precede the earliest
         of them. So *definition* runs before every invocation exactly when it runs before every reference
-        point — and that, per point, is `dominates` when the point lies in *definition*'s own function,
-        or the same question applied to the function the point lies in, recursing up the call graph. This
-        is the interprocedural counterpart of `dominates`, and the sound replacement for ordering a
+        point — and that, per point, is strict dominance when the point lies in *definition*'s own
+        function, or the same question applied to the function the point lies in, recursing up the call
+        graph. The ordering is *strict*: a reference sharing the definition's statement — an earlier
+        declarator or sequence operand evaluated before it — is not accepted, since statement-granularity
+        dominance is reflexive and cannot order within one statement. A reference's function is its
+        nearest enclosing function (its `_activation_of`), so a use in a function's parameter defaults is
+        attributed to that function's invocation, not to the statement that declares it. This is the
+        interprocedural counterpart of `dominates`, and the sound replacement for ordering a
         cross-function inline by statement position.
 
         Conservatively `False` when a reference point cannot be ordered or enumerated: the named binding
@@ -100,16 +100,34 @@ class DominanceModel:
         function that itself runs too late or escapes, or the walk meets a call cycle it cannot bottom
         out. A function never referenced is vacuously safe.
         """
-        return self._runs_before_function(definition, function, set())
+        definition_owner = self._activation_of(definition)
+        return self._runs_before_function(definition, definition_owner, function, set(), {})
 
-    def _runs_before_function(self, definition: Node, function: Node, visiting: set[int]) -> bool:
-        if id(function) in visiting:
+    def _runs_before_function(
+        self,
+        definition: Node,
+        definition_owner: Node,
+        function: Node,
+        visiting: set[int],
+        memo: dict[int, bool],
+    ) -> bool:
+        function_id = id(function)
+        if function_id in visiting:
             return False
+        cached = memo.get(function_id)
+        if cached is not None:
+            return cached
         points = self._reference_points(function)
         if points is None:
+            memo[function_id] = False
             return False
-        visiting = visiting | {id(function)}
-        return all(self._runs_after(definition, point, visiting) for point in points)
+        visiting = visiting | {function_id}
+        result = all(
+            self._runs_after(definition, definition_owner, point, visiting, memo)
+            for point in points
+        )
+        memo[function_id] = result
+        return result
 
     def _reference_points(self, function: Node) -> list[Node] | None:
         """
@@ -120,39 +138,56 @@ class DominanceModel:
         unknowable. For an anonymous function the single point is the function expression itself: the
         closure cannot be invoked before it is created.
         """
-        binding = self._naming_binding(function)
+        binding = self.model.naming_binding(function)
         if binding is not None:
             if binding.writes or len(binding.declarations) != 1:
                 return None
             return list(self.model.references(binding))
         return [function]
 
-    def _runs_after(self, definition: Node, point: Node, visiting: set[int]) -> bool:
-        owner = self._owner_of(point)
-        definition_owner = self._owner_of(definition)
-        if owner is None or definition_owner is None:
-            return False
+    def _runs_after(
+        self,
+        definition: Node,
+        definition_owner: Node,
+        point: Node,
+        visiting: set[int],
+        memo: dict[int, bool],
+    ) -> bool:
+        owner = self._activation_of(point)
         if owner is definition_owner:
-            return self.dominates(definition, point)
+            return self._strictly_dominates(definition, point)
         if isinstance(owner, FUNCTION_NODES):
-            return self._runs_before_function(definition, owner, visiting)
+            return self._runs_before_function(definition, definition_owner, owner, visiting, memo)
         return False
 
-    def _owner_of(self, element: Node) -> Node | None:
-        located = self._locate(element)
-        return located[0].owner if located is not None else None
+    def _activation_of(self, element: Node) -> Node:
+        """
+        The function or script whose invocation evaluates *element*: the nearest function that lexically
+        encloses it, or the script root when none does. This is the unit `runs_before_function` reasons
+        about — a reference in a function's body *or its parameter defaults* runs when that function is
+        invoked, so both must attribute to the function, never to the statement that merely declares it in
+        the enclosing graph.
+        """
+        function = enclosing_function(element)
+        return function if function is not None else self.model.root
 
-    def _naming_binding(self, function: Node) -> Binding | None:
-        if isinstance(function, JsFunctionDeclaration) and function.id is not None:
-            return self.model.binding_of(function.id)
-        parent = function.parent
-        if (
-            isinstance(parent, JsVariableDeclarator)
-            and parent.init is function
-            and isinstance(parent.id, JsIdentifier)
-        ):
-            return self.model.binding_of(parent.id)
-        return None
+    def _strictly_dominates(self, a: Node, b: Node) -> bool:
+        """
+        Like `dominates`, except a node does not strictly dominate itself: `False` when *a* and *b* share
+        one control-flow node (the same statement), where statement-granularity dominance is reflexive
+        and cannot order them. `runs_before_function` needs this — a reference in the same statement as a
+        definition may be evaluated before it (an earlier declarator, an earlier sequence operand), which
+        plain `dominates` would wrongly accept.
+        """
+        located_a = self._locate(a)
+        located_b = self._locate(b)
+        if located_a is None or located_b is None:
+            return False
+        graph_a, node_a = located_a
+        graph_b, node_b = located_b
+        if graph_a is not graph_b or node_a is node_b:
+            return False
+        return id(node_a) in self._dominators.get(id(node_b), frozenset())
 
     def _index_elements(self):
         for graph in self._graphs.values():

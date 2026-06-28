@@ -590,6 +590,60 @@ class TestConstantInlining(TestJsDeobfuscator):
             self._inline("const p = ['a']; function f() { return p[0]; }"),
         )
 
+    def test_const_not_inlined_into_function_called_earlier_in_same_statement(self):
+        source = inspect.cleandoc(
+            """
+            const d = f(), c = 5;
+            function f() {
+              return c;
+            }
+            """
+        )
+        self.assertEqual(source, self._inline(source))
+
+    def test_var_not_inlined_into_function_called_earlier_in_same_statement(self):
+        source = inspect.cleandoc(
+            """
+            var x = f(), c = 5;
+            function f() {
+              return c;
+            }
+            """
+        )
+        self.assertEqual(source, self._inline(source))
+
+    def test_const_not_inlined_into_function_in_caller_default_parameter(self):
+        source = inspect.cleandoc(
+            """
+            inner();
+            const c = 5;
+            function f() {
+              return c;
+            }
+            function inner(a = f()) {
+              return a;
+            }
+            """
+        )
+        self.assertEqual(source, self._inline(source))
+
+    def test_const_inlined_into_function_in_caller_default_parameter_after_definition(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function f() {
+                  return 5;
+                }
+                function inner(a = f()) {
+                  return a;
+                }
+                inner();
+                """
+            ),
+            self._inline(
+                'const c = 5; function f() { return c; } function inner(a = f()) { return a; } inner();'),
+        )
+
     def test_const_array_passed_to_non_mutating_callee_is_inlined(self):
         self.assertEqual(
             inspect.cleandoc(
