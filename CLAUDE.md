@@ -18,16 +18,16 @@ you must read the [STYLEGUIDE](STYLEGUIDE.md) and make sure that all written cod
 
 The following rules contradict common Python conventions. Check them explicitly:
 
-- **DO NOT** wrap at 80 characters! Comments and docstrings wrap at 100 characters, for example.
-- **DO NOT** use double backticks for code in docstrings! Use single backticks for inline code.
-- **DO NOT** use lowercase `f'...'` for f-strings. Use uppercase: `F'...'`.
-- **DO NOT** write single-line docstrings like `"""text"""`. Always use:
+- **Do not** wrap at 80 characters! Comments and docstrings wrap at 100 characters, for example.
+- **Do not** use double backticks for code in docstrings! Use single backticks for inline code.
+- **Do not** use lowercase `f'...'` for f-strings. Use uppercase: `F'...'`.
+- **Do not** write single-line docstrings like `"""text"""`. Always use:
   ```python
   """
   text
   """
   ```
-- **DO NOT** align continuation lines to the opening bracket:
+- **Do not** align continuation lines to the opening bracket:
   ```python
   # WRONG:
   x = function(arg1,
@@ -36,7 +36,7 @@ The following rules contradict common Python conventions. Check them explicitly:
             3, 4]:
   ```
   Use one-level indentation with closing bracket on its own line and **exactly one item per line**.
-- **DO NOT** put conditions on the same line as `if (`:
+- **Do not** put conditions on the same line as `if (`:
   ```python
   # WRONG:
   if (condition1
@@ -48,8 +48,8 @@ The following rules contradict common Python conventions. Check them explicitly:
       and condition2
   ):
   ```
-- **DO NOT** use double quotes for strings. Single quotes only (except docstrings).
-- **DO NOT** write comments unless the information absolutely cannot be communicated by naming or structure.
+- **Do not** use double quotes for strings. Single quotes only (except docstrings).
+- **Do not** write comments unless the information absolutely cannot be communicated by naming or structure.
   Never write comments that reference external source code.
 
 # Rules of Engagement
@@ -73,13 +73,15 @@ The following rules contradict common Python conventions. Check them explicitly:
 - When making commits on the user's behalf, do not include a comment about AI co-authorship.
 - When asked to commit changes to git, only use one-line commit messages.
 
-# Bug Fixing
+# Architecture is P0
 
-When fixing bugs, always prioritize overall code quality and architecture:
-
-- Never choose a quick or simple fix that is overly focused on the specific bug.
-- Always take the time to identify root issues.
-- Make structural changes by refactoring code if this allows you to fix bugs in a cleaner way.
+- Your highest priority is good architecture, clear separation of concerns, and maintainability.
+- **Do not** choose the simplest fix or solution; look for the one that is the cleanest.
+  Even or especially if this requires a large rewrite or rewiring:
+  Prioritize this important architectural redesign over the simple bugfix that uncovered it.
+- **Do not** implement temporary workarounds. If you discover a fundamental design issue:
+  Pause and devise a clean solution. Prompt to draft a new plan if necessary.
+- When fixing a bug, **always** identify the root issue first.
 - When a bug has been identified and understood, always write a small, targeted regression test for it.
 
 # Test Coverage
