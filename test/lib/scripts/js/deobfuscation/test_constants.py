@@ -388,6 +388,26 @@ class TestConstantInlining(TestJsDeobfuscator):
         )
         self.assertEqual(source, self._inline(source))
 
+    def test_cross_function_array_element_mutated_through_with_not_inlined(self):
+        """
+        The `with` body's write to `arr[0]` resolves to no binding, but it is attributed to `arr` as a
+        dynamic reference, so the container is not immutable and the cross-function `arr[0]` read is not
+        inlined into `get`.
+        """
+        source = inspect.cleandoc(
+            """
+            var arr = [10, 20];
+            function get() {
+              return arr[0];
+            }
+            with (q) {
+              arr[0] = 99;
+            }
+            SINK(get());
+            """
+        )
+        self.assertEqual(source, self._inline(source))
+
     def test_constant_written_through_global_alias_not_inlined(self):
         """
         `globalThis.x = 2` writes the script-level `x` through a member expression the effect model's

@@ -546,9 +546,9 @@ class TestEffectModel(TestBase):
             'function f(){ const g = () => { eval("arguments[0][0]=9"); }; g(); }'
             ' var a = [1, 2]; f(a); SINK(a[0]);'))
 
-    def test_over_passed_argument_into_arrow_callee_with_eval_is_immutable(self):
-        self.assertTrue(self._container(
-            'var f = () => { eval("arguments[0][0]=9"); }; var a = [1, 2]; f(a); SINK(a[0]);'))
+    def test_argument_into_arrow_callee_naming_it_via_direct_eval_is_mutable(self):
+        self.assertFalse(self._container(
+            'var f = () => { eval("a[0]=9"); }; var a = [1, 2]; f(a); SINK(a[0]);'))
 
     def test_escape_into_callee_invoking_nested_method_is_mutable_with_trusted_methods(self):
         self.assertFalse(self._container(
@@ -566,6 +566,27 @@ class TestEffectModel(TestBase):
     def test_escape_into_with_containing_callee_is_mutable(self):
         self.assertFalse(self._container(
             'function f(x){ with (o) { x[0] = 9; } } var a = [1, 2]; f(a); SINK(a[0]);'))
+
+    def test_container_member_mutated_through_with_is_mutable(self):
+        self.assertFalse(self._container('var a = [1]; with (q) { a.push(2); } SINK(a[0]);'))
+
+    def test_container_indexed_write_through_with_is_mutable(self):
+        self.assertFalse(self._container('var a = [1]; with (q) { a[0] = 9; } SINK(a[0]);'))
+
+    def test_container_reassigned_through_with_is_mutable(self):
+        self.assertFalse(self._container('var a = [1]; with (q) { a = [9]; } SINK(a[0]);'))
+
+    def test_container_only_read_through_with_is_immutable(self):
+        self.assertTrue(self._container('var a = [1]; with (q) { y = a[0]; } SINK(a[0]);'))
+
+    def test_container_not_named_by_with_is_immutable(self):
+        self.assertTrue(self._container('var a = [1]; var b = [2]; with (q) { b.push(3); } SINK(a[0]);'))
+
+    def test_local_container_in_function_with_direct_eval_is_mutable(self):
+        self.assertFalse(self._container('var a = [1]; eval("x"); SINK(a[0]);'))
+
+    def test_local_container_with_only_with_not_naming_it_is_immutable(self):
+        self.assertTrue(self._container('var a = [1]; with (q) { z = 1; } SINK(a[0]);'))
 
     def test_benign_alias_is_immutable(self):
         self.assertTrue(self._container('var a = [1, 2]; var b = a; SINK(b[0]);'))

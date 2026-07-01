@@ -28,6 +28,59 @@ class TestObjectFold(TestJsDeobfuscator):
         )
         self.assertEqual(source, self._objectfold(source))
 
+    def test_object_member_mutated_through_with_not_folded(self):
+        source = inspect.cleandoc(
+            """
+            var o = { p: 1 };
+            with (q) {
+              o.p = 2;
+            }
+            SINK(o.p);
+            """
+        )
+        self.assertEqual(source, self._objectfold(source))
+
+    def test_object_folded_when_with_does_not_name_it(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                with (q) {
+                  z = 2;
+                }
+                SINK(1);
+                """
+            ),
+            self._objectfold('var o = { p: 1 }; with (q) { z = 2; } SINK(o.p);'),
+        )
+
+    def test_local_object_in_function_with_direct_eval_not_folded(self):
+        source = inspect.cleandoc(
+            """
+            function f() {
+              var o = { p: 1 };
+              eval("x");
+              SINK(o.p);
+            }
+            """
+        )
+        self.assertEqual(source, self._objectfold(source))
+
+    def test_script_scope_object_still_folds_under_direct_eval_residual(self):
+        """
+        A script-scope object folds even though the program has a direct `eval` that could name it:
+        freezing every global on an opaque surface would regress real samples (the b91 lookup arrays), so
+        this is the accepted dynamic-scope residual, not a bug.
+        """
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                eval("x");
+                SINK(1);
+                """
+            ),
+            self._objectfold('var o = { p: 1 }; eval("x"); SINK(o.p);'),
+        )
+
     def test_proto_setting_object_not_folded(self):
         source = inspect.cleandoc(
             """

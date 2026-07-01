@@ -466,11 +466,14 @@ class EffectModel:
         it is passed to a statically known function as an argument whose parameter is itself an immutable
         container (so the callee neither mutates nor further-escapes it). Any other escape — returned,
         stored as a property, passed to a call that cannot be resolved — is treated conservatively as
-        mutable. A mutation hidden behind a dynamic scope — a write through a name a `with` body or direct
-        `eval` resolves at runtime — is NOT modelled here: such a reference resolves to no binding, so it
-        never enters the reference set and the container is wrongly judged immutable. A known narrow gap;
-        the precise fix needs dynamic-scope unresolved-write tracking, and a blunt reflection guard
-        over-blocks real samples (it regresses the b91 lookup arrays).
+        mutable. A mutation through a dynamic scope is modelled: a `with` body that names the container —
+        a member write, method call, reassignment, or escape — is attributed to it as a dynamic reference
+        and judged by the same role logic, so a `with` that never names it keeps it foldable, and a direct
+        `eval` in a local container's own function makes it mutable. The one residual is a script-scope
+        container reached by an opaque global surface — a direct `eval`, `Function`, timer, or dynamic
+        global write whose code cannot be read — which cannot be frozen without also freezing the lookup
+        arrays real samples fold, so it is left to the caller's reflection reasoning, the trust an
+        unresolved external call already receives.
 
         The query is over a *resolved binding*, so it is shadowing-correct, and it descends through
         alias chains, callee parameters, and nested functions, so a capturing closure that mutates the
@@ -496,6 +499,8 @@ class EffectModel:
         if key in visiting:
             return True
         visiting = visiting | {key}
+        if self._dynamic_scope_mutates(binding, member_calls_mutate, exclude):
+            return False
         for ref in self.model.references(binding, exclude=exclude):
             role = container_reference_role(ref)
             if role is ContainerRole.MEMBER_WRITE:
@@ -508,6 +513,30 @@ class EffectModel:
                 ):
                     return False
         return True
+
+    def _dynamic_scope_mutates(
+        self, binding: Binding, member_calls_mutate: bool, exclude: Node | None,
+    ) -> bool:
+        """
+        Whether a dynamic scope may change the container *binding* holds. A direct `eval` in a local
+        container's own function can rewrite it opaquely — a global is left to the caller's reflection
+        reasoning, since freezing every global on any surface over-blocks. A `with` body's accesses are
+        attributed by name: a member write, a reassignment, or an escape mutates it or may alias it out,
+        and a method call may mutate it unless the caller vouches that its methods cannot; only a plain
+        member read leaves it intact, so a `with` that never names the container is no threat. A dynamic
+        escape or reassignment cannot be alias-followed or ordered the way a resolved one can, so either
+        is treated as mutating.
+        """
+        if self.model.local_reachable_by_direct_eval(binding):
+            return True
+        for ref in self.model.dynamic_references(binding, exclude=exclude):
+            role = container_reference_role(ref)
+            if role is ContainerRole.MEMBER_READ:
+                continue
+            if role is ContainerRole.MEMBER_CALL and not member_calls_mutate:
+                continue
+            return True
+        return False
 
     def _escape_keeps_container(self, ref: JsIdentifier, visiting: set[int], member_calls_mutate: bool) -> bool:
         """
@@ -750,11 +779,11 @@ class EffectModel:
         mutate-and-return it, and never a capture by a nested function that could outlive the call.
 
         A write hidden behind a dynamic scope — through a name a `with` body or direct `eval` resolves
-        at runtime — is not modelled: the base resolves to no binding, so the write is conservatively
-        kept. The matching narrow limitation, a prototype accessor installed through reflection
-        observing the write, is the dynamic-scope gap already documented on
-        `binding_is_immutable_container`; a blunt reflection guard here would refuse the obfuscator
-        idioms this is meant to see through, so it is deliberately omitted.
+        at runtime — is not modelled here: the base resolves to no binding, so the write is
+        conservatively kept, which is sound. The residual is the opaque-surface one
+        `binding_is_immutable_container` documents: a reflective surface whose code cannot be read could
+        install a prototype accessor that observes a write this deems unobservable, and freezing on it
+        would refuse the obfuscator idioms this is meant to see through, so it is left to that boundary.
 
         The judgment is structural — fixed by the binding's declarations and reference set — so it is
         invariant across the fixpoint passes that recompute the summaries, and is memoized per member.
