@@ -361,6 +361,7 @@ class EffectModel:
         self._immutable_cache: dict[tuple[int, bool], bool] = {}
         self._member_write_cache: dict[int, bool] = {}
         self._uses_arguments_cache: dict[int, bool] = {}
+        self._mutators_escape_cache: dict[int, bool] = {}
         self._functions: list[Node] = self._collect_functions()
         self._compute()
 
@@ -384,6 +385,45 @@ class EffectModel:
         Whether a call to *func* may write *binding*, itself or through a transitive callee.
         """
         return binding in self.summary_of(func).written_bindings
+
+    def function_escapes(self, func: Node) -> bool:
+        """
+        Whether *func* may be invoked at a point the surrounding scope cannot enumerate as a resolvable
+        `name(...)` call site: an anonymous function (an IIFE, a callback, stored and called later), or a
+        named function whose binding is reassigned, redeclared, or referenced anywhere other than as the
+        callee of a direct call (aliased, passed as an argument, `f.call(...)`). A call to such a function
+        can land at a point no call site pins down; a function only ever called directly by name has all
+        its invocations enumerated by those call sites.
+        """
+        binding = self.model.naming_binding(func)
+        if binding is None:
+            return True
+        if binding.writes or len(binding.declarations) != 1:
+            return True
+        for ref in self.model.references(binding):
+            parent = ref.parent
+            if isinstance(parent, JsCallExpression) and parent.callee is ref:
+                continue
+            return True
+        return False
+
+    def mutators_escape(self, binding: Binding) -> bool:
+        """
+        Whether some function that may write *binding* — itself or through a transitive callee — escapes
+        (`function_escapes`), so a write to *binding* may occur at a point no call site enumerates. When
+        true, the places *binding* changes cannot be pinned down, and a caller reasoning about where its
+        value survives must treat it as volatile everywhere. Memoized per binding.
+        """
+        cached = self._mutators_escape_cache.get(id(binding))
+        if cached is None:
+            cached = any(
+                func is not self.model.root
+                and binding in self.summary_of(func).written_bindings
+                and self.function_escapes(func)
+                for func in self._functions
+            )
+            self._mutators_escape_cache[id(binding)] = cached
+        return cached
 
     def is_pure_call(self, call: JsCallExpression | JsNewExpression) -> bool:
         """

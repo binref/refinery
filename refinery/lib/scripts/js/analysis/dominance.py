@@ -77,45 +77,13 @@ class DominanceModel:
         located = self._locate(element)
         return located[1] if located is not None else None
 
-    def holds_through(self, definition: Node, use: Node, barriers: list[Node]) -> bool:
+    def locate(self, element: Node) -> tuple[ControlFlowGraph, CfgNode] | None:
         """
-        Whether the value established at *definition* still holds when *use* runs: *definition* dominates
-        *use* (so it has executed on every path that reaches *use*) and no node in *barriers* — a
-        statement that could change the value — lies on any control-flow path from *definition* to *use*.
-        This is the intraprocedural query the constant inliner needs for a single-assignment candidate:
-        the value reaches the use unchanged exactly when its definition runs first and nothing rewrites
-        it in between.
-
-        A barrier is *between* the two when its control-flow node is both reachable from *definition*'s
-        node (over successor edges) and able to reach *use*'s node (over predecessor edges) — precisely
-        the nodes that lie on some path `definition → ... → barrier → ... → use`. Reachability includes
-        the endpoints, so a barrier sharing the definition's or use's statement, which statement
-        granularity cannot order against, is conservatively counted as between. Exceptional edges are
-        followed like any other: a value-changing call reached only by a throw still runs before the
-        handler that the use sits in. `False` when *definition* does not dominate *use*, or when either
-        lies outside the control-flow graphs or in a different function's graph; a barrier that locates
-        into a different graph cannot lie on a path within this one and is skipped.
+        The control-flow graph and node that evaluate *element* — climbing out of any expression it is
+        nested in — or `None` when it has no enclosing graph node. The graph identifies the function
+        whose invocation runs *element*, which a caller needs to keep a query within one graph.
         """
-        located_d = self._locate(definition)
-        located_u = self._locate(use)
-        if located_d is None or located_u is None:
-            return False
-        graph_d, node_d = located_d
-        graph_u, node_u = located_u
-        if graph_d is not graph_u:
-            return False
-        if id(node_d) not in self._dominators.get(id(node_u), frozenset()):
-            return False
-        barrier_nodes: set[int] = set()
-        for barrier in barriers:
-            located_b = self._locate(barrier)
-            if located_b is not None and located_b[0] is graph_d:
-                barrier_nodes.add(id(located_b[1]))
-        if not barrier_nodes:
-            return True
-        forward = self._reachable(node_d, forward=True)
-        backward = self._reachable(node_u, forward=False)
-        return not (forward & backward & barrier_nodes)
+        return self._locate(element)
 
     @staticmethod
     def _reachable(start: CfgNode, *, forward: bool) -> set[int]:
@@ -133,6 +101,24 @@ class DominanceModel:
                     seen.add(id(neighbour))
                     stack.append(neighbour)
         return seen
+
+    def dominates_node(self, a: CfgNode, b: CfgNode) -> bool:
+        """
+        Whether control-flow node *a* dominates *b*: every path from the graph's entry to *b* passes
+        through *a*. Reflexive — a node dominates itself. Node-level counterpart of `dominates`, for a
+        caller that has already located the two nodes.
+        """
+        return id(a) in self._dominators.get(id(b), frozenset())
+
+    def reachable(self, start: CfgNode, *, forward: bool) -> set[int]:
+        """
+        The ids of the control-flow nodes reachable from *start* — over successor edges when *forward*,
+        over predecessor edges otherwise — including *start*. Exceptional edges are followed like any
+        other. A flow-sensitive query intersects a forward set from one point with a backward set from
+        another to find the nodes that lie on some path between them (a kill that can execute in
+        between); keeping the two directions separate lets the caller memoize and short-circuit them.
+        """
+        return self._reachable(start, forward=forward)
 
     def runs_before_function(self, definition: Node, function: Node) -> bool:
         """

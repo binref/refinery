@@ -7,6 +7,7 @@ from refinery.lib.scripts.js.model import (
     JsBreakStatement,
     JsCatchClause,
     JsContinueStatement,
+    JsDoWhileStatement,
     JsExpressionStatement,
     JsFunctionDeclaration,
     JsIfStatement,
@@ -59,6 +60,18 @@ class TestControlFlowGraph(TestBase):
                 continue
             seen.add(id(node))
             stack.extend(node.successors)
+        return seen
+
+    @staticmethod
+    def _forward_from(start):
+        seen: set[int] = set()
+        stack = [start]
+        while stack:
+            node = stack.pop()
+            for successor in node.successors:
+                if id(successor) not in seen:
+                    seen.add(id(successor))
+                    stack.append(successor)
         return seen
 
     def _assert_consistent(self, cfg: ControlFlowGraph):
@@ -160,6 +173,30 @@ class TestControlFlowGraph(TestBase):
         assert na is not None and nc is not None and handler is not None
         self.assertTrue(cfg.is_exceptional(na, handler))
         self.assertFalse(cfg.is_exceptional(na, nc))
+
+    def test_do_while_body_starting_with_try_loops_to_guarded_statement(self):
+        """
+        The do-while back-edge must target the first guarded statement, not the catch handler the try
+        builds before it; otherwise a backward walk from an in-loop use cannot reach barriers that run
+        on the back-edge path.
+        """
+        ast, cfg = self._cfg('do { try { a; } catch (e) {} } while (x);')
+        test = cfg.node_of(self._first(ast, JsDoWhileStatement))
+        guarded = cfg.node_of(self._first(ast, JsExpressionStatement))
+        handler = cfg.node_of(self._first(ast, JsCatchClause))
+        assert test is not None and guarded is not None and handler is not None
+        self.assertIn(guarded, test.successors)
+        self.assertNotIn(handler, test.successors)
+
+    def test_for_without_test_body_starting_with_try_stays_on_the_cycle(self):
+        """
+        A for-without-test whose body opens with a try must keep the guarded statement on the loop
+        cycle; a back-edge targeting the handler instead would strip it from the cycle.
+        """
+        ast, cfg = self._cfg('for (;;) { try { a; } catch (e) {} }')
+        guarded = cfg.node_of(self._first(ast, JsExpressionStatement))
+        assert guarded is not None
+        self.assertIn(id(guarded), self._forward_from(guarded))
 
     def test_nested_function_has_its_own_graph(self):
         ast = JsParser('function f() { a; return b; } g();').parse()

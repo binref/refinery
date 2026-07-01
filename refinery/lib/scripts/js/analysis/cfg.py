@@ -233,15 +233,23 @@ class _Builder:
         self, body: Node | None, frontier: list[CfgNode],
     ) -> tuple[CfgNode | None, list[CfgNode]]:
         """
-        Build *body* and return its entry node (the first node control reaches, created first by the
-        structural recursion) alongside its exit frontier. Used where a back-edge must target the body's
-        own entry — a `do`/`while` or a `for` with no test — which the plain frontier threading does not
-        expose.
+        Build *body* and return its entry node — the node control reaches first — alongside its exit
+        frontier. Used where a back-edge must target the body's own entry — a `do`/`while` or a `for`
+        with no test — which the plain frontier threading does not expose.
+
+        The entry is the first successor the incoming *frontier* gains while *body* is built, not the
+        first node created. A body that opens with a `try` builds its handler or finalizer node before
+        any guarded statement, so creation order would return that handler — a node with no edge back
+        into the body — and the loop's back-edge would be wired to it, hiding the real body head from a
+        backward reachability walk. The frontier instead links to the first guarded statement, which is
+        the node control actually enters.
         """
-        mark = len(self.cfg.nodes)
+        before = [(node, len(node.successors)) for node in frontier]
         exits = self._body(body, frontier)
-        entry = self.cfg.nodes[mark] if len(self.cfg.nodes) > mark else None
-        return entry, exits
+        for node, count in before:
+            if len(node.successors) > count:
+                return node.successors[count], exits
+        return None, exits
 
     def _take_label(self) -> str | None:
         label = self._pending_label

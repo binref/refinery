@@ -7,8 +7,9 @@ from typing import NamedTuple
 
 from refinery.lib.scripts import Node, _clone_node, _remove_from_parent, _replace_in_parent
 from refinery.lib.scripts.js.analysis.cache import model_cache
-from refinery.lib.scripts.js.analysis.dominance import DominanceModel, build_dominance
+from refinery.lib.scripts.js.analysis.dominance import DominanceModel
 from refinery.lib.scripts.js.analysis.effects import EffectModel
+from refinery.lib.scripts.js.analysis.reaching import ReachingModel
 from refinery.lib.scripts.js.analysis.model import (
     Binding,
     FUNCTION_NODES,
@@ -168,33 +169,6 @@ def _is_literal_array(node: Node) -> bool:
     return all(el is not None and is_literal(el) for el in node.elements)
 
 
-def _function_escapes(func: Node, model: SemanticModel) -> bool:
-    """
-    Whether *func* may be invoked at a point the surrounding scope cannot see: an anonymous function
-    (an IIFE, a callback, stored and called later), or a named function whose binding is referenced
-    anywhere other than as the callee of a direct `name(...)` call (aliased, passed as an argument,
-    `f.call(...)`). A call to such a function can land between any two reads of a variable it mutates,
-    so that variable is not a stable constant; a function only ever called directly by name seals
-    instead at its call sites.
-
-    A name bound more than once (a redeclared function, or a `var f` co-declared with `function f`) or
-    reassigned also escapes: its calls cannot be pinned to this body — `EffectModel.static_callee`, the
-    seal logic's resolver, declines exactly these — so a mutation it performs could not otherwise be
-    sealed and the candidate must be rejected outright.
-    """
-    binding = model.naming_binding(func)
-    if binding is None:
-        return True
-    if binding.writes or len(binding.declarations) != 1:
-        return True
-    for ref in model.references(binding):
-        parent = ref.parent
-        if isinstance(parent, JsCallExpression) and parent.callee is ref:
-            continue
-        return True
-    return False
-
-
 def _is_member_array_safe(scope: Node, prefix_name: str, prop_name: str) -> bool:
     """
     Verify that `prefix.prop` (a member-expression array) is never mutated after its initial
@@ -291,20 +265,18 @@ class JsConstantInlining(ScopeProcessingTransformer):
         assert self._root is not None
         effects = model_cache(self, self._root).effects
         while True:
-            candidates, seal_points, mutated = self._collect_candidates(scope, effects)
+            candidates, mutated = self._collect_candidates(scope, effects)
             member_arrays = self._collect_member_array_candidates(scope)
             if not candidates and not member_arrays:
                 return
-            inlined = self._substitute_constants(scope, candidates, seal_points)
+            inlined = self._substitute_constants(scope, candidates)
             if member_arrays:
                 self._substitute_member_arrays(scope, member_arrays, inlined)
             if inlined:
                 self._remove_dead(scope, candidates, inlined)
                 self._remove_dead_member_arrays(scope, member_arrays, inlined)
                 continue
-            inlined = self._substitute_expressions(
-                scope, candidates, mutated, seal_points,
-            )
+            inlined = self._substitute_expressions(scope, candidates, mutated)
             if inlined:
                 self._remove_dead(scope, candidates, inlined)
                 continue
@@ -314,17 +286,18 @@ class JsConstantInlining(ScopeProcessingTransformer):
     def _collect_candidates(
         scope: Node,
         effects: EffectModel,
-    ) -> tuple[dict[str, list[_CandidateEntry]], dict[str, list[Node]], set[str]]:
+    ) -> tuple[dict[str, list[_CandidateEntry]], set[str]]:
         """
         Collect constant declaration entries per variable. Each entry is a `_CandidateEntry` of
 
             (declarator, constant_value)
 
-        Also returns barrier nodes (the call sites of non-escaping functions that mutate the candidate's
-        binding, past which the value no longer holds) and the set of fully rejected (mutated) names.
+        Also returns the set of fully rejected (mutated) names — those reassigned, updated, destructured,
+        or written by a function that escapes, whose value cannot be pinned to a single definition. The
+        points past which a surviving candidate's value no longer holds are not enumerated here; the
+        reaching query derives them from the effect model at each use.
         """
         candidates: dict[str, list[_CandidateEntry]] = {}
-        seal_points: dict[str, list[Node]] = {}
         rejected: set[str] = set()
         uninitialized: dict[str, JsVariableDeclarator] = {}
 
@@ -436,8 +409,6 @@ class JsConstantInlining(ScopeProcessingTransformer):
             if cand_name in unresolved_writes or binding.has_global_member_write:
                 _reject(cand_name)
 
-        call_sites, _ = _collect_call_sites(scope, effects)
-
         for func in functions:
             written = effects.mutated_bindings(func)
             if not written:
@@ -445,25 +416,33 @@ class JsConstantInlining(ScopeProcessingTransformer):
             touched = [n for n, binding in candidate_bindings.items() if binding in written]
             if not touched:
                 continue
-            if _function_escapes(func, model):
+            if effects.function_escapes(func):
                 for cand_name in touched:
                     _reject(cand_name)
-                continue
-            for call in call_sites.get(id(func), ()):
-                for cand_name in touched:
-                    seal_points.setdefault(cand_name, []).append(call)
 
-        return candidates, seal_points, rejected
+        return candidates, rejected
+
+    @staticmethod
+    def _candidate_binding(entry: _CandidateEntry, model: SemanticModel) -> Binding | None:
+        """
+        The binding a candidate entry defines, resolved through its declarator identifier, or `None` when
+        the entry carries no single-identifier declarator. This is the binding whose value the reaching
+        query tracks from the definition to a use.
+        """
+        decl = entry.declarator
+        if decl is None or not isinstance(decl.id, JsIdentifier):
+            return None
+        return model.binding_of(decl.id)
 
     def _substitute_constants(
         self,
         scope: Node,
         candidates: dict[str, list[_CandidateEntry]],
-        seal_points: dict[str, list[Node]],
     ) -> dict[str, int]:
         """
-        Inline constant (literal and literal-array) variable references using domination. Handles
-        both scalar references and computed index access into all-literal arrays.
+        Inline constant (literal and literal-array) variable references. A reference is inlined only
+        where the definition's value provably reaches it unchanged (`ReachingModel.value_preserved`).
+        Handles both scalar references and computed index access into all-literal arrays.
         """
         inlined: dict[str, int] = {}
         bloat_blocked: set[str] = set()
@@ -491,8 +470,11 @@ class JsConstantInlining(ScopeProcessingTransformer):
             return inlined
 
         assert self._root is not None
-        effects = model_cache(self, self._root).effects
-        dominance = build_dominance(effects.model)
+        cache = model_cache(self, self._root)
+        effects = cache.effects
+        dominance = cache.dominance
+        reaching = cache.reaching
+        model = effects.model
 
         for node in list(walk_scope(scope, include_root_body=True)):
             if isinstance(node, JsMemberExpression) and node.computed:
@@ -505,7 +487,8 @@ class JsConstantInlining(ScopeProcessingTransformer):
                     and self._index_array_immutable(obj, effects)
                 ):
                     entry = candidates[obj.name][0]
-                    if dominance.holds_through(entry.value, node, seal_points.get(obj.name, [])):
+                    binding = self._candidate_binding(entry, model)
+                    if binding is not None and reaching.value_preserved(binding, entry.value, node):
                         self._apply_index_access_inline(node, entry, obj.name, inlined)
                     continue
             if not isinstance(node, JsIdentifier):
@@ -523,7 +506,8 @@ class JsConstantInlining(ScopeProcessingTransformer):
             entry = candidates[name][0]
             if not is_literal(entry.value):
                 continue
-            if not dominance.holds_through(entry.value, node, seal_points.get(name, [])):
+            binding = self._candidate_binding(entry, model)
+            if binding is None or not reaching.value_preserved(binding, entry.value, node):
                 continue
             _replace_in_parent(node, _clone_node(entry.value))
             self.mark_changed()
@@ -708,13 +692,16 @@ class JsConstantInlining(ScopeProcessingTransformer):
         scope: Node,
         candidates: dict[str, list[_CandidateEntry]],
         mutated: set[str],
-        seal_points: dict[str, list[Node]],
     ) -> dict[str, int]:
         """
-        Inline single-use, side-effect-free, non-literal expressions. The use must be reached from the
-        definition with the value intact (`DominanceModel.holds_through`); the `_is_primitive_and_pure`
-        and `mutated` gates additionally guard the inlined expression's own free variables, which the
-        ordering query does not cover.
+        Inline single-use, side-effect-free, non-literal expressions. Relocating the initializer to its
+        use is sound only when the value it computed still holds there — which means the candidate's own
+        binding reaches the use unchanged *and* every variable the initializer reads holds, at the use,
+        the value it held at the definition. `ReachingModel.value_preserved` decides each: the candidate
+        binding for ordering and its own kills, then one query per resolved free variable. The
+        `_is_primitive_and_pure` gate keeps the initializer free of side effects and reference identity,
+        and the `mutated` gate rejects a free variable written through a name no binding resolves (a
+        global reassigned in scope), which the binding-keyed reaching query cannot see.
         """
         decl_ids = _candidate_decl_ids(candidates)
         ref_counts = _count_scope_references(scope, set(candidates), decl_ids)
@@ -738,7 +725,9 @@ class JsConstantInlining(ScopeProcessingTransformer):
             return {}
 
         assert self._root is not None
-        dominance = build_dominance(model_cache(self, self._root).effects.model)
+        cache = model_cache(self, self._root)
+        reaching = cache.reaching
+        model = cache.effects.model
 
         inlined: dict[str, int] = {}
         for node in list(walk_scope(scope, include_root_body=True)):
@@ -752,12 +741,33 @@ class JsConstantInlining(ScopeProcessingTransformer):
             if reference_role(node) is not Role.READ:
                 continue
             entry = to_inline[name]
-            if not dominance.holds_through(entry.value, node, seal_points.get(name, [])):
+            binding = self._candidate_binding(entry, model)
+            if binding is None or not reaching.value_preserved(binding, entry.value, node):
+                continue
+            if not self._free_variables_preserved(entry.value, node, model, reaching):
                 continue
             _replace_in_parent(node, _clone_node(entry.value))
             self.mark_changed()
             inlined[name] = inlined.get(name, 0) + 1
         return inlined
+
+    @staticmethod
+    def _free_variables_preserved(
+        value: Node, use: Node, model: SemanticModel, reaching: ReachingModel,
+    ) -> bool:
+        """
+        Whether every variable *value* reads holds, at *use*, the value it held where *value* was defined
+        — so re-evaluating *value* at *use* yields the same result. Each identifier that resolves to a
+        binding is checked with `ReachingModel.value_preserved`; an identifier that resolves to no
+        binding (a global) is left to the caller's `mutated` gate.
+        """
+        for ident in value.walk():
+            if not isinstance(ident, JsIdentifier):
+                continue
+            binding = model.resolve(ident)
+            if binding is not None and not reaching.value_preserved(binding, value, use):
+                return False
+        return True
 
     def _remove_dead(
         self,

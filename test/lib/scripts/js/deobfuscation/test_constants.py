@@ -187,6 +187,88 @@ class TestConstantInlining(TestJsDeobfuscator):
             ),
         )
 
+    def test_do_while_body_opening_with_try_sees_the_in_loop_mutation(self):
+        """
+        `f` mutates the captured `x` at the end of each iteration, so a later iteration reads `9`. The
+        do-while whose body opens with a `try` must order that call before the reads on the loop's
+        back-edge, leaving `SINK.push(x)` alone.
+        """
+        source = inspect.cleandoc(
+            """
+            var x = 5;
+            var f = function() {
+              x = 9;
+            };
+            do {
+              try {
+                SINK.push(x);
+                f();
+              } catch (e) {}
+            } while (c);
+            """
+        )
+        self.assertEqual(source, self._inline(source))
+
+    def test_for_without_test_body_opening_with_try_sees_the_in_loop_mutation(self):
+        """
+        The same loop-carried mutation through a `for (;;)` whose body opens with a `try`: the back-edge
+        must reach the guarded reads, so `SINK.push(x)` is not inlined to `5`.
+        """
+        source = inspect.cleandoc(
+            """
+            var x = 5;
+            var f = function() {
+              x = 9;
+            };
+            for (; ; ) {
+              try {
+                SINK.push(x);
+                f();
+                if (q) {
+                  break;
+                }
+              } catch (e) {}
+            }
+            """
+        )
+        self.assertEqual(source, self._inline(source))
+
+    def test_use_before_definition_in_same_statement_not_inlined(self):
+        """
+        Declarators run left to right, so `y = (SINK(x), 0)` reads `x` while it is still undefined; the
+        later `x = 5` must not fold into that read. Statement granularity cannot order the two, so a
+        constant is not inlined into a use that shares its defining statement.
+        """
+        source = inspect.cleandoc(
+            """
+            var y = (SINK(x), 0), x = 5;
+            DONE(y);
+            """
+        )
+        self.assertEqual(source, self._inline(source))
+
+    def test_expression_not_inlined_past_free_variable_mutation(self):
+        """
+        `x = a + 5` captures `a` at entry; `g()` reassigns the captured `a` before each `SINK(x)`.
+        Relocating `a + 5` into the loop would recompute it with the mutated `a`, so the single-use
+        expression stays at its definition even though `x` itself is never mutated.
+        """
+        source = inspect.cleandoc(
+            """
+            function outer(a) {
+              var x = a + 5;
+              var g = function() {
+                a = 100;
+              };
+              while (cond) {
+                g();
+                SINK(x);
+              }
+            }
+            """
+        )
+        self.assertEqual(source, self._inline(source))
+
     def test_block_nested_closure_mutation_seals_variable(self):
         """
         `f` is declared inside the loop block, not at the scope top level; calling it still mutates the

@@ -13,6 +13,7 @@ from refinery.lib.scripts.js.analysis.dominance import DominanceModel, build_dom
 from refinery.lib.scripts.js.analysis.effects import EffectModel, build_effects
 from refinery.lib.scripts.js.analysis.liveness import LivenessModel, build_liveness
 from refinery.lib.scripts.js.analysis.model import SemanticModel, build_semantic_model
+from refinery.lib.scripts.js.analysis.reaching import ReachingModel, build_reaching
 from refinery.lib.scripts.js.model import JsScript
 
 
@@ -21,7 +22,8 @@ class ModelCache:
     Lazily builds and memoizes the `refinery.lib.scripts.js.analysis.model.SemanticModel` and the
     `refinery.lib.scripts.js.analysis.effects.EffectModel` and
     `refinery.lib.scripts.js.analysis.liveness.LivenessModel` and
-    `refinery.lib.scripts.js.analysis.dominance.DominanceModel` layered on it, for one root script.
+    `refinery.lib.scripts.js.analysis.dominance.DominanceModel` and
+    `refinery.lib.scripts.js.analysis.reaching.ReachingModel` layered on it, for one root script.
     The memoized models are dropped whenever this root's AST-mutation counter
     (`refinery.lib.scripts.tree_version`) advances past the value they were built at, so a transform
     that reads the cache after an earlier mutation in the same pass — even one not yet announced
@@ -37,12 +39,14 @@ class ModelCache:
         self._effects: EffectModel | None = None
         self._liveness: LivenessModel | None = None
         self._dominance: DominanceModel | None = None
+        self._reaching: ReachingModel | None = None
 
     def invalidate(self) -> None:
         self._model = None
         self._effects = None
         self._liveness = None
         self._dominance = None
+        self._reaching = None
 
     def _ensure_fresh(self) -> None:
         version = tree_version(self.root)
@@ -77,6 +81,13 @@ class ModelCache:
         if self._dominance is None:
             self._dominance = build_dominance(self.model)
         return self._dominance
+
+    @property
+    def reaching(self) -> ReachingModel:
+        self._ensure_fresh()
+        if self._reaching is None:
+            self._reaching = build_reaching(self.dominance, self.effects)
+        return self._reaching
 
 
 def model_cache(transformer: Transformer, root: JsScript) -> ModelCache:
