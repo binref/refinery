@@ -149,7 +149,10 @@ class Binding:
     from a function nested below the one that owns it. A write performed through a member access on a
     global-object alias (`globalThis.g = ...`) has no referencing identifier for the global it targets,
     so the `JsMemberExpression` stands in for that write site; every other `writes` entry is an
-    identifier.
+    identifier. `dynamic_refs` holds referencing identifiers a dynamic scope resolves at runtime — a name
+    inside a `with` body that could denote this binding — which `reads`/`writes` omit because such a name
+    resolves to no binding statically; its target is uncertain, so it is kept apart from the definite
+    references.
     """
     name: str
     kind: BindingKind
@@ -157,6 +160,7 @@ class Binding:
     declarations: list[JsIdentifier] = field(default_factory=list)
     reads: list[JsIdentifier] = field(default_factory=list)
     writes: list[JsIdentifier | JsMemberExpression] = field(default_factory=list)
+    dynamic_refs: list[JsIdentifier] = field(default_factory=list)
     captured: bool = False
 
     @property
@@ -520,6 +524,22 @@ def _has_local_reflection(function: Node) -> bool:
     return False
 
 
+def _has_direct_eval(function: Node) -> bool:
+    """
+    Whether *function*'s body contains a direct `eval` call — a call whose callee is the bare identifier
+    `eval`, the one reflective surface that runs in the function's own scope and can therefore name its
+    locals. Nested functions are included, since a direct `eval` in a closure inherits the enclosing
+    locals. This is the `eval`-only half of `_has_local_reflection`: the `with` half is modelled precisely
+    as dynamic references, so the two surfaces are kept apart.
+    """
+    for node in function.walk():
+        if isinstance(node, JsCallExpression):
+            callee = node.callee
+            if isinstance(callee, JsIdentifier) and callee.name == 'eval':
+                return True
+    return False
+
+
 def _is_string_timer(call: JsCallExpression) -> bool:
     """
     Whether *call* is a timer/`execScript` invocation whose first argument is not a function literal,
@@ -546,6 +566,7 @@ class SemanticModel:
         self._binding_of: dict[int, Binding] = {}
         self._reflection_surface: bool | None = None
         self._function_dynamic: dict[int, bool] = {}
+        self._function_direct_eval: dict[int, bool] = {}
         self.root_scope: Scope = _ScopeBuilder(self).build(root)
         self._build_def_use()
 
@@ -576,16 +597,21 @@ class SemanticModel:
         """
         return self._binding_of.get(id(decl_id))
 
-    def lookup(self, name: str, scope: Scope | None) -> Binding | None:
+    def lookup(self, name: str, scope: Scope | None, *, cross_dynamic: bool = False) -> Binding | None:
         """
         Resolve *name* from *scope* outward through enclosing scopes, stopping at a dynamically-scoped
-        region where the name could be injected at runtime. Returns `None` for a free name.
+        region where the name could be injected at runtime. Returns `None` for a free name. With
+        *cross_dynamic*, the walk does not stop at a dynamic boundary but continues outward to the binding
+        the name would denote if the `with` object lacked the property — the lexical binding a dynamic
+        scope could still reach at runtime — which is how a `with`-body reference is attributed to the
+        binding it may touch. The default keeps the definite-resolution semantics every other caller
+        relies on.
         """
         while scope is not None:
             binding = scope.bindings.get(name)
             if binding is not None:
                 return binding
-            if scope.is_dynamic:
+            if scope.is_dynamic and not cross_dynamic:
                 return None
             scope = scope.parent
         return None
@@ -612,6 +638,22 @@ class SemanticModel:
         site of a global written through an alias (see `Binding`).
         """
         nodes = binding.reads + binding.writes
+        if exclude is None:
+            return nodes
+        return [n for n in nodes if n is not exclude and not n.is_descendant_of(exclude)]
+
+    def dynamic_references(
+        self, binding: Binding, *, exclude: Node | None = None,
+    ) -> list[JsIdentifier]:
+        """
+        Every reference to *binding* that a dynamic scope resolves at runtime — an identifier inside a
+        `with` body that could denote *binding* (it may instead denote a property of the `with` object,
+        which is why the static `references` set omits it) — optionally omitting those within the subtree
+        of *exclude*. Each is classified on demand by `reference_role` or `container_reference_role`, the
+        same oracles the definite references use, so a consumer applies one role logic to both; only the
+        ordering and alias-following a resolved reference permits do not carry to an uncertain one.
+        """
+        nodes = binding.dynamic_refs
         if exclude is None:
             return nodes
         return [n for n in nodes if n is not exclude and not n.is_descendant_of(exclude)]
@@ -697,6 +739,29 @@ class SemanticModel:
             self._function_dynamic[id(function)] = cached
         return cached
 
+    def local_reachable_by_direct_eval(self, binding: Binding) -> bool:
+        """
+        Whether a direct `eval` positioned to name *binding* could read or write it with no reference this
+        model records. True only for a function-local whose owning function — or a closure nested inside
+        it, which inherits its scope — contains a direct `eval`, the one reflective surface that runs in
+        the caller's own scope and can therefore name a local. False for a global: an opaque global-scope
+        surface can name any global, but that is what the whole-program `reflection_can_reach` answers, and
+        freezing every global on it is an over-approximation the caller must choose to accept, not a fact
+        this query asserts. The `with` surface is not counted — a `with` body's accesses are attributed
+        precisely as `dynamic_references`, so only the opaque `eval` case needs this per-function answer.
+        """
+        owner = binding.scope.var_scope
+        if owner is None or owner.kind is ScopeKind.SCRIPT:
+            return False
+        return self._function_has_direct_eval(owner.node)
+
+    def _function_has_direct_eval(self, function: Node) -> bool:
+        cached = self._function_direct_eval.get(id(function))
+        if cached is None:
+            cached = _has_direct_eval(function)
+            self._function_direct_eval[id(function)] = cached
+        return cached
+
     def _detect_reflection(self) -> bool:
         for node in self.root.walk():
             if isinstance(node, JsWithStatement):
@@ -727,6 +792,7 @@ class SemanticModel:
             ref_scope = self._node_scope.get(id(node))
             binding = self.lookup(node.name, ref_scope)
             if binding is None:
+                self._attribute_dynamic_reference(node, ref_scope)
                 continue
             role = reference_role(node)
             if role is not Role.WRITE:
@@ -735,6 +801,22 @@ class SemanticModel:
                 binding.writes.append(node)
             if ref_scope is None or ref_scope.var_scope is not binding.scope.var_scope:
                 binding.captured = True
+
+    def _attribute_dynamic_reference(self, node: JsIdentifier, scope: Scope | None):
+        """
+        Attribute a reference that did not resolve statically to the binding it could reach across a
+        dynamic scope. A name inside a `with` body resolves to `None` — it may denote a property of the
+        `with` object or a lexical binding — so the def-use walk would otherwise drop it. Only a name that
+        crosses a dynamic scope is a candidate; continuing the lookup past that boundary finds the lexical
+        binding it may touch, and the reference is recorded on that binding's `dynamic_refs`. A genuinely
+        free name that crosses no dynamic scope (an external global the program never declares) is left
+        untouched, as is one whose cross-boundary lookup still finds no binding.
+        """
+        if not self._crosses_dynamic_scope(scope):
+            return
+        binding = self.lookup(node.name, scope, cross_dynamic=True)
+        if binding is not None:
+            binding.dynamic_refs.append(node)
 
     def _create_implicit_globals(self):
         """

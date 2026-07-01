@@ -3,6 +3,7 @@ from __future__ import annotations
 from test import TestBase
 
 from refinery.lib.scripts.js.analysis.model import (
+    Binding,
     BindingKind,
     ContainerRole,
     Role,
@@ -178,8 +179,10 @@ class TestSemanticModel(TestBase):
         self.assertEqual(binding.kind, BindingKind.VAR)
         self.assertIs(model.resolve(a_shorthand), binding)
 
-    def _binding(self, ast, model, name: str):
-        return model.binding_of(self._decl(ast, model, name))
+    def _binding(self, ast, model, name: str) -> Binding:
+        binding = model.binding_of(self._decl(ast, model, name))
+        assert binding is not None
+        return binding
 
     def test_reads_and_writes_are_counted(self):
         ast, model = self._model('function f(){ var x = 1; x; x = 2; x += 1; }')
@@ -615,3 +618,73 @@ class TestSemanticModel(TestBase):
     def test_global_not_reachable_without_surface(self):
         ast, model = self._model('var x = 1; console.log(x);')
         self.assertFalse(model.reflection_can_reach(model.binding_of(self._decl(ast, model, 'x'))))
+
+    def _dynamic_role(self, source: str, name: str = 'o') -> ContainerRole:
+        ast, model = self._model(source)
+        refs = model.dynamic_references(self._binding(ast, model, name))
+        self.assertEqual(len(refs), 1)
+        return container_reference_role(refs[0])
+
+    def test_with_member_call_is_a_dynamic_reference(self):
+        self.assertEqual(self._dynamic_role('var o = [1]; with (q) { o.push(2); }'), ContainerRole.MEMBER_CALL)
+
+    def test_with_indexed_write_is_a_dynamic_reference(self):
+        self.assertEqual(self._dynamic_role('var o = [1]; with (q) { o[0] = 2; }'), ContainerRole.MEMBER_WRITE)
+
+    def test_with_reassignment_is_a_dynamic_reference(self):
+        self.assertEqual(self._dynamic_role('var o = [1]; with (q) { o = 2; }'), ContainerRole.REBIND)
+
+    def test_with_argument_escape_is_a_dynamic_reference(self):
+        self.assertEqual(self._dynamic_role('var o = [1]; with (q) { f(o); }'), ContainerRole.ESCAPE)
+
+    def test_with_member_read_is_a_dynamic_reference(self):
+        self.assertEqual(
+            self._dynamic_role('var o = [1]; var y; with (q) { y = o[0]; }'), ContainerRole.MEMBER_READ)
+
+    def test_with_not_naming_container_attributes_nothing(self):
+        ast, model = self._model('var o = [1]; with (q) { z = 2; }')
+        self.assertEqual(model.dynamic_references(self._binding(ast, model, 'o')), [])
+
+    def test_dynamic_reference_is_not_a_static_reference(self):
+        ast, model = self._model('var o = [1]; with (q) { o[0] = 2; }')
+        binding = self._binding(ast, model, 'o')
+        self.assertEqual(model.references(binding), [])
+        self.assertEqual(len(model.dynamic_references(binding)), 1)
+
+    def test_dynamic_reference_respects_shadowing(self):
+        ast, model = self._model('var o = [1]; function f(q){ var o = [2]; with (q) { o.push(3); } }')
+        outer_decl, inner_decl = (n for n in self._idents(ast, 'o') if model.binding_of(n) is not None)
+        outer, inner = model.binding_of(outer_decl), model.binding_of(inner_decl)
+        assert outer is not None and inner is not None
+        self.assertEqual(model.dynamic_references(outer), [])
+        inner_refs = model.dynamic_references(inner)
+        self.assertEqual(len(inner_refs), 1)
+        self.assertEqual(container_reference_role(inner_refs[0]), ContainerRole.MEMBER_CALL)
+
+    def test_nested_with_attributes_across_both_boundaries(self):
+        self.assertEqual(
+            self._dynamic_role('var o = [1]; with (a) { with (b) { o.push(2); } }'), ContainerRole.MEMBER_CALL)
+
+    def test_free_name_in_with_is_not_attributed(self):
+        model = self._model('with (q) { missing.push(1); }')[1]
+        self.assertNotIn('missing', model.root_scope.bindings)
+
+    def test_local_reachable_by_direct_eval_in_its_function(self):
+        ast, model = self._model("function f(){ var x; eval('x'); }")
+        self.assertTrue(model.local_reachable_by_direct_eval(self._binding(ast, model, 'x')))
+
+    def test_local_not_reachable_by_direct_eval_when_only_with(self):
+        ast, model = self._model('function f(o){ var x; with (o) { x; } }')
+        self.assertFalse(model.local_reachable_by_direct_eval(self._binding(ast, model, 'x')))
+
+    def test_local_reachable_by_direct_eval_in_nested_function(self):
+        ast, model = self._model("function f(){ var x; function g(){ eval('x'); } }")
+        self.assertTrue(model.local_reachable_by_direct_eval(self._binding(ast, model, 'x')))
+
+    def test_local_not_reachable_by_indirect_eval(self):
+        ast, model = self._model("function f(o){ var x; o.eval('x'); }")
+        self.assertFalse(model.local_reachable_by_direct_eval(self._binding(ast, model, 'x')))
+
+    def test_global_not_reachable_by_direct_eval(self):
+        ast, model = self._model('var x; eval(payload);')
+        self.assertFalse(model.local_reachable_by_direct_eval(self._binding(ast, model, 'x')))
