@@ -36,7 +36,12 @@ from __future__ import annotations
 from typing import Iterator
 
 from refinery.lib.scripts import Node
-from refinery.lib.scripts.js.analysis.cfg import CfgNode, ControlFlowGraph, build_control_flow
+from refinery.lib.scripts.js.analysis.cfg import (
+    CfgNode,
+    ControlFlowGraph,
+    ElementLocator,
+    build_control_flow,
+)
 from refinery.lib.scripts.js.analysis.model import (
     Binding,
     BindingKind,
@@ -73,11 +78,10 @@ class LivenessModel:
     def __init__(self, model: SemanticModel):
         self.model = model
         self._graphs = build_control_flow(model.root)
-        self._element_graph: dict[int, ControlFlowGraph] = {}
+        self._locator = ElementLocator(self._graphs)
         self._live_in: dict[int, frozenset[Binding]] = {}
         self._live_out: dict[int, frozenset[Binding]] = {}
         self._pseudo_locals: dict[int, frozenset[Binding]] = {}
-        self._index_elements()
         self._index_pseudo_locals()
         for graph in self._graphs.values():
             self._compute_graph(graph)
@@ -101,10 +105,7 @@ class LivenessModel:
         The control-flow node standing for *element* in whichever function graph owns it, or `None` if
         *element* is not a node the graphs represent.
         """
-        graph = self._element_graph.get(id(element))
-        if graph is None:
-            return None
-        return graph.node_of(element)
+        return self._locator.node_of(element)
 
     def is_dead_store(self, write: JsIdentifier) -> bool:
         """
@@ -118,7 +119,7 @@ class LivenessModel:
         read the local by name without a reference the model sees. A reflective surface elsewhere in the
         program runs in the global scope and cannot reach a local, so it does not suppress the report.
         """
-        located = self._locate(write)
+        located = self._locator.locate(write)
         if located is None:
             return False
         graph, node = located
@@ -188,12 +189,6 @@ class LivenessModel:
             if function is not None:
                 result.append((binding, function))
         return result
-
-    def _index_elements(self):
-        for graph in self._graphs.values():
-            for node in graph.nodes:
-                if node.element is not None:
-                    self._element_graph[id(node.element)] = graph
 
     def _index_pseudo_locals(self):
         """
@@ -444,17 +439,6 @@ class LivenessModel:
             if declarator is not None and declarator.init is not None:
                 return True
         return False
-
-    def _locate(self, write: JsIdentifier) -> tuple[ControlFlowGraph, CfgNode] | None:
-        cursor: Node | None = write
-        while cursor is not None:
-            graph = self._element_graph.get(id(cursor))
-            if graph is not None:
-                node = graph.node_of(cursor)
-                if node is not None:
-                    return graph, node
-            cursor = cursor.parent
-        return None
 
 
 def build_liveness(model: SemanticModel) -> LivenessModel:

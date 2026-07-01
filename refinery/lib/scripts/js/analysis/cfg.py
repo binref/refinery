@@ -106,6 +106,46 @@ class ControlFlowGraph:
         return (id(source), id(target)) in self.exceptional_edges
 
 
+class ElementLocator:
+    """
+    Locates an AST node among the per-function control-flow graphs of one script. Built once from the
+    graph set, it maps an element to the graph and node that evaluate it — directly for an element a
+    graph node stands for (`node_of`), or by climbing to the enclosing statement for one nested inside an
+    expression (`locate`). The flow-sensitive analysis layers built on the graphs share it, so the
+    AST-to-graph mapping and its parent-climb live in one place.
+    """
+
+    def __init__(self, graphs: dict[int, ControlFlowGraph]):
+        self._element_graph: dict[int, ControlFlowGraph] = {}
+        for graph in graphs.values():
+            for node in graph.nodes:
+                if node.element is not None:
+                    self._element_graph[id(node.element)] = graph
+
+    def node_of(self, element: Node) -> CfgNode | None:
+        """
+        The control-flow node standing for *element* in whichever graph owns it, or `None` when
+        *element* is not itself a node the graphs represent (a plain expression inside a statement).
+        """
+        graph = self._element_graph.get(id(element))
+        return graph.node_of(element) if graph is not None else None
+
+    def locate(self, element: Node) -> tuple[ControlFlowGraph, CfgNode] | None:
+        """
+        The graph and node that evaluate *element*, climbing out of any expression it is nested in to the
+        enclosing statement (or loop head), or `None` when it has no enclosing graph node.
+        """
+        cursor: Node | None = element
+        while cursor is not None:
+            graph = self._element_graph.get(id(cursor))
+            if graph is not None:
+                node = graph.node_of(cursor)
+                if node is not None:
+                    return graph, node
+            cursor = cursor.parent
+        return None
+
+
 @dataclass
 class _Target:
     """

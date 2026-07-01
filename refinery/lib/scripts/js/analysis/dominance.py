@@ -28,6 +28,7 @@ from refinery.lib.scripts.js.analysis.cfg import (
     FUNCTION_NODES,
     CfgNode,
     ControlFlowGraph,
+    ElementLocator,
     build_control_flow,
 )
 from refinery.lib.scripts.js.analysis.model import SemanticModel, enclosing_function
@@ -43,9 +44,8 @@ class DominanceModel:
     def __init__(self, model: SemanticModel):
         self.model = model
         self._graphs = build_control_flow(model.root)
-        self._element_graph: dict[int, ControlFlowGraph] = {}
+        self._locator = ElementLocator(self._graphs)
         self._dominators: dict[int, frozenset[int]] = {}
-        self._index_elements()
         for graph in self._graphs.values():
             self._compute_dominators(graph)
 
@@ -59,8 +59,8 @@ class DominanceModel:
         enclosing statement node is unlocatable) or when the two lie in different functions' graphs,
         where intraprocedural dominance does not apply.
         """
-        located_a = self._locate(a)
-        located_b = self._locate(b)
+        located_a = self._locator.locate(a)
+        located_b = self._locator.locate(b)
         if located_a is None or located_b is None:
             return False
         graph_a, node_a = located_a
@@ -74,7 +74,7 @@ class DominanceModel:
         The control-flow node of the statement (or loop head) that evaluates *element*, climbing out of
         any expression *element* is nested in, or `None` when *element* has no enclosing graph node.
         """
-        located = self._locate(element)
+        located = self._locator.locate(element)
         return located[1] if located is not None else None
 
     def locate(self, element: Node) -> tuple[ControlFlowGraph, CfgNode] | None:
@@ -83,7 +83,7 @@ class DominanceModel:
         nested in — or `None` when it has no enclosing graph node. The graph identifies the function
         whose invocation runs *element*, which a caller needs to keep a query within one graph.
         """
-        return self._locate(element)
+        return self._locator.locate(element)
 
     @staticmethod
     def _reachable(start: CfgNode, *, forward: bool) -> set[int]:
@@ -222,8 +222,8 @@ class DominanceModel:
         definition may be evaluated before it (an earlier declarator, an earlier sequence operand), which
         plain `dominates` would wrongly accept.
         """
-        located_a = self._locate(a)
-        located_b = self._locate(b)
+        located_a = self._locator.locate(a)
+        located_b = self._locator.locate(b)
         if located_a is None or located_b is None:
             return False
         graph_a, node_a = located_a
@@ -231,12 +231,6 @@ class DominanceModel:
         if graph_a is not graph_b or node_a is node_b:
             return False
         return id(node_a) in self._dominators.get(id(node_b), frozenset())
-
-    def _index_elements(self):
-        for graph in self._graphs.values():
-            for node in graph.nodes:
-                if node.element is not None:
-                    self._element_graph[id(node.element)] = graph
 
     def _compute_dominators(self, graph: ControlFlowGraph):
         nodes = graph.nodes
@@ -263,17 +257,6 @@ class DominanceModel:
                     changed = True
         for node in nodes:
             self._dominators[id(node)] = frozenset(dom[id(node)])
-
-    def _locate(self, element: Node) -> tuple[ControlFlowGraph, CfgNode] | None:
-        cursor: Node | None = element
-        while cursor is not None:
-            graph = self._element_graph.get(id(cursor))
-            if graph is not None:
-                node = graph.node_of(cursor)
-                if node is not None:
-                    return graph, node
-            cursor = cursor.parent
-        return None
 
 
 def build_dominance(model: SemanticModel) -> DominanceModel:
