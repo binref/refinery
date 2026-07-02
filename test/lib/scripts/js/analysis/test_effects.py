@@ -585,6 +585,12 @@ class TestEffectModel(TestBase):
     def test_local_container_in_function_with_direct_eval_is_mutable(self):
         self.assertFalse(self._container('var a = [1]; eval("x"); SINK(a[0]);'))
 
+    def test_local_container_with_parenthesized_direct_eval_is_mutable(self):
+        self.assertFalse(self._container('var a = [1]; (eval)("a[0]=9"); SINK(a[0]);'))
+
+    def test_local_container_with_indirect_comma_eval_is_immutable(self):
+        self.assertTrue(self._container('var a = [1]; (0, eval)("a[0]=9"); SINK(a[0]);'))
+
     def test_local_container_with_only_with_not_naming_it_is_immutable(self):
         self.assertTrue(self._container('var a = [1]; with (q) { z = 1; } SINK(a[0]);'))
 

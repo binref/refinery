@@ -685,6 +685,14 @@ class TestSemanticModel(TestBase):
         ast, model = self._model("function f(o){ var x; o.eval('x'); }")
         self.assertFalse(model.local_reachable_by_direct_eval(self._binding(ast, model, 'x')))
 
+    def test_local_reachable_by_parenthesized_direct_eval(self):
+        ast, model = self._model("function f(){ var x; (eval)('x'); }")
+        self.assertTrue(model.local_reachable_by_direct_eval(self._binding(ast, model, 'x')))
+
+    def test_local_not_reachable_by_indirect_comma_eval(self):
+        ast, model = self._model("function f(){ var x; (0, eval)('x'); }")
+        self.assertFalse(model.local_reachable_by_direct_eval(self._binding(ast, model, 'x')))
+
     def test_global_not_reachable_by_direct_eval(self):
         ast, model = self._model('var x; eval(payload);')
         self.assertFalse(model.local_reachable_by_direct_eval(self._binding(ast, model, 'x')))

@@ -506,38 +506,43 @@ def _global_member_name(member: JsMemberExpression) -> str | None:
     return prop.name if isinstance(prop, JsIdentifier) else None
 
 
-def _has_local_reflection(function: Node) -> bool:
+def _is_direct_eval_call(node: Node) -> bool:
     """
-    Whether *function*'s body contains a `with` or a direct `eval` call, either of which can read or
-    write the function's own locals by name at runtime. Nested functions are included, since a direct
-    `eval` in a closure inherits the enclosing locals. Indirect eval (`o.eval`), `Function`, string
-    timers, and dynamic global access all run in the global scope and so cannot name a local; they are
-    not counted here, which is what makes this sharper than the whole-program surface for a local.
+    Whether *node* is a direct `eval` call — a call whose callee, once parentheses are stripped, is
+    the bare identifier `eval`. Parentheses are transparent to the reference, so `(eval)(...)` is a
+    direct eval exactly as `eval(...)`; a callee that instead only yields the function as a value —
+    the comma sequence `(0, eval)(...)` that strips to a sequence expression, or a member
+    `o.eval(...)` — is indirect, runs in the global scope, and is excluded. Direct eval is the one
+    reflective surface that runs in the caller's own scope and can therefore name its locals.
     """
+    if not isinstance(node, JsCallExpression):
+        return False
+    callee = _strip_parens(node.callee)
+    return isinstance(callee, JsIdentifier) and callee.name == 'eval'
+
+
+def _scan_local_reflection(function: Node) -> tuple[bool, bool]:
+    """
+    Scan *function* once for the two reflective surfaces that can read or write its own locals by
+    name at runtime, returning whether it contains, respectively, a `with` statement and a direct
+    `eval` call. Nested functions are included: a `with` or direct `eval` in a closure inherits the
+    enclosing locals. Indirect eval (`o.eval`, `(0, eval)`), `Function`, string timers, and
+    dynamic global access all run in the global scope and so cannot name a local; they are not
+    counted, which is what makes this sharper than the whole-program surface for a local. The two
+    flags are reported apart because the `with` surface is modelled precisely as dynamic references
+    while the opaque `eval` surface is not, so a caller that has handled `with` bodies consults only
+    the `eval` flag.
+    """
+    has_with = False
+    has_direct_eval = False
     for node in function.walk():
         if isinstance(node, JsWithStatement):
-            return True
-        if isinstance(node, JsCallExpression):
-            callee = node.callee
-            if isinstance(callee, JsIdentifier) and callee.name == 'eval':
-                return True
-    return False
-
-
-def _has_direct_eval(function: Node) -> bool:
-    """
-    Whether *function*'s body contains a direct `eval` call — a call whose callee is the bare identifier
-    `eval`, the one reflective surface that runs in the function's own scope and can therefore name its
-    locals. Nested functions are included, since a direct `eval` in a closure inherits the enclosing
-    locals. This is the `eval`-only half of `_has_local_reflection`: the `with` half is modelled precisely
-    as dynamic references, so the two surfaces are kept apart.
-    """
-    for node in function.walk():
-        if isinstance(node, JsCallExpression):
-            callee = node.callee
-            if isinstance(callee, JsIdentifier) and callee.name == 'eval':
-                return True
-    return False
+            has_with = True
+        elif _is_direct_eval_call(node):
+            has_direct_eval = True
+        if has_with and has_direct_eval:
+            break
+    return has_with, has_direct_eval
 
 
 def _is_string_timer(call: JsCallExpression) -> bool:
@@ -565,8 +570,7 @@ class SemanticModel:
         self._node_scope: dict[int, Scope] = {}
         self._binding_of: dict[int, Binding] = {}
         self._reflection_surface: bool | None = None
-        self._function_dynamic: dict[int, bool] = {}
-        self._function_direct_eval: dict[int, bool] = {}
+        self._function_reflection: dict[int, tuple[bool, bool]] = {}
         self.root_scope: Scope = _ScopeBuilder(self).build(root)
         self._build_def_use()
 
@@ -655,7 +659,7 @@ class SemanticModel:
         """
         nodes = binding.dynamic_refs
         if exclude is None:
-            return nodes
+            return list(nodes)
         return [n for n in nodes if n is not exclude and not n.is_descendant_of(exclude)]
 
     def naming_binding(self, function: Node) -> Binding | None:
@@ -730,14 +734,8 @@ class SemanticModel:
         owner = binding.scope.var_scope
         if owner is None or owner.kind is ScopeKind.SCRIPT:
             return self.has_reflection_surface()
-        return self._function_has_dynamic_scope(owner.node)
-
-    def _function_has_dynamic_scope(self, function: Node) -> bool:
-        cached = self._function_dynamic.get(id(function))
-        if cached is None:
-            cached = _has_local_reflection(function)
-            self._function_dynamic[id(function)] = cached
-        return cached
+        has_with, has_direct_eval = self._local_reflection(owner.node)
+        return has_with or has_direct_eval
 
     def local_reachable_by_direct_eval(self, binding: Binding) -> bool:
         """
@@ -753,13 +751,33 @@ class SemanticModel:
         owner = binding.scope.var_scope
         if owner is None or owner.kind is ScopeKind.SCRIPT:
             return False
-        return self._function_has_direct_eval(owner.node)
+        return self._local_reflection(owner.node)[1]
 
-    def _function_has_direct_eval(self, function: Node) -> bool:
-        cached = self._function_direct_eval.get(id(function))
+    def binding_maybe_reassigned_dynamically(self, binding: Binding) -> bool:
+        """
+        Whether a dynamic scope could rebind *binding* — give the name a new value through a surface
+        the static `writes` set does not record. A `with` body that names it as an assignment target
+        may rebind it (the target may instead be a property of the `with` object, but may equally be
+        this binding, so it is treated as a possible rebind), and a direct `eval` in its owning
+        function can rebind it opaquely. A member write or method call through the name does not
+        rebind it — the name keeps its value — so only a dynamic reference whose role is not a plain
+        read counts. A consumer that judges a binding's value stable from `writes` alone must also
+        consult this, since neither reassignment leaves a `writes` entry; a script-scope binding
+        reassigned only through an opaque `eval` stays the documented residual, as
+        `local_reachable_by_direct_eval` reports it false there.
+        """
+        if self.local_reachable_by_direct_eval(binding):
+            return True
+        return any(
+            reference_role(ref) is not Role.READ
+            for ref in self.dynamic_references(binding)
+        )
+
+    def _local_reflection(self, function: Node) -> tuple[bool, bool]:
+        cached = self._function_reflection.get(id(function))
         if cached is None:
-            cached = _has_direct_eval(function)
-            self._function_direct_eval[id(function)] = cached
+            cached = _scan_local_reflection(function)
+            self._function_reflection[id(function)] = cached
         return cached
 
     def _detect_reflection(self) -> bool:
@@ -775,7 +793,7 @@ class SemanticModel:
                 ):
                     return True
             elif isinstance(node, (JsCallExpression, JsNewExpression)):
-                callee = node.callee
+                callee = _strip_parens(node.callee)
                 if isinstance(callee, JsIdentifier) and callee.name in ('eval', 'Function'):
                     return True
                 if isinstance(node, JsCallExpression) and _is_string_timer(node):
