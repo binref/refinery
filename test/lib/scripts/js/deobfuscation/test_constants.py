@@ -408,6 +408,50 @@ class TestConstantInlining(TestJsDeobfuscator):
         )
         self.assertEqual(source, self._inline(source))
 
+    def test_cross_function_scalar_reassigned_through_with_not_inlined(self):
+        """
+        The `with` body's `x = 2` resolves to no binding but is attributed to the script `x`, so the
+        candidate is rejected and the cross-function read in `f` is not inlined — it must observe the
+        reassignment.
+        """
+        source = inspect.cleandoc(
+            """
+            var x = 1;
+            function f() {
+              return x;
+            }
+            with (q) {
+              x = 2;
+            }
+            SINK(f());
+            """
+        )
+        self.assertEqual(source, self._inline(source))
+
+    def test_cross_function_with_reassigning_shadowed_param_still_inlines(self):
+        """
+        The `with` body's `x = 2` is attributed to `g`'s parameter `x`, which shadows the script `x`, so
+        the script constant stays stable and the cross-function read folds — the binding-attributed gain
+        over a name-based scan, which would reject any candidate merely named `x`.
+        """
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var x = 1;
+                function g(x) {
+                  with (q) {
+                    x = 2;
+                  }
+                }
+                function f() {
+                  return 1;
+                }
+                SINK(f());
+                """
+            ),
+            self._inline('var x = 1; function g(x) { with (q) { x = 2; } } function f() { return x; } SINK(f());'),
+        )
+
     def test_cross_function_local_reassignable_by_direct_eval_not_inlined(self):
         """
         A direct `eval` in `outer` can rebind its local `x` through an opaque string that carries no
