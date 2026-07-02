@@ -521,28 +521,20 @@ def _is_direct_eval_call(node: Node) -> bool:
     return isinstance(callee, JsIdentifier) and callee.name == 'eval'
 
 
-def _scan_local_reflection(function: Node) -> tuple[bool, bool]:
+def _has_direct_eval(function: Node) -> bool:
     """
-    Scan *function* once for the two reflective surfaces that can read or write its own locals by
-    name at runtime, returning whether it contains, respectively, a `with` statement and a direct
-    `eval` call. Nested functions are included: a `with` or direct `eval` in a closure inherits the
-    enclosing locals. Indirect eval (`o.eval`, `(0, eval)`), `Function`, string timers, and
-    dynamic global access all run in the global scope and so cannot name a local; they are not
-    counted, which is what makes this sharper than the whole-program surface for a local. The two
-    flags are reported apart because the `with` surface is modelled precisely as dynamic references
-    while the opaque `eval` surface is not, so a caller that has handled `with` bodies consults only
-    the `eval` flag.
+    Whether *function*'s body contains a direct `eval` call — a call whose callee, once parentheses are
+    stripped, is the bare identifier `eval` (see `_is_direct_eval_call`), the one reflective surface that
+    runs in the function's own scope and can therefore name its locals. Nested functions are included,
+    since a direct `eval` in a closure inherits the enclosing locals. The `with` surface is not scanned
+    here — a `with` body's accesses are attributed precisely as dynamic references, so only direct eval
+    needs a per-function answer; `Function`, string timers, indirect eval, and dynamic global access all
+    run in the global scope and cannot name a local.
     """
-    has_with = False
-    has_direct_eval = False
     for node in function.walk():
-        if isinstance(node, JsWithStatement):
-            has_with = True
-        elif _is_direct_eval_call(node):
-            has_direct_eval = True
-        if has_with and has_direct_eval:
-            break
-    return has_with, has_direct_eval
+        if _is_direct_eval_call(node):
+            return True
+    return False
 
 
 def _is_string_timer(call: JsCallExpression) -> bool:
@@ -570,7 +562,7 @@ class SemanticModel:
         self._node_scope: dict[int, Scope] = {}
         self._binding_of: dict[int, Binding] = {}
         self._reflection_surface: bool | None = None
-        self._function_reflection: dict[int, tuple[bool, bool]] = {}
+        self._function_direct_eval: dict[int, bool] = {}
         self.root_scope: Scope = _ScopeBuilder(self).build(root)
         self._build_def_use()
 
@@ -724,18 +716,19 @@ class SemanticModel:
     def reflection_can_reach(self, binding: Binding) -> bool:
         """
         Whether a runtime name lookup could read or write *binding* without a reference this model
-        records. A global is reachable through any reflective surface — `eval`, `Function`, a string
-        timer, dynamic global access, `with` — all of which run in the global scope; a function-local is
-        reachable only through a `with` or a direct `eval` lexically inside the function that owns it,
-        because reflective code running in the global scope cannot name a local. This sharpens the
-        whole-program `has_reflection_surface` into the precise question of whether one binding could be
-        touched reflectively; like it, it over-approximates, so a `True` verdict is the conservative one.
+        records. Derived over the precise dynamic-scope facts. A global is reachable through any
+        reflective surface — `eval`, `Function`, a string timer, dynamic global access, `with` — all of
+        which run in the global scope, so it defers to the whole-program `has_reflection_surface`. A
+        function-local is reachable only from within its own function and only by name: a `with` body that
+        names it (a `dynamic_references` entry) or a direct `eval` in the function
+        (`local_reachable_by_direct_eval`). A `with` that never names it cannot reach it, and reflective
+        code in the global scope cannot name a local — so the local answer is exact, while the global one
+        stays conservative (any surface).
         """
         owner = binding.scope.var_scope
         if owner is None or owner.kind is ScopeKind.SCRIPT:
             return self.has_reflection_surface()
-        has_with, has_direct_eval = self._local_reflection(owner.node)
-        return has_with or has_direct_eval
+        return bool(binding.dynamic_refs) or self._function_has_direct_eval(owner.node)
 
     def local_reachable_by_direct_eval(self, binding: Binding) -> bool:
         """
@@ -751,7 +744,7 @@ class SemanticModel:
         owner = binding.scope.var_scope
         if owner is None or owner.kind is ScopeKind.SCRIPT:
             return False
-        return self._local_reflection(owner.node)[1]
+        return self._function_has_direct_eval(owner.node)
 
     def binding_maybe_reassigned_dynamically(self, binding: Binding) -> bool:
         """
@@ -773,11 +766,11 @@ class SemanticModel:
             for ref in self.dynamic_references(binding)
         )
 
-    def _local_reflection(self, function: Node) -> tuple[bool, bool]:
-        cached = self._function_reflection.get(id(function))
+    def _function_has_direct_eval(self, function: Node) -> bool:
+        cached = self._function_direct_eval.get(id(function))
         if cached is None:
-            cached = _scan_local_reflection(function)
-            self._function_reflection[id(function)] = cached
+            cached = _has_direct_eval(function)
+            self._function_direct_eval[id(function)] = cached
         return cached
 
     def _detect_reflection(self) -> bool:

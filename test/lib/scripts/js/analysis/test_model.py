@@ -597,6 +597,10 @@ class TestSemanticModel(TestBase):
         ast, model = self._model('function f(o){ var x; with (o) { x; } }')
         self.assertTrue(model.reflection_can_reach(model.binding_of(self._decl(ast, model, 'x'))))
 
+    def test_local_not_reachable_by_with_that_does_not_name_it(self):
+        ast, model = self._model('function f(o){ var x; with (o) { z; } }')
+        self.assertFalse(model.reflection_can_reach(self._binding(ast, model, 'x')))
+
     def test_local_reachable_by_eval_in_nested_function(self):
         ast, model = self._model("function f(){ var x; function g(){ eval('x'); } }")
         self.assertTrue(model.reflection_can_reach(model.binding_of(self._decl(ast, model, 'x'))))

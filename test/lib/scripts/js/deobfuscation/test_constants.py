@@ -388,6 +388,40 @@ class TestConstantInlining(TestJsDeobfuscator):
         )
         self.assertEqual(source, self._inline(source))
 
+    def test_local_scalar_with_not_naming_it_inlines(self):
+        """
+        The `with` body names `z`, not `x`, so the local constant is not reflectively reachable and folds
+        — the same-scope precision the re-expressed `reflection_can_reach` unmasks; a coarse
+        any-`with`-in-the-function guard would have refused it.
+        """
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function outer() {
+                  with (q) {
+                    z = 1;
+                  }
+                  return 1;
+                }
+                """
+            ),
+            self._inline('function outer() { var x = 1; with (q) { z = 1; } return x; }'),
+        )
+
+    def test_local_scalar_reassigned_through_with_not_inlined(self):
+        source = inspect.cleandoc(
+            """
+            function outer() {
+              var x = 1;
+              with (q) {
+                x = 9;
+              }
+              return x;
+            }
+            """
+        )
+        self.assertEqual(source, self._inline(source))
+
     def test_cross_function_array_element_mutated_through_with_not_inlined(self):
         """
         The `with` body's write to `arr[0]` resolves to no binding, but it is attributed to `arr` as a
