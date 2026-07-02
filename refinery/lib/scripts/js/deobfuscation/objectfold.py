@@ -19,7 +19,7 @@ from refinery.lib.scripts import (
 )
 from refinery.lib.scripts.js.analysis.cache import model_cache
 from refinery.lib.scripts.js.analysis.effects import EffectModel, object_sets_prototype
-from refinery.lib.scripts.js.analysis.model import Binding, Scope, SemanticModel, is_use_position
+from refinery.lib.scripts.js.analysis.model import Binding, Scope, SemanticModel
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     OBJECT_PROTOTYPE_MEMBERS,
     ScopeProcessingTransformer,
@@ -99,9 +99,7 @@ def _free_external_bindings(
     reassigned) and `_resolves_consistently` (does any such name rebind at the fold site).
     """
     for node in value.walk():
-        if not isinstance(node, JsIdentifier) or not is_use_position(node):
-            continue
-        if model.binding_of(node) is not None:
+        if not isinstance(node, JsIdentifier) or not model.is_reference(node):
             continue
         binding = model.resolve(node)
         if binding is not None and _binding_inside(binding, value):
@@ -239,9 +237,7 @@ class JsObjectFold(ScopeProcessingTransformer):
         if isinstance(value, JsIdentifier):
             return False
         for node in walk_scope(value):
-            if not isinstance(node, JsIdentifier) or not is_use_position(node):
-                continue
-            if model.binding_of(node) is not None:
+            if not isinstance(node, JsIdentifier) or not model.is_reference(node):
                 continue
             binding = model.resolve(node)
             if binding is None or _binding_inside(binding, value):

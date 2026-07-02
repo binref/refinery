@@ -60,7 +60,6 @@ from refinery.lib.scripts.js.model import (
     JsImportSpecifier,
     JsLabeledStatement,
     JsMemberExpression,
-    JsNewExpression,
     JsObjectExpression,
     JsObjectPattern,
     JsParenthesizedExpression,
@@ -86,6 +85,8 @@ _FunctionNode = JsFunctionDeclaration | JsFunctionExpression | JsArrowFunctionEx
 GLOBAL_OBJECT_ALIASES = frozenset({'globalThis', 'global', 'window', 'self', 'top', 'frames'})
 
 TIMER_NAMES = frozenset({'setTimeout', 'setInterval', 'setImmediate', 'execScript'})
+
+REFLECTIVE_INTRINSICS = frozenset({'eval', 'Function'})
 
 _PATTERN_CONTAINERS = (
     JsArrayExpression,
@@ -241,7 +242,7 @@ def is_use_position(node: JsIdentifier) -> bool:
     """
     Whether an identifier occupies a position where it reads or writes a value, as opposed to naming a
     property, an object-literal key, a label, or an import/export specifier. Binding sites are not
-    excluded here; callers separate those via `SemanticModel.binding_of`.
+    excluded here; `SemanticModel.is_reference` is the binding-aware predicate that also excludes them.
     """
     p = node.parent
     if p is None:
@@ -506,6 +507,24 @@ def _global_member_name(member: JsMemberExpression) -> str | None:
     return prop.name if isinstance(prop, JsIdentifier) else None
 
 
+def _is_reflective_member(member: JsMemberExpression) -> bool:
+    """
+    Whether a member access is a reflective surface — one through which code obtains the `eval`/`Function`
+    intrinsic or reads an unknown global by a runtime-computed name. A statically named property is a
+    surface exactly when the name is a reflective intrinsic: `window.eval`, `g['Function']`, and the same
+    under any unrecognized base, since the base may alias the global object. A computed access with a
+    non-literal key is a surface when its base is a global-object alias (`window[expr]`), through which any
+    global can be named at runtime; on any other base it designates a property of one specific object and
+    is not a surface.
+    """
+    prop = member.property
+    if member.computed:
+        if isinstance(prop, JsStringLiteral):
+            return prop.value in REFLECTIVE_INTRINSICS
+        return _is_global_base(member.object)
+    return isinstance(prop, JsIdentifier) and prop.name in REFLECTIVE_INTRINSICS
+
+
 def _is_direct_eval_call(node: Node) -> bool:
     """
     Whether *node* is a direct `eval` call — a call whose callee, once parentheses are stripped, is
@@ -513,7 +532,9 @@ def _is_direct_eval_call(node: Node) -> bool:
     direct eval exactly as `eval(...)`; a callee that instead only yields the function as a value —
     the comma sequence `(0, eval)(...)` that strips to a sequence expression, or a member
     `o.eval(...)` — is indirect, runs in the global scope, and is excluded. Direct eval is the one
-    reflective surface that runs in the caller's own scope and can therefore name its locals.
+    reflective surface that runs in the caller's own scope and can therefore name its locals; the
+    excluded indirect forms name only globals, and `has_reflection_surface` accounts for them
+    whole-program.
     """
     if not isinstance(node, JsCallExpression):
         return False
@@ -612,6 +633,15 @@ class SemanticModel:
             scope = scope.parent
         return None
 
+    def is_reference(self, node: JsIdentifier) -> bool:
+        """
+        Whether *node* is a referencing occurrence of a name: it occupies a use position and is not a
+        binding site, so it reads or writes an existing binding rather than declaring one or naming a
+        property, key, label, or import/export specifier. The binding-aware companion to the syntactic
+        `is_use_position`; `resolve` resolves exactly the identifiers for which this holds.
+        """
+        return is_use_position(node) and id(node) not in self._binding_of
+
     def resolve(self, ref: JsIdentifier) -> Binding | None:
         """
         The binding a referencing identifier reads or writes, found by walking outward from its scope.
@@ -619,9 +649,7 @@ class SemanticModel:
         identifier is not a reference (a property name, key, or label), or when resolution crosses a
         dynamically-scoped region where the name could be injected at runtime.
         """
-        if id(ref) in self._binding_of:
-            return None
-        if not is_use_position(ref):
+        if not self.is_reference(ref):
             return None
         return self.lookup(ref.name, self._node_scope.get(id(ref)))
 
@@ -704,9 +732,11 @@ class SemanticModel:
     def has_reflection_surface(self) -> bool:
         """
         Whether the program still contains a construct through which code could reference a global by
-        name at runtime: `eval`, `Function`/`new Function`, a string-valued timer, a dynamic property
-        access on the global object, or a `with` statement. Computed conservatively (over-reporting is
-        safe): while any such surface remains, a dead global must not be removed, because reflective
+        name at runtime: a value-read of the `eval` or `Function` intrinsic in any form — a direct or
+        indirect call, an alias (`var e = eval`), a comma sequence (`(0, eval)`), or a member access
+        (`window.eval`, `g['Function']`) — a string-valued timer, a dynamic property access on the
+        global object (`window[expr]`), or a `with` statement. Computed conservatively (over-reporting
+        is safe): while any such surface remains, a dead global must not be removed, because reflective
         code may read it.
         """
         if self._reflection_surface is None:
@@ -773,23 +803,36 @@ class SemanticModel:
             self._function_direct_eval[id(function)] = cached
         return cached
 
+    def _reads_reflective_intrinsic(self, node: JsIdentifier) -> bool:
+        """
+        Whether *node* obtains the genuine `eval`/`Function` intrinsic as a value: a read of the bare name
+        in a use position that resolves to no binding, so it denotes the intrinsic rather than a local
+        shadow. Naming the intrinsic as a value is itself the reflective surface — once obtained it can be
+        aliased, sequenced (`(0, eval)(...)`), or passed on, all beyond what this model tracks — so the read
+        alone is conclusive, with no need to follow where the value flows. A binding site that declares the
+        name (`function eval(){}`, `var Function`) introduces a shadow rather than reading the intrinsic,
+        and a name that resolves to such a shadow is not the intrinsic, so neither is a surface.
+        """
+        if node.name not in REFLECTIVE_INTRINSICS:
+            return False
+        if not self.is_reference(node):
+            return False
+        if reference_role(node) is not Role.READ:
+            return False
+        return self.lookup(node.name, self._node_scope.get(id(node))) is None
+
     def _detect_reflection(self) -> bool:
         for node in self.root.walk():
             if isinstance(node, JsWithStatement):
                 return True
-            if isinstance(node, JsMemberExpression):
-                if node.computed:
-                    if _is_global_base(node.object) and not isinstance(node.property, JsStringLiteral):
-                        return True
-                elif isinstance(node.property, JsIdentifier) and node.property.name in (
-                    'eval', 'Function',
-                ):
+            elif isinstance(node, JsIdentifier):
+                if self._reads_reflective_intrinsic(node):
                     return True
-            elif isinstance(node, (JsCallExpression, JsNewExpression)):
-                callee = _strip_parens(node.callee)
-                if isinstance(callee, JsIdentifier) and callee.name in ('eval', 'Function'):
+            elif isinstance(node, JsMemberExpression):
+                if _is_reflective_member(node):
                     return True
-                if isinstance(node, JsCallExpression) and _is_string_timer(node):
+            elif isinstance(node, JsCallExpression):
+                if _is_string_timer(node):
                     return True
         return False
 
@@ -798,7 +841,7 @@ class SemanticModel:
         for node in self.root.walk():
             if not isinstance(node, JsIdentifier):
                 continue
-            if id(node) in self._binding_of or not is_use_position(node):
+            if not self.is_reference(node):
                 continue
             ref_scope = self._node_scope.get(id(node))
             binding = self.lookup(node.name, ref_scope)
@@ -845,9 +888,7 @@ class SemanticModel:
             if isinstance(node, JsMemberExpression):
                 self._record_global_member_write(node)
                 continue
-            if not isinstance(node, JsIdentifier) or not is_use_position(node):
-                continue
-            if id(node) in self._binding_of:
+            if not isinstance(node, JsIdentifier) or not self.is_reference(node):
                 continue
             scope = self._node_scope.get(id(node))
             if reference_role(node) is Role.READ:

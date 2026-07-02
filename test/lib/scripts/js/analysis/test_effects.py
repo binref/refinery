@@ -397,6 +397,12 @@ class TestEffectModel(TestBase):
         self.assertFalse(effects.intrinsics_pristine)
         self.assertFalse(effects.summary_of(self._func(ast, 'f')).is_pure)
 
+    def test_indirect_eval_voids_pristine(self):
+        source = "function f(){ return String.fromCharCode(65); } (0, eval)('1');"
+        ast, effects = self._effects(source)
+        self.assertFalse(effects.intrinsics_pristine)
+        self.assertFalse(effects.summary_of(self._func(ast, 'f')).is_pure)
+
     def test_locally_shadowed_intrinsic_is_not_trusted(self):
         source = 'function f(){ var Math = { floor: 0 }; return Math.floor; }'
         self.assertFalse(self._summary(source, 'f').is_pure)

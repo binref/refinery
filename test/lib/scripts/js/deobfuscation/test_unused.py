@@ -286,6 +286,54 @@ class TestUnusedCodeRemoval(TestJsDeobfuscator):
         )
         self.assertEqual(source, self._remove_unused(source))
 
+    def test_indirect_comma_eval_preserves_dead_init_global(self):
+        source = inspect.cleandoc(
+            """
+            var deadGlobal = 1;
+            (0, eval)('deadGlobal');
+            """
+        )
+        self.assertEqual(source, self._remove_unused(source))
+
+    def test_computed_literal_eval_preserves_dead_init_global(self):
+        source = inspect.cleandoc(
+            """
+            var deadGlobal = 1;
+            window['eval']('deadGlobal');
+            """
+        )
+        self.assertEqual(source, self._remove_unused(source))
+
+    def test_eval_alias_preserves_dead_init_global(self):
+        source = inspect.cleandoc(
+            """
+            var deadGlobal = 1;
+            var e = eval;
+            e('deadGlobal');
+            """
+        )
+        self.assertEqual(source, self._remove_unused(source))
+
+    def test_shadowed_eval_still_removes_dead_global(self):
+        source = inspect.cleandoc(
+            """
+            function eval() {
+              return 0;
+            }
+            var deadGlobal = 1;
+            eval();
+            """
+        )
+        expected = inspect.cleandoc(
+            """
+            function eval() {
+              return 0;
+            }
+            eval();
+            """
+        )
+        self.assertEqual(expected, self._remove_unused(source))
+
     def test_strip_globals_removes_dead_global_declaration(self):
         source = inspect.cleandoc(
             """

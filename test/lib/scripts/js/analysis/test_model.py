@@ -553,6 +553,26 @@ class TestSemanticModel(TestBase):
         self.assertEqual(reference_role(target), Role.WRITE)
         self.assertTrue(is_simple_assignment_target(target))
 
+    def test_is_reference_true_for_bound_read(self):
+        ast, model = self._model('function f(x){ return x; }')
+        self.assertTrue(model.is_reference(self._use(ast, model, 'x')))
+
+    def test_is_reference_false_for_binding_sites(self):
+        ast, model = self._model('function f(x){ return x; }')
+        self.assertFalse(model.is_reference(self._decl(ast, model, 'x')))
+        self.assertFalse(model.is_reference(self._decl(ast, model, 'f')))
+
+    def test_is_reference_false_for_property_name_true_for_base(self):
+        ast, model = self._model('o.p;')
+        self.assertTrue(model.is_reference(self._idents(ast, 'o')[0]))
+        self.assertFalse(model.is_reference(self._idents(ast, 'p')[0]))
+
+    def test_is_reference_true_for_free_name_that_resolves_to_nothing(self):
+        ast, model = self._model('g();')
+        g = self._idents(ast, 'g')[0]
+        self.assertTrue(model.is_reference(g))
+        self.assertIsNone(model.resolve(g))
+
     def test_eval_is_a_reflection_surface(self):
         _, model = self._model('eval(payload);')
         self.assertTrue(model.has_reflection_surface())
@@ -621,6 +641,38 @@ class TestSemanticModel(TestBase):
 
     def test_global_not_reachable_without_surface(self):
         ast, model = self._model('var x = 1; console.log(x);')
+        self.assertFalse(model.reflection_can_reach(model.binding_of(self._decl(ast, model, 'x'))))
+
+    def test_indirect_comma_eval_is_a_reflection_surface(self):
+        _, model = self._model("var G = 1; (0, eval)('G');")
+        self.assertTrue(model.has_reflection_surface())
+
+    def test_computed_literal_eval_access_is_a_reflection_surface(self):
+        _, model = self._model("window['eval']('G');")
+        self.assertTrue(model.has_reflection_surface())
+
+    def test_computed_literal_eval_on_unknown_base_is_a_reflection_surface(self):
+        _, model = self._model("o['eval']('G');")
+        self.assertTrue(model.has_reflection_surface())
+
+    def test_eval_alias_is_a_reflection_surface(self):
+        _, model = self._model('var e = eval;')
+        self.assertTrue(model.has_reflection_surface())
+
+    def test_function_value_read_is_a_reflection_surface(self):
+        _, model = self._model('var p = Function.prototype;')
+        self.assertTrue(model.has_reflection_surface())
+
+    def test_shadowed_eval_is_not_a_reflection_surface(self):
+        _, model = self._model('function eval(){ return 0; } eval();')
+        self.assertFalse(model.has_reflection_surface())
+
+    def test_global_reachable_by_indirect_comma_eval(self):
+        ast, model = self._model("var G = 1; (0, eval)('G');")
+        self.assertTrue(model.reflection_can_reach(model.binding_of(self._decl(ast, model, 'G'))))
+
+    def test_local_not_reachable_by_indirect_comma_eval_outside_its_function(self):
+        ast, model = self._model("function f(){ var x; } (0, eval)('x');")
         self.assertFalse(model.reflection_can_reach(model.binding_of(self._decl(ast, model, 'x'))))
 
     def _dynamic_role(self, source: str, name: str = 'o') -> ContainerRole:

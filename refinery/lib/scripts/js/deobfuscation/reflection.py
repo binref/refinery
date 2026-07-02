@@ -21,7 +21,6 @@ from refinery.lib.scripts.js.analysis.model import (
     build_semantic_model,
     is_member_write_target,
     is_simple_assignment_target,
-    is_use_position,
 )
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     ScriptLevelTransformer,
@@ -535,9 +534,7 @@ def _body_free_names(body_model: SemanticModel, parsed: JsScript) -> set[str]:
     """
     free: set[str] = set()
     for ident in parsed.walk():
-        if not isinstance(ident, JsIdentifier) or not is_use_position(ident):
-            continue
-        if body_model.binding_of(ident) is not None:
+        if not isinstance(ident, JsIdentifier) or not body_model.is_reference(ident):
             continue
         binding = body_model.resolve(ident)
         if binding is None or binding.kind is BindingKind.IMPLICIT_GLOBAL:

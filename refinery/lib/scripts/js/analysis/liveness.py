@@ -338,9 +338,7 @@ class LivenessModel:
         return self._is_unconditional(ident, element)
 
     def _is_read(self, ident: JsIdentifier) -> bool:
-        if self.model.binding_of(ident) is not None:
-            return False
-        if not is_use_position(ident):
+        if not self.model.is_reference(ident):
             return False
         return reference_role(ident) is not Role.WRITE
 
