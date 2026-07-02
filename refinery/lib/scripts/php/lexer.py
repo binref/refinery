@@ -26,10 +26,6 @@ _ESCAPE_MAP: dict[str, str] = {
 
 _HEX = frozenset('0123456789abcdefABCDEF')
 
-_FOUR_CHAR_OPS: dict[str, PhpTokenKind] = {
-    '?->=' : PhpTokenKind.NULLSAFE_OPERATOR,
-}
-
 _THREE_CHAR_OPS: dict[str, PhpTokenKind] = {
     '===' : PhpTokenKind.IS_IDENTICAL,
     '!==' : PhpTokenKind.IS_NOT_IDENTICAL,
@@ -485,11 +481,6 @@ class PhpLexer:
                     yield cast
                     continue
 
-            c4 = src[self.pos:self.pos + 4]
-            if c4 in _FOUR_CHAR_OPS:
-                self.pos += 4
-                yield PhpToken(_FOUR_CHAR_OPS[c4], c4, start)
-                continue
             c3 = src[self.pos:self.pos + 3]
             if c3 in _THREE_CHAR_OPS:
                 self.pos += 3
@@ -562,9 +553,11 @@ def decode_php_double_quoted(text: str) -> str:
         if n == 'u' and text[i + 2:i + 3] == '{':
             end = text.find('}', i + 3)
             if end != -1 and all(h in _HEX for h in text[i + 3:end]) and end > i + 3:
-                parts.append(chr(int(text[i + 3:end], 16)))
-                i = end + 1
-                continue
+                code_point = int(text[i + 3:end], 16)
+                if code_point <= 0x10FFFF:
+                    parts.append(chr(code_point))
+                    i = end + 1
+                    continue
         if n in '01234567':
             j = i + 1
             while j < length and j < i + 4 and text[j] in '01234567':

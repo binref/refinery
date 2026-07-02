@@ -182,7 +182,7 @@ def parens_required(inner: Node, parent: Node | None, paren_node: Node) -> bool:
     if isinstance(parent, PhpTernary):
         if parent.condition is paren_node:
             return inner_p <= _TERNARY_PRECEDENCE
-        return inner_p < _ASSIGN_PRECEDENCE
+        return inner_p <= _TERNARY_PRECEDENCE
     if isinstance(parent, PhpAssignment):
         if parent.target is paren_node:
             return False

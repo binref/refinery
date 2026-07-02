@@ -560,7 +560,7 @@ class PhpSynthesizer(Synthesizer):
         writing `PhpInlineHTML` nodes verbatim with `?>` / `<?php` tag toggling around them.
         """
         in_php = False
-        for i, stmt in enumerate(body):
+        for stmt in body:
             if isinstance(stmt, PhpInlineHTML):
                 if in_php:
                     self._write(' ?>')
@@ -574,12 +574,8 @@ class PhpSynthesizer(Synthesizer):
                 self.visit(stmt)
                 continue
             if not in_php:
-                if i > 0:
-                    self._write('<?php')
-                    self._newline()
-                else:
-                    self._write('<?php')
-                    self._newline()
+                self._write('<?php')
+                self._newline()
                 in_php = True
             else:
                 self._newline()

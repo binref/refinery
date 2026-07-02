@@ -289,11 +289,6 @@ class PhpParser:
         tok = self._current
         return PhpToken(kind, tok.value, tok.offset)
 
-    def _drain_comments(self, node: Statement):
-        comments = self._trivia.pop(self._index, None)
-        if comments:
-            node.leading_comments.extend(comments)
-
     def parse(self) -> PhpScript:
         offset = self._current.offset
         body = self._parse_statement_list(K.EOF)
@@ -1551,6 +1546,9 @@ class PhpParser:
             if self._at(K.FUNCTION):
                 return self._parse_closure(is_static=True, offset=offset)
             return self._parse_arrow_function(is_static=True, offset=offset)
+        if kind is K.STATIC:
+            tok = self._advance()
+            return PhpName(parts=[tok.value], offset=offset)
         if kind is K.NEW:
             return self._parse_new()
         if kind is K.ISSET:
@@ -1806,14 +1804,19 @@ class PhpParser:
 
 def _parse_int_text(text: str) -> int:
     text = text.replace('_', '')
+    if not text:
+        return 0
     if text[:2] in ('0x', '0X'):
-        return int(text, 16)
+        return int(text, 16) if len(text) > 2 else 0
     if text[:2] in ('0b', '0B'):
-        return int(text, 2)
+        return int(text, 2) if len(text) > 2 else 0
     if text[:2] in ('0o', '0O'):
-        return int(text, 8)
+        return int(text, 8) if len(text) > 2 else 0
     if len(text) > 1 and text[0] == '0':
-        return int(text, 8)
+        try:
+            return int(text, 8)
+        except ValueError:
+            return 0
     return int(text)
 
 
