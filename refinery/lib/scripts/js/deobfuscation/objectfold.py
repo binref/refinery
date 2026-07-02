@@ -333,10 +333,12 @@ class JsObjectFold(ScopeProcessingTransformer):
         *can_remove* is True when every reference was folded away, so no use of the binding survives — a
         bare reference (an alias such as `var b = obj`), a retained inherited-member access, or a
         reference one of the two conditions above kept leaves *can_remove* False so the declaration is
-        kept.
+        kept. A reference a dynamic scope resolves at runtime — a name inside a `with` body, held in the
+        binding's dynamic references and never folded here — likewise keeps the declaration, so it is not
+        removed out from under a use the fold left in place.
         """
         changed = False
-        can_remove = True
+        can_remove = not binding.dynamic_refs
         consistent: dict[tuple[int, int], bool] = {}
         free_external: dict[int, list[tuple[JsIdentifier, Binding | None]]] = {}
         for ref in list(model.references(binding)):

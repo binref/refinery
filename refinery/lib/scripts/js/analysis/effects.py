@@ -391,14 +391,16 @@ class EffectModel:
         Whether *func* may be invoked at a point the surrounding scope cannot enumerate as a resolvable
         `name(...)` call site: an anonymous function (an IIFE, a callback, stored and called later), or a
         named function whose binding is reassigned, redeclared, or referenced anywhere other than as the
-        callee of a direct call (aliased, passed as an argument, `f.call(...)`). A call to such a function
-        can land at a point no call site pins down; a function only ever called directly by name has all
-        its invocations enumerated by those call sites.
+        callee of a direct call (aliased, passed as an argument, `f.call(...)`). A reference inside a
+        dynamic scope — a name a `with` body resolves at runtime — counts too: the model cannot order or
+        resolve it, so the function may be invoked or aliased there with no static call site. A call to
+        such a function can land at a point no call site pins down; a function only ever called directly
+        by name has all its invocations enumerated by those call sites.
         """
         binding = self.model.naming_binding(func)
         if binding is None:
             return True
-        if binding.writes or len(binding.declarations) != 1:
+        if binding.writes or binding.dynamic_refs or len(binding.declarations) != 1:
             return True
         for ref in self.model.references(binding):
             parent = ref.parent
@@ -636,7 +638,8 @@ class EffectModel:
         The function a call invokes when it is statically a single, never-reassigned function: a direct
         function or arrow expression callee, or an identifier bound once to a function declaration or a
         function/arrow initializer. `None` for anything else — a method call, a parameter, a reassigned
-        binding, or an unresolved name — whose target cannot be pinned down.
+        binding (including one a dynamic scope could rebind through a `with` body or direct `eval`), or an
+        unresolved name — whose target cannot be pinned down.
         """
         callee = call.callee
         if isinstance(callee, (JsFunctionExpression, JsArrowFunctionExpression)):
@@ -645,6 +648,8 @@ class EffectModel:
             return None
         binding = self.model.resolve(callee)
         if binding is None or binding.writes or len(binding.declarations) != 1:
+            return None
+        if self.model.binding_maybe_reassigned_dynamically(binding):
             return None
         decl = binding.declarations[0]
         parent = decl.parent
@@ -916,6 +921,8 @@ class EffectModel:
         if binding is None:
             return None
         if binding.writes or len(binding.declarations) != 1:
+            return None
+        if self.model.binding_maybe_reassigned_dynamically(binding):
             return None
         decl = binding.declarations[0]
         parent = decl.parent

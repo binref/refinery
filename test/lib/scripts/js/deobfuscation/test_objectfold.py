@@ -131,6 +131,26 @@ class TestObjectFold(TestJsDeobfuscator):
             self._objectfold('var x = 1; var o = { p: x }; with (q) { z = 2; } SINK(o.p);'),
         )
 
+    def test_object_read_through_with_folds_resolved_access_but_keeps_declaration(self):
+        """
+        The `with` body reads `o.p` without mutating it, so the container stays immutable and the resolved
+        `SINK(o.p)` folds to the value. The declaration must be kept: the `with`-body `o.p` still names
+        `o` (it denotes this object when `q` lacks the property), and removing `var o` would leave that
+        reference dangling.
+        """
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var o = { p: 1 };
+                with (q) {
+                  y = o.p;
+                }
+                SINK(1);
+                """
+            ),
+            self._objectfold('var o = { p: 1 }; with (q) { y = o.p; } SINK(o.p);'),
+        )
+
     def test_proto_setting_object_not_folded(self):
         source = inspect.cleandoc(
             """

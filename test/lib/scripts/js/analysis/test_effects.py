@@ -369,6 +369,18 @@ class TestEffectModel(TestBase):
         ast, effects = self._effects('function p(){ return 1; } p();')
         self.assertTrue(effects.is_pure_call(self._only_call(ast)))
 
+    def test_is_pure_call_rejects_callee_reassigned_through_with(self):
+        ast, effects = self._effects('function p(){ return 1; } with (o) { p = q; } p();')
+        self.assertFalse(effects.is_pure_call(self._only_call(ast)))
+
+    def test_static_callee_none_for_callee_reassigned_through_with(self):
+        ast, effects = self._effects('function g(){ return 1; } with (o) { g = h; } g();')
+        self.assertIsNone(effects.static_callee(self._only_call(ast)))
+
+    def test_static_callee_resolves_function_not_named_by_with(self):
+        ast, effects = self._effects('function g(){ return 1; } with (o) { z = 1; } g();')
+        self.assertIs(effects.static_callee(self._only_call(ast)), self._func(ast, 'g'))
+
     def test_clean_program_is_pristine(self):
         _, effects = self._effects('function f(n){ return String.fromCharCode(n); }')
         self.assertTrue(effects.intrinsics_pristine)

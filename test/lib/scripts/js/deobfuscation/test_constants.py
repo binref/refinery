@@ -509,6 +509,52 @@ class TestConstantInlining(TestJsDeobfuscator):
         )
         self.assertEqual(source, self._inline(source))
 
+    def test_local_reassigned_by_function_called_through_with_not_inlined(self):
+        """
+        The `with` body invokes `evil` by name; if `o` lacks a property `evil` the call runs the local
+        `evil`, which writes `b`. That invocation is a call site no static reasoning can pin down, so a
+        function named inside a `with` escapes and `b` is volatile — the constant must not be folded.
+        """
+        source = inspect.cleandoc(
+            """
+            function W() {
+              var b = 10;
+              function evil() {
+                b = 99;
+              }
+              with (o) {
+                evil();
+              }
+              return b;
+            }
+            """
+        )
+        self.assertEqual(source, self._inline(source))
+
+    def test_local_mutated_by_function_aliased_through_with_not_inlined(self):
+        """
+        The `with` body reassigns `n` to `evil` (a mutator of `b`); if `o` lacks a property `n` the later
+        `n()` runs `evil` and sets `b` to 99. The alias resolves to no binding statically, so `evil`
+        escapes through its `with`-body reference and `b`'s constant must not be folded.
+        """
+        source = inspect.cleandoc(
+            """
+            function W() {
+              var b = 10;
+              var n = function() {};
+              function evil() {
+                b = 99;
+              }
+              with (o) {
+                n = evil;
+              }
+              n();
+              return b;
+            }
+            """
+        )
+        self.assertEqual(source, self._inline(source))
+
     def test_constant_written_through_global_alias_not_inlined(self):
         """
         `globalThis.x = 2` writes the script-level `x` through a member expression the effect model's
