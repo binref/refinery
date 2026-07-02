@@ -201,16 +201,20 @@ class JsObjectFold(ScopeProcessingTransformer):
     def _value_is_stable(model: SemanticModel, value: Node) -> bool:
         """
         Whether *value* evaluates to the same result wherever it is inlined — the precondition for
-        moving a property value from the object literal to each access site. It holds when every binding
-        the value reads as a free variable is immutable: a property whose value reads a local that is
-        reassigned (`{ p: x }` where `x` is later written) would, once inlined past the reassignment,
-        read the new value instead of the one the object captured at the literal. Identifiers bound
+        moving a property value from the object literal to each access site. It holds when every
+        binding the value reads as a free variable keeps its value: a property whose value reads a
+        local that is reassigned (`{ p: x }` where `x` is later written) would, once inlined past
+        the reassignment, read the new value instead of the one the object captured at the literal.
+        A reassignment through a dynamic scope — a `with` body that names the binding, or a direct
+        `eval` in its function — counts too, since it rebinds the name without leaving a static
+        write; the model answers this over the binding's dynamic references. Identifiers bound
         inside *value* itself (a function's own parameters) and free references that resolve to no
         binding (external globals) place no constraint, so a string, a numeric literal, a `const`
         reference, or a self-contained function wrapper all remain foldable.
         """
         return all(
-            binding is None or not binding.writes
+            binding is None
+            or (not binding.writes and not model.binding_maybe_reassigned_dynamically(binding))
             for _, binding in _free_external_bindings(model, value)
         )
 

@@ -292,8 +292,11 @@ class JsConstantInlining(ScopeProcessingTransformer):
 
             (declarator, constant_value)
 
-        Also returns the set of fully rejected (mutated) names — those reassigned, updated, destructured,
-        or written by a function that escapes, whose value cannot be pinned to a single definition. The
+        Also returns the set of fully rejected (mutated) names — those reassigned, updated,
+        destructured, or written by an escaping function, whose value cannot be pinned to a single
+        definition. A name a dynamic scope could rewrite with no referencing identifier is rejected
+        the same way: an unresolved write in a `with` body, a write through a global-object alias,
+        or a function-local a direct `eval` in its own function could rebind through a string. The
         points past which a surviving candidate's value no longer holds are not enumerated here; the
         reaching query derives them from the effect model at each use.
         """
@@ -406,7 +409,11 @@ class JsConstantInlining(ScopeProcessingTransformer):
                 unresolved_writes.add(node.name)
 
         for cand_name, binding in list(candidate_bindings.items()):
-            if cand_name in unresolved_writes or binding.has_global_member_write:
+            if (
+                cand_name in unresolved_writes
+                or binding.has_global_member_write
+                or model.local_reachable_by_direct_eval(binding)
+            ):
                 _reject(cand_name)
 
         for func in functions:

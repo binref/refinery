@@ -81,6 +81,56 @@ class TestObjectFold(TestJsDeobfuscator):
             self._objectfold('var o = { p: 1 }; eval("x"); SINK(o.p);'),
         )
 
+    def test_object_value_reassigned_through_with_not_folded(self):
+        source = inspect.cleandoc(
+            """
+            var x = 1;
+            var o = { p: x };
+            with (q) {
+              x = 2;
+            }
+            SINK(o.p);
+            """
+        )
+        self.assertEqual(source, self._objectfold(source))
+
+    def test_object_value_reassignable_by_direct_eval_not_folded(self):
+        """
+        The value binding `x` is reassignable by the direct `eval` in `outer`, while the object `o`
+        lives in `inner`, where its own container is immutable. Only the value-stability gate can
+        block this fold — keeping `o` and the `eval` in separate functions is what exercises the
+        `local_reachable_by_direct_eval` path of `binding_maybe_reassigned_dynamically`; with them
+        in one function the container gate would already reject it and the value gate goes untested.
+        """
+        source = inspect.cleandoc(
+            """
+            function outer() {
+              var x = 1;
+              eval("x = 2");
+              function inner() {
+                var o = { p: x };
+                SINK(o.p);
+              }
+              inner();
+            }
+            """
+        )
+        self.assertEqual(source, self._objectfold(source))
+
+    def test_object_value_binding_not_named_by_with_still_folds(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var x = 1;
+                with (q) {
+                  z = 2;
+                }
+                SINK(x);
+                """
+            ),
+            self._objectfold('var x = 1; var o = { p: x }; with (q) { z = 2; } SINK(o.p);'),
+        )
+
     def test_proto_setting_object_not_folded(self):
         source = inspect.cleandoc(
             """

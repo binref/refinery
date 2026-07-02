@@ -408,6 +408,29 @@ class TestConstantInlining(TestJsDeobfuscator):
         )
         self.assertEqual(source, self._inline(source))
 
+    def test_cross_function_local_reassignable_by_direct_eval_not_inlined(self):
+        """
+        A direct `eval` in `outer` can rebind its local `x` through an opaque string that carries no
+        referencing identifier, so `x` is not a stable constant: the cross-function read in `f` must
+        not be inlined. Unlike a `with` body, the reassignment leaves no unresolved-write node to
+        reject on, so the candidate is rejected on `local_reachable_by_direct_eval`. `x` is a
+        function-local, not the script-scope opaque-`eval` residual.
+        """
+        source = inspect.cleandoc(
+            """
+            function outer() {
+              var x = 1;
+              function f() {
+                return x;
+              }
+              eval("x = 2");
+              return f();
+            }
+            SINK(outer());
+            """
+        )
+        self.assertEqual(source, self._inline(source))
+
     def test_constant_written_through_global_alias_not_inlined(self):
         """
         `globalThis.x = 2` writes the script-level `x` through a member expression the effect model's
