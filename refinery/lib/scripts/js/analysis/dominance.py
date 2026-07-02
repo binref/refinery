@@ -178,12 +178,15 @@ class DominanceModel:
         For a named function these are the references to its binding — a use of the name must be
         evaluated before the value it denotes can be called — unless the binding is reassigned or
         redeclared, in which case a reference no longer pins this one function and the points are
-        unknowable. For an anonymous function the single point is the function expression itself: the
-        closure cannot be invoked before it is created.
+        unknowable. A reference inside a dynamic scope — a name a `with` body resolves at runtime — is
+        equally unorderable: the invocation it may perform has no static reference the dominator walk can
+        rank, so the points cannot be enumerated and the answer is `None`, mirroring the escape verdict
+        `EffectModel.function_escapes` draws from the same fact. For an anonymous function the single
+        point is the function expression itself: the closure cannot be invoked before it is created.
         """
         binding = self.model.naming_binding(function)
         if binding is not None:
-            if binding.writes or len(binding.declarations) != 1:
+            if binding.writes or binding.dynamic_refs or len(binding.declarations) != 1:
                 return None
             return list(self.model.references(binding))
         return [function]

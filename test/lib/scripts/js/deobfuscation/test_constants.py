@@ -555,6 +555,30 @@ class TestConstantInlining(TestJsDeobfuscator):
         )
         self.assertEqual(source, self._inline(source))
 
+    def test_cross_function_const_read_by_with_invoked_function_not_inlined(self):
+        """
+        `f` is invoked inside the `with` body, before `const c` initializes, so that call reads `c` in
+        its temporal dead zone. The invocation is a call site no static reference records, so ordering
+        the constant against `f`'s static references alone judges it to run before every call and folds
+        `c` into `f` — turning the `ReferenceError` the early call throws into a silent `5`. The
+        with-body reference must keep `f`'s invocation points unorderable, mirroring `function_escapes`.
+        """
+        source = inspect.cleandoc(
+            """
+            function outer() {
+              function f() {
+                return c;
+              }
+              with (o) {
+                f();
+              }
+              const c = 5;
+              return f();
+            }
+            """
+        )
+        self.assertEqual(source, self._inline(source))
+
     def test_constant_written_through_global_alias_not_inlined(self):
         """
         `globalThis.x = 2` writes the script-level `x` through a member expression the effect model's

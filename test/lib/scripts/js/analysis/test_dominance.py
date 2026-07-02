@@ -124,6 +124,17 @@ class TestDominance(TestBase):
         ast, dom = self._dominance('function f(){ return c; } g(f); const c = 5;')
         self.assertFalse(dom.runs_before_function(self._def(ast, 'c'), self._func(ast, 'f')))
 
+    def test_does_not_run_before_function_invoked_through_with(self):
+        """
+        `f` is invoked inside a `with` body — a call site no static reference records, since the name
+        may denote a property of the `with` object — and that call runs before the definition. The
+        with-body reference makes the points unorderable (mirroring `function_escapes`), so the
+        definition is not judged to run before every invocation; ordering it against the static
+        references alone would miss the earlier dynamic call.
+        """
+        ast, dom = self._dominance('function f(){ return c; } with (o) { f(); } const c = 5;')
+        self.assertFalse(dom.runs_before_function(self._def(ast, 'c'), self._func(ast, 'f')))
+
     def test_uncalled_function_is_vacuously_safe(self):
         ast, dom = self._dominance('const c = 5; function f(){ return c; }')
         self.assertTrue(dom.runs_before_function(self._def(ast, 'c'), self._func(ast, 'f')))
