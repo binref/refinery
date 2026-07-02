@@ -231,12 +231,14 @@ class PhpStaticCall(Expression):
 class PhpNew(Expression):
     class_name: Expression | None = None
     args: list[PhpArg] = field(default_factory=list)
+    has_parens: bool = False
 
 
 @dataclass(repr=False, eq=False)
 class PhpNewAnonymous(Expression):
     args: list[PhpArg] = field(default_factory=list)
     declaration: PhpClass | None = None
+    has_parens: bool = False
 
 
 @dataclass(repr=False, eq=False)
@@ -542,7 +544,7 @@ class PhpUnset(Statement):
 
 @dataclass(repr=False, eq=False)
 class PhpGlobal(Statement):
-    variables: list[PhpVariable] = field(default_factory=list)
+    variables: list[Expression] = field(default_factory=list)
 
 
 @dataclass(repr=False, eq=False)
@@ -552,7 +554,7 @@ class PhpStaticVar(Statement):
 
 @dataclass(repr=False, eq=False)
 class PhpStaticVarDeclaration(Node):
-    variable: PhpVariable | None = None
+    variable: Expression | None = None
     default: Expression | None = None
 
 
@@ -685,6 +687,7 @@ class PhpConst(Statement):
 class PhpDeclare(Statement):
     directives: list[PhpDeclareDirective] = field(default_factory=list)
     body: list[Statement] | None = None
+    alternative_syntax: bool = False
 
 
 @dataclass(repr=False, eq=False)

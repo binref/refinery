@@ -92,6 +92,7 @@ from refinery.lib.scripts.php.model import (
     PhpTernary,
     PhpThrowExpression,
     PhpThrowStatement,
+    PhpTraitAdaptation,
     PhpTraitUse,
     PhpTry,
     PhpUnaryExpression,
@@ -536,13 +537,14 @@ class PhpSynthesizer(Synthesizer):
     def visit_PhpNew(self, node: PhpNew):
         self._write('new ')
         self._emit_child(node.class_name, node)
-        self._write('(')
-        self._comma_list(node.args)
-        self._write(')')
+        if node.has_parens or node.args:
+            self._write('(')
+            self._comma_list(node.args)
+            self._write(')')
 
     def visit_PhpNewAnonymous(self, node: PhpNewAnonymous):
         self._write('new class')
-        if node.args:
+        if node.has_parens or node.args:
             self._write('(')
             self._comma_list(node.args)
             self._write(')')
@@ -649,6 +651,8 @@ class PhpSynthesizer(Synthesizer):
         if alt:
             self._write(':')
             self._emit_statements(body)
+            if not body:
+                self._newline()
         else:
             self._write(' ')
             self._emit_brace_block(body)
@@ -708,6 +712,8 @@ class PhpSynthesizer(Synthesizer):
             self.visit(case)
         self._depth -= 1
         if node.cases:
+            self._newline()
+        elif node.alternative_syntax:
             self._newline()
         if node.alternative_syntax:
             self._write('endswitch;')
@@ -866,8 +872,13 @@ class PhpSynthesizer(Synthesizer):
         self._comma_list(node.directives)
         self._write(')')
         if node.body is not None:
-            self._write(' ')
-            self._emit_brace_block(node.body)
+            if node.alternative_syntax:
+                self._write(':')
+                self._emit_statements(node.body)
+                self._write('enddeclare;')
+            else:
+                self._write(' ')
+                self._emit_brace_block(node.body)
         else:
             self._write(';')
 
@@ -997,4 +1008,34 @@ class PhpSynthesizer(Synthesizer):
             if i > 0:
                 self._write(', ')
             self.visit(name)
+        if not node.adaptations:
+            self._write(';')
+            return
+        self._write(' {')
+        self._depth += 1
+        for adaptation in node.adaptations:
+            self._newline()
+            self.visit(adaptation)
+        self._depth -= 1
+        if node.adaptations:
+            self._newline()
+        self._write('}')
+
+    def visit_PhpTraitAdaptation(self, node: PhpTraitAdaptation):
+        if node.trait is not None:
+            self.visit(node.trait)
+            self._write('::')
+        self._write(node.method)
+        if node.kind == 'insteadof':
+            self._write(' insteadof ')
+            for i, name in enumerate(node.insteadof):
+                if i > 0:
+                    self._write(', ')
+                self.visit(name)
+        else:
+            self._write(' as')
+            if node.new_modifier is not None:
+                self._write(F' {node.new_modifier}')
+            if node.new_name is not None:
+                self._write(F' {node.new_name}')
         self._write(';')

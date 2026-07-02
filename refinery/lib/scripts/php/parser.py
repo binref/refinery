@@ -97,6 +97,7 @@ from refinery.lib.scripts.php.model import (
     PhpTernary,
     PhpThrowExpression,
     PhpThrowStatement,
+    PhpTraitAdaptation,
     PhpTraitUse,
     PhpTry,
     PhpUnaryExpression,
@@ -317,6 +318,9 @@ class PhpParser:
                 if comments:
                     error.leading_comments[:0] = comments
                 body.append(error)
+        trailing = self._trivia.pop(self._index, None)
+        if trailing and body:
+            body[-1].leading_comments.extend(trailing)
         return body
 
     def _parse_statement(self) -> Statement | None:
@@ -690,9 +694,12 @@ class PhpParser:
         offset = self._current.offset
         self._expect(K.GLOBAL)
         variables: list[PhpVariable] = []
-        while self._at(K.VARIABLE):
-            tok = self._advance()
-            variables.append(PhpVariable(name=tok.value, offset=tok.offset))
+        while self._at(K.VARIABLE, K.DOLLAR):
+            if self._at(K.DOLLAR):
+                variables.append(self._parse_variable_variable())
+            else:
+                tok = self._advance()
+                variables.append(PhpVariable(name=tok.value, offset=tok.offset))
             if not self._eat(K.COMMA):
                 break
         self._eat(K.SEMICOLON)
@@ -702,10 +709,13 @@ class PhpParser:
         offset = self._current.offset
         self._expect(K.STATIC)
         declarations: list[PhpStaticVarDeclaration] = []
-        while self._at(K.VARIABLE):
+        while self._at(K.VARIABLE, K.DOLLAR):
             decl_offset = self._current.offset
-            tok = self._advance()
-            variable = PhpVariable(name=tok.value, offset=tok.offset)
+            if self._at(K.DOLLAR):
+                variable = self._parse_variable_variable()
+            else:
+                tok = self._advance()
+                variable = PhpVariable(name=tok.value, offset=tok.offset)
             default = None
             if self._eat(K.EQUALS):
                 default = self._parse_expression()
@@ -739,15 +749,17 @@ class PhpParser:
                 break
         self._expect(K.RPAREN)
         body: list[Statement] | None = None
+        alternative_syntax = False
         if self._at(K.LBRACE):
             body = self._parse_block().body
         elif self._eat(K.COLON):
+            alternative_syntax = True
             body = self._parse_statement_list(K.ENDDECLARE)
             self._expect(K.ENDDECLARE)
             self._eat(K.SEMICOLON)
         else:
             self._eat(K.SEMICOLON)
-        return PhpDeclare(directives=directives, body=body, offset=offset)
+        return PhpDeclare(directives=directives, body=body, alternative_syntax=alternative_syntax, offset=offset)
 
     def _parse_halt_compiler(self) -> PhpHaltCompiler:
         offset = self._current.offset
@@ -1090,21 +1102,46 @@ class PhpParser:
         traits = [self._parse_name()]
         while self._eat(K.COMMA):
             traits.append(self._parse_name())
+        adaptations: list[PhpTraitAdaptation] = []
         if self._at(K.LBRACE):
-            depth = 0
-            while not self._at(K.EOF):
-                if self._at(K.LBRACE):
-                    depth += 1
-                elif self._at(K.RBRACE):
-                    depth -= 1
-                    self._advance()
-                    if depth == 0:
-                        break
-                    continue
-                self._advance()
+            self._advance()
+            while not self._at(K.RBRACE, K.EOF):
+                adaptations.append(self._parse_trait_adaptation())
+            self._expect(K.RBRACE)
         else:
             self._eat(K.SEMICOLON)
-        return PhpTraitUse(traits=traits, offset=offset)
+        return PhpTraitUse(traits=traits, adaptations=adaptations, offset=offset)
+
+    def _parse_trait_adaptation(self) -> PhpTraitAdaptation:
+        offset = self._current.offset
+        trait: PhpName | None = None
+        method = ''
+        first = self._parse_name()
+        if self._eat(K.DOUBLE_COLON):
+            trait = first
+            method = self._advance().value
+        else:
+            method = first.parts[0] if first.parts else ''
+        if self._at(K.INSTEADOF):
+            self._advance()
+            insteadof = [self._parse_name()]
+            while self._eat(K.COMMA):
+                insteadof.append(self._parse_name())
+            self._eat(K.SEMICOLON)
+            return PhpTraitAdaptation(
+                trait=trait, method=method, kind='insteadof',
+                insteadof=insteadof, offset=offset)
+        self._expect(K.AS)
+        new_modifier: str | None = None
+        new_name: str | None = None
+        if self._current.kind in _MODIFIER_KINDS:
+            new_modifier = self._advance().value
+        if self._at(K.IDENTIFIER) or self._current.kind in _SEMI_RESERVED:
+            new_name = self._advance().value
+        self._eat(K.SEMICOLON)
+        return PhpTraitAdaptation(
+            trait=trait, method=method, kind='alias',
+            new_name=new_name, new_modifier=new_modifier, offset=offset)
 
     def _parse_enum_case(
         self,
@@ -1751,17 +1788,19 @@ class PhpParser:
         self._expect(K.NEW)
         if self._at(K.CLASS):
             self._advance()
+            has_parens = self._at(K.LPAREN)
             args: list[PhpArg] = []
-            if self._at(K.LPAREN):
+            if has_parens:
                 args = self._parse_arguments()
             declaration = self._parse_anonymous_class(offset)
             return PhpNewAnonymous(
-                args=args, declaration=declaration, offset=offset)
+                args=args, declaration=declaration, has_parens=has_parens, offset=offset)
         class_name = self._parse_new_target()
+        has_parens = self._at(K.LPAREN)
         args = []
-        if self._at(K.LPAREN):
+        if has_parens:
             args = self._parse_arguments()
-        return PhpNew(class_name=class_name, args=args, offset=offset)
+        return PhpNew(class_name=class_name, args=args, has_parens=has_parens, offset=offset)
 
     def _parse_new_target(self) -> Expression:
         if self._at(K.VARIABLE):
