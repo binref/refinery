@@ -1165,7 +1165,7 @@ class PhpParser:
     ) -> PhpClassConst:
         self._expect(K.CONST)
         const_type = None
-        if self._peek(1).kind is not K.EQUALS:
+        if self._peek(1).kind not in (K.EQUALS, K.COMMA, K.SEMICOLON):
             const_type = self._parse_type()
         consts = self._parse_const_declarations()
         self._eat(K.SEMICOLON)
@@ -1786,13 +1786,16 @@ class PhpParser:
     def _parse_new(self) -> Expression:
         offset = self._current.offset
         self._expect(K.NEW)
+        modifiers: list[str] = []
+        while self._current.kind in (K.READONLY,):
+            modifiers.append(self._advance().value)
         if self._at(K.CLASS):
             self._advance()
             has_parens = self._at(K.LPAREN)
             args: list[PhpArg] = []
             if has_parens:
                 args = self._parse_arguments()
-            declaration = self._parse_anonymous_class(offset)
+            declaration = self._parse_anonymous_class(offset, modifiers)
             return PhpNewAnonymous(
                 args=args, declaration=declaration, has_parens=has_parens, offset=offset)
         class_name = self._parse_new_target()
@@ -1821,7 +1824,7 @@ class PhpParser:
             return self._parse_static_access(PhpConstFetch(name=name, offset=name.offset))
         return PhpConstFetch(name=name, offset=name.offset)
 
-    def _parse_anonymous_class(self, offset: int) -> PhpClass:
+    def _parse_anonymous_class(self, offset: int, modifiers: list[str] | None = None) -> PhpClass:
         extends: list[PhpName] = []
         implements: list[PhpName] = []
         if self._eat(K.EXTENDS):
@@ -1837,6 +1840,7 @@ class PhpParser:
             extends=extends,
             implements=implements,
             members=members,
+            modifiers=modifiers or [],
             offset=offset,
         )
 

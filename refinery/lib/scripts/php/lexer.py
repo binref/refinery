@@ -237,7 +237,7 @@ class PhpLexer:
                 self.pos += 2
                 continue
             self.pos += 1
-            if c == "'":
+            if c == '\'':
                 break
         return PhpToken(PhpTokenKind.STRING_SINGLE, src[start:self.pos], start)
 
@@ -275,7 +275,7 @@ class PhpLexer:
         quote = ''
         if self.pos < length and src[self.pos] in '\'"':
             quote = src[self.pos]
-            nowdoc = quote == "'"
+            nowdoc = quote == '\''
             self.pos += 1
         label_start = self.pos
         while self.pos < length and _is_ident_part(src[self.pos]):
@@ -448,7 +448,7 @@ class PhpLexer:
                 yield PhpToken(PhpTokenKind.ATTRIBUTE, '#[', start)
                 continue
 
-            if c == "'":
+            if c == '\'':
                 yield self._read_single_quoted()
                 continue
             if c == '"':
@@ -511,7 +511,7 @@ def decode_php_single_quoted(text: str) -> str:
     length = len(text)
     while i < length:
         c = text[i]
-        if c == '\\' and i + 1 < length and text[i + 1] in "\\'":
+        if c == '\\' and i + 1 < length and text[i + 1] in '\\\'':
             parts.append(text[i + 1])
             i += 2
             continue
@@ -558,6 +558,9 @@ def decode_php_double_quoted(text: str) -> str:
                     parts.append(chr(code_point))
                     i = end + 1
                     continue
+                parts.append(text[i:end + 1])
+                i = end + 1
+                continue
         if n in '01234567':
             j = i + 1
             while j < length and j < i + 4 and text[j] in '01234567':

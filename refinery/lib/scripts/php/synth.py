@@ -543,7 +543,11 @@ class PhpSynthesizer(Synthesizer):
             self._write(')')
 
     def visit_PhpNewAnonymous(self, node: PhpNewAnonymous):
-        self._write('new class')
+        self._write('new ')
+        if node.declaration:
+            for modifier in node.declaration.modifiers:
+                self._write(F'{modifier} ')
+        self._write('class')
         if node.has_parens or node.args:
             self._write('(')
             self._comma_list(node.args)
@@ -573,6 +577,7 @@ class PhpSynthesizer(Synthesizer):
                 if in_php:
                     self._write(' ?>')
                     in_php = False
+                self._emit_leading_comments(stmt)
                 self.visit(stmt)
                 continue
             if not in_php:
@@ -730,6 +735,7 @@ class PhpSynthesizer(Synthesizer):
         self._depth += 1
         for stmt in node.body:
             self._newline()
+            self._emit_leading_comments(stmt)
             self.visit(stmt)
         self._depth -= 1
 

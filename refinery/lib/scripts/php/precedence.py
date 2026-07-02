@@ -29,6 +29,7 @@ from refinery.lib.scripts.php.model import (
     PhpInstanceof,
     PhpMethodCall,
     PhpNew,
+    PhpNewAnonymous,
     PhpParenExpression,
     PhpPrint,
     PhpPropertyFetch,
@@ -205,6 +206,8 @@ def parens_required(inner: Node, parent: Node | None, paren_node: Node) -> bool:
         if parent.class_name is paren_node:
             return not _is_primary_receiver(inner)
         return False
+    if isinstance(parent, PhpNewAnonymous):
+        return not _is_primary_receiver(inner)
     return False
 
 
