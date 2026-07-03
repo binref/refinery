@@ -589,6 +589,22 @@ class TestSemanticModel(TestBase):
         _, model = self._model('setTimeout(function(){ x(); }, 10);')
         self.assertFalse(model.has_reflection_surface())
 
+    def test_member_form_string_timer_is_a_reflection_surface(self):
+        _, model = self._model("window.setTimeout('x()', 10);")
+        self.assertTrue(model.has_reflection_surface())
+
+    def test_member_form_computed_string_timer_is_a_reflection_surface(self):
+        _, model = self._model("globalThis['setInterval']('x()', 10);")
+        self.assertTrue(model.has_reflection_surface())
+
+    def test_member_form_function_timer_is_not_a_reflection_surface(self):
+        _, model = self._model('window.setTimeout(function(){ x(); }, 10);')
+        self.assertFalse(model.has_reflection_surface())
+
+    def test_string_timer_on_non_global_object_is_not_a_reflection_surface(self):
+        _, model = self._model("obj.setTimeout('x()', 10);")
+        self.assertFalse(model.has_reflection_surface())
+
     def test_dynamic_global_access_is_a_reflection_surface(self):
         _, model = self._model('window[key]();')
         self.assertTrue(model.has_reflection_surface())

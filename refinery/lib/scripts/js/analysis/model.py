@@ -558,13 +558,33 @@ def _has_direct_eval(function: Node) -> bool:
     return False
 
 
+def _timer_callee_name(callee: Node | None) -> str | None:
+    """
+    The timer/`execScript` function *callee* names, or `None` when it is not one. A bare identifier
+    names the timer directly (`setTimeout(...)`); a member access on a global-object alias
+    (`window.setTimeout(...)`, `globalThis['setInterval'](...)`) names the same global timer through
+    the global object. Parentheses are transparent to the reference. Any other base designates a
+    property of one specific object and is not the global timer. The base is not shadow-checked — a
+    local `window` yielding a match only over-reports a reflection surface, the safe direction for the
+    whole-program detector this feeds.
+    """
+    callee = _strip_parens(callee)
+    if isinstance(callee, JsIdentifier):
+        return callee.name if callee.name in TIMER_NAMES else None
+    if isinstance(callee, JsMemberExpression) and _is_global_base(callee.object):
+        name = _global_member_name(callee)
+        return name if name in TIMER_NAMES else None
+    return None
+
+
 def _is_string_timer(call: JsCallExpression) -> bool:
     """
     Whether *call* is a timer/`execScript` invocation whose first argument is not a function literal,
-    so it may evaluate a string of code.
+    so it may evaluate a string of code. The callee may name the timer directly (`setTimeout(...)`) or
+    through a global-object alias (`window.setTimeout(...)`), both of which reach the same evaluating
+    global (see `_timer_callee_name`).
     """
-    callee = call.callee
-    if not isinstance(callee, JsIdentifier) or callee.name not in TIMER_NAMES:
+    if _timer_callee_name(call.callee) is None:
         return False
     if not call.arguments:
         return False
