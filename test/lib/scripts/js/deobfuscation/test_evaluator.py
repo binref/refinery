@@ -45,6 +45,44 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
         )
         self.assertEqual(source, self._evaluate(source))
 
+    def test_reassigned_function_declaration_not_folded(self):
+        """
+        `f` is reassigned after its declaration, so a call runs the new function; folding to the stale
+        declaration's body is unsound (Node: the call yields 9, not the folded 1). The model's
+        `static_callee` declines the reassigned binding, so the evaluator leaves the call intact.
+        """
+        source = inspect.cleandoc(
+            """
+            function f() {
+              return 1;
+            }
+            f = function() {
+              return 9;
+            };
+            SINK(f());
+            """
+        )
+        self.assertEqual(source, self._evaluate(source))
+
+    def test_redeclared_function_not_folded(self):
+        """
+        A name bound by more than one declaration is treated as an unknown function — which body is
+        live at a call cannot be proven once a `var`, a conditional, or a block declaration is mixed in
+        — so the evaluator declines it rather than trusting a last-wins guess.
+        """
+        source = inspect.cleandoc(
+            """
+            function f() {
+              return 1;
+            }
+            function f() {
+              return 9;
+            }
+            SINK(f());
+            """
+        )
+        self.assertEqual(source, self._evaluate(source))
+
     def test_call_with_nested_implicit_global_write_not_folded(self):
         source = inspect.cleandoc(
             """

@@ -583,6 +583,8 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
         func = self._resolve_function(node, name)
         if func is None or id(func) not in self._pure_nodes:
             return
+        if self._effects is None or self._effects.static_callee(node) is not func:
+            return
         if node.is_descendant_of(func):
             return
         func_id = id(func)
