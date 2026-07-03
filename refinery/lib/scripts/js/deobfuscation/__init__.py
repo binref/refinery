@@ -85,8 +85,13 @@ _pipeline = DeobfuscationPipeline(
 )
 
 
-def deobfuscate(ast: JsScript, max_steps: int = 0) -> int:
+def deobfuscate(ast: JsScript, max_steps: int = 5000) -> int:
     """
-    Apply all available deobfuscators to the input.
+    Apply all available deobfuscators to the input. A non-zero *max_steps* bounds the total number of
+    change-producing transformer passes and raises
+    `refinery.lib.scripts.pipeline.DeobfuscationTimeout` once it is exceeded, so a transform that fails
+    to converge fails loudly instead of hanging. The default is generous — real inputs settle in a few
+    to a few dozen passes (the differential corpus peaks in the low tens) — so it never bounds a
+    legitimate deobfuscation, only a runaway loop. Pass `0` to disable the bound entirely.
     """
     return _pipeline.run(ast, max_steps=max_steps, models=ModelCache(ast))

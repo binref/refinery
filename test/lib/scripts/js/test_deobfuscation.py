@@ -4,7 +4,11 @@ import inspect
 
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 
+from refinery.lib.scripts.js.deobfuscation import deobfuscate
 from refinery.lib.scripts.js.deobfuscation.cff import JsControlFlowUnflattening
+from refinery.lib.scripts.js.parser import JsParser
+from refinery.lib.scripts.js.synth import JsSynthesizer
+from refinery.lib.scripts.pipeline import DeobfuscationTimeout
 
 
 class TestDeadCodeElimination(TestJsDeobfuscator):
@@ -392,3 +396,18 @@ class TestOpaquePredicate(TestJsDeobfuscator):
             'live();',
             self._deobfuscate(source),
         )
+
+
+class TestDeobfuscationStepBound(TestJsDeobfuscator):
+
+    SOURCE = 'var x = 1; if (x === 1) { SINK(1); } else { dead(); }'
+
+    def test_max_steps_bound_raises(self):
+        ast = JsParser(self.SOURCE).parse()
+        with self.assertRaises(DeobfuscationTimeout):
+            deobfuscate(ast, max_steps=1)
+
+    def test_default_bound_completes_a_normal_program(self):
+        ast = JsParser(self.SOURCE).parse()
+        deobfuscate(ast)
+        self.assertEqual('SINK(1);', JsSynthesizer().convert(ast))
