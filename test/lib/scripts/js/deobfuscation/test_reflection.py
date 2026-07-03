@@ -39,6 +39,22 @@ class TestReflectionInlining(TestJsDeobfuscator):
     def test_settimeout_non_string_not_inlined(self):
         self.assertEqual('setTimeout(fn, 0);', self._reflect('setTimeout(fn, 0);'))
 
+    def test_member_form_string_timer_inlined(self):
+        self.assertEqual('alert(1);', self._reflect("window.setTimeout('alert(1)', 0);"))
+
+    def test_member_form_string_interval_inlined(self):
+        self.assertEqual('tick();', self._reflect("globalThis.setInterval('tick()', 100);"))
+
+    def test_execscript_string_inlined(self):
+        self.assertEqual('run();', self._reflect("execScript('run()');"))
+
+    def test_member_form_function_timer_not_inlined(self):
+        self.assertEqual(
+            'window.setTimeout(fn, 0);', self._reflect('window.setTimeout(fn, 0);'))
+
+    def test_top_alias_indirect_eval_inlined(self):
+        self.assertEqual('var x = 1;', self._reflect("top.eval('var x = 1;');"))
+
     def test_new_function_body_invoked(self):
         self.assertEqual('42;', self._reflect("new Function('return 42')();"))
 
@@ -297,6 +313,39 @@ class TestReflectionInlining(TestJsDeobfuscator):
             'var pi = Math;',
             self._reflect("var pi = new Function('return Math')();"),
         )
+
+    def test_function_constructor_free_script_var_inlined(self):
+        """
+        A body's free `out` resolves to the script-level `var out`, which in a global script scope is
+        the same global-object property the global-scope constructor body reads, so the fold preserves
+        meaning (Node-verified: both leave `out === [1]`).
+        """
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var out = [];
+                {
+                  out.push(1);
+                }
+                """
+            ),
+            self._reflect("var out = []; { new Function('out.push(1)')(); }"),
+        )
+
+    def test_function_constructor_free_script_let_not_inlined(self):
+        """
+        A top-level `let` is a lexical binding, not a global-object property, so a global-scope body's
+        free `out` would not resolve to it; the inlining is declined.
+        """
+        source = inspect.cleandoc(
+            """
+            let out = [];
+            {
+              new Function('out.push(1)')();
+            }
+            """
+        )
+        self.assertEqual(source, self._reflect(source))
 
     def test_function_constructor_statement_free_name_captured_by_block_local_not_inlined(self):
         source = inspect.cleandoc(

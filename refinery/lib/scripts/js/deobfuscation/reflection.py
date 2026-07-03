@@ -14,6 +14,9 @@ from refinery.lib.scripts import Expression, Node, _clone_node, _replace_in_pare
 from refinery.lib.scripts.js.analysis.cache import model_cache
 from refinery.lib.scripts.js.analysis.effects import side_effect_free
 from refinery.lib.scripts.js.analysis.model import (
+    GLOBAL_OBJECT_ALIASES,
+    TIMER_NAMES,
+    Binding,
     BindingKind,
     FUNCTION_NODES,
     Scope,
@@ -57,10 +60,6 @@ from refinery.lib.scripts.js.model import (
     Statement,
 )
 
-_GLOBAL_OBJECTS = frozenset({'window', 'globalThis', 'self', 'global'})
-
-_TIMER_FUNCTIONS = frozenset({'setTimeout', 'setInterval'})
-
 
 def _unwrap_parens(node: Expression) -> Expression:
     while isinstance(node, JsParenthesizedExpression) and node.expression is not None:
@@ -103,6 +102,28 @@ def _is_function_identifier(node: Expression) -> bool:
     return _is_identifier(_unwrap_parens(node), 'Function')
 
 
+def _global_alias_member_name(callee: Expression | None) -> str | None:
+    """
+    The property named on a global-object alias by *callee*, or `None` when *callee* is not a
+    non-computed dot access on a well-known alias: `window.eval` yields `'eval'`,
+    `globalThis.setTimeout` yields `'setTimeout'`. This is the reflective reach through the global
+    object that resolves to the same intrinsic as the bare name, shared by the indirect-eval and timer
+    extractors so both recognize the same aliases as the model's reflection detector.
+    """
+    if callee is None:
+        return None
+    callee = _unwrap_parens(callee)
+    if (
+        isinstance(callee, JsMemberExpression)
+        and not callee.computed
+        and isinstance(callee.object, JsIdentifier)
+        and callee.object.name in GLOBAL_OBJECT_ALIASES
+        and isinstance(callee.property, JsIdentifier)
+    ):
+        return callee.property.name
+    return None
+
+
 def _extract_eval_code(node: JsCallExpression) -> str | None:
     """
     Extract the code string from `eval("code")` or `(eval)("code")`.
@@ -131,26 +152,26 @@ def _extract_indirect_eval_code(node: JsCallExpression) -> str | None:
         if len(exprs) >= 2 and _is_identifier(exprs[-1], 'eval'):
             if all(side_effect_free(e) for e in exprs[:-1]):
                 return string_value(node.arguments[0]) or _try_eval_string_arg(node.arguments[0])
-    if (
-        isinstance(callee, JsMemberExpression)
-        and isinstance(callee.object, JsIdentifier)
-        and callee.object.name in _GLOBAL_OBJECTS
-        and isinstance(callee.property, JsIdentifier)
-        and callee.property.name == 'eval'
-        and not callee.computed
-    ):
+    if _global_alias_member_name(callee) == 'eval':
         return string_value(node.arguments[0]) or _try_eval_string_arg(node.arguments[0])
     return None
 
 
 def _extract_timer_code(node: JsCallExpression) -> str | None:
     """
-    Extract the code string from `setTimeout("code", ...)` or `setInterval("code", ...)`.
+    Extract the code string from a string-valued timer call — `setTimeout("code", ...)`,
+    `setInterval("code", ...)`, and the `setImmediate`/`execScript` variants — whether the timer is
+    named directly or through a global-object alias (`window.setTimeout("code", ...)`), both of which
+    reach the same evaluating global.
     """
     if node.callee is None:
         return None
     callee = _unwrap_parens(node.callee)
-    if not isinstance(callee, JsIdentifier) or callee.name not in _TIMER_FUNCTIONS:
+    if isinstance(callee, JsIdentifier):
+        name = callee.name
+    else:
+        name = _global_alias_member_name(callee)
+    if name not in TIMER_NAMES:
         return None
     if not node.arguments:
         return None
@@ -555,6 +576,19 @@ def _body_declared_names(body_model: SemanticModel) -> set[str]:
     }
 
 
+def _is_global_equivalent(binding: Binding, root_scope: Scope) -> bool:
+    """
+    Whether *binding* is the global a `Function`-constructed body would resolve a free name to at
+    runtime: an implicit global, or a `var`/function declared at the script's top level, which in a
+    sloppy script scope is itself a property of the global object. A top-level `let`/`const`/`class`,
+    or any binding nested below the script, is a distinct lexical binding the global-scope body would
+    not see, so a body free name resolving to one still declines the inlining.
+    """
+    if binding.kind is BindingKind.IMPLICIT_GLOBAL:
+        return True
+    return binding.scope is root_scope and binding.kind in (BindingKind.VAR, BindingKind.FUNCTION)
+
+
 def _hoist_path_is_clear(names: set[str], site_scope: Scope, var_scope: Scope) -> bool:
     """
     Whether each hoisted `var`/function name can rise from the call site to *var_scope* without
@@ -614,12 +648,7 @@ class JsReflectionInlining(ScriptLevelTransformer):
     indirect invocation via `setTimeout` and `setInterval`.
     """
 
-    def __init__(self):
-        super().__init__()
-        self._root: JsScript | None = None
-
     def _process_script(self, node: JsScript) -> None:
-        self._root = node
         self._inline_statements(node)
         self._inline_expressions(node)
 
@@ -630,7 +659,7 @@ class JsReflectionInlining(ScriptLevelTransformer):
                 continue
             i = 0
             while i < len(body):
-                parsed = self._try_resolve_statement(body[i])
+                parsed = self._try_resolve_statement(body[i], root)
                 if parsed is None:
                     i += 1
                     continue
@@ -672,13 +701,13 @@ class JsReflectionInlining(ScriptLevelTransformer):
                 continue
             if isinstance(node.parent, JsExpressionStatement):
                 continue
-            replacement = self._try_resolve_expression(node)
+            replacement = self._try_resolve_expression(node, root)
             if replacement is None:
                 continue
             _replace_in_parent(node, replacement)
             self.mark_changed()
 
-    def _try_resolve_statement(self, stmt: Statement) -> list[Statement] | None:
+    def _try_resolve_statement(self, stmt: Statement, root: JsScript) -> list[Statement] | None:
         if not isinstance(stmt, JsExpressionStatement) or stmt.expression is None:
             return None
         node = stmt.expression
@@ -695,7 +724,7 @@ class JsReflectionInlining(ScriptLevelTransformer):
         constructor = _invoked_function_constructor_code(node)
         if constructor is not None:
             code, binds = constructor
-            parsed = self._resolve_constructor_body(code, binds, stmt)
+            parsed = self._resolve_constructor_body(code, binds, stmt, root)
         else:
             code = (
                 _extract_eval_code(node)
@@ -710,11 +739,11 @@ class JsReflectionInlining(ScriptLevelTransformer):
             return _wrap_in_async_iife(result)
         return result
 
-    def _try_resolve_expression(self, node: JsCallExpression) -> Expression | None:
+    def _try_resolve_expression(self, node: JsCallExpression, root: JsScript) -> Expression | None:
         constructor = _invoked_function_constructor_code(node)
         if constructor is not None:
             code, binds = constructor
-            parsed = self._resolve_constructor_body(code, binds, node)
+            parsed = self._resolve_constructor_body(code, binds, node, root)
         else:
             code = _extract_eval_code(node) or _extract_indirect_eval_code(node)
             parsed = _try_parse(code) if code is not None else None
@@ -729,7 +758,9 @@ class JsReflectionInlining(ScriptLevelTransformer):
                 return stmt.argument
         return None
 
-    def _resolve_constructor_body(self, code: str, binds: bool, site: Node) -> JsScript | None:
+    def _resolve_constructor_body(
+        self, code: str, binds: bool, site: Node, root: JsScript,
+    ) -> JsScript | None:
         """
         Parse a `Function`-constructor body and decide whether inlining it at *site* preserves meaning.
         The exact global-accessor idiom `return this` becomes `return globalThis`, since a
@@ -746,8 +777,7 @@ class JsReflectionInlining(ScriptLevelTransformer):
         """
         if binds:
             return None
-        assert self._root is not None
-        if _site_in_strict_context(site, self._root):
+        if _site_in_strict_context(site, root):
             return None
         parsed = _try_parse(code)
         if parsed is None:
@@ -767,13 +797,13 @@ class JsReflectionInlining(ScriptLevelTransformer):
         declared = _body_declared_names(body_model)
         if not free and not declared:
             return parsed
-        root_model = model_cache(self, self._root).model
+        root_model = model_cache(self, root).model
         site_scope = root_model.scope_of(site)
         if site_scope is None:
             return None
         for name in free:
             binding = root_model.lookup(name, site_scope)
-            if binding is not None and binding.kind is not BindingKind.IMPLICIT_GLOBAL:
+            if binding is not None and not _is_global_equivalent(binding, root_model.root_scope):
                 return None
         if declared and not _inlined_declarations_safe(body_model, root_model, site_scope):
             return None
