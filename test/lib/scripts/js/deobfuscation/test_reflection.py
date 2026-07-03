@@ -399,6 +399,39 @@ class TestReflectionInlining(TestJsDeobfuscator):
                 ' function g(){ var x = 2; return x; } g(); }'),
         )
 
+    def test_function_constructor_body_return_does_not_escape_enclosing_function(self):
+        """
+        A `Function`-constructor body's trailing `return` is discarded at statement position — the
+        call's value was already unused — so inlining it into a function body lowers `return x` to a
+        bare `x` rather than returning from the enclosing function and stranding the statements after.
+        """
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function f() {
+                  Math;
+                  other();
+                }
+                """
+            ),
+            self._reflect("function f(){ new Function('return Math')(); other(); }"),
+        )
+
+    def test_function_constructor_body_non_trailing_return_not_inlined(self):
+        """
+        A `return` before the last statement cannot be reproduced at statement position without
+        reordering, so the inlining is declined rather than letting the early exit escape the caller.
+        """
+        source = inspect.cleandoc(
+            """
+            function f() {
+              new Function('a(); return b(); c();')();
+              other();
+            }
+            """
+        )
+        self.assertEqual(source, self._reflect(source))
+
     def test_function_constructor_body_lexical_in_inner_block_inlined(self):
         self.assertEqual(
             inspect.cleandoc(

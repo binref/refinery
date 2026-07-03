@@ -628,18 +628,16 @@ class JsReflectionInlining(ScriptLevelTransformer):
             body = get_body(container)
             if body is None:
                 continue
-            is_script = isinstance(container, JsScript)
             i = 0
             while i < len(body):
                 parsed = self._try_resolve_statement(body[i])
                 if parsed is None:
                     i += 1
                     continue
-                if is_script:
-                    parsed = self._sanitize_for_script_scope(parsed)
-                    if parsed is None:
-                        i += 1
-                        continue
+                parsed = self._sanitize_inlined_body(parsed)
+                if parsed is None:
+                    i += 1
+                    continue
                 for stmt in parsed:
                     stmt.parent = container
                 body[i:i + 1] = parsed
@@ -647,7 +645,16 @@ class JsReflectionInlining(ScriptLevelTransformer):
                 i += len(parsed)
 
     @staticmethod
-    def _sanitize_for_script_scope(stmts: list[Statement]) -> list[Statement] | None:
+    def _sanitize_inlined_body(stmts: list[Statement]) -> list[Statement] | None:
+        """
+        Adapt a reflective body's statements for the statement position they replace, where the call's
+        return value is discarded and no `return` may escape into the container. A trailing `return x`
+        becomes the bare expression `x` (its value was already being thrown away) and a trailing
+        valueless `return` is dropped; a `return` before the last statement declines the inlining
+        (`None`), since its early exit cannot be reproduced without reordering and declining is always
+        sound. This holds for every container, not only the script: a `return` spliced into a function
+        body would return from that enclosing function, and into the script would be a syntax error.
+        """
         for stmt in stmts[:-1] if stmts else ():
             if isinstance(stmt, JsReturnStatement):
                 return None
