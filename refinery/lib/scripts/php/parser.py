@@ -118,34 +118,36 @@ from refinery.lib.scripts.php.model import (
 )
 from refinery.lib.scripts.php.token import PhpToken, PhpTokenKind as K
 
-_BINARY_PREC: dict[K, tuple[int, bool]] = {
-    K.LOGICAL_OR:          ( 3, False),  # noqa
-    K.LOGICAL_XOR:         ( 4, False),  # noqa
-    K.LOGICAL_AND:         ( 5, False),  # noqa
-    K.COALESCE:            (11, True),   # noqa
-    K.BOOLEAN_OR:          (12, False),  # noqa
-    K.BOOLEAN_AND:         (13, False),  # noqa
-    K.PIPE:                (14, False),  # noqa
-    K.CARET:               (15, False),  # noqa
-    K.AMP:                 (16, False),  # noqa
-    K.IS_EQUAL:            (17, False),  # noqa
-    K.IS_NOT_EQUAL:        (17, False),  # noqa
-    K.IS_IDENTICAL:        (17, False),  # noqa
-    K.IS_NOT_IDENTICAL:    (17, False),  # noqa
-    K.SPACESHIP:           (17, False),  # noqa
-    K.LT:                  (18, False),  # noqa
-    K.IS_SMALLER_OR_EQUAL: (18, False),  # noqa
-    K.GT:                  (18, False),  # noqa
-    K.IS_GREATER_OR_EQUAL: (18, False),  # noqa
-    K.DOT:                 (20, False),  # noqa
-    K.SL:                  (21, False),  # noqa
-    K.SR:                  (21, False),  # noqa
-    K.PLUS:                (22, False),  # noqa
-    K.MINUS:               (22, False),  # noqa
-    K.STAR:                (23, False),  # noqa
-    K.SLASH:               (23, False),  # noqa
-    K.PERCENT:             (23, False),  # noqa
-    K.POW:                 (27, True),   # noqa
+# Tuple: (precedence, right_associative, non_associative).
+# PHP declares ==, !=, ===, !==, <=>, <, <=, >, >= as %nonassoc in its grammar.
+_BINARY_PREC: dict[K, tuple[int, bool, bool]] = {
+    K.LOGICAL_OR:          ( 3, False, False),  # noqa
+    K.LOGICAL_XOR:         ( 4, False, False),  # noqa
+    K.LOGICAL_AND:         ( 5, False, False),  # noqa
+    K.COALESCE:            (11, True,  False),  # noqa
+    K.BOOLEAN_OR:          (12, False, False),  # noqa
+    K.BOOLEAN_AND:         (13, False, False),  # noqa
+    K.PIPE:                (14, False, False),  # noqa
+    K.CARET:               (15, False, False),  # noqa
+    K.AMP:                 (16, False, False),  # noqa
+    K.IS_EQUAL:            (17, False, True),   # noqa
+    K.IS_NOT_EQUAL:        (17, False, True),   # noqa
+    K.IS_IDENTICAL:        (17, False, True),   # noqa
+    K.IS_NOT_IDENTICAL:    (17, False, True),   # noqa
+    K.SPACESHIP:           (17, False, True),   # noqa
+    K.LT:                  (18, False, True),   # noqa
+    K.IS_SMALLER_OR_EQUAL: (18, False, True),   # noqa
+    K.GT:                  (18, False, True),   # noqa
+    K.IS_GREATER_OR_EQUAL: (18, False, True),   # noqa
+    K.DOT:                 (20, False, False),  # noqa
+    K.SL:                  (21, False, False),  # noqa
+    K.SR:                  (21, False, False),  # noqa
+    K.PLUS:                (22, False, False),  # noqa
+    K.MINUS:               (22, False, False),  # noqa
+    K.STAR:                (23, False, False),  # noqa
+    K.SLASH:               (23, False, False),  # noqa
+    K.PERCENT:             (23, False, False),  # noqa
+    K.POW:                 (27, True,  False),  # noqa
 }
 
 _ASSIGN_OPS: dict[K, str] = {
@@ -360,6 +362,8 @@ class PhpParser:
             comments = self._trivia.pop(self._index, None)
             try:
                 stmt = self._parse_statement()
+            except RecursionError:
+                raise
             except Exception:
                 stmt = None
             if stmt is not None:
@@ -1384,7 +1388,7 @@ class PhpParser:
             entry = _BINARY_PREC.get(self._current.kind)
             if entry is None:
                 break
-            prec, right_assoc = entry
+            prec, right_assoc, non_assoc = entry
             if prec < min_prec:
                 break
             op = self._advance().value
@@ -1392,6 +1396,8 @@ class PhpParser:
             right = self._parse_binary(next_prec)
             left = PhpBinaryExpression(
                 operator=op, left=left, right=right, offset=left.offset)
+            if non_assoc:
+                break
         return left
 
     def _parse_not(self) -> Expression:
@@ -1404,7 +1410,7 @@ class PhpParser:
 
     def _parse_instanceof(self) -> Expression:
         left = self._parse_prefix()
-        while self._at(K.INSTANCEOF):
+        if self._at(K.INSTANCEOF):
             self._advance()
             class_name = self._parse_instanceof_target()
             left = PhpInstanceof(
@@ -1861,7 +1867,7 @@ class PhpParser:
         offset = self._current.offset
         self._expect(K.NEW)
         modifiers: list[str] = []
-        while self._current.kind in (K.READONLY,):
+        while self._current.kind in (K.ABSTRACT, K.FINAL, K.READONLY):
             modifiers.append(self._advance().value)
         if self._at(K.CLASS):
             self._advance()

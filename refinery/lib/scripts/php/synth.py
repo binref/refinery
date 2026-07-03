@@ -177,7 +177,7 @@ class PhpSynthesizer(Synthesizer):
 
     def visit_PhpStringLiteral(self, node: PhpStringLiteral):
         if self._unescape_strings:
-            quote = node.raw[:1] if node.raw[:1] in ('"', "'") else "'"
+            quote = node.raw[:1] if node.raw[:1] in ('"', '\'') else '\''
             self._write(F'{quote}{escape_php_string(node.value, quote)}{quote}')
         else:
             self._write(node.raw)
@@ -493,7 +493,12 @@ class PhpSynthesizer(Synthesizer):
         for i, t in enumerate(node.types):
             if i > 0:
                 self._write('|')
-            self.visit(t)
+            if isinstance(t, PhpIntersectionType):
+                self._write('(')
+                self.visit(t)
+                self._write(')')
+            else:
+                self.visit(t)
 
     def visit_PhpIntersectionType(self, node: PhpIntersectionType):
         for i, t in enumerate(node.types):

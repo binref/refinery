@@ -146,3 +146,10 @@ class TestPhpSynthesizer(TestBase):
 
     def test_yield(self):
         self._round_trip('<?php function g() { yield $k => $v; yield from $other; }')
+
+    def test_dnf_type_parentheses_preserved(self):
+        # (A&B)|C is a PHP 8.2 DNF type; synthesizer must keep the parentheses
+        # around the intersection group or PHP will reject the output.
+        src = '<?php function f((A&B)|C $x): void {}'
+        result = self._round_trip(src)
+        self.assertIn('(A&B)', result)

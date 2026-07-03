@@ -273,3 +273,30 @@ class TestPhpParserExpr(TestBase):
     def test_const_fetch(self):
         node = self._expr('PHP_EOL')
         self.assertIsInstance(node, PhpConstFetch)
+
+    def test_instanceof_non_associative(self):
+        # PHP declares instanceof as non-associative: $a instanceof B instanceof C
+        # must parse as ($a instanceof B) with the second instanceof left unconsumed.
+        from refinery.lib.scripts.php.model import PhpExpressionStatement
+        ast = PhpParser('<?php $a instanceof B instanceof C;').parse()
+        stmts = ast.body
+        # Should produce two statements or error nodes rather than nested instanceof.
+        first = stmts[0]
+        self.assertIsInstance(first, PhpExpressionStatement)
+        self.assertIsInstance(first.expression, PhpInstanceof)
+        # The second instanceof should NOT be nested inside the first.
+        self.assertNotIsInstance(first.expression.operand, PhpInstanceof)
+
+    def test_comparison_non_associative(self):
+        # PHP declares < as non-associative: $a < $b < $c must not produce
+        # a nested left-associative binary expression.
+        ast = PhpParser('<?php $a < $b < $c;').parse()
+        stmts = ast.body
+        # The parser should not produce a clean nested PhpBinaryExpression
+        # for $a < $b < $c; it breaks after one operator.
+        first = stmts[0]
+        self.assertIsInstance(first, PhpExpressionStatement)
+        inner = first.expression
+        self.assertIsInstance(inner, PhpBinaryExpression)
+        # Left operand must be a variable ($a), not a comparison (would mean chaining).
+        self.assertNotIsInstance(inner.left, PhpBinaryExpression)

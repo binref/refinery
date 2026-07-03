@@ -296,8 +296,13 @@ class PhpLexer:
             while self.pos < length and src[self.pos] in ' \t':
                 self.pos += 1
             if src[self.pos:self.pos + len(label)] == label:
-                after = src[self.pos + len(label):self.pos + len(label) + 1]
-                if not after or not _is_ident_part(after):
+                after_start = self.pos + len(label)
+                after = src[after_start:after_start + 1]
+                closes = (
+                    not after or after in '\r\n'
+                    or (after == ';' and src[after_start + 1:after_start + 2] in ('', '\r', '\n'))
+                )
+                if closes:
                     self.pos += len(label)
                     return PhpToken(kind, src[start:self.pos], start)
             self.pos = content_start
@@ -351,8 +356,12 @@ class PhpLexer:
     def _read_prefixed_int(self, valid_digits: str, start: int) -> PhpToken:
         src = self.source
         length = len(src)
+        if self.pos >= length or src[self.pos] not in valid_digits or src[self.pos] == '_':
+            return PhpToken(PhpTokenKind.ERROR, src[start:self.pos], start)
         while self.pos < length and src[self.pos] in valid_digits:
             self.pos += 1
+        if src[self.pos - 1] == '_':
+            return PhpToken(PhpTokenKind.ERROR, src[start:self.pos], start)
         return PhpToken(PhpTokenKind.INTEGER, src[start:self.pos], start)
 
     def _read_variable(self) -> PhpToken:

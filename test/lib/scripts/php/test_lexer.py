@@ -201,3 +201,34 @@ class TestPhpLexer(TestBase):
             (K.ELLIPSIS, '...'),
             (K.VARIABLE, '$args'),
         ])
+
+    def test_heredoc_closes_at_newline_only(self):
+        # A closing label followed by a space/comment must NOT close the heredoc.
+        src = '<?php $x = <<<EOT\nhello\nEOT // not closed\nEOT;\n'
+        tokens = self._tokens(src)
+        heredoc = next(t for k, t in tokens if k is K.HEREDOC)
+        self.assertIn('EOT // not closed', heredoc)
+
+    def test_heredoc_closes_at_semicolon(self):
+        src = '<?php $x = <<<EOT\nhello\nEOT;\n'
+        tokens = self._tokens(src)
+        kinds = [k for k, _ in tokens]
+        self.assertIn(K.HEREDOC, kinds)
+        self.assertIn(K.SEMICOLON, kinds)
+
+    def test_prefixed_int_leading_underscore_is_error(self):
+        tokens = self._tokens('<?php 0x_FF')
+        kinds = [k for k, _ in tokens]
+        self.assertIn(K.ERROR, kinds)
+
+    def test_prefixed_int_trailing_underscore_is_error(self):
+        tokens = self._tokens('<?php 0xFF_')
+        kinds = [k for k, _ in tokens]
+        self.assertIn(K.ERROR, kinds)
+
+    def test_prefixed_int_valid(self):
+        tokens = self._tokens('<?php 0xFF')
+        self.assertEqual(tokens, [
+            (K.OPEN_TAG, '<?php'),
+            (K.INTEGER, '0xFF'),
+        ])
