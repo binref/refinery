@@ -17,6 +17,7 @@ from refinery.lib.scripts.js.analysis.model import (
     SemanticModel,
     _strip_parens,
     enclosing_function,
+    is_member_write_target,
     pattern_identifiers,
     reference_role,
 )
@@ -172,10 +173,12 @@ def _is_literal_array(node: Node) -> bool:
 def _is_member_array_safe(scope: Node, prefix_name: str, prop_name: str) -> bool:
     """
     Verify that `prefix.prop` (a member-expression array) is never mutated after its initial
-    assignment. Checks that: (1) the property is never written to via element assignment
-    (`prefix.prop[i] = ...`), (2) the property value is never passed as an argument or assigned
-    to another variable (aliased), (3) no method calls that could mutate the array exist
-    (`prefix.prop.push(...)` etc.).
+    assignment. Checks that: (1) the property is never written to via an element write —
+    `prefix.prop[i] = ...`, but also `prefix.prop[i]++`, `delete prefix.prop[i]`, and any other write
+    target, decided by the shared `is_member_write_target` climb rather than a hand-rolled
+    assignment-only test that a compound, update, or `delete` slips past; (2) the property value is
+    never passed as an argument or assigned to another variable (aliased); (3) no method calls that
+    could mutate the array exist (`prefix.prop.push(...)` etc.).
     """
     for node in scope.walk():
         if not isinstance(node, JsMemberExpression):
@@ -190,8 +193,7 @@ def _is_member_array_safe(scope: Node, prefix_name: str, prop_name: str) -> bool
         parent = node.parent
         if isinstance(parent, JsMemberExpression) and parent.object is node:
             if parent.computed:
-                gp = parent.parent
-                if isinstance(gp, JsAssignmentExpression) and gp.left is parent:
+                if is_member_write_target(parent):
                     return False
             else:
                 gp = parent.parent

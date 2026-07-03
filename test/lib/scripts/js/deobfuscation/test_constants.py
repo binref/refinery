@@ -777,6 +777,44 @@ class TestConstantInlining(TestJsDeobfuscator):
             self._inline('var x = a.b; return x;'),
         )
 
+    def test_member_array_element_increment_not_inlined(self):
+        """
+        `X.Y[0]++` mutates the member-array element, so the array is not immutable and its elements
+        must not be inlined — a hand-rolled assignment-only write check judged the array safe and folded
+        `X.Y[0]` to the literal (emitting invalid `5++`).
+        """
+        source = inspect.cleandoc(
+            """
+            var X = {};
+            X.Y = [5];
+            X.Y[0]++;
+            SINK(X.Y[0]);
+            """
+        )
+        self.assertEqual(source, self._inline(source))
+
+    def test_member_array_element_delete_not_inlined(self):
+        source = inspect.cleandoc(
+            """
+            var X = {};
+            X.Y = [5, 6];
+            delete X.Y[0];
+            SINK(X.Y[0]);
+            """
+        )
+        self.assertEqual(source, self._inline(source))
+
+    def test_member_array_read_only_element_inlined(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var X = {};
+                SINK(6);
+                """
+            ),
+            self._inline('var X = {}; X.Y = [5, 6]; SINK(X.Y[1]);'),
+        )
+
     def test_does_not_cross_function_boundary(self):
         source = (
             "var x = 'outer';"
