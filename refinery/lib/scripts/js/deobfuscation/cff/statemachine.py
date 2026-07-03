@@ -75,7 +75,6 @@ class _CallSiteInfo(NamedTuple):
 class _WrapperFunctionInfo(NamedTuple):
     initial_state: list[int | float]
     rest_param_name: str | None
-    scope_arg: JsObjectExpression | None
 
 
 @dataclass
@@ -152,6 +151,9 @@ class _GeneratorCFFMatch:
     scope_default_inits: dict[str, Expression] = field(default_factory=dict)
     arg_params: list[str] = field(default_factory=list)
     scope_prop_names: set[str] = field(default_factory=set)
+    namespaces: set[str] = field(default_factory=set)
+    namespace_homes: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    scope_arg_namespaces: dict[str, Expression] = field(default_factory=dict)
 
 
 def _eval_expr(node: Expression, env: _StateEnv) -> int | float | None:
@@ -294,6 +296,187 @@ def _extract_scope_default_props(
     return _ScopeDefaults([], {})
 
 
+def _namespace_member_home(
+    node: Expression | None,
+    scope_param_name: str | None,
+    ns_names: set[str],
+) -> tuple[str, str] | None:
+    """
+    If *node* is an assignment target that defines a namespace-local slot — either `NS.prop` on a
+    bare namespace identifier or `scope.NS.prop` on the scope parameter — return the pair
+    `(member_name, home_namespace)`. Any other target yields `None`.
+    """
+    if not isinstance(node, JsMemberExpression):
+        return None
+    obj = node.object
+    if isinstance(obj, JsIdentifier):
+        if obj.name in ns_names:
+            member = access_key(node)
+            if member is not None:
+                return (member, obj.name)
+        return None
+    if (
+        scope_param_name is not None
+        and isinstance(obj, JsMemberExpression)
+        and isinstance(obj.object, JsIdentifier)
+        and obj.object.name == scope_param_name
+    ):
+        home = access_key(obj)
+        if home is not None and home in ns_names:
+            member = access_key(node)
+            if member is not None:
+                return (member, home)
+    return None
+
+
+def _collect_assignment_targets(
+    target: Expression | None,
+    scope_param_name: str | None,
+    ns_names: set[str],
+    out: dict[str, set[str]],
+) -> None:
+    """
+    Record the home namespace of every namespace-local slot written by *target*, mapping each member
+    name to the set of namespaces it is written under. Recurses through array and object
+    destructuring patterns so that `[NS.a, NS.b] = …` and `({p: NS.c} = …)` are covered.
+    """
+    home = _namespace_member_home(target, scope_param_name, ns_names)
+    if home is not None:
+        member, namespace = home
+        out.setdefault(member, set()).add(namespace)
+        return
+    if isinstance(target, (JsArrayPattern, JsArrayExpression)):
+        for elem in target.elements:
+            if elem is not None:
+                _collect_assignment_targets(elem, scope_param_name, ns_names, out)
+    elif isinstance(target, JsObjectPattern):
+        for prop in target.properties:
+            if isinstance(prop, JsProperty):
+                _collect_assignment_targets(prop.value, scope_param_name, ns_names, out)
+            elif isinstance(prop, JsRestElement):
+                _collect_assignment_targets(prop.argument, scope_param_name, ns_names, out)
+    elif isinstance(target, JsAssignmentPattern):
+        _collect_assignment_targets(target.left, scope_param_name, ns_names, out)
+    elif isinstance(target, JsRestElement):
+        _collect_assignment_targets(target.argument, scope_param_name, ns_names, out)
+
+
+def _redirect_assignment_target(
+    expr: Expression,
+    scope_param_name: str,
+    redirect_var: str,
+) -> str | None:
+    """
+    If *expr* is the single redirect-routing assignment `scope.redirect_var = scope.TARGET` (dot or
+    computed on either side), return the TARGET namespace name. Any other expression yields `None`.
+    """
+    if not isinstance(expr, JsAssignmentExpression) or expr.operator != '=':
+        return None
+    lhs = expr.left
+    if not isinstance(lhs, JsMemberExpression):
+        return None
+    if not isinstance(lhs.object, JsIdentifier) or lhs.object.name != scope_param_name:
+        return None
+    if access_key(lhs) != redirect_var:
+        return None
+    rhs = expr.right
+    if not isinstance(rhs, JsMemberExpression):
+        return None
+    if not isinstance(rhs.object, JsIdentifier) or rhs.object.name != scope_param_name:
+        return None
+    return access_key(rhs)
+
+
+def _scope_arg_object(
+    node: Node,
+    generator_name: str,
+    num_state_vars: int,
+) -> JsObjectExpression | None:
+    """
+    If *node* is a call `generator_name(states…, scopeObj, …)` whose argument at the scope position
+    (index *num_state_vars*) is an object literal, return that object literal. This is the
+    structural scope argument threaded through the shared generator by its wrapper functions.
+    """
+    if not isinstance(node, JsCallExpression):
+        return None
+    if not isinstance(node.callee, JsIdentifier) or node.callee.name != generator_name:
+        return None
+    args = node.arguments
+    if len(args) <= num_state_vars:
+        return None
+    candidate = args[num_state_vars]
+    if isinstance(candidate, JsObjectExpression):
+        return candidate
+    return None
+
+
+def _collect_namespaces(
+    switch_stmt: JsSwitchStatement,
+    scope_param_name: str | None,
+    scope_default_props: list[str],
+    redirect_var: str | None,
+    generator_name: str,
+    num_state_vars: int,
+) -> tuple[set[str], dict[str, Expression]]:
+    """
+    Collect the sibling namespace objects on the scope and the structural scope-argument namespaces.
+    A namespace is any of: a scope default, a redirect target `scope.redirect_var = scope.TARGET`
+    found anywhere in the switch (including inside nested functions), or a key of an object-literal
+    scope argument passed to the shared generator. The second return value maps each object-literal
+    scope-argument key whose value is an empty object literal to that initializer, identifying the
+    namespaces that must be materialized as `var X = {}` beyond the scope defaults.
+    """
+    namespaces: set[str] = set(scope_default_props)
+    scope_arg_inits: dict[str, Expression] = {}
+    for node in switch_stmt.walk():
+        if (
+            scope_param_name is not None
+            and redirect_var is not None
+            and isinstance(node, JsAssignmentExpression)
+        ):
+            target = _redirect_assignment_target(node, scope_param_name, redirect_var)
+            if target is not None:
+                namespaces.add(target)
+        scope_arg = _scope_arg_object(node, generator_name, num_state_vars)
+        if scope_arg is None:
+            continue
+        for prop in scope_arg.properties:
+            if not isinstance(prop, JsProperty):
+                continue
+            key = property_key(prop)
+            if key is None:
+                continue
+            namespaces.add(key)
+            if isinstance(prop.value, JsObjectExpression) and not prop.value.properties:
+                scope_arg_inits.setdefault(key, prop.value)
+    return namespaces, scope_arg_inits
+
+
+def _collect_namespace_homes(
+    switch_stmt: JsSwitchStatement,
+    scope_param_name: str | None,
+    ns_names: set[str],
+) -> dict[str, tuple[str, ...]]:
+    """
+    Determine the canonical home namespace of every proven namespace-local member. Each `=`
+    assignment target in the switch — at any nesting depth, since the scope and namespace objects
+    are closed over — is fed through the destructuring collector to accumulate `member -> {home…}`.
+    A member written under exactly one namespace maps to that namespace as its home path; a member
+    written under two or more namespaces is ambiguous and omitted, leaving it bare. A name with no
+    namespace-defining write at all is genuinely free/global and is likewise absent, so it stays
+    bare and resolves to its outer binding once the `with` is dissolved.
+    """
+    accumulated: dict[str, set[str]] = {}
+    for node in switch_stmt.walk():
+        if isinstance(node, JsAssignmentExpression) and node.operator == '=':
+            _collect_assignment_targets(node.left, scope_param_name, ns_names, accumulated)
+    homes: dict[str, tuple[str, ...]] = {}
+    for member, home_set in accumulated.items():
+        if len(home_set) == 1:
+            homes[member] = (next(iter(home_set)),)
+    return homes
+
+
 def _match_generator_cff(body: list[Statement], idx: int) -> _GeneratorCFFMatch | None:
     """
     Starting at index *idx* in *body*, test whether the statement is a generator function
@@ -379,6 +562,19 @@ def _match_generator_cff(body: list[Statement], idx: int) -> _GeneratorCFFMatch 
         return None
     if len(call_info.initial_state) != len(state_var_names):
         return None
+    namespaces: set[str] = set()
+    namespace_homes: dict[str, tuple[str, ...]] = {}
+    scope_arg_namespaces: dict[str, Expression] = {}
+    if with_redirect_var is not None and len(scope_default_props) == 1:
+        namespaces, scope_arg_namespaces = _collect_namespaces(
+            switch_stmt,
+            scope_param_name,
+            scope_default_props,
+            with_redirect_var,
+            gen_name,
+            len(state_var_names),
+        )
+        namespace_homes = _collect_namespace_homes(switch_stmt, scope_param_name, namespaces)
     return _GeneratorCFFMatch(
         generator_name=gen_name,
         state_var_names=state_var_names,
@@ -395,6 +591,9 @@ def _match_generator_cff(body: list[Statement], idx: int) -> _GeneratorCFFMatch 
         with_redirect_var=with_redirect_var,
         scope_default_props=scope_default_props,
         scope_default_inits=scope_default_inits,
+        namespaces=namespaces,
+        namespace_homes=namespace_homes,
+        scope_arg_namespaces=scope_arg_namespaces,
     )
 
 
@@ -587,11 +786,6 @@ def _detect_wrapper_function(
         if val is None:
             return None
         initial_state.append(val)
-    scope_arg: JsObjectExpression | None = None
-    if len(args) > num_state_vars:
-        candidate = args[num_state_vars]
-        if isinstance(candidate, JsObjectExpression):
-            scope_arg = candidate
     rest_param_name: str | None = None
     params = node.params
     if params:
@@ -600,7 +794,7 @@ def _detect_wrapper_function(
             rest_param_name = last_param.argument.name
         elif isinstance(last_param, JsIdentifier):
             rest_param_name = last_param.name
-    return _WrapperFunctionInfo(initial_state, rest_param_name, scope_arg)
+    return _WrapperFunctionInfo(initial_state, rest_param_name)
 
 
 @dataclass
@@ -1013,8 +1207,6 @@ def _process_branch_prefix(
     var_names: list[str],
     state: _StateEnv,
     match: _GeneratorCFFMatch,
-    strip_ns: str | None,
-    redirect_target: str | None,
 ) -> list[Statement]:
     """
     Process a conditional transition's branch prefix through the standard pipeline (strip state
@@ -1036,8 +1228,8 @@ def _process_branch_prefix(
         s for s in result
         if _extract_arg_param_names(s, match.arg_var_name) is None
     ]
-    result = _strip_scope_param_prefix(result, match.scope_param_name, strip_ns)
-    result = _qualify_with_identifiers(result, match, redirect_target)
+    result = _strip_scope_param_prefix(result, match.scope_param_name)
+    result = _qualify_with_identifiers(result, match)
     result = _filter_redirect_var_assignments(result, match)
     return result
 
@@ -1104,13 +1296,13 @@ def _build_cfg(
     nodes: dict[int, _CFGNode] = {}
     routing_state: _StateEnv = dict(initial_state)
     node_envs: dict[int, _StateEnv] = {}
-    queue: deque[tuple[_SMBlock, _StateEnv, str | None]] = deque()
-    queue.append((entry_block, entry_state, None))
+    queue: deque[tuple[_SMBlock, _StateEnv]] = deque()
+    queue.append((entry_block, entry_state))
     steps = 0
 
     while queue and steps < _MAX_STEPS:
         steps += 1
-        block, state, redirect_target = queue.popleft()
+        block, state = queue.popleft()
         node_id = id(block)
 
         if node_id in nodes:
@@ -1119,9 +1311,6 @@ def _build_cfg(
         payload = _substitute_state_vars(block.payload, state)
         _track_scope_routing(payload, state)
         _track_scope_routing(payload, routing_state)
-        new_redirect = _extract_redirect_target(
-            payload, match.scope_param_name, match.with_redirect_var,
-        )
         if not match.arg_params:
             for s in payload:
                 params = _extract_arg_param_names(s, match.arg_var_name)
@@ -1133,11 +1322,9 @@ def _build_cfg(
             s for s in payload
             if _extract_arg_param_names(s, match.arg_var_name) is None
         ]
-        strip_ns = match.scope_default_props[0] if redirect_target and match.scope_default_props else None
-        payload = _strip_scope_param_prefix(payload, match.scope_param_name, strip_ns)
-        payload = _qualify_with_identifiers(payload, match, redirect_target)
+        payload = _strip_scope_param_prefix(payload, match.scope_param_name)
+        payload = _qualify_with_identifiers(payload, match)
         payload = _filter_redirect_var_assignments(payload, match)
-        next_redirect = new_redirect if new_redirect is not None else redirect_target
 
         condition: Expression | None = None
         successors: list[int] = []
@@ -1161,7 +1348,7 @@ def _build_cfg(
                 next_id = id(next_block)
                 successors = [next_id]
                 if next_id not in nodes:
-                    queue.append((next_block, new_env, next_redirect))
+                    queue.append((next_block, new_env))
         elif isinstance(transition, _SMConditionalTransition):
             condition = transition.condition
             true_base = _apply_prefix_state_changes(transition.true_prefix, var_names, state)
@@ -1173,17 +1360,6 @@ def _build_cfg(
             true_disc = _compute_discriminant(true_env, var_names)
             false_disc = _compute_discriminant(false_env, var_names)
 
-            true_redirect = (
-                _extract_redirect_target(
-                    transition.true_prefix, match.scope_param_name, match.with_redirect_var,
-                ) or next_redirect
-            )
-            false_redirect = (
-                _extract_redirect_target(
-                    transition.false_prefix, match.scope_param_name, match.with_redirect_var,
-                ) or next_redirect
-            )
-
             if true_disc == end_state:
                 true_id = _VIRTUAL_EXIT
             else:
@@ -1192,7 +1368,7 @@ def _build_cfg(
                     return None
                 true_id = id(true_block)
                 if true_id not in nodes:
-                    queue.append((true_block, true_env, true_redirect))
+                    queue.append((true_block, true_env))
 
             if false_disc == end_state:
                 false_id = _VIRTUAL_EXIT
@@ -1202,22 +1378,22 @@ def _build_cfg(
                     return None
                 false_id = id(false_block)
                 if false_id not in nodes:
-                    queue.append((false_block, false_env, false_redirect))
+                    queue.append((false_block, false_env))
 
             successors = [true_id, false_id]
             true_prefix_payload = _process_branch_prefix(
-                transition.true_prefix, var_names, state, match, strip_ns, redirect_target,
+                transition.true_prefix, var_names, state, match,
             )
             false_prefix_payload = _process_branch_prefix(
-                transition.false_prefix, var_names, state, match, strip_ns, redirect_target,
+                transition.false_prefix, var_names, state, match,
             )
             if match.with_redirect_var and match.scope_default_props:
-                condition = _qualify_condition(condition, state, match, redirect_target)
+                condition = _qualify_condition(condition, state, match)
             else:
                 wrapper = JsExpressionStatement(expression=_clone_node(condition))
                 _substitute_in_scope(wrapper, state)
                 if match.scope_param_name:
-                    _strip_scope_prefix_walk(wrapper, match.scope_param_name, strip_ns)
+                    _strip_scope_prefix_walk(wrapper, match.scope_param_name)
                 condition = wrapper.expression  # type: ignore[assignment]
 
         node = _CFGNode(
@@ -1870,56 +2046,64 @@ def _substitute_in_scope(node: Node, env: _StateEnv) -> None:
 def _strip_scope_param_prefix(
     stmts: list[Statement],
     scope_param_name: str | None,
-    namespace: str | None = None,
 ) -> list[Statement]:
     """
-    Remove the scope parameter prefix from member chains. When `namespace` is provided (for
-    redirect-aware qualification), `scope.X` becomes `namespace.X` directly — preserving the
-    root-level qualification so that subsequent bare-identifier qualification only applies to
-    identifiers that resolved through the `with` statement.
-    Without `namespace`, `scope.X` becomes bare `X` (legacy behavior).
+    Rewrite every `scope.X` member access to the bare identifier `X`, dissolving the scope-parameter
+    prefix unconditionally. Where a name actually lives is decided afterwards by home-driven
+    qualification, which is independent of the momentary `with`-redirect state, so the strip carries
+    no namespace and never depends on the traversal's redirect target.
     """
     if scope_param_name is None:
         return stmts
     for stmt in stmts:
-        _strip_scope_prefix_walk(stmt, scope_param_name, namespace)
+        _strip_scope_prefix_walk(stmt, scope_param_name)
     return stmts
 
 
-def _strip_scope_prefix_walk(node: Node, scope_param_name: str, namespace: str | None = None) -> None:
+def _strip_scope_prefix_walk(node: Node, scope_param_name: str) -> None:
     for child in node.children():
         if isinstance(child, JsMemberExpression) and isinstance(child.object, JsIdentifier):
             if child.object.name != scope_param_name:
-                _strip_scope_prefix_walk(child, scope_param_name, namespace)
+                _strip_scope_prefix_walk(child, scope_param_name)
                 continue
             if child.computed:
                 if not isinstance(child.property, JsStringLiteral):
-                    _strip_scope_prefix_walk(child, scope_param_name, namespace)
+                    _strip_scope_prefix_walk(child, scope_param_name)
                     continue
                 prop_name = child.property.value
             else:
                 if not isinstance(child.property, JsIdentifier):
-                    _strip_scope_prefix_walk(child, scope_param_name, namespace)
+                    _strip_scope_prefix_walk(child, scope_param_name)
                     continue
                 prop_name = child.property.name
-            if namespace is not None and prop_name != namespace:
-                replacement = JsMemberExpression(
-                    object=JsIdentifier(name=namespace),
-                    property=JsIdentifier(name=prop_name),
-                    computed=False,
-                )
-            else:
-                replacement = JsIdentifier(name=prop_name)
-            _replace_in_parent(child, replacement)
+            _replace_in_parent(child, JsIdentifier(name=prop_name))
             continue
-        _strip_scope_prefix_walk(child, scope_param_name, namespace)
+        _strip_scope_prefix_walk(child, scope_param_name)
+
+
+def _qualify_exempt(match: _GeneratorCFFMatch) -> set[str]:
+    """
+    The set of names that home-driven qualification must leave bare: the state variables, the
+    JavaScript built-in globals, every namespace object, and the compiler-introduced scaffolding
+    identifiers (generator, scope parameter, argument holder, return flag, redirect variable).
+    """
+    exempt: set[str] = set(match.state_var_names) | _JS_BUILTIN_GLOBALS | set(match.namespaces)
+    for name in (
+        match.generator_name,
+        match.scope_param_name,
+        match.arg_var_name,
+        match.did_return_var,
+        match.with_redirect_var,
+    ):
+        if name is not None:
+            exempt.add(name)
+    return exempt
 
 
 def _qualify_condition(
     condition: Expression,
     state: _StateEnv,
     match: _GeneratorCFFMatch,
-    redirect_target: str | None,
 ) -> Expression:
     """
     Clone, substitute, strip, and qualify a transition condition expression using the same
@@ -1929,73 +2113,10 @@ def _qualify_condition(
     wrapper = JsExpressionStatement(expression=_clone_node(condition))
     _substitute_in_scope(wrapper, state)
     if match.scope_param_name:
-        strip_ns = match.scope_default_props[0] if redirect_target and match.scope_default_props else None
-        _strip_scope_prefix_walk(wrapper, match.scope_param_name, strip_ns)
+        _strip_scope_prefix_walk(wrapper, match.scope_param_name)
     if match.with_redirect_var and len(match.scope_default_props) == 1:
-        namespace = match.scope_default_props[0]
-        exempt: set[str] = set(match.state_var_names) | _JS_BUILTIN_GLOBALS
-        exempt.add(namespace)
-        exempt.add(match.generator_name)
-        if match.scope_param_name:
-            exempt.add(match.scope_param_name)
-        if match.arg_var_name:
-            exempt.add(match.arg_var_name)
-        if match.did_return_var:
-            exempt.add(match.did_return_var)
-        if redirect_target and redirect_target != namespace:
-            exempt.add(redirect_target)
-        ns_path: list[str] = [namespace]
-        if redirect_target and redirect_target != namespace:
-            ns_path.append(redirect_target)
-        _qualify_bare_walk(wrapper, ns_path, exempt)
+        _qualify_bare_walk(wrapper, match.namespace_homes, _qualify_exempt(match))
     return wrapper.expression  # type: ignore[return-value]
-
-
-def _extract_redirect_target(
-    payload: list[Statement],
-    scope_param_name: str | None,
-    redirect_var: str | None,
-) -> str | None:
-    """
-    Scan pre-strip payload for a redirect variable assignment of the form
-
-        scope.redirect_var = scope.TARGET
-
-    (or computed equivalent) and return the TARGET name.
-    Returns the LAST such assignment found (assignments may be overwritten).
-    """
-    if scope_param_name is None or redirect_var is None:
-        return None
-    target: str | None = None
-    for stmt in payload:
-        if not isinstance(stmt, JsExpressionStatement):
-            continue
-        expr = stmt.expression
-        exprs = expr.expressions if isinstance(expr, JsSequenceExpression) else [expr]
-        for e in exprs:
-            if not isinstance(e, JsAssignmentExpression) or e.operator != '=':
-                continue
-            lhs = e.left
-            if not isinstance(lhs, JsMemberExpression):
-                continue
-            if not isinstance(lhs.object, JsIdentifier) or lhs.object.name != scope_param_name:
-                continue
-            if lhs.computed:
-                if not isinstance(lhs.property, JsStringLiteral) or lhs.property.value != redirect_var:
-                    continue
-            elif not isinstance(lhs.property, JsIdentifier) or lhs.property.name != redirect_var:
-                continue
-            rhs = e.right
-            if not isinstance(rhs, JsMemberExpression):
-                continue
-            if not isinstance(rhs.object, JsIdentifier) or rhs.object.name != scope_param_name:
-                continue
-            if rhs.computed:
-                if isinstance(rhs.property, JsStringLiteral):
-                    target = rhs.property.value
-            elif isinstance(rhs.property, JsIdentifier):
-                target = rhs.property.name
-    return target
 
 
 _JS_BUILTIN_GLOBALS: frozenset[str] = frozenset({
@@ -2065,66 +2186,45 @@ _JS_BUILTIN_GLOBALS: frozenset[str] = frozenset({
 def _qualify_with_identifiers(
     stmts: list[Statement],
     match: _GeneratorCFFMatch,
-    redirect_target: str | None = None,
 ) -> list[Statement]:
     """
-    Qualify bare identifiers that resolved through a with-scope redirect by prepending the
-    namespace. Only applies when the with-redirect pattern is detected and there is exactly one
-    namespace. When a redirect_target is active, the qualification path becomes
-
-        NS.redirect_target.X
-
-    instead of just `NS.X`, reflecting the with-scope resolution.
+    Qualify each bare identifier that names a proven namespace-local by prepending its canonical
+    home namespace: a bare `x` whose home is `H` becomes `H.x`. The home is fixed at match time and
+    is independent of the momentary `with`-redirect, so a slot referenced qualified in one position
+    and bare in another canonicalizes to the same `H.x` in both. Only applies under the
+    with-redirect pattern with exactly one scope default.
     """
     if not match.with_redirect_var or len(match.scope_default_props) != 1:
         return stmts
-    namespace = match.scope_default_props[0]
-    exempt: set[str] = set(match.state_var_names) | _JS_BUILTIN_GLOBALS
-    exempt.add(namespace)
-    exempt.add(match.generator_name)
-    if match.scope_param_name:
-        exempt.add(match.scope_param_name)
-    if match.arg_var_name:
-        exempt.add(match.arg_var_name)
-    if match.did_return_var:
-        exempt.add(match.did_return_var)
-    if redirect_target and redirect_target != namespace:
-        exempt.add(redirect_target)
-    ns_path: list[str] = [namespace]
-    if redirect_target and redirect_target != namespace:
-        ns_path.append(redirect_target)
+    exempt = _qualify_exempt(match)
     for stmt in stmts:
-        _qualify_bare_walk(stmt, ns_path, exempt)
-    _convert_function_declarations(stmts, ns_path, exempt)
+        _qualify_bare_walk(stmt, match.namespace_homes, exempt)
+    _convert_function_declarations(stmts, match.namespace_homes, exempt)
     return stmts
 
 
 def _convert_function_declarations(
     stmts: list[Statement],
-    ns_path: list[str],
+    homes: dict[str, tuple[str, ...]],
     exempt: set[str],
     owner: Node | None = None,
 ) -> None:
     """
-    Convert function declarations whose names are not exempt into namespace property assignments.
-    This ensures that `function foo(...)` becomes `NS.foo = function(...)` so that all references
-    to the function consistently go through the namespace. Recurses into block bodies but not into
-    function bodies.
+    Convert a function declaration whose name is a proven namespace-local into a namespace property
+    assignment, so every reference to the function goes through its canonical home: a
+    `function foo(...)` with home `H` becomes `H.foo = function(...)`. A name with no home is left
+    as a free declaration. Recurses into block bodies but not function bodies.
     """
     for i, stmt in enumerate(stmts):
         if isinstance(stmt, JsFunctionDeclaration):
-            if stmt.id is not None and stmt.id.name not in exempt:
+            if stmt.id is not None and stmt.id.name in homes and stmt.id.name not in exempt:
                 name = stmt.id.name
                 func_expr = JsFunctionExpression(
                     id=None,
                     params=stmt.params,
                     body=stmt.body,
                 )
-                target = JsMemberExpression(
-                    object=_make_namespace_node(ns_path),
-                    property=JsIdentifier(name=name),
-                    computed=False,
-                )
+                target = _make_namespace_node([*homes[name], name])
                 assignment = JsAssignmentExpression(operator='=', left=target, right=func_expr)
                 stmts[i] = JsExpressionStatement(expression=assignment)
                 if owner is not None:
@@ -2134,7 +2234,7 @@ def _convert_function_declarations(
             continue
         for child in stmt.children():
             if isinstance(child, JsBlockStatement):
-                _convert_function_declarations(child.body, ns_path, exempt, owner=child)
+                _convert_function_declarations(child.body, homes, exempt, owner=child)
 
 
 def _make_namespace_node(ns_path: list[str]) -> Expression:
@@ -2152,13 +2252,13 @@ def _make_namespace_node(ns_path: list[str]) -> Expression:
     return node
 
 
-def _qualify_bare_walk(node: Node, ns_path: list[str], exempt: set[str]) -> None:
+def _qualify_bare_walk(node: Node, homes: dict[str, tuple[str, ...]], exempt: set[str]) -> None:
     for child in node.children():
         if isinstance(child, (JsFunctionExpression, JsFunctionDeclaration)):
             inner_exempt = exempt | _collect_declared_names(child)
-            _qualify_bare_walk(child, ns_path, inner_exempt)
+            _qualify_bare_walk(child, homes, inner_exempt)
             continue
-        if isinstance(child, JsIdentifier) and child.name not in exempt:
+        if isinstance(child, JsIdentifier) and child.name in homes and child.name not in exempt:
             parent = child.parent
             if isinstance(parent, JsMemberExpression) and parent.property is child and not parent.computed:
                 continue
@@ -2173,14 +2273,9 @@ def _qualify_bare_walk(node: Node, ns_path: list[str], exempt: set[str]) -> None
             if isinstance(parent, (JsLabeledStatement, JsContinueStatement, JsBreakStatement)):
                 if getattr(parent, 'label', None) is child:
                     continue
-            replacement = JsMemberExpression(
-                object=_make_namespace_node(ns_path),
-                property=JsIdentifier(name=child.name),
-                computed=False,
-            )
-            _replace_in_parent(child, replacement)
+            _replace_in_parent(child, _make_namespace_node([*homes[child.name], child.name]))
             continue
-        _qualify_bare_walk(child, ns_path, exempt)
+        _qualify_bare_walk(child, homes, exempt)
 
 
 def _collect_declared_names(func: JsFunctionExpression | JsFunctionDeclaration) -> set[str]:
@@ -2362,20 +2457,18 @@ def _deepest_property_name(node: Node) -> str | None:
     return None
 
 
-def _is_redirect_var_write(stmt: Statement, namespace: str, redirect_var: str) -> bool:
-    if not isinstance(stmt, JsExpressionStatement):
-        return False
-    expr = stmt.expression
-    if not isinstance(expr, JsAssignmentExpression):
-        return False
-    lhs = expr.left
+def _is_bare_redirect_assignment(expr: Expression, redirect_var: str) -> bool:
+    """
+    Whether *expr* is a stripped redirect-routing write `redirect_var = <rhs>` on the bare redirect
+    identifier. Once the scope prefix is dissolved unconditionally, `scope.redirect_var = scope.X`
+    survives as this bare assignment; it is pure routing bookkeeping with no consumer in the
+    recovered code.
+    """
     return (
-        isinstance(lhs, JsMemberExpression)
-        and not lhs.computed
-        and isinstance(lhs.object, JsIdentifier)
-        and lhs.object.name == namespace
-        and isinstance(lhs.property, JsIdentifier)
-        and lhs.property.name == redirect_var
+        isinstance(expr, JsAssignmentExpression)
+        and expr.operator == '='
+        and isinstance(expr.left, JsIdentifier)
+        and expr.left.name == redirect_var
     )
 
 
@@ -2383,11 +2476,35 @@ def _filter_redirect_var_assignments(
     stmts: list[Statement],
     match: _GeneratorCFFMatch,
 ) -> list[Statement]:
-    if not match.with_redirect_var or not match.scope_default_props:
-        return stmts
-    namespace = match.scope_default_props[0]
     redirect_var = match.with_redirect_var
-    return [s for s in stmts if not _is_redirect_var_write(s, namespace, redirect_var)]
+    if not redirect_var or len(match.scope_default_props) != 1:
+        return stmts
+    result: list[Statement] = []
+    for stmt in stmts:
+        if not isinstance(stmt, JsExpressionStatement) or stmt.expression is None:
+            result.append(stmt)
+            continue
+        expr = stmt.expression
+        if isinstance(expr, JsSequenceExpression):
+            remaining = [
+                e for e in expr.expressions
+                if not _is_bare_redirect_assignment(e, redirect_var)
+            ]
+            if len(remaining) == len(expr.expressions):
+                result.append(stmt)
+            elif not remaining:
+                continue
+            elif len(remaining) == 1:
+                result.append(JsExpressionStatement(expression=remaining[0]))
+            else:
+                result.append(JsExpressionStatement(
+                    expression=JsSequenceExpression(expressions=remaining),
+                ))
+            continue
+        if _is_bare_redirect_assignment(expr, redirect_var):
+            continue
+        result.append(stmt)
+    return result
 
 
 def _track_scope_routing(payload: list[Statement], state: _StateEnv) -> None:
@@ -2475,32 +2592,6 @@ def _build_js_if(
     )
 
 
-def _extract_sub_namespace_inits(
-    scope_arg: JsObjectExpression | None,
-    known_props: list[str],
-) -> dict[str, Expression]:
-    """
-    Extract sub-namespace initializations from a wrapper's scope argument. Returns property names
-    mapped to their init expressions for properties that are empty object literals and not already
-    in *known_props*.
-    """
-    if scope_arg is None:
-        return {}
-    result: dict[str, Expression] = {}
-    for prop in scope_arg.properties:
-        if not isinstance(prop, JsProperty):
-            continue
-        key = property_key(prop)
-        if key is None or key in known_props:
-            continue
-        if (
-            isinstance(prop.value, JsObjectExpression)
-            and not prop.value.properties
-        ):
-            result[key] = prop.value
-    return result
-
-
 def _resolve_shared_wrappers(
     stmts: list[Statement],
     machine: _StateMachine,
@@ -2517,7 +2608,6 @@ def _resolve_shared_wrappers(
     gen_name = match.generator_name
     num_vars = len(match.state_var_names)
     attempted: set[int] = set()
-    sub_ns_inits: dict[str, Expression] = {}
 
     while True:
         resolved_any = False
@@ -2530,10 +2620,6 @@ def _resolve_shared_wrappers(
             wrapper_info = _detect_wrapper_function(node, gen_name, num_vars)
             if wrapper_info is None:
                 continue
-            new_subs = _extract_sub_namespace_inits(
-                wrapper_info.scope_arg, match.scope_default_props,
-            )
-            sub_ns_inits.update(new_subs)
             synthetic = _GeneratorCFFMatch(
                 generator_name=gen_name,
                 state_var_names=match.state_var_names,
@@ -2549,43 +2635,28 @@ def _resolve_shared_wrappers(
                 scaffolding_end=0,
                 with_redirect_var=match.with_redirect_var,
                 scope_default_props=match.scope_default_props,
+                namespaces=match.namespaces,
+                namespace_homes=match.namespace_homes,
             )
             result = _execute_machine(machine, synthetic, inherited_state=outer_state)
             if result is None:
                 attempted.add(node_id)
                 continue
             recovered, _ = result
-            if (
-                match.arg_var_name
-                and wrapper_info.rest_param_name
-                and match.arg_var_name != wrapper_info.rest_param_name
-            ):
-                recovered = _rename_identifier(
-                    recovered, match.arg_var_name, wrapper_info.rest_param_name,
-                )
+            target = _wrapper_arg_param_name(match, wrapper_info, recovered)
+            if match.arg_var_name and target and match.arg_var_name != target:
+                recovered = _rebind_free_arg_var(recovered, match.arg_var_name, target)
             node.body = JsBlockStatement(body=recovered)
             node.body.parent = node
             for s in recovered:
                 s.parent = node.body
             if synthetic.arg_params:
                 node.params = [JsIdentifier(name=n) for n in synthetic.arg_params]
+            elif target is not None and target != wrapper_info.rest_param_name:
+                node.params = [JsRestElement(argument=JsIdentifier(name=target))]
             resolved_any = True
         if not resolved_any:
             break
-
-    if sub_ns_inits and match.scope_default_props:
-        namespace = match.scope_default_props[0]
-        for sub_name in sorted(sub_ns_inits):
-            assign = JsExpressionStatement(expression=JsAssignmentExpression(
-                operator='=',
-                left=JsMemberExpression(
-                    object=JsIdentifier(name=namespace),
-                    property=JsIdentifier(name=sub_name),
-                    computed=False,
-                ),
-                right=_clone_node(sub_ns_inits[sub_name]),
-            ))
-            stmts.insert(0, assign)
 
     return stmts
 
@@ -2598,21 +2669,128 @@ def _walk_all(stmts: list[Statement]):
         yield from stmt.walk()
 
 
-def _rename_identifier(stmts: list[Statement], old_name: str, new_name: str) -> list[Statement]:
+def _name_bound_by_nested_function(stmts: list[Statement], name: str) -> bool:
     """
-    Replace all occurrences of an identifier name in a statement list.
+    Return whether *name* is declared — as a parameter, function name, or var — by any function
+    anywhere within the given statements. Such a name cannot serve as a rebind target without
+    capturing that unrelated binding.
+    """
+    for node in _walk_all(stmts):
+        if isinstance(node, (JsFunctionExpression, JsFunctionDeclaration)):
+            if name in _collect_declared_names(node):
+                return True
+    return False
+
+
+def _fresh_arg_name(base: str, taken: set[str]) -> str:
+    """
+    Derive an identifier based on *base* that does not appear in *taken*.
+    """
+    candidate = base
+    suffix = 0
+    while candidate in taken:
+        suffix += 1
+        candidate = F'{base}_{suffix}'
+    return candidate
+
+
+def _wrapper_arg_param_name(
+    match: _GeneratorCFFMatch,
+    wrapper_info: _WrapperFunctionInfo,
+    recovered: list[Statement],
+) -> str | None:
+    """
+    Choose the identifier a wrapper's recovered body should use for the shared generator's argument
+    variable, or `None` when the body never references it. The wrapper's own rest-parameter name is
+    preferred, but it is unusable when it collides with a state-machine variable or is bound by a
+    nested function in the recovered body: in either case rebinding onto it would capture an
+    unrelated binding. When the rest-param is unsafe (or absent), a fresh identifier not present in
+    the recovered body is minted instead.
+    """
+    if match.arg_var_name is None:
+        return None
+    taken = {node.name for node in _walk_all(recovered) if isinstance(node, JsIdentifier)}
+    if match.arg_var_name not in taken:
+        return None
+    rest = wrapper_info.rest_param_name
+    if (
+        rest is not None
+        and rest not in match.state_var_names
+        and not _name_bound_by_nested_function(recovered, rest)
+    ):
+        return rest
+    return _fresh_arg_name(match.arg_var_name, taken)
+
+
+def _rebind_free_arg_var(
+    stmts: list[Statement],
+    arg_var_name: str,
+    param_name: str,
+) -> list[Statement]:
+    """
+    Rename free references to the shared generator's argument variable to a wrapper's parameter
+    name. A nested function whose own declarations (`_collect_declared_names`) bind either name owns
+    that identifier and is left untouched; a function binding neither is descended into, so a
+    genuine closure over the wrapper arguments is still rebound. Member-property and object-key
+    positions are skipped because a name there is not a variable reference.
     """
     for stmt in stmts:
-        for node in stmt.walk():
-            if isinstance(node, JsIdentifier) and node.name == old_name:
-                node.name = new_name
+        _rebind_arg_var_in_scope(stmt, arg_var_name, param_name)
     return stmts
 
 
-def _emit_scope_namespace_declarations(match: _GeneratorCFFMatch) -> list[Statement]:
+def _rebind_arg_var_in_scope(node: Node, arg_var_name: str, param_name: str) -> None:
+    for child in node.children():
+        if isinstance(child, (JsFunctionExpression, JsFunctionDeclaration)):
+            declared = _collect_declared_names(child)
+            if arg_var_name not in declared and param_name not in declared:
+                _rebind_arg_var_in_scope(child, arg_var_name, param_name)
+            continue
+        if isinstance(child, JsIdentifier) and child.name == arg_var_name:
+            parent = child.parent
+            if isinstance(parent, JsMemberExpression) and parent.property is child and not parent.computed:
+                continue
+            if isinstance(parent, JsProperty) and parent.key is child and not parent.computed:
+                continue
+            child.name = param_name
+            continue
+        _rebind_arg_var_in_scope(child, arg_var_name, param_name)
+
+
+def _structural_namespaces(match: _GeneratorCFFMatch) -> list[str]:
+    """
+    The namespaces that must be materialized as `var X = {}`: the scope-parameter defaults and the
+    object-literal scope-argument keys, in that order and deduplicated. Namespaces that exist only
+    because an in-body `scope.X = {}` write created them are excluded — the recovered body declares
+    and initializes those itself.
+    """
+    names: list[str] = list(match.scope_default_props)
+    seen = set(names)
+    for name in match.scope_arg_namespaces:
+        if name not in seen:
+            seen.add(name)
+            names.append(name)
+    return names
+
+
+def _emit_scope_namespace_declarations(
+    match: _GeneratorCFFMatch,
+    recovered: list[Statement],
+) -> list[Statement]:
+    """
+    Emit `var X = {}` for each structural namespace (scope default or object-literal scope-argument
+    key), but only for namespaces still referenced in the recovered body. Once free names are left
+    bare, a namespace whose every member turned out free has no surviving reference, so its
+    declaration would be dead; a surviving `X.member` keeps it.
+    """
+    referenced = {node.name for node in _walk_all(recovered) if isinstance(node, JsIdentifier)}
     declarations: list[Statement] = []
-    for name in match.scope_default_props:
+    for name in _structural_namespaces(match):
+        if name not in referenced:
+            continue
         init = match.scope_default_inits.get(name)
+        if init is None:
+            init = match.scope_arg_namespaces.get(name)
         if init is None:
             init = JsObjectExpression(properties=[])
         decl = JsVariableDeclaration(
@@ -2764,8 +2942,9 @@ def _declare_recovered_scope_vars(
     """
     Hoisted scope variables survive recovery as bare identifiers. Declare the ones that are read as
     locals of the recovered function, and drop the writes of slots that are pure routing bookkeeping
-    (written but never read). Slots already declared, the namespace defaults, and resolved argument
-    parameters are left to their dedicated emitters.
+    (written but never read). Slots already declared, the structural namespaces, and resolved
+    argument parameters are left to their dedicated emitters; an in-body namespace (created by a
+    `scope.X = {}` write) is not structural, so it is declared here.
     """
     props = match.scope_prop_names
     if not props:
@@ -2782,7 +2961,7 @@ def _declare_recovered_scope_vars(
                 present.add(node.name)
     exclude = _declared_names_in_stmts(recovered)
     exclude |= set(match.arg_params)
-    exclude |= set(match.scope_default_props)
+    exclude |= set(_structural_namespaces(match))
     to_declare = sorted(p for p in props if p in present and p not in exclude)
     if not to_declare:
         return recovered
@@ -2821,7 +3000,7 @@ class JsGeneratorCFFUnflattening(BodyProcessingTransformer):
                 recovered = _resolve_shared_wrappers(recovered, machine, match, outer_state)
             recovered = _declare_recovered_scope_vars(recovered, match)
             if match.scope_default_props:
-                recovered = _emit_scope_namespace_declarations(match) + recovered
+                recovered = _emit_scope_namespace_declarations(match, recovered) + recovered
             if match.arg_params:
                 recovered = _emit_arg_param_declarations(match) + recovered
             if is_script:

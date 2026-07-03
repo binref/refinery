@@ -82,7 +82,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
             inspect.cleandoc(
                 """
                 function fizzbuzz(n) {
-                  var QOwuVkJ, n, z947WD2;
+                  var QOwuVkJ, z947WD2;
                   QOwuVkJ = [];
                   for (z947WD2 = 1; z947WD2 <= n; z947WD2++) {
                     if (z947WD2 % 15 === 0) {
@@ -138,9 +138,8 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
         self.assertEqual(result, inspect.cleandoc(
             """
             function wrapper() {
-              var NS = {};
-              NS.x = globalThis;
-              return NS.x;
+              x = globalThis;
+              return x;
             }
             """
         ))
@@ -182,10 +181,19 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
 
     def test_generator_cff_shared_wrapper_routing(self):
         result = self._deobfuscate(self.SHARED_WRAPPER_CFF)
-        self.assertNotIn('function*', result)
-        self.assertNotIn('while', result)
-        self.assertNotIn('switch', result)
-        self.assertIn('rest[0] + rest[1]', result)
+        self.assertEqual(result, inspect.cleandoc(
+            """
+            function wrapper() {
+              var R;
+              R = {};
+              R.k = -10;
+              var wrapper = function(...rest) {
+                return rest[0] + rest[1];
+              };
+              return wrapper(1, 2);
+            }
+            """
+        ))
 
     GUARDED_PREDICATE_CFF = inspect.cleandoc(
         """
@@ -224,10 +232,76 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
 
     def test_generator_cff_guarded_predicate(self):
         result = self._deobfuscate(self.GUARDED_PREDICATE_CFF)
-        self.assertNotIn('function*', result)
-        self.assertNotIn('while', result)
-        self.assertNotIn('switch', result)
-        self.assertIn('resolved', result)
+        self.assertEqual(result, inspect.cleandoc(
+            """
+            function wrapper() {
+              var R;
+              R = {};
+              R.k = 50;
+              var wrapper = function(...rest) {
+                return "resolved";
+              };
+              return wrapper(1, 2);
+            }
+            """
+        ))
+
+    NESTED_WRAPPER_ARG_REBIND_CFF = inspect.cleandoc(
+        """
+        function outer() {
+          function* gen(a, b, scope = {}, args) {
+            while (a + b !== 100) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    scope.run = function(...a) {
+                      return gen(25, 25, scope, a)["next"]()["value"];
+                    };
+                    return done = true, scope.run;
+                    break;
+                  case 50:
+                    return done = true, function(seed) {
+                      var args;
+                      args = seed * 2;
+                      return args + 1;
+                    }(args[0]);
+                    break;
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+"""
+    )
+
+    def test_generator_cff_nested_wrapper_arg_rebind(self):
+        """
+        The wrapper `run` has a rest-parameter named `a` that collides with a state variable, and its
+        recovered body contains a nested function that binds the generator's argument variable `args`
+        as its own local. Threading `run`'s arguments must mint a fresh parameter (`args_1`) rather
+        than reuse the colliding `a`, and must leave the nested `var args` untouched instead of
+        capturing it. Verified equivalent to the original under Node: `outer()(7)` returns `15` for
+        both, as do the other drivers.
+        """
+        result = self._run_transformer(self.NESTED_WRAPPER_ARG_REBIND_CFF, JsGeneratorCFFUnflattening)
+        self.assertEqual(result, inspect.cleandoc(
+            """
+            function outer() {
+              var run;
+              run = function(...args_1) {
+                return function(seed) {
+                  var args;
+                  args = seed * 2;
+                  return args + 1;
+                }(args_1[0]);
+              };
+              return run;
+            }
+            """
+        ))
 
     REDIRECT_VAR_CFF = inspect.cleandoc(
         """
@@ -260,9 +334,8 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
         self.assertEqual(result, inspect.cleandoc(
             """
             function wrapper() {
-              var NS = {};
-              NS.y = 42;
-              return NS.y;
+              y = 42;
+              return y;
             }
             """
         ))
@@ -300,17 +373,20 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
 
     def test_generator_cff_redirect_qualification_levels(self):
         """
-        The generator dissolves and the `with`-redirected namespace flattens all the way down: the
-        qualified `Sub.arr` / `Sub.val` redirects the unflattener produces are promoted to flat
-        variables by the downstream namespace flattening, leaving an equivalent throwing program.
+        A degenerate multi-level-redirect sample: bare `Sub` is used while the `with` redirect still
+        points at `NS`, so `Sub` never resolves and the original throws a `ReferenceError`. The
+        recovery keeps the genuinely free `val`/`extra`/`args` bare (they have no namespace-defining
+        write) and recovers `Sub` from its `scope.Sub` writes, remaining an equivalent throwing
+        program.
         """
         result = self._deobfuscate(self.REDIRECT_QUALIFY_CFF)
         self.assertEqual(result, inspect.cleandoc(
             """
             function wrapper() {
-              var arr, val;
               var extra;
-              arr = args;
+              var Sub;
+              Sub = {};
+              Sub.arr = args;
               return extra + val;
             }
             """
@@ -346,11 +422,15 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
     )
 
     def test_generator_cff_computed_redirect_resolved(self):
-        result = self._deobfuscate(self.COMPUTED_REDIRECT_CFF)
-        self.assertNotIn('function*', result)
-        self.assertNotIn('scope', result)
-        self.assertNotIn('RV', result)
-        self.assertIn('val', result)
+        result = self._run_transformer(self.COMPUTED_REDIRECT_CFF, JsGeneratorCFFUnflattening)
+        self.assertEqual(result, inspect.cleandoc(
+            """
+            function wrapper() {
+              data = args;
+              return val;
+            }
+            """
+        ))
 
     LOOPING_CFF = inspect.cleandoc(
         """
@@ -956,7 +1036,7 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
             self._deobfuscate(self.MIXED_SEQUENCE_BRANCH_CFF),
         )
 
-    NAMESPACE_DECL_CFF = inspect.cleandoc(
+    FREE_NAMES_CFF = inspect.cleandoc(
         """
         function wrapper() {
           function* gen(a, b, scope = {NS: {}}, args) {
@@ -982,14 +1062,13 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
 """
     )
 
-    def test_generator_cff_scope_namespace_declared(self):
-        result = self._run_transformer(self.NAMESPACE_DECL_CFF, JsGeneratorCFFUnflattening)
+    def test_generator_cff_free_names_stay_bare(self):
+        result = self._run_transformer(self.FREE_NAMES_CFF, JsGeneratorCFFUnflattening)
         self.assertEqual(result, inspect.cleandoc(
             """
             function wrapper() {
-              var NS = {};
-              NS.x = 1;
-              return NS.x + NS.y;
+              x = 1;
+              return x + y;
             }
             """
         ))
@@ -1038,3 +1117,220 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
             ),
             self._deobfuscate(self.LABELED_CONTINUE_CFF),
         )
+
+    FREE_FORMS_CFF = inspect.cleandoc(
+        """
+        function wrapper() {
+          function* gen(a, b, scope = {NS: {}}, args) {
+            while (a + b !== 100) {
+              with (scope.RV || scope) {
+                switch (a + b) {
+                  case 10:
+                    scope.RV = scope.NS;
+                    freeCall();
+                    freeObj.method();
+                    freeVar = 5;
+                    a = 40, b = 0;
+                    break;
+                  case 40:
+                    return done = true, freeVal;
+                    break;
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+"""
+    )
+
+    def test_generator_cff_free_forms_stay_free(self):
+        result = self._run_transformer(self.FREE_FORMS_CFF, JsGeneratorCFFUnflattening)
+        self.assertEqual(result, inspect.cleandoc(
+            """
+            function wrapper() {
+              freeCall();
+              freeObj.method();
+              freeVar = 5;
+              return freeVal;
+            }
+            """
+        ))
+
+    NAMESPACE_LOCAL_DEEP_CFF = inspect.cleandoc(
+        """
+        function wrapper() {
+          function* gen(a, b, scope = {NS: {}}, args) {
+            while (a + b !== 100) {
+              with (scope.RV || scope) {
+                switch (a + b) {
+                  case 10:
+                    scope.RV = scope.NS;
+                    scope.NS.local = 7;
+                    a = 40, b = 0;
+                    break;
+                  case 40:
+                    return done = true, local + 1;
+                    break;
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+"""
+    )
+
+    def test_generator_cff_namespace_local_deep_write_recovered(self):
+        """
+        The complement of the free-name tests: a genuine namespace-local with a `scope.NS.local`
+        defining write is proven local, so bare `local` is qualified back to `NS.local`. This is what
+        distinguishes the fix from simply never qualifying.
+        """
+        result = self._run_transformer(self.NAMESPACE_LOCAL_DEEP_CFF, JsGeneratorCFFUnflattening)
+        self.assertEqual(result, inspect.cleandoc(
+            """
+            function wrapper() {
+              var NS = {};
+              NS.local = 7;
+              return NS.local + 1;
+            }
+            """
+        ))
+
+    NAMESPACE_LOCAL_BARE_CFF = inspect.cleandoc(
+        """
+        function wrapper() {
+          function* gen(a, b, scope = {NS: {}}, args) {
+            while (a + b !== 100) {
+              with (scope.RV || scope) {
+                switch (a + b) {
+                  case 10:
+                    NS.member = 7;
+                    scope.RV = scope.NS;
+                    a = 40, b = 0;
+                    break;
+                  case 40:
+                    return done = true, member + 1;
+                    break;
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+"""
+    )
+
+    def test_generator_cff_namespace_local_bare_write_recovered(self):
+        result = self._run_transformer(self.NAMESPACE_LOCAL_BARE_CFF, JsGeneratorCFFUnflattening)
+        self.assertEqual(result, inspect.cleandoc(
+            """
+            function wrapper() {
+              var NS = {};
+              NS.member = 7;
+              return NS.member + 1;
+            }
+            """
+        ))
+
+    NAMESPACE_LOCAL_DESTRUCTURING_CFF = inspect.cleandoc(
+        """
+        function wrapper() {
+          function* gen(a, b, scope = {NS: {}}, args) {
+            while (a + b !== 100) {
+              with (scope.RV || scope) {
+                switch (a + b) {
+                  case 10:
+                    scope.RV = scope.NS;
+                    [scope.NS.p, scope.NS.q] = [3, 4];
+                    a = 40, b = 0;
+                    break;
+                  case 40:
+                    return done = true, p + q;
+                    break;
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+"""
+    )
+
+    def test_generator_cff_namespace_local_destructuring_recovered(self):
+        result = self._run_transformer(self.NAMESPACE_LOCAL_DESTRUCTURING_CFF, JsGeneratorCFFUnflattening)
+        self.assertEqual(result, inspect.cleandoc(
+            """
+            function wrapper() {
+              var NS = {};
+              [NS.p, NS.q] = [3, 4];
+              return NS.p + NS.q;
+            }
+            """
+        ))
+
+    SIBLING_NAMESPACE_HOME_CFF = inspect.cleandoc(
+        """
+        function outer() {
+          function* gen(a, b, scope = {NS: {}}, args) {
+            while (a + b !== 100) {
+              with (scope.RV || scope) {
+                switch (a + b) {
+                  case 10:
+                    NS.make = function(...rest) {
+                      return gen(20, 30, {NS: {}, Sub: {}}, rest)["next"]()["value"];
+                    };
+                    return done = true, NS.make;
+                    break;
+                  case 50:
+                    Sub.slot = args;
+                    scope.RV = scope.Sub;
+                    a = 70, b = 0;
+                    break;
+                  case 70:
+                    return done = true, slot[0];
+                    break;
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+"""
+    )
+
+    def test_generator_cff_sibling_namespace_home_canonical(self):
+        """
+        A member of a sibling namespace `Sub` distinct from the main default `NS` is written qualified
+        (`Sub.slot`, while the `with` redirect is unset) and later read bare (`slot`, while the redirect
+        points at `Sub`). Node resolves both to `scope.Sub.slot`, so the recovery must canonicalize the
+        member to `Sub.slot` in both positions independently of the momentary redirect. `Sub` reaches the
+        scope as an object-literal argument the wrapper threads to the shared generator, making it a
+        structural namespace emitted as `var Sub = {}`. Verified equivalent to the original under Node:
+        the recovered `outer()(7)` returns `7`, as does the original.
+        """
+        result = self._run_transformer(self.SIBLING_NAMESPACE_HOME_CFF, JsGeneratorCFFUnflattening)
+        self.assertEqual(result, inspect.cleandoc(
+            """
+            function outer() {
+              var NS = {};
+              var Sub = {};
+              NS.make = function(...rest) {
+                Sub.slot = rest;
+                return Sub.slot[0];
+              };
+              return NS.make;
+            }
+            """
+        ))
