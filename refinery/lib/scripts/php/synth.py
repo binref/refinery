@@ -391,9 +391,14 @@ class PhpSynthesizer(Synthesizer):
             self._write(')')
 
     def visit_PhpList(self, node: PhpList):
-        self._write('list(')
-        self._comma_list(node.items)
-        self._write(')')
+        if node.short:
+            self._write('[')
+            self._comma_list(node.items)
+            self._write(']')
+        else:
+            self._write('list(')
+            self._comma_list(node.items)
+            self._write(')')
 
     def visit_PhpArrayItem(self, node: PhpArrayItem):
         if node.spread:

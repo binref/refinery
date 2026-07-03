@@ -212,20 +212,78 @@ _TYPE_KEYWORDS = frozenset({
     K.STATIC,
 })
 
-_SEMI_RESERVED = frozenset(
-    {
-        K.INCLUDE, K.INCLUDE_ONCE, K.REQUIRE, K.REQUIRE_ONCE, K.EVAL, K.PRINT, K.ECHO,
-        K.EXIT, K.LOGICAL_OR, K.LOGICAL_XOR, K.LOGICAL_AND, K.INSTANCEOF, K.NEW, K.CLONE,
-        K.YIELD, K.IF, K.ELSEIF, K.ELSE, K.ENDIF, K.DO, K.WHILE, K.ENDWHILE, K.FOR,
-        K.ENDFOR, K.FOREACH, K.ENDFOREACH, K.SWITCH, K.ENDSWITCH, K.CASE, K.DEFAULT,
-        K.MATCH, K.BREAK, K.CONTINUE, K.GOTO, K.RETURN, K.THROW, K.TRY, K.CATCH,
-        K.FINALLY, K.DECLARE, K.ENDDECLARE, K.AS, K.FUNCTION, K.FN, K.CONST, K.USE,
-        K.INSTEADOF, K.GLOBAL, K.STATIC, K.ABSTRACT, K.FINAL, K.PRIVATE, K.PROTECTED,
-        K.PUBLIC, K.READONLY, K.VAR, K.UNSET, K.ISSET, K.EMPTY, K.HALT_COMPILER, K.LIST,
-        K.ARRAY, K.CALLABLE, K.CLASS, K.TRAIT, K.INTERFACE, K.ENUM, K.EXTENDS,
-        K.IMPLEMENTS, K.NAMESPACE,
-    }
-)
+_SEMI_RESERVED = frozenset({
+    K.INCLUDE,
+    K.INCLUDE_ONCE,
+    K.REQUIRE,
+    K.REQUIRE_ONCE,
+    K.EVAL,
+    K.PRINT,
+    K.ECHO,
+    K.EXIT,
+    K.LOGICAL_OR,
+    K.LOGICAL_XOR,
+    K.LOGICAL_AND,
+    K.INSTANCEOF,
+    K.NEW,
+    K.CLONE,
+    K.YIELD,
+    K.IF,
+    K.ELSEIF,
+    K.ELSE,
+    K.ENDIF,
+    K.DO,
+    K.WHILE,
+    K.ENDWHILE,
+    K.FOR,
+    K.ENDFOR,
+    K.FOREACH,
+    K.ENDFOREACH,
+    K.SWITCH,
+    K.ENDSWITCH,
+    K.CASE,
+    K.DEFAULT,
+    K.MATCH,
+    K.BREAK,
+    K.CONTINUE,
+    K.GOTO,
+    K.RETURN,
+    K.THROW,
+    K.TRY,
+    K.CATCH,
+    K.FINALLY,
+    K.DECLARE,
+    K.ENDDECLARE,
+    K.AS,
+    K.FUNCTION,
+    K.FN,
+    K.CONST,
+    K.USE,
+    K.INSTEADOF,
+    K.GLOBAL,
+    K.STATIC,
+    K.ABSTRACT,
+    K.FINAL,
+    K.PRIVATE,
+    K.PROTECTED,
+    K.PUBLIC,
+    K.READONLY,
+    K.VAR,
+    K.UNSET,
+    K.ISSET,
+    K.EMPTY,
+    K.HALT_COMPILER,
+    K.LIST,
+    K.ARRAY,
+    K.CALLABLE,
+    K.CLASS,
+    K.TRAIT,
+    K.INTERFACE,
+    K.ENUM,
+    K.EXTENDS,
+    K.IMPLEMENTS,
+    K.NAMESPACE,
+})
 
 
 class PhpParser:
@@ -318,6 +376,10 @@ class PhpParser:
                 if comments:
                     error.leading_comments[:0] = comments
                 body.append(error)
+            else:
+                if comments:
+                    self._trivia.setdefault(mark, [])
+                    self._trivia[mark][:0] = comments
         trailing = self._trivia.pop(self._index, None)
         if trailing and body:
             body[-1].leading_comments.extend(trailing)
@@ -384,7 +446,7 @@ class PhpParser:
             return self._parse_halt_compiler()
         if kind is K.FUNCTION and self._starts_function_declaration():
             return self._parse_function_declaration()
-        if kind is K.STATIC and self._peek(1).kind is K.VARIABLE:
+        if kind is K.STATIC and self._peek(1).kind in (K.VARIABLE, K.DOLLAR):
             return self._parse_static_var()
         if self._starts_class_like():
             return self._parse_class_like([])
@@ -406,7 +468,7 @@ class PhpParser:
         nxt = self._peek(1)
         if nxt.kind is K.AMP:
             nxt = self._peek(2)
-        return nxt.kind is K.IDENTIFIER
+        return nxt.kind is K.IDENTIFIER or nxt.kind in _SEMI_RESERVED
 
     def _starts_class_like(self) -> bool:
         kind = self._current.kind
@@ -1074,6 +1136,9 @@ class PhpParser:
                 members.append(member)
             elif self._index == mark:
                 self._advance()
+        trailing = self._trivia.pop(self._index, None)
+        if trailing and members:
+            members[-1].leading_comments.extend(trailing)
         self._expect(K.RBRACE)
         return members
 
@@ -1129,8 +1194,12 @@ class PhpParser:
                 insteadof.append(self._parse_name())
             self._eat(K.SEMICOLON)
             return PhpTraitAdaptation(
-                trait=trait, method=method, kind='insteadof',
-                insteadof=insteadof, offset=offset)
+                trait=trait,
+                method=method,
+                kind='insteadof',
+                insteadof=insteadof,
+                offset=offset,
+            )
         self._expect(K.AS)
         new_modifier: str | None = None
         new_name: str | None = None
@@ -1140,8 +1209,13 @@ class PhpParser:
             new_name = self._advance().value
         self._eat(K.SEMICOLON)
         return PhpTraitAdaptation(
-            trait=trait, method=method, kind='alias',
-            new_name=new_name, new_modifier=new_modifier, offset=offset)
+            trait=trait,
+            method=method,
+            kind='alias',
+            new_name=new_name,
+            new_modifier=new_modifier,
+            offset=offset,
+        )
 
     def _parse_enum_case(
         self,
@@ -1498,7 +1572,7 @@ class PhpParser:
             arg_offset = self._current.offset
             name = None
             if (
-                self._at(K.IDENTIFIER)
+                (self._at(K.IDENTIFIER) or self._current.kind in _SEMI_RESERVED)
                 and self._peek(1).kind is K.COLON
                 and self._peek(2).kind is not K.COLON
             ):
@@ -1859,7 +1933,7 @@ def _parse_int_text(text: str) -> int:
         try:
             return int(text, 8)
         except ValueError:
-            return 0
+            return int(text, 10)
     return int(text)
 
 

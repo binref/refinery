@@ -193,7 +193,7 @@ class PhpTokenKind(enum.Enum):
 
 
 KEYWORDS: dict[str, PhpTokenKind] = {
-    tok.value: tok for tok in [
+    tok.value.lower(): tok for tok in [
         PhpTokenKind.INCLUDE,
         PhpTokenKind.INCLUDE_ONCE,
         PhpTokenKind.REQUIRE,
