@@ -198,6 +198,12 @@ class TestSemanticModel(TestBase):
         ast, model = self._model('function f(){ var x = 1; return x; }')
         self.assertFalse(self._binding(ast, model, 'x').is_dead)
 
+    def test_local_read_only_through_with_is_not_dead(self):
+        ast, model = self._model('function f(o){ var x = 1; with (o) { x; } }')
+        binding = self._binding(ast, model, 'x')
+        self.assertEqual(binding.reads, [])
+        self.assertFalse(binding.is_dead)
+
     def test_simple_assignment_is_write_only(self):
         ast, model = self._model('function f(){ var x; x = 1; }')
         binding = self._binding(ast, model, 'x')

@@ -174,10 +174,13 @@ class Binding:
     @property
     def is_dead(self) -> bool:
         """
-        Whether the binding is never read. Definitions of a dead binding can be removed if they carry
-        no other side effect (which the caller decides).
+        Whether no use observes the binding's value: it is read through no resolved reference and named
+        inside no dynamic scope. Definitions of a dead binding can be removed if they carry no other
+        side effect (which the caller decides). A name a `with` body could read is not dead even though
+        `reads` is empty — the dynamic reference may observe it at runtime — so removers need not rely on
+        a separate reflection gate to keep such a binding.
         """
-        return not self.reads
+        return not self.reads and not self.dynamic_refs
 
     @property
     def has_global_member_write(self) -> bool:
