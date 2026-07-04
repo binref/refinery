@@ -16,6 +16,7 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     BodyProcessingTransformer,
     access_key,
     eval_binary_op,
+    is_reference,
     make_numeric_literal,
     member_key,
     property_key,
@@ -23,6 +24,7 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
 from refinery.lib.scripts.js.model import (
     JsArrayExpression,
     JsArrayPattern,
+    JsArrowFunctionExpression,
     JsAssignmentExpression,
     JsAssignmentPattern,
     JsBinaryExpression,
@@ -48,10 +50,12 @@ from refinery.lib.scripts.js.model import (
     JsReturnStatement,
     JsScript,
     JsSequenceExpression,
+    JsSpreadElement,
     JsStringLiteral,
     JsSwitchCase,
     JsSwitchStatement,
     JsUnaryExpression,
+    JsUpdateExpression,
     JsVariableDeclaration,
     JsVariableDeclarator,
     JsVarKind,
@@ -338,7 +342,9 @@ def _collect_assignment_targets(
     """
     Record the home namespace of every namespace-local slot written by *target*, mapping each member
     name to the set of namespaces it is written under. Recurses through array and object
-    destructuring patterns so that `[NS.a, NS.b] = …` and `({p: NS.c} = …)` are covered.
+    destructuring patterns so that `[NS.a, NS.b] = …` and `({p: NS.c} = …)` are covered, including
+    the object-literal spelling the parser leaves as an expression for a nested property value, so
+    that a namespace member destructured at any depth still contributes its home.
     """
     home = _namespace_member_home(target, scope_param_name, ns_names)
     if home is not None:
@@ -349,15 +355,15 @@ def _collect_assignment_targets(
         for elem in target.elements:
             if elem is not None:
                 _collect_assignment_targets(elem, scope_param_name, ns_names, out)
-    elif isinstance(target, JsObjectPattern):
+    elif isinstance(target, (JsObjectPattern, JsObjectExpression)):
         for prop in target.properties:
             if isinstance(prop, JsProperty):
                 _collect_assignment_targets(prop.value, scope_param_name, ns_names, out)
-            elif isinstance(prop, JsRestElement):
+            elif isinstance(prop, (JsRestElement, JsSpreadElement)):
                 _collect_assignment_targets(prop.argument, scope_param_name, ns_names, out)
     elif isinstance(target, JsAssignmentPattern):
         _collect_assignment_targets(target.left, scope_param_name, ns_names, out)
-    elif isinstance(target, JsRestElement):
+    elif isinstance(target, (JsRestElement, JsSpreadElement)):
         _collect_assignment_targets(target.argument, scope_param_name, ns_names, out)
 
 
@@ -464,12 +470,16 @@ def _collect_namespace_homes(
     A member written under exactly one namespace maps to that namespace as its home path; a member
     written under two or more namespaces is ambiguous and omitted, leaving it bare. A name with no
     namespace-defining write at all is genuinely free/global and is likewise absent, so it stays
-    bare and resolves to its outer binding once the `with` is dissolved.
+    bare and resolves to its outer binding once the `with` is dissolved. Any assignment operator
+    (plain, compound, or logical) and the update operators (`++`/`--`) count as a defining write,
+    since each names the slot as living on its namespace.
     """
     accumulated: dict[str, set[str]] = {}
     for node in switch_stmt.walk():
-        if isinstance(node, JsAssignmentExpression) and node.operator == '=':
+        if isinstance(node, JsAssignmentExpression):
             _collect_assignment_targets(node.left, scope_param_name, ns_names, accumulated)
+        elif isinstance(node, JsUpdateExpression):
+            _collect_assignment_targets(node.argument, scope_param_name, ns_names, accumulated)
     homes: dict[str, tuple[str, ...]] = {}
     for member, home_set in accumulated.items():
         if len(home_set) == 1:
@@ -2254,20 +2264,32 @@ def _make_namespace_node(ns_path: list[str]) -> Expression:
 
 def _qualify_bare_walk(node: Node, homes: dict[str, tuple[str, ...]], exempt: set[str]) -> None:
     for child in node.children():
-        if isinstance(child, (JsFunctionExpression, JsFunctionDeclaration)):
+        if isinstance(child, (JsFunctionExpression, JsFunctionDeclaration, JsArrowFunctionExpression)):
             inner_exempt = exempt | _collect_declared_names(child)
+            _qualify_bare_walk(child, homes, inner_exempt)
+            continue
+        if isinstance(child, JsCatchClause):
+            inner_exempt = exempt
+            if child.param is not None:
+                param_names: set[str] = set()
+                _collect_binding_names(child.param, param_names)
+                inner_exempt = exempt | param_names
             _qualify_bare_walk(child, homes, inner_exempt)
             continue
         if isinstance(child, JsIdentifier) and child.name in homes and child.name not in exempt:
             parent = child.parent
             if isinstance(parent, JsMemberExpression) and parent.property is child and not parent.computed:
                 continue
-            if isinstance(parent, JsProperty) and parent.key is child and not parent.computed:
-                continue
+            if isinstance(parent, JsProperty) and not parent.computed:
+                if parent.shorthand and parent.value is child:
+                    replacement = _make_namespace_node([*homes[child.name], child.name])
+                    replacement.parent = parent
+                    parent.value = replacement
+                    parent.shorthand = False
+                    continue
+                if parent.key is child:
+                    continue
             if isinstance(parent, (JsVariableDeclarator, JsRestElement)):
-                exempt.add(child.name)
-                continue
-            if isinstance(parent, JsCatchClause) and parent.param is child:
                 exempt.add(child.name)
                 continue
             if isinstance(parent, (JsLabeledStatement, JsContinueStatement, JsBreakStatement)):
@@ -2278,21 +2300,25 @@ def _qualify_bare_walk(node: Node, homes: dict[str, tuple[str, ...]], exempt: se
         _qualify_bare_walk(child, homes, exempt)
 
 
-def _collect_declared_names(func: JsFunctionExpression | JsFunctionDeclaration) -> set[str]:
+def _collect_declared_names(
+    func: JsFunctionExpression | JsFunctionDeclaration | JsArrowFunctionExpression,
+) -> set[str]:
     """
     Collect parameter names and var-declared names from a function for exemption. Only collects
-    declarations at the function's own scope level — does not descend into nested functions.
+    declarations at the function's own scope level — does not descend into nested functions. An
+    arrow with an expression body (rather than a block) contributes only its parameter names.
     """
     names: set[str] = set()
     if isinstance(func, JsFunctionDeclaration) and func.id is not None:
         names.add(func.id.name)
     for p in (func.params or []):
         _collect_binding_names(p, names)
-    if func.body is not None:
-        queue: deque[Node] = deque(func.body.body)
+    body = func.body
+    if isinstance(body, JsBlockStatement):
+        queue: deque[Node] = deque(body.body)
         while queue:
             node = queue.popleft()
-            if isinstance(node, (JsFunctionExpression, JsFunctionDeclaration)):
+            if isinstance(node, (JsFunctionExpression, JsFunctionDeclaration, JsArrowFunctionExpression)):
                 if isinstance(node, JsFunctionDeclaration) and node.id is not None:
                     names.add(node.id.name)
                 continue
@@ -2459,16 +2485,19 @@ def _deepest_property_name(node: Node) -> str | None:
 
 def _is_bare_redirect_assignment(expr: Expression, redirect_var: str) -> bool:
     """
-    Whether *expr* is a stripped redirect-routing write `redirect_var = <rhs>` on the bare redirect
-    identifier. Once the scope prefix is dissolved unconditionally, `scope.redirect_var = scope.X`
-    survives as this bare assignment; it is pure routing bookkeeping with no consumer in the
-    recovered code.
+    Whether *expr* is a stripped redirect-routing write `redirect_var = <namespace>` on the bare
+    redirect identifier. Once the scope prefix is dissolved unconditionally, `scope.redirect_var =
+    scope.X` survives as this bare assignment of one identifier to another; it is pure routing
+    bookkeeping with no consumer in the recovered code. The right-hand side must be a bare
+    identifier — the only shape a stripped `scope.X` target can take — so that a coincidental
+    side-effecting write to a same-named variable is never discarded.
     """
     return (
         isinstance(expr, JsAssignmentExpression)
         and expr.operator == '='
         and isinstance(expr.left, JsIdentifier)
         and expr.left.name == redirect_var
+        and isinstance(expr.right, JsIdentifier)
     )
 
 
@@ -2653,7 +2682,7 @@ def _resolve_shared_wrappers(
             if synthetic.arg_params:
                 node.params = [JsIdentifier(name=n) for n in synthetic.arg_params]
             elif target is not None and target != wrapper_info.rest_param_name:
-                node.params = [JsRestElement(argument=JsIdentifier(name=target))]
+                node.params = _rebind_wrapper_param(node.params, target)
             resolved_any = True
         if not resolved_any:
             break
@@ -2669,19 +2698,6 @@ def _walk_all(stmts: list[Statement]):
         yield from stmt.walk()
 
 
-def _name_bound_by_nested_function(stmts: list[Statement], name: str) -> bool:
-    """
-    Return whether *name* is declared — as a parameter, function name, or var — by any function
-    anywhere within the given statements. Such a name cannot serve as a rebind target without
-    capturing that unrelated binding.
-    """
-    for node in _walk_all(stmts):
-        if isinstance(node, (JsFunctionExpression, JsFunctionDeclaration)):
-            if name in _collect_declared_names(node):
-                return True
-    return False
-
-
 def _fresh_arg_name(base: str, taken: set[str]) -> str:
     """
     Derive an identifier based on *base* that does not appear in *taken*.
@@ -2694,6 +2710,26 @@ def _fresh_arg_name(base: str, taken: set[str]) -> str:
     return candidate
 
 
+def _rebind_wrapper_param(params: list[Expression], target: str) -> list[Expression]:
+    """
+    Rename the binding of a wrapper's last parameter to *target*, preserving any leading parameters
+    and whether that last parameter is a rest element or a plain identifier. A rest wrapper
+    `(...rest)` becomes `(...target)` and a plain wrapper `(p)` becomes `(target)`, so the recovered
+    body — whose argument-variable references were rebound onto *target* — keeps the wrapper's
+    original arity and its rest-versus-scalar argument mapping. A parameterless wrapper gains a
+    single rest parameter.
+    """
+    if not params:
+        return [JsRestElement(argument=JsIdentifier(name=target))]
+    result = list(params)
+    last = result[-1]
+    if isinstance(last, JsRestElement):
+        result[-1] = JsRestElement(argument=JsIdentifier(name=target))
+    else:
+        result[-1] = JsIdentifier(name=target)
+    return result
+
+
 def _wrapper_arg_param_name(
     match: _GeneratorCFFMatch,
     wrapper_info: _WrapperFunctionInfo,
@@ -2701,23 +2737,26 @@ def _wrapper_arg_param_name(
 ) -> str | None:
     """
     Choose the identifier a wrapper's recovered body should use for the shared generator's argument
-    variable, or `None` when the body never references it. The wrapper's own rest-parameter name is
-    preferred, but it is unusable when it collides with a state-machine variable or is bound by a
-    nested function in the recovered body: in either case rebinding onto it would capture an
-    unrelated binding. When the rest-param is unsafe (or absent), a fresh identifier not present in
+    variable, or `None` when the body never references it in a value position. The wrapper's own
+    rest-parameter name is preferred, but only when it neither collides with a state-machine
+    variable nor occurs anywhere in the recovered body: any occurrence there — a nested binding of
+    the name or a free reference to an outer one — would be captured once the argument variable is
+    rebound onto it. When the rest-param is unusable (or absent), a fresh identifier not present in
     the recovered body is minted instead.
     """
     if match.arg_var_name is None:
         return None
-    taken = {node.name for node in _walk_all(recovered) if isinstance(node, JsIdentifier)}
-    if match.arg_var_name not in taken:
+    taken: set[str] = set()
+    referenced: set[str] = set()
+    for node in _walk_all(recovered):
+        if isinstance(node, JsIdentifier):
+            taken.add(node.name)
+            if is_reference(node):
+                referenced.add(node.name)
+    if match.arg_var_name not in referenced:
         return None
     rest = wrapper_info.rest_param_name
-    if (
-        rest is not None
-        and rest not in match.state_var_names
-        and not _name_bound_by_nested_function(recovered, rest)
-    ):
+    if rest is not None and rest not in match.state_var_names and rest not in taken:
         return rest
     return _fresh_arg_name(match.arg_var_name, taken)
 
@@ -2732,7 +2771,8 @@ def _rebind_free_arg_var(
     name. A nested function whose own declarations (`_collect_declared_names`) bind either name owns
     that identifier and is left untouched; a function binding neither is descended into, so a
     genuine closure over the wrapper arguments is still rebound. Member-property and object-key
-    positions are skipped because a name there is not a variable reference.
+    positions are skipped because a name there is not a variable reference; an object shorthand
+    `{arg}` is expanded to `{arg: param}` so the value read is rebound without renaming the key.
     """
     for stmt in stmts:
         _rebind_arg_var_in_scope(stmt, arg_var_name, param_name)
@@ -2750,8 +2790,15 @@ def _rebind_arg_var_in_scope(node: Node, arg_var_name: str, param_name: str) -> 
             parent = child.parent
             if isinstance(parent, JsMemberExpression) and parent.property is child and not parent.computed:
                 continue
-            if isinstance(parent, JsProperty) and parent.key is child and not parent.computed:
-                continue
+            if isinstance(parent, JsProperty) and not parent.computed:
+                if parent.shorthand and parent.value is child:
+                    replacement = JsIdentifier(name=param_name)
+                    replacement.parent = parent
+                    parent.value = replacement
+                    parent.shorthand = False
+                    continue
+                if parent.key is child:
+                    continue
             child.name = param_name
             continue
         _rebind_arg_var_in_scope(child, arg_var_name, param_name)

@@ -279,12 +279,12 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
 
     def test_generator_cff_nested_wrapper_arg_rebind(self):
         """
-        The wrapper `run` has a rest-parameter named `a` that collides with a state variable, and its
-        recovered body contains a nested function that binds the generator's argument variable `args`
-        as its own local. Threading `run`'s arguments must mint a fresh parameter (`args_1`) rather
-        than reuse the colliding `a`, and must leave the nested `var args` untouched instead of
-        capturing it. Verified equivalent to the original under Node: `outer()(7)` returns `15` for
-        both, as do the other drivers.
+        The wrapper `run` has a rest-parameter named `a` that collides with a state variable, and
+        its recovered body contains a nested function that binds the generator's argument variable
+        `args` as its own local. Threading `run`'s arguments must mint a fresh parameter (`args_1`)
+        rather than reuse the colliding `a`, and must leave the nested `var args` untouched instead
+        of capturing it. Verified equivalent to the original under Node: `outer()(7)` returns `15`
+        for both, as do the other drivers.
         """
         result = self._run_transformer(self.NESTED_WRAPPER_ARG_REBIND_CFF, JsGeneratorCFFUnflattening)
         self.assertEqual(result, inspect.cleandoc(
@@ -1188,8 +1188,8 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
     def test_generator_cff_namespace_local_deep_write_recovered(self):
         """
         The complement of the free-name tests: a genuine namespace-local with a `scope.NS.local`
-        defining write is proven local, so bare `local` is qualified back to `NS.local`. This is what
-        distinguishes the fix from simply never qualifying.
+        defining write is proven local, so bare `local` is qualified back to `NS.local`. This is
+        what distinguishes the fix from simply never qualifying.
         """
         result = self._run_transformer(self.NAMESPACE_LOCAL_DEEP_CFF, JsGeneratorCFFUnflattening)
         self.assertEqual(result, inspect.cleandoc(
@@ -1312,13 +1312,14 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
 
     def test_generator_cff_sibling_namespace_home_canonical(self):
         """
-        A member of a sibling namespace `Sub` distinct from the main default `NS` is written qualified
-        (`Sub.slot`, while the `with` redirect is unset) and later read bare (`slot`, while the redirect
-        points at `Sub`). Node resolves both to `scope.Sub.slot`, so the recovery must canonicalize the
-        member to `Sub.slot` in both positions independently of the momentary redirect. `Sub` reaches the
-        scope as an object-literal argument the wrapper threads to the shared generator, making it a
-        structural namespace emitted as `var Sub = {}`. Verified equivalent to the original under Node:
-        the recovered `outer()(7)` returns `7`, as does the original.
+        A member of a sibling namespace `Sub` distinct from the main default `NS` is written
+        qualified (`Sub.slot`, while the `with` redirect is unset) and later read bare (`slot`,
+        while the redirect points at `Sub`). Node resolves both to `scope.Sub.slot`, so the recovery
+        must canonicalize the member to `Sub.slot` in both positions independently of the momentary
+        redirect. `Sub` reaches the scope as an object-literal argument the wrapper threads to the
+        shared generator, making it a structural namespace emitted as `var Sub = {}`. Verified
+        equivalent to the original under Node: the recovered `outer()(7)` returns `7`, as does the
+        original.
         """
         result = self._run_transformer(self.SIBLING_NAMESPACE_HOME_CFF, JsGeneratorCFFUnflattening)
         self.assertEqual(result, inspect.cleandoc(
@@ -1331,6 +1332,328 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
                 return Sub.slot[0];
               };
               return NS.make;
+            }
+            """
+        ))
+
+    CATCH_PARAM_QUALIFY_CFF = inspect.cleandoc(
+        """
+        function outer() {
+          function* gen(a, b, scope = {NS: {}}, args) {
+            while (a + b !== 100) {
+              with (scope.RV || scope) {
+                switch (a + b) {
+                  case 10:
+                    scope.NS.x = 5;
+                    scope.RV = scope.NS;
+                    a = 40, b = 0;
+                    break;
+                  case 40:
+                    try {
+                      throw 9;
+                    } catch (x) {
+                      scope.NS.x = x;
+                    }
+                    return done = true, x + 1;
+                    break;
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+"""
+    )
+
+    def test_generator_cff_catch_param_does_not_leak_qualification(self):
+        """
+        The namespace-local `x` is shadowed by a `catch (x)` binding in one statement and read
+        bare in a sibling statement. The catch exemption must stay confined to the catch clause so
+        the later read still qualifies to `NS.x`. Original and recovered both return 10 under Node.
+        """
+        result = self._run_transformer(self.CATCH_PARAM_QUALIFY_CFF, JsGeneratorCFFUnflattening)
+        self.assertEqual(result, inspect.cleandoc(
+            """
+            function outer() {
+              var NS = {};
+              NS.x = 5;
+              try {
+                throw 9;
+              } catch (x) {
+                NS.x = x;
+              }
+              return NS.x + 1;
+            }
+            """
+        ))
+
+    ARROW_PARAM_QUALIFY_CFF = inspect.cleandoc(
+        """
+        function outer() {
+          function* gen(a, b, scope = {NS: {}}, args) {
+            while (a + b !== 100) {
+              with (scope.RV || scope) {
+                switch (a + b) {
+                  case 10:
+                    scope.NS.x = 100;
+                    scope.RV = scope.NS;
+                    a = 40, b = 0;
+                    break;
+                  case 40:
+                    return done = true, ((x) => x + 1)(5);
+                    break;
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+"""
+    )
+
+    def test_generator_cff_arrow_param_not_qualified(self):
+        """
+        An arrow parameter that shares a name with the namespace-local `x` is its own binding, so it
+        must stay bare rather than be rewritten to the invalid `(NS.x) => NS.x + 1`. Original and
+        recovered both return 6 under Node.
+        """
+        result = self._run_transformer(self.ARROW_PARAM_QUALIFY_CFF, JsGeneratorCFFUnflattening)
+        self.assertEqual(result, inspect.cleandoc(
+            """
+            function outer() {
+              var NS = {};
+              NS.x = 100;
+              return (x => x + 1)(5);
+            }
+            """
+        ))
+
+    OBJECT_SHORTHAND_QUALIFY_CFF = inspect.cleandoc(
+        """
+        function outer() {
+          function* gen(a, b, scope = {NS: {}}, args) {
+            while (a + b !== 100) {
+              with (scope.RV || scope) {
+                switch (a + b) {
+                  case 10:
+                    scope.NS.x = 7;
+                    scope.RV = scope.NS;
+                    a = 40, b = 0;
+                    break;
+                  case 40:
+                    return done = true, {x};
+                    break;
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+"""
+    )
+
+    def test_generator_cff_object_shorthand_qualified(self):
+        """
+        A namespace-local read through an object shorthand `{x}` must expand to `{x: NS.x}`; leaving
+        it bare would read a global. Original and recovered both return {x: 7} under Node.
+        """
+        result = self._run_transformer(self.OBJECT_SHORTHAND_QUALIFY_CFF, JsGeneratorCFFUnflattening)
+        self.assertEqual(result, inspect.cleandoc(
+            """
+            function outer() {
+              var NS = {};
+              NS.x = 7;
+              return { x: NS.x };
+            }
+            """
+        ))
+
+    COMPOUND_ASSIGNMENT_HOME_CFF = inspect.cleandoc(
+        """
+        function outer(seed) {
+          function* gen(a, b, scope = {NS: {}}, args) {
+            while (a + b !== 100) {
+              with (scope.RV || scope) {
+                switch (a + b) {
+                  case 10:
+                    scope.RV = scope.NS;
+                    scope.NS.c ||= 3;
+                    a = 40, b = 0;
+                    break;
+                  case 40:
+                    return done = true, c + 1;
+                    break;
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+"""
+    )
+
+    def test_generator_cff_compound_assignment_home(self):
+        """
+        A member whose only defining write is a logical assignment (`scope.NS.c ||= 3`) is still a
+        namespace-local, so its bare read must qualify to `NS.c`. Original and recovered both return
+        4 under Node.
+        """
+        result = self._run_transformer(self.COMPOUND_ASSIGNMENT_HOME_CFF, JsGeneratorCFFUnflattening)
+        self.assertEqual(result, inspect.cleandoc(
+            """
+            function outer(seed) {
+              var NS = {};
+              NS.c ||= 3;
+              return NS.c + 1;
+            }
+            """
+        ))
+
+    PLAIN_PARAM_WRAPPER_CFF = inspect.cleandoc(
+        """
+        function outer() {
+          function* gen(a, b, scope = {}, args) {
+            while (a + b !== 100) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    var w = function(a) {
+                      return gen(40, 0, scope, a)["next"]()["value"];
+                    };
+                    return done = true, w;
+                    break;
+                  case 40:
+                    return done = true, args[0] + args[1];
+                    break;
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+"""
+    )
+
+    def test_generator_cff_plain_param_wrapper_preserved(self):
+        """
+        A wrapper with a plain (non-rest) parameter colliding with a state variable must stay plain
+        after its argument name is minted fresh, not become `...args_1`, so the caller's single
+        array argument keeps its binding. Original and recovered both return 3 for `outer()([1,2])`.
+        """
+        result = self._run_transformer(self.PLAIN_PARAM_WRAPPER_CFF, JsGeneratorCFFUnflattening)
+        self.assertEqual(result, inspect.cleandoc(
+            """
+            function outer() {
+              var w = function(args_1) {
+                return args_1[0] + args_1[1];
+              };
+              return w;
+            }
+            """
+        ))
+
+    WRAPPER_REST_FREE_REFERENCE_CFF = inspect.cleandoc(
+        """
+        var sink;
+        function outer() {
+          function* gen(a, b, scope = {}, args) {
+            while (a + b !== 100) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    var w = function(...data) {
+                      return gen(40, 0, scope, data)["next"]()["value"];
+                    };
+                    return done = true, w;
+                    break;
+                  case 40:
+                    sink = data;
+                    return done = true, args[0];
+                    break;
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        var data = 999;
+"""
+    )
+
+    def test_generator_cff_wrapper_rest_free_reference(self):
+        """
+        The wrapper's rest name `data` also occurs as a free global read in the recovered body, so
+        reusing it as the argument name would capture that global; a fresh name must be minted
+        instead. Original and recovered both yield sink == 999 under Node.
+        """
+        result = self._run_transformer(self.WRAPPER_REST_FREE_REFERENCE_CFF, JsGeneratorCFFUnflattening)
+        self.assertEqual(result, inspect.cleandoc(
+            """
+            var sink;
+            function outer() {
+              var w = function(...args_1) {
+                sink = data;
+                return args_1[0];
+              };
+              return w;
+            }
+            var data = 999;
+            """
+        ))
+
+    WRAPPER_SHORTHAND_ARG_CFF = inspect.cleandoc(
+        """
+        function outer() {
+          function* gen(a, b, scope = {}, args) {
+            while (a + b !== 100) {
+              with (scope) {
+                switch (a + b) {
+                  case 10:
+                    var w = function(...rest) {
+                      return gen(40, 0, scope, rest)["next"]()["value"];
+                    };
+                    return done = true, w;
+                    break;
+                  case 40:
+                    return done = true, {args};
+                    break;
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+"""
+    )
+
+    def test_generator_cff_wrapper_shorthand_arg_rebound(self):
+        """
+        The threaded argument holder read through a shorthand `{args}` must expand to `{args: rest}`
+        so the property value binds the wrapper parameter. Original and recovered both return
+        {args: [5, 6]} for `outer()(5, 6)` under Node.
+        """
+        result = self._run_transformer(self.WRAPPER_SHORTHAND_ARG_CFF, JsGeneratorCFFUnflattening)
+        self.assertEqual(result, inspect.cleandoc(
+            """
+            function outer() {
+              var w = function(...rest) {
+                return { args: rest };
+              };
+              return w;
             }
             """
         ))
