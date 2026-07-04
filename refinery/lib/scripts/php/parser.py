@@ -121,9 +121,6 @@ from refinery.lib.scripts.php.token import PhpToken, PhpTokenKind as K
 # Tuple: (precedence, right_associative, non_associative).
 # PHP declares ==, !=, ===, !==, <=>, <, <=, >, >= as %nonassoc in its grammar.
 _BINARY_PREC: dict[K, tuple[int, bool, bool]] = {
-    K.LOGICAL_OR:          ( 3, False, False),  # noqa
-    K.LOGICAL_XOR:         ( 4, False, False),  # noqa
-    K.LOGICAL_AND:         ( 5, False, False),  # noqa
     K.COALESCE:            (11, True,  False),  # noqa
     K.BOOLEAN_OR:          (12, False, False),  # noqa
     K.BOOLEAN_AND:         (13, False, False),  # noqa
@@ -148,6 +145,15 @@ _BINARY_PREC: dict[K, tuple[int, bool, bool]] = {
     K.SLASH:               (23, False, False),  # noqa
     K.PERCENT:             (23, False, False),  # noqa
     K.POW:                 (27, True,  False),  # noqa
+}
+
+# The word operators are the lowest-precedence operators in PHP, below assignment, with
+# or < xor < and. They are handled by `_parse_logical` outside `_BINARY_PREC` so they wrap
+# assignment rather than binding tighter than it.
+_LOGICAL_PREC: dict[K, int] = {
+    K.LOGICAL_OR:  1,  # noqa
+    K.LOGICAL_XOR: 2,  # noqa
+    K.LOGICAL_AND: 3,  # noqa
 }
 
 _ASSIGN_OPS: dict[K, str] = {
@@ -1315,7 +1321,19 @@ class PhpParser:
         )
 
     def _parse_expression(self) -> Expression:
-        return self._parse_assignment()
+        return self._parse_logical(1)
+
+    def _parse_logical(self, min_prec: int) -> Expression:
+        left = self._parse_assignment()
+        while True:
+            prec = _LOGICAL_PREC.get(self._current.kind)
+            if prec is None or prec < min_prec:
+                break
+            op = self._advance().value
+            right = self._parse_logical(prec + 1)
+            left = PhpBinaryExpression(
+                operator=op, left=left, right=right, offset=left.offset)
+        return left
 
     def _parse_assignment(self) -> Expression:
         if self._at(K.THROW):
@@ -1397,7 +1415,9 @@ class PhpParser:
             left = PhpBinaryExpression(
                 operator=op, left=left, right=right, offset=left.offset)
             if non_assoc:
-                break
+                following = _BINARY_PREC.get(self._current.kind)
+                if following is not None and following[0] == prec:
+                    break
         return left
 
     def _parse_not(self) -> Expression:

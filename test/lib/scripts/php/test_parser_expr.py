@@ -15,6 +15,7 @@ from refinery.lib.scripts.php.model import (
     PhpClosure,
     PhpConstFetch,
     PhpEmpty,
+    PhpErrorNode,
     PhpErrorSuppress,
     PhpExpressionStatement,
     PhpFloatLiteral,
@@ -275,28 +276,48 @@ class TestPhpParserExpr(TestBase):
         self.assertIsInstance(node, PhpConstFetch)
 
     def test_instanceof_non_associative(self):
-        # PHP declares instanceof as non-associative: $a instanceof B instanceof C
-        # must parse as ($a instanceof B) with the second instanceof left unconsumed.
-        from refinery.lib.scripts.php.model import PhpExpressionStatement
+        # PHP declares instanceof non-associative, so chaining it is a parse error;
+        # a nested parse instead would recover without any error node.
         ast = PhpParser('<?php $a instanceof B instanceof C;').parse()
-        stmts = ast.body
-        # Should produce two statements or error nodes rather than nested instanceof.
-        first = stmts[0]
-        self.assertIsInstance(first, PhpExpressionStatement)
-        self.assertIsInstance(first.expression, PhpInstanceof)
-        # The second instanceof should NOT be nested inside the first.
-        self.assertNotIsInstance(first.expression.operand, PhpInstanceof)
+        self.assertIsInstance(ast.body[0], PhpExpressionStatement)
+        self.assertTrue(any(isinstance(n, PhpErrorNode) for n in ast.walk()))
 
     def test_comparison_non_associative(self):
-        # PHP declares < as non-associative: $a < $b < $c must not produce
-        # a nested left-associative binary expression.
+        # PHP declares the comparison operators non-associative, so chaining them
+        # is a parse error; a left- or right-associative nesting would not error.
         ast = PhpParser('<?php $a < $b < $c;').parse()
-        stmts = ast.body
-        # The parser should not produce a clean nested PhpBinaryExpression
-        # for $a < $b < $c; it breaks after one operator.
-        first = stmts[0]
-        self.assertIsInstance(first, PhpExpressionStatement)
-        inner = first.expression
-        self.assertIsInstance(inner, PhpBinaryExpression)
-        # Left operand must be a variable ($a), not a comparison (would mean chaining).
-        self.assertNotIsInstance(inner.left, PhpBinaryExpression)
+        self.assertIsInstance(ast.body[0], PhpExpressionStatement)
+        self.assertTrue(any(isinstance(n, PhpErrorNode) for n in ast.walk()))
+
+    def test_comparison_then_lower_precedence(self):
+        # A lower-precedence operator after a non-associative comparison is legal:
+        # $a == $b && $c parses as ($a == $b) && $c, not a chaining error.
+        node = self._expr('$a == $b && $c')
+        self.assertIsInstance(node, PhpBinaryExpression)
+        self.assertEqual(node.operator, '&&')
+        self.assertIsInstance(node.left, PhpBinaryExpression)
+        self.assertEqual(node.left.operator, '==')
+
+    def test_word_logical_below_assignment(self):
+        # and/or/xor are the lowest-precedence operators, below assignment:
+        # $r = $a and $b parses as ($r = $a) and $b.
+        node = self._expr('$r = $a and $b')
+        self.assertIsInstance(node, PhpBinaryExpression)
+        self.assertEqual(node.operator, 'and')
+        self.assertIsInstance(node.left, PhpAssignment)
+
+    def test_word_logical_or_below_and(self):
+        # or binds looser than and: $a or $b and $c parses as $a or ($b and $c).
+        node = self._expr('$a or $b and $c')
+        self.assertIsInstance(node, PhpBinaryExpression)
+        self.assertEqual(node.operator, 'or')
+        self.assertIsInstance(node.right, PhpBinaryExpression)
+        self.assertEqual(node.right.operator, 'and')
+
+    def test_word_logical_left_associative(self):
+        # and is left-associative: $a and $b and $c parses as ($a and $b) and $c.
+        node = self._expr('$a and $b and $c')
+        self.assertIsInstance(node, PhpBinaryExpression)
+        self.assertEqual(node.operator, 'and')
+        self.assertIsInstance(node.left, PhpBinaryExpression)
+        self.assertEqual(node.left.operator, 'and')
