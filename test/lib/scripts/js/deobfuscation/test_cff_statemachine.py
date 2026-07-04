@@ -1336,6 +1336,74 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
             """
         ))
 
+    AMBIGUOUS_NAMESPACE_HOME_CFF = inspect.cleandoc(
+        """
+        function outer() {
+          function* gen(a, b, scope = {NS: {}}, args) {
+            while (a + b !== 100) {
+              with (scope.RV || scope) {
+                switch (a + b) {
+                  case 10:
+                    scope.Alt = {};
+                    scope.NS.v = 11;
+                    scope.Alt.v = 22;
+                    scope.RV = scope.Alt;
+                    a = 40, b = 0;
+                    break;
+                  case 40:
+                    return done = true, v;
+                    break;
+                }
+              }
+            }
+          }
+          var done;
+          var result = gen(5, 5)["next"]()["value"];
+          if (done) { return result; }
+        }
+        """
+    )
+
+    def test_generator_cff_ambiguous_namespace_home_declined(self):
+        """
+        The member `v` is written under two sibling namespaces (`scope.NS.v` and `scope.Alt.v`), so it
+        has no single canonical home — under the `with`-redirect a bare `v` resolves to `NS.v` or
+        `Alt.v` depending on the routing state at each use, which redirect-independent qualification
+        cannot express. Recovery of the whole generator is declined and it is returned unchanged,
+        rather than emitting a bare `v` that would resolve to a free variable. Node-verified: the
+        original and the returned form both evaluate `outer()` to 22.
+        """
+        result = self._run_transformer(self.AMBIGUOUS_NAMESPACE_HOME_CFF, JsGeneratorCFFUnflattening)
+        self.assertEqual(result, inspect.cleandoc(
+            """
+            function outer() {
+              function* gen(a, b, scope = { NS: {} }, args) {
+                while (a + b !== 100) {
+                  with (scope.RV || scope) {
+                    switch (a + b) {
+                      case 10:
+                        scope.Alt = {};
+                        scope.NS.v = 11;
+                        scope.Alt.v = 22;
+                        scope.RV = scope.Alt;
+                        a = 40, b = 0;
+                        break;
+                      case 40:
+                        return done = true, v;
+                        break;
+                    }
+                  }
+                }
+              }
+              var done;
+              var result = gen(5, 5)["next"]()["value"];
+              if (done) {
+                return result;
+              }
+            }
+            """
+        ))
+
     CATCH_PARAM_QUALIFY_CFF = inspect.cleandoc(
         """
         function outer() {

@@ -462,17 +462,21 @@ def _collect_namespace_homes(
     switch_stmt: JsSwitchStatement,
     scope_param_name: str | None,
     ns_names: set[str],
-) -> dict[str, tuple[str, ...]]:
+) -> dict[str, tuple[str, ...]] | None:
     """
-    Determine the canonical home namespace of every proven namespace-local member. Each `=`
-    assignment target in the switch — at any nesting depth, since the scope and namespace objects
-    are closed over — is fed through the destructuring collector to accumulate `member -> {home…}`.
-    A member written under exactly one namespace maps to that namespace as its home path; a member
-    written under two or more namespaces is ambiguous and omitted, leaving it bare. A name with no
-    namespace-defining write at all is genuinely free/global and is likewise absent, so it stays
-    bare and resolves to its outer binding once the `with` is dissolved. Any assignment operator
-    (plain, compound, or logical) and the update operators (`++`/`--`) count as a defining write,
-    since each names the slot as living on its namespace.
+    Determine the canonical home namespace of every proven namespace-local member, or return `None`
+    to decline recovery when a member is ambiguous. Each `=` assignment target in the switch — at any
+    nesting depth, since the scope and namespace objects are closed over — is fed through the
+    destructuring collector to accumulate `member -> {home…}`. A member written under exactly one
+    namespace maps to that namespace as its home path. A member written under two or more namespaces
+    has no single canonical home: under the `with`-redirect its meaning depends on which namespace the
+    routing variable points at when each use executes, which redirect-independent qualification cannot
+    express — so recovery of the whole generator is declined (`None`) rather than emitting a reference
+    that would resolve to the wrong binding or a free variable. A name with no namespace-defining write
+    at all is genuinely free/global and is absent from the map, so it stays bare and resolves to its
+    outer binding once the `with` is dissolved. Any assignment operator (plain, compound, or logical)
+    and the update operators (`++`/`--`) count as a defining write, since each names the slot as living
+    on its namespace.
     """
     accumulated: dict[str, set[str]] = {}
     for node in switch_stmt.walk():
@@ -482,8 +486,9 @@ def _collect_namespace_homes(
             _collect_assignment_targets(node.argument, scope_param_name, ns_names, accumulated)
     homes: dict[str, tuple[str, ...]] = {}
     for member, home_set in accumulated.items():
-        if len(home_set) == 1:
-            homes[member] = (next(iter(home_set)),)
+        if len(home_set) >= 2:
+            return None
+        homes[member] = (next(iter(home_set)),)
     return homes
 
 
@@ -584,7 +589,10 @@ def _match_generator_cff(body: list[Statement], idx: int) -> _GeneratorCFFMatch 
             gen_name,
             len(state_var_names),
         )
-        namespace_homes = _collect_namespace_homes(switch_stmt, scope_param_name, namespaces)
+        homes = _collect_namespace_homes(switch_stmt, scope_param_name, namespaces)
+        if homes is None:
+            return None
+        namespace_homes = homes
     return _GeneratorCFFMatch(
         generator_name=gen_name,
         state_var_names=state_var_names,
