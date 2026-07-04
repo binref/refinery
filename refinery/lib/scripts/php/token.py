@@ -157,7 +157,7 @@ class PhpTokenKind(enum.Enum):
     DOUBLE_COLON        = '::'               # noqa
     NS_SEPARATOR        = '\\'               # noqa
     ELLIPSIS            = '...'              # noqa
-    ATTRIBUTE           = '#['               # noqa
+    ATTRIBUTE           = '\x23['            # noqa
 
     INT_CAST            = '(int)'            # noqa
     FLOAT_CAST          = '(float)'          # noqa
