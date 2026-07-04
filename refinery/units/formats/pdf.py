@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import codecs
 import re
 
 from itertools import islice
@@ -190,23 +191,40 @@ class xtpdf(ArchiveUnit):
             yield UnpackResult(path, blob.to_json())
 
     def unpack(self, data):
+        if not (password := self.args.pwd):
+            password = None
+            password_raw = b''
+            password_str = r''
+        elif isinstance(password, (bytes, bytearray, memoryview)):
+            password_raw = password
+            password_str = codecs.decode(password, self.codec)
+        elif isinstance(password, str):
+            password_raw = codecs.encode(password, self.codec)
+            password_str = password
+        else:
+            raise TypeError('The password argument is not a (byte) string.')
         try:
             mu = self._mupdf.open(stream=data, filetype='pdf')
         except Exception:
-            mu = password = None
+            mu = None
         else:
-            if password := self.args.pwd or None:
+            if password:
                 if mu.is_encrypted:
-                    mu.authenticate(password)
+                    try:
+                        mu.authenticate(password_str)
+                    except Exception:
+                        mu.authenticate(password_raw)
                 else:
                     self.log_warn('This PDF document is not protected; ignoring password argument.')
-                    password = ''
+                    password = None
+                    password_str = r''
+                    password_raw = b''
             elif mu.is_encrypted:
                 raise ValueError('This PDF is password protected.')
 
         with MemoryFile(data, output=bytes) as stream, NoLogging():
             try:
-                pdf = self._pikepdf.open(stream, password=(password or ''))
+                pdf = self._pikepdf.open(stream, password=password_raw)
                 yield from self._walk_pike(pdf.trailer, None, 'raw')
             except Exception:
                 raise
