@@ -3,7 +3,6 @@ from __future__ import annotations
 from test import TestBase
 
 from refinery.lib.scripts.php.deobfuscation import deobfuscate
-from refinery.lib.scripts.php.model import PhpErrorNode
 from refinery.lib.scripts.php.parser import PhpParser
 from refinery.lib.scripts.php.synth import PhpSynthesizer
 
@@ -36,8 +35,11 @@ class TestPhpDeobfuscationSkeleton(TestBase):
             after = synth.convert(ast)
             self.assertEqual(before, after)
 
-    def test_no_error_nodes_on_wellformed_input(self):
+    def test_no_parse_errors_on_wellformed_input(self):
         for source in self.SOURCES:
             ast = PhpParser(source).parse()
-            errors = [n for n in ast.walk() if isinstance(n, PhpErrorNode)]
-            self.assertEqual(errors, [])
+            self.assertEqual(ast.errors, [])
+
+    def test_parse_errors_on_malformed_input(self):
+        ast = PhpParser('<?php { $a;').parse()
+        self.assertNotEqual(ast.errors, [])

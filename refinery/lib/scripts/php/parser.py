@@ -309,6 +309,7 @@ class PhpParser:
         self._tokens: list[PhpToken] = []
         self._trivia: dict[int, list[str]] = {}
         self._index = 0
+        self._errors: list[PhpErrorNode] = []
         self._materialize()
 
     def _materialize(self):
@@ -354,12 +355,18 @@ class PhpParser:
         if self._current.kind == kind:
             return self._advance()
         tok = self._current
+        self._error(tok, F'expected {kind.name}')
         return PhpToken(kind, tok.value, tok.offset)
+
+    def _error(self, tok: PhpToken, message: str) -> PhpErrorNode:
+        node = PhpErrorNode(text=tok.value, message=message, offset=tok.offset)
+        self._errors.append(node)
+        return node
 
     def parse(self) -> PhpScript:
         offset = self._current.offset
         body = self._parse_statement_list(K.EOF)
-        return PhpScript(body=body, offset=offset)
+        return PhpScript(body=body, errors=self._errors, offset=offset)
 
     def _parse_statement_list(self, *stop: K) -> list[Statement]:
         body: list[Statement] = []
@@ -378,11 +385,7 @@ class PhpParser:
                 body.append(stmt)
             elif self._index == mark:
                 tok = self._advance()
-                error = PhpErrorNode(
-                    text=tok.value,
-                    message='unexpected token',
-                    offset=tok.offset,
-                )
+                error = self._error(tok, 'unexpected token')
                 if comments:
                     error.leading_comments[:0] = comments
                 body.append(error)
@@ -1145,7 +1148,8 @@ class PhpParser:
                     member.leading_comments[:0] = comments
                 members.append(member)
             elif self._index == mark:
-                self._advance()
+                tok = self._advance()
+                self._error(tok, 'unexpected token')
         trailing = self._trivia.pop(self._index, None)
         if trailing and members:
             members[-1].leading_comments.extend(trailing)
@@ -1718,8 +1722,7 @@ class PhpParser:
             return self._parse_name_or_const(offset)
 
         self._advance()
-        return PhpErrorNode(
-            text=tok.value, message='unexpected token', offset=offset)
+        return self._error(tok, 'unexpected token')
 
     def _parse_name_or_const(self, offset: int) -> Expression:
         name = self._parse_name()

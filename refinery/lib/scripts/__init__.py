@@ -21,7 +21,7 @@ class Kind(enum.IntEnum):
     TupleList = 3
 
 
-_SKIP_FIELDS = frozenset(('offset', 'parent', 'leading_comments'))
+_SKIP_FIELDS = frozenset(('offset', 'parent', 'leading_comments', 'errors'))
 
 _child_fields_cache: dict[type, list[tuple[str, Kind]]] = {}
 

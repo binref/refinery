@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from test import TestBase
 
-from refinery.lib.scripts.php.model import PhpErrorNode
 from refinery.lib.scripts.php.parser import PhpParser
 from refinery.lib.scripts.php.synth import PhpSynthesizer
 
@@ -12,11 +11,10 @@ class TestPhpSynthesizer(TestBase):
     def _round_trip(self, source: str) -> str:
         synth = PhpSynthesizer()
         ast1 = PhpParser(source).parse()
-        errors = [n for n in ast1.walk() if isinstance(n, PhpErrorNode)]
         self.assertEqual(
-            errors, [],
-            F'Parse produced error nodes for {source!r}: '
-            F'{[e.text for e in errors]}',
+            ast1.errors, [],
+            F'Parse produced errors for {source!r}: '
+            F'{[e.message for e in ast1.errors]}',
         )
         out1 = synth.convert(ast1)
         ast2 = PhpParser(out1).parse()

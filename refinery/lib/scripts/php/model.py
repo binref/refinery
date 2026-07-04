@@ -36,6 +36,7 @@ class PhpClassKind(enum.Enum):
 @dataclass(repr=False, eq=False)
 class PhpScript(Node):
     body: list[Statement] = field(default_factory=list)
+    errors: list[PhpErrorNode] = field(default_factory=list)
 
 
 @dataclass(repr=False, eq=False)
