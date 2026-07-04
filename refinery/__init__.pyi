@@ -312,6 +312,7 @@ from refinery.units.meta.queue import qb as qb
 from refinery.units.meta.queue import qf as qf
 from refinery.units.meta.reduce import reduce as reduce
 from refinery.units.meta.rmv import rmv as rmv
+from refinery.units.meta.scan import scan as scan
 from refinery.units.meta.scope import scope as scope
 from refinery.units.meta.sep import sbc as sbc
 from refinery.units.meta.sep import sbs as sbs

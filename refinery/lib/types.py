@@ -63,6 +63,7 @@ __all__ = [
     'ClassVar',
     'Collection',
     'convert',
+    'EMPTY',
     'Generator',
     'INF',
     'isbuffer',
@@ -275,6 +276,158 @@ class AST(metaclass=Singleton):
 
     def __repr__(self):
         return '*'
+
+
+def _instance_to_neutral(sentinel):
+    if isinstance(sentinel, (int, float, complex)):
+        return 0
+    if isinstance(sentinel, (bytes, bytearray, memoryview)):
+        return B''
+    if isinstance(sentinel, str):
+        return R''
+    if isinstance(sentinel, list):
+        return []
+    if isinstance(sentinel, tuple):
+        return ()
+    if isinstance(sentinel, (set, frozenset)):
+        return set()
+    if isinstance(sentinel, dict):
+        return {}
+    return None
+
+
+def _try_fold_neutral(default):
+    def decorator(method):
+        def decorated(self, sentinel):
+            neutral = _instance_to_neutral(sentinel)
+            if neutral is not None:
+                return method(neutral, sentinel)
+            elif default is None:
+                return sentinel
+            else:
+                return default
+        return decorated
+    return decorator
+
+
+class EMPTY(metaclass=Singleton):
+    """
+    A wildcard object which becomes the most reasonable neutral element in any operation.
+    """
+    @classmethod
+    def Project(cls, t):
+        return _instance_to_neutral(t)
+
+    def __len__(self):
+        return 0
+
+    def __contains__(self, _):
+        return False
+
+    def __index__(self):
+        return 0
+
+    @_try_fold_neutral(False)
+    def __lt__(self, t):
+        return self < t
+
+    @_try_fold_neutral(False)
+    def __le__(self, t: Any):
+        return self <= t
+
+    @_try_fold_neutral(False)
+    def __gt__(self, t: Any):
+        return self > t
+
+    @_try_fold_neutral(False)
+    def __ge__(self, t: Any):
+        return self >= t
+
+    @_try_fold_neutral(False)
+    def __eq__(self, t: Any):
+        return self == t
+
+    @_try_fold_neutral(False)
+    def __ne__(self, t: Any):
+        return self != t
+
+    @_try_fold_neutral(None)
+    def __mul__(self, t: Any):
+        return self * t
+
+    @_try_fold_neutral(None)
+    def __rmul__(self, t: Any):
+        return t * self
+
+    @_try_fold_neutral(None)
+    def __add__(self, t: Any):
+        return self + t
+
+    @_try_fold_neutral(None)
+    def __radd__(self, t: Any):
+        return t + self
+
+    @_try_fold_neutral(None)
+    def __sub__(self, t: Any):
+        return self - t
+
+    @_try_fold_neutral(None)
+    def __rsub__(self, t: Any):
+        return t - self
+
+    @_try_fold_neutral(None)
+    def __mod__(self, t: Any):
+        return self % t
+
+    @_try_fold_neutral(None)
+    def __rmod__(self, t: Any):
+        return t % self
+
+    @_try_fold_neutral(None)
+    def __pow__(self, t: Any):
+        return self ** t
+
+    @_try_fold_neutral(None)
+    def __rpow__(self, t: Any):
+        return t ** self
+
+    def __abs__(self):
+        return self
+
+    def __repr__(self):
+        return '?'
+
+    @_try_fold_neutral(None)
+    def __truediv__(self, t: Any):
+        return self / t
+
+    @_try_fold_neutral(None)
+    def __rtruediv__(self, t: Any):
+        return t / self
+
+    @_try_fold_neutral(None)
+    def __floordiv__(self, t: Any):
+        return self // t
+
+    @_try_fold_neutral(None)
+    def __rfloordiv__(self, t: Any):
+        return t // self
+
+    @_try_fold_neutral(None)
+    def __rshift__(self, t: Any):
+        return self >> t
+
+    @_try_fold_neutral(None)
+    def __rrshift__(self, t: Any):
+        return t >> self
+
+    @_try_fold_neutral(None)
+    def __lshift__(self, t: Any):
+        return self << t
+
+    @_try_fold_neutral(None)
+    def __rlshift__(self, t: Any):
+        return t << self
 
 
 class RepeatedInteger(int):
