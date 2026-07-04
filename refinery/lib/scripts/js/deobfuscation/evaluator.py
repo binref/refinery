@@ -599,12 +599,47 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
             self._failed_counts[func_id] = self._failed_counts.get(func_id, 0) + 1
 
     def _visible_functions(self, node: Node) -> dict[str, _FuncNode]:
+        """
+        The named functions the interpreter may resolve for calls at *node*'s position, in the scope
+        that lexically governs it.
+        """
+        return self._visible_functions_in_scope(self._scope_for_node(node))
+
+    def _functions_in_scope_of(self, func: Node) -> dict[str, _FuncNode]:
+        """
+        The named functions a call inside *func*'s own body may resolve, in *func*'s lexical scope.
+        The interpreter resolves a nested call through this rather than inheriting the caller's map, so
+        a name a closure reads binds to the definition that lexically governs it at the point of the
+        closure — a shadowing local, not an outer function that happens to share the name.
+        """
+        scope = self._scope_map.get(id(func))
+        if scope is None:
+            scope = self._scope_for_node(func)
+        return self._visible_functions_in_scope(scope)
+
+    def _visible_functions_in_scope(self, scope: _Scope | None) -> dict[str, _FuncNode]:
+        """
+        The named functions visible from *scope* outward, restricted to those whose binding the model
+        proves is a stable, sole definition. A reassigned or redeclared name resolves to no fixed
+        function, so it is excluded — the interpreter then treats such a call as unresolved and
+        declines the fold rather than binding it to a stale declaration. A name that an inner scope
+        declares shadows any same-named function further out, so once seen it is never resolved to an
+        outer definition: an unstable inner binding leaves the name unresolvable rather than exposing
+        the outer function the source never refers to at that point.
+        """
         result: dict[str, _FuncNode] = {}
-        scope = self._scope_for_node(node)
+        shadowed: set[str] = set()
+        effects = self._effects
         while scope is not None:
             for name, func in scope.functions.items():
-                if name not in result:
-                    result[name] = func
+                if name in shadowed:
+                    continue
+                shadowed.add(name)
+                if effects is not None:
+                    binding = effects.model.naming_binding(func)
+                    if binding is None or effects.function_of(binding) is not func:
+                        continue
+                result[name] = func
             scope = scope.parent
         return result
 
@@ -659,6 +694,7 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
             functions=functions_for_interpreter,
             closure=closure,
             closure_env=self._closure_env,
+            resolve_functions=self._functions_in_scope_of,
         )
         try:
             result = interpreter.execute(func, args)

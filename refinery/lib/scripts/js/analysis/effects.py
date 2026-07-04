@@ -914,10 +914,16 @@ class EffectModel:
         if isinstance(callee, JsIdentifier):
             if callee.name in _PURE_GLOBAL_FUNCTIONS and self._is_global_intrinsic(callee):
                 return _PURE
-            return self._function_of(self.model.resolve(callee))
+            return self.function_of(self.model.resolve(callee))
         return None
 
-    def _function_of(self, binding) -> Node | None:
+    def function_of(self, binding: Binding | None) -> Node | None:
+        """
+        The single function a *binding* stably resolves to — its sole declaration's function
+        declaration or function/arrow initializer — or `None` when the binding is absent, reassigned
+        (`writes`), redeclared (more than one declaration), dynamically rebindable, or not bound to a
+        function. The binding-level twin of `static_callee`.
+        """
         if binding is None:
             return None
         if binding.writes or len(binding.declarations) != 1:

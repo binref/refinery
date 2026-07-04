@@ -22,6 +22,9 @@ if TYPE_CHECKING:
     from refinery.lib.scripts.js.model import JsFunctionExpression as _FuncExpr
 
     Value: TypeAlias = str | int | float | bool | list | dict | _FuncDecl | _FuncExpr | _Arrow | None
+    _FuncNode: TypeAlias = _FuncDecl | _FuncExpr | _Arrow
+    _FunctionMap: TypeAlias = Mapping[str, _FuncNode]
+    _FunctionResolver: TypeAlias = Callable[[_FuncNode], _FunctionMap]
 
 from refinery.lib.scripts import Node
 from refinery.lib.scripts.js.deobfuscation.helpers import (
@@ -1159,6 +1162,7 @@ class JsInterpreter:
         functions: Mapping[str, JsFunctionDeclaration | JsFunctionExpression | JsArrowFunctionExpression] | None = None,
         closure: Mapping[str, Value] | None = None,
         closure_env: Mapping[int, Mapping[str, Value]] | None = None,
+        resolve_functions: _FunctionResolver | None = None,
         depth: int = 0,
     ):
         self.max_iterations = max_iterations
@@ -1167,6 +1171,7 @@ class JsInterpreter:
         self._functions: Mapping[str, JsFunctionDeclaration | JsFunctionExpression | JsArrowFunctionExpression] = functions or {}
         self._closure: Mapping[str, Value] = closure or {}
         self._closure_env: Mapping[int, Mapping[str, Value]] = closure_env or {}
+        self._resolve_functions = resolve_functions
         self._env: dict[str, Value] = {}
         self._iterations = 0
         self._depth = depth
@@ -1894,13 +1899,18 @@ class JsInterpreter:
         if self._mutates_captured_binding(func):
             raise InterpreterError
         callee_closure = self._closure_env.get(id(func)) or {}
+        if self._resolve_functions is not None:
+            child_functions = self._resolve_functions(func)
+        else:
+            child_functions = self._functions
         child = JsInterpreter(
             max_iterations=max(1, self.max_iterations - self._iterations),
             max_string_len=self.max_string_len,
             max_recursion=self.max_recursion,
-            functions=self._functions,
+            functions=child_functions,
             closure=callee_closure,
             closure_env=self._closure_env,
+            resolve_functions=self._resolve_functions,
             depth=self._depth + 1,
         )
         try:

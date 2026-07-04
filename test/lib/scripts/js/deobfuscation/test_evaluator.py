@@ -83,6 +83,119 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
         )
         self.assertEqual(source, self._evaluate(source))
 
+    def test_call_through_reassigned_nested_callee_not_folded(self):
+        """
+        `outer` is a stable, side-effect-free function, but its body calls `inner`, whose binding is
+        reassigned. Folding `outer()` would resolve the nested `inner()` to the stale declaration and
+        yield 1, whereas the live function returns 9 (Node: `outer()` is 9). The interpreter's function
+        view is restricted to bindings the model proves stable, so `inner` is unresolved inside the fold
+        and the call is left intact.
+        """
+        source = inspect.cleandoc(
+            """
+            function inner() {
+              return 1;
+            }
+            inner = function() {
+              return 9;
+            };
+            function outer() {
+              return inner();
+            }
+            SINK(outer());
+            """
+        )
+        self.assertEqual(source, self._evaluate(source))
+
+    def test_nested_closure_over_reassigned_shadowing_local_not_folded(self):
+        """
+        `mid`'s nested closure `inner` reads `g`, which lexically binds to `mid`'s own `g` — reassigned
+        inside `mid`, so `mid()` returns 9 (Node). A same-named `g` exists in the outer scope. Folding
+        `mid()` must resolve `inner`'s `g` in `mid`'s scope, where the reassigned binding is unresolvable,
+        rather than the outer `g` (which would wrongly yield 2); the call is therefore left intact.
+        """
+        source = inspect.cleandoc(
+            """
+            function g() {
+              return 2;
+            }
+            function mid() {
+              function g() {
+                return 1;
+              }
+              g = function() {
+                return 9;
+              };
+              function inner() {
+                return g();
+              }
+              return inner();
+            }
+            SINK(mid());
+            """
+        )
+        self.assertEqual(source, self._evaluate(source))
+
+    def test_nested_closure_over_redeclared_shadowing_local_not_folded(self):
+        """
+        As above, but `mid`'s local `g` is declared twice. A redeclared name is not a fixed function, so
+        `inner`'s `g` is unresolvable in `mid`'s scope and must not fall through to the outer `g`; the
+        call is left intact (Node: `mid()` is 9, not the outer `g`'s 2).
+        """
+        source = inspect.cleandoc(
+            """
+            function g() {
+              return 2;
+            }
+            function mid() {
+              function g() {
+                return 1;
+              }
+              function g() {
+                return 9;
+              }
+              function inner() {
+                return g();
+              }
+              return inner();
+            }
+            SINK(mid());
+            """
+        )
+        self.assertEqual(source, self._evaluate(source))
+
+    def test_nested_closure_over_stable_shadowing_local_folds(self):
+        """
+        The scope-correct resolution must not over-decline: when `mid`'s local `g` is a stable, sole
+        definition, `inner`'s `g` resolves to it (7), shadowing the outer `g` (2), so `mid()` folds to 7.
+        """
+        source = inspect.cleandoc(
+            """
+            function g() {
+              return 2;
+            }
+            function mid() {
+              function g() {
+                return 7;
+              }
+              function inner() {
+                return g();
+              }
+              return inner();
+            }
+            SINK(mid());
+            """
+        )
+        expected = inspect.cleandoc(
+            """
+            function g() {
+              return 2;
+            }
+            SINK(7);
+            """
+        )
+        self.assertEqual(expected, self._evaluate(source))
+
     def test_call_with_nested_implicit_global_write_not_folded(self):
         source = inspect.cleandoc(
             """
