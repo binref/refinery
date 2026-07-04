@@ -159,6 +159,15 @@ class _GeneratorCFFMatch:
     namespace_homes: dict[str, tuple[str, ...]] = field(default_factory=dict)
     scope_arg_namespaces: dict[str, Expression] = field(default_factory=dict)
 
+    @property
+    def qualifies_namespaces(self) -> bool:
+        """
+        Whether this generator uses the with-redirect namespace-qualification path: a single scope
+        default namespace together with a redirect variable. When false, bare identifiers inside the
+        `with` are left unqualified.
+        """
+        return self.with_redirect_var is not None and len(self.scope_default_props) == 1
+
 
 def _eval_expr(node: Expression, env: _StateEnv) -> int | float | None:
     """
@@ -464,19 +473,19 @@ def _collect_namespace_homes(
     ns_names: set[str],
 ) -> dict[str, tuple[str, ...]] | None:
     """
-    Determine the canonical home namespace of every proven namespace-local member, or return `None`
-    to decline recovery when a member is ambiguous. Each `=` assignment target in the switch — at any
-    nesting depth, since the scope and namespace objects are closed over — is fed through the
-    destructuring collector to accumulate `member -> {home…}`. A member written under exactly one
-    namespace maps to that namespace as its home path. A member written under two or more namespaces
-    has no single canonical home: under the `with`-redirect its meaning depends on which namespace the
-    routing variable points at when each use executes, which redirect-independent qualification cannot
-    express — so recovery of the whole generator is declined (`None`) rather than emitting a reference
-    that would resolve to the wrong binding or a free variable. A name with no namespace-defining write
-    at all is genuinely free/global and is absent from the map, so it stays bare and resolves to its
-    outer binding once the `with` is dissolved. Any assignment operator (plain, compound, or logical)
-    and the update operators (`++`/`--`) count as a defining write, since each names the slot as living
-    on its namespace.
+    Determine the canonical home namespace of every proven namespace-local member, or return
+    `None` to decline recovery when a member is ambiguous. Each `=` assignment target in the
+    switch — at any nesting depth, since the scope and namespace objects are closed over — is
+    fed through the destructuring collector to accumulate `member -> {home…}`. A member written
+    under exactly one namespace maps to that namespace as its home path. A member written under
+    two or more namespaces has no single canonical home: under the `with`-redirect its meaning
+    depends on which namespace the routing variable points at when each use executes, which
+    redirect-independent qualification cannot express — so recovery of the whole generator is
+    declined (`None`) rather than emitting a reference that would resolve to the wrong binding or
+    a free variable. A name with no namespace-defining write at all is genuinely free/global and
+    is absent from the map, so it stays bare and resolves to its outer binding once the `with` is
+    dissolved. Any assignment operator (plain, compound, or logical) and the update operators
+    (`++`/`--`) count as a defining write, since each names the slot as living on its namespace.
     """
     accumulated: dict[str, set[str]] = {}
     for node in switch_stmt.walk():
@@ -1313,7 +1322,6 @@ def _build_cfg(
 
     nodes: dict[int, _CFGNode] = {}
     routing_state: _StateEnv = dict(initial_state)
-    node_envs: dict[int, _StateEnv] = {}
     queue: deque[tuple[_SMBlock, _StateEnv]] = deque()
     queue.append((entry_block, entry_state))
     steps = 0
@@ -1405,14 +1413,14 @@ def _build_cfg(
             false_prefix_payload = _process_branch_prefix(
                 transition.false_prefix, var_names, state, match,
             )
-            if match.with_redirect_var and match.scope_default_props:
+            if match.qualifies_namespaces:
                 condition = _qualify_condition(condition, state, match)
             else:
                 wrapper = JsExpressionStatement(expression=_clone_node(condition))
                 _substitute_in_scope(wrapper, state)
                 if match.scope_param_name:
                     _strip_scope_prefix_walk(wrapper, match.scope_param_name)
-                condition = wrapper.expression  # type: ignore[assignment]
+                condition = wrapper.expression
 
         node = _CFGNode(
             node_id=node_id,
@@ -1423,7 +1431,6 @@ def _build_cfg(
             false_prefix_payload=false_prefix_payload,
         )
         nodes[node_id] = node
-        node_envs[node_id] = state
 
     entry_id = id(entry_block)
     if entry_id not in nodes:
@@ -2132,7 +2139,7 @@ def _qualify_condition(
     _substitute_in_scope(wrapper, state)
     if match.scope_param_name:
         _strip_scope_prefix_walk(wrapper, match.scope_param_name)
-    if match.with_redirect_var and len(match.scope_default_props) == 1:
+    if match.qualifies_namespaces:
         _qualify_bare_walk(wrapper, match.namespace_homes, _qualify_exempt(match))
     return wrapper.expression  # type: ignore[return-value]
 
@@ -2212,7 +2219,7 @@ def _qualify_with_identifiers(
     and bare in another canonicalizes to the same `H.x` in both. Only applies under the
     with-redirect pattern with exactly one scope default.
     """
-    if not match.with_redirect_var or len(match.scope_default_props) != 1:
+    if not match.qualifies_namespaces:
         return stmts
     exempt = _qualify_exempt(match)
     for stmt in stmts:
@@ -2427,7 +2434,7 @@ def _recover_returns(stmts: list[Statement], did_return_var: str | None) -> list
     return result
 
 
-def _is_direct_scope_member(node: Expression | None, scope_param_name: str) -> bool:
+def _is_direct_scope_member(node: Node, scope_param_name: str) -> bool:
     """
     Check if an expression is a depth-1 member access on the scope parameter, i.e. `scope.X` or
     `scope["X"]` but NOT `scope.X.Y`. Only direct slots are CFF routing state; deeper chains are
@@ -2513,9 +2520,10 @@ def _filter_redirect_var_assignments(
     stmts: list[Statement],
     match: _GeneratorCFFMatch,
 ) -> list[Statement]:
-    redirect_var = match.with_redirect_var
-    if not redirect_var or len(match.scope_default_props) != 1:
+    if not match.qualifies_namespaces:
         return stmts
+    redirect_var = match.with_redirect_var
+    assert redirect_var is not None
     result: list[Statement] = []
     for stmt in stmts:
         if not isinstance(stmt, JsExpressionStatement) or stmt.expression is None:
@@ -2874,9 +2882,10 @@ def _collect_scope_props(
     out: set[str],
 ) -> None:
     """
-    Record the property names of depth-1 scope-member accesses (`scope.X` / `scope["X"]`) in *stmts*.
-    These identify which bare identifiers in the recovered code originated as variables stored on the
-    scope object, so the recovery can declare the live ones and drop write-only routing slots.
+    Record the property names of depth-1 scope-member accesses (`scope.X` / `scope["X"]`) in
+    *stmts*. These identify which bare identifiers in the recovered code originated as variables
+    stored on the scope object, so the recovery can declare the live ones and drop write-only
+    routing slots.
     """
     if scope_param_name is None:
         return
@@ -2890,8 +2899,9 @@ def _collect_scope_props(
 
 def _collect_read_names(node: Node | None, out: set[str]) -> None:
     """
-    Collect names of identifiers that are read (appear in a value position) within *node*. Assignment
-    targets, declaration ids, and non-computed member property names do not count as reads.
+    Collect names of identifiers that are read (appear in a value position) within *node*.
+    Assignment targets, declaration ids, and non-computed member property names do not count as
+    reads.
     """
     if node is None:
         return
