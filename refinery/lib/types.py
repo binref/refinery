@@ -63,7 +63,7 @@ __all__ = [
     'ClassVar',
     'Collection',
     'convert',
-    'EMPTY',
+    'NIL',
     'Generator',
     'INF',
     'isbuffer',
@@ -310,12 +310,12 @@ def _try_fold_neutral(default):
     return decorator
 
 
-class EMPTY(metaclass=Singleton):
+class NIL(metaclass=Singleton):
     """
     A wildcard object which becomes the most reasonable neutral element in any operation.
     """
     @classmethod
-    def Project(cls, t):
+    def Concretize(cls, t):
         return _instance_to_neutral(t)
 
     def __len__(self):

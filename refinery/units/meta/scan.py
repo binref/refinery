@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Any, Iterable
 
 from refinery.lib.argformats import DelayedNumSeqArgument
-from refinery.lib.types import EMPTY, Param
+from refinery.lib.types import NIL, Param
 from refinery.units import Arg, Chunk, Unit
 
 
@@ -15,7 +15,7 @@ class ScanRegister:
     """
     name: str
     expression: str
-    data: Any = None
+    value: Any = None
 
     @classmethod
     def FromString(cls, spec: str):
@@ -31,13 +31,13 @@ class scan(Unit):
     `refinery.reduce` unit: rather than folding the frame down to a single chunk, it keeps every
     chunk and stores the running accumulator as a meta variable on each of them.
 
-    The arguments to <this> are expressions of the form `accu=update` where `accu` is a variable
-    name and `update` is a multibin expression.
+    The arguments to <this> are expressions of the form `x=update` where `x` is a variable name
+    and `update` is a multibin expression.
 
-    For each chunk after the first, the accu variable is overwritten with its previous value. The
-    update expression is then evaluated on the current chunk to compute the next value. If the accu
-    variable does not exist on the chunk, a best effort is made to choose a neutral value of the
-    correct type. Use the `put` unit first to explicitly choose an initial value.
+    For each chunk after the first, the variable `x` is overwritten with its previous value. The
+    update expression is then evaluated on the current chunk to compute the next value. If `x`
+    does not exist on the chunk, a best effort is made to choose a neutral value of the correct
+    type. Use the `put` unit first to explicitly choose an initial value.
 
     For example, imagine a frame where each chunk contains a variable `n`:
 
@@ -49,34 +49,34 @@ class scan(Unit):
 
     def __init__(
         self,
-        *accu: Param[str, Arg.String(metavar='accu=update', help='accumulator expressions')],
+        *registers: Param[str, Arg.String(metavar='x=update', help='accumulator expressions')],
     ):
-        if not accu:
+        if not registers:
             raise ValueError('At least one register must be specified.')
-        super().__init__(accu=accu)
+        super().__init__(registers=registers)
 
     def filter(self, chunks: Iterable[Chunk]):
-        accu = [ScanRegister.FromString(a) for a in self.args.accu]
+        registers = [ScanRegister.FromString(a) for a in self.args.registers]
         for chunk in chunks:
             if not chunk.visible:
                 yield chunk
                 continue
             empty_names = set()
             meta = chunk.meta
-            for var in accu:
-                name = var.name
-                if var.data is not None:
-                    meta[name] = var.data
+            for register in registers:
+                name = register.name
+                if register.value is not None:
+                    meta[name] = register.value
                 elif name not in meta:
-                    meta[name] = EMPTY()
+                    meta[name] = NIL()
                     empty_names.add(name)
             self.log_debug(list(meta))
-            for var in accu:
-                name = var.name
-                rv = DelayedNumSeqArgument(var.expression, reverse=True)(chunk)
-                if EMPTY.Project(rv) is None:
+            for register in registers:
+                name = register.name
+                rv = DelayedNumSeqArgument(register.expression, reverse=True)(chunk)
+                if NIL.Concretize(rv) is None:
                     continue
-                meta[name] = var.data = rv
+                meta[name] = register.value = rv
                 empty_names.discard(name)
             for name in empty_names:
                 meta.discard(name)
