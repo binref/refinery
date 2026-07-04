@@ -6,6 +6,7 @@ import sys
 
 from refinery.lib.id import guess_text_encoding
 from refinery.lib.scripts import Node
+from refinery.lib.scripts.pipeline import DeobfuscationTimeout
 from refinery.lib.types import Param, buf
 from refinery.units import Arg, Chunk, RefineryPartialResult, Unit
 
@@ -68,7 +69,11 @@ class IterativeDeobfuscator(Unit, abstract=True):
 
         for k in range(self.args.timeout):
             self.log_info(F'starting round {k}')
-            if self.transform(ast):
+            try:
+                changed = self.transform(ast)
+            except DeobfuscationTimeout:
+                raise AutoDeobfuscationTimeout(_result())
+            if changed:
                 continue
             return _result()
         else:

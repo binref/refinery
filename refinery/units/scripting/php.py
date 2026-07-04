@@ -20,7 +20,8 @@ class php(IterativeDeobfuscator):
     def parse(self, data: str) -> PhpScript:
         return PhpParser(data).parse()
 
-    transform = staticmethod(deobfuscate)
+    def transform(self, ast: PhpScript) -> int:
+        return deobfuscate(ast, max_steps=self.args.timeout)
 
     def synthesize(self, ast: PhpScript) -> str:
         return PhpSynthesizer().convert(ast)
