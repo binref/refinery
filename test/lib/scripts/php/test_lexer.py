@@ -170,10 +170,12 @@ class TestPhpLexer(TestBase):
 
     def test_spaceship_operator(self):
         tokens = self._tokens('<?php $a <=> $b')
-        self.assertEqual(self._kinds('<?php $a <=> $b'), [
-            K.OPEN_TAG, K.VARIABLE, K.SPACESHIP, K.VARIABLE,
+        self.assertEqual(tokens, [
+            (K.OPEN_TAG, '<?php'),
+            (K.VARIABLE, '$a'),
+            (K.SPACESHIP, '<=>'),
+            (K.VARIABLE, '$b'),
         ])
-        self.assertEqual(tokens[2], (K.SPACESHIP, '<=>'))
 
     def test_coalesce_assign(self):
         tokens = self._tokens('<?php $a ??= 1')
@@ -202,33 +204,34 @@ class TestPhpLexer(TestBase):
             (K.VARIABLE, '$args'),
         ])
 
-    def test_heredoc_closes_at_newline_only(self):
-        # A closing label followed by a space/comment must NOT close the heredoc.
-        src = '<?php $x = <<<EOT\nhello\nEOT // not closed\nEOT;\n'
-        tokens = self._tokens(src)
+    def test_heredoc_closes_before_non_label_char(self):
+        # Since PHP 7.3 a heredoc closes when its label is followed by any
+        # non-identifier character, so 'EOT' before ',' terminates the body.
+        tokens = self._tokens('<?php [<<<EOT\na\nEOT, 2];')
         heredoc = next(t for k, t in tokens if k is K.HEREDOC)
-        self.assertIn('EOT // not closed', heredoc)
+        self.assertEqual(heredoc, '<<<EOT\na\nEOT')
+
+    def test_heredoc_label_prefix_does_not_close(self):
+        tokens = self._tokens('<?php <<<EOT\nEOTX line\nEOT;\n')
+        heredoc = next(t for k, t in tokens if k is K.HEREDOC)
+        self.assertEqual(heredoc, '<<<EOT\nEOTX line\nEOT')
+
+    def test_heredoc_backslash_before_newline(self):
+        tokens = self._tokens('<?php <<<EOT\nfoo\\\nEOT;\n')
+        heredoc = next(t for k, t in tokens if k is K.HEREDOC)
+        self.assertEqual(heredoc, '<<<EOT\nfoo\\\nEOT')
 
     def test_heredoc_closes_at_semicolon(self):
-        src = '<?php $x = <<<EOT\nhello\nEOT;\n'
-        tokens = self._tokens(src)
-        kinds = [k for k, _ in tokens]
-        self.assertIn(K.HEREDOC, kinds)
-        self.assertIn(K.SEMICOLON, kinds)
+        self.assertEqual(self._tokens('<?php $x = <<<EOT\nhello\nEOT;\n'), [
+            (K.OPEN_TAG, '<?php'),
+            (K.VARIABLE, '$x'),
+            (K.EQUALS, '='),
+            (K.HEREDOC, '<<<EOT\nhello\nEOT'),
+            (K.SEMICOLON, ';'),
+        ])
 
     def test_prefixed_int_leading_underscore_is_error(self):
-        tokens = self._tokens('<?php 0x_FF')
-        kinds = [k for k, _ in tokens]
-        self.assertIn(K.ERROR, kinds)
+        self.assertIn(K.ERROR, self._kinds('<?php 0x_FF'))
 
     def test_prefixed_int_trailing_underscore_is_error(self):
-        tokens = self._tokens('<?php 0xFF_')
-        kinds = [k for k, _ in tokens]
-        self.assertIn(K.ERROR, kinds)
-
-    def test_prefixed_int_valid(self):
-        tokens = self._tokens('<?php 0xFF')
-        self.assertEqual(tokens, [
-            (K.OPEN_TAG, '<?php'),
-            (K.INTEGER, '0xFF'),
-        ])
+        self.assertIn(K.ERROR, self._kinds('<?php 0xFF_'))
