@@ -407,7 +407,7 @@ class PhpParser:
             return PhpInlineHTML(value=tok.value, offset=offset)
         if kind in (K.OPEN_TAG, K.CLOSE_TAG):
             self._advance()
-            return self._parse_statement()
+            return None
         if kind is K.OPEN_TAG_ECHO:
             return self._parse_echo_tag()
         if kind is K.SEMICOLON:

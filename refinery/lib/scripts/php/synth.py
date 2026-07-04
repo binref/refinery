@@ -128,6 +128,7 @@ class PhpSynthesizer(Synthesizer):
         super().__init__(indent, line_length)
         self._unescape_strings = unescape_strings
         self._strip_comments = strip_comments
+        self._in_php = True
 
     def _emit_leading_comments(self, node: Node):
         if self._strip_comments or not node.leading_comments:
@@ -154,14 +155,33 @@ class PhpSynthesizer(Synthesizer):
                 continue
             self.visit(node)
 
-    def _emit_statements(self, body: list[Statement]):
-        self._depth += 1
-        for stmt in body:
+    def _enter_php(self):
+        if not self._in_php:
+            self._write('<?php')
+            self._in_php = True
+
+    def _leave_php(self):
+        if self._in_php:
+            self._write(' ?>\n')
+            self._in_php = False
+
+    def _emit_statement(self, stmt: Statement):
+        if isinstance(stmt, (PhpInlineHTML, PhpEchoTagStatement)):
+            self._leave_php()
+            self.visit(stmt)
+        else:
+            self._enter_php()
             self._newline()
             self._emit_leading_comments(stmt)
             self.visit(stmt)
+
+    def _emit_statements(self, body: list[Statement]):
+        self._depth += 1
+        for stmt in body:
+            self._emit_statement(stmt)
         self._depth -= 1
         if body:
+            self._enter_php()
             self._newline()
 
     def _emit_brace_block(self, body: list[Statement]):
@@ -572,33 +592,14 @@ class PhpSynthesizer(Synthesizer):
 
     def _emit_top_level(self, body: list[Statement]):
         """
-        Emit a run of top-level statements, opening a `<?php` island around the code segments and
-        writing `PhpInlineHTML` nodes verbatim with `?>` / `<?php` tag toggling around them.
+        Emit the top-level statement run, starting in HTML mode and toggling `<?php` / `?>` islands
+        around inline HTML through the shared `_emit_statement`. The trailing newline is suppressed
+        after a `__halt_compiler` whose `remainder` is verbatim data that must not grow per pass.
         """
-        in_php = False
+        self._in_php = False
         for stmt in body:
-            if isinstance(stmt, PhpInlineHTML):
-                if in_php:
-                    self._write(' ?>')
-                    in_php = False
-                self._write(stmt.value)
-                continue
-            if isinstance(stmt, PhpEchoTagStatement):
-                if in_php:
-                    self._write(' ?>')
-                    in_php = False
-                self._emit_leading_comments(stmt)
-                self.visit(stmt)
-                continue
-            if not in_php:
-                self._write('<?php')
-                self._newline()
-                in_php = True
-            else:
-                self._newline()
-            self._emit_leading_comments(stmt)
-            self.visit(stmt)
-        if in_php:
+            self._emit_statement(stmt)
+        if self._in_php and not (body and isinstance(body[-1], PhpHaltCompiler)):
             self._newline()
 
     def visit_PhpInlineHTML(self, node: PhpInlineHTML):
@@ -744,10 +745,9 @@ class PhpSynthesizer(Synthesizer):
             self._write('default:')
         self._depth += 1
         for stmt in node.body:
-            self._newline()
-            self._emit_leading_comments(stmt)
-            self.visit(stmt)
+            self._emit_statement(stmt)
         self._depth -= 1
+        self._enter_php()
 
     def visit_PhpBreak(self, node: PhpBreak):
         self._write('break')

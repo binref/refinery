@@ -18,6 +18,11 @@ class TestPhpSynthesizer(TestBase):
         )
         out1 = synth.convert(ast1)
         ast2 = PhpParser(out1).parse()
+        self.assertEqual(
+            ast2.errors, [],
+            F'Synthesized output does not re-parse cleanly for {source!r}:\n'
+            F'Output: {out1!r}\nErrors: {[e.message for e in ast2.errors]}',
+        )
         out2 = synth.convert(ast2)
         self.assertEqual(
             out1, out2,
@@ -141,6 +146,29 @@ class TestPhpSynthesizer(TestBase):
 
     def test_echo_tag(self):
         self._round_trip('<div><?= $name ?></div>')
+
+    def test_inline_html_in_block(self):
+        self._round_trip('<?php if ($a) { ?>plain<?php } ?>')
+
+    def test_echo_tag_in_block(self):
+        self._round_trip('<?php foreach ($a as $b) { ?><?= $b ?><?php } ?>')
+
+    def test_alt_syntax_html_islands(self):
+        self._round_trip(
+            '<?php if ($a): ?>\n<b>yes</b>\n<?php else: ?>\n<b>no</b>\n<?php endif; ?>')
+
+    def test_inline_html_in_switch_case(self):
+        self._round_trip(
+            '<?php switch ($x) { case 1: ?>one<?php break; default: ?>two<?php } ?>')
+
+    def test_close_tag_newline_preserved(self):
+        self._round_trip('<?php foo(); ?>\n\n<html>')
+
+    def test_trailing_close_tag(self):
+        self._round_trip('<?php $x = 1; ?>')
+
+    def test_halt_compiler_payload(self):
+        self._round_trip('<?php __halt_compiler();\x00\x01\x02PAYLOAD')
 
     def test_yield(self):
         self._round_trip('<?php function g() { yield $k => $v; yield from $other; }')
