@@ -153,6 +153,8 @@ def _count_scope_references(
         parent = node.parent
         if isinstance(parent, JsAssignmentExpression) and parent.left is node and parent.operator == '=':
             continue
+        if isinstance(parent, JsMemberExpression) and parent.property is node and not parent.computed:
+            continue
         if count_member_access:
             if isinstance(parent, JsMemberExpression) and parent.object is node and parent.computed:
                 continue
@@ -503,7 +505,9 @@ class JsConstantInlining(ScopeProcessingTransformer):
             if not is_literal(entry.value):
                 continue
             binding = self._candidate_binding(entry, model)
-            if binding is None or not reaching.value_preserved(binding, entry.value, node):
+            if binding is None or model.resolve(node) is not binding:
+                continue
+            if not reaching.value_preserved(binding, entry.value, node):
                 continue
             _replace_in_parent(node, _clone_node(entry.value))
             self.mark_changed()

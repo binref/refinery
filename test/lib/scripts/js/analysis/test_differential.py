@@ -37,6 +37,15 @@ class TestDeobfuscationDifferential(TestBase):
     def test_dead_variable_and_constant_folding(self):
         self._check('var a = 1 + 2; var unused = 5; console.log(a * 2);')
 
+    def test_constant_not_substituted_into_member_property_name(self):
+        """
+        The constant `g` appears both as a value (`+ g`, which folds to `5`) and as the property name
+        of a non-computed member access (`o.g`). Only the value position is a substitutable use of the
+        binding; inlining the constant into the property name would produce `o.5`, a SyntaxError.
+        """
+        self._check(
+            'function f(o){ var g = 5; return o.g + g; } console.log(f({ g: 9 }));')
+
     def test_dead_store_overwritten_before_read(self):
         self._check('function f(){ var x = 1; x = 5; return x; } console.log(f());')
 
@@ -558,10 +567,15 @@ class TestDeobfuscationReflectionOpenBugs(TestBase):
     @unittest.expectedFailure
     def test_global_binding_constant_not_inlined_into_globalthis_property(self):
         """
-        `(0, eval)("var g = 7;")` creates a global binding `g` holding the constant 7. Reading it back
-        as `globalThis.g` names a property, not the binding, so substituting the constant into that
-        property-name position yields `globalThis.7` — a SyntaxError. A global binding's constant must
-        not be inlined into a same-named member's property identifier.
+        Indirect eval runs its code in the global scope, so `(0, eval)("var g = 7;")` creates a global
+        binding `g` that `globalThis.g` reads back as `7`. The reflection inliner rewrites the indirect
+        eval into a bare top-level `var g = 7;`, but under the module (or strict) semantics the output
+        may run under, a top-level `var` does not attach to the global object, so `globalThis.g` reads
+        `undefined` and the observable output diverges. Whether this inlining is sound depends on the
+        script-versus-module execution model the deobfuscator targets; the existing reflection tests
+        assume the sloppy-script model where the rewrite is faithful. (The separate constant-into-
+        property-name substitution this once also tripped is now fixed — see
+        `TestDeobfuscationDifferential.test_constant_not_substituted_into_member_property_name`.)
         """
         self._check(
             'var SINK = [];'
