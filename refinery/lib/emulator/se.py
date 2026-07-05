@@ -4,9 +4,15 @@ Implements `refinery.lib.emulator.interface.Emulator` for the speakeasy backend.
 from __future__ import annotations
 
 from contextlib import contextmanager
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, Callable, TypeVar
 
-from refinery.lib.emulator.abstract import EmulationError, Emulator, MemAccess, Register
+from refinery.lib.emulator.abstract import (
+    EmulationError,
+    EmulationTimeout,
+    Emulator,
+    MemAccess,
+    Register,
+)
 from refinery.lib.emulator.uc_shared import get_access_map
 from refinery.lib.executable import ET, Arch
 from refinery.lib.shared.speakeasy import speakeasy as se
@@ -27,6 +33,35 @@ class SpeakeasyNotInitialized(EmulationError):
 
 
 _T = TypeVar('_T')
+
+
+class _InstructionBudget:
+    """
+    Bounds how many instructions Speakeasy emulates. Unicorn and Icicle bound a run with their
+    engine's native instruction limit (the `count` argument of `emu_start` and the `icount_limit`
+    register), but Speakeasy drives run termination through its own code hooks and exposes no
+    detectable native limit, so a counting hook is the reliable and consistent choice here. The
+    instance is installed as a per-instruction code hook: each call accounts for one instruction
+    about to execute, and when the limit is reached it stops the engine and records that the budget
+    was exhausted. Since `expired` is set only by this counter, the backend can tell a genuine
+    timeout apart from any other stop reason and raises
+    `refinery.lib.emulator.abstract.EmulationTimeout` accordingly.
+    """
+    __slots__ = ('limit', 'stop', 'count', 'expired')
+
+    def __init__(self, limit: int, stop: Callable[[], Any]):
+        self.limit = limit
+        self.stop = stop
+        self.count = 0
+        self.expired = False
+
+    def __call__(self, *args, **kwargs) -> bool:
+        if self.count < self.limit:
+            self.count += 1
+        else:
+            self.expired = True
+            self.stop()
+        return True
 
 
 class SpeakeasyEmulator(Emulator[Se, str, _T]):
@@ -316,7 +351,7 @@ class SpeakeasyEmulator(Emulator[Se, str, _T]):
         finally:
             self._remove_hook(hook)
 
-    def _emulate(self, start: int, end: int | None = None):
+    def _emulate(self, start: int, end: int | None = None, timeout: int | None = None):
         spk = self.speakeasy
 
         if (inner := spk.emu) is None:
@@ -324,17 +359,30 @@ class SpeakeasyEmulator(Emulator[Se, str, _T]):
 
         self._set_end(end)
 
-        if inner.get_current_run():
-            return spk.resume(start)
+        budget = None
+        countdown_hooks = []
+        if timeout is not None:
+            budget = _InstructionBudget(timeout, spk.stop)
+            countdown_hooks.append(spk.add_code_hook(budget))
+            countdown_hooks.append(spk.add_dyn_code_hook(budget))
 
-        if self.exe.blob:
-            offset = start - self.base
-            if offset < 0:
-                raise ValueError(F'invalid offset 0x{start:X} specified; base address is 0x{self.base:X}')
-            with self._preserve_cpu_state(start):
-                spk.run_shellcode(self.base, offset=offset)
-        else:
-            spk.call(start, self._ensure_context())
+        try:
+            if inner.get_current_run():
+                spk.resume(start)
+            elif self.exe.blob:
+                offset = start - self.base
+                if offset < 0:
+                    raise ValueError(F'invalid offset 0x{start:X} specified; base address is 0x{self.base:X}')
+                with self._preserve_cpu_state(start):
+                    spk.run_shellcode(self.base, offset=offset)
+            else:
+                spk.call(start, self._ensure_context())
+        finally:
+            for hook in countdown_hooks:
+                self._remove_hook(hook)
+
+        if budget is not None and budget.expired:
+            raise EmulationTimeout(budget.count)
 
     def halt(self):
         return self.speakeasy.stop()

@@ -3,7 +3,16 @@ from __future__ import annotations
 import base64
 import lzma
 
-from refinery.lib.emulator import CC, Arch, Hook, EmulationError, UnicornEmulator, SpeakeasyEmulator, IcicleEmulator
+from refinery.lib.emulator import (
+    CC,
+    Arch,
+    Hook,
+    EmulationError,
+    EmulationTimeout,
+    UnicornEmulator,
+    SpeakeasyEmulator,
+    IcicleEmulator,
+)
 from .. import TestBase
 
 # An x64 native-subsystem kernel driver whose DriverEntry returns STATUS_SUCCESS, stored
@@ -308,3 +317,75 @@ class TestEmulator(TestBase):
         self.assertEqual(emu.get_register('eax'), 2)
         self.assertEqual(seen[0], (0, 5))
         self.assertEqual(seen[1], (5, 1))
+
+    def _test_timeout_unbounded_loop(self, base_emu):
+        code = bytes.fromhex('EBFE')  # jmp $ : a one-instruction infinite loop
+        emulator = base_emu(code, arch=Arch.X32)
+        emulator.reset()
+        with self.assertRaises(EmulationTimeout) as cm:
+            emulator.emulate(emulator.base, timeout=100)
+        self.assertEqual(cm.exception.count, 100)
+
+    def test_timeout_unbounded_loop_uc(self):
+        self._test_timeout_unbounded_loop(UnicornEmulator)
+
+    def test_timeout_unbounded_loop_ic(self):
+        self._test_timeout_unbounded_loop(IcicleEmulator)
+
+    def test_timeout_unbounded_loop_se(self):
+        self._test_timeout_unbounded_loop(SpeakeasyEmulator)
+
+    def _test_timeout_boundary(self, base_emu):
+        code = bytes.fromhex('90' * 5 + 'F4' * 4)  # five NOPs reach end after exactly five steps
+        end = 5
+        emulator = base_emu(code, arch=Arch.X32)
+        emulator.reset()
+        emulator.emulate(emulator.base, emulator.base + end, timeout=end)
+        self.assertEqual(emulator.ip, emulator.base + end)
+        emulator.reset()
+        with self.assertRaises(EmulationTimeout) as cm:
+            emulator.emulate(emulator.base, emulator.base + end, timeout=end - 1)
+        self.assertEqual(cm.exception.count, end - 1)
+
+    def test_timeout_boundary_uc(self):
+        self._test_timeout_boundary(UnicornEmulator)
+
+    def test_timeout_boundary_ic(self):
+        self._test_timeout_boundary(IcicleEmulator)
+
+    def test_timeout_boundary_se(self):
+        self._test_timeout_boundary(SpeakeasyEmulator)
+
+    def _test_timeout_none_completes(self, base_emu):
+        code = bytes.fromhex('B82A000000' + '90' * 4)  # mov eax, 0x2A ; then padding
+        emulator = base_emu(code, arch=Arch.X32)
+        emulator.reset()
+        emulator.emulate(emulator.base, emulator.base + 5, timeout=None)
+        self.assertEqual(emulator.get_register('eax'), 0x2A)
+
+    def test_timeout_none_completes_uc(self):
+        self._test_timeout_none_completes(UnicornEmulator)
+
+    def test_timeout_none_completes_ic(self):
+        self._test_timeout_none_completes(IcicleEmulator)
+
+    def test_timeout_none_completes_se(self):
+        self._test_timeout_none_completes(SpeakeasyEmulator)
+
+    def test_timeout_ignores_explicit_halt_uc(self):
+        code = bytes.fromhex('90' * 16)
+
+        class Emu(UnicornEmulator):
+            seen = 0
+
+            def hook_code_execute(self, emu, address, size, state=None):
+                self.seen += 1
+                if self.seen == 3:
+                    self.halt()
+                return True
+
+        emulator = Emu(code, arch=Arch.X32, hooks=Hook.CodeExecute)
+        emulator.reset()
+        emulator.emulate(emulator.base, emulator.base + 16, timeout=1000)
+        self.assertEqual(emulator.seen, 3)
+        self.assertEqual(emulator.ip, emulator.base + 2)

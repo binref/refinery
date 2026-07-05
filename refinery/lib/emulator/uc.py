@@ -5,7 +5,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, TypeVar
 
-from refinery.lib.emulator.abstract import EmulationError, MemAccess, RawMetalEmulator, Register
+from refinery.lib.emulator.abstract import (
+    EmulationError,
+    EmulationTimeout,
+    MemAccess,
+    RawMetalEmulator,
+    Register,
+)
 from refinery.lib.emulator.uc_shared import get_access_map
 from refinery.lib.executable import BO, Arch
 from refinery.lib.shared.unicorn import unicorn as uc
@@ -50,6 +56,7 @@ class UnicornEmulator(RawMetalEmulator[Uc, int, _T]):
 
         self.unicorn = uc.unicorn.Uc(uc_arch, uc_mode)
         self._single_step_hook = None
+        self._halted = False
 
         self._map_segments()
         self._map_stack_and_heap()
@@ -132,15 +139,21 @@ class UnicornEmulator(RawMetalEmulator[Uc, int, _T]):
                 self._reg_by_code[arch] = reg_by_code
                 self._reg_by_name[arch] = reg_by_name
 
-    def _emulate(self, start: int, end: int | None = None):
+    def _emulate(self, start: int, end: int | None = None, timeout: int | None = None):
         if end is None:
             end = self.exe.location_from_address(start).virtual.box.upper
+        self._halted = False
+        if timeout is None or timeout < 0:
+            timeout = 0
         try:
-            self.unicorn.emu_start(start, end)
+            self.unicorn.emu_start(start, end, count=timeout)
         except Exception as E:
             raise EmulationError(str(E)) from E
+        if timeout and not self._halted and self.ip != end:
+            raise EmulationTimeout(timeout)
 
     def halt(self):
+        self._halted = True
         self.unicorn.emu_stop()
 
     def _lookup_register(self, var: str | int) -> Register[int]:

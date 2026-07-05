@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, TypeVar
 
 from refinery.lib.emulator.abstract import (
     EmulationError,
+    EmulationTimeout,
     InvalidInstruction,
     MemAccess,
     RawMetalEmulator,
@@ -82,10 +83,19 @@ class IcicleEmulator(RawMetalEmulator[Ic, str, _T]):
                 return op.size
         return insn.addr_size
 
-    def _emulate(self, start: int, end: int | None = None):
+    def _emulate(self, start: int, end: int | None = None, timeout: int | None = None):
         RS = ic.RunStatus
         MP = ic.MemoryProtection
         ice = self.icicle
+
+        icount_max = (1 << 64) - 1
+        start_icount = ice.icount
+        if timeout is None:
+            ice.icount_limit = icount_max
+            deadline = None
+        else:
+            deadline = start_icount + timeout
+            ice.icount_limit = min(deadline, icount_max)
 
         code_hooked = self.hooks.CodeExecute
         apis_hooked = self.hooks.ApiCall
@@ -113,6 +123,8 @@ class IcicleEmulator(RawMetalEmulator[Ic, str, _T]):
         while True:
             if end is not None and ip == end:
                 break
+            if deadline is not None and ice.icount >= deadline:
+                raise EmulationTimeout(ice.icount - start_icount)
             if (code_hooked or apis_hooked) and not retrying:
                 try:
                     insn = next(dasm.disasm(self.mem_read(ip, 20), ip, 1))

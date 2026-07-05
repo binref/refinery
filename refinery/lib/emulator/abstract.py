@@ -24,6 +24,17 @@ class EmulationError(Exception):
     """
 
 
+class EmulationTimeout(EmulationError):
+    """
+    The maximum permitted number of instructions was exhausted during emulation.
+    """
+    def __init__(self, count: int) -> None:
+        self.count = count
+
+    def __str__(self):
+        return F'Emulation stopped after {self.count} instructions.'
+
+
 class FailedRead(EmulationError):
     """
     The emulator failed to read memory from a given address.
@@ -361,14 +372,14 @@ class Emulator(ABC, Generic[_E, _R, _T]):
             address = address + self.exe.base - self.base
         return address
 
-    def emulate(self, start: int, end: int | None = None):
+    def emulate(self, start: int, end: int | None = None, timeout: int | None = None):
         """
         Call this function to begin emulation. The `start` parameter is the address where execution
         should begin, the `end` parameter is an optional address to halt at.
         """
         if not self._resetonce:
             self.reset()
-        return self._emulate(start, end)
+        return self._emulate(start, end, timeout)
 
     def mem_read_int(self, address: int, size: int | None = None):
         """
@@ -401,7 +412,7 @@ class Emulator(ABC, Generic[_E, _R, _T]):
         """
 
     @abstractmethod
-    def _emulate(self, start: int, end: int | None = None):
+    def _emulate(self, start: int, end: int | None = None, timeout: int | None = None):
         """
         This is the tail call of `refinery.lib.emulator.Emulator.emulate`.
         """
