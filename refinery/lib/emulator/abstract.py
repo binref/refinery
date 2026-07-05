@@ -248,6 +248,16 @@ class Emulator(ABC, Generic[_E, _R, _T]):
         until: int | None = None,
         cc: CC = CC.StdCall,
     ):
+        for k, value in enumerate(args):
+            if isinstance(value, int):
+                arg = value
+            elif b := asbuffer(value):
+                b = bytes(b)
+                arg = self.malloc(len(b))
+                self.mem_write(arg, b)
+            else:
+                raise TypeError(F'Invalid argument: {value!r}')
+            self._callarg(k, arg, cc)
         if until is None:
             try:
                 until = self._return_trap
@@ -255,26 +265,16 @@ class Emulator(ABC, Generic[_E, _R, _T]):
                 nopcode = NopCodeByArch[self.exe.arch()]
                 self._return_trap = until = self.malloc(len(nopcode))
                 self.mem_write(until, nopcode)
-
         self.set_return_address(until)
-
-        for k, value in enumerate(args):
-            if b := asbuffer(value):
-                b = bytes(b)
-                value = self.malloc(len(b))
-                self.mem_write(value, b)
-            self.callarg(k, cc, value=value)
-
         self.emulate(address, until)
         return self.rv
 
-    def callarg(
+    def _callarg(
         self,
         index: int,
-        cc: CC = CC.StdCall,
-        size: int | None = None,
-        value: int | None = None,
-    ) -> int:
+        value: int,
+        cc: CC = CC.StdCall
+    ) -> None:
         arch = self.exe.arch()
         if index < 0:
             raise ValueError(index)
@@ -296,21 +296,9 @@ class Emulator(ABC, Generic[_E, _R, _T]):
         try:
             reg = regs[index]
         except IndexError:
-            address = self.sp + (index - len(regs) + 1) * self.exe.pointer_size_in_bytes
-            if value is None:
-                return self.mem_read_int(address)
-            else:
-                self.mem_write_int(address, value)
-                return value
+            self.push(value)
         else:
-            if value is None:
-                arg = self.get_register(reg)
-                if size is not None:
-                    arg &= (1 << (size << 3)) - 1
-                return arg
-            else:
-                self.set_register(reg, value)
-                return value
+            self.set_register(reg, value)
 
     @cached_property
     def _reg_sp(self):
