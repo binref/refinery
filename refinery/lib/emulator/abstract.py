@@ -247,7 +247,10 @@ class Emulator(ABC, Generic[_E, _R, _T]):
         *args: buf | int,
         until: int | None = None,
         cc: CC = CC.StdCall,
+        timeout: int | None = None,
     ):
+        registers = self._arg_registers(cc)
+        stack: list[int] = []
         for k, value in enumerate(args):
             if isinstance(value, int):
                 arg = value
@@ -257,7 +260,10 @@ class Emulator(ABC, Generic[_E, _R, _T]):
                 self.mem_write(arg, b)
             else:
                 raise TypeError(F'Invalid argument: {value!r}')
-            self._callarg(k, arg, cc)
+            if k < len(registers):
+                self.set_register(registers[k], arg)
+            else:
+                stack.append(arg)
         if until is None:
             try:
                 until = self._return_trap
@@ -265,40 +271,27 @@ class Emulator(ABC, Generic[_E, _R, _T]):
                 nopcode = NopCodeByArch[self.exe.arch()]
                 self._return_trap = until = self.malloc(len(nopcode))
                 self.mem_write(until, nopcode)
+        for arg in reversed(stack):
+            self.push(arg)
         self.set_return_address(until)
-        self.emulate(address, until)
+        self.emulate(address, until, timeout)
         return self.rv
 
-    def _callarg(
-        self,
-        index: int,
-        value: int,
-        cc: CC = CC.StdCall
-    ) -> None:
+    def _arg_registers(self, cc: CC) -> tuple[str, ...]:
         arch = self.exe.arch()
-        if index < 0:
-            raise ValueError(index)
         if arch == Arch.X32:
             if cc == CC.FastCall:
-                regs = ('ecx', 'edx')
-            elif cc == CC.ThisCall:
-                regs = ('ecx',)
-            else:
-                regs = ()
-        elif arch == Arch.X64:
-            regs = ('rcx', 'rdx', 'r8', 'r9')
-        elif arch == Arch.ARM32:
-            regs = ('r0', 'r1', 'r2', 'r3')
-        elif arch == Arch.ARM64:
-            regs = ('x0', 'x1', 'x2', 'x3', 'x4', 'x5', 'x6', 'x7')
-        else:
-            raise NotImplementedError(F'Calling convention {cc.value} is not implemented for {arch.name}')
-        try:
-            reg = regs[index]
-        except IndexError:
-            self.push(value)
-        else:
-            self.set_register(reg, value)
+                return ('ecx', 'edx')
+            if cc == CC.ThisCall:
+                return ('ecx',)
+            return ()
+        if arch == Arch.X64:
+            return ('rcx', 'rdx', 'r8', 'r9')
+        if arch == Arch.ARM32:
+            return ('r0', 'r1', 'r2', 'r3')
+        if arch == Arch.ARM64:
+            return ('x0', 'x1', 'x2', 'x3', 'x4', 'x5', 'x6', 'x7')
+        raise NotImplementedError(F'Calling convention {cc.value} is not implemented for {arch.name}')
 
     @cached_property
     def _reg_sp(self):

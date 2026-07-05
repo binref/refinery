@@ -222,6 +222,23 @@ class TestEmulator(TestBase):
     def test_call_with_stack_argument_ic(self):
         self._test_call_with_stack_argument(IcicleEmulator)
 
+    def _test_call_with_two_stack_arguments(self, base_emu):
+        code = bytes.fromhex(
+            '8B 44 24 04'   # mov     eax, [esp + 4]   ; first argument
+            '2B 44 24 08'   # sub     eax, [esp + 8]   ; minus second argument
+            'C3'            # ret
+        )
+        emulator = base_emu(code, arch=Arch.X32)
+        emulator.reset()
+        result = emulator.call(emulator.base, 0x64, 0x0A, cc=CC.CDecl)
+        self.assertEqual(result & 0xFFFFFFFF, 0x5A)
+
+    def test_call_with_two_stack_arguments_uc(self):
+        self._test_call_with_two_stack_arguments(UnicornEmulator)
+
+    def test_call_with_two_stack_arguments_ic(self):
+        self._test_call_with_two_stack_arguments(IcicleEmulator)
+
     def _test_push_register(self, base_emu):
         emulator = base_emu(bytes.fromhex('90'), arch=Arch.X32)  # nop
         emulator.reset()
