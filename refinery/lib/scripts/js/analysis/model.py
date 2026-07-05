@@ -705,6 +705,22 @@ class SemanticModel:
             return list(nodes)
         return [n for n in nodes if n is not exclude and not n.is_descendant_of(exclude)]
 
+    def read_may_throw(self, node: Node) -> bool:
+        """
+        Whether evaluating *node* as a value may throw a `ReferenceError` that a lexically-scoped read
+        could not. True for a bare identifier reference resolved through a dynamic scope — a name read
+        inside a `with` body — when no lexical binding would catch the runtime fall-through: the object
+        may lack the property (deleted or never present) and nothing else defines the name, so the read
+        throws. Such a read is not a droppable or reorderable operand. False for a statically-resolved
+        reference, a `with`-body name a lexical binding still backs, and any non-reference node.
+        """
+        if not isinstance(node, JsIdentifier) or not self.is_reference(node):
+            return False
+        scope = self._node_scope.get(id(node))
+        if not self._crosses_dynamic_scope(scope):
+            return False
+        return self.lookup(node.name, scope, cross_dynamic=True) is None
+
     def naming_binding(self, function: Node) -> Binding | None:
         """
         The binding that gives *function* a name through which it can be invoked: the declared name of a

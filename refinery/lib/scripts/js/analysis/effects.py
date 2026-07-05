@@ -446,8 +446,11 @@ class EffectModel:
         trusted intrinsic is free, recursing into its arguments. *defunct* names bindings being removed,
         whose calls and property reads are treated as free. This is the model-aware form of the
         model-free `side_effect_free` in this module, which clears only calls to a defunct name or an
-        inline function.
+        inline function; unlike it, an identifier read that a `with` body could resolve to nothing is
+        rejected here, because such a read can throw a `ReferenceError` (see `read_may_throw`).
         """
+        if any(self.model.read_may_throw(child) for child in node.walk()):
+            return False
         return side_effect_free(node, defunct, self.is_pure_call)
 
     def binding_is_immutable_container(

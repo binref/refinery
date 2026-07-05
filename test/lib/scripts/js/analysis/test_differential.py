@@ -46,6 +46,18 @@ class TestDeobfuscationDifferential(TestBase):
         self._check(
             'function f(o){ var g = 5; return o.g + g; } console.log(f({ g: 9 }));')
 
+    def test_with_scoped_throwing_iife_argument_not_dropped(self):
+        """
+        Inside a `with` body a bare name whose property was deleted throws when read. Passing it as an
+        unused IIFE argument must not inline the body and drop the argument, which would discard the
+        throwing read: the argument can throw, so it is effectful and the call is left in place.
+        """
+        self._check(
+            'var SINK = [];'
+            ' var o = { p0: 1 };'
+            " with (o) { delete p0; SINK.push((function(a){ return 'x'; })(p0)); }"
+            " console.log(SINK.join('|'));")
+
     def test_dead_store_overwritten_before_read(self):
         self._check('function f(){ var x = 1; x = 5; return x; } console.log(f());')
 
@@ -517,7 +529,6 @@ class TestDeobfuscationWithScopeOpenBugs(TestBase):
             F'deobfuscation changed observable behavior; result was:\n{deobfuscated}',
         )
 
-    @unittest.expectedFailure
     def test_with_scoped_throwing_operand_not_dropped(self):
         """
         Inside a `with` body a bare name resolves through the dynamic scope, so reading one whose

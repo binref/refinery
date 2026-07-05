@@ -727,6 +727,7 @@ def is_safe_iife_inline(
     param_names: Sequence[str],
     call_args: Sequence[Node],
     call_pure: Callable[..., bool] | None = None,
+    may_throw: Callable[[Node], bool] | None = None,
 ) -> bool:
     """
     Verify that substituting IIFE arguments into the body expression preserves evaluation semantics.
@@ -738,7 +739,10 @@ def is_safe_iife_inline(
     reordered. When *call_pure* is given (an
     `refinery.lib.scripts.js.analysis.effects.EffectModel.is_pure_call`), a call argument it proves pure
     counts as side-effect-free for the ordering rules — but, being a call, is not simple, so it is still
-    not duplicated.
+    not duplicated. When *may_throw* is given (a
+    `refinery.lib.scripts.js.analysis.model.SemanticModel.read_may_throw`), an argument reading a name
+    that a `with` body could resolve to nothing counts as effectful, since the read can throw a
+    `ReferenceError`; that throw must not be dropped or reordered any more than a visible side effect.
     """
     if _param_written(expr, set(param_names)):
         return False
@@ -752,6 +756,7 @@ def is_safe_iife_inline(
     effectful_indices = [
         i for i, arg in enumerate(call_args)
         if not side_effect_free(arg, call_pure=call_pure)
+        or (may_throw is not None and any(may_throw(n) for n in arg.walk()))
     ]
     if not effectful_indices:
         return True

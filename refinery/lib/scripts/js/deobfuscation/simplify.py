@@ -314,7 +314,9 @@ class JsSimplifications(Transformer):
         if isinstance(fn, JsParenthesizedExpression):
             fn = fn.expression
         if isinstance(fn, JsFunctionExpression):
-            return self._try_inline_iife(node, fn, lambda call: self.effects.is_pure_call(call), self)
+            return self._try_inline_iife(
+                node, fn, lambda call: self.effects.is_pure_call(call), self.model.read_may_throw, self,
+            )
         return (
             self._try_fold_static_method(node)
             or self._try_fold_free_function(node)
@@ -345,6 +347,7 @@ class JsSimplifications(Transformer):
         node: JsCallExpression,
         fn: JsFunctionExpression,
         call_pure: Callable[..., bool],
+        may_throw: Callable[[Node], bool],
         transformer: Transformer,
     ) -> Node | None:
         if fn.body is None or not isinstance(fn.body, JsBlockStatement):
@@ -361,7 +364,9 @@ class JsSimplifications(Transformer):
         expr = stmt.argument
         if not is_closed_expression(expr, set(param_names)):
             return None
-        if not is_safe_iife_inline(expr, param_names, node.arguments, call_pure):
+        if not is_safe_iife_inline(
+            expr, param_names, node.arguments, call_pure, may_throw,
+        ):
             return None
         return substitute_params(expr, fn.params, node.arguments, transformer=transformer)
 
@@ -513,7 +518,9 @@ class JsSimplifications(Transformer):
             return None
         filtered = [
             e for i, e in enumerate(node.expressions)
-            if i == len(node.expressions) - 1 or not is_simple_expression(e)
+            if i == len(node.expressions) - 1
+            or not is_simple_expression(e)
+            or self.model.read_may_throw(e)
         ]
         if len(filtered) == len(node.expressions):
             return None
