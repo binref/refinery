@@ -10,8 +10,10 @@ every generated program upholds four invariants:
 
 - **Valid**: it is syntactically correct and every identifier reference resolves to a name in
   scope, so it neither fails to parse nor throws a spurious `ReferenceError`.
-- **Terminating**: loops have a constant bound, there is no `while`, and a function may only call
-  functions declared before it, so the call graph is acyclic and no recursion can diverge.
+- **Terminating**: loops have a constant bound (a `while` carries an explicit terminating
+  increment), and a declared function body calls only functions already in scope, while a function
+  that is reassigned or passed to an array method is given a call-free body, so the call graph stays
+  acyclic and no recursion can diverge.
 - **Deterministic**: it uses no clock, randomness, `this`, host object, or reflective construct,
   so two runs of the same source always agree; that is the precondition the self-test checks
   before trusting any original-versus-deobfuscated comparison.
@@ -32,7 +34,10 @@ function that mutates it, and stored inside another object — the escape and al
 which a member-write is observable. A stored property may hold another object, so an object
 reference can itself reach `SINK`; the final `join` stringifies it identically on both runs, so it
 cannot masquerade as a divergence, and `SINK` — never one of the pooled objects — is still never
-nested into itself. A function remains something only ever called.
+nested into itself. A function remains something only ever called: it may be reassigned to a new
+body, aliased to another call-only binding, or passed to an array method (`map`/`filter`) that
+invokes it, yet every function-valued binding is kept out of the readable pool, so it is never
+referenced where it could be stringified.
 
 A `for-of` loop also reassigns outer bindings by destructuring each element of a constant array of
 arrays through a rest target in its head (`for ([w0, ...w1] of ...)`). Because the head carries no
@@ -137,6 +142,11 @@ class _Generator:
                 choices.append('member_store')
             if scope.all_mutators():
                 choices.append('mutate_call')
+        funcs = scope.all_funcs()
+        if funcs:
+            choices += ['func_reassign', 'func_alias']
+            if any(arity >= 1 for _, arity in funcs):
+                choices.append('callback')
         kind = self.rng.choice(choices)
         return getattr(self, F'_stmt_{kind}')(scope, depth)
 
@@ -337,6 +347,49 @@ class _Generator:
         lines.append('}')
         return lines
 
+    def _stmt_func_reassign(self, scope: _Scope, depth: int) -> list[str]:
+        """
+        Reassign an existing function binding to a fresh function expression, `f = function (p) {
+        return e; };`. A function declaration creates a mutable binding, so a later call to *f* runs
+        the new body — the reassigned-callee shape the deobfuscator must not fold to a stale
+        definition. The new body is generated in an isolated scope with only its parameters visible,
+        so it calls nothing and cannot close a call cycle through the name it rebinds.
+        """
+        name, arity = self.rng.choice(scope.all_funcs())
+        params = [self._fresh() for _ in range(arity)]
+        body_scope = _Scope()
+        for param in params:
+            body_scope.readable.append(param)
+            body_scope.mutable.add(param)
+        body = self._expr(body_scope, 2)
+        return [F'{name} = function ({", ".join(params)}) {{ return {body}; }};']
+
+    def _stmt_func_alias(self, scope: _Scope, depth: int) -> list[str]:
+        """
+        Alias an existing function to a second call-only binding, `var h = f;`, then track *h* as a
+        callable of the same arity so it is only ever invoked, never read as a value. The alias
+        captures the current function, so if *f* is later reassigned the two names diverge — the
+        deobfuscator must not conflate them.
+        """
+        name, arity = self.rng.choice(scope.all_funcs())
+        alias = self._fresh()
+        scope.funcs.append((alias, arity))
+        return [F'var {alias} = {name};']
+
+    def _stmt_callback(self, scope: _Scope, depth: int) -> list[str]:
+        """
+        Pass a function as a value to an array higher-order method that invokes it, `[items].map(f)` /
+        `.filter(f)`, and observe the result through `SINK`. The function is only ever called (by the
+        method), never stringified, so it stays a valid oracle input while exercising the interpreter's
+        array-callback and escaping-closure paths.
+        """
+        candidates = [(name, arity) for name, arity in scope.all_funcs() if arity >= 1]
+        name, _ = self.rng.choice(candidates)
+        items = ', '.join(self._atom(scope) for _ in range(self.rng.randint(1, 3)))
+        if self.rng.random() < 0.5:
+            return [F"SINK.push([{items}].map({name}).join('|'));"]
+        return [F'SINK.push([{items}].filter({name}).length);']
+
     def _stmt_obj(self, scope: _Scope, depth: int) -> list[str]:
         name = self._fresh()
         kind = self.rng.choice(('array', 'object'))
@@ -447,6 +500,11 @@ class _Generator:
             return F'(delete {name})'
         name, arity = self.rng.choice(funcs)
         args = [self._expr(scope, depth - 1) for _ in range(arity)]
+        form = self.rng.choice(('direct', 'direct', 'paren', 'call'))
+        if form == 'paren':
+            return F'({name})({", ".join(args)})'
+        if form == 'call':
+            return F'{name}.call({", ".join(["null", *args])})'
         return F'{name}({", ".join(args)})'
 
     def _curry(self, scope: _Scope, depth: int) -> str:
