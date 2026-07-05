@@ -628,11 +628,18 @@ class _Generator:
         The keys are readable but never mutated through a value expression, so a bare read always
         resolves: a `delete` of one would make a later bare read of it fall through to an undefined
         lexical name and throw.
+
+        Sometimes the object also carries an accessor key whose name is *also* a lexical binding, read
+        by bare name in a droppable position (a sequence operand, an unused IIFE argument, a pruned `if`
+        test). Reading it fires the getter — an observable side effect the deobfuscator must not drop,
+        even though the lexical binding of the same name makes the read look like a pure, droppable
+        operand. This is the case a plain deleted-property read cannot exercise: there the read *throws*,
+        which the deobfuscator already keeps, whereas the getter read looks pure.
         """
         obj = self._fresh()
         var = self._fresh()
         keys = ('p0', 'p1', 'p2')
-        init = ', '.join(F'{key}: {self._expr(scope, 1)}' for key in keys)
+        props = [F'{key}: {self._expr(scope, 1)}' for key in keys]
         body_scope = scope.child()
         for key in keys:
             body_scope.readable.append(key)
@@ -644,14 +651,37 @@ class _Generator:
         lines = [
             F'var {var} = {self._atom(scope)};',
             F'SINK.push({var});',
-            F'var {obj} = {{{init}}};',
-            F'with ({obj}) {{',
         ]
+        if self.rng.random() < 0.5:
+            getter = self._fresh()
+            props.append(
+                F"get {getter}() {{ SINK.push('g_{getter}'); return {self.rng.randint(0, 9)}; }}")
+            lines.append(F'var {getter} = {self._atom(scope)};')
+            lines.append(F'SINK.push({getter});')
+            body.extend(self._with_getter_read(getter))
+        lines.append(F'var {obj} = {{{", ".join(props)}}};')
+        lines.append(F'with ({obj}) {{')
         lines += self._indent(body)
         lines.append('}')
         lines.append(F'SINK.push({var});')
         lines.append(F'SINK.push({obj}.p0);')
         return lines
+
+    def _with_getter_read(self, name: str) -> list[str]:
+        """
+        A bare read of *name* in a droppable position: a non-final sequence operand, an unused IIFE
+        argument, or a pruned `if` test. Inside a `with` body whose object defines *name* as a getter the
+        read fires that getter — an observable side effect a sound deobfuscator must keep even though a
+        lexical binding of the same name would make the read look pure and droppable.
+        """
+        literal = self.rng.randint(0, 9)
+        form = self.rng.choice(('sequence', 'iife', 'iftest'))
+        if form == 'sequence':
+            return [F'SINK.push(({name}, {literal}));']
+        if form == 'iife':
+            param = self._fresh()
+            return [F'SINK.push((function({param}) {{ return {literal}; }})({name}));']
+        return [F'if ([{name}]) SINK.push({literal});']
 
     def _with_stmt(self, scope: _Scope, keys: tuple[str, ...]) -> list[str]:
         """
