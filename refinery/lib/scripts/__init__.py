@@ -219,6 +219,7 @@ class Transformer(Visitor):
         super().__init__()
         self._changed = False
         self.models: AnalysisCache | None = None
+        self.options: object | None = None
 
     @property
     def changed(self) -> bool:

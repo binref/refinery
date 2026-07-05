@@ -29,12 +29,14 @@ def node_executable() -> str | None:
     return shutil.which('node')
 
 
-def deobfuscate_source(source: str) -> str:
+def deobfuscate_source(source: str, *, module: bool = False) -> str:
     """
-    Parse, deobfuscate, and re-synthesize a snippet, returning the deobfuscated source.
+    Parse, deobfuscate, and re-synthesize a snippet, returning the deobfuscated source. *module*
+    selects the module execution model (the oracle runs each snippet as a CommonJS module, so a
+    scope-sensitive snippet must be deobfuscated under the same model to be comparable).
     """
     ast = JsParser(source).parse()
-    deobfuscate(ast)
+    deobfuscate(ast, module=module)
     return JsSynthesizer().convert(ast)
 
 

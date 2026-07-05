@@ -28,9 +28,11 @@ class TestJsDeobfuscator(TestBase):
                 break
         return JsSynthesizer().convert(ast)
 
-    def _run_transformer(self, source: str, t: type[Transformer]):
+    def _run_transformer(self, source: str, t: type[Transformer], options: object | None = None):
         ast = JsParser(source).parse()
-        t().visit(ast)
+        instance = t()
+        instance.options = options
+        instance.visit(ast)
         return JsSynthesizer().convert(ast)
 
     def _run_transformers(self, source: str, *transformers: type[Transformer]):

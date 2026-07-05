@@ -25,8 +25,9 @@ class IterativeDeobfuscator(Unit, abstract=True):
         self,
         timeout: Param[int, Arg.Number(
             '-t', help='Maximum number of iterations; the default is {default}.')] = 500,
+        **kwargs,
     ):
-        super().__init__(timeout=timeout)
+        super().__init__(timeout=timeout, **kwargs)
 
     @abc.abstractmethod
     def parse(self, data: str) -> Node:

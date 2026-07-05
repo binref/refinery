@@ -31,12 +31,15 @@ class TransformerGroup:
         steps: int = 0,
         max_steps: int = 0,
         models: AnalysisCache | None = None,
+        options: object | None = None,
     ) -> tuple[bool, int]:
         """
         Run all transformers in a loop until none report changes. Returns (changed, steps) where
         changed indicates whether any transformation was applied and steps is the updated step
         counter. Each transformer instance shares the *models* cache so it reuses the run's analysis
-        models instead of rebuilding them, and invalidates that cache when it changes the tree.
+        models instead of rebuilding them, and invalidates that cache when it changes the tree. The
+        *options* value is attached to every transformer so language-specific transforms can read
+        caller-supplied settings.
         """
         changed = False
         active = set(range(len(self.transformers)))
@@ -47,6 +50,7 @@ class TransformerGroup:
                     continue
                 t = cls()
                 t.models = models
+                t.options = options
                 t.visit(ast)
                 if t.changed:
                     steps += 1
@@ -101,13 +105,14 @@ class DeobfuscationPipeline:
         max_steps: int = 0,
         initial_steps: int = 0,
         models: AnalysisCache | None = None,
+        options: object | None = None,
     ) -> int:
         """
         Execute the pipeline. Returns the total number of transformer invocations that resulted in a
         change, including `initial_steps` carried over from an earlier phase so that a shared
         `max_steps` budget is enforced across phases. A return value equal to `initial_steps` means
         the pipeline was already stable. When *models* is given, every transformer in the run shares
-        that analysis cache.
+        that analysis cache. The *options* value is passed through to every transformer.
         """
         stable: set[str] = set()
         steps = initial_steps
@@ -119,7 +124,7 @@ class DeobfuscationPipeline:
                 if (d := self._dependencies.get(name)) and not d <= stable:
                     continue
                 group = self._groups[name]
-                changed, steps = group.run(ast, steps, max_steps, models)
+                changed, steps = group.run(ast, steps, max_steps, models, options)
                 stable.add(name)
                 if changed:
                     targets = self._invalidators.get(name)

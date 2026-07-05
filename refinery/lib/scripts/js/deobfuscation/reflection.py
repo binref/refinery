@@ -34,6 +34,7 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     string_value,
     walk_scope,
 )
+from refinery.lib.scripts.js.deobfuscation.options import DeobfuscationOptions
 from refinery.lib.scripts.js.model import (
     JsArrowFunctionExpression,
     JsAssignmentExpression,
@@ -43,6 +44,7 @@ from refinery.lib.scripts.js.model import (
     JsClassDeclaration,
     JsClassExpression,
     JsExpressionStatement,
+    JsFunctionDeclaration,
     JsFunctionExpression,
     JsIdentifier,
     JsMemberExpression,
@@ -57,6 +59,7 @@ from refinery.lib.scripts.js.model import (
     JsStringLiteral,
     JsThisExpression,
     JsUnaryExpression,
+    JsVariableDeclaration,
     Statement,
 )
 
@@ -76,6 +79,21 @@ def _try_parse(code: str) -> JsScript | None:
     if not parsed.body:
         return None
     return parsed
+
+
+def _declares_top_level_names(body: list[Statement]) -> bool:
+    """
+    Whether *body* — statements parsed from an evaluated code string — declares any name at its top
+    level (a `var`/`let`/`const`, function, or class declaration). Indirect eval, string timers, and
+    the `Function` constructor evaluate their code in the global scope, so such a declaration binds a
+    global; inlining the body at the call site would instead bind it wherever the deobfuscated output
+    runs, which under the module model is a module scope that never reaches the global object. The
+    declaration's target scope is therefore not reproducible by textual inlining under that model.
+    """
+    return any(
+        isinstance(stmt, (JsVariableDeclaration, JsFunctionDeclaration, JsClassDeclaration))
+        for stmt in body
+    )
 
 
 def _try_eval_string_arg(node: Expression) -> str | None:
@@ -707,6 +725,16 @@ class JsReflectionInlining(ScriptLevelTransformer):
             _replace_in_parent(node, replacement)
             self.mark_changed()
 
+    @property
+    def _module_scope(self) -> bool:
+        """
+        Whether the caller selected the module execution model (see
+        `refinery.lib.scripts.js.deobfuscation.options.DeobfuscationOptions`), under which a top-level
+        declaration is scoped to the module and does not reach the global object.
+        """
+        options = self.options
+        return isinstance(options, DeobfuscationOptions) and options.module
+
     def _try_resolve_statement(self, stmt: Statement, root: JsScript) -> list[Statement] | None:
         if not isinstance(stmt, JsExpressionStatement) or stmt.expression is None:
             return None
@@ -725,14 +753,19 @@ class JsReflectionInlining(ScriptLevelTransformer):
         if constructor is not None:
             code, binds = constructor
             parsed = self._resolve_constructor_body(code, binds, stmt, root)
+            global_scoped = True
         else:
-            code = (
-                _extract_eval_code(node)
-                or _extract_indirect_eval_code(node)
-                or _extract_timer_code(node)
-            )
-            parsed = _try_parse(code) if code is not None else None
+            direct = _extract_eval_code(node)
+            if direct is not None:
+                parsed = _try_parse(direct)
+                global_scoped = False
+            else:
+                code = _extract_indirect_eval_code(node) or _extract_timer_code(node)
+                parsed = _try_parse(code) if code is not None else None
+                global_scoped = True
         if parsed is None:
+            return None
+        if self._module_scope and global_scoped and _declares_top_level_names(parsed.body):
             return None
         result = parsed.body
         if had_await and _has_top_level_await(result):

@@ -559,40 +559,35 @@ class TestDeobfuscationWithScopeOpenBugs(TestBase):
 
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
-class TestDeobfuscationReflectionOpenBugs(TestBase):
+class TestDeobfuscationModuleScope(TestBase):
     """
-    Known-open soundness bugs the reflection fuzzer grammar (`eval`, `Function`, `globalThis`)
-    surfaced, captured as expected failures pending the same batched fix session as the other
-    open-bug classes. No deobfuscator change accompanies these tests; when a fix lands the matching
-    test becomes an unexpected success — the signal to remove the decorator.
+    Semantics preservation for the module execution model. The oracle runs each snippet as a CommonJS
+    module (`node <file>`), so a scope-sensitive snippet is deobfuscated with `module=True` to match.
     """
 
-    def _check(self, source: str):
-        deobfuscated = deobfuscate_source(source)
+    def _check(self, source: str, *, module: bool = False):
+        deobfuscated = deobfuscate_source(source, module=module)
         self.assertEqual(
             behavior(source),
             behavior(deobfuscated),
             F'deobfuscation changed observable behavior; result was:\n{deobfuscated}',
         )
 
-    @unittest.expectedFailure
-    def test_global_binding_constant_not_inlined_into_globalthis_property(self):
+    def test_indirect_eval_global_declaration_preserved_in_module_scope(self):
         """
         Indirect eval runs its code in the global scope, so `(0, eval)("var g = 7;")` creates a global
-        binding `g` that `globalThis.g` reads back as `7`. The reflection inliner rewrites the indirect
-        eval into a bare top-level `var g = 7;`, but under the module (or strict) semantics the output
-        may run under, a top-level `var` does not attach to the global object, so `globalThis.g` reads
-        `undefined` and the observable output diverges. Whether this inlining is sound depends on the
-        script-versus-module execution model the deobfuscator targets; the existing reflection tests
-        assume the sloppy-script model where the rewrite is faithful. (The separate constant-into-
-        property-name substitution this once also tripped is now fixed — see
-        `TestDeobfuscationDifferential.test_constant_not_substituted_into_member_property_name`.)
+        that `globalThis.g` reads back as `7`. Rewriting it into a bare top-level `var g = 7;` is
+        faithful only under the script model; under the module model the oracle runs, a top-level `var`
+        is scoped to the module and never reaches the global object. Deobfuscated in module mode, the
+        inliner declines the rewrite (leaving the reflective call intact) so the observable output is
+        preserved.
         """
         self._check(
             'var SINK = [];'
             ' (0, eval)("var g = 7;");'
             ' SINK.push(globalThis.g);'
-            " console.log(SINK.join('|'));")
+            " console.log(SINK.join('|'));",
+            module=True)
 
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')

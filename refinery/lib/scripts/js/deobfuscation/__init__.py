@@ -26,6 +26,7 @@ from refinery.lib.scripts.js.deobfuscation.stringarray import JsStringArrayResol
 from refinery.lib.scripts.js.deobfuscation.unshuffle import JsArrayUnshuffle
 from refinery.lib.scripts.js.deobfuscation.unused import JsUnusedCodeRemoval
 from refinery.lib.scripts.js.deobfuscation.wrappers import JsCallWrapperInliner
+from refinery.lib.scripts.js.deobfuscation.options import DeobfuscationOptions
 from refinery.lib.scripts.js.analysis.cache import ModelCache
 from refinery.lib.scripts.js.model import JsScript
 from refinery.lib.scripts.pipeline import DeobfuscationPipeline, TransformerGroup
@@ -85,13 +86,16 @@ _pipeline = DeobfuscationPipeline(
 )
 
 
-def deobfuscate(ast: JsScript, max_steps: int = 5000) -> int:
+def deobfuscate(ast: JsScript, max_steps: int = 5000, *, module: bool = False) -> int:
     """
     Apply all available deobfuscators to the input. A non-zero *max_steps* bounds the total number of
     change-producing transformer passes and raises
     `refinery.lib.scripts.pipeline.DeobfuscationTimeout` once it is exceeded, so a transform that fails
     to converge fails loudly instead of hanging. The default is generous — real inputs settle in a few
     to a few dozen passes (the differential corpus peaks in the low tens) — so it never bounds a
-    legitimate deobfuscation, only a runaway loop. Pass `0` to disable the bound entirely.
+    legitimate deobfuscation, only a runaway loop. Pass `0` to disable the bound entirely. *module*
+    selects the execution model the input is assumed to run under; see
+    `refinery.lib.scripts.js.deobfuscation.options.DeobfuscationOptions`.
     """
-    return _pipeline.run(ast, max_steps=max_steps, models=ModelCache(ast))
+    options = DeobfuscationOptions(module=module)
+    return _pipeline.run(ast, max_steps=max_steps, models=ModelCache(ast), options=options)

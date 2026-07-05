@@ -4,6 +4,7 @@ import inspect
 
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 
+from refinery.lib.scripts.js.deobfuscation.options import DeobfuscationOptions
 from refinery.lib.scripts.js.deobfuscation.reflection import JsReflectionInlining
 
 
@@ -11,6 +12,10 @@ class TestReflectionInlining(TestJsDeobfuscator):
 
     def _reflect(self, source: str) -> str:
         return self._run_transformer(source, JsReflectionInlining)
+
+    def _reflect_module(self, source: str) -> str:
+        return self._run_transformer(
+            source, JsReflectionInlining, DeobfuscationOptions(module=True))
 
     def test_eval_string_literal(self):
         self.assertEqual('var x = 1;', self._reflect("eval('var x = 1;');"))
@@ -38,6 +43,22 @@ class TestReflectionInlining(TestJsDeobfuscator):
 
     def test_settimeout_non_string_not_inlined(self):
         self.assertEqual('setTimeout(fn, 0);', self._reflect('setTimeout(fn, 0);'))
+
+    def test_module_indirect_eval_declaration_not_inlined(self):
+        self.assertEqual(
+            "(0, eval)('var x = 1;');",
+            self._reflect_module("(0, eval)('var x = 1;');"))
+
+    def test_module_timer_declaration_not_inlined(self):
+        self.assertEqual(
+            "setTimeout('var x = 1;', 0);",
+            self._reflect_module("setTimeout('var x = 1;', 0);"))
+
+    def test_module_direct_eval_declaration_still_inlined(self):
+        self.assertEqual('var x = 1;', self._reflect_module("eval('var x = 1;');"))
+
+    def test_module_indirect_eval_expression_still_inlined(self):
+        self.assertEqual('foo();', self._reflect_module("(0, eval)('foo();');"))
 
     def test_member_form_string_timer_inlined(self):
         self.assertEqual('alert(1);', self._reflect("window.setTimeout('alert(1)', 0);"))
