@@ -203,6 +203,7 @@ from refinery.units.formats.email import xtmail as xtmail
 from refinery.units.formats.evtx import evtx as evtx
 from refinery.units.formats.exe.opc import opc as opc
 from refinery.units.formats.exe.vaddr import vaddr as vaddr
+from refinery.units.formats.exe.vcall import vcall as vcall
 from refinery.units.formats.exe.vmemref import vmemref as vmemref
 from refinery.units.formats.exe.vsect import vsect as vsect
 from refinery.units.formats.exe.vsnip import vsnip as vsnip

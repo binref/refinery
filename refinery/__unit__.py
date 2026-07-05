@@ -202,6 +202,7 @@ UNITS = {
     'evtx'                                       : 'refinery.units.formats.evtx',
     'opc'                                        : 'refinery.units.formats.exe.opc',
     'vaddr'                                      : 'refinery.units.formats.exe.vaddr',
+    'vcall'                                      : 'refinery.units.formats.exe.vcall',
     'vmemref'                                    : 'refinery.units.formats.exe.vmemref',
     'vsect'                                      : 'refinery.units.formats.exe.vsect',
     'vsnip'                                      : 'refinery.units.formats.exe.vsnip',
