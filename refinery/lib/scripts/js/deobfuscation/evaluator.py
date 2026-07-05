@@ -15,6 +15,7 @@ from refinery.lib.scripts.js.analysis.effects import EffectModel
 from refinery.lib.scripts.js.analysis.model import Binding, SemanticModel
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     ScriptLevelTransformer,
+    _param_written,
     access_key,
     binding_has_references,
     extract_literal_value,
@@ -701,6 +702,8 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
         except IrreducibleExpression as irr:
             if gate_unresolved and self._is_unresolved_call(irr.node):
                 return False
+            if self._substitution_would_break(irr.node, func):
+                return False
             replacement = self._substitute_params_in_clone(irr.node, func, args, self)
             _replace_in_parent(node, replacement)
             self.mark_changed()
@@ -948,6 +951,28 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
             if isinstance(child, JsCallExpression):
                 return True
         return False
+
+    def _substitution_would_break(self, node: Node, func: _FuncNode) -> bool:
+        """
+        Whether splicing *node* — an irreducible sub-expression of *func*'s body — into the call site
+        by parameter substitution would change behavior. Two cases make it unsafe: the node writes a
+        parameter, so substituting the argument value would place it at a write target (`delete p`
+        becomes `delete <literal>`; `(p = 5)` becomes `(<literal> = 5)`); or the node references a
+        name declared local to *func*'s body, which has no binding at the call site once the body is
+        discarded, leaving a dangling reference.
+        """
+        param_names = {p.name for p in func.params if isinstance(p, JsIdentifier)}
+        if _param_written(node, param_names):
+            return True
+        body_locals: set[str] = set()
+        _collect_declared_names(func.body, body_locals)
+        body_locals -= param_names
+        if not body_locals:
+            return False
+        return any(
+            isinstance(child, JsIdentifier) and is_reference(child) and child.name in body_locals
+            for child in node.walk()
+        )
 
     @staticmethod
     def _substitute_params_in_clone(

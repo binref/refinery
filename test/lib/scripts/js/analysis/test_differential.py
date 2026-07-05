@@ -598,7 +598,6 @@ class TestDeobfuscationExpressionOpenBugs(TestBase):
             " SINK.push(Math.sign('ab'));"
             " console.log(SINK.join('|'));")
 
-    @unittest.expectedFailure
     def test_delete_parameter_not_substituted_when_inlined(self):
         """
         `delete p` for a parameter `p` returns false — a binding is not a deletable reference — but
@@ -626,7 +625,6 @@ class TestDeobfuscationExpressionOpenBugs(TestBase):
             ' SINK.push(m0());'
             " console.log(SINK.join('|'));")
 
-    @unittest.expectedFailure
     def test_function_local_not_dropped_when_body_is_inlined(self):
         """
         `g` returns `x[0] instanceof Object`, an expression over its own local `x`. Because `instanceof`
@@ -641,7 +639,6 @@ class TestDeobfuscationExpressionOpenBugs(TestBase):
             ' SINK.push(g());'
             " console.log(SINK.join('|'));")
 
-    @unittest.expectedFailure
     def test_assignment_target_parameter_not_substituted_when_inlined(self):
         """
         The same inliner fragility as the `delete` case, in an assignment target: `(p = 5)` assigns the
