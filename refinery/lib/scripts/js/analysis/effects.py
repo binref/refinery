@@ -447,7 +447,8 @@ class EffectModel:
         whose calls and property reads are treated as free. This is the model-aware form of the
         model-free `side_effect_free` in this module, which clears only calls to a defunct name or an
         inline function; unlike it, an identifier read that a `with` body could resolve to nothing is
-        rejected here, because such a read can throw a `ReferenceError` (see `read_may_throw`).
+        rejected here, because such a read can throw a `ReferenceError` (see
+        `refinery.lib.scripts.js.analysis.model.SemanticModel.read_may_throw`).
         """
         if any(self.model.read_may_throw(child) for child in node.walk()):
             return False

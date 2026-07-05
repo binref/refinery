@@ -612,6 +612,95 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
     def test_object_literal_parens_preserved(self):
         self.assertEqual('var x = ({ a: 1 });', self._simplify('var x = ({a: 1});'))
 
+    def test_fold_resolves_callee_free_name_in_definition_scope(self):
+        """
+        `f` reads the top-level `g` through `g(n)`. Folding `f(5)` inside `caller`, whose own `g`
+        shadows the top-level one at the call site, must bind `f`'s `g` to the definition `f`
+        lexically sees, not the `g` in scope at the call (Node: `caller()` is 16, not 115).
+        """
+        source = inspect.cleandoc(
+            """
+            function g(x) {
+              return x + 1;
+            }
+            function f(n) {
+              return g(n) + 10;
+            }
+            function caller() {
+              function g(x) {
+                return x + 100;
+              }
+              return f(5);
+            }
+            sink(g, f, caller);
+            """
+        )
+        expected = inspect.cleandoc(
+            """
+            function g(x) {
+              return x + 1;
+            }
+            function f(n) {
+              return g(n) + 10;
+            }
+            function caller() {
+              function g(x) {
+                return x + 100;
+              }
+              return 16;
+            }
+            sink(g, f, caller);
+            """
+        )
+        self.assertEqual(expected, self._evaluate(source))
+
+    def test_irreducible_substitution_declined_when_parameter_reassigned(self):
+        """
+        The wrapper reassigns its parameter (`x = 7`) before the irreducible `return x + String`, so
+        `x` there is 7, not the argument 1. Substituting the original argument would emit `1 + String`
+        (Node: `7 + String`), so the evaluator must leave the call unfolded.
+        """
+        source = inspect.cleandoc(
+            """
+            (function(x) {
+              x = 7;
+              return x + String;
+            })(1);
+            """
+        )
+        self.assertEqual(source, self._evaluate(source))
+
+    def test_irreducible_substitution_declined_for_named_function_expression_self_name(self):
+        """
+        The named function expression refers to its own name `f`, a binding that exists only inside the
+        expression. Splicing `return f` into the call site would leave a dangling `f`, so the evaluator
+        must not fold the call.
+        """
+        source = inspect.cleandoc(
+            """
+            var y = (function f() {
+              return f;
+            })();
+            """
+        )
+        self.assertEqual(source, self._evaluate(source))
+
+    def test_irreducible_substitution_declined_for_destructured_local(self):
+        """
+        `String` is rebound as a destructured local (`var { String } = Math`), so `return String` reads
+        that hoisted local (undefined), not the global constructor. Splicing bare `String` into the
+        call site would resolve to the global `String`, so the evaluator must decline the fold.
+        """
+        source = inspect.cleandoc(
+            """
+            var w = (function() {
+              return String;
+              var { String } = Math;
+            })();
+            """
+        )
+        self.assertEqual(source, self._evaluate(source))
+
 
 class TestClosureCapture(TestJsDeobfuscator):
 

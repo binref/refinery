@@ -84,11 +84,14 @@ def _try_parse(code: str) -> JsScript | None:
 def _declares_top_level_names(body: list[Statement]) -> bool:
     """
     Whether *body* — statements parsed from an evaluated code string — declares any name at its top
-    level (a `var`/`let`/`const`, function, or class declaration). Indirect eval, string timers, and
-    the `Function` constructor evaluate their code in the global scope, so such a declaration binds a
-    global; inlining the body at the call site would instead bind it wherever the deobfuscated output
-    runs, which under the module model is a module scope that never reaches the global object. The
-    declaration's target scope is therefore not reproducible by textual inlining under that model.
+    level (a `var`/`let`/`const`, function, or class declaration). Indirect eval and string timers
+    evaluate their code in the global scope, so such a declaration binds a global; inlining the body
+    at the call site would instead bind it wherever the deobfuscated output runs — a module scope
+    under the module model, or the enclosing function or block when the call site is not the global
+    scope — neither of which reaches the global object. The declaration's target scope is therefore
+    not reproducible by textual inlining there. The `Function` constructor is not among these: a
+    declaration in its body binds a local of the created function, not a global, so inlining it into
+    any scope is sound and it is exempt from this gate.
     """
     return any(
         isinstance(stmt, (JsVariableDeclaration, JsFunctionDeclaration, JsClassDeclaration))
@@ -677,7 +680,7 @@ class JsReflectionInlining(ScriptLevelTransformer):
                 continue
             i = 0
             while i < len(body):
-                parsed = self._try_resolve_statement(body[i], root)
+                parsed = self._try_resolve_statement(body[i], root, container is root)
                 if parsed is None:
                     i += 1
                     continue
@@ -735,7 +738,9 @@ class JsReflectionInlining(ScriptLevelTransformer):
         options = self.options
         return isinstance(options, DeobfuscationOptions) and options.module
 
-    def _try_resolve_statement(self, stmt: Statement, root: JsScript) -> list[Statement] | None:
+    def _try_resolve_statement(
+        self, stmt: Statement, root: JsScript, at_global_scope: bool,
+    ) -> list[Statement] | None:
         if not isinstance(stmt, JsExpressionStatement) or stmt.expression is None:
             return None
         node = stmt.expression
@@ -753,7 +758,7 @@ class JsReflectionInlining(ScriptLevelTransformer):
         if constructor is not None:
             code, binds = constructor
             parsed = self._resolve_constructor_body(code, binds, stmt, root)
-            global_scoped = True
+            global_scoped = False
         else:
             direct = _extract_eval_code(node)
             if direct is not None:
@@ -765,7 +770,11 @@ class JsReflectionInlining(ScriptLevelTransformer):
                 global_scoped = True
         if parsed is None:
             return None
-        if self._module_scope and global_scoped and _declares_top_level_names(parsed.body):
+        if (
+            global_scoped
+            and _declares_top_level_names(parsed.body)
+            and (self._module_scope or not at_global_scope)
+        ):
             return None
         result = parsed.body
         if had_await and _has_top_level_await(result):

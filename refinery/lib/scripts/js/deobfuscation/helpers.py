@@ -143,7 +143,8 @@ def _js_div(a: int | float, b: int | float) -> int | float:
     if b == 0:
         if a == 0 or a != a:
             return float('nan')
-        return float('inf') if a > 0 else float('-inf')
+        negative = (a < 0) != (math.copysign(1.0, b) < 0)
+        return float('-inf') if negative else float('inf')
     return a / b
 
 

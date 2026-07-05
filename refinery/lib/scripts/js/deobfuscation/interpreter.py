@@ -883,7 +883,10 @@ def _math_min(args: list[Value]) -> Value:
     values = [to_number(a) for a in args]
     if any(v != v for v in values):
         return float('nan')
-    return min(values)
+    result = min(values)
+    if result == 0 and any(math.copysign(1.0, v) < 0 for v in values):
+        return -0.0
+    return result
 
 
 @_register(('Math', 'max'))
@@ -893,7 +896,10 @@ def _math_max(args: list[Value]) -> Value:
     values = [to_number(a) for a in args]
     if any(v != v for v in values):
         return float('nan')
-    return max(values)
+    result = max(values)
+    if result == 0 and any(math.copysign(1.0, v) > 0 for v in values):
+        return 0.0
+    return result
 
 
 @_register(('Math', 'trunc'))

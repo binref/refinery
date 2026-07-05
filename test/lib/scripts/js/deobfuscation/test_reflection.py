@@ -60,6 +60,37 @@ class TestReflectionInlining(TestJsDeobfuscator):
     def test_module_indirect_eval_expression_still_inlined(self):
         self.assertEqual('foo();', self._reflect_module("(0, eval)('foo();');"))
 
+    def test_indirect_eval_declaration_not_inlined_into_function(self):
+        """
+        Indirect eval runs its code in the global scope, so `var x` binds a global. Inlining it into
+        the function body would rebind `x` as a function local, so the call is left intact even in the
+        default script model.
+        """
+        source = inspect.cleandoc(
+            """
+            function f() {
+              (0, eval)('var x = 1;');
+            }
+            """
+        )
+        self.assertEqual(source, self._reflect(source))
+
+    def test_function_constructor_declaration_inlined_into_function(self):
+        """
+        A `var` in a `Function` constructor body binds a local of the created function, not a global,
+        so inlining it into the enclosing function preserves scope.
+        """
+        source = "function f() { new Function('var x = 1; sink(x);')(); }"
+        expected = inspect.cleandoc(
+            """
+            function f() {
+              var x = 1;
+              sink(x);
+            }
+            """
+        )
+        self.assertEqual(expected, self._reflect(source))
+
     def test_member_form_string_timer_inlined(self):
         self.assertEqual('alert(1);', self._reflect("window.setTimeout('alert(1)', 0);"))
 

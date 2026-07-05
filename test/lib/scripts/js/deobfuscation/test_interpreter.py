@@ -209,6 +209,24 @@ class TestInterpreterValueSemantics(TestJsDeobfuscator):
         )
         self.assertEqual("var x = 'KEY';", self._evaluate(source))
 
+    def test_division_by_negative_zero_is_negative_infinity(self):
+        self.assertEqual('var x = -Infinity;', self._fold('1 / -0'))
+
+    def test_division_of_negative_by_negative_zero_is_positive_infinity(self):
+        self.assertEqual('var x = Infinity;', self._fold('-1 / -0'))
+
+    def test_math_round_negative_zero_observable_through_division(self):
+        self.assertEqual('var x = -Infinity;', self._fold('1 / Math.round(-0.4)'))
+
+    def test_math_max_selects_positive_over_negative_zero(self):
+        self.assertEqual('var x = Infinity;', self._fold('1 / Math.max(-0, 0)'))
+
+    def test_math_min_selects_negative_over_positive_zero(self):
+        self.assertEqual('var x = -Infinity;', self._fold('1 / Math.min(-0, 0)'))
+
+    def test_math_max_keeps_negative_zero_when_all_operands_negative_zero(self):
+        self.assertEqual('var x = -Infinity;', self._fold('1 / Math.max(-0, -0)'))
+
 
 class TestInterpreterThrowSemantics(TestJsDeobfuscator):
 

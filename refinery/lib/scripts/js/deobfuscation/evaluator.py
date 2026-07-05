@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 from refinery.lib.scripts import Node, Transformer, _remove_from_parent, _replace_in_parent
 from refinery.lib.scripts.js.analysis.cache import model_cache
 from refinery.lib.scripts.js.analysis.effects import EffectModel
-from refinery.lib.scripts.js.analysis.model import Binding, SemanticModel
+from refinery.lib.scripts.js.analysis.model import SemanticModel, pattern_identifiers
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     ScriptLevelTransformer,
     _param_written,
@@ -599,13 +599,6 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
         else:
             self._failed_counts[func_id] = self._failed_counts.get(func_id, 0) + 1
 
-    def _visible_functions(self, node: Node) -> dict[str, _FuncNode]:
-        """
-        The named functions the interpreter may resolve for calls at *node*'s position, in the scope
-        that lexically governs it.
-        """
-        return self._visible_functions_in_scope(self._scope_for_node(node))
-
     def _functions_in_scope_of(self, func: Node) -> dict[str, _FuncNode]:
         """
         The named functions a call inside *func*'s own body may resolve, in *func*'s lexical scope.
@@ -689,7 +682,7 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
         Run the interpreter on *func* with *args* and, on success, replace *node* with the result.
         Returns True if the call site was resolved (either to a value or a substituted expression).
         """
-        functions_for_interpreter = self._visible_functions(node)
+        functions_for_interpreter = self._functions_in_scope_of(func)
         closure = closure_override if closure_override is not None else self._closure_env.get(id(func))
         interpreter = JsInterpreter(
             functions=functions_for_interpreter,
@@ -733,7 +726,7 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
         `with`-body call still needs the binding. This mirrors the reflection gate the unused-code
         remover applies, so both transforms keep the same functions.
         """
-        binding = self._function_binding(model, func)
+        binding = model.naming_binding(func)
         if binding is None:
             return False
         exclude = self._function_exclude_node(func)
@@ -802,20 +795,6 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
         if isinstance(declarator, JsVariableDeclarator):
             return declarator
         return func
-
-    @staticmethod
-    def _function_binding(model: SemanticModel, func: _FuncNode) -> Binding | None:
-        """
-        The binding introduced by *func*'s name — the function declaration's own identifier, or the
-        declarator that a named function expression is assigned to — or `None` when the function is
-        anonymous and so has no name to reference.
-        """
-        if isinstance(func, JsFunctionDeclaration):
-            ident = func.id
-        else:
-            declarator = func.parent
-            ident = declarator.id if isinstance(declarator, JsVariableDeclarator) else None
-        return model.binding_of(ident) if isinstance(ident, JsIdentifier) else None
 
     def _remove_function(self, func: _FuncNode) -> None:
         if isinstance(func, JsFunctionDeclaration):
@@ -968,24 +947,51 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
     def _substitution_would_break(self, node: Node, func: _FuncNode) -> bool:
         """
         Whether splicing *node* — an irreducible sub-expression of *func*'s body — into the call site
-        by parameter substitution would change behavior. Two cases make it unsafe: the node writes a
-        parameter, so substituting the argument value would place it at a write target (`delete p`
-        becomes `delete <literal>`; `(p = 5)` becomes `(<literal> = 5)`); or the node references a
-        name declared local to *func*'s body, which has no binding at the call site once the body is
-        discarded, leaving a dangling reference.
+        by parameter substitution would change behavior. Substitution replaces each parameter with its
+        original argument value and discards the rest of the body, so it is unsafe when *node*:
+
+        - writes a parameter, which would place the argument value at a write target (`delete p`
+          becomes `delete <literal>`, `(p = 5)` becomes `(<literal> = 5)`);
+        - reads a parameter that *func* reassigns, whose value at the irreducible point is no longer the
+          original argument the substitution would supply;
+        - references a name bound inside *func* but declared outside *node* — a body local (including a
+          destructured or `catch` binding), a nested declaration, `arguments`, or the function
+          expression's own name — which has no binding once the body is discarded, leaving a dangling
+          reference.
+
+        A binding *node* itself introduces travels with it and stays intact. This resolves the actual
+        bindings of *node*'s references through the model, so shadowing and destructuring are exact.
         """
         param_names = {p.name for p in func.params if isinstance(p, JsIdentifier)}
         if _param_written(node, param_names):
             return True
-        body_locals: set[str] = set()
-        _collect_declared_names(func.body, body_locals)
-        body_locals -= param_names
-        if not body_locals:
-            return False
-        return any(
-            isinstance(child, JsIdentifier) and is_reference(child) and child.name in body_locals
-            for child in node.walk()
-        )
+        script = self._script
+        if script is None:
+            return True
+        model = model_cache(self, script).model
+        param_bindings = {
+            binding
+            for param in func.params
+            for ident in pattern_identifiers(param)
+            if (binding := model.binding_of(ident)) is not None
+        }
+        for child in node.walk():
+            if not isinstance(child, JsIdentifier) or not model.is_reference(child):
+                continue
+            binding = model.resolve(child)
+            if binding is None:
+                continue
+            owner = binding.scope.node
+            if owner is not func and not owner.is_descendant_of(func):
+                continue
+            if binding in param_bindings:
+                if binding.writes:
+                    return True
+                continue
+            if owner is node or owner.is_descendant_of(node):
+                continue
+            return True
+        return False
 
     @staticmethod
     def _substitute_params_in_clone(
