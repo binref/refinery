@@ -509,16 +509,15 @@ class TestDeobfuscationDifferential(TestBase):
 
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
-class TestDeobfuscationWithScopeOpenBugs(TestBase):
+class TestDeobfuscationWithScope(TestBase):
     """
-    Known-open soundness bugs the `with`-block fuzzer grammar surfaced, both rooted in the
-    deobfuscator under-counting a reference that resolves through a `with` body's dynamic scope:
-    such a reference may throw (a deleted property falls through to a lexical name) and keeps its
-    target alive, yet a transform treats it as a pure droppable operand or an absent use. They are
-    captured here as expected failures, so the suite stays green while formally recording each bug;
-    when a fix lands the matching test becomes an unexpected success — the signal to remove the
-    decorator. The fixes are scheduled together in a separate session, so no deobfuscator change
-    accompanies these tests.
+    Semantics preservation for a read that resolves through a `with` body's dynamic scope. A bare name
+    inside a `with` body is resolved against the `with` object first, so reading it is not a pure,
+    droppable, or reorderable operand: a matching property fires the object's getter — an observable
+    side effect — a deleted or absent one falls through to a lexical binding or, failing that, throws a
+    `ReferenceError`, and the reference keeps its lexical target alive. Each case is a regression the
+    deobfuscator once mishandled by treating such a read as a pure operand or an absent use; the Node
+    oracle confirms the observable behavior is unchanged.
     """
 
     def _check(self, source: str):
@@ -528,6 +527,31 @@ class TestDeobfuscationWithScopeOpenBugs(TestBase):
             behavior(deobfuscated),
             F'deobfuscation changed observable behavior; result was:\n{deobfuscated}',
         )
+
+    def test_with_scoped_getter_read_in_sequence_not_dropped(self):
+        """
+        Reading the bare name `x` inside `with (o)` fires `o`'s getter for `x` before the lexical
+        `var x` is consulted. Folding the sequence `(x, 'y')` to its last value would drop the read and
+        skip the getter, so the sequence must be kept.
+        """
+        self._check(
+            'var SINK = [];'
+            ' var x = 1;'
+            " var o = { get x() { SINK.push('g'); return 2; } };"
+            " with (o) { SINK.push((x, 'y')); }"
+            " console.log(SINK.join('|'));")
+
+    def test_with_scoped_getter_read_as_iife_argument_not_dropped(self):
+        """
+        The bare read `x` inside `with (o)` fires `o`'s getter; passed as an unused IIFE argument it
+        must not be inlined away, which would drop the argument and skip the getter.
+        """
+        self._check(
+            'var SINK = [];'
+            ' var x = 1;'
+            " var o = { get x() { SINK.push('g'); return 2; } };"
+            " with (o) { SINK.push((function(a){ return 'y'; })(x)); }"
+            " console.log(SINK.join('|'));")
 
     def test_with_scoped_throwing_operand_not_dropped(self):
         """

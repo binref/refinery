@@ -147,6 +147,23 @@ class TestSemanticModel(TestBase):
         self.assertEqual(model.binding_of(z_decl).kind, BindingKind.VAR)
         self.assertIsNone(model.resolve(z_use))
 
+    def test_read_has_dynamic_effect_for_with_body_read_backed_by_binding(self):
+        ast, model = self._model('var x = 1; with (o) { x; }')
+        self.assertTrue(model.read_has_dynamic_effect(self._use(ast, model, 'x')))
+
+    def test_read_has_dynamic_effect_for_unresolved_with_body_read(self):
+        ast, model = self._model('with (o) { y; }')
+        y_use = next(n for n in self._idents(ast, 'y') if model.binding_of(n) is None)
+        self.assertTrue(model.read_has_dynamic_effect(y_use))
+
+    def test_read_has_no_dynamic_effect_for_static_read(self):
+        ast, model = self._model('var x = 1; x;')
+        self.assertFalse(model.read_has_dynamic_effect(self._use(ast, model, 'x')))
+
+    def test_read_has_no_dynamic_effect_for_declaration(self):
+        ast, model = self._model('var x = 1;')
+        self.assertFalse(model.read_has_dynamic_effect(self._decl(ast, model, 'x')))
+
     def test_for_let_head_scopes_iteration_variable(self):
         ast, model = self._model('for (let i = 0; i < 1; i++) { i; } i;')
         i_decl = self._decl(ast, model, 'i')

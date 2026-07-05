@@ -315,7 +315,8 @@ class JsSimplifications(Transformer):
             fn = fn.expression
         if isinstance(fn, JsFunctionExpression):
             return self._try_inline_iife(
-                node, fn, lambda call: self.effects.is_pure_call(call), self.model.read_may_throw, self,
+                node, fn,
+                lambda call: self.effects.is_pure_call(call), self.model.read_has_dynamic_effect, self,
             )
         return (
             self._try_fold_static_method(node)
@@ -347,7 +348,7 @@ class JsSimplifications(Transformer):
         node: JsCallExpression,
         fn: JsFunctionExpression,
         call_pure: Callable[..., bool],
-        may_throw: Callable[[Node], bool],
+        read_effect: Callable[[Node], bool],
         transformer: Transformer,
     ) -> Node | None:
         if fn.body is None or not isinstance(fn.body, JsBlockStatement):
@@ -365,7 +366,7 @@ class JsSimplifications(Transformer):
         if not is_closed_expression(expr, set(param_names)):
             return None
         if not is_safe_iife_inline(
-            expr, param_names, node.arguments, call_pure, may_throw,
+            expr, param_names, node.arguments, call_pure, read_effect,
         ):
             return None
         return substitute_params(expr, fn.params, node.arguments, transformer=transformer)
@@ -520,7 +521,7 @@ class JsSimplifications(Transformer):
             e for i, e in enumerate(node.expressions)
             if i == len(node.expressions) - 1
             or not is_simple_expression(e)
-            or self.model.read_may_throw(e)
+            or self.model.read_has_dynamic_effect(e)
         ]
         if len(filtered) == len(node.expressions):
             return None

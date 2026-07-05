@@ -9,6 +9,7 @@ from refinery.lib.scripts.js.model import (
     JsBinaryExpression,
     JsCallExpression,
     JsFunctionDeclaration,
+    JsFunctionExpression,
     JsIdentifier,
     JsObjectExpression,
 )
@@ -471,6 +472,19 @@ class TestEffectModel(TestBase):
         ast, effects = self._effects('function f(g){ return [g()]; }')
         array = next(n for n in ast.walk_in_order() if isinstance(n, JsArrayExpression))
         self.assertFalse(effects.is_side_effect_free(array))
+
+    def test_side_effect_free_rejects_with_scoped_read_backed_by_binding(self):
+        ast, effects = self._effects('var x = 1; with (o) { x; }')
+        x_use = next(
+            n for n in ast.walk_in_order()
+            if isinstance(n, JsIdentifier) and n.name == 'x' and effects.model.binding_of(n) is None
+        )
+        self.assertFalse(effects.is_side_effect_free(x_use))
+
+    def test_side_effect_free_clears_function_value_reading_through_with(self):
+        ast, effects = self._effects('(function () { with (o) { x; } });')
+        fn = next(n for n in ast.walk_in_order() if isinstance(n, JsFunctionExpression))
+        self.assertTrue(effects.is_side_effect_free(fn))
 
     @staticmethod
     def _container(source: str, name: str = 'a', *, member_calls_mutate: bool = True) -> bool:
