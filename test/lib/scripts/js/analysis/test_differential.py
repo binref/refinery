@@ -485,3 +485,55 @@ class TestDeobfuscationDifferential(TestBase):
             ' function read(){ try { return secret; } catch (e) { return e.name; } }'
             ' SINK.push(read());'
             " console.log(SINK.join('|'));")
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestDeobfuscationWithScopeOpenBugs(TestBase):
+    """
+    Known-open soundness bugs the `with`-block fuzzer grammar surfaced, both rooted in the
+    deobfuscator under-counting a reference that resolves through a `with` body's dynamic scope:
+    such a reference may throw (a deleted property falls through to a lexical name) and keeps its
+    target alive, yet a transform treats it as a pure droppable operand or an absent use. They are
+    captured here as expected failures, so the suite stays green while formally recording each bug;
+    when a fix lands the matching test becomes an unexpected success — the signal to remove the
+    decorator. The fixes are scheduled together in a separate session, so no deobfuscator change
+    accompanies these tests.
+    """
+
+    def _check(self, source: str):
+        deobfuscated = deobfuscate_source(source)
+        self.assertEqual(
+            behavior(source),
+            behavior(deobfuscated),
+            F'deobfuscation changed observable behavior; result was:\n{deobfuscated}',
+        )
+
+    @unittest.expectedFailure
+    def test_with_scoped_throwing_operand_not_dropped(self):
+        """
+        Inside a `with` body a bare name resolves through the dynamic scope, so reading one whose
+        property was just deleted throws a `ReferenceError`. Folding the sequence `(p0, 'x')` to its
+        last value drops the `p0` read, discarding that throw — the deobfuscator treats a dynamic-scope
+        operand as a pure, droppable read when it can in fact throw.
+        """
+        self._check(
+            'var SINK = [];'
+            ' var o = { p0: 1 };'
+            " with (o) { delete p0; SINK.push((p0, 'x')); }"
+            " console.log(SINK.join('|'));")
+
+    @unittest.expectedFailure
+    def test_function_called_only_in_with_body_not_removed(self):
+        """
+        `f` is called directly (foldable to its constant result) and also by bare name inside a `with`
+        body, where the call resolves to the lexical `f` because the object lacks the property. After
+        folding the direct call, unused-removal drops `f` — ignoring the `with`-body dynamic reference
+        — so the surviving dynamic call throws a `ReferenceError`. A dead local in `f` is what routes it
+        through this fold-then-remove path.
+        """
+        self._check(
+            'var SINK = [];'
+            " function f() { var dead = 1; return 'z'; }"
+            ' var o = { p0: f() };'
+            ' with (o) { SINK.push(f()); }'
+            " console.log(SINK.join('|'));")

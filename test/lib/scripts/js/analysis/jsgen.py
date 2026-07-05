@@ -20,12 +20,13 @@ every generated program upholds four invariants:
 - **Observable**: a shared `SINK` array accumulates values that statements and impure functions
   push, and it is logged at the end, so a dropped effect, a mis-evaluation, or a reorder shows up.
 
-The observable output deliberately excludes two things a deobfuscator may change without altering
+The observable output deliberately excludes three things a deobfuscator may change without altering
 meaning, so they cannot masquerade as divergences: a function's source text (a function is never
 logged or kept as data — it is only called, including a function returned by another function, which
 is invoked immediately, since `Function.prototype.toString` reflects the very source the deobfuscator
-rewrites) and a self-referential structure (`SINK` is only pushed to and joined once at the end,
-never nested into itself).
+rewrites), a self-referential structure (`SINK` is only pushed to and joined once at the end, never
+nested into itself), and a caught exception (a `catch` binding is never referenced, since an error's
+`.stack` and message encode the source positions the deobfuscator relocates).
 
 The generator also builds objects and arrays and mutates them in place, so the deobfuscator's
 member-write reasoning is exercised: a fresh array or object is bound to a local, its elements are
@@ -45,6 +46,13 @@ SINK.push(g());`), and a function may read and write a variable confined to it a
 sequence (`function f() { SINK.push(x); x = e; SINK.push(x); }`). These are the cross-function ordering
 and confined-write shapes the deobfuscator must not collapse by folding the captured variable to its
 declared value, dropping the confined write as unread, or reordering a reassignment past a call.
+
+A `with (obj) { ... }` block exercises dynamic scoping: inside it a bare name resolves to a property of
+*obj* when it has one and to a lexical binding otherwise, so the deobfuscator cannot statically decide
+whether `m = e` writes an object property or rebinds the outer variable *m*. The block reads and writes
+the object's own keys as bare names and writes an outer variable the program also reads before and after
+the block, so treating that variable as a stable constant across the block — rather than possibly rebound
+through the dynamic scope — changes the output.
 
 A `for-of` loop also reassigns outer bindings by destructuring each element of a constant array of
 arrays through a rest target in its head (`for ([w0, ...w1] of ...)`). Because the head carries no
@@ -138,7 +146,7 @@ class _Generator:
         choices = ['decl', 'sink', 'log', 'expr', 'obj', 'object_destructure_decl']
         if depth < 2:
             choices += ['if', 'for', 'while', 'for_destructure', 'func', 'try', 'objfunc']
-            choices += ['cross_call', 'confined_write']
+            choices += ['cross_call', 'confined_write', 'with']
         if scope.all_mutable():
             choices.append('assign')
             choices.append('destructure')
@@ -308,13 +316,19 @@ class _Generator:
         return lines
 
     def _stmt_try(self, scope: _Scope, depth: int) -> list[str]:
+        """
+        A `try`/`catch` whose handler body runs ordinary statements but never references the caught
+        value. Once another construct — a `with` body that deletes a property it then reads — makes the
+        try actually throw, the handler runs, and a caught exception is a position- and
+        environment-dependent value: stringifying or coercing it exposes a `.stack` or message that
+        encodes the very source locations the deobfuscator rewrites, so observing it would read as a
+        divergence when the two runs merely differ in layout. The catch binding is therefore kept out of
+        the readable pool, exactly as a function is, so it is never logged, pushed, or coerced.
+        """
         lines = ['try {']
         lines += self._indent(self._body(scope.child(), depth + 1))
         lines.append('} catch (e) {')
-        handler = scope.child()
-        handler.readable.append('e')
-        handler.mutable.add('e')
-        lines += self._indent(self._body(handler, depth + 1))
+        lines += self._indent(self._body(scope.child(), depth + 1))
         lines.append('}')
         return lines
 
@@ -446,6 +460,64 @@ class _Generator:
         if self.rng.random() < 0.5:
             lines.append(F'{func}();')
         return lines
+
+    def _stmt_with(self, scope: _Scope, depth: int) -> list[str]:
+        """
+        A `with (obj) { ... }` block whose body references names by bare identifier, so each resolves
+        dynamically — to a property of *obj* when it has one, otherwise to a lexical binding. The body
+        reads and writes the object's own keys (p0/p1/p2) as bare names and also writes an outer
+        variable *m* as a bare name, the assignment whose target the deobfuscator cannot statically pin
+        to either *obj* or *m*: it must treat *m* as possibly rebound through the dynamic scope rather
+        than fold it to its declared value. The object's member writes and *m*'s value are observed
+        after the block, and *m* is read before it too, so folding *m* across the block changes output.
+        """
+        obj = self._fresh()
+        var = self._fresh()
+        init = ', '.join(F'{key}: {self._expr(scope, 1)}' for key in ('p0', 'p1', 'p2'))
+        body_scope = scope.child()
+        for key in ('p0', 'p1', 'p2'):
+            body_scope.readable.append(key)
+            body_scope.mutable.add(key)
+        body_scope.readable.append(var)
+        body_scope.mutable.add(var)
+        body: list[str] = []
+        for _ in range(self.rng.randint(2, 4)):
+            body.extend(self._with_stmt(body_scope))
+        lines = [
+            F'var {var} = {self._atom(scope)};',
+            F'SINK.push({var});',
+            F'var {obj} = {{{init}}};',
+            F'with ({obj}) {{',
+        ]
+        lines += self._indent(body)
+        lines.append('}')
+        lines.append(F'SINK.push({var});')
+        lines.append(F'SINK.push({obj}.p0);')
+        return lines
+
+    def _with_stmt(self, scope: _Scope) -> list[str]:
+        """
+        One statement for a `with` body: a bare-name read observed through `SINK`, a bare-name write or
+        compound write to an object key or the threaded outer variable, or a call. Every name is drawn
+        from the body scope — the object's keys, the outer variable, and inherited outer names — so each
+        reference resolves, whether the dynamic scope routes it to the object or to a lexical binding.
+        """
+        kinds = ['read', 'write', 'compound']
+        funcs = scope.all_funcs()
+        if funcs:
+            kinds.append('call')
+        kind = self.rng.choice(kinds)
+        if kind == 'read':
+            return [F'SINK.push({self._atom(scope)});']
+        if kind == 'call':
+            name, arity = self.rng.choice(funcs)
+            args = ', '.join(self._atom(scope) for _ in range(arity))
+            return [F'SINK.push({name}({args}));']
+        target = self.rng.choice(scope.all_mutable())
+        if kind == 'compound':
+            op = self.rng.choice(('+=', '-=', '*=', '|=', '&='))
+            return [F'{target} {op} {self._expr(scope, 1)};']
+        return [F'{target} = {self._expr(scope, 1)};']
 
     def _stmt_obj(self, scope: _Scope, depth: int) -> list[str]:
         name = self._fresh()
