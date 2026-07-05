@@ -39,6 +39,13 @@ body, aliased to another call-only binding, or passed to an array method (`map`/
 invokes it, yet every function-valued binding is kept out of the readable pool, so it is never
 referenced where it could be stringified.
 
+A function may also capture an outer variable that is reassigned between two calls of it, so the two
+calls observe different values (`var x = a; function g() { return x; } SINK.push(g()); x = b;
+SINK.push(g());`), and a function may read and write a variable confined to it across a self-observing
+sequence (`function f() { SINK.push(x); x = e; SINK.push(x); }`). These are the cross-function ordering
+and confined-write shapes the deobfuscator must not collapse by folding the captured variable to its
+declared value, dropping the confined write as unread, or reordering a reassignment past a call.
+
 A `for-of` loop also reassigns outer bindings by destructuring each element of a constant array of
 arrays through a rest target in its head (`for ([w0, ...w1] of ...)`). Because the head carries no
 `var`/`let`/`const`, the rest target is an assignment target that parses as an array literal with a
@@ -131,6 +138,7 @@ class _Generator:
         choices = ['decl', 'sink', 'log', 'expr', 'obj', 'object_destructure_decl']
         if depth < 2:
             choices += ['if', 'for', 'while', 'for_destructure', 'func', 'try', 'objfunc']
+            choices += ['cross_call', 'confined_write']
         if scope.all_mutable():
             choices.append('assign')
             choices.append('destructure')
@@ -389,6 +397,55 @@ class _Generator:
         if self.rng.random() < 0.5:
             return [F"SINK.push([{items}].map({name}).join('|'));"]
         return [F'SINK.push([{items}].filter({name}).length);']
+
+    def _stmt_cross_call(self, scope: _Scope, depth: int) -> list[str]:
+        """
+        A variable captured by a function and reassigned between calls of it, so the calls must
+        observe different values: `var x = a; function g() { return x; } SINK.push(g()); x = b;
+        SINK.push(g());`. The function closes over the binding rather than a copy, so folding `x` to
+        its declared value inside `g`, or reordering a reassignment past a call, changes the
+        observable result — the cross-function ordering shape constant-inlining must not collapse.
+        The captured variable and the function are local to this block, read and written only here.
+        """
+        var = self._fresh()
+        func = self._fresh()
+        if self.rng.random() < 0.5:
+            decl = F'var {var};'
+        else:
+            decl = F'var {var} = {self._atom(scope)};'
+        lines = [decl, F'function {func}() {{ return {var}; }}', F'SINK.push({func}());']
+        for _ in range(self.rng.randint(1, 3)):
+            lines.append(F'{var} = {self._atom(scope)};')
+            lines.append(F'SINK.push({func}());')
+        return lines
+
+    def _stmt_confined_write(self, scope: _Scope, depth: int) -> list[str]:
+        """
+        A variable read and written only inside one function across a self-observing sequence:
+        `var x = a; function f() { SINK.push(x); x = e; SINK.push(x); } f();`. The write to `x` is
+        confined to `f` yet observable through `SINK`, and `e` may itself read `x`, so `f` both reads
+        and writes the binding it captures. Dropping the write as dead — because no other function
+        reads `x` — or folding `x` to its declared value loses the effect. The binding and the
+        function are local to this block.
+        """
+        var = self._fresh()
+        func = self._fresh()
+        body_scope = _Scope()
+        body_scope.readable.append(var)
+        body_scope.mutable.add(var)
+        value = self._expr(body_scope, 1)
+        lines = [
+            F'var {var} = {self._atom(scope)};',
+            F'function {func}() {{',
+            F'  SINK.push({var});',
+            F'  {var} = {value};',
+            F'  SINK.push({var});',
+            '}',
+            F'{func}();',
+        ]
+        if self.rng.random() < 0.5:
+            lines.append(F'{func}();')
+        return lines
 
     def _stmt_obj(self, scope: _Scope, depth: int) -> list[str]:
         name = self._fresh()
