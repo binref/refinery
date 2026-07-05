@@ -172,10 +172,11 @@ class _Generator:
 
     def _statement(self, scope: _Scope, depth: int) -> list[str]:
         choices = ['decl', 'sink', 'log', 'expr', 'obj', 'object_destructure_decl', 'reflect']
+        choices += ['arrow_callback', 'arrow_func']
         if depth < 2:
             choices += ['if', 'for', 'while', 'for_destructure', 'func', 'try', 'objfunc']
             choices += ['cross_call', 'confined_write', 'with', 'objadv', 'throw']
-            choices += ['switch', 'do_while', 'for_in']
+            choices += ['switch', 'do_while', 'for_in', 'construct']
         if scope.all_mutable():
             choices.append('assign')
             choices.append('destructure')
@@ -517,6 +518,54 @@ class _Generator:
         if self.rng.random() < 0.5:
             return [F"SINK.push([{items}].map({name}).join('|'));"]
         return [F'SINK.push([{items}].filter({name}).length);']
+
+    def _stmt_arrow_callback(self, scope: _Scope, depth: int) -> list[str]:
+        """
+        An array higher-order method invoked with an inline arrow function. The arrow body is generated
+        in an isolated scope, so it returns a constant expression over its parameter and calls nothing,
+        and the arrow is only ever invoked by the method, never stringified.
+        """
+        param = self._fresh()
+        body_scope = _Scope()
+        body_scope.readable.append(param)
+        body_scope.mutable.add(param)
+        body = self._expr(body_scope, 2)
+        items = ', '.join(self._atom(scope) for _ in range(self.rng.randint(1, 3)))
+        if self.rng.random() < 0.5:
+            return [F"SINK.push([{items}].map(({param}) => {body}).join('|'));"]
+        return [F'SINK.push([{items}].filter(({param}) => {body}).length);']
+
+    def _stmt_arrow_func(self, scope: _Scope, depth: int) -> list[str]:
+        """
+        An arrow function bound to a name and called through it. The arrow is tracked as a callable of
+        arity one, so later code invokes it like any function, and its body is an isolated constant
+        expression over its parameter, so the call is deterministic and closes no cycle.
+        """
+        name = self._fresh()
+        param = self._fresh()
+        body_scope = _Scope()
+        body_scope.readable.append(param)
+        body_scope.mutable.add(param)
+        body = self._expr(body_scope, 2)
+        scope.funcs.append((name, 1))
+        return [F'var {name} = ({param}) => {body};', F'SINK.push({name}({self._atom(scope)}));']
+
+    def _stmt_construct(self, scope: _Scope, depth: int) -> list[str]:
+        """
+        A constructor that initializes `this` and an instance built with `new`. The constructor is used
+        only through `new`, so `this` is always the fresh instance, and the instance's properties are
+        read afterward. Exercises the deobfuscator's handling of `new`, `this` in a constructor, and the
+        object it produces.
+        """
+        ctor = self._fresh()
+        obj = self._fresh()
+        param = self._fresh()
+        return [
+            F'function {ctor}({param}) {{ this.p0 = {param}; this.p1 = {self.rng.randint(0, 12)}; }}',
+            F'var {obj} = new {ctor}({self._atom(scope)});',
+            F'SINK.push({obj}.p0);',
+            F'SINK.push({obj}.p1);',
+        ]
 
     def _stmt_cross_call(self, scope: _Scope, depth: int) -> list[str]:
         """

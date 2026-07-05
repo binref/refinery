@@ -644,6 +644,21 @@ class TestDeobfuscationExpressionOpenBugs(TestBase):
             " console.log(SINK.join('|'));")
 
     @unittest.expectedFailure
+    def test_assignment_target_parameter_not_substituted_when_inlined(self):
+        """
+        The same inliner fragility as the `delete` case, in an assignment target: `(p = 5)` assigns the
+        parameter `p`, but inlining substitutes `p` with its argument, producing `(3 = 5)` — an invalid
+        assignment target, a SyntaxError. The `instanceof` keeps the expression from being simplified so
+        the parameter-substitution path is taken. A parameter used as an assignment target must not be
+        inlined.
+        """
+        self._check(
+            'var SINK = [];'
+            ' function f(p) { return ((p = 5) instanceof Object); }'
+            ' SINK.push(f(3));'
+            " console.log(SINK.join('|'));")
+
+    @unittest.expectedFailure
     def test_math_round_of_negative_zero_preserves_sign(self):
         """
         `Math.round(-0)` and `Math.floor(-0)` are `-0`, observable as `1 / -0 === -Infinity`. The
