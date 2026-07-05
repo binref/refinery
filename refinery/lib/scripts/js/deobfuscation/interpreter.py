@@ -824,22 +824,36 @@ _ARRAY_HOF_METHODS = frozenset({
 _BUFFER_PRESERVING_HOFS = frozenset({'map', 'filter'})
 
 
+def _to_js_integer(args: list[Value], round_to_integer) -> Value:
+    """
+    Shared implementation for the integer-valued `Math` roundings (floor/ceil/round/trunc). Passes NaN
+    and the infinities through unchanged and preserves the sign of a negative-zero result, which JS
+    requires (e.g. `Math.round(-0)` is `-0`, observable as `1 / Math.round(-0) === -Infinity`).
+    """
+    v = to_number(args[0]) if args else 0.0
+    if v != v:
+        return float('nan')
+    if math.isinf(v):
+        return v
+    result = int(round_to_integer(v))
+    if result == 0 and math.copysign(1.0, v) < 0:
+        return -0.0
+    return result
+
+
 @_register(('Math', 'floor'))
 def _math_floor(args: list[Value]) -> Value:
-    v = to_number(args[0]) if args else 0.0
-    return float('nan') if v != v else v if math.isinf(v) else int(math.floor(v))
+    return _to_js_integer(args, math.floor)
 
 
 @_register(('Math', 'ceil'))
 def _math_ceil(args: list[Value]) -> Value:
-    v = to_number(args[0]) if args else 0.0
-    return float('nan') if v != v else v if math.isinf(v) else int(math.ceil(v))
+    return _to_js_integer(args, math.ceil)
 
 
 @_register(('Math', 'round'))
 def _math_round(args: list[Value]) -> Value:
-    v = to_number(args[0]) if args else 0.0
-    return float('nan') if v != v else v if math.isinf(v) else int(math.floor(v + 0.5))
+    return _to_js_integer(args, lambda v: math.floor(v + 0.5))
 
 
 @_register(('Math', 'abs'))
@@ -884,18 +898,19 @@ def _math_max(args: list[Value]) -> Value:
 
 @_register(('Math', 'trunc'))
 def _math_trunc(args: list[Value]) -> Value:
-    v = to_number(args[0]) if args else 0.0
-    return float('nan') if v != v else v if math.isinf(v) else int(math.trunc(v))
+    return _to_js_integer(args, math.trunc)
 
 
 @_register(('Math', 'sign'))
 def _math_sign(args: list[Value]) -> Value:
     v = to_number(args[0]) if args else 0
+    if v != v:
+        return v
     if v > 0:
         return 1
     if v < 0:
         return -1
-    return 0
+    return v
 
 
 def _math_log_impl(args: list[Value], fn) -> Value:
@@ -1604,6 +1619,8 @@ class JsInterpreter:
                     return 'function'
                 if name in STATIC_OBJECTS:
                     return 'object'
+                if name in ('NaN', 'Infinity'):
+                    return 'number'
                 return 'undefined'
             return _js_typeof(self._eval(node.operand))
         if op == 'void':

@@ -587,7 +587,6 @@ class TestDeobfuscationExpressionOpenBugs(TestBase):
             F'deobfuscation changed observable behavior; result was:\n{deobfuscated}',
         )
 
-    @unittest.expectedFailure
     def test_math_sign_of_nan_folds_to_nan_not_zero(self):
         """
         `Math.sign(NaN)` is `NaN`, but the constant folder computes the sign as a difference of
@@ -614,7 +613,6 @@ class TestDeobfuscationExpressionOpenBugs(TestBase):
             " SINK.push(f('ef'));"
             " console.log(SINK.join('|'));")
 
-    @unittest.expectedFailure
     def test_typeof_of_unfoldable_builtin_not_folded_to_undefined(self):
         """
         `Math.max('mn', 4)` is `NaN`, so `typeof` of it is `'number'`. While inlining a function the
@@ -658,7 +656,6 @@ class TestDeobfuscationExpressionOpenBugs(TestBase):
             ' SINK.push(f(3));'
             " console.log(SINK.join('|'));")
 
-    @unittest.expectedFailure
     def test_math_round_of_negative_zero_preserves_sign(self):
         """
         `Math.round(-0)` and `Math.floor(-0)` are `-0`, observable as `1 / -0 === -Infinity`. The
