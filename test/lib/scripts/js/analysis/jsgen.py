@@ -40,6 +40,14 @@ body, aliased to another call-only binding, or passed to an array method (`map`/
 invokes it, yet every function-valued binding is kept out of the readable pool, so it is never
 referenced where it could be stringified.
 
+Some objects carry shapes whose observable behavior the deobfuscator's object analysis must read
+precisely: an accessor property whose getter and setter run code (the setter pushes to `SINK`), a
+prototype set through a literal `__proto__:` — distinguished from the computed `['__proto__']` form,
+which makes an ordinary own property and inherits nothing — a method called through the object, and a
+function-valued property that reads the object through its own binding (a self-reference). Each object
+is self-contained and its distinguishing effect reaches `SINK`, so a fold that treats an accessor as a
+data property, conflates the two `__proto__` forms, or mishandles the self-reference shows up.
+
 A function may also capture an outer variable that is reassigned between two calls of it, so the two
 calls observe different values (`var x = a; function g() { return x; } SINK.push(g()); x = b;
 SINK.push(g());`), and a function may read and write a variable confined to it across a self-observing
@@ -158,7 +166,7 @@ class _Generator:
         choices = ['decl', 'sink', 'log', 'expr', 'obj', 'object_destructure_decl', 'reflect']
         if depth < 2:
             choices += ['if', 'for', 'while', 'for_destructure', 'func', 'try', 'objfunc']
-            choices += ['cross_call', 'confined_write', 'with']
+            choices += ['cross_call', 'confined_write', 'with', 'objadv']
         if scope.all_mutable():
             choices.append('assign')
             choices.append('destructure')
@@ -661,6 +669,88 @@ class _Generator:
         return [
             F'{mutator}({name});',
             F'SINK.push({name}[0]);',
+        ]
+
+    def _stmt_objadv(self, scope: _Scope, depth: int) -> list[str]:
+        """
+        An object whose shape the objectfold analysis must read precisely: an accessor property, a
+        prototype set through `__proto__`, a method, or a self-reference. Each is self-contained and
+        deterministic, and its distinguishing behavior — running accessor code, inheriting through the
+        prototype, calling a method, reading the object from inside its own member — reaches `SINK`.
+        """
+        kind = self.rng.choice(('accessor', 'proto', 'method', 'self_ref'))
+        return getattr(self, F'_obj_{kind}')(scope)
+
+    def _obj_accessor(self, scope: _Scope) -> list[str]:
+        """
+        An object with a `get`/`set` accessor over a backing variable plus a data property. Reading the
+        accessor runs the getter, assigning it runs the setter (which pushes to `SINK`), and a compound
+        assignment runs both, so folding the member access or dropping the assignment loses an effect.
+        """
+        obj = self._fresh()
+        store = self._fresh()
+        return [
+            F'var {store} = {self.rng.randint(0, 12)};',
+            F'var {obj} = {{',
+            F'  get p0() {{ return {store}; }},',
+            F'  set p0(v) {{ {store} = v; SINK.push(v); }},',
+            F'  p1: {self._expr(scope, 1)},',
+            '};',
+            F'SINK.push({obj}.p0);',
+            F'{obj}.p0 = {self.rng.randint(0, 12)};',
+            F'{obj}.p0 += {self.rng.randint(0, 12)};',
+            F'SINK.push({obj}.p1);',
+        ]
+
+    def _obj_proto(self, scope: _Scope) -> list[str]:
+        """
+        An object that either sets its prototype through a literal `__proto__:` or, with the computed
+        `['__proto__']` form, creates an ordinary own property of that name and leaves the prototype
+        unchanged. The distinction is observable: a prototype-linked object inherits the base's `p1`,
+        whereas the computed form does not, so a fold that conflates the two forms changes the output.
+        """
+        base = self._fresh()
+        obj = self._fresh()
+        base_init = ', '.join(F'{key}: {self._atom(scope)}' for key in ('p0', 'p1', 'p2'))
+        lines = [F'var {base} = {{{base_init}}};']
+        if self.rng.random() < 0.5:
+            lines.append(F'var {obj} = {{__proto__: {base}, p0: {self._atom(scope)}}};')
+            lines.append(F'SINK.push({obj}.p0);')
+            lines.append(F'SINK.push({obj}.p1);')
+        else:
+            lines.append(F"var {obj} = {{['__proto__']: {base}, p0: {self._atom(scope)}}};")
+            lines.append(F'SINK.push({obj}.p0);')
+            lines.append(F'SINK.push({obj}.p1 === undefined);')
+        return lines
+
+    def _obj_method(self, scope: _Scope) -> list[str]:
+        """
+        An object with a method property called through the object. The method body is generated in an
+        isolated scope, so it returns a constant expression and calls nothing, and the call is only ever
+        made through `obj.m0()`, never by reading the method as a value.
+        """
+        obj = self._fresh()
+        body = self._expr(_Scope(), 2)
+        return [
+            F'var {obj} = {{ m0() {{ return {body}; }}, p1: {self._expr(scope, 1)} }};',
+            F'SINK.push({obj}.m0());',
+            F'SINK.push({obj}.p1);',
+        ]
+
+    def _obj_self_ref(self, scope: _Scope) -> list[str]:
+        """
+        An object with a function-valued property that reads the object through its own binding, so the
+        object is referenced from inside itself. The function is only ever called (`obj.f()`), after the
+        object is fully constructed, and it returns the object's own data property.
+        """
+        obj = self._fresh()
+        return [
+            F'var {obj} = {{',
+            F'  p0: {self.rng.randint(0, 12)},',
+            F'  p1: {self._expr(scope, 1)},',
+            F'  f: function() {{ return {obj}.p0; }},',
+            '};',
+            F'SINK.push({obj}.f());',
         ]
 
     def _body(self, scope: _Scope, depth: int) -> list[str]:
