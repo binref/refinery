@@ -128,6 +128,7 @@ class _Generator:
     def __init__(self, seed: int):
         self.rng = random.Random(seed)
         self._counter = 0
+        self._global_counter = 0
 
     def generate(self) -> str:
         root = _Scope()
@@ -142,8 +143,19 @@ class _Generator:
         self._counter += 1
         return name
 
+    def _global_name(self) -> str:
+        """
+        A fresh global-property name (`g0`, `g1`, ...), disjoint from the `v`-prefixed local names, for
+        a value written to and read back through the global object. Globals are only ever touched
+        through a `globalThis` member access or an indirect-eval assignment, never a bare read, so an
+        unwritten one reads as `undefined` rather than throwing a `ReferenceError`.
+        """
+        name = F'g{self._global_counter}'
+        self._global_counter += 1
+        return name
+
     def _statement(self, scope: _Scope, depth: int) -> list[str]:
-        choices = ['decl', 'sink', 'log', 'expr', 'obj', 'object_destructure_decl']
+        choices = ['decl', 'sink', 'log', 'expr', 'obj', 'object_destructure_decl', 'reflect']
         if depth < 2:
             choices += ['if', 'for', 'while', 'for_destructure', 'func', 'try', 'objfunc']
             choices += ['cross_call', 'confined_write', 'with']
@@ -470,19 +482,22 @@ class _Generator:
         to either *obj* or *m*: it must treat *m* as possibly rebound through the dynamic scope rather
         than fold it to its declared value. The object's member writes and *m*'s value are observed
         after the block, and *m* is read before it too, so folding *m* across the block changes output.
+        The keys are readable but never mutated through a value expression, so a bare read always
+        resolves: a `delete` of one would make a later bare read of it fall through to an undefined
+        lexical name and throw.
         """
         obj = self._fresh()
         var = self._fresh()
-        init = ', '.join(F'{key}: {self._expr(scope, 1)}' for key in ('p0', 'p1', 'p2'))
+        keys = ('p0', 'p1', 'p2')
+        init = ', '.join(F'{key}: {self._expr(scope, 1)}' for key in keys)
         body_scope = scope.child()
-        for key in ('p0', 'p1', 'p2'):
+        for key in keys:
             body_scope.readable.append(key)
-            body_scope.mutable.add(key)
         body_scope.readable.append(var)
         body_scope.mutable.add(var)
         body: list[str] = []
         for _ in range(self.rng.randint(2, 4)):
-            body.extend(self._with_stmt(body_scope))
+            body.extend(self._with_stmt(body_scope, keys))
         lines = [
             F'var {var} = {self._atom(scope)};',
             F'SINK.push({var});',
@@ -495,12 +510,14 @@ class _Generator:
         lines.append(F'SINK.push({obj}.p0);')
         return lines
 
-    def _with_stmt(self, scope: _Scope) -> list[str]:
+    def _with_stmt(self, scope: _Scope, keys: tuple[str, ...]) -> list[str]:
         """
         One statement for a `with` body: a bare-name read observed through `SINK`, a bare-name write or
-        compound write to an object key or the threaded outer variable, or a call. Every name is drawn
-        from the body scope — the object's keys, the outer variable, and inherited outer names — so each
-        reference resolves, whether the dynamic scope routes it to the object or to a lexical binding.
+        compound write to an object key or a mutable binding, or a call. Read names are drawn from the
+        body scope — the object's keys, the outer variable, and inherited outer names — so each resolves,
+        whether the dynamic scope routes it to the object or to a lexical binding. A write targets an
+        object *key* or a mutable binding; the keys are write targets here but not in the value scope, so
+        a value expression never deletes or rebinds one and every bare read of a key stays valid.
         """
         kinds = ['read', 'write', 'compound']
         funcs = scope.all_funcs()
@@ -513,11 +530,76 @@ class _Generator:
             name, arity = self.rng.choice(funcs)
             args = ', '.join(self._atom(scope) for _ in range(arity))
             return [F'SINK.push({name}({args}));']
-        target = self.rng.choice(scope.all_mutable())
+        target = self.rng.choice([*keys, *scope.all_mutable()])
         if kind == 'compound':
             op = self.rng.choice(('+=', '-=', '*=', '|=', '&='))
             return [F'{target} {op} {self._expr(scope, 1)};']
         return [F'{target} = {self._expr(scope, 1)};']
+
+    def _stmt_reflect(self, scope: _Scope, depth: int) -> list[str]:
+        """
+        A reflective construct — `eval`, the `Function` constructor, or a `globalThis` access — the
+        deobfuscator's reflection analysis must recognize without breaking behavior. Each template is a
+        fixed, deterministic string: a direct or indirect `eval` of a constant expression or an
+        assignment, a `Function`-built function that is only ever called, the `Function('return this')`
+        global-object idiom, or a plain `globalThis` property round-trip. A global is written and then
+        read back only through `globalThis`, so the value is observable and no bare-name global read can
+        throw.
+        """
+        kinds = ['eval_expr', 'eval_global', 'function_ctor', 'return_this', 'global_write_read']
+        if scope.all_mutable():
+            kinds.append('eval_assign_local')
+        return getattr(self, F'_reflect_{self.rng.choice(kinds)}')(scope)
+
+    def _reflect_eval_expr(self, scope: _Scope) -> list[str]:
+        left = self.rng.randint(0, 9)
+        right = self.rng.randint(1, 9)
+        op = self.rng.choice(('+', '-', '*'))
+        form = self.rng.choice(('eval', '(eval)'))
+        return [F'SINK.push({form}("{left} {op} {right}"));']
+
+    def _reflect_eval_assign_local(self, scope: _Scope) -> list[str]:
+        name = self.rng.choice(scope.all_mutable())
+        value = self.rng.randint(0, 12)
+        return [F'eval("{name} = {value}");', F'SINK.push({name});']
+
+    def _reflect_eval_global(self, scope: _Scope) -> list[str]:
+        """
+        An indirect `eval` that assigns a global property, read back through `globalThis`. The
+        assignment is bare (`g = v`), which creates a global property; the `var g = v` variant, which
+        creates a global binding, is deliberately not generated because it deterministically hits one
+        already-recorded deobfuscator bug and would mask every other reflection finding.
+        """
+        name = self._global_name()
+        value = self.rng.randint(0, 12)
+        return [F'(0, eval)("{name} = {value};");', F'SINK.push(globalThis.{name});']
+
+    def _reflect_function_ctor(self, scope: _Scope) -> list[str]:
+        name = self._fresh()
+        param = self._fresh()
+        value = self.rng.randint(0, 9)
+        op = self.rng.choice(('+', '-', '*'))
+        ctor = self.rng.choice(('Function', 'new Function'))
+        scope.funcs.append((name, 1))
+        return [
+            F'var {name} = {ctor}("{param}", "return {param} {op} {value};");',
+            F'SINK.push({name}({self.rng.randint(0, 9)}));',
+        ]
+
+    def _reflect_return_this(self, scope: _Scope) -> list[str]:
+        obj = self._fresh()
+        name = self._global_name()
+        value = self.rng.randint(0, 12)
+        return [
+            F'var {obj} = Function("return this")();',
+            F'{obj}.{name} = {value};',
+            F'SINK.push(globalThis.{name});',
+        ]
+
+    def _reflect_global_write_read(self, scope: _Scope) -> list[str]:
+        name = self._global_name()
+        value = self.rng.randint(0, 12)
+        return [F'globalThis.{name} = {value};', F'SINK.push(globalThis.{name});']
 
     def _stmt_obj(self, scope: _Scope, depth: int) -> list[str]:
         name = self._fresh()

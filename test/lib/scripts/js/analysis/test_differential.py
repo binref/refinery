@@ -537,3 +537,35 @@ class TestDeobfuscationWithScopeOpenBugs(TestBase):
             ' var o = { p0: f() };'
             ' with (o) { SINK.push(f()); }'
             " console.log(SINK.join('|'));")
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestDeobfuscationReflectionOpenBugs(TestBase):
+    """
+    Known-open soundness bugs the reflection fuzzer grammar (`eval`, `Function`, `globalThis`)
+    surfaced, captured as expected failures pending the same batched fix session as the other
+    open-bug classes. No deobfuscator change accompanies these tests; when a fix lands the matching
+    test becomes an unexpected success — the signal to remove the decorator.
+    """
+
+    def _check(self, source: str):
+        deobfuscated = deobfuscate_source(source)
+        self.assertEqual(
+            behavior(source),
+            behavior(deobfuscated),
+            F'deobfuscation changed observable behavior; result was:\n{deobfuscated}',
+        )
+
+    @unittest.expectedFailure
+    def test_global_binding_constant_not_inlined_into_globalthis_property(self):
+        """
+        `(0, eval)("var g = 7;")` creates a global binding `g` holding the constant 7. Reading it back
+        as `globalThis.g` names a property, not the binding, so substituting the constant into that
+        property-name position yields `globalThis.7` — a SyntaxError. A global binding's constant must
+        not be inlined into a same-named member's property identifier.
+        """
+        self._check(
+            'var SINK = [];'
+            ' (0, eval)("var g = 7;");'
+            ' SINK.push(globalThis.g);'
+            " console.log(SINK.join('|'));")
