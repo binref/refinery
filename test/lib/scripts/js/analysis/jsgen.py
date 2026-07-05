@@ -28,6 +28,12 @@ rewrites), a self-referential structure (`SINK` is only pushed to and joined onc
 nested into itself), and a caught exception (a `catch` binding is never referenced, since an error's
 `.stack` and message encode the source positions the deobfuscator relocates).
 
+Control also leaves a block abnormally: a `try` body may `throw` partway through, so control transfers
+to the handler and the statements after the throw are dead, and an optional `finally` runs whether or
+not the throw fires. The thrown value is caught and never observed, so only what runs before the throw,
+in the handler, and in the finalizer reaches `SINK` — a dropped finalizer, a handler skipped, or a
+statement after the throw wrongly kept would change the output.
+
 The generator also builds objects and arrays and mutates them in place, so the deobfuscator's
 member-write reasoning is exercised: a fresh array or object is bound to a local, its elements are
 assigned, incremented, and deleted, and the object is aliased to a second binding, passed to a
@@ -166,7 +172,7 @@ class _Generator:
         choices = ['decl', 'sink', 'log', 'expr', 'obj', 'object_destructure_decl', 'reflect']
         if depth < 2:
             choices += ['if', 'for', 'while', 'for_destructure', 'func', 'try', 'objfunc']
-            choices += ['cross_call', 'confined_write', 'with', 'objadv']
+            choices += ['cross_call', 'confined_write', 'with', 'objadv', 'throw']
         if scope.all_mutable():
             choices.append('assign')
             choices.append('destructure')
@@ -349,6 +355,27 @@ class _Generator:
         lines += self._indent(self._body(scope.child(), depth + 1))
         lines.append('} catch (e) {')
         lines += self._indent(self._body(scope.child(), depth + 1))
+        lines.append('}')
+        return lines
+
+    def _stmt_throw(self, scope: _Scope, depth: int) -> list[str]:
+        """
+        A `try` whose body throws partway through, so control transfers to the `catch` and every
+        statement after the `throw` is dead. An optional `finally` runs whether or not the throw fires.
+        The catch binding is never referenced — a caught value is non-observable — so the effect is
+        seen only through what runs before the throw, in the handler, and in the finalizer. Exercises
+        the catch-taken path, finalizer ordering, and dead-code elimination across a `throw`.
+        """
+        body = self._body(scope.child(), depth + 1)
+        body.append(F'throw {self._atom(scope)};')
+        body.append(F'SINK.push({self._atom(scope)});')
+        lines = ['try {']
+        lines += self._indent(body)
+        lines.append('} catch (e) {')
+        lines += self._indent(self._body(scope.child(), depth + 1))
+        if self.rng.random() < 0.5:
+            lines.append('} finally {')
+            lines += self._indent(self._body(scope.child(), depth + 1))
         lines.append('}')
         return lines
 
