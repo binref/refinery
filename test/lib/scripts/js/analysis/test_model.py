@@ -13,7 +13,7 @@ from refinery.lib.scripts.js.analysis.model import (
     is_simple_assignment_target,
     reference_role,
 )
-from refinery.lib.scripts.js.model import JsIdentifier, JsReturnStatement
+from refinery.lib.scripts.js.model import JsIdentifier, JsMemberExpression, JsReturnStatement
 from refinery.lib.scripts.js.parser import JsParser
 
 
@@ -33,6 +33,10 @@ class TestSemanticModel(TestBase):
                 seen.add(id(node))
                 out.append(node)
         return out
+
+    @staticmethod
+    def _member(ast) -> JsMemberExpression:
+        return next(n for n in ast.walk() if isinstance(n, JsMemberExpression))
 
     def _decl(self, ast, model, name: str) -> JsIdentifier:
         return next(n for n in self._idents(ast, name) if model.binding_of(n) is not None)
@@ -396,6 +400,48 @@ class TestSemanticModel(TestBase):
     def test_dynamic_alias_member_write_does_not_create_named_global(self):
         ast, model = self._model('globalThis[k] = 99;')
         self.assertNotIn('k', model.root_scope.bindings)
+
+    def test_reference_role_reads_global_alias_member_value(self):
+        ast, _ = self._model('sink(globalThis.g);')
+        self.assertIs(reference_role(self._member(ast)), Role.READ)
+
+    def test_reference_role_writes_global_alias_member_target(self):
+        ast, _ = self._model('globalThis.g = 1;')
+        self.assertIs(reference_role(self._member(ast)), Role.WRITE)
+
+    def test_reference_role_readwrites_global_alias_member_compound(self):
+        ast, _ = self._model('globalThis.g += 1;')
+        self.assertIs(reference_role(self._member(ast)), Role.READWRITE)
+
+    def test_reference_role_writes_global_alias_member_for_in_head(self):
+        ast, _ = self._model('for (globalThis.g in o) {}')
+        self.assertIs(reference_role(self._member(ast)), Role.WRITE)
+
+    def test_global_alias_member_read_records_on_declared_global_var(self):
+        ast, model = self._model('var g = 7; sink(globalThis.g);')
+        binding = self._binding(ast, model, 'g')
+        self.assertEqual(binding.kind, BindingKind.VAR)
+        self.assertEqual(len(binding.reads), 1)
+        self.assertTrue(binding.is_read)
+        self.assertFalse(binding.is_dead)
+
+    def test_global_alias_computed_member_read_records_on_declared_global_var(self):
+        ast, model = self._model("var g = 7; sink(globalThis['g']);")
+        self.assertEqual(len(self._binding(ast, model, 'g').reads), 1)
+
+    def test_global_alias_member_compound_records_read_and_write(self):
+        ast, model = self._model('var g = 0; globalThis.g += 1;')
+        binding = self._binding(ast, model, 'g')
+        self.assertEqual(len(binding.reads), 1)
+        self.assertEqual(len(binding.writes), 1)
+
+    def test_shadowed_alias_member_read_attributes_nothing(self):
+        ast, model = self._model('var g = 1; function f(){ var globalThis = {}; return globalThis.g; }')
+        self.assertEqual(self._binding(ast, model, 'g').reads, [])
+
+    def test_alias_member_read_inside_with_attributes_nothing(self):
+        ast, model = self._model('var g = 1; with (o) { sink(globalThis.g); }')
+        self.assertEqual(self._binding(ast, model, 'g').reads, [])
 
     def _role(self, source: str, name: str = 'a') -> ContainerRole:
         ast, model = self._model(source)

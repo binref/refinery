@@ -331,13 +331,20 @@ class JsObjectFold(ScopeProcessingTransformer):
         reference one of the two conditions above kept leaves *can_remove* False so the declaration is
         kept. A reference a dynamic scope resolves at runtime — a name inside a `with` body, held in the
         binding's dynamic references and never folded here — likewise keeps the declaration, so it is not
-        removed out from under a use the fold left in place.
+        removed out from under a use the fold left in place. A reference performed through a global-object
+        alias (`globalThis.o`, a member node rather than an identifier) also keeps the declaration and is
+        not folded: folding through it (`globalThis.o.x` to the property value) holds only under the script
+        execution model, where a top-level `var` becomes a global property, not when the global is
+        module-scoped.
         """
         changed = False
         can_remove = not binding.dynamic_refs
         consistent: dict[tuple[int, int], bool] = {}
         free_external: dict[int, list[tuple[JsIdentifier, Binding | None]]] = {}
         for ref in list(model.references(binding)):
+            if not isinstance(ref, JsIdentifier):
+                can_remove = False
+                continue
             member = ref.parent
             if not isinstance(member, JsMemberExpression) or member.object is not ref:
                 can_remove = False

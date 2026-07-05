@@ -40,6 +40,18 @@ class TestObjectFold(TestJsDeobfuscator):
         )
         self.assertEqual(source, self._objectfold(source))
 
+    def test_global_alias_member_read_keeps_object_and_is_not_folded(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var o = { p: 1 };
+                SINK(1);
+                dump(globalThis.o.p);
+                """
+            ),
+            self._objectfold('var o = { p: 1 }; SINK(o.p); dump(globalThis.o.p);'),
+        )
+
     def test_object_folded_when_with_does_not_name_it(self):
         self.assertEqual(
             inspect.cleandoc(

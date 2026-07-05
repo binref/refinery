@@ -147,10 +147,11 @@ class Binding:
     A single declared name within one scope. `declarations` holds the binding-site identifier nodes
     that introduce the name; `reads` and `writes` hold the referencing identifiers that read and write
     it (a compound assignment or update appears in both). `captured` is set when the name is referenced
-    from a function nested below the one that owns it. A write performed through a member access on a
-    global-object alias (`globalThis.g = ...`) has no referencing identifier for the global it targets,
-    so the `JsMemberExpression` stands in for that write site; every other `writes` entry is an
-    identifier. `dynamic_refs` holds referencing identifiers a dynamic scope resolves at runtime — a name
+    from a function nested below the one that owns it. A read or write performed through a member access
+    on a global-object alias (`globalThis.g`, `globalThis.g = ...`) has no referencing identifier for
+    the global it targets, so the `JsMemberExpression` stands in for that reference; every other
+    `reads`/`writes` entry is an identifier. `dynamic_refs` holds referencing identifiers a dynamic
+    scope resolves at runtime — a name
     inside a `with` body that could denote this binding — which `reads`/`writes` omit because such a name
     resolves to no binding statically; its target is uncertain, so it is kept apart from the definite
     references.
@@ -159,7 +160,7 @@ class Binding:
     kind: BindingKind
     scope: Scope
     declarations: list[JsIdentifier] = field(default_factory=list)
-    reads: list[JsIdentifier] = field(default_factory=list)
+    reads: list[JsIdentifier | JsMemberExpression] = field(default_factory=list)
     writes: list[JsIdentifier | JsMemberExpression] = field(default_factory=list)
     dynamic_refs: list[JsIdentifier] = field(default_factory=list)
     captured: bool = False
@@ -291,15 +292,17 @@ def pattern_identifiers(target: Node | None) -> Iterator[JsIdentifier]:
         yield from pattern_identifiers(target.argument)
 
 
-def reference_role(node: JsIdentifier) -> Role:
+def reference_role(node: JsIdentifier | JsMemberExpression) -> Role:
     """
-    Classify how a referencing identifier touches its binding: a plain read, a write-only target (the
-    left of a simple `=`, including inside a destructuring pattern or a destructuring default, or a
+    Classify how a reference touches its binding: a plain read, a write-only target (the left of a
+    simple `=`, including inside a destructuring pattern or a destructuring default, or a
     `for-in`/`for-of` head), or a read-and-write (compound assignment, `++`/`--`, or a `delete`, each
     of which keeps the name live as a read rather than overwriting it outright). The shared
     `_governing_target` climb looks through destructuring containers, default patterns, and
     parentheses, so a target nested in a pattern or a grouping (`[x = 9] = xs`, `(x)++`, `(o) = v`) is
-    still recognized as a write.
+    still recognized as a write. The reference is usually an identifier, but the same rules classify a
+    member access on a global-object alias (`globalThis.g`, `globalThis.g = ...`) against the global it
+    denotes, so the def-use pass records such an access as the read or write it is.
     """
     governor, target = _governing_target(node)
     if isinstance(governor, JsAssignmentExpression) and _strip_parens(governor.left) is target:
@@ -878,6 +881,9 @@ class SemanticModel:
     def _build_def_use(self):
         self._create_implicit_globals()
         for node in self.root.walk():
+            if isinstance(node, JsMemberExpression):
+                self._record_global_alias_member_reference(node)
+                continue
             if not isinstance(node, JsIdentifier):
                 continue
             if not self.is_reference(node):
@@ -917,15 +923,16 @@ class SemanticModel:
         follows resolves its references to it like any other binding. A name becomes an implicit global
         when the program writes it — an assignment, update, or `for-in`/`for-of` target — without it
         resolving to any lexical binding, which in sloppy mode creates a property on the global object.
-        A write through a member access on a global-object alias (`globalThis.g = ...`) likewise writes
-        the named global, even though its property name is not a use-position identifier the def-use
-        walk would resolve. A write that resolves through a dynamic scope is skipped: inside a `with`
-        body the target may be a property of the `with` object rather than a global, so the model cannot
+        A write through a member access on a global-object alias (`globalThis.g = ...`) likewise creates
+        the named global; the reference itself — the alias write, and any alias read — is recorded
+        against the binding by `_build_def_use` like any other reference, so this pass establishes
+        existence only. A write that resolves through a dynamic scope is skipped: inside a `with` body
+        the target may be a property of the `with` object rather than a global, so the model cannot
         claim a global binding.
         """
         for node in self.root.walk():
             if isinstance(node, JsMemberExpression):
-                self._record_global_member_write(node)
+                self._ensure_implicit_global_from_alias_write(node)
                 continue
             if not isinstance(node, JsIdentifier) or not self.is_reference(node):
                 continue
@@ -937,31 +944,75 @@ class SemanticModel:
             self.root_scope.bindings.setdefault(
                 node.name, Binding(node.name, BindingKind.IMPLICIT_GLOBAL, self.root_scope))
 
-    def _record_global_member_write(self, member: JsMemberExpression):
+    def _global_alias_member_name(self, member: JsMemberExpression) -> str | None:
         """
-        Record a write performed through a member access on a global-object alias (`globalThis.g = ...`,
-        `window['g'] = ...`) as a write of the named global's binding, creating an implicit-global
-        binding when the name is otherwise undeclared. Without this the global's property name, which is
-        not a use-position identifier, leaves the def-use model unaware that the global is reassigned, so
-        a transform could wrongly treat its value as stable. The alias must not be locally shadowed (a
-        local `window` names an ordinary object, not the global) and the write must not cross a dynamic
-        scope, where the alias itself could be rebound or the target could be a `with`-object property —
-        in either case the model cannot claim the global is written.
+        The name of the global that a member access on a global-object alias references
+        (`globalThis.g`, `window['g']` → `g`), or `None` when *member* is not such an access. The alias
+        must be an unshadowed `GLOBAL_OBJECT_ALIASES` identifier (a local `window` names an ordinary
+        object, not the global) with a statically known property name, and the access must not cross a
+        dynamic scope, where the alias could be rebound or the target could be a `with`-object property —
+        in either case the model cannot claim the reference denotes a global.
         """
         base = member.object
         if not isinstance(base, JsIdentifier) or base.name not in GLOBAL_OBJECT_ALIASES:
-            return
-        if not is_member_write_target(member):
-            return
+            return None
         name = _global_member_name(member)
         if name is None:
-            return
+            return None
         scope = self._node_scope.get(id(member))
         if self.lookup(base.name, scope) is not None or self._crosses_dynamic_scope(scope):
+            return None
+        return name
+
+    def _ensure_implicit_global_from_alias_write(self, member: JsMemberExpression):
+        """
+        Give a global written through a member access on a global-object alias (`globalThis.g = ...`) an
+        implicit-global binding when the name is otherwise undeclared, so the def-use pass resolves the
+        reference to it. Only a write creates a global property, so a read establishes nothing; the write
+        itself is recorded against the binding by `_build_def_use` like any other reference, so this
+        establishes existence only.
+        """
+        if not is_member_write_target(member):
             return
-        binding = self.root_scope.bindings.setdefault(
+        name = self._global_alias_member_name(member)
+        if name is None:
+            return
+        self.root_scope.bindings.setdefault(
             name, Binding(name, BindingKind.IMPLICIT_GLOBAL, self.root_scope))
-        binding.writes.append(member)
+
+    def _global_alias_member_binding(self, member: JsMemberExpression) -> Binding | None:
+        """
+        The existing global binding a member access on a global-object alias references, or `None`.
+        Unlike `_ensure_implicit_global_from_alias_write` this never creates a binding: a read of an
+        otherwise-undeclared global has none to attribute and leaves the name free.
+        """
+        name = self._global_alias_member_name(member)
+        if name is None:
+            return None
+        return self.root_scope.bindings.get(name)
+
+    def _record_global_alias_member_reference(self, member: JsMemberExpression):
+        """
+        Record a reference performed through a member access on a global-object alias (`globalThis.g`,
+        `globalThis.g = ...`, `globalThis.g += 1`) against the global's binding, exactly as an ordinary
+        identifier reference is recorded: `reference_role` decides whether the access reads, writes, or
+        both. The binding must already exist — `_ensure_implicit_global_from_alias_write` established one
+        for an alias write, while a read of an undeclared global stays free. The member node stands in
+        for the referencing identifier the global has none of (see `Binding`). Without the read half a
+        `globalThis.g` read would leave the binding looking unreferenced, so a remover could drop a live
+        global whose only use is through the alias.
+        """
+        binding = self._global_alias_member_binding(member)
+        if binding is None:
+            return
+        role = reference_role(member)
+        if role is not Role.WRITE:
+            binding.reads.append(member)
+        if role is not Role.READ:
+            binding.writes.append(member)
+        scope = self._node_scope.get(id(member))
+        if scope is None or scope.var_scope is not binding.scope.var_scope:
+            binding.captured = True
 
     def _crosses_dynamic_scope(self, scope: Scope | None) -> bool:
         """
