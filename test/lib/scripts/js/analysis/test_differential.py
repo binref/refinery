@@ -569,3 +569,76 @@ class TestDeobfuscationReflectionOpenBugs(TestBase):
             ' (0, eval)("var g = 7;");'
             ' SINK.push(globalThis.g);'
             " console.log(SINK.join('|'));")
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestDeobfuscationExpressionOpenBugs(TestBase):
+    """
+    Known-open soundness bugs the interpreter/expression fuzzer grammar surfaced, captured as expected
+    failures pending the same batched fix session as the other open-bug classes. No deobfuscator change
+    accompanies these tests; a fix turns the matching test into an unexpected success.
+    """
+
+    def _check(self, source: str):
+        deobfuscated = deobfuscate_source(source)
+        self.assertEqual(
+            behavior(source),
+            behavior(deobfuscated),
+            F'deobfuscation changed observable behavior; result was:\n{deobfuscated}',
+        )
+
+    @unittest.expectedFailure
+    def test_math_sign_of_nan_folds_to_nan_not_zero(self):
+        """
+        `Math.sign(NaN)` is `NaN`, but the constant folder computes the sign as a difference of
+        comparisons (`(x > 0) - (x < 0)`), which is `0` for a `NaN` argument. Folding `Math.sign('ab')`
+        must yield `NaN`, not `0`.
+        """
+        self._check(
+            'var SINK = [];'
+            " SINK.push(Math.sign('ab'));"
+            " console.log(SINK.join('|'));")
+
+    @unittest.expectedFailure
+    def test_delete_parameter_not_substituted_when_inlined(self):
+        """
+        `delete p` for a parameter `p` returns false — a binding is not a deletable reference — but
+        inlining the function substitutes `p` with its argument, turning `delete p` into `delete
+        <literal>`, which returns true. The `instanceof` keeps the disjunction from being simplified
+        away, so the inliner takes the parameter-substitution path and the observed value flips from
+        false to true. A parameter that is the operand of `delete` must not be inlined.
+        """
+        self._check(
+            'var SINK = [];'
+            ' function f(p) { return ((p instanceof Array) || (delete p)); }'
+            " SINK.push(f('ef'));"
+            " console.log(SINK.join('|'));")
+
+    @unittest.expectedFailure
+    def test_typeof_of_unfoldable_builtin_not_folded_to_undefined(self):
+        """
+        `Math.max('mn', 4)` is `NaN`, so `typeof` of it is `'number'`. While inlining a function the
+        interpreter cannot fold `Math.max` on a non-numeric argument and yields a couldn't-fold
+        sentinel; `typeof` of that sentinel is wrongly folded to `'undefined'` rather than left
+        unevaluated. The same shape at the top level is not folded and stays `'number'`.
+        """
+        self._check(
+            'var SINK = [];'
+            " function m0() { return (typeof Math.max('mn', 4)); }"
+            ' SINK.push(m0());'
+            " console.log(SINK.join('|'));")
+
+    @unittest.expectedFailure
+    def test_function_local_not_dropped_when_body_is_inlined(self):
+        """
+        `g` returns `x[0] instanceof Object`, an expression over its own local `x`. Because `instanceof`
+        cannot be folded, the inliner substitutes the body into the caller — but drops the `var x`
+        declaration, so the substituted `x` is a dangling reference that throws. Inlining a body that
+        reads a function-local must not discard that local's declaration. (`return x[0]` folds to the
+        value and is unaffected; the unfoldable operator is what forces textual substitution.)
+        """
+        self._check(
+            'var SINK = [];'
+            ' function g() { var x = [5]; return (x[0] instanceof Object); }'
+            ' SINK.push(g());'
+            " console.log(SINK.join('|'));")

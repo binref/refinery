@@ -83,7 +83,9 @@ import random
 
 from dataclasses import dataclass, field
 
-_BIN_OPS = ('+', '-', '*', '%', '<', '<=', '>', '>=', '===', '!==', '&&', '||')
+_BIN_OPS = (
+    '+', '-', '*', '%', '<', '<=', '>', '>=', '===', '!==', '==', '!=', '&&', '||', '??',
+)
 _WORDS = ('ab', 'cd', 'ef', 'gh', 'ij', 'kl', 'mn', 'op')
 
 
@@ -790,9 +792,13 @@ class _Generator:
         if depth <= 0:
             return self._atom(scope)
         kinds = ['atom', 'binary', 'unary', 'ternary', 'array', 'curry', 'sequence']
+        kinds += ['typeof', 'template', 'instanceof', 'builtin']
         funcs = scope.all_funcs()
         if funcs:
             kinds.append('call')
+        objects = scope.all_objects()
+        if objects:
+            kinds += ['computed', 'optional', 'contains']
         if scope.all_mutable():
             kinds.append('assign')
             kinds.append('update')
@@ -803,6 +809,25 @@ class _Generator:
         if kind == 'binary':
             op = self.rng.choice(_BIN_OPS)
             return F'({self._expr(scope, depth - 1)} {op} {self._expr(scope, depth - 1)})'
+        if kind == 'typeof':
+            return F'(typeof {self._expr(scope, depth - 1)})'
+        if kind == 'template':
+            return '`' + self.rng.choice(_WORDS) + '${' + self._expr(scope, depth - 1) + '}`'
+        if kind == 'instanceof':
+            return F'({self._expr(scope, depth - 1)} instanceof {self.rng.choice(("Array", "Object"))})'
+        if kind == 'builtin':
+            return self._builtin_call(scope, depth)
+        if kind == 'computed':
+            name, okind = self.rng.choice(objects)
+            return self._computed_member(name, okind)
+        if kind == 'optional':
+            name, okind = self.rng.choice(objects)
+            if okind == 'array':
+                return F'{name}?.[{self.rng.randint(0, 2)}]'
+            return F'{name}?.{self.rng.choice(("p0", "p1", "p2"))}'
+        if kind == 'contains':
+            name, _ = self.rng.choice(objects)
+            return F"('{self.rng.choice(('p0', 'p1', 'p2'))}' in {name})"
         if kind == 'unary':
             return F'({self.rng.choice(("!", "-"))}{self._expr(scope, depth - 1)})'
         if kind == 'ternary':
@@ -834,6 +859,46 @@ class _Generator:
         if form == 'call':
             return F'{name}.call({", ".join(["null", *args])})'
         return F'{name}({", ".join(args)})'
+
+    def _builtin_call(self, scope: _Scope, depth: int) -> str:
+        """
+        A call to a deterministic built-in: a one- or two-argument `Math` function, a `String`/`Number`/
+        `Boolean` conversion, or a method on a pooled array (`join`/`indexOf`/`slice`). No source of
+        nondeterminism (`Math.random`, `Date`) is used, so the result is a pure function of the seed.
+        `Math.sign` is deliberately excluded: it deterministically hits one already-recorded
+        deobfuscator bug (it folds a `NaN` argument to `0`) and would mask other findings.
+        """
+        arrays = [name for name, kind in scope.all_objects() if kind == 'array']
+        kinds = ['math2', 'math1', 'convert']
+        if arrays:
+            kinds.append('arraymethod')
+        kind = self.rng.choice(kinds)
+        if kind == 'math2':
+            fn = self.rng.choice(('max', 'min'))
+            return F'Math.{fn}({self._expr(scope, depth - 1)}, {self._expr(scope, depth - 1)})'
+        if kind == 'math1':
+            fn = self.rng.choice(('abs', 'floor', 'round'))
+            return F'Math.{fn}({self._expr(scope, depth - 1)})'
+        if kind == 'convert':
+            fn = self.rng.choice(('String', 'Number', 'Boolean'))
+            return F'{fn}({self._expr(scope, depth - 1)})'
+        arr = self.rng.choice(arrays)
+        method = self.rng.choice(('join', 'indexOf', 'slice'))
+        if method == 'join':
+            return F"{arr}.join(',')"
+        if method == 'indexOf':
+            return F'{arr}.indexOf({self._atom(scope)})'
+        return F"{arr}.slice(1).join(',')"
+
+    def _computed_member(self, name: str, kind: str) -> str:
+        """
+        A computed member access `name[key]` — a bracketed integer index for an array, a bracketed
+        string literal for an object — the computed-key form the deobfuscator must read like the dotted
+        access it is equivalent to.
+        """
+        if kind == 'array':
+            return F'{name}[{self.rng.randint(0, 2)}]'
+        return F"{name}['{self.rng.choice(('p0', 'p1', 'p2'))}']"
 
     def _curry(self, scope: _Scope, depth: int) -> str:
         """
