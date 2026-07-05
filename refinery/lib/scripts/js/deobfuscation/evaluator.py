@@ -725,6 +725,23 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
         self.mark_changed()
         return True
 
+    def _function_is_removable(self, model: SemanticModel, func: _FuncNode) -> bool:
+        """
+        Whether *func*'s definition can be deleted: it has no surviving static reference and cannot be
+        reached by a runtime name lookup. A function named inside a `with` body or otherwise reflected
+        (`model.reflection_can_reach`) must be kept even once every direct call has folded away — the
+        `with`-body call still needs the binding. This mirrors the reflection gate the unused-code
+        remover applies, so both transforms keep the same functions.
+        """
+        binding = self._function_binding(model, func)
+        if binding is None:
+            return False
+        exclude = self._function_exclude_node(func)
+        return (
+            not binding_has_references(model, binding, exclude=exclude)
+            and not model.reflection_can_reach(binding)
+        )
+
     def _remove_resolved_definitions(self, script: JsScript) -> None:
         removed: set[int] = set()
         while True:
@@ -744,9 +761,7 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
                 name = self._function_name(func)
                 if name is None:
                     continue
-                exclude = self._function_exclude_node(func)
-                binding = self._function_binding(model, func)
-                if not binding_has_references(model, binding, exclude=exclude):
+                if self._function_is_removable(model, func):
                     self._remove_function(func)
                     removed.add(func_id)
                     self.mark_changed()
@@ -762,9 +777,7 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
                 call_count = self._call_counts.get(func_id, 0)
                 if call_count == 0:
                     continue
-                exclude = self._function_exclude_node(func)
-                binding = self._function_binding(model, func)
-                if not binding_has_references(model, binding, exclude=exclude):
+                if self._function_is_removable(model, func):
                     self._remove_function(func)
                     removed.add(func_id)
                     self.mark_changed()

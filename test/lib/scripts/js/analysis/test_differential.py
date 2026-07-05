@@ -522,7 +522,6 @@ class TestDeobfuscationWithScopeOpenBugs(TestBase):
             " with (o) { delete p0; SINK.push((p0, 'x')); }"
             " console.log(SINK.join('|'));")
 
-    @unittest.expectedFailure
     def test_function_called_only_in_with_body_not_removed(self):
         """
         `f` is called directly (foldable to its constant result) and also by bare name inside a `with`
