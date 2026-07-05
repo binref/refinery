@@ -89,14 +89,16 @@ class JsDeadCodeElimination(BodyProcessingTransformer):
 
     def _test_is_side_effect_free(self, test: Node) -> bool:
         """
-        Whether the discarded test can be dropped. The conservative structural check is tried first;
-        only when it fails is the effect model consulted, so a call to a proven-pure function or
-        intrinsic in the test no longer forces it to be kept.
+        Whether the discarded test can be dropped. The model-aware effect check is authoritative when a
+        model is available: it certifies a proven-pure call the model-free check would keep, and rejects
+        a read through a `with` body's dynamic scope the model-free check would wrongly call pure (that
+        read may fire the `with` object's getter or throw). The structural check is only a fallback for a
+        pass constructed without a model.
         """
-        if side_effect_free(test):
-            return True
         effects = self.effects
-        return effects is not None and effects.is_side_effect_free(test)
+        if effects is not None:
+            return effects.is_side_effect_free(test)
+        return side_effect_free(test)
 
     @staticmethod
     def _unwrap_branch(branch: Statement | None) -> list[Statement]:

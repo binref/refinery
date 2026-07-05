@@ -701,7 +701,11 @@ class JsConstantInlining(ScopeProcessingTransformer):
         binding for ordering and its own kills, then one query per resolved free variable. The
         `_is_primitive_and_pure` gate keeps the initializer free of side effects and reference identity,
         and the `mutated` gate rejects a free variable written through a name no binding resolves (a
-        global reassigned in scope), which the binding-keyed reaching query cannot see.
+        global reassigned in scope), which the binding-keyed reaching query cannot see. A candidate whose
+        initializer reads a bare name through a `with` body's dynamic scope needs no separate gate here:
+        such an initializer is inside the `with` body, so the candidate's own binding is written in a
+        dynamic scope and `_collect_candidates` already rejects it through
+        `binding_maybe_reassigned_dynamically`.
         """
         decl_ids = _candidate_decl_ids(candidates)
         ref_counts = _count_scope_references(scope, set(candidates), decl_ids)

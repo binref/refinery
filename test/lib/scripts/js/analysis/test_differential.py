@@ -553,6 +553,19 @@ class TestDeobfuscationWithScope(TestBase):
             " with (o) { SINK.push((function(a){ return 'y'; })(x)); }"
             " console.log(SINK.join('|'));")
 
+    def test_with_scoped_getter_read_in_pruned_if_test_not_dropped(self):
+        """
+        Reading the bare name `x` inside `with (o)` fires `o`'s getter. The `if ([x])` test is statically
+        truthy, so the branch is taken and the array test discarded — but discarding it must not skip the
+        getter, so the test is kept as an expression statement rather than dropped.
+        """
+        self._check(
+            'var SINK = [];'
+            ' var x = 1;'
+            " var o = { get x() { SINK.push('g'); return 2; } };"
+            " with (o) { if ([x]) SINK.push('t'); }"
+            " console.log(SINK.join('|'));")
+
     def test_with_scoped_throwing_operand_not_dropped(self):
         """
         Inside a `with` body a bare name resolves through the dynamic scope, so reading one whose
