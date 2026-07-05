@@ -642,3 +642,16 @@ class TestDeobfuscationExpressionOpenBugs(TestBase):
             ' function g() { var x = [5]; return (x[0] instanceof Object); }'
             ' SINK.push(g());'
             " console.log(SINK.join('|'));")
+
+    @unittest.expectedFailure
+    def test_math_round_of_negative_zero_preserves_sign(self):
+        """
+        `Math.round(-0)` and `Math.floor(-0)` are `-0`, observable as `1 / -0 === -Infinity`. The
+        constant folder rounds through an integer conversion that yields `+0`, dropping the sign, so
+        `1 / Math.round(-0)` folds to `Infinity`. `Math.max`/`min`/`abs` keep the sign correctly;
+        rounding a negative zero must too.
+        """
+        self._check(
+            'var SINK = [];'
+            ' SINK.push(1 / Math.round(-0));'
+            " console.log(SINK.join('|'));")

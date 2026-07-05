@@ -175,6 +175,7 @@ class _Generator:
         if depth < 2:
             choices += ['if', 'for', 'while', 'for_destructure', 'func', 'try', 'objfunc']
             choices += ['cross_call', 'confined_write', 'with', 'objadv', 'throw']
+            choices += ['switch', 'do_while', 'for_in']
         if scope.all_mutable():
             choices.append('assign')
             choices.append('destructure')
@@ -378,6 +379,62 @@ class _Generator:
         if self.rng.random() < 0.5:
             lines.append('} finally {')
             lines += self._indent(self._body(scope.child(), depth + 1))
+        lines.append('}')
+        return lines
+
+    def _stmt_switch(self, scope: _Scope, depth: int) -> list[str]:
+        """
+        A `switch` over a constant integer selector with several integer cases and a `default`. A case
+        without a `break` falls through to the next, so which statements run depends on both the matched
+        case and fallthrough — the control-flow shape the deobfuscator must not collapse. Each case body
+        is generated in its own child scope, so no declaration is referenced across a case boundary
+        where the selector could have skipped it.
+        """
+        selector = self.rng.randint(0, 4)
+        lines = [F'switch ({selector}) {{']
+        for value in range(4):
+            body = self._body(scope.child(), depth + 1)
+            if self.rng.random() < 0.6:
+                body.append('break;')
+            lines.append(F'case {value}:')
+            lines += self._indent(body)
+        lines.append('default:')
+        lines += self._indent(self._body(scope.child(), depth + 1))
+        lines.append('}')
+        return lines
+
+    def _stmt_do_while(self, scope: _Scope, depth: int) -> list[str]:
+        """
+        A `do`/`while` over a bounded counter, so the body always runs at least once and the loop
+        terminates via the trailing increment. The counter is read-only to the body, so only that
+        increment advances it. Exercises the control-flow transforms on the run-once-then-test loop.
+        """
+        counter = self._fresh()
+        bound = self.rng.randint(0, 3)
+        inner = scope.child()
+        inner.readable.append(counter)
+        body = self._body(inner, depth + 1)
+        body.append(F'{counter}++;')
+        lines = [F'var {counter} = 0;', 'do {']
+        lines += self._indent(body)
+        lines.append(F'}} while ({counter} < {bound});')
+        return lines
+
+    def _stmt_for_in(self, scope: _Scope, depth: int) -> list[str]:
+        """
+        A `for-in` over a fresh object, iterating its keys in insertion order; the body reads the key
+        and the value at it through a computed member. The key is read-only, and the object is local to
+        this block, so the iteration is deterministic and every reference resolves.
+        """
+        obj = self._fresh()
+        key = self._fresh()
+        init = ', '.join(F'{name}: {self._expr(scope, 1)}' for name in ('p0', 'p1', 'p2'))
+        inner = scope.child()
+        inner.readable.append(key)
+        body = [F'SINK.push({key});', F'SINK.push({obj}[{key}]);']
+        body += self._body(inner, depth + 1)
+        lines = [F'var {obj} = {{{init}}};', F'for (var {key} in {obj}) {{']
+        lines += self._indent(body)
         lines.append('}')
         return lines
 
