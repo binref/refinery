@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from hashlib import md5
+from hashlib import blake2b
 
 from refinery.lib.argformats import PythonExpression
 from refinery.lib.meta import metavars
@@ -25,23 +25,23 @@ class dedup(Unit):
         keyvar = self.args.key
 
         if keyvar is not None:
-            def key(chunk):
+            def _key_from_var(chunk):
                 v = PythonExpression.Evaluate(keyvar, metavars(chunk))
                 if isbuffer(v):
-                    v = md5(v).digest()
+                    v = blake2b(v, digest_size=16).digest()
                 return v
+            key = _key_from_var
         else:
-            def key(chunk):
-                return md5(chunk).digest()
+            def _key_from_buf(chunk):
+                return blake2b(chunk, digest_size=16).digest()
+            key = _key_from_buf
 
+        counts = {}
+        buffer = {}
         if self.args.count:
-            counts = {}
-            buffer = {}
             hashes = None
         else:
             hashes = set()
-            counts = None
-            buffer = None
 
         for chunk in chunks:
             if not chunk.visible:
