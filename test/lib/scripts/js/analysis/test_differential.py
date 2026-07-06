@@ -79,6 +79,17 @@ class TestDeobfuscationDifferential(TestBase):
             "function f(){ var g; (0, eval)('g = 5;'); return g; }"
             ' console.log(f(), typeof g);')
 
+    def test_function_constructor_this_resolves_to_global_object(self):
+        """
+        A `Function`-constructed function invoked with no receiver has `this` bound to the global
+        object, so `this.marker` reads the global set beforehand. Rewriting it to `globalThis.marker`
+        when inlining must read the same global.
+        """
+        self._check(
+            "globalThis.marker = 'G';"
+            " var out = new Function('return this.marker')();"
+            ' console.log(out);')
+
     def test_sequence_callee_preserves_indirect_this_binding(self):
         """
         `(0, o.m)()` calls `o.m` with no receiver, so `this` is not `o`. Collapsing the callee sequence

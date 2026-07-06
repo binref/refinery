@@ -32,6 +32,7 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     property_key,
     references_receiver_this,
     string_value,
+    walk_receiver_scope,
     walk_scope,
 )
 from refinery.lib.scripts.js.deobfuscation.options import DeobfuscationOptions
@@ -582,6 +583,23 @@ def _references_new_target(root: Node) -> bool:
     return False
 
 
+def _rewrite_receiver_this_to_global(root: JsScript) -> None:
+    """
+    Replace every `this` bound to the constructed function's own receiver with a `globalThis` reference.
+    A `Function`-constructed function is invoked here with no receiver, so its `this` is the global
+    object; rewriting each occurrence lets the body inline as ordinary global-scope code rather than
+    declining the moment a `this` appears. The rewrite descends the same receiver boundary
+    `references_receiver_this` uses — through arrow functions and a class's `extends` clause and computed
+    keys, but not into a nested regular or generator function, whose `this` is its own — so only the
+    constructed function's own `this` is rewritten. The synthesized `globalThis` identifiers are then
+    held to the body free-name check like any other global reference, so a binding named `globalThis` in
+    scope at the call site still declines the inlining.
+    """
+    for node in list(walk_receiver_scope(root)):
+        if isinstance(node, JsThisExpression):
+            _replace_in_parent(node, JsIdentifier(name='globalThis'))
+
+
 def _body_free_names(body_model: SemanticModel, parsed: JsScript) -> set[str]:
     """
     The names *parsed* reads or writes without binding them locally — the names a
@@ -841,17 +859,17 @@ class JsReflectionInlining(ScriptLevelTransformer):
     ) -> JsScript | None:
         """
         Parse a `Function`-constructor body and decide whether inlining it at *site* preserves meaning.
-        The exact global-accessor idiom `return this` becomes `return globalThis`, since a
-        `Function`-constructed function's `this` is always the global object; the rewritten `globalThis`
-        is then held to the same free-name check as any other global reference, so a binding named
-        `globalThis` in scope at *site* declines the inlining. Otherwise the body must run in the global
-        sloppy mode the constructed function has: a strict context at *site* declines the inlining (the
-        always-sloppy body would inherit the caller's strictness), as does a `"use strict"` prologue in
-        the body itself. The body must also be self-contained in both directions: it binds no parameters
-        or arguments and references no `this`, `arguments`, or `new.target`; every free name it reads
-        still denotes the same global at *site*; and every name it declares can be hoisted into the scope
-        at *site* without capturing an identifier already meaningful there. Anything else is left intact
-        (returns `None`) — declining is always sound.
+        A `Function`-constructed function's `this` is always the global object, so every `this` bound to
+        its own receiver becomes `globalThis`; each rewritten `globalThis` is then held to the same
+        free-name check as any other global reference, so a binding named `globalThis` in scope at *site*
+        declines the inlining. Otherwise the body must run in the global sloppy mode the constructed
+        function has: a strict context at *site* declines the inlining (the always-sloppy body would
+        inherit the caller's strictness), as does a `"use strict"` prologue in the body itself. The body
+        must also be self-contained in both directions: it binds no parameters or arguments and
+        references no `arguments`, `super`, or `new.target`; every free name it reads still denotes the
+        same global at *site*; and every name it declares can be hoisted into the scope at *site* without
+        capturing an identifier already meaningful there. Anything else is left intact (returns `None`) —
+        declining is always sound.
         """
         if binds:
             return None
@@ -862,10 +880,7 @@ class JsReflectionInlining(ScriptLevelTransformer):
             return None
         if _has_use_strict_directive(parsed.body):
             return None
-        if len(parsed.body) == 1:
-            only = parsed.body[0]
-            if isinstance(only, JsReturnStatement) and isinstance(only.argument, JsThisExpression):
-                _replace_in_parent(only.argument, JsIdentifier(name='globalThis'))
+        _rewrite_receiver_this_to_global(parsed)
         if references_receiver_this(parsed) or _references_new_target(parsed):
             return None
         body_model = build_semantic_model(parsed)

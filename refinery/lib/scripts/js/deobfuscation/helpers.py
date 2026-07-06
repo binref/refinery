@@ -996,27 +996,19 @@ def function_binds_name(func: Node, name: str) -> bool:
     return False
 
 
-def references_receiver_this(root: Node) -> bool:
+def walk_receiver_scope(root: Node) -> Iterator[Node]:
     """
-    Return whether relocating *root* would change the meaning of a `this` or `super` reference bound
-    to its current receiver. Both are receiver-bound: `this` to the call's receiver and `super` to the
-    method's home object, and `super` is a syntax error outside a method, so a value that uses either
-    cannot be detached from its containing method. Arrow functions inherit both lexically, so they are
-    traversed; regular and generator functions nested below *root* rebind `this` (and cannot name the
-    outer `super`) and are not descended into. A class also rebinds `this` for its method bodies and
-    field initializers, but its `extends` clause and any computed member keys are evaluated in the
-    enclosing `this` context, so only those parts of a class are traversed. *root* itself is always
-    traversed, so a method whose body reads `this` or `super` (directly or through an arrow) counts.
-    An identifier `super` that merely names a property (`x.super`) or an object-literal key is not a
-    receiver-bound reference, so it is gated on `is_use_position` and does not count.
+    Yield every node in the subtree at *root* that shares *root*'s `this`/`super` receiver, without
+    descending into a nested regular or generator function, which rebinds `this`. Arrow functions are
+    descended, since they inherit the receiver lexically. A class rebinds `this` for its method bodies
+    and field initializers, but its `extends` clause and any computed member keys are evaluated in the
+    enclosing receiver context, so only those parts of a class are descended. *root* itself is always
+    yielded and descended, so a method reached directly through *root* is included.
     """
     stack: list[Node] = [root]
     while stack:
         node = stack.pop()
-        if isinstance(node, JsThisExpression):
-            return True
-        if isinstance(node, JsIdentifier) and node.name == 'super' and is_use_position(node):
-            return True
+        yield node
         if isinstance(node, (JsFunctionExpression, JsFunctionDeclaration)) and node is not root:
             continue
         if isinstance(node, (JsClassDeclaration, JsClassExpression)):
@@ -1028,7 +1020,26 @@ def references_receiver_this(root: Node) -> bool:
                         stack.append(member.key)
             continue
         stack.extend(node.children())
-    return False
+
+
+def references_receiver_this(root: Node) -> bool:
+    """
+    Return whether relocating *root* would change the meaning of a `this` or `super` reference bound
+    to its current receiver. Both are receiver-bound: `this` to the call's receiver and `super` to the
+    method's home object, and `super` is a syntax error outside a method, so a value that uses either
+    cannot be detached from its containing method. The receiver boundary is `walk_receiver_scope`:
+    arrow functions inherit both lexically and are traversed; regular and generator functions nested
+    below *root* rebind `this` (and cannot name the outer `super`) and are not descended into; a class
+    rebinds `this` for its method bodies and field initializers, so only its `extends` clause and
+    computed member keys are traversed. An identifier `super` that merely names a property (`x.super`)
+    or an object-literal key is not a receiver-bound reference, so it is gated on `is_use_position` and
+    does not count.
+    """
+    return any(
+        isinstance(node, JsThisExpression)
+        or (isinstance(node, JsIdentifier) and node.name == 'super' and is_use_position(node))
+        for node in walk_receiver_scope(root)
+    )
 
 
 def binding_has_references(

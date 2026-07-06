@@ -431,10 +431,34 @@ class TestReflectionInlining(TestJsDeobfuscator):
             self._reflect("new Function('a', 'return a')(5);"),
         )
 
-    def test_function_constructor_referencing_this_not_inlined(self):
+    def test_function_constructor_this_member_becomes_globalthis(self):
+        """
+        The constructed function is invoked with no receiver, so its `this` is the global object; a
+        member access on it becomes the same access on `globalThis`, which the body then inlines.
+        """
         self.assertEqual(
-            "new Function('return this.x')();",
+            'globalThis.x;',
             self._reflect("new Function('return this.x')();"),
+        )
+
+    def test_function_constructor_multi_statement_this_becomes_globalthis(self):
+        """
+        Every `this` bound to the constructed function's own receiver becomes `globalThis`, not only a
+        single `return this`, so a multi-statement body using `this` inlines.
+        """
+        self.assertEqual(
+            'globalThis.x = 1;\nglobalThis.y = 2;',
+            self._reflect("new Function('this.x = 1; this.y = 2;')();"),
+        )
+
+    def test_function_constructor_nested_function_this_preserved(self):
+        """
+        A `this` inside a nested regular function is that function's own receiver, not the constructed
+        function's, so it is left intact while the outer body inlines.
+        """
+        self.assertEqual(
+            '(function() {\n  return this;\n});',
+            self._reflect("new Function('return function(){ return this; }')();"),
         )
 
     def test_function_constructor_referencing_arguments_not_inlined(self):
