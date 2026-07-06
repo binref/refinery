@@ -227,6 +227,21 @@ class TestInterpreterValueSemantics(TestJsDeobfuscator):
     def test_math_max_keeps_negative_zero_when_all_operands_negative_zero(self):
         self.assertEqual('var x = -Infinity;', self._fold('1 / Math.max(-0, -0)'))
 
+    def test_math_abs_of_no_argument_is_nan(self):
+        self.assertEqual('var x = NaN;', self._fold('Math.abs()'))
+
+    def test_math_sqrt_of_no_argument_is_nan(self):
+        self.assertEqual('var x = NaN;', self._fold('Math.sqrt()'))
+
+    def test_math_sign_of_no_argument_is_nan(self):
+        self.assertEqual('var x = NaN;', self._fold('Math.sign()'))
+
+    def test_math_floor_of_no_argument_is_nan(self):
+        self.assertEqual('var x = NaN;', self._fold('Math.floor()'))
+
+    def test_math_log_of_no_argument_is_nan(self):
+        self.assertEqual('var x = NaN;', self._fold('Math.log()'))
+
 
 class TestInterpreterThrowSemantics(TestJsDeobfuscator):
 

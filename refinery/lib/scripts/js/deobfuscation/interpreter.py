@@ -830,7 +830,7 @@ def _to_js_integer(args: list[Value], round_to_integer) -> Value:
     and the infinities through unchanged and preserves the sign of a negative-zero result, which JS
     requires (e.g. `Math.round(-0)` is `-0`, observable as `1 / Math.round(-0) === -Infinity`).
     """
-    v = to_number(args[0]) if args else 0.0
+    v = to_number(args[0]) if args else float('nan')
     if v != v:
         return float('nan')
     if math.isinf(v):
@@ -858,7 +858,7 @@ def _math_round(args: list[Value]) -> Value:
 
 @_register(('Math', 'abs'))
 def _math_abs(args: list[Value]) -> Value:
-    return abs(to_number(args[0])) if args else 0
+    return abs(to_number(args[0])) if args else float('nan')
 
 
 @_register(('Math', 'pow'))
@@ -870,7 +870,7 @@ def _math_pow(args: list[Value]) -> Value:
 
 @_register(('Math', 'sqrt'))
 def _math_sqrt(args: list[Value]) -> Value:
-    v = to_number(args[0]) if args else 0
+    v = to_number(args[0]) if args else float('nan')
     if v < 0:
         return float('nan')
     return math.sqrt(v)
@@ -909,7 +909,7 @@ def _math_trunc(args: list[Value]) -> Value:
 
 @_register(('Math', 'sign'))
 def _math_sign(args: list[Value]) -> Value:
-    v = to_number(args[0]) if args else 0
+    v = to_number(args[0]) if args else float('nan')
     if v != v:
         return v
     if v > 0:
@@ -920,7 +920,7 @@ def _math_sign(args: list[Value]) -> Value:
 
 
 def _math_log_impl(args: list[Value], fn) -> Value:
-    v = to_number(args[0]) if args else 0
+    v = to_number(args[0]) if args else float('nan')
     if v <= 0:
         return float('-inf') if v == 0 else float('nan')
     return fn(v)
