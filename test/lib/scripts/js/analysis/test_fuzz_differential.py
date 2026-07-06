@@ -9,7 +9,11 @@ from test.lib.scripts.js.analysis.differential import (
     deobfuscate_source,
     node_executable,
 )
-from test.lib.scripts.js.analysis.jsgen import generate
+from test.lib.scripts.js.analysis.jsgen import (
+    _Generator,
+    _Scope,
+    generate,
+)
 
 
 class TestFuzzGenerator(TestBase):
@@ -24,6 +28,46 @@ class TestFuzzGenerator(TestBase):
     def test_generation_is_deterministic(self):
         for seed in range(256):
             self.assertEqual(generate(seed), generate(seed))
+
+    def test_mutate_call_passes_only_a_compatible_container(self):
+        """
+        A mutator runs array-only methods on its parameter, so `_stmt_mutate_call` must hand it an
+        array-kind container. With an array and an object both in scope and one array-mutator, every
+        emitted call passes the array across many RNG states; a kind-blind draw would eventually pass
+        the object and throw in Node.
+        """
+        for seed in range(256):
+            scope = _Scope()
+            scope.objects.append(('arr', 'array'))
+            scope.objects.append(('obj', 'object'))
+            scope.mutators.append(('mut', 'array'))
+            self.assertEqual(
+                _Generator(seed)._stmt_mutate_call(scope, 0),
+                ['mut(arr);', 'SINK.push(arr[0]);'],
+            )
+
+    def test_mutator_without_a_compatible_container_is_not_callable(self):
+        """
+        An array-mutator is a candidate only when an array is in scope. With only an object-kind
+        container present no candidate exists, so the dispatcher never offers a `mutate_call` and can
+        never feed the mutator a non-array.
+        """
+        scope = _Scope()
+        scope.objects.append(('obj', 'object'))
+        scope.mutators.append(('mut', 'array'))
+        self.assertEqual(scope.mutator_candidates(), [])
+        scope.objects.append(('arr', 'array'))
+        self.assertEqual(scope.mutator_candidates(), [('mut', 'array')])
+
+    def test_objfunc_registers_its_mutator_requiring_an_array(self):
+        """
+        The only mutator producer treats its parameter as an array, so it must register the argument
+        kind it requires as `array`; dropping that kind is what let a caller pass an object.
+        """
+        scope = _Scope()
+        _Generator(0)._stmt_objfunc(scope, 0)
+        self.assertEqual(len(scope.mutators), 1)
+        self.assertEqual(scope.mutators[0][1], 'array')
 
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')

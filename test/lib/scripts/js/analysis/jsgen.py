@@ -96,7 +96,8 @@ class _Scope:
     referenced; `mutable` is the subset a plain assignment may target, so a `const` is never
     reassigned; `funcs` maps a callable function name to its arity. `objects` records each name bound
     to a fresh array or object together with its kind, so member accesses pick a valid key; `mutators`
-    lists functions that mutate an object passed to them. A child scope sees its parent's names
+    lists functions that mutate a container argument, paired with the kind that argument must be,
+    so a call site only ever passes a compatible container. A child scope sees its parent's names
     through `parent`, modelling JS closure so nested functions may read outer variables.
     """
     parent: _Scope | None = None
@@ -104,7 +105,7 @@ class _Scope:
     mutable: set[str] = field(default_factory=set)
     funcs: list[tuple[str, int]] = field(default_factory=list)
     objects: list[tuple[str, str]] = field(default_factory=list)
-    mutators: list[str] = field(default_factory=list)
+    mutators: list[tuple[str, str]] = field(default_factory=list)
 
     def child(self) -> _Scope:
         return _Scope(parent=self)
@@ -133,11 +134,21 @@ class _Scope:
             items += self.parent.all_objects()
         return items
 
-    def all_mutators(self) -> list[str]:
+    def all_mutators(self) -> list[tuple[str, str]]:
         items = list(self.mutators)
         if self.parent is not None:
             items += self.parent.all_mutators()
         return items
+
+    def mutator_candidates(self) -> list[tuple[str, str]]:
+        """
+        The in-scope mutators callable here, each paired with the container kind it requires. A
+        mutator runs array-only methods on its parameter, so it is callable only when a container
+        of that kind is in scope to receive it; the dispatcher's gate and the call site both draw
+        from this one set, so a mutator is never offered without a compatible argument.
+        """
+        kinds = {kind for _, kind in self.all_objects()}
+        return [(name, kind) for name, kind in self.all_mutators() if kind in kinds]
 
 
 class _Generator:
@@ -186,7 +197,7 @@ class _Generator:
             choices += ['member_write', 'alias']
             if len(objects) >= 2:
                 choices.append('member_store')
-            if scope.all_mutators():
+            if scope.mutator_candidates():
                 choices.append('mutate_call')
         funcs = scope.all_funcs()
         if funcs:
@@ -825,12 +836,18 @@ class _Generator:
         lines = [F'function {name}({param}) {{']
         lines += self._indent(body)
         lines.append('}')
-        scope.mutators.append(name)
+        scope.mutators.append((name, 'array'))
         return lines
 
     def _stmt_mutate_call(self, scope: _Scope, depth: int) -> list[str]:
-        name, kind = self.rng.choice(scope.all_objects())
-        mutator = self.rng.choice(scope.all_mutators())
+        """
+        Call a mutator with a container of the kind it requires and observe the mutation. The
+        mutator runs array-only methods on its parameter, so the argument is drawn only from
+        containers of the matching kind; passing another kind would throw before any comparison
+        and poison the oracle.
+        """
+        mutator, kind = self.rng.choice(scope.mutator_candidates())
+        name = self.rng.choice([n for n, k in scope.all_objects() if k == kind])
         return [
             F'{mutator}({name});',
             F'SINK.push({name}[0]);',
