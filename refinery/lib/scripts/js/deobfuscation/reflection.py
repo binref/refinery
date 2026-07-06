@@ -612,16 +612,22 @@ def _body_declared_names(body_model: SemanticModel) -> set[str]:
     }
 
 
-def _is_global_equivalent(binding: Binding, root_scope: Scope) -> bool:
+def _is_global_equivalent(binding: Binding, root_scope: Scope, module_scope: bool) -> bool:
     """
     Whether *binding* is the global a `Function`-constructed body would resolve a free name to at
-    runtime: an implicit global, or a `var`/function declared at the script's top level, which in a
-    sloppy script scope is itself a property of the global object. A top-level `let`/`const`/`class`,
-    or any binding nested below the script, is a distinct lexical binding the global-scope body would
-    not see, so a body free name resolving to one still declines the inlining.
+    runtime. A `Function`-constructed function is always a sloppy global-scope function, so its free
+    names resolve against the true global object. An implicit global is a property of that object, so
+    it is always equivalent. A `var`/function declared at the script's top level is equivalent only
+    under the script model, where a top-level declaration is itself a property of the global object;
+    under the module model (*module_scope*) it is scoped to the module and never reaches the global, so
+    the global-scope body would not resolve its free name to it. A top-level `let`/`const`/`class`, or
+    any binding nested below the script, is a distinct lexical binding the global-scope body would not
+    see. A body free name resolving to any of these non-equivalent bindings declines the inlining.
     """
     if binding.kind is BindingKind.IMPLICIT_GLOBAL:
         return True
+    if module_scope:
+        return False
     return binding.scope is root_scope and binding.kind in (BindingKind.VAR, BindingKind.FUNCTION)
 
 
@@ -875,7 +881,9 @@ class JsReflectionInlining(ScriptLevelTransformer):
             return None
         for name in free:
             binding = root_model.lookup(name, site_scope)
-            if binding is not None and not _is_global_equivalent(binding, root_model.root_scope):
+            if binding is not None and not _is_global_equivalent(
+                binding, root_model.root_scope, self._module_scope,
+            ):
                 return None
         if declared and not _inlined_declarations_safe(body_model, root_model, site_scope):
             return None

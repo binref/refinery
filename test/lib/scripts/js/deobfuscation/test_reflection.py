@@ -101,6 +101,26 @@ class TestReflectionInlining(TestJsDeobfuscator):
     def test_module_indirect_eval_expression_still_inlined(self):
         self.assertEqual('foo();', self._reflect_module("(0, eval)('foo();');"))
 
+    def test_function_constructor_reading_top_level_var_inlined_in_script_mode(self):
+        """
+        A `Function`-constructed body is a sloppy global-scope function, so it resolves `out` against
+        the global object. Under the script model a top-level `var` is itself a property of that object,
+        so inlining `out.push(1)` preserves which binding the read reaches.
+        """
+        self.assertEqual(
+            'var out = [];\nout.push(1);',
+            self._reflect("var out = []; new Function('out.push(1)')();"))
+
+    def test_module_function_constructor_reading_top_level_var_not_inlined(self):
+        """
+        Under the module model a top-level `var` is scoped to the module rather than made a property of
+        the global object, so the global-scope `Function` body does not resolve `out` to it. Inlining
+        would rebind the read to the module-local declaration, so the call is left intact.
+        """
+        self.assertEqual(
+            "var out = [];\nnew Function('out.push(1)')();",
+            self._reflect_module("var out = []; new Function('out.push(1)')();"))
+
     def test_indirect_eval_declaration_not_inlined_into_function(self):
         """
         Indirect eval runs its code in the global scope, so `var x` binds a global. Inlining it into
