@@ -35,6 +35,47 @@ class TestReflectionInlining(TestJsDeobfuscator):
     def test_indirect_eval_globalthis(self):
         self.assertEqual('var x = 1;', self._reflect("globalThis.eval('var x = 1;');"))
 
+    def test_indirect_eval_prefix_read_in_with_not_inlined(self):
+        """
+        The bare name `e` in the comma-sequence prefix of `(e, eval)(...)` inside a `with` body fires
+        the object's getter before `eval` resolves. Inlining the indirect eval discards the prefix, so
+        the site is left intact rather than dropping the getter read.
+        """
+        source = inspect.cleandoc(
+            """
+            var e = 0;
+            var o = { get e() {
+              return 0;
+            } };
+            with (o) {
+              (e, eval)("f()");
+            }
+            """
+        )
+        self.assertEqual(source, self._reflect(source))
+
+    def test_constructor_chain_base_read_in_with_not_inlined(self):
+        """
+        The bare base `s` of `s.constructor.constructor(...)()` inside a `with` body fires the object's
+        getter before the chain resolves to `Function`. Inlining discards the base evaluation, so the
+        chain is left intact rather than dropping the getter read.
+        """
+        source = inspect.cleandoc(
+            """
+            var s = '';
+            var o = { get s() {
+              return '';
+            } };
+            with (o) {
+              s.constructor.constructor('f()')();
+            }
+            """
+        )
+        self.assertEqual(source, self._reflect(source))
+
+    def test_indirect_eval_identifier_prefix_outside_with_still_inlined(self):
+        self.assertEqual('f();', self._reflect("(e, eval)('f()');"))
+
     def test_settimeout_string(self):
         self.assertEqual('alert(1);', self._reflect("setTimeout('alert(1)', 0);"))
 

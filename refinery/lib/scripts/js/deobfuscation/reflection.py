@@ -8,7 +8,7 @@ is handled as a special case with automatic proxy object resolution.
 """
 from __future__ import annotations
 
-from typing import NamedTuple
+from typing import Callable, NamedTuple
 
 from refinery.lib.scripts import Expression, Node, _clone_node, _replace_in_parent
 from refinery.lib.scripts.js.analysis.cache import model_cache
@@ -159,11 +159,17 @@ def _extract_eval_code(node: JsCallExpression) -> str | None:
     return string_value(node.arguments[0]) or _try_eval_string_arg(node.arguments[0])
 
 
-def _extract_indirect_eval_code(node: JsCallExpression) -> str | None:
+def _extract_indirect_eval_code(
+    node: JsCallExpression, read_effect: Callable[[Node], bool] | None = None,
+) -> str | None:
     """
     Extract the code string from indirect eval patterns:
     - `(0, eval)("code")`
     - `window.eval("code")` / `globalThis.eval("code")`
+
+    Inlining discards the comma-sequence prefix, so it is admitted only when dropping it is
+    side-effect free; *read_effect* rejects a prefix read that resolves through a `with` body's dynamic
+    scope (firing a getter or throwing), which the model-free check cannot see.
     """
     if len(node.arguments) != 1:
         return None
@@ -171,7 +177,7 @@ def _extract_indirect_eval_code(node: JsCallExpression) -> str | None:
     if isinstance(callee, JsSequenceExpression):
         exprs = callee.expressions
         if len(exprs) >= 2 and _is_identifier(exprs[-1], 'eval'):
-            if all(side_effect_free(e) for e in exprs[:-1]):
+            if all(side_effect_free(e, read_effect=read_effect) for e in exprs[:-1]):
                 return string_value(node.arguments[0]) or _try_eval_string_arg(node.arguments[0])
     if _global_alias_member_name(callee) == 'eval':
         return string_value(node.arguments[0]) or _try_eval_string_arg(node.arguments[0])
@@ -229,11 +235,17 @@ def _extract_function_body_code(
     return body
 
 
-def _is_constructor_chain(node: JsCallExpression | JsNewExpression) -> bool:
+def _is_constructor_chain(
+    node: JsCallExpression | JsNewExpression, read_effect: Callable[[Node], bool] | None = None,
+) -> bool:
     """
     Detect a constructor chain callee pattern equivalent to `Function`:
 
         <literal>.constructor.constructor
+
+    Inlining discards the evaluation of the chain base, so the base must be side-effect free;
+    *read_effect* rejects a bare-identifier base that resolves through a `with` body's dynamic scope
+    (firing a getter or throwing), which the model-free check cannot see.
     """
     callee = node.callee
     if not isinstance(callee, JsMemberExpression):
@@ -248,10 +260,12 @@ def _is_constructor_chain(node: JsCallExpression | JsNewExpression) -> bool:
     base = inner.object
     if base is None:
         return False
-    return isinstance(base, (JsStringLiteral, JsIdentifier)) or side_effect_free(base)
+    return side_effect_free(base, read_effect=read_effect)
 
 
-def _extract_constructor_chain_code(node: JsCallExpression) -> str | None:
+def _extract_constructor_chain_code(
+    node: JsCallExpression, read_effect: Callable[[Node], bool] | None = None,
+) -> str | None:
     """
     Extract code from constructor chain IIFE patterns:
 
@@ -261,14 +275,16 @@ def _extract_constructor_chain_code(node: JsCallExpression) -> str | None:
     inner_call = node.callee
     if not isinstance(inner_call, JsCallExpression):
         return None
-    if not _is_constructor_chain(inner_call):
+    if not _is_constructor_chain(inner_call, read_effect):
         return None
     if len(inner_call.arguments) != 1:
         return None
     return string_value(inner_call.arguments[0]) or _try_eval_string_arg(inner_call.arguments[0])
 
 
-def _invoked_function_constructor_code(node: JsCallExpression) -> tuple[str, bool] | None:
+def _invoked_function_constructor_code(
+    node: JsCallExpression, read_effect: Callable[[Node], bool] | None = None,
+) -> tuple[str, bool] | None:
     """
     If *node* immediately invokes a `Function` constructor — `Function("code")()`,
     `new Function("code")()`, or the `<x>.constructor.constructor("code")()` chain — return its body
@@ -282,7 +298,7 @@ def _invoked_function_constructor_code(node: JsCallExpression) -> tuple[str, boo
         code = _extract_function_body_code(inner)
         if code is not None:
             return code, len(inner.arguments) > 1 or bool(node.arguments)
-    chain = _extract_constructor_chain_code(node)
+    chain = _extract_constructor_chain_code(node, read_effect)
     if chain is not None:
         return chain, bool(node.arguments)
     return None
@@ -673,6 +689,15 @@ class JsReflectionInlining(ScriptLevelTransformer):
         self._inline_statements(node)
         self._inline_expressions(node)
 
+    def _dynamic_read_effect(self, root: JsScript) -> Callable[[Node], bool]:
+        """
+        A predicate reporting whether reading a node crosses a `with` body's dynamic scope, resolved
+        against *root*'s current model. Threaded into the reflective-inlining safety checks so a read
+        that may fire a `with` object's getter or throw is never dropped as if it were pure. Resolved
+        lazily through the shared cache, so a script with no reflective site builds no model.
+        """
+        return lambda node: model_cache(self, root).model.read_has_dynamic_effect(node)
+
     def _inline_statements(self, root: JsScript) -> None:
         for container in list(root.walk()):
             body = get_body(container)
@@ -754,7 +779,7 @@ class JsReflectionInlining(ScriptLevelTransformer):
             return pack_result
         if _is_pack_shaped(node):
             return None
-        constructor = _invoked_function_constructor_code(node)
+        constructor = _invoked_function_constructor_code(node, self._dynamic_read_effect(root))
         if constructor is not None:
             code, binds = constructor
             parsed = self._resolve_constructor_body(code, binds, stmt, root)
@@ -765,7 +790,10 @@ class JsReflectionInlining(ScriptLevelTransformer):
                 parsed = _try_parse(direct)
                 global_scoped = False
             else:
-                code = _extract_indirect_eval_code(node) or _extract_timer_code(node)
+                code = (
+                    _extract_indirect_eval_code(node, self._dynamic_read_effect(root))
+                    or _extract_timer_code(node)
+                )
                 parsed = _try_parse(code) if code is not None else None
                 global_scoped = True
         if parsed is None:
@@ -782,12 +810,15 @@ class JsReflectionInlining(ScriptLevelTransformer):
         return result
 
     def _try_resolve_expression(self, node: JsCallExpression, root: JsScript) -> Expression | None:
-        constructor = _invoked_function_constructor_code(node)
+        constructor = _invoked_function_constructor_code(node, self._dynamic_read_effect(root))
         if constructor is not None:
             code, binds = constructor
             parsed = self._resolve_constructor_body(code, binds, node, root)
         else:
-            code = _extract_eval_code(node) or _extract_indirect_eval_code(node)
+            code = (
+                _extract_eval_code(node)
+                or _extract_indirect_eval_code(node, self._dynamic_read_effect(root))
+            )
             parsed = _try_parse(code) if code is not None else None
         if parsed is None:
             return None

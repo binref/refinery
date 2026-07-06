@@ -566,6 +566,32 @@ class TestDeobfuscationWithScope(TestBase):
             " with (o) { if ([x]) SINK.push('t'); }"
             " console.log(SINK.join('|'));")
 
+    def test_with_scoped_indirect_eval_prefix_read_not_dropped(self):
+        """
+        The bare name `e` in the comma-sequence prefix of `(e, eval)(...)` inside `with (o)` fires `o`'s
+        getter before `eval` resolves. Inlining the indirect eval drops the prefix and skips the getter,
+        so the site must be kept.
+        """
+        self._check(
+            'var SINK = [];'
+            ' var e = 0;'
+            " var o = { get e() { SINK.push('g'); return 0; } };"
+            ' with (o) { (e, eval)("1"); }'
+            " console.log(SINK.join('|'));")
+
+    def test_with_scoped_constructor_chain_base_read_not_dropped(self):
+        """
+        The bare base `s` of `s.constructor.constructor(...)()` inside `with (o)` fires `o`'s getter
+        before the chain resolves to `Function`. Inlining the chain drops the base read and skips the
+        getter, so the site must be kept.
+        """
+        self._check(
+            'var SINK = [];'
+            " var s = '';"
+            " var o = { get s() { SINK.push('g'); return ''; } };"
+            ' with (o) { s.constructor.constructor("return 1")(); }'
+            " console.log(SINK.join('|'));")
+
     def test_with_scoped_throwing_operand_not_dropped(self):
         """
         Inside a `with` body a bare name resolves through the dynamic scope, so reading one whose
