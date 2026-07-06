@@ -80,7 +80,15 @@ class TestFuzzGeneratorRunsInNode(TestBase):
     deobfuscator bug.
     """
 
-    def test_generated_programs_run_cleanly_and_deterministically(self):
+    def test_generated_programs_run_cleanly(self):
+        for seed in range(256):
+            source = generate(seed)
+            self.assertIsNone(
+                behavior(source)[1],
+                F'seed {seed} did not run cleanly in node:\n{source}',
+            )
+
+    def test_generated_programs_are_deterministic_in_node(self):
         for seed in range(64):
             source = generate(seed)
             first = behavior(source)
