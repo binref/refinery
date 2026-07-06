@@ -58,6 +58,36 @@ class TestDeobfuscationDifferential(TestBase):
             " with (o) { delete p0; SINK.push((function(a){ return 'x'; })(p0)); }"
             " console.log(SINK.join('|'));")
 
+    def test_indirect_eval_block_hoisted_var_creates_observable_global(self):
+        """
+        The `var g` inside the block of the indirect-eval body hoists to the eval's global scope, so
+        calling `f` creates a global `g` observable afterwards. Inlining the call into `f` would hoist
+        `g` into the function and leave the global undefined, so the call must be kept.
+        """
+        self._check(
+            "function f(){ (0, eval)('{ var g = 1; }'); }"
+            ' f();'
+            ' console.log(typeof g);')
+
+    def test_indirect_eval_implicit_global_write_not_captured_by_local(self):
+        """
+        The unqualified `g = 5` in the indirect-eval body runs in the global scope, writing the global
+        `g` rather than the function-local `g`. Inlining the call into `f` would capture the write with
+        the local, so the call must be kept: `f` returns the untouched local and the global is set.
+        """
+        self._check(
+            "function f(){ var g; (0, eval)('g = 5;'); return g; }"
+            ' console.log(f(), typeof g);')
+
+    def test_sequence_callee_preserves_indirect_this_binding(self):
+        """
+        `(0, o.m)()` calls `o.m` with no receiver, so `this` is not `o`. Collapsing the callee sequence
+        to `o.m()` would bind `this` to `o`, changing the result, so the sequence must be kept.
+        """
+        self._check(
+            "var o = { tag: 'self', m: function(){ return this === o ? this.tag : 'detached'; } };"
+            ' console.log((0, o.m)());')
+
     def test_dead_store_overwritten_before_read(self):
         self._check('function f(){ var x = 1; x = 5; return x; } console.log(f());')
 

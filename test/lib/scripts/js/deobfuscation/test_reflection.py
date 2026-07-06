@@ -116,6 +116,38 @@ class TestReflectionInlining(TestJsDeobfuscator):
         )
         self.assertEqual(source, self._reflect(source))
 
+    def test_indirect_eval_block_hoisted_var_not_inlined_into_function(self):
+        """
+        A `var` inside a nested block of the eval body hoists past the block to the eval's global
+        scope, binding a global. Inlining the call into the function would hoist it into the function
+        instead, so the call is left intact even in the default script model.
+        """
+        source = inspect.cleandoc(
+            """
+            function f() {
+              (0, eval)('{ var g = 1; }');
+            }
+            """
+        )
+        self.assertEqual(source, self._reflect(source))
+
+    def test_indirect_eval_nested_lexical_declaration_still_inlined(self):
+        """
+        A `let` in a nested block of the eval body is block-scoped and never reaches the global scope,
+        so inlining the call into the function preserves its meaning: the block is inlined intact.
+        """
+        source = "function f() { (0, eval)('{ let g = 1; }'); }"
+        expected = inspect.cleandoc(
+            """
+            function f() {
+              {
+                let g = 1;
+              }
+            }
+            """
+        )
+        self.assertEqual(expected, self._reflect(source))
+
     def test_function_constructor_declaration_inlined_into_function(self):
         """
         A `var` in a `Function` constructor body binds a local of the created function, not a global,

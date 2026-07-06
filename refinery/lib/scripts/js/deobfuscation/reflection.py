@@ -44,7 +44,6 @@ from refinery.lib.scripts.js.model import (
     JsClassDeclaration,
     JsClassExpression,
     JsExpressionStatement,
-    JsFunctionDeclaration,
     JsFunctionExpression,
     JsIdentifier,
     JsMemberExpression,
@@ -59,7 +58,6 @@ from refinery.lib.scripts.js.model import (
     JsStringLiteral,
     JsThisExpression,
     JsUnaryExpression,
-    JsVariableDeclaration,
     Statement,
 )
 
@@ -81,22 +79,23 @@ def _try_parse(code: str) -> JsScript | None:
     return parsed
 
 
-def _declares_top_level_names(body: list[Statement]) -> bool:
+def _binds_global_scope_names(parsed: JsScript) -> bool:
     """
-    Whether *body* — statements parsed from an evaluated code string — declares any name at its top
-    level (a `var`/`let`/`const`, function, or class declaration). Indirect eval and string timers
-    evaluate their code in the global scope, so such a declaration binds a global; inlining the body
-    at the call site would instead bind it wherever the deobfuscated output runs — a module scope
-    under the module model, or the enclosing function or block when the call site is not the global
-    scope — neither of which reaches the global object. The declaration's target scope is therefore
-    not reproducible by textual inlining there. The `Function` constructor is not among these: a
-    declaration in its body binds a local of the created function, not a global, so inlining it into
-    any scope is sound and it is exempt from this gate.
+    Whether *parsed* — a script parsed from an evaluated code string — creates any binding at its own
+    global scope: a `var` or function declaration (including one hoisted out of a nested block), a
+    top-level `let`/`const`/`class`, or an implicit global an unqualified assignment writes. Indirect
+    eval and string timers evaluate their code in the global scope, so each such binding targets the
+    global object or the global lexical environment; inlining the body at the call site would instead
+    bind it wherever the deobfuscated output runs — a module scope under the module model, or the
+    enclosing function or block when the call site is not the global scope — none of which reaches the
+    global. The target scope is therefore not reproducible by textual inlining there. The set of names
+    bound at the parsed script's own root scope answers this directly: the model hoists a nested `var`
+    or function declaration into it, keeps a nested `let`/`const`/`class` out of it, and records an
+    implicit global there, so a non-empty root scope is exactly the gate. The `Function` constructor is
+    exempt: a declaration in its body binds a local of the created function, not a global, so inlining
+    it into any scope is sound and its gate is separate.
     """
-    return any(
-        isinstance(stmt, (JsVariableDeclaration, JsFunctionDeclaration, JsClassDeclaration))
-        for stmt in body
-    )
+    return bool(build_semantic_model(parsed).root_scope.bindings)
 
 
 def _try_eval_string_arg(node: Expression) -> str | None:
@@ -800,8 +799,8 @@ class JsReflectionInlining(ScriptLevelTransformer):
             return None
         if (
             global_scoped
-            and _declares_top_level_names(parsed.body)
             and (self._module_scope or not at_global_scope)
+            and _binds_global_scope_names(parsed)
         ):
             return None
         result = parsed.body
