@@ -79,6 +79,16 @@ class TestDeobfuscationDifferential(TestBase):
             "function f(){ var g; (0, eval)('g = 5;'); return g; }"
             ' console.log(f(), typeof g);')
 
+    def test_objectfold_parenthesized_function_value_folds_soundly(self):
+        """
+        A parenthesized function property value folds the same as the bare form: the immediately-called
+        read inlines to its body while the identity-compared read is preserved as a distinct function,
+        both without changing observable behavior.
+        """
+        self._check(
+            'var o = { f: (function(a){ return a + 1; }) };'
+            ' console.log(o.f(2), o.f === o.f);')
+
     def test_function_constructor_this_resolves_to_global_object(self):
         """
         A `Function`-constructed function invoked with no receiver has `this` bound to the global

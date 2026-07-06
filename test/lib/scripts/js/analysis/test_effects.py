@@ -12,6 +12,7 @@ from refinery.lib.scripts.js.model import (
     JsFunctionExpression,
     JsIdentifier,
     JsObjectExpression,
+    JsParenthesizedExpression,
 )
 from refinery.lib.scripts.js.parser import JsParser
 
@@ -485,6 +486,16 @@ class TestEffectModel(TestBase):
         ast, effects = self._effects('(function () { with (o) { x; } });')
         fn = next(n for n in ast.walk_in_order() if isinstance(n, JsFunctionExpression))
         self.assertTrue(effects.is_side_effect_free(fn))
+
+    def test_side_effect_free_sees_through_parentheses_to_pure_inner(self):
+        ast, effects = self._effects('(function () {});')
+        paren = next(n for n in ast.walk_in_order() if isinstance(n, JsParenthesizedExpression))
+        self.assertTrue(effects.is_side_effect_free(paren))
+
+    def test_side_effect_free_sees_through_parentheses_to_effectful_inner(self):
+        ast, effects = self._effects('(ext());')
+        paren = next(n for n in ast.walk_in_order() if isinstance(n, JsParenthesizedExpression))
+        self.assertFalse(effects.is_side_effect_free(paren))
 
     @staticmethod
     def _container(source: str, name: str = 'a', *, member_calls_mutate: bool = True) -> bool:

@@ -19,7 +19,7 @@ from refinery.lib.scripts import (
 )
 from refinery.lib.scripts.js.analysis.cache import model_cache
 from refinery.lib.scripts.js.analysis.effects import EffectModel, object_sets_prototype
-from refinery.lib.scripts.js.analysis.model import Binding, Scope, SemanticModel
+from refinery.lib.scripts.js.analysis.model import Binding, Scope, SemanticModel, _strip_parens
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     OBJECT_PROTOTYPE_MEMBERS,
     ScopeProcessingTransformer,
@@ -55,7 +55,10 @@ def _build_property_map(
 ) -> dict[str, Node] | None:
     """
     Build a map from string key to value node for every property in the object literal.
-    Returns `None` if any property cannot be statically keyed (computed key, spread, etc.).
+    Returns `None` if any property cannot be statically keyed (computed key, spread, etc.). Each value
+    is stripped of enclosing parentheses so the fold guards inspect the expression itself: a
+    parenthesized function value (`{ f: (function(){}) }`) must reach the identity guard as the function
+    it wraps, or a bare `o.f` read would fold to a fresh clone and break `o.f === o.f`.
     """
     result: dict[str, Node] = {}
     for prop in obj.properties:
@@ -64,9 +67,10 @@ def _build_property_map(
         if prop.kind is not JsPropertyKind.INIT:
             return None
         key = property_key(prop)
-        if key is None or prop.value is None:
+        value = _strip_parens(prop.value)
+        if key is None or value is None:
             return None
-        result[key] = prop.value
+        result[key] = value
     return result
 
 

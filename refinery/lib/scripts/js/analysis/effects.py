@@ -66,6 +66,7 @@ from refinery.lib.scripts.js.model import (
     JsNullLiteral,
     JsNumericLiteral,
     JsObjectExpression,
+    JsParenthesizedExpression,
     JsProperty,
     JsPropertyKind,
     JsRestElement,
@@ -287,7 +288,8 @@ def side_effect_free(
     a bare name that resolves through a `with` body's dynamic scope (reading it may fire the `with`
     object's getter or throw). A function expression is free without descending into its body — defining
     it runs nothing — so a dynamic-scope read inside an un-called function does not make the value
-    effectful. `EffectModel.is_side_effect_free` passes `EffectModel.is_pure_call` and
+    effectful. A parenthesized expression is transparent, bearing exactly the effects of the expression
+    it groups. `EffectModel.is_side_effect_free` passes `EffectModel.is_pure_call` and
     `read_has_dynamic_effect`; a caller without a model gets the conservative behaviour. When *defunct*
     is given its identifiers name bindings being removed, so calls to them and property reads through
     them are treated as free.
@@ -298,6 +300,9 @@ def side_effect_free(
         return read_effect is None or not read_effect(node)
     if isinstance(node, (JsFunctionExpression, JsArrowFunctionExpression)):
         return True
+    if isinstance(node, JsParenthesizedExpression):
+        return node.expression is not None and side_effect_free(
+            node.expression, defunct, call_pure, read_effect)
     if isinstance(node, JsUnaryExpression):
         if node.operator == 'delete':
             return False

@@ -643,6 +643,32 @@ class TestObjectFold(TestJsDeobfuscator):
         )
         self.assertEqual(source, self._objectfold(source))
 
+    def test_parenthesized_function_property_read_by_identity_not_folded(self):
+        """
+        A parenthesized function value is the same function as the bare form, so a bare identity read of
+        it must not clone it into two distinct functions either: the paren is seen through so the
+        identity guard keeps the fold from happening.
+        """
+        source = inspect.cleandoc(
+            """
+            var o = { f: (function() {
+              return 1;
+            }) };
+            SINK(o.f === o.f);
+            """
+        )
+        self.assertEqual(source, self._objectfold(source))
+
+    def test_parenthesized_function_property_call_inlined(self):
+        """
+        A parenthesized function value that is immediately called inlines exactly as the bare form does:
+        the paren is transparent to the effect check and the trivial-wrapper inline.
+        """
+        self.assertEqual(
+            'SINK(2 + 1);',
+            self._objectfold('var o = { f: (function(a) { return a + 1; }) }; SINK(o.f(2));'),
+        )
+
     def test_fresh_array_returning_call_value_not_folded(self):
         source = inspect.cleandoc(
             """
