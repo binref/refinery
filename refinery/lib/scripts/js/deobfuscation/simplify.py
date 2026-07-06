@@ -67,6 +67,7 @@ from refinery.lib.scripts.js.model import (
     JsScript,
     JsSequenceExpression,
     JsStringLiteral,
+    JsTaggedTemplateExpression,
     JsUnaryExpression,
     JsVariableDeclaration,
     JsVariableDeclarator,
@@ -120,6 +121,29 @@ def _is_global_alias(node: Node, name: str) -> bool:
                     ):
                         return True
         parent = parent.parent
+    return False
+
+
+def _is_call_callee(node: Node) -> bool:
+    """
+    Whether *node* stands in the callee position of a call or the tag position of a tagged template,
+    looking through any enclosing parentheses. A call invokes its callee with a receiver determined by
+    the callee's reference form: a member access (`o.m()`) binds `this` to the object, a bare `eval`
+    performs a *direct* eval evaluated in the caller's own scope, and any other reference or bare value
+    invokes with no receiver (an indirect eval among them, evaluated in the global scope). Rewriting the
+    callee into a different reference form — collapsing a comma sequence to its last element, or dropping
+    a global-object alias from a member access — therefore changes the call's meaning, so a
+    simplification that would do so must be declined here. A `new` expression is excluded: it constructs
+    its own receiver, so the callee's reference form does not affect it.
+    """
+    parent = node.parent
+    while isinstance(parent, JsParenthesizedExpression):
+        node = parent
+        parent = parent.parent
+    if isinstance(parent, JsCallExpression):
+        return parent.callee is node
+    if isinstance(parent, JsTaggedTemplateExpression):
+        return parent.tag is node
     return False
 
 
@@ -517,6 +541,8 @@ class JsSimplifications(Transformer):
         self.generic_visit(node)
         if not node.expressions:
             return None
+        if _is_call_callee(node):
+            return None
         filtered = [
             e for i, e in enumerate(node.expressions)
             if i == len(node.expressions) - 1
@@ -562,6 +588,8 @@ class JsSimplifications(Transformer):
         ):
             p = node.parent
             if isinstance(p, JsAssignmentExpression) and p.left is node:
+                return None
+            if _is_call_callee(node):
                 return None
             return node.property
         if node.computed and node.object is not None and node.property is not None:

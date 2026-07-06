@@ -805,3 +805,42 @@ class TestGlobalAliasStripping(TestJsDeobfuscator):
             """
         )
         self.assertEqual(source, self._simplify(source))
+
+    def test_global_alias_stripped_in_call_argument(self):
+        self.assertEqual('f(X);', self._simplify('f(globalThis.X);'))
+
+    def test_global_alias_not_stripped_from_call_callee(self):
+        """
+        Stripping `window` from the callee of `window.foo()` would call `foo` with no receiver instead
+        of with `window` as `this`, so the alias is kept in callee position even though it is stripped
+        from a value position.
+        """
+        self.assertEqual('window.foo();', self._simplify('window.foo();'))
+
+    def test_alias_eval_callee_not_de_indirected(self):
+        """
+        `window.eval(code)` is an indirect eval evaluated in the global scope; stripping the alias to
+        `eval(code)` would make it a direct eval evaluated in the caller's scope, so the alias is kept.
+        """
+        self.assertEqual("window.eval('x');", self._simplify("window.eval('x');"))
+
+
+class TestCalleeSequencePreserved(TestJsDeobfuscator):
+
+    def test_sequence_folded_in_statement_position(self):
+        self.assertEqual('x;', self._simplify('(0, x);'))
+
+    def test_sequence_callee_not_collapsed_for_indirect_eval(self):
+        """
+        `(0, eval)(code)` is an indirect eval evaluated in the global scope; collapsing the callee
+        sequence to `eval(code)` would make it a direct eval evaluated in the caller's scope, so the
+        sequence is kept.
+        """
+        self.assertEqual("(0, eval)('x');", self._simplify("(0, eval)('x');"))
+
+    def test_sequence_callee_not_collapsed_for_method_receiver(self):
+        """
+        `(0, o.m)()` invokes `o.m` with no receiver; collapsing the callee sequence to `o.m()` would
+        bind `this` to `o`, so the sequence is kept.
+        """
+        self.assertEqual('(0, o.m)();', self._simplify('(0, o.m)();'))
