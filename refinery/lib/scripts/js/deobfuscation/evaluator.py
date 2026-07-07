@@ -695,7 +695,7 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
         except IrreducibleExpression as irr:
             if gate_unresolved and self._is_unresolved_call(irr.node):
                 return False
-            if self._substitution_would_break(irr.node, func):
+            if self._substitution_would_break(irr.node, func, node):
                 return False
             replacement = self._substitute_params_in_clone(irr.node, func, args, self)
             _replace_in_parent(node, replacement)
@@ -944,10 +944,10 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
                 return True
         return False
 
-    def _substitution_would_break(self, node: Node, func: _FuncNode) -> bool:
+    def _substitution_would_break(self, node: Node, func: _FuncNode, call_site: Node) -> bool:
         """
-        Whether splicing *node* — an irreducible sub-expression of *func*'s body — into the call site
-        by parameter substitution would change behavior. Substitution replaces each parameter with its
+        Whether splicing *node* — an irreducible sub-expression of *func*'s body — into *call_site* by
+        parameter substitution would change behavior. Substitution replaces each parameter with its
         original argument value and discards the rest of the body, so it is unsafe when *node*:
 
         - writes a parameter, which would place the argument value at a write target (`delete p`
@@ -957,10 +957,14 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
         - references a name bound inside *func* but declared outside *node* — a body local (including a
           destructured or `catch` binding), a nested declaration, `arguments`, or the function
           expression's own name — which has no binding once the body is discarded, leaving a dangling
-          reference.
+          reference;
+        - references a name that resolves outside *func*, or to no binding at all, but which a
+          same-named local in scope at *call_site* would recapture, so the spliced reference would bind
+          to a different declaration there than it does in *func*.
 
-        A binding *node* itself introduces travels with it and stays intact. This resolves the actual
-        bindings of *node*'s references through the model, so shadowing and destructuring are exact.
+        A binding *node* itself introduces travels with it and stays intact. Every reference is resolved
+        through the model, so shadowing and destructuring are exact; a free name whose read crosses a
+        `with` in *func* is treated as unsafe, since its runtime target cannot be matched at *call_site*.
         """
         param_names = {p.name for p in func.params if isinstance(p, JsIdentifier)}
         if _param_written(node, param_names):
@@ -969,6 +973,9 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
         if script is None:
             return True
         model = model_cache(self, script).model
+        call_scope = model.scope_of(call_site)
+        if call_scope is None:
+            return True
         param_bindings = {
             binding
             for param in func.params
@@ -980,9 +987,15 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
                 continue
             binding = model.resolve(child)
             if binding is None:
+                if model.read_has_dynamic_effect(child):
+                    return True
+                if model.lookup(child.name, call_scope) is not None:
+                    return True
                 continue
             owner = binding.scope.node
             if owner is not func and not owner.is_descendant_of(func):
+                if model.lookup(child.name, call_scope) is not binding:
+                    return True
                 continue
             if binding in param_bindings:
                 if binding.writes:

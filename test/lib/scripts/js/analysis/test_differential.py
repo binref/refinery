@@ -904,14 +904,14 @@ class TestDeobfuscationReflectionScope(TestBase):
 
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
-class TestDeobfuscationInlinerScopeOpenBugs(TestBase):
+class TestDeobfuscationInlinerScope(TestBase):
     """
-    Known-open soundness bug in parameter substitution, captured as an expected failure pending a
-    batched fix session. When a folded call leaves an irreducible body expression, the evaluator
-    splices it into the call site, but the substitution-safety gate skips a reference whose binding is
-    declared outside the inlined function — assuming an outer binding resolves the same at the call
-    site. A local of the same name at the call site shadows it, so the spliced name is recaptured. No
-    deobfuscator change accompanies this test; a fix turns it into an unexpected success.
+    When a folded call leaves an irreducible body expression, the evaluator splices it into the call
+    site. The substitution-safety gate resolves every spliced reference at the call site: a name that
+    binds outside the inlined function, or to no binding at all, is inlined only when it still resolves
+    to the same declaration there, so a same-named local at the call site that would recapture it
+    declines the substitution. Both cases changed observable behavior before the gate consulted the
+    call-site scope; they guard the fix.
     """
 
     def _check(self, source: str):
@@ -922,17 +922,28 @@ class TestDeobfuscationInlinerScopeOpenBugs(TestBase):
             F'deobfuscation changed observable behavior; result was:\n{deobfuscated}',
         )
 
-    @unittest.expectedFailure
     def test_substitution_recaptures_outer_binding_shadowed_at_call_site(self):
         """
         Folding `f(5)` substitutes the irreducible body expression `g` into the call site inside
         `caller`. `g` resolves to the outer `g` (`1`) in `f`'s scope, but `caller` has a local `g` of
-        `100` that recaptures the spliced name, so `caller()` changes from `1` to `100`. The gate skips
-        a reference whose binding is declared outside the inlined function, but such a binding can be
-        shadowed at the call site.
+        `100` that would recapture the spliced name, changing `caller()` from `1` to `100`. Resolving
+        `g` at the call site sees the shadowing local and declines the substitution.
         """
         self._check(
             'var g = 1;'
             ' function f(n) { switch (n) { case 5: return g; } }'
             ' function caller() { var g = 100; return f(5); }'
+            ' console.log(caller());')
+
+    def test_substitution_recaptures_free_name_shadowed_at_call_site(self):
+        """
+        `f`'s body reads `externalThing`, a name it never binds, so in `f` it is a free global whose read
+        throws when it is undeclared. Folding `f(5)` would splice `externalThing` into `caller`, whose
+        local `externalThing` of `100` recaptures it — turning the throw into `100`. A free name is
+        treated like an outer binding: it is inlined only when the call site resolves it the same way, so
+        the shadowing local declines it.
+        """
+        self._check(
+            'function f(n) { switch (n) { case 5: return externalThing; } }'
+            ' function caller() { var externalThing = 100; return f(5); }'
             ' console.log(caller());')
