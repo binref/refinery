@@ -102,13 +102,54 @@ class TestReflectionInlining(TestJsDeobfuscator):
         self.assertEqual('f();', self._reflect("(e, eval)('f()');"))
 
     def test_settimeout_string(self):
-        self.assertEqual('alert(1);', self._reflect("setTimeout('alert(1)', 0);"))
+        """
+        A string timer is lowered to a deferred function call rather than inlined at the call site: its
+        code is deobfuscated but still runs when the timer schedules it, not immediately.
+        """
+        self.assertEqual(
+            'setTimeout(function() {\n  alert(1);\n}, 0);',
+            self._reflect("setTimeout('alert(1)', 0);"))
 
     def test_setinterval_string(self):
-        self.assertEqual('doStuff();', self._reflect("setInterval('doStuff()', 1000);"))
+        """
+        A `setInterval` string is lowered to a deferred function so its repetition is preserved: inlining
+        the body would run it once instead of on every interval.
+        """
+        self.assertEqual(
+            'setInterval(function() {\n  doStuff();\n}, 1000);',
+            self._reflect("setInterval('doStuff()', 1000);"))
 
     def test_settimeout_non_string_not_inlined(self):
         self.assertEqual('setTimeout(fn, 0);', self._reflect('setTimeout(fn, 0);'))
+
+    def test_string_timer_this_rewritten_to_global(self):
+        """
+        A string timer's `this` is the global object, so lowering it to a function rewrites `this` to
+        `globalThis` — a plain function's `this` would otherwise depend on how the timer invokes it.
+        """
+        self.assertEqual(
+            'setTimeout(function() {\n  globalThis.foo();\n}, 0);',
+            self._reflect("setTimeout('this.foo()', 0);"))
+
+    def test_string_timer_with_shadowed_free_name_not_lowered(self):
+        """
+        A string timer resolves its free names in the global scope, but the wrapping function resolves
+        them at the call site. A local `alert` shadowing the global there would rebind the call, so the
+        timer is left as a string.
+        """
+        self.assertEqual(
+            'function f() {\n  var alert = 1;\n  setTimeout("alert(1)", 0);\n}',
+            self._reflect('function f(){ var alert = 1; setTimeout("alert(1)", 0); }'))
+
+    def test_string_timer_in_with_body_not_lowered(self):
+        """
+        A `with` on the path to the timer binds the body's free names dynamically, so lowering could
+        resolve them to the `with` object's properties rather than the globals the timer would reach. The
+        timer is left as a string.
+        """
+        self.assertEqual(
+            'function f() {\n  with (o) {\n    setTimeout("foo()", 0);\n  }\n}',
+            self._reflect('function f(){ with (o) { setTimeout("foo()", 0); } }'))
 
     def test_module_indirect_eval_declaration_not_inlined(self):
         self.assertEqual(
@@ -209,14 +250,20 @@ class TestReflectionInlining(TestJsDeobfuscator):
         )
         self.assertEqual(expected, self._reflect(source))
 
-    def test_member_form_string_timer_inlined(self):
-        self.assertEqual('alert(1);', self._reflect("window.setTimeout('alert(1)', 0);"))
+    def test_member_form_string_timer_lowered(self):
+        self.assertEqual(
+            'window.setTimeout(function() {\n  alert(1);\n}, 0);',
+            self._reflect("window.setTimeout('alert(1)', 0);"))
 
-    def test_member_form_string_interval_inlined(self):
-        self.assertEqual('tick();', self._reflect("globalThis.setInterval('tick()', 100);"))
+    def test_member_form_string_interval_lowered(self):
+        self.assertEqual(
+            'globalThis.setInterval(function() {\n  tick();\n}, 100);',
+            self._reflect("globalThis.setInterval('tick()', 100);"))
 
-    def test_execscript_string_inlined(self):
-        self.assertEqual('run();', self._reflect("execScript('run()');"))
+    def test_execscript_string_lowered(self):
+        self.assertEqual(
+            'execScript(function() {\n  run();\n});',
+            self._reflect("execScript('run()');"))
 
     def test_member_form_function_timer_not_inlined(self):
         self.assertEqual(

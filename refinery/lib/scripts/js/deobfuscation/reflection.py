@@ -735,6 +735,7 @@ class JsReflectionInlining(ScriptLevelTransformer):
     def _process_script(self, node: JsScript) -> None:
         self._inline_statements(node)
         self._inline_expressions(node)
+        self._lower_timers(node)
 
     def _dynamic_read_effect(self, root: JsScript) -> Callable[[Node], bool]:
         """
@@ -800,6 +801,44 @@ class JsReflectionInlining(ScriptLevelTransformer):
             _replace_in_parent(node, replacement)
             self.mark_changed()
 
+    def _lower_timers(self, root: JsScript) -> None:
+        """
+        Rewrite a string-argument timer — `setTimeout("code", delay)`, `setInterval`, and their
+        `setImmediate`/`execScript`/global-alias variants — into a deferred function call
+        `setTimeout(function () { code }, delay)`, so the evaluated code is deobfuscated without changing
+        when or how often it runs. Unlike the eval and constructor paths, a timer is not inlined at the
+        call site: its value is a handle and its execution is deferred, so only its code string is
+        lowered.
+        """
+        for node in list(root.walk()):
+            if isinstance(node, JsCallExpression):
+                self._try_lower_timer(node, root)
+
+    def _try_lower_timer(self, node: JsCallExpression, root: JsScript) -> None:
+        """
+        Replace a string timer's code argument with a function wrapping the parsed code, when that code
+        runs safely in the global scope the timer would give it. The wrapper is defined at the call site,
+        so it is held to the same global-scope safety as an indirect eval — its `this` is rewritten to
+        `globalThis`, its free names must still denote the same global, and a top-level declaration
+        (whose global or transient environment a local function cannot reproduce) or a `return`/`await`
+        that a plain function body cannot host declines the lowering, leaving the string timer intact.
+        """
+        code = _extract_timer_code(node)
+        if code is None:
+            return
+        resolved = self._resolve_reflected_body(
+            code, node, root, ReflectedScope.GLOBAL_EVAL, at_global_scope=False,
+        )
+        if resolved is None or _has_top_level_await(resolved.body):
+            return
+        block = JsBlockStatement(body=resolved.body)
+        wrapper = JsFunctionExpression(params=[], body=block)
+        block.parent = wrapper
+        for stmt in resolved.body:
+            stmt.parent = block
+        _replace_in_parent(node.arguments[0], wrapper)
+        self.mark_changed()
+
     @property
     def _module_scope(self) -> bool:
         """
@@ -826,7 +865,7 @@ class JsReflectionInlining(ScriptLevelTransformer):
             return pack_result
         if _is_pack_shaped(node):
             return None
-        resolved = self._resolve_reflected_call(node, stmt, root, at_global_scope, allow_timer=True)
+        resolved = self._resolve_reflected_call(node, stmt, root, at_global_scope)
         if resolved is None:
             return None
         result = resolved[1].body
@@ -835,9 +874,7 @@ class JsReflectionInlining(ScriptLevelTransformer):
         return result
 
     def _try_resolve_expression(self, node: JsCallExpression, root: JsScript) -> Expression | None:
-        resolved = self._resolve_reflected_call(
-            node, node, root, at_global_scope=False, allow_timer=False,
-        )
+        resolved = self._resolve_reflected_call(node, node, root, at_global_scope=False)
         if resolved is None:
             return None
         scope, parsed = resolved
@@ -859,16 +896,13 @@ class JsReflectionInlining(ScriptLevelTransformer):
         site: Node,
         root: JsScript,
         at_global_scope: bool,
-        *,
-        allow_timer: bool,
     ) -> tuple[ReflectedScope, JsScript] | None:
         """
         Dispatch a reflective call to the safety gate for its execution scope, pairing the resolved body
         with that scope or returning `None` to decline. A `Function` constructor or constructor chain is
         a fresh global-scope function; a direct `eval` runs in the caller's scope; an indirect `eval`
-        or, when *allow_timer* is set, a string timer runs in the global scope. A timer's value is a
-        handle rather than the evaluated code's completion value, so it is admitted only in statement
-        position, where that value is discarded.
+        runs in the global scope. A string timer is not inlined here: its value is a handle, not the
+        code's completion value, and its deferred execution is preserved instead by `_lower_timers`.
         """
         read_effect = self._dynamic_read_effect(root)
         constructor = _invoked_function_constructor_code(node, read_effect)
@@ -885,8 +919,6 @@ class JsReflectionInlining(ScriptLevelTransformer):
             )
             return (ReflectedScope.DIRECT_EVAL, parsed) if parsed is not None else None
         code = _extract_indirect_eval_code(node, read_effect)
-        if code is None and allow_timer:
-            code = _extract_timer_code(node)
         if code is not None:
             parsed = self._resolve_reflected_body(
                 code, site, root, ReflectedScope.GLOBAL_EVAL, at_global_scope,
