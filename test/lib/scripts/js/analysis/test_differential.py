@@ -705,11 +705,10 @@ class TestDeobfuscationModuleScope(TestBase):
 
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
-class TestDeobfuscationExpressionOpenBugs(TestBase):
+class TestDeobfuscationExpressionRegressions(TestBase):
     """
-    Known-open soundness bugs the interpreter/expression fuzzer grammar surfaced, captured as expected
-    failures pending the same batched fix session as the other open-bug classes. No deobfuscator change
-    accompanies these tests; a fix turns the matching test into an unexpected success.
+    Interpreter and constant-folding cases the expression fuzzer grammar surfaced, each of which once
+    changed observable behavior and is now fixed; they guard against a regression.
     """
 
     def _check(self, source: str):
@@ -797,3 +796,143 @@ class TestDeobfuscationExpressionOpenBugs(TestBase):
             'var SINK = [];'
             ' SINK.push(1 / Math.round(-0));'
             " console.log(SINK.join('|'));")
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestDeobfuscationReflectionScope(TestBase):
+    """
+    Reflected code — indirect `eval`, a string timer, a `Function`-constructor chain — runs in the
+    global sloppy scope, and every inlining path holds it to that scope through the shared
+    `_resolve_reflected_body` gate: a free name is inlined only when it still denotes the same global at
+    the call site, a receiver `this` is rewritten to `globalThis`, a transient lexical declaration is
+    declined, an expression-position IIFE/eval value is never fabricated, and a body is not inlined into
+    a `with`. Each case changed observable behavior before the gate was unified; they guard the fix.
+    """
+
+    def _check(self, source: str):
+        deobfuscated = deobfuscate_source(source)
+        self.assertEqual(
+            behavior(source),
+            behavior(deobfuscated),
+            F'deobfuscation changed observable behavior; result was:\n{deobfuscated}',
+        )
+
+    def test_indirect_eval_lexical_declaration_is_transient(self):
+        """
+        An indirect `eval` runs in the global scope, but a top-level `let`/`const`/`class` in its code
+        is instantiated in a fresh declarative environment discarded when `eval` returns — so
+        `(0, eval)('let g = 1;')` leaves no `g` afterward and `typeof g` is `'undefined'`. Inlining the
+        declaration as a persistent top-level `let g = 1;` makes it `'number'`. Only a `var`/function
+        declaration reaches the global object and may be inlined at global script scope; a lexical one
+        must be declined.
+        """
+        self._check(
+            "(0, eval)('let g = 1;');"
+            ' console.log(typeof g);')
+
+    def test_indirect_eval_in_expression_position_not_scope_checked(self):
+        """
+        An indirect `eval` in expression position is inlined with none of the global-scope safety
+        checks the statement path and the `Function`-constructor path apply. Here `(0, eval)('g = 7')`
+        runs in the global scope and writes the global `g`, leaving the function-local `g` at `0`;
+        inlining it to `var x = (g = 7)` writes the local instead, so `f()` changes from `'0|7'` to
+        `'7|7'`.
+        """
+        self._check(
+            "function f() { var g = 0; var x = (0, eval)('g = 7'); return g + '|' + x; }"
+            ' console.log(f());')
+
+    def test_indirect_eval_free_name_recaptured_by_local(self):
+        """
+        An indirect `eval` reads its free names in the global scope, so `(0, eval)('g')` reads the
+        global `g` (`1`); inlining `return g` into `f`, whose local `g` is `100`, recaptures the name
+        and returns `100`. The eval/timer inlining path checks only the names the body binds, not the
+        names it reads, so a free read that resolves to a shadowing local at the inline site is dropped
+        in.
+        """
+        self._check(
+            'globalThis.g = 1;'
+            " function f() { var g = 100; return (0, eval)('g'); }"
+            ' console.log(f());')
+
+    def test_indirect_eval_this_rebinds_to_receiver(self):
+        """
+        An indirect `eval` body's `this` is the global object, so `(0, eval)('this.tag')` reads the
+        global `tag`. Inlining `return this.tag` into the method `o.f` would rebind `this` to `o`,
+        changing `'global'` to `'obj'`. The gate rewrites such a `this` to `globalThis` before inlining,
+        so the global `tag` is still read.
+        """
+        self._check(
+            "globalThis.tag = 'global';"
+            " var o = { tag: 'obj', f: function() { return (0, eval)('this.tag'); } };"
+            ' console.log(o.f());')
+
+    def test_constructor_iife_without_return_yields_undefined(self):
+        """
+        A `Function`-constructed IIFE whose body is a bare expression runs it for effect and returns
+        `undefined`; `Function("x")()` is not `x`. Inlining it in expression position must not lift the
+        expression as the value, so `var y = Function("x")()` is left intact and `y` stays `undefined`.
+        """
+        self._check(
+            'globalThis.x = 5;'
+            ' var y = Function("x")();'
+            ' console.log(typeof y);')
+
+    def test_indirect_eval_top_level_return_is_a_syntax_error(self):
+        """
+        A `return` at the top level of evaluated code is a SyntaxError, so `(0, eval)("return 1")`
+        throws; inlining it as the value `1` would turn the throw into a number. The body is left intact
+        so the error is preserved.
+        """
+        self._check(
+            'var y = (0, eval)("return 1");'
+            ' console.log(y);')
+
+    def test_indirect_eval_free_name_not_inlined_into_with_body(self):
+        """
+        An indirect `eval` resolves its free names in the global scope, but a `with` on the path to the
+        call site binds them dynamically. Inlining `foo()` from `(0, eval)('foo()')` into a `with (obj)`
+        body would call `obj.foo` when the object has that property; the body is left intact so the
+        global `foo` runs.
+        """
+        self._check(
+            'var out = [];'
+            " globalThis.foo = function(){ out.push('global'); };"
+            " var obj = { foo: function(){ out.push('obj'); } };"
+            ' function f(){ with (obj) { (0, eval)("foo()"); } }'
+            " f(); console.log(out.join('|'));")
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestDeobfuscationInlinerScopeOpenBugs(TestBase):
+    """
+    Known-open soundness bug in parameter substitution, captured as an expected failure pending a
+    batched fix session. When a folded call leaves an irreducible body expression, the evaluator
+    splices it into the call site, but the substitution-safety gate skips a reference whose binding is
+    declared outside the inlined function — assuming an outer binding resolves the same at the call
+    site. A local of the same name at the call site shadows it, so the spliced name is recaptured. No
+    deobfuscator change accompanies this test; a fix turns it into an unexpected success.
+    """
+
+    def _check(self, source: str):
+        deobfuscated = deobfuscate_source(source)
+        self.assertEqual(
+            behavior(source),
+            behavior(deobfuscated),
+            F'deobfuscation changed observable behavior; result was:\n{deobfuscated}',
+        )
+
+    @unittest.expectedFailure
+    def test_substitution_recaptures_outer_binding_shadowed_at_call_site(self):
+        """
+        Folding `f(5)` substitutes the irreducible body expression `g` into the call site inside
+        `caller`. `g` resolves to the outer `g` (`1`) in `f`'s scope, but `caller` has a local `g` of
+        `100` that recaptures the spliced name, so `caller()` changes from `1` to `100`. The gate skips
+        a reference whose binding is declared outside the inlined function, but such a binding can be
+        shadowed at the call site.
+        """
+        self._check(
+            'var g = 1;'
+            ' function f(n) { switch (n) { case 5: return g; } }'
+            ' function caller() { var g = 100; return f(5); }'
+            ' console.log(caller());')

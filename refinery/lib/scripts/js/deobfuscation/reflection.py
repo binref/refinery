@@ -8,6 +8,8 @@ is handled as a special case with automatic proxy object resolution.
 """
 from __future__ import annotations
 
+import enum
+
 from typing import Callable, NamedTuple
 
 from refinery.lib.scripts import Expression, Node, _clone_node, _replace_in_parent
@@ -63,6 +65,19 @@ from refinery.lib.scripts.js.model import (
 )
 
 
+class ReflectedScope(enum.Enum):
+    """
+    The execution scope of reflectively evaluated code, which decides how its free names, `this`, and
+    top-level declarations must be treated when the code is inlined at its call site. A
+    `Function`-constructed function and indirect `eval`/string-timer code run in the global sloppy
+    scope; a direct `eval` runs in the caller's scope, which is the inline site itself, so its
+    references and `this` are already correct there and only its declarations need care.
+    """
+    FUNCTION_CONSTRUCTOR = enum.auto()
+    GLOBAL_EVAL = enum.auto()
+    DIRECT_EVAL = enum.auto()
+
+
 def _unwrap_parens(node: Expression) -> Expression:
     while isinstance(node, JsParenthesizedExpression) and node.expression is not None:
         node = node.expression
@@ -78,25 +93,6 @@ def _try_parse(code: str) -> JsScript | None:
     if not parsed.body:
         return None
     return parsed
-
-
-def _binds_global_scope_names(parsed: JsScript) -> bool:
-    """
-    Whether *parsed* — a script parsed from an evaluated code string — creates any binding at its own
-    global scope: a `var` or function declaration (including one hoisted out of a nested block), a
-    top-level `let`/`const`/`class`, or an implicit global an unqualified assignment writes. Indirect
-    eval and string timers evaluate their code in the global scope, so each such binding targets the
-    global object or the global lexical environment; inlining the body at the call site would instead
-    bind it wherever the deobfuscated output runs — a module scope under the module model, or the
-    enclosing function or block when the call site is not the global scope — none of which reaches the
-    global. The target scope is therefore not reproducible by textual inlining there. The set of names
-    bound at the parsed script's own root scope answers this directly: the model hoists a nested `var`
-    or function declaration into it, keeps a nested `let`/`const`/`class` out of it, and records an
-    implicit global there, so a non-empty root scope is exactly the gate. The `Function` constructor is
-    exempt: a declaration in its body binds a local of the created function, not a global, so inlining
-    it into any scope is sound and its gate is separate.
-    """
-    return bool(build_semantic_model(parsed).root_scope.bindings)
 
 
 def _try_eval_string_arg(node: Expression) -> str | None:
@@ -510,6 +506,17 @@ def _has_top_level_await(stmts: list[Statement]) -> bool:
     return any(isinstance(n, JsAwaitExpression) for s in stmts for n in walk_scope(s))
 
 
+def _has_top_level_return(stmts: list[Statement]) -> bool:
+    """
+    Whether *stmts* — an evaluated code string's body — has a `return` at its own top level, outside any
+    nested function. A `return` outside a function is a SyntaxError in `eval` and string-timer code, so
+    such a body throws when evaluated and must not be inlined as if it produced a value or ran to
+    completion. The `Function` constructor is exempt: its body is a real function body, where a
+    top-level `return` is the function's own return.
+    """
+    return any(isinstance(n, JsReturnStatement) for s in stmts for n in walk_scope(s))
+
+
 def _wrap_in_async_iife(stmts: list[Statement]) -> list[Statement]:
     iife = JsExpressionStatement(
         expression=JsCallExpression(
@@ -666,6 +673,22 @@ def _hoist_path_is_clear(names: set[str], site_scope: Scope, var_scope: Scope) -
     return True
 
 
+def _site_crosses_dynamic_scope(site_scope: Scope) -> bool:
+    """
+    Whether *site_scope* lies inside a dynamically-scoped (`with`) region. Global-scope reflected code
+    resolves its free names against the global scope, but a `with` on the path from the inline site to
+    the root binds those names dynamically: `lookup` stops at the `with` boundary and cannot tell
+    whether the object captures a name, so an inlined free name could resolve to the object's property
+    rather than the global. Declining whenever such a region encloses the site keeps the inlining sound.
+    """
+    scope: Scope | None = site_scope
+    while scope is not None:
+        if scope.is_dynamic:
+            return True
+        scope = scope.parent
+    return False
+
+
 def _inlined_declarations_safe(
     body_model: SemanticModel,
     root_model: SemanticModel,
@@ -802,90 +825,116 @@ class JsReflectionInlining(ScriptLevelTransformer):
             return pack_result
         if _is_pack_shaped(node):
             return None
-        constructor = _invoked_function_constructor_code(node, self._dynamic_read_effect(root))
-        if constructor is not None:
-            code, binds = constructor
-            parsed = self._resolve_constructor_body(code, binds, stmt, root)
-            global_scoped = False
-        else:
-            direct = _extract_eval_code(node)
-            if direct is not None:
-                parsed = _try_parse(direct)
-                global_scoped = False
-            else:
-                code = (
-                    _extract_indirect_eval_code(node, self._dynamic_read_effect(root))
-                    or _extract_timer_code(node)
-                )
-                parsed = _try_parse(code) if code is not None else None
-                global_scoped = True
-        if parsed is None:
+        resolved = self._resolve_reflected_call(node, stmt, root, at_global_scope, allow_timer=True)
+        if resolved is None:
             return None
-        if (
-            global_scoped
-            and (self._module_scope or not at_global_scope)
-            and _binds_global_scope_names(parsed)
-        ):
-            return None
-        result = parsed.body
+        result = resolved[1].body
         if had_await and _has_top_level_await(result):
             return _wrap_in_async_iife(result)
         return result
 
     def _try_resolve_expression(self, node: JsCallExpression, root: JsScript) -> Expression | None:
-        constructor = _invoked_function_constructor_code(node, self._dynamic_read_effect(root))
-        if constructor is not None:
-            code, binds = constructor
-            parsed = self._resolve_constructor_body(code, binds, node, root)
-        else:
-            code = (
-                _extract_eval_code(node)
-                or _extract_indirect_eval_code(node, self._dynamic_read_effect(root))
-            )
-            parsed = _try_parse(code) if code is not None else None
-        if parsed is None:
+        resolved = self._resolve_reflected_call(
+            node, node, root, at_global_scope=False, allow_timer=False,
+        )
+        if resolved is None:
             return None
+        scope, parsed = resolved
         body = parsed.body
-        if len(body) == 1:
-            stmt = body[0]
-            if isinstance(stmt, JsExpressionStatement) and stmt.expression is not None:
-                return stmt.expression
+        if len(body) != 1:
+            return None
+        stmt = body[0]
+        if scope is ReflectedScope.FUNCTION_CONSTRUCTOR:
             if isinstance(stmt, JsReturnStatement) and stmt.argument is not None:
                 return stmt.argument
+            return None
+        if isinstance(stmt, JsExpressionStatement) and stmt.expression is not None:
+            return stmt.expression
         return None
 
-    def _resolve_constructor_body(
-        self, code: str, binds: bool, site: Node, root: JsScript,
+    def _resolve_reflected_call(
+        self,
+        node: JsCallExpression,
+        site: Node,
+        root: JsScript,
+        at_global_scope: bool,
+        *,
+        allow_timer: bool,
+    ) -> tuple[ReflectedScope, JsScript] | None:
+        """
+        Dispatch a reflective call to the safety gate for its execution scope, pairing the resolved body
+        with that scope or returning `None` to decline. A `Function` constructor or constructor chain is
+        a fresh global-scope function; a direct `eval` runs in the caller's scope; an indirect `eval`
+        or, when *allow_timer* is set, a string timer runs in the global scope. A timer's value is a
+        handle rather than the evaluated code's completion value, so it is admitted only in statement
+        position, where that value is discarded.
+        """
+        read_effect = self._dynamic_read_effect(root)
+        constructor = _invoked_function_constructor_code(node, read_effect)
+        if constructor is not None:
+            code, binds = constructor
+            parsed = self._resolve_reflected_body(
+                code, site, root, ReflectedScope.FUNCTION_CONSTRUCTOR, at_global_scope, binds=binds,
+            )
+            return (ReflectedScope.FUNCTION_CONSTRUCTOR, parsed) if parsed is not None else None
+        direct = _extract_eval_code(node)
+        if direct is not None:
+            parsed = self._resolve_reflected_body(
+                direct, site, root, ReflectedScope.DIRECT_EVAL, at_global_scope,
+            )
+            return (ReflectedScope.DIRECT_EVAL, parsed) if parsed is not None else None
+        code = _extract_indirect_eval_code(node, read_effect)
+        if code is None and allow_timer:
+            code = _extract_timer_code(node)
+        if code is not None:
+            parsed = self._resolve_reflected_body(
+                code, site, root, ReflectedScope.GLOBAL_EVAL, at_global_scope,
+            )
+            return (ReflectedScope.GLOBAL_EVAL, parsed) if parsed is not None else None
+        return None
+
+    def _resolve_reflected_body(
+        self,
+        code: str,
+        site: Node,
+        root: JsScript,
+        scope: ReflectedScope,
+        at_global_scope: bool,
+        *,
+        binds: bool = False,
     ) -> JsScript | None:
         """
-        Parse a `Function`-constructor body and decide whether inlining it at *site* preserves meaning.
-        A `Function`-constructed function's `this` is always the global object, so every `this` bound to
-        its own receiver becomes `globalThis`; each rewritten `globalThis` is then held to the same
-        free-name check as any other global reference, so a binding named `globalThis` in scope at *site*
-        declines the inlining. Otherwise the body must run in the global sloppy mode the constructed
-        function has: a strict context at *site* declines the inlining (the always-sloppy body would
-        inherit the caller's strictness), as does a `"use strict"` prologue in the body itself. The body
-        must also be self-contained in both directions: it binds no parameters or arguments and
-        references no `arguments`, `super`, or `new.target`; every free name it reads still denotes the
-        same global at *site*; and every name it declares can be hoisted into the scope at *site* without
-        capturing an identifier already meaningful there. Anything else is left intact (returns `None`) —
-        declining is always sound.
+        Parse reflectively evaluated *code* and decide whether inlining its body at *site* preserves
+        meaning, given the `ReflectedScope` it runs in. Global-scope code — a `Function`-constructed
+        body or indirect `eval`/string-timer code — must run in the global sloppy mode it would have: a
+        strict context at *site* declines the inlining, as does a `"use strict"` prologue; every receiver
+        `this` becomes `globalThis`; and a body reading `arguments`, `super`, or `new.target`, or a free
+        name that no longer denotes the same global at *site* — including one a `with` on the path could
+        capture — declines. Direct `eval` runs in the caller's scope, which is *site* itself, so its
+        references and `this` are already correct there and only the checks below apply. A top-level
+        `return` is a SyntaxError in evaluated code, so an eval body with one declines. Declaration
+        handling is delegated to `_reflected_declarations_safe`. Anything not provably safe is left
+        intact (returns `None`) — declining is always sound.
         """
         if binds:
             return None
-        if _site_in_strict_context(site, root):
+        resolves_globally = scope is not ReflectedScope.DIRECT_EVAL
+        if resolves_globally and _site_in_strict_context(site, root):
             return None
         parsed = _try_parse(code)
         if parsed is None:
             return None
-        if _has_use_strict_directive(parsed.body):
+        if resolves_globally and _has_use_strict_directive(parsed.body):
             return None
-        _rewrite_receiver_this_to_global(parsed)
-        if references_receiver_this(parsed) or _references_new_target(parsed):
+        if resolves_globally:
+            _rewrite_receiver_this_to_global(parsed)
+            if references_receiver_this(parsed) or _references_new_target(parsed):
+                return None
+        if scope is not ReflectedScope.FUNCTION_CONSTRUCTOR and _has_top_level_return(parsed.body):
             return None
         body_model = build_semantic_model(parsed)
         free = _body_free_names(body_model, parsed)
-        if 'arguments' in free:
+        if resolves_globally and 'arguments' in free:
             return None
         declared = _body_declared_names(body_model)
         if not free and not declared:
@@ -894,12 +943,48 @@ class JsReflectionInlining(ScriptLevelTransformer):
         site_scope = root_model.scope_of(site)
         if site_scope is None:
             return None
-        for name in free:
-            binding = root_model.lookup(name, site_scope)
-            if binding is not None and not _is_global_equivalent(
-                binding, root_model.root_scope, self._module_scope,
-            ):
+        if resolves_globally and free:
+            if _site_crosses_dynamic_scope(site_scope):
                 return None
-        if declared and not _inlined_declarations_safe(body_model, root_model, site_scope):
+            for name in free:
+                binding = root_model.lookup(name, site_scope)
+                if binding is not None and not _is_global_equivalent(
+                    binding, root_model.root_scope, self._module_scope,
+                ):
+                    return None
+        if declared and not self._reflected_declarations_safe(
+            body_model, root_model, site_scope, scope, at_global_scope,
+        ):
             return None
         return parsed
+
+    def _reflected_declarations_safe(
+        self,
+        body_model: SemanticModel,
+        root_model: SemanticModel,
+        site_scope: Scope,
+        scope: ReflectedScope,
+        at_global_scope: bool,
+    ) -> bool:
+        """
+        Whether the top-level declarations of a reflected body can be reproduced by inlining it at the
+        call site. A `Function`-constructed body's declarations are local to the created function and
+        lift into the caller's scopes (`_inlined_declarations_safe`). Under indirect eval a top-level
+        `let`/`const`/`class` lives in a fresh declarative environment discarded when the evaluation
+        returns, so it is transient and can never be inlined as a persistent binding, while a `var` or
+        function becomes a property of the global object, reproducible only when the call site is the
+        top-level script scope under the script model, where a bare declaration is itself global. A
+        direct eval declares in the caller's own scope, which is the inline site, so its declarations
+        are inlined there.
+        """
+        if scope is ReflectedScope.FUNCTION_CONSTRUCTOR:
+            return _inlined_declarations_safe(body_model, root_model, site_scope)
+        if scope is ReflectedScope.DIRECT_EVAL:
+            return True
+        lexical = any(
+            binding.kind not in (BindingKind.VAR, BindingKind.FUNCTION, BindingKind.IMPLICIT_GLOBAL)
+            for binding in body_model.root_scope.bindings.values()
+        )
+        if lexical:
+            return False
+        return at_global_scope and not self._module_scope
