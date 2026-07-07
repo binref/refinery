@@ -151,10 +151,9 @@ class Binding:
     on a global-object alias (`globalThis.g`, `globalThis.g = ...`) has no referencing identifier for
     the global it targets, so the `JsMemberExpression` stands in for that reference; every other
     `reads`/`writes` entry is an identifier. `dynamic_refs` holds referencing identifiers a dynamic
-    scope resolves at runtime — a name
-    inside a `with` body that could denote this binding — which `reads`/`writes` omit because such a name
-    resolves to no binding statically; its target is uncertain, so it is kept apart from the definite
-    references.
+    scope resolves at runtime — a name inside a `with` body that could denote this binding — which
+    `reads`/`writes` omit because such a name resolves to no binding statically; its target is
+    uncertain, so it is kept apart from the definite references.
     """
     name: str
     kind: BindingKind
