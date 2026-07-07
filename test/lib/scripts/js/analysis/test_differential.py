@@ -947,3 +947,55 @@ class TestDeobfuscationInlinerScope(TestBase):
             'function f(n) { switch (n) { case 5: return externalThing; } }'
             ' function caller() { var externalThing = 100; return f(5); }'
             ' console.log(caller());')
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestDeobfuscationDirectEvalScope(TestBase):
+    """
+    A direct `eval` runs in the caller's scope, so its references and `this` inline unchanged, but only a
+    sloppy `var` or function actually declares in the caller: a top-level `let`/`const`/`class`, and a
+    `var` under strict mode, live in the eval's own environment and leave nothing behind, while a `var`
+    that does persist is inlined only where the eval site dominates every reference to the name —
+    hoisting it past an earlier reference would rebind that reference. Each case changed observable
+    behavior before the gate modeled direct-eval declaration scope; they guard the fix.
+    """
+
+    def _check(self, source: str):
+        deobfuscated = deobfuscate_source(source)
+        self.assertEqual(
+            behavior(source),
+            behavior(deobfuscated),
+            F'deobfuscation changed observable behavior; result was:\n{deobfuscated}',
+        )
+
+    def test_direct_eval_lexical_declaration_is_transient(self):
+        """
+        A direct `eval`'s top-level `let` lives in the eval's own environment, discarded when it returns,
+        so `eval("let x = 1;")` leaves no `x` and `typeof x` is `'undefined'`. Inlining it as a
+        persistent `let x = 1;` would make it `'number'`; the read of `x` outside the body declines it.
+        """
+        self._check(
+            'function f(){ eval("let x = 1;"); return typeof x; }'
+            ' console.log(f());')
+
+    def test_direct_eval_var_in_strict_context_is_eval_local(self):
+        """
+        A strict direct `eval` has its own variable environment, so `eval("var x = 1;")` under
+        `"use strict"` does not leak `x` to the caller and `typeof x` is `'undefined'`. Only a sloppy
+        direct eval's `var` leaks; the strict context declines the inlining.
+        """
+        self._check(
+            'function f(){ "use strict"; eval("var x = 1;"); return typeof x; }'
+            ' console.log(f());')
+
+    def test_direct_eval_var_not_inlined_past_earlier_reference(self):
+        """
+        A direct `eval`'s `var` is added to the caller only when the eval runs, so `var out = x` before
+        `eval("var x = 1;")` reads the global `x` (`5`). Inlining the `var x` would hoist it above the
+        read, rebinding `out` to the still-unassigned local; the earlier reference the eval does not
+        dominate declines the inlining.
+        """
+        self._check(
+            'globalThis.x = 5;'
+            ' function f(){ var out = x; eval("var x = 1;"); return out; }'
+            ' console.log(f());')

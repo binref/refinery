@@ -20,6 +20,31 @@ class TestReflectionInlining(TestJsDeobfuscator):
     def test_eval_string_literal(self):
         self.assertEqual('var x = 1;', self._reflect("eval('var x = 1;');"))
 
+    def test_direct_eval_var_inlined_when_reference_is_dominated(self):
+        """
+        A sloppy direct eval's `var` leaks to the caller, so `eval('var x = 1;')` inlines when the eval
+        site dominates every reference to the name. Here `return x` runs after the eval, so hoisting the
+        declaration cannot rebind it and the inlining is admitted.
+        """
+        source = inspect.cleandoc(
+            """
+            function f() {
+              eval('var x = 1;');
+              return x;
+            }
+            """
+        )
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function f() {
+                  var x = 1;
+                  return x;
+                }
+                """
+            ),
+            self._reflect(source))
+
     def test_eval_non_literal_not_inlined(self):
         self.assertEqual('eval(x);', self._reflect('eval(x);'))
 

@@ -26,6 +26,7 @@ from refinery.lib.scripts.js.analysis.model import (
     build_semantic_model,
     is_member_write_target,
     is_simple_assignment_target,
+    is_use_position,
 )
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     ScriptLevelTransformer,
@@ -953,7 +954,7 @@ class JsReflectionInlining(ScriptLevelTransformer):
                 ):
                     return None
         if declared and not self._reflected_declarations_safe(
-            body_model, root_model, site_scope, scope, at_global_scope,
+            body_model, root_model, site_scope, site, scope, at_global_scope,
         ):
             return None
         return parsed
@@ -963,28 +964,68 @@ class JsReflectionInlining(ScriptLevelTransformer):
         body_model: SemanticModel,
         root_model: SemanticModel,
         site_scope: Scope,
+        site: Node,
         scope: ReflectedScope,
         at_global_scope: bool,
     ) -> bool:
         """
         Whether the top-level declarations of a reflected body can be reproduced by inlining it at the
         call site. A `Function`-constructed body's declarations are local to the created function and
-        lift into the caller's scopes (`_inlined_declarations_safe`). Under indirect eval a top-level
-        `let`/`const`/`class` lives in a fresh declarative environment discarded when the evaluation
-        returns, so it is transient and can never be inlined as a persistent binding, while a `var` or
-        function becomes a property of the global object, reproducible only when the call site is the
-        top-level script scope under the script model, where a bare declaration is itself global. A
-        direct eval declares in the caller's own scope, which is the inline site, so its declarations
-        are inlined there.
+        lift into the caller's scopes (`_inlined_declarations_safe`); evaluated code declares in its
+        execution scope and is handled by `_eval_declarations_safe`.
         """
         if scope is ReflectedScope.FUNCTION_CONSTRUCTOR:
             return _inlined_declarations_safe(body_model, root_model, site_scope)
-        if scope is ReflectedScope.DIRECT_EVAL:
-            return True
-        lexical = any(
-            binding.kind not in (BindingKind.VAR, BindingKind.FUNCTION, BindingKind.IMPLICIT_GLOBAL)
-            for binding in body_model.root_scope.bindings.values()
+        return self._eval_declarations_safe(
+            body_model, root_model, site_scope, site, scope, at_global_scope,
         )
-        if lexical:
+
+    def _eval_declarations_safe(
+        self,
+        body_model: SemanticModel,
+        root_model: SemanticModel,
+        site_scope: Scope,
+        site: Node,
+        scope: ReflectedScope,
+        at_global_scope: bool,
+    ) -> bool:
+        """
+        Whether an `eval` body's top-level declarations can be inlined at the call site. A
+        `let`/`const`/`class` lives in a declarative environment discarded when the evaluation
+        returns, so a persistent inlined binding differs only if a name it declares is referenced
+        outside the body; it is declined exactly when introducing it at the site would capture such a
+        reference. A `var` or function persists: under indirect eval it becomes a global-object
+        property, reproducible only at top-level script scope and never under the module model; under
+        direct eval it lands in the caller's variable scope, but never under a strict direct eval,
+        whose `var` stays local to the eval. Such a declaration hoists to the head of its variable
+        scope, so it is inlined only when the eval site dominates every reference to the name already
+        there — one that runs before it, or reads the name through a closure, would be rebound.
+        """
+        root = root_model.root
+        bindings = body_model.root_scope.bindings
+        lexical = {
+            name for name, binding in bindings.items()
+            if binding.kind not in (BindingKind.VAR, BindingKind.FUNCTION, BindingKind.IMPLICIT_GLOBAL)
+        }
+        if lexical and root_model.would_capture(lexical, site_scope):
             return False
-        return at_global_scope and not self._module_scope
+        hoisted = {
+            name for name, binding in bindings.items()
+            if binding.kind in (BindingKind.VAR, BindingKind.FUNCTION)
+        }
+        if not hoisted:
+            return True
+        if scope is ReflectedScope.GLOBAL_EVAL:
+            if self._module_scope or not at_global_scope:
+                return False
+        elif _site_in_strict_context(site, root) or _has_use_strict_directive(body_model.root.body):
+            return False
+        var_scope = site_scope.var_scope
+        if var_scope is None:
+            return False
+        dominance = model_cache(self, root).dominance
+        return all(
+            dominance.dominates(site, node)
+            for node in var_scope.node.walk()
+            if isinstance(node, JsIdentifier) and node.name in hoisted and is_use_position(node)
+        )
