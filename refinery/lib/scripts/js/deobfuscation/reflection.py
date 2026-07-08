@@ -1030,8 +1030,9 @@ class JsReflectionInlining(ScriptLevelTransformer):
         property, reproducible only at top-level script scope and never under the module model; under
         direct eval it lands in the caller's variable scope, but never under a strict direct eval,
         whose `var` stays local to the eval. Such a declaration hoists to the head of its variable
-        scope, so it is inlined only when the eval site dominates every reference to the name already
-        there — one that runs before it, or reads the name through a closure, would be rebound.
+        scope, so it is inlined only when the eval site strictly dominates every reference to the name
+        already there — one that runs before it or shares its statement, or reads the name through a
+        closure, would be rebound.
         """
         root = root_model.root
         bindings = body_model.root_scope.bindings
@@ -1057,7 +1058,7 @@ class JsReflectionInlining(ScriptLevelTransformer):
             return False
         dominance = model_cache(self, root).dominance
         return all(
-            dominance.dominates(site, node)
+            dominance.strictly_dominates(site, node)
             for node in var_scope.node.walk()
             if isinstance(node, JsIdentifier) and node.name in hoisted and is_use_position(node)
         )

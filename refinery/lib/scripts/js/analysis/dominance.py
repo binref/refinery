@@ -14,14 +14,16 @@ a definition is reported as dominating a use only when it runs before that use o
 including the ones that leave a `try` by throwing. A use a definition does not dominate, or one in a
 different function's graph, is answered conservatively as not-dominated.
 
-The public surface — `DominanceModel.dominates`, `DominanceModel.cfg_node_of`,
-`DominanceModel.runs_before_function`, `build_dominance` — is keyed to AST nodes: an arbitrary node is
-located to the control-flow node of the statement (or loop head) that evaluates it, the granularity at
-which the graph reasons. `runs_before_function` lifts dominance across calls: it answers whether a
-definition runs before every invocation of a function, which a single graph cannot, by ordering the
-definition against the points the function is referenced and recursing up the call graph. `runs_before`
-and `runs_before_all` expose that same ordering against a single reference, or every reference in a set —
-the query a transform needs to confirm a value is established before every use that could observe it.
+The public surface — `DominanceModel.dominates`, `DominanceModel.strictly_dominates`,
+`DominanceModel.cfg_node_of`, `DominanceModel.runs_before_function`, `build_dominance` — is keyed to AST
+nodes: an arbitrary node is located to the control-flow node of the statement (or loop head) that
+evaluates it, the granularity at which the graph reasons. `strictly_dominates` is the non-reflexive
+`dominates`, refusing a same-statement pair a caller must order. `runs_before_function` lifts dominance
+across calls: it answers whether a definition runs before every invocation of a function, which a single
+graph cannot, by ordering the definition against the points the function is referenced and recursing up
+the call graph. `runs_before` and `runs_before_all` expose that same ordering against a single reference,
+or every reference in a set — the query a transform needs to confirm a value is established before every
+use that could observe it.
 """
 from __future__ import annotations
 
@@ -70,6 +72,26 @@ class DominanceModel:
         graph_a, node_a = located_a
         graph_b, node_b = located_b
         if graph_a is not graph_b:
+            return False
+        return id(node_a) in self._dominators.get(id(node_b), frozenset())
+
+    def strictly_dominates(self, a: Node, b: Node) -> bool:
+        """
+        Like `dominates`, but not reflexive: whether the statement evaluating *a* is guaranteed to have
+        executed by the time *b* runs *and* is not *b*'s own statement — `False` when *a* and *b* share
+        one control-flow node, where statement-granularity dominance cannot order two occurrences within
+        it. A caller that must reject a same-statement occurrence needs this: a reference in the same
+        statement as a definition may be evaluated before it (an earlier declarator, an earlier sequence
+        operand), which the reflexive `dominates` would wrongly accept. `False` too when either node is
+        unlocatable or the two lie in different functions' graphs, exactly as `dominates`.
+        """
+        located_a = self._locator.locate(a)
+        located_b = self._locator.locate(b)
+        if located_a is None or located_b is None:
+            return False
+        graph_a, node_a = located_a
+        graph_b, node_b = located_b
+        if graph_a is not graph_b or node_a is node_b:
             return False
         return id(node_a) in self._dominators.get(id(node_b), frozenset())
 
@@ -241,7 +263,7 @@ class DominanceModel:
     ) -> bool:
         owner = self._activation_of(point)
         if owner is definition_owner:
-            return self._strictly_dominates(definition, point)
+            return self.strictly_dominates(definition, point)
         if isinstance(owner, FUNCTION_NODES):
             return self._runs_before_function(definition, definition_owner, owner, visiting, memo)
         return False
@@ -256,24 +278,6 @@ class DominanceModel:
         """
         function = enclosing_function(element)
         return function if function is not None else self.model.root
-
-    def _strictly_dominates(self, a: Node, b: Node) -> bool:
-        """
-        Like `dominates`, except a node does not strictly dominate itself: `False` when *a* and *b* share
-        one control-flow node (the same statement), where statement-granularity dominance is reflexive
-        and cannot order them. `runs_before_function` needs this — a reference in the same statement as a
-        definition may be evaluated before it (an earlier declarator, an earlier sequence operand), which
-        plain `dominates` would wrongly accept.
-        """
-        located_a = self._locator.locate(a)
-        located_b = self._locator.locate(b)
-        if located_a is None or located_b is None:
-            return False
-        graph_a, node_a = located_a
-        graph_b, node_b = located_b
-        if graph_a is not graph_b or node_a is node_b:
-            return False
-        return id(node_a) in self._dominators.get(id(node_b), frozenset())
 
     def _compute_dominators(self, graph: ControlFlowGraph):
         nodes = graph.nodes

@@ -213,6 +213,29 @@ class TestDominance(TestBase):
         self.assertTrue(dom.dominates_node(na, nb))
         self.assertFalse(dom.dominates_node(nb, na))
 
+    def test_strictly_dominates_orders_sequential_statements(self):
+        ast, dom = self._dominance('var a = 1; var b = 2;')
+        a = self._idents(ast, 'a')[0]
+        b = self._idents(ast, 'b')[0]
+        self.assertTrue(dom.strictly_dominates(a, b))
+        self.assertFalse(dom.strictly_dominates(b, a))
+
+    def test_strictly_dominates_refuses_same_statement(self):
+        """
+        A pair sharing one statement shares one control-flow node, so strict dominance refuses it —
+        where the reflexive `dominates` accepts the same pair.
+        """
+        ast, dom = self._dominance('var a = 1, b = a;')
+        decl, use = self._idents(ast, 'a')
+        self.assertTrue(dom.dominates(decl, use))
+        self.assertFalse(dom.strictly_dominates(decl, use))
+
+    def test_strictly_dominates_refuses_a_node_against_itself(self):
+        ast, dom = self._dominance('var a = 1;')
+        a = self._idents(ast, 'a')[0]
+        self.assertTrue(dom.dominates(a, a))
+        self.assertFalse(dom.strictly_dominates(a, a))
+
     def test_runs_before_reference_later_in_scope(self):
         ast, dom = self._dominance('var a = 1; a;')
         decl, use = self._idents(ast, 'a')
