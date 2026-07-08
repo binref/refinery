@@ -472,3 +472,45 @@ def build_control_flow(root: JsScript) -> dict[int, ControlFlowGraph]:
         if isinstance(node, FUNCTION_NODES):
             graphs[id(node)] = build_cfg(node)
     return graphs
+
+
+class ControlFlowModel:
+    """
+    The per-function control-flow graphs of one script, paired with the `ElementLocator` that maps any
+    AST node to the graph node evaluating it. Built once over the script root — the graphs are purely
+    syntactic, needing no `refinery.lib.scripts.js.analysis.model.SemanticModel` — and shared by the
+    `DominanceModel` and `LivenessModel` layered on it, which would otherwise each rebuild the whole set.
+    """
+
+    def __init__(self, root: JsScript):
+        self.graphs = build_control_flow(root)
+        self._locator = ElementLocator(self.graphs)
+
+    def graph_of(self, owner: Node) -> ControlFlowGraph | None:
+        """
+        The control-flow graph owned by *owner* — a function node or the script root — or `None` when it
+        owns none.
+        """
+        return self.graphs.get(id(owner))
+
+    def node_of(self, element: Node) -> CfgNode | None:
+        """
+        The control-flow node standing for *element*, or `None` when the graphs do not represent it
+        directly (a plain expression inside a statement). Delegates to the shared `ElementLocator`.
+        """
+        return self._locator.node_of(element)
+
+    def locate(self, element: Node) -> tuple[ControlFlowGraph, CfgNode] | None:
+        """
+        The graph and node that evaluate *element*, climbing out of any enclosing expression, or `None`
+        when it has no enclosing graph node. Delegates to the shared `ElementLocator`.
+        """
+        return self._locator.locate(element)
+
+
+def build_control_flow_model(root: JsScript) -> ControlFlowModel:
+    """
+    Build the `ControlFlowModel` for a script root — the shared control-flow layer the `DominanceModel`
+    and `LivenessModel` consume.
+    """
+    return ControlFlowModel(root)

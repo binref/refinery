@@ -34,8 +34,8 @@ from refinery.lib.scripts.js.analysis.cfg import (
     FUNCTION_NODES,
     CfgNode,
     ControlFlowGraph,
-    ElementLocator,
-    build_control_flow,
+    ControlFlowModel,
+    build_control_flow_model,
 )
 from refinery.lib.scripts.js.analysis.model import SemanticModel, enclosing_function
 
@@ -47,12 +47,11 @@ class DominanceModel:
     execute before another with `dominates`. Build through `build_dominance`.
     """
 
-    def __init__(self, model: SemanticModel):
+    def __init__(self, model: SemanticModel, control_flow: ControlFlowModel | None = None):
         self.model = model
-        self._graphs = build_control_flow(model.root)
-        self._locator = ElementLocator(self._graphs)
+        self._flow = control_flow if control_flow is not None else build_control_flow_model(model.root)
         self._dominators: dict[int, frozenset[int]] = {}
-        for graph in self._graphs.values():
+        for graph in self._flow.graphs.values():
             self._compute_dominators(graph)
 
     def dominates(self, a: Node, b: Node) -> bool:
@@ -65,8 +64,8 @@ class DominanceModel:
         enclosing statement node is unlocatable) or when the two lie in different functions' graphs,
         where intraprocedural dominance does not apply.
         """
-        located_a = self._locator.locate(a)
-        located_b = self._locator.locate(b)
+        located_a = self._flow.locate(a)
+        located_b = self._flow.locate(b)
         if located_a is None or located_b is None:
             return False
         graph_a, node_a = located_a
@@ -85,8 +84,8 @@ class DominanceModel:
         operand), which the reflexive `dominates` would wrongly accept. `False` too when either node is
         unlocatable or the two lie in different functions' graphs, exactly as `dominates`.
         """
-        located_a = self._locator.locate(a)
-        located_b = self._locator.locate(b)
+        located_a = self._flow.locate(a)
+        located_b = self._flow.locate(b)
         if located_a is None or located_b is None:
             return False
         graph_a, node_a = located_a
@@ -100,7 +99,7 @@ class DominanceModel:
         The control-flow node of the statement (or loop head) that evaluates *element*, climbing out of
         any expression *element* is nested in, or `None` when *element* has no enclosing graph node.
         """
-        located = self._locator.locate(element)
+        located = self._flow.locate(element)
         return located[1] if located is not None else None
 
     def locate(self, element: Node) -> tuple[ControlFlowGraph, CfgNode] | None:
@@ -109,7 +108,7 @@ class DominanceModel:
         nested in — or `None` when it has no enclosing graph node. The graph identifies the function
         whose invocation runs *element*, which a caller needs to keep a query within one graph.
         """
-        return self._locator.locate(element)
+        return self._flow.locate(element)
 
     @staticmethod
     def _reachable(start: CfgNode, *, forward: bool) -> set[int]:
@@ -306,8 +305,11 @@ class DominanceModel:
             self._dominators[id(node)] = frozenset(dom[id(node)])
 
 
-def build_dominance(model: SemanticModel) -> DominanceModel:
+def build_dominance(
+    model: SemanticModel, control_flow: ControlFlowModel | None = None,
+) -> DominanceModel:
     """
-    Build the `DominanceModel` for a script's `refinery.lib.scripts.js.analysis.model.SemanticModel`.
+    Build the `DominanceModel` for a script's `refinery.lib.scripts.js.analysis.model.SemanticModel`,
+    reusing *control_flow* when the caller has one to share, or building a fresh one when it is `None`.
     """
-    return DominanceModel(model)
+    return DominanceModel(model, control_flow)

@@ -39,8 +39,8 @@ from refinery.lib.scripts import Node
 from refinery.lib.scripts.js.analysis.cfg import (
     CfgNode,
     ControlFlowGraph,
-    ElementLocator,
-    build_control_flow,
+    ControlFlowModel,
+    build_control_flow_model,
 )
 from refinery.lib.scripts.js.analysis.model import (
     Binding,
@@ -75,15 +75,14 @@ class LivenessModel:
     whether a write is dead with `is_dead_store`. Build through `build_liveness`.
     """
 
-    def __init__(self, model: SemanticModel):
+    def __init__(self, model: SemanticModel, control_flow: ControlFlowModel | None = None):
         self.model = model
-        self._graphs = build_control_flow(model.root)
-        self._locator = ElementLocator(self._graphs)
+        self._flow = control_flow if control_flow is not None else build_control_flow_model(model.root)
         self._live_in: dict[int, frozenset[Binding]] = {}
         self._live_out: dict[int, frozenset[Binding]] = {}
         self._pseudo_locals: dict[int, frozenset[Binding]] = {}
         self._index_pseudo_locals()
-        for graph in self._graphs.values():
+        for graph in self._flow.graphs.values():
             self._compute_graph(graph)
 
     def live_in(self, node: CfgNode) -> frozenset[Binding]:
@@ -105,7 +104,7 @@ class LivenessModel:
         The control-flow node standing for *element* in whichever function graph owns it, or `None` if
         *element* is not a node the graphs represent.
         """
-        return self._locator.node_of(element)
+        return self._flow.node_of(element)
 
     def is_dead_store(self, write: JsIdentifier) -> bool:
         """
@@ -119,7 +118,7 @@ class LivenessModel:
         read the local by name without a reference the model sees. A reflective surface elsewhere in the
         program runs in the global scope and cannot reach a local, so it does not suppress the report.
         """
-        located = self._locator.locate(write)
+        located = self._flow.locate(write)
         if located is None:
             return False
         graph, node = located
@@ -152,7 +151,7 @@ class LivenessModel:
         call — from a previous invocation or from load — is ever observed. Answered from the liveness at
         the function's control-flow entry; a binding not tracked in *function* returns `False`.
         """
-        graph = self._graphs.get(id(function))
+        graph = self._flow.graph_of(function)
         if graph is None:
             return False
         return binding not in self.live_in(graph.entry)
@@ -439,8 +438,11 @@ class LivenessModel:
         return False
 
 
-def build_liveness(model: SemanticModel) -> LivenessModel:
+def build_liveness(
+    model: SemanticModel, control_flow: ControlFlowModel | None = None,
+) -> LivenessModel:
     """
-    Build the `LivenessModel` for a script's `refinery.lib.scripts.js.analysis.model.SemanticModel`.
+    Build the `LivenessModel` for a script's `refinery.lib.scripts.js.analysis.model.SemanticModel`,
+    reusing *control_flow* when the caller has one to share, or building a fresh one when it is `None`.
     """
-    return LivenessModel(model)
+    return LivenessModel(model, control_flow)

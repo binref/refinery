@@ -11,8 +11,10 @@ from __future__ import annotations
 from refinery.lib.scripts.js.analysis.cfg import (
     CfgNode,
     ControlFlowGraph,
+    ControlFlowModel,
     build_cfg,
     build_control_flow,
+    build_control_flow_model,
 )
 from refinery.lib.scripts.js.analysis.effects import (
     EffectModel,
@@ -41,6 +43,7 @@ __all__ = [
     'BindingKind',
     'CfgNode',
     'ControlFlowGraph',
+    'ControlFlowModel',
     'EffectModel',
     'EffectSummary',
     'LivenessModel',
