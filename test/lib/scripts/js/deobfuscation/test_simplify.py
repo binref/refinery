@@ -761,6 +761,36 @@ class TestGlobalAliasStripping(TestJsDeobfuscator):
     def test_guaranteed_global_alias_member_stripped(self):
         self.assertEqual('y = String;', self._simplify('y = globalThis.String;'))
 
+    def test_implicit_global_alias_member_stripped_after_dominating_write(self):
+        source = inspect.cleandoc(
+            """
+            X = 5;
+            y = globalThis.X;
+            """
+        )
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                X = 5;
+                y = X;
+                """
+            ),
+            self._simplify(source),
+        )
+
+    def test_implicit_global_alias_member_not_stripped_before_its_write(self):
+        """
+        `globalThis.X` is read before the write that makes `X` an implicit global, so a bare read there
+        would throw where the member read is `undefined`; the alias member is preserved.
+        """
+        source = inspect.cleandoc(
+            """
+            f(globalThis.X);
+            X = 5;
+            """
+        )
+        self.assertEqual(source, self._simplify(source))
+
     def test_global_alias_preserved_when_locally_shadowed(self):
         source = inspect.cleandoc(
             """

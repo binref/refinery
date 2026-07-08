@@ -218,6 +218,14 @@ class TestDeobfuscationDifferential(TestBase):
         """
         self._check('console.log((function (self) { return self.Array; })({ Array: 7 }));')
 
+    def test_implicit_global_alias_read_before_write_preserved(self):
+        """
+        `globalThis.X` is read before the write that makes `X` an implicit global, so it is `undefined`;
+        collapsing to a bare `X` read there would throw before the assignment runs.
+        """
+        self._check(
+            'function f(v) { return v; } var y = f(globalThis.X); X = 5; console.log(y, X);')
+
     def test_namespace_flatten_preserves_block_scoped_shadow(self):
         """
         Flattening `NS.x` to a script-level `var x` must respect a `let x` that block-scopes a

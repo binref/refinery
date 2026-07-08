@@ -6,7 +6,8 @@ from __future__ import annotations
 from typing import Callable
 
 from refinery.lib.scripts import Node, Transformer
-from refinery.lib.scripts.js.analysis.cache import model_cache
+from refinery.lib.scripts.js.analysis.cache import ModelCache, model_cache
+from refinery.lib.scripts.js.analysis.dominance import DominanceModel
 from refinery.lib.scripts.js.analysis.effects import EffectModel, build_effects
 from refinery.lib.scripts.js.analysis.model import (
     GUARANTEED_GLOBALS,
@@ -208,6 +209,7 @@ class JsSimplifications(Transformer):
 
     def __init__(self):
         super().__init__()
+        self._cache: ModelCache | None = None
         self._model: SemanticModel | None = None
         self._effects: EffectModel | None = None
 
@@ -222,6 +224,11 @@ class JsSimplifications(Transformer):
             self._effects = build_effects(self.model)
         return self._effects
 
+    @property
+    def dominance(self) -> DominanceModel:
+        assert self._cache is not None
+        return self._cache.dominance
+
     def visit_JsScript(self, node: JsScript):
         """
         Build the semantic model once for the whole script, then rewrite. Simplification only ever
@@ -229,7 +236,8 @@ class JsSimplifications(Transformer):
         locally bound stays bound; reading shadowing from that model can therefore only over-preserve
         a global-alias access, never collapse one that a local now captures.
         """
-        self._model = model_cache(self, node).model
+        self._cache = model_cache(self, node)
+        self._model = self._cache.model
         self._effects = None
         self.generic_visit(node)
         return None
@@ -253,12 +261,15 @@ class JsSimplifications(Transformer):
         Whether a bare read of *name* where *member* sits is guaranteed to resolve, so collapsing
         `<global-alias>.name` to `name` cannot turn the member read's `undefined` into a
         `ReferenceError`. A free name must be one the specification mandates on the global object
-        (`GUARANTEED_GLOBALS`); a name the program itself defines as a global carries a binding.
+        (`GUARANTEED_GLOBALS`); a name the program itself defines as a global (an implicit global) exists
+        only after its establishing write, so it is admitted only when a write is proven to run before
+        this read — interprocedurally, so a top-level write still covers a read inside a function invoked
+        after it, but strictly, so a same-statement or earlier read is declined.
         """
         binding = self.model.lookup(name, self.model.scope_of(member))
         if binding is None:
             return name in GUARANTEED_GLOBALS
-        return True
+        return any(self.dominance.runs_before(w, member) for w in binding.writes)
 
     def visit_JsBinaryExpression(self, node: JsBinaryExpression):
         self.generic_visit(node)
