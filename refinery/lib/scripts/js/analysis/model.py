@@ -608,6 +608,7 @@ class SemanticModel:
         self._node_scope: dict[int, Scope] = {}
         self._binding_of: dict[int, Binding] = {}
         self._reflection_surface: bool | None = None
+        self._opaque_reflection_surface: bool | None = None
         self._function_direct_eval: dict[int, bool] = {}
         self.root_scope: Scope = _ScopeBuilder(self).build(root)
         self._build_def_use()
@@ -799,6 +800,22 @@ class SemanticModel:
             return self.has_reflection_surface()
         return bool(binding.dynamic_refs) or self._function_has_direct_eval(owner.node)
 
+    def reachable_by_opaque_reflection(self, binding: Binding) -> bool:
+        """
+        Whether an opaque reflective surface — a value-read of `eval` or `Function`, a string timer, or a
+        dynamic access on the global object — could name *binding* at runtime with no reference this model
+        records. Unlike `reflection_can_reach`, a `with` body is not counted: a `with` that names the
+        binding is attributed precisely as a `dynamic_references` entry, so a caller that already consults
+        `dynamic_refs` needs only the opaque surfaces here, the ones that leave no attributable reference.
+        A global is reachable through any such surface, all of which run in the global scope; a
+        function-local only through a direct `eval` in its own function, since a surface running in the
+        global scope cannot name a local.
+        """
+        owner = binding.scope.var_scope
+        if owner is None or owner.kind is ScopeKind.SCRIPT:
+            return self._has_opaque_reflection_surface()
+        return self.local_reachable_by_direct_eval(binding)
+
     def local_reachable_by_direct_eval(self, binding: Binding) -> bool:
         """
         Whether a direct `eval` positioned to name *binding* could read or write it with no reference this
@@ -860,9 +877,9 @@ class SemanticModel:
             return False
         return self.lookup(node.name, self._node_scope.get(id(node))) is None
 
-    def _detect_reflection(self) -> bool:
+    def _detect_reflection(self, *, include_with: bool = True) -> bool:
         for node in self.root.walk():
-            if isinstance(node, JsWithStatement):
+            if include_with and isinstance(node, JsWithStatement):
                 return True
             elif isinstance(node, JsIdentifier):
                 if self._reads_reflective_intrinsic(node):
@@ -874,6 +891,11 @@ class SemanticModel:
                 if _is_string_timer(node):
                     return True
         return False
+
+    def _has_opaque_reflection_surface(self) -> bool:
+        if self._opaque_reflection_surface is None:
+            self._opaque_reflection_surface = self._detect_reflection(include_with=False)
+        return self._opaque_reflection_surface
 
     def _build_def_use(self):
         self._create_implicit_globals()

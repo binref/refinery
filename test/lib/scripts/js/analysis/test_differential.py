@@ -176,6 +176,17 @@ class TestDeobfuscationDifferential(TestBase):
     def test_function_called_only_through_eval_preserved(self):
         self._check("function greet(){ return 'hi'; } console.log(eval('greet()'));")
 
+    def test_const_not_inlined_into_function_reachable_only_through_eval(self):
+        """
+        `probe` has no static reference — it is invoked only through the opaque `eval`, which runs it
+        while `const c` is still in its temporal dead zone — so inlining `c`'s value into the body would
+        replace the original `ReferenceError` with a silent read.
+        """
+        self._check(
+            'function probe(){ return c; }'
+            ' var call = String.fromCharCode(112, 114, 111, 98, 101, 40, 41);'
+            ' eval(call); const c = 5;')
+
     def test_global_alias_not_collapsed_into_catch_binding(self):
         """
         `globalThis.X` inside a `catch (X)` names the global property, not the caught exception, so

@@ -728,6 +728,37 @@ class TestSemanticModel(TestBase):
         ast, model = self._model('var x = 1; console.log(x);')
         self.assertFalse(model.reflection_can_reach(model.binding_of(self._decl(ast, model, 'x'))))
 
+    def test_opaque_reflection_reaches_global_through_eval(self):
+        ast, model = self._model('var x; eval(payload);')
+        self.assertTrue(model.reachable_by_opaque_reflection(self._binding(ast, model, 'x')))
+
+    def test_opaque_reflection_ignores_a_with_that_does_not_name_the_global(self):
+        """
+        A `with` names its targets precisely as dynamic references, so the opaque-surface query — used
+        where a caller already consults `dynamic_refs` — must not report a global reachable merely
+        because a `with` exists, unlike the conservative `reflection_can_reach`.
+        """
+        ast, model = self._model('var x; with (o) { z; }')
+        binding = self._binding(ast, model, 'x')
+        self.assertTrue(model.reflection_can_reach(binding))
+        self.assertFalse(model.reachable_by_opaque_reflection(binding))
+
+    def test_opaque_reflection_reaches_global_through_function_and_timer(self):
+        ast, model = self._model("var x; var g = Function('return 1'); setTimeout('y()', 1);")
+        self.assertTrue(model.reachable_by_opaque_reflection(self._binding(ast, model, 'x')))
+
+    def test_opaque_reflection_absent_without_surface(self):
+        ast, model = self._model('var x = 1; console.log(x);')
+        self.assertFalse(model.reachable_by_opaque_reflection(self._binding(ast, model, 'x')))
+
+    def test_opaque_reflection_reaches_local_through_direct_eval(self):
+        ast, model = self._model("function f(){ var x; eval('x'); }")
+        self.assertTrue(model.reachable_by_opaque_reflection(self._binding(ast, model, 'x')))
+
+    def test_opaque_reflection_does_not_reach_local_through_global_surfaces(self):
+        ast, model = self._model('function f(){ var x; } eval(payload);')
+        self.assertFalse(model.reachable_by_opaque_reflection(self._binding(ast, model, 'x')))
+
     def test_indirect_comma_eval_is_a_reflection_surface(self):
         _, model = self._model("var G = 1; (0, eval)('G');")
         self.assertTrue(model.has_reflection_surface())

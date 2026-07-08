@@ -579,6 +579,25 @@ class TestConstantInlining(TestJsDeobfuscator):
         )
         self.assertEqual(source, self._inline(source))
 
+    def test_cross_function_reachable_by_opaque_eval_not_inlined(self):
+        """
+        `probe` is invoked only through the opaque `eval(payload)`, a call site no static reference
+        records; it could run `probe` before `const c` initializes, reading `c` in its temporal dead
+        zone. Ordering the constant against `probe`'s static references alone would find none and fold
+        `c` into the body, turning the `ReferenceError` the early call throws into a silent `5`, so the
+        opaque reflective surface must keep `probe`'s invocation points unorderable.
+        """
+        source = inspect.cleandoc(
+            """
+            function probe() {
+              return c;
+            }
+            eval(payload);
+            const c = 5;
+            """
+        )
+        self.assertEqual(source, self._inline(source))
+
     def test_constant_written_through_global_alias_not_inlined(self):
         """
         `globalThis.x = 2` writes the script-level `x` through a member expression the effect model's

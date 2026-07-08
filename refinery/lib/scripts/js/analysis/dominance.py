@@ -145,7 +145,7 @@ class DominanceModel:
         Conservatively `False` when a reference point cannot be ordered or enumerated: the named binding
         is reassigned or redeclared (its references no longer pin one function), a reference lies in a
         function that itself runs too late or escapes, or the walk meets a call cycle it cannot bottom
-        out. A function never referenced is vacuously safe.
+        out. A function neither referenced nor within reflection's reach is vacuously safe.
         """
         definition_owner = self._activation_of(definition)
         return self._runs_before_function(definition, definition_owner, function, set(), {})
@@ -210,14 +210,23 @@ class DominanceModel:
         evaluated before the value it denotes can be called — unless the binding is reassigned or
         redeclared, in which case a reference no longer pins this one function and the points are
         unknowable. A reference inside a dynamic scope — a name a `with` body resolves at runtime — is
-        equally unorderable: the invocation it may perform has no static reference the dominator walk can
-        rank, so the points cannot be enumerated and the answer is `None`, mirroring the escape verdict
-        `EffectModel.function_escapes` draws from the same fact. For an anonymous function the single
+        equally unorderable, and its `dynamic_refs` entry makes the points `None`; this mirrors the escape
+        verdict `EffectModel.function_escapes` draws from the same fact. An opaque reflective surface is
+        unorderable for the same reason and leaves no reference to rank: a direct `eval`, `Function`, a
+        string timer, or a dynamic global access may invoke the function by name, so a binding
+        `SemanticModel.reachable_by_opaque_reflection` judges reachable also yields `None` — without it a
+        function invoked only through an opaque `eval` would look never referenced, hence vacuously safe,
+        and a value be inlined into a body a call observes early. For an anonymous function the single
         point is the function expression itself: the closure cannot be invoked before it is created.
         """
         binding = self.model.naming_binding(function)
         if binding is not None:
-            if binding.writes or binding.dynamic_refs or len(binding.declarations) != 1:
+            if (
+                binding.writes
+                or binding.dynamic_refs
+                or len(binding.declarations) != 1
+                or self.model.reachable_by_opaque_reflection(binding)
+            ):
                 return None
             return list(self.model.references(binding))
         return [function]
