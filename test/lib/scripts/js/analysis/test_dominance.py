@@ -212,3 +212,48 @@ class TestDominance(TestBase):
         self.assertTrue(dom.dominates_node(na, na))
         self.assertTrue(dom.dominates_node(na, nb))
         self.assertFalse(dom.dominates_node(nb, na))
+
+    def test_runs_before_reference_later_in_scope(self):
+        ast, dom = self._dominance('var a = 1; a;')
+        decl, use = self._idents(ast, 'a')
+        self.assertTrue(dom.runs_before(decl, use))
+
+    def test_does_not_run_before_reference_earlier_in_scope(self):
+        ast, dom = self._dominance('a; var a = 1;')
+        use, decl = self._idents(ast, 'a')
+        self.assertFalse(dom.runs_before(decl, use))
+
+    def test_runs_before_is_strict_within_a_statement(self):
+        """
+        A reference sharing the definition's statement cannot be ordered by statement-granularity
+        dominance, so strict `runs_before` refuses it — where reflexive `dominates` accepts the same
+        pair.
+        """
+        ast, dom = self._dominance('var a = 1, b = a;')
+        decl, use = self._idents(ast, 'a')
+        self.assertTrue(dom.dominates(decl, use))
+        self.assertFalse(dom.runs_before(decl, use))
+
+    def test_runs_before_reference_in_function_called_after_definition(self):
+        ast, dom = self._dominance('var c = 5; function f(){ return c; } f();')
+        reference = self._idents(ast, 'c')[1]
+        self.assertTrue(dom.runs_before(self._def(ast, 'c'), reference))
+
+    def test_does_not_run_before_reference_in_function_called_before_definition(self):
+        ast, dom = self._dominance('function f(){ return c; } f(); var c = 5;')
+        reference = self._idents(ast, 'c')[0]
+        self.assertFalse(dom.runs_before(self._def(ast, 'c'), reference))
+
+    def test_runs_before_all_true_when_every_reference_after(self):
+        ast, dom = self._dominance('var c = 5; c; c;')
+        references = self._idents(ast, 'c')[1:]
+        self.assertTrue(dom.runs_before_all(self._def(ast, 'c'), references))
+
+    def test_runs_before_all_false_when_any_reference_before(self):
+        ast, dom = self._dominance('c; var c = 5; c;')
+        idents = self._idents(ast, 'c')
+        self.assertFalse(dom.runs_before_all(self._def(ast, 'c'), [idents[0], idents[2]]))
+
+    def test_runs_before_all_vacuously_true_for_no_references(self):
+        ast, dom = self._dominance('var c = 5;')
+        self.assertTrue(dom.runs_before_all(self._def(ast, 'c'), []))

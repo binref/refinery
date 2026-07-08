@@ -19,9 +19,13 @@ The public surface — `DominanceModel.dominates`, `DominanceModel.cfg_node_of`,
 located to the control-flow node of the statement (or loop head) that evaluates it, the granularity at
 which the graph reasons. `runs_before_function` lifts dominance across calls: it answers whether a
 definition runs before every invocation of a function, which a single graph cannot, by ordering the
-definition against the points the function is referenced and recursing up the call graph.
+definition against the points the function is referenced and recursing up the call graph. `runs_before`
+and `runs_before_all` expose that same ordering against a single reference, or every reference in a set —
+the query a transform needs to confirm a value is established before every use that could observe it.
 """
 from __future__ import annotations
+
+from typing import Iterable
 
 from refinery.lib.scripts import Node
 from refinery.lib.scripts.js.analysis.cfg import (
@@ -145,6 +149,33 @@ class DominanceModel:
         """
         definition_owner = self._activation_of(definition)
         return self._runs_before_function(definition, definition_owner, function, set(), {})
+
+    def runs_before(self, definition: Node, reference: Node) -> bool:
+        """
+        Whether *definition* is guaranteed to have executed before *reference* is evaluated — the
+        single-reference form of the ordering `runs_before_function` applies per reference point. When
+        *reference* shares *definition*'s activation this is intraprocedural *strict* dominance (a
+        reference sharing *definition*'s statement is not accepted, since statement-granularity
+        dominance is reflexive and cannot order within one statement); when *reference* lies inside a
+        function that cannot be invoked until after *definition*, it is the interprocedural
+        runs-before-function query, recursing up the call graph. Conservatively `False` whenever the
+        ordering cannot be established — a reference in an activation that may run before *definition*,
+        or a reference point that cannot be enumerated — so a caller may treat `True` as a guarantee.
+        """
+        definition_owner = self._activation_of(definition)
+        return self._runs_after(definition, definition_owner, reference, set(), {})
+
+    def runs_before_all(self, definition: Node, references: Iterable[Node]) -> bool:
+        """
+        Whether *definition* is guaranteed to run before every reference in *references* — `runs_before`
+        for each, vacuously `True` for an empty iterable. The definition's activation is resolved once
+        and shared across the references.
+        """
+        definition_owner = self._activation_of(definition)
+        return all(
+            self._runs_after(definition, definition_owner, reference, set(), {})
+            for reference in references
+        )
 
     def _runs_before_function(
         self,
