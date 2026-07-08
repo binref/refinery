@@ -99,7 +99,12 @@ class TestRegressionBugs(TestJsDeobfuscator):
             ),
         )
 
-    def test_argwrap_expression_position_returns_void0(self):
+    def test_argwrap_expression_position_lowered_to_sequence(self):
+        """
+        A wrapper call embedded in a larger expression cannot expand to preceding statements without
+        reordering side effects, so it is lowered in place to the comma sequence its evaluation is
+        equivalent to — the arguments left to right, then `undefined`.
+        """
         source = inspect.cleandoc(
             """
             function wr() { wr = function() {}; }
@@ -107,18 +112,70 @@ class TestRegressionBugs(TestJsDeobfuscator):
             console.log(y);
             """
         )
+        goal = inspect.cleandoc(
+            """
+            var y = (a = 1, b = 2, void 0);
+            console.log(y);
+            """
+        )
+        self.assertEqual(self._run_transformer(source, JsAssignmentsAsFunctionArgs), goal)
+        self.assertEqual(self._deobfuscate_iterative(source), goal)
+
+    def test_single_argument_expression_position_lowered_to_sequence(self):
+        source = 'function wr() { wr = function() {}; } var y = wr(x); g(y);'
         self.assertEqual(
             self._run_transformer(source, JsAssignmentsAsFunctionArgs),
             inspect.cleandoc(
                 """
-                a = 1;
-                b = 2;
-                var y = void 0;
-                console.log(y);
+                var y = (x, void 0);
+                g(y);
                 """
             ),
         )
+
+    def test_no_argument_expression_position_is_void0(self):
+        source = 'function wr() { wr = function() {}; } var y = wr(); g(y);'
         self.assertEqual(
-            self._deobfuscate_iterative(source),
-            'console.log(void 0);'
+            self._run_transformer(source, JsAssignmentsAsFunctionArgs),
+            inspect.cleandoc(
+                """
+                var y = void 0;
+                g(y);
+                """
+            ),
+        )
+
+    def test_conditional_arm_preserves_short_circuit(self):
+        """
+        The wrapper call sits in a conditional arm, evaluated only when the branch is taken; lowering
+        it to a sequence in place keeps `a()` out of the untaken branch.
+        """
+        source = 'function wr() { wr = function() {}; } var y = c ? wr(a()) : 0; g(y);'
+        self.assertEqual(
+            self._run_transformer(source, JsAssignmentsAsFunctionArgs),
+            inspect.cleandoc(
+                """
+                var y = c ? (a(), void 0) : 0;
+                g(y);
+                """
+            ),
+        )
+
+    def test_spread_argument_call_not_expanded(self):
+        """
+        A spread argument cannot become a comma-sequence operand (or a bare statement) without
+        producing invalid syntax, so the call is left intact and the wrapper is retained.
+        """
+        source = 'function wr() { wr = function() {}; } var y = wr(...arr); g(y);'
+        self.assertEqual(
+            self._run_transformer(source, JsAssignmentsAsFunctionArgs),
+            inspect.cleandoc(
+                """
+                function wr() {
+                  wr = function() {};
+                }
+                var y = wr(...arr);
+                g(y);
+                """
+            ),
         )

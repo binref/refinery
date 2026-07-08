@@ -5,7 +5,7 @@ call back into individual statements, and removes the wrapper definition.
 """
 from __future__ import annotations
 
-from refinery.lib.scripts import Node, Statement, _remove_from_parent, _replace_in_parent
+from refinery.lib.scripts import Expression, Node, _remove_from_parent, _replace_in_parent
 from refinery.lib.scripts.js.analysis.cache import model_cache
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     ScriptLevelTransformer,
@@ -21,6 +21,8 @@ from refinery.lib.scripts.js.model import (
     JsIdentifier,
     JsNumericLiteral,
     JsScript,
+    JsSequenceExpression,
+    JsSpreadElement,
     JsSwitchCase,
     JsUnaryExpression,
 )
@@ -74,23 +76,24 @@ def _find_expression_wrappers(root: Node) -> set[str]:
     return names
 
 
-def _enclosing_statement(node: Node) -> Statement | None:
-    """
-    Walk up from an expression node to find its nearest ancestor that is a statement.
-    """
-    cursor = node.parent
-    while cursor is not None:
-        if isinstance(cursor, Statement):
-            return cursor
-        cursor = cursor.parent
-    return None
-
-
 class JsAssignmentsAsFunctionArgs(ScriptLevelTransformer):
     """
-    Detect self-disabling wrapper functions and expand their call sites into individual expression
-    statements.
+    Detect self-disabling wrapper functions and expand their call sites: a call in statement position
+    becomes the individual argument statements, and a call embedded in a larger expression becomes the
+    equivalent comma sequence in place, so evaluation order is preserved.
     """
+
+    @staticmethod
+    def _sequence_lowering(arguments: list[Expression]) -> Expression:
+        """
+        The value a self-disabling wrapper call `W(a, b)` computes — its arguments evaluated left to
+        right, then `undefined` — expressed in place so nothing is reordered: the comma sequence
+        `(a, b, void 0)`, or a bare `void 0` when there are no arguments.
+        """
+        void_0 = JsUnaryExpression(operator='void', operand=JsNumericLiteral(value=0, raw='0'))
+        if not arguments:
+            return void_0
+        return JsSequenceExpression(expressions=[*arguments, void_0])
 
     def _process_script(self, node: JsScript):
         wrapper_names = _find_expression_wrappers(node)
@@ -103,6 +106,8 @@ class JsAssignmentsAsFunctionArgs(ScriptLevelTransformer):
             if not isinstance(ast_node.callee, JsIdentifier):
                 continue
             if ast_node.callee.name not in wrapper_names:
+                continue
+            if any(isinstance(arg, JsSpreadElement) for arg in ast_node.arguments):
                 continue
             if (
                 isinstance(parent := ast_node.parent, JsExpressionStatement)
@@ -121,28 +126,7 @@ class JsAssignmentsAsFunctionArgs(ScriptLevelTransformer):
                     stmt.parent = pp
                 unwrapped = True
             else:
-                stmt = _enclosing_statement(ast_node)
-                if stmt is None:
-                    continue
-                stmt_parent = stmt.parent
-                if not isinstance(stmt_parent, (JsBlockStatement, JsScript, JsSwitchCase)):
-                    continue
-                body = stmt_parent.body
-                try:
-                    idx = body.index(stmt)
-                except ValueError:
-                    continue
-                hoisted = [
-                    JsExpressionStatement(expression=arg) for arg in ast_node.arguments
-                ]
-                body[idx:idx] = hoisted
-                for s in hoisted:
-                    s.parent = stmt_parent
-                void_0 = JsUnaryExpression(
-                    operator='void',
-                    operand=JsNumericLiteral(value=0, raw='0'),
-                )
-                _replace_in_parent(ast_node, void_0)
+                _replace_in_parent(ast_node, self._sequence_lowering(ast_node.arguments))
                 unwrapped = True
         if not unwrapped:
             return

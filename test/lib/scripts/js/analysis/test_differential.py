@@ -234,6 +234,44 @@ class TestDeobfuscationDifferential(TestBase):
             ' delete NS.flag;'
             ' console.log(NS.flag);')
 
+    def test_argwrap_non_statement_call_preserves_evaluation_order(self):
+        """
+        `f()` is evaluated before the wrapper call's argument in the original; lowering the call to a
+        comma sequence in place keeps that order, where hoisting the argument ahead of the statement
+        would run it first.
+        """
+        self._check(
+            'function W() { W = function () {}; }'
+            ' var log = [];'
+            ' function f() { log.push("f"); return 0; }'
+            ' function a() { log.push("a"); return 0; }'
+            ' var x = f() + W(a());'
+            ' console.log(log.join(","), x);')
+
+    def test_argwrap_non_statement_call_preserves_short_circuit(self):
+        self._check(
+            'function W() { W = function () {}; }'
+            ' var log = [];'
+            ' function a() { log.push("a"); return 0; }'
+            ' var y = false && W(a());'
+            ' console.log(log.join(","), y);')
+
+    def test_argwrap_second_declarator_not_reordered(self):
+        self._check(
+            'function W() { W = function () {}; }'
+            ' var log = [];'
+            ' function g() { log.push("g"); return 1; }'
+            ' function a() { log.push("a"); return 2; }'
+            ' var p = g(), y = W(a());'
+            ' console.log(log.join(","), p, y);')
+
+    def test_argwrap_spread_argument_call_left_intact(self):
+        self._check(
+            'function W() { W = function () {}; }'
+            ' var arr = [1, 2];'
+            ' var y = W(...arr);'
+            ' console.log(typeof y);')
+
     def test_const_not_inlined_past_inherited_param_shadow(self):
         """
         `B` reads `k` through the parameter of its enclosing `A`, not the outer `const k`. Constant
