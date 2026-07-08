@@ -975,7 +975,7 @@ class SemanticModel:
             self.root_scope.bindings.setdefault(
                 node.name, Binding(node.name, BindingKind.IMPLICIT_GLOBAL, self.root_scope))
 
-    def _global_alias_member_name(self, member: JsMemberExpression) -> str | None:
+    def global_alias_member_name(self, member: JsMemberExpression) -> str | None:
         """
         The name of the global that a member access on a global-object alias references
         (`globalThis.g`, `window['g']` → `g`), or `None` when *member* is not such an access. The alias
@@ -1005,7 +1005,7 @@ class SemanticModel:
         """
         if not is_member_write_target(member):
             return
-        name = self._global_alias_member_name(member)
+        name = self.global_alias_member_name(member)
         if name is None:
             return
         self.root_scope.bindings.setdefault(
@@ -1017,7 +1017,7 @@ class SemanticModel:
         Unlike `_ensure_implicit_global_from_alias_write` this never creates a binding: a read of an
         otherwise-undeclared global has none to attribute and leaves the name free.
         """
-        name = self._global_alias_member_name(member)
+        name = self.global_alias_member_name(member)
         if name is None:
             return None
         return self.root_scope.bindings.get(name)

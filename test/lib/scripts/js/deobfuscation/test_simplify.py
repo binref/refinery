@@ -806,6 +806,43 @@ class TestGlobalAliasStripping(TestJsDeobfuscator):
         )
         self.assertEqual(source, self._simplify(source))
 
+    def test_shadowed_base_via_param_not_stripped(self):
+        """
+        The base `self` is a parameter, not the global object, so `self.foo` reads that argument's
+        property; stripping to bare `foo` would read a different (global) name.
+        """
+        source = inspect.cleandoc(
+            """
+            function f(self) {
+              return self.foo;
+            }
+            """
+        )
+        self.assertEqual(source, self._simplify(source))
+
+    def test_shadowed_base_via_var_not_stripped(self):
+        source = inspect.cleandoc(
+            """
+            var self = obj;
+            y = self.foo;
+            """
+        )
+        self.assertEqual(source, self._simplify(source))
+
+    def test_const_aliased_base_not_stripped(self):
+        """
+        A base reached only through a `const` alias of the global object is conservatively preserved:
+        proving the alias equals the global is a value-provenance question this syntactic collapse no
+        longer attempts.
+        """
+        source = inspect.cleandoc(
+            """
+            const w = window;
+            y = w.foo;
+            """
+        )
+        self.assertEqual(source, self._simplify(source))
+
     def test_global_alias_stripped_in_call_argument(self):
         self.assertEqual('f(X);', self._simplify('f(globalThis.X);'))
 

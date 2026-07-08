@@ -13,8 +13,6 @@ from refinery.lib.scripts.js.analysis.model import (
     SemanticModel,
 )
 from refinery.lib.scripts.js.deobfuscation.helpers import (
-    FUNCTION_NODE_TYPES,
-    GLOBAL_OBJECT_ALIASES,
     OBJECT_PROTOTYPE_MEMBERS,
     RELATIONAL_OPS,
     _to_int32,
@@ -89,39 +87,6 @@ _FUNCTION_PROPERTIES = _OBJECT_PROTO_PROPERTIES | frozenset({
 })
 
 _EMPTY_OBJECT_PROPERTIES = _OBJECT_PROTO_PROPERTIES
-
-
-def _is_global_alias(node: Node, name: str) -> bool:
-    """
-    Checks whether *name* is const-bound to a known global object alias in any enclosing scope.
-    Handles `const c = global` making `c` a recognized global alias for property simplification.
-    """
-    parent = node.parent
-    while parent is not None:
-        if isinstance(parent, FUNCTION_NODE_TYPES):
-            for param in getattr(parent, 'params', ()):
-                if isinstance(param, JsIdentifier) and param.name == name:
-                    return False
-                for child in param.walk():
-                    if isinstance(child, JsIdentifier) and child.name == name:
-                        return False
-        if isinstance(parent, (JsBlockStatement, JsScript)):
-            for stmt in parent.body:
-                if not isinstance(stmt, JsVariableDeclaration):
-                    continue
-                if stmt.kind is not JsVarKind.CONST:
-                    continue
-                for decl in stmt.declarations:
-                    if (
-                        isinstance(decl, JsVariableDeclarator)
-                        and isinstance(decl.id, JsIdentifier)
-                        and decl.id.name == name
-                        and isinstance(decl.init, JsIdentifier)
-                        and decl.init.name in GLOBAL_OBJECT_ALIASES
-                    ):
-                        return True
-        parent = parent.parent
-    return False
 
 
 def _is_call_callee(node: Node) -> bool:
@@ -580,11 +545,8 @@ class JsSimplifications(Transformer):
             not node.computed
             and isinstance(node.object, JsIdentifier)
             and isinstance(node.property, JsIdentifier)
+            and self.model.global_alias_member_name(node) is not None
             and not self._resolves_to_local(node, node.property.name)
-            and (
-                node.object.name in GLOBAL_OBJECT_ALIASES
-                or _is_global_alias(node, node.object.name)
-            )
         ):
             p = node.parent
             if isinstance(p, JsAssignmentExpression) and p.left is node:
