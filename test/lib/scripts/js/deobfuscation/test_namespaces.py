@@ -149,3 +149,107 @@ class TestNamespaceFlattening(TestJsDeobfuscator):
             ),
             self._flatten('var NS = {}; NS.x = 1; try { h(); } catch (x) { log(x); } log(NS.x);'),
         )
+
+    def test_function_hoisted_when_assignment_precedes_every_use(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function greet() {
+                  return 42;
+                }
+                foo(greet);
+                """
+            ),
+            self._flatten('var NS = {}; NS.greet = function () { return 42; }; foo(NS.greet);'),
+        )
+
+    def test_function_kept_in_place_when_a_use_can_run_before_assignment(self):
+        """
+        `early()` reads the property and runs before the assignment, so a hoisted `function greet(){}`
+        would let that call see the function early; the assignment stays in place behind a bare `var`.
+        """
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var greet;
+                function early() {
+                  return greet;
+                }
+                var probe = early();
+                greet = function() {
+                  return 42;
+                };
+                """
+            ),
+            self._flatten(
+                'var NS = {}; function early() { return NS.greet; } var probe = early();'
+                ' NS.greet = function () { return 42; };'),
+        )
+
+    def test_computed_read_before_assignment_keeps_function_in_place(self):
+        """
+        The early read spells the property dynamically as `NS["greet"]`; it must still block the hoist.
+        """
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var greet;
+                function early() {
+                  return greet;
+                }
+                var probe = early();
+                greet = function() {
+                  return 42;
+                };
+                """
+            ),
+            self._flatten(
+                'var NS = {}; function early() { return NS["greet"]; } var probe = early();'
+                ' NS.greet = function () { return 42; };'),
+        )
+
+    def test_object_property_init_kept_in_place(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var config;
+                config = {};
+                config.x = 1;
+                """
+            ),
+            self._flatten('var NS = {}; NS.config = {}; NS.config.x = 1;'),
+        )
+
+    def test_named_function_expression_kept_in_place(self):
+        """
+        Hoisting to `function f(){}` would drop the expression's own name `fact`, leaving the
+        recursive call unbound; the in-place form preserves it.
+        """
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var f;
+                f = function fact(n) {
+                  return n;
+                };
+                foo(f);
+                """
+            ),
+            self._flatten('var NS = {}; NS.f = function fact(n) { return n; }; foo(NS.f);'),
+        )
+
+    def test_deleted_property_blocks_flattening(self):
+        """
+        `delete p` on a bare `var` binding is not a property removal, so a namespace with a deleted
+        property is left intact.
+        """
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var NS = {};
+                NS.x = 1;
+                delete NS.x;
+                """
+            ),
+            self._flatten('var NS = {}; NS.x = 1; delete NS.x;'),
+        )

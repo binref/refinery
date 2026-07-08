@@ -7,6 +7,7 @@ from typing import Iterator, NamedTuple
 
 from refinery.lib.scripts import Expression, Node, _replace_in_parent
 from refinery.lib.scripts.js.analysis.cache import model_cache
+from refinery.lib.scripts.js.analysis.dominance import DominanceModel
 from refinery.lib.scripts.js.analysis.model import Scope, SemanticModel
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     FUNCTION_NODE_TYPES,
@@ -23,6 +24,7 @@ from refinery.lib.scripts.js.model import (
     JsMemberExpression,
     JsObjectExpression,
     JsScript,
+    JsUnaryExpression,
     JsVariableDeclaration,
     JsVariableDeclarator,
     JsVarKind,
@@ -58,7 +60,8 @@ class JsNamespaceFlattening(ScopeProcessingTransformer):
             props = self._collect_properties(scope, name, declarator)
             if not props:
                 continue
-            model = model_cache(self, self._root).model
+            cache = model_cache(self, self._root)
+            model = cache.model
             scope_obj = model.scope_of(scope)
             if scope_obj is None:
                 continue
@@ -66,15 +69,16 @@ class JsNamespaceFlattening(ScopeProcessingTransformer):
             flattenable = props - conflicts
             if not flattenable:
                 continue
-            inits = self._detect_init_assignments(body, name, flattenable)
             func_assigns = self._detect_function_assignments(body, name, flattenable)
+            hoisted_keys = (
+                self._hoistable_functions(scope, name, body, func_assigns, cache.dominance)
+                if func_assigns else set()
+            )
+            hoisted = {k: v for k, v in func_assigns.items() if k in hoisted_keys}
             self._rewrite(scope, name, declarator, flattenable)
-            all_removals: dict[str, _PropertyAssignment] = {}
-            all_removals.update(inits)
-            all_removals.update(func_assigns)
-            self._remove_init_statements(body, all_removals)
-            self._emit_declarations(scope, body, flattenable - set(func_assigns), inits)
-            self._emit_function_declarations(scope, body, func_assigns)
+            self._remove_hoisted_statements(body, hoisted)
+            self._emit_declarations(scope, body, flattenable - set(hoisted))
+            self._emit_function_declarations(scope, body, hoisted)
             if not conflicts:
                 self._remove_declarator(body, declarator, decl_stmt)
             self.changed = True
@@ -117,8 +121,11 @@ class JsNamespaceFlattening(ScopeProcessingTransformer):
     def _is_safe(scope: Node, name: str, declarator: JsVariableDeclarator) -> bool:
         """
         Verify every reference to the namespace variable is a member-expression access with a
-        statically extractable key. Identifiers in non-computed property position (e.g.
-        `other.NS`) do not reference the variable and are ignored.
+        statically extractable key, and that none is the operand of a `delete`. Identifiers in
+        non-computed property position (e.g. `other.NS`) do not reference the variable and are
+        ignored. A `delete NS.p` cannot survive flattening — `delete p` on a bare `var` binding is a
+        no-op (or a strict-mode SyntaxError), not a property removal — so a namespace whose property
+        is deleted is left intact.
         """
         decl_id = declarator.id
         for node in JsNamespaceFlattening._walk_pruning_shadows(scope, name):
@@ -132,6 +139,9 @@ class JsNamespaceFlattening(ScopeProcessingTransformer):
             if not isinstance(parent, JsMemberExpression) or parent.object is not node:
                 return False
             if access_key(parent) is None:
+                return False
+            grandparent = parent.parent
+            if isinstance(grandparent, JsUnaryExpression) and grandparent.operator == 'delete':
                 return False
         return True
 
@@ -243,25 +253,12 @@ class JsNamespaceFlattening(ScopeProcessingTransformer):
         return {k: v for k, v in found.items() if counts.get(k) == 1}
 
     @staticmethod
-    def _detect_init_assignments(
-        body: list,
-        name: str,
-        flattenable: set[str],
-    ) -> dict[str, _PropertyAssignment]:
+    def _remove_hoisted_statements(body: list, hoisted: dict[str, _PropertyAssignment]) -> None:
         """
-        Scan body-level statements for `NS.X = {}` patterns that represent namespace property
-        initializations.
+        Delete the `NS.f = function…` statements whose properties are being raised to hoisted
+        `function f(){}` declarations, deepest index first so the earlier indices stay valid.
         """
-        return JsNamespaceFlattening._detect_single_assignments(
-            body,
-            name,
-            flattenable,
-            lambda rhs: isinstance(rhs, JsObjectExpression) and not rhs.properties,
-        )
-
-    @staticmethod
-    def _remove_init_statements(body: list, inits: dict[str, _PropertyAssignment]) -> None:
-        for _, entry in sorted(inits.items(), key=lambda x: x[1].stmt_index, reverse=True):
+        for _, entry in sorted(hoisted.items(), key=lambda x: x[1].stmt_index, reverse=True):
             del body[entry.stmt_index]
 
     @staticmethod
@@ -283,6 +280,69 @@ class JsNamespaceFlattening(ScopeProcessingTransformer):
         )
 
     @staticmethod
+    def _hoistable_functions(
+        scope: Node,
+        name: str,
+        body: list,
+        func_assigns: dict[str, _PropertyAssignment],
+        dominance: DominanceModel,
+    ) -> set[str]:
+        """
+        The function properties whose single `NS.f = function…` assignment may be raised to a hoisted
+        `function f(){}` declaration. Hoisting makes the function reachable from the top of the scope,
+        so it is sound only when the assignment provably runs before every reference to the property —
+        a `DominanceModel.runs_before_all` query over every `NS.f` access, computed forms included, so
+        a read that could run first (earlier in the scope, or inside a function invoked earlier) keeps
+        the property in place. The rewrite to a declaration also drops the function expression's own
+        name, so a differing live inner name (a recursive `function fact` assigned to `NS.other`) would
+        become unbound; such a property is likewise held back. A property failing either test keeps its
+        assignment in place behind a bare `var f;`, reproducing the original member's
+        `undefined`-until-assigned semantics.
+        """
+        hoistable: set[str] = set()
+        for key, entry in func_assigns.items():
+            func_expr = entry.rhs
+            if not isinstance(func_expr, JsFunctionExpression):
+                continue
+            if func_expr.id is not None and func_expr.id.name != key:
+                continue
+            statement = body[entry.stmt_index]
+            write: Node | None = None
+            if (
+                isinstance(statement, JsExpressionStatement)
+                and isinstance(statement.expression, JsAssignmentExpression)
+            ):
+                write = statement.expression.left
+            references = JsNamespaceFlattening._property_references(scope, name, key, write)
+            if dominance.runs_before_all(statement, references):
+                hoistable.add(key)
+        return hoistable
+
+    @staticmethod
+    def _property_references(
+        scope: Node,
+        name: str,
+        key: str,
+        write: Node | None,
+    ) -> list[Node]:
+        """
+        Every `NS.key` member access in the scope subtree except the initializing write *write* — the
+        reads and any compound writes whose observed value the hoisting gate must order after the
+        initialization. Computed accesses `NS["key"]` are included through `access_key`, so a read
+        that spells the property dynamically still blocks an unsound hoist.
+        """
+        references: list[Node] = []
+        for node in JsNamespaceFlattening._walk_pruning_shadows(scope, name):
+            if not isinstance(node, JsMemberExpression) or node is write:
+                continue
+            obj = node.object
+            if not isinstance(obj, JsIdentifier) or obj.name != name:
+                continue
+            if access_key(node) == key:
+                references.append(node)
+        return references
+
+    @staticmethod
     def _emit_function_declarations(
         scope: Node,
         body: list,
@@ -302,12 +362,13 @@ class JsNamespaceFlattening(ScopeProcessingTransformer):
             body.insert(0, decl)
 
     @staticmethod
-    def _emit_declarations(
-        scope: Node,
-        body: list,
-        props: set[str],
-        inits: dict[str, _PropertyAssignment] | None = None,
-    ) -> None:
+    def _emit_declarations(scope: Node, body: list, props: set[str]) -> None:
+        """
+        Insert a hoisted `var` declaration at the top of the scope for each flattened property that
+        does not already have one. The declarations are uninitialized: a flattened property's value is
+        established by its (in-place) assignment, so a bare `var p;` reproduces the
+        `undefined`-until-assigned semantics of the original `NS.p` member exactly.
+        """
         existing: set[str] = set()
         for stmt in body:
             if not isinstance(stmt, JsVariableDeclaration):
@@ -320,12 +381,10 @@ class JsNamespaceFlattening(ScopeProcessingTransformer):
         needed = sorted(props - existing)
         if not needed:
             return
-        declarations: list[JsVariableDeclarator] = []
-        for n in needed:
-            init_expr: Expression | None = None
-            if inits and n in inits:
-                init_expr = JsObjectExpression(properties=[])
-            declarations.append(JsVariableDeclarator(id=JsIdentifier(name=n), init=init_expr))
+        declarations = [
+            JsVariableDeclarator(id=JsIdentifier(name=n), init=None)
+            for n in needed
+        ]
         decl = JsVariableDeclaration(declarations=declarations, kind=JsVarKind.VAR)
         decl.parent = scope
         body.insert(0, decl)

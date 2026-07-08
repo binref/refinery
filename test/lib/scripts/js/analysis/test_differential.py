@@ -196,6 +196,44 @@ class TestDeobfuscationDifferential(TestBase):
             'var NS = {}; NS.x = 1; var r = [];'
             ' { let x = 9; r.push(x); } r.push(NS.x); console.log(r.join(","));')
 
+    def test_namespace_function_not_hoisted_before_early_read(self):
+        """
+        `early()` runs before `NS.greet` is assigned, so `NS.greet` is `undefined` there. Flattening
+        the assignment to a hoisted `function greet(){}` would make the early call see the function;
+        the assignment must stay in place so the early read still observes `undefined`.
+        """
+        self._check(
+            'var NS = {};'
+            ' function early() { return NS.greet; }'
+            ' var probe = early();'
+            ' NS.greet = function () { return 42; };'
+            ' console.log(typeof probe, typeof early());')
+
+    def test_namespace_object_init_not_hoisted_before_early_read(self):
+        self._check(
+            'var NS = {};'
+            ' function early() { return NS.config; }'
+            ' var before = early();'
+            ' NS.config = {};'
+            ' console.log(typeof before, typeof early());')
+
+    def test_namespace_named_function_expression_keeps_inner_name(self):
+        """
+        Flattening `NS.factorial` must not rebuild it as `function factorial(){}` — that would drop the
+        expression's own name `fact`, leaving the recursive call unbound.
+        """
+        self._check(
+            'var NS = {};'
+            ' NS.factorial = function fact(n) { return n <= 1 ? 1 : n * fact(n - 1); };'
+            ' console.log(NS.factorial(5));')
+
+    def test_namespace_deleted_property_not_flattened(self):
+        self._check(
+            'var NS = {};'
+            ' NS.flag = 1;'
+            ' delete NS.flag;'
+            ' console.log(NS.flag);')
+
     def test_const_not_inlined_past_inherited_param_shadow(self):
         """
         `B` reads `k` through the parameter of its enclosing `A`, not the outer `const k`. Constant
