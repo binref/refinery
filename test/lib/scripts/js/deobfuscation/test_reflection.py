@@ -51,8 +51,47 @@ class TestReflectionInlining(TestJsDeobfuscator):
     def test_eval_parenthesized(self):
         self.assertEqual('var x = 1;', self._reflect("(eval)('var x = 1;');"))
 
+    def test_direct_eval_shadowed_not_inlined(self):
+        """
+        `eval` is a local parameter, so `eval("1")` calls that value, not the global eval.
+        """
+        source = inspect.cleandoc(
+            """
+            function f(eval) {
+              return eval("1");
+            }
+            """
+        )
+        self.assertEqual(source, self._reflect(source))
+
+    def test_direct_eval_in_with_not_inlined(self):
+        """
+        Inside a `with` body a bare `eval` may resolve to a property of the `with` object.
+        """
+        source = inspect.cleandoc(
+            """
+            with (o) {
+              eval("1");
+            }
+            """
+        )
+        self.assertEqual(source, self._reflect(source))
+
     def test_indirect_eval_comma_operator(self):
         self.assertEqual('var x = 1;', self._reflect("(0, eval)('var x = 1;');"))
+
+    def test_indirect_eval_comma_operator_shadowed_not_inlined(self):
+        """
+        `eval` is a local parameter, so `(0, eval)` yields that value, not the global eval.
+        """
+        source = inspect.cleandoc(
+            """
+            function f(eval) {
+              return (0, eval)("1");
+            }
+            """
+        )
+        self.assertEqual(source, self._reflect(source))
 
     def test_indirect_eval_window(self):
         self.assertEqual('var x = 1;', self._reflect("window.eval('var x = 1;');"))
@@ -311,6 +350,19 @@ class TestReflectionInlining(TestJsDeobfuscator):
         )
         self.assertEqual(source, self._reflect(source))
 
+    def test_bare_string_timer_shadowed_not_lowered(self):
+        """
+        `setTimeout` is a local parameter, so the call is to that value, not the global timer.
+        """
+        source = inspect.cleandoc(
+            """
+            function f(setTimeout) {
+              setTimeout("g()", 0);
+            }
+            """
+        )
+        self.assertEqual(source, self._reflect(source))
+
     def test_top_alias_indirect_eval_inlined(self):
         self.assertEqual('var x = 1;', self._reflect("top.eval('var x = 1;');"))
 
@@ -319,6 +371,32 @@ class TestReflectionInlining(TestJsDeobfuscator):
 
     def test_function_constructor_body_invoked(self):
         self.assertEqual('42;', self._reflect("Function('return 42')();"))
+
+    def test_function_constructor_shadowed_not_inlined(self):
+        """
+        `Function` is a local parameter, so the call is to that value, not the global constructor.
+        """
+        source = inspect.cleandoc(
+            """
+            function f(Function) {
+              return Function("return 1")();
+            }
+            """
+        )
+        self.assertEqual(source, self._reflect(source))
+
+    def test_new_function_shadowed_not_inlined(self):
+        """
+        `Function` is a local parameter, so `new Function` constructs that value, not the global one.
+        """
+        source = inspect.cleandoc(
+            """
+            function f(Function) {
+              return new Function("return 1")();
+            }
+            """
+        )
+        self.assertEqual(source, self._reflect(source))
 
     def test_constructor_chain_string(self):
         self.assertEqual('1;', self._reflect("''.constructor.constructor('return 1')();"))

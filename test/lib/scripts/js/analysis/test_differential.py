@@ -700,6 +700,42 @@ class TestDeobfuscationDifferential(TestBase):
         """
         self._check('console.log(globalThis["eval"]("1"));')
 
+    def test_reflection_bare_eval_shadowed_not_inlined(self):
+        """
+        `eval` is a parameter holding a plain function, so `eval("1")` calls it and returns 99; inlining
+        the string as direct eval would yield 1 instead.
+        """
+        self._check(
+            'function f(eval){ return eval("1"); }'
+            ' console.log(f(function(){ return 99; }));')
+
+    def test_reflection_sequence_eval_shadowed_not_inlined(self):
+        """
+        `(0, eval)` yields the local parameter `eval`, not the global; its call returns 99, where
+        inlining the indirect eval would return 1.
+        """
+        self._check(
+            'function f(eval){ return (0, eval)("1"); }'
+            ' console.log(f(function(){ return 99; }));')
+
+    def test_reflection_bare_timer_shadowed_not_lowered(self):
+        """
+        A local `setTimeout` receives its code as a string; lowering it to a function wrapper would hand
+        the local a function argument instead, changing what it observes.
+        """
+        self._check(
+            'function f(setTimeout){ setTimeout("console.log(0)", 0); }'
+            ' f(function(c){ console.log(typeof c); });')
+
+    def test_reflection_function_constructor_shadowed_not_inlined(self):
+        """
+        `Function` is a local parameter, so `Function("return 1")()` calls it and returns 99; treating it
+        as the global constructor would inline the body and yield 1.
+        """
+        self._check(
+            'function f(Function){ return Function("return 1")(); }'
+            ' console.log(f(function(){ return function(){ return 99; }; }));')
+
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestDeobfuscationWithScope(TestBase):
@@ -823,6 +859,18 @@ class TestDeobfuscationWithScope(TestBase):
             'var o = { window: { eval: function(){ return 99; } } };'
             ' var r;'
             ' with (o) { r = window.eval("1"); }'
+            ' console.log(r);')
+
+    def test_with_scoped_bare_eval_not_inlined(self):
+        """
+        Inside `with (o)` a bare `eval` resolves against `o` first, so it need not be the global eval;
+        `o.eval` supplies a custom function, so inlining the call as direct eval would drop that dynamic
+        resolution and return the evaluated code instead of the custom function's result.
+        """
+        self._check(
+            'var o = { eval: function(){ return 99; } };'
+            ' var r;'
+            ' with (o) { r = eval("1"); }'
             ' console.log(r);')
 
 

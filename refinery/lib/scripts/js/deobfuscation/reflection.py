@@ -119,14 +119,16 @@ def _is_function_identifier(node: Expression) -> bool:
     return _is_identifier(_unwrap_parens(node), 'Function')
 
 
-def _extract_eval_code(node: JsCallExpression) -> str | None:
+def _extract_eval_code(
+    node: JsCallExpression,
+    *,
+    free_global_name: Callable[[Expression | None], str | None],
+) -> str | None:
     """
-    Extract the code string from `eval("code")` or `(eval)("code")`.
+    Extract the code string from a direct `eval("code")` / `(eval)("code")`. The callee must be the
+    free global `eval`; a locally-shadowed `eval` names an ordinary value whose call is left intact.
     """
-    if node.callee is None:
-        return None
-    callee = _unwrap_parens(node.callee)
-    if not _is_identifier(callee, 'eval'):
+    if free_global_name(node.callee) != 'eval':
         return None
     if len(node.arguments) != 1:
         return None
@@ -138,6 +140,7 @@ def _extract_indirect_eval_code(
     read_effect: Callable[[Node], bool] | None = None,
     *,
     alias_name: Callable[[Expression | None], str | None],
+    free_global_name: Callable[[Expression | None], str | None],
 ) -> str | None:
     """
     Extract the code string from indirect eval patterns:
@@ -146,15 +149,16 @@ def _extract_indirect_eval_code(
 
     Inlining discards the comma-sequence prefix, so it is admitted only when dropping it is
     side-effect free; *read_effect* rejects a prefix read that resolves through a `with` body's dynamic
-    scope (firing a getter or throwing), which the model-free check cannot see. *alias_name* resolves a
-    global-object-alias member to the intrinsic it names, declining a shadowed base or a dynamic scope.
+    scope (firing a getter or throwing), which the model-free check cannot see. *free_global_name*
+    confirms the sequence tail is the free global `eval` and *alias_name* resolves a global-object-alias
+    member to the intrinsic it names, both declining a shadowed name or a dynamic scope.
     """
     if len(node.arguments) != 1:
         return None
     callee = _unwrap_parens(node.callee) if node.callee is not None else None
     if isinstance(callee, JsSequenceExpression):
         exprs = callee.expressions
-        if len(exprs) >= 2 and _is_identifier(exprs[-1], 'eval'):
+        if len(exprs) >= 2 and free_global_name(exprs[-1]) == 'eval':
             if all(side_effect_free(e, read_effect=read_effect) for e in exprs[:-1]):
                 return string_value(node.arguments[0]) or _try_eval_string_arg(node.arguments[0])
     if alias_name(callee) == 'eval':
@@ -166,21 +170,19 @@ def _extract_timer_code(
     node: JsCallExpression,
     *,
     alias_name: Callable[[Expression | None], str | None],
+    free_global_name: Callable[[Expression | None], str | None],
 ) -> str | None:
     """
     Extract the code string from a string-valued timer call — `setTimeout("code", ...)`,
     `setInterval("code", ...)`, and the `setImmediate`/`execScript` variants — whether the timer is
     named directly or through a global-object alias (`window.setTimeout("code", ...)`), both of which
-    reach the same evaluating global. A global-alias member is resolved shadow-aware via *alias_name*; a
-    bare timer name is still matched syntactically (a locally-shadowed bare name is a known gap).
+    reach the same evaluating global. The callee must denote the free global timer: *free_global_name*
+    resolves a bare name and *alias_name* a global-object-alias member, each declining a locally
+    shadowed name or a dynamic scope.
     """
     if node.callee is None:
         return None
-    callee = _unwrap_parens(node.callee)
-    if isinstance(callee, JsIdentifier):
-        name = callee.name
-    else:
-        name = alias_name(callee)
+    name = free_global_name(node.callee) or alias_name(node.callee)
     if name not in TIMER_NAMES:
         return None
     if not node.arguments:
@@ -190,6 +192,8 @@ def _extract_timer_code(
 
 def _extract_function_body_code(
     constructor_call: JsCallExpression | JsNewExpression,
+    *,
+    free_global_name: Callable[[Expression | None], str | None],
 ) -> str | None:
     """
     Extract the body code string from Function constructor calls:
@@ -198,13 +202,11 @@ def _extract_function_body_code(
         Function("a", "b", "code")
         new Function("code")
 
-    The last string argument is the function body; preceding string arguments are parameter
-    names (ignored for now).
+    The callee must be the free global `Function`; a locally-shadowed `Function` names an ordinary
+    value and is left alone. The last string argument is the function body; preceding string arguments
+    are parameter names (ignored for now).
     """
-    callee = constructor_call.callee
-    if callee is None:
-        return None
-    if not _is_function_identifier(callee):
+    if free_global_name(constructor_call.callee) != 'Function':
         return None
     args = constructor_call.arguments
     if not args:
@@ -266,7 +268,10 @@ def _extract_constructor_chain_code(
 
 
 def _invoked_function_constructor_code(
-    node: JsCallExpression, read_effect: Callable[[Node], bool] | None = None,
+    node: JsCallExpression,
+    read_effect: Callable[[Node], bool] | None = None,
+    *,
+    free_global_name: Callable[[Expression | None], str | None],
 ) -> tuple[str, bool] | None:
     """
     If *node* immediately invokes a `Function` constructor — `Function("code")()`,
@@ -278,7 +283,7 @@ def _invoked_function_constructor_code(
     """
     inner = node.callee
     if isinstance(inner, (JsCallExpression, JsNewExpression)):
-        code = _extract_function_body_code(inner)
+        code = _extract_function_body_code(inner, free_global_name=free_global_name)
         if code is not None:
             return code, len(inner.arguments) > 1 or bool(node.arguments)
     chain = _extract_constructor_chain_code(node, read_effect)
@@ -424,6 +429,8 @@ def _substitute_proxy_accesses(
 
 def _try_unpack_function_constructor(
     node: JsCallExpression,
+    *,
+    free_global_name: Callable[[Expression | None], str | None],
 ) -> list[Statement] | None:
     """
     Unpack an immediately-invoked `Function` constructor whose single argument is a proxy object
@@ -434,13 +441,14 @@ def _try_unpack_function_constructor(
         )
 
     Parses the code string, resolves all `p.key` accesses through the proxy mapping back to their
-    original global identifiers, and returns the recovered statement list. Returns `None` if the
-    node does not match or if any proxy access cannot be resolved.
+    original global identifiers, and returns the recovered statement list. Returns `None` if the node
+    does not match — including when the inner callee is not the free global `Function` — or if any
+    proxy access cannot be resolved.
     """
     inner = node.callee
     if not isinstance(inner, JsCallExpression):
         return None
-    if inner.callee is None or not _is_function_identifier(inner.callee):
+    if free_global_name(inner.callee) != 'Function':
         return None
     if len(node.arguments) != 1 or not isinstance(node.arguments[0], JsObjectExpression):
         return None
@@ -753,6 +761,30 @@ class JsReflectionInlining(ScriptLevelTransformer):
             return model.global_alias_member_name(member)
         return resolve
 
+    def _free_global_name(self, root: JsScript) -> Callable[[Expression | None], str | None]:
+        """
+        A resolver reporting the intrinsic a bare callee identifier denotes — `eval` yields `'eval'`,
+        `Function` yields `'Function'` — or `None` when the name is not a free, unshadowed global. A
+        local binding (a parameter, a `var`, a `with`-object property) of the name is an ordinary value,
+        not the intrinsic, and must not drive an inline; the model resolves a reference to its binding
+        for a shadow and to `None` for a free global, and `read_has_dynamic_effect` rejects a name read
+        through a dynamic scope. Resolved lazily against *root*'s current model, mirroring
+        `_dynamic_read_effect`.
+        """
+        def resolve(callee: Expression | None) -> str | None:
+            if callee is None:
+                return None
+            ident = _unwrap_parens(callee)
+            if not isinstance(ident, JsIdentifier):
+                return None
+            model = model_cache(self, root).model
+            if model.scope_of(ident) is None:
+                return None
+            if model.resolve(ident) is None and not model.read_has_dynamic_effect(ident):
+                return ident.name
+            return None
+        return resolve
+
     def _inline_statements(self, root: JsScript) -> None:
         for container in list(root.walk()):
             body = get_body(container)
@@ -830,7 +862,11 @@ class JsReflectionInlining(ScriptLevelTransformer):
         (whose global or transient environment a local function cannot reproduce) or a `return`/`await`
         that a plain function body cannot host declines the lowering, leaving the string timer intact.
         """
-        code = _extract_timer_code(node, alias_name=self._alias_member_name(root))
+        code = _extract_timer_code(
+            node,
+            alias_name=self._alias_member_name(root),
+            free_global_name=self._free_global_name(root),
+        )
         if code is None:
             return
         resolved = self._resolve_reflected_body(
@@ -867,7 +903,8 @@ class JsReflectionInlining(ScriptLevelTransformer):
             node = node.argument
         if not isinstance(node, JsCallExpression):
             return None
-        pack_result = _try_unpack_function_constructor(node)
+        pack_result = _try_unpack_function_constructor(
+            node, free_global_name=self._free_global_name(root))
         if pack_result is not None:
             return pack_result
         if _is_pack_shaped(node):
@@ -913,20 +950,23 @@ class JsReflectionInlining(ScriptLevelTransformer):
         """
         read_effect = self._dynamic_read_effect(root)
         alias_name = self._alias_member_name(root)
-        constructor = _invoked_function_constructor_code(node, read_effect)
+        free_global_name = self._free_global_name(root)
+        constructor = _invoked_function_constructor_code(
+            node, read_effect, free_global_name=free_global_name)
         if constructor is not None:
             code, binds = constructor
             parsed = self._resolve_reflected_body(
                 code, site, root, ReflectedScope.FUNCTION_CONSTRUCTOR, at_global_scope, binds=binds,
             )
             return (ReflectedScope.FUNCTION_CONSTRUCTOR, parsed) if parsed is not None else None
-        direct = _extract_eval_code(node)
+        direct = _extract_eval_code(node, free_global_name=free_global_name)
         if direct is not None:
             parsed = self._resolve_reflected_body(
                 direct, site, root, ReflectedScope.DIRECT_EVAL, at_global_scope,
             )
             return (ReflectedScope.DIRECT_EVAL, parsed) if parsed is not None else None
-        code = _extract_indirect_eval_code(node, read_effect, alias_name=alias_name)
+        code = _extract_indirect_eval_code(
+            node, read_effect, alias_name=alias_name, free_global_name=free_global_name)
         if code is not None:
             parsed = self._resolve_reflected_body(
                 code, site, root, ReflectedScope.GLOBAL_EVAL, at_global_scope,
