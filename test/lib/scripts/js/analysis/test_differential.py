@@ -674,6 +674,32 @@ class TestDeobfuscationDifferential(TestBase):
             ' SINK.push(read());'
             " console.log(SINK.join('|'));")
 
+    def test_reflection_alias_eval_shadowed_base_not_inlined(self):
+        """
+        `window` is a parameter holding an ordinary object, so `window.eval` is that object's method,
+        not the global eval; inlining its string argument would discard the real call and yield the
+        evaluated code instead of the method's result.
+        """
+        self._check(
+            'function f(window){ return window.eval("1"); }'
+            ' console.log(f({ eval: function(){ return 99; } }));')
+
+    def test_reflection_alias_timer_shadowed_base_not_lowered(self):
+        """
+        A local `window`'s `setTimeout` receives the code as a string; lowering it to a function wrapper
+        would hand the local method a function instead, changing what it observes.
+        """
+        self._check(
+            'function f(window){ window.setTimeout("console.log(0)", 0); }'
+            ' f({ setTimeout: function(c){ console.log(typeof c); } });')
+
+    def test_reflection_computed_alias_eval_inlined(self):
+        """
+        `globalThis['eval']("1")` reaches the same intrinsic as `globalThis.eval("1")`, so the computed
+        alias member is inlined identically without changing behavior.
+        """
+        self._check('console.log(globalThis["eval"]("1"));')
+
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestDeobfuscationWithScope(TestBase):
@@ -786,6 +812,18 @@ class TestDeobfuscationWithScope(TestBase):
             ' var o = { p0: f() };'
             ' with (o) { SINK.push(f()); }'
             " console.log(SINK.join('|'));")
+
+    def test_with_scoped_alias_eval_member_not_inlined(self):
+        """
+        Inside `with (o)` the base `window` resolves against `o` first, so `window.eval` need not be the
+        global eval; `o.window` supplies a custom `eval`, so inlining the member's argument would drop
+        that dynamic resolution and return the evaluated code instead of the custom method's result.
+        """
+        self._check(
+            'var o = { window: { eval: function(){ return 99; } } };'
+            ' var r;'
+            ' with (o) { r = window.eval("1"); }'
+            ' console.log(r);')
 
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')

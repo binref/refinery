@@ -16,7 +16,6 @@ from refinery.lib.scripts import Expression, Node, _clone_node, _replace_in_pare
 from refinery.lib.scripts.js.analysis.cache import model_cache
 from refinery.lib.scripts.js.analysis.effects import side_effect_free
 from refinery.lib.scripts.js.analysis.model import (
-    GLOBAL_OBJECT_ALIASES,
     TIMER_NAMES,
     Binding,
     BindingKind,
@@ -120,28 +119,6 @@ def _is_function_identifier(node: Expression) -> bool:
     return _is_identifier(_unwrap_parens(node), 'Function')
 
 
-def _global_alias_member_name(callee: Expression | None) -> str | None:
-    """
-    The property named on a global-object alias by *callee*, or `None` when *callee* is not a
-    non-computed dot access on a well-known alias: `window.eval` yields `'eval'`,
-    `globalThis.setTimeout` yields `'setTimeout'`. This is the reflective reach through the global
-    object that resolves to the same intrinsic as the bare name, shared by the indirect-eval and timer
-    extractors so both recognize the same aliases as the model's reflection detector.
-    """
-    if callee is None:
-        return None
-    callee = _unwrap_parens(callee)
-    if (
-        isinstance(callee, JsMemberExpression)
-        and not callee.computed
-        and isinstance(callee.object, JsIdentifier)
-        and callee.object.name in GLOBAL_OBJECT_ALIASES
-        and isinstance(callee.property, JsIdentifier)
-    ):
-        return callee.property.name
-    return None
-
-
 def _extract_eval_code(node: JsCallExpression) -> str | None:
     """
     Extract the code string from `eval("code")` or `(eval)("code")`.
@@ -157,16 +134,20 @@ def _extract_eval_code(node: JsCallExpression) -> str | None:
 
 
 def _extract_indirect_eval_code(
-    node: JsCallExpression, read_effect: Callable[[Node], bool] | None = None,
+    node: JsCallExpression,
+    read_effect: Callable[[Node], bool] | None = None,
+    *,
+    alias_name: Callable[[Expression | None], str | None],
 ) -> str | None:
     """
     Extract the code string from indirect eval patterns:
     - `(0, eval)("code")`
-    - `window.eval("code")` / `globalThis.eval("code")`
+    - `window.eval("code")` / `globalThis.eval("code")` / `window['eval']("code")`
 
     Inlining discards the comma-sequence prefix, so it is admitted only when dropping it is
     side-effect free; *read_effect* rejects a prefix read that resolves through a `with` body's dynamic
-    scope (firing a getter or throwing), which the model-free check cannot see.
+    scope (firing a getter or throwing), which the model-free check cannot see. *alias_name* resolves a
+    global-object-alias member to the intrinsic it names, declining a shadowed base or a dynamic scope.
     """
     if len(node.arguments) != 1:
         return None
@@ -176,17 +157,22 @@ def _extract_indirect_eval_code(
         if len(exprs) >= 2 and _is_identifier(exprs[-1], 'eval'):
             if all(side_effect_free(e, read_effect=read_effect) for e in exprs[:-1]):
                 return string_value(node.arguments[0]) or _try_eval_string_arg(node.arguments[0])
-    if _global_alias_member_name(callee) == 'eval':
+    if alias_name(callee) == 'eval':
         return string_value(node.arguments[0]) or _try_eval_string_arg(node.arguments[0])
     return None
 
 
-def _extract_timer_code(node: JsCallExpression) -> str | None:
+def _extract_timer_code(
+    node: JsCallExpression,
+    *,
+    alias_name: Callable[[Expression | None], str | None],
+) -> str | None:
     """
     Extract the code string from a string-valued timer call — `setTimeout("code", ...)`,
     `setInterval("code", ...)`, and the `setImmediate`/`execScript` variants — whether the timer is
     named directly or through a global-object alias (`window.setTimeout("code", ...)`), both of which
-    reach the same evaluating global.
+    reach the same evaluating global. A global-alias member is resolved shadow-aware via *alias_name*; a
+    bare timer name is still matched syntactically (a locally-shadowed bare name is a known gap).
     """
     if node.callee is None:
         return None
@@ -194,7 +180,7 @@ def _extract_timer_code(node: JsCallExpression) -> str | None:
     if isinstance(callee, JsIdentifier):
         name = callee.name
     else:
-        name = _global_alias_member_name(callee)
+        name = alias_name(callee)
     if name not in TIMER_NAMES:
         return None
     if not node.arguments:
@@ -746,6 +732,27 @@ class JsReflectionInlining(ScriptLevelTransformer):
         """
         return lambda node: model_cache(self, root).model.read_has_dynamic_effect(node)
 
+    def _alias_member_name(self, root: JsScript) -> Callable[[Expression | None], str | None]:
+        """
+        A resolver reporting the intrinsic a global-object-alias member names — `window.eval` yields
+        `'eval'`, `globalThis['setTimeout']` yields `'setTimeout'` — or `None` when the base is not the
+        real, unshadowed global object. A local `window` (a parameter, a `var`, a `with`-object
+        property) names an ordinary object whose member is not the reflective intrinsic and must not be
+        inlined; the model's shadow- and dynamic-scope-aware check is the single source of that judgment.
+        Resolved lazily against *root*'s current model, mirroring `_dynamic_read_effect`.
+        """
+        def resolve(callee: Expression | None) -> str | None:
+            if callee is None:
+                return None
+            member = _unwrap_parens(callee)
+            if not isinstance(member, JsMemberExpression):
+                return None
+            model = model_cache(self, root).model
+            if model.scope_of(member) is None:
+                return None
+            return model.global_alias_member_name(member)
+        return resolve
+
     def _inline_statements(self, root: JsScript) -> None:
         for container in list(root.walk()):
             body = get_body(container)
@@ -823,7 +830,7 @@ class JsReflectionInlining(ScriptLevelTransformer):
         (whose global or transient environment a local function cannot reproduce) or a `return`/`await`
         that a plain function body cannot host declines the lowering, leaving the string timer intact.
         """
-        code = _extract_timer_code(node)
+        code = _extract_timer_code(node, alias_name=self._alias_member_name(root))
         if code is None:
             return
         resolved = self._resolve_reflected_body(
@@ -905,6 +912,7 @@ class JsReflectionInlining(ScriptLevelTransformer):
         code's completion value, and its deferred execution is preserved instead by `_lower_timers`.
         """
         read_effect = self._dynamic_read_effect(root)
+        alias_name = self._alias_member_name(root)
         constructor = _invoked_function_constructor_code(node, read_effect)
         if constructor is not None:
             code, binds = constructor
@@ -918,7 +926,7 @@ class JsReflectionInlining(ScriptLevelTransformer):
                 direct, site, root, ReflectedScope.DIRECT_EVAL, at_global_scope,
             )
             return (ReflectedScope.DIRECT_EVAL, parsed) if parsed is not None else None
-        code = _extract_indirect_eval_code(node, read_effect)
+        code = _extract_indirect_eval_code(node, read_effect, alias_name=alias_name)
         if code is not None:
             parsed = self._resolve_reflected_body(
                 code, site, root, ReflectedScope.GLOBAL_EVAL, at_global_scope,

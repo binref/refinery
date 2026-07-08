@@ -60,6 +60,35 @@ class TestReflectionInlining(TestJsDeobfuscator):
     def test_indirect_eval_globalthis(self):
         self.assertEqual('var x = 1;', self._reflect("globalThis.eval('var x = 1;');"))
 
+    def test_indirect_eval_computed_alias_member(self):
+        self.assertEqual('var x = 1;', self._reflect("globalThis['eval']('var x = 1;');"))
+
+    def test_indirect_eval_shadowed_alias_base_not_inlined(self):
+        """
+        `window` is a local parameter, so `window.eval` is that object's method, not the global eval.
+        """
+        source = inspect.cleandoc(
+            """
+            function f(window) {
+              return window.eval("1");
+            }
+            """
+        )
+        self.assertEqual(source, self._reflect(source))
+
+    def test_indirect_eval_alias_base_in_with_not_inlined(self):
+        """
+        Inside a `with` body the base `window` may resolve to a property of the `with` object.
+        """
+        source = inspect.cleandoc(
+            """
+            with (o) {
+              window.eval("1");
+            }
+            """
+        )
+        self.assertEqual(source, self._reflect(source))
+
     def test_indirect_eval_prefix_read_in_with_not_inlined(self):
         """
         The bare name `e` in the comma-sequence prefix of `(e, eval)(...)` inside a `with` body fires
@@ -268,6 +297,19 @@ class TestReflectionInlining(TestJsDeobfuscator):
     def test_member_form_function_timer_not_inlined(self):
         self.assertEqual(
             'window.setTimeout(fn, 0);', self._reflect('window.setTimeout(fn, 0);'))
+
+    def test_member_form_string_timer_shadowed_base_not_lowered(self):
+        """
+        `window` is a local parameter, so `window.setTimeout` is that object's method, not the timer.
+        """
+        source = inspect.cleandoc(
+            """
+            function f(window) {
+              window.setTimeout("g()", 0);
+            }
+            """
+        )
+        self.assertEqual(source, self._reflect(source))
 
     def test_top_alias_indirect_eval_inlined(self):
         self.assertEqual('var x = 1;', self._reflect("top.eval('var x = 1;');"))
