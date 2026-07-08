@@ -9,6 +9,7 @@ from refinery.lib.scripts import Node, Transformer
 from refinery.lib.scripts.js.analysis.cache import model_cache
 from refinery.lib.scripts.js.analysis.effects import EffectModel, build_effects
 from refinery.lib.scripts.js.analysis.model import (
+    GUARANTEED_GLOBALS,
     BindingKind,
     SemanticModel,
 )
@@ -246,6 +247,18 @@ class JsSimplifications(Transformer):
             return True
         binding = self.model.lookup(name, scope)
         return binding is not None and binding.kind is not BindingKind.IMPLICIT_GLOBAL
+
+    def _alias_property_defined(self, member: JsMemberExpression, name: str) -> bool:
+        """
+        Whether a bare read of *name* where *member* sits is guaranteed to resolve, so collapsing
+        `<global-alias>.name` to `name` cannot turn the member read's `undefined` into a
+        `ReferenceError`. A free name must be one the specification mandates on the global object
+        (`GUARANTEED_GLOBALS`); a name the program itself defines as a global carries a binding.
+        """
+        binding = self.model.lookup(name, self.model.scope_of(member))
+        if binding is None:
+            return name in GUARANTEED_GLOBALS
+        return True
 
     def visit_JsBinaryExpression(self, node: JsBinaryExpression):
         self.generic_visit(node)
@@ -547,6 +560,7 @@ class JsSimplifications(Transformer):
             and isinstance(node.property, JsIdentifier)
             and self.model.global_alias_member_name(node) is not None
             and not self._resolves_to_local(node, node.property.name)
+            and self._alias_property_defined(node, node.property.name)
         ):
             p = node.parent
             if isinstance(p, JsAssignmentExpression) and p.left is node:

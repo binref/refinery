@@ -88,6 +88,30 @@ TIMER_NAMES = frozenset({'setTimeout', 'setInterval', 'setImmediate', 'execScrip
 
 REFLECTIVE_INTRINSICS = frozenset({'eval', 'Function'})
 
+GUARANTEED_GLOBALS = frozenset({
+    'globalThis', 'NaN', 'Infinity', 'undefined',
+    'eval', 'isFinite', 'isNaN', 'parseFloat', 'parseInt',
+    'decodeURI', 'decodeURIComponent', 'encodeURI', 'encodeURIComponent',
+    'Object', 'Function', 'Boolean', 'Symbol', 'BigInt',
+    'Error', 'AggregateError', 'EvalError', 'RangeError', 'ReferenceError',
+    'SyntaxError', 'TypeError', 'URIError',
+    'Number', 'Math', 'Date', 'String', 'RegExp',
+    'Array', 'Int8Array', 'Uint8Array', 'Uint8ClampedArray', 'Int16Array', 'Uint16Array',
+    'Int32Array', 'Uint32Array', 'Float32Array', 'Float64Array', 'BigInt64Array', 'BigUint64Array',
+    'Map', 'Set', 'WeakMap', 'WeakSet', 'WeakRef', 'FinalizationRegistry',
+    'ArrayBuffer', 'DataView', 'JSON', 'Promise', 'Reflect', 'Proxy',
+})
+"""
+Names the ECMAScript specification mandates as properties of the global object and that every mainstream
+engine exposes unconditionally, so a bare read of one is guaranteed to resolve rather than throw a
+`ReferenceError`. This is an *existence* allowlist — distinct from the getter-purity and host-presence
+sets in `refinery.lib.scripts.js.analysis.effects` — used to decide whether `<global-alias>.name` may be
+collapsed to the bare `name` without turning the member read's `undefined` into a throw. It excludes host
+and alias names (`window`, `self`, `global`, `top`, `frames`, `console`, timers, `Buffer`, …) that are not
+universal, and `SharedArrayBuffer`/`Atomics`, which a conformant host may withhold outside a
+cross-origin-isolated context.
+"""
+
 _PATTERN_CONTAINERS = (
     JsArrayExpression,
     JsArrayPattern,

@@ -197,6 +197,27 @@ class TestDeobfuscationDifferential(TestBase):
             ' function probe(){ try { throw "caught"; } catch (X) { return globalThis.X; } }'
             ' console.log(probe());')
 
+    def test_free_global_alias_member_read_preserved(self):
+        """
+        `globalThis.X` for a free `X` yields `undefined`; collapsing it to a bare `X` would throw a
+        ReferenceError, so the member read must be preserved.
+        """
+        self._check('console.log(globalThis.notDeclaredAnywhere);')
+
+    def test_non_universal_global_alias_member_read_preserved(self):
+        """
+        `execScript` exists in no mainstream host: `globalThis.execScript` is `undefined` while a bare
+        read throws, so a spec-existence tier that wrongly admitted it would diverge here.
+        """
+        self._check('console.log(globalThis.execScript);')
+
+    def test_shadowed_alias_base_member_read_preserved(self):
+        """
+        `self` is a parameter holding an ordinary object, not the global object, so `self.Array` reads
+        that object's property; collapsing it to the global `Array` would corrupt the value.
+        """
+        self._check('console.log((function (self) { return self.Array; })({ Array: 7 }));')
+
     def test_namespace_flatten_preserves_block_scoped_shadow(self):
         """
         Flattening `NS.x` to a script-level `var x` must respect a `let x` that block-scopes a

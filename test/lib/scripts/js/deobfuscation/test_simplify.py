@@ -751,8 +751,15 @@ class TestParenthesisPreservation(TestJsDeobfuscator):
 
 class TestGlobalAliasStripping(TestJsDeobfuscator):
 
-    def test_global_alias_stripped_when_not_shadowed(self):
-        self.assertEqual('y = X;', self._simplify('y = globalThis.X;'))
+    def test_free_name_alias_member_not_stripped(self):
+        """
+        `X` is free — a bare read would throw where `globalThis.X` yields `undefined` — so the alias
+        member is preserved rather than collapsed into a `ReferenceError`.
+        """
+        self.assertEqual('y = globalThis.X;', self._simplify('y = globalThis.X;'))
+
+    def test_guaranteed_global_alias_member_stripped(self):
+        self.assertEqual('y = String;', self._simplify('y = globalThis.String;'))
 
     def test_global_alias_preserved_when_locally_shadowed(self):
         source = inspect.cleandoc(
@@ -763,8 +770,12 @@ class TestGlobalAliasStripping(TestJsDeobfuscator):
         )
         self.assertEqual(source, self._simplify(source))
 
-    def test_window_alias_stripped_when_not_shadowed(self):
-        self.assertEqual('y = console;', self._simplify('y = window.console;'))
+    def test_host_global_alias_member_not_stripped(self):
+        """
+        `console` exists in every mainstream host but is not spec-mandated, so the analyzer cannot prove
+        a bare read resolves; the alias member is conservatively preserved.
+        """
+        self.assertEqual('y = window.console;', self._simplify('y = window.console;'))
 
     def test_global_alias_preserved_when_shadowed_by_param(self):
         source = inspect.cleandoc(
@@ -843,8 +854,8 @@ class TestGlobalAliasStripping(TestJsDeobfuscator):
         )
         self.assertEqual(source, self._simplify(source))
 
-    def test_global_alias_stripped_in_call_argument(self):
-        self.assertEqual('f(X);', self._simplify('f(globalThis.X);'))
+    def test_free_name_alias_member_in_argument_not_stripped(self):
+        self.assertEqual('f(globalThis.X);', self._simplify('f(globalThis.X);'))
 
     def test_global_alias_not_stripped_from_call_callee(self):
         """
