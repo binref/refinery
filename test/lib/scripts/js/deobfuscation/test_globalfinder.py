@@ -139,3 +139,40 @@ class TestGlobalFinderInlining(TestJsDeobfuscator):
             '''
         )
         self.assertEqual(source, self._find(source))
+
+    def test_reassigned_finder_is_not_substituted(self):
+        """
+        The finder name is reassigned before the call, so the call may reach the replacement rather
+        than the finder; substituting `globalThis` would drop the replacement's side effect.
+        """
+        source = inspect.cleandoc(
+            '''
+            function finder() {
+              return globalThis;
+            }
+            finder = function() {
+              console.log("side effect");
+              return globalThis;
+            };
+            var g = finder();
+            '''
+        )
+        self.assertEqual(source, self._find(source))
+
+    def test_redeclared_finder_is_not_substituted(self):
+        """
+        The name has two declarations, so a call resolves to the last by hoisting; the binding no
+        longer pins one function and the call is left intact.
+        """
+        source = inspect.cleandoc(
+            '''
+            function finder() {
+              return globalThis;
+            }
+            function finder() {
+              return window;
+            }
+            finder();
+            '''
+        )
+        self.assertEqual(source, self._find(source))

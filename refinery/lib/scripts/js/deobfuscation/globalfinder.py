@@ -75,7 +75,7 @@ class JsGlobalFinderInlining(ScriptLevelTransformer):
             callee = _unwrap(call.callee)
             if not isinstance(callee, JsIdentifier):
                 continue
-            target = _function_of(model.resolve(callee))
+            target = cache.effects.function_of(model.resolve(callee))
             if target is None or id(target) not in finder_ids or _within(call, target):
                 continue
             scope = model.scope_of(call)
@@ -266,15 +266,6 @@ def _function_declarations(binding: Binding | None) -> list[Node]:
     if binding is None:
         return []
     return [decl.parent for decl in binding.declarations if isinstance(decl.parent, _FUNCTION_NODES)]
-
-
-def _function_of(binding: Binding | None) -> JsFunctionDeclaration | None:
-    if binding is None:
-        return None
-    for decl in binding.declarations:
-        if isinstance(decl.parent, JsFunctionDeclaration):
-            return decl.parent
-    return None
 
 
 def _own_nodes(func: Node) -> Iterator[Node]:
