@@ -852,6 +852,18 @@ class SemanticModel:
             for ref in self.dynamic_references(binding)
         )
 
+    def binding_never_reassigned(self, binding: Binding) -> bool:
+        """
+        Whether *binding* holds one value for its whole lifetime: it is never written after its
+        declaration, statically (`writes`) or through a dynamic scope
+        (`binding_maybe_reassigned_dynamically`). This is the value-stability contract a caller needs
+        before treating the binding's initializer as its value everywhere — distinct from the
+        orderability contract `dynamic_refs` expresses (whether every reference can be ranked), which a
+        `with`-body read violates while a stable value does not. It does not itself require a single
+        declaration; a caller that needs one checks `declarations` alongside.
+        """
+        return not binding.writes and not self.binding_maybe_reassigned_dynamically(binding)
+
     def _function_has_direct_eval(self, function: Node) -> bool:
         cached = self._function_direct_eval.get(id(function))
         if cached is None:

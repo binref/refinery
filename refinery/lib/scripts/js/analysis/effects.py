@@ -80,8 +80,6 @@ from refinery.lib.scripts.js.model import (
     JsVariableDeclarator,
 )
 
-_FunctionNode = JsFunctionDeclaration | JsFunctionExpression | JsArrowFunctionExpression
-
 _PURE_INTRINSIC_METHODS = frozenset({
     'String.fromCharCode',
     'Array.isArray',
@@ -664,9 +662,9 @@ class EffectModel:
         if not isinstance(callee, JsIdentifier):
             return None
         binding = self.model.resolve(callee)
-        if binding is None or binding.writes or len(binding.declarations) != 1:
+        if binding is None or len(binding.declarations) != 1:
             return None
-        if self.model.binding_maybe_reassigned_dynamically(binding):
+        if not self.model.binding_never_reassigned(binding):
             return None
         decl = binding.declarations[0]
         parent = decl.parent
@@ -941,11 +939,9 @@ class EffectModel:
         (`writes`), redeclared (more than one declaration), dynamically rebindable, or not bound to a
         function. The binding-level twin of `static_callee`.
         """
-        if binding is None:
+        if binding is None or len(binding.declarations) != 1:
             return None
-        if binding.writes or len(binding.declarations) != 1:
-            return None
-        if self.model.binding_maybe_reassigned_dynamically(binding):
+        if not self.model.binding_never_reassigned(binding):
             return None
         decl = binding.declarations[0]
         parent = decl.parent

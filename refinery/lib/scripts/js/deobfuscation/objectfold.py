@@ -215,8 +215,7 @@ class JsObjectFold(ScopeProcessingTransformer):
         reference, or a self-contained function wrapper all remain foldable.
         """
         return all(
-            binding is None
-            or (not binding.writes and not model.binding_maybe_reassigned_dynamically(binding))
+            binding is None or model.binding_never_reassigned(binding)
             for _, binding in _free_external_bindings(model, value)
         )
 

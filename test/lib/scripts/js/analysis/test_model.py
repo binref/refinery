@@ -759,6 +759,30 @@ class TestSemanticModel(TestBase):
         ast, model = self._model('function f(){ var x; } eval(payload);')
         self.assertFalse(model.reachable_by_opaque_reflection(self._binding(ast, model, 'x')))
 
+    def test_binding_never_reassigned_holds_for_a_write_free_binding(self):
+        ast, model = self._model('var x = 1; console.log(x);')
+        self.assertTrue(model.binding_never_reassigned(self._binding(ast, model, 'x')))
+
+    def test_binding_never_reassigned_false_when_statically_written(self):
+        ast, model = self._model('var x = 1; x = 2; console.log(x);')
+        self.assertFalse(model.binding_never_reassigned(self._binding(ast, model, 'x')))
+
+    def test_binding_never_reassigned_false_when_a_with_may_rebind_it(self):
+        ast, model = self._model('var x = 1; function f(o){ with (o) { x = 2; } }')
+        self.assertFalse(model.binding_never_reassigned(self._binding(ast, model, 'x')))
+
+    def test_binding_never_reassigned_holds_when_a_with_only_reads_it(self):
+        """
+        A `with`-body read does not rebind the name, so the value stays stable — the distinction between
+        value stability, which this reports, and orderability, which the read still breaks.
+        """
+        ast, model = self._model('var x = 1; function f(o){ with (o) { g(x); } }')
+        self.assertTrue(model.binding_never_reassigned(self._binding(ast, model, 'x')))
+
+    def test_binding_never_reassigned_false_when_a_local_direct_eval_may_rebind_it(self):
+        ast, model = self._model('function f(){ var x = 1; eval("x = 2"); return x; }')
+        self.assertFalse(model.binding_never_reassigned(self._binding(ast, model, 'x')))
+
     def test_indirect_comma_eval_is_a_reflection_surface(self):
         _, model = self._model("var G = 1; (0, eval)('G');")
         self.assertTrue(model.has_reflection_surface())
