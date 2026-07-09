@@ -4,7 +4,7 @@ import ipaddress
 import logging
 
 from enum import IntEnum, IntFlag
-from typing import NamedTuple
+from typing import Iterator, NamedTuple
 
 from refinery.lib.structures import EOF, Struct, StructReader
 
@@ -53,24 +53,56 @@ class FlowKey(NamedTuple):
 
 class TcpSegment(NamedTuple):
     seq: int
-    data: bytes
+    data: memoryview
     packet_index: int
 
 
-class TcpDatagram(NamedTuple):
+class CapturedPacket(NamedTuple):
+    link_type: LinkType
+    frame: memoryview
+    seconds: float | None
+
+
+class NetworkPacket(NamedTuple):
+    ether_type: EtherType
+    payload: memoryview
+    link_type: LinkType
+    seconds: float | None
+
+
+class TransportSegment(NamedTuple):
+    protocol: IPProtocol
+    src_addr: str
+    dst_addr: str
+    src_port: int
+    dst_port: int
+    seq: int
+    ack: int
+    payload: memoryview
+
+
+class Datagram(NamedTuple):
+    protocol: IPProtocol
     src_addr: str
     dst_addr: str
     src_port: int
     dst_port: int
     payload: bytearray
-    first_packet_index: int
 
 
-def _read_pcap_global_header(reader: StructReader) -> LinkType:
-    if (magic := reader.u32()) in (0xA1B2C3D4, 0xA1B23C4D):
+def _read_pcap_global_header(reader: StructReader) -> tuple[LinkType, float]:
+    if (magic := reader.u32()) == 0xA1B2C3D4:
         reader.bigendian = False
-    elif magic in (0xD4C3B2A1, 0x4D3CB2A1):
+        ts_scale = 1e-6
+    elif magic == 0xA1B23C4D:
+        reader.bigendian = False
+        ts_scale = 1e-9
+    elif magic == 0xD4C3B2A1:
         reader.bigendian = True
+        ts_scale = 1e-6
+    elif magic == 0x4D3CB2A1:
+        reader.bigendian = True
+        ts_scale = 1e-9
     else:
         raise ValueError(F'invalid PCAP magic: 0x{magic:08X}')
     reader.u16()  # version_major
@@ -79,18 +111,18 @@ def _read_pcap_global_header(reader: StructReader) -> LinkType:
     reader.u32()  # sigfigs
     reader.u32()  # snaplen
     link_type = LinkType(reader.u32())
-    return link_type
+    return link_type, ts_scale
 
 
-def _iter_pcap_classic(reader: StructReader):
+def _iter_pcap_classic(reader: StructReader) -> Iterator[CapturedPacket]:
     try:
-        link_type = _read_pcap_global_header(reader)
+        link_type, ts_scale = _read_pcap_global_header(reader)
     except EOF:
         return
     while not reader.eof:
         try:
-            reader.u32()  # ts_sec
-            reader.u32()  # ts_usec
+            ts_sec = reader.u32()
+            ts_frac = reader.u32()
             incl_len = reader.u32()
             reader.u32()  # orig_len
         except EOF:
@@ -99,11 +131,32 @@ def _iter_pcap_classic(reader: StructReader):
             packet_data = reader.read_exactly(incl_len)
         except EOF:
             break
-        yield link_type, memoryview(packet_data)
+        seconds = ts_sec + ts_frac * ts_scale
+        yield CapturedPacket(link_type, memoryview(packet_data), seconds)
 
 
-def _iter_pcap_ng(reader: StructReader):
-    interfaces: list[LinkType] = []
+def _read_ng_timestamp_scale(options: memoryview, bigendian: bool) -> float:
+    order = 'big' if bigendian else 'little'
+    offset = 0
+    scale = 1e-6
+    while offset + 4 <= len(options):
+        code = int.from_bytes(options[offset + 0:offset + 2], order)
+        size = int.from_bytes(options[offset + 2:offset + 4], order)
+        offset += 4
+        if code == 0:
+            break
+        if code == 9 and size >= 1 and offset < len(options):
+            resolution = options[offset]
+            if resolution & 0x80:
+                scale = 2.0 ** -(resolution & 0x7F)
+            else:
+                scale = 10.0 ** -resolution
+        offset += (size + 3) & ~3
+    return scale
+
+
+def _iter_pcap_ng(reader: StructReader) -> Iterator[CapturedPacket]:
+    interfaces: list[tuple[LinkType, float]] = []
 
     while not reader.eof:
         try:
@@ -118,6 +171,7 @@ def _iter_pcap_ng(reader: StructReader):
 
         try:
             if block_type == 0x0A0D0D0A:
+                interfaces.clear()
                 bom = reader.u32()
                 if bom == 0x1A2B3C4D:
                     needs_swap = reader.bigendian
@@ -141,22 +195,26 @@ def _iter_pcap_ng(reader: StructReader):
                 lt = LinkType(reader.u16())
                 reader.u16()  # reserved
                 reader.u32()  # snap_len
-                interfaces.append(lt)
                 remaining = body_length - 8
                 if remaining > 0:
-                    reader.read_exactly(remaining)
+                    options = memoryview(reader.read_exactly(remaining))
+                else:
+                    options = memoryview(b'')
+                scale = _read_ng_timestamp_scale(options, reader.bigendian)
+                interfaces.append((lt, scale))
             elif block_type == 0x00000006:
                 iface_id = reader.u32()
-                reader.u32()  # timestamp_high
-                reader.u32()  # timestamp_low
+                timestamp_high = reader.u32()
+                timestamp_low = reader.u32()
                 captured_len = reader.u32()
                 reader.u32()  # original_len
                 if iface_id < len(interfaces):
-                    lt = interfaces[iface_id]
+                    lt, scale = interfaces[iface_id]
                 else:
-                    lt = LinkType.ETHERNET
+                    lt, scale = LinkType.ETHERNET, 1e-6
                 packet_data = reader.read_exactly(captured_len)
-                yield lt, memoryview(packet_data)
+                seconds = ((timestamp_high << 32) | timestamp_low) * scale
+                yield CapturedPacket(lt, memoryview(packet_data), seconds)
                 padded = (captured_len + 3) & ~3
                 skip = padded - captured_len
                 remaining = body_length - 20 - padded
@@ -293,11 +351,24 @@ class _TcpHeader(Struct[memoryview]):
         self.payload = reader.read_exactly(reader.remaining_bytes)
 
 
+class _UdpHeader(Struct[memoryview]):
+    def __init__(self, reader: StructReader[memoryview]):
+        reader.bigendian = True
+        self.src_port = reader.u16()
+        self.dst_port = reader.u16()
+        length = reader.u16()
+        self.checksum = reader.u16()
+        payload_length = length - 8
+        if payload_length < 0 or payload_length > reader.remaining_bytes:
+            payload_length = reader.remaining_bytes
+        self.payload = reader.read_exactly(payload_length)
+
+
 class _TcpStream:
     def __init__(self):
         self.segments: list[TcpSegment] = []
 
-    def add(self, seq: int, data: bytes, packet_index: int):
+    def add(self, seq: int, data: memoryview, packet_index: int):
         if data:
             self.segments.append(TcpSegment(seq, data, packet_index))
 
@@ -319,59 +390,159 @@ class _TcpStream:
         return result
 
 
-def reassemble_tcp_streams(data: bytes | bytearray | memoryview) -> list[TcpDatagram]:
+def iter_captured_packets(
+    data: bytes | bytearray | memoryview
+) -> Iterator[CapturedPacket]:
+    """
+    Iterates over the raw link-layer frames of a classic PCAP or PCAP-NG capture. The capture
+    format is selected based on the file magic. Each `CapturedPacket` carries the frame bytes,
+    the interface `LinkType`, and the capture timestamp in epoch seconds when available.
+    """
     view = memoryview(data)
     reader = StructReader(view)
-    magic = bytes(view[:4])
     reader.bigendian = False
-
-    if magic == b'\x0A\x0D\x0D\x0A':
-        packet_iter = _iter_pcap_ng(reader)
+    if bytes(view[:4]) == b'\x0A\x0D\x0D\x0A':
+        yield from _iter_pcap_ng(reader)
     else:
-        packet_iter = _iter_pcap_classic(reader)
+        yield from _iter_pcap_classic(reader)
 
-    flows: dict[FlowKey, _TcpStream] = {}
-    flow_first_packet: dict[FlowKey, int] = {}
-    packet_index = 0
 
-    for link_type, frame in packet_iter:
-        packet_index += 1
+def iter_network_layers(
+    data: bytes | bytearray | memoryview
+) -> Iterator[NetworkPacket]:
+    """
+    Iterates over the network-layer payloads of a capture by unwrapping the link layer of each
+    captured packet using `refinery.lib.pcap.iter_captured_packets`. Frames whose link layer
+    does not carry IPv4 or IPv6 are skipped.
+    """
+    for packet in iter_captured_packets(data):
         try:
-            result = _parse_link_layer(link_type, frame)
-            if result is None:
-                continue
-            ether_type, ip_data = result
-            if ether_type == EtherType.IPv4:
-                ip = _IPv4Header.Parse(ip_data)
-            elif ether_type == EtherType.IPv6:
-                ip = _IPv6Header.Parse(ip_data)
-            else:
-                continue
-            if ip.protocol != IPProtocol.TCP:
-                continue
-            tcp = _TcpHeader.Parse(ip.payload)
-            key = FlowKey(
-                ip.src, tcp.src_port, ip.dst, tcp.dst_port, tcp.ack)
-            if key not in flow_first_packet:
-                flow_first_packet[key] = packet_index
-            payload_bytes = bytes(tcp.payload)
-            if payload_bytes:
-                if key not in flows:
-                    flows[key] = _TcpStream()
-                flows[key].add(tcp.seq, payload_bytes, packet_index)
+            result = _parse_link_layer(packet.link_type, packet.frame)
         except Exception:
-            logger.debug('failed to parse packet %d', packet_index, exc_info=True)
+            logger.debug('failed to parse link layer', exc_info=True)
             continue
+        if result is None:
+            continue
+        ether_type, payload = result
+        yield NetworkPacket(ether_type, payload, packet.link_type, packet.seconds)
 
-    datagrams: list[TcpDatagram] = []
+
+def parse_transport_segment(
+    network_payload: bytes | bytearray | memoryview,
+    protocol: IPProtocol,
+) -> TransportSegment | None:
+    """
+    Parses a single network-layer payload (starting at the IP header) into a `TransportSegment`
+    of the requested `IPProtocol`. The IP version is detected from the header, and `None` is
+    returned when the payload does not parse or does not carry the requested protocol.
+    """
+    view = memoryview(network_payload)
+    if not view:
+        return None
+    version = view[0] >> 4
+    try:
+        if version == 4:
+            ip = _IPv4Header.Parse(view)
+        elif version == 6:
+            ip = _IPv6Header.Parse(view)
+        else:
+            return None
+        if ip.protocol != protocol:
+            return None
+        if protocol == IPProtocol.TCP:
+            tcp = _TcpHeader.Parse(ip.payload)
+            return TransportSegment(
+                IPProtocol.TCP,
+                ip.src,
+                ip.dst,
+                tcp.src_port,
+                tcp.dst_port,
+                tcp.seq,
+                tcp.ack,
+                tcp.payload,
+            )
+        else:
+            udp = _UdpHeader.Parse(ip.payload)
+            return TransportSegment(
+                IPProtocol.UDP,
+                ip.src,
+                ip.dst,
+                udp.src_port,
+                udp.dst_port,
+                0,
+                0,
+                udp.payload,
+            )
+    except Exception:
+        logger.debug('failed to parse network-layer packet', exc_info=True)
+        return None
+
+
+def iter_transport(
+    data: bytes | bytearray | memoryview,
+    protocol: IPProtocol,
+) -> Iterator[TransportSegment]:
+    """
+    Iterates over the `TransportSegment`s of the requested `IPProtocol` in a capture, combining
+    `refinery.lib.pcap.iter_network_layers` with `refinery.lib.pcap.parse_transport_segment`.
+    """
+    for packet in iter_network_layers(data):
+        segment = parse_transport_segment(packet.payload, protocol)
+        if segment is not None:
+            yield segment
+
+
+def reassemble_tcp(segments: Iterator[TransportSegment]) -> list[Datagram]:
+    """
+    Reassembles a sequence of TCP `TransportSegment`s into `Datagram`s. Segments are grouped by
+    their four-tuple and acknowledgement number so that each half of every exchange is emitted
+    as a separate `Datagram`, ordered by the position of the first contributing segment.
+    """
+    flows: dict[FlowKey, _TcpStream] = {}
+    first_index: dict[FlowKey, int] = {}
+    for index, segment in enumerate(segments):
+        key = FlowKey(
+            segment.src_addr,
+            segment.src_port,
+            segment.dst_addr,
+            segment.dst_port,
+            segment.ack,
+        )
+        if key not in first_index:
+            first_index[key] = index
+        if segment.payload:
+            flows.setdefault(key, _TcpStream()).add(segment.seq, segment.payload, index)
+    datagrams: list[tuple[int, Datagram]] = []
     for key, stream in flows.items():
         payload = stream.reassemble()
         if payload:
-            first_idx = flow_first_packet[key]
-            datagrams.append(TcpDatagram(
-                key.src_addr, key.dst_addr, key.src_port, key.dst_port,
-                payload, first_idx,
-            ))
+            datagrams.append((first_index[key], Datagram(
+                IPProtocol.TCP,
+                key.src_addr,
+                key.dst_addr,
+                key.src_port,
+                key.dst_port,
+                payload,
+            )))
+    datagrams.sort(key=lambda item: item[0])
+    return [datagram for _, datagram in datagrams]
 
-    datagrams.sort(key=lambda d: d.first_packet_index)
+
+def reassemble_udp(segments: Iterator[TransportSegment]) -> list[Datagram]:
+    """
+    Collects a sequence of UDP `TransportSegment`s into `Datagram`s. Each UDP payload is a
+    message boundary in its own right, so every segment with a payload becomes one `Datagram`,
+    preserving capture order.
+    """
+    datagrams: list[Datagram] = []
+    for segment in segments:
+        if segment.payload:
+            datagrams.append(Datagram(
+                IPProtocol.UDP,
+                segment.src_addr,
+                segment.dst_addr,
+                segment.src_port,
+                segment.dst_port,
+                bytearray(segment.payload),
+            ))
     return datagrams

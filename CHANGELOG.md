@@ -6,6 +6,7 @@
 > Otherwise, the changelog entries highlight only new or changed functionality.
 
 ## Version 0.11.1
+- The `pcap` unit was refactored into modular network units. It now emits one chunk per packet and no longer reassembles TCP streams by itself. The new units `tcp` and `udp` perform stream reassembly, and the former `pcap-http` unit is now called `http`. The equivalent of the old behavior is the pipeline `pcap [| tcp ]`, and HTTP payloads are extracted with `pcap [| tcp | http ]`.
 
 ## Version 0.11.0
 - Starting with 0.11.0, binary refinery requires Python 3.10 as the minimum Python version to run.

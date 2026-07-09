@@ -1,12 +1,23 @@
 import base64
-import hashlib
 import lzma
 import pytest
 
-from refinery.lib.pcap import IPProtocol, TcpDatagram, reassemble_tcp_streams
+from refinery.lib.pcap import (
+    Datagram,
+    IPProtocol,
+    iter_captured_packets,
+    iter_network_layers,
+    iter_transport,
+    reassemble_tcp,
+    _read_ng_timestamp_scale,
+)
 
 from .. import TestUnitBase
-from . import test_pcap_http
+from . import test_http
+
+
+def _import_http_sample() -> bytes:
+    return test_http.TestHTTP._HTTP_SAMPLE_01
 
 
 _PCAPNG_SAMPLE = lzma.decompress(base64.b85decode(
@@ -62,150 +73,75 @@ _PCAPNG_SAMPLE = lzma.decompress(base64.b85decode(
 class TestPCAP(TestUnitBase):
 
     @pytest.mark.xdist_group(name='pcap')
-    def test_pe_extraction_from_pcap(self):
-        data = self.download_sample('1baf0e669f38b94487b671fab59929129b5b1c2755bc00510812e8a96a53e10e')
-        pipeline = self.ldu('pcap-http')
-        test = {
-            hashlib.sha256(chunk).hexdigest(): str(chunk['url'])
-            for chunk in data | pipeline
-        }
-        goal = {
-            'ad2b64410eb0d5a009d56583891e0ed36635d000044aeaaaf0003bb3e373ca2b': 'http:/''/163.fuckunion''.com/286//update.txt',
-            '6494f132d23a9e1081150e954bbb11b577c260a7f4fc654044bf6ddb0793ea2a': 'http:/''/163.fuckunion''.com/286/soft/163.exe',
-            'db604c662d8b659ef96558c8a572764e2479d911ae4a7e295a16bbf84aec5ab7': 'http:/''/www.tao168188''.com/mh.exe',
-            '264dc5686bc2a6a75ae8f70692332042a73230f4159478711a32fe4dd4c5ec09': 'http:/''/163.fuckunion''.com/286/pop.asp?url=http://www.puma164.com/pu/39685867.htm?2',
-            '78e42e7616421aa1f6a30aef6e6ef347e82d592992df7259fa94c550d9382767': 'http:/''/163.fuckunion''.com/286/count/count.asp?mac=00-0E-0C-33-1C-80&ver=2007051922&user=00&md5=258a993832e5f435cc3a7ba4791bc3de&pc=BOBTWO',
-            '9972394d4d8d51abf15bfaf6c1ddfe9c8bf85ae0b9b0a561adfd9b4844c520b9': 'http:/''/www.tao168188''.com/12.exe',
-            'e682dfcdde010f6e15bae0d843696f6ae8d5a85e75441660b782789ee747f075': 'http:/''/163.fuckunion''.com/favicon.ico',
-            '302e8c6bb616ec55276915c6f2373bafa031970479ea9ab2e2e96f4e9d8b6730': 'http:/''/163.fuckunion''.com/286/pop.asp?url=http://59.34.197.164:81/804635/adx352133.asp',
-        }
-        self.assertDictEqual(test, goal)
+    def test_network_layer_packet_count(self):
+        packets = _PCAPNG_SAMPLE | self.load() | [bytes]
+        self.assertEqual(len(packets), 40)
 
     @pytest.mark.xdist_group(name='pcap')
-    def test_get_request_summary(self):
-        data = self.download_sample('1baf0e669f38b94487b671fab59929129b5b1c2755bc00510812e8a96a53e10e')
-        pipeline = self.load_pipeline(R'pcap [| rex "^GET\s[^\s]+" | sep ]')
-        result = str(data | pipeline)
-        self.assertEqual(result, '\n'.join((
-            'GET /286//update.txt',
-            'GET /286/soft/163.exe',
-            'GET /286/count/count.asp?mac=00-0E-0C-33-1C-80&ver=2007051922&user=00&md5=258a993832e5f435cc3a7ba4791bc3de&pc=BOBTWO',
-            'GET /mh.exe',
-            'GET /286/pop.asp?url=http://www.puma164.''com/pu/39685867.htm?2',
-            'GET /favicon.ico',
-            'GET /12.exe',
-            'GET /286/pop.asp?url=http://59.34.197.''164:81/804635/adx352133.asp',
-        )))
+    def test_network_layer_labels(self):
+        chunks = list(_PCAPNG_SAMPLE | self.load())
+        self.assertEqual(chunks[0]['link'], 'ETHERNET')
+        self.assertEqual(chunks[0]['time'], '2024-07-24 18:37:37+00:00')
 
     @pytest.mark.xdist_group(name='pcap')
-    def test_flaron11_challenge7(self):
-        data = _PCAPNG_SAMPLE
-        goal = [bytes.fromhex(p) for p in [
-            '0a 6c 55 90 73 da 49 75  4e 9a d9 84 6a 72 95 47'
-            '45 e4 f2 92 12 13 ec cd  a4 b1 42 2e 2f dd 64 6f'
-            'c7 e2 83 89 c7 c2 e5 1a  59 1e 01 47 e2 eb e7 ae'
-            '26 40 22 da f8 c7 67 6a  1b 27 20 91 7b 82 99 9d'
-            '42 cd 18 78 d3 1b c5 7b  6d b1 7b 97 05 c7 ff 24'
-            '04 cb bf 13 cb db 8c 09  66 21 63 40 45 29 39 22',
-            # ------------------------------------------------
-            'a0 d2 eb a8 17 e3 8b 03  cd 06 32 27 bd 32 e3 53'
-            '88 08 18 89 3a b0 23 78  d7 db 3c 71 c5 c7 25 c6'
-            'bb a0 93 4b 5d 5e 2d 3c  a6 fa 89 ff bb 37 4c 31'
-            '96 a3 5e af 2a 5e 0b 43  00 21 de 36 1a a5 8f 80'
-            '15 98 1f fd 0d 98 24 b5  0a f2 3b 5c cf 16 fa 4e'
-            '32 34 83 60 2d 07 54 53  4d 2e 7a 8a af 81 74 dc'
-            'f2 72 d5 4c 31 86 0f',
-            # ------------------------------------------------
-            '3f bd 43 da 3e e3 25',
-            # ------------------------------------------------
-            '86 df d7',
-            # ------------------------------------------------
-            'c5 0c ea 1c 4a a0 64 c3  5a 7f 6e 3a b0 25 84 41'
-            'ac 15 85 c3 62 56 de a8  3c ac 93 00 7a 0c 3a 29'
-            '86 4f 8e 28 5f fa 79 c8  eb 43 97 6d 5b 58 7f 8f'
-            '35 e6 99 54 71 16',
-            # ------------------------------------------------
-            'fc b1 d2 cd bb a9 79 c9  89 99 8c',
-            # ------------------------------------------------
-            '61 49 0b',
-            # ------------------------------------------------
-            'ce 39 da',
-            # ------------------------------------------------
-            '57 70 11 e0 d7 6e c8 eb  0b 82 59 33 1d ef 13 ee'
-            '6d 86 72 3e ac 9f 04 28  92 4e e7 f8 41 1d 4c 70'
-            '1b 4d 9e 2b 37 93 f6 11  7d d3 0d ac ba',
-            # ------------------------------------------------
-            '2c ae 60 0b 5f 32 ce a1  93 e0 de 63 d7 09 83 8b'
-            'd6',
-            # ------------------------------------------------
-            'a7 fd 35',
-            # ------------------------------------------------
-            'ed f0 fc',
-            # ------------------------------------------------
-            '80 2b 15 18 6c 7a 1b 1a  47 5d af 94 ae 40 f6 bb'
-            '81 af ce dc 4a fb 15 8a  51 28 c2 8c 91 cd 7a 88'
-            '57 d1 2a 66 1a ca ec',
-            # ------------------------------------------------
-            'ae c8 d2 7a 7c f2 6a 17  27 36 85',
-            # ------------------------------------------------
-            '35 a4 4e',
-            # ------------------------------------------------
-            '2f 39 17',
-            # ------------------------------------------------
-            'ed 09 44 7d ed 79 72 19  c9 66 ef 3d d5 70 5a 3c'
-            '32 bd b1 71 0a e3 b8 7f  e6 66 69 e0 b4 64 6f c4'
-            '16 c3 99 c3 a4 fe 1e dc  0a 3e c5 82 7b 84 db 5a'
-            '79 b8 16 34 e7 c3 af e5  28 a4 da 15 45 7b 63 78'
-            '15 37 3d 4e dc ac 21 59  d0 56',
-            # ------------------------------------------------
-            'f5 98 1f 71 c7 ea 1b 5d  8b 1e 5f 06 fc 83 b1 de'
-            'f3 8c 6f 4e 69 4e 37 06  41 2e ab f5 4e 3b 6f 4d'
-            '19 e8 ef 46 b0 4e 39 9f  2c 8e ce 84 17 fa',
-            # ------------------------------------------------
-            '40 08 bc',
-            # ------------------------------------------------
-            '54 e4 1e',
-            # ------------------------------------------------
-            'f7 01 fe e7 4e 80 e8 df  b5 4b 48 7f 9b 2e 3a 27'
-            '7f a2 89 cf 6c b8 df 98  6c dd 38 7e 34 2a c9 f5'
-            '28 6d a1 1c a2 78 40 84',
-            # ------------------------------------------------
-            '5c a6 8d 13 94 be 2a 4d  3d 4d 7c 82 e5',
-            # ------------------------------------------------
-            '31 b6 da c6 2e f1 ad 8d  c1 f6 0b 79 26 5e d0 de'
-            'aa 31 dd d2 d5 3a a9 fd  93 43 46 38 10 f3 e2 23'
-            '24 06 36 6b 48 41 53 33  d4 b8 ac 33 6d 40 86 ef'
-            'a0 f1 5e 6e 59',
-            # ------------------------------------------------
-            '0d 1e c0 6f 36',
-        ]]
+    def test_link_layer_mode_preserves_all_frames(self):
+        frames = list(iter_captured_packets(_PCAPNG_SAMPLE))
+        emitted = _PCAPNG_SAMPLE | self.load(link=True) | [bytes]
+        self.assertEqual(emitted, [bytes(f.frame) for f in frames])
 
+    @pytest.mark.xdist_group(name='pcap')
+    def test_handles_accepts_bytearray_and_memoryview(self):
         unit = self.load()
-        test = data | unit | [bytes]
-        self.assertEqual(test, goal)
+        self.assertTrue(unit.handles(_PCAPNG_SAMPLE))
+        self.assertTrue(unit.handles(bytearray(_PCAPNG_SAMPLE)))
+        self.assertTrue(unit.handles(memoryview(bytes(_PCAPNG_SAMPLE))))
+
+    @pytest.mark.xdist_group(name='pcap')
+    def test_out_of_range_timestamp_does_not_crash(self):
+        patched = bytearray(_PCAPNG_SAMPLE)
+        patched[344:348] = (0xFFFFFFFF).to_bytes(4, 'little')
+        chunks = list(patched | self.load())
+        self.assertEqual(len(chunks), 40)
+        self.assertNotIn('time', chunks[0].meta)
+
+    @pytest.mark.xdist_group(name='pcap')
+    def test_network_layer_is_link_layer_suffix(self):
+        for frame, network in zip(
+            iter_captured_packets(_PCAPNG_SAMPLE),
+            iter_network_layers(_PCAPNG_SAMPLE),
+        ):
+            self.assertEqual(
+                bytes(network.payload),
+                bytes(frame.frame)[-len(network.payload):],
+            )
+
+
+
+def _reassemble_tcp(data) -> list[Datagram]:
+    return reassemble_tcp(iter_transport(data, IPProtocol.TCP))
 
 
 class TestPCAPRobustness(TestUnitBase):
 
-    _PCAP_CLASSIC = test_pcap_http.TestPCAP_HTTP._HTTP_SAMPLE_01
+    _PCAP_CLASSIC = _import_http_sample()
 
     def test_unsupported_link_type_pcapng_yields_nothing(self):
-        self.assertGreater(len(reassemble_tcp_streams(_PCAPNG_SAMPLE)), 0)
+        self.assertGreater(len(_reassemble_tcp(_PCAPNG_SAMPLE)), 0)
         patched = bytearray(_PCAPNG_SAMPLE)
         patched[196:198] = (105).to_bytes(2, 'little')
-        self.assertEqual(reassemble_tcp_streams(patched), [])
+        self.assertEqual(_reassemble_tcp(patched), [])
 
     def test_unsupported_link_type_classic_yields_nothing(self):
-        self.assertGreater(len(reassemble_tcp_streams(self._PCAP_CLASSIC)), 0)
+        self.assertGreater(len(_reassemble_tcp(self._PCAP_CLASSIC)), 0)
         patched = bytearray(self._PCAP_CLASSIC)
         patched[20:24] = (105).to_bytes(4, 'little')
-        self.assertEqual(reassemble_tcp_streams(patched), [])
+        self.assertEqual(_reassemble_tcp(patched), [])
 
     def test_truncated_pcapng_never_raises(self):
         failures = []
         for n in range(len(_PCAPNG_SAMPLE) + 1):
             try:
-                reassemble_tcp_streams(_PCAPNG_SAMPLE[:n])
+                _reassemble_tcp(_PCAPNG_SAMPLE[:n])
             except Exception:
                 failures.append(n)
         self.assertEqual(failures, [])
@@ -214,13 +150,19 @@ class TestPCAPRobustness(TestUnitBase):
         failures = []
         for n in range(len(self._PCAP_CLASSIC) + 1):
             try:
-                reassemble_tcp_streams(self._PCAP_CLASSIC[:n])
+                _reassemble_tcp(self._PCAP_CLASSIC[:n])
             except Exception:
                 failures.append(n)
         self.assertEqual(failures, [])
 
     def test_empty_input_yields_nothing(self):
-        self.assertEqual(reassemble_tcp_streams(b''), [])
+        self.assertEqual(_reassemble_tcp(b''), [])
+
+    def test_truncated_tsresol_option_falls_back_to_default(self):
+        truncated = memoryview(b'\x09\x00\x01\x00')
+        self.assertEqual(_read_ng_timestamp_scale(truncated, False), 1e-6)
+        wellformed = memoryview(b'\x09\x00\x01\x00\x09\x00\x00\x00')
+        self.assertEqual(_read_ng_timestamp_scale(wellformed, False), 1e-9)
 
 
 def _ipv6_packet(next_header: int, payload: bytes) -> bytes:
@@ -263,16 +205,16 @@ class TestPCAPv6ExtensionHeaders(TestUnitBase):
         # them as extension headers would surface a (bogus) datagram instead of nothing.
         body = _hop_by_hop(IPProtocol.TCP) + _tcp_segment(49152, 80, self._TCP_PAYLOAD)
         packet = _ipv6_packet(ip_next_header, body)
-        return reassemble_tcp_streams(_classic_pcap_raw_ip(packet))
+        return _reassemble_tcp(_classic_pcap_raw_ip(packet))
 
     def test_hop_by_hop_extension_is_traversed(self):
-        self.assertEqual(self._reassemble(0), [TcpDatagram(
+        self.assertEqual(self._reassemble(0), [Datagram(
+            protocol=IPProtocol.TCP,
             src_addr='2001:db8::1',
             dst_addr='2001:db8::2',
             src_port=49152,
             dst_port=80,
             payload=bytearray(self._TCP_PAYLOAD),
-            first_packet_index=1,
         )])
 
     def test_esp_is_not_walked_as_extension_header(self):

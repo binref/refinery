@@ -228,6 +228,10 @@ from refinery.units.formats.lnk import lnk as lnk
 from refinery.units.formats.macho.machometa import machometa as machometa
 from refinery.units.formats.msgpack import msgpack as msgpack
 from refinery.units.formats.msi import xtmsi as xtmsi
+from refinery.units.formats.network.http import http as http
+from refinery.units.formats.network.pcap import pcap as pcap
+from refinery.units.formats.network.tcp import tcp as tcp
+from refinery.units.formats.network.udp import udp as udp
 from refinery.units.formats.office.docmeta import docmeta as docmeta
 from refinery.units.formats.office.doctxt import doctxt as doctxt
 from refinery.units.formats.office.officecrypt import officecrypt as officecrypt
@@ -242,8 +246,6 @@ from refinery.units.formats.office.xtmdb import xtmdb as xtmdb
 from refinery.units.formats.office.xtone import xtone as xtone
 from refinery.units.formats.office.xtrtf import xtrtf as xtrtf
 from refinery.units.formats.pbuf import pbuf as pbuf
-from refinery.units.formats.pcap import pcap as pcap
-from refinery.units.formats.pcap_http import pcap_http as pcap_http
 from refinery.units.formats.pdf import xtpdf as xtpdf
 from refinery.units.formats.pdfcrypt import pdfcrypt as pdfcrypt
 from refinery.units.formats.pe.dotnet.dnarrays import dnarrays as dnarrays

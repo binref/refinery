@@ -1,16 +1,83 @@
 import base64
+import hashlib
 import lzma
 import pytest
+
+from refinery.lib.frame import Chunk
+from refinery.units.formats.network.http import _parse_http_request
 
 from .. import TestUnitBase
 
 
-class TestPCAP_HTTP(TestUnitBase):
+class TestHTTP(TestUnitBase):
+
+    def test_ipv6_destination_request_url(self):
+        chunk = Chunk(bytearray(B'GET /path/file.exe HTTP/1.1\r\nHost: example.test\r\n\r\n'))
+        chunk['src'] = B'2001:db8::1:52000'
+        chunk['dst'] = B'2001:db8::2:80'
+        request = _parse_http_request(chunk)
+        self.assertEqual(request.url, B'http://example.test/path/file.exe')
+
+    def test_non_default_port_appended_to_host(self):
+        chunk = Chunk(bytearray(B'GET /a HTTP/1.1\r\nHost: host.test\r\n\r\n'))
+        chunk['src'] = B'10.0.0.1:5000'
+        chunk['dst'] = B'10.0.0.2:8080'
+        request = _parse_http_request(chunk)
+        self.assertEqual(request.url, B'http://host.test:8080/a')
+
+    @pytest.mark.xdist_group(name='pcap')
+    def test_pe_extraction_from_download_sample(self):
+        data = self.download_sample('1baf0e669f38b94487b671fab59929129b5b1c2755bc00510812e8a96a53e10e')
+        pipeline = self.load_pipeline('pcap [| tcp | http ]')
+        test = {
+            hashlib.sha256(chunk).hexdigest(): str(chunk['url'])
+            for chunk in data | pipeline
+        }
+        goal = {
+            'ad2b64410eb0d5a009d56583891e0ed36635d000044aeaaaf0003bb3e373ca2b': 'http:/''/163.fuckunion''.com/286//update.txt',
+            '6494f132d23a9e1081150e954bbb11b577c260a7f4fc654044bf6ddb0793ea2a': 'http:/''/163.fuckunion''.com/286/soft/163.exe',
+            'db604c662d8b659ef96558c8a572764e2479d911ae4a7e295a16bbf84aec5ab7': 'http:/''/www.tao168188''.com/mh.exe',
+            '264dc5686bc2a6a75ae8f70692332042a73230f4159478711a32fe4dd4c5ec09': 'http:/''/163.fuckunion''.com/286/pop.asp?url=http://www.puma164.com/pu/39685867.htm?2',
+            '78e42e7616421aa1f6a30aef6e6ef347e82d592992df7259fa94c550d9382767': 'http:/''/163.fuckunion''.com/286/count/count.asp?mac=00-0E-0C-33-1C-80&ver=2007051922&user=00&md5=258a993832e5f435cc3a7ba4791bc3de&pc=BOBTWO',
+            '9972394d4d8d51abf15bfaf6c1ddfe9c8bf85ae0b9b0a561adfd9b4844c520b9': 'http:/''/www.tao168188''.com/12.exe',
+            'e682dfcdde010f6e15bae0d843696f6ae8d5a85e75441660b782789ee747f075': 'http:/''/163.fuckunion''.com/favicon.ico',
+            '302e8c6bb616ec55276915c6f2373bafa031970479ea9ab2e2e96f4e9d8b6730': 'http:/''/163.fuckunion''.com/286/pop.asp?url=http://59.34.197.164:81/804635/adx352133.asp',
+        }
+        self.assertDictEqual(test, goal)
+
+    @pytest.mark.xdist_group(name='pcap')
+    def test_body_endpoints_match_their_own_stream(self):
+        data = self.download_sample('1baf0e669f38b94487b671fab59929129b5b1c2755bc00510812e8a96a53e10e')
+        pipeline = self.load_pipeline('pcap [| tcp | http ]')
+        test = {
+            str(chunk['url']): (str(chunk['src']), str(chunk['dst']), chunk['stream'])
+            for chunk in data | pipeline
+        }
+        goal = {
+            'http:/''/163.fuckunion''.com/286//update.txt':
+                ('182.91.85.186:80', '210.233.108.255:1045', 0),
+            'http:/''/163.fuckunion''.com/286/soft/163.exe':
+                ('182.91.85.186:80', '210.233.108.255:1045', 0),
+            'http:/''/163.fuckunion''.com/286/count/count.asp?mac=00-0E-0C-33-1C-80&ver=2007051922&user=00&md5=258a993832e5f435cc3a7ba4791bc3de&pc=BOBTWO':
+                ('182.91.85.186:80', '210.233.108.255:1045', 0),
+            'http:/''/www.tao168188''.com/mh.exe':
+                ('182.91.85.186:80', '210.233.108.255:1046', 1),
+            'http:/''/www.tao168188''.com/12.exe':
+                ('182.91.85.186:80', '210.233.108.255:1046', 1),
+            'http:/''/163.fuckunion''.com/286/pop.asp?url=http://www.puma164.com/pu/39685867.htm?2':
+                ('182.91.85.186:80', '210.233.108.255:1048', 2),
+            'http:/''/163.fuckunion''.com/favicon.ico':
+                ('182.91.85.186:80', '210.233.108.255:1048', 2),
+            'http:/''/163.fuckunion''.com/286/pop.asp?url=http://59.34.197.164:81/804635/adx352133.asp':
+                ('182.91.85.186:80', '210.233.108.255:1059', 3),
+        }
+        self.assertDictEqual(test, goal)
 
     @pytest.mark.xdist_group(name='pcap')
     def test_pe_extraction_from_pcap(self):
         _url = 'http:''/''/ncdn.nb6dsl.neufbox.neuf''.fr/nb6dsl_Vers%203.3.4_ter/nb6-3.3.4_ter.sha256sum'
-        test = self._HTTP_SAMPLE_01 | self.load() | {'url': str}
+        pipeline = self.load_pipeline('pcap [| tcp | http ]')
+        test = self._HTTP_SAMPLE_01 | pipeline | {'url': str}
         self.assertIn(_url, test)
         self.assertEqual(test[_url], '\n'.join((
             '#',
