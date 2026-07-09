@@ -25,3 +25,12 @@ class DeobfuscationOptions:
       therefore declined to preserve semantics.
     """
     module: bool = False
+
+
+def module_execution(options: object | None) -> bool:
+    """
+    Whether *options* selects the module execution model, under which a top-level binding is scoped to
+    the module and never reaches the global object. Any value that is not a `DeobfuscationOptions` — a
+    transformer run standalone, or with no options attached — defaults to the script model.
+    """
+    return isinstance(options, DeobfuscationOptions) and options.module

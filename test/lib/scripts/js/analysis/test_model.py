@@ -431,6 +431,28 @@ class TestSemanticModel(TestBase):
         function_scope = model.root_scope.children[0]
         self.assertFalse(function_scope.bindings['x'].has_member_reference)
 
+    def test_reaches_global_object_implicit_global(self):
+        _, model = self._model('globalThis.g = 1;')
+        g = model.root_scope.bindings['g']
+        self.assertTrue(model.reaches_global_object(g, module_scope=False))
+        self.assertTrue(model.reaches_global_object(g, module_scope=True))
+
+    def test_reaches_global_object_top_level_var_depends_on_execution_model(self):
+        _, model = self._model('var v = 1;')
+        v = model.root_scope.bindings['v']
+        self.assertTrue(model.reaches_global_object(v, module_scope=False))
+        self.assertFalse(model.reaches_global_object(v, module_scope=True))
+
+    def test_reaches_global_object_false_for_top_level_let(self):
+        _, model = self._model('let x = 1;')
+        x = model.root_scope.bindings['x']
+        self.assertFalse(model.reaches_global_object(x, module_scope=False))
+
+    def test_reaches_global_object_false_for_nested_var(self):
+        _, model = self._model('function f(){ var n = 1; return n; }')
+        n = model.root_scope.children[0].bindings['n']
+        self.assertFalse(model.reaches_global_object(n, module_scope=False))
+
     def test_reference_role_reads_global_alias_member_value(self):
         ast, _ = self._model('sink(globalThis.g);')
         self.assertIs(reference_role(self._member(ast)), Role.READ)

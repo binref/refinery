@@ -17,7 +17,6 @@ from refinery.lib.scripts.js.analysis.cache import model_cache
 from refinery.lib.scripts.js.analysis.effects import side_effect_free
 from refinery.lib.scripts.js.analysis.model import (
     TIMER_NAMES,
-    Binding,
     BindingKind,
     FUNCTION_NODES,
     Scope,
@@ -38,7 +37,7 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     walk_receiver_scope,
     walk_scope,
 )
-from refinery.lib.scripts.js.deobfuscation.options import DeobfuscationOptions
+from refinery.lib.scripts.js.deobfuscation.options import module_execution
 from refinery.lib.scripts.js.model import (
     JsArrowFunctionExpression,
     JsAssignmentExpression,
@@ -628,25 +627,6 @@ def _body_declared_names(body_model: SemanticModel) -> set[str]:
     }
 
 
-def _is_global_equivalent(binding: Binding, root_scope: Scope, module_scope: bool) -> bool:
-    """
-    Whether *binding* is the global a `Function`-constructed body would resolve a free name to at
-    runtime. A `Function`-constructed function is always a sloppy global-scope function, so its free
-    names resolve against the true global object. An implicit global is a property of that object, so
-    it is always equivalent. A `var`/function declared at the script's top level is equivalent only
-    under the script model, where a top-level declaration is itself a property of the global object;
-    under the module model (*module_scope*) it is scoped to the module and never reaches the global, so
-    the global-scope body would not resolve its free name to it. A top-level `let`/`const`/`class`, or
-    any binding nested below the script, is a distinct lexical binding the global-scope body would not
-    see. A body free name resolving to any of these non-equivalent bindings declines the inlining.
-    """
-    if binding.kind is BindingKind.IMPLICIT_GLOBAL:
-        return True
-    if module_scope:
-        return False
-    return binding.scope is root_scope and binding.kind in (BindingKind.VAR, BindingKind.FUNCTION)
-
-
 def _hoist_path_is_clear(names: set[str], site_scope: Scope, var_scope: Scope) -> bool:
     """
     Whether each hoisted `var`/function name can rise from the call site to *var_scope* without
@@ -862,16 +842,6 @@ class JsReflectionInlining(ScriptLevelTransformer):
         _replace_in_parent(node.arguments[0], wrapper)
         self.mark_changed()
 
-    @property
-    def _module_scope(self) -> bool:
-        """
-        Whether the caller selected the module execution model (see
-        `refinery.lib.scripts.js.deobfuscation.options.DeobfuscationOptions`), under which a top-level
-        declaration is scoped to the module and does not reach the global object.
-        """
-        options = self.options
-        return isinstance(options, DeobfuscationOptions) and options.module
-
     def _try_resolve_statement(
         self, stmt: Statement, root: JsScript, at_global_scope: bool,
     ) -> list[Statement] | None:
@@ -1009,8 +979,8 @@ class JsReflectionInlining(ScriptLevelTransformer):
                 return None
             for name in free:
                 binding = root_model.lookup(name, site_scope)
-                if binding is not None and not _is_global_equivalent(
-                    binding, root_model.root_scope, self._module_scope,
+                if binding is not None and not root_model.reaches_global_object(
+                    binding, module_scope=module_execution(self.options),
                 ):
                     return None
         if declared and not self._reflected_declarations_safe(
@@ -1077,7 +1047,7 @@ class JsReflectionInlining(ScriptLevelTransformer):
         if not hoisted:
             return True
         if scope is ReflectedScope.GLOBAL_EVAL:
-            if self._module_scope or not at_global_scope:
+            if module_execution(self.options) or not at_global_scope:
                 return False
         elif _site_in_strict_context(site, root) or _has_use_strict_directive(body_model.root.body):
             return False

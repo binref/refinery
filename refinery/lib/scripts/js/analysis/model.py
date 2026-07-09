@@ -912,6 +912,24 @@ class SemanticModel:
         """
         return not binding.writes and not self.binding_maybe_reassigned_dynamically(binding)
 
+    def reaches_global_object(self, binding: Binding, *, module_scope: bool) -> bool:
+        """
+        Whether *binding* is a property of the global object at runtime — the global a free name in
+        global-scope reflected code (a `Function` body, an indirect `eval`, a string timer) resolves to.
+        An implicit global always is. A top-level `var`/function declaration is, but only under the
+        script execution model; under the module model (*module_scope*) it is scoped to the module and
+        never reaches the global. A top-level `let`/`const`/`class`, or any binding nested below the
+        script, is a distinct lexical binding that global-scope code cannot see.
+        """
+        if binding.kind is BindingKind.IMPLICIT_GLOBAL:
+            return True
+        if module_scope:
+            return False
+        return (
+            binding.scope is self.root_scope
+            and binding.kind in (BindingKind.VAR, BindingKind.FUNCTION)
+        )
+
     def _function_has_direct_eval(self, function: Node) -> bool:
         cached = self._function_direct_eval.get(id(function))
         if cached is None:
