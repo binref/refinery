@@ -278,6 +278,17 @@ class Scope:
         return False
 
 
+def crosses_dynamic_scope(scope: Scope | None) -> bool:
+    """
+    Whether resolving a name from *scope* outward passes through a dynamically-scoped region.
+    """
+    while scope is not None:
+        if scope.is_dynamic:
+            return True
+        scope = scope.parent
+    return False
+
+
 def is_use_position(node: JsIdentifier) -> bool:
     """
     Whether an identifier occupies a position where it reads or writes a value, as opposed to naming a
@@ -747,7 +758,7 @@ class SemanticModel:
         """
         if not isinstance(node, JsIdentifier) or not self.is_reference(node):
             return False
-        return self._crosses_dynamic_scope(self._node_scope.get(id(node)))
+        return crosses_dynamic_scope(self._node_scope.get(id(node)))
 
     def naming_binding(self, function: Node) -> Binding | None:
         """
@@ -971,7 +982,7 @@ class SemanticModel:
         free name that crosses no dynamic scope (an external global the program never declares) is left
         untouched, as is one whose cross-boundary lookup still finds no binding.
         """
-        if not self._crosses_dynamic_scope(scope):
+        if not crosses_dynamic_scope(scope):
             return
         binding = self.lookup(node.name, scope, cross_dynamic=True)
         if binding is not None:
@@ -999,7 +1010,7 @@ class SemanticModel:
             scope = self._node_scope.get(id(node))
             if reference_role(node) is Role.READ:
                 continue
-            if self.lookup(node.name, scope) is not None or self._crosses_dynamic_scope(scope):
+            if self.lookup(node.name, scope) is not None or crosses_dynamic_scope(scope):
                 continue
             self.root_scope.bindings.setdefault(
                 node.name, Binding(node.name, BindingKind.IMPLICIT_GLOBAL, self.root_scope))
@@ -1020,7 +1031,7 @@ class SemanticModel:
         if name is None:
             return None
         scope = self._node_scope.get(id(member))
-        if self.lookup(base.name, scope) is not None or self._crosses_dynamic_scope(scope):
+        if self.lookup(base.name, scope) is not None or crosses_dynamic_scope(scope):
             return None
         return name
 
@@ -1073,17 +1084,6 @@ class SemanticModel:
         scope = self._node_scope.get(id(member))
         if scope is None or scope.var_scope is not binding.scope.var_scope:
             binding.captured = True
-
-    def _crosses_dynamic_scope(self, scope: Scope | None) -> bool:
-        """
-        Whether resolving a name from *scope* outward passes through a dynamically-scoped region.
-        """
-        while scope is not None:
-            if scope.is_dynamic:
-                return True
-            scope = scope.parent
-        return False
-
 
 class _ScopeBuilder:
     """

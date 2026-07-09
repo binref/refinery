@@ -23,6 +23,7 @@ from refinery.lib.scripts.js.analysis.model import (
     Scope,
     SemanticModel,
     build_semantic_model,
+    crosses_dynamic_scope,
     is_member_write_target,
     is_simple_assignment_target,
     is_use_position,
@@ -663,22 +664,6 @@ def _hoist_path_is_clear(names: set[str], site_scope: Scope, var_scope: Scope) -
     return True
 
 
-def _site_crosses_dynamic_scope(site_scope: Scope) -> bool:
-    """
-    Whether *site_scope* lies inside a dynamically-scoped (`with`) region. Global-scope reflected code
-    resolves its free names against the global scope, but a `with` on the path from the inline site to
-    the root binds those names dynamically: `lookup` stops at the `with` boundary and cannot tell
-    whether the object captures a name, so an inlined free name could resolve to the object's property
-    rather than the global. Declining whenever such a region encloses the site keeps the inlining sound.
-    """
-    scope: Scope | None = site_scope
-    while scope is not None:
-        if scope.is_dynamic:
-            return True
-        scope = scope.parent
-    return False
-
-
 def _inlined_declarations_safe(
     body_model: SemanticModel,
     root_model: SemanticModel,
@@ -1020,7 +1005,7 @@ class JsReflectionInlining(ScriptLevelTransformer):
         if site_scope is None:
             return None
         if resolves_globally and free:
-            if _site_crosses_dynamic_scope(site_scope):
+            if crosses_dynamic_scope(site_scope):
                 return None
             for name in free:
                 binding = root_model.lookup(name, site_scope)
