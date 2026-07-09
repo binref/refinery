@@ -1277,6 +1277,8 @@ class _ScopeBuilder:
     def _visit_class(self, node: JsClassDeclaration | JsClassExpression, enclosing: Scope):
         if isinstance(node, JsClassDeclaration) and node.id is not None:
             self._declare(enclosing, node.id.name, BindingKind.CLASS, node.id)
+        for decorator in node.decorators:
+            self._visit(decorator, enclosing)
         if node.super_class is not None:
             self._visit(node.super_class, enclosing)
         cscope = self._new_scope(ScopeKind.CLASS, node, enclosing)

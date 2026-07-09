@@ -19,6 +19,18 @@ class TestUnusedCodeRemoval(TestJsDeobfuscator):
     def _remove_unused(self, source: str) -> str:
         return self._run_transformer(source, JsUnusedCodeRemoval)
 
+    def test_binding_used_only_in_class_decorator_preserved(self):
+        source = inspect.cleandoc(
+            """
+            var deco = function(x) {
+              return x;
+            };
+            @deco class C {}
+            new C();
+            """
+        )
+        self.assertEqual(source, self._remove_unused(source))
+
     def test_block_scoped_var_read_outside_block_preserved(self):
         source = inspect.cleandoc(
             """
