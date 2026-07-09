@@ -77,6 +77,23 @@ class TestReflectionInlining(TestJsDeobfuscator):
         )
         self.assertEqual(source, self._reflect(source))
 
+    def test_direct_eval_strict_body_into_sloppy_site_not_inlined(self):
+        """
+        A direct `eval` whose body opens with `"use strict"` runs strict. Spliced below a non-directive
+        position in a sloppy function the directive no longer governs the body, so an assignment to an
+        undeclared name would silently create a global instead of throwing a `ReferenceError`; the
+        inlining is declined.
+        """
+        source = inspect.cleandoc(
+            """
+            function f() {
+              g();
+              eval("'use strict'; x = 1;");
+            }
+            """
+        )
+        self.assertEqual(source, self._reflect(source))
+
     def test_indirect_eval_comma_operator(self):
         self.assertEqual('var x = 1;', self._reflect("(0, eval)('var x = 1;');"))
 
@@ -821,6 +838,23 @@ class TestReflectionInlining(TestJsDeobfuscator):
             """
             function f() {
               new Function('a(); return b(); c();')();
+              other();
+            }
+            """
+        )
+        self.assertEqual(source, self._reflect(source))
+
+    def test_function_constructor_body_nested_control_flow_return_not_inlined(self):
+        """
+        A `return` nested in a body's control flow — here inside an `if` — is not a top-level statement,
+        so scanning only the statement list would miss it. Splicing the `if` into statement position
+        would let the `return` exit the caller (or be a SyntaxError at script level), so the inlining is
+        declined.
+        """
+        source = inspect.cleandoc(
+            """
+            function f() {
+              new Function('if (a) { return b(); } c();')();
               other();
             }
             """

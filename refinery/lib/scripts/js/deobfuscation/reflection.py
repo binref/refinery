@@ -769,21 +769,25 @@ class JsReflectionInlining(ScriptLevelTransformer):
         Adapt a reflective body's statements for the statement position they replace, where the call's
         return value is discarded and no `return` may escape into the container. A trailing `return x`
         becomes the bare expression `x` (its value was already being thrown away) and a trailing
-        valueless `return` is dropped; a `return` before the last statement declines the inlining
-        (`None`), since its early exit cannot be reproduced without reordering and declining is always
-        sound. This holds for every container, not only the script: a `return` spliced into a function
-        body would return from that enclosing function, and into the script would be a syntax error.
+        valueless `return` is dropped. Any other `return` — before the last statement, or nested in the
+        control flow of any statement (an `if`, loop, or `try`) rather than at the body's own top level —
+        declines the inlining (`None`), since its early exit cannot be reproduced at statement position
+        without reordering and declining is always sound. `walk_scope` finds a nested `return` without
+        descending into a nested function, whose own `return` stays with it. This holds for every
+        container, not only the script: a `return` spliced into a function body would return from that
+        enclosing function, and into the script would be a syntax error.
         """
-        for stmt in stmts[:-1] if stmts else ():
-            if isinstance(stmt, JsReturnStatement):
+        if not stmts:
+            return stmts
+        trailing = stmts[-1] if isinstance(stmts[-1], JsReturnStatement) else None
+        for stmt in stmts[:-1] if trailing is not None else stmts:
+            if any(isinstance(node, JsReturnStatement) for node in walk_scope(stmt)):
                 return None
-        if stmts and isinstance(stmts[-1], JsReturnStatement):
-            last = stmts[-1]
-            if last.argument is not None:
-                stmts = stmts[:-1] + [JsExpressionStatement(expression=last.argument)]
-            else:
-                stmts = stmts[:-1]
-        return stmts
+        if trailing is None:
+            return stmts
+        if trailing.argument is not None:
+            return [*stmts[:-1], JsExpressionStatement(expression=trailing.argument)]
+        return stmts[:-1]
 
     def _inline_expressions(self, root: JsScript) -> None:
         for node in list(root.walk()):
@@ -970,7 +974,9 @@ class JsReflectionInlining(ScriptLevelTransformer):
         parsed = _try_parse(code, top_level_await=top_level_await)
         if parsed is None:
             return None
-        if resolves_globally and _has_use_strict_directive(parsed.body):
+        if _has_use_strict_directive(parsed.body) and (
+            resolves_globally or not _site_in_strict_context(site, root)
+        ):
             return None
         if resolves_globally:
             _rewrite_receiver_this_to_global(parsed)
