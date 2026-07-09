@@ -28,6 +28,8 @@ from refinery.lib.scripts.js.model import (
     JsLabeledStatement,
     JsMethodDefinition,
     JsMethodKind,
+    JsPrivateIdentifier,
+    JsPropertyDefinition,
     JsReturnStatement,
     JsScript,
     JsSwitchStatement,
@@ -240,6 +242,21 @@ class TestJsParserStatements(TestBase):
         self.assertEqual(body.body[1].kind, JsMethodKind.GET)
         self.assertEqual(body.body[2].kind, JsMethodKind.SET)
         self.assertTrue(body.body[3].is_static)
+
+    def test_class_private_field_and_method(self):
+        stmt = self._parse_stmt('class C { #x = 1; #m() { return this.#x; } }')
+        self.assertIsInstance(stmt, JsClassDeclaration)
+        body = stmt.body.body
+        self.assertIsInstance(body[0], JsPropertyDefinition)
+        self.assertIsInstance(body[0].key, JsPrivateIdentifier)
+        self.assertEqual(body[0].key.name, 'x')
+        self.assertIsInstance(body[1], JsMethodDefinition)
+        self.assertIsInstance(body[1].key, JsPrivateIdentifier)
+        self.assertEqual(body[1].key.name, 'm')
+
+    def test_class_private_field_produces_no_error_node(self):
+        stmt = self._parse_stmt('class C { #x = 1; }')
+        self.assertEqual([n for n in stmt.walk() if isinstance(n, JsErrorNode)], [])
 
     def test_import_default(self):
         stmt = self._parse_stmt("import foo from 'bar';")

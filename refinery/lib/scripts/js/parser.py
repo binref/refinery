@@ -38,6 +38,7 @@ from refinery.lib.scripts.js.model import (
     JsFunctionDeclaration,
     JsFunctionExpression,
     JsIdentifier,
+    JsPrivateIdentifier,
     JsIfStatement,
     JsImportDeclaration,
     JsImportDefaultSpecifier,
@@ -1057,8 +1058,7 @@ class JsParser:
             if self._at(JsTokenKind.LPAREN) and not self._preceded_by_newline:
                 expr = self._parse_call_arguments(expr, optional=False)
             elif self._eat(JsTokenKind.DOT):
-                prop_tok = self._advance()
-                prop = JsIdentifier(name=prop_tok.value, offset=prop_tok.offset)
+                prop = self._member_property()
                 expr = JsMemberExpression(
                     object=expr, property=prop, computed=False, optional=False, offset=expr.offset)
             elif self._at(JsTokenKind.LBRACKET) and not self._preceded_by_newline:
@@ -1077,8 +1077,7 @@ class JsParser:
                     expr = JsMemberExpression(
                         object=expr, property=prop, computed=True, optional=True, offset=expr.offset)
                 else:
-                    prop_tok = self._advance()
-                    prop = JsIdentifier(name=prop_tok.value, offset=prop_tok.offset)
+                    prop = self._member_property()
                     expr = JsMemberExpression(
                         object=expr, property=prop, computed=False, optional=True, offset=expr.offset)
             elif self._at(
@@ -1090,6 +1089,12 @@ class JsParser:
             else:
                 break
         return expr
+
+    def _member_property(self) -> Expression:
+        tok = self._advance()
+        if tok.kind is JsTokenKind.PRIVATE_IDENTIFIER:
+            return JsPrivateIdentifier(name=tok.value[1:], offset=tok.offset)
+        return JsIdentifier(name=tok.value, offset=tok.offset)
 
     def _parse_argument_list(self) -> list[Expression]:
         args: list[Expression] = []
@@ -1171,6 +1176,10 @@ class JsParser:
                 return JsArrowFunctionExpression(
                     params=[param], body=body, offset=offset)
             return JsIdentifier(name=tok.value, offset=offset)
+
+        if self._at(JsTokenKind.PRIVATE_IDENTIFIER):
+            self._advance()
+            return JsPrivateIdentifier(name=tok.value[1:], offset=offset)
 
         if self._at(JsTokenKind.INTEGER):
             self._advance()
@@ -1450,6 +1459,9 @@ class JsParser:
             )
         if self._at(JsTokenKind.STRING_SINGLE, JsTokenKind.STRING_DOUBLE):
             return self._parse_string_literal()
+        if self._at(JsTokenKind.PRIVATE_IDENTIFIER):
+            self._advance()
+            return JsPrivateIdentifier(name=tok.value[1:], offset=tok.offset)
         self._advance()
         return JsIdentifier(name=tok.value, offset=tok.offset)
 

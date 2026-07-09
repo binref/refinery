@@ -621,3 +621,15 @@ class TestJsSynthesizer(TestBase):
 
     def test_chained_member_access(self):
         self._round_trip('a.b.c.d;')
+
+    def test_private_field(self):
+        self._round_trip('class A { #x = 1; }')
+
+    def test_private_method_and_access(self):
+        self._round_trip('class A { #x = 2; #m() { return this.#x; } }')
+
+    def test_private_brand_check(self):
+        self._round_trip('class A { #x; has(o) { return #x in o; } }')
+
+    def test_static_private_field(self):
+        self._round_trip('class A { static #n = 0; }')

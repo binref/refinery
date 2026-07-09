@@ -438,6 +438,15 @@ class JsLexer:
                 yield tok
                 continue
 
+            if c == '#':
+                nxt = src[self.pos + 1] if self.pos + 1 < length else ''
+                if nxt.isalpha() or nxt == '_' or nxt == '$' or nxt == '\\':
+                    self.pos += 1
+                    name = self._read_identifier_or_keyword()
+                    prev_allows_regex = False
+                    yield JsToken(JsTokenKind.PRIVATE_IDENTIFIER, '#' + name.value, start)
+                    continue
+
             if c == '/':
                 if prev_allows_regex:
                     text = self._read_regexp()

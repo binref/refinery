@@ -736,6 +736,23 @@ class TestDeobfuscationDifferential(TestBase):
             'function f(Function){ return Function("return 1")(); }'
             ' console.log(f(function(){ return function(){ return 99; }; }));')
 
+    def test_private_class_fields_and_methods(self):
+        """
+        A class using private fields, a private method, a static private field, and the `#x in o`
+        brand check must round-trip through parse/deob/synth with identical observable behavior.
+        """
+        self._check(
+            'class A {'
+            ' static #count = 0;'
+            ' #x = 0;'
+            ' constructor() { A.#count++; }'
+            ' inc() { return ++this.#x; }'
+            ' has(o) { return #x in o; }'
+            ' static total() { return A.#count; }'
+            ' }'
+            ' var a = new A();'
+            ' console.log(a.inc(), a.inc(), a.has(a), a.has({}), A.total());')
+
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestDeobfuscationWithScope(TestBase):

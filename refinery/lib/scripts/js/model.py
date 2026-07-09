@@ -38,6 +38,11 @@ class JsIdentifier(Expression):
 
 
 @dataclass(repr=False, eq=False)
+class JsPrivateIdentifier(Expression):
+    name: str = ''
+
+
+@dataclass(repr=False, eq=False)
 class JsNumericLiteral(Expression):
     value: int | float = 0
     raw: str = '0'

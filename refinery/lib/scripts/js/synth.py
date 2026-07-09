@@ -32,6 +32,7 @@ from refinery.lib.scripts.js.model import (
     JsFunctionDeclaration,
     JsFunctionExpression,
     JsIdentifier,
+    JsPrivateIdentifier,
     JsIfStatement,
     JsImportDeclaration,
     JsImportDefaultSpecifier,
@@ -219,6 +220,10 @@ class JsSynthesizer(Synthesizer):
         self._write('this')
 
     def visit_JsIdentifier(self, node: JsIdentifier):
+        self._write(node.name)
+
+    def visit_JsPrivateIdentifier(self, node: JsPrivateIdentifier):
+        self._write('#')
         self._write(node.name)
 
     def visit_JsErrorNode(self, node: JsErrorNode):

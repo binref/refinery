@@ -18,6 +18,7 @@ class JsTokenKind(enum.Enum):
     REGEXP          = 'regexp'           # noqa
 
     IDENTIFIER      = 'identifier'       # noqa
+    PRIVATE_IDENTIFIER = 'private-identifier'  # noqa
 
     VAR             = 'var'              # noqa
     LET             = 'let'              # noqa

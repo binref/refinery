@@ -289,3 +289,17 @@ class TestJsLexer(TestBase):
         tokens = self._tokens('var x;\n#!/usr/bin/env node')
         kinds = [k for k, _ in tokens]
         self.assertIn(JsTokenKind.ERROR, kinds)
+
+    def test_private_identifier(self):
+        self.assertEqual(
+            self._tokens('#field'), [(JsTokenKind.PRIVATE_IDENTIFIER, '#field')])
+
+    def test_private_identifier_after_dot(self):
+        self.assertEqual(self._token_kinds('this.#x'), [
+            JsTokenKind.THIS,
+            JsTokenKind.DOT,
+            JsTokenKind.PRIVATE_IDENTIFIER,
+        ])
+
+    def test_hash_without_name_is_error(self):
+        self.assertEqual(self._tokens('#'), [(JsTokenKind.ERROR, '#')])
