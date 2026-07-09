@@ -15,7 +15,6 @@ from refinery.lib.scripts.js.analysis.model import (
     FUNCTION_NODES,
     Role,
     SemanticModel,
-    _strip_parens,
     enclosing_function,
     is_member_write_target,
     pattern_identifiers,
@@ -52,6 +51,7 @@ from refinery.lib.scripts.js.model import (
     JsTaggedTemplateExpression,
     JsUpdateExpression,
     JsVariableDeclaration,
+    strip_parens,
     JsVariableDeclarator,
     JsVarKind,
     JsYieldExpression,
@@ -336,7 +336,7 @@ class JsConstantInlining(ScopeProcessingTransformer):
                     uninitialized.pop(name, None)
 
             if isinstance(node, JsAssignmentExpression):
-                left = _strip_parens(node.left)
+                left = strip_parens(node.left)
                 if isinstance(left, JsIdentifier):
                     name = left.name
                     if (
@@ -362,14 +362,14 @@ class JsConstantInlining(ScopeProcessingTransformer):
                         uninitialized.pop(name, None)
 
             if isinstance(node, JsUpdateExpression):
-                target = _strip_parens(node.argument)
+                target = strip_parens(node.argument)
                 if isinstance(target, JsIdentifier):
                     name = target.name
                     rejected.add(name)
                     candidates.pop(name, None)
 
             if isinstance(node, (JsForInStatement, JsForOfStatement)):
-                left = _strip_parens(node.left)
+                left = strip_parens(node.left)
                 loop_targets: set[str] = set()
                 if isinstance(left, JsVariableDeclaration):
                     for decl in left.declarations:

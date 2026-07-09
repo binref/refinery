@@ -43,11 +43,11 @@ from refinery.lib.scripts.js.model import (
     JsIdentifier,
     JsLogicalExpression,
     JsMemberExpression,
-    JsParenthesizedExpression,
     JsReturnStatement,
     JsScript,
     JsThisExpression,
     JsVariableDeclarator,
+    strip_parens,
 )
 
 _FUNCTION_NODES = (JsFunctionDeclaration, JsFunctionExpression, JsArrowFunctionExpression)
@@ -72,7 +72,7 @@ class JsGlobalFinderInlining(ScriptLevelTransformer):
         for call in list(node.walk()):
             if not isinstance(call, JsCallExpression) or call.arguments:
                 continue
-            callee = _unwrap(call.callee)
+            callee = strip_parens(call.callee)
             if not isinstance(callee, JsIdentifier):
                 continue
             target = cache.effects.function_of(model.resolve(callee))
@@ -120,7 +120,7 @@ def _is_finder(func: JsFunctionDeclaration, model: SemanticModel, effects: Effec
 def _is_global_valued(
     expr: Node | None, func: Node, model: SemanticModel, taint: set[int], visiting: set[int]
 ) -> bool:
-    expr = _unwrap(expr)
+    expr = strip_parens(expr)
     if isinstance(expr, JsThisExpression):
         return True
     if isinstance(expr, JsIdentifier):
@@ -175,25 +175,25 @@ def _global_taint(func: Node, model: SemanticModel) -> set[int]:
 
 
 def _callee_closures(callee: Node | None, func: Node, model: SemanticModel) -> list[Node]:
-    callee = _unwrap(callee)
+    callee = strip_parens(callee)
     if isinstance(callee, _CLOSURE_NODES):
         return [callee]
     if isinstance(callee, JsIdentifier):
         return _function_declarations(model.resolve(callee))
     if isinstance(callee, JsMemberExpression):
-        base = _unwrap(callee.object)
+        base = strip_parens(callee.object)
         if isinstance(base, JsIdentifier):
             return _array_closures(model.resolve(base), func, model)
     return []
 
 
 def _array_closures(binding: Binding | None, func: Node, model: SemanticModel) -> list[Node]:
-    value = _unwrap(_sole_value(binding, func, model))
+    value = strip_parens(_sole_value(binding, func, model))
     if not isinstance(value, JsArrayExpression):
         return []
     closures: list[Node] = []
     for element in value.elements:
-        element = _unwrap(element)
+        element = strip_parens(element)
         if not isinstance(element, _CLOSURE_NODES):
             return []
         closures.append(element)
@@ -236,7 +236,7 @@ def _sole_value(binding: Binding | None, func: Node, model: SemanticModel) -> No
 
 
 def _root_is_local(expr: Node | None, func: Node, model: SemanticModel) -> bool:
-    expr = _unwrap(expr)
+    expr = strip_parens(expr)
     if isinstance(expr, _CLOSURE_NODES):
         return True
     if isinstance(expr, JsIdentifier):
@@ -287,9 +287,3 @@ def _within(node: Node, ancestor: Node) -> bool:
             return True
         current = current.parent
     return False
-
-
-def _unwrap(expr: Node | None) -> Node | None:
-    while isinstance(expr, JsParenthesizedExpression):
-        expr = expr.expression
-    return expr

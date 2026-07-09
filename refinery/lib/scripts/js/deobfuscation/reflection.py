@@ -62,6 +62,7 @@ from refinery.lib.scripts.js.model import (
     JsThisExpression,
     JsUnaryExpression,
     Statement,
+    strip_parens,
 )
 
 
@@ -76,12 +77,6 @@ class ReflectedScope(enum.Enum):
     FUNCTION_CONSTRUCTOR = enum.auto()
     GLOBAL_EVAL = enum.auto()
     DIRECT_EVAL = enum.auto()
-
-
-def _unwrap_parens(node: Expression) -> Expression:
-    while isinstance(node, JsParenthesizedExpression) and node.expression is not None:
-        node = node.expression
-    return node
 
 
 def _try_parse(code: str) -> JsScript | None:
@@ -111,12 +106,12 @@ def _try_eval_string_arg(node: Expression) -> str | None:
     return None
 
 
-def _is_identifier(node: Node, name: str) -> bool:
+def _is_identifier(node: Node | None, name: str) -> bool:
     return isinstance(node, JsIdentifier) and node.name == name
 
 
 def _is_function_identifier(node: Expression) -> bool:
-    return _is_identifier(_unwrap_parens(node), 'Function')
+    return _is_identifier(strip_parens(node), 'Function')
 
 
 def _extract_eval_code(
@@ -155,13 +150,13 @@ def _extract_indirect_eval_code(
     """
     if len(node.arguments) != 1:
         return None
-    callee = _unwrap_parens(node.callee) if node.callee is not None else None
+    callee = strip_parens(node.callee) if node.callee is not None else None
     if isinstance(callee, JsSequenceExpression):
         exprs = callee.expressions
         if len(exprs) >= 2 and free_global_name(exprs[-1]) == 'eval':
             if all(side_effect_free(e, read_effect=read_effect) for e in exprs[:-1]):
                 return string_value(node.arguments[0]) or _try_eval_string_arg(node.arguments[0])
-    if alias_name(callee) == 'eval':
+    if alias_name(node.callee) == 'eval':
         return string_value(node.arguments[0]) or _try_eval_string_arg(node.arguments[0])
     return None
 
@@ -752,7 +747,7 @@ class JsReflectionInlining(ScriptLevelTransformer):
         def resolve(callee: Expression | None) -> str | None:
             if callee is None:
                 return None
-            member = _unwrap_parens(callee)
+            member = strip_parens(callee)
             if not isinstance(member, JsMemberExpression):
                 return None
             model = model_cache(self, root).model
@@ -774,7 +769,7 @@ class JsReflectionInlining(ScriptLevelTransformer):
         def resolve(callee: Expression | None) -> str | None:
             if callee is None:
                 return None
-            ident = _unwrap_parens(callee)
+            ident = strip_parens(callee)
             if not isinstance(ident, JsIdentifier):
                 return None
             model = model_cache(self, root).model

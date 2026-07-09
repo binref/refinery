@@ -53,22 +53,14 @@ from refinery.lib.scripts.js.model import (
     JsFunctionExpression,
     JsIdentifier,
     JsObjectExpression,
-    JsParenthesizedExpression,
     JsProperty,
     JsReturnStatement,
     JsScript,
     JsUpdateExpression,
     JsVariableDeclaration,
     JsVariableDeclarator,
+    strip_parens,
 )
-
-
-def _unwrap_paren(node: Node | None) -> Node | None:
-    while isinstance(node, JsParenthesizedExpression):
-        if node.expression is None:
-            return None
-        node = node.expression
-    return node
 
 
 def _is_literal_initializer(node: Node | None) -> bool:
@@ -103,12 +95,12 @@ def _detect(declarator: JsVariableDeclarator) -> _Pattern | None:
         return None
     if len(declaration.declarations) != 1:
         return None
-    init = _unwrap_paren(declarator.init)
+    init = strip_parens(declarator.init)
     if not isinstance(init, JsCallExpression):
         return None
     if init.arguments:
         return None
-    callee = _unwrap_paren(init.callee)
+    callee = strip_parens(init.callee)
     if not isinstance(callee, (JsFunctionExpression, JsArrowFunctionExpression)):
         return None
     if callee.params:
@@ -132,7 +124,7 @@ def _detect(declarator: JsVariableDeclarator) -> _Pattern | None:
             closure_decls.append(stmt)
             continue
         if isinstance(stmt, JsReturnStatement):
-            ret_arg = _unwrap_paren(stmt.argument)
+            ret_arg = strip_parens(stmt.argument)
             if not isinstance(ret_arg, (JsFunctionExpression, JsArrowFunctionExpression)):
                 return None
             if not isinstance(ret_arg.body, JsBlockStatement):

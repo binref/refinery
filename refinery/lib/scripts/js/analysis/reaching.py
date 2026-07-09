@@ -25,12 +25,13 @@ from refinery.lib.scripts import Node
 from refinery.lib.scripts.js.analysis.cfg import CfgNode, ControlFlowGraph
 from refinery.lib.scripts.js.analysis.dominance import DominanceModel
 from refinery.lib.scripts.js.analysis.effects import EffectModel
-from refinery.lib.scripts.js.analysis.model import Binding, _strip_parens
+from refinery.lib.scripts.js.analysis.model import Binding
 from refinery.lib.scripts.js.model import (
     JsAssignmentExpression,
     JsCallExpression,
     JsIdentifier,
     JsVariableDeclarator,
+    strip_parens,
 )
 
 
@@ -183,7 +184,7 @@ class ReachingModel:
             if isinstance(parent, JsVariableDeclarator) and parent.init is cursor:
                 return parent.id if isinstance(parent.id, JsIdentifier) else None
             if isinstance(parent, JsAssignmentExpression) and parent.right is cursor:
-                left = _strip_parens(parent.left)
+                left = strip_parens(parent.left)
                 return left if isinstance(left, JsIdentifier) else None
             cursor = parent
         return None

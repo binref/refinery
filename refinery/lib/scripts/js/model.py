@@ -510,3 +510,15 @@ class JsExportAllDeclaration(Statement):
 @dataclass(repr=False, eq=False)
 class JsScript(Statement):
     body: list[Statement] = field(default_factory=list)
+
+
+def strip_parens(node: Node | None) -> Node | None:
+    """
+    The expression *node* denotes once any enclosing parentheses are removed, so that a parenthesized
+    operand is classified by the operator that actually applies to it rather than by the redundant
+    grouping the parser preserves. A grouping whose inner expression is absent strips to `None`, which
+    every caller treats as "not the node being matched".
+    """
+    while isinstance(node, JsParenthesizedExpression):
+        node = node.expression
+    return node

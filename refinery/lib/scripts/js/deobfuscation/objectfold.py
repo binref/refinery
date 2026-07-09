@@ -19,7 +19,7 @@ from refinery.lib.scripts import (
 )
 from refinery.lib.scripts.js.analysis.cache import model_cache
 from refinery.lib.scripts.js.analysis.effects import EffectModel, object_sets_prototype
-from refinery.lib.scripts.js.analysis.model import Binding, Scope, SemanticModel, _strip_parens
+from refinery.lib.scripts.js.analysis.model import Binding, Scope, SemanticModel
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     OBJECT_PROTOTYPE_MEMBERS,
     ScopeProcessingTransformer,
@@ -47,6 +47,7 @@ from refinery.lib.scripts.js.model import (
     JsTaggedTemplateExpression,
     JsVariableDeclaration,
     JsVariableDeclarator,
+    strip_parens,
 )
 
 
@@ -67,7 +68,7 @@ def _build_property_map(
         if prop.kind is not JsPropertyKind.INIT:
             return None
         key = property_key(prop)
-        value = _strip_parens(prop.value)
+        value = strip_parens(prop.value)
         if key is None or value is None:
             return None
         result[key] = value

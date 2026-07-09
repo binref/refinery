@@ -47,7 +47,6 @@ from refinery.lib.scripts.js.model import (
     JsIdentifier,
     JsMemberExpression,
     JsNumericLiteral,
-    JsParenthesizedExpression,
     JsReturnStatement,
     JsScript,
     JsStringLiteral,
@@ -58,6 +57,7 @@ from refinery.lib.scripts.js.model import (
     JsVariableDeclaration,
     JsVariableDeclarator,
     JsVarKind,
+    strip_parens,
 )
 
 MAX_RESULT_ARRAY_LEN = 260
@@ -212,14 +212,6 @@ def _collect_declared_names(body, names: set[str]) -> None:
             names.add(node.id.name)
         if isinstance(node, JsCatchClause) and isinstance(node.param, JsIdentifier):
             names.add(node.param.name)
-
-
-def _unwrap_callee(node: Node) -> Node:
-    while isinstance(node, JsParenthesizedExpression):
-        if node.expression is None:
-            break
-        node = node.expression
-    return node
 
 
 def _unresolved_names(
@@ -574,7 +566,7 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
                 continue
             if node.callee is None:
                 continue
-            callee = _unwrap_callee(node.callee)
+            callee = strip_parens(node.callee)
             if isinstance(callee, JsIdentifier):
                 self._try_named_call(node, callee.name)
             elif isinstance(callee, (JsFunctionExpression, JsArrowFunctionExpression)):

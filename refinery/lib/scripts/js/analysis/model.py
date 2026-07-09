@@ -78,6 +78,7 @@ from refinery.lib.scripts.js.model import (
     JsVariableDeclarator,
     JsVarKind,
     JsWithStatement,
+    strip_parens,
 )
 
 FUNCTION_NODES = (JsFunctionDeclaration, JsFunctionExpression, JsArrowFunctionExpression)
@@ -340,30 +341,19 @@ def reference_role(node: JsIdentifier | JsMemberExpression) -> Role:
     denotes, so the def-use pass records such an access as the read or write it is.
     """
     governor, target = _governing_target(node)
-    if isinstance(governor, JsAssignmentExpression) and _strip_parens(governor.left) is target:
+    if isinstance(governor, JsAssignmentExpression) and strip_parens(governor.left) is target:
         return Role.WRITE if governor.operator == '=' else Role.READWRITE
-    if isinstance(governor, JsUpdateExpression) and _strip_parens(governor.argument) is target:
+    if isinstance(governor, JsUpdateExpression) and strip_parens(governor.argument) is target:
         return Role.READWRITE
     if (
         isinstance(governor, JsUnaryExpression)
         and governor.operator == 'delete'
-        and _strip_parens(governor.operand) is target
+        and strip_parens(governor.operand) is target
     ):
         return Role.READWRITE
-    if isinstance(governor, (JsForInStatement, JsForOfStatement)) and _strip_parens(governor.left) is target:
+    if isinstance(governor, (JsForInStatement, JsForOfStatement)) and strip_parens(governor.left) is target:
         return Role.WRITE
     return Role.READ
-
-
-def _strip_parens(node: Node | None) -> Node | None:
-    """
-    The expression *node* denotes once any enclosing parentheses are removed, so that a parenthesized
-    operand is classified by the operator that actually applies to it rather than by the redundant
-    grouping the parser preserves.
-    """
-    while isinstance(node, JsParenthesizedExpression):
-        node = node.expression
-    return node
 
 
 def _enclosing_operator(node: Node) -> Node | None:
@@ -401,15 +391,15 @@ def _governing_target(node: Node) -> tuple[Node | None, Node]:
     parent = _enclosing_operator(cursor)
     while parent is not None:
         if isinstance(parent, JsProperty):
-            value = _strip_parens(parent.value)
+            value = strip_parens(parent.value)
             if value is not cursor and not (
                 parent.shorthand
                 and isinstance(value, JsAssignmentPattern)
-                and _strip_parens(value.left) is cursor
+                and strip_parens(value.left) is cursor
             ):
                 break
         elif isinstance(parent, JsAssignmentPattern):
-            if _strip_parens(parent.left) is not cursor:
+            if strip_parens(parent.left) is not cursor:
                 break
         elif not isinstance(parent, _PATTERN_CONTAINERS):
             break
@@ -434,18 +424,18 @@ def container_reference_role(node: JsIdentifier | JsMemberExpression) -> Contain
     set (with alias-following and callee summaries) to decide container immutability.
     """
     parent = _enclosing_operator(node)
-    if isinstance(parent, JsMemberExpression) and _strip_parens(parent.object) is node:
+    if isinstance(parent, JsMemberExpression) and strip_parens(parent.object) is node:
         member: Node = parent
         while True:
             outer = _enclosing_operator(member)
-            if isinstance(outer, JsMemberExpression) and _strip_parens(outer.object) is member:
+            if isinstance(outer, JsMemberExpression) and strip_parens(outer.object) is member:
                 member = outer
                 continue
             break
         if _is_invocation_of(_enclosing_operator(member), member):
             return ContainerRole.MEMBER_CALL
         return ContainerRole.MEMBER_WRITE if is_member_write_target(member) else ContainerRole.MEMBER_READ
-    if isinstance(parent, JsAssignmentExpression) and _strip_parens(parent.left) is node and parent.operator == '=':
+    if isinstance(parent, JsAssignmentExpression) and strip_parens(parent.left) is node and parent.operator == '=':
         return ContainerRole.REBIND
     return ContainerRole.ESCAPE
 
@@ -456,9 +446,9 @@ def _is_invocation_of(node: Node | None, callee: Node) -> bool:
     looking through parentheses around the callee.
     """
     if isinstance(node, JsCallExpression):
-        return _strip_parens(node.callee) is callee
+        return strip_parens(node.callee) is callee
     if isinstance(node, JsTaggedTemplateExpression):
-        return _strip_parens(node.tag) is callee
+        return strip_parens(node.tag) is callee
     return False
 
 
@@ -473,13 +463,13 @@ def is_member_write_target(member: Node) -> bool:
     """
     governor, target = _governing_target(member)
     if isinstance(governor, JsAssignmentExpression):
-        return _strip_parens(governor.left) is target
+        return strip_parens(governor.left) is target
     if isinstance(governor, JsUpdateExpression):
-        return _strip_parens(governor.argument) is target
+        return strip_parens(governor.argument) is target
     if isinstance(governor, JsUnaryExpression):
-        return governor.operator == 'delete' and _strip_parens(governor.operand) is target
+        return governor.operator == 'delete' and strip_parens(governor.operand) is target
     if isinstance(governor, (JsForInStatement, JsForOfStatement)):
-        return _strip_parens(governor.left) is target
+        return strip_parens(governor.left) is target
     return False
 
 
@@ -496,7 +486,7 @@ def is_simple_assignment_target(node: Node) -> bool:
     return (
         isinstance(governor, JsAssignmentExpression)
         and governor.operator == '='
-        and _strip_parens(governor.left) is target
+        and strip_parens(governor.left) is target
     )
 
 
@@ -580,7 +570,7 @@ def _is_direct_eval_call(node: Node) -> bool:
     """
     if not isinstance(node, JsCallExpression):
         return False
-    callee = _strip_parens(node.callee)
+    callee = strip_parens(node.callee)
     return isinstance(callee, JsIdentifier) and callee.name == 'eval'
 
 
@@ -610,7 +600,7 @@ def _timer_callee_name(callee: Node | None) -> str | None:
     local `window` yielding a match only over-reports a reflection surface, the safe direction for the
     whole-program detector this feeds.
     """
-    callee = _strip_parens(callee)
+    callee = strip_parens(callee)
     if isinstance(callee, JsIdentifier):
         return callee.name if callee.name in TIMER_NAMES else None
     if isinstance(callee, JsMemberExpression) and _is_global_base(callee.object):
