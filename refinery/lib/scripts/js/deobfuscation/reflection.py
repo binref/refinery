@@ -16,6 +16,7 @@ from refinery.lib.scripts import Expression, Node, _clone_node, _replace_in_pare
 from refinery.lib.scripts.js.analysis.cache import model_cache
 from refinery.lib.scripts.js.analysis.effects import side_effect_free
 from refinery.lib.scripts.js.analysis.model import (
+    REFLECTIVE_INTRINSICS,
     SYNC_EVAL_NAMES,
     TIMER_NAMES,
     BindingKind,
@@ -64,6 +65,8 @@ from refinery.lib.scripts.js.model import (
     Statement,
     strip_parens,
 )
+
+_REFLECTIVE_CALLEE_NAMES = REFLECTIVE_INTRINSICS | TIMER_NAMES | SYNC_EVAL_NAMES
 
 
 class ReflectedScope(enum.Enum):
@@ -716,19 +719,20 @@ class JsReflectionInlining(ScriptLevelTransformer):
 
     def _free_global_name(self, root: JsScript) -> Callable[[Expression | None], str | None]:
         """
-        A resolver reporting the intrinsic a bare callee identifier denotes — `eval` yields `'eval'`,
-        `Function` yields `'Function'` — or `None` when the name is not a free, unshadowed global. A
-        local binding (a parameter, a `var`, a `with`-object property) of the name is an ordinary value,
-        not the intrinsic, and must not drive an inline; the model resolves a reference to its binding
-        for a shadow and to `None` for a free global, and `read_has_dynamic_effect` rejects a name read
-        through a dynamic scope. Resolved lazily against *root*'s current model, mirroring
-        `_dynamic_read_effect`.
+        A resolver reporting the reflective intrinsic a bare callee identifier denotes — `eval` yields
+        `'eval'`, `Function` yields `'Function'`, a timer or `execScript` its own name — or `None`. Only
+        a name that could name such a callee is resolved; any other identifier is declined before any
+        model lookup, since no caller acts on a non-reflective name. A local binding (a parameter, a
+        `var`, a `with`-object property) of the name is an ordinary value, not the intrinsic, and must
+        not drive an inline; the model resolves a reference to its binding for a shadow and to `None` for
+        a free global, and `read_has_dynamic_effect` rejects a name read through a dynamic scope.
+        Resolved lazily against *root*'s current model, mirroring `_dynamic_read_effect`.
         """
         def resolve(callee: Expression | None) -> str | None:
             if callee is None:
                 return None
             ident = strip_parens(callee)
-            if not isinstance(ident, JsIdentifier):
+            if not isinstance(ident, JsIdentifier) or ident.name not in _REFLECTIVE_CALLEE_NAMES:
                 return None
             model = model_cache(self, root).model
             if model.scope_of(ident) is None:
