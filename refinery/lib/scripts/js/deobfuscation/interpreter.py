@@ -851,9 +851,19 @@ def _math_ceil(args: list[Value]) -> Value:
     return _to_js_integer(args, math.ceil)
 
 
+def _round_half_up(v: float) -> float:
+    """
+    Round *v* to the nearest integer, ties toward positive infinity, matching JS `Math.round`. The
+    result is taken from the fractional distance to the floor rather than `floor(v + 0.5)`, whose
+    addition rounds the largest double below `0.5` up to `1.0` and would yield `1` instead of `0`.
+    """
+    lower = math.floor(v)
+    return lower if v - lower < 0.5 else lower + 1
+
+
 @_register(('Math', 'round'))
 def _math_round(args: list[Value]) -> Value:
-    return _to_js_integer(args, lambda v: math.floor(v + 0.5))
+    return _to_js_integer(args, _round_half_up)
 
 
 @_register(('Math', 'abs'))

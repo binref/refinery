@@ -218,6 +218,9 @@ class TestInterpreterValueSemantics(TestJsDeobfuscator):
     def test_math_round_negative_zero_observable_through_division(self):
         self.assertEqual('var x = -Infinity;', self._fold('1 / Math.round(-0.4)'))
 
+    def test_math_round_largest_value_below_half_rounds_down(self):
+        self.assertEqual('var x = 0;', self._fold('Math.round(0.49999999999999994)'))
+
     def test_math_max_selects_positive_over_negative_zero(self):
         self.assertEqual('var x = Infinity;', self._fold('1 / Math.max(-0, 0)'))
 
