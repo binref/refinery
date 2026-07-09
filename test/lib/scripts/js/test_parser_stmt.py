@@ -300,6 +300,14 @@ class TestJsParserStatements(TestBase):
         self.assertEqual(len([n for n in ast.walk() if isinstance(n, JsDecorator)]), 1)
         self.assertEqual([n for n in ast.walk() if isinstance(n, JsErrorNode)], [])
 
+    def test_jsx_element_fails_loud(self):
+        ast = JsParser('var x = <div>hi</div>;').parse()
+        self.assertGreater(len([n for n in ast.walk() if isinstance(n, JsErrorNode)]), 0)
+
+    def test_jsx_fragment_fails_loud(self):
+        ast = JsParser('var x = <>hi</>;').parse()
+        self.assertGreater(len([n for n in ast.walk() if isinstance(n, JsErrorNode)]), 0)
+
     def test_import_default(self):
         stmt = self._parse_stmt("import foo from 'bar';")
         self.assertIsInstance(stmt, JsImportDeclaration)
