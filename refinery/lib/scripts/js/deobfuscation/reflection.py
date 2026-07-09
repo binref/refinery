@@ -24,6 +24,7 @@ from refinery.lib.scripts.js.analysis.model import (
     SemanticModel,
     build_semantic_model,
     crosses_dynamic_scope,
+    enclosing_function,
     is_member_write_target,
     is_simple_assignment_target,
     is_use_position,
@@ -40,7 +41,6 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
 )
 from refinery.lib.scripts.js.deobfuscation.options import module_execution
 from refinery.lib.scripts.js.model import (
-    JsArrowFunctionExpression,
     JsAssignmentExpression,
     JsAwaitExpression,
     JsBlockStatement,
@@ -53,7 +53,6 @@ from refinery.lib.scripts.js.model import (
     JsMemberExpression,
     JsNewExpression,
     JsObjectExpression,
-    JsParenthesizedExpression,
     JsProperty,
     JsPropertyKind,
     JsReturnStatement,
@@ -80,15 +79,25 @@ class ReflectedScope(enum.Enum):
     DIRECT_EVAL = enum.auto()
 
 
-def _try_parse(code: str) -> JsScript | None:
+def _try_parse(code: str, *, top_level_await: bool) -> JsScript | None:
     try:
         from refinery.lib.scripts.js.parser import JsParser
-        parsed = JsParser(code, top_level_await=True).parse()
+        parsed = JsParser(code, top_level_await=top_level_await).parse()
     except Exception:
         return None
     if not parsed.body:
         return None
     return parsed
+
+
+def _site_in_async_function(site: Node) -> bool:
+    """
+    Whether *site* sits inside an `async` function, so a direct `eval` there runs where `await` is an
+    operator. Global-scope reflected code (indirect `eval`, a `Function` body, a string call) runs in
+    the global sloppy scope instead, where `await` is an ordinary identifier and never an operator.
+    """
+    func = enclosing_function(site)
+    return isinstance(func, FUNCTION_NODES) and func.is_async
 
 
 def _try_eval_string_arg(node: Expression) -> str | None:
@@ -468,7 +477,7 @@ def _try_unpack_function_constructor(
     if mapping is None:
         return None
     getters, setters = mapping
-    parsed = _try_parse(code)
+    parsed = _try_parse(code, top_level_await=False)
     if parsed is None:
         return None
     if param_name and not _substitute_proxy_accesses(parsed, param_name, getters, setters):
@@ -508,22 +517,6 @@ def _has_top_level_return(stmts: list[Statement]) -> bool:
     top-level `return` is the function's own return.
     """
     return any(isinstance(n, JsReturnStatement) for s in stmts for n in walk_scope(s))
-
-
-def _wrap_in_async_iife(stmts: list[Statement]) -> list[Statement]:
-    iife = JsExpressionStatement(
-        expression=JsCallExpression(
-            callee=JsParenthesizedExpression(
-                expression=JsArrowFunctionExpression(
-                    is_async=True,
-                    params=[],
-                    body=JsBlockStatement(body=stmts),
-                ),
-            ),
-            arguments=[],
-        ),
-    )
-    return [iife]
 
 
 def _has_use_strict_directive(stmts: list[Statement]) -> bool:
@@ -855,30 +848,27 @@ class JsReflectionInlining(ScriptLevelTransformer):
         `Function`-constructor pack, a direct or indirect `eval`, and a `Function` body are handled by
         `_resolve_reflected_call`; `execScript("code")` runs its code synchronously in the global scope
         and discards the value, so at statement position it is replaced by that code inlined in place. An
-        outer `await` is preserved by wrapping a top-level-await body in an async IIFE.
+        `await`-ed call is not a plain call expression here, so it is left for the expression pass, which
+        rewrites the `eval` inside `await eval("expr")` to `await (expr)` without dropping the `await`.
         """
         if not isinstance(stmt, JsExpressionStatement) or stmt.expression is None:
             return None
         node = stmt.expression
-        had_await = isinstance(node, JsAwaitExpression)
-        if had_await:
-            node = node.argument
         if not isinstance(node, JsCallExpression):
             return None
-        if not had_await:
-            sync = _extract_string_call_code(
-                node,
-                SYNC_EVAL_NAMES,
-                alias_name=self._alias_member_name(root),
-                free_global_name=self._free_global_name(root),
+        sync = _extract_string_call_code(
+            node,
+            SYNC_EVAL_NAMES,
+            alias_name=self._alias_member_name(root),
+            free_global_name=self._free_global_name(root),
+        )
+        if sync is not None:
+            parsed = self._resolve_reflected_body(
+                sync, stmt, root, ReflectedScope.GLOBAL_EVAL, at_global_scope,
             )
-            if sync is not None:
-                parsed = self._resolve_reflected_body(
-                    sync, stmt, root, ReflectedScope.GLOBAL_EVAL, at_global_scope,
-                )
-                if parsed is None or _has_top_level_await(parsed.body):
-                    return None
-                return parsed.body
+            if parsed is None or _has_top_level_await(parsed.body):
+                return None
+            return parsed.body
         pack_result = _try_unpack_function_constructor(
             node, free_global_name=self._free_global_name(root))
         if pack_result is not None:
@@ -888,10 +878,7 @@ class JsReflectionInlining(ScriptLevelTransformer):
         resolved = self._resolve_reflected_call(node, stmt, root, at_global_scope)
         if resolved is None:
             return None
-        result = resolved[1].body
-        if had_await and _has_top_level_await(result):
-            return _wrap_in_async_iife(result)
-        return result
+        return resolved[1].body
 
     def _try_resolve_expression(self, node: JsCallExpression, root: JsScript) -> Expression | None:
         resolved = self._resolve_reflected_call(node, node, root, at_global_scope=False)
@@ -978,7 +965,8 @@ class JsReflectionInlining(ScriptLevelTransformer):
         resolves_globally = scope is not ReflectedScope.DIRECT_EVAL
         if resolves_globally and _site_in_strict_context(site, root):
             return None
-        parsed = _try_parse(code)
+        top_level_await = not resolves_globally and _site_in_async_function(site)
+        parsed = _try_parse(code, top_level_await=top_level_await)
         if parsed is None:
             return None
         if resolves_globally and _has_use_strict_directive(parsed.body):

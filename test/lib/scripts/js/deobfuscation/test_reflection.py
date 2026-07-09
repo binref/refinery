@@ -502,7 +502,28 @@ class TestReflectionInlining(TestJsDeobfuscator):
         )
         self.assertEqual("console.log('hello');", self._deobfuscate(source))
 
-    def test_await_eval_inlined(self):
+    def test_await_eval_single_expression_preserves_await(self):
+        source = inspect.cleandoc(
+            """
+            async function run() {
+              await eval("foo()");
+            }
+            run();
+            """
+        )
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                async function run() {
+                  await foo();
+                }
+                run();
+                """
+            ),
+            self._reflect(source),
+        )
+
+    def test_await_eval_multi_statement_not_inlined(self):
         source = inspect.cleandoc(
             """
             async function run() {
@@ -511,66 +532,10 @@ class TestReflectionInlining(TestJsDeobfuscator):
             run();
             """
         )
-        self.assertEqual(
-            inspect.cleandoc(
-                """
-                async function run() {
-                  var a = 1;
-                  var b = 2;
-                }
-                run();
-                """
-            ),
-            self._reflect(source),
-        )
+        self.assertEqual(source, self._reflect(source))
 
-    def test_await_eval_with_top_level_await(self):
-        source = inspect.cleandoc(
-            """
-            async function run() {
-              await eval("await fetch('x'); var a = 1;");
-            }
-            run();
-            """
-        )
-        self.assertEqual(
-            inspect.cleandoc(
-                """
-                async function run() {
-                  (async () => {
-                    await fetch('x');
-                    var a = 1;
-                  })();
-                }
-                run();
-                """
-            ),
-            self._reflect(source),
-        )
-
-    def test_await_eval_nested_async_not_wrapped(self):
-        source = inspect.cleandoc(
-            """
-            async function run() {
-              await eval("const g = async () => { await fetch('x'); }; g();");
-            }
-            run();
-            """
-        )
-        self.assertEqual(
-            inspect.cleandoc(
-                """
-                async function run() {
-                  const g = async () => {
-                    await fetch('x');
-                  };
-                  g();
-                }
-                run();
-                """
-            ),
-            self._reflect(source),
-        )
+    def test_global_eval_await_used_as_identifier_not_misparsed(self):
+        self.assertEqual('await(fn);', self._reflect('(0, eval)("await(fn)");'))
 
     def test_eval_atob(self):
         import base64
