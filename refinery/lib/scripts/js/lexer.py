@@ -121,6 +121,7 @@ _ONE_CHAR_OPS: dict[str, JsTokenKind] = {
     ']' : JsTokenKind.RBRACKET,
     ';' : JsTokenKind.SEMICOLON,
     ',' : JsTokenKind.COMMA,
+    '@' : JsTokenKind.AT,
 }
 
 _EXPR_END_KINDS = frozenset({

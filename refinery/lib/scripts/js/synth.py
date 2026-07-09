@@ -11,6 +11,7 @@ from refinery.lib.scripts.js.model import (
     JsBooleanLiteral,
     JsBreakStatement,
     JsCallExpression,
+    JsDecorator,
     JsCatchClause,
     JsClassBody,
     JsClassDeclaration,
@@ -438,7 +439,25 @@ class JsSynthesizer(Synthesizer):
             else:
                 self.visit(node.body)
 
+    def _emit_decorators(self, decorators: list[JsDecorator]):
+        for decorator in decorators:
+            self.visit(decorator)
+            self._write(' ')
+
+    def visit_JsDecorator(self, node: JsDecorator):
+        self._write('@')
+        expr = node.expression
+        if expr is None:
+            return
+        if isinstance(expr, (JsIdentifier, JsMemberExpression, JsCallExpression)):
+            self.visit(expr)
+        else:
+            self._write('(')
+            self.visit(expr)
+            self._write(')')
+
     def _emit_class(self, node: JsClassDeclaration | JsClassExpression):
+        self._emit_decorators(node.decorators)
         self._write('class')
         if node.id:
             self._write(' ')
@@ -483,6 +502,7 @@ class JsSynthesizer(Synthesizer):
         self._write('}')
 
     def visit_JsMethodDefinition(self, node: JsMethodDefinition):
+        self._emit_decorators(node.decorators)
         if node.is_static:
             self._write('static ')
         if node.kind in (JsMethodKind.GET, JsMethodKind.SET):
@@ -500,6 +520,7 @@ class JsSynthesizer(Synthesizer):
                 self._emit_block(node.value.body.body)
 
     def visit_JsPropertyDefinition(self, node: JsPropertyDefinition):
+        self._emit_decorators(node.decorators)
         if node.is_static:
             self._write('static ')
         self._emit_key(node.key, node.computed)

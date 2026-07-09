@@ -303,3 +303,6 @@ class TestJsLexer(TestBase):
 
     def test_hash_without_name_is_error(self):
         self.assertEqual(self._tokens('#'), [(JsTokenKind.ERROR, '#')])
+
+    def test_at_token(self):
+        self.assertEqual(self._tokens('@'), [(JsTokenKind.AT, '@')])

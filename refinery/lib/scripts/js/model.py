@@ -139,10 +139,16 @@ class JsArrowFunctionExpression(Expression):
 
 
 @dataclass(repr=False, eq=False)
+class JsDecorator(Node):
+    expression: Expression | None = None
+
+
+@dataclass(repr=False, eq=False)
 class JsClassExpression(Expression):
     id: JsIdentifier | None = None
     super_class: Expression | None = None
     body: JsClassBody | None = None
+    decorators: list[JsDecorator] = field(default_factory=list)
 
 
 @dataclass(repr=False, eq=False)
@@ -268,6 +274,7 @@ class JsMethodDefinition(Node):
     kind: JsMethodKind = JsMethodKind.METHOD
     computed: bool = False
     is_static: bool = False
+    decorators: list[JsDecorator] = field(default_factory=list)
 
 
 @dataclass(repr=False, eq=False)
@@ -276,6 +283,7 @@ class JsPropertyDefinition(Node):
     value: Expression | None = None
     computed: bool = False
     is_static: bool = False
+    decorators: list[JsDecorator] = field(default_factory=list)
 
 
 @dataclass(repr=False, eq=False)
@@ -428,6 +436,7 @@ class JsClassDeclaration(Statement):
     id: JsIdentifier | None = None
     super_class: Expression | None = None
     body: JsClassBody | None = None
+    decorators: list[JsDecorator] = field(default_factory=list)
 
 
 @dataclass(repr=False, eq=False)

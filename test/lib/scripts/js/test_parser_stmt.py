@@ -10,6 +10,7 @@ from refinery.lib.scripts.js.model import (
     JsClassDeclaration,
     JsContinueStatement,
     JsDebuggerStatement,
+    JsDecorator,
     JsDoWhileStatement,
     JsEmptyStatement,
     JsErrorNode,
@@ -283,6 +284,21 @@ class TestJsParserStatements(TestBase):
         ast = JsParser("import x from 'm';").parse()
         self.assertEqual([n for n in ast.walk() if isinstance(n, JsImportExpression)], [])
         self.assertEqual(len([n for n in ast.walk() if isinstance(n, JsImportDeclaration)]), 1)
+
+    def test_class_decorator(self):
+        ast = JsParser('@dec class C {}').parse()
+        self.assertEqual(len([n for n in ast.walk() if isinstance(n, JsDecorator)]), 1)
+        self.assertEqual([n for n in ast.walk() if isinstance(n, JsErrorNode)], [])
+
+    def test_member_decorators(self):
+        ast = JsParser('class C { @a m() {} @b x = 1; }').parse()
+        self.assertEqual(len([n for n in ast.walk() if isinstance(n, JsDecorator)]), 2)
+        self.assertEqual([n for n in ast.walk() if isinstance(n, JsErrorNode)], [])
+
+    def test_export_decorated_class(self):
+        ast = JsParser('export @dec class C {}').parse()
+        self.assertEqual(len([n for n in ast.walk() if isinstance(n, JsDecorator)]), 1)
+        self.assertEqual([n for n in ast.walk() if isinstance(n, JsErrorNode)], [])
 
     def test_import_default(self):
         stmt = self._parse_stmt("import foo from 'bar';")

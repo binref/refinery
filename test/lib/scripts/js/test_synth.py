@@ -657,3 +657,18 @@ class TestJsSynthesizer(TestBase):
 
     def test_import_with_attributes(self):
         self._round_trip("import x from 'y' with { type: 'json' };")
+
+    def test_class_decorator(self):
+        self._round_trip('@dec class C {}')
+
+    def test_class_decorator_call(self):
+        self._round_trip('@dec(1) class C {}')
+
+    def test_class_decorator_member(self):
+        self._round_trip('@a.b.c class C {}')
+
+    def test_member_decorators(self):
+        self._round_trip('class C { @a m() {} @b x = 1; }')
+
+    def test_export_decorated_class(self):
+        self._round_trip('export @dec class C {}')

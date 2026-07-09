@@ -121,6 +121,7 @@ class JsTokenKind(enum.Enum):
     RBRACKET        = ']'                # noqa
     SEMICOLON       = ';'                # noqa
     COMMA           = ','                # noqa
+    AT              = '@'                # noqa
 
     NEWLINE         = 'newline'          # noqa
     COMMENT         = 'comment'          # noqa

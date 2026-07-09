@@ -24,6 +24,7 @@ from refinery.lib.scripts.js.model import (
     JsConditionalExpression,
     JsContinueStatement,
     JsDebuggerStatement,
+    JsDecorator,
     JsDoWhileStatement,
     JsEmptyStatement,
     JsErrorNode,
@@ -290,6 +291,17 @@ class JsParser:
             return self._parse_continue_statement()
         if kind == JsTokenKind.FUNCTION:
             return self._parse_function_declaration()
+        if kind == JsTokenKind.AT:
+            decorators = self._parse_decorators()
+            if self._at(JsTokenKind.EXPORT):
+                return self._parse_export_declaration(decorators)
+            if self._at(JsTokenKind.CLASS):
+                return self._parse_class_declaration(decorators)
+            return JsExpressionStatement(
+                expression=JsErrorNode(
+                    text='@', message='decorators must precede a class', offset=offset),
+                offset=offset,
+            )
         if kind == JsTokenKind.CLASS:
             return self._parse_class_declaration()
         if kind == JsTokenKind.DEBUGGER:
@@ -685,10 +697,45 @@ class JsParser:
         self._expect(JsTokenKind.RPAREN)
         return params
 
+    def _parse_decorators(self) -> list[JsDecorator]:
+        decorators: list[JsDecorator] = []
+        while self._at(JsTokenKind.AT):
+            decorators.append(self._parse_decorator())
+        return decorators
+
+    def _parse_decorator(self) -> JsDecorator:
+        offset = self._current.offset
+        self._expect(JsTokenKind.AT)
+        if self._at(JsTokenKind.LPAREN):
+            self._advance()
+            inner = self._parse_expression()
+            self._expect(JsTokenKind.RPAREN)
+            return JsDecorator(expression=inner, offset=offset)
+        if not self._at(JsTokenKind.IDENTIFIER):
+            return JsDecorator(
+                expression=JsErrorNode(
+                    text=self._current.value, message='unexpected token', offset=offset),
+                offset=offset,
+            )
+        tok = self._advance()
+        expr: Expression = JsIdentifier(name=tok.value, offset=tok.offset)
+        while self._eat(JsTokenKind.DOT):
+            prop = self._advance()
+            expr = JsMemberExpression(
+                object=expr,
+                property=JsIdentifier(name=prop.value, offset=prop.offset),
+                computed=False,
+                offset=expr.offset,
+            )
+        if self._at(JsTokenKind.LPAREN):
+            expr = self._parse_call_arguments(expr, optional=False)
+        return JsDecorator(expression=expr, offset=offset)
+
     def _parse_class_impl(
         self,
         *,
         as_expression: bool,
+        decorators: list[JsDecorator] | None = None,
     ) -> JsClassDeclaration | JsClassExpression:
         offset = self._current.offset
         self._expect(JsTokenKind.CLASS)
@@ -702,12 +749,16 @@ class JsParser:
         body = self._parse_class_body()
         if as_expression:
             return JsClassExpression(
-                id=id_node, super_class=super_class, body=body, offset=offset)
+                id=id_node, super_class=super_class, body=body,
+                decorators=decorators or [], offset=offset)
         return JsClassDeclaration(
-            id=id_node, super_class=super_class, body=body, offset=offset)
+            id=id_node, super_class=super_class, body=body,
+            decorators=decorators or [], offset=offset)
 
-    def _parse_class_declaration(self) -> JsClassDeclaration:
-        return self._parse_class_impl(as_expression=False)
+    def _parse_class_declaration(
+        self, decorators: list[JsDecorator] | None = None,
+    ) -> JsClassDeclaration:
+        return self._parse_class_impl(as_expression=False, decorators=decorators)
 
     def _parse_class_body(self) -> JsClassBody:
         offset = self._current.offset
@@ -716,7 +767,12 @@ class JsParser:
         while not self._at(JsTokenKind.RBRACE, JsTokenKind.EOF):
             if self._eat(JsTokenKind.SEMICOLON):
                 continue
-            members.append(self._parse_class_member())
+            decorators = self._parse_decorators()
+            member = self._parse_class_member()
+            if decorators and isinstance(member, (JsMethodDefinition, JsPropertyDefinition)):
+                member.decorators = decorators
+                member._adopt(*decorators)
+            members.append(member)
         self._expect(JsTokenKind.RBRACE)
         return JsClassBody(body=members, offset=offset)
 
@@ -928,16 +984,20 @@ class JsParser:
         self._expect(JsTokenKind.RBRACE)
         return specs
 
-    def _parse_export_declaration(self) -> Statement:
+    def _parse_export_declaration(
+        self, decorators: list[JsDecorator] | None = None,
+    ) -> Statement:
         offset = self._current.offset
         self._expect(JsTokenKind.EXPORT)
+        class_decorators = list(decorators or []) + self._parse_decorators()
 
         if self._eat(JsTokenKind.DEFAULT):
+            class_decorators += self._parse_decorators()
             if self._at(JsTokenKind.FUNCTION):
                 decl = self._parse_function_declaration()
                 return JsExportDefaultDeclaration(declaration=decl, offset=offset)
             if self._at(JsTokenKind.CLASS):
-                decl = self._parse_class_declaration()
+                decl = self._parse_class_declaration(class_decorators)
                 return JsExportDefaultDeclaration(declaration=decl, offset=offset)
             if self._at(JsTokenKind.ASYNC):
                 decl = self._parse_async_statement()
@@ -969,7 +1029,7 @@ class JsParser:
             decl = self._parse_function_declaration()
             return JsExportNamedDeclaration(declaration=decl, offset=offset)
         if self._at(JsTokenKind.CLASS):
-            decl = self._parse_class_declaration()
+            decl = self._parse_class_declaration(class_decorators)
             return JsExportNamedDeclaration(declaration=decl, offset=offset)
         if self._at(JsTokenKind.ASYNC):
             decl = self._parse_async_statement()
