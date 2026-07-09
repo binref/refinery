@@ -662,20 +662,7 @@ class EffectModel:
             return callee
         if not isinstance(callee, JsIdentifier):
             return None
-        binding = self.model.resolve(callee)
-        if binding is None or len(binding.declarations) != 1:
-            return None
-        if not self.model.binding_never_reassigned(binding):
-            return None
-        decl = binding.declarations[0]
-        parent = decl.parent
-        if isinstance(parent, JsFunctionDeclaration) and parent.id is decl:
-            return parent
-        if isinstance(parent, JsVariableDeclarator) and parent.id is decl and isinstance(
-            parent.init, (JsFunctionExpression, JsArrowFunctionExpression)
-        ):
-            return parent.init
-        return None
+        return self.function_of(self.model.resolve(callee))
 
     def _alias_target(self, ref: JsIdentifier) -> Binding | None:
         parent = ref.parent
@@ -935,7 +922,9 @@ class EffectModel:
             return self.function_of(self.model.resolve(callee))
         return None
 
-    def function_of(self, binding: Binding | None) -> Node | None:
+    def function_of(
+        self, binding: Binding | None
+    ) -> JsFunctionDeclaration | JsFunctionExpression | JsArrowFunctionExpression | None:
         """
         The single function a *binding* stably resolves to — its sole declaration's function
         declaration or function/arrow initializer — or `None` when the binding is absent, reassigned
