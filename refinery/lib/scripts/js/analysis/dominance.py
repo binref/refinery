@@ -54,6 +54,22 @@ class DominanceModel:
         for graph in self._flow.graphs.values():
             self._compute_dominators(graph)
 
+    def _locate_pair(self, a: Node, b: Node) -> tuple[CfgNode, CfgNode] | None:
+        """
+        The control-flow nodes that evaluate *a* and *b* when both lie in the same function's graph, or
+        `None` when either is unlocatable or the two lie in different functions' graphs, where
+        intraprocedural dominance does not apply.
+        """
+        located_a = self._flow.locate(a)
+        located_b = self._flow.locate(b)
+        if located_a is None or located_b is None:
+            return None
+        graph_a, node_a = located_a
+        graph_b, node_b = located_b
+        if graph_a is not graph_b:
+            return None
+        return node_a, node_b
+
     def dominates(self, a: Node, b: Node) -> bool:
         """
         Whether the statement evaluating *a* is guaranteed to have executed by the time the statement
@@ -64,15 +80,8 @@ class DominanceModel:
         enclosing statement node is unlocatable) or when the two lie in different functions' graphs,
         where intraprocedural dominance does not apply.
         """
-        located_a = self._flow.locate(a)
-        located_b = self._flow.locate(b)
-        if located_a is None or located_b is None:
-            return False
-        graph_a, node_a = located_a
-        graph_b, node_b = located_b
-        if graph_a is not graph_b:
-            return False
-        return id(node_a) in self._dominators.get(id(node_b), frozenset())
+        pair = self._locate_pair(a, b)
+        return pair is not None and self.dominates_node(*pair)
 
     def strictly_dominates(self, a: Node, b: Node) -> bool:
         """
@@ -84,15 +93,10 @@ class DominanceModel:
         operand), which the reflexive `dominates` would wrongly accept. `False` too when either node is
         unlocatable or the two lie in different functions' graphs, exactly as `dominates`.
         """
-        located_a = self._flow.locate(a)
-        located_b = self._flow.locate(b)
-        if located_a is None or located_b is None:
+        pair = self._locate_pair(a, b)
+        if pair is None or pair[0] is pair[1]:
             return False
-        graph_a, node_a = located_a
-        graph_b, node_b = located_b
-        if graph_a is not graph_b or node_a is node_b:
-            return False
-        return id(node_a) in self._dominators.get(id(node_b), frozenset())
+        return self.dominates_node(*pair)
 
     def cfg_node_of(self, element: Node) -> CfgNode | None:
         """
