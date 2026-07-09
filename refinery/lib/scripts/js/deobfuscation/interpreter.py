@@ -1169,6 +1169,38 @@ def _list_to_string(buf: list, args: list[Value]) -> Value:
 
 STATIC_OBJECTS = frozenset({'Math', 'String', 'Object', 'Array', 'Number', 'JSON', 'Buffer'})
 
+_TYPEOF_FUNCTION_GLOBALS = frozenset({
+    'String', 'Number', 'Boolean', 'Array', 'Object', 'Function', 'Symbol', 'BigInt',
+    'Date', 'RegExp', 'Error', 'EvalError', 'RangeError', 'ReferenceError', 'SyntaxError',
+    'TypeError', 'URIError', 'AggregateError', 'Promise', 'Map', 'Set', 'WeakMap', 'WeakSet',
+    'WeakRef', 'Proxy', 'ArrayBuffer', 'SharedArrayBuffer', 'DataView', 'Int8Array', 'Uint8Array',
+    'Uint8ClampedArray', 'Int16Array', 'Uint16Array', 'Int32Array', 'Uint32Array', 'Float32Array',
+    'Float64Array', 'BigInt64Array', 'BigUint64Array', 'Buffer', 'parseInt', 'parseFloat', 'isNaN',
+    'isFinite', 'encodeURIComponent', 'decodeURIComponent', 'encodeURI', 'decodeURI', 'eval',
+    'escape', 'unescape', 'btoa', 'atob', 'setTimeout', 'setInterval', 'clearTimeout',
+    'clearInterval', 'setImmediate', 'queueMicrotask',
+})
+
+_TYPEOF_OBJECT_GLOBALS = frozenset({'Math', 'JSON', 'Reflect', 'Atomics', 'globalThis', 'console'})
+
+
+def _global_typeof(name: str) -> str | None:
+    """
+    The `typeof` result for a well-known global *name* — a constructor or built-in function is
+    `'function'`, a namespace object is `'object'`, `NaN`/`Infinity` are `'number'` and `undefined` is
+    `'undefined'` — or `None` when the interpreter does not model *name* and so cannot tell a declared
+    global (whose `typeof` is not `'undefined'`) from a genuinely absent one.
+    """
+    if name in _TYPEOF_FUNCTION_GLOBALS or (None, name) in BUILTIN_REGISTRY:
+        return 'function'
+    if name in _TYPEOF_OBJECT_GLOBALS:
+        return 'object'
+    if name in ('NaN', 'Infinity'):
+        return 'number'
+    if name == 'undefined':
+        return 'undefined'
+    return None
+
 
 def is_runtime_name(name: str) -> bool:
     """
@@ -1631,13 +1663,10 @@ class JsInterpreter:
                     return _js_typeof(self._env[name])
                 if name in self._functions:
                     return 'function'
-                if name in ('String', 'Number', 'Array', 'Object', 'Buffer'):
-                    return 'function'
-                if name in STATIC_OBJECTS:
-                    return 'object'
-                if name in ('NaN', 'Infinity'):
-                    return 'number'
-                return 'undefined'
+                result = _global_typeof(name)
+                if result is None:
+                    raise IrreducibleExpression(node)
+                return result
             return _js_typeof(self._eval(node.operand))
         if op == 'void':
             self._eval(node.operand)

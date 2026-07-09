@@ -112,6 +112,13 @@ class TestInterpreterValueSemantics(TestJsDeobfuscator):
     def test_typeof_null_is_object(self):
         self.assertEqual("var x = 'object';", self._fold('typeof null'))
 
+    def test_typeof_builtin_function_folds_to_function(self):
+        self.assertEqual("var x = 'function';", self._fold('typeof parseInt'))
+        self.assertEqual("var x = 'function';", self._fold('typeof encodeURIComponent'))
+
+    def test_typeof_namespace_object_folds_to_object(self):
+        self.assertEqual("var x = 'object';", self._fold('typeof Math'))
+
     def test_string_of_null_is_null(self):
         self.assertEqual("var x = 'null';", self._fold('String(null)'))
 
