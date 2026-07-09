@@ -31,6 +31,19 @@ class TestUnusedCodeRemoval(TestJsDeobfuscator):
         )
         self.assertEqual(source, self._remove_unused(source))
 
+    def test_pseudo_global_read_through_alias_not_relocated(self):
+        source = inspect.cleandoc(
+            """
+            var g;
+            function f() {
+              g = 5;
+              return globalThis.g;
+            }
+            console.log(f());
+            """
+        )
+        self.assertEqual(source, self._remove_unused(source))
+
     def test_block_scoped_var_read_outside_block_preserved(self):
         source = inspect.cleandoc(
             """
