@@ -67,6 +67,7 @@ from refinery.lib.scripts.js.model import (
     JsRestElement,
     JsScript,
     JsSpreadElement,
+    JsStaticBlock,
     JsStringLiteral,
     JsSwitchStatement,
     JsTaggedTemplateExpression,
@@ -79,6 +80,11 @@ from refinery.lib.scripts.js.model import (
 )
 
 FUNCTION_NODES = (JsFunctionDeclaration, JsFunctionExpression, JsArrowFunctionExpression)
+
+# A class static block hoists its own `var`/function declarations, so it bounds the hoist walk like a
+# function body. It is deliberately absent from FUNCTION_NODES so the effect model stays transparent to
+# it: its statements run once, at class-definition time, as part of the enclosing function.
+HOIST_BOUNDARY = FUNCTION_NODES + (JsStaticBlock,)
 
 _FunctionNode = JsFunctionDeclaration | JsFunctionExpression | JsArrowFunctionExpression
 
@@ -129,6 +135,7 @@ class ScopeKind(enum.Enum):
     CATCH    = 'catch'     # noqa
     CLASS    = 'class'     # noqa
     WITH     = 'with'      # noqa
+    STATIC_BLOCK = 'static-block'  # noqa
 
 
 class BindingKind(enum.Enum):
@@ -234,10 +241,14 @@ class Scope:
     @property
     def is_var_scope(self) -> bool:
         """
-        Whether this scope is the target of `var`/function-declaration hoisting: a function body or
-        the script itself.
+        Whether this scope is the target of `var`/function-declaration hoisting: a function body, a
+        class static block, or the script itself.
         """
-        return self.kind is ScopeKind.FUNCTION or self.kind is ScopeKind.SCRIPT
+        return (
+            self.kind is ScopeKind.FUNCTION
+            or self.kind is ScopeKind.SCRIPT
+            or self.kind is ScopeKind.STATIC_BLOCK
+        )
 
     @property
     def var_scope(self) -> Scope | None:
@@ -491,13 +502,14 @@ def is_simple_assignment_target(node: Node) -> bool:
 def _walk_skipping_functions(stmts: list) -> Iterator[Node]:
     """
     Yield the statements in *stmts* and all their descendants, but do not descend into nested function
-    bodies (the function nodes themselves are yielded so their declared names can be read).
+    bodies or class static blocks — each hoists its own declarations (the boundary nodes themselves are
+    yielded so their declared names can be read).
     """
     stack: list[Node] = list(reversed(stmts))
     while stack:
         node = stack.pop()
         yield node
-        if isinstance(node, FUNCTION_NODES):
+        if isinstance(node, HOIST_BOUNDARY):
             continue
         stack.extend(reversed(node.children()))
 
@@ -1169,6 +1181,8 @@ class _ScopeBuilder:
             self._visit_with(node, scope)
         elif isinstance(node, (JsClassDeclaration, JsClassExpression)):
             self._visit_class(node, scope)
+        elif isinstance(node, JsStaticBlock):
+            self._visit_static_block(node, scope)
         else:
             for child in node.children():
                 self._visit(child, scope)
@@ -1270,6 +1284,13 @@ class _ScopeBuilder:
             self.model._node_scope[id(body)] = cscope
             for member in body.body:
                 self._visit(member, cscope)
+
+    def _visit_static_block(self, node: JsStaticBlock, enclosing: Scope):
+        sscope = self._new_scope(ScopeKind.STATIC_BLOCK, node, enclosing)
+        self._hoist(node.body, sscope)
+        self._collect_lexical(node.body, sscope)
+        for stmt in node.body:
+            self._visit(stmt, sscope)
 
 
 def build_semantic_model(root: JsScript) -> SemanticModel:

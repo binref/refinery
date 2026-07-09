@@ -33,6 +33,7 @@ from refinery.lib.scripts.js.model import (
     JsFunctionExpression,
     JsIdentifier,
     JsPrivateIdentifier,
+    JsStaticBlock,
     JsIfStatement,
     JsImportDeclaration,
     JsImportDefaultSpecifier,
@@ -503,6 +504,10 @@ class JsSynthesizer(Synthesizer):
             self._write(' = ')
             self._emit_element(node.value, True)
         self._write(';')
+
+    def visit_JsStaticBlock(self, node: JsStaticBlock):
+        self._write('static ')
+        self._emit_block(node.body)
 
     def visit_JsExpressionStatement(self, node: JsExpressionStatement):
         expr = node.expression

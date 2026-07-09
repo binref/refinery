@@ -633,3 +633,12 @@ class TestJsSynthesizer(TestBase):
 
     def test_static_private_field(self):
         self._round_trip('class A { static #n = 0; }')
+
+    def test_static_block(self):
+        self._round_trip('class A { static { this.x = 1; } }')
+
+    def test_static_block_with_var_and_loop(self):
+        self._round_trip('class A { static { var t = 0; for (var i = 0; i < 3; i++) t += i; } }')
+
+    def test_static_field_named_static(self):
+        self._round_trip('class A { static x = 1; }')

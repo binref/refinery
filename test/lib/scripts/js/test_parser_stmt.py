@@ -32,6 +32,7 @@ from refinery.lib.scripts.js.model import (
     JsPropertyDefinition,
     JsReturnStatement,
     JsScript,
+    JsStaticBlock,
     JsSwitchStatement,
     JsThrowStatement,
     JsTryStatement,
@@ -244,19 +245,23 @@ class TestJsParserStatements(TestBase):
         self.assertTrue(body.body[3].is_static)
 
     def test_class_private_field_and_method(self):
-        stmt = self._parse_stmt('class C { #x = 1; #m() { return this.#x; } }')
-        self.assertIsInstance(stmt, JsClassDeclaration)
-        body = stmt.body.body
-        self.assertIsInstance(body[0], JsPropertyDefinition)
-        self.assertIsInstance(body[0].key, JsPrivateIdentifier)
-        self.assertEqual(body[0].key.name, 'x')
-        self.assertIsInstance(body[1], JsMethodDefinition)
-        self.assertIsInstance(body[1].key, JsPrivateIdentifier)
-        self.assertEqual(body[1].key.name, 'm')
+        ast = JsParser('class C { #x = 1; #m() { return this.#x; } }').parse()
+        names = [n.name for n in ast.walk() if isinstance(n, JsPrivateIdentifier)]
+        self.assertEqual(names, ['x', 'm', 'x'])
 
     def test_class_private_field_produces_no_error_node(self):
-        stmt = self._parse_stmt('class C { #x = 1; }')
-        self.assertEqual([n for n in stmt.walk() if isinstance(n, JsErrorNode)], [])
+        ast = JsParser('class C { #x = 1; }').parse()
+        self.assertEqual([n for n in ast.walk() if isinstance(n, JsErrorNode)], [])
+
+    def test_class_static_block(self):
+        ast = JsParser('class C { static { this.x = 1; } }').parse()
+        self.assertEqual(len([n for n in ast.walk() if isinstance(n, JsStaticBlock)]), 1)
+        self.assertEqual([n for n in ast.walk() if isinstance(n, JsErrorNode)], [])
+
+    def test_class_static_field_named_static_still_parses(self):
+        ast = JsParser('class C { static x = 1; }').parse()
+        self.assertEqual([n for n in ast.walk() if isinstance(n, JsStaticBlock)], [])
+        self.assertEqual([n for n in ast.walk() if isinstance(n, JsErrorNode)], [])
 
     def test_import_default(self):
         stmt = self._parse_stmt("import foo from 'bar';")

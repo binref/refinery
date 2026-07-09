@@ -258,7 +258,7 @@ class JsRestElement(Expression):
 
 @dataclass(repr=False, eq=False)
 class JsClassBody(Node):
-    body: list[JsMethodDefinition | JsPropertyDefinition] = field(default_factory=list)
+    body: list[JsMethodDefinition | JsPropertyDefinition | JsStaticBlock] = field(default_factory=list)
 
 
 @dataclass(repr=False, eq=False)
@@ -276,6 +276,11 @@ class JsPropertyDefinition(Node):
     value: Expression | None = None
     computed: bool = False
     is_static: bool = False
+
+
+@dataclass(repr=False, eq=False)
+class JsStaticBlock(Node):
+    body: list[Statement] = field(default_factory=list)
 
 
 @dataclass(repr=False, eq=False)

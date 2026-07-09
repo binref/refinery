@@ -753,6 +753,25 @@ class TestDeobfuscationDifferential(TestBase):
             ' var a = new A();'
             ' console.log(a.inc(), a.inc(), a.has(a), a.has({}), A.total());')
 
+    def test_static_block_runs_at_class_definition(self):
+        """
+        A static block runs once, when the class is defined, and can read and write the class's private
+        state; its observable effects must survive parse/deob/synth.
+        """
+        self._check(
+            'var log = [];'
+            ' class C { static #n = 0; static { log.push("sb"); C.#n = 7; } static n() { return C.#n; } }'
+            ' console.log(log.join(","), C.n());')
+
+    def test_static_block_var_does_not_leak_to_enclosing_function(self):
+        """
+        A `var` declared inside a static block is scoped to that block, not the enclosing function, so
+        the function's own same-named binding is unaffected — no pass may conflate the two.
+        """
+        self._check(
+            'function f() { var x = "outer"; class C { static { var x = "inner"; } } return x; }'
+            ' console.log(f());')
+
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestDeobfuscationWithScope(TestBase):

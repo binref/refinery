@@ -58,6 +58,7 @@ from refinery.lib.scripts.js.model import (
     JsReturnStatement,
     JsScript,
     JsSequenceExpression,
+    JsStaticBlock,
     JsStringLiteral,
     JsThisExpression,
     JsUnaryExpression,
@@ -1016,6 +1017,8 @@ def walk_receiver_scope(root: Node) -> Iterator[Node]:
                 stack.append(node.super_class)
             if node.body is not None:
                 for member in node.body.body:
+                    if isinstance(member, JsStaticBlock):
+                        continue
                     if member.computed and member.key is not None:
                         stack.append(member.key)
             continue

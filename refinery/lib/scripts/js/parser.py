@@ -39,6 +39,7 @@ from refinery.lib.scripts.js.model import (
     JsFunctionExpression,
     JsIdentifier,
     JsPrivateIdentifier,
+    JsStaticBlock,
     JsIfStatement,
     JsImportDeclaration,
     JsImportDefaultSpecifier,
@@ -692,7 +693,7 @@ class JsParser:
     def _parse_class_body(self) -> JsClassBody:
         offset = self._current.offset
         self._expect(JsTokenKind.LBRACE)
-        members: list[JsMethodDefinition | JsPropertyDefinition] = []
+        members: list[JsMethodDefinition | JsPropertyDefinition | JsStaticBlock] = []
         while not self._at(JsTokenKind.RBRACE, JsTokenKind.EOF):
             if self._eat(JsTokenKind.SEMICOLON):
                 continue
@@ -700,7 +701,11 @@ class JsParser:
         self._expect(JsTokenKind.RBRACE)
         return JsClassBody(body=members, offset=offset)
 
-    def _parse_class_member(self) -> JsMethodDefinition | JsPropertyDefinition:
+    def _parse_static_block(self, offset: int) -> JsStaticBlock:
+        block = self._parse_block_statement()
+        return JsStaticBlock(body=block.body, offset=offset)
+
+    def _parse_class_member(self) -> JsMethodDefinition | JsPropertyDefinition | JsStaticBlock:
         offset = self._current.offset
         is_static = False
         if (
@@ -708,9 +713,10 @@ class JsParser:
         ):
             saved_pos = self._current
             self._advance()
+            if self._at(JsTokenKind.LBRACE):
+                return self._parse_static_block(offset)
             if self._at(
-                JsTokenKind.LBRACE, JsTokenKind.RBRACE, JsTokenKind.EOF,
-                JsTokenKind.SEMICOLON,
+                JsTokenKind.RBRACE, JsTokenKind.EOF, JsTokenKind.SEMICOLON,
             ):
                 key = JsIdentifier(name='static', offset=saved_pos.offset)
                 return self._finish_class_member(key, False, False, offset)
