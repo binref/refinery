@@ -8,7 +8,7 @@ from typing import Callable
 from refinery.lib.scripts import Node, Transformer
 from refinery.lib.scripts.js.analysis.cache import ModelCache, model_cache
 from refinery.lib.scripts.js.analysis.dominance import DominanceModel
-from refinery.lib.scripts.js.analysis.effects import EffectModel, build_effects
+from refinery.lib.scripts.js.analysis.effects import EffectModel
 from refinery.lib.scripts.js.analysis.model import (
     GUARANTEED_GLOBALS,
     BindingKind,
@@ -210,19 +210,16 @@ class JsSimplifications(Transformer):
     def __init__(self):
         super().__init__()
         self._cache: ModelCache | None = None
-        self._model: SemanticModel | None = None
-        self._effects: EffectModel | None = None
 
     @property
     def model(self) -> SemanticModel:
-        assert self._model is not None
-        return self._model
+        assert self._cache is not None
+        return self._cache.model
 
     @property
     def effects(self) -> EffectModel:
-        if self._effects is None:
-            self._effects = build_effects(self.model)
-        return self._effects
+        assert self._cache is not None
+        return self._cache.effects
 
     @property
     def dominance(self) -> DominanceModel:
@@ -231,14 +228,13 @@ class JsSimplifications(Transformer):
 
     def visit_JsScript(self, node: JsScript):
         """
-        Build the semantic model once for the whole script, then rewrite. Simplification only ever
-        removes bindings within a pass, never adds one, so a name the pass-start model reports as
-        locally bound stays bound; reading shadowing from that model can therefore only over-preserve
-        a global-alias access, never collapse one that a local now captures.
+        Attach the shared model cache for the whole script, then rewrite. The model, effect, and
+        dominance models are all read from that version-aware cache, so a mid-pass mutation rebuilds them
+        together and the three stay consistent. Simplification only ever removes bindings within a pass,
+        never adds one, so a name the model reports as locally bound stays bound; reading shadowing from
+        it can therefore only over-preserve a global-alias access, never collapse one a local now captures.
         """
         self._cache = model_cache(self, node)
-        self._model = self._cache.model
-        self._effects = None
         self.generic_visit(node)
         return None
 
