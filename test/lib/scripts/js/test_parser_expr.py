@@ -8,6 +8,7 @@ from refinery.lib.scripts.js.model import (
     JsArrowFunctionExpression,
     JsAssignmentExpression,
     JsAssignmentPattern,
+    JsAwaitExpression,
     JsBigIntLiteral,
     JsBinaryExpression,
     JsBooleanLiteral,
@@ -337,14 +338,28 @@ class TestJsParserExpressions(TestBase):
         self.assertEqual(len(expr.expressions), 1)
 
     def test_yield(self):
-        expr = self._parse_expr('yield x')
-        self.assertIsInstance(expr, JsYieldExpression)
-        self.assertFalse(expr.delegate)
+        ast = JsParser('function* g(){ (yield x); }').parse()
+        yields = [n for n in ast.walk() if isinstance(n, JsYieldExpression)]
+        self.assertEqual(len(yields), 1)
+        self.assertFalse(yields[0].delegate)
 
     def test_yield_delegate(self):
-        expr = self._parse_expr('yield* gen()')
-        self.assertIsInstance(expr, JsYieldExpression)
-        self.assertTrue(expr.delegate)
+        ast = JsParser('function* g(){ (yield* gen()); }').parse()
+        yields = [n for n in ast.walk() if isinstance(n, JsYieldExpression)]
+        self.assertEqual(len(yields), 1)
+        self.assertTrue(yields[0].delegate)
+
+    def test_yield_is_identifier_outside_generator(self):
+        ast = JsParser('function h(){ var yield = 1; return yield; }').parse()
+        self.assertEqual([n for n in ast.walk() if isinstance(n, JsYieldExpression)], [])
+
+    def test_await_is_operator_in_async_function(self):
+        ast = JsParser('async function f(){ await x; }').parse()
+        self.assertEqual(len([n for n in ast.walk() if isinstance(n, JsAwaitExpression)]), 1)
+
+    def test_await_is_identifier_outside_async(self):
+        ast = JsParser('var await = 1; f(await);').parse()
+        self.assertEqual([n for n in ast.walk() if isinstance(n, JsAwaitExpression)], [])
 
     def test_sequence(self):
         expr = self._parse_expr('a, b, c')

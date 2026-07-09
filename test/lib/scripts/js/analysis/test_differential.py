@@ -794,6 +794,24 @@ class TestDeobfuscationDifferential(TestBase):
             "globalThis.CFG = 3;"
             " import('data:text/javascript,console.log(globalThis.CFG)').then(() => {});")
 
+    def test_yield_as_identifier_multiplied_in_sloppy_function(self):
+        """
+        Outside a generator, `yield` is an ordinary identifier, so `yield * 2` is a multiplication, not
+        a delegating yield — the parser must not reinterpret it.
+        """
+        self._check('function h(){ var yield = 3; return yield * 2; } console.log(h());')
+
+    def test_await_as_identifier_at_top_level(self):
+        self._check('var await = 5; function f(){ return await + 1; } console.log(f(), await);')
+
+    def test_async_arrow_await_operator_preserved(self):
+        self._check(
+            'var f = async () => await Promise.resolve(7); f().then(v => console.log(v));')
+
+    def test_generator_yield_and_delegate_preserved(self):
+        self._check(
+            'function* g(){ yield 1; yield* [2, 3]; } console.log([...g()].join(","));')
+
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestDeobfuscationWithScope(TestBase):

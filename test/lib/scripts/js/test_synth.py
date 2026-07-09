@@ -356,7 +356,7 @@ class TestJsSynthesizer(TestBase):
     def test_paren_await_of_binary(self):
         node = JsAwaitExpression(argument=JsBinaryExpression(
             left=JsIdentifier(name='a'), operator='+', right=JsIdentifier(name='b')))
-        self._assert_synth_valid(node, 'await (a + b)')
+        self.assertEqual('await (a + b)', JsSynthesizer().convert(node))
 
     def test_paren_member_on_await(self):
         node = JsMemberExpression(
@@ -364,7 +364,7 @@ class TestJsSynthesizer(TestBase):
             property=JsIdentifier(name='b'),
             computed=False,
         )
-        self._assert_synth_valid(node, '(await a).b')
+        self.assertEqual('(await a).b', JsSynthesizer().convert(node))
 
     def test_paren_sequence_in_conditional_alternate(self):
         seq = JsSequenceExpression(
@@ -411,7 +411,7 @@ class TestJsSynthesizer(TestBase):
             operator='**',
             right=JsNumericLiteral(value=2, raw='2'),
         )
-        self._assert_synth_valid(node, '(await x) ** 2')
+        self.assertEqual('(await x) ** 2', JsSynthesizer().convert(node))
 
     def test_paren_sequence_as_yield_argument(self):
         seq = JsSequenceExpression(expressions=[JsIdentifier(name='a'), JsIdentifier(name='b')])

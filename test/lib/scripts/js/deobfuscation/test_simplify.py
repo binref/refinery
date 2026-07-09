@@ -704,7 +704,8 @@ class TestParenthesisPreservation(TestJsDeobfuscator):
         self.assertEqual('var x = (++a) ** 2;', self._simplify('var x = (++a) ** 2;'))
 
     def test_paren_preserved_for_await_as_exponent_left_operand(self):
-        self.assertEqual('var x = (await a) ** 2;', self._simplify('var x = (await a) ** 2;'))
+        source = 'async function f() {\n  var x = (await a) ** 2;\n}'
+        self.assertEqual(source, self._simplify(source))
 
     def test_paren_preserved_for_destructuring_assignment_statement(self):
         self.assertEqual('({ a } = obj);', self._simplify('({ a } = obj);'))

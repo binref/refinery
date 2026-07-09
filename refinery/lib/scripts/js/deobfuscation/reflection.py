@@ -87,7 +87,7 @@ def _unwrap_parens(node: Expression) -> Expression:
 def _try_parse(code: str) -> JsScript | None:
     try:
         from refinery.lib.scripts.js.parser import JsParser
-        parsed = JsParser(code).parse()
+        parsed = JsParser(code, top_level_await=True).parse()
     except Exception:
         return None
     if not parsed.body:

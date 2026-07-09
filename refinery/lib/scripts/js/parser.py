@@ -144,7 +144,7 @@ class JsParser:
             return int(text, 2)
         return int(text)
 
-    def __init__(self, source: str):
+    def __init__(self, source: str, *, top_level_await: bool = False):
         self._lexer = JsLexer(source)
         self._source = source
         self._tokens = self._lexer.tokenize()
@@ -153,6 +153,8 @@ class JsParser:
         self._ahead: JsToken | None = None
         self._ahead_newline: bool = False
         self._no_in: bool = False
+        self._in_async: bool = top_level_await
+        self._in_generator: bool = False
         self._pending_comments: list[str] = []
         self._advance()
 
@@ -224,6 +226,16 @@ class JsParser:
             yield
         finally:
             self._no_in = saved
+
+    @contextmanager
+    def _function_body_context(self, is_async: bool, is_generator: bool):
+        saved = (self._in_async, self._in_generator)
+        self._in_async = is_async
+        self._in_generator = is_generator
+        try:
+            yield
+        finally:
+            self._in_async, self._in_generator = saved
 
     def parse(self) -> JsScript:
         return self._parse_program()
@@ -663,8 +675,9 @@ class JsParser:
         if self._at(JsTokenKind.IDENTIFIER):
             tok = self._advance()
             id_node = JsIdentifier(name=tok.value, offset=tok.offset)
-        params = self._parse_formal_parameters()
-        body = self._parse_block_statement()
+        with self._function_body_context(is_async, generator):
+            params = self._parse_formal_parameters()
+            body = self._parse_block_statement()
         if as_expression:
             return JsFunctionExpression(
                 id=id_node, params=params, body=body,
@@ -856,8 +869,9 @@ class JsParser:
         is_async: bool = False,
     ) -> JsMethodDefinition:
         func_offset = self._current.offset
-        params = self._parse_formal_parameters()
-        body = self._parse_block_statement()
+        with self._function_body_context(is_async, is_generator):
+            params = self._parse_formal_parameters()
+            body = self._parse_block_statement()
         value = JsFunctionExpression(
             params=params,
             body=body,
@@ -1158,7 +1172,7 @@ class JsParser:
             operand = self._parse_unary_expression()
             return JsUnaryExpression(
                 operator='-', operand=operand, prefix=True, offset=tok.offset)
-        if self._at(JsTokenKind.AWAIT):
+        if self._at(JsTokenKind.AWAIT) and self._in_async:
             tok = self._advance()
             operand = self._parse_unary_expression()
             return JsAwaitExpression(argument=operand, offset=tok.offset)
@@ -1288,12 +1302,16 @@ class JsParser:
         tok = self._current
         offset = tok.offset
 
-        if self._at(
-            JsTokenKind.IDENTIFIER,
-            JsTokenKind.AS,
-            JsTokenKind.FROM,
-            JsTokenKind.OF,
-            JsTokenKind.LET,
+        if (
+            self._at(
+                JsTokenKind.IDENTIFIER,
+                JsTokenKind.AS,
+                JsTokenKind.FROM,
+                JsTokenKind.OF,
+                JsTokenKind.LET,
+            )
+            or (self._at(JsTokenKind.AWAIT) and not self._in_async)
+            or (self._at(JsTokenKind.YIELD) and not self._in_generator)
         ):
             self._advance()
             if self._at(JsTokenKind.ARROW) and not self._preceded_by_newline:
@@ -1376,7 +1394,7 @@ class JsParser:
         if self._at(JsTokenKind.ASYNC):
             return self._parse_async_expression()
 
-        if self._at(JsTokenKind.YIELD):
+        if self._at(JsTokenKind.YIELD) and self._in_generator:
             return self._parse_yield_expression()
 
         self._advance()
@@ -1595,7 +1613,7 @@ class JsParser:
         self._advance()
         return JsIdentifier(name=tok.value, offset=tok.offset)
 
-    def _parse_paren_or_arrow(self) -> Expression:
+    def _parse_paren_or_arrow(self, is_async: bool = False) -> Expression:
         with self._with_no_in(False):
             offset = self._current.offset
             self._expect(JsTokenKind.LPAREN)
@@ -1603,14 +1621,14 @@ class JsParser:
             if self._at(JsTokenKind.RPAREN):
                 self._advance()
                 self._expect(JsTokenKind.ARROW)
-                body = self._parse_arrow_body()
+                body = self._parse_arrow_body(is_async)
                 return JsArrowFunctionExpression(params=[], body=body, offset=offset)
 
             if self._at(JsTokenKind.ELLIPSIS):
                 params = self._parse_arrow_params_rest()
                 self._expect(JsTokenKind.RPAREN)
                 self._expect(JsTokenKind.ARROW)
-                body = self._parse_arrow_body()
+                body = self._parse_arrow_body(is_async)
                 return JsArrowFunctionExpression(params=params, body=body, offset=offset)
 
             expr = self._parse_expression()
@@ -1620,7 +1638,7 @@ class JsParser:
                 if self._at(JsTokenKind.ARROW) and not self._preceded_by_newline:
                     self._advance()
                     params = self._expr_to_params(expr)
-                    body = self._parse_arrow_body()
+                    body = self._parse_arrow_body(is_async)
                     return JsArrowFunctionExpression(
                         params=params, body=body, offset=offset)
                 return JsParenthesizedExpression(expression=expr, offset=offset)
@@ -1636,10 +1654,11 @@ class JsParser:
                 self._advance()
         return params
 
-    def _parse_arrow_body(self) -> Expression | JsBlockStatement:
-        if self._at(JsTokenKind.LBRACE):
-            return self._parse_block_statement()
-        return self._parse_assignment_expression()
+    def _parse_arrow_body(self, is_async: bool = False) -> Expression | JsBlockStatement:
+        with self._function_body_context(is_async, False):
+            if self._at(JsTokenKind.LBRACE):
+                return self._parse_block_statement()
+            return self._parse_assignment_expression()
 
     def _expr_to_params(self, expr: Expression) -> list[Expression]:
         if isinstance(expr, JsSequenceExpression):
@@ -1694,13 +1713,13 @@ class JsParser:
             if self._at(JsTokenKind.ARROW) and not self._preceded_by_newline:
                 self._advance()
                 param = JsIdentifier(name=tok.value, offset=tok.offset)
-                body = self._parse_arrow_body()
+                body = self._parse_arrow_body(True)
                 return JsArrowFunctionExpression(
                     params=[param], body=body, is_async=True, offset=offset)
             return JsIdentifier(name=tok.value, offset=tok.offset)
 
         if self._at(JsTokenKind.LPAREN) and not self._preceded_by_newline:
-            paren_result = self._parse_paren_or_arrow()
+            paren_result = self._parse_paren_or_arrow(True)
             if isinstance(paren_result, JsArrowFunctionExpression):
                 paren_result.is_async = True
                 paren_result.offset = offset
