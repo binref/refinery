@@ -13,6 +13,7 @@ from __future__ import annotations
 import codecs
 import enum
 import math
+import re
 import struct
 
 from collections import defaultdict
@@ -32,6 +33,121 @@ _SYSTEM_FLAGS = {-0x80000000, -2, 0x80000000, 2}
 _ACCESS_MAGIC = b'\x00\x01\x00\x00'
 _ACCESS_ENGINES = (b'Standard ACE DB', b'Standard Jet DB')
 
+_OLE_MAGIC = b'\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1'
+
+_USER_PROFILE_PATH = re.compile(r'(?i)^[A-Za-z]:[\\/]Users[\\/][^\\/]+')
+
+_VBA_PROJECT_RESERVED1 = 0x61CC
+_VBA_REFERENCE_SENTINEL = '*\\'.encode('utf-16-le')
+
+_IMEXSPEC_STREAM = 'Blob'
+_IMEXSPEC_ROOT = 'ImportExportSpecification'
+
+
+class VbaReference(NamedTuple):
+    """
+    A single type-library reference parsed from the reference table of a VBA project. The fields
+    follow the LIBID grammar defined in MS-OVBA §2.1.1.8: a GUID, a version, an LCID, the absolute
+    path of the referenced type library on the machine that compiled the project, and a human
+    readable description.
+    """
+    guid: str
+    version: str
+    lcid: str
+    path: str
+    description: str
+
+
+def _parse_libid(text: str) -> VbaReference | None:
+    """
+    Parse a single LIBID string of the form `*\\G{guid}#version#lcid#path#description` into its
+    fields. The leading `*\\G` marker and the surrounding braces of the GUID are stripped. Returns
+    None when the string does not have the expected shape.
+    """
+    if not text.startswith('*\\'):
+        return None
+    body = text[3:]
+    if not body.startswith('{'):
+        return None
+    fields = body.split('#')
+    if len(fields) < 4:
+        return None
+    guid = fields[0].strip('{}')
+    version = fields[1]
+    lcid = fields[2]
+    path = fields[3]
+    description = fields[4] if len(fields) > 4 else ''
+    return VbaReference(guid, version, lcid, path, description)
+
+
+def _parse_vba_references(stream: bytes) -> list[VbaReference]:
+    """
+    Parse the reference table embedded in the PerformanceCache of a `_VBA_PROJECT` stream. The
+    stream begins with the version-independent header described in MS-OVBA §2.3.4.1, whose first
+    field Reserved1 must equal 0x61CC. The PerformanceCache that follows is implementation specific
+    and undocumented, but it stores each type-library reference as a length-prefixed LIBID record: a
+    16-bit little-endian byte count immediately precedes a UTF-16LE LIBID string. Each reference is
+    located by its `*\\` sentinel and accepted only when the preceding length prefix exactly bounds
+    a well formed LIBID string, which distinguishes a genuine record from a coincidental byte match.
+    """
+    if len(stream) < 7 or int.from_bytes(stream[:2], 'little') != _VBA_PROJECT_RESERVED1:
+        return []
+    references: list[VbaReference] = []
+    search = 0
+    while True:
+        pos = stream.find(_VBA_REFERENCE_SENTINEL, search)
+        if pos < 0:
+            break
+        search = pos + 2
+        if pos < 2:
+            continue
+        length = int.from_bytes(stream[pos - 2:pos], 'little')
+        end = pos + length
+        if length == 0 or length % 2 or end > len(stream):
+            continue
+        segment = stream[pos:end]
+        if any(segment[i] == 0 and segment[i + 1] == 0 for i in range(0, len(segment) - 1, 2)):
+            continue
+        text = segment.decode('utf-16-le', 'replace')
+        if '�' in text:
+            continue
+        reference = _parse_libid(text)
+        if reference is not None:
+            references.append(reference)
+            search = end
+    return references
+
+
+def _parse_import_export_spec(blob: bytes) -> str | None:
+    """
+    Parse the path recorded in an Access import/export specification. Each specification is stored
+    as a UTF-16LE XML document whose root `ImportExportSpecification` element carries a `Path`
+    attribute naming the file that was imported or exported on the machine that authored the
+    database. The XML declaration advertises a `utf-8` encoding that does not match the actual
+    UTF-16LE byte stream, so the document is decoded explicitly before parsing. Any bytes that
+    trail the closing tag are ignored so that stream padding does not defeat the decode. Returns the
+    path or None when the blob is not a well formed specification.
+    """
+    from refinery.lib.xml import ForgivingParse
+
+    closing = F'</{_IMEXSPEC_ROOT}>'.encode('utf-16-le')
+    end = blob.find(closing)
+    if end < 0:
+        return None
+    document = blob[:end + len(closing)]
+    try:
+        text = document.decode('utf-16-le')
+    except UnicodeDecodeError:
+        return None
+    try:
+        root = ForgivingParse(text.encode('utf-8')).getroot()
+    except Exception:
+        return None
+    tag = root.tag.rsplit('}', 1)[-1]
+    if tag != _IMEXSPEC_ROOT:
+        return None
+    return root.get('Path') or None
+
 
 def is_access_database(data: bytes | bytearray | memoryview) -> bool:
     """
@@ -46,6 +162,14 @@ class JetVersion(enum.IntEnum):
     V4 = 0x01
     V5 = 0x02
     V2010 = 0x03
+
+
+_ENGINE_NAMES = {
+    JetVersion.V3: 'Jet3',
+    JetVersion.V4: 'Jet4',
+    JetVersion.V5: 'ACE12',
+    JetVersion.V2010: 'ACE14',
+}
 
 
 class ColumnType(enum.IntEnum):
@@ -211,6 +335,8 @@ def _parse_type(
         else:
             text = _decode_text(data)
         return text.replace('\x00', '')
+    if length is not None:
+        return bytes(data[:length])
     return bytes(data)
 
 
@@ -535,11 +661,19 @@ class AccessDatabase:
 
     def open_vba(self):
         """
-        Reconstruct the VBA project storage tree from the MSysAccessStorage system table and
-        return it as a `refinery.lib.ole.file.VirtualOleFile`. Access stores the streams that
-        would normally live inside an OLE VBA project as individual rows of MSysAccessStorage,
-        with the storage hierarchy encoded by the ParentId column. Returns None when no VBA
-        storage is present.
+        Reconstruct the VBA project storage tree and return it through the interface of
+        `refinery.lib.ole.file.OleFile`. Microsoft Access stores VBA in one of two containers: newer
+        databases explode the project into individual rows of the MSysAccessStorage system table,
+        while older databases embed a complete OLE2 compound file in the MSysAccessObjects system
+        table. Both are tried in turn. Returns None when no VBA project is present.
+        """
+        return self._open_vba_storage() or self._open_vba_objects()
+
+    def _open_vba_storage(self):
+        """
+        Reconstruct the VBA project from the MSysAccessStorage system table, where each stream of
+        the project is stored as an individual row and the storage hierarchy is encoded by the
+        ParentId column. Returns a `refinery.lib.ole.file.VirtualOleFile` or None.
         """
         from refinery.lib.ole.file import STGTY, VirtualOleFile
 
@@ -594,6 +728,138 @@ class AccessDatabase:
         if not entries:
             return None
         return VirtualOleFile(entries)
+
+    def _open_vba_objects(self):
+        """
+        Reconstruct the VBA project from the MSysAccessObjects system table, which stores a complete
+        OLE2 compound file split across the rows of a single binary column. The rows are ordered by
+        their ID column and concatenated to recover the compound file. Returns a
+        `refinery.lib.ole.file.OleFile` or None.
+        """
+        from refinery.lib.ole.file import NotOleFileError, OleFile, OleFileError
+
+        table = self._parse_system_table('MSysAccessObjects')
+        ids = table.get('ID')
+        data = table.get('Data')
+        if not ids or not data:
+            return None
+
+        rows = sorted(
+            zip(ids, data),
+            key=lambda row: row[0] if isinstance(row[0], int) else 0,
+        )
+        blob = b''.join(
+            bytes(value) for _, value in rows
+            if isinstance(value, (bytes, bytearray, memoryview))
+        )
+        start = blob.find(_OLE_MAGIC)
+        if start < 0:
+            return None
+        try:
+            return OleFile(blob[start:])
+        except (OleFileError, NotOleFileError, ValueError):
+            return None
+
+    def vba_references(self, vba=None) -> list[VbaReference]:
+        """
+        Return the type-library references declared by every VBA project in the database. Each
+        `_VBA_PROJECT` stream is located through the reconstructed storage tree and its reference
+        table is parsed structurally. A reconstructed storage tree may be passed in to avoid
+        opening it twice; otherwise it is opened on demand.
+        """
+        if vba is None:
+            try:
+                vba = self.open_vba()
+            except Exception:
+                vba = None
+        if vba is None:
+            return []
+        references: list[VbaReference] = []
+        for entry in vba.listdir(streams=True):
+            if entry[-1] != '_VBA_PROJECT':
+                continue
+            try:
+                stream = bytes(vba.openstream('/'.join(entry)).read())
+            except Exception:
+                continue
+            references.extend(_parse_vba_references(stream))
+        return references
+
+    def import_export_paths(self, vba=None) -> list[str]:
+        """
+        Return the file paths recorded in the import/export specifications of the database. These
+        specifications are stored as XML blobs in the reconstructed storage tree and name a file on
+        the machine that authored the database. A reconstructed storage tree may be passed in to
+        avoid opening it twice; otherwise it is opened on demand.
+        """
+        if vba is None:
+            try:
+                vba = self.open_vba()
+            except Exception:
+                vba = None
+        if vba is None:
+            return []
+        paths: dict[str, None] = {}
+        for entry in vba.listdir(streams=True):
+            if entry[-1] != _IMEXSPEC_STREAM:
+                continue
+            try:
+                blob = bytes(vba.openstream('/'.join(entry)).read())
+            except Exception:
+                continue
+            path = _parse_import_export_spec(blob)
+            if path is not None:
+                paths[path] = None
+        return list(paths)
+
+    def metadata(self) -> dict:
+        """
+        Extract triage metadata from the database. The result contains the engine name, the
+        earliest creation and latest modification timestamps, the user profile paths leaked by the
+        VBA project reference table (the machine that compiled the VBA project), and every file path
+        recorded in the import/export specifications (the data sources on the machine that authored
+        the database). Each path field is included only when its source yields at least one path.
+        This method is best effort and never raises.
+        """
+        result: dict = {
+            'Engine': _ENGINE_NAMES.get(self._version, str(self._version))
+        }
+        try:
+            objects = self._parse_system_table('MSysObjects')
+        except Exception:
+            pass
+        else:
+            result['Created'] = min(
+                (c for c in objects.get('DateCreate', []) if isinstance(c, datetime)), default=None)
+            result['Updated'] = max(
+                (u for u in objects.get('DateUpdate', []) if isinstance(u, datetime)), default=None)
+        try:
+            vba = self.open_vba()
+        except Exception:
+            vba = None
+        else:
+            if p := self._distinct(self.import_export_paths(vba)):
+                result['ImportExportPaths'] = p
+            if p := self._profile_paths(reference.path for reference in self.vba_references(vba)):
+                result['VBAProfilePaths'] = p
+        return result
+
+    @staticmethod
+    def _distinct(paths) -> list[str]:
+        """
+        Reduce an iterable of file paths to a sorted list of the distinct string paths.
+        """
+        found = {path for path in paths if isinstance(path, str)}
+        return sorted(found)
+
+    @staticmethod
+    def _profile_paths(paths) -> list[str]:
+        """
+        Filter an iterable of file paths down to the sorted, distinct paths that lie within a user
+        profile directory.
+        """
+        found = {path for path in paths if isinstance(path, str) and _USER_PROFILE_PATH.match(path)}
+        return sorted(found)
 
     def _do_parse_table(self, table_obj: _TableObj) -> dict[str, list]:
         try:

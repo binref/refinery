@@ -17,15 +17,31 @@ class _Prop(str, Enum):
 
 class docmeta(JSONTableUnit):
     """
-    Extract metadata from Word Documents such as custom document properties.
+    Extract metadata from Office documents. For Word documents, this includes custom document
+    properties; for Microsoft Access databases, this includes the database engine, timestamps, and
+    the user profile paths leaked by the compiled VBA project and by the import/export
+    specifications.
     """
     @classmethod
     def handles(cls, data) -> bool | None:
         from refinery.lib.id import is_likely_doc
+        from refinery.lib.access import is_access_database
         if is_likely_doc(data):
+            return True
+        if is_access_database(data):
             return True
 
     def json(self, data: bytearray):
+        from refinery.lib.access import is_access_database
+        if is_access_database(data):
+            return self._json_access(data)
+        return self._json_ooxml(data)
+
+    def _json_access(self, data: bytearray):
+        from refinery.lib.access import AccessDatabase
+        return AccessDatabase(data).metadata()
+
+    def _json_ooxml(self, data: bytearray):
         def interpret(value: str | dict):
             if isinstance(value, dict):
                 return {k: interpret(v) for k, v in value.items()}

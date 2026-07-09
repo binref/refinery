@@ -375,6 +375,11 @@ class TestAccessLib(unittest.TestCase):
         result = _parse_type(255, data)
         self.assertEqual(result, b'\x01\x02\x03')
 
+    def test_parse_type_unknown_honors_length(self):
+        data = b'\x01\x02\x03\x04\x05'
+        result = _parse_type(17, data, length=3)
+        self.assertEqual(result, b'\x01\x02\x03')
+
     def test_invalid_data_page_magic(self):
         data = memoryview(bytearray(b'\xFF\xFF' + b'\x00' * 30))
         reader = StructReader[memoryview](data)
