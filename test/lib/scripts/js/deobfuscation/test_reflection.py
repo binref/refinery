@@ -328,10 +328,15 @@ class TestReflectionInlining(TestJsDeobfuscator):
             'globalThis.setInterval(function() {\n  tick();\n}, 100);',
             self._reflect("globalThis.setInterval('tick()', 100);"))
 
-    def test_execscript_string_lowered(self):
+    def test_execscript_string_inlined_in_place(self):
         self.assertEqual(
-            'execScript(function() {\n  run();\n});',
+            'run();',
             self._reflect("execScript('run()');"))
+
+    def test_execscript_in_expression_position_not_inlined(self):
+        self.assertEqual(
+            "var x = execScript('run()');",
+            self._reflect("var x = execScript('run()');"))
 
     def test_member_form_function_timer_not_inlined(self):
         self.assertEqual(

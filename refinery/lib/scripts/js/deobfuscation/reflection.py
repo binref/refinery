@@ -16,6 +16,7 @@ from refinery.lib.scripts import Expression, Node, _clone_node, _replace_in_pare
 from refinery.lib.scripts.js.analysis.cache import model_cache
 from refinery.lib.scripts.js.analysis.effects import side_effect_free
 from refinery.lib.scripts.js.analysis.model import (
+    SYNC_EVAL_NAMES,
     TIMER_NAMES,
     BindingKind,
     FUNCTION_NODES,
@@ -161,24 +162,26 @@ def _extract_indirect_eval_code(
     return None
 
 
-def _extract_timer_code(
+def _extract_string_call_code(
     node: JsCallExpression,
+    names: frozenset[str],
     *,
     alias_name: Callable[[Expression | None], str | None],
     free_global_name: Callable[[Expression | None], str | None],
 ) -> str | None:
     """
-    Extract the code string from a string-valued timer call — `setTimeout("code", ...)`,
-    `setInterval("code", ...)`, and the `setImmediate`/`execScript` variants — whether the timer is
-    named directly or through a global-object alias (`window.setTimeout("code", ...)`), both of which
-    reach the same evaluating global. The callee must denote the free global timer: *free_global_name*
-    resolves a bare name and *alias_name* a global-object-alias member, each declining a locally
-    shadowed name or a dynamic scope.
+    Extract the code string a named global string-call evaluates — a deferred timer
+    (`setTimeout("code", ...)`, `setInterval`, `setImmediate`) or a synchronous global eval
+    (`execScript("code")`) — whether the global is named directly or through a global-object alias
+    (`window.setTimeout("code", ...)`), both of which reach the same evaluating global. *names* selects
+    which globals qualify. The callee must denote the free global: *free_global_name* resolves a bare
+    name and *alias_name* a global-object-alias member, each declining a locally shadowed name or a
+    dynamic scope.
     """
     if node.callee is None:
         return None
     name = free_global_name(node.callee) or alias_name(node.callee)
-    if name not in TIMER_NAMES:
+    if name not in names:
         return None
     if not node.arguments:
         return None
@@ -803,11 +806,12 @@ class JsReflectionInlining(ScriptLevelTransformer):
     def _lower_timers(self, root: JsScript) -> None:
         """
         Rewrite a string-argument timer — `setTimeout("code", delay)`, `setInterval`, and their
-        `setImmediate`/`execScript`/global-alias variants — into a deferred function call
+        `setImmediate`/global-alias variants — into a deferred function call
         `setTimeout(function () { code }, delay)`, so the evaluated code is deobfuscated without changing
         when or how often it runs. Unlike the eval and constructor paths, a timer is not inlined at the
         call site: its value is a handle and its execution is deferred, so only its code string is
-        lowered.
+        lowered. `execScript` is not a timer — it evaluates synchronously — so it is inlined in place by
+        `_try_resolve_statement` instead of lowered here.
         """
         for node in list(root.walk()):
             if isinstance(node, JsCallExpression):
@@ -822,8 +826,9 @@ class JsReflectionInlining(ScriptLevelTransformer):
         (whose global or transient environment a local function cannot reproduce) or a `return`/`await`
         that a plain function body cannot host declines the lowering, leaving the string timer intact.
         """
-        code = _extract_timer_code(
+        code = _extract_string_call_code(
             node,
+            TIMER_NAMES,
             alias_name=self._alias_member_name(root),
             free_global_name=self._free_global_name(root),
         )
@@ -845,6 +850,13 @@ class JsReflectionInlining(ScriptLevelTransformer):
     def _try_resolve_statement(
         self, stmt: Statement, root: JsScript, at_global_scope: bool,
     ) -> list[Statement] | None:
+        """
+        Resolve a statement-position reflective call to the statements it should become, or `None`. A
+        `Function`-constructor pack, a direct or indirect `eval`, and a `Function` body are handled by
+        `_resolve_reflected_call`; `execScript("code")` runs its code synchronously in the global scope
+        and discards the value, so at statement position it is replaced by that code inlined in place. An
+        outer `await` is preserved by wrapping a top-level-await body in an async IIFE.
+        """
         if not isinstance(stmt, JsExpressionStatement) or stmt.expression is None:
             return None
         node = stmt.expression
@@ -853,6 +865,20 @@ class JsReflectionInlining(ScriptLevelTransformer):
             node = node.argument
         if not isinstance(node, JsCallExpression):
             return None
+        if not had_await:
+            sync = _extract_string_call_code(
+                node,
+                SYNC_EVAL_NAMES,
+                alias_name=self._alias_member_name(root),
+                free_global_name=self._free_global_name(root),
+            )
+            if sync is not None:
+                parsed = self._resolve_reflected_body(
+                    sync, stmt, root, ReflectedScope.GLOBAL_EVAL, at_global_scope,
+                )
+                if parsed is None or _has_top_level_await(parsed.body):
+                    return None
+                return parsed.body
         pack_result = _try_unpack_function_constructor(
             node, free_global_name=self._free_global_name(root))
         if pack_result is not None:

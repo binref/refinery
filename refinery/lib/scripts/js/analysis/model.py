@@ -92,7 +92,11 @@ _FunctionNode = JsFunctionDeclaration | JsFunctionExpression | JsArrowFunctionEx
 
 GLOBAL_OBJECT_ALIASES = frozenset({'globalThis', 'global', 'window', 'self', 'top', 'frames'})
 
-TIMER_NAMES = frozenset({'setTimeout', 'setInterval', 'setImmediate', 'execScript'})
+TIMER_NAMES = frozenset({'setTimeout', 'setInterval', 'setImmediate'})
+
+SYNC_EVAL_NAMES = frozenset({'execScript'})
+
+STRING_EVAL_NAMES = TIMER_NAMES | SYNC_EVAL_NAMES
 
 REFLECTIVE_INTRINSICS = frozenset({'eval', 'Function'})
 
@@ -623,10 +627,10 @@ def _timer_callee_name(callee: Node | None) -> str | None:
     """
     callee = strip_parens(callee)
     if isinstance(callee, JsIdentifier):
-        return callee.name if callee.name in TIMER_NAMES else None
+        return callee.name if callee.name in STRING_EVAL_NAMES else None
     if isinstance(callee, JsMemberExpression) and _is_global_base(callee.object):
         name = _global_member_name(callee)
-        return name if name in TIMER_NAMES else None
+        return name if name in STRING_EVAL_NAMES else None
     return None
 
 
