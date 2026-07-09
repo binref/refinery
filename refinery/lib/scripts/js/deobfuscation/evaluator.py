@@ -15,7 +15,6 @@ from refinery.lib.scripts.js.analysis.effects import EffectModel
 from refinery.lib.scripts.js.analysis.model import SemanticModel, pattern_identifiers
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     ScriptLevelTransformer,
-    _param_written,
     access_key,
     binding_has_references,
     extract_literal_value,
@@ -944,8 +943,9 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
 
         - writes a parameter, which would place the argument value at a write target (`delete p`
           becomes `delete <literal>`, `(p = 5)` becomes `(<literal> = 5)`);
-        - reads a parameter that *func* reassigns, whose value at the irreducible point is no longer the
-          original argument the substitution would supply;
+        - reads a parameter that *func* reassigns — statically, or through a `with` body or direct
+          `eval` — whose value at the irreducible point is no longer the original argument the
+          substitution would supply;
         - references a name bound inside *func* but declared outside *node* — a body local (including a
           destructured or `catch` binding), a nested declaration, `arguments`, or the function
           expression's own name — which has no binding once the body is discarded, leaving a dangling
@@ -958,9 +958,6 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
         through the model, so shadowing and destructuring are exact; a free name whose read crosses a
         `with` in *func* is treated as unsafe, since its runtime target cannot be matched at *call_site*.
         """
-        param_names = {p.name for p in func.params if isinstance(p, JsIdentifier)}
-        if _param_written(node, param_names):
-            return True
         script = self._script
         if script is None:
             return True
@@ -990,7 +987,7 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
                     return True
                 continue
             if binding in param_bindings:
-                if binding.writes:
+                if not model.binding_never_reassigned(binding):
                     return True
                 continue
             if owner is node or owner.is_descendant_of(node):
