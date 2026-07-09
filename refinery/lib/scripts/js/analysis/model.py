@@ -831,8 +831,8 @@ class SemanticModel:
         is safe): while any such surface remains, a dead global must not be removed, because reflective
         code may read it.
         """
-        if self._reflection_surface is None:
-            self._reflection_surface = self._detect_reflection()
+        self._ensure_reflection_detected()
+        assert self._reflection_surface is not None
         return self._reflection_surface
 
     def reflection_can_reach(self, binding: Binding) -> bool:
@@ -959,26 +959,39 @@ class SemanticModel:
             return False
         return self.lookup(node.name, self._node_scope.get(id(node))) is None
 
-    def _detect_reflection(self, *, include_with: bool = True) -> bool:
+    def _ensure_reflection_detected(self) -> None:
+        """
+        Populate both reflection-surface memos in a single AST walk. A `with` statement contributes only
+        to the whole-program surface; every other surface — an `import()`, a value-read of the
+        `eval`/`Function` intrinsic, a reflective global-object member, or a string-valued timer — is
+        opaque and contributes to both. The walk stops once both facts are known.
+        """
+        if self._reflection_surface is not None:
+            return
+        saw_with = False
+        saw_opaque = False
         for node in self.root.walk():
-            if include_with and isinstance(node, JsWithStatement):
-                return True
+            if isinstance(node, JsWithStatement):
+                saw_with = True
             elif isinstance(node, JsImportExpression):
-                return True
+                saw_opaque = True
             elif isinstance(node, JsIdentifier):
                 if self._reads_reflective_intrinsic(node):
-                    return True
+                    saw_opaque = True
             elif isinstance(node, JsMemberExpression):
                 if _is_reflective_member(node):
-                    return True
+                    saw_opaque = True
             elif isinstance(node, JsCallExpression):
                 if _is_string_timer(node):
-                    return True
-        return False
+                    saw_opaque = True
+            if saw_with and saw_opaque:
+                break
+        self._opaque_reflection_surface = saw_opaque
+        self._reflection_surface = saw_with or saw_opaque
 
     def _has_opaque_reflection_surface(self) -> bool:
-        if self._opaque_reflection_surface is None:
-            self._opaque_reflection_surface = self._detect_reflection(include_with=False)
+        self._ensure_reflection_detected()
+        assert self._opaque_reflection_surface is not None
         return self._opaque_reflection_surface
 
     def _build_def_use(self):
