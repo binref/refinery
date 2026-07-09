@@ -24,12 +24,13 @@ from refinery.lib.scripts.js.model import (
     JsIfStatement,
     JsImportDeclaration,
     JsImportDefaultSpecifier,
+    JsImportExpression,
     JsImportNamespaceSpecifier,
     JsLabeledStatement,
+    JsMetaProperty,
     JsMethodDefinition,
     JsMethodKind,
     JsPrivateIdentifier,
-    JsPropertyDefinition,
     JsReturnStatement,
     JsScript,
     JsStaticBlock,
@@ -262,6 +263,26 @@ class TestJsParserStatements(TestBase):
         ast = JsParser('class C { static x = 1; }').parse()
         self.assertEqual([n for n in ast.walk() if isinstance(n, JsStaticBlock)], [])
         self.assertEqual([n for n in ast.walk() if isinstance(n, JsErrorNode)], [])
+
+    def test_dynamic_import_expression(self):
+        ast = JsParser("const p = import('m');").parse()
+        self.assertEqual(len([n for n in ast.walk() if isinstance(n, JsImportExpression)]), 1)
+        self.assertEqual([n for n in ast.walk() if isinstance(n, JsErrorNode)], [])
+
+    def test_dynamic_import_statement_with_postfix(self):
+        ast = JsParser("import('m').then(f);").parse()
+        self.assertEqual(len([n for n in ast.walk() if isinstance(n, JsImportExpression)]), 1)
+        self.assertEqual([n for n in ast.walk() if isinstance(n, JsErrorNode)], [])
+
+    def test_import_meta(self):
+        ast = JsParser('var u = import.meta.url;').parse()
+        self.assertEqual(len([n for n in ast.walk() if isinstance(n, JsMetaProperty)]), 1)
+        self.assertEqual([n for n in ast.walk() if isinstance(n, JsErrorNode)], [])
+
+    def test_import_declaration_not_confused_with_expression(self):
+        ast = JsParser("import x from 'm';").parse()
+        self.assertEqual([n for n in ast.walk() if isinstance(n, JsImportExpression)], [])
+        self.assertEqual(len([n for n in ast.walk() if isinstance(n, JsImportDeclaration)]), 1)
 
     def test_import_default(self):
         stmt = self._parse_stmt("import foo from 'bar';")

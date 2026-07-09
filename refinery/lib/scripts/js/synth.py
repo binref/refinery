@@ -35,12 +35,15 @@ from refinery.lib.scripts.js.model import (
     JsPrivateIdentifier,
     JsStaticBlock,
     JsIfStatement,
+    JsImportAttribute,
     JsImportDeclaration,
     JsImportDefaultSpecifier,
+    JsImportExpression,
     JsImportNamespaceSpecifier,
     JsImportSpecifier,
     JsLabeledStatement,
     JsMemberExpression,
+    JsMetaProperty,
     JsMethodDefinition,
     JsMethodKind,
     JsNewExpression,
@@ -724,6 +727,7 @@ class JsSynthesizer(Synthesizer):
         if not node.specifiers:
             if node.source:
                 self.visit(node.source)
+            self._emit_import_attributes(node)
             self._write(';')
             return
         default_spec = None
@@ -755,7 +759,39 @@ class JsSynthesizer(Synthesizer):
         self._write(' from ')
         if node.source:
             self.visit(node.source)
+        self._emit_import_attributes(node)
         self._write(';')
+
+    def _emit_import_attributes(self, node: JsImportDeclaration):
+        if not node.attributes_keyword:
+            return
+        self._write(F' {node.attributes_keyword} {{ ')
+        for i, attr in enumerate(node.attributes):
+            if i > 0:
+                self._write(', ')
+            self.visit(attr)
+        self._write(' }')
+
+    def visit_JsImportAttribute(self, node: JsImportAttribute):
+        if node.key:
+            self.visit(node.key)
+        self._write(': ')
+        if node.value:
+            self.visit(node.value)
+
+    def visit_JsImportExpression(self, node: JsImportExpression):
+        self._write('import(')
+        if node.source is not None:
+            self._emit_element(node.source, True)
+        if node.options is not None:
+            self._write(', ')
+            self._emit_element(node.options, True)
+        self._write(')')
+
+    def visit_JsMetaProperty(self, node: JsMetaProperty):
+        self._write(node.meta)
+        self._write('.')
+        self._write(node.property)
 
     def visit_JsImportSpecifier(self, node: JsImportSpecifier):
         if node.imported:

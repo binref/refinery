@@ -60,6 +60,7 @@ from refinery.lib.scripts.js.model import (
     JsFunctionDeclaration,
     JsFunctionExpression,
     JsIdentifier,
+    JsImportExpression,
     JsLogicalExpression,
     JsMemberExpression,
     JsNewExpression,
@@ -736,6 +737,8 @@ class EffectModel:
                     summary.calls_unknown = True
             elif isinstance(node, (JsCallExpression, JsNewExpression)):
                 self._account_call(summary, node)
+            elif isinstance(node, JsImportExpression):
+                summary.calls_unknown = True
         return summary
 
     def _account_write(

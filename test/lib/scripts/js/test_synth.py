@@ -642,3 +642,18 @@ class TestJsSynthesizer(TestBase):
 
     def test_static_field_named_static(self):
         self._round_trip('class A { static x = 1; }')
+
+    def test_dynamic_import(self):
+        self._round_trip("import('m');")
+
+    def test_dynamic_import_with_options(self):
+        self._round_trip("import('m', { with: { type: 'json' } });")
+
+    def test_dynamic_import_postfix(self):
+        self._round_trip("import('a').then(f);")
+
+    def test_import_meta(self):
+        self._round_trip('var u = import.meta.url;')
+
+    def test_import_with_attributes(self):
+        self._round_trip("import x from 'y' with { type: 'json' };")

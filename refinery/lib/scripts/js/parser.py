@@ -41,13 +41,16 @@ from refinery.lib.scripts.js.model import (
     JsPrivateIdentifier,
     JsStaticBlock,
     JsIfStatement,
+    JsImportAttribute,
     JsImportDeclaration,
     JsImportDefaultSpecifier,
+    JsImportExpression,
     JsImportNamespaceSpecifier,
     JsImportSpecifier,
     JsLabeledStatement,
     JsLogicalExpression,
     JsMemberExpression,
+    JsMetaProperty,
     JsMethodDefinition,
     JsMethodKind,
     JsNewExpression,
@@ -146,12 +149,13 @@ class JsParser:
         self._tokens = self._lexer.tokenize()
         self._current: JsToken = JsToken(JsTokenKind.EOF, '', 0)
         self._preceded_by_newline: bool = False
+        self._ahead: JsToken | None = None
+        self._ahead_newline: bool = False
         self._no_in: bool = False
         self._pending_comments: list[str] = []
         self._advance()
 
-    def _advance(self) -> JsToken:
-        prev = self._current
+    def _pull_token(self) -> tuple[JsToken, bool]:
         had_newline = False
         while True:
             tok = next(self._tokens, JsToken(JsTokenKind.EOF, '', len(self._source)))
@@ -162,8 +166,16 @@ class JsParser:
                 self._pending_comments.append(tok.value)
                 continue
             break
-        self._current = tok
-        self._preceded_by_newline = had_newline
+        return tok, had_newline
+
+    def _advance(self) -> JsToken:
+        prev = self._current
+        if self._ahead is not None:
+            self._current = self._ahead
+            self._preceded_by_newline = self._ahead_newline
+            self._ahead = None
+            return prev
+        self._current, self._preceded_by_newline = self._pull_token()
         return prev
 
     def _drain_comments(self, node):
@@ -173,6 +185,11 @@ class JsParser:
 
     def _peek(self) -> JsToken:
         return self._current
+
+    def _peek_next(self) -> JsToken:
+        if self._ahead is None:
+            self._ahead, self._ahead_newline = self._pull_token()
+        return self._ahead
 
     def _at(self, *kinds: JsTokenKind) -> bool:
         return self._current.kind in kinds
@@ -279,7 +296,9 @@ class JsParser:
             self._advance()
             self._eat_semicolon()
             return JsDebuggerStatement(offset=offset)
-        if kind == JsTokenKind.IMPORT:
+        if kind == JsTokenKind.IMPORT and self._peek_next().kind not in (
+            JsTokenKind.LPAREN, JsTokenKind.DOT,
+        ):
             return self._parse_import_declaration()
         if kind == JsTokenKind.EXPORT:
             return self._parse_export_declaration()
@@ -801,14 +820,54 @@ class JsParser:
             offset=offset,
         )
 
+    def _parse_import_expression(self, offset: int) -> Expression:
+        self._expect(JsTokenKind.IMPORT)
+        if self._eat(JsTokenKind.DOT):
+            prop = self._advance()
+            return JsMetaProperty(meta='import', property=prop.value, offset=offset)
+        if self._at(JsTokenKind.LPAREN):
+            self._advance()
+            source = self._parse_assignment_expression()
+            options = None
+            if self._eat(JsTokenKind.COMMA) and not self._at(JsTokenKind.RPAREN):
+                options = self._parse_assignment_expression()
+                self._eat(JsTokenKind.COMMA)
+            self._expect(JsTokenKind.RPAREN)
+            return JsImportExpression(source=source, options=options, offset=offset)
+        return JsErrorNode(text='import', message='unexpected token', offset=offset)
+
+    def _parse_import_attributes(self) -> tuple[str, list[JsImportAttribute]]:
+        if self._preceded_by_newline:
+            return '', []
+        if self._at(JsTokenKind.WITH):
+            keyword = 'with'
+        elif self._at(JsTokenKind.IDENTIFIER) and self._current.value == 'assert':
+            keyword = 'assert'
+        else:
+            return '', []
+        self._advance()
+        attributes: list[JsImportAttribute] = []
+        self._expect(JsTokenKind.LBRACE)
+        while not self._at(JsTokenKind.RBRACE, JsTokenKind.EOF):
+            key = self._parse_property_name()
+            self._expect(JsTokenKind.COLON)
+            value = self._parse_string_literal()
+            attributes.append(JsImportAttribute(key=key, value=value, offset=key.offset))
+            if not self._eat(JsTokenKind.COMMA):
+                break
+        self._expect(JsTokenKind.RBRACE)
+        return keyword, attributes
+
     def _parse_import_declaration(self) -> JsImportDeclaration:
         offset = self._current.offset
         self._expect(JsTokenKind.IMPORT)
 
         if self._at(JsTokenKind.STRING_SINGLE, JsTokenKind.STRING_DOUBLE):
             source = self._parse_string_literal()
+            keyword, attributes = self._parse_import_attributes()
             self._eat_semicolon()
-            return JsImportDeclaration(source=source, offset=offset)
+            return JsImportDeclaration(
+                source=source, attributes=attributes, attributes_keyword=keyword, offset=offset)
 
         specifiers: list[
             JsImportSpecifier | JsImportDefaultSpecifier | JsImportNamespaceSpecifier
@@ -834,9 +893,11 @@ class JsParser:
 
         self._expect_contextual('from')
         source = self._parse_string_literal()
+        keyword, attributes = self._parse_import_attributes()
         self._eat_semicolon()
         return JsImportDeclaration(
-            specifiers=specifiers, source=source, offset=offset)
+            specifiers=specifiers, source=source,
+            attributes=attributes, attributes_keyword=keyword, offset=offset)
 
     def _parse_namespace_import(self) -> JsImportNamespaceSpecifier:
         offset = self._current.offset
@@ -1186,6 +1247,9 @@ class JsParser:
         if self._at(JsTokenKind.PRIVATE_IDENTIFIER):
             self._advance()
             return JsPrivateIdentifier(name=tok.value[1:], offset=offset)
+
+        if self._at(JsTokenKind.IMPORT):
+            return self._parse_import_expression(offset)
 
         if self._at(JsTokenKind.INTEGER):
             self._advance()

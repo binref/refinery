@@ -55,6 +55,7 @@ from refinery.lib.scripts.js.model import (
     JsFunctionExpression,
     JsIdentifier,
     JsImportDeclaration,
+    JsImportExpression,
     JsImportDefaultSpecifier,
     JsImportNamespaceSpecifier,
     JsImportSpecifier,
@@ -928,6 +929,8 @@ class SemanticModel:
     def _detect_reflection(self, *, include_with: bool = True) -> bool:
         for node in self.root.walk():
             if include_with and isinstance(node, JsWithStatement):
+                return True
+            elif isinstance(node, JsImportExpression):
                 return True
             elif isinstance(node, JsIdentifier):
                 if self._reads_reflective_intrinsic(node):

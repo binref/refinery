@@ -772,6 +772,28 @@ class TestDeobfuscationDifferential(TestBase):
             'function f() { var x = "outer"; class C { static { var x = "inner"; } } return x; }'
             ' console.log(f());')
 
+    def test_dynamic_import_of_data_url(self):
+        self._check(
+            "import('data:text/javascript,export const v = 5').then(m => console.log(m.v));")
+
+    def test_dynamic_import_side_effect_preserved(self):
+        """
+        import() runs the imported module's top-level code, so an unused dynamic import must not be
+        dropped as if it were pure — its observable side effect has to survive.
+        """
+        self._check(
+            "import('data:text/javascript,globalThis.SIDE = 9')"
+            ".then(() => console.log(globalThis.SIDE));")
+
+    def test_global_read_by_dynamic_import_kept_alive(self):
+        """
+        The imported module reads a global assigned before the import, so a dead-global pass must keep
+        that write while a dynamic import (a reflective surface) is present.
+        """
+        self._check(
+            "globalThis.CFG = 3;"
+            " import('data:text/javascript,console.log(globalThis.CFG)').then(() => {});")
+
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestDeobfuscationWithScope(TestBase):

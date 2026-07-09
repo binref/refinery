@@ -447,11 +447,31 @@ class JsImportNamespaceSpecifier(Node):
 
 
 @dataclass(repr=False, eq=False)
+class JsImportAttribute(Node):
+    key: Expression | None = None
+    value: Expression | None = None
+
+
+@dataclass(repr=False, eq=False)
 class JsImportDeclaration(Statement):
     specifiers: list[
         JsImportSpecifier | JsImportDefaultSpecifier | JsImportNamespaceSpecifier
     ] = field(default_factory=list)
     source: JsStringLiteral | None = None
+    attributes: list[JsImportAttribute] = field(default_factory=list)
+    attributes_keyword: str = ''
+
+
+@dataclass(repr=False, eq=False)
+class JsImportExpression(Expression):
+    source: Expression | None = None
+    options: Expression | None = None
+
+
+@dataclass(repr=False, eq=False)
+class JsMetaProperty(Expression):
+    meta: str = ''
+    property: str = ''
 
 
 @dataclass(repr=False, eq=False)
