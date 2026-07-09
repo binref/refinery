@@ -72,6 +72,7 @@ from refinery.lib.scripts.js.model import (
     JsVariableDeclaration,
     JsVariableDeclarator,
     JsVarKind,
+    strip_parens,
 )
 from refinery.lib.scripts.js.precedence import parens_required
 
@@ -98,10 +99,11 @@ def _is_call_callee(node: Node) -> bool:
     the callee's reference form: a member access (`o.m()`) binds `this` to the object, a bare `eval`
     performs a *direct* eval evaluated in the caller's own scope, and any other reference or bare value
     invokes with no receiver (an indirect eval among them, evaluated in the global scope). Rewriting the
-    callee into a different reference form — collapsing a comma sequence to its last element, or dropping
-    a global-object alias from a member access — therefore changes the call's meaning, so a
-    simplification that would do so must be declined here. A `new` expression is excluded: it constructs
-    its own receiver, so the callee's reference form does not affect it.
+    callee into a different reference form — dropping a global-object alias from a member access, or
+    collapsing a comma sequence down to a form-sensitive last element (`_callee_form_sensitive`) —
+    therefore changes the call's meaning, so a simplification that would do so must be declined. A `new`
+    expression is excluded: it constructs its own receiver, so the callee's reference form does not
+    affect it.
     """
     parent = node.parent
     while isinstance(parent, JsParenthesizedExpression):
@@ -112,6 +114,20 @@ def _is_call_callee(node: Node) -> bool:
     if isinstance(parent, JsTaggedTemplateExpression):
         return parent.tag is node
     return False
+
+
+def _callee_form_sensitive(node: Node) -> bool:
+    """
+    Whether invoking *node* directly as a call callee, rather than behind the comma sequence that
+    currently wraps it, would change the call's meaning. A member access binds `this` to its object and
+    a bare `eval` performs a *direct* eval evaluated in the caller's own scope; any other callee — a
+    plain identifier or value — invokes with no receiver and no direct-eval effect, exactly as the
+    wrapping indirect sequence does, so collapsing the sequence down to it preserves the call.
+    """
+    inner = strip_parens(node)
+    if isinstance(inner, JsMemberExpression):
+        return True
+    return isinstance(inner, JsIdentifier) and inner.name == 'eval'
 
 
 def _resolve_in_expression(node: Node, key: str, name: str) -> bool | None:
@@ -529,8 +545,6 @@ class JsSimplifications(Transformer):
         self.generic_visit(node)
         if not node.expressions:
             return None
-        if _is_call_callee(node):
-            return None
         filtered = [
             e for i, e in enumerate(node.expressions)
             if i == len(node.expressions) - 1
@@ -540,6 +554,8 @@ class JsSimplifications(Transformer):
         if len(filtered) == len(node.expressions):
             return None
         if len(filtered) == 1:
+            if _is_call_callee(node) and _callee_form_sensitive(filtered[0]):
+                return None
             return filtered[0]
         node.expressions = filtered
         self.mark_changed()

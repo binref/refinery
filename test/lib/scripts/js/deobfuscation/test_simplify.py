@@ -923,3 +923,11 @@ class TestCalleeSequencePreserved(TestJsDeobfuscator):
         bind `this` to `o`, so the sequence is kept.
         """
         self.assertEqual('(0, o.m)();', self._simplify('(0, o.m)();'))
+
+    def test_sequence_callee_collapsed_for_plain_identifier(self):
+        """
+        `(0, f)(x)` invokes the plain identifier `f` with no receiver, exactly as `f(x)` does — only a
+        member or `eval` callee, whose reference form the sequence protects, must be kept — so the
+        indirect-call idiom collapses.
+        """
+        self.assertEqual('f(x);', self._simplify('(0, f)(x);'))
