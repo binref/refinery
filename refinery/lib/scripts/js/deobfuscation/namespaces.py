@@ -34,6 +34,7 @@ from refinery.lib.scripts.js.model import (
 class _PropertyAssignment(NamedTuple):
     rhs: Expression
     stmt_index: int
+    write: Node
 
 
 class JsNamespaceFlattening(ScopeProcessingTransformer):
@@ -249,7 +250,7 @@ class JsNamespaceFlattening(ScopeProcessingTransformer):
                 continue
             counts[key] = counts.get(key, 0) + 1
             if expr.right is not None and rhs_predicate(expr.right):
-                found[key] = _PropertyAssignment(expr.right, idx)
+                found[key] = _PropertyAssignment(expr.right, idx, lhs)
         return {k: v for k, v in found.items() if counts.get(k) == 1}
 
     @staticmethod
@@ -300,6 +301,7 @@ class JsNamespaceFlattening(ScopeProcessingTransformer):
         `undefined`-until-assigned semantics.
         """
         hoistable: set[str] = set()
+        references_by_key = JsNamespaceFlattening._property_references_by_key(scope, name)
         for key, entry in func_assigns.items():
             func_expr = entry.rhs
             if not isinstance(func_expr, JsFunctionExpression):
@@ -307,40 +309,30 @@ class JsNamespaceFlattening(ScopeProcessingTransformer):
             if func_expr.id is not None and func_expr.id.name != key:
                 continue
             statement = body[entry.stmt_index]
-            write: Node | None = None
-            if (
-                isinstance(statement, JsExpressionStatement)
-                and isinstance(statement.expression, JsAssignmentExpression)
-            ):
-                write = statement.expression.left
-            references = JsNamespaceFlattening._property_references(scope, name, key, write)
+            references = [ref for ref in references_by_key.get(key, ()) if ref is not entry.write]
             if dominance.runs_before_all(statement, references):
                 hoistable.add(key)
         return hoistable
 
     @staticmethod
-    def _property_references(
-        scope: Node,
-        name: str,
-        key: str,
-        write: Node | None,
-    ) -> list[Node]:
+    def _property_references_by_key(scope: Node, name: str) -> dict[str, list[Node]]:
         """
-        Every `NS.key` member access in the scope subtree except the initializing write *write* — the
-        reads and any compound writes whose observed value the hoisting gate must order after the
-        initialization. Computed accesses `NS["key"]` are included through `access_key`, so a read
-        that spells the property dynamically still blocks an unsound hoist.
+        Every `NS.<key>` member access in the scope subtree, bucketed by property key, in a single walk.
+        Computed accesses `NS["key"]` are bucketed with the static reads through `access_key`, so a read
+        that spells the property dynamically still blocks an unsound hoist. The initializing write of a
+        property is included here and excluded by the caller, which alone knows which reference it is.
         """
-        references: list[Node] = []
+        buckets: dict[str, list[Node]] = {}
         for node in JsNamespaceFlattening._walk_pruning_shadows(scope, name):
-            if not isinstance(node, JsMemberExpression) or node is write:
+            if not isinstance(node, JsMemberExpression):
                 continue
             obj = node.object
             if not isinstance(obj, JsIdentifier) or obj.name != name:
                 continue
-            if access_key(node) == key:
-                references.append(node)
-        return references
+            key = access_key(node)
+            if key is not None:
+                buckets.setdefault(key, []).append(node)
+        return buckets
 
     @staticmethod
     def _emit_function_declarations(
