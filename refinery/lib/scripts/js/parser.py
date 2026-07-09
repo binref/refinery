@@ -762,11 +762,19 @@ class JsParser:
         body = self._parse_class_body()
         if as_expression:
             return JsClassExpression(
-                id=id_node, super_class=super_class, body=body,
-                decorators=decorators or [], offset=offset)
+                id=id_node,
+                super_class=super_class,
+                body=body,
+                decorators=decorators or [],
+                offset=offset,
+            )
         return JsClassDeclaration(
-            id=id_node, super_class=super_class, body=body,
-            decorators=decorators or [], offset=offset)
+            id=id_node,
+            super_class=super_class,
+            body=body,
+            decorators=decorators or [],
+            offset=offset,
+        )
 
     def _parse_class_declaration(
         self, decorators: list[JsDecorator] | None = None,
@@ -966,8 +974,12 @@ class JsParser:
         keyword, attributes = self._parse_import_attributes()
         self._eat_semicolon()
         return JsImportDeclaration(
-            specifiers=specifiers, source=source,
-            attributes=attributes, attributes_keyword=keyword, offset=offset)
+            specifiers=specifiers,
+            source=source,
+            attributes=attributes,
+            attributes_keyword=keyword,
+            offset=offset,
+        )
 
     def _parse_namespace_import(self) -> JsImportNamespaceSpecifier:
         offset = self._current.offset

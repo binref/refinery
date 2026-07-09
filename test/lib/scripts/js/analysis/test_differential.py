@@ -783,7 +783,7 @@ class TestDeobfuscationDifferential(TestBase):
         """
         self._check(
             "import('data:text/javascript,globalThis.SIDE = 9')"
-            ".then(() => console.log(globalThis.SIDE));")
+            '.then(() => console.log(globalThis.SIDE));')
 
     def test_global_read_by_dynamic_import_kept_alive(self):
         """
@@ -791,7 +791,7 @@ class TestDeobfuscationDifferential(TestBase):
         that write while a dynamic import (a reflective surface) is present.
         """
         self._check(
-            "globalThis.CFG = 3;"
+            'globalThis.CFG = 3;'
             " import('data:text/javascript,console.log(globalThis.CFG)').then(() => {});")
 
     def test_yield_as_identifier_multiplied_in_sloppy_function(self):

@@ -324,8 +324,11 @@ class JsSimplifications(Transformer):
             fn = fn.expression
         if isinstance(fn, JsFunctionExpression):
             return self._try_inline_iife(
-                node, fn,
-                lambda call: self.effects.is_pure_call(call), self.model.read_has_dynamic_effect, self,
+                node,
+                fn,
+                lambda call: self.effects.is_pure_call(call),
+                self.model.read_has_dynamic_effect,
+                self,
             )
         return (
             self._try_fold_static_method(node)
