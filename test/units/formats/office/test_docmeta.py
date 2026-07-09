@@ -9,6 +9,7 @@ from refinery.lib.access import (
     _parse_libid,
     _parse_vba_references,
 )
+from refinery.lib.ole.rtf import RtfInfoParser
 
 from ... import TestUnitBase
 
@@ -56,6 +57,70 @@ class TestDocMetaOOXML(TestUnitBase):
         test = data | self.load() | json.loads
         self.assertEqual(test['core']['creator'], 'Adobe')
         self.assertEqual(test['app']['Application'], 'Microsoft Office Word')
+
+
+class TestDocMetaOle(TestUnitBase):
+
+    def test_real_world_doc(self):
+        data = self.download_sample('0adb998791595d9f127750313289d62ad1c452415d4e995d3ca7b903860dd7d5')
+        self.assertTrue(self.unit().handles(data))
+        test = data | self.load() | json.loads
+        self.assertEqual(test['author'], 'Adobe')
+        self.assertEqual(test['creating_application'], 'Microsoft Office Word')
+        self.assertEqual(test['create_time'], '2021-11-13 20:40:00')
+        self.assertEqual(test['last_saved_time'], '2021-11-15 12:15:00')
+        self.assertEqual(test['num_pages'], 3)
+        self.assertEqual(test['num_words'], 560)
+
+
+class TestDocMetaOpenDocument(TestUnitBase):
+
+    def test_real_world_odt(self):
+        data = self.download_sample('2b3ed3eea86116bf1e644da8c945f1df4972052fb4e3c4a3a30b1e68da27f0ce')
+        self.assertTrue(self.unit().handles(data))
+        test = data | self.load() | json.loads
+        self.assertEqual(test['meta']['creator'], 'Adobe')
+        self.assertEqual(test['meta']['generator'], 'MicrosoftOffice/15.0 MicrosoftWord')
+        self.assertEqual(test['meta']['creation-date'], '2021-11-15 13:34:00')
+        self.assertEqual(test['meta']['page-count'], 3)
+        self.assertEqual(test['meta']['word-count'], 560)
+
+
+class TestDocMetaPdf(TestUnitBase):
+
+    def test_real_world_pdf(self):
+        data = self.download_sample('76b19c1e705328cab4d98e546095eb5eb601d23d8102e6e0bfb0a8a6ab157366')
+        self.assertTrue(self.unit().handles(data))
+        test = data | self.load() | json.loads
+        self.assertEqual(test['format'], 'PDF 1.6')
+        self.assertEqual(test['creationDate'], '2019-09-09 05:03:47+02:00')
+        self.assertEqual(test['modDate'], '2019-09-09 05:03:47+02:00')
+
+
+class TestDocMetaRtf(TestUnitBase):
+
+    def test_real_world_rtf(self):
+        data = self.download_sample('40f97cf37c136209a65d5582963a72352509eb802da7f1f5b4478a0d9e0817e8')
+        self.assertTrue(self.unit().handles(data))
+        test = data | self.load() | json.loads
+        self.assertEqual(test['author'], 'Admin')
+        self.assertEqual(test['operator'], 'Admin')
+        self.assertEqual(test['create_time'], '2017-11-23 01:05:00')
+        self.assertEqual(test['last_saved_time'], '2017-11-23 01:06:00')
+        self.assertEqual(test['num_pages'], 1)
+
+
+class TestRtfInfoParser(TestUnitBase):
+
+    def test_real_world_info(self):
+        data = self.download_sample('40f97cf37c136209a65d5582963a72352509eb802da7f1f5b4478a0d9e0817e8')
+        info = RtfInfoParser(data).info
+        self.assertEqual(info['author'], 'Admin')
+        self.assertEqual(info['operator'], 'Admin')
+        self.assertEqual(str(info['create_time']), '2017-11-23 01:05:00')
+        self.assertEqual(str(info['last_saved_time']), '2017-11-23 01:06:00')
+        self.assertEqual(info['num_pages'], 1)
+        self.assertEqual(info['num_words'], 0)
 
 
 class TestVbaReferenceParser(TestUnitBase):

@@ -9,6 +9,8 @@ import enum
 import re
 
 from dataclasses import dataclass, field
+from datetime import datetime
+from typing import Any
 
 from refinery.lib.structures import EOF, Struct, StructReader
 
@@ -662,3 +664,113 @@ class RtfObjParser(RtfParser):
             self.current_destination.data = bytearray(_RE_NON_HEX.sub(b'', self.current_destination.data))
             if len(self.current_destination.data) & 1:
                 del self.current_destination.data[-1:]
+
+
+_INFO_TEXT_FIELDS: dict[bytes, str] = {
+    b'title'     : 'title',
+    b'subject'   : 'subject',
+    b'author'    : 'author',
+    b'manager'   : 'manager',
+    b'company'   : 'company',
+    b'operator'  : 'operator',
+    b'category'  : 'category',
+    b'keywords'  : 'keywords',
+    b'doccomm'   : 'comments',
+    b'hlinkbase' : 'hyperlink_base',
+}
+
+_INFO_DATE_FIELDS: dict[bytes, str] = {
+    b'creatim' : 'create_time',
+    b'revtim'  : 'last_saved_time',
+    b'printim' : 'last_printed',
+    b'buptim'  : 'backup_time',
+}
+
+_INFO_COUNT_FIELDS: dict[bytes, str] = {
+    b'nofpages'   : 'num_pages',
+    b'nofwords'   : 'num_words',
+    b'nofchars'   : 'num_chars',
+    b'nofcharsws' : 'num_chars_ws',
+    b'edmins'     : 'total_edit_time',
+    b'vern'       : 'internal_version',
+    b'version'    : 'version',
+}
+
+_INFO_DATE_PARTS: dict[bytes, str] = {
+    b'yr'  : 'year',
+    b'mo'  : 'month',
+    b'dy'  : 'day',
+    b'hr'  : 'hour',
+    b'min' : 'minute',
+    b'sec' : 'second',
+}
+
+
+def _assemble_date(parts: dict[str, int]) -> datetime | None:
+    if 'year' not in parts:
+        return None
+    try:
+        return datetime(
+            parts['year'],
+            parts.get('month', 1),
+            parts.get('day', 1),
+            parts.get('hour', 0),
+            parts.get('minute', 0),
+            parts.get('second', 0),
+        )
+    except ValueError:
+        return None
+
+
+class RtfInfoParser(RtfParser):
+    """
+    Specialized RTF parser that harvests document metadata from the `\\info` destination group,
+    including author, title, subject, keywords, comments, operator, company, and manager text as
+    well as the creation, revision, and printing timestamps and the page, word, and character
+    counts. After parsing, the harvested metadata is available in the `info` dictionary.
+    """
+    def __init__(self, data: bytes | bytearray | memoryview):
+        self.info: dict[str, Any] = {}
+        self._collecting = False
+        self._date_parts: dict[str, int] = {}
+        super().__init__(data)
+
+    def open_destination(self, destination: _Destination) -> None:
+        if destination.cword == b'info':
+            self._collecting = True
+        elif destination.cword in _INFO_DATE_FIELDS:
+            self._date_parts = {}
+
+    def close_destination(self, destination: _Destination) -> None:
+        cword = destination.cword
+        if cword is None:
+            return
+        if cword == b'info':
+            self._collecting = False
+            return
+        if not self._collecting:
+            return
+        if name := _INFO_TEXT_FIELDS.get(cword):
+            if text := bytes(destination.data).decode('latin1').strip():
+                self.info[name] = text
+        elif name := _INFO_DATE_FIELDS.get(cword):
+            if date := _assemble_date(self._date_parts):
+                self.info[name] = date
+
+    def control_word(
+        self,
+        matchobject: re.Match,
+        cword: bytes,
+        param: bytes | None,
+    ) -> None:
+        if not self._collecting or param is None:
+            return
+        current = self.current_destination.cword
+        if current is None:
+            return
+        if current in _INFO_DATE_FIELDS:
+            if part := _INFO_DATE_PARTS.get(cword):
+                self._date_parts[part] = int(param)
+        elif current == b'info':
+            if name := _INFO_COUNT_FIELDS.get(cword):
+                self.info[name] = int(param)

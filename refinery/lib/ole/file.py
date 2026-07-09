@@ -356,13 +356,20 @@ class OleMetadata:
                     setattr(self, attr_name, value)
 
     def dump(self) -> dict[str, Any]:
+        def clean(value):
+            if isinstance(value, str):
+                value = value.strip('\0').strip()
+                return value or None
+            if isinstance(value, (bytes, bytearray)):
+                value = bytes(value).strip(b'\0').strip()
+                return value.decode('latin1') or None
+            if isinstance(value, list):
+                value = [item for item in map(clean, value) if item is not None]
+                return value or None
+            return value
         result = {}
-        for attr in SUMMARY_ATTRIBS[1:]:
-            value = getattr(self, attr, None)
-            if value is not None:
-                result[attr] = value
-        for attr in DOCSUM_ATTRIBS[1:]:
-            value = getattr(self, attr, None)
+        for attr in (*SUMMARY_ATTRIBS[1:], *DOCSUM_ATTRIBS[1:]):
+            value = clean(getattr(self, attr, None))
             if value is not None:
                 result[attr] = value
         return result
