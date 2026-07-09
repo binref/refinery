@@ -418,6 +418,19 @@ class TestSemanticModel(TestBase):
         ast, model = self._model('globalThis[k] = 99;')
         self.assertNotIn('k', model.root_scope.bindings)
 
+    def test_has_member_reference_true_for_alias_member_write(self):
+        _, model = self._model('var g; globalThis.g = 99;')
+        self.assertTrue(model.root_scope.bindings['g'].has_member_reference)
+
+    def test_has_member_reference_true_for_alias_member_read(self):
+        _, model = self._model('var g = 1; globalThis.g;')
+        self.assertTrue(model.root_scope.bindings['g'].has_member_reference)
+
+    def test_has_member_reference_false_for_plain_local(self):
+        _, model = self._model('function f(){ var x = 1; return x; }')
+        function_scope = model.root_scope.children[0]
+        self.assertFalse(function_scope.bindings['x'].has_member_reference)
+
     def test_reference_role_reads_global_alias_member_value(self):
         ast, _ = self._model('sink(globalThis.g);')
         self.assertIs(reference_role(self._member(ast)), Role.READ)

@@ -225,6 +225,16 @@ class Binding:
         """
         return any(isinstance(write, JsMemberExpression) for write in self.writes)
 
+    @property
+    def has_member_reference(self) -> bool:
+        """
+        Whether the binding is read or written through a member access on a global-object alias
+        (`globalThis.x`), recorded as a `JsMemberExpression` reference rather than a referencing
+        identifier (see the class docstring). Such a binding is reachable through the global object, so
+        a caller must not treat it as an ordinary local — it cannot be relocated into a function.
+        """
+        return any(isinstance(ref, JsMemberExpression) for ref in (*self.reads, *self.writes))
+
 
 @dataclass(eq=False)
 class Scope:
