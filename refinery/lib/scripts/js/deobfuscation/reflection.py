@@ -116,14 +116,6 @@ def _try_eval_string_arg(node: Expression) -> str | None:
     return None
 
 
-def _is_identifier(node: Node | None, name: str) -> bool:
-    return isinstance(node, JsIdentifier) and node.name == name
-
-
-def _is_function_identifier(node: Expression) -> bool:
-    return _is_identifier(strip_parens(node), 'Function')
-
-
 def _extract_eval_code(
     node: JsCallExpression,
     *,
@@ -485,17 +477,22 @@ def _try_unpack_function_constructor(
     return list(parsed.body)
 
 
-def _is_pack_shaped(node: JsCallExpression) -> bool:
+def _is_pack_shaped(
+    node: JsCallExpression,
+    *,
+    free_global_name: Callable[[Expression | None], str | None],
+) -> bool:
     """
-    Return `True` when the call has the shape of a pack pattern: the callee is a `Function()`
+    Return `True` when the call has the shape of a pack pattern: the callee is a free-global `Function()`
     call and the outer argument is an object expression. When this shape is detected, the generic
-    function-body extraction should be skipped to avoid inlining code with unresolved proxy
-    references.
+    function-body extraction should be skipped to avoid inlining code with unresolved proxy references.
+    The callee is identified through the model, so a locally shadowed `Function` is not mistaken for the
+    intrinsic.
     """
     inner = node.callee
     if not isinstance(inner, JsCallExpression) or inner.callee is None:
         return False
-    if not _is_function_identifier(inner.callee):
+    if free_global_name(inner.callee) != 'Function':
         return False
     return len(node.arguments) == 1 and isinstance(node.arguments[0], JsObjectExpression)
 
@@ -873,7 +870,7 @@ class JsReflectionInlining(ScriptLevelTransformer):
             node, free_global_name=self._free_global_name(root))
         if pack_result is not None:
             return pack_result
-        if _is_pack_shaped(node):
+        if _is_pack_shaped(node, free_global_name=self._free_global_name(root)):
             return None
         resolved = self._resolve_reflected_call(node, stmt, root, at_global_scope)
         if resolved is None:

@@ -115,6 +115,21 @@ class TestReflectionInlining(TestJsDeobfuscator):
         )
         self.assertEqual(source, self._reflect(source))
 
+    def test_shadowed_function_pack_not_inlined(self):
+        """
+        A locally shadowed `Function` in the pack shape is that local's value, not the intrinsic, so the
+        model-backed callee check must not treat it as a pack pattern to inline.
+        """
+        source = inspect.cleandoc(
+            """
+            function g() {
+              var Function = h;
+              Function(x)({ a: 1 });
+            }
+            """
+        )
+        self.assertEqual(source, self._reflect(source))
+
     def test_indirect_eval_alias_base_in_with_not_inlined(self):
         """
         Inside a `with` body the base `window` may resolve to a property of the `with` object.
