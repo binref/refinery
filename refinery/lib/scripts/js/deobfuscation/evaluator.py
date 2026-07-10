@@ -582,23 +582,26 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
 
     def _established_before(self, func: _FuncNode, call: JsCallExpression) -> bool:
         """
-        Whether *func*'s value is installed before *call* runs. A function declaration or a declarator
-        initializer is established at its declaration — hoisted, or bound before any later reference — so
-        it always qualifies. A function installed by a lone assignment (`f = function(){}`, the form
-        namespace flattening leaves) is `undefined` until that assignment runs, so its call folds only
-        when the establishing write is proven to run first; otherwise the interpreted body would replace
-        the runtime `TypeError` a premature call throws with a value.
+        Whether *func*'s value is installed before *call* runs. A function declaration is hoisted, so it
+        is always established; a declarator initializer (`const`/`let`/`var f = function(){}`) is in place
+        only once its declarator has run, and a lone assignment (`f = function(){}`, the form namespace
+        flattening leaves) only once that assignment has run. A premature call to either reads a value
+        that is absent — a temporal dead zone `ReferenceError`, or the hoisted `undefined` a `var` call
+        throws a `TypeError` on — which the interpreted body must not silently replace with a result. The
+        model names the establishing nodes; dominance decides whether they all precede the call.
         """
         if self._effects is None:
             return False
-        binding = self._effects.model.invocation_binding(func)
-        if binding is None or not binding.writes:
+        sites = self._effects.model.establishment_sites(func)
+        if sites is None:
+            return False
+        if not sites:
             return True
         script = self._script
         if script is None:
             return False
         dominance = model_cache(self, script).dominance
-        return all(dominance.runs_before(w, call) for w in binding.writes)
+        return all(dominance.runs_before(site, call) for site in sites)
 
     def _try_named_call(self, node: JsCallExpression) -> None:
         if self._effects is None:

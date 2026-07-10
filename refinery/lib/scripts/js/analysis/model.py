@@ -943,6 +943,31 @@ class SemanticModel:
                 return strip_parens(assignment.right)
         return None
 
+    def establishment_sites(self, function: Node) -> list[Node] | None:
+        """
+        The nodes that must all have executed before *function*'s callable value is installed under the
+        name it is invoked through, for a consumer that gates a use on execution order. An empty list
+        when the value is hoisted into place before any statement runs — a function declaration — so no
+        ordering is required; the declarator when the value is a `var`/`let`/`const` initializer, which
+        is absent until that declarator runs; the recorded writes when a lone assignment installs it
+        (`f = function(){}`, the form namespace flattening leaves). `None` when *function* is not invoked
+        through a single such name, so its presence cannot be ordered and the caller declines. Ordering
+        the returned nodes against the use is the caller's job, since that needs the dominance model this
+        layer must not depend on.
+        """
+        binding = self.invocation_binding(function)
+        if binding is None or len(binding.declarations) != 1:
+            return None
+        if binding.writes:
+            return list(binding.writes)
+        declaration = binding.declarations[0]
+        parent = declaration.parent
+        if isinstance(parent, JsFunctionDeclaration):
+            return []
+        if isinstance(parent, JsVariableDeclarator):
+            return [parent]
+        return None
+
     def is_shadowed(self, name: str, at: Node, outer: Scope) -> bool:
         """
         Whether *name*, referenced at *at*, resolves to a binding declared strictly inside *outer*

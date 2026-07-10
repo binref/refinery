@@ -95,6 +95,62 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
         )
         self.assertEqual(source, self._evaluate(source))
 
+    def test_premature_call_before_const_definition_not_folded(self):
+        """
+        `f` is called before its `const` initializer runs, so at runtime the temporal dead zone throws
+        a `ReferenceError`; folding the call to the initializer's value would invent a result.
+        """
+        source = inspect.cleandoc(
+            """
+            SINK(f());
+            const f = () => 1;
+            """
+        )
+        self.assertEqual(source, self._evaluate(source))
+
+    def test_premature_call_before_var_definition_not_folded(self):
+        """
+        `f` is hoisted as `undefined` until its `var` initializer runs, so the earlier call throws a
+        `TypeError` at runtime rather than returning 1.
+        """
+        source = inspect.cleandoc(
+            """
+            SINK(f());
+            var f = function() {
+              return 1;
+            };
+            """
+        )
+        self.assertEqual(source, self._evaluate(source))
+
+    def test_premature_call_before_let_definition_not_folded(self):
+        """
+        `f` is in its temporal dead zone until the `let` initializer runs, so the earlier call throws a
+        `ReferenceError` at runtime.
+        """
+        source = inspect.cleandoc(
+            """
+            SINK(f());
+            let f = () => 1;
+            """
+        )
+        self.assertEqual(source, self._evaluate(source))
+
+    def test_premature_call_before_hoisted_declaration_folded(self):
+        """
+        A function declaration is fully hoisted, so a call textually preceding it runs the function and
+        the fold to its value is sound.
+        """
+        source = inspect.cleandoc(
+            """
+            SINK(f());
+            function f() {
+              return 1;
+            }
+            """
+        )
+        self.assertEqual('SINK(1);', self._evaluate(source))
+
     def test_call_through_reassigned_nested_callee_not_folded(self):
         """
         `outer` is a stable, side-effect-free function, but its body calls `inner`, whose binding is
