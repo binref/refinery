@@ -231,30 +231,36 @@ class DominanceModel:
     def _reference_points(self, function: Node) -> list[Node] | None:
         """
         The points no invocation of *function* can precede, or `None` when they cannot be enumerated.
-        For a named function these are the references to its binding — a use of the name must be
-        evaluated before the value it denotes can be called — unless the binding is reassigned or
-        redeclared, in which case a reference no longer pins this one function and the points are
-        unknowable. A reference inside a dynamic scope — a name a `with` body resolves at runtime — is
-        equally unorderable, and its `dynamic_refs` entry makes the points `None`; this mirrors the escape
-        verdict `EffectModel.function_escapes` draws from the same fact. An opaque reflective surface is
-        unorderable for the same reason and leaves no reference to rank: a direct `eval`, `Function`, a
-        string timer, or a dynamic global access may invoke the function by name, so a binding
-        `SemanticModel.reachable_by_opaque_reflection` judges reachable also yields `None` — without it a
-        function invoked only through an opaque `eval` would look never referenced, hence vacuously safe,
-        and a value be inlined into a body a call observes early. For an anonymous function the single
-        point is the function expression itself: the closure cannot be invoked before it is created.
+        For a function pinned to a name (`SemanticModel.invocation_binding`) these are the value-reads of
+        that name — a read must be evaluated before the value it denotes can be called — together with the
+        opaque reflective surface sites that could invoke it by name
+        (`SemanticModel.reflection_surface_sites`): a direct `eval`, `Function`, a string timer, or a
+        dynamic global access cannot invoke the function before the surface that grants the capability has
+        run, so each surface is itself a point no invocation precedes, ranked exactly like a read. The
+        enumeration is `None` when the name is redeclared, reassigned to another value so a read no longer
+        pins this one function (`SemanticModel.binding_pinned_to`), or resolved inside a dynamic scope a
+        `with` body governs, whose `dynamic_refs` entry is unorderable; this mirrors the escape verdict
+        `EffectModel.function_escapes` draws from the same fact. A surface lexically inside *function* is
+        dropped: it cannot trigger the function's first invocation, only a re-entrant one, so it never
+        bounds the ordering. For a function bound to no name the single point is the function expression
+        itself: the closure cannot be invoked before it is created.
         """
-        binding = self.model.naming_binding(function)
-        if binding is not None:
-            if (
-                binding.writes
-                or binding.dynamic_refs
-                or len(binding.declarations) != 1
-                or self.model.reachable_by_opaque_reflection(binding)
-            ):
-                return None
-            return list(self.model.references(binding))
-        return [function]
+        binding = self.model.invocation_binding(function)
+        if binding is None:
+            return [function]
+        if (
+            binding.dynamic_refs
+            or len(binding.declarations) != 1
+            or not self.model.binding_pinned_to(binding, function)
+        ):
+            return None
+        points: list[Node] = [*binding.reads]
+        points.extend(
+            site
+            for site in self.model.reflection_surface_sites(binding)
+            if not site.is_descendant_of(function)
+        )
+        return points
 
     def _runs_after(
         self,

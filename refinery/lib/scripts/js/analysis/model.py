@@ -643,22 +643,6 @@ def _is_direct_eval_call(node: Node) -> bool:
     return isinstance(callee, JsIdentifier) and callee.name == 'eval'
 
 
-def _has_direct_eval(function: Node) -> bool:
-    """
-    Whether *function*'s body contains a direct `eval` call — a call whose callee, once parentheses are
-    stripped, is the bare identifier `eval` (see `_is_direct_eval_call`), the one reflective surface that
-    runs in the function's own scope and can therefore name its locals. Nested functions are included,
-    since a direct `eval` in a closure inherits the enclosing locals. The `with` surface is not scanned
-    here — a `with` body's accesses are attributed precisely as dynamic references, so only direct eval
-    needs a per-function answer; `Function`, string timers, indirect eval, and dynamic global access all
-    run in the global scope and cannot name a local.
-    """
-    for node in function.walk():
-        if _is_direct_eval_call(node):
-            return True
-    return False
-
-
 def _timer_callee_name(callee: Node | None) -> str | None:
     """
     The timer/`execScript` function *callee* names, or `None` when it is not one. A bare identifier
@@ -704,8 +688,8 @@ class SemanticModel:
         self._node_scope: dict[int, Scope] = {}
         self._binding_of: dict[int, Binding] = {}
         self._reflection_surface: bool | None = None
-        self._opaque_reflection_surface: bool | None = None
-        self._function_direct_eval: dict[int, bool] = {}
+        self._opaque_surface_sites: list[Node] | None = None
+        self._function_direct_eval_sites: dict[int, list[Node]] = {}
         self.root_scope: Scope = _ScopeBuilder(self).build(root)
         self._build_def_use()
 
@@ -836,6 +820,53 @@ class SemanticModel:
             return self.binding_of(parent.id)
         return None
 
+    def invocation_binding(self, function: Node) -> Binding | None:
+        """
+        The binding whose value-reads are the sites through which *function* is invoked — its
+        `naming_binding`, extended to a lone assignment installing it in an already-declared name
+        (`f = function(){}`) as well as a named declaration or a declarator initializer. `None` for a
+        function with no such name — an anonymous IIFE or callback, or one stored through a member or
+        other non-identifier target — whose invocation cannot be pinned to a name. Unlike `naming_binding`
+        this also recognizes the bare-assignment form, so a function held in a hoisted `var` assigned once
+        is ordered by its calls rather than by its creation; a caller confirms the binding is singly
+        declared, `binding_pinned_to` *function*, and free of dynamic references before trusting its reads
+        to enumerate every invocation.
+        """
+        binding = self.naming_binding(function)
+        if binding is not None:
+            return binding
+        parent = function.parent
+        if (
+            isinstance(parent, JsAssignmentExpression)
+            and parent.operator == '='
+            and parent.right is function
+        ):
+            target = strip_parens(parent.left)
+            if isinstance(target, JsIdentifier):
+                return self.resolve(target)
+        return None
+
+    def binding_pinned_to(self, binding: Binding, function: Node) -> bool:
+        """
+        Whether *binding* holds *function* as its one assigned value, so every read of it outside the
+        value's temporal dead zone denotes *function* and its reads enumerate *function*'s invocations.
+        True when the binding's only write is the assignment that establishes *function* — a bare
+        `name = function(){}` records that target as its sole write — and false once any other write could
+        give the name a different value. A named function declaration or a declarator initializer installs
+        the value with no recorded write, so any write at all is a reassignment that unpins it. The
+        single-declaration and dynamic-reference checks a caller also needs are left to the caller; this
+        answers only the reassignment question.
+        """
+        parent = function.parent
+        establishing = None
+        if (
+            isinstance(parent, JsAssignmentExpression)
+            and parent.operator == '='
+            and parent.right is function
+        ):
+            establishing = strip_parens(parent.left)
+        return all(write is establishing for write in binding.writes)
+
     def is_shadowed(self, name: str, at: Node, outer: Scope) -> bool:
         """
         Whether *name*, referenced at *at*, resolves to a binding declared strictly inside *outer*
@@ -905,12 +936,28 @@ class SemanticModel:
         `dynamic_refs` needs only the opaque surfaces here, the ones that leave no attributable reference.
         A global is reachable through any such surface, all of which run in the global scope; a
         function-local only through a direct `eval` in its own function, since a surface running in the
-        global scope cannot name a local.
+        global scope cannot name a local. The boolean companion of `reflection_surface_sites` — true
+        exactly when that site list is non-empty.
+        """
+        return bool(self.reflection_surface_sites(binding))
+
+    def reflection_surface_sites(self, binding: Binding) -> list[Node]:
+        """
+        The AST nodes of the opaque reflective surfaces that could name *binding* at runtime with no
+        reference this model records — the points no reflected invocation of it can precede. A caller
+        ranks a definition against these to prove it runs before every such invocation, the site-level
+        companion of `reachable_by_opaque_reflection`. For a global (script-scope) binding they are the
+        whole-program opaque surfaces (`_opaque_reflection_sites`), each running in the global scope and
+        able to name any global; for a function-local, the direct `eval` sites in its owning function
+        (`_direct_eval_sites`), the only opaque surface that runs in the local's own scope and can name
+        it. Empty exactly when the binding is not opaque-reflection reachable. A `with` surface is not
+        included — a `with` that names the binding is attributed as a `dynamic_references` entry a caller
+        consults separately.
         """
         owner = binding.scope.var_scope
         if owner is None or owner.kind is ScopeKind.SCRIPT:
-            return self._has_opaque_reflection_surface()
-        return self.local_reachable_by_direct_eval(binding)
+            return self._opaque_reflection_sites()
+        return self._direct_eval_sites(owner.node)
 
     def local_reachable_by_direct_eval(self, binding: Binding) -> bool:
         """
@@ -978,12 +1025,23 @@ class SemanticModel:
             and binding.kind in (BindingKind.VAR, BindingKind.FUNCTION)
         )
 
-    def _function_has_direct_eval(self, function: Node) -> bool:
-        cached = self._function_direct_eval.get(id(function))
+    def _direct_eval_sites(self, function: Node) -> list[Node]:
+        """
+        The direct `eval` call sites within *function* — every call whose callee, once parentheses are
+        stripped, is the bare identifier `eval` (see `_is_direct_eval_call`), the one reflective surface
+        that runs in the function's own scope and can therefore name its locals. Nested functions are
+        included, since a direct `eval` in a closure inherits the enclosing locals. The `with` surface is
+        not scanned — a `with` body's accesses are attributed precisely as dynamic references — so only
+        direct eval needs a per-function answer. Computed once per function and memoized.
+        """
+        cached = self._function_direct_eval_sites.get(id(function))
         if cached is None:
-            cached = _has_direct_eval(function)
-            self._function_direct_eval[id(function)] = cached
+            cached = [node for node in function.walk() if _is_direct_eval_call(node)]
+            self._function_direct_eval_sites[id(function)] = cached
         return cached
+
+    def _function_has_direct_eval(self, function: Node) -> bool:
+        return bool(self._direct_eval_sites(function))
 
     def _reads_reflective_intrinsic(self, node: JsIdentifier) -> bool:
         """
@@ -1005,38 +1063,47 @@ class SemanticModel:
 
     def _ensure_reflection_detected(self) -> None:
         """
-        Populate both reflection-surface memos in a single AST walk. A `with` statement contributes only
+        Populate the reflection-surface memos in a single AST walk. A `with` statement contributes only
         to the whole-program surface; every other surface — an `import()`, a value-read of the
         `eval`/`Function` intrinsic, a reflective global-object member, or a string-valued timer — is
-        opaque and contributes to both. The walk stops once both facts are known.
+        opaque, and its node is collected so a caller can order a definition against the site. The
+        whole-program surface is present when any opaque site exists or a `with` statement is seen.
         """
         if self._reflection_surface is not None:
             return
+        sites: list[Node] = []
         saw_with = False
-        saw_opaque = False
         for node in self.root.walk():
             if isinstance(node, JsWithStatement):
                 saw_with = True
             elif isinstance(node, JsImportExpression):
-                saw_opaque = True
+                sites.append(node)
             elif isinstance(node, JsIdentifier):
                 if self._reads_reflective_intrinsic(node):
-                    saw_opaque = True
+                    sites.append(node)
             elif isinstance(node, JsMemberExpression):
                 if _is_reflective_member(node):
-                    saw_opaque = True
+                    sites.append(node)
             elif isinstance(node, JsCallExpression):
                 if _is_string_timer(node):
-                    saw_opaque = True
-            if saw_with and saw_opaque:
-                break
-        self._opaque_reflection_surface = saw_opaque
-        self._reflection_surface = saw_with or saw_opaque
+                    sites.append(node)
+        self._opaque_surface_sites = sites
+        self._reflection_surface = saw_with or bool(sites)
+
+    def _opaque_reflection_sites(self) -> list[Node]:
+        """
+        The AST nodes of the whole-program opaque reflective surfaces — a value-read of the
+        `eval`/`Function` intrinsic, a reflective global-object member, a string-valued timer, or an
+        `import()`. A `with` statement is not opaque (its body's accesses are attributed as dynamic
+        references) and is excluded. Computed once and memoized; empty exactly when the program has no
+        opaque surface, which `_has_opaque_reflection_surface` reports as its non-emptiness.
+        """
+        self._ensure_reflection_detected()
+        assert self._opaque_surface_sites is not None
+        return self._opaque_surface_sites
 
     def _has_opaque_reflection_surface(self) -> bool:
-        self._ensure_reflection_detected()
-        assert self._opaque_reflection_surface is not None
-        return self._opaque_reflection_surface
+        return bool(self._opaque_reflection_sites())
 
     def _build_def_use(self):
         self._create_implicit_globals()
