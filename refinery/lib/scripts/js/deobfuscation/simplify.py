@@ -11,6 +11,7 @@ from refinery.lib.scripts.js.analysis.dominance import DominanceModel
 from refinery.lib.scripts.js.analysis.effects import EffectModel
 from refinery.lib.scripts.js.analysis.model import (
     GUARANTEED_GLOBALS,
+    Binding,
     BindingKind,
     SemanticModel,
 )
@@ -52,7 +53,6 @@ from refinery.lib.scripts.js.model import (
     JsClassDeclaration,
     JsClassExpression,
     JsConditionalExpression,
-    JsExpressionStatement,
     JsFunctionDeclaration,
     JsFunctionExpression,
     JsIdentifier,
@@ -69,9 +69,6 @@ from refinery.lib.scripts.js.model import (
     JsStringLiteral,
     JsTaggedTemplateExpression,
     JsUnaryExpression,
-    JsVariableDeclaration,
-    JsVariableDeclarator,
-    JsVarKind,
     strip_parens,
 )
 from refinery.lib.scripts.js.precedence import parens_required
@@ -90,6 +87,8 @@ _FUNCTION_PROPERTIES = _OBJECT_PROTO_PROPERTIES | frozenset({
 })
 
 _EMPTY_OBJECT_PROPERTIES = _OBJECT_PROTO_PROPERTIES
+
+_FUNCTION_NODES = (JsFunctionDeclaration, JsFunctionExpression, JsArrowFunctionExpression)
 
 
 def _is_call_callee(node: Node) -> bool:
@@ -128,85 +127,6 @@ def _callee_form_sensitive(node: Node) -> bool:
     if isinstance(inner, JsMemberExpression):
         return True
     return isinstance(inner, JsIdentifier) and inner.name == 'eval'
-
-
-def _resolve_in_expression(node: Node, key: str, name: str) -> bool | None:
-    """
-    Attempt to statically resolve `key in name` by walking up from *node* through all enclosing
-    scopes. Recognizes empty function declarations, empty class declarations (no super, no body),
-    and const empty object literals. Returns `True` when *key* is a known built-in property of the
-    resolved type or has been explicitly assigned, `False` when it is provably absent, or `None`
-    when the result cannot be determined.
-    """
-    scope = node.parent
-    while scope is not None:
-        if isinstance(scope, (JsScript, JsBlockStatement)):
-            for stmt in scope.body:
-                if (
-                    isinstance(stmt, JsFunctionDeclaration)
-                    and isinstance(stmt.id, JsIdentifier)
-                    and stmt.id.name == name
-                ):
-                    stores = _collect_property_stores(scope.body, name)
-                    if key in _FUNCTION_PROPERTIES:
-                        return True
-                    if key in stores:
-                        return True
-                    if stores:
-                        return None
-                    return False
-                if (
-                    isinstance(stmt, JsClassDeclaration)
-                    and isinstance(stmt.id, JsIdentifier)
-                    and stmt.id.name == name
-                    and stmt.super_class is None
-                    and stmt.body is not None
-                    and not stmt.body.body
-                ):
-                    stores = _collect_property_stores(scope.body, name)
-                    if key in _FUNCTION_PROPERTIES:
-                        return True
-                    if key in stores:
-                        return True
-                    if stores:
-                        return None
-                    return False
-                if (
-                    isinstance(stmt, JsVariableDeclaration)
-                    and stmt.kind is JsVarKind.CONST
-                ):
-                    for decl in stmt.declarations:
-                        if (
-                            isinstance(decl, JsVariableDeclarator)
-                            and isinstance(decl.id, JsIdentifier)
-                            and decl.id.name == name
-                            and isinstance(decl.init, JsObjectExpression)
-                            and not decl.init.properties
-                        ):
-                            return key in _EMPTY_OBJECT_PROPERTIES
-        scope = scope.parent
-    return None
-
-
-def _collect_property_stores(body: list, name: str) -> set[str]:
-    """
-    Collect property names assigned via `name.prop = ...` in the given body.
-    """
-    props: set[str] = set()
-    for stmt in body:
-        if not isinstance(stmt, JsExpressionStatement):
-            continue
-        expr = stmt.expression
-        if not isinstance(expr, JsAssignmentExpression):
-            continue
-        lhs = expr.left
-        if not isinstance(lhs, JsMemberExpression) or lhs.computed:
-            continue
-        if not isinstance(lhs.object, JsIdentifier) or lhs.object.name != name:
-            continue
-        if isinstance(lhs.property, JsIdentifier):
-            props.add(lhs.property.name)
-    return props
 
 
 _UNCONVERTIBLE = object()
@@ -283,6 +203,82 @@ class JsSimplifications(Transformer):
             return name in GUARANTEED_GLOBALS
         return any(self.dominance.runs_before(w, member) for w in binding.writes)
 
+    def _resolve_in(self, node: JsBinaryExpression, key: str) -> bool | None:
+        """
+        Statically resolve `key in name` by asking the model what value *name* holds. A sole function,
+        an empty class, or an empty object literal has a bounded property set — the built-in members of
+        its type plus the own properties the binding is assigned — so membership is decidable; any other
+        value, or one whose own-property set cannot be bounded, yields `None`. The binding is resolved
+        through the model, so the answer is shadowing-correct across scopes and recognizes the
+        bare-assignment form namespace flattening leaves, not only declarations. A value installed by
+        assignment reads `undefined` before that write runs, so a `key in name` the establishing write
+        does not dominate is left unresolved rather than fold away the `TypeError` a premature read
+        would throw; a declaration or initializer, established without a write, needs no such gate.
+        """
+        right = node.right
+        if not isinstance(right, JsIdentifier):
+            return None
+        binding = self.model.resolve(right)
+        if binding is None:
+            return None
+        value = self.model.singular_value(binding)
+        if value is None:
+            return None
+        if binding.writes and not self.dominance.runs_before(binding.writes[0], right):
+            return None
+        if isinstance(value, _FUNCTION_NODES):
+            members = _FUNCTION_PROPERTIES
+        elif isinstance(value, (JsClassDeclaration, JsClassExpression)):
+            if value.super_class is not None:
+                return None
+            if value.body is not None and value.body.body:
+                return None
+            members = _FUNCTION_PROPERTIES
+        elif isinstance(value, JsObjectExpression) and not value.properties:
+            members = _EMPTY_OBJECT_PROPERTIES
+        else:
+            return None
+        if key in members:
+            return True
+        stores = self._own_property_stores(binding)
+        if stores is None:
+            return None
+        if key in stores:
+            return True
+        if stores:
+            return None
+        return False
+
+    def _own_property_stores(self, binding: Binding) -> set[str] | None:
+        """
+        The property names assigned as own properties of a binding's value (`name.k = ...`,
+        `name['k'] = ...`), collected from the binding's references so the set is shadowing-correct.
+        `None` when a write targets a computed key that is not a string literal, since the own-property
+        set is then unbounded and no `in` membership can be decided.
+        """
+        stores: set[str] = set()
+        for ref in self.model.references(binding):
+            member = ref.parent
+            if not isinstance(member, JsMemberExpression) or member.object is not ref:
+                continue
+            assignment = member.parent
+            if (
+                not isinstance(assignment, JsAssignmentExpression)
+                or strip_parens(assignment.left) is not member
+            ):
+                continue
+            prop = member.property
+            if member.computed:
+                if isinstance(prop, JsStringLiteral):
+                    stores.add(prop.value)
+                else:
+                    return None
+            elif isinstance(prop, JsIdentifier):
+                stores.add(prop.name)
+            else:
+                return None
+        return stores
+
     def visit_JsBinaryExpression(self, node: JsBinaryExpression):
         self.generic_visit(node)
         if node.left is None or node.right is None:
@@ -320,12 +316,8 @@ class JsSimplifications(Transformer):
         if op in RELATIONAL_OPS:
             if left_str is not None and right_str is not None:
                 return JsBooleanLiteral(value=RELATIONAL_OPS[op](left_str, right_str))
-        if (
-            op == 'in'
-            and isinstance(node.left, JsStringLiteral)
-            and isinstance(node.right, JsIdentifier)
-        ):
-            result = _resolve_in_expression(node, node.left.value, node.right.name)
+        if op == 'in' and isinstance(node.left, JsStringLiteral):
+            result = self._resolve_in(node, node.left.value)
             if result is not None:
                 return JsBooleanLiteral(value=result)
         return None
