@@ -207,6 +207,20 @@ def _to_index(value: Value) -> int:
     return int(n)
 
 
+def _to_array_length(value: Value) -> int:
+    """
+    Coerce a value to a valid array length. Per ECMA-262 ArraySetLength, `ToUint32(v)` must equal
+    `ToNumber(v)`; otherwise the length is invalid and a JavaScript `RangeError` is signalled. This
+    rejects NaN, +/-Infinity, negative, and non-integer lengths, each of which a real engine
+    (verified against Node and Chrome) reports as `Invalid array length`.
+    """
+    number_len = to_number(value)
+    length = _to_uint32(number_len)
+    if length != number_len:
+        _js_throw('RangeError', 'Invalid array length')
+    return length
+
+
 def to_number(value: Value) -> int | float:
     if isinstance(value, bool):
         return 1 if value else 0
@@ -2129,9 +2143,7 @@ class JsInterpreter:
             return
         if isinstance(obj, list):
             if key == 'length':
-                new_len = _to_int(value)
-                if new_len < 0:
-                    _js_throw('RangeError', 'Invalid array length')
+                new_len = _to_array_length(value)
                 if new_len < len(obj):
                     del obj[new_len:]
                 else:

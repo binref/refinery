@@ -319,6 +319,23 @@ class TestInterpreterThrowSemantics(TestJsDeobfuscator):
         )
         self.assertEqual("var r = 'RangeError';", self._evaluate(source))
 
+    def test_array_length_range_error_is_catchable(self):
+        source = inspect.cleandoc(
+            """
+            function f() {
+                var a = [1, 2, 3];
+                try {
+                    a['length'] = NaN;
+                    return 'no throw';
+                } catch (e) {
+                    return e.name + ': ' + e.message;
+                }
+            }
+            var r = f();
+            """
+        )
+        self.assertEqual("var r = 'RangeError: Invalid array length';", self._evaluate(source))
+
     def test_uncaught_runtime_throw_is_not_folded(self):
         source = inspect.cleandoc(
             """

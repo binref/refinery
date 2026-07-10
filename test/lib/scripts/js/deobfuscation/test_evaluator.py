@@ -1344,7 +1344,7 @@ class TestClosureCapture(TestJsDeobfuscator):
         result = self._evaluate(source)
         self.assertEqual('var r = -1;', result)
 
-    def test_array_length_nan_does_not_raise(self):
+    def test_array_length_nan_assignment_raises(self):
         source = inspect.cleandoc(
             """
             function f() {
@@ -1356,10 +1356,11 @@ class TestClosureCapture(TestJsDeobfuscator):
         )
         func = JsParser(source).parse().body[0]
         assert isinstance(func, JsFunctionDeclaration)
-        result = JsInterpreter().execute(func, [])
-        self.assertEqual(0, result)
+        # NaN is not a valid array length: Node and Chrome both throw RangeError.
+        with self.assertRaises(Exception):
+            JsInterpreter().execute(func, [])
 
-    def test_array_length_infinity_does_not_raise(self):
+    def test_array_length_infinity_assignment_raises(self):
         source = inspect.cleandoc(
             """
             function f() {
@@ -1371,8 +1372,53 @@ class TestClosureCapture(TestJsDeobfuscator):
         )
         func = JsParser(source).parse().body[0]
         assert isinstance(func, JsFunctionDeclaration)
-        result = JsInterpreter().execute(func, [])
-        self.assertEqual(0, result)
+        # Infinity is not a valid array length: Node and Chrome both throw RangeError.
+        with self.assertRaises(Exception):
+            JsInterpreter().execute(func, [])
+
+    def test_array_length_non_integer_assignment_raises(self):
+        source = inspect.cleandoc(
+            """
+            function f() {
+                var a = [1, 2, 3];
+                a['length'] = 1.5;
+                return a.length;
+            }
+            """
+        )
+        func = JsParser(source).parse().body[0]
+        assert isinstance(func, JsFunctionDeclaration)
+        # A non-integer length is invalid: Node and Chrome both throw RangeError.
+        with self.assertRaises(Exception):
+            JsInterpreter().execute(func, [])
+
+    def test_array_length_shrink_truncates(self):
+        source = inspect.cleandoc(
+            """
+            function f() {
+                var a = [1, 2, 3];
+                a['length'] = 2;
+                return a;
+            }
+            """
+        )
+        func = JsParser(source).parse().body[0]
+        assert isinstance(func, JsFunctionDeclaration)
+        self.assertEqual([1, 2], JsInterpreter().execute(func, []))
+
+    def test_array_length_grow_pads_with_undefined(self):
+        source = inspect.cleandoc(
+            """
+            function f() {
+                var a = [1, 2, 3];
+                a['length'] = 5;
+                return a;
+            }
+            """
+        )
+        func = JsParser(source).parse().body[0]
+        assert isinstance(func, JsFunctionDeclaration)
+        self.assertEqual([1, 2, 3, None, None], JsInterpreter().execute(func, []))
 
     def test_typeof_buffer_is_function(self):
         source = inspect.cleandoc(
