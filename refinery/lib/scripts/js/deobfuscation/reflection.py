@@ -674,7 +674,14 @@ class JsReflectionInlining(ScriptLevelTransformer):
     indirect invocation via `setTimeout` and `setInterval`.
     """
 
+    _read_effect: Callable[[Node], bool]
+    _alias_name: Callable[[Expression | None], str | None]
+    _free_global: Callable[[Expression | None], str | None]
+
     def _process_script(self, node: JsScript) -> None:
+        self._read_effect = self._dynamic_read_effect(node)
+        self._alias_name = self._alias_member_name(node)
+        self._free_global = self._free_global_name(node)
         self._inline_statements(node)
         self._inline_expressions(node)
         self._lower_timers(node)
@@ -819,8 +826,8 @@ class JsReflectionInlining(ScriptLevelTransformer):
         code = _extract_string_call_code(
             node,
             TIMER_NAMES,
-            alias_name=self._alias_member_name(root),
-            free_global_name=self._free_global_name(root),
+            alias_name=self._alias_name,
+            free_global_name=self._free_global,
         )
         if code is None:
             return
@@ -856,8 +863,8 @@ class JsReflectionInlining(ScriptLevelTransformer):
         sync = _extract_string_call_code(
             node,
             SYNC_EVAL_NAMES,
-            alias_name=self._alias_member_name(root),
-            free_global_name=self._free_global_name(root),
+            alias_name=self._alias_name,
+            free_global_name=self._free_global,
         )
         if sync is not None:
             parsed = self._resolve_reflected_body(
@@ -867,10 +874,10 @@ class JsReflectionInlining(ScriptLevelTransformer):
                 return None
             return parsed.body
         pack_result = _try_unpack_function_constructor(
-            node, free_global_name=self._free_global_name(root))
+            node, free_global_name=self._free_global)
         if pack_result is not None:
             return pack_result
-        if _is_pack_shaped(node, free_global_name=self._free_global_name(root)):
+        if _is_pack_shaped(node, free_global_name=self._free_global):
             return None
         resolved = self._resolve_reflected_call(node, stmt, root, at_global_scope)
         if resolved is None:
@@ -908,9 +915,9 @@ class JsReflectionInlining(ScriptLevelTransformer):
         runs in the global scope. A string timer is not inlined here: its value is a handle, not the
         code's completion value, and its deferred execution is preserved instead by `_lower_timers`.
         """
-        read_effect = self._dynamic_read_effect(root)
-        alias_name = self._alias_member_name(root)
-        free_global_name = self._free_global_name(root)
+        read_effect = self._read_effect
+        alias_name = self._alias_name
+        free_global_name = self._free_global
         constructor = _invoked_function_constructor_code(
             node, read_effect, free_global_name=free_global_name)
         if constructor is not None:
