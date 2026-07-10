@@ -889,6 +889,8 @@ class SemanticModel:
         if not binding.writes:
             if isinstance(parent, JsFunctionDeclaration) and parent.id is decl:
                 return parent
+            if isinstance(parent, JsClassDeclaration) and parent.id is decl:
+                return parent
             if isinstance(parent, JsVariableDeclarator) and parent.id is decl:
                 return parent.init
             return None
@@ -1456,8 +1458,6 @@ class _ScopeBuilder:
             self._visit(node.body, wscope)
 
     def _visit_class(self, node: JsClassDeclaration | JsClassExpression, enclosing: Scope):
-        if isinstance(node, JsClassDeclaration) and node.id is not None:
-            self._declare(enclosing, node.id.name, BindingKind.CLASS, node.id)
         for decorator in node.decorators:
             self._visit(decorator, enclosing)
         if node.super_class is not None:
