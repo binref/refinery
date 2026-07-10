@@ -16,6 +16,7 @@ from refinery.lib.scripts.js.analysis.model import (
     Role,
     SemanticModel,
     enclosing_function,
+    is_invocation_target,
     is_member_write_target,
     pattern_identifiers,
     reference_role,
@@ -198,14 +199,13 @@ def _is_member_array_safe(scope: Node, prefix_name: str, prop_name: str) -> bool
                 if is_member_write_target(parent):
                     return False
             else:
-                gp = parent.parent
-                if isinstance(gp, JsCallExpression) and gp.callee is parent:
+                if is_invocation_target(parent):
                     return False
             continue
         if isinstance(parent, JsAssignmentExpression) and parent.left is node:
             continue
         if isinstance(parent, JsCallExpression):
-            if parent.callee is not node:
+            if not is_invocation_target(node):
                 return False
     return True
 

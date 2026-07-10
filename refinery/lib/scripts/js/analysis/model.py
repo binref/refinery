@@ -253,6 +253,24 @@ class Binding:
         return bool(self.reads)
 
     @property
+    def is_hoisted(self) -> bool:
+        """
+        Whether the binding is hoisted to the top of its variable scope — a `var` or a function
+        declaration — and so is visible (as `undefined`, or the function) throughout that scope before
+        its textual position, rather than sitting in a temporal dead zone.
+        """
+        return self.kind in (BindingKind.VAR, BindingKind.FUNCTION)
+
+    @property
+    def is_lexical(self) -> bool:
+        """
+        Whether the binding is block-scoped in a declarative environment — a `let`, `const`, or
+        `class`. Defined positively: a parameter, catch binding, import, or implicit global is neither
+        hoisted nor lexical in this sense.
+        """
+        return self.kind in (BindingKind.LET, BindingKind.CONST, BindingKind.CLASS)
+
+    @property
     def is_dead(self) -> bool:
         """
         Whether no use observes the binding's value: it is read through no resolved reference and named
@@ -370,6 +388,17 @@ def is_use_position(node: JsIdentifier) -> bool:
     )):
         return False
     return True
+
+
+def name_uses_in_scope(names: set[str], scope: Scope) -> Iterator[JsIdentifier]:
+    """
+    Every use-position identifier within *scope* (descending into nested functions) whose name is one
+    of *names* — the shared walk behind the capture check and the reflection dominance gate, which both
+    enumerate the live occurrences of a set of names across a region.
+    """
+    for node in scope.node.walk():
+        if isinstance(node, JsIdentifier) and node.name in names and is_use_position(node):
+            yield node
 
 
 def pattern_identifiers(target: Node | None) -> Iterator[JsIdentifier]:
@@ -519,6 +548,16 @@ def _is_invocation_of(node: Node | None, callee: Node) -> bool:
     if isinstance(node, JsTaggedTemplateExpression):
         return strip_parens(node.tag) is callee
     return False
+
+
+def is_invocation_target(node: Node) -> bool:
+    """
+    Whether *node* is the callee a call invokes or the tag a tagged template applies — `node(...)` or
+    `` node`...` `` — looking through parentheses around both *node* and the operator that governs it.
+    The shared primitive for "is this reference actually being called", replacing the hand-rolled
+    `parent.callee is node` checks that a parenthesized or tagged callee slips past.
+    """
+    return _is_invocation_of(_enclosing_operator(node), node)
 
 
 def is_member_write_target(member: Node) -> bool:
@@ -924,11 +963,7 @@ class SemanticModel:
         occurrence — free, inherited from an enclosing scope, or bound in *scope* itself — would be
         rebound by the introduced declaration.
         """
-        for node in scope.node.walk():
-            if not isinstance(node, JsIdentifier) or node.name not in names:
-                continue
-            if not is_use_position(node):
-                continue
+        for node in name_uses_in_scope(names, scope):
             if not self.is_shadowed(node.name, node, scope):
                 return True
         return False
@@ -1059,7 +1094,7 @@ class SemanticModel:
             return False
         return (
             binding.scope is self.root_scope
-            and binding.kind in (BindingKind.VAR, BindingKind.FUNCTION)
+            and binding.is_hoisted
         )
 
     def _direct_eval_sites(self, function: Node) -> list[Node]:

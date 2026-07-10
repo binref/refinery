@@ -27,6 +27,7 @@ from refinery.lib.scripts.js.analysis.cache import model_cache
 from refinery.lib.scripts.js.analysis.effects import EffectModel
 from refinery.lib.scripts.js.analysis.model import (
     Binding,
+    FUNCTION_NODES,
     GLOBAL_OBJECT_ALIASES,
     SemanticModel,
 )
@@ -50,7 +51,6 @@ from refinery.lib.scripts.js.model import (
     strip_parens,
 )
 
-_FUNCTION_NODES = (JsFunctionDeclaration, JsFunctionExpression, JsArrowFunctionExpression)
 _CLOSURE_NODES = (JsFunctionExpression, JsArrowFunctionExpression)
 
 
@@ -92,7 +92,7 @@ def _collect_finders(
 ) -> list[Node]:
     finders: list[Node] = []
     for node in root.walk():
-        if not isinstance(node, _FUNCTION_NODES):
+        if not isinstance(node, FUNCTION_NODES):
             continue
         parent = node.parent
         named = (
@@ -276,7 +276,7 @@ def _is_global_alias(node: Node, model: SemanticModel) -> bool:
 def _function_declarations(binding: Binding | None) -> list[Node]:
     if binding is None:
         return []
-    return [decl.parent for decl in binding.declarations if isinstance(decl.parent, _FUNCTION_NODES)]
+    return [decl.parent for decl in binding.declarations if isinstance(decl.parent, FUNCTION_NODES)]
 
 
 def _own_nodes(func: Node) -> Iterator[Node]:
@@ -287,7 +287,7 @@ def _own_nodes(func: Node) -> Iterator[Node]:
     while stack:
         node = stack.pop()
         yield node
-        if not isinstance(node, _FUNCTION_NODES):
+        if not isinstance(node, FUNCTION_NODES):
             stack.extend(node.children())
 
 

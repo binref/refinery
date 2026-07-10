@@ -8,9 +8,8 @@ from typing import Iterator, NamedTuple
 from refinery.lib.scripts import Expression, Node, _replace_in_parent
 from refinery.lib.scripts.js.analysis.cache import model_cache
 from refinery.lib.scripts.js.analysis.dominance import DominanceModel
-from refinery.lib.scripts.js.analysis.model import Scope, SemanticModel
+from refinery.lib.scripts.js.analysis.model import FUNCTION_NODES, Scope, SemanticModel
 from refinery.lib.scripts.js.deobfuscation.helpers import (
-    FUNCTION_NODE_TYPES,
     ScopeProcessingTransformer,
     access_key,
     function_binds_name,
@@ -94,7 +93,7 @@ class JsNamespaceFlattening(ScopeProcessingTransformer):
         while stack:
             node = stack.pop()
             yield node
-            if isinstance(node, FUNCTION_NODE_TYPES):
+            if isinstance(node, FUNCTION_NODES):
                 if function_binds_name(node, name):
                     continue
             for child in node.children():

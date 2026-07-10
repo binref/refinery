@@ -24,8 +24,8 @@ from dataclasses import dataclass, field
 from typing import Sequence
 
 from refinery.lib.scripts import Node
+from refinery.lib.scripts.js.analysis.model import FUNCTION_NODES
 from refinery.lib.scripts.js.model import (
-    JsArrowFunctionExpression,
     JsBlockStatement,
     JsBreakStatement,
     JsContinueStatement,
@@ -33,8 +33,6 @@ from refinery.lib.scripts.js.model import (
     JsForInStatement,
     JsForOfStatement,
     JsForStatement,
-    JsFunctionDeclaration,
-    JsFunctionExpression,
     JsIfStatement,
     JsLabeledStatement,
     JsReturnStatement,
@@ -45,8 +43,6 @@ from refinery.lib.scripts.js.model import (
     JsWhileStatement,
     JsWithStatement,
 )
-
-FUNCTION_NODES = (JsFunctionDeclaration, JsFunctionExpression, JsArrowFunctionExpression)
 
 _LOOP_NODES = (
     JsWhileStatement,

@@ -27,6 +27,7 @@ from refinery.lib.scripts import (
 from refinery.lib.scripts.js.analysis.cache import model_cache
 from refinery.lib.scripts.js.analysis.effects import side_effect_free
 from refinery.lib.scripts.js.analysis.model import (
+    FUNCTION_NODES,
     Binding,
     Role,
     SemanticModel,
@@ -73,7 +74,6 @@ SIMPLE_IDENTIFIER = re.compile(r'^[a-zA-Z_$][a-zA-Z_$0-9]*$')
 
 JS_RESERVED = frozenset(set(KEYWORDS) | FUTURE_RESERVED | {'undefined'})
 
-FUNCTION_NODE_TYPES = (JsFunctionDeclaration, JsFunctionExpression, JsArrowFunctionExpression)
 GLOBAL_OBJECT_ALIASES: frozenset[str] = frozenset({'globalThis', 'global', 'window', 'self'})
 VOID_LITERAL_OPERANDS = (JsNumericLiteral, JsStringLiteral, JsBooleanLiteral, JsNullLiteral)
 
@@ -936,7 +936,7 @@ def walk_scope(root: Node, *, include_root_body: bool = False) -> Iterator[Node]
     while stack:
         node = stack.pop()
         yield node
-        if isinstance(node, (JsFunctionDeclaration, JsFunctionExpression, JsArrowFunctionExpression)):
+        if isinstance(node, FUNCTION_NODES):
             if not (include_root_body and node is root):
                 continue
         cc = _compute_children(node)
@@ -985,7 +985,7 @@ def function_binds_name(func: Node, name: str) -> bool:
     stack: list[Node] = [body]
     while stack:
         node = stack.pop()
-        if isinstance(node, FUNCTION_NODE_TYPES):
+        if isinstance(node, FUNCTION_NODES):
             continue
         if isinstance(node, JsVariableDeclaration) and node.kind == JsVarKind.VAR:
             for decl in node.declarations:

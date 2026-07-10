@@ -10,10 +10,12 @@ from refinery.lib.scripts.js.analysis.cache import ModelCache, model_cache
 from refinery.lib.scripts.js.analysis.dominance import DominanceModel
 from refinery.lib.scripts.js.analysis.effects import EffectModel
 from refinery.lib.scripts.js.analysis.model import (
+    FUNCTION_NODES,
     GUARANTEED_GLOBALS,
     Binding,
     BindingKind,
     SemanticModel,
+    is_invocation_target,
 )
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     OBJECT_PROTOTYPE_MEMBERS,
@@ -53,7 +55,6 @@ from refinery.lib.scripts.js.model import (
     JsClassDeclaration,
     JsClassExpression,
     JsConditionalExpression,
-    JsFunctionDeclaration,
     JsFunctionExpression,
     JsIdentifier,
     JsLogicalExpression,
@@ -67,7 +68,6 @@ from refinery.lib.scripts.js.model import (
     JsScript,
     JsSequenceExpression,
     JsStringLiteral,
-    JsTaggedTemplateExpression,
     JsUnaryExpression,
     strip_parens,
 )
@@ -87,32 +87,6 @@ _FUNCTION_PROPERTIES = _OBJECT_PROTO_PROPERTIES | frozenset({
 })
 
 _EMPTY_OBJECT_PROPERTIES = _OBJECT_PROTO_PROPERTIES
-
-_FUNCTION_NODES = (JsFunctionDeclaration, JsFunctionExpression, JsArrowFunctionExpression)
-
-
-def _is_call_callee(node: Node) -> bool:
-    """
-    Whether *node* stands in the callee position of a call or the tag position of a tagged template,
-    looking through any enclosing parentheses. A call invokes its callee with a receiver determined by
-    the callee's reference form: a member access (`o.m()`) binds `this` to the object, a bare `eval`
-    performs a *direct* eval evaluated in the caller's own scope, and any other reference or bare value
-    invokes with no receiver (an indirect eval among them, evaluated in the global scope). Rewriting the
-    callee into a different reference form — dropping a global-object alias from a member access, or
-    collapsing a comma sequence down to a form-sensitive last element (`_callee_form_sensitive`) —
-    therefore changes the call's meaning, so a simplification that would do so must be declined. A `new`
-    expression is excluded: it constructs its own receiver, so the callee's reference form does not
-    affect it.
-    """
-    parent = node.parent
-    while isinstance(parent, JsParenthesizedExpression):
-        node = parent
-        parent = parent.parent
-    if isinstance(parent, JsCallExpression):
-        return parent.callee is node
-    if isinstance(parent, JsTaggedTemplateExpression):
-        return parent.tag is node
-    return False
 
 
 def _callee_form_sensitive(node: Node) -> bool:
@@ -226,7 +200,7 @@ class JsSimplifications(Transformer):
             return None
         if binding.writes and not self.dominance.runs_before(binding.writes[0], right):
             return None
-        if isinstance(value, _FUNCTION_NODES):
+        if isinstance(value, FUNCTION_NODES):
             members = _FUNCTION_PROPERTIES
         elif isinstance(value, (JsClassDeclaration, JsClassExpression)):
             if value.super_class is not None:
@@ -546,7 +520,7 @@ class JsSimplifications(Transformer):
         if len(filtered) == len(node.expressions):
             return None
         if len(filtered) == 1:
-            if _is_call_callee(node) and _callee_form_sensitive(filtered[0]):
+            if is_invocation_target(node) and _callee_form_sensitive(filtered[0]):
                 return None
             return filtered[0]
         node.expressions = filtered
@@ -583,7 +557,7 @@ class JsSimplifications(Transformer):
             p = node.parent
             if isinstance(p, JsAssignmentExpression) and p.left is node:
                 return None
-            if _is_call_callee(node):
+            if is_invocation_target(node):
                 return None
             return node.property
         if node.computed and node.object is not None and node.property is not None:

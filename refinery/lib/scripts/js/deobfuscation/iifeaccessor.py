@@ -35,8 +35,8 @@ from refinery.lib.scripts import (
     _clone_node,
     _replace_in_parent,
 )
+from refinery.lib.scripts.js.analysis.model import FUNCTION_NODES
 from refinery.lib.scripts.js.deobfuscation.helpers import (
-    FUNCTION_NODE_TYPES,
     ScriptLevelTransformer,
     extract_identifier_params,
     is_literal,
@@ -181,7 +181,7 @@ def _is_safe_to_promote(
         if isinstance(node, JsVariableDeclarator):
             if isinstance(node.id, JsIdentifier) and node.id.name in closure_names:
                 return False
-        if isinstance(node, FUNCTION_NODE_TYPES) and node is not inner:
+        if isinstance(node, FUNCTION_NODES) and node is not inner:
             for p in node.params:
                 if isinstance(p, JsIdentifier) and p.name in closure_names:
                     return False

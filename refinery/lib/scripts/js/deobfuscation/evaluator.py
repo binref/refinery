@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 from refinery.lib.scripts import Node, Transformer, _remove_from_parent, _replace_in_parent
 from refinery.lib.scripts.js.analysis.cache import model_cache
 from refinery.lib.scripts.js.analysis.effects import EffectModel
-from refinery.lib.scripts.js.analysis.model import SemanticModel, pattern_identifiers
+from refinery.lib.scripts.js.analysis.model import SemanticModel, is_invocation_target, pattern_identifiers
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     ScriptLevelTransformer,
     access_key,
@@ -90,7 +90,7 @@ def _is_inplace_mutation(node: JsIdentifier) -> bool:
         return True
     if isinstance(grand, (JsForOfStatement, JsForInStatement)) and grand.left is parent:
         return True
-    if isinstance(grand, JsCallExpression) and grand.callee is parent:
+    if is_invocation_target(parent):
         return access_key(parent) in _MUTATING_ARRAY_METHODS
     return False
 

@@ -28,7 +28,7 @@ from refinery.lib.scripts.js.analysis.model import (
     enclosing_function,
     is_member_write_target,
     is_simple_assignment_target,
-    is_use_position,
+    name_uses_in_scope,
 )
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     ScriptLevelTransformer,
@@ -655,18 +655,10 @@ def _inlined_declarations_safe(
     land in.
     """
     bindings = body_model.root_scope.bindings
-    hoisted = {
-        name for name, binding in bindings.items()
-        if binding.kind in (BindingKind.VAR, BindingKind.FUNCTION)
-    }
-    lexical = {
-        name for name, binding in bindings.items()
-        if binding.kind not in (BindingKind.VAR, BindingKind.FUNCTION, BindingKind.IMPLICIT_GLOBAL)
-    }
+    hoisted = {name for name, binding in bindings.items() if binding.is_hoisted}
+    lexical = {name for name, binding in bindings.items() if binding.is_lexical}
     if hoisted:
-        var_scope = site_scope
-        while var_scope is not None and not var_scope.is_var_scope:
-            var_scope = var_scope.parent
+        var_scope = site_scope.var_scope
         if var_scope is None or root_model.would_capture(hoisted, var_scope):
             return False
         if not _hoist_path_is_clear(hoisted, site_scope, var_scope):
@@ -1055,16 +1047,10 @@ class JsReflectionInlining(ScriptLevelTransformer):
         """
         root = root_model.root
         bindings = body_model.root_scope.bindings
-        lexical = {
-            name for name, binding in bindings.items()
-            if binding.kind not in (BindingKind.VAR, BindingKind.FUNCTION, BindingKind.IMPLICIT_GLOBAL)
-        }
+        lexical = {name for name, binding in bindings.items() if binding.is_lexical}
         if lexical and root_model.would_capture(lexical, site_scope):
             return False
-        hoisted = {
-            name for name, binding in bindings.items()
-            if binding.kind in (BindingKind.VAR, BindingKind.FUNCTION)
-        }
+        hoisted = {name for name, binding in bindings.items() if binding.is_hoisted}
         if not hoisted:
             return True
         if scope is ReflectedScope.GLOBAL_EVAL:
@@ -1078,6 +1064,5 @@ class JsReflectionInlining(ScriptLevelTransformer):
         dominance = model_cache(self, root).dominance
         return all(
             dominance.strictly_dominates(site, node)
-            for node in var_scope.node.walk()
-            if isinstance(node, JsIdentifier) and node.name in hoisted and is_use_position(node)
+            for node in name_uses_in_scope(hoisted, var_scope)
         )
