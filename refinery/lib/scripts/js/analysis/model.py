@@ -867,6 +867,41 @@ class SemanticModel:
             establishing = strip_parens(parent.left)
         return all(write is establishing for write in binding.writes)
 
+    def singular_value(self, binding: Binding | None) -> Node | None:
+        """
+        The single value node a *binding* provably holds: the initializer of a sole `var`/`let`/`const`
+        declarator, the function of a sole function declaration, or the right-hand side of the one
+        assignment that establishes a name written exactly once (`x = <value>`, the form namespace
+        flattening leaves). `None` when the binding is absent, redeclared, reassigned to more than one
+        value, dynamically rebindable, or declared with no initializer and never assigned. The value is
+        what the name denotes wherever it is not in the value's temporal dead zone; a consumer that also
+        needs the value established before a use orders it separately, since a bare-assignment binding
+        reads `undefined` before its write. `EffectModel.function_of` is the function-typed specialization
+        of this query, and it is the value-resolution the bare-assignment recognition sites route through
+        instead of re-deriving binding shapes.
+        """
+        if binding is None or len(binding.declarations) != 1:
+            return None
+        if self.binding_maybe_reassigned_dynamically(binding):
+            return None
+        decl = binding.declarations[0]
+        parent = decl.parent
+        if not binding.writes:
+            if isinstance(parent, JsFunctionDeclaration) and parent.id is decl:
+                return parent
+            if isinstance(parent, JsVariableDeclarator) and parent.id is decl:
+                return parent.init
+            return None
+        if len(binding.writes) == 1:
+            assignment = binding.writes[0].parent
+            if (
+                isinstance(assignment, JsAssignmentExpression)
+                and assignment.operator == '='
+                and strip_parens(assignment.left) is binding.writes[0]
+            ):
+                return strip_parens(assignment.right)
+        return None
+
     def is_shadowed(self, name: str, at: Node, outer: Scope) -> bool:
         """
         Whether *name*, referenced at *at*, resolves to a binding declared strictly inside *outer*

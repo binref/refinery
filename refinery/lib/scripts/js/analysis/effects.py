@@ -933,34 +933,12 @@ class EffectModel:
         to more than one value, dynamically rebindable, or not bound to a function. A lone assignment
         counts because the name denotes that one function wherever it is not in the value's temporal dead
         zone; a caller that also needs the value established before a use orders it separately. The
-        binding-level twin of `static_callee`.
+        binding-level twin of `static_callee`, and the function-typed specialization of
+        `SemanticModel.singular_value`: it filters that value-resolution to a function node.
         """
-        if binding is None or len(binding.declarations) != 1:
-            return None
-        if self.model.binding_maybe_reassigned_dynamically(binding):
-            return None
-        decl = binding.declarations[0]
-        parent = decl.parent
-        if not binding.writes:
-            if isinstance(parent, JsFunctionDeclaration) and parent.id is decl:
-                return parent
-            if (
-                isinstance(parent, JsVariableDeclarator)
-                and parent.id is decl
-                and isinstance(parent.init, FUNCTION_NODES)
-            ):
-                return parent.init
-            return None
-        if len(binding.writes) == 1:
-            assignment = binding.writes[0].parent
-            if (
-                isinstance(assignment, JsAssignmentExpression)
-                and assignment.operator == '='
-                and strip_parens(assignment.left) is binding.writes[0]
-            ):
-                value = strip_parens(assignment.right)
-                if isinstance(value, FUNCTION_NODES):
-                    return value
+        value = self.model.singular_value(binding)
+        if isinstance(value, FUNCTION_NODES):
+            return value
         return None
 
     def _is_global_intrinsic(self, name: JsIdentifier) -> bool:
