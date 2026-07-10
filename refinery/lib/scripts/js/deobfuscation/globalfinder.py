@@ -89,16 +89,27 @@ def _collect_finders(
     root: JsScript,
     model: SemanticModel,
     effects: EffectModel,
-) -> list[JsFunctionDeclaration]:
-    return [
-        node for node in root.walk()
-        if isinstance(node, JsFunctionDeclaration)
-        and node.id is not None
-        and _is_finder(node, model, effects)
-    ]
+) -> list[Node]:
+    finders: list[Node] = []
+    for node in root.walk():
+        if not isinstance(node, _FUNCTION_NODES):
+            continue
+        parent = node.parent
+        named = (
+            (isinstance(node, JsFunctionDeclaration) and node.id is not None)
+            or (isinstance(parent, JsVariableDeclarator) and parent.init is node)
+            or (
+                isinstance(parent, JsAssignmentExpression)
+                and parent.operator == '='
+                and parent.right is node
+            )
+        )
+        if named and _is_finder(node, model, effects):
+            finders.append(node)
+    return finders
 
 
-def _is_finder(func: JsFunctionDeclaration, model: SemanticModel, effects: EffectModel) -> bool:
+def _is_finder(func: Node, model: SemanticModel, effects: EffectModel) -> bool:
     summary = effects.summary_of(func)
     if summary.writes_global or summary.writes_captured:
         return False

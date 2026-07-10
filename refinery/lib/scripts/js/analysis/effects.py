@@ -79,6 +79,7 @@ from refinery.lib.scripts.js.model import (
     JsUnaryExpression,
     JsUpdateExpression,
     JsVariableDeclarator,
+    strip_parens,
 )
 
 _PURE_INTRINSIC_METHODS = frozenset({
@@ -926,23 +927,40 @@ class EffectModel:
         self, binding: Binding | None
     ) -> JsFunctionDeclaration | JsFunctionExpression | JsArrowFunctionExpression | None:
         """
-        The single function a *binding* stably resolves to — its sole declaration's function
-        declaration or function/arrow initializer — or `None` when the binding is absent, reassigned
-        (`writes`), redeclared (more than one declaration), dynamically rebindable, or not bound to a
-        function. The binding-level twin of `static_callee`.
+        The single function a *binding* stably resolves to — a sole declaration's function declaration or
+        function/arrow initializer, or a name assigned a function exactly once (`f = function(){}`, the
+        form namespace flattening leaves) — or `None` when the binding is absent, redeclared, reassigned
+        to more than one value, dynamically rebindable, or not bound to a function. A lone assignment
+        counts because the name denotes that one function wherever it is not in the value's temporal dead
+        zone; a caller that also needs the value established before a use orders it separately. The
+        binding-level twin of `static_callee`.
         """
         if binding is None or len(binding.declarations) != 1:
             return None
-        if not self.model.binding_never_reassigned(binding):
+        if self.model.binding_maybe_reassigned_dynamically(binding):
             return None
         decl = binding.declarations[0]
         parent = decl.parent
-        if isinstance(parent, JsFunctionDeclaration) and parent.id is decl:
-            return parent
-        if isinstance(parent, JsVariableDeclarator) and parent.id is decl and isinstance(
-            parent.init, FUNCTION_NODES
-        ):
-            return parent.init
+        if not binding.writes:
+            if isinstance(parent, JsFunctionDeclaration) and parent.id is decl:
+                return parent
+            if (
+                isinstance(parent, JsVariableDeclarator)
+                and parent.id is decl
+                and isinstance(parent.init, FUNCTION_NODES)
+            ):
+                return parent.init
+            return None
+        if len(binding.writes) == 1:
+            assignment = binding.writes[0].parent
+            if (
+                isinstance(assignment, JsAssignmentExpression)
+                and assignment.operator == '='
+                and strip_parens(assignment.left) is binding.writes[0]
+            ):
+                value = strip_parens(assignment.right)
+                if isinstance(value, FUNCTION_NODES):
+                    return value
         return None
 
     def _is_global_intrinsic(self, name: JsIdentifier) -> bool:
