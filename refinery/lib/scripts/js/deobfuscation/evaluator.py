@@ -38,6 +38,7 @@ from refinery.lib.scripts.js.model import (
     JsBlockStatement,
     JsCallExpression,
     JsCatchClause,
+    JsExpressionStatement,
     JsForInStatement,
     JsForOfStatement,
     JsForStatement,
@@ -328,6 +329,31 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
                     child_scope = _Scope(parent=scope)
                     self._scope_map[id(init)] = child_scope
                     self._populate_scope(init, child_scope)
+            elif (
+                isinstance(node, JsAssignmentExpression)
+                and node.operator == '='
+                and isinstance(node.left, JsIdentifier)
+                and isinstance(node.right, (JsFunctionExpression, JsArrowFunctionExpression))
+                and node.right.body is not None
+            ):
+                if not isinstance(node.parent, JsExpressionStatement):
+                    continue
+                if not self._is_direct_body_child(node.parent, scope_node):
+                    continue
+                name = node.left.name
+                if name in scope.functions:
+                    continue
+                value = node.right
+                script = self._script
+                if script is None:
+                    continue
+                effects = model_cache(self, script).effects
+                if effects.function_of(effects.model.resolve(node.left)) is not value:
+                    continue
+                scope.functions[name] = value
+                child_scope = _Scope(parent=scope)
+                self._scope_map[id(value)] = child_scope
+                self._populate_scope(value, child_scope)
 
     @staticmethod
     def _is_direct_body_child(node: Node, scope_node: Node) -> bool:
@@ -571,6 +597,26 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
             elif isinstance(callee, (JsFunctionExpression, JsArrowFunctionExpression)):
                 self._try_iife(node, callee)
 
+    def _established_before(self, func: _FuncNode, call: JsCallExpression) -> bool:
+        """
+        Whether *func*'s value is installed before *call* runs. A function declaration or a declarator
+        initializer is established at its declaration — hoisted, or bound before any later reference — so
+        it always qualifies. A function installed by a lone assignment (`f = function(){}`, the form
+        namespace flattening leaves) is `undefined` until that assignment runs, so its call folds only
+        when the establishing write is proven to run first; otherwise the interpreted body would replace
+        the runtime `TypeError` a premature call throws with a value.
+        """
+        if self._effects is None:
+            return False
+        binding = self._effects.model.invocation_binding(func)
+        if binding is None or not binding.writes:
+            return True
+        script = self._script
+        if script is None:
+            return False
+        dominance = model_cache(self, script).dominance
+        return all(dominance.runs_before(w, call) for w in binding.writes)
+
     def _try_named_call(self, node: JsCallExpression, name: str) -> None:
         func = self._resolve_function(node, name)
         if func is None or id(func) not in self._pure_nodes:
@@ -578,6 +624,8 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
         if self._effects is None or self._effects.static_callee(node) is not func:
             return
         if node.is_descendant_of(func):
+            return
+        if not self._established_before(func, node):
             return
         func_id = id(func)
         self._call_counts[func_id] = self._call_counts.get(func_id, 0) + 1
@@ -621,7 +669,7 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
                     continue
                 shadowed.add(name)
                 if effects is not None:
-                    binding = effects.model.naming_binding(func)
+                    binding = effects.model.invocation_binding(func)
                     if binding is None or effects.function_of(binding) is not func:
                         continue
                 result[name] = func

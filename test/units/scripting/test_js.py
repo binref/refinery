@@ -380,8 +380,10 @@ class TestJsDeobfuscator(TestUnitBase):
             '00Fd8f%pOdp@`YsvBYQl0ssI200dcD'
         ))
         test = data | self.load() | str
+        # globalThis.console is the sound reduction: console is a host global, not spec-mandated, so
+        # collapsing globalThis.console to bare console would turn undefined into a ReferenceError.
         self.assertEqual(
-            "console.log([1, 2, 'Fizz', 4, 'Buzz', 'Fizz', 7, 8, 'Fizz', 'Buzz',"
+            "globalThis.console.log([1, 2, 'Fizz', 4, 'Buzz', 'Fizz', 7, 8, 'Fizz', 'Buzz',"
             " 11, 'Fizz', 13, 14, 'FizzBuzz', 16, 17, 'Fizz', 19, 'Buzz']);",
             test,
         )
