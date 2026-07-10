@@ -503,26 +503,45 @@ def _cleanup(
     cache: ModelCache,
 ) -> None:
     """
-    Remove accessor functions, decoder functions, string tables, and emptied cache objects once all
-    strings have been resolved.
+    Remove accessor functions, decoder functions, string tables, and emptied cache objects that are no
+    longer referenced. An accessor whose name still has a call — one whose argument was not yet a
+    constant when this pass resolved calls, so it could not be replaced — is kept, together with the
+    decoder, table, and cache it depends on, so a later pass can resolve it once constant inlining has
+    folded the argument, rather than deleting the decoder out from under a surviving call and stranding
+    it. Removal is decided from the model's reference facts, the same basis the table and cache removals
+    already use, so it is shadowing-correct and sees the bare-assignment form.
     """
-    dead_ids: set[int] = set()
+    assert isinstance(root, JsScript)
+    model = cache.model
+    kept: set[str] = set()
     for a in accessors:
+        binding = model.lookup(a.name, model.scope_of(a.node))
+        if binding is None or binding_has_references(model, binding, exclude=a.node):
+            kept.add(a.name)
+    keep_decoders = {a.decoder_name for a in accessors if a.name in kept}
+    keep_tables = {a.table_name for a in accessors if a.name in kept}
+    keep_caches = {a.cache_name for a in accessors if a.name in kept}
+    removed_accessors = [a for a in accessors if a.name not in kept]
+    removed_decoders = [d for d in decoders if d.name not in keep_decoders]
+    dead_ids: set[int] = set()
+    for a in removed_accessors:
         dead_ids.add(id(a.node))
-    for d in decoders:
+    for d in removed_decoders:
         dead_ids.add(id(d.node))
     for t in tables:
+        if t.name in keep_tables:
+            continue
         if t.declarator is not None:
             dead_ids.add(id(t.declarator))
         if t.assignment is not None:
             dead_ids.add(id(t.assignment))
-    assert isinstance(root, JsScript)
-    model = cache.model
-    for a in accessors:
+    for a in removed_accessors:
         _remove_from_parent(a.node)
-    for d in decoders:
+    for d in removed_decoders:
         _remove_from_parent(d.node)
     for t in tables:
+        if t.name in keep_tables:
+            continue
         if '.' in t.name:
             if t.assignment is not None:
                 _remove_assignment_table(t)
@@ -535,7 +554,11 @@ def _cleanup(
                 _remove_assignment_table(t)
     for node in list(root.walk()):
         if isinstance(node, JsVariableDeclarator) and isinstance(node.id, JsIdentifier):
-            if node.id.name in cache_names and isinstance(node.init, JsObjectExpression):
+            if (
+                node.id.name in cache_names
+                and node.id.name not in keep_caches
+                and isinstance(node.init, JsObjectExpression)
+            ):
                 if not node.init.properties:
                     if not binding_has_references(
                         model, model.binding_of(node.id), exclude_ids=dead_ids,
