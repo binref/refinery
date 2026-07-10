@@ -141,6 +141,31 @@ class TestDeadCodeElimination(TestJsDeobfuscator):
         )
         self.assertEqual('3;', self._deobfuscate(source))
 
+    def test_in_bare_assignment_empty_function_guard_folded(self):
+        source = inspect.cleandoc(
+            """
+            var sentinel;
+            sentinel = function() {};
+            if ("xK9mQ" in sentinel) {
+              dead();
+            } else {
+              live();
+            }
+            """
+        )
+        self.assertEqual(self._deobfuscate(source), 'live();')
+
+    def test_in_bare_assignment_before_establishing_write_not_folded(self):
+        source = inspect.cleandoc(
+            """
+            var sentinel;
+            var present = "xK9mQ" in sentinel;
+            sentinel = function() {};
+            SINK(present);
+            """
+        )
+        self.assertEqual(self._simplify(source), self._run_transformers(source))
+
 
 class TestConstantPoolIntegration(TestJsDeobfuscator):
 

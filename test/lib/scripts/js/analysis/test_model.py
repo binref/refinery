@@ -13,7 +13,13 @@ from refinery.lib.scripts.js.analysis.model import (
     is_simple_assignment_target,
     reference_role,
 )
-from refinery.lib.scripts.js.model import JsIdentifier, JsMemberExpression, JsReturnStatement
+from refinery.lib.scripts.js.model import (
+    JsFunctionDeclaration,
+    JsFunctionExpression,
+    JsIdentifier,
+    JsMemberExpression,
+    JsReturnStatement,
+)
 from refinery.lib.scripts.js.parser import JsParser
 
 
@@ -57,6 +63,30 @@ class TestSemanticModel(TestBase):
         binding = model.binding_of(self._decl(ast, model, 'a'))
         self.assertIs(model.resolve(self._use(ast, model, 'a')), binding)
         self.assertEqual(binding.scope.kind, ScopeKind.FUNCTION)
+
+    def test_singular_value_resolves_declaration_and_assignment_forms(self):
+        ast, model = self._model(
+            'function f() {}\n'
+            'var g = function () {};\n'
+            'var h;\n'
+            'h = function () {};'
+        )
+        self.assertIsInstance(
+            model.singular_value(model.binding_of(self._decl(ast, model, 'f'))),
+            JsFunctionDeclaration,
+        )
+        self.assertIsInstance(
+            model.singular_value(model.binding_of(self._decl(ast, model, 'g'))),
+            JsFunctionExpression,
+        )
+        self.assertIsInstance(
+            model.singular_value(model.binding_of(self._decl(ast, model, 'h'))),
+            JsFunctionExpression,
+        )
+
+    def test_singular_value_is_none_for_reassigned_binding(self):
+        ast, model = self._model('var x;\nx = 1;\nx = 2;')
+        self.assertIsNone(model.singular_value(model.binding_of(self._decl(ast, model, 'x'))))
 
     def test_let_is_block_scoped_and_outer_use_is_free(self):
         ast, model = self._model('{ let a; a; } a;')

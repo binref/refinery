@@ -11,6 +11,18 @@ from refinery.lib.scripts.js.parser import JsParser
 
 class TestFunctionEvaluator(TestJsDeobfuscator):
 
+    def test_bare_assignment_function_call_folded(self):
+        source = inspect.cleandoc(
+            """
+            var scale;
+            scale = function(n) {
+              return n * 3;
+            };
+            SINK(scale(7));
+            """
+        )
+        self.assertEqual('SINK(21);', self._deobfuscate(source))
+
     def test_iife_with_nested_arrow_this_not_evaluated(self):
         source = inspect.cleandoc(
             """

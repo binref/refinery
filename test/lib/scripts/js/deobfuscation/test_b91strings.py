@@ -91,6 +91,29 @@ class TestStringConcealing(TestJsDeobfuscator):
             result,
         )
 
+    def test_accessor_kept_until_inlined_argument_resolves(self):
+        source = '\n'.join([
+            'var cache = {};',
+            'var table = ["aa","bb","cc","dd","ee","ff","gg","hh","ii","jj",'
+            '"fOg=r","lrCD^","#ZlH"];',
+            *self._decode_js('decode', self._ESCAPED_ALPHABET),
+            *self._access_js('accessor', 'cache', 'decode'),
+            'var k = 10;',
+            'var results = [];',
+            'results[accessor(k)]("hello");',
+            'console[accessor(12)](results);',
+        ])
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var results = [];
+                results.push("hello");
+                console.log(results);
+                """
+            ),
+            self._deobfuscate(source),
+        )
+
     def test_full_fizzbuzz_sample(self):
         source = lzma.decompress(base64.b85decode(
             "{Wp48S^xk9=GL@E0stWa8~^|S5YJf5;3H2DoLvAj9ZCPGVfzyXn;9}d7=bd;P-u|=hS4y!t6q`3iYd7Jn@gb<iH1XeW)Th&veG?%"
