@@ -4,7 +4,7 @@ computed results.
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Iterator
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from refinery.lib.scripts.js.deobfuscation.interpreter import Value
@@ -12,7 +12,12 @@ if TYPE_CHECKING:
 from refinery.lib.scripts import Node, Transformer, _remove_from_parent, _replace_in_parent
 from refinery.lib.scripts.js.analysis.cache import model_cache
 from refinery.lib.scripts.js.analysis.effects import EffectModel
-from refinery.lib.scripts.js.analysis.model import SemanticModel, is_invocation_target, pattern_identifiers
+from refinery.lib.scripts.js.analysis.model import (
+    Scope,
+    SemanticModel,
+    is_invocation_target,
+    pattern_identifiers,
+)
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     ScriptLevelTransformer,
     access_key,
@@ -38,7 +43,6 @@ from refinery.lib.scripts.js.model import (
     JsBlockStatement,
     JsCallExpression,
     JsCatchClause,
-    JsExpressionStatement,
     JsForInStatement,
     JsForOfStatement,
     JsForStatement,
@@ -93,23 +97,6 @@ def _is_inplace_mutation(node: JsIdentifier) -> bool:
     if is_invocation_target(parent):
         return access_key(parent) in _MUTATING_ARRAY_METHODS
     return False
-
-
-class _Scope:
-    __slots__ = ('functions', 'parent')
-
-    def __init__(self, parent: _Scope | None = None):
-        self.functions: dict[str, _FuncNode] = {}
-        self.parent = parent
-
-    def resolve(self, name: str) -> _FuncNode | None:
-        scope: _Scope | None = self
-        while scope is not None:
-            func = scope.functions.get(name)
-            if func is not None:
-                return func
-            scope = scope.parent
-        return None
 
 
 def _is_value_closed(
@@ -271,7 +258,7 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
         super().__init__()
         self._script: JsScript | None = None
         self._effects: EffectModel | None = None
-        self._scope_map: dict[int, _Scope] = {}
+        self._functions: list[_FuncNode] = []
         self._pure_nodes: set[int] = set()
         self._closure_env: dict[int, dict[str, Value]] = {}
         self._call_counts: dict[int, int] = {}
@@ -280,106 +267,62 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
 
     def _process_script(self, node: JsScript) -> None:
         self._script = node
-        self._build_scope_tree(node)
-        self._analyze_purity(node)
-        self._evaluate_calls(node)
-        self._remove_resolved_definitions(node)
-
-    def _build_scope_tree(self, script: JsScript) -> None:
         self._effects = None
-        self._scope_map.clear()
+        self._functions = []
         self._pure_nodes.clear()
         self._closure_env.clear()
         self._call_counts.clear()
         self._resolved_counts.clear()
         self._failed_counts.clear()
-        root_scope = _Scope()
-        self._scope_map[id(script)] = root_scope
-        self._populate_scope(script, root_scope)
+        self._analyze_purity(node)
+        self._evaluate_calls(node)
+        self._remove_resolved_definitions(node)
 
-    def _populate_scope(self, scope_node: Node, scope: _Scope) -> None:
-        for node in walk_scope(scope_node, include_root_body=True):
-            if node is scope_node:
+    def _collect_named_functions(self, script: JsScript) -> list[_FuncNode]:
+        """
+        Every function the model resolves a name to unambiguously: a function declaration, a
+        `var`/`let`/`const` declarator initializer, or a hoisted `var` assigned a function exactly once
+        (`var f; f = function(){}`, the form namespace flattening leaves). This is
+        `EffectModel.unambiguous_function`, the same filter the interpreter resolves nested callees
+        through, so every name a call site can reach is a candidate for purity analysis here. Anonymous
+        functions and names that held a value and were then reassigned are excluded, because the model
+        resolves no single function for them.
+        """
+        effects = self._effects
+        if effects is None:
+            return []
+        model = effects.model
+        functions: list[_FuncNode] = []
+        for node in script.walk():
+            if not isinstance(node, _FuncNode):
                 continue
-            if isinstance(node, JsFunctionDeclaration):
-                if not isinstance(node.id, JsIdentifier) or node.body is None:
-                    continue
-                name = node.id.name
-                scope.functions[name] = node
-                child_scope = _Scope(parent=scope)
-                self._scope_map[id(node)] = child_scope
-                self._populate_scope(node, child_scope)
-            elif isinstance(node, JsVariableDeclaration) and node.kind == JsVarKind.CONST:
-                if not self._is_direct_body_child(node, scope_node):
-                    continue
-                for decl in node.declarations:
-                    if not isinstance(decl, JsVariableDeclarator):
-                        continue
-                    if not isinstance(decl.id, JsIdentifier):
-                        continue
-                    init = decl.init
-                    if not isinstance(init, (JsFunctionExpression, JsArrowFunctionExpression)):
-                        continue
-                    if init.body is None:
-                        continue
-                    name = decl.id.name
-                    if name in scope.functions:
-                        continue
-                    scope.functions[name] = init
-                    child_scope = _Scope(parent=scope)
-                    self._scope_map[id(init)] = child_scope
-                    self._populate_scope(init, child_scope)
-            elif (
-                isinstance(node, JsAssignmentExpression)
-                and node.operator == '='
-                and isinstance(node.left, JsIdentifier)
-                and isinstance(node.right, (JsFunctionExpression, JsArrowFunctionExpression))
-                and node.right.body is not None
-            ):
-                if not isinstance(node.parent, JsExpressionStatement):
-                    continue
-                if not self._is_direct_body_child(node.parent, scope_node):
-                    continue
-                name = node.left.name
-                if name in scope.functions:
-                    continue
-                value = node.right
-                script = self._script
-                if script is None:
-                    continue
-                effects = model_cache(self, script).effects
-                if effects.function_of(effects.model.resolve(node.left)) is not value:
-                    continue
-                scope.functions[name] = value
-                child_scope = _Scope(parent=scope)
-                self._scope_map[id(value)] = child_scope
-                self._populate_scope(value, child_scope)
+            if effects.unambiguous_function(model.invocation_binding(node)) is node:
+                functions.append(node)
+        return functions
 
-    @staticmethod
-    def _is_direct_body_child(node: Node, scope_node: Node) -> bool:
+    def _visible_pure_names(self, scope: Scope | None) -> set[str]:
         """
-        Return whether *node* is a direct statement of *scope_node*'s body — i.e. not inside
-        a nested block. For function scope nodes, the body block is checked.
+        The names that resolve, from *scope* outward, to a function already proven pure. A nearer
+        binding wins: a name rebound below the scope that holds the pure function — a parameter or a
+        local — shadows it and is not treated as pure, matching how the name resolves inside the body
+        being analyzed.
         """
-        parent = node.parent
-        if parent is scope_node:
-            return True
-        if isinstance(scope_node, (JsFunctionDeclaration, JsFunctionExpression, JsArrowFunctionExpression)):
-            return parent is scope_node.body
-        return False
-
-    def _scope_for_node(self, node: Node) -> _Scope | None:
-        current = node.parent
+        effects = self._effects
+        if effects is None:
+            return set()
+        names: set[str] = set()
+        seen: set[str] = set()
+        current = scope
         while current is not None:
-            scope = self._scope_map.get(id(current))
-            if scope is not None:
-                return scope
+            for name, binding in current.bindings.items():
+                if name in seen:
+                    continue
+                seen.add(name)
+                func = effects.unambiguous_function(binding)
+                if func is not None and id(func) in self._pure_nodes:
+                    names.add(name)
             current = current.parent
-        return None
-
-    def _all_functions(self) -> Iterator[_FuncNode]:
-        for scope in self._scope_map.values():
-            yield from scope.functions.values()
+        return names
 
     def _value_safe_to_capture(self, name: str, value: Value, owner: Node | None) -> bool:
         """
@@ -525,29 +468,21 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
 
     def _analyze_purity(self, script: JsScript) -> None:
         self._effects = model_cache(self, script).effects
+        self._functions = self._collect_named_functions(script)
         closure_cache: dict[int, dict[str, Value]] = {
             id(func): self._collect_closure_constants(func)
-            for func in self._all_functions()
+            for func in self._functions
             if not isinstance(func, JsFunctionDeclaration)
         }
         changed = True
         while changed:
             changed = False
-            for func in self._all_functions():
+            for func in self._functions:
                 if id(func) in self._pure_nodes:
-                    continue
-                scope = self._scope_map.get(id(func))
-                if scope is None:
                     continue
                 if not self._effects.summary_of(func).is_value_replaceable:
                     continue
-                visible_pure: set[str] = set()
-                s: _Scope | None = scope
-                while s is not None:
-                    for name, f in s.functions.items():
-                        if id(f) in self._pure_nodes:
-                            visible_pure.add(name)
-                    s = s.parent
+                visible_pure = self._visible_pure_names(self._effects.model.function_scope(func))
                 if _is_value_closed(func, visible_pure):
                     self._pure_nodes.add(id(func))
                     changed = True
@@ -631,13 +566,7 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
     ) -> None:
         if self._effects is None or not self._effects.summary_of(func).is_value_replaceable:
             return
-        pure_names: set[str] = set()
-        scope = self._scope_for_node(node)
-        while scope is not None:
-            for name, f in scope.functions.items():
-                if id(f) in self._pure_nodes:
-                    pure_names.add(name)
-            scope = scope.parent
+        pure_names = self._visible_pure_names(self._effects.model.scope_of(node))
         if _is_value_closed(func, pure_names):
             args = self._extract_constant_args(node.arguments, node)
             if args is None:
@@ -725,7 +654,7 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
         while True:
             model = model_cache(self, script).model
             before = len(removed)
-            for func in self._all_functions():
+            for func in self._functions:
                 func_id = id(func)
                 if func_id in removed:
                     continue
@@ -743,7 +672,7 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
                     self._remove_function(func)
                     removed.add(func_id)
                     self.mark_changed()
-            for func in self._all_functions():
+            for func in self._functions:
                 func_id = id(func)
                 if func_id in removed:
                     continue

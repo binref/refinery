@@ -151,6 +151,46 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
         )
         self.assertEqual('SINK(1);', self._evaluate(source))
 
+    def test_var_initialized_function_call_folded(self):
+        source = inspect.cleandoc(
+            """
+            var f = function() {
+              return 1;
+            };
+            SINK(f());
+            """
+        )
+        self.assertEqual('SINK(1);', self._evaluate(source))
+
+    def test_let_initialized_function_call_folded(self):
+        source = inspect.cleandoc(
+            """
+            let f = () => 1;
+            SINK(f());
+            """
+        )
+        self.assertEqual('SINK(1);', self._evaluate(source))
+
+    def test_block_scoped_const_function_call_folded(self):
+        source = inspect.cleandoc(
+            """
+            {
+              const f = () => 1;
+              SINK(f());
+            }
+            """
+        )
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                {
+                  SINK(1);
+                }
+                """
+            ),
+            self._evaluate(source),
+        )
+
     def test_call_through_reassigned_nested_callee_not_folded(self):
         """
         `outer` is a stable, side-effect-free function, but its body calls `inner`, whose binding is
