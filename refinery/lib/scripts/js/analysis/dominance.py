@@ -51,6 +51,7 @@ class DominanceModel:
         self.model = model
         self._flow = control_flow if control_flow is not None else build_control_flow_model(model.root)
         self._dominators: dict[int, frozenset[int]] = {}
+        self._reference_points_cache: dict[int, list[Node] | None] = {}
         for graph in self._flow.graphs.values():
             self._compute_dominators(graph)
 
@@ -244,7 +245,19 @@ class DominanceModel:
         dropped: it cannot trigger the function's first invocation, only a re-entrant one, so it never
         bounds the ordering. For a function bound to no name the single point is the function expression
         itself: the closure cannot be invoked before it is created.
+
+        Memoized by function identity: the enumeration is a pure function of *function* and the model,
+        both fixed for the model's lifetime — the whole DominanceModel is rebuilt when the tree version
+        advances — so every `runs_before*` caller shares one result per function instead of recomputing
+        it per reference and per query.
         """
+        key = id(function)
+        cache = self._reference_points_cache
+        if key not in cache:
+            cache[key] = self._compute_reference_points(function)
+        return cache[key]
+
+    def _compute_reference_points(self, function: Node) -> list[Node] | None:
         binding = self.model.invocation_binding(function)
         if binding is None:
             return [function]
