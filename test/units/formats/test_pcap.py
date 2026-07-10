@@ -10,6 +10,7 @@ from refinery.lib.pcap import (
     iter_transport,
     reassemble_tcp,
     _read_ng_timestamp_scale,
+    _seq_delta,
 )
 
 from .. import TestUnitBase
@@ -157,6 +158,41 @@ class TestPCAPRobustness(TestUnitBase):
 
     def test_empty_input_yields_nothing(self):
         self.assertEqual(_reassemble_tcp(b''), [])
+
+    def test_seq_delta_wraparound(self):
+        self.assertEqual(_seq_delta(5, 3), 2)
+        self.assertEqual(_seq_delta(3, 5), -2)
+        self.assertEqual(_seq_delta(7, 7), 0)
+        self.assertEqual(_seq_delta(0, 0xFFFFFFFF), 1)
+        self.assertEqual(_seq_delta(0xFFFFFFFF, 0), -1)
+        self.assertEqual(_seq_delta(0x00000004, 0xFFFFFFFC), 8)
+
+    def test_reassembly_survives_sequence_wraparound(self):
+        segments = list(iter_transport(_PCAPNG_SAMPLE, IPProtocol.TCP))
+        baseline = [bytes(d.payload) for d in reassemble_tcp(iter(segments))]
+
+        flows: dict[tuple, list[int]] = {}
+        for segment in segments:
+            if segment.payload:
+                key = (
+                    segment.src_addr,
+                    segment.src_port,
+                    segment.dst_addr,
+                    segment.dst_port,
+                    segment.ack,
+                )
+                flows.setdefault(key, []).append(segment.seq)
+        multi = [seqs for seqs in flows.values() if len(seqs) > 1]
+        self.assertGreater(len(multi), 0)
+
+        boundary = min(min(seqs) for seqs in multi)
+        shift = (0x100000000 - boundary - 8) & 0xFFFFFFFF
+        shifted = [
+            segment._replace(seq=(segment.seq + shift) & 0xFFFFFFFF)
+            for segment in segments
+        ]
+        wrapped = [bytes(d.payload) for d in reassemble_tcp(iter(shifted))]
+        self.assertEqual(wrapped, baseline)
 
     def test_truncated_tsresol_option_falls_back_to_default(self):
         truncated = memoryview(b'\x09\x00\x01\x00')

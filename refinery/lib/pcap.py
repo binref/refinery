@@ -78,6 +78,7 @@ class TransportSegment(NamedTuple):
     dst_port: int
     seq: int
     ack: int
+    flags: TcpFlag
     payload: memoryview
 
 
@@ -364,6 +365,17 @@ class _UdpHeader(Struct[memoryview]):
         self.payload = reader.read_exactly(payload_length)
 
 
+def _seq_delta(a: int, b: int) -> int:
+    """
+    Computes the signed 32-bit distance from TCP sequence number `b` to `a`, i.e. the value of
+    `a - b` interpreted modulo 2**32 as a signed integer. This mirrors the semantics of the
+    Wireshark `LT_SEQ`/`GT_SEQ` comparison macros and orders sequence numbers correctly across a
+    wraparound, as long as the true distance between the two values is less than 2**31.
+    """
+    d = (a - b) & 0xFFFFFFFF
+    return d - 0x100000000 if d & 0x80000000 else d
+
+
 class _TcpStream:
     def __init__(self):
         self.segments: list[TcpSegment] = []
@@ -375,18 +387,23 @@ class _TcpStream:
     def reassemble(self) -> bytearray:
         if not self.segments:
             return bytearray()
-        self.segments.sort(key=lambda s: (s.seq, s.packet_index))
+        anchor = self.segments[0].seq
+        ordered = sorted(
+            self.segments,
+            key=lambda s: (_seq_delta(s.seq, anchor), s.packet_index),
+        )
         result = bytearray()
-        next_seq = self.segments[0].seq
-        for seg in self.segments:
-            if seg.seq + len(seg.data) <= next_seq:
+        next_off = _seq_delta(ordered[0].seq, anchor)
+        for seg in ordered:
+            off = _seq_delta(seg.seq, anchor)
+            if off + len(seg.data) <= next_off:
                 continue
-            if seg.seq < next_seq:
-                trimmed = seg.data[next_seq - seg.seq:]
+            if off < next_off:
+                trimmed = seg.data[next_off - off:]
             else:
                 trimmed = seg.data
             result.extend(trimmed)
-            next_seq = seg.seq + len(seg.data)
+            next_off = off + len(seg.data)
         return result
 
 
@@ -459,6 +476,7 @@ def parse_transport_segment(
                 tcp.dst_port,
                 tcp.seq,
                 tcp.ack,
+                tcp.flags,
                 tcp.payload,
             )
         else:
@@ -471,6 +489,7 @@ def parse_transport_segment(
                 udp.dst_port,
                 0,
                 0,
+                TcpFlag(0),
                 udp.payload,
             )
     except Exception:
