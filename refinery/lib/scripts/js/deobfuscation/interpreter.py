@@ -17,14 +17,13 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from typing import Callable, Mapping, TypeAlias
 
+    from refinery.lib.scripts.js.analysis.effects import EffectModel
     from refinery.lib.scripts.js.model import JsArrowFunctionExpression as _Arrow
     from refinery.lib.scripts.js.model import JsFunctionDeclaration as _FuncDecl
     from refinery.lib.scripts.js.model import JsFunctionExpression as _FuncExpr
 
     Value: TypeAlias = str | int | float | bool | list | dict | _FuncDecl | _FuncExpr | _Arrow | None
     _FuncNode: TypeAlias = _FuncDecl | _FuncExpr | _Arrow
-    _FunctionMap: TypeAlias = Mapping[str, _FuncNode]
-    _FunctionResolver: TypeAlias = Callable[[_FuncNode], _FunctionMap]
 
 from refinery.lib.scripts import Node
 from refinery.lib.scripts.js.deobfuscation.helpers import (
@@ -1272,19 +1271,17 @@ class JsInterpreter:
         max_iterations: int = MAX_ITERATIONS,
         max_string_len: int = MAX_STRING_LEN,
         max_recursion: int = _MAX_RECURSION,
-        functions: Mapping[str, JsFunctionDeclaration | JsFunctionExpression | JsArrowFunctionExpression] | None = None,
+        effects: EffectModel | None = None,
         closure: Mapping[str, Value] | None = None,
         closure_env: Mapping[int, Mapping[str, Value]] | None = None,
-        resolve_functions: _FunctionResolver | None = None,
         depth: int = 0,
     ):
         self.max_iterations = max_iterations
         self.max_string_len = max_string_len
         self.max_recursion = max_recursion
-        self._functions: Mapping[str, JsFunctionDeclaration | JsFunctionExpression | JsArrowFunctionExpression] = functions or {}
+        self._effects = effects
         self._closure: Mapping[str, Value] = closure or {}
         self._closure_env: Mapping[int, Mapping[str, Value]] = closure_env or {}
-        self._resolve_functions = resolve_functions
         self._env: dict[str, Value] = {}
         self._iterations = 0
         self._depth = depth
@@ -1633,6 +1630,19 @@ class JsInterpreter:
             return self._eval(expr.expression)
         raise InterpreterError
 
+    def _resolve_function_node(self, node: JsIdentifier) -> _FuncNode | None:
+        """
+        The single function *node* names that this interpreter may resolve without ordering information,
+        or `None`. Delegates to `EffectModel.unambiguous_function`: a function declaration or a
+        bare-assignment (`var f; f = function(){}`) resolves, but a name reassigned away from a value it
+        already held stays unresolved — the ordering-free view the evaluator's old visible-functions map
+        enforced before interpretation routed resolution through the model.
+        """
+        effects = self._effects
+        if effects is None:
+            return None
+        return effects.unambiguous_function(effects.model.resolve(node))
+
     def _eval_identifier(self, node: JsIdentifier) -> Value:
         name = node.name
         if name == 'undefined':
@@ -1643,8 +1653,9 @@ class JsInterpreter:
             return float('inf')
         if name in self._env:
             return self._env[name]
-        if name in self._functions:
-            return self._functions[name]
+        func = self._resolve_function_node(node)
+        if func is not None:
+            return func
         raise IrreducibleExpression(node)
 
     def _js_add(self, left: Value, right: Value) -> Value:
@@ -1708,10 +1719,11 @@ class JsInterpreter:
         op = node.operator
         if op == 'typeof':
             if isinstance(node.operand, JsIdentifier):
-                name = node.operand.name
+                operand = node.operand
+                name = operand.name
                 if name in self._env:
                     return _js_typeof(self._env[name])
-                if name in self._functions:
+                if self._resolve_function_node(operand) is not None:
                     return 'function'
                 result = _global_typeof(name)
                 if result is None:
@@ -1853,7 +1865,7 @@ class JsInterpreter:
             if node.optional and (target is None or target is JS_NULL):
                 return None
             _js_throw('TypeError', F'{name} is not a function')
-        func = self._functions.get(name)
+        func = self._resolve_function_node(callee)
         if func is not None:
             return self._call_function(func, args)
         raise InterpreterError
@@ -2011,18 +2023,13 @@ class JsInterpreter:
         if self._mutates_captured_binding(func):
             raise InterpreterError
         callee_closure = self._closure_env.get(id(func)) or {}
-        if self._resolve_functions is not None:
-            child_functions = self._resolve_functions(func)
-        else:
-            child_functions = self._functions
         child = JsInterpreter(
             max_iterations=max(1, self.max_iterations - self._iterations),
             max_string_len=self.max_string_len,
             max_recursion=self.max_recursion,
-            functions=child_functions,
+            effects=self._effects,
             closure=callee_closure,
             closure_env=self._closure_env,
-            resolve_functions=self._resolve_functions,
             depth=self._depth + 1,
         )
         try:

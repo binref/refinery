@@ -941,6 +941,36 @@ class EffectModel:
             return value
         return None
 
+    def unambiguous_function(
+        self, binding: Binding | None
+    ) -> JsFunctionDeclaration | JsFunctionExpression | JsArrowFunctionExpression | None:
+        """
+        The single function *binding* names for a consumer that resolves calls without execution ordering
+        — the interpreter — or `None`. `function_of` narrowed to that ordering-free view: a pure function
+        declaration, or a hoisted `var`/`let` assigned a function exactly once (`var f; f = function(){}`,
+        the bare-assignment form namespace flattening leaves), qualifies; a name that already carried a
+        value from its declaration — a function/class declaration, an initialized declarator, or a
+        parameter — and is then reassigned holds two values across its life and is refused. This reproduces
+        the filter the evaluator's visible-functions map applied before interpretation routed resolution
+        through the model.
+        """
+        if binding is None:
+            return None
+        func = self.function_of(binding)
+        if func is None:
+            return None
+        if not binding.writes:
+            return func
+        declaration = binding.declarations[0]
+        parent = declaration.parent
+        if (
+            isinstance(parent, JsVariableDeclarator)
+            and parent.id is declaration
+            and parent.init is None
+        ):
+            return func
+        return None
+
     def _is_global_intrinsic(self, name: JsIdentifier) -> bool:
         """
         Whether *name* denotes a trusted intrinsic root that the program leaves pristine and does not
