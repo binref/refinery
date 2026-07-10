@@ -1208,13 +1208,13 @@ class JsParser:
     def _parse_call_expression(self) -> Expression:
         expr = self._parse_new_expression()
         while True:
-            if self._at(JsTokenKind.LPAREN) and not self._preceded_by_newline:
+            if self._at(JsTokenKind.LPAREN):
                 expr = self._parse_call_arguments(expr, optional=False)
             elif self._eat(JsTokenKind.DOT):
                 prop = self._member_property()
                 expr = JsMemberExpression(
                     object=expr, property=prop, computed=False, optional=False, offset=expr.offset)
-            elif self._at(JsTokenKind.LBRACKET) and not self._preceded_by_newline:
+            elif self._at(JsTokenKind.LBRACKET):
                 self._advance()
                 prop = self._parse_expression()
                 self._expect(JsTokenKind.RBRACKET)
@@ -1235,7 +1235,7 @@ class JsParser:
                         object=expr, property=prop, computed=False, optional=True, offset=expr.offset)
             elif self._at(
                 JsTokenKind.TEMPLATE_FULL, JsTokenKind.TEMPLATE_HEAD,
-            ) and not self._preceded_by_newline:
+            ):
                 quasi = self._parse_template_literal()
                 expr = JsTaggedTemplateExpression(
                     tag=expr, quasi=quasi, offset=expr.offset)

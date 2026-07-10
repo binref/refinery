@@ -423,10 +423,30 @@ class TestJsParserStatements(TestBase):
         stmt = self._parse_stmt('for (x in obj) { }')
         self.assertIsInstance(stmt, JsForInStatement)
 
-    def test_newline_before_paren_does_not_fuse_statements(self):
+    def test_newline_before_paren_continues_call(self):
+        """
+        ASI does not insert a semicolon before `(`, so the string on the first line is called as a
+        function: this parses as one statement (a runtime TypeError), matching V8.
+        """
         source = 'global["VERSION"] = "9.4533"\n\n(async () => {\n  const c = global;\n})()'
-        self.assertEqual(len(self._parse_all(source).body), 2)
+        body = self._parse_all(source).body
+        self.assertEqual(len(body), 1)
+        self.assertIsInstance(body[0], JsExpressionStatement)
 
-    def test_newline_before_template_does_not_create_tagged_template(self):
-        source = "var x = foo\n`template`"
-        self.assertEqual(len(self._parse_all(source).body), 2)
+    def test_newline_before_bracket_continues_member(self):
+        """
+        ASI does not insert a semicolon before `[`, so `[0]` on the next line continues the array as a
+        computed member access `[10, 20][0]`: one statement, matching V8.
+        """
+        body = self._parse_all('var a = [10, 20]\n[0]').body
+        self.assertEqual(len(body), 1)
+        self.assertIsInstance(body[0], JsVariableDeclaration)
+
+    def test_newline_before_template_continues_tagged_template(self):
+        """
+        ASI does not insert a semicolon before a template literal, so the template on the next line
+        continues `foo` as a tagged template: one statement, matching V8.
+        """
+        body = self._parse_all('var x = foo\n`template`').body
+        self.assertEqual(len(body), 1)
+        self.assertIsInstance(body[0], JsVariableDeclaration)
