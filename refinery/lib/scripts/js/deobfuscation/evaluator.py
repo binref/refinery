@@ -377,23 +377,6 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
             current = current.parent
         return None
 
-    def _resolve_function(self, call_node: Node, name: str) -> _FuncNode | None:
-        scope = self._scope_for_node(call_node)
-        if scope is None:
-            return None
-        func = scope.resolve(name)
-        if func is None:
-            return None
-        current = call_node.parent
-        while current is not None:
-            if current is func:
-                break
-            if isinstance(current, (JsFunctionDeclaration, JsFunctionExpression, JsArrowFunctionExpression)):
-                if any(isinstance(p, JsIdentifier) and p.name == name for p in current.params):
-                    return None
-            current = current.parent
-        return func
-
     def _all_functions(self) -> Iterator[_FuncNode]:
         for scope in self._scope_map.values():
             yield from scope.functions.values()
@@ -593,7 +576,7 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
                 continue
             callee = strip_parens(node.callee)
             if isinstance(callee, JsIdentifier):
-                self._try_named_call(node, callee.name)
+                self._try_named_call(node)
             elif isinstance(callee, (JsFunctionExpression, JsArrowFunctionExpression)):
                 self._try_iife(node, callee)
 
@@ -617,11 +600,11 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
         dominance = model_cache(self, script).dominance
         return all(dominance.runs_before(w, call) for w in binding.writes)
 
-    def _try_named_call(self, node: JsCallExpression, name: str) -> None:
-        func = self._resolve_function(node, name)
-        if func is None or id(func) not in self._pure_nodes:
+    def _try_named_call(self, node: JsCallExpression) -> None:
+        if self._effects is None:
             return
-        if self._effects is None or self._effects.static_callee(node) is not func:
+        func = self._effects.static_callee(node)
+        if func is None or id(func) not in self._pure_nodes:
             return
         if node.is_descendant_of(func):
             return
