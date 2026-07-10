@@ -104,11 +104,14 @@ class ModelCache:
 def model_cache(transformer: Transformer, root: JsScript) -> ModelCache:
     """
     The pipeline's shared `ModelCache` for *root* when one is attached to *transformer* and built over
-    that same root, otherwise a fresh single-use cache. This lets a transform consume the shared models
-    inside the pipeline yet still run standalone — in tests, or outside the pipeline — with no change in
-    behavior, since a standalone transform simply builds its own models on demand as before.
+    that same root, otherwise a fresh cache — stashed back onto *transformer* so later lookups within
+    its single-pass lifetime reuse it instead of rebuilding the models per call. A transform still runs
+    standalone (in tests, or outside the pipeline); freshness stays governed by the tree version, and a
+    standalone mutation now invalidates the stashed cache exactly as it would the shared one.
     """
     cache = transformer.models
     if isinstance(cache, ModelCache) and cache.root is root:
         return cache
-    return ModelCache(root)
+    cache = ModelCache(root)
+    transformer.models = cache
+    return cache
