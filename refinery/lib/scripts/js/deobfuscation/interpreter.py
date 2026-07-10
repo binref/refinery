@@ -1338,6 +1338,8 @@ class JsInterpreter:
         if body is not None:
             try:
                 return self._eval(body)
+            except IrreducibleExpression:
+                raise IrreducibleExpression(body)
             except _ThrowSignal:
                 if self._depth == 0:
                     raise InterpreterError

@@ -58,6 +58,17 @@ class TestInterpreterValueSemantics(TestJsDeobfuscator):
         )
         self.assertEqual("var x = '12';", self._evaluate(source))
 
+    def test_concise_arrow_irreducible_tail_substitutes_whole_expression(self):
+        """
+        An arrow whose tail expression cannot be reduced folds to that whole tail with the argument
+        substituted, exactly as a `return` of the same expression would — never to an inner operand.
+        `Array` is unresolved, so the call becomes `!('mn' instanceof Array)`, not the bare `Array`.
+        """
+        self.assertEqual(
+            "SINK(!('mn' instanceof Array));",
+            self._evaluate("const f = v => !(v instanceof Array);\nSINK(f('mn'));"),
+        )
+
     def test_strict_equal_distinct_arrays_is_false(self):
         self.assertEqual('var x = false;', self._fold('[1] === [1]'))
 
