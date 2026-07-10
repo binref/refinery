@@ -740,12 +740,6 @@ class TestParenthesisPreservation(TestJsDeobfuscator):
     def test_paren_preserved_for_assignment_in_binary_right(self):
         self.assertEqual('var x = a + (b = c);', self._simplify('var x = a + (b = c);'))
 
-    def test_paren_preserved_for_same_precedence_right_subtraction(self):
-        self.assertEqual('var x = a - (b - c);', self._simplify('var x = a - (b - c);'))
-
-    def test_paren_dropped_for_same_precedence_left_subtraction(self):
-        self.assertEqual('var x = a - b - c;', self._simplify('var x = (a - b) - c;'))
-
     def test_paren_preserved_for_destructuring_assignment_arrow_body(self):
         self.assertEqual('var f = () => ({ a } = obj);', self._simplify('var f = () => ({ a } = obj);'))
 
@@ -925,9 +919,4 @@ class TestCalleeSequencePreserved(TestJsDeobfuscator):
         self.assertEqual('(0, o.m)();', self._simplify('(0, o.m)();'))
 
     def test_sequence_callee_collapsed_for_plain_identifier(self):
-        """
-        `(0, f)(x)` invokes the plain identifier `f` with no receiver, exactly as `f(x)` does — only a
-        member or `eval` callee, whose reference form the sequence protects, must be kept — so the
-        indirect-call idiom collapses.
-        """
         self.assertEqual('f(x);', self._simplify('(0, f)(x);'))

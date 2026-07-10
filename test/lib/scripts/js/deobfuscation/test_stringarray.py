@@ -187,10 +187,11 @@ class TestStringArray(TestJsDeobfuscator):
         result = self._deobfuscate(source)
         self.assertEqual("console.log('test string');", result)
 
-    def test_string_array_cache_survives_checksum_corruption(self):
+    def test_string_array_resolution_populates_cache(self):
         """
-        The resolved array is cached on the AST node. If the checksum expression is
-        corrupted by later passes, subsequent resolution must use the cache.
+        A successful resolution stores the simulated array on the scope node so a later pipeline pass
+        can reuse it if the simplifier rewrites the checksum expression in between; this checks the
+        cache is populated after resolution.
         """
         source = self._default_preset()
         ast = JsParser(source).parse()

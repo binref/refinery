@@ -32,8 +32,13 @@ class TestAntiDebug(TestJsDeobfuscator):
         self.assertEqual(self._deobfuscate(source), "console.log('hello');")
 
     def test_preserves_code_without_redos(self):
-        source = "var x = 1; console.log(x);"
-        self.assertEqual(self._deobfuscate(source), 'console.log(1);')
+        source = inspect.cleandoc(
+            """
+            var x = 1;
+            console.log(x);
+            """
+        )
+        self.assertEqual(source, self._run_transformer(source, JsRemoveReDoS))
 
     def test_redos_factory_preserved_when_referenced(self):
         source = self._DEFENSE_CODE + (

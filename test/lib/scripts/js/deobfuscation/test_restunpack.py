@@ -96,7 +96,7 @@ class TestVariableDemasking(TestJsDeobfuscator):
             self._demask('var f = function(...s) { s.length = 1; foo(s); return s[0]; }'),
         )
 
-    def test_nested_function_not_processed(self):
+    def test_nested_function_unpacked_in_own_scope(self):
         source = inspect.cleandoc(
             """
             var outer = function(...s) {

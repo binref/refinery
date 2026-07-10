@@ -187,9 +187,6 @@ class TestNamespaceFlattening(TestJsDeobfuscator):
         )
 
     def test_computed_read_before_assignment_keeps_function_in_place(self):
-        """
-        The early read spells the property dynamically as `NS["greet"]`; it must still block the hoist.
-        """
         self.assertEqual(
             inspect.cleandoc(
                 """

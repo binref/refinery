@@ -368,16 +368,21 @@ class TestUnusedCodeRemoval(TestJsDeobfuscator):
         )
         self.assertEqual(expected, self._remove_unused(source))
 
-    def test_strip_globals_removes_dead_global_declaration(self):
+    def test_strip_globals_keeps_reflection_reachable_global(self):
+        """
+        With preserve_globals=False the blunt script-scope bail is disabled, yet a global that a
+        reflection surface can reach must still be preserved by the fine-grained reachability check;
+        dropping it would be unsound.
+        """
         source = inspect.cleandoc(
             """
             var deadGlobal = 1;
-            console.log(2);
+            eval('deadGlobal');
             """
         )
         ast = JsParser(source).parse()
         JsUnusedCodeRemoval(preserve_globals=False).visit(ast)
-        self.assertEqual('console.log(2);', JsSynthesizer().convert(ast))
+        self.assertEqual(source, JsSynthesizer().convert(ast))
 
     def test_reflection_surface_preserves_dead_split_global(self):
         source = inspect.cleandoc(

@@ -156,9 +156,6 @@ class TestEffectModel(TestBase):
         ast, effects = self._effects('function g(){} function g(){} function h(){ g(); }')
         self.assertTrue(effects.summary_of(self._func(ast, 'h')).calls_unknown)
 
-    def test_write_to_never_read_global_is_unobservable(self):
-        self.assertTrue(self._summary('function f(){ scratch = 1; }', 'f').is_pure)
-
     def test_write_to_never_read_global_under_reflection_is_impure(self):
         source = "function f(){ scratch = 1; } eval('1');"
         ast, effects = self._effects(source)

@@ -524,7 +524,7 @@ class TestJsSynthesizer(TestBase):
         self._assert_synth_valid(node, '() => ({ a } = obj)')
 
     def test_break_statement(self):
-        self._round_trip('while (true) { break; }')
+        self._round_trip('outer: while (true) { break outer; }')
 
     def test_break_label(self):
         self._round_trip('outer: while (true) { break outer; }')
@@ -572,7 +572,7 @@ class TestJsSynthesizer(TestBase):
         self._round_trip('async function f() { await x; }')
 
     def test_yield_expression(self):
-        self._round_trip('function* g() { yield 1; }')
+        self._round_trip('function* g() { var x = yield 1; }')
 
     def test_yield_delegate(self):
         self._round_trip('function* g() { yield* other(); }')

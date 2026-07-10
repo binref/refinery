@@ -110,9 +110,7 @@ class TestObjectFold(TestJsDeobfuscator):
         """
         The value binding `x` is reassignable by the direct `eval` in `outer`, while the object `o`
         lives in `inner`, where its own container is immutable. Only the value-stability gate can
-        block this fold — keeping `o` and the `eval` in separate functions is what exercises the
-        `local_reachable_by_direct_eval` path of `binding_maybe_reassigned_dynamically`; with them
-        in one function the container gate would already reject it and the value gate goes untested.
+        block this fold.
         """
         source = inspect.cleandoc(
             """
@@ -660,10 +658,6 @@ class TestObjectFold(TestJsDeobfuscator):
         self.assertEqual(source, self._objectfold(source))
 
     def test_parenthesized_function_property_call_inlined(self):
-        """
-        A parenthesized function value that is immediately called inlines exactly as the bare form does:
-        the paren is transparent to the effect check and the trivial-wrapper inline.
-        """
         self.assertEqual(
             'SINK(2 + 1);',
             self._objectfold('var o = { f: (function(a) { return a + 1; }) }; SINK(o.f(2));'),

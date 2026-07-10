@@ -52,9 +52,6 @@ class TestReflectionInlining(TestJsDeobfuscator):
         self.assertEqual('var x = 1;', self._reflect("(eval)('var x = 1;');"))
 
     def test_direct_eval_shadowed_not_inlined(self):
-        """
-        `eval` is a local parameter, so `eval("1")` calls that value, not the global eval.
-        """
         source = inspect.cleandoc(
             """
             function f(eval) {
@@ -98,9 +95,6 @@ class TestReflectionInlining(TestJsDeobfuscator):
         self.assertEqual('var x = 1;', self._reflect("(0, eval)('var x = 1;');"))
 
     def test_indirect_eval_comma_operator_shadowed_not_inlined(self):
-        """
-        `eval` is a local parameter, so `(0, eval)` yields that value, not the global eval.
-        """
         source = inspect.cleandoc(
             """
             function f(eval) {
@@ -388,9 +382,6 @@ class TestReflectionInlining(TestJsDeobfuscator):
         self.assertEqual(source, self._reflect(source))
 
     def test_bare_string_timer_shadowed_not_lowered(self):
-        """
-        `setTimeout` is a local parameter, so the call is to that value, not the global timer.
-        """
         source = inspect.cleandoc(
             """
             function f(setTimeout) {
@@ -410,9 +401,6 @@ class TestReflectionInlining(TestJsDeobfuscator):
         self.assertEqual('42;', self._reflect("Function('return 42')();"))
 
     def test_function_constructor_shadowed_not_inlined(self):
-        """
-        `Function` is a local parameter, so the call is to that value, not the global constructor.
-        """
         source = inspect.cleandoc(
             """
             function f(Function) {
@@ -423,9 +411,6 @@ class TestReflectionInlining(TestJsDeobfuscator):
         self.assertEqual(source, self._reflect(source))
 
     def test_new_function_shadowed_not_inlined(self):
-        """
-        `Function` is a local parameter, so `new Function` constructs that value, not the global one.
-        """
         source = inspect.cleandoc(
             """
             function f(Function) {
