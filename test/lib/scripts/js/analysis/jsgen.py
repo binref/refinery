@@ -66,7 +66,10 @@ A `with (obj) { ... }` block exercises dynamic scoping: inside it a bare name re
 whether `m = e` writes an object property or rebinds the outer variable *m*. The block reads and writes
 the object's own keys as bare names and writes an outer variable the program also reads before and after
 the block, so treating that variable as a stable constant across the block — rather than possibly rebound
-through the dynamic scope — changes the output.
+through the dynamic scope — changes the output. The object may also shadow a reflection primitive with an
+own getter — a bare `eval`, an indirect `(0, eval)`, or the base of a constructor chain resolving to user
+code rather than the global — so folding the constant string as a real eval or `Function` drops the
+observable getter read the shadowed callee performs.
 
 A `for-of` loop also reassigns outer bindings by destructuring each element of a constant array of
 arrays through a rest target in its head (`for ([w0, ...w1] of ...)`). Because the head carries no
@@ -646,6 +649,14 @@ class _Generator:
         even though the lexical binding of the same name makes the read look like a pure, droppable
         operand. This is the case a plain deleted-property read cannot exercise: there the read *throws*,
         which the deobfuscator already keeps, whereas the getter read looks pure.
+
+        The object may instead, or additionally, shadow a reflection primitive with an own getter: a
+        getter named `eval`, or a getter whose string value bases a constructor chain. Inside the
+        block a bare `eval(...)`, an indirect `(0, eval)(...)`, or a constructor-chain call then
+        resolves through the dynamic scope to the getter, not the global primitive, so the getter read
+        is observable and the call runs user code. Folding the constant string as a real eval or
+        `Function` — rather than recognizing the `with` may shadow the callee — drops that effect and
+        changes the output.
         """
         obj = self._fresh()
         var = self._fresh()
@@ -670,6 +681,10 @@ class _Generator:
             lines.append(F'var {getter} = {self._atom(scope)};')
             lines.append(F'SINK.push({getter});')
             body.extend(self._with_getter_read(getter))
+        if self.rng.random() < 0.4:
+            prop, calls = self._with_reflect()
+            props.append(prop)
+            body.extend(calls)
         lines.append(F'var {obj} = {{{", ".join(props)}}};')
         lines.append(F'with ({obj}) {{')
         lines += self._indent(body)
@@ -693,6 +708,31 @@ class _Generator:
             param = self._fresh()
             return [F'SINK.push((function({param}) {{ return {literal}; }})({name}));']
         return [F'if ([{name}]) SINK.push({literal});']
+
+    def _with_reflect(self) -> tuple[str, list[str]]:
+        """
+        A reflection primitive shadowed by an own getter of the `with` object, paired with the body
+        statement that fires it. Inside the block a bare `eval`, an indirect `(0, eval)`, or the base
+        of a constructor chain resolves through the dynamic scope to the object's getter rather than
+        the global primitive, so reading the name is an observable side effect and the call runs the
+        getter's return value. Folding the constant string as a real eval or `Function` — instead of
+        recognizing that the `with` may shadow the callee — drops the getter effect and changes the
+        value, so a divergence surfaces.
+        """
+        left = self.rng.randint(0, 9)
+        right = self.rng.randint(1, 9)
+        op = self.rng.choice(('+', '-', '*'))
+        form = self.rng.choice(('eval', 'indirect_eval', 'chain'))
+        if form == 'chain':
+            base = self._fresh()
+            word = self.rng.choice(_WORDS)
+            prop = F"get {base}() {{ SINK.push('g_{base}'); return '{word}'; }}"
+            call = F"{base}.constructor.constructor('return {left} {op} {right}')()"
+            return prop, [F'SINK.push({call});']
+        result = self.rng.randint(0, 9)
+        callee = 'eval' if form == 'eval' else '(0, eval)'
+        prop = F"get eval() {{ SINK.push('g_eval'); return function (s) {{ return {result}; }}; }}"
+        return prop, [F'SINK.push({callee}("{left} {op} {right}"));']
 
     def _with_stmt(self, scope: _Scope, keys: tuple[str, ...]) -> list[str]:
         """
