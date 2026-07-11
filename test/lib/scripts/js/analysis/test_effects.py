@@ -394,6 +394,14 @@ class TestEffectModel(TestBase):
         )
         self.assertFalse(effects.is_side_effect_free(call))
 
+    def test_is_side_effect_free_clears_hoisted_declaration_call(self):
+        ast, effects = self._effects('function p(){ return 1; } p();')
+        self.assertTrue(effects.is_side_effect_free(self._only_call(ast)))
+
+    def test_is_side_effect_free_refuses_non_hoisted_callee_call(self):
+        ast, effects = self._effects('const p = () => 1; p();')
+        self.assertFalse(effects.is_side_effect_free(self._only_call(ast)))
+
     def test_static_callee_none_for_callee_reassigned_through_with(self):
         ast, effects = self._effects('function g(){ return 1; } with (o) { g = h; } g();')
         self.assertIsNone(effects.static_callee(self._only_call(ast)))

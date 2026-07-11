@@ -496,6 +496,39 @@ class TestDeobfuscationDifferential(TestBase):
             ' bump = function(x) {};'
             ' console.log(o.v);')
 
+    def test_premature_bare_assignment_call_keeps_throw(self):
+        """
+        `f()` runs while `f` is the hoisted `undefined` (real: TypeError), before the assignment; dropping
+        the call as pure discards the throw. The unused `dead` lets the removal pass reach the call.
+        """
+        self._check(
+            'var f;'
+            ' f();'
+            ' function dead(){}'
+            ' f = function(){ return 1; };'
+            ' console.log("after");')
+
+    def test_premature_const_call_keeps_throw(self):
+        """
+        `foo()` runs in the temporal dead zone of the later `const foo` (real: ReferenceError); dropping
+        the call as pure discards the throw.
+        """
+        self._check(
+            'foo();'
+            ' function dead(){}'
+            ' const foo = () => 1;'
+            ' console.log("after");')
+
+    def test_premature_iife_argument_call_keeps_throw(self):
+        """
+        The IIFE argument `f()` runs while `f` is the hoisted `undefined` (real: TypeError); inlining the
+        IIFE and dropping the unused argument would discard the throw.
+        """
+        self._check(
+            'var f;'
+            ' console.log((function(p){ return 7; })(f()));'
+            ' f = function(){ return 1; };')
+
     def test_call_before_function_reassignment_keeps_side_effect(self):
         """
         `v0(true)` runs the original side-effecting body before the reassignment; resolving `v0` to the
