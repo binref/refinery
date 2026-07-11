@@ -525,18 +525,10 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
         throws a `TypeError` on — which the interpreted body must not silently replace with a result. The
         model names the establishing nodes; dominance decides whether they all precede the call.
         """
-        if self._effects is None:
-            return False
-        sites = self._effects.model.establishment_sites(func)
-        if sites is None:
-            return False
-        if not sites:
-            return True
         script = self._script
         if script is None:
             return False
-        dominance = model_cache(self, script).dominance
-        return all(dominance.runs_before(site, call) for site in sites)
+        return model_cache(self, script).dominance.established_before(func, call)
 
     def _try_named_call(self, node: JsCallExpression) -> None:
         if self._effects is None:

@@ -52,10 +52,12 @@ from refinery.lib.scripts.js.model import (
     JsArrayPattern,
     JsAssignmentExpression,
     JsBlockStatement,
+    JsCallExpression,
     JsExpressionStatement,
     JsFunctionDeclaration,
     JsIdentifier,
     JsMemberExpression,
+    JsNewExpression,
     JsObjectExpression,
     JsObjectPattern,
     JsProperty,
@@ -440,9 +442,20 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
         `refinery.lib.scripts.js.analysis.effects.EffectModel.is_side_effect_free`: a call proven pure
         under a pristine intrinsic surface is removable when its arguments are, so a dead binding whose
         initializer is a pure decoder or factory can be dropped even though it is a call. A member read
-        through a local global-object alias is cleared only where the alias is established before it.
+        through a local global-object alias is cleared only where the alias is established before it, and
+        a pure call only where its callee is established before it.
         """
-        return self.effects.is_side_effect_free(node, defunct, member_safe=self._member_read_ok)
+        return self.effects.is_side_effect_free(
+            node, defunct, member_safe=self._member_read_ok, call_established=self._call_established)
+
+    def _call_established(self, call: JsCallExpression | JsNewExpression) -> bool:
+        """
+        Whether a pure call may be dropped: its callee is a trusted intrinsic, or a local function whose
+        definition reaches the call, so a call textually before a not-yet-established function keeps its
+        runtime throw.
+        """
+        return self.effects.call_clearable(
+            call, lambda func: self.reaching.dominance.established_before(func, call))
 
     def _member_read_ok(self, member: JsMemberExpression) -> bool:
         """

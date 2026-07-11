@@ -203,6 +203,21 @@ class DominanceModel:
             for reference in references
         )
 
+    def established_before(self, function: Node, reference: Node) -> bool:
+        """
+        Whether *function*'s callable value is in place before *reference* runs: every node in its
+        `SemanticModel.establishment_sites` executes first. A hoisted function declaration has no sites
+        and qualifies unconditionally; a `var`/`let`/`const` initializer or a lone assignment
+        (`f = function(){}`, the form namespace flattening leaves) qualifies only where each establishing
+        node runs before *reference*. `False` when *function* is not invoked through a single orderable
+        name, so its presence cannot be ordered — the query a consumer needs before folding or dropping a
+        call whose callee would otherwise read a temporal dead zone or a hoisted `undefined`.
+        """
+        sites = self.model.establishment_sites(function)
+        if sites is None:
+            return False
+        return all(self.runs_before(site, reference) for site in sites)
+
     def _runs_before_function(
         self,
         definition: Node,

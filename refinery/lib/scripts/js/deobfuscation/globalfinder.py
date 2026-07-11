@@ -78,8 +78,7 @@ class JsGlobalFinderInlining(ScriptLevelTransformer):
             target = cache.effects.function_of(model.resolve(callee))
             if target is None or id(target) not in finder_ids or _within(call, target):
                 continue
-            sites = model.establishment_sites(target)
-            if sites is None or not all(cache.dominance.runs_before(site, call) for site in sites):
+            if not cache.dominance.established_before(target, call):
                 continue
             scope = model.scope_of(call)
             if scope is not None and model.lookup('globalThis', scope) is not None:

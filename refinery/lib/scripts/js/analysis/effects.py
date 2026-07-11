@@ -466,20 +466,34 @@ class EffectModel:
             return self.summary_of(callee).is_pure
         return False
 
-    def _established_call_default(self, call: JsCallExpression | JsNewExpression) -> bool:
+    def call_clearable(
+        self,
+        call: JsCallExpression | JsNewExpression,
+        callee_established: Callable[[Node], bool],
+    ) -> bool:
         """
-        The ordering-free floor for clearing a call in `is_side_effect_free`: a trusted pure intrinsic,
-        or a call to a hoisted function declaration (empty `establishment_sites`), whose value is in
-        place before any statement runs. A call to a non-hoisted local function — a `const`/`let`/`var`
-        initializer or a bare assignment — is refused here, since this model cannot see whether the
-        definition ran before the call; a caller that can order it supplies its own `call_established`.
+        Whether clearing *call* is permitted given *callee_established*, the caller's test of whether the
+        resolved local callee is in place before the call runs. A trusted pure intrinsic is always
+        clearable; a call resolving to a single local function is clearable when *callee_established*
+        accepts it; an unresolved or ambiguous callee is not. The resolution and the intrinsic case live
+        here so callers supply only the ordering judgment their layer can make.
         """
         resolved = self._resolve_callee(call)
         if resolved is _PURE:
             return True
         if isinstance(resolved, Node):
-            return self.model.establishment_sites(resolved) == []
+            return callee_established(resolved)
         return False
+
+    def _established_call_default(self, call: JsCallExpression | JsNewExpression) -> bool:
+        """
+        The ordering-free floor for `is_side_effect_free`: clears a trusted pure intrinsic or a call to a
+        hoisted function declaration (empty `establishment_sites`), whose value is in place before any
+        statement runs. A non-hoisted local callee — a `const`/`let`/`var` initializer or a bare
+        assignment — is refused, since this model cannot order the definition against the call; a caller
+        that can supplies its own `call_established`.
+        """
+        return self.call_clearable(call, lambda func: self.model.establishment_sites(func) == [])
 
     def is_side_effect_free(
         self,

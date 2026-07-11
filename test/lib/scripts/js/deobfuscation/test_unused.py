@@ -1261,6 +1261,16 @@ class TestRegressionBugs(TestJsDeobfuscator):
         )
         self.assertEqual('keep("y");', self._run_transformer(source, JsUnusedCodeRemoval))
 
+    def test_dead_binding_from_established_const_call_removed(self):
+        source = inspect.cleandoc(
+            """
+            const makeTag = () => "[x]";
+            var unused = makeTag();
+            keep("y");
+            """
+        )
+        self.assertEqual('keep("y");', self._run_transformer(source, JsUnusedCodeRemoval))
+
     def test_dead_binding_from_impure_call_kept(self):
         source = inspect.cleandoc(
             """
