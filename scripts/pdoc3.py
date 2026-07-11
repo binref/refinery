@@ -9,9 +9,17 @@ import subprocess
 import sys
 import shutil
 
+from pathlib import Path
+
+here = Path(__file__).parent
+assert here.parts[-1] == 'scripts'
+root = here.parent
+os.chdir(str(root))
+sys.path.insert(0, str(root))
+
 _SAFETY_FLAG = '--current-environment'
-_TEMPLATEDIR = os.path.abspath('pdoc3-template')
-_DOCUMENTDIR = os.path.abspath('html')
+_TEMPLATEDIR = str(root / 'pdoc3-template')
+_DOCUMENTDIR = str(root / 'html')
 
 if __name__ == '__main__':
     def venv(path):
@@ -29,7 +37,7 @@ if __name__ == '__main__':
     where = argp.add_mutually_exclusive_group()
     where.add_argument('venv', nargs='?', type=venv, default=None,
         help='Specify the virtual environment to use.')
-    where.add_argument(_SAFETY_FLAG, dest='safety', action='store_true', help=(
+    where.add_argument('-c', _SAFETY_FLAG, dest='safety', action='store_true', help=(
         'If no virtual environment is specified, you have to provide this '
         'flag to force use of the current environment. This flag exists to '
         'prevent users from accidentally running this script outside a '

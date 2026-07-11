@@ -17,7 +17,7 @@ def sortkey(u: tuple[str, str]):
 
 
 def generate():
-    root = pathlib.Path(__file__).parent / 'refinery'
+    root = pathlib.Path(__file__).parent.parent / 'refinery'
 
     units = ((u.__module__, u.__name__) for u in get_all_entry_points())
     units = sorted(units, key=sortkey)

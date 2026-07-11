@@ -2,15 +2,19 @@
 """
 Generates the lists of toplevel domains and URL specifiers.
 """
-import os.path
-import re
 import io
+import json
+import pathlib
+import re
 import requests
 import zipfile
-import json
 
 from refinery.lib import xml
 from refinery.lib.patterns.tlds import tlds as old_tlds
+
+here = pathlib.Path(__file__).parent
+assert here.parts[-1] == 'scripts'
+root = here.parent
 
 
 def normalize(data, *required):
@@ -29,7 +33,7 @@ def crawl_tlds():
     tlds.sort()
     tlds.sort(key=len, reverse=True)
     tab = '\x20' * 4
-    with open(os.path.join('.', 'refinery', 'lib', 'patterns', 'tlds.py'), 'w', newline='\n') as stream:
+    with open(root / 'refinery' / 'lib' / 'patterns' / 'tlds.py', 'w', newline='\n') as stream:
         stream.write('tlds = [\n')
         for tld in tlds:
             stream.write(F'{tab}{tld!r},\n')
@@ -45,6 +49,11 @@ def crawl_rich():
             if fn.endswith('.xml') and 'rich' in fn:
                 rich = xml.parse(archive.read(info.filename))
                 break
+        else:
+            rich = None
+    if rich is None:
+        print('could not find RICH data')
+        return
     while len(rich.children) == 1:
         rich = rich.children[0]
     r = {}
@@ -61,11 +70,11 @@ def crawl_rich():
     dishather = session.get('https://raw.githubusercontent.com/dishather/richprint/master/comp_id.txt').text
     for match in re.finditer(r'(?im)^(?P<value>[a-f0-9]{8})\s\[...\]\s(?P<description>.*)$', dishather):
         value = int(match['value'], 16)
-        code = F'{value&0xFFFF:04X}'
+        code = F'{value & 0xFFFF:04X}'
         if code not in r['ver']:
             r['ver'][code] = {'ide': match['description']}
 
-    with open(os.path.join('.', 'refinery', 'data', 'rich.json'), 'w') as stream:
+    with open(root / 'refinery' / 'data' / 'rich.json', 'w') as stream:
         json.dump(r, stream, indent=2)
 
 

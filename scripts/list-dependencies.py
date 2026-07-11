@@ -8,9 +8,16 @@ import builtins
 import importlib
 import itertools
 import pkgutil
+import pathlib
+import sys
 
-from refinery.lib.loader import get_all_entry_points
+if True:
+    here = pathlib.Path(__file__).parent
+    assert here.parts[-1] == 'scripts'
+    root = here.parent
+    sys.path.insert(0, str(root))
 
+import refinery.lib.loader
 import refinery.lib.shared
 
 deps_by_level: dict[int, set[str]] = {}
@@ -22,7 +29,7 @@ for _, name, _ in pkgutil.iter_modules(refinery.lib.shared.__path__):
 
 for executable in itertools.chain(
     (refinery.lib.shared.GlobalDependenciesDummy,),
-    get_all_entry_points(),
+    refinery.lib.loader.get_all_entry_points(),
 ):
     if executable.optional_dependencies:
         for level, deps in executable.optional_dependencies.items():

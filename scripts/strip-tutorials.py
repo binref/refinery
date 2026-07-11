@@ -7,7 +7,11 @@ import pathlib
 
 CK = 'execution_count'
 
-for path in pathlib.Path.cwd().glob('tutorials/notebooks/*.ipynb'):
+here = pathlib.Path(__file__).parent
+assert here.parts[-1] == 'scripts'
+root = here.parent
+
+for path in root.glob('tutorials/notebooks/*.ipynb'):
     print(F'fixing {path}')
     ctr = 0
     with path.open('r', encoding='utf8') as fd:
