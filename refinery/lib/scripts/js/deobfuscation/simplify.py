@@ -310,6 +310,8 @@ class JsSimplifications(Transformer):
                 fn,
                 lambda call: self.effects.is_pure_call(call),
                 self.model.read_has_dynamic_effect,
+                lambda call: self.effects.call_clearable(
+                    call, lambda f: self.dominance.established_before(f, call)),
                 self,
             )
         return (
@@ -343,6 +345,7 @@ class JsSimplifications(Transformer):
         fn: JsFunctionExpression,
         call_pure: Callable[..., bool],
         read_effect: Callable[[Node], bool],
+        call_established: Callable[..., bool],
         transformer: Transformer,
     ) -> Node | None:
         if fn.body is None or not isinstance(fn.body, JsBlockStatement):
@@ -360,7 +363,7 @@ class JsSimplifications(Transformer):
         if not is_closed_expression(expr, set(param_names)):
             return None
         if not is_safe_iife_inline(
-            expr, param_names, node.arguments, call_pure, read_effect,
+            expr, param_names, node.arguments, call_pure, read_effect, call_established,
         ):
             return None
         return substitute_params(expr, fn.params, node.arguments, transformer=transformer)

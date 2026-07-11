@@ -730,6 +730,7 @@ def is_safe_iife_inline(
     call_args: Sequence[Node],
     call_pure: Callable[..., bool] | None = None,
     read_effect: Callable[[Node], bool] | None = None,
+    call_established: Callable[..., bool] | None = None,
 ) -> bool:
     """
     Verify that substituting IIFE arguments into the body expression preserves evaluation semantics.
@@ -740,8 +741,9 @@ def is_safe_iife_inline(
     order relative to other effectful arguments, so its side effect is neither dropped, duplicated, nor
     reordered. When *call_pure* is given (an
     `refinery.lib.scripts.js.analysis.effects.EffectModel.is_pure_call`), a call argument it proves pure
-    counts as side-effect-free for the ordering rules — but, being a call, is not simple, so it is still
-    not duplicated. When *read_effect* is given (a
+    counts as side-effect-free for the ordering rules — but only when *call_established* also certifies
+    its callee is in place before the call runs, and, being a call, it is not simple, so it is still not
+    duplicated. When *read_effect* is given (a
     `refinery.lib.scripts.js.analysis.model.SemanticModel.read_has_dynamic_effect`), an argument reading
     a bare name through a `with` body's dynamic scope counts as effectful — the read may fire the `with`
     object's getter or throw — so it too must not be dropped or reordered.
@@ -757,7 +759,9 @@ def is_safe_iife_inline(
             return False
     effectful_indices = [
         i for i, arg in enumerate(call_args)
-        if not side_effect_free(arg, call_pure=call_pure, read_effect=read_effect)
+        if not side_effect_free(
+            arg, call_pure=call_pure, read_effect=read_effect, call_established=call_established,
+        )
     ]
     if not effectful_indices:
         return True
