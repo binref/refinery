@@ -8,7 +8,8 @@ from typing import Callable
 from refinery.lib.scripts import Node, Transformer
 from refinery.lib.scripts.js.analysis.cache import ModelCache, model_cache
 from refinery.lib.scripts.js.analysis.dominance import DominanceModel
-from refinery.lib.scripts.js.analysis.effects import EffectModel
+from refinery.lib.scripts.js.analysis.effects import GLOBAL_OBJECT, EffectModel
+from refinery.lib.scripts.js.analysis.reaching import ReachingModel
 from refinery.lib.scripts.js.analysis.model import (
     FUNCTION_NODES,
     GUARANTEED_GLOBALS,
@@ -135,6 +136,30 @@ class JsSimplifications(Transformer):
     def dominance(self) -> DominanceModel:
         assert self._cache is not None
         return self._cache.dominance
+
+    @property
+    def reaching(self) -> ReachingModel:
+        assert self._cache is not None
+        return self._cache.reaching
+
+    def _global_object_alias_base(self, member: JsMemberExpression) -> bool:
+        """
+        Whether *member*'s base is a local single-assigned to the global object whose value reaches this
+        read unchanged — the `var g = globalThis || {}; g.String` idiom. The value must be established
+        before the read (`ReachingModel.value_preserved`), so collapsing `g.String` to `String` cannot
+        turn a not-yet-assigned `undefined.String` into a different result. The bare syntactic-alias case
+        (`globalThis.String`) is handled by `global_alias_member_name`; this covers only the local alias.
+        """
+        base = member.object
+        if not isinstance(base, JsIdentifier) or self.model.global_alias_member_name(member) is not None:
+            return False
+        binding = self.model.resolve(base)
+        if binding is None:
+            return False
+        value = self.model.singular_value(binding)
+        if value is None or self.effects.intrinsic_of(value) is not GLOBAL_OBJECT:
+            return False
+        return self.reaching.value_preserved(binding, value, base)
 
     def visit_JsScript(self, node: JsScript):
         """
@@ -553,7 +578,7 @@ class JsSimplifications(Transformer):
             not node.computed
             and isinstance(node.object, JsIdentifier)
             and isinstance(node.property, JsIdentifier)
-            and self.model.global_alias_member_name(node) is not None
+            and (self.model.global_alias_member_name(node) is not None or self._global_object_alias_base(node))
             and not self._resolves_to_local(node, node.property.name)
             and self._alias_property_defined(node, node.property.name)
         ):
@@ -643,6 +668,8 @@ class JsSimplifications(Transformer):
         self.generic_visit(node)
         if node.left is None or node.right is None:
             return None
+        if node.operator == '||' and self.effects.intrinsic_of(node.left) is not None:
+            return node.left
         if not is_statically_evaluable(node.left):
             return None
         op = node.operator

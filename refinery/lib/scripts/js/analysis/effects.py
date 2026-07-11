@@ -32,7 +32,7 @@ contract so a later control-flow layer can sharpen the same answers without chan
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Callable, Iterator
+from typing import Callable, Iterator, Sequence
 
 from refinery.lib.scripts import Node
 from refinery.lib.scripts.js.analysis.model import (
@@ -117,6 +117,16 @@ _PURE_INTRINSIC_ROOTS = (
     frozenset(name.split('.', 1)[0] for name in _PURE_INTRINSIC_METHODS) | _PURE_GLOBAL_FUNCTIONS
 )
 
+_PURE_CONSTRUCTOR_ROOTS = frozenset({'Array'})
+"""
+Intrinsic roots whose `new`-construction has no observable effect when its arguments are safe. Only
+`Array` here: it is already guarded against reassignment/shadowing by `_intrinsics_pristine` (it is a
+`_PURE_INTRINSIC_ROOTS` member via `Array.isArray`), and its sole throw is a bad single numeric length.
+Adding a root not already in `_PURE_INTRINSIC_ROOTS` (e.g. `Object`) requires first extending the
+`_intrinsics_pristine` guard to it, or trusting `new Object()` while `Object` was monkeypatched would be
+unsound.
+"""
+
 _SPEC_GLOBAL_INTRINSICS = frozenset({
     'Object',
     'Boolean',
@@ -176,6 +186,15 @@ like `_SPEC_GLOBAL_INTRINSICS`, but resting on that host assumption rather than 
 
 _GLOBAL_DATA_PROPERTIES = _SPEC_GLOBAL_INTRINSICS | _HOST_GLOBAL_INTRINSICS
 
+_POISON_PILL_PROPERTIES = frozenset({'caller', 'arguments', '__proto__'})
+"""
+Property names whose read is never treated as getter-free even off an otherwise trusted base. `caller`
+and `arguments` are the poison-pill accessors on strict and built-in functions — reading one may throw a
+`TypeError` — and `__proto__` is an `Object.prototype` accessor rather than an own data slot. A read of
+one carries a possible throw or accessor call, so it is not the plain field read the getter-safe base
+rule would otherwise clear.
+"""
+
 _ACCESSOR_INSTALL_METHODS = frozenset({
     'defineProperty',
     'defineProperties',
@@ -191,6 +210,16 @@ class _PureCall:
 
 
 _PURE = _PureCall()
+
+
+class _GlobalObject:
+    """
+    Sentinel denoting the global object as the value an expression evaluates to, distinct from a named
+    intrinsic root and from an unresolved value.
+    """
+
+
+GLOBAL_OBJECT = _GlobalObject()
 
 
 @dataclass
@@ -254,6 +283,51 @@ class EffectSummary:
         self.written_bindings |= other.written_bindings
 
 
+def _literal_number(node: Node) -> int | float | None:
+    """
+    The numeric value *node* denotes as a literal, folding a leading `-`/`+` on a numeric literal, or
+    `None` when it is not a numeric literal. `void` and any non-literal are not numbers here; `NaN` and
+    `Infinity` are identifiers, not literals, so they too return `None`.
+    """
+    if isinstance(node, JsNumericLiteral):
+        return node.value
+    if (
+        isinstance(node, JsUnaryExpression)
+        and node.operator in ('-', '+')
+        and isinstance(node.operand, JsNumericLiteral)
+    ):
+        return -node.operand.value if node.operator == '-' else node.operand.value
+    return None
+
+
+def _array_construct_is_pure(arguments: Sequence[Node]) -> bool:
+    """
+    Whether `new Array(*arguments)` is a pure allocation — it runs no user code and cannot throw. `Array`
+    throws a `RangeError` only for a single numeric argument that is not a valid length
+    (`ToUint32(v) != v`, i.e. not an integer in `[0, 2**32)`); a single argument provably not a number
+    builds a one-element array; two or more arguments build a list. A spread argument runs the iterable's
+    iterator (arbitrary user code) and its element count may be an invalid length, so it is never pure,
+    and a single non-literal argument has an unknown value that could be an out-of-range length.
+    """
+    if any(isinstance(arg, JsSpreadElement) for arg in arguments):
+        return False
+    if len(arguments) != 1:
+        return True
+    arg = arguments[0]
+    number = _literal_number(arg)
+    if number is not None:
+        return 0 <= number < 2 ** 32 and number == int(number)
+    return isinstance(arg, (
+        JsStringLiteral,
+        JsBooleanLiteral,
+        JsNullLiteral,
+        JsArrayExpression,
+        JsObjectExpression,
+        JsFunctionExpression,
+        JsArrowFunctionExpression,
+    ))
+
+
 def _is_safe_property_base(node: Node, defunct: set[str] | None = None) -> bool:
     """
     Whether a property access on *node* cannot run a custom getter, so the read carries no hidden
@@ -283,10 +357,12 @@ def side_effect_free(
     """
     Conservative check for whether evaluating an expression can be dropped or reordered with no
     observable side effect. Compositional: an expression is free when every sub-expression is. Two leaves
-    can bear an effect. The call — free only when its callee is a *defunct* identifier or an inline
-    function expression, or, when both *call_pure* and *call_established* are supplied, when *call_pure*
-    certifies the call (or `new`) pure, *call_established* certifies its callee is in place before the
-    call runs, and its arguments are free. The identifier read — free unless *read_effect* rejects it,
+    can bear an effect. The call — free only when its callee is a *defunct* identifier, or, when both
+    *call_pure* and *call_established* are supplied, when *call_pure* certifies the call (or `new`) pure,
+    *call_established* certifies its callee is in place before the call runs, and its arguments are free.
+    An inline function-expression callee is not special-cased: it is resolved like any other callee through
+    *call_pure*, which inspects its body, so a called IIFE with an effectful body is not cleared. The
+    identifier read — free unless *read_effect* rejects it,
     which `EffectModel.is_side_effect_free` supplies as `SemanticModel.read_has_dynamic_effect` to reject
     a bare name that resolves through a `with` body's dynamic scope (reading it may fire the `with`
     object's getter or throw). A function expression is free without descending into its body — defining
@@ -358,8 +434,6 @@ def side_effect_free(
         return all(side_effect_free(e, defunct, call_pure, read_effect, member_safe, call_established) for e in node.expressions)
     if isinstance(node, JsCallExpression):
         if defunct and isinstance(node.callee, JsIdentifier) and node.callee.name in defunct:
-            return all(side_effect_free(arg, defunct, call_pure, read_effect, member_safe, call_established) for arg in node.arguments)
-        if isinstance(node.callee, JsFunctionExpression):
             return all(side_effect_free(arg, defunct, call_pure, read_effect, member_safe, call_established) for arg in node.arguments)
     if (
         call_pure is not None
@@ -472,26 +546,33 @@ class EffectModel:
         callee_established: Callable[[Node], bool],
     ) -> bool:
         """
-        Whether clearing *call* is permitted given *callee_established*, the caller's test of whether the
-        resolved local callee is in place before the call runs. A trusted pure intrinsic is always
-        clearable; a call resolving to a single local function is clearable when *callee_established*
-        accepts it; an unresolved or ambiguous callee is not. The resolution and the intrinsic case live
-        here so callers supply only the ordering judgment their layer can make.
+        Whether *call*'s callee is established — in place before the call runs — given *callee_established*,
+        the caller's test for a resolved named local callee. A trusted pure intrinsic and an inline
+        function-expression callee (defined at the call site, hence always in place) qualify
+        unconditionally; a call resolving to a single named local function qualifies when
+        *callee_established* accepts it; an unresolved or ambiguous callee does not. The resolution, the
+        intrinsic case, and the inline-callee case live here so callers supply only the ordering judgment
+        their layer can make. This certifies establishment ONLY, not purity — a caller deciding whether a
+        call may be dropped must conjoin it with `is_pure_call`, as `side_effect_free` does, since an
+        established callee may still run an effectful body.
         """
         resolved = self._resolve_callee(call)
         if resolved is _PURE:
             return True
         if isinstance(resolved, Node):
+            if isinstance(strip_parens(call.callee), (JsFunctionExpression, JsArrowFunctionExpression)):
+                return True
             return callee_established(resolved)
         return False
 
     def _established_call_default(self, call: JsCallExpression | JsNewExpression) -> bool:
         """
-        The ordering-free floor for `is_side_effect_free`: clears a trusted pure intrinsic or a call to a
-        hoisted function declaration (empty `establishment_sites`), whose value is in place before any
-        statement runs. A non-hoisted local callee — a `const`/`let`/`var` initializer or a bare
-        assignment — is refused, since this model cannot order the definition against the call; a caller
-        that can supplies its own `call_established`.
+        The ordering-free floor for `is_side_effect_free`: clears a trusted pure intrinsic, an inline
+        function-expression callee (established at its call site), or a call to a hoisted function
+        declaration (empty `establishment_sites`), whose value is in place before any statement runs. A
+        non-hoisted named local callee — a `const`/`let`/`var` initializer or a bare assignment — is
+        refused, since this model cannot order the definition against the call; a caller that can supplies
+        its own `call_established`.
         """
         return self.call_clearable(call, lambda func: self.model.establishment_sites(func) == [])
 
@@ -507,8 +588,8 @@ class EffectModel:
         the call leaf resolved through this model's `is_pure_call`: a call to a proven-pure function or
         trusted intrinsic is free, recursing into its arguments. *defunct* names bindings being removed,
         whose calls and property reads are treated as free. This is the model-aware form of the
-        model-free `side_effect_free` in this module, which clears only calls to a defunct name or an
-        inline function; unlike it, an identifier read that resolves through a `with` body's dynamic
+        model-free `side_effect_free` in this module, which clears only calls to a defunct name; unlike
+        it, an identifier read that resolves through a `with` body's dynamic
         scope is rejected here — reading the bare name may fire the `with` object's getter or throw (see
         `refinery.lib.scripts.js.analysis.model.SemanticModel.read_has_dynamic_effect`) — while a
         function value whose body performs such a read stays free, since defining it runs nothing. A
@@ -521,7 +602,7 @@ class EffectModel:
             defunct,
             self.is_pure_call,
             self.model.read_has_dynamic_effect,
-            member_safe or self._is_trusted_global_read,
+            member_safe or self._getter_free_read,
             call_established or self._established_call_default,
         )
 
@@ -794,11 +875,7 @@ class EffectModel:
                 if is_member_write_target(node):
                     if not self._member_write_unobservable(node, func):
                         summary.writes_global = True
-                elif (
-                    base is not None
-                    and not self._base_getter_safe(base)
-                    and not self._is_trusted_global_read(node)
-                ):
+                elif base is not None and not self._getter_free_read(node):
                     summary.calls_unknown = True
             elif isinstance(node, (JsCallExpression, JsNewExpression)):
                 self._account_call(summary, node)
@@ -986,6 +1063,8 @@ class EffectModel:
 
     def _resolve_callee(self, call: JsCallExpression | JsNewExpression) -> Node | _PureCall | None:
         callee = call.callee
+        if isinstance(call, JsNewExpression) and self._pure_construct(call):
+            return _PURE
         if isinstance(callee, (JsFunctionExpression, JsArrowFunctionExpression)):
             return callee
         if isinstance(callee, JsMemberExpression) and not callee.computed:
@@ -999,6 +1078,18 @@ class EffectModel:
                 return _PURE
             return self.unambiguous_function(self.model.resolve(callee))
         return None
+
+    def _pure_construct(self, call: JsNewExpression) -> bool:
+        """
+        Whether `new <callee>(...)` is a pure allocation: the callee denotes a pristine constructor root in
+        `_PURE_CONSTRUCTOR_ROOTS` and its arguments are safe for that root. `Array` — the only such root
+        today — throws only on a bad single numeric length, decided by `_array_construct_is_pure`; a root
+        added to the set needs its own argument rule wired in here rather than reusing Array's.
+        """
+        root = self.intrinsic_of(call.callee)
+        if not (isinstance(root, str) and root in _PURE_CONSTRUCTOR_ROOTS):
+            return False
+        return _array_construct_is_pure(call.arguments)
 
     def function_of(
         self, binding: Binding | None
@@ -1057,6 +1148,35 @@ class EffectModel:
             return False
         return self.model.lookup(name.name, self.model.scope_of(name)) is None
 
+    def intrinsic_of(self, node: Node | None) -> str | _GlobalObject | None:
+        """
+        The pristine intrinsic value *node* provably denotes: `GLOBAL_OBJECT` for the global object, an
+        intrinsic root name (`'Array'`, `'String'`, …) for a named intrinsic, or `None`. A name is
+        returned only under `intrinsics_pristine` and where the identifier is unshadowed at this use site,
+        so the result may be *value-trusted* — used to construct, to clear a getter-free static read, or
+        to fold `A || B`. Every value it can return — `globalThis` and every `_PURE_INTRINSIC_ROOTS`
+        member — is truthy, so `A || B` evaluates to `A` whenever `intrinsic_of(A)` is not `None`; a
+        contributor extending this must preserve that truthiness invariant and never return a falsy name
+        such as `NaN`/`undefined`.
+
+        It deliberately does NOT follow a local alias through its value — `intrinsic_of` of an identifier
+        bound to `var x = Array` is `None` — because a local's value holds only where it is established, a
+        control-flow fact this flow-insensitive query cannot certify; a consumer that owns dominance
+        resolves the alias itself against `singular_value`. It likewise does not treat `<global-object>.Name`
+        as a value: that read's getter-freeness rests on `global_pristine`, a weaker premise than value
+        trust, so it stays the concern of `_is_trusted_global_read`.
+        """
+        node = strip_parens(node)
+        if isinstance(node, JsIdentifier):
+            if node.name == 'globalThis' and self.model.lookup(node.name, self.model.scope_of(node)) is None:
+                return GLOBAL_OBJECT
+            if node.name in _PURE_INTRINSIC_ROOTS and self._is_global_intrinsic(node):
+                return node.name
+            return None
+        if isinstance(node, JsLogicalExpression) and node.operator == '||':
+            return self.intrinsic_of(node.left)
+        return None
+
     def _is_trusted_global_read(self, member: JsMemberExpression) -> bool:
         """
         Whether reading *member* off the global object runs no user getter, so the read carries no
@@ -1088,14 +1208,15 @@ class EffectModel:
         established: Callable[[Binding, JsMemberExpression], bool] | None = None,
     ) -> bool:
         """
-        Whether reading *member* runs no user getter, so it carries no observable effect: a trusted
-        global data-property read off a syntactic global-object alias — always, the global object is
-        never nullish — or off a local single-assigned to the global object, which holds it only from
-        its establishing definition onward. The local case qualifies only when *established* confirms
-        that definition reaches the read, an ordering this effect model cannot decide on its own (see
+        Whether reading *member* runs no user getter, so it carries no observable effect: a getter-free
+        read off a pristine value (a fresh literal or a pristine intrinsic root) or a trusted global
+        data-property read off a syntactic global-object alias — always, since neither is nullish — or off
+        a local single-assigned to the global object, which holds it only from its establishing definition
+        onward. The local case qualifies only when *established* confirms that definition reaches the read,
+        an ordering this effect model cannot decide on its own (see
         `refinery.lib.scripts.js.analysis.reaching.ReachingModel.value_preserved`).
         """
-        if self._is_trusted_global_read(member):
+        if self._getter_free_read(member):
             return True
         if established is None:
             return False
@@ -1130,26 +1251,7 @@ class EffectModel:
         A host alias that may be `undefined` is excluded, so a read through the local cannot throw on a
         nullish base.
         """
-        node = strip_parens(node)
-        if self._is_canonical_globalthis(node):
-            return True
-        return (
-            isinstance(node, JsLogicalExpression)
-            and node.operator == '||'
-            and self._is_canonical_globalthis(node.left)
-        )
-
-    def _is_canonical_globalthis(self, node: Node | None) -> bool:
-        """
-        Whether *node* is the canonical, unshadowed `globalThis` — the one global-object alias the
-        language guarantees to exist, so it is always truthy and never nullish.
-        """
-        node = strip_parens(node)
-        return (
-            isinstance(node, JsIdentifier)
-            and node.name == 'globalThis'
-            and self.model.lookup(node.name, self.model.scope_of(node)) is None
-        )
+        return self.intrinsic_of(node) is GLOBAL_OBJECT
 
     def _base_is_safe(self, node: Node) -> bool:
         """
@@ -1168,7 +1270,7 @@ class EffectModel:
         if isinstance(node, JsIdentifier):
             if node.name in GLOBAL_OBJECT_ALIASES:
                 return True
-            return node.name in _PURE_INTRINSIC_ROOTS and self._is_global_intrinsic(node)
+            return isinstance(self.intrinsic_of(node), str)
         if isinstance(node, JsMemberExpression):
             return node.object is not None and self._base_is_safe(node.object)
         return False
@@ -1192,10 +1294,25 @@ class EffectModel:
         if isinstance(node, JsObjectExpression):
             return not object_member_access_runs_accessor(node)
         if isinstance(node, JsIdentifier):
-            return node.name in _PURE_INTRINSIC_ROOTS and self._is_global_intrinsic(node)
+            return isinstance(self.intrinsic_of(node), str)
         if isinstance(node, JsMemberExpression):
             return node.object is not None and self._base_getter_safe(node.object)
         return False
+
+    def _getter_free_read(self, member: JsMemberExpression) -> bool:
+        """
+        Whether reading *member* runs no user getter and cannot fire a poison-pill accessor: the base is a
+        getter-safe value (a fresh literal or a pristine intrinsic root) or a trusted global-object data
+        property, and the property is not one of the poison-pill names whose read may throw or run an
+        `Object.prototype` accessor. This is the single getter-freeness gate the summary scan and
+        `is_side_effect_free` share.
+        """
+        prop = member.property
+        if isinstance(prop, JsIdentifier) and prop.name in _POISON_PILL_PROPERTIES:
+            return False
+        if member.object is not None and self._base_getter_safe(member.object):
+            return True
+        return self._is_trusted_global_read(member)
 
 
 def _object_has_own_accessor(obj: JsObjectExpression) -> bool:

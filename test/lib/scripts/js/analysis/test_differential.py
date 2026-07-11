@@ -463,6 +463,34 @@ class TestDeobfuscationDifferential(TestBase):
             ' dead = leak();'
             ' console.log(SINK.join(","));')
 
+    def test_dead_store_effectful_inline_iife_initializer_kept(self):
+        """
+        The dead `x` binds an inline IIFE whose body writes a global; the callee is a bare function
+        expression, so clearing the call from its arguments alone would discard the write.
+        """
+        self._check(
+            'var x = function(){ globalThis.g = 9; }();'
+            ' console.log(globalThis.g);')
+
+    def test_effectful_inline_iife_argument_to_inlined_iife_kept(self):
+        """
+        The bare-IIFE argument writes a global and the outer IIFE ignores its parameter; treating the
+        argument as side-effect-free would let inlining elide the unused parameter and drop the write.
+        """
+        self._check(
+            'console.log((function(unused){ return 7; })(function(){ globalThis.g = 9; }()));'
+            ' console.log(globalThis.g);')
+
+    def test_new_array_invalid_length_throw_preserved(self):
+        """
+        `new Array(-1)` throws a RangeError; recognizing `new Array` pure must exclude a bad length, so
+        the dead store is kept and the throw survives.
+        """
+        self._check('var x = new Array(-1); console.log("after");')
+
+    def test_new_array_pure_length_drop_preserves_behavior(self):
+        self._check('var x = new Array(128); console.log("after");')
+
     def test_relational_comparison_of_non_numeric_strings(self):
         """
         Relational operators ToPrimitive both operands first and compare as strings when both results

@@ -802,6 +802,52 @@ class TestGlobalAliasStripping(TestJsDeobfuscator):
         """
         self.assertEqual('y = window.console;', self._simplify('y = window.console;'))
 
+    def test_global_object_existence_guard_folded(self):
+        self.assertEqual('var g = globalThis;', self._simplify('var g = globalThis || {};'))
+
+    def test_intrinsic_existence_guard_folded(self):
+        self.assertEqual('var s = String;', self._simplify('var s = String || String;'))
+
+    def test_host_alias_existence_guard_not_folded(self):
+        self.assertEqual('var g = window || {};', self._simplify('var g = window || {};'))
+
+    def test_falsy_global_existence_guard_not_folded(self):
+        self.assertEqual('var s = NaN || 5;', self._simplify('var s = NaN || 5;'))
+
+    def test_local_global_object_alias_member_stripped(self):
+        source = inspect.cleandoc(
+            """
+            var g = globalThis || {};
+            var s = g.String;
+            """
+        )
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var g = globalThis;
+                var s = String;
+                """
+            ),
+            self._simplify(source),
+        )
+
+    def test_local_global_object_alias_member_before_establishment_not_stripped(self):
+        source = inspect.cleandoc(
+            """
+            var s = g.String;
+            var g = globalThis || {};
+            """
+        )
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var s = g.String;
+                var g = globalThis;
+                """
+            ),
+            self._simplify(source),
+        )
+
     def test_global_alias_preserved_when_shadowed_by_param(self):
         source = inspect.cleandoc(
             """

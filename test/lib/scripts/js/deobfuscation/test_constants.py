@@ -963,6 +963,43 @@ class TestConstantInlining(TestJsDeobfuscator):
             self._inline("const p = ['a']; function f() { return p[0]; }"),
         )
 
+    def test_intrinsic_alias_inlined_across_functions(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function g() {
+                  return new Array(1);
+                }
+                g();
+                """
+            ),
+            self._inline("var A = Array; function g() { return new A(1); } g();"),
+        )
+
+    def test_intrinsic_alias_not_inlined_into_shadowing_scope(self):
+        source = inspect.cleandoc(
+            """
+            var A = Array;
+            function g(Array) {
+              return new A(1);
+            }
+            g(0);
+            """
+        )
+        self.assertEqual(source, self._inline(source))
+
+    def test_non_bare_intrinsic_alias_not_inlined(self):
+        source = inspect.cleandoc(
+            """
+            var S = globalThis.String || String;
+            function g() {
+              return S.fromCharCode(65);
+            }
+            g();
+            """
+        )
+        self.assertEqual(source, self._inline(source))
+
     def test_const_not_inlined_into_function_called_earlier_in_same_statement(self):
         source = inspect.cleandoc(
             """

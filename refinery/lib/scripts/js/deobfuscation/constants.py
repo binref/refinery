@@ -218,6 +218,17 @@ def _is_constant_value(node: Node) -> bool:
     return is_literal(node) or _is_literal_array(node)
 
 
+def _is_intrinsic_alias_value(effects: EffectModel, node: Node) -> bool:
+    """
+    Whether *node* is a bare identifier naming a pristine intrinsic (or the global object) — a stable,
+    unshadowed value that may be inlined at a cross-function use as itself, emitting the same name. Like a
+    literal it never goes stale (the intrinsic is pristine and the binding is single-assigned), so it
+    joins the `const`-like class the cross-function inliner admits; the emitted name is separately checked
+    unshadowed at each use, since intrinsic pristineness only rules out shadowing at the script scope.
+    """
+    return isinstance(node, JsIdentifier) and effects.intrinsic_of(node) is not None
+
+
 def _is_const_qualified(declarator: JsVariableDeclarator) -> bool:
     """
     Return whether a declarator belongs to a `const` declaration.
@@ -460,19 +471,19 @@ class JsConstantInlining(ScopeProcessingTransformer):
             if isinstance(value, JsStringLiteral) and len(value.value) > self.max_inline_length:
                 bloat_blocked.add(name)
 
-        constant_names = {
-            name for name, entries in candidates.items()
-            if any(_is_constant_value(e.value) for e in entries)
-        }
-        if not constant_names:
-            return inlined
-
         assert self._root is not None
         cache = model_cache(self, self._root)
         effects = cache.effects
         dominance = cache.dominance
         reaching = cache.reaching
         model = effects.model
+
+        constant_names = {
+            name for name, entries in candidates.items()
+            if any(_is_constant_value(e.value) or _is_intrinsic_alias_value(effects, e.value) for e in entries)
+        }
+        if not constant_names:
+            return inlined
 
         for node in list(walk_scope(scope, include_root_body=True)):
             if isinstance(node, JsMemberExpression) and node.computed:
@@ -592,14 +603,15 @@ class JsConstantInlining(ScopeProcessingTransformer):
             entry = entries[0]
             if entry.declarator is None or not isinstance(entry.declarator.id, JsIdentifier):
                 continue
-            if not _is_constant_value(entry.value):
+            intrinsic_alias = _is_intrinsic_alias_value(effects, entry.value)
+            if not (_is_constant_value(entry.value) or intrinsic_alias):
                 continue
             binding = model.binding_of(entry.declarator.id)
             if binding is None:
                 continue
             cross_candidates[name] = entries
             cross_bindings[name] = binding
-            if _is_const_qualified(entry.declarator) or entry.declarator.init is None:
+            if _is_const_qualified(entry.declarator) or entry.declarator.init is None or intrinsic_alias:
                 const_names.add(name)
 
         if not cross_candidates:
@@ -666,7 +678,8 @@ class JsConstantInlining(ScopeProcessingTransformer):
             if isinstance(parent, (JsFunctionDeclaration, JsFunctionExpression)) and parent.id is node:
                 continue
             entry = cross_candidates[name][0]
-            if not is_literal(entry.value):
+            intrinsic_alias = _is_intrinsic_alias_value(effects, entry.value)
+            if not (is_literal(entry.value) or intrinsic_alias):
                 continue
             enclosing = enclosing_function(node)
             if enclosing is None or enclosing is owner:
@@ -682,6 +695,12 @@ class JsConstantInlining(ScopeProcessingTransformer):
             if not dominance.runs_before_function(entry.value, enclosing):
                 continue
             if model.is_shadowed(name, node, outer):
+                continue
+            if (
+                intrinsic_alias
+                and isinstance(entry.value, JsIdentifier)
+                and model.lookup(entry.value.name, model.scope_of(node)) is not None
+            ):
                 continue
             _replace_in_parent(node, _clone_node(entry.value))
             self.mark_changed()

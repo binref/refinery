@@ -2,7 +2,12 @@ from __future__ import annotations
 
 from test import TestBase
 
-from refinery.lib.scripts.js.analysis.effects import EffectSummary, build_effects, object_member_access_runs_accessor
+from refinery.lib.scripts.js.analysis.effects import (
+    GLOBAL_OBJECT,
+    EffectSummary,
+    build_effects,
+    object_member_access_runs_accessor,
+)
 from refinery.lib.scripts.js.analysis.model import build_semantic_model
 from refinery.lib.scripts.js.model import (
     JsArrayExpression,
@@ -11,8 +16,10 @@ from refinery.lib.scripts.js.model import (
     JsFunctionDeclaration,
     JsFunctionExpression,
     JsIdentifier,
+    JsMemberExpression,
     JsObjectExpression,
     JsParenthesizedExpression,
+    JsVariableDeclarator,
 )
 from refinery.lib.scripts.js.parser import JsParser
 
@@ -478,6 +485,105 @@ class TestEffectModel(TestBase):
         _, effects = self._effects('function f(){ return globalThis.Uint8Array; }')
         self.assertTrue(effects.global_pristine)
 
+    def _intrinsic_of(self, expr: str, prefix: str = ''):
+        ast, effects = self._effects(F'{prefix}var _t = {expr};')
+        decl = next(
+            n for n in ast.walk_in_order()
+            if isinstance(n, JsVariableDeclarator) and isinstance(n.id, JsIdentifier) and n.id.name == '_t'
+        )
+        return effects.intrinsic_of(decl.init)
+
+    def test_intrinsic_of_canonical_global_object(self):
+        self.assertIs(self._intrinsic_of('globalThis'), GLOBAL_OBJECT)
+
+    def test_intrinsic_of_global_object_existence_guard(self):
+        self.assertIs(self._intrinsic_of('globalThis || {}'), GLOBAL_OBJECT)
+
+    def test_intrinsic_of_bare_pristine_root(self):
+        self.assertEqual(self._intrinsic_of('Array'), 'Array')
+
+    def test_intrinsic_of_existence_guard_of_roots(self):
+        self.assertEqual(self._intrinsic_of('String || String'), 'String')
+
+    def test_intrinsic_of_falsy_guard_is_not_an_intrinsic(self):
+        self.assertIsNone(self._intrinsic_of('NaN || 5'))
+
+    def test_intrinsic_of_host_alias_is_none(self):
+        self.assertIsNone(self._intrinsic_of('window'))
+
+    def test_intrinsic_of_shadowed_root_is_none(self):
+        self.assertIsNone(self._intrinsic_of('Array', prefix='var Array = 0; '))
+
+    def test_intrinsic_of_reflective_program_is_none(self):
+        self.assertIsNone(self._intrinsic_of('Array', prefix="eval('1'); "))
+
+    def test_intrinsic_of_does_not_follow_local_alias(self):
+        self.assertIsNone(self._intrinsic_of('a', prefix='var a = Array; '))
+
+    def test_intrinsic_poison_pill_read_is_impure(self):
+        self.assertFalse(self._summary('function f(){ return String.caller; }', 'f').is_pure)
+
+    def test_intrinsic_static_read_stays_pure(self):
+        self.assertTrue(self._summary('function f(){ return String.fromCodePoint; }', 'f').is_pure)
+
+    def test_new_array_literal_length_is_pure(self):
+        self.assertTrue(self._summary('function f(){ return new Array(128); }', 'f').is_pure)
+
+    def test_new_array_no_args_is_pure(self):
+        self.assertTrue(self._summary('function f(){ return new Array(); }', 'f').is_pure)
+
+    def test_new_array_multiple_args_is_pure(self):
+        self.assertTrue(self._summary('function f(){ return new Array(1, 2, 3); }', 'f').is_pure)
+
+    def test_new_array_non_number_literal_is_pure(self):
+        self.assertTrue(self._summary("function f(){ return new Array('x'); }", 'f').is_pure)
+
+    def test_new_array_negative_length_is_impure(self):
+        self.assertFalse(self._summary('function f(){ return new Array(-1); }', 'f').is_pure)
+
+    def test_new_array_fractional_length_is_impure(self):
+        self.assertFalse(self._summary('function f(){ return new Array(+3.5); }', 'f').is_pure)
+
+    def test_new_array_overflow_length_is_impure(self):
+        self.assertFalse(self._summary('function f(){ return new Array(4294967296); }', 'f').is_pure)
+
+    def test_new_array_spread_arg_is_impure(self):
+        self.assertFalse(self._summary('function f(){ return new Array(...xs); }', 'f').is_pure)
+
+    def test_new_array_dynamic_length_is_impure(self):
+        self.assertFalse(self._summary('function f(){ return new Array(n); }', 'f').is_pure)
+
+    def test_new_array_getter_arg_is_impure(self):
+        self.assertFalse(self._summary('function f(){ return new Array(obj.x); }', 'f').is_pure)
+
+    def test_new_array_shadowed_is_impure(self):
+        self.assertFalse(self._summary('function f(){ var Array = 0; return new Array(1); }', 'f').is_pure)
+
+    def test_new_object_is_not_a_pure_construct(self):
+        self.assertFalse(self._summary('function f(){ return new Object(); }', 'f').is_pure)
+
+    def _member(self, source: str) -> JsMemberExpression:
+        ast, effects = self._effects(source)
+        member = next(n for n in ast.walk_in_order() if isinstance(n, JsMemberExpression))
+        self._member_effects = effects
+        return member
+
+    def test_side_effect_free_clears_intrinsic_static_read(self):
+        member = self._member('String.fromCodePoint;')
+        self.assertTrue(self._member_effects.is_side_effect_free(member))
+
+    def test_side_effect_free_rejects_intrinsic_poison_pill_read(self):
+        member = self._member('String.caller;')
+        self.assertFalse(self._member_effects.is_side_effect_free(member))
+
+    def test_side_effect_free_rejects_shadowed_intrinsic_read(self):
+        member = self._member('var String = {}; String.fromCodePoint;')
+        self.assertFalse(self._member_effects.is_side_effect_free(member))
+
+    def test_side_effect_free_rejects_intrinsic_read_under_reflection(self):
+        member = self._member("String.fromCodePoint; eval('1');")
+        self.assertFalse(self._member_effects.is_side_effect_free(member))
+
     def test_call_to_parameter_is_not_pure(self):
         summary = self._summary('function f(g){ return g(); }', 'f')
         self.assertTrue(summary.calls_unknown)
@@ -523,6 +629,22 @@ class TestEffectModel(TestBase):
         ast, effects = self._effects('(ext());')
         paren = next(n for n in ast.walk_in_order() if isinstance(n, JsParenthesizedExpression))
         self.assertFalse(effects.is_side_effect_free(paren))
+
+    def test_side_effect_free_rejects_effectful_inline_iife(self):
+        ast, effects = self._effects('var _ = function () { ext(); }();')
+        iife = next(
+            n for n in ast.walk_in_order()
+            if isinstance(n, JsCallExpression) and isinstance(n.callee, JsFunctionExpression)
+        )
+        self.assertFalse(effects.is_side_effect_free(iife))
+
+    def test_side_effect_free_clears_pure_inline_iife(self):
+        ast, effects = self._effects('var _ = function () { return 1; }();')
+        iife = next(
+            n for n in ast.walk_in_order()
+            if isinstance(n, JsCallExpression) and isinstance(n.callee, JsFunctionExpression)
+        )
+        self.assertTrue(effects.is_side_effect_free(iife))
 
     @staticmethod
     def _container(source: str, name: str = 'a', *, member_calls_mutate: bool = True) -> bool:
