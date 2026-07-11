@@ -29,6 +29,7 @@ from refinery.lib.scripts import Node, _remove_from_parent
 from refinery.lib.scripts.js.analysis.cache import model_cache
 from refinery.lib.scripts.js.analysis.effects import EffectModel, object_member_access_runs_accessor
 from refinery.lib.scripts.js.analysis.liveness import LivenessModel
+from refinery.lib.scripts.js.analysis.reaching import ReachingModel
 from refinery.lib.scripts.js.analysis.model import (
     Binding,
     BindingKind,
@@ -272,6 +273,7 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
         self._model: SemanticModel | None = None
         self._effects: EffectModel | None = None
         self._liveness: LivenessModel | None = None
+        self._reaching: ReachingModel | None = None
 
     def visit_JsScript(self, node: JsScript):
         """
@@ -288,6 +290,7 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
             self._model = cache.model
             self._effects = cache.effects
             self._liveness = cache.liveness
+            self._reaching = cache.reaching
             self._has_reflection = self._model.has_reflection_surface()
             self._remove_dead_stores(node)
             self._localize_pseudo_globals(node)
@@ -315,6 +318,11 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
     def liveness(self) -> LivenessModel:
         assert self._liveness is not None
         return self._liveness
+
+    @property
+    def reaching(self) -> ReachingModel:
+        assert self._reaching is not None
+        return self._reaching
 
     def _remove_dead_stores(self, root: JsScript):
         """
@@ -431,9 +439,28 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
         Whether evaluating *node* can be dropped without losing an observable effect, via
         `refinery.lib.scripts.js.analysis.effects.EffectModel.is_side_effect_free`: a call proven pure
         under a pristine intrinsic surface is removable when its arguments are, so a dead binding whose
-        initializer is a pure decoder or factory can be dropped even though it is a call.
+        initializer is a pure decoder or factory can be dropped even though it is a call. A member read
+        through a local global-object alias is cleared only where the alias is established before it.
         """
-        return self.effects.is_side_effect_free(node, defunct)
+        return self.effects.is_side_effect_free(node, defunct, member_safe=self._member_read_ok)
+
+    def _member_read_ok(self, member: JsMemberExpression) -> bool:
+        """
+        Whether a member read is getter-free for removal: a trusted global data-property read, including
+        one through a local global-object alias proven to hold the global object before the read.
+        """
+        return self.effects.member_read_getter_free(member, self._alias_established)
+
+    def _alias_established(self, binding: Binding, member: JsMemberExpression) -> bool:
+        """
+        Whether *binding*'s single global-valued definition reaches *member*'s base unchanged, so the
+        alias holds the global object where it is read and the read cannot throw on a nullish base.
+        """
+        value = self.model.singular_value(binding)
+        base = member.object
+        if value is None or base is None:
+            return False
+        return self.reaching.value_preserved(binding, value, base)
 
     def _reflection_reachable(self, binding: Binding | None) -> bool:
         """

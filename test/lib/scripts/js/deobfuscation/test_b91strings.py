@@ -115,6 +115,10 @@ class TestStringConcealing(TestJsDeobfuscator):
         )
 
     def test_full_fizzbuzz_sample(self):
+        """
+        The whole recovered program is a single `console.log` of the FizzBuzz array; the dead
+        global-object helper preamble the string-concealing sample carries is fully removed.
+        """
         source = lzma.decompress(base64.b85decode(
             "{Wp48S^xk9=GL@E0stWa8~^|S5YJf5;3H2DoLvAj9ZCPGVfzyXn;9}d7=bd;P-u|=hS4y!t6q`3iYd7Jn@gb<iH1XeW)Th&veG?%"
             "YwBK2@+d2^J$YeG%M4UKdAGD!4GsZVt`^bppHR_iV0FXK*h#6x)K@pE_d426aHY}ck*@-Z<qci=bK`7R;<|B{jy#q`0RF-r89E<6"
@@ -168,11 +172,11 @@ class TestStringConcealing(TestJsDeobfuscator):
             "nb(gf4mErZ;J?VGGcz`5QFp!o{-$Tq8{0!cWR0UeOnMD$s&{9z;Ck)vH_cox7)@1(?vLXN+JV1HV7fJ=AEcU~^Ba0ru@Cvr0=ZBm"
             "%bQGS=ej;30)^>|*f5s$S)&3YOdG{R<Zr|PITBM2o}hXT00Fok&_)0NeGNZ_vBYQl0ssI200dcD"
         )).decode('utf8')
-        result = self._deobfuscate(source)
-        self.assertIn("'FizzBuzz'", result)
-        self.assertIn("'Fizz'", result)
-        self.assertIn("'Buzz'", result)
-        self.assertIn('console.log', result)
+        self.assertEqual(
+            "console.log([1, 2, 'Fizz', 4, 'Buzz', 'Fizz', 7, 8, 'Fizz', 'Buzz', 11, 'Fizz', 13, 14,"
+            " 'FizzBuzz', 16, 17, 'Fizz', 19, 'Buzz']);",
+            self._deobfuscate(source),
+        )
 
     def test_scope_aware_decoder_pairing(self):
         alpha1 = '0,Fz)`Q(lH=j5gK[i8~mJt_b&qr/fW^Y2]?#|@.!$cLZ9BN>A1o7ye+D%IM}O6;pV:P*E3CRnxXSh{wvaTUuk4G"s<d'

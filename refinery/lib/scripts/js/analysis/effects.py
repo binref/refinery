@@ -458,7 +458,12 @@ class EffectModel:
             return self.summary_of(callee).is_pure
         return False
 
-    def is_side_effect_free(self, node: Node, defunct: set[str] | None = None) -> bool:
+    def is_side_effect_free(
+        self,
+        node: Node,
+        defunct: set[str] | None = None,
+        member_safe: Callable[[JsMemberExpression], bool] | None = None,
+    ) -> bool:
         """
         Whether evaluating *node* can be dropped or reordered without an observable side effect, with
         the call leaf resolved through this model's `is_pure_call`: a call to a proven-pure function or
@@ -468,14 +473,17 @@ class EffectModel:
         inline function; unlike it, an identifier read that resolves through a `with` body's dynamic
         scope is rejected here — reading the bare name may fire the `with` object's getter or throw (see
         `refinery.lib.scripts.js.analysis.model.SemanticModel.read_has_dynamic_effect`) — while a
-        function value whose body performs such a read stays free, since defining it runs nothing.
+        function value whose body performs such a read stays free, since defining it runs nothing. A
+        caller with control-flow context passes *member_safe* to also clear a getter-free read through a
+        local global-object alias it can prove established before the read; the default clears only the
+        syntactic global case (`_is_trusted_global_read`).
         """
         return side_effect_free(
             node,
             defunct,
             self.is_pure_call,
             self.model.read_has_dynamic_effect,
-            self._is_trusted_global_read,
+            member_safe or self._is_trusted_global_read,
         )
 
     def binding_is_immutable_container(
@@ -1007,12 +1015,83 @@ class EffectModel:
 
     def _base_is_global_object(self, node: Node) -> bool:
         """
-        Whether *node* denotes the global object itself. The syntactic base case is an unshadowed
-        global-object alias identifier; a later value-provenance layer may prove more expressions global.
+        Whether *node* denotes the global object itself: an unshadowed global-object alias identifier,
+        always safe because the global object is never in a temporal dead zone. A local that only holds
+        the global from an establishing definition is resolved separately by `_trusted_global_alias_read`,
+        whose caller orders that definition before the read.
         """
         if isinstance(node, JsIdentifier) and node.name in GLOBAL_OBJECT_ALIASES:
             return self.model.lookup(node.name, self.model.scope_of(node)) is None
         return False
+
+    def member_read_getter_free(
+        self,
+        member: JsMemberExpression,
+        established: Callable[[Binding, JsMemberExpression], bool] | None = None,
+    ) -> bool:
+        """
+        Whether reading *member* runs no user getter, so it carries no observable effect: a trusted
+        global data-property read off a syntactic global-object alias — always, the global object is
+        never nullish — or off a local single-assigned to the global object, which holds it only from
+        its establishing definition onward. The local case qualifies only when *established* confirms
+        that definition reaches the read, an ordering this effect model cannot decide on its own (see
+        `refinery.lib.scripts.js.analysis.reaching.ReachingModel.value_preserved`).
+        """
+        if self._is_trusted_global_read(member):
+            return True
+        if established is None:
+            return False
+        binding = self._trusted_global_alias_read(member)
+        return binding is not None and established(binding, member)
+
+    def _trusted_global_alias_read(self, member: JsMemberExpression) -> Binding | None:
+        """
+        The local binding *member*'s base reads when *member* is a non-computed access of a trusted
+        global data property through a single-assignment local whose value is provably the global object
+        — a `globalThis` alias or a `globalThis || ...` guard — under `global_pristine`; `None`
+        otherwise. The binding is returned rather than a verdict because whether it already holds the
+        global where it is read is an ordering question for a layer that sees control flow.
+        """
+        if not self.global_pristine or member.computed:
+            return None
+        prop = member.property
+        if not isinstance(prop, JsIdentifier) or prop.name not in _GLOBAL_DATA_PROPERTIES:
+            return None
+        base = member.object
+        if not isinstance(base, JsIdentifier) or base.name in GLOBAL_OBJECT_ALIASES:
+            return None
+        binding = self.model.resolve(base)
+        if binding is None or self.model.reflection_can_reach(binding):
+            return None
+        return binding if self._value_is_global_object(self.model.singular_value(binding)) else None
+
+    def _value_is_global_object(self, node: Node | None) -> bool:
+        """
+        Whether *node*, the value a local is single-assigned, is provably the global object: the
+        canonical `globalThis`, or a `globalThis || ...` existence guard whose truthy left is exactly it.
+        A host alias that may be `undefined` is excluded, so a read through the local cannot throw on a
+        nullish base.
+        """
+        node = strip_parens(node)
+        if self._is_canonical_globalthis(node):
+            return True
+        return (
+            isinstance(node, JsLogicalExpression)
+            and node.operator == '||'
+            and self._is_canonical_globalthis(node.left)
+        )
+
+    def _is_canonical_globalthis(self, node: Node | None) -> bool:
+        """
+        Whether *node* is the canonical, unshadowed `globalThis` — the one global-object alias the
+        language guarantees to exist, so it is always truthy and never nullish.
+        """
+        node = strip_parens(node)
+        return (
+            isinstance(node, JsIdentifier)
+            and node.name == 'globalThis'
+            and self.model.lookup(node.name, self.model.scope_of(node)) is None
+        )
 
     def _base_is_safe(self, node: Node) -> bool:
         """

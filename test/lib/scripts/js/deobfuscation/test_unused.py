@@ -70,6 +70,34 @@ class TestUnusedCodeRemoval(TestJsDeobfuscator):
         )
         self.assertEqual(source, self._remove_unused(source))
 
+    def test_dead_global_alias_data_property_read_removed(self):
+        """
+        A local single-assigned to the global object is a global-object alias, so a data-property read
+        through it runs no getter; the dead read and the now-unreferenced alias are both dropped.
+        """
+        source = inspect.cleandoc(
+            """
+            var g = globalThis || {};
+            var d = g.TextDecoder;
+            console.log(1);
+            """
+        )
+        self.assertEqual('console.log(1);', self._remove_unused(source))
+
+    def test_dead_global_alias_read_before_establishment_preserved(self):
+        """
+        The alias is read before its establishing assignment runs, where it is still the hoisted
+        `undefined`, so the read throws; dropping it would discard the throw, so it is kept.
+        """
+        source = inspect.cleandoc(
+            """
+            var d = g.TextDecoder;
+            var g = globalThis || {};
+            console.log(1);
+            """
+        )
+        self.assertEqual(source, self._remove_unused(source))
+
     def test_block_scoped_var_read_outside_block_preserved(self):
         source = inspect.cleandoc(
             """

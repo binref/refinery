@@ -50,6 +50,20 @@ class TestDeobfuscationDifferential(TestBase):
             ' var dead = globalThis.TextDecoder;'
             " console.log(SINK.join('|'));")
 
+    def test_dead_global_alias_read_with_installed_getter_preserved(self):
+        """
+        The read is through a local global-object alias, but an accessor installed with
+        `Object.defineProperty` makes the global no longer pristine, so the alias read is no longer
+        trusted as getter-free and the unused binding is kept, preserving the getter's observable push.
+        """
+        self._check(
+            'var SINK = [];'
+            " Object.defineProperty(globalThis, 'TextDecoder',"
+            " { configurable: true, get: function () { SINK.push('read'); return 1; } });"
+            ' var g = globalThis || {};'
+            ' var dead = g.TextDecoder;'
+            " console.log(SINK.join('|'));")
+
     def test_constant_not_substituted_into_member_property_name(self):
         """
         The constant `g` appears both as a value (`+ g`, which folds to `5`) and as the property name
