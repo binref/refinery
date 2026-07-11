@@ -37,6 +37,19 @@ class TestDeobfuscationDifferential(TestBase):
     def test_dead_variable_and_constant_folding(self):
         self._check('var a = 1 + 2; var unused = 5; console.log(a * 2);')
 
+    def test_dead_global_read_with_installed_getter_preserved(self):
+        """
+        Installing an accessor with `Object.defineProperty` makes the global no longer pristine, so a
+        read of a trusted data-property name may now run that getter. An unused read of it must be kept,
+        or the getter's observable push is dropped.
+        """
+        self._check(
+            'var SINK = [];'
+            " Object.defineProperty(globalThis, 'TextDecoder',"
+            " { configurable: true, get: function () { SINK.push('read'); return 1; } });"
+            ' var dead = globalThis.TextDecoder;'
+            " console.log(SINK.join('|'));")
+
     def test_constant_not_substituted_into_member_property_name(self):
         """
         The constant `g` appears both as a value (`+ g`, which folds to `5`) and as the property name

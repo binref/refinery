@@ -44,6 +44,32 @@ class TestUnusedCodeRemoval(TestJsDeobfuscator):
         )
         self.assertEqual(source, self._remove_unused(source))
 
+    def test_dead_global_data_property_read_removed(self):
+        """
+        A read of a trusted data-property global off `globalThis` runs no getter, so an unused binding
+        initialized from one is a pure dead store the removal drops.
+        """
+        source = inspect.cleandoc(
+            """
+            var d = globalThis.TextDecoder;
+            console.log(1);
+            """
+        )
+        self.assertEqual('console.log(1);', self._remove_unused(source))
+
+    def test_dead_non_data_property_global_read_preserved(self):
+        """
+        `location` is not among the trusted global data properties, so `globalThis.location` may run an
+        accessor; the unused binding is kept rather than dropped as a pure read.
+        """
+        source = inspect.cleandoc(
+            """
+            var d = globalThis.location;
+            console.log(1);
+            """
+        )
+        self.assertEqual(source, self._remove_unused(source))
+
     def test_block_scoped_var_read_outside_block_preserved(self):
         source = inspect.cleandoc(
             """

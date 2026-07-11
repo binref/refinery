@@ -277,6 +277,7 @@ def side_effect_free(
     defunct: set[str] | None = None,
     call_pure: Callable[[JsCallExpression | JsNewExpression], bool] | None = None,
     read_effect: Callable[[Node], bool] | None = None,
+    member_safe: Callable[[JsMemberExpression], bool] | None = None,
 ) -> bool:
     """
     Conservative check for whether evaluating an expression can be dropped or reordered with no
@@ -289,8 +290,10 @@ def side_effect_free(
     object's getter or throw). A function expression is free without descending into its body — defining
     it runs nothing — so a dynamic-scope read inside an un-called function does not make the value
     effectful. A parenthesized expression is transparent, bearing exactly the effects of the expression
-    it groups. `EffectModel.is_side_effect_free` passes `EffectModel.is_pure_call` and
-    `read_has_dynamic_effect`; a caller without a model gets the conservative behaviour. When *defunct*
+    it groups. A member read is free when its base is a safe value or *member_safe* certifies it;
+    `EffectModel.is_side_effect_free` supplies `EffectModel._is_trusted_global_read` to clear a
+    getter-free read of a trusted global data property. It passes `EffectModel.is_pure_call` and
+    `read_has_dynamic_effect` too. A caller without a model gets the conservative behaviour. When *defunct*
     is given its identifiers name bindings being removed, so calls to them and property reads through
     them are treated as free.
     """
@@ -302,60 +305,62 @@ def side_effect_free(
         return True
     if isinstance(node, JsParenthesizedExpression):
         return node.expression is not None and side_effect_free(
-            node.expression, defunct, call_pure, read_effect)
+            node.expression, defunct, call_pure, read_effect, member_safe)
     if isinstance(node, JsUnaryExpression):
         if node.operator == 'delete':
             return False
-        return node.operand is not None and side_effect_free(node.operand, defunct, call_pure, read_effect)
+        return node.operand is not None and side_effect_free(node.operand, defunct, call_pure, read_effect, member_safe)
     if isinstance(node, JsMemberExpression):
         if node.object is None:
             return False
-        if not side_effect_free(node.object, defunct, call_pure, read_effect):
+        if not side_effect_free(node.object, defunct, call_pure, read_effect, member_safe):
             return False
-        if node.property is not None and not side_effect_free(node.property, defunct, call_pure, read_effect):
+        if node.property is not None and not side_effect_free(node.property, defunct, call_pure, read_effect, member_safe):
             return False
-        return _is_safe_property_base(node.object, defunct)
+        if _is_safe_property_base(node.object, defunct):
+            return True
+        return member_safe is not None and member_safe(node)
     if isinstance(node, (JsBinaryExpression, JsLogicalExpression)):
         return (
             node.left is not None
-            and side_effect_free(node.left, defunct, call_pure, read_effect)
+            and side_effect_free(node.left, defunct, call_pure, read_effect, member_safe)
             and node.right is not None
-            and side_effect_free(node.right, defunct, call_pure, read_effect)
+            and side_effect_free(node.right, defunct, call_pure, read_effect, member_safe)
         )
     if isinstance(node, JsConditionalExpression):
         return (
             node.test is not None
-            and side_effect_free(node.test, defunct, call_pure, read_effect)
+            and side_effect_free(node.test, defunct, call_pure, read_effect, member_safe)
             and node.consequent is not None
-            and side_effect_free(node.consequent, defunct, call_pure, read_effect)
+            and side_effect_free(node.consequent, defunct, call_pure, read_effect, member_safe)
             and node.alternate is not None
-            and side_effect_free(node.alternate, defunct, call_pure, read_effect)
+            and side_effect_free(node.alternate, defunct, call_pure, read_effect, member_safe)
         )
     if isinstance(node, JsObjectExpression):
         for prop in node.properties:
             if not isinstance(prop, JsProperty):
                 return False
             if prop.computed and (
-                prop.key is None or not side_effect_free(prop.key, defunct, call_pure, read_effect)
+                prop.key is None or not side_effect_free(prop.key, defunct, call_pure, read_effect, member_safe)
             ):
                 return False
-            if prop.value is not None and not side_effect_free(prop.value, defunct, call_pure, read_effect):
+            if prop.value is not None and not side_effect_free(prop.value, defunct, call_pure, read_effect, member_safe):
                 return False
         return True
     if isinstance(node, JsArrayExpression):
         return all(
-            elem is None or side_effect_free(elem, defunct, call_pure, read_effect)
+            elem is None or side_effect_free(elem, defunct, call_pure, read_effect, member_safe)
             for elem in node.elements
         )
     if isinstance(node, JsSequenceExpression):
-        return all(side_effect_free(e, defunct, call_pure, read_effect) for e in node.expressions)
+        return all(side_effect_free(e, defunct, call_pure, read_effect, member_safe) for e in node.expressions)
     if isinstance(node, JsCallExpression):
         if defunct and isinstance(node.callee, JsIdentifier) and node.callee.name in defunct:
-            return all(side_effect_free(arg, defunct, call_pure, read_effect) for arg in node.arguments)
+            return all(side_effect_free(arg, defunct, call_pure, read_effect, member_safe) for arg in node.arguments)
         if isinstance(node.callee, JsFunctionExpression):
-            return all(side_effect_free(arg, defunct, call_pure, read_effect) for arg in node.arguments)
+            return all(side_effect_free(arg, defunct, call_pure, read_effect, member_safe) for arg in node.arguments)
     if call_pure is not None and isinstance(node, (JsCallExpression, JsNewExpression)) and call_pure(node):
-        return all(side_effect_free(arg, defunct, call_pure, read_effect) for arg in node.arguments)
+        return all(side_effect_free(arg, defunct, call_pure, read_effect, member_safe) for arg in node.arguments)
     return False
 
 
@@ -465,7 +470,13 @@ class EffectModel:
         `refinery.lib.scripts.js.analysis.model.SemanticModel.read_has_dynamic_effect`) — while a
         function value whose body performs such a read stays free, since defining it runs nothing.
         """
-        return side_effect_free(node, defunct, self.is_pure_call, self.model.read_has_dynamic_effect)
+        return side_effect_free(
+            node,
+            defunct,
+            self.is_pure_call,
+            self.model.read_has_dynamic_effect,
+            self._is_trusted_global_read,
+        )
 
     def binding_is_immutable_container(
         self, binding: Binding, *, member_calls_mutate: bool = True, exclude: Node | None = None,
