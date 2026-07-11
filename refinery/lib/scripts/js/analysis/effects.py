@@ -612,7 +612,7 @@ class EffectModel:
         parent = ref.parent
         if not isinstance(parent, JsCallExpression) or ref not in parent.arguments:
             return False
-        func = self.static_callee(parent)
+        func = self.unambiguous_callee(parent)
         if func is None:
             return False
         if self._callee_uses_arguments(func):
@@ -671,11 +671,13 @@ class EffectModel:
         self, call: JsCallExpression
     ) -> JsFunctionDeclaration | JsFunctionExpression | JsArrowFunctionExpression | None:
         """
-        The function a call invokes when it is statically a single, never-reassigned function: a direct
-        function or arrow expression callee, or an identifier bound once to a function declaration or a
-        function/arrow initializer. `None` for anything else — a method call, a parameter, a reassigned
-        binding (including one a dynamic scope could rebind through a `with` body or direct `eval`), or an
-        unresolved name — whose target cannot be pinned down.
+        The function a call invokes, resolved permissively through `function_of`: a direct function or
+        arrow expression callee, or an identifier bound to a single function — a declaration, a
+        `var`/`let`/`const` initializer, or the value a name is assigned exactly once. For a name that
+        held a value and was then reassigned this returns the post-reassignment value, which is the
+        running target only where that reassignment is established before the call; a consumer that
+        cannot order the reassignment against the call must use `unambiguous_callee` instead. `None` for
+        a method call, a parameter, a redeclared or dynamically-rebindable binding, or an unresolved name.
         """
         callee = call.callee
         if isinstance(callee, (JsFunctionExpression, JsArrowFunctionExpression)):
@@ -683,6 +685,23 @@ class EffectModel:
         if not isinstance(callee, JsIdentifier):
             return None
         return self.function_of(self.model.resolve(callee))
+
+    def unambiguous_callee(
+        self, call: JsCallExpression
+    ) -> JsFunctionDeclaration | JsFunctionExpression | JsArrowFunctionExpression | None:
+        """
+        The ordering-free twin of `static_callee`, for a consumer that reasons about a call without
+        knowing where it sits in execution order. Identical except an identifier callee resolves through
+        `unambiguous_function`, so a name that held a value and was then reassigned — whose running target
+        depends on the call's position relative to the reassignment — yields `None` rather than the
+        post-reassignment value.
+        """
+        callee = call.callee
+        if isinstance(callee, (JsFunctionExpression, JsArrowFunctionExpression)):
+            return callee
+        if not isinstance(callee, JsIdentifier):
+            return None
+        return self.unambiguous_function(self.model.resolve(callee))
 
     def _alias_target(self, ref: JsIdentifier) -> Binding | None:
         parent = ref.parent

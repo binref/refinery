@@ -484,6 +484,18 @@ class TestDeobfuscationDifferential(TestBase):
             ' SINK.push(v5());'
             ' console.log(SINK.join(","));')
 
+    def test_call_mutating_container_before_reassignment_not_inlined(self):
+        """
+        `bump(o)` runs the original body, which sets `o.v` to 9, before `bump` is reassigned; judging `o`
+        immutable and inlining `o.v` as its initial 1 drops the mutation.
+        """
+        self._check(
+            'var o = { v: 1 };'
+            ' function bump(x) { x.v = 9; }'
+            ' bump(o);'
+            ' bump = function(x) {};'
+            ' console.log(o.v);')
+
     def test_call_before_function_reassignment_keeps_side_effect(self):
         """
         `v0(true)` runs the original side-effecting body before the reassignment; resolving `v0` to the

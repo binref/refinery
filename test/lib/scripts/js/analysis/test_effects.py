@@ -591,6 +591,16 @@ class TestEffectModel(TestBase):
         self.assertFalse(self._container(
             'function f(x){ return x[0]; } f = g; var a = [1, 2]; f(a); SINK(a[0]);'))
 
+    def test_escape_into_reassigned_to_literal_mutating_callee_is_mutable(self):
+        self.assertFalse(self._container(
+            'function keep(x){ x[0] = 9; } var a = [1, 2]; keep(a);'
+            ' keep = function(x){ return x[0]; }; SINK(a[0]);'))
+
+    def test_escape_into_reassigned_to_literal_mutating_object_callee_is_mutable(self):
+        self.assertFalse(self._container(
+            'function keep(x){ x.v = 9; } var o = {v: 1}; keep(o);'
+            ' keep = function(x){ return x.v; }; SINK(o.v);', 'o'))
+
     def test_escape_into_callee_reaching_arg_via_arguments_is_mutable(self):
         self.assertFalse(self._container(
             'function f(x){ arguments[0][0] = 9; } var a = [1, 2]; f(a); SINK(a[0]);'))
