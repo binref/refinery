@@ -159,6 +159,22 @@ class TestGlobalFinderInlining(TestJsDeobfuscator):
         )
         self.assertEqual(source, self._find(source))
 
+    def test_premature_call_to_declarator_finder_is_not_substituted(self):
+        """
+        The finder is installed by a `var` initializer, so a call textually before it runs while the
+        binding is the hoisted `undefined` and throws; rewriting that call to `globalThis` would replace
+        the runtime `TypeError` with a value.
+        """
+        source = inspect.cleandoc(
+            '''
+            var g = finder();
+            var finder = function() {
+              return window;
+            };
+            '''
+        )
+        self.assertEqual(source, self._find(source))
+
     def test_redeclared_finder_is_not_substituted(self):
         """
         The name has two declarations, so a call resolves to the last by hoisting; the binding no
