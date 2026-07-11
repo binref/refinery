@@ -939,7 +939,7 @@ class EffectModel:
         if isinstance(callee, JsIdentifier):
             if callee.name in _PURE_GLOBAL_FUNCTIONS and self._is_global_intrinsic(callee):
                 return _PURE
-            return self.function_of(self.model.resolve(callee))
+            return self.unambiguous_function(self.model.resolve(callee))
         return None
 
     def function_of(

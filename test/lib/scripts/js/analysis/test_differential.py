@@ -484,6 +484,20 @@ class TestDeobfuscationDifferential(TestBase):
             ' SINK.push(v5());'
             ' console.log(SINK.join(","));')
 
+    def test_call_before_function_reassignment_keeps_side_effect(self):
+        """
+        `v0(true)` runs the original side-effecting body before the reassignment; resolving `v0` to the
+        later empty function and dropping the call as pure would lose the `SINK.push`. The unused `v6` is
+        the dead binding that lets the removal pass reach the call.
+        """
+        self._check(
+            'var SINK = [];'
+            ' function v0(v1) { SINK.push(v1); }'
+            ' v0(true);'
+            ' function v6() {}'
+            ' v0 = function(){};'
+            ' console.log(SINK.join(","));')
+
     def test_reassigned_global_not_inlined_as_initial_value(self):
         """
         `v0` starts at 7 but is reassigned to an array before `v3` (which reads `-v0`) ever runs, so
