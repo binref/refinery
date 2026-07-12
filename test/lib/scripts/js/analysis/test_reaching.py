@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from test import TestBase
 
+from refinery.lib.scripts import Node
 from refinery.lib.scripts.js.analysis.cache import ModelCache
+from refinery.lib.scripts.js.analysis.model import Binding
 from refinery.lib.scripts.js.model import JsIdentifier, JsVariableDeclarator
 from refinery.lib.scripts.js.parser import JsParser
 
@@ -27,6 +29,30 @@ class TestReaching(TestBase):
         binding = cache.model.binding_of(declarator.id)
         assert binding is not None
         return cache.reaching.value_preserved(binding, declarator.init, binding.reads[0])
+
+    def _free_variable_reaches(self, source: str) -> bool:
+        """
+        Whether the value of `x`, read inside the initializer of `r`, still holds where `r` is later
+        used, as `ReachingModel.value_preserved` reports it — the free-variable check the inliner makes
+        before relocating `r`'s value, with a declaration of `x` the potential kill between the two.
+        """
+        ast = JsParser(source).parse()
+        cache = ModelCache(ast)
+        x = self._reference(cache, ast, 'x')
+        r = self._reference(cache, ast, 'r')
+        return cache.reaching.value_preserved(x, x.reads[0], r.reads[0])
+
+    @staticmethod
+    def _reference(cache: ModelCache, ast: Node, name: str) -> Binding:
+        """
+        The binding of the first bound reference named *name* in *ast*.
+        """
+        for node in ast.walk_in_order():
+            if isinstance(node, JsIdentifier) and node.name == name:
+                binding = cache.model.resolve(node)
+                if binding is not None:
+                    return binding
+        raise AssertionError(F'no bound reference named {name!r}')
 
     def test_reaches_with_no_barrier(self):
         self.assertTrue(self._query('var x = 1; x;'))
@@ -94,3 +120,17 @@ class TestReaching(TestBase):
         self.assertFalse(self._query(
             'var x = 1; function m() { x = 2; } var alias = m; x;'
         ))
+
+    def test_does_not_reach_across_bare_lexical_declaration(self):
+        """
+        `let x;` ends the binding's temporal dead zone: a read taken before it observes a throw, a read
+        after it observes the declared value, so the two are not the same value and the earlier read
+        must not be relocated past the declaration.
+        """
+        self.assertFalse(self._free_variable_reaches('var r = x; let x; r;'))
+
+    def test_reaches_when_lexical_declared_before_the_definition(self):
+        self.assertTrue(self._free_variable_reaches('let x; var r = x; r;'))
+
+    def test_reaches_across_bare_var_declaration(self):
+        self.assertTrue(self._free_variable_reaches('var r = x; var x; r;'))

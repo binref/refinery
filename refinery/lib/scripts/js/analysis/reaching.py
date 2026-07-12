@@ -160,13 +160,19 @@ class ReachingModel:
     @staticmethod
     def _value_definitions(binding: Binding) -> Iterator[Node]:
         """
-        Every site that establishes *binding*'s value: an assignment or update recorded in `writes`, and
-        a declaration whose declarator carries an initializer. A later definition kills an earlier one,
-        so the reaching query counts them all bar the one it tracks from. A bare `var x;` with no
-        initializer establishes nothing and is left out.
+        Every site that establishes *binding*'s value: a write in `writes`, and a declaration that
+        ends the binding's temporal dead zone. A `let`, `const`, or `class` declaration ends that
+        zone even without an initializer, so a read cannot move across it and it is a kill; a `var`
+        has no dead zone, so a bare `var x;` establishes nothing and only an initialized declarator
+        counts. A later definition kills an earlier one, so the query counts them all bar the
+        one it tracks from.
         """
         yield from binding.writes
+        lexical = binding.is_lexical
         for declaration in binding.declarations:
+            if lexical:
+                yield declaration
+                continue
             parent = declaration.parent
             if isinstance(parent, JsVariableDeclarator) and parent.init is not None:
                 yield declaration

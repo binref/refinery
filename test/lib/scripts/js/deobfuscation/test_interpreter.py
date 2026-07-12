@@ -130,6 +130,24 @@ class TestInterpreterValueSemantics(TestJsDeobfuscator):
     def test_typeof_namespace_object_folds_to_object(self):
         self.assertEqual("var x = 'object';", self._fold('typeof Math'))
 
+    def test_typeof_shadowed_global_in_dead_zone_is_not_folded(self):
+        """
+        `typeof Math` here reads the local `Math` in its temporal dead zone — a `ReferenceError` at
+        runtime, not the global `Math` — so the evaluator must not manufacture `'object'` for it and
+        leaves the throwing function unreduced.
+        """
+        source = inspect.cleandoc(
+            """
+            function f() {
+                var r = typeof Math;
+                let Math = 5;
+                return r;
+            }
+            var x = f();
+            """
+        )
+        self.assertEqual(self._run_transformers(source), self._evaluate(source))
+
     def test_string_of_null_is_null(self):
         self.assertEqual("var x = 'null';", self._fold('String(null)'))
 

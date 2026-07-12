@@ -1668,6 +1668,18 @@ class JsInterpreter:
             return None
         return func
 
+    def _resolves_to_lexical_binding(self, node: JsIdentifier) -> bool:
+        """
+        Whether *node* resolves to a local `let`, `const`, or `class` binding. Such a name is absent from
+        `_env` only while its declarator has not yet run, i.e. it is being read in its temporal dead zone,
+        so the read throws at runtime and the well-known-global `typeof` fallback must not apply to it.
+        """
+        effects = self._effects
+        if effects is None:
+            return False
+        binding = effects.model.resolve(node)
+        return binding is not None and binding.is_lexical
+
     def _eval_identifier(self, node: JsIdentifier) -> Value:
         name = node.name
         if name == 'undefined':
@@ -1750,6 +1762,8 @@ class JsInterpreter:
                     return _js_typeof(self._env[name])
                 if self._resolve_function_node(operand) is not None:
                     return 'function'
+                if self._resolves_to_lexical_binding(operand):
+                    raise IrreducibleExpression(node)
                 result = _global_typeof(name)
                 if result is None:
                     raise IrreducibleExpression(node)
