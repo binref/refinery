@@ -125,3 +125,107 @@ class TestJsStrict(TestBase):
                 StrictViolation(0, 'octal-literal'),
                 StrictViolation(source.index('with'), 'with-statement'),
             ])
+
+    RESERVED = [
+        'implements', 'interface', 'let', 'package', 'private', 'protected', 'public', 'static', 'yield',
+    ]
+
+    def test_reserved_word_as_binding(self):
+        for word in self.RESERVED:
+            source = F'var {word} = 1'
+            with self.subTest(word=word):
+                self.assertEqual(
+                    self._violations(source, strict=True),
+                    [StrictViolation(source.index(word), 'reserved-word', word)])
+
+    def test_reserved_word_as_reference(self):
+        for word in self.RESERVED:
+            source = F'typeof {word}'
+            with self.subTest(word=word):
+                self.assertEqual(
+                    self._violations(source, strict=True),
+                    [StrictViolation(source.index(word), 'reserved-word', word)])
+
+    def test_reserved_word_as_label(self):
+        self.assertEqual(
+            self._violations('yield: ;', strict=True),
+            [StrictViolation(0, 'reserved-word', 'yield')])
+
+    def test_reserved_word_in_property_position_clean(self):
+        for source in ['({let: 1})', '({}).public', 'o.yield', 'o.static = 1']:
+            with self.subTest(source=source):
+                self.assertEqual(self._violations(source, strict=True), [])
+
+    def test_eval_arguments_as_binding_or_target(self):
+        cases = [
+            ('var eval = 1', 'eval'),
+            ('eval = 1', 'eval'),
+            ('eval += 1', 'eval'),
+            ('++arguments', 'arguments'),
+            ('(function (eval) {})', 'eval'),
+            ('(function arguments() {})', 'arguments'),
+            ('try {} catch (eval) {}', 'eval'),
+            ('for (arguments in {}) {}', 'arguments'),
+        ]
+        for source, name in cases:
+            with self.subTest(source=source):
+                self.assertEqual(
+                    self._violations(source, strict=True),
+                    [StrictViolation(source.index(name), 'eval-arguments-target', name)])
+
+    def test_eval_arguments_as_reference_clean(self):
+        for source in ['typeof eval', '({eval: 1})', '({}).arguments', 'eval()', 'arguments[0]']:
+            with self.subTest(source=source):
+                self.assertEqual(self._violations(source, strict=True), [])
+
+    def test_eval_in_binding_pattern(self):
+        cases = [
+            ('(function ({eval}) {})', 'eval'),
+            ('(function ([arguments]) {})', 'arguments'),
+            ('(function ({a: {b: eval}}) {})', 'eval'),
+        ]
+        for source, name in cases:
+            with self.subTest(source=source):
+                self.assertEqual(
+                    self._violations(source, strict=True),
+                    [StrictViolation(source.index(name), 'eval-arguments-target', name)])
+
+    def test_duplicate_parameter(self):
+        source = '(function (q, q) {})'
+        self.assertEqual(
+            self._violations(source, strict=True),
+            [StrictViolation(source.rindex('q'), 'duplicate-parameter', 'q')])
+
+    def test_distinct_parameters_clean(self):
+        self.assertEqual(self._violations('(function (a, b, c) {})', strict=True), [])
+
+    def test_default_value_is_a_reference(self):
+        self.assertEqual(self._violations('(function (a = eval) {})', strict=True), [])
+        source = '(function (a = implements) {})'
+        self.assertEqual(
+            self._violations(source, strict=True),
+            [StrictViolation(source.index('implements'), 'reserved-word', 'implements')])
+
+    def test_computed_key_is_a_reference(self):
+        self.assertEqual(self._violations('({[eval]: 1})', strict=True), [])
+        source = '({[yield]: 1})'
+        self.assertEqual(
+            self._violations(source, strict=True),
+            [StrictViolation(source.index('yield'), 'reserved-word', 'yield')])
+
+    def test_name_rules_clean_when_sloppy(self):
+        for source in ['var eval = 1', 'yield: ;', '(function (q, q) {})', 'typeof implements']:
+            with self.subTest(source=source):
+                self.assertEqual(self._violations(source, strict=False), [])
+
+    def test_reserved_binding_in_strict_function_body(self):
+        source = 'function outer() { "use strict"; var yield = 1; }'
+        self.assertEqual(
+            self._violations(source, strict=False),
+            [StrictViolation(source.index('yield'), 'reserved-word', 'yield')])
+
+    def test_reserved_binding_in_class_method(self):
+        source = 'class C { m() { var package = 1; } }'
+        self.assertEqual(
+            self._violations(source, strict=False),
+            [StrictViolation(source.index('package'), 'reserved-word', 'package')])
