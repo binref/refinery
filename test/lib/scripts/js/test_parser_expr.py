@@ -481,3 +481,55 @@ class TestJsParserExpressions(TestBase):
         self.assertIsInstance(prop.key, JsIdentifier)
         self.assertEqual(prop.key.name, 'set')
         self.assertTrue(prop.value.generator)
+
+    def test_async_call_is_not_sequence(self):
+        expr = self._parse_expr('async(1, 2)')
+        self.assertIsInstance(expr, JsCallExpression)
+        self.assertIsInstance(expr.callee, JsIdentifier)
+        self.assertEqual(expr.callee.name, 'async')
+        self.assertEqual(len(expr.arguments), 2)
+
+    def test_async_empty_call(self):
+        expr = self._parse_expr('async()')
+        self.assertIsInstance(expr, JsCallExpression)
+        self.assertIsInstance(expr.callee, JsIdentifier)
+        self.assertEqual(expr.callee.name, 'async')
+        self.assertEqual(len(expr.arguments), 0)
+
+    def test_async_member_call(self):
+        expr = self._parse_expr('async.foo()')
+        self.assertIsInstance(expr, JsCallExpression)
+        self.assertIsInstance(expr.callee, JsMemberExpression)
+        self.assertIsInstance(expr.callee.object, JsIdentifier)
+        self.assertEqual(expr.callee.object.name, 'async')
+
+    def test_async_is_identifier_in_binary(self):
+        expr = self._parse_expr('async + 1')
+        self.assertIsInstance(expr, JsBinaryExpression)
+        self.assertIsInstance(expr.left, JsIdentifier)
+        self.assertEqual(expr.left.name, 'async')
+
+    def test_async_bare_identifier(self):
+        expr = self._parse_expr('async')
+        self.assertIsInstance(expr, JsIdentifier)
+        self.assertEqual(expr.name, 'async')
+
+    def test_async_arrow_paren_param(self):
+        expr = self._parse_expr('async(x) => x')
+        self.assertIsInstance(expr, JsArrowFunctionExpression)
+        self.assertTrue(expr.is_async)
+        self.assertEqual(len(expr.params), 1)
+
+    def test_async_arrow_bare_param(self):
+        expr = self._parse_expr('async x => x')
+        self.assertIsInstance(expr, JsArrowFunctionExpression)
+        self.assertTrue(expr.is_async)
+        self.assertEqual(len(expr.params), 1)
+
+    def test_async_is_param_name_in_sync_arrow(self):
+        expr = self._parse_expr('async => async + 1')
+        self.assertIsInstance(expr, JsArrowFunctionExpression)
+        self.assertFalse(expr.is_async)
+        self.assertEqual(len(expr.params), 1)
+        self.assertIsInstance(expr.params[0], JsIdentifier)
+        self.assertEqual(expr.params[0].name, 'async')

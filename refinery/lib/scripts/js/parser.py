@@ -326,8 +326,9 @@ class JsParser:
             return self._parse_import_declaration()
         if kind == JsTokenKind.EXPORT:
             return self._parse_export_declaration()
-        if kind == JsTokenKind.ASYNC:
-            return self._parse_async_statement()
+        if self._at_async_function():
+            self._advance()
+            return self._parse_function_declaration(is_async=True)
 
         expr = self._parse_expression()
 
@@ -1025,8 +1026,9 @@ class JsParser:
             if self._at(JsTokenKind.CLASS):
                 decl = self._parse_class_declaration(class_decorators)
                 return JsExportDefaultDeclaration(declaration=decl, offset=offset)
-            if self._at(JsTokenKind.ASYNC):
-                decl = self._parse_async_statement()
+            if self._at_async_function():
+                self._advance()
+                decl = self._parse_function_declaration(is_async=True)
                 return JsExportDefaultDeclaration(declaration=decl, offset=offset)
             expr = self._parse_assignment_expression()
             self._eat_semicolon()
@@ -1057,8 +1059,9 @@ class JsParser:
         if self._at(JsTokenKind.CLASS):
             decl = self._parse_class_declaration(class_decorators)
             return JsExportNamedDeclaration(declaration=decl, offset=offset)
-        if self._at(JsTokenKind.ASYNC):
-            decl = self._parse_async_statement()
+        if self._at_async_function():
+            self._advance()
+            decl = self._parse_function_declaration(is_async=True)
             return JsExportNamedDeclaration(declaration=decl, offset=offset)
 
         self._advance()
@@ -1089,14 +1092,19 @@ class JsParser:
         return JsExportNamedDeclaration(
             specifiers=specifiers, source=source, offset=offset)
 
-    def _parse_async_statement(self) -> Statement:
-        offset = self._current.offset
-        self._expect(JsTokenKind.ASYNC)
-        if self._at(JsTokenKind.FUNCTION) and not self._preceded_by_newline:
-            return self._parse_function_declaration(is_async=True)
-        expr = self._parse_expression_starting_with_async(offset)
-        self._eat_semicolon()
-        return JsExpressionStatement(expression=expr, offset=offset)
+    def _at_async_function(self) -> bool:
+        """
+        Whether the parser is positioned at `async function` with no line terminator between the two — the
+        one form in which a leading `async` opens a declaration rather than an ordinary expression. Every
+        other `async` (a call, member access, arrow, or bare reference) is left to the expression grammar,
+        which reaches it through `_parse_async_expression` and applies the full call/member and operator
+        parsing.
+        """
+        return (
+            self._at(JsTokenKind.ASYNC)
+            and self._peek_next().kind == JsTokenKind.FUNCTION
+            and not self._ahead_newline
+        )
 
     def _expect_contextual(self, keyword: str):
         if self._at(JsTokenKind.FROM) and keyword == 'from':
@@ -1718,25 +1726,45 @@ class JsParser:
         return self._parse_expression_starting_with_async(offset)
 
     def _parse_expression_starting_with_async(self, offset: int) -> Expression:
-        if self._at(JsTokenKind.FUNCTION) and not self._preceded_by_newline:
-            return self._parse_function_impl(as_expression=True, is_async=True)
+        if not self._preceded_by_newline:
+            if self._at(JsTokenKind.FUNCTION):
+                return self._parse_function_impl(as_expression=True, is_async=True)
 
-        if self._at(JsTokenKind.IDENTIFIER) and not self._preceded_by_newline:
-            tok = self._advance()
-            if self._at(JsTokenKind.ARROW) and not self._preceded_by_newline:
+            if self._at(JsTokenKind.ARROW):
+                self._advance()
+                param = JsIdentifier(name='async', offset=offset)
+                body = self._parse_arrow_body(False)
+                return JsArrowFunctionExpression(
+                    params=[param], body=body, is_async=False, offset=offset)
+
+            if (
+                self._at(JsTokenKind.IDENTIFIER)
+                and self._peek_next().kind == JsTokenKind.ARROW
+                and not self._ahead_newline
+            ):
+                tok = self._advance()
                 self._advance()
                 param = JsIdentifier(name=tok.value, offset=tok.offset)
                 body = self._parse_arrow_body(True)
                 return JsArrowFunctionExpression(
                     params=[param], body=body, is_async=True, offset=offset)
-            return JsIdentifier(name=tok.value, offset=tok.offset)
 
-        if self._at(JsTokenKind.LPAREN) and not self._preceded_by_newline:
-            paren_result = self._parse_paren_or_arrow(True)
-            if isinstance(paren_result, JsArrowFunctionExpression):
-                paren_result.is_async = True
-                paren_result.offset = offset
-            return paren_result
+            if self._at(JsTokenKind.LPAREN):
+                self._advance()
+                with self._with_no_in(False):
+                    args = self._parse_argument_list()
+                if self._at(JsTokenKind.ARROW) and not self._preceded_by_newline:
+                    self._advance()
+                    params = [self._to_param(arg) for arg in args]
+                    body = self._parse_arrow_body(True)
+                    return JsArrowFunctionExpression(
+                        params=params, body=body, is_async=True, offset=offset)
+                return JsCallExpression(
+                    callee=JsIdentifier(name='async', offset=offset),
+                    arguments=args,
+                    optional=False,
+                    offset=offset,
+                )
 
         return JsIdentifier(name='async', offset=offset)
 

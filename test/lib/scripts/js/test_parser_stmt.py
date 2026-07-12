@@ -4,8 +4,10 @@ from test import TestBase
 
 from refinery.lib.scripts.js.parser import JsParser
 from refinery.lib.scripts.js.model import (
+    JsArrowFunctionExpression,
     JsBlockStatement,
     JsBreakStatement,
+    JsCallExpression,
     JsClassBody,
     JsClassDeclaration,
     JsContinueStatement,
@@ -22,6 +24,7 @@ from refinery.lib.scripts.js.model import (
     JsForOfStatement,
     JsForStatement,
     JsFunctionDeclaration,
+    JsIdentifier,
     JsIfStatement,
     JsImportDeclaration,
     JsImportDefaultSpecifier,
@@ -346,6 +349,36 @@ class TestJsParserStatements(TestBase):
     def test_export_all(self):
         stmt = self._parse_stmt("export * from 'mod';")
         self.assertIsInstance(stmt, JsExportAllDeclaration)
+
+    def test_export_async_function(self):
+        stmt = self._parse_stmt('export async function f() {}')
+        assert isinstance(stmt, JsExportNamedDeclaration)
+        decl = stmt.declaration
+        assert isinstance(decl, JsFunctionDeclaration)
+        self.assertTrue(decl.is_async)
+
+    def test_export_default_async_function(self):
+        stmt = self._parse_stmt('export default async function () {}')
+        assert isinstance(stmt, JsExportDefaultDeclaration)
+        decl = stmt.declaration
+        assert isinstance(decl, JsFunctionDeclaration)
+        self.assertTrue(decl.is_async)
+
+    def test_export_default_async_arrow(self):
+        stmt = self._parse_stmt('export default async () => {};')
+        assert isinstance(stmt, JsExportDefaultDeclaration)
+        decl = stmt.declaration
+        assert isinstance(decl, JsArrowFunctionExpression)
+        self.assertTrue(decl.is_async)
+
+    def test_export_default_async_call(self):
+        stmt = self._parse_stmt('export default async(1, 2);')
+        assert isinstance(stmt, JsExportDefaultDeclaration)
+        decl = stmt.declaration
+        assert isinstance(decl, JsCallExpression)
+        callee = decl.callee
+        assert isinstance(callee, JsIdentifier)
+        self.assertEqual(callee.name, 'async')
 
     def test_labeled_statement(self):
         stmt = self._parse_stmt('outer: for (;;) { break outer; }')
