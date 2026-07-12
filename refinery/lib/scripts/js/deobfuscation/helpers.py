@@ -42,6 +42,7 @@ from refinery.lib.scripts.js.model import (
     JsBinaryExpression,
     JsBlockStatement,
     JsBooleanLiteral,
+    JsCallExpression,
     JsClassDeclaration,
     JsClassExpression,
     JsConditionalExpression,
@@ -55,12 +56,14 @@ from refinery.lib.scripts.js.model import (
     JsNullLiteral,
     JsNumericLiteral,
     JsObjectExpression,
+    JsParenthesizedExpression,
     JsProperty,
     JsReturnStatement,
     JsScript,
     JsSequenceExpression,
     JsStaticBlock,
     JsStringLiteral,
+    JsTaggedTemplateExpression,
     JsThisExpression,
     JsUnaryExpression,
     JsVariableDeclaration,
@@ -1047,6 +1050,47 @@ def references_receiver_this(root: Node) -> bool:
         or (isinstance(node, JsIdentifier) and node.name == 'super' and is_use_position(node))
         for node in walk_receiver_scope(root)
     )
+
+
+def is_receiver_binding_call(member: Node) -> bool:
+    """
+    Return whether *member* is evaluated in a position where the resulting call binds its object as the
+    call's `this` receiver: the callee of a call `m(...)` (including an optional call `m?.(...)`) or the
+    tag of a tagged template. Transparent parentheses are seen through; a comma-sequence callee
+    `(0, m)()` yields a value rather than a Reference and so detaches the receiver, as does `new m()`
+    (a constructor receives a fresh `this`). This is the dual of `references_receiver_this`: detaching
+    *member* from its object preserves `this` unless the call site binds a receiver and the callee
+    observes one.
+    """
+    node = member
+    parent = node.parent
+    while isinstance(parent, JsParenthesizedExpression):
+        node, parent = parent, parent.parent
+    if isinstance(parent, JsCallExpression) and parent.callee is node:
+        return True
+    if isinstance(parent, JsTaggedTemplateExpression) and parent.tag is node:
+        return True
+    return False
+
+
+def rewrite_receiver_this_to_global(root: Node) -> bool:
+    """
+    Replace every `this` bound to *root*'s own receiver with a `globalThis` identifier, returning whether
+    any replacement was made. The rewrite descends the receiver boundary `walk_receiver_scope` defines —
+    through arrow functions and a class's `extends` clause and computed keys, but not into a nested
+    regular or generator function, whose `this` is its own — so only *root*'s own `this` is rewritten.
+    A caller uses this where *root* is invoked with no receiver, so its `this` is the global object: a
+    `Function`-constructed body, or a recognized global-object finder whose `… || this` fallback yields
+    the global. The synthesized `globalThis` identifiers stay subject to whatever free-name or shadow
+    check the caller applies, so a binding named `globalThis` in scope declines the rewrite at the
+    caller's discretion.
+    """
+    changed = False
+    for node in list(walk_receiver_scope(root)):
+        if isinstance(node, JsThisExpression):
+            _replace_in_parent(node, JsIdentifier(name='globalThis'))
+            changed = True
+    return changed
 
 
 def binding_has_references(

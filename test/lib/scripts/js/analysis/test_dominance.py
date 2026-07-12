@@ -5,9 +5,11 @@ from test import TestBase
 from refinery.lib.scripts.js.analysis.dominance import build_dominance
 from refinery.lib.scripts.js.analysis.model import build_semantic_model
 from refinery.lib.scripts.js.model import (
+    JsAssignmentExpression,
     JsFunctionDeclaration,
     JsFunctionExpression,
     JsIdentifier,
+    JsMemberExpression,
     JsVariableDeclarator,
 )
 from refinery.lib.scripts.js.parser import JsParser
@@ -151,6 +153,19 @@ class TestDominance(TestBase):
                 return node
         raise AssertionError('no function expression')
 
+    @staticmethod
+    def _method(ast, base: str, key: str) -> JsFunctionExpression:
+        for node in ast.walk_in_order():
+            left = node.left if isinstance(node, JsAssignmentExpression) else None
+            if (
+                isinstance(left, JsMemberExpression)
+                and isinstance(left.object, JsIdentifier) and left.object.name == base
+                and isinstance(left.property, JsIdentifier) and left.property.name == key
+                and isinstance(node.right, JsFunctionExpression)
+            ):
+                return node.right
+        raise AssertionError(F'no method {base}.{key}')
+
     def test_runs_before_directly_invoked_iife_after_definition(self):
         ast, dom = self._dominance('const c = 5; (function(){ return c; })();')
         self.assertTrue(dom.runs_before_function(self._def(ast, 'c'), self._func_expr(ast)))
@@ -201,6 +216,35 @@ class TestDominance(TestBase):
         ast, dom = self._dominance(
             'const c = 5; function f(){ return c; } function inner(a = f()){ return a; } inner();')
         self.assertTrue(dom.runs_before_function(self._def(ast, 'c'), self._func(ast, 'f')))
+
+    def test_runs_before_namespace_method_called_after_definition(self):
+        """
+        `NS.f` is stored as a method of a non-escaping local object and invoked only after `c` is
+        assigned; the method's invocation is ordered by that call site, not by its earlier creation, so
+        the definition runs before every call even though it is written after the method is created.
+        """
+        ast, dom = self._dominance(
+            'var NS = {}; NS.f = function(){ return c; }; var c = 5; NS.f();')
+        self.assertTrue(dom.runs_before_function(self._def(ast, 'c'), self._method(ast, 'NS', 'f')))
+
+    def test_does_not_run_before_namespace_method_called_before_definition(self):
+        """
+        The `NS.f()` call precedes `var c = 5`, so the method reads `c` while it is still unset; the
+        property read that pins the call runs before the definition, so it is not judged to run before.
+        """
+        ast, dom = self._dominance(
+            'var NS = {}; NS.f = function(){ return c; }; NS.f(); var c = 5;')
+        self.assertFalse(dom.runs_before_function(self._def(ast, 'c'), self._method(ast, 'NS', 'f')))
+
+    def test_does_not_run_before_method_when_object_escapes(self):
+        """
+        `NS` is passed to `sink`, which could invoke `NS.f()` before `c` is assigned; because the object
+        escapes, the method's call sites are no longer enumerable through property reads alone, so the
+        definition is not judged to run before every invocation despite the later in-scope call.
+        """
+        ast, dom = self._dominance(
+            'var NS = {}; NS.f = function(){ return c; }; sink(NS); var c = 5; NS.f();')
+        self.assertFalse(dom.runs_before_function(self._def(ast, 'c'), self._method(ast, 'NS', 'f')))
 
     def test_dominates_node_reflexive_and_ordered(self):
         ast, dom = self._dominance('var a = 1; var b = 2;')

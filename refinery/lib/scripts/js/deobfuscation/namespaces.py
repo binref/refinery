@@ -13,6 +13,8 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     ScopeProcessingTransformer,
     access_key,
     function_binds_name,
+    is_receiver_binding_call,
+    references_receiver_this,
 )
 from refinery.lib.scripts.js.model import (
     JsAssignmentExpression,
@@ -66,7 +68,10 @@ class JsNamespaceFlattening(ScopeProcessingTransformer):
             if scope_obj is None:
                 continue
             conflicts = self._find_conflicting_names(model, scope, scope_obj, name, props, declarator)
-            flattenable = props - conflicts
+            receiver_called = self._receiver_called_keys(scope, name)
+            this_unsafe = self._this_unsafe_keys(scope, name, receiver_called)
+            held_back = conflicts | this_unsafe
+            flattenable = props - held_back
             if not flattenable:
                 continue
             func_assigns = self._detect_function_assignments(body, name, flattenable)
@@ -79,7 +84,7 @@ class JsNamespaceFlattening(ScopeProcessingTransformer):
             self._remove_hoisted_statements(body, hoisted)
             self._emit_declarations(scope, body, flattenable - set(hoisted))
             self._emit_function_declarations(scope, body, hoisted)
-            if not conflicts:
+            if not held_back:
                 self._remove_declarator(body, declarator, decl_stmt)
             self.changed = True
 
@@ -332,6 +337,54 @@ class JsNamespaceFlattening(ScopeProcessingTransformer):
             if key is not None:
                 buckets.setdefault(key, []).append(node)
         return buckets
+
+    @staticmethod
+    def _receiver_called_keys(scope: Node, name: str) -> set[str]:
+        """
+        Property keys accessed at least once in a receiver-binding call position (`NS.key(...)`,
+        `NS.key` as a template tag), where the call binds `this === NS`. Flattening such an access to a
+        bare `key` would rebind `this` to the global object, so a `this`-observing value on one of these
+        keys cannot be detached; keys reached only through detached uses are unaffected.
+        """
+        return {
+            key
+            for key, nodes in JsNamespaceFlattening._property_references_by_key(scope, name).items()
+            if any(is_receiver_binding_call(node) for node in nodes)
+        }
+
+    @staticmethod
+    def _this_unsafe_keys(scope: Node, name: str, receiver_called: set[str]) -> set[str]:
+        """
+        The receiver-called keys that cannot be proven to hold a `this`-free function, so flattening
+        `NS.key(...)` to `key(...)` might rebind `this` from `NS` to the global object. A key is provably
+        safe only when every `NS.key = rhs` assignment binds a function expression that does not observe
+        its receiver `this`, and at least one such assignment exists. Anything else — a value observing
+        `this`, an opaque or compound assignment, an arrow (conservatively, though its `this` is lexical),
+        or a key never assigned a function — is held back on the namespace object.
+        """
+        if not receiver_called:
+            return set()
+        assigned: dict[str, list[Expression | None]] = {key: [] for key in receiver_called}
+        for node in JsNamespaceFlattening._walk_pruning_shadows(scope, name):
+            if not isinstance(node, JsMemberExpression):
+                continue
+            obj = node.object
+            if not isinstance(obj, JsIdentifier) or obj.name != name:
+                continue
+            key = access_key(node)
+            if key not in receiver_called:
+                continue
+            parent = node.parent
+            if isinstance(parent, JsAssignmentExpression) and parent.left is node:
+                assigned[key].append(parent.right if parent.operator == '=' else None)
+        return {
+            key
+            for key, values in assigned.items()
+            if not values or not all(
+                isinstance(rhs, JsFunctionExpression) and not references_receiver_this(rhs)
+                for rhs in values
+            )
+        }
 
     @staticmethod
     def _emit_function_declarations(

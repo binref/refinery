@@ -634,17 +634,31 @@ def _is_global_base(node: Node | None) -> bool:
     return isinstance(node, JsIdentifier) and node.name in GLOBAL_OBJECT_ALIASES
 
 
-def _global_member_name(member: JsMemberExpression) -> str | None:
+def _member_property_name(member: JsMemberExpression) -> str | None:
     """
-    The name of the global a member access on a global-object alias designates when it is statically
-    known: the property identifier of a dot access (`globalThis.g`) or the value of a string-literal
-    computed access (`globalThis['g']`). A non-literal computed key (`globalThis[expr]`) has no static
-    name — it is a reflection surface `_detect_reflection` accounts for — and yields `None`.
+    The statically known property name a member access designates: the property identifier of a dot
+    access (`o.g`) or the value of a string-literal computed access (`o['g']`). A non-literal computed
+    key (`o[expr]`) has no static name and yields `None`. The base is not inspected — a caller that
+    needs the base to be a global-object alias checks that separately.
     """
     prop = member.property
     if member.computed:
         return prop.value if isinstance(prop, JsStringLiteral) else None
     return prop.name if isinstance(prop, JsIdentifier) else None
+
+
+def _is_member_assignment_target(member: JsMemberExpression) -> bool:
+    """
+    Whether *member* is the target of a plain `=` assignment (`m = x`), the one position where a member
+    access is written without its prior value being read. A compound assignment (`m += x`) or an update
+    (`m++`) reads the value before writing, so neither is counted here.
+    """
+    parent = member.parent
+    return (
+        isinstance(parent, JsAssignmentExpression)
+        and parent.operator == '='
+        and strip_parens(parent.left) is member
+    )
 
 
 def _is_reflective_member(member: JsMemberExpression) -> bool:
@@ -696,7 +710,7 @@ def _timer_callee_name(callee: Node | None) -> str | None:
     if isinstance(callee, JsIdentifier):
         return callee.name if callee.name in STRING_EVAL_NAMES else None
     if isinstance(callee, JsMemberExpression) and _is_global_base(callee.object):
-        name = _global_member_name(callee)
+        name = _member_property_name(callee)
         return name if name in STRING_EVAL_NAMES else None
     return None
 
@@ -905,6 +919,67 @@ class SemanticModel:
         ):
             establishing = strip_parens(parent.left)
         return all(write is establishing for write in binding.writes)
+
+    def object_property_reference_points(self, function: Node) -> list[Node] | None:
+        """
+        The reference points that no invocation of *function* can precede when it is installed as a
+        property of a non-escaping local object — the read sites of that property. Returns them when
+        *function* is the value of a `BASE.key = function` assignment whose `BASE` identifier resolves to
+        a local binding that holds one object value (`singular_value` is a `JsObjectExpression`) and never
+        escapes as a bare value — every reference to it is the object of a member access, so the object
+        identity is pinned to that binding and the only way to obtain the callable is to read `BASE.key`.
+        Every such read is a point the invocation follows, including one whose value is stored and called
+        later; the establishing write installs the value without reading it and is excluded, as is an
+        access of a statically different property, which never reads the value. A computed access whose
+        key is not statically known (`BASE[expr]`) may read the property and is kept. The opaque reflective
+        surfaces that could name the binding are added as points exactly as the name-based enumeration adds
+        them, and a `with` that could rename the base (a `dynamic_refs` entry) makes the ordering
+        unknowable and yields `None`, as does any pattern the recognition does not match, so a caller falls
+        through to its name-based ordering.
+
+        This is a bounded points-to fact: a method reached only through property reads on an object that
+        never leaks is ordered by those reads, not by its creation site, which a member assignment target
+        gives no name to order by. It answers, at the binding level, the ordering `invocation_binding`
+        cannot when the callable is pinned to a member rather than a name.
+        """
+        parent = function.parent
+        if not (
+            isinstance(parent, JsAssignmentExpression)
+            and parent.operator == '='
+            and parent.right is function
+        ):
+            return None
+        target = strip_parens(parent.left)
+        if not isinstance(target, JsMemberExpression) or not isinstance(target.object, JsIdentifier):
+            return None
+        key = _member_property_name(target)
+        if key is None:
+            return None
+        binding = self.resolve(target.object)
+        if binding is None or not isinstance(self.singular_value(binding), JsObjectExpression):
+            return None
+        if binding.dynamic_refs:
+            return None
+        points: list[Node] = []
+        for read in binding.reads:
+            node = read
+            access = node.parent
+            while isinstance(access, JsParenthesizedExpression):
+                node, access = access, access.parent
+            if not isinstance(access, JsMemberExpression) or access.object is not node:
+                return None
+            name = _member_property_name(access)
+            if name is not None and name != key:
+                continue
+            if _is_member_assignment_target(access):
+                continue
+            points.append(access)
+        points.extend(
+            site
+            for site in self.reflection_surface_sites(binding)
+            if not site.is_descendant_of(function)
+        )
+        return points
 
     def singular_value(self, binding: Binding | None) -> Node | None:
         """
@@ -1291,7 +1366,7 @@ class SemanticModel:
         base = member.object
         if not isinstance(base, JsIdentifier) or base.name not in GLOBAL_OBJECT_ALIASES:
             return None
-        name = _global_member_name(member)
+        name = _member_property_name(member)
         if name is None:
             return None
         scope = self._node_scope.get(id(member))

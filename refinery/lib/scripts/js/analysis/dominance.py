@@ -268,8 +268,12 @@ class DominanceModel:
         `with` body governs, whose `dynamic_refs` entry is unorderable; this mirrors the escape verdict
         `EffectModel.function_escapes` draws from the same fact. A surface lexically inside *function* is
         dropped: it cannot trigger the function's first invocation, only a re-entrant one, so it never
-        bounds the ordering. For a function bound to no name the single point is the function expression
-        itself: the closure cannot be invoked before it is created.
+        bounds the ordering. A function pinned to no name but installed as a property of a non-escaping
+        local object (`SemanticModel.object_property_reference_points`) is enumerated instead by the read
+        sites of that property, the only way its callable can be obtained; this is consulted first, so a
+        namespace method ordered by its call sites is not mistaken for an anonymous closure ordered by its
+        creation. For a function bound to no name and matching neither pattern, the single point is the
+        function expression itself: the closure cannot be invoked before it is created.
 
         Memoized by function identity: the enumeration is a pure function of *function* and the model,
         both fixed for the model's lifetime — the whole DominanceModel is rebuilt when the tree version
@@ -283,6 +287,9 @@ class DominanceModel:
         return cache[key]
 
     def _compute_reference_points(self, function: Node) -> list[Node] | None:
+        member_points = self.model.object_property_reference_points(function)
+        if member_points is not None:
+            return member_points
         binding = self.model.invocation_binding(function)
         if binding is None:
             return [function]

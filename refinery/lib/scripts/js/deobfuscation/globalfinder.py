@@ -31,7 +31,10 @@ from refinery.lib.scripts.js.analysis.model import (
     GLOBAL_OBJECT_ALIASES,
     SemanticModel,
 )
-from refinery.lib.scripts.js.deobfuscation.helpers import ScriptLevelTransformer
+from refinery.lib.scripts.js.deobfuscation.helpers import (
+    ScriptLevelTransformer,
+    rewrite_receiver_this_to_global,
+)
 from refinery.lib.scripts.js.model import (
     JsArrayExpression,
     JsArrowFunctionExpression,
@@ -68,6 +71,9 @@ class JsGlobalFinderInlining(ScriptLevelTransformer):
         finders = _collect_finders(node, model, cache.effects)
         if not finders:
             return
+        if self._materialize_finder_receivers(model, finders):
+            self.mark_changed()
+            return
         finder_ids = {id(f) for f in finders}
         for call in list(node.walk()):
             if not isinstance(call, JsCallExpression) or call.arguments:
@@ -85,6 +91,39 @@ class JsGlobalFinderInlining(ScriptLevelTransformer):
                 continue
             _replace_in_parent(call, JsIdentifier(name='globalThis'))
             self.mark_changed()
+
+    @staticmethod
+    def _materialize_finder_receivers(model: SemanticModel, finders: list[Node]) -> bool:
+        """
+        Rewrite the receiver `this` of each recognized finder that is stored as a namespace method
+        (`NS.f = function(){ … return r || this; }`) to `globalThis`, returning whether any finder was
+        changed. A finder invoked as `NS.f()` binds its object as `this`, so its `… || this` fallback
+        cannot be folded through the identifier-callee path and the namespace flattening declines to
+        detach the method while it observes a receiver. Materializing the belief the recognition already
+        rests on — that the finder yields the global object — makes the method `this`-free, so flattening
+        detaches it to a bare `f()` the fold path then resolves to `globalThis`. Only a non-arrow,
+        member-assigned finder is touched, and only where `globalThis` is not shadowed in its scope: a
+        name-bound finder is left to the fold path untouched (its body needs no rewrite), and an arrow
+        inherits `this` lexically rather than from the call, so neither is a receiver to materialize.
+        """
+        changed = False
+        for finder in finders:
+            if isinstance(finder, JsArrowFunctionExpression):
+                continue
+            parent = finder.parent
+            if not (
+                isinstance(parent, JsAssignmentExpression)
+                and parent.operator == '='
+                and parent.right is finder
+                and isinstance(parent.left, JsMemberExpression)
+            ):
+                continue
+            scope = model.function_scope(finder)
+            if scope is None or model.lookup('globalThis', scope) is not None:
+                continue
+            if rewrite_receiver_this_to_global(finder):
+                changed = True
+        return changed
 
 
 def _collect_finders(

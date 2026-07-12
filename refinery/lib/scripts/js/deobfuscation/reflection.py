@@ -36,8 +36,8 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     get_body,
     property_key,
     references_receiver_this,
+    rewrite_receiver_this_to_global,
     string_value,
-    walk_receiver_scope,
     walk_scope,
 )
 from refinery.lib.scripts.js.deobfuscation.options import module_execution
@@ -60,7 +60,6 @@ from refinery.lib.scripts.js.model import (
     JsScript,
     JsSequenceExpression,
     JsStringLiteral,
-    JsThisExpression,
     JsUnaryExpression,
     Statement,
     strip_parens,
@@ -576,23 +575,6 @@ def _references_new_target(root: Node) -> bool:
     return False
 
 
-def _rewrite_receiver_this_to_global(root: JsScript) -> None:
-    """
-    Replace every `this` bound to the constructed function's own receiver with a `globalThis` reference.
-    A `Function`-constructed function is invoked here with no receiver, so its `this` is the global
-    object; rewriting each occurrence lets the body inline as ordinary global-scope code rather than
-    declining the moment a `this` appears. The rewrite descends the same receiver boundary
-    `references_receiver_this` uses — through arrow functions and a class's `extends` clause and computed
-    keys, but not into a nested regular or generator function, whose `this` is its own — so only the
-    constructed function's own `this` is rewritten. The synthesized `globalThis` identifiers are then
-    held to the body free-name check like any other global reference, so a binding named `globalThis` in
-    scope at the call site still declines the inlining.
-    """
-    for node in list(walk_receiver_scope(root)):
-        if isinstance(node, JsThisExpression):
-            _replace_in_parent(node, JsIdentifier(name='globalThis'))
-
-
 def _body_free_names(body_model: SemanticModel, parsed: JsScript) -> set[str]:
     """
     The names *parsed* reads or writes without binding them locally — the names a
@@ -978,7 +960,7 @@ class JsReflectionInlining(ScriptLevelTransformer):
         ):
             return None
         if resolves_globally:
-            _rewrite_receiver_this_to_global(parsed)
+            rewrite_receiver_this_to_global(parsed)
             if references_receiver_this(parsed) or _references_new_target(parsed):
                 return None
         if scope is not ReflectedScope.FUNCTION_CONSTRUCTOR and _has_top_level_return(parsed.body):

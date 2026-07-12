@@ -65,6 +65,25 @@ class TestGlobalFinderInlining(TestJsDeobfuscator):
             '''
         ))
 
+    def test_namespace_method_finder_receiver_is_materialized(self):
+        source = (
+            'var NS = {}; NS.f = function() { var r; try { r = window; } catch (e) {}'
+            ' return r || this; }; NS.f();'
+        )
+        self.assertEqual(self._find(source), inspect.cleandoc(
+            '''
+            var NS = {};
+            NS.f = function() {
+              var r;
+              try {
+                r = window;
+              } catch (e) {}
+              return r || globalThis;
+            };
+            NS.f();
+            '''
+        ))
+
     def test_non_finder_returning_constant_is_unchanged(self):
         source = inspect.cleandoc(
             '''

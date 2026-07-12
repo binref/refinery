@@ -250,3 +250,105 @@ class TestNamespaceFlattening(TestJsDeobfuscator):
             ),
             self._flatten('var NS = {}; NS.x = 1; delete NS.x;'),
         )
+
+    def test_this_method_receiver_called_kept_on_namespace(self):
+        """
+        `NS.f()` binds `this === NS`; flattening to `f()` would rebind `this` to the global object, so
+        a `this`-observing method that is receiver-called stays on the namespace. Sibling data
+        properties still flatten around it.
+        """
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var x;
+                var NS = {};
+                x = 5;
+                NS.f = function() {
+                  return this.x;
+                };
+                log(NS.f());
+                """
+            ),
+            self._flatten('var NS = {}; NS.x = 5; NS.f = function () { return this.x; }; log(NS.f());'),
+        )
+
+    def test_this_method_called_through_sequence_is_flattened(self):
+        """
+        `(0, NS.f)()` detaches the receiver, so `this` is the global object in both forms and the
+        `this`-observing method flattens.
+        """
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function f() {
+                  return this.x;
+                }
+                var x;
+                x = 5;
+                log((0, f)());
+                """
+            ),
+            self._flatten('var NS = {}; NS.x = 5; NS.f = function () { return this.x; }; log((0, NS.f)());'),
+        )
+
+    def test_this_method_called_through_alias_is_flattened(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function f() {
+                  return this.x;
+                }
+                var x;
+                x = 5;
+                var g = f;
+                log(g());
+                """
+            ),
+            self._flatten(
+                'var NS = {}; NS.x = 5; NS.f = function () { return this.x; }; var g = NS.f; log(g());'),
+        )
+
+    def test_this_free_method_receiver_called_is_flattened(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function f() {
+                  return 1;
+                }
+                log(f());
+                """
+            ),
+            self._flatten('var NS = {}; NS.f = function () { return 1; }; log(NS.f());'),
+        )
+
+    def test_this_method_called_through_parentheses_kept_on_namespace(self):
+        """
+        Parentheses are transparent to the receiver: `(NS.f)()` still binds `this === NS`, so the
+        method is held back unchanged.
+        """
+        source = 'var NS = {}; NS.f = function () { return this.x; }; log((NS.f)());'
+        self.assertEqual(self._run_transformers(source), self._flatten(source))
+
+    def test_this_method_constructed_with_new_is_flattened(self):
+        """
+        `new NS.f()` gives the constructor a fresh `this`, so detaching the callee does not change it.
+        """
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function f() {
+                  return this;
+                }
+                new f();
+                """
+            ),
+            self._flatten('var NS = {}; NS.f = function () { return this; }; new NS.f();'),
+        )
+
+    def test_opaque_value_receiver_called_kept_on_namespace(self):
+        """
+        The value of `NS.f` is not a provable `this`-free function literal, so a receiver call on it is
+        held back rather than detached.
+        """
+        source = 'var NS = {}; NS.f = impl(); NS.f();'
+        self.assertEqual(self._run_transformers(source), self._flatten(source))
