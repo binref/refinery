@@ -380,6 +380,61 @@ class TestJsParserStatements(TestBase):
         assert isinstance(callee, JsIdentifier)
         self.assertEqual(callee.name, 'async')
 
+    def test_function_name_contextual_keyword(self):
+        for name in ('async', 'await', 'yield', 'as', 'from', 'of', 'let'):
+            with self.subTest(name=name):
+                stmt = self._parse_stmt(F'function {name}() {{ return 1; }}')
+                assert isinstance(stmt, JsFunctionDeclaration)
+                node_id = stmt.id
+                assert isinstance(node_id, JsIdentifier)
+                self.assertEqual(node_id.name, name)
+
+    def test_class_name_contextual_keyword(self):
+        for name in ('async', 'await', 'yield', 'as', 'from', 'of', 'let'):
+            with self.subTest(name=name):
+                stmt = self._parse_stmt(F'class {name} {{}}')
+                assert isinstance(stmt, JsClassDeclaration)
+                node_id = stmt.id
+                assert isinstance(node_id, JsIdentifier)
+                self.assertEqual(node_id.name, name)
+
+    def test_break_label_contextual_keyword(self):
+        stmt = self._parse_stmt('break of;')
+        assert isinstance(stmt, JsBreakStatement)
+        assert isinstance(stmt.label, JsIdentifier)
+        self.assertEqual(stmt.label.name, 'of')
+
+    def test_continue_label_contextual_keyword(self):
+        stmt = self._parse_stmt('continue as;')
+        assert isinstance(stmt, JsContinueStatement)
+        assert isinstance(stmt.label, JsIdentifier)
+        self.assertEqual(stmt.label.name, 'as')
+
+    def test_import_default_contextual_keyword(self):
+        stmt = self._parse_stmt("import async from 'm';")
+        assert isinstance(stmt, JsImportDeclaration)
+        specifier = stmt.specifiers[0]
+        assert isinstance(specifier, JsImportDefaultSpecifier)
+        local = specifier.local
+        assert isinstance(local, JsIdentifier)
+        self.assertEqual(local.name, 'async')
+
+    def test_import_default_named_from(self):
+        stmt = self._parse_stmt("import from from 'm';")
+        assert isinstance(stmt, JsImportDeclaration)
+        specifier = stmt.specifiers[0]
+        assert isinstance(specifier, JsImportDefaultSpecifier)
+        local = specifier.local
+        assert isinstance(local, JsIdentifier)
+        self.assertEqual(local.name, 'from')
+
+    def test_decorator_contextual_keyword_name(self):
+        stmt = self._parse_stmt('@async class C {}')
+        assert isinstance(stmt, JsClassDeclaration)
+        decorator = stmt.decorators[0]
+        assert isinstance(decorator.expression, JsIdentifier)
+        self.assertEqual(decorator.expression.name, 'async')
+
     def test_labeled_statement(self):
         stmt = self._parse_stmt('outer: for (;;) { break outer; }')
         self.assertIsInstance(stmt, JsLabeledStatement)

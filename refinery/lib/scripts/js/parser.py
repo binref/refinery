@@ -209,6 +209,27 @@ class JsParser:
         self._advance()
         return JsToken(kind, tok.value, tok.offset)
 
+    def _at_binding_identifier(self) -> bool:
+        """
+        Whether the current token can serve as an ordinary binding or reference name. Several contextual
+        keywords (`as`, `from`, `of`, `let`, `async`) are always valid names, and `await` and `yield` are
+        valid names except inside an async function or a generator respectively. This mirrors the identifier
+        acceptance of `_parse_primary_expression`, so a name-reading site accepts exactly the tokens the
+        expression grammar would treat as a reference.
+        """
+        return (
+            self._at(
+                JsTokenKind.IDENTIFIER,
+                JsTokenKind.AS,
+                JsTokenKind.FROM,
+                JsTokenKind.OF,
+                JsTokenKind.LET,
+                JsTokenKind.ASYNC,
+            )
+            or (self._at(JsTokenKind.AWAIT) and not self._in_async)
+            or (self._at(JsTokenKind.YIELD) and not self._in_generator)
+        )
+
     def _eat_semicolon(self) -> bool:
         if self._eat(JsTokenKind.SEMICOLON):
             return True
@@ -377,7 +398,10 @@ class JsParser:
 
     def _parse_binding_identifier(self) -> Expression:
         offset = self._current.offset
-        tok = self._expect(JsTokenKind.IDENTIFIER)
+        if self._at_binding_identifier():
+            tok = self._advance()
+        else:
+            tok = self._expect(JsTokenKind.IDENTIFIER)
         return JsIdentifier(name=tok.value, offset=offset)
 
     def _parse_array_pattern(self) -> JsArrayPattern:
@@ -647,7 +671,7 @@ class JsParser:
         offset = self._current.offset
         self._expect(JsTokenKind.BREAK)
         label = None
-        if not self._preceded_by_newline and self._at(JsTokenKind.IDENTIFIER):
+        if not self._preceded_by_newline and self._at_binding_identifier():
             tok = self._advance()
             label = JsIdentifier(name=tok.value, offset=tok.offset)
         self._eat_semicolon()
@@ -657,7 +681,7 @@ class JsParser:
         offset = self._current.offset
         self._expect(JsTokenKind.CONTINUE)
         label = None
-        if not self._preceded_by_newline and self._at(JsTokenKind.IDENTIFIER):
+        if not self._preceded_by_newline and self._at_binding_identifier():
             tok = self._advance()
             label = JsIdentifier(name=tok.value, offset=tok.offset)
         self._eat_semicolon()
@@ -673,7 +697,7 @@ class JsParser:
         self._expect(JsTokenKind.FUNCTION)
         generator = bool(self._eat(JsTokenKind.STAR))
         id_node = None
-        if self._at(JsTokenKind.IDENTIFIER):
+        if self._at_binding_identifier():
             tok = self._advance()
             id_node = JsIdentifier(name=tok.value, offset=tok.offset)
         with self._function_body_context(is_async, generator):
@@ -725,7 +749,7 @@ class JsParser:
             inner = self._parse_expression()
             self._expect(JsTokenKind.RPAREN)
             return JsDecorator(expression=inner, offset=offset)
-        if not self._at(JsTokenKind.IDENTIFIER):
+        if not self._at_binding_identifier():
             return JsDecorator(
                 expression=JsErrorNode(
                     text=self._current.value, message='unexpected token', offset=offset),
@@ -754,7 +778,7 @@ class JsParser:
         offset = self._current.offset
         self._expect(JsTokenKind.CLASS)
         id_node = None
-        if self._at(JsTokenKind.IDENTIFIER):
+        if self._at_binding_identifier():
             tok = self._advance()
             id_node = JsIdentifier(name=tok.value, offset=tok.offset)
         super_class = None
@@ -952,7 +976,7 @@ class JsParser:
             JsImportSpecifier | JsImportDefaultSpecifier | JsImportNamespaceSpecifier
         ] = []
 
-        if self._at(JsTokenKind.IDENTIFIER):
+        if self._at_binding_identifier():
             tok = self._advance()
             specifiers.append(JsImportDefaultSpecifier(
                 local=JsIdentifier(name=tok.value, offset=tok.offset),
@@ -1296,7 +1320,11 @@ class JsParser:
                     computed=False,
                     offset=offset,
                 )
-            callee = self._parse_new_expression()
+            if self._at(JsTokenKind.ASYNC) and not self._at_async_function():
+                tok = self._advance()
+                callee = JsIdentifier(name=tok.value, offset=tok.offset)
+            else:
+                callee = self._parse_new_expression()
             while True:
                 if self._eat(JsTokenKind.DOT):
                     prop_tok = self._advance()
@@ -1738,7 +1766,7 @@ class JsParser:
                     params=[param], body=body, is_async=False, offset=offset)
 
             if (
-                self._at(JsTokenKind.IDENTIFIER)
+                self._at_binding_identifier()
                 and self._peek_next().kind == JsTokenKind.ARROW
                 and not self._ahead_newline
             ):

@@ -307,6 +307,17 @@ class TestJsSynthesizer(TestBase):
         statement = out if out.endswith(';') else out + ';'
         self.assertEqual(statement, JsSynthesizer().convert(JsParser(out).parse()))
 
+    def test_binding_identifier_contextual_keyword_roundtrip(self):
+        for source in (
+            'var of = 1;',
+            'try {} catch (from) {}',
+            'var { as, of } = obj;',
+            'new async();',
+            'new async(1, 2);',
+        ):
+            with self.subTest(source=source):
+                self.assertEqual(source, JsSynthesizer().convert(JsParser(source).parse()))
+
     def test_paren_arrow_in_callee_position(self):
         arrow = JsArrowFunctionExpression(params=[], body=JsIdentifier(name='x'))
         self._assert_synth_valid(JsCallExpression(callee=arrow, arguments=[]), '(() => x)()')

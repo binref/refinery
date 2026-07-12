@@ -533,3 +533,30 @@ class TestJsParserExpressions(TestBase):
         self.assertEqual(len(expr.params), 1)
         self.assertIsInstance(expr.params[0], JsIdentifier)
         self.assertEqual(expr.params[0].name, 'async')
+
+    def test_async_arrow_contextual_keyword_param(self):
+        expr = self._parse_expr('async of => of')
+        self.assertIsInstance(expr, JsArrowFunctionExpression)
+        self.assertTrue(expr.is_async)
+        self.assertEqual(len(expr.params), 1)
+        self.assertIsInstance(expr.params[0], JsIdentifier)
+        self.assertEqual(expr.params[0].name, 'of')
+
+    def test_new_async_is_construct_not_call(self):
+        expr = self._parse_expr('new async()')
+        self.assertIsInstance(expr, JsNewExpression)
+        self.assertIsInstance(expr.callee, JsIdentifier)
+        self.assertEqual(expr.callee.name, 'async')
+        self.assertEqual(len(expr.arguments), 0)
+
+    def test_new_async_with_arguments(self):
+        expr = self._parse_expr('new async(1, 2)')
+        self.assertIsInstance(expr, JsNewExpression)
+        self.assertIsInstance(expr.callee, JsIdentifier)
+        self.assertEqual(expr.callee.name, 'async')
+        self.assertEqual(len(expr.arguments), 2)
+
+    def test_new_async_member_callee(self):
+        expr = self._parse_expr('new async.foo()')
+        self.assertIsInstance(expr, JsNewExpression)
+        self.assertIsInstance(expr.callee, JsMemberExpression)
