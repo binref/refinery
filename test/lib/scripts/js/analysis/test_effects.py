@@ -222,21 +222,76 @@ class TestEffectModel(TestBase):
         summary = self._summary('function f(a){ var o = a; o[0] = 9; return o[0]; }', 'f')
         self.assertTrue(summary.writes_global)
 
-    def test_fresh_local_returned_after_write_is_a_global_write(self):
+    def test_fresh_local_returned_after_write_mutates_returned_local(self):
         summary = self._summary('function f(){ var o = []; o[0] = 9; return o; }', 'f')
-        self.assertTrue(summary.writes_global)
+        self.assertFalse(summary.writes_global)
+        self.assertFalse(summary.writes_captured)
+        self.assertTrue(summary.mutates_returned_local)
+        self.assertFalse(summary.is_pure)
+        self.assertFalse(summary.is_value_replaceable)
 
-    def test_fresh_local_passed_to_call_after_write_is_a_global_write(self):
+    def test_fresh_local_passed_to_call_after_write_mutates_returned_local(self):
         summary = self._summary('function f(){ var o = []; o[0] = 9; sink(o); return 1; }', 'f')
-        self.assertTrue(summary.writes_global)
+        self.assertFalse(summary.writes_global)
+        self.assertTrue(summary.mutates_returned_local)
+        self.assertFalse(summary.is_pure)
 
-    def test_fresh_local_aliased_after_write_is_a_global_write(self):
+    def test_fresh_local_aliased_after_write_mutates_returned_local(self):
         summary = self._summary('function f(){ var o = []; o[0] = 9; var b = o; return b[0]; }', 'f')
-        self.assertTrue(summary.writes_global)
+        self.assertFalse(summary.writes_global)
+        self.assertTrue(summary.mutates_returned_local)
+        self.assertFalse(summary.is_pure)
 
-    def test_rest_param_returned_after_write_is_a_global_write(self):
+    def test_rest_param_returned_after_write_is_discardable(self):
         summary = self._summary('function f(...xs){ xs[0] = 9; return xs; }', 'f')
-        self.assertTrue(summary.writes_global)
+        self.assertFalse(summary.writes_global)
+        self.assertFalse(summary.writes_captured)
+        self.assertFalse(summary.throws)
+        self.assertTrue(summary.mutates_returned_local)
+        self.assertFalse(summary.is_pure)
+        self.assertFalse(summary.is_value_replaceable)
+        self.assertTrue(summary.is_effect_free_when_discarded)
+
+    def test_decoder_factory_iife_is_discardable(self):
+        source = (
+            'function F(...A3LWTls){'
+            ' A3LWTls.length = 0;'
+            ' A3LWTls.b = new Array(128);'
+            ' A3LWTls[-42] = String.fromCodePoint || String.fromCharCode;'
+            ' A3LWTls.d = [];'
+            ' return function(w){ return A3LWTls.d; }; }'
+        )
+        summary = self._summary(source, 'F')
+        self.assertFalse(summary.throws)
+        self.assertFalse(summary.writes_global)
+        self.assertFalse(summary.writes_captured)
+        self.assertFalse(summary.calls_unknown)
+        self.assertTrue(summary.mutates_returned_local)
+        self.assertFalse(summary.is_pure)
+        self.assertTrue(summary.is_effect_free_when_discarded)
+
+    def test_member_write_on_hoisted_var_before_init_may_throw(self):
+        summary = self._summary('function g(){ A3.length = 0; var A3 = []; return A3; }', 'g')
+        self.assertTrue(summary.throws)
+        self.assertFalse(summary.is_effect_free_when_discarded)
+
+    def test_member_write_on_lexical_before_init_may_throw(self):
+        summary = self._summary('function g(){ A3.length = 0; let A3 = []; return A3; }', 'g')
+        self.assertTrue(summary.throws)
+        self.assertFalse(summary.is_effect_free_when_discarded)
+
+    def test_inner_mutating_captured_enclosing_local_stays_observable(self):
+        source = (
+            'function outer(){ var a = [];'
+            ' function inner(){ a[0] = 1; }'
+            ' inner();'
+            ' return function(){ return a; }; }'
+        )
+        summary = self._summary(source, 'inner')
+        self.assertFalse(summary.mutates_returned_local)
+        self.assertTrue(summary.writes_global or summary.writes_captured)
+        self.assertFalse(summary.is_pure)
+        self.assertFalse(summary.is_effect_free_when_discarded)
 
     def test_write_to_fresh_array_literal_base_is_pure(self):
         summary = self._summary('function f(){ [1, 2][0] = 9; return 1; }', 'f')

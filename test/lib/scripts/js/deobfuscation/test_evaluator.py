@@ -151,6 +151,44 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
         )
         self.assertEqual('SINK(1);', self._evaluate(source))
 
+    def test_nested_callee_not_established_at_outer_call_not_folded(self):
+        """
+        `ns` is established when `ns()` runs, but its body calls `helper`, whose bare assignment has not
+        yet run at the outer call site — at runtime `helper` is the hoisted `undefined`, so `ns()` throws
+        a `TypeError`. The fold must gate the nested callee against the outer call, not only `ns` itself.
+        """
+        source = inspect.cleandoc(
+            """
+            var ns;
+            ns = function() {
+              return helper();
+            };
+            var r = ns();
+            var helper = function() {
+              return 7;
+            };
+            """
+        )
+        self.assertEqual(source, self._evaluate(source))
+
+    def test_nested_callee_established_at_outer_call_folded(self):
+        """
+        Both `helper` and `ns` are established before `ns()` runs, so folding the interprocedural call
+        through the nested callee to its value is sound.
+        """
+        source = inspect.cleandoc(
+            """
+            var helper = function() {
+              return 7;
+            };
+            var ns = function() {
+              return helper();
+            };
+            var r = ns();
+            """
+        )
+        self.assertEqual('var r = 7;', self._evaluate(source))
+
     def test_var_initialized_function_call_folded(self):
         source = inspect.cleandoc(
             """

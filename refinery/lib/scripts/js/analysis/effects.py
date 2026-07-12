@@ -31,6 +31,8 @@ contract so a later control-flow layer can sharpen the same answers without chan
 """
 from __future__ import annotations
 
+import enum
+
 from dataclasses import dataclass, field
 from typing import Callable, Iterator, Sequence
 
@@ -42,7 +44,6 @@ from refinery.lib.scripts.js.analysis.model import (
     FUNCTION_NODES,
     GLOBAL_OBJECT_ALIASES,
     Role,
-    Scope,
     SemanticModel,
     container_reference_role,
     enclosing_function,
@@ -195,6 +196,19 @@ one carries a possible throw or accessor call, so it is not the plain field read
 rule would otherwise clear.
 """
 
+
+def _is_poison_pill_property(member: JsMemberExpression) -> bool:
+    """
+    Whether *member* reads a poison-pill property (`.caller`, `.arguments`, `.__proto__`) by name, in
+    either the dotted (`f.caller`) or the string-computed (`f['caller']`) form. A computed access whose
+    key is not a string literal (`f[k]`) names no fixed property and does not count.
+    """
+    prop = member.property
+    if member.computed:
+        return isinstance(prop, JsStringLiteral) and prop.value in _POISON_PILL_PROPERTIES
+    return isinstance(prop, JsIdentifier) and prop.name in _POISON_PILL_PROPERTIES
+
+
 _ACCESSOR_INSTALL_METHODS = frozenset({
     'defineProperty',
     'defineProperties',
@@ -230,7 +244,11 @@ class EffectSummary:
     `writes_captured` covers assignment to a binding owned by an enclosing function (a closure mutation
     visible after the call returns); `throws` covers a `throw` or an operation that may throw on a
     value the analysis cannot prove safe; `calls_unknown` covers invoking a callee that cannot be
-    resolved and summarized. A summary with none of these set is `is_pure`. `wraps_return` is separate:
+    resolved and summarized. A summary with none of these set is `is_pure`. `mutates_returned_local` is
+    held apart from those four: it records a write to a fresh local the function owns whose sole route to
+    the caller is the value the call returns. Such a write is a real mutation baked into the returned
+    value, so it blocks `is_pure` and `is_value_replaceable`, but not `is_effect_free_when_discarded` — a
+    call whose result is thrown away can never expose it. `wraps_return` is separate:
     it does not bear on purity but records that a call to the function yields a wrapper (a promise from
     an `async` function, an iterator from a generator) rather than the value of its return expression,
     so the call cannot be replaced by that expression. `written_bindings` names, by identity, the outer
@@ -246,14 +264,37 @@ class EffectSummary:
     writes_captured: bool = False
     throws: bool = False
     calls_unknown: bool = False
+    mutates_returned_local: bool = False
     wraps_return: bool = False
     written_bindings: set[Binding] = field(default_factory=set)
 
     @property
     def is_pure(self) -> bool:
         """
-        Whether a call to the summarized function produces no observable effect, so a call whose result
-        is unused carries no consequence the program can detect (termination aside).
+        Whether a call to the summarized function produces no observable effect, so it carries no
+        consequence the program can detect (termination aside) whether or not its result is used. A
+        mutation the function confines to its returned value (`mutates_returned_local`) disqualifies it
+        here, since a caller that uses the result observes that mutation; `is_effect_free_when_discarded`
+        is the companion test for a call whose result is thrown away, which tolerates it.
+        """
+        return not (
+            self.writes_global
+            or self.writes_captured
+            or self.throws
+            or self.calls_unknown
+            or self.mutates_returned_local
+        )
+
+    @property
+    def is_effect_free_when_discarded(self) -> bool:
+        """
+        Whether a call to the summarized function, its result discarded, produces no observable effect.
+        Identical to `is_pure` except it tolerates `mutates_returned_local`: a write to a fresh local the
+        function owns is observable only through the value the call returns, so once that value is thrown
+        away the write can never be seen and the call is free to drop. Every other way such a local — or a
+        closure over it — reaches the caller is a distinct effect that independently sets a blocking flag
+        (a store to a global, a store to an enclosing capture, a leak into an unknown callee, a throw), so
+        excluding only `mutates_returned_local` here stays sound.
         """
         return not (self.writes_global or self.writes_captured or self.throws or self.calls_unknown)
 
@@ -262,15 +303,22 @@ class EffectSummary:
         """
         Whether replacing a call to the summarized function with its computed return value drops no
         observable effect. This holds when the call writes no state visible after it returns — neither a
-        global nor a captured binding — and the call returns its value directly rather than wrapped: an
-        `async` function's call is a promise and a generator's is an iterator, neither equal to the
+        global nor a captured binding, nor a fresh local it mutates and then returns
+        (`mutates_returned_local`), which is a distinct object per call and so cannot be substituted as a
+        shared value — and the call returns its value directly rather than wrapped:
+        an `async` function's call is a promise and a generator's is an iterator, neither equal to the
         return expression, so `wraps_return` disqualifies it. Unlike `is_pure`, a call that may throw or
         read unknown state still qualifies: an evaluator that actually executes the call to a value
         reproduces those, and only a *write* would be silently lost. `is_pure`, which additionally
         forbids throwing and unknown reads, is the right test for removing a call outright rather than
         replacing it.
         """
-        return not (self.writes_global or self.writes_captured or self.wraps_return)
+        return not (
+            self.writes_global
+            or self.writes_captured
+            or self.wraps_return
+            or self.mutates_returned_local
+        )
 
     def absorb(self, other: EffectSummary):
         """
@@ -280,6 +328,7 @@ class EffectSummary:
         self.writes_captured = self.writes_captured or other.writes_captured
         self.throws = self.throws or other.throws
         self.calls_unknown = self.calls_unknown or other.calls_unknown
+        self.mutates_returned_local = self.mutates_returned_local or other.mutates_returned_local
         self.written_bindings |= other.written_bindings
 
 
@@ -346,13 +395,127 @@ def _is_safe_property_base(node: Node, defunct: set[str] | None = None) -> bool:
     return False
 
 
+_CallPredicate = Callable[[JsCallExpression | JsNewExpression], bool]
+
+
+class _SideEffectScan:
+    """
+    The recursive engine behind `side_effect_free`. It holds the fixed policy — the callables and the
+    *defunct* set — so that only the per-node `discarded` flag threads down the recursion, and every
+    consumed sub-expression is scanned with `discarded` reset to false by default.
+
+    `discarded` is true where the value being scanned is thrown away by the enclosing context, which
+    lets a top-level call be cleared by the more permissive *call_pure_discarded* — one that tolerates a
+    write the call confines to its own returned value (`EffectSummary.mutates_returned_local`), since a
+    discarded result can never expose it. It is propagated only into positions that are themselves
+    discarded whenever the whole is: the expression a parenthesis groups, and every element of a
+    sequence (each but the last is always discarded; the last inherits the sequence's own fate). It is
+    reset for every operand whose value is consumed — a call argument, a unary/binary operand, a member
+    base, a conditional branch — because a call nested there does have its result used, so a mutation it
+    confines to that result must still count.
+    """
+
+    def __init__(
+        self,
+        defunct: set[str] | None,
+        call_pure: _CallPredicate | None,
+        read_effect: Callable[[Node], bool] | None,
+        member_safe: Callable[[JsMemberExpression], bool] | None,
+        call_established: _CallPredicate | None,
+        call_pure_discarded: _CallPredicate | None,
+    ):
+        self.defunct = defunct
+        self.call_pure = call_pure
+        self.read_effect = read_effect
+        self.member_safe = member_safe
+        self.call_established = call_established
+        self.call_pure_discarded = call_pure_discarded
+
+    def free(self, node: Node, discarded: bool = False) -> bool:
+        if isinstance(node, (JsStringLiteral, JsNumericLiteral, JsBooleanLiteral, JsNullLiteral)):
+            return True
+        if isinstance(node, JsIdentifier):
+            return self.read_effect is None or not self.read_effect(node)
+        if isinstance(node, (JsFunctionExpression, JsArrowFunctionExpression)):
+            return True
+        if isinstance(node, JsParenthesizedExpression):
+            return node.expression is not None and self.free(node.expression, discarded)
+        if isinstance(node, JsUnaryExpression):
+            if node.operator == 'delete':
+                return False
+            return node.operand is not None and self.free(node.operand)
+        if isinstance(node, JsMemberExpression):
+            if node.object is None:
+                return False
+            if not self.free(node.object):
+                return False
+            if node.property is not None and not self.free(node.property):
+                return False
+            if _is_poison_pill_property(node):
+                return self.member_safe is not None and self.member_safe(node)
+            if _is_safe_property_base(node.object, self.defunct):
+                return True
+            return self.member_safe is not None and self.member_safe(node)
+        if isinstance(node, (JsBinaryExpression, JsLogicalExpression)):
+            return (
+                node.left is not None
+                and self.free(node.left)
+                and node.right is not None
+                and self.free(node.right)
+            )
+        if isinstance(node, JsConditionalExpression):
+            return (
+                node.test is not None
+                and self.free(node.test)
+                and node.consequent is not None
+                and self.free(node.consequent)
+                and node.alternate is not None
+                and self.free(node.alternate)
+            )
+        if isinstance(node, JsObjectExpression):
+            for prop in node.properties:
+                if not isinstance(prop, JsProperty):
+                    return False
+                if prop.computed and (prop.key is None or not self.free(prop.key)):
+                    return False
+                if prop.value is not None and not self.free(prop.value):
+                    return False
+            return True
+        if isinstance(node, JsArrayExpression):
+            return all(elem is None or self.free(elem) for elem in node.elements)
+        if isinstance(node, JsSequenceExpression):
+            return all(self.free(e, discarded) for e in node.expressions)
+        if isinstance(node, JsCallExpression):
+            if self.defunct and isinstance(node.callee, JsIdentifier) and node.callee.name in self.defunct:
+                return all(self.free(arg) for arg in node.arguments)
+        if (
+            isinstance(node, (JsCallExpression, JsNewExpression))
+            and self._call_is_pure(node, discarded)
+            and self.call_established is not None
+            and self.call_established(node)
+        ):
+            return all(self.free(arg) for arg in node.arguments)
+        return False
+
+    def _call_is_pure(self, node: JsCallExpression | JsNewExpression, discarded: bool) -> bool:
+        """
+        Whether the call leaf itself carries no effect, choosing the discard-aware predicate only where
+        the call's result is thrown away and one was supplied; otherwise the ordinary purity predicate.
+        """
+        if discarded and self.call_pure_discarded is not None:
+            return self.call_pure_discarded(node)
+        return self.call_pure is not None and self.call_pure(node)
+
+
 def side_effect_free(
     node: Node,
     defunct: set[str] | None = None,
-    call_pure: Callable[[JsCallExpression | JsNewExpression], bool] | None = None,
+    call_pure: _CallPredicate | None = None,
     read_effect: Callable[[Node], bool] | None = None,
     member_safe: Callable[[JsMemberExpression], bool] | None = None,
-    call_established: Callable[[JsCallExpression | JsNewExpression], bool] | None = None,
+    call_established: _CallPredicate | None = None,
+    discarded: bool = False,
+    call_pure_discarded: _CallPredicate | None = None,
 ) -> bool:
     """
     Conservative check for whether evaluating an expression can be dropped or reordered with no
@@ -374,76 +537,33 @@ def side_effect_free(
     `read_has_dynamic_effect` too. A caller without a model gets the conservative behaviour. When *defunct*
     is given its identifiers name bindings being removed, so calls to them and property reads through
     them are treated as free.
+
+    When *discarded* is set the expression's own value is thrown away by the caller, so a top-level call
+    (or `new`) leaf is cleared through *call_pure_discarded* instead of *call_pure* — admitting a call
+    whose only residual effect is a write it confines to its returned value, unobservable once that value
+    is dropped. The flag reaches only positions that stay discarded — a parenthesized group and every
+    element of a sequence — and is reset into any consumed operand, so a nested call whose result is used
+    is still held to *call_pure*.
     """
-    if isinstance(node, (JsStringLiteral, JsNumericLiteral, JsBooleanLiteral, JsNullLiteral)):
-        return True
-    if isinstance(node, JsIdentifier):
-        return read_effect is None or not read_effect(node)
-    if isinstance(node, (JsFunctionExpression, JsArrowFunctionExpression)):
-        return True
-    if isinstance(node, JsParenthesizedExpression):
-        return node.expression is not None and side_effect_free(
-            node.expression, defunct, call_pure, read_effect, member_safe, call_established)
-    if isinstance(node, JsUnaryExpression):
-        if node.operator == 'delete':
-            return False
-        return node.operand is not None and side_effect_free(node.operand, defunct, call_pure, read_effect, member_safe, call_established)
-    if isinstance(node, JsMemberExpression):
-        if node.object is None:
-            return False
-        if not side_effect_free(node.object, defunct, call_pure, read_effect, member_safe, call_established):
-            return False
-        if node.property is not None and not side_effect_free(node.property, defunct, call_pure, read_effect, member_safe, call_established):
-            return False
-        if _is_safe_property_base(node.object, defunct):
-            return True
-        return member_safe is not None and member_safe(node)
-    if isinstance(node, (JsBinaryExpression, JsLogicalExpression)):
-        return (
-            node.left is not None
-            and side_effect_free(node.left, defunct, call_pure, read_effect, member_safe, call_established)
-            and node.right is not None
-            and side_effect_free(node.right, defunct, call_pure, read_effect, member_safe, call_established)
-        )
-    if isinstance(node, JsConditionalExpression):
-        return (
-            node.test is not None
-            and side_effect_free(node.test, defunct, call_pure, read_effect, member_safe, call_established)
-            and node.consequent is not None
-            and side_effect_free(node.consequent, defunct, call_pure, read_effect, member_safe, call_established)
-            and node.alternate is not None
-            and side_effect_free(node.alternate, defunct, call_pure, read_effect, member_safe, call_established)
-        )
-    if isinstance(node, JsObjectExpression):
-        for prop in node.properties:
-            if not isinstance(prop, JsProperty):
-                return False
-            if prop.computed and (
-                prop.key is None or not side_effect_free(prop.key, defunct, call_pure, read_effect, member_safe, call_established)
-            ):
-                return False
-            if prop.value is not None and not side_effect_free(prop.value, defunct, call_pure, read_effect, member_safe, call_established):
-                return False
-        return True
-    if isinstance(node, JsArrayExpression):
-        return all(
-            elem is None or side_effect_free(elem, defunct, call_pure, read_effect, member_safe, call_established)
-            for elem in node.elements
-        )
-    if isinstance(node, JsSequenceExpression):
-        return all(side_effect_free(e, defunct, call_pure, read_effect, member_safe, call_established) for e in node.expressions)
-    if isinstance(node, JsCallExpression):
-        if defunct and isinstance(node.callee, JsIdentifier) and node.callee.name in defunct:
-            return all(side_effect_free(arg, defunct, call_pure, read_effect, member_safe, call_established) for arg in node.arguments)
-    if (
-        call_pure is not None
-        and isinstance(node, (JsCallExpression, JsNewExpression))
-        and call_pure(node)
-        and call_established is not None
-        and call_established(node)
-    ):
-        return all(side_effect_free(arg, defunct, call_pure, read_effect, member_safe, call_established) for arg in node.arguments)
-    return False
+    return _SideEffectScan(
+        defunct, call_pure, read_effect, member_safe, call_established, call_pure_discarded,
+    ).free(node, discarded)
+
+
+class _WriteClass(enum.Enum):
+    """
+    How far a member write through a container base can be observed by code outside the writing
+    function. `UNOBSERVABLE`: the container is a fresh value the function owns and never lets escape, so
+    no other code can ever reach it and the write is invisible. `VIA_RESULT`: the container is a fresh
+    local the function owns, but it — or a closure over it — leaves the function only through the value
+    the call returns, so the write is seen only if that value is used, and a call whose result is
+    discarded may still be dropped. `OBSERVABLE`: the base may alias state the caller already holds — a
+    global, a plain parameter, a binding captured from an enclosing scope, or a write hidden behind a
+    dynamic scope — so the write is a plain side effect that any caller can observe.
+    """
+    UNOBSERVABLE = 0
+    VIA_RESULT = 1
+    OBSERVABLE = 2
 
 
 class EffectModel:
@@ -460,7 +580,7 @@ class EffectModel:
         self._summaries: dict[int, EffectSummary] = {}
         self._confine_cache: dict[int, Node | None] = {}
         self._immutable_cache: dict[tuple[int, bool], bool] = {}
-        self._member_write_cache: dict[int, bool] = {}
+        self._member_write_cache: dict[int, _WriteClass] = {}
         self._uses_arguments_cache: dict[int, bool] = {}
         self._mutators_escape_cache: dict[int, bool] = {}
         self._functions: list[Node] = self._collect_functions()
@@ -540,6 +660,20 @@ class EffectModel:
             return self.summary_of(callee).is_pure
         return False
 
+    def is_pure_call_discarded(self, call: JsCallExpression | JsNewExpression) -> bool:
+        """
+        Whether evaluating *call* and discarding its result has no observable effect. Like `is_pure_call`
+        but resolved through `EffectSummary.is_effect_free_when_discarded`, so a callee whose only residual
+        effect is a write it confines to its returned value qualifies — that write is unobservable once the
+        result is thrown away. A caller may use this only in a position it has proven discards the value.
+        """
+        callee = self._resolve_callee(call)
+        if callee is _PURE:
+            return True
+        if isinstance(callee, Node):
+            return self.summary_of(callee).is_effect_free_when_discarded
+        return False
+
     def call_clearable(
         self,
         call: JsCallExpression | JsNewExpression,
@@ -582,6 +716,7 @@ class EffectModel:
         defunct: set[str] | None = None,
         member_safe: Callable[[JsMemberExpression], bool] | None = None,
         call_established: Callable[[JsCallExpression | JsNewExpression], bool] | None = None,
+        discarded: bool = False,
     ) -> bool:
         """
         Whether evaluating *node* can be dropped or reordered without an observable side effect, with
@@ -596,6 +731,10 @@ class EffectModel:
         caller with control-flow context passes *member_safe* to also clear a getter-free read through a
         local global-object alias it can prove established before the read; the default clears only the
         syntactic global case (`_is_trusted_global_read`).
+
+        With *discarded* the caller asserts *node*'s own value is thrown away, so a top-level call leaf is
+        cleared through `is_pure_call_discarded` and a callee that only mutates a local it returns is
+        droppable — the removal contexts of `JsUnusedCodeRemoval` supply it.
         """
         return side_effect_free(
             node,
@@ -604,6 +743,8 @@ class EffectModel:
             self.model.read_has_dynamic_effect,
             member_safe or self._getter_free_read,
             call_established or self._established_call_default,
+            discarded,
+            self.is_pure_call_discarded,
         )
 
     def binding_is_immutable_container(
@@ -861,20 +1002,22 @@ class EffectModel:
         summary = EffectSummary()
         if getattr(func, 'is_async', False) or getattr(func, 'generator', False):
             summary.wraps_return = True
-        func_scope = self.model.function_scope(func)
         for node in _body_nodes(func):
             if isinstance(node, JsThrowStatement):
                 summary.throws = True
             elif isinstance(node, JsIdentifier):
                 if reference_role(node) is not Role.READ:
-                    self._account_write(summary, node, func_scope, func)
+                    self._account_write(summary, node, func)
             elif isinstance(node, JsMemberExpression):
                 base = node.object
                 if base is not None and not self._base_is_safe(base):
                     summary.throws = True
                 if is_member_write_target(node):
-                    if not self._member_write_unobservable(node, func):
+                    write_class = self._member_write_class(node, func)
+                    if write_class is _WriteClass.OBSERVABLE:
                         summary.writes_global = True
+                    elif write_class is _WriteClass.VIA_RESULT:
+                        summary.mutates_returned_local = True
                 elif base is not None and not self._getter_free_read(node):
                     summary.calls_unknown = True
             elif isinstance(node, (JsCallExpression, JsNewExpression)):
@@ -883,21 +1026,18 @@ class EffectModel:
                 summary.calls_unknown = True
         return summary
 
-    def _account_write(
-        self, summary: EffectSummary, target: JsIdentifier, func_scope: Scope | None, func: Node
-    ):
+    def _account_write(self, summary: EffectSummary, target: JsIdentifier, func: Node):
         binding = self.model.resolve(target)
         if binding is None:
             summary.writes_global = True
             return
-        is_global = binding.kind is BindingKind.IMPLICIT_GLOBAL or binding.scope is self.model.root_scope
-        if not is_global and func_scope is not None and func_scope.contains(binding.scope):
+        if self._owns_binding(binding, func):
             return
         if binding.is_read:
             summary.written_bindings.add(binding)
         if self._write_unobservable(binding, func):
             return
-        if is_global:
+        if binding.kind is BindingKind.IMPLICIT_GLOBAL or binding.scope is self.model.root_scope:
             summary.writes_global = True
         else:
             summary.writes_captured = True
@@ -926,55 +1066,77 @@ class EffectModel:
             return False
         return self._confining_function(binding) is func
 
-    def _member_write_unobservable(self, member: JsMemberExpression, func: Node) -> bool:
+    def _member_write_class(self, member: JsMemberExpression, func: Node) -> _WriteClass:
         """
-        Whether the container written by *member* (`base.k = v`, `base[i]++`, `delete base[i]`) is a
-        value built inside *func* that never escapes it, so no caller can observe the write and a
-        function whose only effect is the mutation is pure. The base must be a fresh value — written
-        directly on an object/array/function literal, or resolving to a binding local to *func* whose
-        value is always freshly built: a rest parameter, which the language guarantees is a new array,
-        or a local initialized only to an object/array/function literal. An object literal with an own
-        setter — or one that installs a custom prototype through `__proto__:`, which may carry an
-        inherited setter — does NOT qualify, since the write then runs an accessor, an effect a caller
-        can observe. A plain parameter does NOT qualify either — it aliases the caller's object, so
-        `function modify(a){ a[0] = 9; }` mutates the argument observably — which is the soundness
-        boundary this rests on. Every reference to the binding must keep the container contained: only
-        member reads and writes, never an escape that could alias it out (returned, passed to a call,
-        stored as a property, aliased to another name) or a method call that might leak or
-        mutate-and-return it, and never a capture by a nested function that could outlive the call.
+        How observable the container written by *member* (`base.k = v`, `base[i]++`, `delete base[i]`) is
+        to code outside *func* — the distinction that lets a mutation of an obfuscator's scratch container
+        be tolerated without weakening purity. The base must be a fresh value: written directly on an
+        object/array/function literal, or resolving to a binding *func* owns whose value is always freshly
+        built — a rest parameter, which the language guarantees is a new array, or a local initialized
+        only to an object/array/function literal. An object literal with an own setter — or one that
+        installs a custom prototype through `__proto__:`, which may carry an inherited setter — does NOT
+        qualify, since the write then runs an accessor a caller can observe. A plain parameter does NOT
+        qualify either: it aliases the caller's object, so `function modify(a){ a[0] = 9; }` mutates the
+        argument observably — the soundness boundary this rests on. Ownership is the exact test
+        `_account_write` uses for a plain-identifier write (`func_scope.contains(binding.scope)` and not
+        global), so a binding captured *from an enclosing scope* is not owned and its mutation stays
+        `OBSERVABLE`, matching that a call mutating an outer local is a visible effect.
 
-        A write hidden behind a dynamic scope — through a name a `with` body or direct `eval` resolves
-        at runtime — is not modelled here: the base resolves to no binding, so the write is
-        conservatively kept, which is sound. The residual is the opaque-surface one
-        `binding_is_immutable_container` documents: a reflective surface whose code cannot be read could
-        install a prototype accessor that observes a write this deems unobservable, and freezing on it
-        would refuse the obfuscator idioms this is meant to see through, so it is left to that boundary.
+        For an owned fresh container the outcome splits on how it escapes. When no reference lets it out
+        (`_container_non_escaping`) and no nested function captures it, the write is `UNOBSERVABLE` — the
+        container dies with the call and no caller can ever reach it, so a function whose only effect is
+        the mutation is pure. Otherwise the container — or a closure over it — leaves *func*, but every
+        escape route other than the return value independently sets a blocking flag on the summary (a
+        store to a global or captured binding, a leak into an unknown callee, a throw), so the only
+        unflagged escape is `return`, whose value the caller may discard: the write is then `VIA_RESULT`,
+        seen only if that value is used.
+
+        A write hidden behind a dynamic scope — through a name a `with` body or direct `eval` resolves at
+        runtime — is `OBSERVABLE`: the base resolves to no binding, so the write is conservatively kept,
+        which is sound. The residual is the opaque-surface one `binding_is_immutable_container` documents:
+        a reflective surface whose code cannot be read could install a prototype accessor that observes a
+        write this deems unobservable, and freezing on it would refuse the obfuscator idioms this is meant
+        to see through, so it is left to that boundary.
 
         The judgment is structural — fixed by the binding's declarations and reference set — so it is
         invariant across the fixpoint passes that recompute the summaries, and is memoized per member.
         """
         cached = self._member_write_cache.get(id(member))
         if cached is None:
-            cached = self._fresh_local_member_write(member, func)
+            cached = self._classify_member_write(member, func)
             self._member_write_cache[id(member)] = cached
         return cached
 
-    def _fresh_local_member_write(self, member: JsMemberExpression, func: Node) -> bool:
+    def _classify_member_write(self, member: JsMemberExpression, func: Node) -> _WriteClass:
         base = member.object
         if isinstance(base, (JsArrayExpression, JsFunctionExpression)):
-            return True
+            return _WriteClass.UNOBSERVABLE
         if isinstance(base, JsObjectExpression):
-            return not object_member_access_runs_accessor(base)
+            if object_member_access_runs_accessor(base):
+                return _WriteClass.OBSERVABLE
+            return _WriteClass.UNOBSERVABLE
         if not isinstance(base, JsIdentifier):
-            return False
+            return _WriteClass.OBSERVABLE
         binding = self.model.resolve(base)
-        if binding is None or binding.captured:
-            return False
-        if not self._confined_to(binding, func):
-            return False
+        if binding is None or not self._owns_binding(binding, func):
+            return _WriteClass.OBSERVABLE
         if not self._fresh_container_origin(binding):
+            return _WriteClass.OBSERVABLE
+        if not binding.captured and self._container_non_escaping(binding):
+            return _WriteClass.UNOBSERVABLE
+        return _WriteClass.VIA_RESULT
+
+    def _owns_binding(self, binding: Binding, func: Node) -> bool:
+        """
+        Whether *binding* is declared within *func* rather than reaching in from an enclosing scope or the
+        global object — the exact ownership test `_account_write` applies to a plain-identifier write, so a
+        mutation of an owned local and a mutation of its name agree on observability. A binding *func* owns
+        has all its references inside *func*'s subtree, so the summary scan sees every one of its escapes.
+        """
+        if binding.kind is BindingKind.IMPLICIT_GLOBAL or binding.scope is self.model.root_scope:
             return False
-        return self._container_non_escaping(binding)
+        func_scope = self.model.function_scope(func)
+        return func_scope is not None and func_scope.contains(binding.scope)
 
     def _fresh_container_origin(self, binding: Binding) -> bool:
         """
@@ -1256,7 +1418,14 @@ class EffectModel:
     def _base_is_safe(self, node: Node) -> bool:
         """
         Whether a property access on *node* cannot throw because *node* is known not to be nullish: a
-        freshly built value, the global object, a pristine intrinsic root, or a member chain on one.
+        freshly built value, the global object, a pristine intrinsic root, a never-rebound rest parameter,
+        or a member chain on one. A rest parameter is bound to a fresh array at function entry, before any
+        body statement runs — no temporal-dead-zone or hoisted-`undefined` window a flow-insensitive check
+        could miss — so a member access on it is safe wherever it appears, provided the name is never
+        reassigned to a value that could be nullish. A `var`/`let`/`const` local initialized to a literal
+        is deliberately NOT admitted here: its initializer may not have run yet at the access
+        (`function(){ a.x = 1; var a = []; }` throws), which this flow-insensitive predicate cannot rule
+        out.
         """
         if isinstance(node, (
             JsArrayExpression,
@@ -1270,7 +1439,10 @@ class EffectModel:
         if isinstance(node, JsIdentifier):
             if node.name in GLOBAL_OBJECT_ALIASES:
                 return True
-            return isinstance(self.intrinsic_of(node), str)
+            if isinstance(self.intrinsic_of(node), str):
+                return True
+            binding = self.model.resolve(node)
+            return binding is not None and self._is_rest_param(binding) and not binding.writes
         if isinstance(node, JsMemberExpression):
             return node.object is not None and self._base_is_safe(node.object)
         return False
@@ -1307,8 +1479,7 @@ class EffectModel:
         `Object.prototype` accessor. This is the single getter-freeness gate the summary scan and
         `is_side_effect_free` share.
         """
-        prop = member.property
-        if isinstance(prop, JsIdentifier) and prop.name in _POISON_PILL_PROPERTIES:
+        if _is_poison_pill_property(member):
             return False
         if member.object is not None and self._base_getter_safe(member.object):
             return True

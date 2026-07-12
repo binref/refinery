@@ -113,7 +113,7 @@ def _collect_finders(
 
 def _is_finder(func: Node, model: SemanticModel, effects: EffectModel) -> bool:
     summary = effects.summary_of(func)
-    if summary.writes_global or summary.writes_captured:
+    if summary.writes_global or summary.writes_captured or summary.mutates_returned_local:
         return False
     if not any(_is_global_alias(node, model) for node in func.walk()):
         return False

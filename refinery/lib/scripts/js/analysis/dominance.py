@@ -37,7 +37,7 @@ from refinery.lib.scripts.js.analysis.cfg import (
     ControlFlowModel,
     build_control_flow_model,
 )
-from refinery.lib.scripts.js.analysis.model import SemanticModel, enclosing_function
+from refinery.lib.scripts.js.analysis.model import Binding, SemanticModel, enclosing_function
 
 
 class DominanceModel:
@@ -205,15 +205,25 @@ class DominanceModel:
 
     def established_before(self, function: Node, reference: Node) -> bool:
         """
-        Whether *function*'s callable value is in place before *reference* runs: every node in its
-        `SemanticModel.establishment_sites` executes first. A hoisted function declaration has no sites
-        and qualifies unconditionally; a `var`/`let`/`const` initializer or a lone assignment
-        (`f = function(){}`, the form namespace flattening leaves) qualifies only where each establishing
-        node runs before *reference*. `False` when *function* is not invoked through a single orderable
-        name, so its presence cannot be ordered — the query a consumer needs before folding or dropping a
-        call whose callee would otherwise read a temporal dead zone or a hoisted `undefined`.
+        Whether *function*'s callable value is in place before *reference* runs. The
+        function-invocation view of `binding_established_before`: `False` when *function* is not invoked
+        through a single orderable name, so its presence cannot be ordered — the query a consumer needs
+        before folding or dropping a call whose callee would otherwise read a temporal dead zone or a
+        hoisted `undefined`.
         """
-        sites = self.model.establishment_sites(function)
+        return self.binding_established_before(self.model.invocation_binding(function), reference)
+
+    def binding_established_before(self, binding: Binding | None, reference: Node) -> bool:
+        """
+        Whether *binding*'s `singular_value` is in place before *reference* runs: every node in its
+        `SemanticModel.binding_establishment_sites` executes first. A hoisted function declaration has no
+        sites and qualifies unconditionally; a `var`/`let`/`const` initializer, a class declaration, or a
+        lone assignment (`f = function(){}`, the form namespace flattening leaves) qualifies only where
+        each establishing node runs before *reference*. `False` when the binding holds no single orderable
+        value, so its presence cannot be ordered — the query a consumer needs before trusting a value that
+        would otherwise be read out of its temporal dead zone or before its establishing write.
+        """
+        sites = self.model.binding_establishment_sites(binding)
         if sites is None:
             return False
         return all(self.runs_before(site, reference) for site in sites)

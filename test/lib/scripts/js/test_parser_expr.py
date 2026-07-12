@@ -361,6 +361,14 @@ class TestJsParserExpressions(TestBase):
         ast = JsParser('var await = 1; f(await);').parse()
         self.assertEqual([n for n in ast.walk() if isinstance(n, JsAwaitExpression)], [])
 
+    def test_await_is_operator_in_object_async_method(self):
+        ast = JsParser('var o = { async f(){ return await x; } };').parse()
+        self.assertEqual(len([n for n in ast.walk() if isinstance(n, JsAwaitExpression)]), 1)
+
+    def test_yield_is_operator_in_object_generator_method(self):
+        ast = JsParser('var o = { *g(){ yield x; } };').parse()
+        self.assertEqual(len([n for n in ast.walk() if isinstance(n, JsYieldExpression)]), 1)
+
     def test_sequence(self):
         expr = self._parse_expr('a, b, c')
         self.assertIsInstance(expr, JsSequenceExpression)

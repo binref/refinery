@@ -209,10 +209,10 @@ class JsSimplifications(Transformer):
         its type plus the own properties the binding is assigned — so membership is decidable; any other
         value, or one whose own-property set cannot be bounded, yields `None`. The binding is resolved
         through the model, so the answer is shadowing-correct across scopes and recognizes the
-        bare-assignment form namespace flattening leaves, not only declarations. A value installed by
-        assignment reads `undefined` before that write runs, so a `key in name` the establishing write
-        does not dominate is left unresolved rather than fold away the `TypeError` a premature read
-        would throw; a declaration or initializer, established without a write, needs no such gate.
+        bare-assignment form namespace flattening leaves, not only declarations. The value reads
+        `undefined` until whatever establishes it — a declarator initializer, a class declaration, or a
+        lone assignment — has run, so a `key in name` whose establishing node does not run before the read
+        is left unresolved rather than fold away the `TypeError` a premature read would throw.
         """
         right = node.right
         if not isinstance(right, JsIdentifier):
@@ -223,7 +223,7 @@ class JsSimplifications(Transformer):
         value = self.model.singular_value(binding)
         if value is None:
             return None
-        if binding.writes and not self.dominance.runs_before(binding.writes[0], right):
+        if not self.dominance.binding_established_before(binding, right):
             return None
         if isinstance(value, FUNCTION_NODES):
             members = _FUNCTION_PROPERTIES
@@ -239,44 +239,65 @@ class JsSimplifications(Transformer):
             return None
         if key in members:
             return True
-        stores = self._own_property_stores(binding)
-        if stores is None:
+        state = self._own_property_stores(binding, right)
+        if state is None:
             return None
-        if key in stores:
+        present, any_store = state
+        if key in present:
             return True
-        if stores:
+        if any_store:
             return None
         return False
 
-    def _own_property_stores(self, binding: Binding) -> set[str] | None:
+    def _own_property_stores(self, binding: Binding, read: Node) -> tuple[set[str], bool] | None:
         """
-        The property names assigned as own properties of a binding's value (`name.k = ...`,
-        `name['k'] = ...`), collected from the binding's references so the set is shadowing-correct.
-        `None` when a write targets a computed key that is not a string literal, since the own-property
-        set is then unbounded and no `in` membership can be decided.
+        The own-property state of *binding*'s value at *read*: a pair `(present, any_store)`. *present* is
+        the property names a store (`name.k = ...`, `name['k'] = ...`) provably installs before *read*
+        runs and that no `delete name.k` can remove; a store that runs after *read* cannot make the key
+        present at it, and a key that may be deleted — or that shares the binding with a `delete` of an
+        unbounded computed key — is withheld. *any_store* records whether the value receives any
+        own-property store at all, so the caller only concludes absence for a value that receives none.
+        References are resolved through the model so the set is shadowing-correct. `None` when a store or
+        delete targets a computed key that is not a string literal, since the own-property set is then
+        unbounded and no `in` membership can be decided.
         """
-        stores: set[str] = set()
+        stores: list[tuple[str, JsMemberExpression]] = []
+        deleted: set[str] = set()
+        unbounded_delete = False
+        any_store = False
         for ref in self.model.references(binding):
             member = ref.parent
             if not isinstance(member, JsMemberExpression) or member.object is not ref:
                 continue
-            assignment = member.parent
-            if (
-                not isinstance(assignment, JsAssignmentExpression)
-                or strip_parens(assignment.left) is not member
-            ):
-                continue
             prop = member.property
             if member.computed:
-                if isinstance(prop, JsStringLiteral):
-                    stores.add(prop.value)
-                else:
-                    return None
+                name = prop.value if isinstance(prop, JsStringLiteral) else None
             elif isinstance(prop, JsIdentifier):
-                stores.add(prop.name)
+                name = prop.name
             else:
-                return None
-        return stores
+                name = None
+            parent = member.parent
+            if isinstance(parent, JsAssignmentExpression) and strip_parens(parent.left) is member:
+                if name is None:
+                    return None
+                any_store = True
+                stores.append((name, member))
+            elif (
+                isinstance(parent, JsUnaryExpression)
+                and parent.operator == 'delete'
+                and strip_parens(parent.operand) is member
+            ):
+                if name is None:
+                    unbounded_delete = True
+                else:
+                    deleted.add(name)
+        present: set[str] = set()
+        for name, member in stores:
+            if name in deleted or unbounded_delete:
+                continue
+            if self.dominance.runs_before(member, read):
+                present.add(name)
+        return present, any_store
 
     def visit_JsBinaryExpression(self, node: JsBinaryExpression):
         self.generic_visit(node)

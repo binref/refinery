@@ -1288,6 +1288,7 @@ class JsInterpreter:
         effects: EffectModel | None = None,
         closure: Mapping[str, Value] | None = None,
         closure_env: Mapping[int, Mapping[str, Value]] | None = None,
+        established: Callable[[_FuncNode], bool] | None = None,
         depth: int = 0,
     ):
         self.max_iterations = max_iterations
@@ -1296,6 +1297,7 @@ class JsInterpreter:
         self._effects = effects
         self._closure: Mapping[str, Value] = closure or {}
         self._closure_env: Mapping[int, Mapping[str, Value]] = closure_env or {}
+        self._established = established
         self._env: dict[str, Value] = {}
         self._iterations = 0
         self._depth = depth
@@ -1648,16 +1650,23 @@ class JsInterpreter:
 
     def _resolve_function_node(self, node: JsIdentifier) -> _FuncNode | None:
         """
-        The single function *node* names that this interpreter may resolve without ordering information,
-        or `None`. Delegates to `EffectModel.unambiguous_function`: a function declaration or a
-        bare-assignment (`var f; f = function(){}`) resolves, but a name reassigned away from a value it
-        already held stays unresolved — the ordering-free view the evaluator's old visible-functions map
-        enforced before interpretation routed resolution through the model.
+        The single function *node* names, or `None`. Delegates to `EffectModel.unambiguous_function`: a
+        function declaration or a bare-assignment (`var f; f = function(){}`) resolves, but a name
+        reassigned away from a value it already held stays unresolved. When an *established* predicate was
+        supplied, a resolved function is returned only if it is in place before the call site folding began
+        — a bare-assignment or initializer function reached before its establishing node has run reads a
+        temporal dead zone or a hoisted `undefined` at runtime, so resolving it here would replace that
+        throw with a value. A hoisted function declaration is always established and passes unconditionally.
         """
         effects = self._effects
         if effects is None:
             return None
-        return effects.unambiguous_function(effects.model.resolve(node))
+        func = effects.unambiguous_function(effects.model.resolve(node))
+        if func is None:
+            return None
+        if self._established is not None and not self._established(func):
+            return None
+        return func
 
     def _eval_identifier(self, node: JsIdentifier) -> Value:
         name = node.name
@@ -2046,6 +2055,7 @@ class JsInterpreter:
             effects=self._effects,
             closure=callee_closure,
             closure_env=self._closure_env,
+            established=self._established,
             depth=self._depth + 1,
         )
         try:

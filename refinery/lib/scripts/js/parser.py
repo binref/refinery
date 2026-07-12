@@ -1589,8 +1589,9 @@ class JsParser:
         is_async: bool = False,
     ) -> JsProperty:
         func_offset = self._current.offset
-        params = self._parse_formal_parameters()
-        body = self._parse_block_statement()
+        with self._function_body_context(is_async, is_generator):
+            params = self._parse_formal_parameters()
+            body = self._parse_block_statement()
         value = JsFunctionExpression(
             params=params, body=body, generator=is_generator,
             is_async=is_async, offset=func_offset)

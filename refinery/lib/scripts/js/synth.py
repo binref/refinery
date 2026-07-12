@@ -83,6 +83,33 @@ from refinery.lib.scripts.js.precedence import needs_parens, statement_needs_par
 _WORD_UNARY_OPS = frozenset({'typeof', 'void', 'delete'})
 
 
+def _is_decorator_member(expr: Node) -> bool:
+    """
+    Whether *expr* is a `DecoratorMemberExpression`: a bare identifier or a dotted chain of
+    non-computed member accesses bottoming out in one (`a`, `a.b.c`). A computed member (`a[b]`) or a
+    member whose base is a call (`a().b`) is not, so it cannot follow `@` without parentheses.
+    """
+    if isinstance(expr, JsIdentifier):
+        return True
+    if isinstance(expr, JsMemberExpression) and not expr.computed and isinstance(expr.property, JsIdentifier):
+        return expr.object is not None and _is_decorator_member(expr.object)
+    return False
+
+
+def _is_bare_decorator(expr: Node) -> bool:
+    """
+    Whether *expr* may follow `@` without parentheses. The decorator grammar admits only a
+    `DecoratorMemberExpression` (`a`, `a.b`) or a `DecoratorCallExpression` — one such member chain
+    applied to a single argument list (`a.b()`). Any other expression (a computed member, a chained or
+    higher-order call, an arbitrary expression) must be wrapped in parentheses to round-trip.
+    """
+    if _is_decorator_member(expr):
+        return True
+    if isinstance(expr, JsCallExpression) and expr.callee is not None:
+        return _is_decorator_member(expr.callee)
+    return False
+
+
 class JsSynthesizer(Synthesizer):
 
     def __init__(
@@ -449,7 +476,7 @@ class JsSynthesizer(Synthesizer):
         expr = node.expression
         if expr is None:
             return
-        if isinstance(expr, (JsIdentifier, JsMemberExpression, JsCallExpression)):
+        if _is_bare_decorator(expr):
             self.visit(expr)
         else:
             self._write('(')

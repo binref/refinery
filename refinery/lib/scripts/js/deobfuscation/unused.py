@@ -443,10 +443,15 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
         under a pristine intrinsic surface is removable when its arguments are, so a dead binding whose
         initializer is a pure decoder or factory can be dropped even though it is a call. A member read
         through a local global-object alias is cleared only where the alias is established before it, and
-        a pure call only where its callee is established before it.
+        a pure call only where its callee is established before it. Every call site of this method drops
+        *node*'s value outright — a dead store, a bare expression statement, an unreferenced initializer —
+        so it is scanned as *discarded*: a call whose sole residual effect is a mutation of a local it
+        returns (a decoder-factory IIFE building a scratch container) is removable, its mutation being
+        unobservable once the result is thrown away.
         """
         return self.effects.is_side_effect_free(
-            node, defunct, member_safe=self._member_read_ok, call_established=self._call_established)
+            node, defunct, member_safe=self._member_read_ok, call_established=self._call_established,
+            discarded=True)
 
     def _call_established(self, call: JsCallExpression | JsNewExpression) -> bool:
         """

@@ -595,6 +595,7 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
             effects=self._effects,
             closure=closure,
             closure_env=self._closure_env,
+            established=lambda callee: self._established_before(callee, node),
         )
         try:
             result = interpreter.execute(func, args)

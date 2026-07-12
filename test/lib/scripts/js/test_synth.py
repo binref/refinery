@@ -667,6 +667,12 @@ class TestJsSynthesizer(TestBase):
     def test_class_decorator_member(self):
         self._round_trip('@a.b.c class C {}')
 
+    def test_class_decorator_parenthesized_computed_member(self):
+        self._round_trip('@(a[b]) class C {}')
+
+    def test_class_decorator_parenthesized_member_of_call(self):
+        self._round_trip('@(a().b) class C {}')
+
     def test_member_decorators(self):
         self._round_trip('class C { @a m() {} @b x = 1; }')
 

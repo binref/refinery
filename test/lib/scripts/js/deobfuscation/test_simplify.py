@@ -848,6 +848,85 @@ class TestGlobalAliasStripping(TestJsDeobfuscator):
             self._simplify(source),
         )
 
+    def test_in_operator_folds_absent_key_for_established_empty_object(self):
+        source = inspect.cleandoc(
+            """
+            var obj = {};
+            var a = 'x' in obj;
+            """
+        )
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var obj = {};
+                var a = false;
+                """
+            ),
+            self._simplify(source),
+        )
+
+    def test_in_operator_folds_present_key_for_store_before_read(self):
+        source = inspect.cleandoc(
+            """
+            var obj = {};
+            obj.x = 1;
+            var a = 'x' in obj;
+            """
+        )
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var obj = {};
+                obj.x = 1;
+                var a = true;
+                """
+            ),
+            self._simplify(source),
+        )
+
+    def test_in_operator_not_folded_before_object_initializer_runs(self):
+        """
+        At the `in`, `obj` is still its hoisted `undefined`, so `'x' in obj` throws a `TypeError` at
+        runtime rather than reading an empty object. Folding it to `false` would delete that throw, so the
+        establishment gate must decline until the declarator runs.
+        """
+        source = inspect.cleandoc(
+            """
+            var a = 'x' in obj;
+            var obj = {};
+            """
+        )
+        self.assertEqual(source, self._simplify(source))
+
+    def test_in_operator_not_folded_for_store_after_read(self):
+        """
+        The `obj.x = 1` store runs after the read, so the property is absent when `'x' in obj` evaluates;
+        the store cannot make the key present at the read and must not fold the membership to `true`.
+        """
+        source = inspect.cleandoc(
+            """
+            var obj = {};
+            var a = 'x' in obj;
+            obj.x = 1;
+            """
+        )
+        self.assertEqual(source, self._simplify(source))
+
+    def test_in_operator_not_folded_when_key_deleted_before_read(self):
+        """
+        The property is stored then deleted before the read, so it is absent when `'x' in obj` evaluates;
+        a store the membership check trusts must not be one a `delete` can remove first.
+        """
+        source = inspect.cleandoc(
+            """
+            var obj = {};
+            obj.x = 1;
+            delete obj.x;
+            var a = 'x' in obj;
+            """
+        )
+        self.assertEqual(source, self._simplify(source))
+
     def test_global_alias_preserved_when_shadowed_by_param(self):
         source = inspect.cleandoc(
             """

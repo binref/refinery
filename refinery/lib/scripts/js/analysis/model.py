@@ -946,16 +946,25 @@ class SemanticModel:
     def establishment_sites(self, function: Node) -> list[Node] | None:
         """
         The nodes that must all have executed before *function*'s callable value is installed under the
-        name it is invoked through, for a consumer that gates a use on execution order. An empty list
-        when the value is hoisted into place before any statement runs — a function declaration — so no
-        ordering is required; the declarator when the value is a `var`/`let`/`const` initializer, which
-        is absent until that declarator runs; the recorded writes when a lone assignment installs it
-        (`f = function(){}`, the form namespace flattening leaves). `None` when *function* is not invoked
-        through a single such name, so its presence cannot be ordered and the caller declines. Ordering
-        the returned nodes against the use is the caller's job, since that needs the dominance model this
-        layer must not depend on.
+        name it is invoked through, for a consumer that gates a use on execution order. The
+        function-invocation view of `binding_establishment_sites`: `None` when *function* is not invoked
+        through a single orderable name, so its presence cannot be ordered and the caller declines.
         """
-        binding = self.invocation_binding(function)
+        return self.binding_establishment_sites(self.invocation_binding(function))
+
+    def binding_establishment_sites(self, binding: Binding | None) -> list[Node] | None:
+        """
+        The nodes that must all have executed before *binding*'s `singular_value` is installed, for a
+        consumer that gates a use on execution order. An empty list when the value is hoisted into place
+        before any statement runs — a function declaration — so no ordering is required; the declarator
+        when the value is a `var`/`let`/`const` initializer, which is absent until that declarator runs;
+        the class declaration when the value is a class, which is in its temporal dead zone until it runs;
+        the recorded writes when a lone assignment installs it (`f = function(){}`, the form namespace
+        flattening leaves). `None` when the binding holds no single such value, so its presence cannot be
+        ordered and the caller declines. This mirrors `singular_value`'s binding shapes exactly, one query
+        returning the value and the other the nodes that establish it. Ordering the returned nodes against
+        the use is the caller's job, since that needs the dominance model this layer must not depend on.
+        """
         if binding is None or len(binding.declarations) != 1:
             return None
         if binding.writes:
@@ -964,6 +973,8 @@ class SemanticModel:
         parent = declaration.parent
         if isinstance(parent, JsFunctionDeclaration):
             return []
+        if isinstance(parent, JsClassDeclaration):
+            return [parent]
         if isinstance(parent, JsVariableDeclarator):
             return [parent]
         return None

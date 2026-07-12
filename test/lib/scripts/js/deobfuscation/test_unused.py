@@ -70,6 +70,36 @@ class TestUnusedCodeRemoval(TestJsDeobfuscator):
         )
         self.assertEqual(source, self._remove_unused(source))
 
+    def test_dead_strict_function_caller_read_preserved(self):
+        """
+        Reading `.caller` on a strict-mode function throws a `TypeError`, so the read is not
+        side-effect-free even off a fresh function literal; the unused binding is kept, not dropped.
+        """
+        source = inspect.cleandoc(
+            """
+            var x = function() {
+              'use strict';
+            }.caller;
+            console.log(1);
+            """
+        )
+        self.assertEqual(source, self._remove_unused(source))
+
+    def test_dead_strict_function_computed_caller_read_preserved(self):
+        """
+        The poison-pill gate also covers the string-computed form `['caller']`, which names the same
+        throwing accessor as the dotted `.caller`.
+        """
+        source = inspect.cleandoc(
+            """
+            var x = function() {
+              'use strict';
+            }['caller'];
+            console.log(1);
+            """
+        )
+        self.assertEqual(source, self._remove_unused(source))
+
     def test_dead_global_alias_data_property_read_removed(self):
         """
         A local single-assigned to the global object is a global-object alias, so a data-property read
@@ -1299,6 +1329,35 @@ class TestRegressionBugs(TestJsDeobfuscator):
         source = inspect.cleandoc(
             """
             var unused = String.fromCodePoint;
+            keep("y");
+            """
+        )
+        self.assertEqual('keep("y");', self._run_transformer(source, JsUnusedCodeRemoval))
+
+    def test_dead_binding_from_decoder_factory_iife_removed(self):
+        source = inspect.cleandoc(
+            """
+            var unused = function (...A3LWTls) {
+              A3LWTls.length = 0;
+              A3LWTls.b = new Array(128);
+              A3LWTls.d = [];
+              return function (w) { return A3LWTls.d; };
+            }();
+            keep("y");
+            """
+        )
+        self.assertEqual('keep("y");', self._run_transformer(source, JsUnusedCodeRemoval))
+
+    def test_bare_decoder_factory_iife_removed_with_dead_sibling(self):
+        source = inspect.cleandoc(
+            """
+            var dead;
+            dead = 1;
+            (function (...A3LWTls) {
+              A3LWTls.length = 0;
+              A3LWTls.d = [];
+              return function (w) { return A3LWTls.d; };
+            }());
             keep("y");
             """
         )
