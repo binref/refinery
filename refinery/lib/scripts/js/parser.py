@@ -142,6 +142,8 @@ class JsParser:
             return int(text, 8)
         if text.startswith(('0b', '0B')):
             return int(text, 2)
+        if len(text) > 1 and text[0] == '0' and all(d in '01234567' for d in text):
+            return int(text, 8)
         return int(text)
 
     def __init__(self, source: str, *, top_level_await: bool = False):

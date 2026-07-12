@@ -12,7 +12,6 @@ _ESCAPE_MAP: dict[str, str] = {
     'r'  : '\r',
     't'  : '\t',
     'v'  : '\v',
-    '0'  : '\0',
     '\\' : '\\',
     "'"  : "'",
     '"'  : '"',
@@ -20,6 +19,7 @@ _ESCAPE_MAP: dict[str, str] = {
 }
 
 _HEX = frozenset('0123456789abcdefABCDEF')
+_OCTAL = frozenset('01234567')
 
 
 def _decode_one_escape(src: str, pos: int, length: int) -> tuple[str, int]:
@@ -30,6 +30,16 @@ def _decode_one_escape(src: str, pos: int, length: int) -> tuple[str, int]:
     mapped = _ESCAPE_MAP.get(c)
     if mapped is not None:
         return mapped, pos
+    if c in _OCTAL:
+        value = int(c, 8)
+        remaining = 2 if c in '0123' else 1
+        while remaining > 0 and pos < length and src[pos] in _OCTAL:
+            value = value * 8 + int(src[pos], 8)
+            pos += 1
+            remaining -= 1
+        return chr(value), pos
+    if c in '89':
+        return c, pos
     if c == 'x' and pos + 1 < length:
         hexstr = src[pos:pos + 2]
         if len(hexstr) == 2 and _HEX.issuperset(hexstr):

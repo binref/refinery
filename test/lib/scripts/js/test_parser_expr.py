@@ -91,6 +91,42 @@ class TestJsParserExpressions(TestBase):
         self.assertIsInstance(expr, JsStringLiteral)
         self.assertEqual(expr.value, 'world')
 
+    def test_legacy_octal_and_non_octal_decimal_values(self):
+        cases = [
+            ('010', 8),
+            ('0755', 493),
+            ('017', 15),
+            ('00', 0),
+            ('08', 8),
+            ('09', 9),
+            ('019', 19),
+        ]
+        for source, expected in cases:
+            with self.subTest(source=source):
+                expr = self._parse_expr(source)
+                self.assertIsInstance(expr, JsNumericLiteral)
+                self.assertEqual(expr.value, expected)
+
+    def test_legacy_octal_string_escape_values(self):
+        cases = [
+            (r"'\07'", '\x07'),
+            (r"'\7'", '\x07'),
+            (r"'\101'", 'A'),
+            (r"'\377'", '\xff'),
+            (r"'\400'", ' 0'),
+            (r"'\0'", '\x00'),
+            (r"'\0a'", '\x00a'),
+            (r"'\08'", '\x008'),
+            (r"'\8'", '8'),
+            (r"'\9'", '9'),
+            (r"'\\1'", '\\1'),
+        ]
+        for source, expected in cases:
+            with self.subTest(source=source):
+                expr = self._parse_expr(source)
+                self.assertIsInstance(expr, JsStringLiteral)
+                self.assertEqual(expr.value, expected)
+
     def test_regexp(self):
         expr = self._parse_expr('/abc/gi')
         self.assertIsInstance(expr, JsRegExpLiteral)
