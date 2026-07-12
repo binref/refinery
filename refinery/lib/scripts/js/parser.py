@@ -529,14 +529,16 @@ class JsParser:
             decl_offset = self._current.offset
             kind_tok = self._advance()
             kind = _VAR_KIND_MAP[kind_tok.kind]
-            declarator = self._parse_variable_declarator()
+            with self._with_no_in(True):
+                declarator = self._parse_variable_declarator()
             decl = JsVariableDeclaration(
                 declarations=[declarator], kind=kind, offset=decl_offset)
             result = self._parse_for_in_or_of(decl, is_await, offset)
             if result is not None:
                 return result
             while self._eat(JsTokenKind.COMMA):
-                decl.declarations.append(self._parse_variable_declarator())
+                with self._with_no_in(True):
+                    decl.declarations.append(self._parse_variable_declarator())
             self._expect(JsTokenKind.SEMICOLON)
             return self._parse_for_rest(decl, offset)
 

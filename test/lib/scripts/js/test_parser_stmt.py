@@ -138,6 +138,14 @@ class TestJsParserStatements(TestBase):
         stmt = self._parse_stmt('for (var k in obj) { }')
         self.assertIsInstance(stmt, JsForInStatement)
 
+    def test_for_in_with_var_initializer(self):
+        stmt = self._parse_stmt('for (var i = 0 in obj) { }')
+        assert isinstance(stmt, JsForInStatement)
+        left = stmt.left
+        assert isinstance(left, JsVariableDeclaration)
+        self.assertEqual(len(left.declarations), 1)
+        self.assertIsNotNone(left.declarations[0].init)
+
     def test_for_of(self):
         stmt = self._parse_stmt('for (const x of arr) { }')
         self.assertIsInstance(stmt, JsForOfStatement)
