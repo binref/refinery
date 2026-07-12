@@ -368,6 +368,23 @@ class TestRegressionBugs(TestJsDeobfuscator):
         )
         self.assertEqual("'number';", self._deobfuscate(source))
 
+    def test_object_property_reading_lexical_in_dead_zone_is_not_folded(self):
+        """
+        The object literal reads `x` in its temporal dead zone, so building it throws; folding `o.p`
+        across the `let` declaration would replace the throw with the declared value, so the throwing
+        program is left unchanged.
+        """
+        source = inspect.cleandoc(
+            """
+            (function () {
+                var o = { p: x };
+                let x;
+                return o.p;
+            })();
+            """
+        )
+        self.assertEqual(self._run_transformers(source), self._deobfuscate(source))
+
 
 class TestGlobalAliasStripping(TestJsDeobfuscator):
 

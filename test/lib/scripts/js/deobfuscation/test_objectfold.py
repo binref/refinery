@@ -916,3 +916,71 @@ class TestRegressionBugs(TestJsDeobfuscator):
             """
         )
         self.assertEqual(source, self._objectfold(source))
+
+    def test_property_reading_lexical_in_dead_zone_not_folded(self):
+        """
+        `{ p: x }` reads `x` before its `let` declaration — its temporal dead zone, a `ReferenceError`
+        at runtime — so folding `o.p` to `x` at the later access site would replace the throw with the
+        declared value; the object is left unfolded.
+        """
+        source = inspect.cleandoc(
+            """
+            function f() {
+              var o = { p: x };
+              let x = 5;
+              return o.p;
+            }
+            """
+        )
+        self.assertEqual(source, self._objectfold(source))
+
+    def test_property_reading_lexical_established_first_still_folds(self):
+        source = inspect.cleandoc(
+            """
+            function f() {
+              let x = 5;
+              var o = { p: x };
+              return o.p;
+            }
+            """
+        )
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function f() {
+                  let x = 5;
+                  return x;
+                }
+                """
+            ),
+            self._objectfold(source),
+        )
+
+    def test_deferred_read_of_lexical_in_nested_function_still_folds(self):
+        """
+        The property value reads `x` only inside a nested function, evaluated when `o.p()` is called —
+        a site folding preserves — not eagerly at the literal, so the dead-zone gate does not apply and
+        the wrapper still inlines at its call site.
+        """
+        source = inspect.cleandoc(
+            """
+            function f() {
+              var o = { p: function () { return x; } };
+              let x = 5;
+              return o.p();
+            }
+            """
+        )
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function f() {
+                  let x = 5;
+                  return function() {
+                    return x;
+                  }();
+                }
+                """
+            ),
+            self._objectfold(source),
+        )

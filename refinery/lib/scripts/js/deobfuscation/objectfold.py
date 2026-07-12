@@ -18,6 +18,7 @@ from refinery.lib.scripts import (
     _replace_in_parent,
 )
 from refinery.lib.scripts.js.analysis.cache import model_cache
+from refinery.lib.scripts.js.analysis.dominance import DominanceModel
 from refinery.lib.scripts.js.analysis.effects import EffectModel, object_sets_prototype
 from refinery.lib.scripts.js.analysis.model import Binding, Scope, SemanticModel
 from refinery.lib.scripts.js.deobfuscation.helpers import (
@@ -178,6 +179,11 @@ class JsObjectFold(ScopeProcessingTransformer):
                 for value in prop_map.values()
             ):
                 continue
+            if any(
+                self._reads_lexical_in_dead_zone(model, cache.dominance, value)
+                for value in prop_map.values()
+            ):
+                continue
             changed, can_remove = self._inline_references(model, binding, prop_map, self)
             if changed:
                 if can_remove:
@@ -247,6 +253,31 @@ class JsObjectFold(ScopeProcessingTransformer):
             if binding is None or _binding_inside(binding, value):
                 continue
             if not effects.binding_is_immutable_container(binding, member_calls_mutate=True, exclude=value):
+                return True
+        return False
+
+    @staticmethod
+    def _reads_lexical_in_dead_zone(
+        model: SemanticModel, dominance: DominanceModel, value: Node,
+    ) -> bool:
+        """
+        Whether *value*, evaluated eagerly when the object literal is built, reads a `let`, `const`, or
+        `class` binding not yet established there — a read in the binding's temporal dead zone, a
+        `ReferenceError` at runtime. Folding clones the value into each access site, which may lie past
+        the binding's declaration, so the read would move out of the dead zone and observe the declared
+        value instead of throwing. A read inside a nested function is not eager — it runs at call time,
+        where folding a called wrapper preserves its position — so `walk_scope` does not enter one. Only
+        a lexical binding has a dead zone; a `var`, a parameter, or an external global places no
+        constraint. This is the temporal-dead-zone counterpart to `_value_is_stable`, which guards only
+        against the binding being rebound, not against the value reading it before its declaration runs.
+        """
+        for node in walk_scope(value):
+            if not isinstance(node, JsIdentifier) or not model.is_reference(node):
+                continue
+            binding = model.resolve(node)
+            if binding is None or _binding_inside(binding, value):
+                continue
+            if binding.is_lexical and not dominance.binding_established_before(binding, node):
                 return True
         return False
 
