@@ -24,6 +24,7 @@ from refinery.lib.scripts.js.model import (
     JsForOfStatement,
     JsForStatement,
     JsFunctionDeclaration,
+    JsFunctionExpression,
     JsIdentifier,
     JsIfStatement,
     JsImportDeclaration,
@@ -35,6 +36,7 @@ from refinery.lib.scripts.js.model import (
     JsMethodDefinition,
     JsMethodKind,
     JsPrivateIdentifier,
+    JsPropertyDefinition,
     JsReturnStatement,
     JsScript,
     JsStaticBlock,
@@ -267,6 +269,89 @@ class TestJsParserStatements(TestBase):
         ast = JsParser('class C { static x = 1; }').parse()
         self.assertEqual([n for n in ast.walk() if isinstance(n, JsStaticBlock)], [])
         self.assertEqual([n for n in ast.walk() if isinstance(n, JsErrorNode)], [])
+
+    def test_class_field_named_contextual_keyword(self):
+        for name in ('static', 'get', 'set', 'async'):
+            with self.subTest(name=name):
+                ast = JsParser(F'class C {{ {name} }}').parse()
+                fields = [n for n in ast.walk() if isinstance(n, JsPropertyDefinition)]
+                self.assertEqual([n for n in ast.walk() if isinstance(n, JsMethodDefinition)], [])
+                self.assertEqual(len(fields), 1)
+                key = fields[0].key
+                assert isinstance(key, JsIdentifier)
+                self.assertEqual(key.name, name)
+                self.assertFalse(fields[0].is_static)
+                self.assertIsNone(fields[0].value)
+
+    def test_class_field_named_contextual_keyword_with_initializer(self):
+        for name in ('static', 'get', 'set', 'async'):
+            with self.subTest(name=name):
+                ast = JsParser(F'class C {{ {name} = 1; }}').parse()
+                fields = [n for n in ast.walk() if isinstance(n, JsPropertyDefinition)]
+                self.assertEqual(len(fields), 1)
+                key = fields[0].key
+                assert isinstance(key, JsIdentifier)
+                self.assertEqual(key.name, name)
+                self.assertIsNotNone(fields[0].value)
+                self.assertFalse(fields[0].is_static)
+
+    def test_class_method_named_contextual_keyword(self):
+        for name in ('static', 'get', 'set', 'async'):
+            with self.subTest(name=name):
+                ast = JsParser(F'class C {{ {name}() {{ return 1; }} }}').parse()
+                methods = [n for n in ast.walk() if isinstance(n, JsMethodDefinition)]
+                self.assertEqual([n for n in ast.walk() if isinstance(n, JsPropertyDefinition)], [])
+                self.assertEqual(len(methods), 1)
+                key = methods[0].key
+                assert isinstance(key, JsIdentifier)
+                self.assertEqual(key.name, name)
+                self.assertEqual(methods[0].kind, JsMethodKind.METHOD)
+
+    def test_class_static_modifier_with_field_named_static(self):
+        ast = JsParser('class C { static static = 1; }').parse()
+        fields = [n for n in ast.walk() if isinstance(n, JsPropertyDefinition)]
+        self.assertEqual(len(fields), 1)
+        key = fields[0].key
+        assert isinstance(key, JsIdentifier)
+        self.assertEqual(key.name, 'static')
+        self.assertTrue(fields[0].is_static)
+
+    def test_class_async_field_then_method_across_newline(self):
+        ast = JsParser('class C { async\n m() {} }').parse()
+        fields = [n for n in ast.walk() if isinstance(n, JsPropertyDefinition)]
+        methods = [n for n in ast.walk() if isinstance(n, JsMethodDefinition)]
+        self.assertEqual(len(fields), 1)
+        self.assertEqual(len(methods), 1)
+        field_key = fields[0].key
+        assert isinstance(field_key, JsIdentifier)
+        self.assertEqual(field_key.name, 'async')
+        value = methods[0].value
+        assert isinstance(value, JsFunctionExpression)
+        self.assertFalse(value.is_async)
+
+    def test_class_static_modifier_survives_newline(self):
+        ast = JsParser('class C { static\n m() {} }').parse()
+        self.assertEqual([n for n in ast.walk() if isinstance(n, JsPropertyDefinition)], [])
+        methods = [n for n in ast.walk() if isinstance(n, JsMethodDefinition)]
+        self.assertEqual(len(methods), 1)
+        self.assertTrue(methods[0].is_static)
+
+    def test_class_getter_named_x(self):
+        ast = JsParser('class C { get x() { return 1; } }').parse()
+        methods = [n for n in ast.walk() if isinstance(n, JsMethodDefinition)]
+        self.assertEqual(len(methods), 1)
+        self.assertEqual(methods[0].kind, JsMethodKind.GET)
+        key = methods[0].key
+        assert isinstance(key, JsIdentifier)
+        self.assertEqual(key.name, 'x')
+
+    def test_class_async_method_is_async(self):
+        ast = JsParser('class C { async m() {} }').parse()
+        methods = [n for n in ast.walk() if isinstance(n, JsMethodDefinition)]
+        self.assertEqual(len(methods), 1)
+        value = methods[0].value
+        assert isinstance(value, JsFunctionExpression)
+        self.assertTrue(value.is_async)
 
     def test_dynamic_import_expression(self):
         ast = JsParser("const p = import('m');").parse()

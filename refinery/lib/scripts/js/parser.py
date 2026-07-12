@@ -829,47 +829,46 @@ class JsParser:
     def _parse_class_member(self) -> JsMethodDefinition | JsPropertyDefinition | JsStaticBlock:
         offset = self._current.offset
         is_static = False
-        if (
-            self._at(JsTokenKind.IDENTIFIER) and self._current.value == 'static'
-        ):
+        if self._at(JsTokenKind.IDENTIFIER) and self._current.value == 'static':
             saved_pos = self._current
             self._advance()
             if self._at(JsTokenKind.LBRACE):
                 return self._parse_static_block(offset)
-            if self._at(
-                JsTokenKind.RBRACE, JsTokenKind.EOF, JsTokenKind.SEMICOLON,
-            ):
+            if self._at(JsTokenKind.LPAREN):
                 key = JsIdentifier(name='static', offset=saved_pos.offset)
                 return self._finish_class_member(key, False, False, offset)
+            if self._at_class_field_terminator():
+                key = JsIdentifier(name='static', offset=saved_pos.offset)
+                return self._finish_class_field(key, False, False, offset)
             is_static = True
 
         kind = JsMethodKind.METHOD
-        is_generator = False
+        is_generator = bool(self._eat(JsTokenKind.STAR))
         is_async = False
 
-        if self._eat(JsTokenKind.STAR):
-            is_generator = True
-
-        if self._at(JsTokenKind.IDENTIFIER) and self._current.value == 'get':
+        if (
+            not is_generator
+            and self._at(JsTokenKind.IDENTIFIER)
+            and self._current.value in ('get', 'set')
+        ):
             saved = self._current
             self._advance()
             if self._at(JsTokenKind.LPAREN):
-                key = JsIdentifier(name='get', offset=saved.offset)
-                return self._finish_class_member(key, is_static, is_generator, offset)
-            kind = JsMethodKind.GET
-        elif self._at(JsTokenKind.IDENTIFIER) and self._current.value == 'set':
-            saved = self._current
-            self._advance()
-            if self._at(JsTokenKind.LPAREN):
-                key = JsIdentifier(name='set', offset=saved.offset)
-                return self._finish_class_member(key, is_static, is_generator, offset)
-            kind = JsMethodKind.SET
-        elif self._at(JsTokenKind.ASYNC):
+                key = JsIdentifier(name=saved.value, offset=saved.offset)
+                return self._finish_class_member(key, is_static, False, offset)
+            if self._at_class_field_terminator():
+                key = JsIdentifier(name=saved.value, offset=saved.offset)
+                return self._finish_class_field(key, is_static, False, offset)
+            kind = JsMethodKind.GET if saved.value == 'get' else JsMethodKind.SET
+        elif not is_generator and self._at(JsTokenKind.ASYNC):
             saved = self._current
             self._advance()
             if self._at(JsTokenKind.LPAREN):
                 key = JsIdentifier(name='async', offset=saved.offset)
-                return self._finish_class_member(key, is_static, is_generator, offset)
+                return self._finish_class_member(key, is_static, False, offset)
+            if self._preceded_by_newline or self._at_class_field_terminator():
+                key = JsIdentifier(name='async', offset=saved.offset)
+                return self._finish_class_field(key, is_static, False, offset)
             is_async = True
             if self._eat(JsTokenKind.STAR):
                 is_generator = True
@@ -877,19 +876,42 @@ class JsParser:
         key, computed = self._parse_property_key()
 
         if kind == JsMethodKind.METHOD and not is_generator and not self._at(JsTokenKind.LPAREN):
-            value = None
-            if self._eat(JsTokenKind.EQUALS):
-                value = self._parse_assignment_expression()
-            self._eat_semicolon()
-            return JsPropertyDefinition(
-                key=key,
-                value=value,
-                computed=computed,
-                is_static=is_static,
-                offset=offset,
-            )
+            return self._finish_class_field(key, is_static, computed, offset)
 
         return self._finish_class_member(key, is_static, is_generator, offset, kind, computed, is_async=is_async)
+
+    def _at_class_field_terminator(self) -> bool:
+        """
+        Whether the current token completes a class element as a field named by the identifier just consumed:
+        an initializer (`=`), an explicit terminator (`;`), or the end of the class body (`}` / end of input).
+        A modifier prefix (`static`/`get`/`set`/`async`) followed by one of these is an ordinary field whose
+        name happens to be that word, not a modifier.
+        """
+        return self._at(
+            JsTokenKind.EQUALS,
+            JsTokenKind.SEMICOLON,
+            JsTokenKind.RBRACE,
+            JsTokenKind.EOF,
+        )
+
+    def _finish_class_field(
+        self,
+        key: Expression,
+        is_static: bool,
+        computed: bool,
+        offset: int,
+    ) -> JsPropertyDefinition:
+        value = None
+        if self._eat(JsTokenKind.EQUALS):
+            value = self._parse_assignment_expression()
+        self._eat_semicolon()
+        return JsPropertyDefinition(
+            key=key,
+            value=value,
+            computed=computed,
+            is_static=is_static,
+            offset=offset,
+        )
 
     def _finish_class_member(
         self,
