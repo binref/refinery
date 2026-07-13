@@ -679,7 +679,7 @@ def _is_reflective_member(member: JsMemberExpression) -> bool:
     return isinstance(prop, JsIdentifier) and prop.name in REFLECTIVE_INTRINSICS
 
 
-def _is_direct_eval_call(node: Node) -> bool:
+def is_direct_eval_call(node: Node) -> bool:
     """
     Whether *node* is a direct `eval` call — a call whose callee, once parentheses are stripped, is
     the bare identifier `eval`. Parentheses are transparent to the reference, so `(eval)(...)` is a
@@ -1211,7 +1211,7 @@ class SemanticModel:
     def _direct_eval_sites(self, function: Node) -> list[Node]:
         """
         The direct `eval` call sites within *function* — every call whose callee, once parentheses are
-        stripped, is the bare identifier `eval` (see `_is_direct_eval_call`), the one reflective surface
+        stripped, is the bare identifier `eval` (see `is_direct_eval_call`), the one reflective surface
         that runs in the function's own scope and can therefore name its locals. Nested functions are
         included, since a direct `eval` in a closure inherits the enclosing locals. The `with` surface is
         not scanned — a `with` body's accesses are attributed precisely as dynamic references — so only
@@ -1219,7 +1219,7 @@ class SemanticModel:
         """
         cached = self._function_direct_eval_sites.get(id(function))
         if cached is None:
-            cached = [node for node in function.walk() if _is_direct_eval_call(node)]
+            cached = [node for node in function.walk() if is_direct_eval_call(node)]
             self._function_direct_eval_sites[id(function)] = cached
         return cached
 
