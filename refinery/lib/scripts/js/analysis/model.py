@@ -1424,6 +1424,7 @@ class SemanticModel:
         if scope is None or scope.var_scope is not binding.scope.var_scope:
             binding.captured = True
 
+
 class _ScopeBuilder:
     """
     Single-pass scope and binding construction. Bindings are collected when a scope is created
