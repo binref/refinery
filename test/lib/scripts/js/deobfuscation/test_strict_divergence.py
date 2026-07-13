@@ -129,6 +129,25 @@ class TestStrictDivergenceDifferential(TestBase):
         'console.log((function () { return this; })() === undefined);',
     ]
 
+    DIVERGENT_FRAGMENTS = [
+        'zz = 5;',
+        'undefined = 5;',
+        '(1).px = 2;',
+        '(function () {}).name = "z";',
+        'delete Object.prototype;',
+        'eval("var qq = 1"); console.log(typeof qq);',
+        'if (1) { function gg() {} } console.log(typeof gg);',
+        'console.log((function (a) { a = 9; return arguments[0]; })(3));',
+        'console.log(this === undefined);',
+        'function ff() {} console.log(ff.caller);',
+    ]
+
+    NESTING_CONTEXTS = [
+        '(function () {{ {frag} }})();',
+        '(function () {{ return (function () {{ {frag} }})(); }})();',
+        '(() => {{ {frag} }})();',
+    ]
+
     def _diverges(self, source: str) -> bool:
         parsed = JsParser(source).parse()
         return diverges_under_strict(parsed, build_semantic_model(parsed))
@@ -145,3 +164,18 @@ class TestStrictDivergenceDifferential(TestBase):
                     self.assertTrue(self._diverges(source))
                 elif self._oracle_diverges(source):
                     self.assertTrue(self._diverges(source))
+
+    def test_no_false_negative_in_nested_scopes(self):
+        """
+        The mode flip reaches every nested scope, so each divergent fragment must still be flagged when
+        wrapped in a nested function, a doubly nested function, or an arrow — a rule that stopped at a
+        scope boundary would inline an unsound body.
+        """
+        for frag in self.DIVERGENT_FRAGMENTS:
+            for context in self.NESTING_CONTEXTS:
+                source = context.format(frag=frag)
+                with self.subTest(source=source):
+                    if collect_strict_violations(JsParser(source).parse(), strict=True):
+                        self.assertTrue(self._diverges(source))
+                    elif self._oracle_diverges(source):
+                        self.assertTrue(self._diverges(source))
