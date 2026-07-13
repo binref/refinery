@@ -14,7 +14,6 @@ from refinery.lib.scripts.js.analysis.cfg import (
     ControlFlowModel,
     build_cfg,
     build_control_flow,
-    build_control_flow_model,
 )
 from refinery.lib.scripts.js.analysis.effects import (
     EffectModel,
