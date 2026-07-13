@@ -67,8 +67,8 @@ class _popcount:
 
 class pop(Unit):
     """
-    Consume one or more visible chunks in the frame and store them as meta variables. Invisible
-    chunks are made visible.
+    Consume one or more visible chunks in the frame and store them as meta variables. Trailing
+    invisible chunks are made visible.
 
     In processing order, remove visible chunks from the current frame and store their contents
     in the given meta variables on all chunks that remain. The first invisible chunk in the input
