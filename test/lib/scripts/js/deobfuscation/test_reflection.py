@@ -923,6 +923,143 @@ class TestReflectionInlining(TestJsDeobfuscator):
         )
         self.assertEqual(source, self._reflect(source))
 
+    def test_function_constructor_pure_body_inlined_in_strict_function(self):
+        """
+        A body that behaves identically under strict mode — a pure `return 1 + 1` — now inlines into a
+        strict function, where the blunt strict-context gate used to decline every body.
+        """
+        source = inspect.cleandoc(
+            """
+            function f() {
+              'use strict';
+              return new Function('return 1 + 1')();
+            }
+            """
+        )
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function f() {
+                  'use strict';
+                  return 1 + 1;
+                }
+                """
+            ),
+            self._reflect(source))
+
+    def test_function_constructor_reads_inlined_in_strict_script(self):
+        """
+        A read-only body inlines into a strict script: reading a free name throws in both modes, so the
+        body cannot diverge under strict mode.
+        """
+        source = inspect.cleandoc(
+            """
+            'use strict';
+            var x = new Function('return a.b.c')();
+            """
+        )
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                'use strict';
+                var x = a.b.c;
+                """
+            ),
+            self._reflect(source))
+
+    def test_function_constructor_free_write_not_inlined_in_strict_context(self):
+        source = inspect.cleandoc(
+            """
+            function f() {
+              'use strict';
+              new Function('x = 1')();
+            }
+            """
+        )
+        self.assertEqual(source, self._reflect(source))
+
+    def test_function_constructor_member_write_not_inlined_in_strict_context(self):
+        source = inspect.cleandoc(
+            """
+            function f() {
+              'use strict';
+              new Function('o.p = 1')();
+            }
+            """
+        )
+        self.assertEqual(source, self._reflect(source))
+
+    def test_function_constructor_block_function_not_inlined_in_strict_context(self):
+        source = inspect.cleandoc(
+            """
+            function f() {
+              'use strict';
+              new Function('if (1) { function g() {} }')();
+            }
+            """
+        )
+        self.assertEqual(source, self._reflect(source))
+
+    def test_function_constructor_direct_eval_not_inlined_in_strict_context(self):
+        source = inspect.cleandoc(
+            """
+            function f() {
+              'use strict';
+              new Function('eval("var x = 1")')();
+            }
+            """
+        )
+        self.assertEqual(source, self._reflect(source))
+
+    def test_function_constructor_mapped_arguments_not_inlined_in_strict_context(self):
+        source = inspect.cleandoc(
+            """
+            function f() {
+              'use strict';
+              return new Function('return function (a) { arguments[0] = 9; return a; }')();
+            }
+            """
+        )
+        self.assertEqual(source, self._reflect(source))
+
+    def test_function_constructor_pure_body_inlined_in_class_method(self):
+        """
+        A class body is always strict, so the gate applies inside a method; a non-diverging body still
+        inlines there.
+        """
+        source = inspect.cleandoc(
+            """
+            class C {
+              m() {
+                return new Function('return 1 + 1')();
+              }
+            }
+            """
+        )
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                class C {
+                  m() {
+                    return 1 + 1;
+                  }
+                }
+                """
+            ),
+            self._reflect(source))
+
+    def test_function_constructor_diverging_body_not_inlined_in_class_method(self):
+        source = inspect.cleandoc(
+            """
+            class C {
+              m() {
+                return new Function('x = 1')();
+              }
+            }
+            """
+        )
+        self.assertEqual(source, self._reflect(source))
+
     def test_function_constructor_body_new_target_not_inlined(self):
         source = inspect.cleandoc(
             """

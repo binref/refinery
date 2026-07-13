@@ -41,6 +41,7 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     walk_scope,
 )
 from refinery.lib.scripts.js.deobfuscation.options import module_execution
+from refinery.lib.scripts.js.deobfuscation.strict_divergence import diverges_under_strict
 from refinery.lib.scripts.js.model import (
     JsAssignmentExpression,
     JsAwaitExpression,
@@ -937,8 +938,9 @@ class JsReflectionInlining(ScriptLevelTransformer):
         Parse reflectively evaluated *code* and decide whether inlining its body at *site* preserves
         meaning, given the `ReflectedScope` it runs in. Global-scope code — a `Function`-constructed
         body or indirect `eval`/string-timer code — must run in the global sloppy mode it would have: a
-        strict context at *site* declines the inlining, as does a `"use strict"` prologue; every receiver
-        `this` becomes `globalThis`; and a body reading `arguments`, `super`, or `new.target`, or a free
+        strict context at *site* declines a body that would diverge under strict mode
+        (`diverges_under_strict`), as does a `"use strict"` prologue; every receiver `this` becomes
+        `globalThis`; and a body reading `arguments`, `super`, or `new.target`, or a free
         name that no longer denotes the same global at *site* — including one a `with` on the path could
         capture — declines. Direct `eval` runs in the caller's scope, which is *site* itself, so its
         references and `this` are already correct there and only the checks below apply. A top-level
@@ -949,8 +951,6 @@ class JsReflectionInlining(ScriptLevelTransformer):
         if binds:
             return None
         resolves_globally = scope is not ReflectedScope.DIRECT_EVAL
-        if resolves_globally and _site_in_strict_context(site, root):
-            return None
         top_level_await = not resolves_globally and _site_in_async_function(site)
         parsed = _try_parse(code, top_level_await=top_level_await)
         if parsed is None:
@@ -966,6 +966,12 @@ class JsReflectionInlining(ScriptLevelTransformer):
         if scope is not ReflectedScope.FUNCTION_CONSTRUCTOR and _has_top_level_return(parsed.body):
             return None
         body_model = build_semantic_model(parsed)
+        if (
+            resolves_globally
+            and _site_in_strict_context(site, root)
+            and diverges_under_strict(parsed, body_model)
+        ):
+            return None
         free = _body_free_names(body_model, parsed)
         if resolves_globally and 'arguments' in free:
             return None
