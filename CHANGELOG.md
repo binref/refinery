@@ -5,8 +5,36 @@
 > If a release contains only bugfix, it contains no changelog details.
 > Otherwise, the changelog entries highlight only new or changed functionality.
 
-## Version 0.11.1
+## Version 0.11.2
+- The `php` unit was added; it parses PHP into an abstract syntax tree and pretty-prints it.
+  Future versions will add deobfuscation capabilities.
 - The `pcap` unit was refactored into modular network units. It now emits one chunk per packet and no longer reassembles TCP streams by itself. The new units `tcp` and `udp` perform stream reassembly, and the former `pcap-http` unit is now called `http`. The equivalent of the old behavior is the pipeline `pcap [| tcp ]`, and HTTP payloads are extracted with `pcap [| tcp | http ]`.
+- The `scan` unit was added; it is the counterpart to `reduce`,
+  threading an accumulator through the frame and storing the running value as a meta variable on every chunk.
+- The `vcall` unit was added;
+  it uses an emulator backend to call a single function inside an input executable and captures the results as meta variables.
+- The `xtvhd` unit was added for extracting files from VHD and VHDX virtual hard disk images; it is also included in `xt`.
+- The `xtinno` unit (and thereby `xt`) now supports Inno Setup 7.0, including its 64-bit IFPS scripts.
+- All path extraction units now support an exclusion pattern via the `-x` switch.
+- The `xtw` unit now recognizes more cryptocurrency address types and validates the addresses it extracts.
+- The `chacha20poly1305` unit now supports additional authenticated data and Poly1305 tag verification,
+  and the `chacha` unit now accepts the IETF 12-byte nonce.
+- The `vbamc` and `vbapc` units can now extract VBA from Microsoft Access databases.
+- The `docmeta` unit was extended with additional metadata parsers and can now also extract metadata from MS Access databases.
+- The `asn1` unit's parser was substantially improved: It resolves recursive and mutually-recursive type definitions,
+  handles more ASN.1 constructs (such as `SET`, implicit-tagged `CHOICE`, and named integer defaults),
+  normalizes time values, and computes certificate fingerprints from the decoded byte spans.
+- The `bat` unit now emulates `SET /A` arithmetic and the `FIND` and `FINDSTR` commands with faithful cmd.exe semantics.
+- The `xtrar` unit received extensive correctness and robustness fixes across RAR versions,
+  including correct RAR5 and RAR4 timestamps and recovery of partial output from malformed archives.
+- The `qr` unit now performs Reed-Solomon error correction correctly; it was previously non-functional.
+- The `binref` command again uses disjunctive search logic by default,
+  matching any of the given keywords rather than requiring all of them.
+- The script deobfuscators (`js`, `ps1`, `vba`) received substantial robustness and fidelity improvements.
+  They now honor a `-t` iteration limit and return a partial result when it is reached.
+- The SpeakEasy 2.0 emulator backend can now emulate PE modules and kernel drivers.
+
+## Version 0.11.1
 
 ## Version 0.11.0
 - Starting with 0.11.0, binary refinery requires Python 3.10 as the minimum Python version to run.
