@@ -21,5 +21,5 @@ for path in root.glob('tutorials/notebooks/*.ipynb'):
     for cell in notebook['cells']:
         if CK in cell:
             cell[CK] = ctr = ctr + 1
-    with path.open('w') as fd:
+    with path.open('w', encoding='utf8', newline='\n') as fd:
         json.dump(notebook, fd, indent=1)

@@ -4,6 +4,7 @@ File type related functions.
 from __future__ import annotations
 
 import functools
+import re
 
 from refinery.lib.id import get_pe_type, get_structured_data_type
 from refinery.lib.magic import magicparse
@@ -305,6 +306,8 @@ class FileMagicInfo:
                     pass
                 else:
                     extension = F'{inner}.{extension}'
+
+        description = re.sub('[^\\s!-~]', '', description)
 
         self.extension = extension
         self.description = description
