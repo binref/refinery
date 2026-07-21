@@ -125,6 +125,7 @@ _PURE_INSTANCE_METHODS = frozenset({
 
 _PURE_CMDLETS = frozenset({
     'get-childitem',
+    'get-command',
     'get-content',
     'get-date',
     'get-item',

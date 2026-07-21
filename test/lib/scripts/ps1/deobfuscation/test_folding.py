@@ -35,7 +35,7 @@ class TestPS1StringConcatenations(TestPs1):
         self.assertIn('barbaz', result)
 
     def test_variable_substitution(self):
-        result = self._deobfuscate('''$y = "$y"+'$z';''')
+        result = self._deobfuscate('''$y = "$y"+'$z'; Write-Output $y''')
         self.assertIn('$z', result)
 
     def test_split_format_string(self):

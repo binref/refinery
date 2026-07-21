@@ -4,7 +4,7 @@ Eliminate dead code from PowerShell scripts after constant folding.
 from __future__ import annotations
 
 from refinery.lib.scripts import Block, Expression, Node, Statement, Transformer
-from refinery.lib.scripts.ps1.deobfuscation.data import COMPARISON_OPS
+from refinery.lib.scripts.ps1.deobfuscation.data import COMPARISON_OPS, KNOWN_CMDLETS
 from refinery.lib.scripts.ps1.deobfuscation.helpers import (
     BodyRole,
     classify_body,
@@ -24,6 +24,8 @@ from refinery.lib.scripts.ps1.model import (
     Ps1AssignmentExpression,
     Ps1BinaryExpression,
     Ps1BreakStatement,
+    Ps1CommandArgument,
+    Ps1CommandInvocation,
     Ps1ContinueStatement,
     Ps1DoLoop,
     Ps1ExpressionStatement,
@@ -41,6 +43,56 @@ from refinery.lib.scripts.ps1.model import (
     Ps1Variable,
     Ps1WhileLoop,
 )
+
+_PATH_EXTENSIONS = frozenset({'.exe', '.ps1', '.cmd', '.bat', '.com', '.vbs', '.msi'})
+
+
+def _is_unresolvable_command(expr: Expression) -> bool:
+    """
+    Return `True` when `expr` is a command invocation of an unknown bareword whose arguments are all
+    side-effect-free. Such an invocation will throw `CommandNotFoundException` at runtime — no side
+    effect precedes the throw, and if it somehow resolved, the discarded result is harmless. This
+    predicate is intentionally narrow: only bareword string-literal names that do not match any
+    known cmdlet or alias and do not look like a filesystem path.
+    """
+    if not isinstance(expr, Ps1CommandInvocation):
+        return False
+    if not isinstance(expr.name, Ps1StringLiteral):
+        return False
+    name = expr.name.value
+    name_lower = name.lower()
+    if name_lower in KNOWN_CMDLETS:
+        return False
+    if any(sep in name for sep in ('\\', '/', ':')):
+        return False
+    if any(name_lower.endswith(ext) for ext in _PATH_EXTENSIONS):
+        return False
+    if name.startswith('.') or name.startswith('~'):
+        return False
+    for arg in expr.arguments:
+        value = arg.value if isinstance(arg, Ps1CommandArgument) else arg
+        if value is not None and not is_side_effect_free(value):
+            return False
+    return True
+
+
+def _try_body_is_harmless(body: list[Statement]) -> bool:
+    """
+    Return `True` when every statement in a try body is guaranteed to produce no observable side
+    effects whether it succeeds or throws. This covers pure expressions (value discarded) and
+    unresolvable bareword commands (throw `CommandNotFoundException` with no preceding side effect).
+    """
+    for stmt in body:
+        if not isinstance(stmt, Ps1ExpressionStatement):
+            return False
+        if stmt.expression is None:
+            continue
+        if is_side_effect_free(stmt.expression):
+            continue
+        if _is_unresolvable_command(stmt.expression):
+            continue
+        return False
+    return True
 
 
 def _evaluate_for_condition(node: Ps1ForLoop) -> bool | None:
@@ -442,15 +494,23 @@ class Ps1DeadCodeElimination(Transformer):
     @staticmethod
     def _prune_try(node: Ps1TryCatchFinally) -> list[Statement] | None:
         """
-        Resolve a `try`/`catch`/`finally` whose `try` body cannot throw. An empty (or absent) `try`
-        block raises nothing, so every `catch` clause is unreachable and drops away; the `finally`
-        block always runs, so its statements are hoisted in place of the whole construct. A `try`
-        body with statements is left untouched (its `catch`/`finally` blocks are ordinary `Block`s
-        reached by the outer walk and pruned there).
+        Resolve a `try`/`catch`/`finally` whose `try` body cannot produce observable side effects.
+        An empty (or absent) `try` block raises nothing, so every `catch` clause is unreachable and
+        drops away; the `finally` block always runs, so its statements are hoisted in place of the
+        whole construct. A non-empty `try` body that is "harmless" (all statements are either pure
+        expressions or unresolvable bareword commands that would throw without side effects) combined
+        with all-empty `catch` clauses is likewise a no-op — the entire construct is removed (or
+        reduced to the `finally` body when present).
         """
         try_body = node.try_block.body if node.try_block is not None else []
-        if try_body:
+        if not try_body:
+            finally_body = node.finally_block.body if node.finally_block is not None else []
+            return list(finally_body)
+        if not _try_body_is_harmless(try_body):
             return None
+        for clause in node.catch_clauses:
+            if clause.body is not None and clause.body.body:
+                return None
         finally_body = node.finally_block.body if node.finally_block is not None else []
         return list(finally_body)
 

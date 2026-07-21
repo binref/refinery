@@ -56,6 +56,11 @@ class TestPs1ParserModeRescan(TestPs1):
         )
         self.assertIn('deVICEcREdEnTiaLDEPlOYmENt.eXe', result)
 
+    def test_wildcard_argument_not_split(self):
+        ast = Ps1Parser("gcm ???t?")
+        result = Ps1Synthesizer().convert(ast.parse())
+        self.assertEqual(result, 'gcm ???t?')
+
     def test_member_dash_operator_not_absorbed(self):
         ast = Ps1Parser("$_.Name-like'*test*'")
         result = Ps1Synthesizer().convert(ast.parse())
@@ -296,6 +301,33 @@ class TestPs1Integration(TestPs1):
             j
             trap { continue }
             try {} catch {}
+            Write-Host 'payload'
+        """)
+        result = self._deobfuscate(src)
+        self.assertEqual(result, "Write-Host 'payload'")
+
+    def test_tier3_try_bareword_cascade(self):
+        src = cleandoc("""
+            try { foo =5 } catch {}
+            try { bar =3 } catch {}
+            Write-Host 'payload'
+        """)
+        result = self._deobfuscate(src)
+        self.assertEqual(result, "Write-Host 'payload'")
+
+    def test_tier3_dead_store_cascade(self):
+        src = "$i = 33\n$i = 44\nfor ($i = 0; $i -LT 3; $i++) { Write-Host $i }"
+        result = self._deobfuscate(src)
+        self.assertNotIn('$i = 33', result)
+        self.assertNotIn('$i = 44', result)
+        self.assertIn('for', result)
+
+    def test_tier3_full(self):
+        src = cleandoc("""
+            try { MEI26Qtd2AKx =9188720 } catch {}
+            $i = 33
+            try { kfkeJNjkCnmbK =3750696 } catch {}
+            $i = 44
             Write-Host 'payload'
         """)
         result = self._deobfuscate(src)

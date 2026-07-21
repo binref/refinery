@@ -21,6 +21,7 @@ from refinery.lib.scripts.ps1.deobfuscation.typecast import Ps1TypeCasts
 from refinery.lib.scripts.ps1.deobfuscation.typenames import Ps1TypeSystemSimplifications
 from refinery.lib.scripts.ps1.deobfuscation.unflatten import Ps1ControlFlowDeflattening
 from refinery.lib.scripts.ps1.deobfuscation.unused import (
+    Ps1DeadStoreElimination,
     Ps1JunkStatementRemoval,
     Ps1UnusedVariableRemoval,
 )
@@ -39,6 +40,7 @@ _folds = (
 _cleanup = (
     Ps1NullVariableInlining,
     Ps1UnusedVariableRemoval,
+    Ps1DeadStoreElimination,
     Ps1JunkStatementRemoval,
 )
 

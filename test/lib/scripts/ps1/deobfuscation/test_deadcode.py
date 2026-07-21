@@ -361,3 +361,45 @@ class TestPs1DeadCodeExtra(TestPs1):
             "function f { $Null = 915; 42 }\n$x = f\nWrite-Host $x",
             Ps1DeadCodeElimination)
         self.assertIn('42', result)
+
+    def test_try_bareword_assign_removed(self):
+        result = self._apply(
+            "try { foo =5 } catch {}\nWrite-Host 'keep'", Ps1DeadCodeElimination)
+        self.assertEqual(result, "Write-Host 'keep'")
+
+    def test_try_multiple_bareword_assigns_removed(self):
+        result = self._apply(
+            "try {\n  abc =1\n  def =2\n} catch {}\nWrite-Host 'keep'", Ps1DeadCodeElimination)
+        self.assertEqual(result, "Write-Host 'keep'")
+
+    def test_try_bareword_with_finally_hoists(self):
+        result = self._apply(
+            "try { foo =5 } catch {} finally { Write-Host 'f' }", Ps1DeadCodeElimination)
+        self.assertEqual(result, "Write-Host 'f'")
+
+    def test_try_pure_body_removed(self):
+        result = self._apply(
+            "try { [Math]::Sqrt(9) } catch {}\nWrite-Host 'keep'", Ps1DeadCodeElimination)
+        self.assertEqual(result, "Write-Host 'keep'")
+
+    def test_try_side_effect_command_kept(self):
+        result = self._apply(
+            "try { Remove-Item foo } catch {}\nWrite-Host 'keep'", Ps1DeadCodeElimination)
+        self.assertIn('Remove-Item', result)
+
+    def test_try_nonempty_catch_kept(self):
+        result = self._apply(
+            "try { foo =5 } catch { Write-Host 'err' }\nWrite-Host 'keep'",
+            Ps1DeadCodeElimination)
+        self.assertIn('foo', result)
+        self.assertIn('err', result)
+
+    def test_try_path_command_kept(self):
+        result = self._apply(
+            "try { ./script.ps1 } catch {}\nWrite-Host 'keep'", Ps1DeadCodeElimination)
+        self.assertIn('script', result)
+
+    def test_try_exe_command_kept(self):
+        result = self._apply(
+            "try { notepad.exe } catch {}\nWrite-Host 'keep'", Ps1DeadCodeElimination)
+        self.assertIn('notepad', result)

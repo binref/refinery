@@ -5,6 +5,7 @@ from inspect import cleandoc
 from test.lib.scripts.ps1.deobfuscation import TestPs1
 
 from refinery.lib.scripts.ps1.deobfuscation import (
+    Ps1DeadStoreElimination,
     Ps1JunkStatementRemoval,
     Ps1UnusedVariableRemoval,
 )
@@ -324,3 +325,62 @@ class TestPs1DiscardedObjectRemoval(TestPs1):
         result = self._apply(
             "(1, 2, 3) | ForEach-Object { $_ }\nWrite-Host 'keep'", Ps1JunkStatementRemoval)
         self.assertIn('ForEach-Object', result)
+
+
+class TestPs1DeadStoreElimination(TestPs1):
+
+    def test_overwritten_store_removed(self):
+        result = self._apply("$x = 1\n$x = 2\nWrite-Host $x", Ps1DeadStoreElimination)
+        self.assertEqual(result, '$x = 2\nWrite-Host $x')
+
+    def test_chain_all_but_last_removed(self):
+        result = self._apply("$x = 1\n$x = 2\n$x = 3\nWrite-Host $x", Ps1DeadStoreElimination)
+        self.assertEqual(result, '$x = 3\nWrite-Host $x')
+
+    def test_dead_store_before_for_removed(self):
+        result = self._apply(
+            "$i = 33\nfor ($i = 0; $i -LT 5; $i++) { Write-Host $i }",
+            Ps1DeadStoreElimination)
+        self.assertNotIn('$i = 33', result)
+        self.assertIn('for', result)
+
+    def test_multiple_dead_stores_before_for_removed(self):
+        result = self._apply(
+            "$i = 33\n$i = 44\n$i = 55\nfor ($i = 0; $i -LT 5; $i++) { Write-Host $i }",
+            Ps1DeadStoreElimination)
+        self.assertNotIn('$i = 33', result)
+        self.assertNotIn('$i = 44', result)
+        self.assertNotIn('$i = 55', result)
+        self.assertIn('for', result)
+
+    def test_intervening_read_keeps_store(self):
+        result = self._apply(
+            "$x = 1\nWrite-Host $x\n$x = 2\nWrite-Host $x", Ps1DeadStoreElimination)
+        self.assertIn('$x = 1', result)
+        self.assertIn('$x = 2', result)
+
+    def test_impure_rhs_preserved_as_standalone(self):
+        result = self._apply(
+            "$x = Remove-Item foo\n$x = 5\nWrite-Host $x", Ps1DeadStoreElimination)
+        self.assertIn('Remove-Item', result)
+        self.assertNotIn('$x = Remove-Item', result)
+        self.assertIn('$x = 5', result)
+
+    def test_different_variables_independent(self):
+        result = self._apply(
+            "$x = 1\n$y = 2\n$x = 3\nWrite-Host $x $y", Ps1DeadStoreElimination)
+        self.assertNotIn('$x = 1', result)
+        self.assertIn('$y = 2', result)
+        self.assertIn('$x = 3', result)
+
+    def test_scoped_variable_not_killed(self):
+        result = self._apply(
+            "$script:x = 1\n$script:x = 2\nWrite-Host $script:x", Ps1DeadStoreElimination)
+        self.assertIn('$script:x = 1', result)
+
+    def test_control_flow_flushes_pending(self):
+        result = self._apply(
+            "$x = 1\nif ($c) { Write-Host $x }\n$x = 2\nWrite-Host $x",
+            Ps1DeadStoreElimination)
+        self.assertIn('$x = 1', result)
+        self.assertIn('$x = 2', result)

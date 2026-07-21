@@ -618,7 +618,7 @@ class Ps1Lexer:
                             yield from self._emit(token)
                             continue
 
-            if self.mode == Ps1LexerMode.ARGUMENT and c in '*/%=!+':
+            if self.mode == Ps1LexerMode.ARGUMENT and c in '*/%=!+?':
                 if self.pos + 1 < length and src[self.pos + 1] not in _FORCE_START_NEW_TOKEN:
                     token = self._read_generic_token()
                     if token.value:

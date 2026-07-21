@@ -304,6 +304,18 @@ class TestPs1Lexer(TestBase):
         self.assertEqual(tokens[0][0], Ps1TokenKind.HSTRING_EXPAND)
         self.assertEqual(tokens[0][1], src)
 
+    def test_wildcard_question_marks_single_token(self):
+        tokens = self._tokens('???t?', mode=Ps1LexerMode.ARGUMENT)
+        self.assertEqual(tokens, [(Ps1TokenKind.GENERIC_TOKEN, '???t?')])
+
+    def test_wildcard_question_star_mix(self):
+        tokens = self._tokens('??*', mode=Ps1LexerMode.ARGUMENT)
+        self.assertEqual(tokens, [(Ps1TokenKind.GENERIC_TOKEN, '??*')])
+
+    def test_single_question_mark_stays_separate(self):
+        tokens = self._tokens('?', mode=Ps1LexerMode.ARGUMENT)
+        self.assertEqual(tokens, [(Ps1TokenKind.GENERIC_TOKEN, '?')])
+
     def test_expandable_here_string_with_nested_here_string(self):
         src = '@"\n$(@"\ninner\n"@)\n"@'
         tokens = self._tokens(src)

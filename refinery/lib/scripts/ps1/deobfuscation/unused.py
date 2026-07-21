@@ -32,6 +32,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1EnumDefinition,
     Ps1ExpressionStatement,
     Ps1ForEachLoop,
+    Ps1ForLoop,
     Ps1FunctionDefinition,
     Ps1ParameterDeclaration,
     Ps1Pipeline,
@@ -418,3 +419,116 @@ class Ps1JunkStatementRemoval(Transformer):
                 continue
             return True
         return False
+
+
+class Ps1DeadStoreElimination(Transformer):
+    """
+    Remove assignments to a variable that are provably overwritten before their next read within the
+    same linear scope. This targets the pattern left behind by tier-2 empty-for rewriting: dozens of
+    `$i = N` statements followed by a for-loop whose initializer `$i = 0` overwrites them all.
+    """
+
+    def visit(self, node: Node):
+        body = get_body(node)
+        if body is None:
+            return None
+        pending: dict[str, list[Ps1ExpressionStatement]] = {}
+        dead: list[Ps1ExpressionStatement] = []
+        has_read: set[str] = set()
+        for stmt in body:
+            reads, kills, writes = self._classify_statement(stmt)
+            for var in kills:
+                if var in pending:
+                    dead.extend(pending.pop(var))
+                has_read.add(var)
+            for var in reads:
+                pending.pop(var, None)
+                has_read.add(var)
+            for var, store in writes:
+                if var in pending:
+                    dead.extend(pending[var])
+                pending[var] = [store]
+        if isinstance(node, Ps1Script):
+            for var, stores in pending.items():
+                if var in has_read:
+                    dead.extend(stores)
+        if not dead:
+            return None
+        for stmt in dead:
+            if not isinstance(stmt, Ps1ExpressionStatement):
+                continue
+            rhs = stmt.expression
+            if isinstance(rhs, Ps1AssignmentExpression):
+                rhs = rhs.value
+            if rhs is not None and isinstance(rhs, Expression) and not is_side_effect_free(rhs):
+                replacement = Ps1ExpressionStatement(expression=rhs)
+                _replace_in_parent(stmt, replacement)
+            else:
+                _remove_from_parent(stmt)
+            self.mark_changed()
+
+    def _classify_statement(
+        self, stmt,
+    ) -> tuple[set[str], set[str], list[tuple[str, Ps1ExpressionStatement]]]:
+        """
+        Return `(reads, kills, writes)` for a top-level statement:
+        - `reads`: variable keys read by the statement (flush: pending writes are needed).
+        - `kills`: variable keys whose previous pending writes are dead (overwritten before read).
+        - `writes`: list of `(key, statement)` pairs for pure assignments to register as pending.
+
+        A for-loop's initializer kills previous stores without itself becoming a pending write
+        (the for-loop is not a removable expression statement). Other control-flow constructs
+        contribute all internal variable references as reads and produce no kills/writes.
+        """
+        reads: set[str] = set()
+        kills: set[str] = set()
+        writes: list[tuple[str, Ps1ExpressionStatement]] = []
+        if isinstance(stmt, Ps1ExpressionStatement) and isinstance(
+            stmt.expression, Ps1AssignmentExpression
+        ):
+            assign = stmt.expression
+            if (
+                assign.operator == '='
+                and isinstance(assign.target, Ps1Variable)
+                and assign.target.scope is Ps1ScopeModifier.NONE
+            ):
+                key = assign.target.name.lower()
+                if key not in _PS1_SKIP_VARIABLES:
+                    self._collect_reads(assign.value, reads)
+                    writes.append((key, stmt))
+                    return reads, kills, writes
+        if isinstance(stmt, Ps1ForLoop):
+            if (
+                isinstance(stmt.initializer, Ps1AssignmentExpression)
+                and stmt.initializer.operator == '='
+                and isinstance(stmt.initializer.target, Ps1Variable)
+                and stmt.initializer.target.scope is Ps1ScopeModifier.NONE
+            ):
+                key = stmt.initializer.target.name.lower()
+                if key not in _PS1_SKIP_VARIABLES:
+                    kills.add(key)
+        self._collect_all_reads(stmt, reads)
+        return reads, kills, writes
+
+    def _collect_reads(self, node, reads: set[str]):
+        """
+        Collect variable reads from an expression (not descending into nested scopes).
+        """
+        if node is None:
+            return
+        if isinstance(node, Ps1Variable) and node.scope is Ps1ScopeModifier.NONE:
+            if not is_assignment_write_target(node):
+                reads.add(node.name.lower())
+        for child in node.walk():
+            if isinstance(child, Ps1Variable) and child.scope is Ps1ScopeModifier.NONE:
+                if not is_assignment_write_target(child):
+                    reads.add(child.name.lower())
+
+    def _collect_all_reads(self, stmt, reads: set[str]):
+        """
+        Collect all variable reads from a statement and its descendants (conservative flush).
+        """
+        for child in stmt.walk():
+            if isinstance(child, Ps1Variable) and child.scope is Ps1ScopeModifier.NONE:
+                reads.add(child.name.lower())
+
