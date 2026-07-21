@@ -384,3 +384,10 @@ class TestPs1DeadStoreElimination(TestPs1):
             Ps1DeadStoreElimination)
         self.assertIn('$x = 1', result)
         self.assertIn('$x = 2', result)
+
+    def test_dead_store_inside_nested_function_removed(self):
+        result = self._apply(
+            'function f { $i = 5\n$i = 3\nWrite-Host $i }',
+            Ps1DeadStoreElimination)
+        self.assertNotIn('$i = 5', result)
+        self.assertIn('$i = 3', result)

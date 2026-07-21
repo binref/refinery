@@ -431,6 +431,7 @@ class Ps1DeadStoreElimination(Transformer):
     def visit(self, node: Node):
         body = get_body(node)
         if body is None:
+            self.generic_visit(node)
             return None
         pending: dict[str, list[Ps1ExpressionStatement]] = {}
         dead: list[Ps1ExpressionStatement] = []
@@ -453,6 +454,7 @@ class Ps1DeadStoreElimination(Transformer):
                 if var in has_read:
                     dead.extend(stores)
         if not dead:
+            self.generic_visit(node)
             return None
         for stmt in dead:
             if not isinstance(stmt, Ps1ExpressionStatement):
@@ -466,6 +468,7 @@ class Ps1DeadStoreElimination(Transformer):
             else:
                 _remove_from_parent(stmt)
             self.mark_changed()
+        self.generic_visit(node)
 
     def _classify_statement(
         self, stmt,

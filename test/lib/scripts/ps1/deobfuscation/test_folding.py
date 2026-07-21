@@ -222,6 +222,10 @@ class TestPs1StringEqualityFolding(TestPs1):
         # Only equality is folded for strings; culture-dependent ordering is left untouched.
         self.assertEqual(self._apply("'a' -lt 'b'", Ps1ConstantFolding), "'a' -lt 'b'")
 
+    def test_sharp_s_not_equal_ss(self):
+        self.assertEqual(self._apply("'ß'  -eq 'SS'", Ps1ConstantFolding), '$False')
+        self.assertEqual(self._apply("'ß' -ieq 'ss'", Ps1ConstantFolding), '$False')
+
 
 class TestPs1LogicalFolding(TestPs1):
 

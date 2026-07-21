@@ -19,6 +19,7 @@ from refinery.lib.scripts.ps1.deobfuscation.purity import (
     StatementEffect,
     classify_statement_effect,
     is_side_effect_free,
+    statement_performs_side_effect,
 )
 from refinery.lib.scripts.ps1.model import (
     Ps1AssignmentExpression,
@@ -345,10 +346,7 @@ class Ps1DeadCodeElimination(Transformer):
         if role is BodyRole.NESTED:
             prune_output = True
         else:
-            prune_output = any(
-                classify_statement_effect(s) is StatementEffect.EFFECT
-                for s in body
-            )
+            prune_output = any(statement_performs_side_effect(s) for s in body)
         for stmt in body:
             if isinstance(stmt, Ps1ExpressionStatement) and _is_pure_constant(stmt.expression):
                 if prune_output:

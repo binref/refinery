@@ -82,7 +82,7 @@ _PURE_STATIC_METHODS = frozenset({
 def _pure_type_name(name: str) -> str:
     """
     Normalize a .NET type name for purity lookup: lower-cased, `System.` prefix removed, and any
-    generic-argument suffix (`[byte]`, `` `1[...] ``) stripped, so `System.Collections.Generic.List`
+    generic-argument suffix (`[byte]` or the arity marker before it) stripped, so `System.Collections.Generic.List`
     and `List[byte]` reduce to the same `collections.generic.list` key.
     """
     name = normalize_dotnet_type_name(name)
@@ -376,3 +376,22 @@ def pipeline_ends_with_cmdlet(pipeline: Ps1Pipeline, names: frozenset) -> bool:
         return False
     name = get_command_name(expr)
     return name is not None and name.lower() in names
+
+
+def statement_performs_side_effect(stmt) -> bool:
+    """
+    Return `True` only when a statement is known to perform a genuine observable side effect
+    beyond yielding a value. This is stricter than `classify_statement_effect` returning `EFFECT`:
+    pipelines ending with a pure pipeline cmdlet (`Where-Object`, `Select-Object`, etc.) are
+    classified as `EFFECT` to prevent their deletion, but they have no side effect of their own —
+    only a value yield. Such statements must NOT count as anchors that permit removing surrounding
+    pure-output statements from a ROOT body.
+    """
+    if not isinstance(stmt, Ps1ExpressionStatement):
+        return stmt is not None
+    expr = stmt.expression
+    if expr is None:
+        return False
+    if isinstance(expr, Ps1Pipeline) and pipeline_ends_with_cmdlet(expr, _PURE_PIPELINE_CMDLETS):
+        return False
+    return classify_statement_effect(stmt) is StatementEffect.EFFECT

@@ -403,3 +403,9 @@ class TestPs1DeadCodeExtra(TestPs1):
         result = self._apply(
             "try { notepad.exe } catch {}\nWrite-Host 'keep'", Ps1DeadCodeElimination)
         self.assertIn('notepad', result)
+
+    def test_function_return_value_preserved_alongside_pipeline_cmdlet(self):
+        result = self._apply(
+            'function f { $items | Where-Object { $_ -gt 0 }; 42 }',
+            Ps1DeadCodeElimination)
+        self.assertIn('42', result)

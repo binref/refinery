@@ -883,7 +883,7 @@ class Ps1ConstantFolding(LocalFunctionAwareTransformer):
         if op.startswith('-c'):
             equal = left == right
         else:
-            equal = left.casefold() == right.casefold()
+            equal = left.lower() == right.lower()
         return self._bool_literal(equal if base == 'eq' else not equal)
 
     def _handle_logical(self, node: Ps1BinaryExpression, op: str) -> Expression | None:
