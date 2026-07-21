@@ -287,3 +287,77 @@ class TestPs1DeadCodeExtra(TestPs1):
             "switch -CaseSensitive ('Foo') { 'foo' { Write-Host 'A' } 'Foo' { Write-Host 'B' } }",
             Ps1DeadCodeElimination)
         self.assertEqual(result, "Write-Host 'B'")
+
+    def test_empty_try_catch_removed(self):
+        result = self._apply('try {} catch {}', Ps1DeadCodeElimination)
+        self.assertEqual(result, '')
+
+    def test_empty_try_catch_finally_hoists_finally(self):
+        result = self._apply(
+            "try {} catch {} finally { Write-Host 'f' }", Ps1DeadCodeElimination)
+        self.assertEqual(result, "Write-Host 'f'")
+
+    def test_nonempty_try_kept(self):
+        result = self._apply(
+            "try { Get-Item x } catch { Write-Host 'err' }", Ps1DeadCodeElimination)
+        self.assertIn('Get-Item', result)
+        self.assertIn('catch', result.lower())
+
+    def test_trap_continue_removed(self):
+        result = self._apply('trap { continue }', Ps1DeadCodeElimination)
+        self.assertEqual(result, '')
+
+    def test_trap_break_removed(self):
+        result = self._apply('trap { break }', Ps1DeadCodeElimination)
+        self.assertEqual(result, '')
+
+    def test_trap_empty_removed(self):
+        result = self._apply('trap {}', Ps1DeadCodeElimination)
+        self.assertEqual(result, '')
+
+    def test_trap_typed_empty_removed(self):
+        result = self._apply('trap [Exception] { continue }', Ps1DeadCodeElimination)
+        self.assertEqual(result, '')
+
+    def test_trap_with_output_kept(self):
+        result = self._apply("trap { Write-Host 'log' }", Ps1DeadCodeElimination)
+        self.assertIn('trap', result.lower())
+        self.assertIn('Write-Host', result)
+
+    def test_trap_labeled_break_kept(self):
+        result = self._apply('trap { break :outer }', Ps1DeadCodeElimination)
+        self.assertIn('trap', result.lower())
+
+    def test_empty_for_counter_terminal(self):
+        result = self._apply(
+            'for ($i = 0; $i -LT 41; $i++) {}', Ps1DeadCodeElimination)
+        self.assertEqual(result, '$i = 41')
+
+    def test_empty_for_decrement_terminal(self):
+        result = self._apply(
+            'for ($i = 10; $i -GT 0; $i--) {}', Ps1DeadCodeElimination)
+        self.assertEqual(result, '$i = 0')
+
+    def test_empty_for_zero_iteration_keeps_init(self):
+        result = self._apply(
+            'for ($i = 5; $i -LT 0; $i++) {}', Ps1DeadCodeElimination)
+        self.assertEqual(result, '$i = 5')
+
+    def test_empty_for_infinite_kept(self):
+        result = self._apply('for (;;) {}', Ps1DeadCodeElimination)
+        self.assertIn('for', result.lower())
+
+    def test_empty_for_nonconstant_bound_kept(self):
+        result = self._apply(
+            'for ($i = 0; $i -LT $n; $i++) {}', Ps1DeadCodeElimination)
+        self.assertIn('for', result.lower())
+
+    def test_empty_while_true_kept(self):
+        result = self._apply('while ($True) {}', Ps1DeadCodeElimination)
+        self.assertIn('while', result.lower())
+
+    def test_function_body_return_value_preserved(self):
+        result = self._apply(
+            "function f { $Null = 915; 42 }\n$x = f\nWrite-Host $x",
+            Ps1DeadCodeElimination)
+        self.assertIn('42', result)

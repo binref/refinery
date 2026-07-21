@@ -261,3 +261,42 @@ class TestPs1Integration(TestPs1):
         ast = Ps1Parser(source).parse()
         with self.assertRaises(DeobfuscationTimeout):
             deobfuscate(ast, max_steps=1)
+
+    def test_string_equality_guard_prunes_dead_branch(self):
+        # A folded string comparison must cascade into dead-branch elimination across the pipeline.
+        result = self._deobfuscate(
+            "if ('m' -eq 'z') { Write-Output 'dead' } else { Write-Output 'live' }")
+        self.assertEqual(result, "Write-Output 'live'")
+
+    def test_logical_guard_prunes_dead_branch(self):
+        # A folded boolean `-and` guard must likewise cascade into dead-branch elimination.
+        result = self._deobfuscate(
+            "if ($true -and $false) { Write-Output 'dead' } else { Write-Output 'live' }")
+        self.assertEqual(result, "Write-Output 'live'")
+
+    def test_junk_function_cascade(self):
+        result = self._deobfuscate(
+            "function j { $Null = 915 }\nj\nWrite-Host 'payload'")
+        self.assertEqual(result, "Write-Host 'payload'")
+
+    def test_empty_for_dead_variable_cascade(self):
+        result = self._deobfuscate(
+            "for ($i = 0; $i -LT 41; $i++) {}\nWrite-Host 'payload'")
+        self.assertEqual(result, "Write-Host 'payload'")
+
+    def test_empty_for_live_variable_terminal_kept(self):
+        result = self._deobfuscate(
+            'for ($i = 0; $i -LT 41; $i++) {}\nWrite-Host $i')
+        self.assertEqual(result, 'Write-Host 41')
+
+    def test_tier2_full_cascade(self):
+        src = cleandoc("""
+            for ($i = 0; $i -LT 41; $i++) {}
+            function j { $Null = 915 }
+            j
+            trap { continue }
+            try {} catch {}
+            Write-Host 'payload'
+        """)
+        result = self._deobfuscate(src)
+        self.assertEqual(result, "Write-Host 'payload'")

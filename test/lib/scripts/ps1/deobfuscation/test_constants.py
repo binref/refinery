@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from test.lib.scripts.ps1.deobfuscation import TestPs1
 
+from refinery.lib.scripts.ps1.deobfuscation import Ps1ConstantInlining
+from refinery.lib.scripts.ps1.parser import Ps1Parser
+
 
 class TestPs1ConstantInlining(TestPs1):
 
@@ -124,6 +127,27 @@ class TestPs1ConstantInlining(TestPs1):
         self.assertNotIn('$x', result)
         self.assertNotIn('$y', result)
 
+    def test_multiassign_target_not_inlined(self):
+        # A constant assigned to `$x` must never be inlined into a subsequent multi-assignment
+        # target `$x, $y, $z = ...`, which would corrupt it into `509, $y, $z = ...` (invalid).
+        from refinery.lib.scripts.ps1.model import (
+            Ps1ArrayLiteral,
+            Ps1AssignmentExpression,
+            Ps1Variable,
+        )
+        source = '$x = 509\n$x, $y, $z = 1, 2, 3\nWrite-Output $x'
+        ast = Ps1Parser(source).parse()
+        Ps1ConstantInlining().visit(ast)
+        multi = [
+            n for n in ast.walk()
+            if isinstance(n, Ps1AssignmentExpression) and isinstance(n.target, Ps1ArrayLiteral)
+        ]
+        self.assertEqual(len(multi), 1)
+        self.assertEqual(
+            [type(e).__name__ for e in multi[0].target.elements],
+            ['Ps1Variable', 'Ps1Variable', 'Ps1Variable'])
+        self.assertTrue(all(isinstance(e, Ps1Variable) for e in multi[0].target.elements))
+
 
 class TestPs1DeadBranchInlining(TestPs1):
 
@@ -154,7 +178,7 @@ class TestPs1DeadBranchInlining(TestPs1):
 
     def test_conditional_only_not_inlined_nonconstant_condition(self):
         result = self._deobfuscate_iterative(
-            'if ($env:OS -eq "Windows_NT") { $x = 42 }\n'
+            'if ($env:UserInput -eq "yes") { $x = 42 }\n'
             'Write-Host $x'
         )
         self.assertIn('$x', result)

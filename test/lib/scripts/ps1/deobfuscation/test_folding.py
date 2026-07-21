@@ -192,6 +192,59 @@ class TestPs1ComparisonFolding(TestPs1):
         self.assertIn('-Eq', result)
 
 
+class TestPs1StringEqualityFolding(TestPs1):
+
+    def test_eq_false(self):
+        self.assertEqual(self._apply("'m' -eq 'z'", Ps1ConstantFolding), '$False')
+
+    def test_eq_true(self):
+        self.assertEqual(self._apply("'abc' -eq 'abc'", Ps1ConstantFolding), '$True')
+
+    def test_ne_true(self):
+        self.assertEqual(self._apply("'a' -ne 'b'", Ps1ConstantFolding), '$True')
+
+    def test_ne_false(self):
+        self.assertEqual(self._apply("'a' -ne 'a'", Ps1ConstantFolding), '$False')
+
+    def test_eq_case_insensitive_by_default(self):
+        self.assertEqual(self._apply("'M' -eq 'm'", Ps1ConstantFolding), '$True')
+
+    def test_ieq_case_insensitive(self):
+        self.assertEqual(self._apply("'M' -ieq 'm'", Ps1ConstantFolding), '$True')
+
+    def test_ceq_case_sensitive(self):
+        self.assertEqual(self._apply("'M' -ceq 'm'", Ps1ConstantFolding), '$False')
+
+    def test_cne_case_sensitive(self):
+        self.assertEqual(self._apply("'M' -cne 'm'", Ps1ConstantFolding), '$True')
+
+    def test_ordering_not_folded(self):
+        # Only equality is folded for strings; culture-dependent ordering is left untouched.
+        self.assertEqual(self._apply("'a' -lt 'b'", Ps1ConstantFolding), "'a' -lt 'b'")
+
+
+class TestPs1LogicalFolding(TestPs1):
+
+    def test_and_true_false(self):
+        self.assertEqual(self._apply('$true -and $false', Ps1ConstantFolding), '$False')
+
+    def test_or_true_false(self):
+        self.assertEqual(self._apply('$true -or $false', Ps1ConstantFolding), '$True')
+
+    def test_xor_true_true(self):
+        self.assertEqual(self._apply('$true -xor $true', Ps1ConstantFolding), '$False')
+
+    def test_xor_true_false(self):
+        self.assertEqual(self._apply('$true -xor $false', Ps1ConstantFolding), '$True')
+
+    def test_null_operand_is_false(self):
+        self.assertEqual(self._apply('$null -and $true', Ps1ConstantFolding), '$False')
+
+    def test_unknown_operand_not_folded(self):
+        # With one operand unresolved, the result is not constant and must be preserved.
+        self.assertEqual(self._apply('$x -and $false', Ps1ConstantFolding), '$x -and $false')
+
+
 class TestPs1RegexFolding(TestPs1):
 
     def test_regex_matches_simple(self):

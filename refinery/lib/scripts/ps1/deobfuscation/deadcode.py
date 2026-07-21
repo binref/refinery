@@ -6,13 +6,19 @@ from __future__ import annotations
 from refinery.lib.scripts import Block, Expression, Node, Statement, Transformer
 from refinery.lib.scripts.ps1.deobfuscation.data import COMPARISON_OPS
 from refinery.lib.scripts.ps1.deobfuscation.helpers import (
+    BodyRole,
+    classify_body,
     get_body,
-    inside_value_producing_context,
     is_builtin_variable,
     is_truthy,
     switch_matches,
     unwrap_integer,
     unwrap_parens,
+)
+from refinery.lib.scripts.ps1.deobfuscation.purity import (
+    StatementEffect,
+    classify_statement_effect,
+    is_side_effect_free,
 )
 from refinery.lib.scripts.ps1.model import (
     Ps1AssignmentExpression,
@@ -27,9 +33,10 @@ from refinery.lib.scripts.ps1.model import (
     Ps1ParenExpression,
     Ps1RealLiteral,
     Ps1ScopeModifier,
-    Ps1Script,
     Ps1StringLiteral,
     Ps1SwitchStatement,
+    Ps1TrapStatement,
+    Ps1TryCatchFinally,
     Ps1UnaryExpression,
     Ps1Variable,
     Ps1WhileLoop,
@@ -81,6 +88,105 @@ def _resolve_side(
         return init_val
     result = unwrap_integer(node)
     return result.value if result is not None else None
+
+
+def _make_int_literal(value: int) -> Ps1IntegerLiteral:
+    return Ps1IntegerLiteral(value=value, raw=str(value))
+
+
+def _is_counter_variable(node, var_name: str, var_scope: Ps1ScopeModifier) -> bool:
+    node = unwrap_parens(node) if isinstance(node, Expression) else node
+    return (
+        isinstance(node, Ps1Variable)
+        and node.name.lower() == var_name
+        and node.scope == var_scope
+    )
+
+
+def _counter_delta(iterator, var_name: str, var_scope: Ps1ScopeModifier) -> int | None:
+    """
+    Return the constant per-iteration change a for-loop iterator applies to the loop variable, or
+    `None` when the iterator is not a nonzero constant step on that single variable (`$i++`, `$i--`,
+    `$i += k`, `$i -= k`).
+    """
+    if isinstance(iterator, Ps1UnaryExpression) and iterator.operator in ('++', '--'):
+        if _is_counter_variable(iterator.operand, var_name, var_scope):
+            return 1 if iterator.operator == '++' else -1
+        return None
+    if isinstance(iterator, Ps1AssignmentExpression) and iterator.operator in ('+=', '-='):
+        if not _is_counter_variable(iterator.target, var_name, var_scope):
+            return None
+        step = unwrap_integer(iterator.value)
+        if step is None:
+            return None
+        delta = step.value if iterator.operator == '+=' else -step.value
+        return delta or None
+    return None
+
+
+def _counter_condition(cond, var_name: str, var_scope: Ps1ScopeModifier):
+    """
+    Return `(predicate, bound)` where `predicate` maps an integer loop-variable value to the truth
+    of the for-loop condition and `bound` is the constant it is compared against, or `None` when the
+    condition is not a comparison between the loop variable and a constant integer (`$i <cmp> C` or
+    `C <cmp> $i`). The bound lets the caller size a simulation cap to the loop's real trip count.
+    """
+    if not isinstance(cond, Ps1BinaryExpression):
+        return None
+    op_fn = COMPARISON_OPS.get(cond.operator.lower())
+    if op_fn is None:
+        return None
+    left_int = unwrap_integer(cond.left)
+    right_int = unwrap_integer(cond.right)
+    if _is_counter_variable(cond.left, var_name, var_scope) and right_int is not None:
+        bound = right_int.value
+        return (lambda value: bool(op_fn(value, bound))), bound
+    if _is_counter_variable(cond.right, var_name, var_scope) and left_int is not None:
+        bound = left_int.value
+        return (lambda value: bool(op_fn(bound, value))), bound
+    return None
+
+
+def _simulate_empty_for_terminal(node: Ps1ForLoop) -> tuple[Ps1Variable, int] | None:
+    """
+    For an empty-bodied `for` loop driven by a single integer counter, return `(variable, terminal)`
+    giving the value the counter holds once the loop exits, or `None` when the loop is not a
+    provably-terminating linear counter (non-constant initializer/bound, `for (;;)`, a
+    non-constant-step iterator, or a condition that never turns false). The counter is stepped
+    exactly as PowerShell evaluates the loop — check the condition, then apply the iterator — so the
+    terminal value is exact, including the zero-iteration case where the counter keeps its initial
+    value.
+    """
+    init = node.initializer
+    if not isinstance(init, Ps1AssignmentExpression) or init.operator != '=':
+        return None
+    if not isinstance(init.target, Ps1Variable):
+        return None
+    init_int = unwrap_integer(init.value)
+    if init_int is None:
+        return None
+    variable = init.target
+    var_name = variable.name.lower()
+    var_scope = variable.scope
+    delta = _counter_delta(node.iterator, var_name, var_scope)
+    if delta is None:
+        return None
+    condition = _counter_condition(node.condition, var_name, var_scope)
+    if condition is None:
+        return None
+    predicate, bound = condition
+    # A terminating linear counter reaches the bound within `distance / |step|` iterations; a couple
+    # extra guard against off-by-one and the exact-hit (`-ne`/`-eq`) cases. Exceeding this proves the
+    # condition never turns false (a wrong-direction step), so the loop is infinite and left intact.
+    cap = abs(bound - init_int.value) // abs(delta) + 2
+    value = init_int.value
+    iterations = 0
+    while predicate(value):
+        value += delta
+        iterations += 1
+        if iterations > cap:
+            return None
+    return variable, value
 
 
 def _body_breaks_unconditionally(body: list[Statement]) -> bool:
@@ -162,12 +268,11 @@ class Ps1DeadCodeElimination(Transformer):
 
     def visit(self, node: Node):
         for parent in list(node.walk()):
-            if inside_value_producing_context(parent):
+            role = classify_body(parent)
+            if role is None or role is BodyRole.OPAQUE:
                 continue
             body = get_body(parent)
-            if body is None:
-                continue
-            new_body = self._prune_body(body, isinstance(parent, Ps1Script))
+            new_body = self._prune_body(body, role)
             if new_body is not body:
                 body.clear()
                 body.extend(new_body)
@@ -176,22 +281,27 @@ class Ps1DeadCodeElimination(Transformer):
                 self.mark_changed()
 
     def _prune_body(
-        self, body: list[Statement], is_script_level: bool = False,
+        self, body: list[Statement], role: BodyRole = BodyRole.NESTED,
     ) -> list[Statement]:
         result: list[Statement] = []
         changed = False
-        prune_constants = not is_script_level or any(
-            not (isinstance(s, Ps1ExpressionStatement) and _is_pure_constant(s.expression))
-            for s in body
-        )
+        # A `ROOT` body's last-standing bare constant is its observable output value (the return
+        # value of a function or `&{}`), so it must be kept; only prune OUTPUT statements (bare
+        # constants) when an EFFECT or another OUTPUT survivor already carries the body's output.
+        # DISCARD statements ($Null=<pure>, [Void], |Out-Null) emit nothing and never count as
+        # output-anchors. A `NESTED` body has no observable value — OUTPUT is always prunable.
+        if role is BodyRole.NESTED:
+            prune_output = True
+        else:
+            prune_output = any(
+                classify_statement_effect(s) is StatementEffect.EFFECT
+                for s in body
+            )
         for stmt in body:
-            if (
-                prune_constants
-                and isinstance(stmt, Ps1ExpressionStatement)
-                and _is_pure_constant(stmt.expression)
-            ):
-                changed = True
-                continue
+            if isinstance(stmt, Ps1ExpressionStatement) and _is_pure_constant(stmt.expression):
+                if prune_output:
+                    changed = True
+                    continue
             replacement = self._try_prune(stmt)
             if replacement is not None:
                 result.extend(replacement)
@@ -211,6 +321,10 @@ class Ps1DeadCodeElimination(Transformer):
             return self._prune_if(stmt)
         if isinstance(stmt, Ps1SwitchStatement):
             return self._prune_switch(stmt)
+        if isinstance(stmt, Ps1TryCatchFinally):
+            return self._prune_try(stmt)
+        if isinstance(stmt, Ps1TrapStatement):
+            return self._prune_trap(stmt)
         return None
 
     @staticmethod
@@ -258,6 +372,14 @@ class Ps1DeadCodeElimination(Transformer):
             else:
                 result.append(Ps1IfStatement(clauses=[(node.condition, Block(body=body))]))
             return result
+        if node.body is None or not node.body.body:
+            terminal = _simulate_empty_for_terminal(node)
+            if terminal is not None:
+                variable, value = terminal
+                target = Ps1Variable(name=variable.name, scope=variable.scope)
+                assignment = Ps1AssignmentExpression(
+                    target=target, operator='=', value=_make_int_literal(value))
+                return [Ps1ExpressionStatement(expression=assignment)]
         return None
 
     @staticmethod
@@ -315,4 +437,42 @@ class Ps1DeadCodeElimination(Transformer):
             if body is None:
                 return None
             return body[0]
+        return []
+
+    @staticmethod
+    def _prune_try(node: Ps1TryCatchFinally) -> list[Statement] | None:
+        """
+        Resolve a `try`/`catch`/`finally` whose `try` body cannot throw. An empty (or absent) `try`
+        block raises nothing, so every `catch` clause is unreachable and drops away; the `finally`
+        block always runs, so its statements are hoisted in place of the whole construct. A `try`
+        body with statements is left untouched (its `catch`/`finally` blocks are ordinary `Block`s
+        reached by the outer walk and pruned there).
+        """
+        try_body = node.try_block.body if node.try_block is not None else []
+        if try_body:
+            return None
+        finally_body = node.finally_block.body if node.finally_block is not None else []
+        return list(finally_body)
+
+    @staticmethod
+    def _prune_trap(node: Ps1TrapStatement) -> list[Statement] | None:
+        """
+        Remove a `trap` handler whose body produces no observable output. A trap only runs when the
+        code it guards throws a terminating error; injected-noise traps (`trap { continue }`, an
+        empty `trap {}`, `trap { break }`) merely swallow or re-raise without emitting anything, so
+        deleting them is invisible unless an error actually propagates. A body that emits output (a
+        real logging handler such as `trap { Write-Host 'err' }`) is not side-effect-free and keeps
+        the trap intact. This is the one removal not provable under strict semantics — it relies on
+        the guarded code never throwing — and is deliberately gated on a strict no-output body.
+        """
+        body = node.body.body if node.body is not None else []
+        for stmt in body:
+            if isinstance(stmt, (Ps1BreakStatement, Ps1ContinueStatement)):
+                if stmt.label is not None:
+                    return None
+                continue
+            if isinstance(stmt, Ps1ExpressionStatement) and stmt.expression is not None:
+                if is_side_effect_free(stmt.expression):
+                    continue
+            return None
         return []

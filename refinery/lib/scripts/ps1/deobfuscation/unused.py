@@ -12,76 +12,37 @@ from refinery.lib.scripts.ps1.deobfuscation.constants import (
     _walk_outer_scope,
 )
 from refinery.lib.scripts.ps1.deobfuscation.helpers import (
+    BodyRole,
+    assignment_target_variables,
+    classify_body,
     get_body,
     get_command_name,
-    inside_value_producing_context,
+    is_assignment_write_target,
+)
+from refinery.lib.scripts.ps1.deobfuscation.purity import (
+    StatementEffect,
+    classify_statement_effect,
+    is_side_effect_free,
 )
 from refinery.lib.scripts.ps1.model import (
     Expression,
-    Ps1AccessKind,
-    Ps1ArrayExpression,
-    Ps1ArrayLiteral,
     Ps1AssignmentExpression,
-    Ps1BinaryExpression,
-    Ps1CastExpression,
     Ps1ClassDefinition,
-    Ps1CommandArgument,
     Ps1CommandInvocation,
     Ps1EnumDefinition,
-    Ps1ExpandableString,
     Ps1ExpressionStatement,
     Ps1ForEachLoop,
     Ps1FunctionDefinition,
-    Ps1HereString,
-    Ps1IndexExpression,
-    Ps1IntegerLiteral,
-    Ps1InvokeMember,
-    Ps1MemberAccess,
     Ps1ParameterDeclaration,
-    Ps1ParenExpression,
     Ps1Pipeline,
     Ps1PipelineElement,
-    Ps1RangeExpression,
-    Ps1RealLiteral,
     Ps1ScopeModifier,
+    Ps1Script,
     Ps1ScriptBlock,
     Ps1StringLiteral,
-    Ps1TypeExpression,
     Ps1UnaryExpression,
     Ps1Variable,
 )
-
-_PURE_STATIC_TYPES = frozenset({
-    'array',
-    'bitconverter',
-    'char',
-    'convert',
-    'datetime',
-    'decimal',
-    'double',
-    'environment',
-    'guid',
-    'int',
-    'int32',
-    'int64',
-    'math',
-    'string',
-    'system.array',
-    'system.bitconverter',
-    'system.char',
-    'system.convert',
-    'system.datetime',
-    'system.decimal',
-    'system.double',
-    'system.environment',
-    'system.guid',
-    'system.int32',
-    'system.int64',
-    'system.math',
-    'system.string',
-    'system.timespan',
-    'timespan',
-})
 
 
 def _inside_definition(node: Node) -> bool:
@@ -93,148 +54,6 @@ def _inside_definition(node: Node) -> bool:
         if isinstance(cursor, (Ps1FunctionDefinition, Ps1ClassDefinition, Ps1EnumDefinition)):
             return True
         cursor = cursor.parent
-    return False
-
-
-_PURE_INSTANCE_METHODS = frozenset({
-    'adddays',
-    'addhours',
-    'addminutes',
-    'addmonths',
-    'addseconds',
-    'addyears',
-    'compareto',
-    'contains',
-    'endswith',
-    'equals',
-    'gethashcode',
-    'gettype',
-    'indexof',
-    'lastindexof',
-    'length',
-    'padleft',
-    'padright',
-    'split',
-    'startswith',
-    'substring',
-    'tochar',
-    'tochararray',
-    'tolower',
-    'tostring',
-    'touniversaltime',
-    'toupper',
-    'trim',
-    'trimend',
-    'trimstart',
-})
-
-_PURE_CMDLETS = frozenset({
-    'get-childitem',
-    'get-content',
-    'get-date',
-    'get-item',
-    'get-location',
-    'get-process',
-    'get-random',
-    'get-variable',
-    'measure-object',
-    'out-null',
-    'out-string',
-    'select-object',
-    'sort-object',
-    'where-object',
-})
-
-_PURE_PIPELINE_CMDLETS = frozenset({
-    'foreach-object',
-    'select-object',
-    'sort-object',
-    'where-object',
-})
-
-
-def _command_body_is_pure(cmd: Ps1CommandInvocation) -> bool:
-    """
-    Check whether all script block arguments of a pipeline cmdlet (ForEach-Object, Where-Object,
-    etc.) have side-effect-free bodies. These cmdlets are pure transforms: they evaluate a script
-    block per input item without mutating state themselves.
-    """
-    for arg in cmd.arguments:
-        block = arg.value if isinstance(arg, Ps1CommandArgument) else arg
-        if not isinstance(block, Ps1ScriptBlock):
-            continue
-        for stmt in block.body:
-            if isinstance(stmt, Ps1ExpressionStatement) and stmt.expression is not None:
-                if not _is_side_effect_free(stmt.expression):
-                    return False
-            elif not isinstance(stmt, Ps1ExpressionStatement):
-                return False
-    return True
-
-
-def _is_side_effect_free(node) -> bool:
-    """
-    Conservative check: return `True` only when evaluating `node` is guaranteed to produce no
-    observable side effects beyond yielding a value.
-    """
-    if isinstance(node, (Ps1StringLiteral, Ps1HereString, Ps1IntegerLiteral, Ps1RealLiteral)):
-        return True
-    if isinstance(node, Ps1TypeExpression):
-        return True
-    if isinstance(node, Ps1Variable):
-        return True
-    if isinstance(node, Ps1ParenExpression):
-        return node.expression is None or _is_side_effect_free(node.expression)
-    if isinstance(node, Ps1CastExpression):
-        return _is_side_effect_free(node.operand)
-    if isinstance(node, Ps1UnaryExpression):
-        if node.operator in ('++', '--'):
-            return False
-        return _is_side_effect_free(node.operand)
-    if isinstance(node, Ps1BinaryExpression):
-        return _is_side_effect_free(node.left) and _is_side_effect_free(node.right)
-    if isinstance(node, Ps1RangeExpression):
-        return _is_side_effect_free(node.start) and _is_side_effect_free(node.end)
-    if isinstance(node, Ps1ArrayLiteral):
-        return all(_is_side_effect_free(e) for e in node.elements)
-    if isinstance(node, Ps1ArrayExpression):
-        if len(node.body) == 1:
-            stmt = node.body[0]
-            if isinstance(stmt, Ps1ExpressionStatement) and stmt.expression is not None:
-                return _is_side_effect_free(stmt.expression)
-        return len(node.body) == 0
-    if isinstance(node, Ps1IndexExpression):
-        return _is_side_effect_free(node.object) and _is_side_effect_free(node.index)
-    if isinstance(node, Ps1MemberAccess):
-        return _is_side_effect_free(node.object)
-    if isinstance(node, Ps1InvokeMember):
-        if not all(_is_side_effect_free(a) for a in node.arguments):
-            return False
-        if node.access == Ps1AccessKind.STATIC:
-            obj = node.object
-            if isinstance(obj, Ps1TypeExpression) and obj.name.lower() in _PURE_STATIC_TYPES:
-                return True
-        elif _is_side_effect_free(node.object):
-            member = node.member
-            if isinstance(member, str) and member.lower() in _PURE_INSTANCE_METHODS:
-                return True
-        return False
-    if isinstance(node, Ps1CommandInvocation):
-        name = get_command_name(node)
-        if name is None:
-            return False
-        if name.lower() in _PURE_CMDLETS:
-            return True
-        if name.lower() in _PURE_PIPELINE_CMDLETS:
-            return _command_body_is_pure(node)
-        return False
-    if isinstance(node, Ps1Pipeline):
-        return all(
-            isinstance(el, Ps1PipelineElement) and _is_side_effect_free(el.expression)
-            for el in node.elements
-        )
-    if isinstance(node, Ps1ExpandableString):
-        return all(_is_side_effect_free(p) for p in node.parts)
     return False
 
 
@@ -252,8 +71,7 @@ class Ps1UnusedVariableRemoval(Transformer):
         has_free_read: set[str] = set()
         for n in _walk_outer_scope(node):
             if isinstance(n, Ps1AssignmentExpression):
-                var = _assignment_target_variable(n.target)
-                if var is not None:
+                for var in assignment_target_variables(n.target):
                     write_targets.add(var)
                     key = _candidate_key(var)
                     if key is not None:
@@ -313,14 +131,26 @@ class Ps1UnusedVariableRemoval(Transformer):
                     changed = True
         if not dead:
             return None
+        removable: list[Node] = []
+        seen: set[Node] = set()
+        for key in dead:
+            for mutation in write_nodes[key]:
+                if mutation in seen:
+                    continue
+                if (
+                    isinstance(mutation, Ps1AssignmentExpression)
+                    and not self._all_targets_dead(mutation, dead)
+                ):
+                    continue
+                seen.add(mutation)
+                removable.append(mutation)
         body = get_body(node)
         if body is not None:
             dead_stmts: set[Node] = set()
-            for key in dead:
-                for mutation in write_nodes[key]:
-                    stmt = _find_removable_statement(mutation)
-                    if stmt is not None:
-                        dead_stmts.add(stmt)
+            for mutation in removable:
+                stmt = _find_removable_statement(mutation)
+                if stmt is not None:
+                    dead_stmts.add(stmt)
             surviving = [
                 s for s in body
                 if s not in dead_stmts
@@ -328,15 +158,28 @@ class Ps1UnusedVariableRemoval(Transformer):
             ]
             if not surviving:
                 return None
-        for key in dead:
-            for mutation in write_nodes[key]:
-                self._remove_mutation(mutation)
+        for mutation in removable:
+            self._remove_mutation(mutation)
+
+    @staticmethod
+    def _all_targets_dead(assign: Ps1AssignmentExpression, dead: set[str]) -> bool:
+        """
+        Return `True` when every variable written by `assign` is dead. A multi-assignment such as
+        `$a, $b = 1, 2` is only removable when all of its targets are dead; removing it while a
+        co-target is still live would destroy that live write.
+        """
+        keys = [_candidate_key(var) for var in assignment_target_variables(assign.target)]
+        if not keys:
+            return False
+        return all(key is not None and key in dead for key in keys)
 
     @staticmethod
     def _enclosing_assignment_target(var: Ps1Variable) -> str | None:
         """
         If `var` is read inside an assignment's RHS, return the assignment target's variable key.
         """
+        if is_assignment_write_target(var):
+            return None
         cursor: Node = var
         while cursor.parent is not None:
             parent = cursor.parent
@@ -351,7 +194,7 @@ class Ps1UnusedVariableRemoval(Transformer):
     def _remove_mutation(self, mutation: Node):
         if isinstance(mutation, Ps1AssignmentExpression):
             rhs = mutation.value
-            if rhs is not None and not _is_side_effect_free(rhs) and isinstance(rhs, Expression):
+            if rhs is not None and not is_side_effect_free(rhs) and isinstance(rhs, Expression):
                 stmt = _find_removable_statement(mutation)
                 if stmt is None:
                     return
@@ -376,13 +219,13 @@ class Ps1JunkStatementRemoval(Transformer):
 
     def visit(self, node: Node):
         called = self._reachable_functions(node)
-        for parent in list(_walk_outer_scope(node)):
-            if inside_value_producing_context(parent):
+        for parent in list(node.walk()):
+            role = classify_body(parent)
+            if role is None or role is BodyRole.OPAQUE:
                 continue
             body = get_body(parent)
-            if body is None:
-                continue
-            self._prune_body(body, parent is node, called)
+            self._prune_body(body, role, isinstance(parent, Ps1Script), called)
+        self._remove_inert_functions(node)
 
     @staticmethod
     def _is_dynamic_dispatch(cmd: Ps1CommandInvocation) -> bool:
@@ -437,22 +280,122 @@ class Ps1JunkStatementRemoval(Transformer):
                             frontier.append(key)
         return reachable
 
-    def _prune_body(self, body: list, is_root: bool, called: set[str]):
-        removable: set[Node] = set()
+    def _remove_inert_functions(self, node: Node):
+        """
+        Remove top-level functions whose body carries no observable output or side effect together
+        with the bare call statements that invoke them. After body pruning, an injected junk function
+        such as `function j { $Null = 915 }` has an empty body; calling it is a no-op, so the
+        definition and its call sites drop out as a unit. Only whole-statement, argument-free
+        invocations of the function count as call sites — if the name is referenced any other way, or
+        anything in the script dispatches dynamically (`& $f`), the function is kept, because its
+        result might then be observed or its identity might not be provable.
+        """
+        if self._any_dynamic_dispatch(node):
+            return
+        inert: dict[str, Ps1FunctionDefinition] = {}
+        for stmt in node.body:
+            if isinstance(stmt, Ps1FunctionDefinition) and self._body_is_inert(stmt):
+                inert[stmt.name.lower()] = stmt
+        if not inert:
+            return
+        call_sites: dict[str, list[Node]] = {name: [] for name in inert}
+        other_reference: set[str] = set()
+        for ref in node.walk():
+            if not isinstance(ref, Ps1CommandInvocation):
+                continue
+            name = get_command_name(ref)
+            if name is None:
+                continue
+            key = name.lower()
+            if key not in inert:
+                continue
+            statement = self._bare_call_statement(ref)
+            if statement is not None and not ref.arguments:
+                call_sites[key].append(statement)
+            else:
+                other_reference.add(key)
+        for key, definition in inert.items():
+            if key in other_reference:
+                continue
+            for statement in call_sites[key]:
+                if _remove_from_parent(statement):
+                    self.mark_changed()
+            if _remove_from_parent(definition):
+                self.mark_changed()
+
+    @staticmethod
+    def _body_is_inert(function: Ps1FunctionDefinition) -> bool:
+        """
+        Return `True` when a function body neither emits output nor performs a side effect: it is
+        empty, or every statement is a no-output discard (`$Null = <pure>`, `[Void]`, `Out-Null`).
+        A statement that yields a value or has any effect makes the function observable and non-inert.
+        """
+        if function.body is None:
+            return True
+        for stmt in function.body.body:
+            if classify_statement_effect(stmt) is not StatementEffect.DISCARD:
+                return False
+        return True
+
+    @staticmethod
+    def _bare_call_statement(cmd: Ps1CommandInvocation) -> Node | None:
+        """
+        Return the enclosing statement when `cmd` is invoked as a whole expression statement (`f`
+        alone, or `f` as the sole element of a statement-level pipeline), or `None` when its result
+        flows into a larger expression where the call's value could be observed.
+        """
+        parent = cmd.parent
+        if isinstance(parent, Ps1ExpressionStatement):
+            return parent
+        if isinstance(parent, Ps1PipelineElement):
+            pipeline = parent.parent
+            if (
+                isinstance(pipeline, Ps1Pipeline)
+                and len(pipeline.elements) == 1
+                and isinstance(pipeline.parent, Ps1ExpressionStatement)
+            ):
+                return pipeline.parent
+        return None
+
+    @staticmethod
+    def _any_dynamic_dispatch(node: Node) -> bool:
+        for n in node.walk():
+            if isinstance(n, Ps1CommandInvocation):
+                if get_command_name(n) is None and Ps1JunkStatementRemoval._is_dynamic_dispatch(n):
+                    return True
+        return False
+
+    def _prune_body(self, body: list, role: BodyRole, is_script_root: bool, called: set[str]):
+        is_root = role is BodyRole.ROOT
+        discard: set[Node] = set()
+        output: set[Node] = set()
+        dead_functions: set[Node] = set()
         for stmt in body:
-            if self._is_removable_statement(stmt):
-                removable.add(stmt)
-            elif is_root and isinstance(stmt, Ps1FunctionDefinition):
-                if stmt.name.lower() not in called:
-                    removable.add(stmt)
+            if isinstance(stmt, Ps1FunctionDefinition):
+                if is_root and stmt.name.lower() not in called:
+                    dead_functions.add(stmt)
+                continue
+            effect = classify_statement_effect(stmt)
+            if effect is StatementEffect.DISCARD:
+                discard.add(stmt)
+            elif effect is StatementEffect.OUTPUT:
+                output.add(stmt)
+        # Emit-safety for a captured `ROOT` body (a function body or bare `&{}`): a side-effect-free
+        # value may be the body's whole point (its return value), so a pure output statement is only
+        # pruned when a non-removable statement survives to carry the body's output. A `DISCARD`
+        # emits nothing and is always safe to drop, even when it empties the body — that is what
+        # turns a junk function inert. The true script root has no return value, so this guard does
+        # not apply there. A `NESTED` body likewise has no observable value: prune freely.
+        if is_root and not is_script_root and output:
+            if not self._output_survives(body, discard, output, dead_functions):
+                output.clear()
+        removable = discard | output | dead_functions
         if not removable:
             return
-        if is_root:
-            surviving = [
-                s for s in body
-                if s not in removable
-                and not isinstance(s, Ps1FunctionDefinition)
-            ]
+        # Never strip the script root down to nothing: a script that is only function definitions is
+        # a module whose functions may be dot-sourced, so leaving it empty would erase real code.
+        if is_script_root:
+            surviving = [s for s in body if s not in removable]
             if not surviving:
                 return
         for stmt in list(body):
@@ -461,84 +404,17 @@ class Ps1JunkStatementRemoval(Transformer):
                     self.mark_changed()
 
     @staticmethod
-    def _is_removable_statement(stmt) -> bool:
-        if not isinstance(stmt, Ps1ExpressionStatement):
-            return False
-        expr = stmt.expression
-        if expr is None:
-            return False
-        if isinstance(expr, Ps1CastExpression) and expr.type_name.lower() == 'void':
+    def _output_survives(
+        body: list, discard: set[Node], output: set[Node], dead_functions: set[Node],
+    ) -> bool:
+        """
+        Return `True` when a statement that carries observable output would remain after pruning, so
+        that removing the pure-output statements does not silence a captured body's return value.
+        """
+        for stmt in body:
+            if stmt in discard or stmt in output or stmt in dead_functions:
+                continue
+            if isinstance(stmt, Ps1FunctionDefinition):
+                continue
             return True
-        if isinstance(expr, Ps1Pipeline):
-            if _pipeline_ends_with_out_null(expr) and _pipeline_prefix_is_pure(expr):
-                return True
-            if _pipeline_ends_with_void_foreach(expr) and _pipeline_prefix_is_pure(expr):
-                return True
-            if _pipeline_ends_with_cmdlet(expr, _PURE_PIPELINE_CMDLETS):
-                return False
-        return _is_side_effect_free(expr)
-
-
-def _pipeline_ends_with_out_null(pipeline: Ps1Pipeline) -> bool:
-    if len(pipeline.elements) < 2:
         return False
-    last = pipeline.elements[-1]
-    if not isinstance(last, Ps1PipelineElement):
-        return False
-    expr = last.expression
-    if isinstance(expr, Ps1CommandInvocation):
-        name = get_command_name(expr)
-        return name is not None and name.lower() == 'out-null'
-    return False
-
-
-def _pipeline_prefix_is_pure(pipeline: Ps1Pipeline) -> bool:
-    for el in pipeline.elements[:-1]:
-        if not isinstance(el, Ps1PipelineElement):
-            return False
-        if not _is_side_effect_free(el.expression):
-            return False
-    return True
-
-
-def _pipeline_ends_with_void_foreach(pipeline: Ps1Pipeline) -> bool:
-    """
-    Detect junk pipelines like ``... | ForEach-Object { [Void]$_ }`` where the ForEach body
-    explicitly discards all output via ``[Void]`` casts. These are anti-analysis noise injected
-    into malware scripts.
-    """
-    if len(pipeline.elements) < 2:
-        return False
-    last = pipeline.elements[-1]
-    if not isinstance(last, Ps1PipelineElement):
-        return False
-    expr = last.expression
-    if not isinstance(expr, Ps1CommandInvocation):
-        return False
-    name = get_command_name(expr)
-    if name is None or name.lower() != 'foreach-object':
-        return False
-    for arg in expr.arguments:
-        block = arg.value if isinstance(arg, Ps1CommandArgument) else arg
-        if not isinstance(block, Ps1ScriptBlock):
-            continue
-        for stmt in block.body:
-            if not isinstance(stmt, Ps1ExpressionStatement) or stmt.expression is None:
-                return False
-            if not (isinstance(stmt.expression, Ps1CastExpression)
-                    and stmt.expression.type_name.lower() == 'void'):
-                return False
-    return True
-
-
-def _pipeline_ends_with_cmdlet(pipeline: Ps1Pipeline, names: frozenset) -> bool:
-    if len(pipeline.elements) < 2:
-        return False
-    last = pipeline.elements[-1]
-    if not isinstance(last, Ps1PipelineElement):
-        return False
-    expr = last.expression
-    if not isinstance(expr, Ps1CommandInvocation):
-        return False
-    name = get_command_name(expr)
-    return name is not None and name.lower() in names

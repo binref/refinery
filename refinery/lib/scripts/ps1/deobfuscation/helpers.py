@@ -39,8 +39,11 @@ from refinery.lib.scripts.ps1.model import (
     Ps1MemberAccess,
     Ps1ParameterDeclaration,
     Ps1ParenExpression,
+    Ps1Pipeline,
+    Ps1PipelineElement,
     Ps1RealLiteral,
     Ps1ScopeModifier,
+    Ps1Script,
     Ps1ScriptBlock,
     Ps1StringLiteral,
     Ps1SubExpression,
@@ -59,6 +62,25 @@ class MutationKind(enum.Enum):
     FOREACH = 'foreach'
     INCRDECR = 'incrdecr'
     PARAM = 'param'
+
+
+class BodyRole(enum.Enum):
+    """
+    How a statement body relates to the code that surrounds it, for the cleanup passes that descend
+    into function and `&{}` bodies. A `refinery.lib.scripts.Block` or `Ps1Code` body is one of:
+
+    - `OPAQUE`: the body's value is captured (an assignment right-hand side, `$(...)`, `@(...)`, a
+      stored or argument scriptblock, a piped `&{}`); pruning any statement could destroy an
+      observable value, so the body is left untouched.
+    - `ROOT`: the body's output is observed but not captured into a value (the script root, a
+      function body, a bare `&{}`/`.{}` in statement position); side-effect-free junk may be pruned,
+      but a body that is nothing but its own output value is preserved.
+    - `NESTED`: a plain nested block that runs for its side effects (a loop or `if` body in
+      statement position); statements may be pruned freely.
+    """
+    OPAQUE = 'opaque'
+    ROOT = 'root'
+    NESTED = 'nested'
 
 
 class VariableMutation(NamedTuple):
@@ -256,6 +278,70 @@ def inside_value_producing_context(node) -> bool:
     return False
 
 
+def _scriptblock_is_captured(block: Ps1ScriptBlock) -> bool:
+    """
+    Return `True` when the value of a `refinery.lib.scripts.ps1.model.Ps1ScriptBlock` is captured
+    rather than run for its observable output. A bare `&{ ... }` / `.{ ... }` in statement position
+    produces output that the pass may prune into; every other scriptblock (a stored closure
+    `$x = { ... }`, an argument block, or an invocation whose result is assigned, passed, or piped)
+    is treated as captured and left opaque.
+    """
+    parent = block.parent
+    if isinstance(parent, Ps1FunctionDefinition):
+        return False
+    if not (isinstance(parent, Ps1CommandInvocation) and parent.name is block):
+        return True
+    invocation_parent = parent.parent
+    if isinstance(invocation_parent, Ps1ExpressionStatement):
+        return False
+    if isinstance(invocation_parent, Ps1PipelineElement):
+        pipeline = invocation_parent.parent
+        if (
+            isinstance(pipeline, Ps1Pipeline)
+            and len(pipeline.elements) == 1
+            and isinstance(pipeline.parent, Ps1ExpressionStatement)
+        ):
+            return False
+    return True
+
+
+def classify_body(node) -> BodyRole | None:
+    """
+    Classify the statement body owned by `node` as a
+    `refinery.lib.scripts.ps1.deobfuscation.helpers.BodyRole`, or return `None` when `node` owns no
+    prunable body (`get_body` is `None`). Used by the dead-code and junk passes to decide whether a
+    body may be pruned and how aggressively; ambiguous capture always resolves to `OPAQUE`.
+    """
+    if get_body(node) is None:
+        return None
+    if isinstance(node, Ps1Script):
+        return BodyRole.ROOT
+    if isinstance(node, Ps1SubExpression):
+        return BodyRole.OPAQUE
+    if isinstance(node, Ps1ScriptBlock):
+        if isinstance(node.parent, Ps1FunctionDefinition) and node.parent.body is node:
+            return BodyRole.ROOT
+        return BodyRole.OPAQUE if _scriptblock_is_captured(node) else BodyRole.ROOT
+    # A plain `Block` (loop/if/try/catch/finally/trap body): walk to the nearest enclosing body
+    # owner. Crossing a value-capturing boundary (`$(...)`, `@(...)`, a captured scriptblock, or the
+    # right-hand side of an assignment such as `$x = if (...) {...}`) makes this block opaque; a
+    # function/script/bare-`&{}` boundary resets capture, leaving it nested.
+    prev = node
+    cursor = node.parent
+    while cursor is not None:
+        if isinstance(cursor, (Ps1SubExpression, Ps1ArrayExpression)):
+            return BodyRole.OPAQUE
+        if isinstance(cursor, Ps1AssignmentExpression) and cursor.value is prev:
+            return BodyRole.OPAQUE
+        if isinstance(cursor, Ps1ScriptBlock):
+            return BodyRole.OPAQUE if _scriptblock_is_captured(cursor) else BodyRole.NESTED
+        if isinstance(cursor, Ps1Script):
+            return BodyRole.NESTED
+        prev = cursor
+        cursor = cursor.parent
+    return BodyRole.NESTED
+
+
 def unwrap_parens(node: Node) -> Node:
     """
     Unwrap nested `refinery.lib.scripts.ps1.model.Ps1ParenExpression` wrappers and single-statement
@@ -346,6 +432,50 @@ def detect_encoding_chain(node: Ps1InvokeMember) -> str | None:
     return enc_name
 
 
+def _unwrap_assignment_target(target: Node | None) -> Node | None:
+    """
+    Peel type-constraint casts and parentheses from an assignment target.
+    """
+    while isinstance(target, (Ps1ParenExpression, Ps1CastExpression)):
+        target = target.expression if isinstance(target, Ps1ParenExpression) else target.operand
+    return target
+
+
+def assignment_target_variables(target: Node | None) -> list[Ps1Variable]:
+    """
+    Return the variables written by an assignment target. A plain variable target yields a single
+    entry, a `refinery.lib.scripts.ps1.model.Ps1ArrayLiteral` target (the PowerShell
+    multi-assignment `$a, $b = 1, 2`) yields one entry per element that unwraps to a variable, and
+    any other target (index, member access, literal) yields an empty list.
+    """
+    target = _unwrap_assignment_target(target)
+    if isinstance(target, Ps1Variable):
+        return [target]
+    if isinstance(target, Ps1ArrayLiteral):
+        variables: list[Ps1Variable] = []
+        for element in target.elements:
+            unwrapped = _unwrap_assignment_target(element)
+            if isinstance(unwrapped, Ps1Variable):
+                variables.append(unwrapped)
+        return variables
+    return []
+
+
+def is_assignment_write_target(var: Ps1Variable) -> bool:
+    """
+    Return `True` when `var` occupies the target position of an enclosing
+    `refinery.lib.scripts.ps1.model.Ps1AssignmentExpression`, including as an element of a
+    multi-assignment `refinery.lib.scripts.ps1.model.Ps1ArrayLiteral` target. Enclosing casts and
+    parentheses are transparent.
+    """
+    cursor: Node = var
+    parent = cursor.parent
+    while isinstance(parent, (Ps1CastExpression, Ps1ParenExpression, Ps1ArrayLiteral)):
+        cursor = parent
+        parent = cursor.parent
+    return isinstance(parent, Ps1AssignmentExpression) and parent.target is cursor
+
+
 def iter_variable_mutations(
     root: Node,
 ) -> Generator[VariableMutation, None, None]:
@@ -354,14 +484,15 @@ def iter_variable_mutations(
     """
     for node in root.walk():
         if isinstance(node, Ps1AssignmentExpression):
-            target = node.target
-            while isinstance(target, (Ps1ParenExpression, Ps1CastExpression)):
-                target = target.expression if isinstance(target, Ps1ParenExpression) else target.operand
-            if isinstance(target, Ps1Variable):
-                yield VariableMutation(target, MutationKind.ASSIGN, node)
-            elif isinstance(target, (Ps1IndexExpression, Ps1MemberAccess)):
-                if isinstance(target.object, Ps1Variable):
-                    yield VariableMutation(target.object, MutationKind.MEMBER_ASSIGN, node)
+            variables = assignment_target_variables(node.target)
+            if variables:
+                for variable in variables:
+                    yield VariableMutation(variable, MutationKind.ASSIGN, node)
+            else:
+                target = _unwrap_assignment_target(node.target)
+                if isinstance(target, (Ps1IndexExpression, Ps1MemberAccess)):
+                    if isinstance(target.object, Ps1Variable):
+                        yield VariableMutation(target.object, MutationKind.MEMBER_ASSIGN, node)
         elif isinstance(node, Ps1ForEachLoop):
             if isinstance(node.variable, Ps1Variable):
                 yield VariableMutation(node.variable, MutationKind.FOREACH, node)
@@ -463,6 +594,45 @@ def is_array_reverse_call(node: Ps1ExpressionStatement) -> Ps1Variable | None:
     if isinstance(arg, Ps1Variable):
         return arg
     return None
+
+
+def extract_new_object(cmd: Ps1CommandInvocation) -> tuple[str, list[Expression]] | None:
+    """
+    Extract the type name and constructor arguments from a `New-Object` invocation. Returns
+    `(type_name, [arg_expressions])`, or `None` when `cmd` is not a resolvable `New-Object` call.
+    """
+    if not isinstance(cmd.name, Ps1StringLiteral):
+        return None
+    if cmd.name.value.lower() != 'new-object':
+        return None
+    positional: list[Expression] = []
+    for arg in cmd.arguments:
+        if isinstance(arg, Ps1CommandArgument):
+            if arg.kind != Ps1CommandArgumentKind.POSITIONAL or arg.value is None:
+                return None
+            positional.append(arg.value)
+        elif isinstance(arg, Expression):
+            positional.append(arg)
+        else:
+            return None
+    if not positional:
+        return None
+    type_name_expr = positional[0]
+    if not isinstance(type_name_expr, Ps1StringLiteral):
+        return None
+    type_name = type_name_expr.value
+    ctor_args: list[Expression] = []
+    if len(positional) >= 2:
+        second = positional[1]
+        if isinstance(second, Ps1ParenExpression) and second.expression is not None:
+            inner = second.expression
+            if isinstance(inner, Ps1ArrayLiteral):
+                ctor_args = list(inner.elements)
+            else:
+                ctor_args = [inner]
+        else:
+            ctor_args = [second]
+    return type_name, ctor_args
 
 
 def ps_divide(a: int | float, b: int | float) -> int | float:

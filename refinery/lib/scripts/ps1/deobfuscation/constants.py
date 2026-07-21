@@ -16,8 +16,10 @@ from refinery.lib.scripts import (
 )
 from refinery.lib.scripts.ps1.deobfuscation.data import PS1_KNOWN_VARIABLES
 from refinery.lib.scripts.ps1.deobfuscation.helpers import (
+    assignment_target_variables,
     get_body,
     is_array_reverse_call,
+    is_assignment_write_target,
     is_builtin_variable,
     iter_variable_mutations,
     make_string_literal,
@@ -136,21 +138,14 @@ _MIN_EXPANSION_BUDGET = 256
 
 def _assignment_target_variable(target) -> Ps1Variable | None:
     """
-    Extract the variable from an assignment target, unwrapping any type
-    constraint casts. Handles both `$x = expr` and `[Type]$x = expr`.
+    Extract the single variable written by an assignment target, unwrapping any type constraint
+    casts and parentheses. Handles both `$x = expr` and `[Type]$x = expr`. Returns `None` for a
+    multi-assignment target (`$a, $b = 1, 2`), which writes more than one variable; use
+    `refinery.lib.scripts.ps1.deobfuscation.helpers.assignment_target_variables` when every written
+    variable is needed.
     """
-    while isinstance(target, Ps1CastExpression):
-        target = target.operand
-    if isinstance(target, Ps1Variable):
-        return target
-    return None
-
-
-def _first_non_cast_parent(node: Node) -> Node | None:
-    parent = node.parent
-    while isinstance(parent, Ps1CastExpression):
-        parent = parent.parent
-    return parent
+    variables = assignment_target_variables(target)
+    return variables[0] if len(variables) == 1 else None
 
 
 def _collect_mutated_variables(root: Node) -> set[str]:
@@ -420,9 +415,14 @@ class Ps1ConstantInlining(Transformer):
 
         for node in _walk_outer_scope(root):
             if isinstance(node, Ps1AssignmentExpression):
-                target = _assignment_target_variable(node.target)
-                if target is not None:
-                    key = _candidate_key(target)
+                targets = assignment_target_variables(node.target)
+                if len(targets) > 1:
+                    for target in targets:
+                        key = _candidate_key(target)
+                        if key is not None:
+                            _reject(key)
+                elif len(targets) == 1:
+                    key = _candidate_key(targets[0])
                     if key is None or key in rejected:
                         continue
                     if node.operator == '=' and node.value is not None:
@@ -530,8 +530,7 @@ class Ps1ConstantInlining(Transformer):
             elif isinstance(node, Ps1Variable):
                 key = _candidate_key(node)
                 if key is not None and key in candidates:
-                    parent = _first_non_cast_parent(node)
-                    if isinstance(parent, Ps1AssignmentExpression) and _assignment_target_variable(parent.target) is node:
+                    if is_assignment_write_target(node):
                         continue
                     var_len = 1 + len(node.name)
                     expansion[key] += max(0, value_lengths[key] - var_len)
@@ -658,11 +657,7 @@ class Ps1ConstantInlining(Transformer):
         remaining: dict[str, int],
         inlined: dict[str, int],
     ) -> None:
-        parent = _first_non_cast_parent(node)
-        if (
-            isinstance(parent, Ps1AssignmentExpression)
-            and _assignment_target_variable(parent.target) is node
-        ):
+        if is_assignment_write_target(node):
             return
         if sp := seal_points.get(key):
             sp = self._exclude_own_seal_points(node, key, sp)
@@ -779,8 +774,7 @@ class Ps1NullVariableInlining(Transformer):
                 continue
             if key.startswith('env:'):
                 continue
-            parent = _first_non_cast_parent(ref)
-            if isinstance(parent, Ps1AssignmentExpression) and _assignment_target_variable(parent.target) is ref:
+            if is_assignment_write_target(ref):
                 continue
             if not self._is_null_eligible(ref):
                 continue

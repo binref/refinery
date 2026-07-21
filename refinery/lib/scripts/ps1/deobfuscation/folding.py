@@ -816,6 +816,8 @@ class Ps1ConstantFolding(LocalFunctionAwareTransformer):
             return self._handle_binary_replace(node, op)
         if op in ('-split', '-csplit', '-isplit'):
             return self._handle_binary_split(node, op)
+        if op in ('-and', '-or', '-xor'):
+            return self._handle_logical(node, op)
         return self._handle_comparison(node, op) or self._handle_arithmetic(node, op)
 
     def _handle_arithmetic(self, node: Ps1BinaryExpression, op: str) -> Expression | None:
@@ -848,16 +850,57 @@ class Ps1ConstantFolding(LocalFunctionAwareTransformer):
             return None
         return make_string_literal(s * count)
 
+    @staticmethod
+    def _bool_literal(result: bool) -> Ps1Variable:
+        """
+        Build the `$True`/`$False` variable node that represents a folded boolean value.
+        """
+        return Ps1Variable(name='True' if result else 'False')
+
     def _handle_comparison(self, node: Ps1BinaryExpression, op: str) -> Expression | None:
         left = unwrap_integer(node.left)
         right = unwrap_integer(node.right)
+        if left is not None and right is not None:
+            fn = COMPARISON_OPS.get(op)
+            if fn is None:
+                return None
+            return self._bool_literal(fn(left.value, right.value))
+        return self._handle_string_equality(node, op)
+
+    def _handle_string_equality(self, node: Ps1BinaryExpression, op: str) -> Expression | None:
+        """
+        Fold an equality comparison between two constant strings. Only equality operators are folded
+        (`-eq`/`-ne` and their case-sensitive `-ceq`/`-cne` and explicit case-insensitive `-ieq`/`-ine`
+        variants); ordering comparisons follow culture-dependent rules and are left untouched.
+        """
+        base = op[2:] if op[:2] in ('-c', '-i') else op[1:]
+        if base not in ('eq', 'ne'):
+            return None
+        left = string_value(node.left)
+        right = string_value(node.right)
         if left is None or right is None:
             return None
-        fn = COMPARISON_OPS.get(op)
-        if fn is None:
+        if op.startswith('-c'):
+            equal = left == right
+        else:
+            equal = left.casefold() == right.casefold()
+        return self._bool_literal(equal if base == 'eq' else not equal)
+
+    def _handle_logical(self, node: Ps1BinaryExpression, op: str) -> Expression | None:
+        """
+        Fold the logical operators `-and`, `-or`, and `-xor` when both operands are constant.
+        """
+        left = is_truthy(node.left)
+        right = is_truthy(node.right)
+        if left is None or right is None:
             return None
-        result = fn(left.value, right.value)
-        return Ps1Variable(name='True' if result else 'False')
+        if op == '-and':
+            result = left and right
+        elif op == '-or':
+            result = left or right
+        else:
+            result = left != right
+        return self._bool_literal(result)
 
     def _handle_format(self, node: Ps1BinaryExpression) -> Expression | None:
         fmt_str = string_value(node.left) if node.left else None

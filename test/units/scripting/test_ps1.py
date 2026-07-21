@@ -780,7 +780,6 @@ class TestPs1RealWorldLarge(TestUnitBase):
         goal = inspect.cleandoc(
             """
             $ppvvglp = New-Object -Com "Scripting.FileSystemObject"
-            New-Object System.Text.StringBuilder
             New-Object -Com "WScript.Shell"
             $aefqnhv = $ppvvglp.GetDrive("c:").SerialNumber
             $oysdesi = New-Object Threading.Mutex ($False, $aefqnhv)

@@ -191,3 +191,136 @@ class TestPs1UnusedExtra(TestPs1):
             }
             f
         """))
+
+    def test_dead_multiassign_all_targets_removed(self):
+        # Every target of `$a, $b, $c = 1, 2, 3` is unread, so the whole multi-assignment is dead.
+        result = self._apply(
+            "$a, $b, $c = 1, 2, 3\nWrite-Host 'keep'", Ps1UnusedVariableRemoval)
+        self.assertEqual(result, "Write-Host 'keep'")
+
+    def test_live_multiassign_cotarget_keeps_statement(self):
+        # `$b` is read, so the multi-assignment survives even though its co-target `$a` is dead.
+        result = self._apply(
+            '$a, $b = 1, 2\nWrite-Output $b', Ps1UnusedVariableRemoval)
+        self.assertEqual(result, '$a, $b = 1, 2\nWrite-Output $b')
+
+    def test_pure_new_object_dead_store_removed(self):
+        # `New-Object System.Object` has no side effect, so an unread store of it is removable.
+        result = self._apply(
+            "$x = New-Object System.Object\nWrite-Host 'keep'", Ps1UnusedVariableRemoval)
+        self.assertEqual(result, "Write-Host 'keep'")
+
+    def test_impure_new_object_store_kept(self):
+        # `New-Object System.Net.WebClient` is not proven pure, so its RHS must be preserved.
+        result = self._apply(
+            "$x = New-Object System.Net.WebClient\nWrite-Host 'keep'", Ps1UnusedVariableRemoval)
+        self.assertEqual(result, "New-Object System.Net.WebClient\nWrite-Host 'keep'")
+
+    def test_null_discard_pure_removed(self):
+        # `$null = <pure>` is PowerShell's discard idiom; with a side-effect-free RHS it is junk.
+        result = self._apply(
+            "$null = [Environment]::UserName\nWrite-Host 'keep'", Ps1JunkStatementRemoval)
+        self.assertEqual(result, "Write-Host 'keep'")
+
+    def test_null_discard_side_effect_kept(self):
+        # A `$null =` discard whose RHS is a command call has a side effect and must be preserved.
+        result = self._apply(
+            "$null = Remove-Item C:\\x\nWrite-Host 'keep'", Ps1JunkStatementRemoval)
+        self.assertEqual(result, "$null = Remove-Item C:\\x\nWrite-Host 'keep'")
+
+
+class TestPs1InertFunctionRemoval(TestPs1):
+
+    def test_inert_function_and_call_removed(self):
+        result = self._apply(
+            "function j { $Null = 915 }\nj\nWrite-Host 'keep'", Ps1JunkStatementRemoval)
+        self.assertEqual(result, "Write-Host 'keep'")
+
+    def test_inert_function_multiple_calls_removed(self):
+        result = self._apply(
+            "function j { $Null = 915 }\nj\nj\nj\nWrite-Host 'keep'", Ps1JunkStatementRemoval)
+        self.assertEqual(result, "Write-Host 'keep'")
+
+    def test_emitting_function_kept(self):
+        result = self._apply(
+            "function f { 42 }\nf\nWrite-Host 'keep'", Ps1JunkStatementRemoval)
+        self.assertIn('function f', result)
+        self.assertIn('42', result)
+
+    def test_effectful_function_kept(self):
+        result = self._apply(
+            "function f { Write-Host 'real' }\nf", Ps1JunkStatementRemoval)
+        self.assertIn('function f', result)
+        self.assertIn('Write-Host', result)
+
+    def test_dynamic_dispatch_preserves_all_functions(self):
+        result = self._apply(
+            "function j { $Null = 1 }\nj\n& $name\nWrite-Host 'keep'",
+            Ps1JunkStatementRemoval)
+        self.assertIn('function j', result)
+
+    def test_function_with_argful_call_kept(self):
+        result = self._apply(
+            "function j { $Null = 1 }\nj 'arg'\nWrite-Host 'keep'", Ps1JunkStatementRemoval)
+        self.assertIn('function j', result)
+
+    def test_function_captured_result_kept(self):
+        result = self._apply(
+            "function j { $Null = 1 }\n$x = j\nWrite-Host 'keep'", Ps1JunkStatementRemoval)
+        self.assertIn('function j', result)
+
+    def test_param_block_function_module_preserved(self):
+        result = self._apply(cleandoc("""
+            function Ge {
+              [CmdletBinding()]
+              param (
+                [parameter(ValueFromPipeline=$true)]
+                $frk=$env:ComputerName
+              )
+              Write-Host $frk
+            }
+        """), Ps1JunkStatementRemoval)
+        self.assertIn('function Ge', result)
+        self.assertIn('Write-Host', result)
+
+
+class TestPs1DiscardedObjectRemoval(TestPs1):
+
+    def test_bare_hash_literal_removed(self):
+        result = self._apply(
+            "@{ a = 1; b = 2 }\nWrite-Host 'keep'", Ps1JunkStatementRemoval)
+        self.assertEqual(result, "Write-Host 'keep'")
+
+    def test_pscustomobject_hash_removed(self):
+        result = self._apply(
+            "[pscustomobject]@{ Name = 'x'; Value = 42 }\nWrite-Host 'keep'",
+            Ps1JunkStatementRemoval)
+        self.assertEqual(result, "Write-Host 'keep'")
+
+    def test_synchronized_hashtable_removed(self):
+        result = self._apply(
+            "[Collections.Hashtable]::Synchronized(@{})\nWrite-Host 'keep'",
+            Ps1JunkStatementRemoval)
+        self.assertEqual(result, "Write-Host 'keep'")
+
+    def test_void_foreach_pipeline_removed(self):
+        result = self._apply(
+            "(1, 2, 3) | ForEach-Object { [Void]$_ }\nWrite-Host 'keep'",
+            Ps1JunkStatementRemoval)
+        self.assertEqual(result, "Write-Host 'keep'")
+
+    def test_null_assign_foreach_pipeline_removed(self):
+        result = self._apply(
+            "(1, 2, 3) | ForEach-Object { $Null = $_ }\nWrite-Host 'keep'",
+            Ps1JunkStatementRemoval)
+        self.assertEqual(result, "Write-Host 'keep'")
+
+    def test_hash_with_impure_value_kept(self):
+        result = self._apply(
+            "@{ x = (Start-Process notepad) }\nWrite-Host 'keep'", Ps1JunkStatementRemoval)
+        self.assertIn('Start-Process', result)
+
+    def test_emitting_foreach_kept(self):
+        result = self._apply(
+            "(1, 2, 3) | ForEach-Object { $_ }\nWrite-Host 'keep'", Ps1JunkStatementRemoval)
+        self.assertIn('ForEach-Object', result)

@@ -17,6 +17,7 @@ from refinery.lib.scripts.ps1.deobfuscation.data import ENCODING_MAP
 from refinery.lib.scripts.ps1.deobfuscation.helpers import (
     collect_byte_array,
     extract_foreach_scriptblock,
+    extract_new_object,
     get_body,
     normalize_dotnet_type_name,
     string_value,
@@ -162,46 +163,6 @@ def _try_extract_scriptblock_create_arg(expr: Expression) -> Expression | None:
     return expr.arguments[0]
 
 
-def _extract_new_object_args(cmd: Ps1CommandInvocation) -> tuple[str, list[Expression]] | None:
-    """
-    Extract type name and constructor arguments from a `New-Object` invocation.
-
-    Returns `(type_name, [arg_expressions])` or `None`.
-    """
-    if not isinstance(cmd.name, Ps1StringLiteral):
-        return None
-    if cmd.name.value.lower() != 'new-object':
-        return None
-    positional: list[Expression] = []
-    for arg in cmd.arguments:
-        if isinstance(arg, Ps1CommandArgument):
-            if arg.kind != Ps1CommandArgumentKind.POSITIONAL or arg.value is None:
-                return None
-            positional.append(arg.value)
-        elif isinstance(arg, Expression):
-            positional.append(arg)
-        else:
-            return None
-    if not positional:
-        return None
-    type_name_expr = positional[0]
-    if not isinstance(type_name_expr, Ps1StringLiteral):
-        return None
-    type_name = type_name_expr.value
-    ctor_args: list[Expression] = []
-    if len(positional) >= 2:
-        second = positional[1]
-        if isinstance(second, Ps1ParenExpression) and second.expression is not None:
-            inner = second.expression
-            if isinstance(inner, Ps1ArrayLiteral):
-                ctor_args = list(inner.elements)
-            else:
-                ctor_args = [inner]
-        else:
-            ctor_args = [second]
-    return type_name, ctor_args
-
-
 def _resolve_encoding(expr: Expression) -> str | None:
     """
     Resolve `[Text.Encoding]::ASCII` and similar to a Python codec name.
@@ -297,7 +258,7 @@ def _try_evaluate(
             return _try_evaluate(expr.operand, bindings)
 
     if isinstance(expr, Ps1CommandInvocation):
-        result = _extract_new_object_args(expr)
+        result = extract_new_object(expr)
         if result is None:
             return None
         type_name, ctor_args = result
