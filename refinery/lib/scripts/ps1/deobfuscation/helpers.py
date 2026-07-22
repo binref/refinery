@@ -465,6 +465,21 @@ def assignment_target_variables(target: Node | None) -> list[Ps1Variable]:
     return []
 
 
+def assignment_target_is_all_variables(target: Node | None) -> bool:
+    """
+    Return `True` when every slot of an assignment target unwraps to a plain variable. Returns
+    `False` when any slot is an index or member-access expression (e.g. `$arr[0]`), which means
+    the assignment writes to memory other than a named variable and cannot be removed based solely
+    on variable-liveness information.
+    """
+    target = _unwrap_assignment_target(target)
+    if isinstance(target, Ps1Variable):
+        return True
+    if isinstance(target, Ps1ArrayLiteral):
+        return all(isinstance(_unwrap_assignment_target(e), Ps1Variable) for e in target.elements)
+    return False
+
+
 def is_assignment_write_target(var: Ps1Variable) -> bool:
     """
     Return `True` when `var` occupies the target position of an enclosing

@@ -13,6 +13,7 @@ from refinery.lib.scripts.ps1.deobfuscation.constants import (
 )
 from refinery.lib.scripts.ps1.deobfuscation.helpers import (
     BodyRole,
+    assignment_target_is_all_variables,
     assignment_target_variables,
     classify_body,
     get_body,
@@ -167,8 +168,12 @@ class Ps1UnusedVariableRemoval(Transformer):
         """
         Return `True` when every variable written by `assign` is dead. A multi-assignment such as
         `$a, $b = 1, 2` is only removable when all of its targets are dead; removing it while a
-        co-target is still live would destroy that live write.
+        co-target is still live would destroy that live write. A target that contains a non-variable
+        slot (e.g. `$arr[0], $b = 1, 2`) writes to memory beyond the named variables and is never
+        considered fully dead.
         """
+        if not assignment_target_is_all_variables(assign.target):
+            return False
         keys = [_candidate_key(var) for var in assignment_target_variables(assign.target)]
         if not keys:
             return False
@@ -509,7 +514,12 @@ class Ps1DeadStoreElimination(Transformer):
             ):
                 key = stmt.initializer.target.name.lower()
                 if key not in _PS1_SKIP_VARIABLES:
-                    kills.add(key)
+                    init_rhs_reads: set[str] = set()
+                    self._collect_reads(stmt.initializer.value, init_rhs_reads)
+                    if key in init_rhs_reads:
+                        reads.update(init_rhs_reads)
+                    else:
+                        kills.add(key)
         self._collect_all_reads(stmt, reads)
         return reads, kills, writes
 

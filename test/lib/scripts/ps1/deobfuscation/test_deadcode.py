@@ -380,6 +380,11 @@ class TestPs1DeadCodeExtra(TestPs1):
             "try { [Math]::Sqrt(9) } catch {}\nWrite-Host 'keep'", Ps1DeadCodeElimination)
         self.assertEqual(result, "Write-Host 'keep'")
 
+    def test_try_function_return_value_preserved(self):
+        result = self._apply(
+            'function f { try { 42 } catch {} }', Ps1DeadCodeElimination)
+        self.assertEqual(result, 'function f {\n  42\n}')
+
     def test_try_side_effect_command_kept(self):
         result = self._apply(
             "try { Remove-Item foo } catch {}\nWrite-Host 'keep'", Ps1DeadCodeElimination)

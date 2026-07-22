@@ -512,8 +512,9 @@ class Ps1DeadCodeElimination(Transformer):
         drops away; the `finally` block always runs, so its statements are hoisted in place of the
         whole construct. A non-empty `try` body that is "harmless" (all statements are either pure
         expressions or unresolvable bareword commands that would throw without side effects) combined
-        with all-empty `catch` clauses is likewise a no-op — the entire construct is removed (or
-        reduced to the `finally` body when present).
+        with all-empty `catch` clauses is likewise a no-op — the entire construct is replaced with
+        any pure-constant statements from the try body (preserving integer/boolean literals that may
+        be a function's implicit return value) followed by the `finally` body when present.
         """
         try_body = node.try_block.body if node.try_block is not None else []
         if not try_body:
@@ -525,7 +526,11 @@ class Ps1DeadCodeElimination(Transformer):
             if clause.body is not None and clause.body.body:
                 return None
         finally_body = node.finally_block.body if node.finally_block is not None else []
-        return list(finally_body)
+        output_stmts = [
+            stmt for stmt in try_body
+            if isinstance(stmt, Ps1ExpressionStatement) and _is_pure_constant(stmt.expression)
+        ]
+        return output_stmts + list(finally_body)
 
     @staticmethod
     def _prune_trap(node: Ps1TrapStatement) -> list[Statement] | None:
