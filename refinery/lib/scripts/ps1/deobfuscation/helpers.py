@@ -334,7 +334,11 @@ def classify_body(node) -> BodyRole | None:
         if isinstance(cursor, Ps1AssignmentExpression) and cursor.value is prev:
             return BodyRole.OPAQUE
         if isinstance(cursor, Ps1ScriptBlock):
-            return BodyRole.OPAQUE if _scriptblock_is_captured(cursor) else BodyRole.NESTED
+            if _scriptblock_is_captured(cursor):
+                return BodyRole.OPAQUE
+            if isinstance(cursor.parent, Ps1FunctionDefinition) and cursor.parent.body is cursor:
+                return BodyRole.ROOT
+            return BodyRole.NESTED
         if isinstance(cursor, Ps1Script):
             return BodyRole.NESTED
         prev = cursor

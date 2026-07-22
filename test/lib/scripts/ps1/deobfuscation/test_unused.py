@@ -245,30 +245,28 @@ class TestPs1InertFunctionRemoval(TestPs1):
     def test_emitting_function_kept(self):
         result = self._apply(
             "function f { 42 }\nf\nWrite-Host 'keep'", Ps1JunkStatementRemoval)
-        self.assertIn('function f', result)
-        self.assertIn('42', result)
+        self.assertEqual(result, "function f {\n  42\n}\nf\nWrite-Host 'keep'")
 
     def test_effectful_function_kept(self):
         result = self._apply(
             "function f { Write-Host 'real' }\nf", Ps1JunkStatementRemoval)
-        self.assertIn('function f', result)
-        self.assertIn('Write-Host', result)
+        self.assertEqual(result, "function f {\n  Write-Host 'real'\n}\nf")
 
     def test_dynamic_dispatch_preserves_all_functions(self):
         result = self._apply(
             "function j { $Null = 1 }\nj\n& $name\nWrite-Host 'keep'",
             Ps1JunkStatementRemoval)
-        self.assertIn('function j', result)
+        self.assertEqual(result, "function j {}\nj\n& $name\nWrite-Host 'keep'")
 
     def test_function_with_argful_call_kept(self):
         result = self._apply(
             "function j { $Null = 1 }\nj 'arg'\nWrite-Host 'keep'", Ps1JunkStatementRemoval)
-        self.assertIn('function j', result)
+        self.assertEqual(result, "function j {}\nj 'arg'\nWrite-Host 'keep'")
 
     def test_function_captured_result_kept(self):
         result = self._apply(
             "function j { $Null = 1 }\n$x = j\nWrite-Host 'keep'", Ps1JunkStatementRemoval)
-        self.assertIn('function j', result)
+        self.assertEqual(result, "function j {}\n$x = j\nWrite-Host 'keep'")
 
     def test_param_block_function_module_preserved(self):
         result = self._apply(cleandoc("""
@@ -283,7 +281,6 @@ class TestPs1InertFunctionRemoval(TestPs1):
         """), Ps1JunkStatementRemoval)
         self.assertIn('function Ge', result)
         self.assertIn('Write-Host', result)
-
 
 class TestPs1DiscardedObjectRemoval(TestPs1):
 
@@ -319,18 +316,18 @@ class TestPs1DiscardedObjectRemoval(TestPs1):
     def test_hash_with_impure_value_kept(self):
         result = self._apply(
             "@{ x = (Start-Process notepad) }", Ps1JunkStatementRemoval)
-        self.assertIn('Start-Process', result)
+        self.assertEqual(result, '@{\n  x = (Start-Process notepad)\n}')
 
     def test_emitting_foreach_kept(self):
         result = self._apply(
             "(1, 2, 3) | ForEach-Object { $_ }", Ps1JunkStatementRemoval)
-        self.assertIn('ForEach-Object', result)
+        self.assertEqual(result, '(1, 2, 3) | ForEach-Object {\n  $_\n}')
 
     def test_null_assign_foreach_side_effect_kept(self):
         result = self._apply(
             "(1, 2, 3) | ForEach-Object { $Null = Remove-Item $_ }",
             Ps1JunkStatementRemoval)
-        self.assertIn('Remove-Item', result)
+        self.assertEqual(result, '(1, 2, 3) | ForEach-Object {\n  $Null = Remove-Item $_\n}')
 
 
 class TestPs1DeadStoreElimination(TestPs1):
@@ -382,21 +379,19 @@ class TestPs1DeadStoreElimination(TestPs1):
     def test_scoped_variable_not_killed(self):
         result = self._apply(
             "$script:x = 1\n$script:x = 2\nWrite-Host $script:x", Ps1DeadStoreElimination)
-        self.assertIn('$script:x = 1', result)
+        self.assertEqual(result, '$script:x = 1\n$script:x = 2\nWrite-Host $script:x')
 
     def test_control_flow_flushes_pending(self):
         result = self._apply(
             "$x = 1\nif ($c) { Write-Host $x }\n$x = 2\nWrite-Host $x",
             Ps1DeadStoreElimination)
-        self.assertIn('$x = 1', result)
-        self.assertIn('$x = 2', result)
+        self.assertEqual(result, '$x = 1\nif ($c) {\n  Write-Host $x\n}\n$x = 2\nWrite-Host $x')
 
     def test_dead_store_inside_nested_function_removed(self):
         result = self._apply(
             'function f { $i = 5\n$i = 3\nWrite-Host $i }',
             Ps1DeadStoreElimination)
-        self.assertNotIn('$i = 5', result)
-        self.assertIn('$i = 3', result)
+        self.assertEqual(result, 'function f {\n  $i = 3\n  Write-Host $i\n}')
 
     def test_dead_store_scriptblock_local_does_not_flush_outer(self):
         result = self._apply(cleandoc(
@@ -409,6 +404,4 @@ class TestPs1DeadStoreElimination(TestPs1):
             Write-Host $inner
             """
         ), Ps1DeadStoreElimination)
-        self.assertNotIn('$inner = 1', result)
-        self.assertIn('$inner = 2', result)
-        self.assertIn('$cb', result)
+        self.assertEqual(result, '$cb = {\n  $inner = 99\n}\n$inner = 2\nWrite-Host $inner')

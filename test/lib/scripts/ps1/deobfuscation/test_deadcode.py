@@ -300,8 +300,7 @@ class TestPs1DeadCodeExtra(TestPs1):
     def test_nonempty_try_kept(self):
         result = self._apply(
             "try { Get-Item x } catch { Write-Host 'err' }", Ps1DeadCodeElimination)
-        self.assertIn('Get-Item', result)
-        self.assertIn('catch', result.lower())
+        self.assertEqual(result, "try {\n  Get-Item x\n} catch {\n  Write-Host 'err'\n}")
 
     def test_trap_continue_removed(self):
         result = self._apply('trap { continue }', Ps1DeadCodeElimination)
@@ -321,12 +320,11 @@ class TestPs1DeadCodeExtra(TestPs1):
 
     def test_trap_with_output_kept(self):
         result = self._apply("trap { Write-Host 'log' }", Ps1DeadCodeElimination)
-        self.assertIn('trap', result.lower())
-        self.assertIn('Write-Host', result)
+        self.assertEqual(result, "trap {\n  Write-Host 'log'\n}")
 
     def test_trap_labeled_break_kept(self):
         result = self._apply('trap { break :outer }', Ps1DeadCodeElimination)
-        self.assertIn('trap', result.lower())
+        self.assertEqual(result, 'trap {\n  break :outer\n}')
 
     def test_empty_for_counter_terminal(self):
         result = self._apply(
@@ -448,3 +446,26 @@ class TestPs1DeadCodeExtra(TestPs1):
         result = self._apply(
             "trap { 5; 'hello' }\nWrite-Host 'keep'", Ps1DeadCodeElimination)
         self.assertEqual(result, "Write-Host 'keep'")
+
+    def test_function_nested_block_return_value_preserved(self):
+        result = self._apply(
+            'function f { if ($cond) { 42 } }', Ps1DeadCodeElimination)
+        self.assertEqual(result, 'function f {\n  if ($cond) {\n    42\n  }\n}')
+
+    def test_function_return_value_preserved_with_effectful_if(self):
+        result = self._apply(
+            "function f { if ($cond) { Write-Host 'x' }; 42 }", Ps1DeadCodeElimination)
+        self.assertEqual(result, "function f {\n  if ($cond) {\n    Write-Host 'x'\n  }\n  42\n}")
+
+    def test_do_while_nested_break_not_hoisted(self):
+        result = self._apply(
+            'while ($outer) { do { if ($c) { break } } while ($False); $z = 2 }',
+            Ps1DeadCodeElimination)
+        self.assertIn('do', result.lower())
+        self.assertIn('while ($False)', result)
+
+    def test_body_breaks_unconditionally_rejects_intermediate_break(self):
+        result = self._apply(
+            'while ($True) { $x = 1; if ($c) { break }; $y = 2; break }',
+            Ps1DeadCodeElimination)
+        self.assertIn('while', result.lower())

@@ -387,9 +387,13 @@ def statement_performs_side_effect(stmt) -> bool:
     classified as `EFFECT` to prevent their deletion, but they have no side effect of their own —
     only a value yield. Such statements must NOT count as anchors that permit removing surrounding
     pure-output statements from a ROOT body.
+
+    Control-flow statements (`if`, `for`, `while`, etc.) are treated as non-anchors even when their
+    bodies contain side effects, because they execute conditionally — they cannot guarantee that the
+    function's output is already covered when their condition is unknown at compile time.
     """
     if not isinstance(stmt, Ps1ExpressionStatement):
-        return stmt is not None
+        return False
     expr = stmt.expression
     if expr is None:
         return False

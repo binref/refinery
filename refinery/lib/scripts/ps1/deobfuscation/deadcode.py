@@ -254,7 +254,7 @@ def _body_breaks_unconditionally(body: list[Statement]) -> bool:
         return False
     for stmt in body[:-1]:
         for node in stmt.walk():
-            if isinstance(node, Ps1ContinueStatement):
+            if isinstance(node, (Ps1BreakStatement, Ps1ContinueStatement)):
                 return False
     return True
 
@@ -409,8 +409,9 @@ class Ps1DeadCodeElimination(Transformer):
                 if _body_breaks_unconditionally(body):
                     return list(body[:-1])
                 for stmt in body:
-                    if isinstance(stmt, (Ps1BreakStatement, Ps1ContinueStatement)):
-                        return None
+                    for node in stmt.walk():
+                        if isinstance(node, (Ps1BreakStatement, Ps1ContinueStatement)):
+                            return None
                 return list(body)
             if _body_breaks_unconditionally(node.body.body):
                 return list(node.body.body[:-1])
