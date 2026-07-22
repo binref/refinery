@@ -3,7 +3,7 @@ Remove unused variable assignments and junk expression statements.
 """
 from __future__ import annotations
 
-from refinery.lib.scripts import Node, Transformer, _remove_from_parent, _replace_in_parent
+from refinery.lib.scripts import Node, Transformer, _compute_children, _remove_from_parent, _replace_in_parent
 from refinery.lib.scripts.ps1.deobfuscation.constants import (
     _PS1_SKIP_VARIABLES,
     _assignment_target_variable,
@@ -515,17 +515,21 @@ class Ps1DeadStoreElimination(Transformer):
 
     def _collect_reads(self, node, reads: set[str]):
         """
-        Collect variable reads from an expression (not descending into nested scopes).
+        Collect variable reads from an expression without descending into nested scriptblock scopes.
+        Variables referenced only inside a `Ps1ScriptBlock` are locals of that scope and must not
+        be treated as reads in the enclosing body.
         """
         if node is None:
             return
-        if isinstance(node, Ps1Variable) and node.scope is Ps1ScopeModifier.NONE:
-            if not is_assignment_write_target(node):
-                reads.add(node.name.lower())
-        for child in node.walk():
+        stack: list[Node] = [node]
+        while stack:
+            child = stack.pop()
+            if child is not node and isinstance(child, Ps1ScriptBlock):
+                continue
             if isinstance(child, Ps1Variable) and child.scope is Ps1ScopeModifier.NONE:
                 if not is_assignment_write_target(child):
                     reads.add(child.name.lower())
+            stack.extend(_compute_children(child))
 
     def _collect_all_reads(self, stmt, reads: set[str]):
         """

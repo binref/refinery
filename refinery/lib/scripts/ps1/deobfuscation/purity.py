@@ -359,6 +359,7 @@ def pipeline_ends_with_void_foreach(pipeline: Ps1Pipeline) -> bool:
                 isinstance(ex, Ps1AssignmentExpression)
                 and ex.operator == '='
                 and is_builtin_variable(ex.target, {'null'})
+                and (ex.value is None or is_side_effect_free(ex.value))
             ):
                 continue
             return False

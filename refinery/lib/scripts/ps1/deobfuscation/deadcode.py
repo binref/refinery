@@ -336,28 +336,36 @@ class Ps1DeadCodeElimination(Transformer):
     def _prune_body(
         self, body: list[Statement], role: BodyRole = BodyRole.NESTED,
     ) -> list[Statement]:
-        result: list[Statement] = []
+        # First pass: apply control-flow pruning (dead branches, empty loops, try/trap removal).
+        # prune_output must be computed from what actually survives this pass: a branch like
+        # `if ($false) {}` is a non-expression statement that looks like a side effect before
+        # pruning but produces nothing afterwards. Computing prune_output from the original body
+        # would cause the flag to stay True even after the apparent anchor is eliminated,
+        # incorrectly silencing the body's observable return value.
+        intermediate: list[Statement] = []
         changed = False
-        # A `ROOT` body's last-standing bare constant is its observable output value (the return
-        # value of a function or `&{}`), so it must be kept; only prune OUTPUT statements (bare
-        # constants) when an EFFECT or another OUTPUT survivor already carries the body's output.
-        # DISCARD statements ($Null=<pure>, [Void], |Out-Null) emit nothing and never count as
-        # output-anchors. A `NESTED` body has no observable value — OUTPUT is always prunable.
+        for stmt in body:
+            replacement = self._try_prune(stmt)
+            if replacement is not None:
+                intermediate.extend(replacement)
+                changed = True
+            else:
+                intermediate.append(stmt)
+        # Second pass: drop bare output statements (pure constants) that carry no side effect.
+        # A ROOT body must preserve a pure output when no side-effecting statement survives to
+        # carry the body's observable value. DISCARD statements emit nothing and never count.
+        # A NESTED body has no observable return value — all output statements are prunable.
         if role is BodyRole.NESTED:
             prune_output = True
         else:
-            prune_output = any(statement_performs_side_effect(s) for s in body)
-        for stmt in body:
+            prune_output = any(statement_performs_side_effect(s) for s in intermediate)
+        result: list[Statement] = []
+        for stmt in intermediate:
             if isinstance(stmt, Ps1ExpressionStatement) and _is_pure_constant(stmt.expression):
                 if prune_output:
                     changed = True
                     continue
-            replacement = self._try_prune(stmt)
-            if replacement is not None:
-                result.extend(replacement)
-                changed = True
-            else:
-                result.append(stmt)
+            result.append(stmt)
         return result if changed else body
 
     def _try_prune(self, stmt: Statement) -> list[Statement] | None:
@@ -397,7 +405,13 @@ class Ps1DeadCodeElimination(Transformer):
                 else is_truthy(node.condition) is False
             )
             if trivially_exits:
-                return list(node.body.body)
+                body = node.body.body
+                if _body_breaks_unconditionally(body):
+                    return list(body[:-1])
+                for stmt in body:
+                    if isinstance(stmt, (Ps1BreakStatement, Ps1ContinueStatement)):
+                        return None
+                return list(body)
             if _body_breaks_unconditionally(node.body.body):
                 return list(node.body.body[:-1])
         return None
@@ -529,8 +543,8 @@ class Ps1DeadCodeElimination(Transformer):
                 if stmt.label is not None:
                     return None
                 continue
-            if isinstance(stmt, Ps1ExpressionStatement) and stmt.expression is not None:
-                if is_side_effect_free(stmt.expression):
+            if isinstance(stmt, Ps1ExpressionStatement):
+                if stmt.expression is None or is_side_effect_free(stmt.expression):
                     continue
             return None
         return []

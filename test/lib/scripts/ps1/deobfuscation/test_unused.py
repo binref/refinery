@@ -318,13 +318,19 @@ class TestPs1DiscardedObjectRemoval(TestPs1):
 
     def test_hash_with_impure_value_kept(self):
         result = self._apply(
-            "@{ x = (Start-Process notepad) }\nWrite-Host 'keep'", Ps1JunkStatementRemoval)
+            "@{ x = (Start-Process notepad) }", Ps1JunkStatementRemoval)
         self.assertIn('Start-Process', result)
 
     def test_emitting_foreach_kept(self):
         result = self._apply(
-            "(1, 2, 3) | ForEach-Object { $_ }\nWrite-Host 'keep'", Ps1JunkStatementRemoval)
+            "(1, 2, 3) | ForEach-Object { $_ }", Ps1JunkStatementRemoval)
         self.assertIn('ForEach-Object', result)
+
+    def test_null_assign_foreach_side_effect_kept(self):
+        result = self._apply(
+            "(1, 2, 3) | ForEach-Object { $Null = Remove-Item $_ }",
+            Ps1JunkStatementRemoval)
+        self.assertIn('Remove-Item', result)
 
 
 class TestPs1DeadStoreElimination(TestPs1):
@@ -391,3 +397,18 @@ class TestPs1DeadStoreElimination(TestPs1):
             Ps1DeadStoreElimination)
         self.assertNotIn('$i = 5', result)
         self.assertIn('$i = 3', result)
+
+    def test_dead_store_scriptblock_local_does_not_flush_outer(self):
+        result = self._apply(cleandoc(
+            """
+            $inner = 1
+            $cb = {
+              $inner = 99
+            }
+            $inner = 2
+            Write-Host $inner
+            """
+        ), Ps1DeadStoreElimination)
+        self.assertNotIn('$inner = 1', result)
+        self.assertIn('$inner = 2', result)
+        self.assertIn('$cb', result)

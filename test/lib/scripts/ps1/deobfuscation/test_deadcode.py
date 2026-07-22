@@ -404,8 +404,47 @@ class TestPs1DeadCodeExtra(TestPs1):
             "try { notepad.exe } catch {}\nWrite-Host 'keep'", Ps1DeadCodeElimination)
         self.assertIn('notepad', result)
 
-    def test_function_return_value_preserved_alongside_pipeline_cmdlet(self):
+    def test_function_return_value_not_dropped_when_dead_if_pruned(self):
         result = self._apply(
-            'function f { $items | Where-Object { $_ -gt 0 }; 42 }',
+            'function f { if ($False) {} 42 }',
             Ps1DeadCodeElimination)
-        self.assertIn('42', result)
+        self.assertEqual(result, cleandoc(
+            """
+            function f {
+              42
+            }
+            """
+        ))
+
+    def test_do_while_false_break_does_not_retarget_outer_loop(self):
+        result = self._apply(
+            "while ($outer) { do { $x = 1; break } while ($False); $z = 2 }",
+            Ps1DeadCodeElimination)
+        self.assertEqual(result, cleandoc(
+            """
+            while ($outer) {
+              $x = 1
+              $z = 2
+            }
+            """
+        ))
+
+    def test_do_while_false_continue_does_not_retarget_outer_loop(self):
+        code = cleandoc(
+            """
+            while ($outer) {
+              do {
+                $x = 1
+                continue
+              } while ($False)
+              $z = 2
+            }
+            """
+        )
+        result = self._apply(code, Ps1DeadCodeElimination)
+        self.assertEqual(result, code)
+
+    def test_trap_with_inert_body_removed(self):
+        result = self._apply(
+            "trap { 5; 'hello' }\nWrite-Host 'keep'", Ps1DeadCodeElimination)
+        self.assertEqual(result, "Write-Host 'keep'")
