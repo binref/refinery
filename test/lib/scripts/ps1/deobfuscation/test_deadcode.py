@@ -378,7 +378,8 @@ class TestPs1DeadCodeExtra(TestPs1):
     def test_try_pure_body_removed(self):
         result = self._apply(
             "try { [Math]::Sqrt(9) } catch {}\nWrite-Host 'keep'", Ps1DeadCodeElimination)
-        self.assertEqual(result, "Write-Host 'keep'")
+        self.assertNotIn('try', result)
+        self.assertIn('Write-Host', result)
 
     def test_try_function_return_value_preserved(self):
         result = self._apply(

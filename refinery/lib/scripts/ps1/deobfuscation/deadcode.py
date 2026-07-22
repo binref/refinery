@@ -16,10 +16,7 @@ from refinery.lib.scripts.ps1.deobfuscation.helpers import (
     unwrap_parens,
 )
 from refinery.lib.scripts.ps1.deobfuscation.purity import (
-    StatementEffect,
-    classify_statement_effect,
     is_side_effect_free,
-    statement_performs_side_effect,
 )
 from refinery.lib.scripts.ps1.model import (
     Ps1AssignmentExpression,
@@ -36,6 +33,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1ParenExpression,
     Ps1RealLiteral,
     Ps1ScopeModifier,
+    Ps1Script,
     Ps1StringLiteral,
     Ps1SwitchStatement,
     Ps1TrapStatement,
@@ -231,7 +229,8 @@ def _simulate_empty_for_terminal(node: Ps1ForLoop) -> tuple[Ps1Variable, int] | 
     # A terminating linear counter reaches the bound within `distance / |step|` iterations; a couple
     # extra guard against off-by-one and the exact-hit (`-ne`/`-eq`) cases. Exceeding this proves the
     # condition never turns false (a wrong-direction step), so the loop is infinite and left intact.
-    cap = abs(bound - init_int.value) // abs(delta) + 2
+    # The absolute cap prevents pathological samples (e.g. bound = 2 billion) from hanging the pass.
+    cap = min(abs(bound - init_int.value) // abs(delta) + 2, 100_000)
     value = init_int.value
     iterations = 0
     while predicate(value):
@@ -325,7 +324,7 @@ class Ps1DeadCodeElimination(Transformer):
             if role is None or role is BodyRole.OPAQUE:
                 continue
             body = get_body(parent)
-            new_body = self._prune_body(body, role)
+            new_body = self._prune_body(body, role, isinstance(parent, Ps1Script))
             if new_body is not body:
                 body.clear()
                 body.extend(new_body)
@@ -335,6 +334,7 @@ class Ps1DeadCodeElimination(Transformer):
 
     def _prune_body(
         self, body: list[Statement], role: BodyRole = BodyRole.NESTED,
+        is_script_root: bool = False,
     ) -> list[Statement]:
         # First pass: apply control-flow pruning (dead branches, empty loops, try/trap removal).
         # prune_output must be computed from what actually survives this pass: a branch like
@@ -351,14 +351,25 @@ class Ps1DeadCodeElimination(Transformer):
                 changed = True
             else:
                 intermediate.append(stmt)
-        # Second pass: drop bare output statements (pure constants) that carry no side effect.
-        # A ROOT body must preserve a pure output when no side-effecting statement survives to
-        # carry the body's observable value. DISCARD statements emit nothing and never count.
-        # A NESTED body has no observable return value — all output statements are prunable.
+        # Second pass: drop bare pure-constant output statements (integers, booleans, $null) whose
+        # value is not observed. A NESTED body has no observable return value — all constants are
+        # prunable. The script root has no pipeline return value, but a script consisting entirely of
+        # pure constants must be preserved (otherwise `42` becomes empty). So the script root only
+        # prunes when at least one non-constant statement survives the first pass.
+        # A non-script ROOT body (function body, bare `&{}`) may use a bare constant as its
+        # implicit return value, and determining whether some other statement "covers" that return is
+        # subtle (e.g. Write-Host has a side effect but does not produce pipeline output). The
+        # junk-removal pass handles ROOT emit-safety with a proper `_output_survives` check; here we
+        # stay conservative and never prune constants from non-script ROOT bodies.
         if role is BodyRole.NESTED:
             prune_output = True
+        elif is_script_root:
+            prune_output = any(
+                not (isinstance(s, Ps1ExpressionStatement) and _is_pure_constant(s.expression))
+                for s in intermediate
+            )
         else:
-            prune_output = any(statement_performs_side_effect(s) for s in intermediate)
+            prune_output = False
         result: list[Statement] = []
         for stmt in intermediate:
             if isinstance(stmt, Ps1ExpressionStatement) and _is_pure_constant(stmt.expression):
@@ -409,8 +420,8 @@ class Ps1DeadCodeElimination(Transformer):
                 if _body_breaks_unconditionally(body):
                     return list(body[:-1])
                 for stmt in body:
-                    for node in stmt.walk():
-                        if isinstance(node, (Ps1BreakStatement, Ps1ContinueStatement)):
+                    for child in stmt.walk():
+                        if isinstance(child, (Ps1BreakStatement, Ps1ContinueStatement)):
                             return None
                 return list(body)
             if _body_breaks_unconditionally(node.body.body):
@@ -528,7 +539,7 @@ class Ps1DeadCodeElimination(Transformer):
         finally_body = node.finally_block.body if node.finally_block is not None else []
         output_stmts = [
             stmt for stmt in try_body
-            if isinstance(stmt, Ps1ExpressionStatement) and _is_pure_constant(stmt.expression)
+            if isinstance(stmt, Ps1ExpressionStatement) and is_side_effect_free(stmt.expression)
         ]
         return output_stmts + list(finally_body)
 

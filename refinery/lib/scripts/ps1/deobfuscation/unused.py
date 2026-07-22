@@ -378,7 +378,7 @@ class Ps1JunkStatementRemoval(Transformer):
         dead_functions: set[Node] = set()
         for stmt in body:
             if isinstance(stmt, Ps1FunctionDefinition):
-                if is_root and stmt.name.lower() not in called:
+                if is_script_root and stmt.name.lower() not in called:
                     dead_functions.add(stmt)
                 continue
             effect = classify_statement_effect(stmt)
