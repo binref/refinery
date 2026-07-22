@@ -153,9 +153,14 @@ def _command_body_is_pure(cmd: Ps1CommandInvocation) -> bool:
     """
     Check whether all script block arguments of a pipeline cmdlet (ForEach-Object, Where-Object,
     etc.) have side-effect-free bodies. These cmdlets are pure transforms: they evaluate a script
-    block per input item without mutating state themselves. A `$Null = <pure>` discard inside the
-    block is itself side-effect-free, so a foreach that only discards its input stays pure.
+    block per input item without mutating state themselves. Note: the `$Null = <pure>` discard
+    idiom is NOT currently recognized here because `is_side_effect_free` has no case for
+    `Ps1AssignmentExpression`; such bodies are caught at statement level by
+    `pipeline_ends_with_void_foreach` instead.
     """
+    # TODO: teach `is_side_effect_free` to recognize `$Null = <pure>` assignments as pure so that
+    # this function correctly handles ForEach bodies containing the discard idiom without relying
+    # on the separate `pipeline_ends_with_void_foreach` path.
     for arg in cmd.arguments:
         block = arg.value if isinstance(arg, Ps1CommandArgument) else arg
         if not isinstance(block, Ps1ScriptBlock):
