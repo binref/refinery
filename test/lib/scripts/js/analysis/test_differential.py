@@ -1481,3 +1481,64 @@ class TestDeobfuscationDirectEvalScope(TestBase):
             'globalThis.x = 5;'
             ' function f(){ var out = x; eval("var x = 1;"); return out; }'
             ' console.log(f());')
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestModelBlindFoldRegressions(TestBase):
+    """
+    Constant folding must consult the semantic model, not the spelling of a name. `String` and `parseInt`
+    are only the built-ins when nothing shadows them at the use site, and a callback that writes an outer
+    binding is not pure however literal its arguments are. Each case below currently changes observable
+    behavior; they are the specification for routing every fold through one model-aware admission gate.
+    """
+
+    def _check(self, source: str):
+        deobfuscated = deobfuscate_source(source)
+        self.assertEqual(
+            behavior(source),
+            behavior(deobfuscated),
+            F'deobfuscation changed observable behavior; result was:\n{deobfuscated}',
+        )
+
+    def test_shadowed_string_from_char_code_is_not_the_builtin(self):
+        """
+        A local `String` shadows the global, so `String.fromCharCode(65)` calls the local and yields `'X'`.
+        Folding on the *name* `String` emits `'A'`. The fold must resolve the receiver through the model's
+        per-use-site intrinsic lookup instead of comparing the identifier text.
+        """
+        self._check(
+            "var String = { fromCharCode: function(){ return 'X'; } };"
+            ' console.log(String.fromCharCode(65));')
+
+    def test_shadowed_string_in_function_scope_is_not_the_builtin(self):
+        self._check(
+            "(function(){ var String = { fromCharCode: function(){ return 'X'; } };"
+            ' console.log(String.fromCharCode(65)); })();')
+
+    def test_shadowed_parse_int_is_not_the_builtin(self):
+        """
+        The same fault for a free function: a local `parseInt` makes both calls yield `99`, but folding by
+        name emits `10` and `12`. Both the dedicated `parseInt` fold and the general registry fold are
+        affected.
+        """
+        self._check(
+            'var parseInt = function(){ return 99; };'
+            " console.log(parseInt('10'), parseInt('12', 10));")
+
+    def test_callback_writing_outer_binding_is_not_pure(self):
+        """
+        The callback writes the outer `n`, so evaluating the chain for its value must also keep that write.
+        Folding the call to its result alone reports `n` as still `0` where Node says `3`. A callback is
+        admissible only when it writes no binding outside itself, which purity alone does not establish —
+        a write to a script-scope `var` is not *captured* from the callback's perspective.
+        """
+        self._check(
+            'var n = 0;'
+            " console.log((function(a){ return a.map(function(x){ n += x; return x; }).join(''); })([1, 2]), n);")
+
+    def test_foreach_callback_write_survives(self):
+        self._check(
+            'var n = 0;'
+            ' (function(a){ a.forEach(function(x){ n += x; }); })([1, 2]);'
+            ' console.log(n);')
+

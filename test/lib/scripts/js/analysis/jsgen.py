@@ -87,7 +87,7 @@ import random
 from dataclasses import dataclass, field
 
 _BIN_OPS = (
-    '+', '-', '*', '%', '<', '<=', '>', '>=', '===', '!==', '==', '!=', '&&', '||', '??',
+    '+', '-', '*', '%', '^', '<', '<=', '>', '>=', '===', '!==', '==', '!=', '&&', '||', '??',
 )
 _WORDS = ('ab', 'cd', 'ef', 'gh', 'ij', 'kl', 'mn', 'op')
 
@@ -1056,13 +1056,16 @@ class _Generator:
     def _builtin_call(self, scope: _Scope, depth: int) -> str:
         """
         A call to a deterministic built-in: a one- or two-argument `Math` function, a `String`/`Number`/
-        `Boolean` conversion, or a method on a pooled array (`join`/`indexOf`/`slice`). No source of
-        nondeterminism (`Math.random`, `Date`) is used, so the result is a pure function of the seed.
+        `Boolean` conversion, a method on a pooled array (`join`/`indexOf`/`slice`/`map`/`filter`), or a
+        `String.fromCharCode` decoder chain. No source of nondeterminism (`Math.random`, `Date`) is used,
+        so the result is a pure function of the seed. Every array method drawn here is non-mutating, and
+        the higher-order ones take a self-contained callback, so a pooled array's contents stay whatever
+        the mutator statements made them — the generator's container invariants are unaffected.
         `Math.sign` is deliberately excluded: it deterministically hits one already-recorded
         deobfuscator bug (it folds a `NaN` argument to `0`) and would mask other findings.
         """
         arrays = [name for name, kind in scope.all_objects() if kind == 'array']
-        kinds = ['math2', 'math1', 'convert']
+        kinds = ['math2', 'math1', 'convert', 'decode']
         if arrays:
             kinds.append('arraymethod')
         kind = self.rng.choice(kinds)
@@ -1075,13 +1078,47 @@ class _Generator:
         if kind == 'convert':
             fn = self.rng.choice(('String', 'Number', 'Boolean'))
             return F'{fn}({self._expr(scope, depth - 1)})'
+        if kind == 'decode':
+            return self._decoder_chain()
         arr = self.rng.choice(arrays)
-        method = self.rng.choice(('join', 'indexOf', 'slice'))
+        method = self.rng.choice(('join', 'indexOf', 'slice', 'map', 'filter', 'length'))
         if method == 'join':
             return F"{arr}.join(',')"
         if method == 'indexOf':
             return F'{arr}.indexOf({self._atom(scope)})'
+        if method == 'map':
+            return F"{arr}.map(function (c) {{ return String(c) + '!'; }}).join(',')"
+        if method == 'filter':
+            return F'{arr}.filter(function (c) {{ return c !== undefined; }}).length'
+        if method == 'length':
+            return F'{arr}.length'
         return F"{arr}.slice(1).join(',')"
+
+    def _decoder_chain(self) -> str:
+        """
+        The string-obfuscation idiom this generator otherwise never produces: a literal array of character
+        codes mapped through `String.fromCharCode` and joined, optionally XOR-masked, or a reversed split.
+        Written over literals rather than pooled names so no container invariant is involved. These shapes
+        are what obfuscators emit to conceal capability strings, and folding them is the whole point of the
+        constant-folding path, so the sweep should cover them.
+        """
+        form = self.rng.choice(('xor', 'plain', 'reverse', 'indexed'))
+        if form == 'reverse':
+            word = self.rng.choice(_WORDS)
+            return F"'{word}'.split('').reverse().join('')"
+        if form == 'indexed':
+            word = self.rng.choice(_WORDS)
+            return F"'{word}'.split('')[{self.rng.randint(0, 1)}]"
+        codes = [self.rng.randint(0x41, 0x5A) for _ in range(self.rng.randint(1, 4))]
+        if form == 'plain':
+            body = 'return String.fromCharCode(c);'
+        else:
+            mask = self.rng.randint(1, 0x3F)
+            body = F'return String.fromCharCode(c ^ {mask});'
+            codes = [c ^ mask for c in codes]
+        listing = ', '.join(str(c) for c in codes)
+        return F"[{listing}].map(function (c) {{ {body} }}).join('')"
+
 
     def _computed_member(self, name: str, kind: str) -> str:
         """

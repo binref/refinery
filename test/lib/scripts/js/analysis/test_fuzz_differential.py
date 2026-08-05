@@ -115,7 +115,7 @@ class TestDeobfuscationFuzzSweep(TestBase):
     """
 
     def test_deobfuscation_preserves_behavior_across_seeds(self):
-        for seed in range(64):
+        for seed in range(176):
             source = generate(seed)
             original = behavior(source)
             self.assertIsNone(
