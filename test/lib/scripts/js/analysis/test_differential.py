@@ -1111,6 +1111,96 @@ class TestDeobfuscationExpressionRegressions(TestBase):
             F'deobfuscation changed observable behavior; result was:\n{deobfuscated}',
         )
 
+    def test_method_value_read_is_not_invoked(self):
+        """
+        Reading a method without calling it yields the function, so `typeof 'abc'.charAt` is
+        `'function'`. Folding the read as a zero-argument call would make it `'string'`.
+        """
+        self._check("console.log(typeof 'abc'.charAt, typeof 'abc'.toUpperCase, typeof 'abc'.split);")
+
+    def test_length_is_not_callable(self):
+        """
+        `length` is a number, so calling it is a `TypeError`. Treating the call as a second application
+        of the registry entry would fold it to the length and erase the throw.
+        """
+        self._check("console.log((function(){ return [1, 2].length(); })());")
+
+    def test_string_length_is_not_callable(self):
+        self._check("console.log((function(){ return 'hello'.length(); })());")
+
+    def test_astral_split_by_code_unit(self):
+        """
+        `split('')` splits by UTF-16 code unit, so an astral character yields its two surrogate halves.
+        """
+        self._check(R"console.log('\u{1F600}x'.split('').length);")
+
+    def test_astral_split_yields_lone_surrogates(self):
+        """
+        Each half of the split is a lone surrogate, so its code unit is in the D800-DFFF range. Splitting
+        by code point instead would make the first element the whole astral character.
+        """
+        self._check(R"console.log('\u{1F600}x'.split('')[0].charCodeAt(0));")
+
+    def test_unimplemented_method_read_is_not_undefined(self):
+        """
+        `normalize` and `sort` are real prototype methods this package does not implement. Membership in
+        the language and evaluability here are different questions, so an unmodeled method must not read
+        as `undefined`; using the builtin registry as a membership oracle made `typeof` answer
+        `'undefined'` where Node says `'function'`.
+        """
+        self._check("console.log(typeof 'abc'.normalize, typeof [1, 2].sort, typeof [1, 2].map);")
+
+    def test_inherited_object_member_read_is_not_undefined(self):
+        """
+        Strings, arrays, and plain objects all inherit from `Object.prototype`, so `hasOwnProperty` and
+        `constructor` exist on every one of them.
+        """
+        self._check(
+            "console.log(typeof 'abc'.hasOwnProperty, typeof [1, 2].constructor,"
+            ' typeof ({ a: 1 }).toString);')
+
+    def test_absent_member_read_is_still_undefined(self):
+        """
+        The companion case: a name on no prototype genuinely is `undefined`, so declining method reads
+        must not degrade into declining every miss.
+        """
+        self._check("console.log(typeof 'abc'.nosuch, typeof ({ a: 1 }).nosuch);")
+
+    def test_own_property_shadows_inherited_member(self):
+        """
+        An own property wins over the inherited one, so `({toString: 1}).toString` is the number `1`.
+        A prototype-membership check applied before the own-property lookup would refuse or mis-answer.
+        """
+        self._check('console.log(({ toString: 1 }).toString, ({ map: 7 }).map, ({ length: 5 }).length);')
+
+    def test_non_canonical_index_key_is_not_an_index(self):
+        """
+        A property key indexes only in its canonical decimal spelling, so `'+1'` and `'01'` are ordinary
+        property names that read as `undefined`. Python's `int` accepts both, which would invent the
+        element at index 1.
+        """
+        self._check("console.log('abc'['1'], typeof 'abc'['+1'], typeof 'abc'['01']);")
+
+    def test_in_operator_sees_whole_prototype_chain(self):
+        """
+        `in` asks whether a property exists anywhere on the chain, so it is `true` for an unimplemented
+        method and `false` for a non-canonical index key.
+        """
+        self._check(
+            "console.log('sort' in [1, 2], 'map' in [1, 2], 'nosuch' in [1, 2],"
+            " '0' in [1, 2], '2' in [1, 2], '+1' in [1, 2]);")
+
+    def test_arguments_evaluate_before_non_callable_throws(self):
+        """
+        A call evaluates its arguments before checking that the callee is callable, so the push inside the
+        argument is observable even though `length` is not a function. Throwing before evaluating them
+        would lose the side effect.
+        """
+        self._check(
+            'var log = [];'
+            " try { 'hello'.length(log.push('arg')); } catch (e) { log.push('threw'); }"
+            " console.log(log.join('|'));")
+
     def test_math_sign_of_nan_folds_to_nan_not_zero(self):
         """
         `Math.sign(NaN)` is `NaN`, but the constant folder computes the sign as a difference of

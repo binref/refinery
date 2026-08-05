@@ -282,6 +282,227 @@ class TestInterpreterValueSemantics(TestJsDeobfuscator):
         self.assertEqual('var x = NaN;', self._fold('Math.log()'))
 
 
+class TestInterpreterMethodValueSemantics(TestJsDeobfuscator):
+    """
+    Reading a method off a value yields the method itself, not the result of calling it, and not
+    `undefined`. Node decides these: `typeof 'abc'.charAt` is `'function'`, `'abc'.length()` is a
+    `TypeError` because `length` is a number rather than a callable, and `typeof 'abc'.normalize` is
+    `'function'` even though this package does not implement `normalize`. There is no value domain here
+    for a function — a JS function has an observable identity, `name`, and source text — so the only
+    correct answers are the true one or a refusal to fold. Each case asserts the fold declines rather
+    than guessing.
+    """
+
+    def _declines(self, expression: str):
+        """
+        Assert that the interpreter leaves a function returning *expression* entirely unfolded.
+        """
+        source = F'function f() {{\n  return {expression};\n}}\nvar x = f();'
+        self.assertEqual(source, self._evaluate(source))
+
+    def test_string_method_read_is_not_invoked(self):
+        self._declines("typeof 'abc'.charAt")
+
+    def test_string_transform_method_read_is_not_invoked(self):
+        self._declines("typeof 'abc'.toUpperCase")
+
+    def test_string_split_read_is_not_invoked(self):
+        self._declines("typeof 'abc'.split")
+
+    def test_unimplemented_string_method_read_is_not_absent(self):
+        """
+        `normalize` is a real `String.prototype` method this package does not model. Membership in the
+        language and evaluability by this interpreter are different questions, so an unmodeled method
+        must not read as `undefined` — that would make `typeof` answer `'undefined'` where Node says
+        `'function'`.
+        """
+        self._declines("typeof 'abc'.normalize")
+
+    def test_unimplemented_array_method_read_is_not_absent(self):
+        self._declines('typeof [1, 2].sort')
+
+    def test_inherited_object_method_read_is_not_absent(self):
+        self._declines("typeof 'abc'.hasOwnProperty")
+
+    def test_array_hof_read_is_not_absent(self):
+        self._declines('typeof [1, 2].map')
+
+    def test_constructor_read_is_not_absent(self):
+        """
+        `constructor` is the entry point of the `[].constructor.constructor('...')()` reflection chain,
+        so answering `undefined` for it would erase a capability rather than resolve it.
+        """
+        self._declines('typeof [1, 2].constructor')
+
+    def test_object_prototype_read_on_plain_object_is_not_absent(self):
+        self._declines('typeof ({ a: 1 }).toString')
+
+    def test_absent_member_still_reads_as_undefined(self):
+        """
+        The companion negative case: a name that is on no prototype really is `undefined`, and must keep
+        folding, so refusing method reads does not degrade into refusing every miss.
+        """
+        source = inspect.cleandoc(
+            """
+            function f() {
+                return typeof 'abc'.nosuchmember;
+            }
+            var x = f();
+            """
+        )
+        self.assertEqual("var x = 'undefined';", self._evaluate(source))
+
+    def test_buffer_member_is_never_provably_absent(self):
+        """
+        A Buffer's surface is over a hundred methods and varies between Node versions, so it cannot be
+        enumerated here. Nothing can be proven absent on one, and a read must decline rather than answer
+        `undefined` — `Buffer.prototype.readUInt8` is a function.
+        """
+        source = inspect.cleandoc(
+            """
+            function f() {
+              var b = Buffer.from('aa', 'hex');
+              return typeof b.readUInt8;
+            }
+            var x = f();
+            """
+        )
+        self.assertEqual(source, self._evaluate(source))
+
+    def test_buffer_length_still_folds(self):
+        """
+        `length` is a data property on a Buffer as much as on an array, so refusing to enumerate the
+        Buffer method surface must not also block reading its length.
+        """
+        source = inspect.cleandoc(
+            """
+            function f() {
+                var b = Buffer.from('aabb', 'hex');
+                return b.length;
+            }
+            var x = f();
+            """
+        )
+        self.assertEqual('var x = 2;', self._evaluate(source))
+
+    def test_string_length_is_not_callable(self):
+        """
+        `length` is a number, so calling it throws. The interpreter must not treat the call as a second
+        application of a registry entry and fold it to the string's length.
+        """
+        self._declines("'hello'.length()")
+
+    def test_array_length_is_not_callable(self):
+        self._declines('[1, 2].length()')
+
+    def test_length_read_still_folds(self):
+        """
+        The companion positive case: `length` is a genuine data property, so the read form must keep
+        folding even though the call form now throws.
+        """
+        source = inspect.cleandoc(
+            """
+            function f() {
+                return 'abc'.charAt(0).length;
+            }
+            var x = f();
+            """
+        )
+        self.assertEqual('var x = 1;', self._evaluate(source))
+
+    def test_non_canonical_index_key_is_undefined(self):
+        """
+        A property key is an array index only in its canonical decimal spelling, so `'+1'` is an
+        ordinary property name and reads as `undefined`. Python's `int` accepts `'+1'`, which would
+        otherwise invent the element at index 1.
+        """
+        source = inspect.cleandoc(
+            """
+            function f() {
+                return typeof 'abc'['+1'];
+            }
+            var x = f();
+            """
+        )
+        self.assertEqual("var x = 'undefined';", self._evaluate(source))
+
+    def test_canonical_index_key_still_folds(self):
+        source = inspect.cleandoc(
+            """
+            function f() {
+                return 'abc'['1'];
+            }
+            var x = f();
+            """
+        )
+        self.assertEqual("var x = 'b';", self._evaluate(source))
+
+    def test_astral_split_by_code_unit(self):
+        """
+        `String.prototype.split('')` splits by UTF-16 code unit, so an astral character becomes its two
+        surrogate halves: Node yields 3 elements for a smiley followed by `x`, where splitting by Unicode
+        code point would yield 2.
+        """
+        source = inspect.cleandoc(
+            """
+            function f() {
+                return '\U0001F600x'.split('').length;
+            }
+            var x = f();
+            """
+        )
+        self.assertEqual('var x = 3;', self._evaluate(source))
+
+
+class TestInterpreterInOperator(TestJsDeobfuscator):
+    """
+    The `in` operator asks whether a property exists anywhere on the prototype chain, so it shares the
+    membership question with a property read. Node decides: `'sort' in [1,2]` is `true` even though this
+    package does not implement `sort`, and `'+1' in [1,2]` is `false` because a non-canonical key is an
+    ordinary property name rather than an index.
+    """
+
+    def _in(self, expression: str, expected: str):
+        source = F'function f() {{\n  return {expression};\n}}\nvar x = f();'
+        self.assertEqual(F'var x = {expected};', self._evaluate(source))
+
+    def test_data_property_is_present(self):
+        self._in("'length' in [1, 2]", 'true')
+
+    def test_implemented_method_is_present(self):
+        self._in("'join' in [1, 2]", 'true')
+
+    def test_unimplemented_method_is_present(self):
+        self._in("'sort' in [1, 2]", 'true')
+
+    def test_inherited_object_method_is_present(self):
+        self._in("'hasOwnProperty' in [1, 2]", 'true')
+
+    def test_absent_name_is_missing(self):
+        self._in("'nosuch' in [1, 2]", 'false')
+
+    def test_index_in_range_is_present(self):
+        self._in("'0' in [1, 2]", 'true')
+
+    def test_index_out_of_range_is_missing(self):
+        self._in("'2' in [1, 2]", 'false')
+
+    def test_non_canonical_index_is_missing(self):
+        self._in("'+1' in [1, 2]", 'false')
+
+    def test_leading_zero_index_is_missing(self):
+        self._in("'01' in [1, 2]", 'false')
+
+    def test_own_property_of_object_is_present(self):
+        self._in("'a' in { a: 1 }", 'true')
+
+    def test_inherited_property_of_object_is_present(self):
+        self._in("'toString' in { a: 1 }", 'true')
+
+    def test_absent_property_of_object_is_missing(self):
+        self._in("'nosuch' in { a: 1 }", 'false')
+
+
 class TestInterpreterThrowSemantics(TestJsDeobfuscator):
 
     def test_unsupported_expression_in_try_does_not_run_catch(self):

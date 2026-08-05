@@ -26,13 +26,20 @@ if TYPE_CHECKING:
 
 from refinery.lib.scripts import Node
 from refinery.lib.scripts.js.deobfuscation.helpers import (
+    ARRAY_PROTOTYPE_METHODS,
     JS_NULL,
+    OBJECT_PROTOTYPE_MEMBERS,
+    PROTOTYPE_CHAIN_PROPERTIES,
     RELATIONAL_OPS,
+    SEQUENCE_DATA_PROPERTIES,
+    STRING_PROTOTYPE_METHODS,
     _js_pow,
     _to_int32,
     _to_uint32,
+    canonical_array_index,
     eval_binary_op,
     js_parse_int,
+    utf16_code_units,
     walk_scope,
 )
 from refinery.lib.scripts.js.model import (
@@ -364,11 +371,6 @@ def _register(key: tuple):
     return _decorator
 
 
-@_register((str, 'length'))
-def _str_length(s: str, args: list[Value]) -> Value:
-    return len(s)
-
-
 @_register((str, 'charAt'))
 def _str_char_at(s: str, args: list[Value]) -> Value:
     idx = _to_index(args[0]) if args else 0
@@ -478,7 +480,7 @@ def _str_split(s: str, args: list[Value]) -> Value:
         return [s]
     sep = to_string(args[0])
     if not sep:
-        result = list(s)
+        result = utf16_code_units(s)
     else:
         result = s.split(sep)
     if len(args) > 1 and args[1] is not None:
@@ -649,11 +651,6 @@ def _json_parse(args: list[Value]) -> Value:
     except Exception:
         raise InterpreterError
     return _json_nulls_to_jsnull(parsed)
-
-
-@_register((list, 'length'))
-def _arr_length(arr: list, args: list[Value]) -> Value:
-    return len(arr)
 
 
 @_register((list, 'push'))
@@ -1724,20 +1721,18 @@ class JsInterpreter:
             return self._js_add(left, right)
         if op == 'in':
             if isinstance(right, dict):
-                return to_string(left) in right
+                key = to_string(left)
+                if key in right:
+                    return True
+                return not self._property_is_absent(right, key)
             if isinstance(right, list):
                 key = to_string(left)
-                if key == 'length':
+                if key in SEQUENCE_DATA_PROPERTIES:
                     return True
-                if (type(right), key) in BUILTIN_REGISTRY or (list, key) in BUILTIN_REGISTRY:
-                    return True
-                if key in _ARRAY_HOF_METHODS:
-                    return True
-                try:
-                    idx = int(key)
-                except (ValueError, OverflowError):
-                    return False
-                return str(idx) == key and 0 <= idx < len(right)
+                index = canonical_array_index(key)
+                if index is not None:
+                    return index < len(right)
+                return not self._property_is_absent(right, key)
             raise InterpreterError
         if op == 'instanceof':
             raise InterpreterError
@@ -1930,6 +1925,10 @@ class JsInterpreter:
             _js_throw('TypeError', F"Cannot read properties of {to_string(obj)} (reading a method)")
         method_name = self._member_key(member)
         args = [self._eval(a) for a in node.arguments]
+        if isinstance(obj, (str, list)) and method_name in SEQUENCE_DATA_PROPERTIES:
+            # A data property is not callable. The arguments are evaluated first, as JS does, so a side
+            # effect or a throw inside one is not lost to this TypeError.
+            _js_throw('TypeError', F'{to_string(obj)}.{method_name} is not a function')
         obj_type = type(obj)
         builtin = BUILTIN_REGISTRY.get((obj_type, method_name))
         if builtin is None and obj_type is not list and isinstance(obj, list):
@@ -2127,63 +2126,71 @@ class JsInterpreter:
         raise InterpreterError
 
     def _get_property(self, obj: Value, key: str) -> Value:
+        """
+        Read property *key* off *obj*, as a property *read* rather than a call. A method name yields the
+        method itself, which this interpreter has no value domain for — a JS function value has an
+        observable identity, `name`, `length`, and source text — so reading one aborts interpretation
+        instead of guessing. Crucially it must not *invoke* the method: `typeof 'abc'.charAt` is
+        `'function'`, not the `typeof` of what `charAt()` would return. Only `length` and a canonical
+        index are data properties, and only they may answer with a value.
+        """
         if obj is None or obj is JS_NULL:
             _js_throw('TypeError', F"Cannot read properties of {to_string(obj)} (reading '{key}')")
-        if isinstance(obj, dict):
-            return obj.get(key)
-        if isinstance(obj, list):
-            if key == 'length':
+        if isinstance(obj, (str, list)):
+            if key in SEQUENCE_DATA_PROPERTIES:
                 return len(obj)
-            try:
-                idx = int(key)
-                if 0 <= idx < len(obj):
-                    return obj[idx]
+            index = canonical_array_index(key)
+            if index is not None:
+                if 0 <= index < len(obj):
+                    return obj[index]
                 return None
-            except (ValueError, TypeError):
-                pass
-            obj_type = type(obj)
-            builtin = BUILTIN_REGISTRY.get((obj_type, key))
-            if builtin is None and obj_type is not list:
-                builtin = BUILTIN_REGISTRY.get((list, key))
-            if builtin is not None:
-                raise InterpreterError
-            return None
-        if isinstance(obj, str):
-            builtin = BUILTIN_REGISTRY.get((str, key))
-            if builtin is not None:
-                return builtin(obj, [])
-            try:
-                idx = int(key)
-                if 0 <= idx < len(obj):
-                    return obj[idx]
-                return None
-            except (ValueError, TypeError):
-                pass
+        elif isinstance(obj, dict):
+            if key in obj:
+                return obj[key]
+        else:
+            raise InterpreterError
+        if self._property_is_absent(obj, key):
             return None
         raise InterpreterError
+
+    @staticmethod
+    def _property_is_absent(obj: Value, key: str) -> bool:
+        """
+        Whether *key* provably does not exist anywhere on *obj*'s prototype chain, making a read of it
+        `undefined`. Answering this needs the *language's* vocabulary, not the subset this package
+        implements: `normalize` and `hasOwnProperty` are functions whether or not we can evaluate them,
+        so treating an unimplemented member as absent would contradict `typeof`. A `JsBuffer` carries
+        over a hundred methods that vary between Node versions, so its surface is not enumerable here
+        and nothing can be proven absent on it.
+        """
+        if key in OBJECT_PROTOTYPE_MEMBERS or key in PROTOTYPE_CHAIN_PROPERTIES:
+            return False
+        if isinstance(obj, JsBuffer):
+            return False
+        if isinstance(obj, str):
+            return key not in STRING_PROTOTYPE_METHODS
+        if isinstance(obj, list):
+            return key not in ARRAY_PROTOTYPE_METHODS and key not in _ARRAY_HOF_METHODS
+        return isinstance(obj, dict)
 
     def _set_property(self, obj: Value, key: str, value: Value) -> None:
         if isinstance(obj, dict):
             obj[key] = value
             return
         if isinstance(obj, list):
-            if key == 'length':
+            if key in SEQUENCE_DATA_PROPERTIES:
                 new_len = _to_array_length(value)
                 if new_len < len(obj):
                     del obj[new_len:]
                 else:
                     obj.extend([None] * (new_len - len(obj)))
                 return
-            try:
-                idx = int(key)
-                if idx < 0:
-                    raise InterpreterError
-                while len(obj) <= idx:
+            index = canonical_array_index(key)
+            if index is not None:
+                while len(obj) <= index:
                     obj.append(None)
-                obj[idx] = value
+                obj[index] = value
                 return
-            except (ValueError, TypeError):
-                pass
         raise InterpreterError
 
     @staticmethod

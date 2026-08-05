@@ -101,6 +101,44 @@ an object that does not own it resolves through the prototype rather than to `un
 that treats an absent own-property as `undefined` must leave these intact.
 """
 
+STRING_PROTOTYPE_METHODS = frozenset({
+    'anchor', 'at', 'big', 'blink', 'bold', 'charAt', 'charCodeAt', 'codePointAt', 'concat',
+    'endsWith', 'fixed', 'fontcolor', 'fontsize', 'includes', 'indexOf', 'isWellFormed', 'italics',
+    'lastIndexOf', 'link', 'localeCompare', 'match', 'matchAll', 'normalize', 'padEnd', 'padStart',
+    'repeat', 'replace', 'replaceAll', 'search', 'slice', 'small', 'split', 'startsWith', 'strike',
+    'sub', 'substr', 'substring', 'sup', 'toLocaleLowerCase', 'toLocaleUpperCase', 'toLowerCase',
+    'toString', 'toUpperCase', 'toWellFormed', 'trim', 'trimEnd', 'trimLeft', 'trimRight',
+    'trimStart', 'valueOf',
+})
+
+ARRAY_PROTOTYPE_METHODS = frozenset({
+    'at', 'concat', 'copyWithin', 'entries', 'every', 'fill', 'filter', 'find', 'findIndex',
+    'findLast', 'findLastIndex', 'flat', 'flatMap', 'forEach', 'includes', 'indexOf', 'join',
+    'keys', 'lastIndexOf', 'map', 'pop', 'push', 'reduce', 'reduceRight', 'reverse', 'shift',
+    'slice', 'some', 'sort', 'splice', 'toLocaleString', 'toReversed', 'toSorted', 'toSpliced',
+    'toString', 'unshift', 'values', 'with',
+})
+"""
+The callable members of `String.prototype` and `Array.prototype`, enumerated from a real engine
+rather than from the subset this package implements. Reading one of these names yields the method
+itself, so a reader that answers `undefined` for the ones we cannot evaluate would contradict
+`typeof`; membership and evaluability are separate questions.
+"""
+
+SEQUENCE_DATA_PROPERTIES = frozenset({'length'})
+"""
+The non-callable inherited properties of a string or array. `length` is the only one, which is why
+it must never be reached through a method registry: `'abc'.length` is the number `3` and
+`'abc'.length()` is a `TypeError`, whereas a registry entry would answer `3` to both.
+"""
+
+PROTOTYPE_CHAIN_PROPERTIES = frozenset({'__proto__', 'constructor'})
+"""
+The two properties that expose the prototype chain itself. Both exist on every value, so answering
+`undefined` for them is wrong, but modelling them would hand out the `Function` constructor that
+`[].constructor.constructor('...')()` reflection depends on. They are therefore left unevaluated.
+"""
+
 
 class _JsNull:
     """
@@ -117,6 +155,41 @@ class _JsNull:
 
 
 JS_NULL = _JsNull()
+
+
+def canonical_array_index(key: str) -> int | None:
+    """
+    The integer index *key* denotes as an array index, or `None` when it is not one. JavaScript treats
+    a property key as an index only when it is the canonical decimal spelling of a non-negative
+    integer, so `'1'` indexes but `'+1'`, `'01'`, `'1.0'`, `' 1 '`, `'1_0'`, and `'0x1'` are ordinary
+    property names that resolve to `undefined`. Python's `int` accepts every one of those spellings,
+    and `str.isdigit` additionally accepts non-ASCII digits such as `'²'`, so neither is usable alone.
+    """
+    if not key or not all(c in '0123456789' for c in key):
+        return None
+    index = int(key)
+    if str(index) != key:
+        return None
+    return index
+
+
+def utf16_code_units(text: str) -> list[str]:
+    """
+    Split *text* into its UTF-16 code units, which is what JavaScript indexing and `split('')` operate
+    on. Python strings are sequences of code points, so a character outside the BMP is one Python
+    character but two JavaScript ones: `'\U0001F600'.split('')` has length 2 in JS, and each half is a
+    lone surrogate. Iterating the Python string directly would under-count it.
+    """
+    units: list[str] = []
+    for char in text:
+        code = ord(char)
+        if code > 0xFFFF:
+            offset = code - 0x10000
+            units.append(chr(0xD800 + (offset >> 10)))
+            units.append(chr(0xDC00 + (offset & 0x3FF)))
+        else:
+            units.append(char)
+    return units
 
 
 def _to_int32(v: int | float) -> int:
