@@ -1603,3 +1603,48 @@ class TestModelBlindFoldRegressions(TestBase):
             ' (function(a){ a.forEach(function(x){ n += x; }); })([1, 2]);'
             ' console.log(n);')
 
+    def test_patched_string_method_is_not_the_builtin(self):
+        """
+        A method call on a literal receiver names no global at the call site, so per-name trust on the
+        callee cannot see that the method itself was replaced. `String.prototype.toUpperCase = ...` makes
+        `'ab'.toUpperCase()` yield `'X'`; folding it as the built-in emits `'AB'`. The gate must ask
+        whether the *receiver's prototype* is intact, not only whether a named global is.
+        """
+        self._check(
+            "String.prototype.toUpperCase = function () { return 'X'; };"
+            " console.log('ab'.toUpperCase());")
+
+    def test_patched_string_indexof_is_not_the_builtin(self):
+        self._check(
+            "String.prototype.indexOf = function () { return 99; };"
+            " console.log('abc'.indexOf('b'));")
+
+    def test_patched_string_split_is_not_the_builtin(self):
+        self._check(
+            "String.prototype.split = function () { return ['X']; };"
+            " function f() { return 'a-b'.split('-').length; } console.log(f());")
+
+    def test_patched_array_join_is_not_the_builtin(self):
+        """
+        The same fault for arrays. It survives at the top level only because the dedicated `join` fold
+        needs an array-literal receiver that reaches it; inside a function the evaluator path folds and
+        emits `'1-2'` where Node says `'X'`.
+        """
+        self._check(
+            "Array.prototype.join = function () { return 'X'; };"
+            ' function f() { return [1, 2].join(\'-\'); } console.log(f());')
+
+    def test_patched_array_method_via_define_property_is_not_the_builtin(self):
+        self._check(
+            "Object.defineProperty(Array.prototype, 'join', { value: function () { return 'X'; } });"
+            ' function f() { return [1, 2].join(\'-\'); } console.log(f());')
+
+    def test_unpatched_prototype_methods_still_fold(self):
+        """
+        The companion control: with no prototype write anywhere, every one of these must still fold, so
+        the receiver-prototype gate does not degrade into refusing all instance methods.
+        """
+        self._check(
+            "function f() { return [1, 2].join('-') + 'ab'.toUpperCase() + 'abc'.indexOf('b'); }"
+            ' console.log(f());')
+
