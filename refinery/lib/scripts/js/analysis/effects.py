@@ -577,6 +577,7 @@ class EffectModel:
         self.model = model
         self.intrinsics_pristine = _intrinsics_pristine(model)
         self.global_pristine = _global_pristine(model)
+        self._globals_written = _globals_written_by_name(model)
         self._summaries: dict[int, EffectSummary] = {}
         self._confine_cache: dict[int, Node | None] = {}
         self._immutable_cache: dict[tuple[int, bool], bool] = {}
@@ -1339,6 +1340,40 @@ class EffectModel:
             return self.intrinsic_of(node.left)
         return None
 
+    def trusted_intrinsic(self, node: Node | None) -> str | None:
+        """
+        The global name *node* denotes, when that one name is provably still the built-in, or `None`. A
+        name qualifies when the program never binds it, never assigns to it, never writes or updates a
+        property anywhere on it, and exposes no reflection surface through which it could be replaced at
+        runtime.
+
+        This differs from `intrinsic_of` in *scope of the question*, not in strictness. `intrinsic_of`
+        rests on `intrinsics_pristine`, one program-wide flag over a fixed root set, so a single
+        `Object.prototype.x = 1` withdraws trust from every intrinsic in the file — including `Math`,
+        which that line cannot affect. This query answers per name, so the same program still folds
+        `Math.floor` while declining `Object.keys`. Its callers are the constant folds, which need to know
+        whether *this* built-in is intact; `intrinsic_of` answers the stronger question of whether a value
+        may be trusted for construction or `A || B` folding, and keeps its own callers and vocabulary.
+
+        The name is not checked against a list of blessed intrinsics: whether a fold *knows how* to
+        evaluate the call is the caller's question, answered by its own registry lookup. Conflating the two
+        is what let a registry entry exist with no matching trust rule.
+
+        Shadowing needs no per-site scope resolution, because a name bound *anywhere* in the program is
+        already disqualified: `_globals_written` collects every binding in every scope. That is stricter
+        than JavaScript requires — a shadow inside an unrelated function does not affect this use site —
+        and deliberately so. A name the program binds at all is one an obfuscator may be routing values
+        through, and the price of refusing is an unfolded call rather than a wrong value.
+        """
+        node = strip_parens(node)
+        if not isinstance(node, JsIdentifier):
+            return None
+        if self.model.has_reflection_surface():
+            return None
+        if node.name in self._globals_written:
+            return None
+        return node.name
+
     def _is_trusted_global_read(self, member: JsMemberExpression) -> bool:
         """
         Whether reading *member* off the global object runs no user getter, so the read carries no
@@ -1551,6 +1586,88 @@ def _body_nodes(func: Node) -> Iterator[Node]:
         if isinstance(node, FUNCTION_NODES):
             continue
         stack.extend(reversed(node.children()))
+
+
+def _globals_written_by_name(model: SemanticModel) -> frozenset[str]:
+    """
+    The set of global names the program does anything with beyond reading them: binding the name in any
+    scope, assigning to it, writing or updating or deleting a property anywhere along a chain rooted at it
+    (`Object.prototype.x = 1`, `Math.PI++`), or installing a descriptor on it with
+    `Object.defineProperty`.
+
+    This is the per-name counterpart of `_intrinsics_pristine`, which answers the same question for a
+    fixed root set but collapses it to one program-wide flag. Keeping the answer per name is what lets a
+    program that patches `Object.prototype` still have its `Math.floor` calls folded; the flag cannot
+    express that, because one disturbed root disables every other one.
+
+    Bindings cover every *assignment* form too, so no separate scan of write-role identifiers is needed:
+    a bare `Math = 1` introduces an implicit-global binding for `Math`, as do the destructuring and
+    `for`-target forms. Only property writes, deletes, and descriptor installs — which leave the name
+    itself a plain read — need the explicit branches below.
+    """
+    written: set[str] = set()
+    pending = [model.root_scope]
+    while pending:
+        scope = pending.pop()
+        written.update(scope.bindings)
+        pending.extend(scope.children)
+    for node in model.root.walk():
+        if isinstance(node, JsCallExpression):
+            base = _accessor_install_target(node)
+            if base is not None:
+                written.add(base.name)
+            continue
+        target = None
+        if isinstance(node, JsAssignmentExpression):
+            target = node.left
+        elif isinstance(node, JsUpdateExpression):
+            target = node.argument
+        elif isinstance(node, JsUnaryExpression) and node.operator == 'delete':
+            target = node.operand
+        base = _member_chain_root(target)
+        if base is not None:
+            written.add(base.name)
+    return frozenset(written)
+
+
+def _accessor_install_target(call: JsCallExpression) -> JsIdentifier | None:
+    """
+    The name whose properties *call* installs an accessor or data descriptor on, or `None`. An
+    `Object.defineProperty(Math, ...)` replaces a method without ever writing `Math` syntactically, so a
+    scan for assignments alone would leave the name looking untouched. The receiver form
+    (`o.__defineGetter__(...)`) attributes to the chain root of the receiver instead of an argument.
+    """
+    callee = strip_parens(call.callee)
+    if not isinstance(callee, JsMemberExpression) or callee.computed:
+        return None
+    prop = callee.property
+    if not isinstance(prop, JsIdentifier) or prop.name not in _ACCESSOR_INSTALL_METHODS:
+        return None
+    if prop.name.startswith('__define'):
+        base = strip_parens(callee.object)
+        if isinstance(base, JsIdentifier):
+            return base
+        return _member_chain_root(base)
+    if not call.arguments:
+        return None
+    first = strip_parens(call.arguments[0])
+    if isinstance(first, JsIdentifier):
+        return first
+    return _member_chain_root(first)
+
+
+def _member_chain_root(node: Node | None) -> JsIdentifier | None:
+    """
+    The identifier at the foot of a member-access chain, or `None` when the chain does not start at a
+    plain name. `Math.prototype.x` roots at `Math`, so a write anywhere along the chain is attributed to
+    the name that owns it; testing only the immediate `.object` would miss every nested write.
+    """
+    cursor = strip_parens(node)
+    if not isinstance(cursor, JsMemberExpression):
+        return None
+    while isinstance(cursor, JsMemberExpression):
+        cursor = strip_parens(cursor.object)
+    return cursor if isinstance(cursor, JsIdentifier) else None
 
 
 def _intrinsics_pristine(model: SemanticModel) -> bool:

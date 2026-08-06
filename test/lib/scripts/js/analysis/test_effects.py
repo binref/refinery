@@ -896,3 +896,165 @@ class TestEffectModel(TestBase):
 
     def test_parenthesized_method_call_is_mutable(self):
         self.assertFalse(self._container('var a = [1, 2]; (a.sort)(); SINK(a[0]);'))
+
+
+class TestTrustedIntrinsic(TestBase):
+    """
+    `trusted_intrinsic` asks whether one named global is still the built-in at a use site. It answers per
+    name rather than program-wide, which is what lets a program that patches `Object.prototype` keep
+    folding `Math.floor`: `intrinsics_pristine` collapses every root into a single flag, so one disturbed
+    name withdraws trust from all of them, including names the disturbance cannot reach.
+
+    A refusal must cover every way a name can stop being the built-in — all six declaration forms, a write
+    anywhere along a member chain rooted at it, a `delete`, and a descriptor install that never writes the
+    name syntactically. The paired trust cases are equally load-bearing: over-refusal silently disables
+    correct folds, so each refusal has a control that must still be trusted.
+    """
+
+    @staticmethod
+    def _trust(source: str, name: str):
+        """
+        `trusted_intrinsic` for the callee root named *name* in the single call it appears in.
+        """
+        ast = JsParser(source).parse()
+        effects = build_effects(build_semantic_model(ast))
+        target = None
+        for node in ast.walk():
+            if not isinstance(node, JsCallExpression):
+                continue
+            callee = node.callee
+            if isinstance(callee, JsMemberExpression) and isinstance(callee.object, JsIdentifier):
+                if callee.object.name == name:
+                    target = callee.object
+            elif isinstance(callee, JsIdentifier) and callee.name == name:
+                target = callee
+        if target is None:
+            raise AssertionError(F'no call with a callee rooted at {name}')
+        return effects.trusted_intrinsic(target)
+
+    def _refuses(self, source: str, name: str = 'Math'):
+        self.assertIsNone(self._trust(source, name))
+
+    def _trusts(self, source: str, name: str = 'Math'):
+        self.assertEqual(name, self._trust(source, name))
+
+    def test_unshadowed_name_is_trusted(self):
+        self._trusts('console.log(Math.floor(1.7));')
+
+    def test_unshadowed_free_function_is_trusted(self):
+        self._trusts("console.log(parseInt('10'));", 'parseInt')
+
+    def test_name_absent_from_any_blessed_list_is_trusted(self):
+        """
+        Trust is not restricted to a list of known intrinsics: whether a fold knows how to evaluate the
+        call is the caller's question. `atob` is absent from the effect model's pure-intrinsic vocabulary,
+        yet an unshadowed `atob` is still the built-in.
+        """
+        self._trusts("console.log(atob('QUJD'));", 'atob')
+
+    def test_var_shadow_is_refused(self):
+        self._refuses('var Math = { floor: function(){ return 1; } }; console.log(Math.floor(1.7));')
+
+    def test_let_shadow_is_refused(self):
+        self._refuses('let Math = { floor: function(){ return 1; } }; console.log(Math.floor(1.7));')
+
+    def test_const_shadow_is_refused(self):
+        self._refuses('const Math = { floor: function(){ return 1; } }; console.log(Math.floor(1.7));')
+
+    def test_function_declaration_shadow_is_refused(self):
+        self._refuses("function parseInt(){ return 1; } console.log(parseInt('10'));", 'parseInt')
+
+    def test_parameter_shadow_is_refused(self):
+        self._refuses('(function (Math) { console.log(Math.floor(1.7)); })({ floor: null });')
+
+    def test_assignment_shadow_is_refused(self):
+        """
+        A bare assignment introduces an implicit-global binding for the name, which is why no separate scan
+        of write-role identifiers is needed to catch it.
+        """
+        self._refuses('Math = { floor: function(){ return 1; } }; console.log(Math.floor(1.7));')
+
+    def test_assignment_inside_a_function_is_refused(self):
+        self._refuses('(function(){ Math = 1; })(); console.log(Math.floor(1.7));')
+
+    def test_for_of_target_assignment_is_refused(self):
+        self._refuses('for (Math of xs) {} console.log(Math.floor(1.7));')
+
+    def test_destructuring_assignment_target_is_refused(self):
+        self._refuses('[Math] = xs; console.log(Math.floor(1.7));')
+
+    def test_destructuring_shadow_is_refused(self):
+        self._refuses('var { Math } = {}; console.log(Math.floor(1.7));')
+
+    def test_catch_parameter_shadow_is_refused(self):
+        self._refuses('try {} catch (Math) {} console.log(Math.floor(1.7));')
+
+    def test_shadow_in_an_unrelated_scope_is_refused(self):
+        """
+        The shadow is in a sibling function the use site never enters, so JavaScript resolves the use site
+        to the global and a per-site scope lookup would permit the fold. Refusing is deliberate and is why
+        no such lookup is performed: a name the program binds anywhere is one an obfuscator may be routing
+        values through, and the price of refusing is an unfolded call rather than a wrong value.
+        """
+        self._refuses('(function(){ var Math = 1; })(); console.log(Math.floor(1.7));')
+
+    def test_property_write_on_the_name_is_refused(self):
+        self._refuses('Math.floor = function(){ return 1; }; console.log(Math.floor(1.7));')
+
+    def test_nested_property_write_is_refused(self):
+        """
+        The write is two levels deep, so the assignment target's own `.object` is another member
+        expression rather than the name. Attribution has to follow the chain to its root.
+        """
+        self._refuses('Math.prototype.zz = 1; console.log(Math.floor(1.7));')
+
+    def test_computed_property_write_is_refused(self):
+        self._refuses("Math['floor'] = function(){ return 1; }; console.log(Math.floor(1.7));")
+
+    def test_property_update_is_refused(self):
+        self._refuses('Math.PI++; console.log(Math.floor(1.7));')
+
+    def test_property_delete_is_refused(self):
+        self._refuses('delete Math.floor; console.log(Math.floor(1.7));')
+
+    def test_define_property_on_the_name_is_refused(self):
+        """
+        `Object.defineProperty` replaces a method without writing the name syntactically, so a scan for
+        assignments alone would leave it looking untouched.
+        """
+        self._refuses("Object.defineProperty(Math, 'floor', { value: 1 }); console.log(Math.floor(1.7));")
+
+    def test_define_getter_on_the_name_is_refused(self):
+        self._refuses("Math.__defineGetter__('floor', function(){}); console.log(Math.floor(1.7));")
+
+    def test_reflection_surface_refuses_every_name(self):
+        """
+        A direct `eval` can rebind anything at runtime, so no name is provably intact.
+        """
+        self._refuses("eval('Math = 1'); console.log(Math.floor(1.7));")
+
+    def test_property_read_alone_is_trusted(self):
+        self._trusts('console.log(Math.PI, Math.floor(1.7));')
+
+    def test_passing_the_method_as_a_value_is_trusted(self):
+        self._trusts('[1].map(Math.floor); console.log(Math.floor(1.7));')
+
+    def test_aliasing_the_name_is_trusted(self):
+        """
+        Binding the intrinsic to a local reads it; it does not disturb it.
+        """
+        self._trusts('var m = Math; console.log(Math.floor(1.7));')
+
+    def test_another_name_being_shadowed_is_trusted(self):
+        self._trusts('var Object = 1; console.log(Math.floor(1.7));')
+
+    def test_another_name_being_patched_is_trusted(self):
+        """
+        The precision this query exists for: patching `Object.prototype` cannot affect `Math`, so `Math`
+        stays foldable. The program-wide `intrinsics_pristine` flag cannot express this.
+        """
+        self._trusts('Object.prototype.zz = 1; console.log(Math.floor(1.7));')
+
+    def test_the_patched_name_itself_is_refused(self):
+        self._refuses('Object.prototype.zz = 1; console.log(Object.keys({ a: 1 }));', 'Object')
+
