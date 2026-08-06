@@ -847,8 +847,24 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
         )
         self.assertEqual(source, self._evaluate(source))
 
+    def test_array_result_over_the_size_cap_is_not_folded(self):
+        """
+        A fold that replaces a call with an array literal is bounded by output size, not by correctness: at
+        some point the literal is less readable than the call that produced it, and readability is what a
+        triage tool trades folding for. The cap is on the *result*, so a chain whose array result exceeds it
+        stays put while the same chain reduced to a string still folds.
+        """
+        elements = ', '.join(str(n) for n in range(300))
+        result = self._evaluate(F'[{elements}].map(function (x) {{ return x + 1; }});')
+        self.assertEqual(1, result.count('.map('))
+        self.assertEqual(0, result.count('301'))
 
-class TestClosureCapture(TestJsDeobfuscator):
+    def test_string_result_over_the_array_size_cap_still_folds(self):
+        elements = ', '.join(str(n) for n in range(300))
+        folded = F"[{elements}].map(function (x) {{ return x + 1; }}).join('');"
+        expected = ''.join(str(n + 1) for n in range(300))
+        self.assertEqual(F"'{expected}';", self._evaluate(folded).replace('\n', '').strip())
+
 
     def test_const_arrow_with_outer_string(self):
         source = inspect.cleandoc(

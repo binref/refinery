@@ -238,6 +238,25 @@ therefore exact rather than a walk up the Python MRO, which would silently answe
 `list` subclass instead of refusing. A type with no entry is never trusted through this route.
 """
 
+_LITERAL_RECEIVER_TYPES: dict[type, type] = {
+    JsArrayExpression: list,
+    JsStringLiteral: str,
+    JsNumericLiteral: float,
+    JsBooleanLiteral: bool,
+    JsObjectExpression: dict,
+}
+"""
+The runtime type of a receiver whose literal syntax fixes it, mapping an AST node type to the value type
+`_PROTOTYPE_OWNERS` is keyed on. A literal is the one receiver form whose prototype is knowable from the
+expression alone: `[1, 2].join('-')` has an array receiver whatever the surrounding program does, whereas
+`a.join('-')` depends on what `a` holds and on whether anything mutated it in between.
+
+Deciding this here rather than at each caller is what lets a fold ask about a whole chain without walking
+it: the recursive case above resolves an inner link, and this resolves the literal the chain starts from.
+The `receiver_type` parameter remains for callers that hold an evaluated receiver — a value whose type is
+known but whose syntax is not a literal — and is consulted only when the syntax settles nothing.
+"""
+
 
 class _PureCall:
     """
@@ -1431,8 +1450,10 @@ class EffectModel:
 
         - The callee is still the built-in it is spelled as. A named callee (`parseInt(...)`,
           `String.fromCharCode(...)`) is judged by `trusted_intrinsic` on its root name; a call on a
-          literal receiver is judged by `trusted_prototype` on *receiver_type*, which the caller supplies
-          because it knows the receiver's runtime type and this model does not.
+          literal receiver is judged by `trusted_prototype` on the type that literal's syntax fixes; and a
+          call on another call — a chain link — is judged by asking this whole question of that inner call.
+          `receiver_type` covers the remaining case, a caller holding an already-evaluated receiver whose
+          type it knows and this model does not.
         - Every function-valued argument writes nothing outside itself. `is_effect_free_when_discarded` is
           the right predicate rather than `is_pure`: a callback that mutates a fresh local and returns it —
           the `reduce` accumulator idiom — is not pure, but that mutation is the value being computed and an
@@ -1463,10 +1484,14 @@ class EffectModel:
         if isinstance(base, JsIdentifier):
             return self.trusted_intrinsic(base) is not None
         if isinstance(base, JsCallExpression):
-            # A chained call (`Buffer.from(x).toString('hex')`) has no name at this link. Its receiver is
-            # whatever the inner call returned, so it is trustworthy exactly when that call is — the
-            # receiver type is unknown here and the inner call's own gate decides.
-            return self._callee_is_trusted(base, None)
+            # A chained call (`Buffer.from(x).toString('hex')`, `[1, 2].map(f).join('')`) has no name at
+            # this link. Its receiver is whatever the inner call returned, so it is trustworthy exactly
+            # when that inner call is admissible in full — including its arguments, since an effectful
+            # argument to the inner link is just as observable as one to the outer.
+            return self.call_is_foldable(base)
+        literal_type = _LITERAL_RECEIVER_TYPES.get(type(base))
+        if literal_type is not None:
+            return self.trusted_prototype(literal_type)
         if receiver_type is None:
             return False
         return self.trusted_prototype(receiver_type)

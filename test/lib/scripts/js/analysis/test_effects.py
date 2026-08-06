@@ -1158,12 +1158,45 @@ class TestCallIsFoldable(TestBase):
         self.assertFalse(self._foldable(
             "String.prototype.toUpperCase = function () {}; var r = 'ab'.toUpperCase();", str))
 
-    def test_instance_method_without_a_receiver_type_is_refused(self):
+    def test_literal_receiver_needs_no_receiver_type(self):
         """
-        The caller supplies the receiver's runtime type because only it knows the value. Omitting it leaves
-        the prototype question unanswered, and an unanswered question is not a yes.
+        A literal receiver's type is fixed by its own syntax, so the gate resolves the prototype question
+        itself rather than requiring the caller to answer it. This is what lets a fold ask about a whole
+        chain without first walking down to its innermost receiver.
         """
-        self.assertFalse(self._foldable("var r = 'ab'.toUpperCase();"))
+        self.assertTrue(self._foldable("var r = 'ab'.toUpperCase();"))
+        self.assertTrue(self._foldable("var r = [1, 2].join('-');"))
+        self.assertTrue(self._foldable('var r = (5).toString(2);'))
+
+    def test_patched_prototype_refused_for_a_literal_receiver_without_a_type(self):
+        self.assertFalse(self._foldable(
+            "String.prototype.toUpperCase = function () {}; var r = 'ab'.toUpperCase();"))
+
+    def test_computed_receiver_without_a_receiver_type_is_refused(self):
+        """
+        Where the syntax settles nothing — an identifier, a member read, a conditional, a concatenation —
+        the receiver's type is genuinely unknown, and an unanswered question is not a yes. The caller must
+        supply the type it knows, or be refused.
+        """
+        self.assertFalse(self._foldable("var s = 'ab'; var r = s.toUpperCase();"))
+        self.assertFalse(self._foldable("var o = { s: 'ab' }; var r = o.s.toUpperCase();"))
+        self.assertFalse(self._foldable("var r = ('a' + 'b').toUpperCase();"))
+        self.assertFalse(self._foldable("var x = 1; var r = (x ? 'a' : 'b').toUpperCase();"))
+
+    def test_chain_link_receiver_is_judged_by_the_inner_call(self):
+        """
+        At a link whose receiver is another call no prototype can be named, so the inner call is put through
+        this same gate in full. Its arguments are judged too: an effectful argument to the inner link is as
+        observable as one to the outer, and checking only the inner callee's trust would fold it away.
+        """
+        self.assertTrue(self._foldable(
+            "var r = [1, 2].map(function (x) { return x + 1; }).join('-');"))
+        self.assertFalse(self._foldable(
+            'var n = 0;'
+            " var r = [1, 2].map(function (x) { n += x; return x; }).join('-');"))
+        self.assertFalse(self._foldable(
+            'var n = 0; function h() { n += 1; return 1; }'
+            " var r = [1, 2].slice(h()).join('-');"))
 
     def test_callback_writing_a_script_scope_var_is_refused(self):
         """

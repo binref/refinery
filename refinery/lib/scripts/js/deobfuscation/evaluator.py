@@ -34,6 +34,7 @@ from refinery.lib.scripts.js.deobfuscation.interpreter import (
     InterpreterError,
     IrreducibleExpression,
     JsInterpreter,
+    _ThrowSignal,
     is_runtime_name,
 )
 from refinery.lib.scripts.js.model import (
@@ -513,6 +514,59 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
                 self._try_named_call(node)
             elif isinstance(callee, (JsFunctionExpression, JsArrowFunctionExpression)):
                 self._try_iife(node, callee)
+            elif isinstance(callee, JsMemberExpression):
+                self._try_method_chain(node)
+
+    def _try_method_chain(self, node: JsCallExpression) -> None:
+        """
+        Evaluate a method call whose value the interpreter can compute — the `[66, 79].map(f).join('')`
+        decoder shape and everything it composes from. Unlike a call to a named function, there is no
+        function node to run with arguments: the call *is* the expression, so it goes to
+        `eval_expression` and the result replaces it.
+
+        Walking outermost-first means the longest chain is attempted before any of its links, so a whole
+        decoder collapses in one step and the inner links are gone before they are reached. Admission is
+        the shared gate's decision alone; this adds no question of its own, because every one it would ask
+        — is the prototype intact, does a callback write outside itself, is an argument effectful — the gate
+        already asks, and asking twice in two vocabularies is how the fold surface fragmented before.
+        """
+        effects = self._effects
+        if effects is None or not effects.call_is_foldable(node):
+            return
+        self._evaluate_expression_and_replace(node)
+
+    def _evaluate_expression_and_replace(self, node: JsCallExpression) -> bool:
+        """
+        Evaluate *node* as a standalone expression and replace it with the result. Returns whether the
+        replacement happened.
+
+        `_ThrowSignal` is caught alongside the interpreter's own refusals: a JavaScript exception raised
+        inside the evaluated expression is the program's business, not a value this fold may produce, and it
+        reaches here as its own exception type rather than an `InterpreterError`. An `IrreducibleExpression`
+        is a refusal too — the parameter substitution that makes it useful at a call site has no meaning for
+        an expression that takes no parameters.
+        """
+        interpreter = JsInterpreter(effects=self._effects)
+        try:
+            result = interpreter.eval_expression(node)
+        except (InterpreterError, IrreducibleExpression, _ThrowSignal):
+            return False
+        return self._replace_with_value(node, result)
+
+    def _replace_with_value(self, node: JsCallExpression, result: Value) -> bool:
+        """
+        Replace *node* with a literal denoting *result*, refusing when no such literal exists or when the
+        literal would be larger than the expression it replaces. Every path that folds a call to a value
+        shares this, so the result guards cannot be present at one and missing at another.
+        """
+        if isinstance(result, list) and len(result) > MAX_RESULT_ARRAY_LEN:
+            return False
+        replacement = value_to_node(result)
+        if replacement is None:
+            return False
+        _replace_in_parent(node, replacement)
+        self.mark_changed()
+        return True
 
     def _established_before(self, func: _FuncNode, call: JsCallExpression) -> bool:
         """
@@ -609,17 +663,12 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
             return True
         except InterpreterError:
             return False
-        if isinstance(result, list) and len(result) > MAX_RESULT_ARRAY_LEN:
-            return False
-        replacement = value_to_node(result)
-        if replacement is None:
+        if not self._replace_with_value(node, result):
             return False
         if closure is not None and closure_override is None:
             for name in closure:
                 if name in interpreter._env:
                     closure[name] = interpreter._env[name]
-        _replace_in_parent(node, replacement)
-        self.mark_changed()
         return True
 
     def _function_is_removable(self, model: SemanticModel, func: _FuncNode) -> bool:
