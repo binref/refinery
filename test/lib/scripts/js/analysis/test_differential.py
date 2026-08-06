@@ -1648,3 +1648,36 @@ class TestModelBlindFoldRegressions(TestBase):
             "function f() { return [1, 2].join('-') + 'ab'.toUpperCase() + 'abc'.indexOf('b'); }"
             ' console.log(f());')
 
+    def test_patched_static_method_is_not_the_builtin_in_a_function(self):
+        """
+        The interpreter resolves a static method by name independently of the syntactic folds, so patching
+        `Math.floor` must stop the interpreted path too. Inside a function body that path is the one taken.
+        """
+        self._check(
+            'Math.floor = function () { return 99; };'
+            ' function f() { return Math.floor(1.7); } console.log(f());')
+
+    def test_patched_array_hof_is_not_the_builtin_in_a_function(self):
+        """
+        A higher-order method reaches the interpreter's own callback machinery rather than a registry entry,
+        so it needs the receiver-prototype question asked separately at that site.
+        """
+        self._check(
+            "Array.prototype.map = function () { return ['X']; };"
+            ' function f() { return [1, 2].map(function (x) { return x + 1; }).length; }'
+            ' console.log(f());')
+
+    def test_patched_join_on_a_string_array_is_not_the_builtin(self):
+        """
+        The dedicated `join` fold only accepts string elements, so it is this shape rather than a numeric
+        array that reaches it, and it needs its own receiver-prototype check.
+        """
+        self._check(
+            "Array.prototype.join = function () { return 'X'; };"
+            " console.log(['a', 'b'].join('-'));")
+
+    def test_patched_join_after_split_is_not_the_builtin(self):
+        self._check(
+            "Array.prototype.join = function () { return 'X'; };"
+            " console.log('a-b'.split('-').join('+'));")
+

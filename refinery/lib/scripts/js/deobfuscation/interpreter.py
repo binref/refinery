@@ -1896,6 +1896,8 @@ class JsInterpreter:
             args = [self._eval(a) for a in node.arguments]
             builtin = BUILTIN_REGISTRY.get((static_name, method_name))
             if builtin is not None:
+                if not self._callee_is_intact(node):
+                    raise InterpreterError
                 return builtin(args)
             raise InterpreterError
         obj = self._eval(member.object)
@@ -1914,11 +1916,15 @@ class JsInterpreter:
         if builtin is None and obj_type is not list and isinstance(obj, list):
             builtin = BUILTIN_REGISTRY.get((list, method_name))
         if builtin is not None:
+            if not self._prototype_is_intact(obj_type):
+                raise InterpreterError
             result = builtin(obj, args)
             if isinstance(obj, JsBuffer) and isinstance(result, list) and not isinstance(result, JsBuffer):
                 result = JsBuffer(result)
             return result
         if isinstance(obj, list) and method_name in _ARRAY_HOF_METHODS:
+            if not self._prototype_is_intact(obj_type):
+                raise InterpreterError
             result = self._eval_array_hof(obj, method_name, args)
             if isinstance(obj, JsBuffer) and method_name in _BUFFER_PRESERVING_HOFS:
                 if isinstance(result, list) and not isinstance(result, JsBuffer):
@@ -1932,6 +1938,57 @@ class JsInterpreter:
                 return self._call_function(obj, actual_args)
         raise InterpreterError
 
+    def _callee_is_intact(self, node: JsCallExpression) -> bool:
+        """
+        Whether the built-in *node* names is still that built-in. Evaluating a call by looking its name up
+        in the registry assumes the program has not replaced it, and an obfuscated file may well have.
+        Without an effect model there is nothing to consult, and the interpreter is then used on a single
+        expression in isolation rather than over a whole program, so the assumption is the caller's.
+        """
+        effects = self._effects
+        if effects is None:
+            return True
+        return effects.call_is_foldable(node)
+
+    def _prototype_is_intact(self, value_type: type) -> bool:
+        """
+        Whether the prototype that supplies *value_type*'s methods is unmodified, so dispatching a method
+        on a receiver of that type by name still means what the language says. This is the same question
+        `_callee_is_intact` asks, for a receiver that names no global.
+        """
+        effects = self._effects
+        if effects is None:
+            return True
+        return effects.trusted_prototype(value_type)
+
+    def _callback_is_contained(self, callback: _FuncNode) -> bool:
+        """
+        Whether running *callback* for its return values alone loses nothing. A higher-order method is
+        evaluated here for the value it produces, so a callback that also writes a binding outside itself
+        has an effect the resulting literal cannot carry: `[1,2].map(function (x) { n += x; return x; })`
+        yields the right array while leaving `n` unchanged.
+
+        `is_effect_free_when_discarded` rather than `is_pure`, which is stricter than this position needs: it
+        tolerates a mutation the callback confines to a fresh local it returns, and a throw, which surfaces
+        as a real `_ThrowSignal` an emulated `try/catch` observes rather than being swallowed.
+
+        Purity is not sufficient on its own either. A write to a *script-scope* `var` reports
+        `writes_captured=False`, because that binding is not captured from the callback's perspective, so it
+        slips through every purity flag. `written_bindings` records outer bindings by identity and catches it.
+
+        This refuses the `reduce` accumulator idiom, `(acc, v) => { acc.push(v); return acc; }`, whose
+        `acc.push` sets `calls_unknown` — a method call on a parameter is a callee the summary cannot
+        resolve. That is a real fold this declines, and deliberately: the same flag is the only thing
+        distinguishing `acc.push(v)` from a mutation of an outer array `s.push(v)`, so admitting one admits
+        the other. Separating them needs the callee resolution to see through the parameter to the argument,
+        which is a question for the effect model rather than a relaxation here.
+        """
+        effects = self._effects
+        if effects is None:
+            return True
+        summary = effects.summary_of(callback)
+        return summary.is_effect_free_when_discarded and not summary.written_bindings
+
     def _eval_array_hof(self, arr: list, method: str, args: list[Value]) -> Value:
         if not args:
             raise InterpreterError
@@ -1940,6 +1997,8 @@ class JsInterpreter:
             callback,
             (JsFunctionDeclaration, JsFunctionExpression, JsArrowFunctionExpression)
         ):
+            raise InterpreterError
+        if not self._callback_is_contained(callback):
             raise InterpreterError
         if method == 'every':
             for i, item in enumerate(arr):

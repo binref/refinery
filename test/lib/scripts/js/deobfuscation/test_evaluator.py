@@ -2161,6 +2161,12 @@ class TestClosureCapture(TestJsDeobfuscator):
         self.assertEqual("var r = ['abc'];", result)
 
     def test_buffer_reduce_returns_plain_array(self):
+        """
+        The `reduce` accumulator idiom is not folded. `acc.push` is a method call on a parameter, so the
+        callback's summary reports `calls_unknown` — and that same flag is the only thing separating a write
+        to the accumulator from a write to an outer array, so a fold that admitted this would admit that.
+        The chain is left intact, which preserves behavior; only the resolution is given up.
+        """
         source = inspect.cleandoc(
             """
             const f = () => Array.isArray(
@@ -2169,8 +2175,16 @@ class TestClosureCapture(TestJsDeobfuscator):
             var r = f();
             """
         )
-        result = self._evaluate(source)
-        self.assertEqual('var r = true;', result)
+        expected = inspect.cleandoc(
+            """
+            const f = () => Array.isArray(Buffer.from([1, 2, 3]).reduce((acc, v) => {
+              acc.push(v * 2);
+              return acc;
+            }, []));
+            var r = f();
+            """
+        )
+        self.assertEqual(expected, self._evaluate(source))
 
     def test_pure_function_ref_as_value_does_not_produce_wrong_substitution(self):
         source = inspect.cleandoc(

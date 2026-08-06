@@ -1058,3 +1058,168 @@ class TestTrustedIntrinsic(TestBase):
     def test_the_patched_name_itself_is_refused(self):
         self._refuses('Object.prototype.zz = 1; console.log(Object.keys({ a: 1 }));', 'Object')
 
+
+class TestTrustedPrototype(TestBase):
+    """
+    `trusted_prototype` answers the question a literal receiver raises: `'ab'.toUpperCase()` mentions no
+    identifier, so no name-based query can see that `String.prototype.toUpperCase` was replaced. It maps
+    the receiver's type to the intrinsic that owns its methods and asks that name the same question.
+    """
+
+    @staticmethod
+    def _trusted(source: str, value_type: type) -> bool:
+        ast = JsParser(source).parse()
+        effects = build_effects(build_semantic_model(ast))
+        return effects.trusted_prototype(value_type)
+
+    def test_untouched_prototypes_are_trusted(self):
+        self.assertTrue(self._trusted("var r = 'ab'.toUpperCase();", str))
+        self.assertTrue(self._trusted("var r = [1, 2].join('-');", list))
+
+    def test_patched_string_prototype_is_refused(self):
+        self.assertFalse(self._trusted(
+            "String.prototype.toUpperCase = function () { return 'X'; };", str))
+
+    def test_patched_array_prototype_is_refused(self):
+        self.assertFalse(self._trusted(
+            "Array.prototype.join = function () { return 'X'; };", list))
+
+    def test_patch_of_one_prototype_leaves_the_other_trusted(self):
+        """
+        The same precision as the per-name query: patching `Array.prototype` cannot change what a string
+        method means.
+        """
+        source = "Array.prototype.join = function () { return 'X'; };"
+        self.assertFalse(self._trusted(source, list))
+        self.assertTrue(self._trusted(source, str))
+
+    def test_define_property_on_a_prototype_is_refused(self):
+        self.assertFalse(self._trusted(
+            "Object.defineProperty(Array.prototype, 'join', { value: 1 });", list))
+
+    def test_shadowing_the_owner_name_is_refused(self):
+        self.assertFalse(self._trusted('var String = {};', str))
+
+    def test_reflection_surface_refuses_every_prototype(self):
+        self.assertFalse(self._trusted("eval('x');", str))
+
+    def test_type_with_no_known_owner_is_refused(self):
+        self.assertFalse(self._trusted('var r = 1;', object))
+
+    def test_number_and_boolean_owners_are_recognized(self):
+        self.assertTrue(self._trusted('var r = 1;', int))
+        self.assertTrue(self._trusted('var r = 1;', bool))
+        self.assertFalse(self._trusted('Number.prototype.toFixed = function () {};', int))
+        self.assertFalse(self._trusted('Boolean.prototype.toString = function () {};', bool))
+
+
+class TestCallIsFoldable(TestBase):
+    """
+    `call_is_foldable` is the single gate every constant fold shares. It must admit exactly the calls whose
+    value can replace them: the callee is still the built-in it is spelled as, and no argument carries an
+    effect the fold would discard. The admit cases matter as much as the refusals — a gate that refuses too
+    much silently disables correct folding, which is the failure mode that looks like success.
+    """
+
+    @staticmethod
+    def _foldable(source: str, receiver_type: type | None = None) -> bool:
+        ast = JsParser(source).parse()
+        effects = build_effects(build_semantic_model(ast))
+        outermost = None
+        for node in ast.walk():
+            if not isinstance(node, JsCallExpression):
+                continue
+            if outermost is None or not node.is_descendant_of(outermost):
+                outermost = node
+        if outermost is None:
+            raise AssertionError('no call expression in source')
+        return effects.call_is_foldable(outermost, receiver_type=receiver_type)
+
+    def test_free_function_is_admitted(self):
+        self.assertTrue(self._foldable("var r = parseInt('10');"))
+
+    def test_static_method_is_admitted(self):
+        self.assertTrue(self._foldable('var r = String.fromCharCode(65);'))
+
+    def test_instance_method_is_admitted(self):
+        self.assertTrue(self._foldable("var r = 'ab'.toUpperCase();", str))
+
+    def test_pure_callback_is_admitted(self):
+        self.assertTrue(self._foldable(
+            'var r = [1, 2].map(function (x) { return x + 1; });', list))
+
+    def test_shadowed_callee_is_refused(self):
+        self.assertFalse(self._foldable("var parseInt = function () {}; var r = parseInt('10');"))
+
+    def test_shadowed_static_root_is_refused(self):
+        self.assertFalse(self._foldable('var String = {}; var r = String.fromCharCode(65);'))
+
+    def test_patched_receiver_prototype_is_refused(self):
+        self.assertFalse(self._foldable(
+            "String.prototype.toUpperCase = function () {}; var r = 'ab'.toUpperCase();", str))
+
+    def test_instance_method_without_a_receiver_type_is_refused(self):
+        """
+        The caller supplies the receiver's runtime type because only it knows the value. Omitting it leaves
+        the prototype question unanswered, and an unanswered question is not a yes.
+        """
+        self.assertFalse(self._foldable("var r = 'ab'.toUpperCase();"))
+
+    def test_callback_writing_a_script_scope_var_is_refused(self):
+        """
+        The write reports `writes_captured=False`, because the binding is not captured from the callback's
+        perspective, so purity alone admits it and the write would be lost. `written_bindings` catches it.
+        """
+        self.assertFalse(self._foldable(
+            'var n = 0; var r = [1, 2].map(function (x) { n += x; return x; });', list))
+
+    def test_callback_writing_a_global_is_refused(self):
+        self.assertFalse(self._foldable(
+            'var r = [1, 2].map(function (x) { globalThis.q = x; return x; });', list))
+
+    def test_callback_calling_an_unknown_function_is_refused(self):
+        self.assertFalse(self._foldable(
+            'var r = [1, 2].map(function (x) { return WScript.f(x); });', list))
+
+    def test_throwing_callback_is_refused(self):
+        self.assertFalse(self._foldable(
+            "var r = [1, 2].map(function (x) { throw 'boom'; });", list))
+
+    def test_callback_mutating_an_outer_container_is_refused(self):
+        self.assertFalse(self._foldable(
+            'var s = [9]; var r = [1, 2].map(function (x) { s.push(x); return x; });', list))
+
+    def test_trusted_call_valued_argument_is_admitted(self):
+        """
+        A nested call is admissible precisely because the same questions are asked of it. Refusing all
+        nested calls would disable a large class of correct folds.
+        """
+        self.assertTrue(self._foldable('var r = Math.floor(Math.abs(-1.7));'))
+        self.assertTrue(self._foldable('var r = parseInt(String.fromCharCode(65));'))
+
+    def test_shadowed_nested_callee_is_refused(self):
+        """
+        The nested call is what makes this refusable: `String` is shadowed, so the inner call is not the
+        built-in, and the outer fold must not proceed on a value it cannot trust.
+        """
+        self.assertFalse(self._foldable(
+            'var String = {}; var r = parseInt(String.fromCharCode(65));'))
+
+    def test_nested_callee_with_a_patched_prototype_is_refused(self):
+        self.assertFalse(self._foldable(
+            "Array.prototype.join = function () {};"
+            " var r = parseInt([1, 2].join(''));", None))
+
+    def test_reflection_surface_is_refused(self):
+        self.assertFalse(self._foldable("eval('x'); var r = Math.floor(1.7);"))
+
+    def test_unrelated_prototype_patch_still_admits(self):
+        """
+        The precision control: patching `Object.prototype` cannot reach `Math`, so the fold survives.
+        """
+        self.assertTrue(self._foldable('Object.prototype.zz = 1; var r = Math.floor(1.7);'))
+
+    def test_callee_that_is_not_a_name_is_refused(self):
+        self.assertFalse(self._foldable('var r = (function () { return 1; })();'))
+
+

@@ -369,9 +369,10 @@ class JsSimplifications(Transformer):
             or self._try_fold_join(node)
         )
 
-    @staticmethod
-    def _fold_parseint(node: JsCallExpression) -> JsNumericLiteral | None:
+    def _fold_parseint(self, node: JsCallExpression) -> JsNumericLiteral | None:
         if len(node.arguments) < 1:
+            return None
+        if not self.effects.call_is_foldable(node):
             return None
         radix = 10
         if len(node.arguments) >= 2:
@@ -415,8 +416,7 @@ class JsSimplifications(Transformer):
             return None
         return substitute_params(expr, fn.params, node.arguments, transformer=transformer)
 
-    @staticmethod
-    def _try_fold_static_method(node: JsCallExpression) -> Node | None:
+    def _try_fold_static_method(self, node: JsCallExpression) -> Node | None:
         callee = node.callee
         if not isinstance(callee, JsMemberExpression):
             return None
@@ -431,6 +431,8 @@ class JsSimplifications(Transformer):
         builtin = BUILTIN_REGISTRY.get((static_name, method_name))
         if builtin is None:
             return None
+        if not self.effects.call_is_foldable(node):
+            return None
         args = [_node_to_value(a) for a in node.arguments]
         if any(a is _UNCONVERTIBLE for a in args):
             return None
@@ -440,14 +442,15 @@ class JsSimplifications(Transformer):
             return None
         return value_to_node(result)
 
-    @staticmethod
-    def _try_fold_free_function(node: JsCallExpression) -> Node | None:
+    def _try_fold_free_function(self, node: JsCallExpression) -> Node | None:
         callee = node.callee
         if not isinstance(callee, JsIdentifier):
             return None
         builtin = BUILTIN_REGISTRY.get((None, callee.name))
         if builtin is None:
             return None
+        if not self.effects.call_is_foldable(node):
+            return None
         args = [_node_to_value(a) for a in node.arguments]
         if any(a is _UNCONVERTIBLE for a in args):
             return None
@@ -457,13 +460,12 @@ class JsSimplifications(Transformer):
             return None
         return value_to_node(result)
 
-    @staticmethod
-    def _try_fold_instance_method(node: JsCallExpression) -> Node | None:
+    def _try_fold_instance_method(self, node: JsCallExpression) -> Node | None:
         callee = node.callee
         if not isinstance(callee, JsMemberExpression):
             return None
         method_name = access_key(callee)
-        if method_name is None or method_name in ('split', 'join', 'length'):
+        if method_name is None or method_name in ('split', 'join'):
             return None
         if callee.object is None:
             return None
@@ -478,6 +480,8 @@ class JsSimplifications(Transformer):
             return None
         if builtin is None:
             return None
+        if not self.effects.call_is_foldable(node, receiver_type=type(receiver)):
+            return None
         args = [_node_to_value(a) for a in node.arguments]
         if any(a is _UNCONVERTIBLE for a in args):
             return None
@@ -487,8 +491,7 @@ class JsSimplifications(Transformer):
             return None
         return value_to_node(result)
 
-    @staticmethod
-    def _try_fold_split(node: JsCallExpression) -> JsArrayExpression | None:
+    def _try_fold_split(self, node: JsCallExpression) -> JsArrayExpression | None:
         if len(node.arguments) != 1:
             return None
         callee = node.callee
@@ -503,13 +506,14 @@ class JsSimplifications(Transformer):
         sep = string_value(node.arguments[0])
         if sep is None:
             return None
+        if not self.effects.call_is_foldable(node, receiver_type=str):
+            return None
         parts = obj_str.split(sep) if sep else utf16_code_units(obj_str)
         return JsArrayExpression(
             elements=[make_string_literal(p) for p in parts],
         )
 
-    @staticmethod
-    def _try_fold_join(node: JsCallExpression) -> JsStringLiteral | None:
+    def _try_fold_join(self, node: JsCallExpression) -> JsStringLiteral | None:
         if len(node.arguments) > 1:
             return None
         callee = node.callee
@@ -532,6 +536,8 @@ class JsSimplifications(Transformer):
                 return None
         else:
             sep = ','
+        if not self.effects.call_is_foldable(node, receiver_type=list):
+            return None
         return make_string_literal(sep.join(parts))
 
     def visit_JsConditionalExpression(self, node: JsConditionalExpression):

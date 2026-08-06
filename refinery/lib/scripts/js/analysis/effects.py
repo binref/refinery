@@ -216,6 +216,28 @@ _ACCESSOR_INSTALL_METHODS = frozenset({
     '__defineSetter__',
 })
 
+_PROTOTYPE_OWNERS: dict[str, str] = {
+    'str': 'String',
+    'list': 'Array',
+    'JsBuffer': 'Buffer',
+    'dict': 'Object',
+    'bool': 'Boolean',
+    'int': 'Number',
+    'float': 'Number',
+}
+"""
+The intrinsic whose prototype supplies the methods of each interpreter value type, keyed by type name so
+this module needs no import from the interpreter that depends on it. A method call on a literal receiver
+names no global at the call site, so trusting it means asking whether *this* prototype is intact:
+`String.prototype.toUpperCase = f` is a write to `String`, and it changes what `'ab'.toUpperCase()` means
+even though the expression mentions no identifier at all.
+
+Every type in the interpreter's value domain is named here directly, including `JsBuffer`, whose methods
+come from `Buffer.prototype` rather than the `Array.prototype` its `list` base would suggest. Lookup is
+therefore exact rather than a walk up the Python MRO, which would silently answer `Array` for any future
+`list` subclass instead of refusing. A type with no entry is never trusted through this route.
+"""
+
 
 class _PureCall:
     """
@@ -1373,6 +1395,90 @@ class EffectModel:
         if node.name in self._globals_written:
             return None
         return node.name
+
+    def trusted_prototype(self, value_type: type) -> bool:
+        """
+        Whether the prototype supplying *value_type*'s methods is provably unmodified, so a method call on
+        a receiver of that type still means what the language says. A method call on a literal receiver
+        names no global, which is exactly why it needs its own question: `trusted_intrinsic` can only
+        judge names the expression mentions, and `'ab'.toUpperCase()` mentions none.
+
+        The owning intrinsic is looked up rather than assumed, and then asked the same per-name question a
+        named callee gets — `String.prototype.toUpperCase = f` and
+        `Object.defineProperty(Array.prototype, ...)` are both already recorded as writes to `String` and
+        `Array` by `_globals_written_by_name`. A type with no known owner is never trusted.
+        """
+        owner = _PROTOTYPE_OWNERS.get(value_type.__name__)
+        if owner is None:
+            return False
+        if self.model.has_reflection_surface():
+            return False
+        return owner not in self._globals_written
+
+    def call_is_foldable(
+        self,
+        node: JsCallExpression,
+        *,
+        receiver_type: type | None = None,
+    ) -> bool:
+        """
+        Whether the call *node* may be evaluated to a constant and have its result replace it. This is the
+        one admission gate every fold shares, so that a rule proven necessary at one site cannot be missing
+        at another — the fold surface acquired its divergent hand-rolled checks precisely because each
+        transform owned its own.
+
+        Three questions must all answer yes:
+
+        - The callee is still the built-in it is spelled as. A named callee (`parseInt(...)`,
+          `String.fromCharCode(...)`) is judged by `trusted_intrinsic` on its root name; a call on a
+          literal receiver is judged by `trusted_prototype` on *receiver_type*, which the caller supplies
+          because it knows the receiver's runtime type and this model does not.
+        - Every function-valued argument writes nothing outside itself. `is_effect_free_when_discarded` is
+          the right predicate rather than `is_pure`: a callback that mutates a fresh local and returns it —
+          the `reduce` accumulator idiom — is not pure, but that mutation is the value being computed and an
+          evaluator that runs the call reproduces it. Purity is not sufficient on its own either, since a
+          callback writing a script-scope `var` reports `writes_captured=False` — that binding is not
+          captured from its perspective — so the write would be dropped while the value folds.
+          `written_bindings` records it by identity and catches it.
+        - Nothing in the argument list is itself a call this gate does not also clear, so admitting an outer
+          call cannot smuggle in an inner one. A nested built-in (`Math.floor(Math.abs(-1.7))`) is fine
+          precisely because the same questions are asked of it.
+
+        Trust is not evaluability, and this answers only the first. `trusted_intrinsic` says `unknownFn` is
+        undisturbed — true, and no help, since no such built-in exists to fold. Whether a callee can
+        actually be evaluated is the caller's question, answered by its own registry lookup before it asks
+        this one; conflating the two is what let a registry entry exist with no matching trust rule.
+        """
+        if not self._callee_is_trusted(node, receiver_type):
+            return False
+        return all(self._argument_is_admissible(arg) for arg in node.arguments)
+
+    def _callee_is_trusted(self, node: JsCallExpression, receiver_type: type | None) -> bool:
+        callee = strip_parens(node.callee)
+        if isinstance(callee, JsIdentifier):
+            return self.trusted_intrinsic(callee) is not None
+        if not isinstance(callee, JsMemberExpression):
+            return False
+        base = strip_parens(callee.object)
+        if isinstance(base, JsIdentifier):
+            return self.trusted_intrinsic(base) is not None
+        if isinstance(base, JsCallExpression):
+            # A chained call (`Buffer.from(x).toString('hex')`) has no name at this link. Its receiver is
+            # whatever the inner call returned, so it is trustworthy exactly when that call is — the
+            # receiver type is unknown here and the inner call's own gate decides.
+            return self._callee_is_trusted(base, None)
+        if receiver_type is None:
+            return False
+        return self.trusted_prototype(receiver_type)
+
+    def _argument_is_admissible(self, arg: Node | None) -> bool:
+        node = strip_parens(arg)
+        if isinstance(node, FUNCTION_NODES):
+            summary = self.summary_of(node)
+            return summary.is_effect_free_when_discarded and not summary.written_bindings
+        if isinstance(node, JsCallExpression):
+            return self.call_is_foldable(node)
+        return True
 
     def _is_trusted_global_read(self, member: JsMemberExpression) -> bool:
         """
