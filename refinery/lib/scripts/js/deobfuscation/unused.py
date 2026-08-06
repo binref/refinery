@@ -47,6 +47,10 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     remove_declarator,
     walk_scope,
 )
+from refinery.lib.scripts.js.deobfuscation.options import (
+    is_host_entrypoint,
+    module_execution,
+)
 from refinery.lib.scripts.js.model import (
     JsArrayExpression,
     JsArrayPattern,
@@ -104,11 +108,21 @@ def _global_alias_read_names(root: Node, aliases: frozenset[str]) -> frozenset[s
 def _reachable_functions(
     body: list[Statement],
     functions: dict[str, JsFunctionDeclaration],
+    entrypoints: frozenset[str] = frozenset(),
 ) -> tuple[set[str], dict[str, list[Statement]]]:
     """
     Compute the set of function names transitively reachable from non-function statements in
     *body*. A function is reachable if its name appears as any identifier in a reachable statement
     or in the body of another reachable function.
+
+    A name in *entrypoints* is reachable regardless of what the file references, because a host invokes
+    it from outside: in the script execution model a top-level function is a property of the global
+    object, so the file is not the whole program and its references are not the whole call graph.
+    Seeding such a name here rather than exempting it from removal later is what makes everything it
+    calls survive too — the transitive closure below then does that work — which matters because the
+    entrypoint is typically the root of the whole program. Keeping the entrypoint's *own* declaration is
+    not this function's job; the caller spares it by binding, so the write-only demotion below needs no
+    exception for it.
 
     Functions that are only referenced as the object of property-write statements
     (`funcName.prop = ...`) where neither the function nor its properties are read anywhere else
@@ -122,6 +136,7 @@ def _reachable_functions(
             continue
         referenced |= collect_identifier_names(stmt)
     reachable = referenced & functions.keys()
+    reachable |= entrypoints & functions.keys()
     frontier = list(reachable)
     while frontier:
         name = frontier.pop()
@@ -487,7 +502,27 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
         surface. The model decides; a `None` binding (a synthesized node the model never saw) is treated
         as not reachable, matching the surrounding removal logic.
         """
-        return binding is not None and self.model.reflection_can_reach(binding)
+        if binding is None:
+            return False
+        if self._named_host_entrypoint(binding):
+            return True
+        return self.model.reflection_can_reach(binding)
+
+    def _named_host_entrypoint(self, binding: Binding) -> bool:
+        """
+        Whether *binding* is one the caller declared a host invokes by name. This answers the same
+        question reflection does — could code outside the recorded references reach this binding — for the
+        case the model cannot see at all, a caller living outside the file.
+
+        A pattern alone does not decide it: the binding must also be one a host could reach, which
+        `reaches_global_object` answers over the active execution model. That is what keeps a pattern from
+        protecting a nested binding, a `let`, or anything at all under the module model, where a top-level
+        declaration never becomes a property of the global object.
+        """
+        if not is_host_entrypoint(self.options, binding.name):
+            return False
+        return self.model.reaches_global_object(
+            binding, module_scope=module_execution(self.options))
 
     def _at_script_scope(self, parent: Node) -> bool:
         """
@@ -549,7 +584,8 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
                 functions[stmt.id.name] = stmt
         if not functions:
             return set()
-        reachable, write_only_stmts = _reachable_functions(body, functions)
+        reachable, write_only_stmts = _reachable_functions(
+            body, functions, self._host_entrypoints(functions))
         kept_by_reflection = {
             name for name, func in functions.items()
             if isinstance(func.id, JsIdentifier)
@@ -567,6 +603,25 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
                 _remove_from_parent(stmt)
         self.mark_changed()
         return unreachable
+
+    def _host_entrypoints(
+        self, functions: dict[str, JsFunctionDeclaration],
+    ) -> frozenset[str]:
+        """
+        Which of *functions* the caller declared a host invokes by name. Naming one seeds it as a
+        reachability root, so everything it calls is reachable through it and survives too — which is the
+        point, since an entrypoint is usually the root of the whole program. The binding is taken from each
+        declaration's own identifier rather than looked up by name, so a same-named function in a nested
+        body is judged on its own merits.
+        """
+        names: set[str] = set()
+        for name, func in functions.items():
+            if not isinstance(func.id, JsIdentifier):
+                continue
+            binding = self.model.binding_of(func.id)
+            if binding is not None and self._named_host_entrypoint(binding):
+                names.add(name)
+        return frozenset(names)
 
     def _remove_dead_variables(
         self, parent: Node, body: list[Statement], defunct: set[str],

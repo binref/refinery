@@ -387,3 +387,34 @@ class TestJsDeobfuscator(TestUnitBase):
             " 11, 'Fizz', 13, 14, 'FizzBuzz', 16, 17, 'Fizz', 19, 'Buzz']);",
             test,
         )
+
+    def test_host_entrypoint_survives_removal(self):
+        """
+        A JXA script exposes `run` for the host to invoke and never calls it itself, so reachability over
+        the file alone deletes it — and with it everything only it reached, which here is the whole file.
+        Naming it on the command line keeps it together with the binding and helper it uses, while the
+        function nothing reaches is still removed.
+        """
+        data = inspect.cleandoc(
+            """
+            var config = 'payload';
+            function decode(s) { return s.toUpperCase(); }
+            function run() { return decode(config); }
+            function junk() { return 'unused'; }
+            """
+        ).encode('utf8')
+        self.assertEqual('', data | self.load() | str)
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var config = 'payload';
+                function decode(s) {
+                  return s.toUpperCase();
+                }
+                function run() {
+                  return decode(config);
+                }
+                """
+            ),
+            data | self.load('run') | str,
+        )

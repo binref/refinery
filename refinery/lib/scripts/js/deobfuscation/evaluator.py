@@ -13,6 +13,7 @@ from refinery.lib.scripts import Node, Transformer, _remove_from_parent, _replac
 from refinery.lib.scripts.js.analysis.cache import model_cache
 from refinery.lib.scripts.js.analysis.effects import EffectModel
 from refinery.lib.scripts.js.analysis.model import (
+    Binding,
     Scope,
     SemanticModel,
     is_invocation_target,
@@ -36,6 +37,10 @@ from refinery.lib.scripts.js.deobfuscation.interpreter import (
     JsInterpreter,
     _ThrowSignal,
     is_runtime_name,
+)
+from refinery.lib.scripts.js.deobfuscation.options import (
+    is_host_entrypoint,
+    module_execution,
 )
 from refinery.lib.scripts.js.model import (
     JsArrowFunctionExpression,
@@ -678,15 +683,32 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
         (`model.reflection_can_reach`) must be kept even once every direct call has folded away — the
         `with`-body call still needs the binding. This mirrors the reflection gate the unused-code
         remover applies, so both transforms keep the same functions.
+
+        A function the caller declared to be a host entrypoint is likewise never removable: a host calls
+        it by name from outside the file, so no reference here can prove it dead. Both transforms consult
+        the same declaration, or they would disagree about which functions survive.
         """
         binding = model.naming_binding(func)
         if binding is None:
+            return False
+        if self._is_host_entrypoint(model, binding):
             return False
         exclude = self._function_exclude_node(func)
         return (
             not binding_has_references(model, binding, exclude=exclude)
             and not model.reflection_can_reach(binding)
         )
+
+    def _is_host_entrypoint(self, model: SemanticModel, binding: Binding) -> bool:
+        """
+        Whether *binding* names a function the caller declared a host invokes, and is one a host could
+        actually reach — a top-level declaration under the script execution model. The reachability test
+        is what keeps a pattern from protecting a nested function that happens to share the name.
+        """
+        if not is_host_entrypoint(self.options, binding.name):
+            return False
+        return model.reaches_global_object(
+            binding, module_scope=module_execution(self.options))
 
     def _remove_resolved_definitions(self, script: JsScript) -> None:
         removed: set[int] = set()

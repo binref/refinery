@@ -7,6 +7,7 @@ from test import TestBase
 from test.lib.scripts.js.analysis.differential import (
     behavior,
     deobfuscate_source,
+    host_behavior,
     node_executable,
 )
 
@@ -1797,4 +1798,87 @@ class TestMemberCalleeChainFolds(TestBase):
         self._check(
             'try { console.log([1, 2].concat([3]).length()); }'
             ' catch (e) { console.log(e.constructor.name); }')
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestHostEntrypointPreservation(TestBase):
+    """
+    Under the script execution model a top-level `var`/`function` is a property of the global object, so
+    a host — a JXA runner, Windows Script Host, a browser event dispatch — calls into the file by a name
+    the file itself never mentions. Reachability computed over the file alone therefore judges such a
+    function dead.
+
+    These cases are the reason `host_behavior` exists. Running the file and comparing stdout cannot see
+    the difference, because nothing inside the file reads the deleted name; only calling it afterwards
+    through `globalThis` makes the loss observable, with Node deciding what was lost.
+    """
+
+    def _check_host(self, source: str, *, calls: tuple[str, ...], entrypoints: tuple[str, ...]):
+        deobfuscated = deobfuscate_source(source, entrypoints=entrypoints)
+        self.assertEqual(
+            host_behavior(source, calls=calls),
+            host_behavior(deobfuscated, calls=calls),
+            F'deobfuscation changed what a host observes; result was:\n{deobfuscated}',
+        )
+
+    def test_named_entrypoint_is_still_callable_by_the_host(self):
+        self._check_host(
+            "var config = 'hi';"
+            ' function run() { return config; }',
+            calls=('run',),
+            entrypoints=('run',))
+
+    def test_entrypoint_callees_survive_so_it_still_returns_the_same_value(self):
+        """
+        Preserving the entrypoint alone is not enough: everything it calls has to survive too, or the
+        host's call throws instead of returning. Node arbitrates which.
+        """
+        self._check_host(
+            "function decode(n) { return 'v' + n; }"
+            ' function helper() { return decode(7); }'
+            ' function run() { return helper(); }',
+            calls=('run',),
+            entrypoints=('run',))
+
+    def test_several_handlers_survive_a_wildcard(self):
+        self._check_host(
+            "function OnStart() { return 'a'; }"
+            " function OnStop() { return 'b'; }",
+            calls=('OnStart', 'OnStop'),
+            entrypoints=('On*',))
+
+    def test_entrypoint_survives_beside_a_self_driving_top_level(self):
+        """
+        The realistic shape: the file both runs code of its own on load and exposes an entrypoint. Both
+        the load-time output and the host call must be preserved.
+        """
+        self._check_host(
+            "var log = [];"
+            " function record(x) { log.push(x); return x; }"
+            " function run() { return record('called'); }"
+            " console.log(record('loaded'));",
+            calls=('run',),
+            entrypoints=('run',))
+
+    def test_unnamed_dead_function_removal_is_unobservable_to_the_host(self):
+        """
+        The companion control. A function the host does not call may still be removed, and doing so
+        changes nothing a host can observe — so declaring one entrypoint does not freeze the file.
+        """
+        self._check_host(
+            "function junk() { return 'unused'; }"
+            " function run() { return 'kept'; }",
+            calls=('run', 'junk'),
+            entrypoints=('run',))
+
+    def test_entrypoint_held_by_a_var_is_still_callable_by_the_host(self):
+        """
+        `var run = function(){}` reaches the global object exactly as a declaration does, so a host calls
+        it the same way. It is removed by a different sweep than a function declaration, and Node confirms
+        the host observes no difference either way.
+        """
+        self._check_host(
+            "var run = function() { return 'from-var'; };",
+            calls=('run',),
+            entrypoints=('run',))
 

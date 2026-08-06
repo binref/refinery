@@ -4,7 +4,9 @@ import inspect
 
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 
+from refinery.lib.scripts.js.deobfuscation.evaluator import JsFunctionEvaluator
 from refinery.lib.scripts.js.deobfuscation.interpreter import IrreducibleExpression, JsInterpreter
+from refinery.lib.scripts.js.deobfuscation.options import DeobfuscationOptions
 from refinery.lib.scripts.js.model import JsFunctionDeclaration, JsIdentifier
 from refinery.lib.scripts.js.parser import JsParser
 
@@ -2220,3 +2222,135 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
             """
         )
         self.assertEqual(expected, result)
+
+
+class TestHostEntrypointDefinitions(TestJsDeobfuscator):
+    """
+    Once every call to a function has folded to its result, the evaluator deletes the definition. That is
+    right for an internal helper and wrong for a function a host also calls by name: the file's calls are
+    not the only calls. This transform must honour the same declaration the unused-code remover does, or
+    the two disagree about which functions survive.
+    """
+
+    def _evaluate_with(self, source: str, *entrypoints: str) -> str:
+        return self._run_transformer(
+            source,
+            JsFunctionEvaluator,
+            DeobfuscationOptions(entrypoints=entrypoints),
+        )
+
+    def test_folded_entrypoint_definition_is_kept(self):
+        source = inspect.cleandoc(
+            """
+            function run(n) {
+              return n + 1;
+            }
+            SINK(run(1));
+            """
+        )
+        expected = inspect.cleandoc(
+            """
+            function run(n) {
+              return n + 1;
+            }
+            SINK(2);
+            """
+        )
+        self.assertEqual(expected, self._evaluate_with(source, 'run'))
+
+    def test_folded_helper_definition_is_still_removed(self):
+        """
+        The control: naming one entrypoint must not stop the evaluator from cleaning up everything else.
+        """
+        source = inspect.cleandoc(
+            """
+            function calc(n) {
+              return n + 1;
+            }
+            SINK(calc(1));
+            """
+        )
+        self.assertEqual('SINK(2);', self._evaluate_with(source, 'run'))
+
+    def test_entrypoint_keeps_its_body_after_its_callee_folds(self):
+        """
+        The entrypoint survives, but the fold inside it still applies — preserving the definition is not
+        the same as freezing its contents.
+        """
+        source = inspect.cleandoc(
+            """
+            function helper(n) {
+              return n * 2;
+            }
+            function run() {
+              return helper(3);
+            }
+            SINK(run());
+            """
+        )
+        expected = inspect.cleandoc(
+            """
+            function run() {
+              return 6;
+            }
+            SINK(6);
+            """
+        )
+        self.assertEqual(expected, self._evaluate_with(source, 'run'))
+
+    def test_nested_function_sharing_an_entrypoint_name_is_not_kept(self):
+        """
+        Only a declaration a host could reach is protected, which is a top-level one under the script
+        model. A same-named function nested in another body is a distinct binding no host can name.
+        """
+        source = inspect.cleandoc(
+            """
+            function outer() {
+              function run(n) {
+                return n + 1;
+              }
+              return run(1);
+            }
+            SINK(outer());
+            """
+        )
+        self.assertEqual('SINK(2);', self._evaluate_with(source, 'run'))
+
+    def test_entrypoint_held_by_a_var_declarator_is_kept(self):
+        """
+        `var run = function(){}` puts `run` on the global object just as a declaration does, so a host can
+        call it and the definition must survive even once the file's own call has folded.
+        """
+        source = inspect.cleandoc(
+            """
+            var run = function(n) {
+              return n + 1;
+            };
+            SINK(run(1));
+            """
+        )
+        expected = inspect.cleandoc(
+            """
+            var run = function(n) {
+              return n + 1;
+            };
+            SINK(2);
+            """
+        )
+        self.assertEqual(expected, self._evaluate_with(source, 'run'))
+
+    def test_entrypoint_held_by_a_let_declarator_is_not_kept(self):
+        """
+        The companion negative. A `let` is lexical and never becomes a property of the global object, so
+        no host can reach it by name and naming it protects nothing — the same distinction
+        `reaches_global_object` draws for the unused-code remover.
+        """
+        source = inspect.cleandoc(
+            """
+            let run = function(n) {
+              return n + 1;
+            };
+            SINK(run(1));
+            """
+        )
+        self.assertEqual('SINK(2);', self._evaluate_with(source, 'run'))

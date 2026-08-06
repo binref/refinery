@@ -3,12 +3,19 @@ Differential testing support for JavaScript deobfuscation: run a snippet and its
 a real Node.js engine and compare observable behavior. This is the strongest available oracle for the
 invariant that deobfuscation preserves semantics — the engine, not our own interpreter, decides.
 
+Two execution models are available, because they disagree about what a top-level declaration means.
+`behavior` runs the snippet as `node <file>`, a CommonJS module, where a top-level `var`/`function` is
+scoped to the module. `host_behavior` runs it as a classic global script and can additionally call a
+name through `globalThis` afterwards, which is the only way to observe a declaration that reaches the
+global object — and therefore the only way to observe whether an entrypoint a host would call survived.
+
 SECURITY: this executes JavaScript in Node.js. It must only ever be given benign, hand-authored
 snippets. Never point it at the repository's malware test corpus or any untrusted sample — executing
 those is forbidden.
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -29,14 +36,21 @@ def node_executable() -> str | None:
     return shutil.which('node')
 
 
-def deobfuscate_source(source: str, *, module: bool = False) -> str:
+def deobfuscate_source(
+    source: str,
+    *,
+    module: bool = False,
+    entrypoints: tuple[str, ...] = (),
+) -> str:
     """
     Parse, deobfuscate, and re-synthesize a snippet, returning the deobfuscated source. *module*
     selects the module execution model (the oracle runs each snippet as a CommonJS module, so a
     scope-sensitive snippet must be deobfuscated under the same model to be comparable).
+    *entrypoints* names top-level functions a host calls by name, which intra-script reachability
+    cannot see.
     """
     ast = JsParser(source).parse()
-    deobfuscate(ast, module=module)
+    deobfuscate(ast, module=module, entrypoints=entrypoints)
     return JsSynthesizer().convert(ast)
 
 
@@ -45,6 +59,48 @@ def _normalize_error(stderr: str) -> str:
     if match is not None:
         return match.group(1)
     return 'ERROR'
+
+
+def _as_global_script(source: str, calls: tuple[str, ...]) -> str:
+    """
+    Wrap *source* so it runs under the *script* execution model and then invoke each name in *calls* as
+    a host would.
+
+    `node file.js` runs a CommonJS module, where a top-level `var`/`function` is scoped to the module,
+    so `behavior` alone cannot observe anything about the global object. Indirect `eval` runs its
+    argument in the true global scope — the same scope a browser `<script>`, a Windows Script Host
+    `.js`, or a JXA file gets — which is what puts a top-level declaration onto `globalThis` and makes
+    it reachable by name from outside.
+
+    That reachability is the whole point: a host entrypoint has no caller inside the file, so its
+    deletion changes nothing about running the file and is invisible to a stdout comparison. Calling it
+    afterwards through `globalThis` is what turns the deletion into an observable difference, with Node
+    rather than our own reading of the specification deciding what the difference is.
+    """
+    lines = [
+        'const globalEval = eval;',
+        F'globalEval({json.dumps(source)});',
+    ]
+    for name in calls:
+        key = json.dumps(name)
+        lines.append(
+            F'console.log({key} + "=" + JSON.stringify('
+            F'typeof globalThis[{key}] === "function" ? globalThis[{key}]() : undefined));'
+        )
+    return '\n'.join(lines)
+
+
+def host_behavior(
+    source: str,
+    *,
+    calls: tuple[str, ...] = (),
+    timeout: float = 15.0,
+) -> tuple[str, str | None]:
+    """
+    The observable behavior of *source* run as a classic global script, including the results of the
+    host calling each name in *calls* once loading finishes. Same return shape as `behavior`.
+    """
+    return behavior(_as_global_script(source, calls), timeout=timeout)
 
 
 def behavior(source: str, *, timeout: float = 15.0) -> tuple[str, str | None]:

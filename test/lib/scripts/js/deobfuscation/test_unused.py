@@ -4,6 +4,7 @@ import inspect
 
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 
+from refinery.lib.scripts.js.deobfuscation.options import DeobfuscationOptions
 from refinery.lib.scripts.js.deobfuscation.simplify import JsSimplifications
 from refinery.lib.scripts.js.deobfuscation.unused import (
     JsUnusedCodeRemoval,
@@ -1386,3 +1387,270 @@ class TestRegressionBugs(TestJsDeobfuscator):
             ),
             self._run_transformer(source, JsUnusedCodeRemoval),
         )
+
+
+class TestHostEntrypoints(TestJsDeobfuscator):
+    """
+    A top-level function a host invokes by name has no caller inside the file, so reachability computed
+    over the file alone judges it dead — and removing it also strands everything only it reached. Which
+    names a host calls is not derivable from the file, so the caller declares them and they seed the
+    reachability roots.
+    """
+
+    def _remove_unused(self, source: str, *entrypoints: str) -> str:
+        return self._run_transformer(
+            source,
+            JsUnusedCodeRemoval,
+            DeobfuscationOptions(entrypoints=entrypoints),
+        )
+
+    def test_unreferenced_function_removed_when_no_entrypoint_is_named(self):
+        """
+        The default is unchanged: with nothing declared, an unreferenced top-level function is dead.
+        """
+        source = inspect.cleandoc(
+            """
+            var config = 'x';
+            function run() {
+              return config;
+            }
+            console.log(1);
+            """
+        )
+        self.assertEqual('console.log(1);', self._remove_unused(source))
+
+    def test_named_entrypoint_survives(self):
+        source = inspect.cleandoc(
+            """
+            var config = 'x';
+            function run() {
+              return config;
+            }
+            console.log(1);
+            """
+        )
+        self.assertEqual(source, self._remove_unused(source, 'run'))
+
+    def test_named_entrypoint_keeps_the_functions_it_calls(self):
+        """
+        The declaration seeds a reachability root rather than exempting one function from removal, so
+        the entrypoint's callees are reachable through it and survive without being named themselves.
+        """
+        source = inspect.cleandoc(
+            """
+            function helper() {
+              return 7;
+            }
+            function run() {
+              return helper();
+            }
+            console.log(1);
+            """
+        )
+        self.assertEqual(source, self._remove_unused(source, 'run'))
+
+    def test_unnamed_function_still_removed_beside_an_entrypoint(self):
+        source = inspect.cleandoc(
+            """
+            function junk() {
+              return 2;
+            }
+            function run() {
+              return 1;
+            }
+            console.log(1);
+            """
+        )
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function run() {
+                  return 1;
+                }
+                console.log(1);
+                """
+            ),
+            self._remove_unused(source, 'run'),
+        )
+
+    def test_non_matching_pattern_changes_nothing(self):
+        source = inspect.cleandoc(
+            """
+            function run() {
+              return 1;
+            }
+            console.log(1);
+            """
+        )
+        self.assertEqual('console.log(1);', self._remove_unused(source, 'doGet'))
+
+    def test_wildcard_selects_a_family_of_handlers(self):
+        source = inspect.cleandoc(
+            """
+            function OnStart() {
+              return 1;
+            }
+            function OnStop() {
+              return 2;
+            }
+            function junk() {
+              return 3;
+            }
+            console.log(1);
+            """
+        )
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function OnStart() {
+                  return 1;
+                }
+                function OnStop() {
+                  return 2;
+                }
+                console.log(1);
+                """
+            ),
+            self._remove_unused(source, 'On*'),
+        )
+
+    def test_single_asterisk_keeps_every_top_level_function(self):
+        source = inspect.cleandoc(
+            """
+            function a() {
+              return 1;
+            }
+            function b() {
+              return 2;
+            }
+            console.log(1);
+            """
+        )
+        self.assertEqual(source, self._remove_unused(source, '*'))
+
+    def test_pattern_matching_is_case_sensitive(self):
+        source = inspect.cleandoc(
+            """
+            function Run() {
+              return 1;
+            }
+            console.log(1);
+            """
+        )
+        self.assertEqual('console.log(1);', self._remove_unused(source, 'run'))
+
+    def test_nested_function_sharing_the_name_is_not_protected(self):
+        """
+        Only a declaration a host can actually reach is protected, which `reaches_global_object` decides.
+        A same-named function inside another body is a distinct binding no host can name.
+        """
+        source = inspect.cleandoc(
+            """
+            function outer() {
+              function run() {
+                return 1;
+              }
+              return 2;
+            }
+            console.log(outer());
+            """
+        )
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function outer() {
+                  return 2;
+                }
+                console.log(outer());
+                """
+            ),
+            self._remove_unused(source, 'run'),
+        )
+
+    def test_entrypoints_protect_nothing_under_the_module_model(self):
+        """
+        A top-level declaration in a module never becomes a property of the global object, so no host can
+        call it by name and naming it cannot make it live.
+        """
+        source = inspect.cleandoc(
+            """
+            var config = 'x';
+            function run() {
+              return config;
+            }
+            console.log(1);
+            """
+        )
+        self.assertEqual(
+            'console.log(1);',
+            self._run_transformer(
+                source,
+                JsUnusedCodeRemoval,
+                DeobfuscationOptions(module=True, entrypoints=('run',)),
+            ),
+        )
+
+    def test_entrypoint_referenced_only_by_a_property_write_survives(self):
+        """
+        A function whose only reference is `f.prop = ...` is normally reclaimed as write-only. A host
+        calls the entrypoint regardless of how the file references it, so that demotion must not apply.
+        """
+        source = inspect.cleandoc(
+            """
+            function run() {
+              return 1;
+            }
+            run.version = 2;
+            console.log(1);
+            """
+        )
+        self.assertEqual(source, self._remove_unused(source, 'run'))
+
+    def test_declared_name_that_is_not_a_top_level_function_is_inert(self):
+        """
+        A pattern names a callable a host reaches, so it protects a top-level function declaration. A name
+        the script never declares that way — here only a `let` binding exists — is left to the ordinary
+        reachability rules.
+        """
+        source = inspect.cleandoc(
+            """
+            let run = function() {
+              return 1;
+            };
+            console.log(1);
+            """
+        )
+        self.assertEqual('console.log(1);', self._remove_unused(source, 'run'))
+
+    def test_entrypoint_held_by_a_var_declarator_survives(self):
+        """
+        `var run = function(){}` puts `run` on the global object just as a declaration does, so a host can
+        call it. This binding is swept by the dead-variable path rather than the dead-function path, which
+        is why the declaration is protected per binding and not only where function reachability is
+        computed.
+        """
+        source = inspect.cleandoc(
+            """
+            var run = function() {
+              return 1;
+            };
+            console.log(1);
+            """
+        )
+        self.assertEqual(source, self._remove_unused(source, 'run'))
+
+    def test_entrypoint_var_store_survives(self):
+        """
+        The same binding in its split form, where the declaration and the assignment are separate
+        statements and the assignment is what the sweep would drop.
+        """
+        source = inspect.cleandoc(
+            """
+            var run;
+            run = function() {
+              return 1;
+            };
+            console.log(1);
+            """
+        )
+        self.assertEqual(source, self._remove_unused(source, 'run'))
