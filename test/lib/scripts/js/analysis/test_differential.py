@@ -1279,6 +1279,67 @@ class TestDeobfuscationExpressionRegressions(TestBase):
             ' SINK.push(1 / Math.round(-0));'
             " console.log(SINK.join('|'));")
 
+    def test_json_parsed_proto_key_survives_the_fold(self):
+        """
+        `JSON.parse` creates a real own `__proto__` property. Rendering the parsed object back with a
+        plain `__proto__:` key installs a prototype instead, so the property disappears and the object
+        stringifies as `{}`. Only the computed key form round-trips.
+        """
+        self._check(R"console.log(JSON.stringify(JSON.parse('{\"__proto__\":{\"x\":1}}')));")
+
+    def test_json_parsed_proto_key_stays_enumerable(self):
+        self._check(R"console.log(Object.keys(JSON.parse('{\"__proto__\":{\"x\":1}}')).length);")
+
+    def test_nested_json_parsed_proto_key_survives_the_fold(self):
+        self._check(R"console.log(JSON.stringify(JSON.parse('{\"a\":{\"__proto__\":{\"x\":1}}}')));")
+
+    def test_proto_literal_installs_prototype_rather_than_property(self):
+        """
+        The inverse direction: a plain `__proto__:` key in the source installs a prototype and creates no
+        own property, so reading it back as an ordinary key invents a property Node does not have and
+        hides the inherited one.
+        """
+        self._check(
+            'function f() { return Object.keys({ __proto__: { x: 1 } }).length; }'
+            ' console.log(f());')
+
+    def test_proto_literal_member_is_inherited(self):
+        self._check(
+            'function f() { var o = { __proto__: { x: 1 } }; return o.x; }'
+            ' console.log(f());')
+
+    def test_computed_proto_literal_is_an_own_property(self):
+        """
+        The companion positive case: the computed form really does create an own property, and must keep
+        folding, so refusing the prototype-installing forms does not degrade into refusing all of them.
+        """
+        self._check(
+            "function f() { var o = { ['__proto__']: { x: 1 } };"
+            ' return Object.keys(o).length + (o.x === undefined); }'
+            ' console.log(f());')
+
+    def test_proto_assignment_installs_prototype(self):
+        self._check(
+            "function f() { var o = {}; o['__proto__'] = { x: 1 };"
+            ' return Object.keys(o).length + (o.x === 1); }'
+            ' console.log(f());')
+
+    def test_buffer_survives_the_fold(self):
+        """
+        A Buffer has no literal form; emitting its bytes as an array would change its type, so
+        `Buffer.isBuffer` and `.toString('hex')` would answer differently after the fold.
+        """
+        self._check(
+            "function f() { return Buffer.from([65, 66]); }"
+            " console.log(Buffer.isBuffer(f()), f().toString('hex'));")
+
+    def test_buffer_decoded_to_string_still_folds(self):
+        """
+        The capability that must not be lost: when the chain ends in a string, the Buffer stays inside the
+        interpreter and the base64 decoding still resolves.
+        """
+        self._check(R"console.log((function(){ return Buffer.from('QUJD', 'base64').toString('utf8'); })());")
+
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestDeobfuscationReflectionScope(TestBase):

@@ -156,6 +156,27 @@ class _JsNull:
 
 JS_NULL = _JsNull()
 
+PROTO_KEY = '__proto__'
+"""
+The one property key whose plain spelling in an object literal does not denote an own property.
+`{__proto__: v}` and `{'__proto__': v}` install `v` as the prototype and leave the object with no own
+property at all, whereas `{['__proto__']: v}` — and `JSON.parse` — create an ordinary own property of
+that name. A runtime object modelled as a Python dict holds only own data properties, so a
+`__proto__` entry in such a dict can only have come from one of the latter two, and may only be
+rendered back as the computed form.
+"""
+
+
+class JsBuffer(list):
+    """
+    Thin wrapper around `list` to distinguish a Node.js Buffer (byte array) from a plain JS Array in
+    the interpreter's type-based method dispatch. It lives beside `JS_NULL` because both are members
+    of the interpreter's value domain that a plain Python type cannot express, and every consumer of
+    that domain — most importantly `value_to_node`, which must not render a Buffer as an array
+    literal — has to be able to tell them apart.
+    """
+    pass
+
 
 def canonical_array_index(key: str) -> int | None:
     """
@@ -456,8 +477,10 @@ def extract_literal_value(node: Node) -> tuple[bool, LiteralValue]:
 
 def value_to_node(value: object) -> Expression | None:
     """
-    Convert a Python value to the corresponding AST literal node. Returns `None` when the value
-    type is not representable as a literal expression.
+    Convert a Python value to the corresponding AST literal node, or `None` when the value has no
+    literal form that denotes it faithfully. Refusing is always sound — the caller leaves the original
+    expression in place — whereas rendering an approximation silently changes what the program means,
+    so every case here either round-trips exactly or returns `None`.
     """
     if isinstance(value, str):
         return make_string_literal(value)
@@ -477,6 +500,8 @@ def value_to_node(value: object) -> Expression | None:
         if value < 0:
             return JsUnaryExpression(operator='-', operand=make_numeric_literal(-value))
         return make_numeric_literal(value)
+    if isinstance(value, JsBuffer):
+        return None
     if isinstance(value, list):
         elements: list[Expression | None] = []
         for item in value:
@@ -493,7 +518,11 @@ def value_to_node(value: object) -> Expression | None:
             val_node = value_to_node(v)
             if val_node is None:
                 return None
-            properties.append(JsProperty(key=make_string_literal(k), value=val_node))
+            properties.append(JsProperty(
+                key=make_string_literal(k),
+                value=val_node,
+                computed=k == PROTO_KEY,
+            ))
         return JsObjectExpression(properties=properties)
     if value is JS_NULL:
         return JsNullLiteral()

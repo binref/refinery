@@ -25,14 +25,17 @@ if TYPE_CHECKING:
     _FuncNode: TypeAlias = _FuncDecl | _FuncExpr | _Arrow
 
 from refinery.lib.scripts import Node
+from refinery.lib.scripts.js.analysis.effects import object_sets_prototype
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     ARRAY_PROTOTYPE_METHODS,
     JS_NULL,
     OBJECT_PROTOTYPE_MEMBERS,
+    PROTO_KEY,
     PROTOTYPE_CHAIN_PROPERTIES,
     RELATIONAL_OPS,
     SEQUENCE_DATA_PROPERTIES,
     STRING_PROTOTYPE_METHODS,
+    JsBuffer,
     _js_pow,
     _to_int32,
     _to_uint32,
@@ -138,29 +141,6 @@ class _ReturnIrreducible(Exception):
     """
     def __init__(self, node: Node):
         self.node = node
-
-
-class JsBuffer(list):
-    """
-    Thin wrapper around `list` to distinguish a Node.js Buffer (byte array) from a plain JS Array
-    in the interpreter's type-based method dispatch.
-    """
-    pass
-
-
-def _contains_jsbuffer(value: Value) -> bool:
-    """
-    Recursively determine whether *value* is, or contains, a `JsBuffer`. A Buffer (even nested
-    inside an array or object) must never be emitted as a plain array literal, which would silently
-    change its type and method dispatch (e.g. `.toString('hex')` would no longer work).
-    """
-    if isinstance(value, JsBuffer):
-        return True
-    if isinstance(value, list):
-        return any(_contains_jsbuffer(v) for v in value)
-    if isinstance(value, dict):
-        return any(_contains_jsbuffer(v) for v in value.values())
-    return False
 
 
 def _deep_copy_value(value):
@@ -2097,6 +2077,16 @@ class JsInterpreter:
         return result
 
     def _eval_object(self, node: JsObjectExpression) -> Value:
+        """
+        Evaluate an object literal into a dict of its own data properties. A literal that installs a
+        prototype through the plain `__proto__:` form has a member surface this dict cannot express —
+        the installed object's properties are inherited, not owned — so it aborts interpretation rather
+        than record `__proto__` as an ordinary key, which would invent an own property JavaScript does
+        not create. `object_sets_prototype` decides which spellings do that; the computed form and a
+        shorthand or method define an ordinary own property and evaluate normally.
+        """
+        if object_sets_prototype(node):
+            raise InterpreterError
         result: dict[str, Value] = {}
         for prop in node.properties:
             if not isinstance(prop, JsProperty):
@@ -2175,6 +2165,11 @@ class JsInterpreter:
 
     def _set_property(self, obj: Value, key: str, value: Value) -> None:
         if isinstance(obj, dict):
+            if key == PROTO_KEY and key not in obj:
+                # Writing `__proto__` runs the accessor Object.prototype carries, which installs a
+                # prototype instead of creating an own property. An existing own `__proto__` entry
+                # shadows that accessor, and then the write does land in the data slot.
+                raise InterpreterError
             obj[key] = value
             return
         if isinstance(obj, list):

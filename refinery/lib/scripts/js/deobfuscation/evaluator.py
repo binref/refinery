@@ -34,7 +34,6 @@ from refinery.lib.scripts.js.deobfuscation.interpreter import (
     InterpreterError,
     IrreducibleExpression,
     JsInterpreter,
-    _contains_jsbuffer,
     is_runtime_name,
 )
 from refinery.lib.scripts.js.model import (
@@ -609,8 +608,6 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
             self.mark_changed()
             return True
         except InterpreterError:
-            return False
-        if _contains_jsbuffer(result):
             return False
         if isinstance(result, list) and len(result) > MAX_RESULT_ARRAY_LEN:
             return False

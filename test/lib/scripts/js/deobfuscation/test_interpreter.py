@@ -503,6 +503,98 @@ class TestInterpreterInOperator(TestJsDeobfuscator):
         self._in("'nosuch' in { a: 1 }", 'false')
 
 
+class TestInterpreterProtoKeySemantics(TestJsDeobfuscator):
+    """
+    A `__proto__` key is the one property name whose plain spelling does not create an own property.
+    Node decides: `Object.keys({__proto__: {x: 1}})` is empty and the object inherits `x`, whereas
+    `Object.keys({['__proto__']: {x: 1}})` has one entry and inherits nothing. The interpreter models an
+    object as a dict of own data properties and has no representation for an installed prototype, so a
+    literal or an assignment that installs one must decline rather than record an ordinary key — that
+    would invent an own property and hide the inherited ones.
+    """
+
+    def _declines(self, body: str):
+        source = F'function f() {{\n{body}\n}}\nvar x = f();'
+        self.assertEqual(source, self._evaluate(source))
+
+    def _folds(self, body: str, expected: str):
+        source = F'function f() {{\n{body}\n}}\nvar x = f();'
+        self.assertEqual(F'var x = {expected};', self._evaluate(source))
+
+    def test_bare_proto_literal_declines(self):
+        self._declines('  return Object.keys({ __proto__: { x: 1 } }).length;')
+
+    def test_quoted_proto_literal_declines(self):
+        self._declines("  return Object.keys({ '__proto__': { x: 1 } }).length;")
+
+    def test_bare_proto_literal_with_primitive_declines(self):
+        self._declines('  return Object.keys({ __proto__: 1 }).length;')
+
+    def test_bare_proto_literal_with_null_declines(self):
+        """
+        `{__proto__: null}` installs a null prototype, which changes the object's whole member surface
+        rather than adding a property, so it is no more representable than any other prototype.
+        """
+        self._declines('  return Object.keys({ __proto__: null }).length;')
+
+    def test_inherited_member_read_through_proto_literal_declines(self):
+        self._declines('  var o = { __proto__: { x: 1 } };\n  return o.x;')
+
+    def test_proto_key_alongside_other_keys_declines(self):
+        self._declines('  return Object.keys({ a: 1, __proto__: { x: 1 } }).length;')
+
+    def test_computed_proto_literal_folds(self):
+        """
+        The computed form creates an ordinary own property for every value type, so it is representable
+        and must keep folding — otherwise the fix would trade one wrong answer for a lost one.
+        """
+        self._folds("  return Object.keys({ ['__proto__']: { x: 1 } }).length;", '1')
+
+    def test_computed_proto_literal_is_not_inherited(self):
+        self._folds("  var o = { ['__proto__']: { x: 1 } };\n  return o.x === undefined;", 'true')
+
+    def test_shorthand_proto_is_an_ordinary_property(self):
+        """
+        A shorthand `{__proto__}` defines an ordinary own property; only the `key: value` data form
+        installs a prototype.
+        """
+        self._folds('  var __proto__ = 7;\n  return Object.keys({ __proto__ }).length;', '1')
+
+    def test_proto_assignment_to_plain_object_declines(self):
+        self._declines("  var o = {};\n  o['__proto__'] = { x: 1 };\n  return o.x;")
+
+    def test_proto_dot_assignment_to_plain_object_declines(self):
+        self._declines('  var o = {};\n  o.__proto__ = { x: 1 };\n  return o.x;')
+
+    def test_proto_assignment_over_own_proto_property_folds(self):
+        """
+        An own `__proto__` data property shadows the inherited accessor, so a later write lands in the
+        data slot instead of installing a prototype. This is the one assignment form that is precise.
+        """
+        self._folds(
+            "  var o = { ['__proto__']: 1 };\n"
+            "  o['__proto__'] = 2;\n"
+            "  return o['__proto__'];",
+            '2',
+        )
+
+    def test_ordinary_assignment_still_folds(self):
+        self._folds("  var o = {};\n  o['a'] = 1;\n  return o['a'];", '1')
+
+    def test_json_parsed_proto_key_is_an_own_property(self):
+        """
+        `JSON.parse` creates a genuine own `__proto__` property, which is representable, so the round
+        trip through the interpreter and back into source must preserve it.
+        """
+        self._folds(
+            '  return Object.keys(JSON.parse(\'{"__proto__":{"x":1}}\')).length;',
+            '1',
+        )
+
+    def test_ordinary_prototype_member_name_as_key_folds(self):
+        self._folds('  return Object.keys({ constructor: 1 }).length;', '1')
+
+
 class TestInterpreterThrowSemantics(TestJsDeobfuscator):
 
     def test_unsupported_expression_in_try_does_not_run_catch(self):
