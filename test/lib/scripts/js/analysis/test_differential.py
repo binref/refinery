@@ -1681,3 +1681,120 @@ class TestModelBlindFoldRegressions(TestBase):
             "Array.prototype.join = function () { return 'X'; };"
             " console.log('a-b'.split('-').join('+'));")
 
+
+class TestMemberCalleeChainFolds(TestBase):
+    """
+    A method-call chain on a literal receiver (`[66, 79].map(f).join('')`) is the decoder shape obfuscators
+    emit most, and evaluating it is the whole point of having an interpreter. Behavior on these is already
+    correct — the chain is simply left standing — so what these cases pin is that admitting them does not
+    trade coverage for a wrong answer: every hazard below must survive the widening intact.
+    """
+
+    def _check(self, source: str):
+        deobfuscated = deobfuscate_source(source)
+        self.assertEqual(
+            behavior(source),
+            behavior(deobfuscated),
+            F'deobfuscation changed observable behavior; result was:\n{deobfuscated}',
+        )
+
+    def _folds_to(self, source: str, expected: str):
+        """
+        Assert *source* deobfuscates to exactly *expected* and that both agree with Node. The literal form
+        is asserted, not merely that behavior is preserved: leaving the chain untouched also preserves
+        behavior, so only the exact output distinguishes a fold from a refusal.
+        """
+        deobfuscated = deobfuscate_source(source)
+        self.assertEqual(expected, deobfuscated.strip())
+        self.assertEqual(behavior(source), behavior(deobfuscated))
+
+    def test_map_join_xor_decoder_folds(self):
+        self._folds_to(
+            '[66, 79, 70, 70, 69].map(function (c) { return String.fromCharCode(c ^ 42); }).join(\'\');',
+            "'hello';")
+
+    def test_map_join_on_empty_array_folds(self):
+        self._folds_to(
+            "[].map(function (c) { return String.fromCharCode(c ^ 42); }).join('');",
+            "'';")
+
+    def test_filter_join_folds(self):
+        self._folds_to(
+            "['a', '', 'b'].filter(function (s) { return s; }).join('|');",
+            "'a|b';")
+
+    def test_slice_join_folds(self):
+        self._folds_to("[1, 2, 3, 4].slice(1, 3).join('+');", "'2+3';")
+
+    def test_concat_join_folds(self):
+        self._folds_to("[1, 2].concat([3]).join('-');", "'1-2-3';")
+
+    def test_reduce_decoder_folds(self):
+        self._folds_to(
+            "[72, 73].reduce(function (a, c) { return a + String.fromCharCode(c); }, '');",
+            "'HI';")
+
+    def test_callback_writing_outer_binding_blocks_the_chain(self):
+        """
+        The write to `n` is observable after the chain returns, so folding the chain to its value alone
+        loses it. This is the hazard the widening must not admit.
+        """
+        self._check(
+            'var n = 0;'
+            " console.log([1, 2].map(function (x) { n += x; return x; }).join(''), n);")
+
+    def test_effectful_receiver_blocks_the_chain(self):
+        """
+        A user function as the chain's innermost receiver is one the interpreter can resolve and run, so
+        without a gate its write would be dropped while the chain folded. Only a literal receiver has a
+        type the syntax fixes and a value with no effect to lose.
+        """
+        self._check(
+            'var n = 0;'
+            ' function mk() { n += 1; return [1, 2]; }'
+            " console.log(mk().join('-'), n);")
+
+    def test_effectful_argument_to_an_inner_chain_link_blocks_the_chain(self):
+        """
+        The effectful call is an argument to `Buffer.from`, the *inner* link, whose result is the receiver
+        of `.toString`. Admitting the outer call must therefore re-ask the whole admission question of the
+        inner one and not merely whether its callee is trusted, or the write to `n` is folded away.
+        """
+        self._check(
+            'var n = 0;'
+            " function h() { n += 1; return 'aa'; }"
+            " console.log(Buffer.from(h(), 'hex').toString('hex'), n);")
+
+    def test_patched_prototype_blocks_the_chain_at_every_link(self):
+        self._check(
+            "Array.prototype.join = function () { return 'X'; };"
+            " console.log([66, 79].map(function (c) { return c; }).join(''));")
+
+    def test_patched_string_prototype_blocks_a_string_seeded_chain(self):
+        self._check(
+            "String.prototype.split = function () { return ['X']; };"
+            " console.log('a-b'.split('-').join('+'));")
+
+    def test_identifier_receiver_still_refused(self):
+        """
+        A named receiver may be mutated through an alias between its definition and the chain, which no
+        syntactic check on the chain can see. It stays refused; only literal receivers are admitted here.
+        """
+        self._check(
+            'var a = [66, 79];'
+            " console.log(a.map(function (x) { return x; }).join(''));")
+
+    def test_throwing_callback_blocks_the_chain(self):
+        self._check(
+            "try { console.log([1, 2].map(function (x) { throw new Error('boom'); }).join('')); }"
+            " catch (e) { console.log('caught'); }")
+
+    def test_data_property_call_on_a_chain_still_throws(self):
+        """
+        `length` is a data property, so calling it is a `TypeError` rather than a value. A chain ending in
+        one must not fold to the property's value.
+        """
+        self._check(
+            'try { console.log([1, 2].concat([3]).length()); }'
+            ' catch (e) { console.log(e.constructor.name); }')
+
