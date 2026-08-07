@@ -10,7 +10,8 @@ from refinery.lib.scripts import (
     Statement,
     Transformer,
 )
-from refinery.lib.scripts.ps1.analysis.cache import model_cache
+from refinery.lib.scripts.analysis.dominance import DominatorModel
+from refinery.lib.scripts.ps1.analysis.cache import Ps1ModelCache, model_cache
 from refinery.lib.scripts.ps1.analysis.effects import (
     OutputSink,
     is_fault_free,
@@ -30,6 +31,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1AssignmentExpression,
     Ps1BinaryExpression,
     Ps1BreakStatement,
+    Ps1CatchClause,
     Ps1CommandArgument,
     Ps1CommandInvocation,
     Ps1ContinueStatement,
@@ -40,8 +42,10 @@ from refinery.lib.scripts.ps1.model import (
     Ps1IntegerLiteral,
     Ps1RealLiteral,
     Ps1ScopeModifier,
+    Ps1ScriptBlock,
     Ps1StringLiteral,
     Ps1SwitchStatement,
+    Ps1ThrowStatement,
     Ps1TrapStatement,
     Ps1TryCatchFinally,
     Ps1UnaryExpression,
@@ -382,19 +386,23 @@ class Ps1DeadCodeElimination(Transformer):
     """
 
     def visit(self, node: Node):
-        # Captured once, not re-read per body: `set_body` below advances the tree version, so a
-        # per-call-site lookup would rebuild the whole-tree walk after every prune, and could flip
-        # the verdict mid-pass. Capturing errs the safe way — this pass only removes or hoists
-        # nodes and never introduces a leak, so a stale verdict is always the more open one.
-        oracle = model_cache(self, node).oracle
+        # The oracle is captured once, not re-read per body: `set_body` below advances the tree
+        # version, so a per-call-site lookup would rebuild the whole-tree walk after every prune, and
+        # could flip the verdict mid-pass. Capturing errs the safe way — this pass only removes or
+        # hoists nodes and never introduces a leak, so a stale verdict is always the more open one.
+        # The cache itself is threaded so that reachability is read fresh per body: a reachability
+        # verdict must reflect the current tree, and reading it through the version-aware cache
+        # rebuilds only after a body has actually changed.
+        cache = model_cache(self, node)
+        oracle = cache.oracle
         for parent in list(node.walk()):
             sink = output_sink(parent)
             if sink is None or sink is OutputSink.CAPTURED:
                 continue
-            if self._prune_body(parent, oracle):
+            if self._prune_body(parent, oracle, cache):
                 self.mark_changed()
 
-    def _prune_body(self, parent: Node, oracle: TypeOracle) -> bool:
+    def _prune_body(self, parent: Node, oracle: TypeOracle, cache: Ps1ModelCache) -> bool:
         """
         Rewrite each statement of one body into what its condition has already been proved to make
         of it, or leave it alone.
@@ -408,19 +416,93 @@ class Ps1DeadCodeElimination(Transformer):
         `refinery.lib.scripts.ps1.deobfuscation.unused.Ps1JunkStatementRemoval` owns alone, and the
         whole decision is gone from here rather than gated to nothing.
 
-        What is left removes only constructs whose condition is already proved constant, so none of
-        it can be what an enclosing handler catches, and none of it can empty a body that pruning
-        was not already entitled to empty.
+        What is left removes only constructs whose condition is already proved constant, plus
+        statements the control-flow graph reports no path can reach — a statement after `return`,
+        `throw` or `exit`, which never runs and so cannot be what an enclosing handler catches. Its
+        removal cannot empty a body that pruning was not already entitled to empty, because a body's
+        entry is always reachable.
         """
+        dominance = cache.dominance
+        reachable_by_graph: dict[int, frozenset[int]] = {}
+
+        def reachable_of(graph) -> frozenset[int]:
+            reach = reachable_by_graph.get(id(graph))
+            if reach is None:
+                reach = frozenset(dominance.reachable(graph.entry, forward=True))
+                reachable_by_graph[id(graph)] = reach
+            return reach
+
+        # A handler body — a `trap`, a `catch`, or a `finally` — runs on a path this deletion does
+        # not walk: a `trap` or `catch` only when the code it guards throws, so from normal flow it
+        # reads as unreachable exactly when nothing threw, which is not the same as its statements
+        # being dead. Emptying one here would strip a payload `_prune_trap` and `_prune_try` weigh as
+        # a whole, and an empty guarded body is evidence about an earlier pass rather than about the
+        # code, so the unreachability deletion stays out of every handler body.
+        deletes_unreachable = not self._within_handler_body(parent)
         plan = Ps1RemovalPlan(parent, removals_may_fault=False)
         for stmt in get_body(parent):
-            replacement = self._try_prune(stmt, oracle)
+            if (
+                deletes_unreachable
+                and not isinstance(stmt, Ps1TrapStatement)
+                and self._is_unreachable(stmt, dominance, reachable_of)
+            ):
+                plan.propose(stmt, [])
+                continue
+            replacement = self._try_prune(stmt, oracle, dominance)
             if replacement is None:
                 continue
             plan.propose(stmt, replacement)
         return plan.commit()
 
-    def _try_prune(self, stmt: Statement, oracle: TypeOracle) -> list[Statement] | None:
+    @staticmethod
+    def _within_handler_body(node: Node) -> bool:
+        """
+        Whether `node` is a body nested inside a `trap`, a `catch`, or a `finally`, up to the nearest
+        control-flow-graph boundary. A statement in a `trap` or `catch` is reached only by the
+        guarded code throwing, so its normal-flow unreachability says nothing about whether it is
+        dead; a `finally` always runs and so is never wrongly deleted, but it is excluded with the
+        others so that the whole handler decision stays with the construct-specific passes.
+        """
+        current = node
+        while current is not None and not isinstance(current, Ps1ScriptBlock):
+            parent = current.parent
+            if isinstance(parent, (Ps1TrapStatement, Ps1CatchClause)):
+                return True
+            if isinstance(parent, Ps1TryCatchFinally) and parent.finally_block is current:
+                return True
+            current = parent
+        return False
+
+    @staticmethod
+    def _is_unreachable(stmt: Statement, dominance: DominatorModel, reachable_of) -> bool:
+        """
+        Whether no path reaches any part of `stmt`. A compound statement runs when its first
+        executable node is reached, so a `do`/`while` whose tail-tested condition is unreachable
+        still runs its body — the statement is dead only when *every* control-flow node in its own
+        graph is unreachable. A node in a nested script block is in that block's own graph and says
+        nothing about whether the statement enclosing it runs, so it is not counted. A `trap` is
+        excluded by the caller: its handler node is reachable only through the exceptional edges of
+        the body it guards, so an unreachable handler means nothing threw, not that the declaration
+        is dead — `_prune_trap` owns that decision.
+        """
+        located = dominance.locate(stmt)
+        if located is None:
+            return False
+        graph = located[0]
+        reachable = reachable_of(graph)
+        saw_node = False
+        for descendant in stmt.walk():
+            found = dominance.locate(descendant)
+            if found is None or found[0] is not graph:
+                continue
+            saw_node = True
+            if id(found[1]) in reachable:
+                return False
+        return saw_node
+
+    def _try_prune(
+        self, stmt: Statement, oracle: TypeOracle, dominance: DominatorModel,
+    ) -> list[Statement] | None:
         if isinstance(stmt, Ps1WhileLoop):
             return self._prune_while(stmt)
         if isinstance(stmt, Ps1DoLoop):
@@ -434,7 +516,7 @@ class Ps1DeadCodeElimination(Transformer):
         if isinstance(stmt, Ps1TryCatchFinally):
             return self._prune_try(stmt, oracle)
         if isinstance(stmt, Ps1TrapStatement):
-            return self._prune_trap(stmt, oracle)
+            return self._prune_trap(stmt, oracle, dominance)
         return None
 
     @staticmethod
@@ -587,19 +669,32 @@ class Ps1DeadCodeElimination(Transformer):
         finally_body = node.finally_block.body if node.finally_block is not None else []
         return survivors + list(finally_body)
 
-    def _prune_trap(self, node: Ps1TrapStatement, oracle: TypeOracle) -> list[Statement] | None:
+    def _prune_trap(
+        self, node: Ps1TrapStatement, oracle: TypeOracle, dominance: DominatorModel,
+    ) -> list[Statement] | None:
         """
-        Remove a `trap` handler whose body produces no observable output. A trap only runs when the
-        code it guards throws a terminating error; injected-noise traps (`trap { continue }`, an
-        empty `trap {}`, `trap { break }`) merely swallow or re-raise without emitting anything, so
-        deleting them is invisible unless an error actually propagates. A body that performs a side
-        effect — a real logging handler such as `trap { Write-Host 'err' }` — keeps the trap intact.
+        Remove a `trap` handler whose body produces no observable output and whose scope cannot
+        throw a terminating error the trap would intercept. A trap only runs when the code it guards
+        throws; injected-noise traps (`trap { continue }`, an empty `trap {}`, `trap { break }`)
+        merely swallow or re-raise without emitting anything, so deleting them is invisible — but
+        only where nothing they guard actually throws. A body that performs a side effect — a real
+        logging handler such as `trap { Write-Host 'err' }` — keeps the trap intact.
 
-        The gate is purity, not emission: this removal is not provable under strict semantics at all
-        (it relies on the guarded code never throwing), and under that premise a body that merely
-        emits never runs either, so `trap { 5 }` and `trap { Get-Date }` are dropped alike. Only a
-        body whose statements would do something observable is worth keeping the trap for.
+        The first gate is control flow: the removal rests on the guarded code never throwing, so a
+        `throw` the control-flow graph reports as reachable in the trap's scope makes the trap
+        load-bearing and keeps it. Without it, `trap { continue }; throw 'e'; Write-Host 'after'`
+        would have its handler removed, the throw would escape, and the statement the trap resumes
+        into would never run. A terminating error that is not a `throw` statement — a failing cast,
+        a method call — is modelled as ordinary fall-through by this graph and is not seen here; that
+        residual is no wider than before this gate existed.
+
+        The second gate is purity, not emission: the removal is not provable under strict semantics
+        at all, and under the premise that the guarded code does not throw, a body that merely emits
+        never runs either, so `trap { 5 }` and `trap { Get-Date }` are dropped alike. Only a body
+        whose statements would do something observable is worth keeping the trap for.
         """
+        if self._intercepts_a_reachable_throw(node, dominance):
+            return None
         body = node.body.body if node.body is not None else []
         for stmt in body:
             if isinstance(stmt, (Ps1BreakStatement, Ps1ContinueStatement)):
@@ -611,3 +706,22 @@ class Ps1DeadCodeElimination(Transformer):
                     continue
             return None
         return []
+
+    @staticmethod
+    def _intercepts_a_reachable_throw(node: Ps1TrapStatement, dominance: DominatorModel) -> bool:
+        """
+        Whether a `throw` the control-flow graph reports as reachable lies in the scope this trap
+        guards. A trap catches for the whole body it is declared in, which is exactly the body whose
+        graph it belongs to, so the reachable `throw` statements of that graph are the ones it would
+        intercept. A trap this cannot place — one with no graph node — is kept, which is the safe
+        direction.
+        """
+        located = dominance.locate(node)
+        if located is None:
+            return True
+        graph, _ = located
+        reachable = dominance.reachable(graph.entry, forward=True)
+        return any(
+            id(cfg_node) in reachable and isinstance(cfg_node.element, Ps1ThrowStatement)
+            for cfg_node in graph.nodes
+        )

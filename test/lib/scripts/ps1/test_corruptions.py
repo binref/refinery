@@ -505,7 +505,6 @@ class TestPs1Corruptions(TestPs1):
             'the sort no longer reaches the array the read observes',
         )
 
-    @unittest.expectedFailure
     def test_trap_with_continue_resumes_after_the_throw(self):
         """
         `trap { continue }; throw 'e'; Write-Host 'after'` prints `after` under 5.1: the trap

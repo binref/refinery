@@ -116,9 +116,6 @@ BEHAVIOUR_DEFECTS: dict[str, str] = {
     "$x = @('b', 'a'); [Array]::Sort($x); Write-Host $x[0]":
         'The read is folded to `b`, the order from before the sort. `[Array]::Sort` reorders the '
         'array the variable holds rather than returning a new one, so the snippet prints `a`.',
-    "trap { continue }; throw 'e'; Write-Host 'after'":
-        'The handler is removed, so the throw escapes and nothing is printed. Under 5.1 the trap '
-        'handles it and `continue` resumes at the next statement, which prints `after`.',
     "$x = 'a'; & { Write-Host $script:x }; $x = 'b'":
         'The store is removed and the read prints nothing. A child scope resolves `$script:x` to '
         'the caller, where the store put `a`.',

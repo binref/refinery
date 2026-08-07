@@ -149,10 +149,10 @@ class TestPs1DeadCodeElimination(TestPs1):
             "for($i=0;$i -lt 5;$i++){if($i -eq 3){continue}; $x = 1; break}")
         self.assertIn('for', result.lower())
 
-    def test_for_break_not_last_preserved(self):
+    def test_for_break_unreachable_tail_removed(self):
         result = self._deobfuscate(
-            "for($i=0;$i -lt 5;$i++){break; Write-Host done}")
-        self.assertIn('for', result.lower())
+            'for($i=0;$i -lt 5;$i++){break; Write-Host done}')
+        self.assertEqual(result, '$i = 0')
 
     def test_for_break_only(self):
         result = self._deobfuscate(
@@ -527,6 +527,79 @@ class TestPs1DeadCodeExtra(TestPs1):
             'while ($True) { $x = 1; if ($c) { break }; $y = 2; break }',
             Ps1DeadCodeElimination)
         self.assertIn('while', result.lower())
+
+
+class TestPs1UnreachableStatementRemoval(TestPs1):
+
+    def test_a_statement_after_a_return_is_removed(self):
+        result = self._apply(cleandoc(
+            """
+            function f {
+              Write-Host 'before'
+              return 1
+              Write-Host 'after'
+            }
+            """
+        ), Ps1DeadCodeElimination)
+        self.assertEqual(result, cleandoc(
+            """
+            function f {
+              Write-Host 'before'
+              return 1
+            }
+            """
+        ))
+
+    def test_a_statement_after_a_throw_is_removed(self):
+        result = self._apply(cleandoc(
+            """
+            Write-Host 'before'
+            throw 'boom'
+            Write-Host 'after'
+            """
+        ), Ps1DeadCodeElimination)
+        self.assertEqual(result, cleandoc(
+            """
+            Write-Host 'before'
+            throw 'boom'
+            """
+        ))
+
+    def test_a_finally_body_survives_the_return_that_leaves_its_try(self):
+        result = self._apply(cleandoc(
+            """
+            function f {
+              try {
+                return 1
+                Write-Host 'dead'
+              } finally {
+                Write-Host 'always'
+              }
+            }
+            """
+        ), Ps1DeadCodeElimination)
+        self.assertEqual(result, cleandoc(
+            """
+            function f {
+              try {
+                return 1
+              } finally {
+                Write-Host 'always'
+              }
+            }
+            """
+        ))
+
+    def test_a_trap_intercepting_a_reachable_throw_is_kept(self):
+        self._assertUnchanged(cleandoc(
+            """
+            trap {
+              continue
+            }
+            throw 'e'
+            Write-Host 'after'
+            """
+        ), Ps1DeadCodeElimination)
 
 
 class TestPs1InjectedNoiseBareword(TestPs1):
