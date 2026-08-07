@@ -1959,6 +1959,8 @@ class JsInterpreter:
                     result = JsBuffer(result)
             return result
         if isinstance(obj, (JsFunctionExpression, JsArrowFunctionExpression)):
+            if method_name in ('call', 'apply') and not self._prototype_is_intact(obj_type):
+                raise InterpreterError
             if method_name == 'call':
                 return self._call_function(obj, args[1:] if len(args) > 1 else [])
             if method_name == 'apply':
@@ -2230,8 +2232,7 @@ class JsInterpreter:
             return None
         raise InterpreterError
 
-    @staticmethod
-    def _property_is_absent(obj: Value, key: str) -> bool:
+    def _property_is_absent(self, obj: Value, key: str) -> bool:
         """
         Whether *key* provably does not exist anywhere on *obj*'s prototype chain, making a read of it
         `undefined`. Answering this needs the *language's* vocabulary, not the subset this package
@@ -2239,16 +2240,37 @@ class JsInterpreter:
         so treating an unimplemented member as absent would contradict `typeof`. A `JsBuffer` carries
         over a hundred methods that vary between Node versions, so its surface is not enumerable here
         and nothing can be proven absent on it.
+
+        Absence is a claim about the chain as the language defines it, so it holds only while the program
+        leaves that chain alone. `Object.defineProperty(Array.prototype, 'zz', { get: … })` puts a name
+        there that no table here lists, and answering `undefined` for it both loses the getter's effect and
+        yields the wrong value — which is why this consults the effect model rather than deciding on the
+        tables alone. Without a model there is nothing to consult and the caller owns the assumption, as
+        with `_callee_is_intact`.
         """
         if key in OBJECT_PROTOTYPE_MEMBERS or key in PROTOTYPE_CHAIN_PROPERTIES:
             return False
         if isinstance(obj, JsBuffer):
+            return False
+        if not self._read_chain_is_intact(type(obj)):
             return False
         if isinstance(obj, str):
             return key not in STRING_PROTOTYPE_METHODS
         if isinstance(obj, list):
             return key not in ARRAY_PROTOTYPE_METHODS and key not in _ARRAY_HOF_METHODS
         return isinstance(obj, dict)
+
+    def _read_chain_is_intact(self, value_type: type) -> bool:
+        """
+        Whether every prototype a plain property read on *value_type* consults is unmodified. This is the
+        read counterpart of `_prototype_is_intact`, which guards a method *call*: a call resolves on the
+        prototype that owns the method, while a read of an arbitrary name walks the whole chain down to
+        `Object.prototype`.
+        """
+        effects = self._effects
+        if effects is None:
+            return True
+        return effects.read_chain_intact(value_type)
 
     def _set_property(self, obj: Value, key: str, value: Value) -> None:
         """

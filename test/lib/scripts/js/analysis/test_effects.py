@@ -13,6 +13,7 @@ from refinery.lib.scripts.js.analysis.model import build_semantic_model
 from refinery.lib.scripts.js.deobfuscation.simplify import JsSimplifications
 from refinery.lib.scripts.js.model import (
     JsArrayExpression,
+    JsArrowFunctionExpression,
     JsBinaryExpression,
     JsCallExpression,
     JsFunctionDeclaration,
@@ -1459,6 +1460,68 @@ class TestTrustedPrototype(TestBase):
 
     def test_type_with_no_known_owner_is_refused(self):
         self.assertFalse(self._trusted('var r = 1;', object))
+
+
+class TestReadChainIntact(TestBase):
+    """
+    `read_chain_intact` answers the neighbouring question for a property *read* rather than a method call.
+    A method resolves on the prototype that owns it, so `Array.prototype.join` shadows anything installed on
+    `Object.prototype`; a read of an arbitrary name has no such shadow and walks the chain to its root.
+    The two therefore diverge on exactly one input — a patch to `Object.prototype` — and that divergence is
+    the reason they are separate predicates.
+    """
+
+    @staticmethod
+    def _intact(source: str, value_type: type) -> bool:
+        ast = JsParser(source).parse()
+        effects = build_effects(build_semantic_model(ast))
+        return effects.read_chain_intact(value_type)
+
+    @staticmethod
+    def _trusted(source: str, value_type: type) -> bool:
+        ast = JsParser(source).parse()
+        effects = build_effects(build_semantic_model(ast))
+        return effects.trusted_prototype(value_type)
+
+    def test_untouched_chains_are_intact(self):
+        self.assertTrue(self._intact('var r = [1, 2].length;', list))
+        self.assertTrue(self._intact("var r = 'ab'.length;", str))
+
+    def test_patched_owner_prototype_is_refused(self):
+        self.assertFalse(self._intact('Array.prototype.zz = 1;', list))
+
+    def test_patched_object_prototype_is_refused_for_every_type(self):
+        source = 'Object.prototype.zz = 1;'
+        self.assertFalse(self._intact(source, list))
+        self.assertFalse(self._intact(source, str))
+        self.assertFalse(self._intact(source, float))
+        self.assertFalse(self._intact(source, dict))
+
+    def test_object_prototype_patch_divides_the_read_from_the_call(self):
+        """
+        The one input on which the two questions must disagree. Node confirms both halves: patching
+        `Object.prototype.join` leaves `[1, 2].join('-')` meaning the built-in, while patching
+        `Object.prototype.zz` makes `[1, 2].zz` run user code.
+        """
+        source = 'Object.prototype.zz = 1;'
+        self.assertTrue(self._trusted(source, list))
+        self.assertFalse(self._intact(source, list))
+
+    def test_patch_of_an_unrelated_owner_leaves_the_chain_intact(self):
+        source = 'String.prototype.zz = 1;'
+        self.assertTrue(self._intact(source, list))
+        self.assertFalse(self._intact(source, str))
+
+    def test_function_values_resolve_to_the_function_owner(self):
+        self.assertTrue(self._intact('var r = 1;', JsFunctionExpression))
+        self.assertFalse(self._intact('Function.prototype.zz = 1;', JsFunctionExpression))
+        self.assertFalse(self._intact('Function.prototype.zz = 1;', JsArrowFunctionExpression))
+
+    def test_reflection_surface_refuses_every_chain(self):
+        self.assertFalse(self._intact("eval('x');", list))
+
+    def test_type_with_no_known_owner_is_refused(self):
+        self.assertFalse(self._intact('var r = 1;', object))
 
     def test_number_and_boolean_owners_are_recognized(self):
         self.assertTrue(self._trusted('var r = 1;', int))

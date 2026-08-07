@@ -1905,6 +1905,172 @@ class TestMemberBaseSafety(TestBase):
         self._check('function f() { console.log((() => 1).length); } f();')
 
 
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestPrototypeChainTrust(TestBase):
+    """
+    A property read walks a prototype chain the program can patch, so what a literal base's syntax settles
+    is its *type* and not its behaviour. A read cleared on syntax alone dropped a getter installed on the
+    corresponding prototype, and the interpreter separately answered `undefined` for a name its own tables
+    call absent from the chain — an absence claim that only holds while the chain is intact.
+
+    Every prototype in the chain matters, not just the one owning the type's methods: `Object.prototype`
+    roots the chain of an array literal, of a primitive, and of `Math` alike. Each patched case is paired
+    with the pristine control it must not cost, since refusing every literal base would also make the
+    behavior agree while undoing the folds these tests exist to protect.
+    """
+
+    def _check(self, source: str):
+        deobfuscated = deobfuscate_source(source)
+        self.assertEqual(
+            behavior(source),
+            behavior(deobfuscated),
+            F'deobfuscation changed observable behavior; result was:\n{deobfuscated}',
+        )
+
+    def _getter(self, owner: str) -> str:
+        return (
+            F"Object.defineProperty({owner}.prototype, 'zz',"
+            " { get: function () { console.log('getter'); return 1; } });"
+        )
+
+    def test_getter_on_array_prototype_is_reached_by_an_array_literal_read(self):
+        self._check(
+            self._getter('Array')
+            + ' function f() { var t = [1, 2].zz; }'
+            " f(); console.log('done');")
+
+    def test_getter_on_string_prototype_is_reached_by_a_string_literal_read(self):
+        self._check(
+            self._getter('String')
+            + " function f() { var t = 'ab'.zz; }"
+            " f(); console.log('done');")
+
+    def test_getter_on_number_prototype_is_reached_by_a_number_literal_read(self):
+        self._check(
+            self._getter('Number')
+            + ' function f() { var t = 7 .zz; }'
+            " f(); console.log('done');")
+
+    def test_getter_on_boolean_prototype_is_reached_by_a_boolean_literal_read(self):
+        self._check(
+            self._getter('Boolean')
+            + ' function f() { var t = true.zz; }'
+            " f(); console.log('done');")
+
+    def test_getter_on_function_prototype_is_reached_by_a_function_literal_read(self):
+        self._check(
+            self._getter('Function')
+            + ' function f() { var t = (function () {}).zz; }'
+            " f(); console.log('done');")
+
+    def test_getter_on_function_prototype_is_reached_by_an_arrow_literal_read(self):
+        self._check(
+            self._getter('Function')
+            + ' function f() { var t = (() => 1).zz; }'
+            " f(); console.log('done');")
+
+    def test_getter_on_object_prototype_is_reached_by_an_array_literal_read(self):
+        """
+        `Object.prototype` owns none of an array's methods, so a rule asking only about `Array` clears
+        this. It is nonetheless in the chain a read walks.
+        """
+        self._check(
+            self._getter('Object')
+            + ' function f() { var t = [1, 2].zz; }'
+            " f(); console.log('done');")
+
+    def test_getter_on_object_prototype_is_reached_by_an_object_literal_read(self):
+        self._check(
+            self._getter('Object')
+            + ' function f() { var t = ({ a: 1 }).zz; }'
+            " f(); console.log('done');")
+
+    def test_getter_on_object_prototype_is_reached_by_an_intrinsic_root_read(self):
+        """
+        `Math` names an intrinsic the program never touches, so trusting it by name says pristine while the
+        read still walks the patched `Object.prototype`.
+        """
+        self._check(
+            self._getter('Object')
+            + ' function f() { var t = Math.zz; }'
+            " f(); console.log('done');")
+
+    def test_throwing_getter_on_a_patched_prototype_still_throws(self):
+        """
+        Uncaught, the throw is the program's whole observable outcome, so dropping the read turns a failing
+        exit into a clean one — a divergence no amount of value agreement covers.
+        """
+        self._check(
+            "Object.defineProperty(Array.prototype, 'zz',"
+            " { get: function () { throw new Error('boom'); } });"
+            ' function f() { var t = [1].zz; }'
+            " f(); console.log('unreachable');")
+
+    def test_value_read_through_a_patched_prototype_is_not_folded_to_undefined(self):
+        """
+        The interpreter's own tables do not list `zz` on `Array.prototype` and concluded the read was
+        `undefined`. Here the value is used, so a wrong fold is observable even with no getter involved.
+        """
+        self._check(
+            "Array.prototype.zz = 7;"
+            ' function f() { return [1, 2].zz; }'
+            ' console.log(String(f()));')
+
+    def test_patched_prototype_method_is_not_folded_to_the_builtin(self):
+        self._check(
+            "Array.prototype.join = function () { return 'PATCHED'; };"
+            " console.log([1, 2].join('-'));")
+
+    def test_pristine_array_literal_read_still_folds(self):
+        self._check("function f() { console.log([1, 2].length); } f(); console.log('done');")
+
+    def test_pristine_intrinsic_root_read_still_folds(self):
+        self._check("function f() { console.log(Math.PI); } f(); console.log('done');")
+
+    def test_object_prototype_patch_does_not_block_an_owned_method_call(self):
+        """
+        The control that keeps the read rule from being copied onto the call rule: a method resolves on the
+        prototype that owns it, so `Array.prototype.join` shadows anything installed on `Object.prototype`
+        and the fold must survive.
+        """
+        self._check(
+            "Object.prototype.join = function () { return 'PATCHED'; };"
+            " console.log([1, 2].join('-'));")
+
+    def test_object_prototype_patch_does_not_block_an_owned_string_method_call(self):
+        self._check(
+            "Object.prototype.toUpperCase = function () { return 'PATCHED'; };"
+            " console.log('ab'.toUpperCase());")
+
+    def test_patched_function_apply_is_not_dispatched_as_the_builtin(self):
+        """
+        `.apply` on a function receiver is dispatched by name like any other method, so a patched
+        `Function.prototype.apply` redirects the call. The receiver has to be a function-local for the
+        evaluator to reach that dispatch at all — a parenthesized literal receiver is refused earlier as an
+        untrusted callee — which is why this shape and not the shorter one exercises the guard.
+        """
+        self._check(
+            "Function.prototype.apply = function () { return 'PATCHED'; };"
+            ' function f() { var g = function (a) { return a * 3; }; return g.apply(null, [3]); }'
+            ' console.log(String(f()));')
+
+    def test_patched_function_call_is_not_dispatched_as_the_builtin(self):
+        self._check(
+            "Function.prototype.call = function () { return 'PATCHED'; };"
+            ' function f() { var g = function (a) { return a + 1; }; return g.call(null, 2); }'
+            ' console.log(String(f()));')
+
+    def test_pristine_function_apply_still_folds(self):
+        self._check(
+            ' function f() { var g = function (a) { return a * 3; }; return g.apply(null, [3]); }'
+            ' console.log(String(f()));')
+
+    def test_pristine_function_call_still_folds(self):
+        self._check(
+            ' function f() { var g = function (a) { return a + 1; }; return g.call(null, 2); }'
+            ' console.log(String(f()));')
+
+
 class TestHostEntrypointPreservation(TestBase):
     """
     Under the script execution model a top-level `var`/`function` is a property of the global object, so

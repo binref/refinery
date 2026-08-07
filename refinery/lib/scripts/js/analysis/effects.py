@@ -256,6 +256,8 @@ _PROTOTYPE_OWNERS: dict[str, str] = {
     'bool': 'Boolean',
     'int': 'Number',
     'float': 'Number',
+    'JsFunctionExpression': 'Function',
+    'JsArrowFunctionExpression': 'Function',
 }
 """
 The intrinsic whose prototype supplies the methods of each interpreter value type, keyed by type name so
@@ -265,9 +267,25 @@ names no global at the call site, so trusting it means asking whether *this* pro
 even though the expression mentions no identifier at all.
 
 Every type in the interpreter's value domain is named here directly, including `JsBuffer`, whose methods
-come from `Buffer.prototype` rather than the `Array.prototype` its `list` base would suggest. Lookup is
-therefore exact rather than a walk up the Python MRO, which would silently answer `Array` for any future
-`list` subclass instead of refusing. A type with no entry is never trusted through this route.
+come from `Buffer.prototype` rather than the `Array.prototype` its `list` base would suggest. A function
+value is represented as its own AST node, so the two function node names appear here as value types rather
+than as syntax; both inherit from `Function.prototype`. Lookup is exact rather than a walk up the Python
+MRO, which would silently answer `Array` for any future `list` subclass instead of refusing. A type with no
+entry is never trusted through this route.
+"""
+
+_INHERITED_CHAIN_ROOTS = frozenset({'Object'})
+"""
+The prototypes every value inherits from beyond the one that owns its own methods. `Object.prototype` roots
+every chain, so a getter installed there is reached by a plain read on an array literal and on `Math`
+alike — which is why reading a property is a strictly stronger requirement than calling a method.
+"""
+
+_INTRINSIC_CHAIN_ROOTS = frozenset({'Object', 'Function'})
+"""
+The prototypes an intrinsic root's own chain can contain. `Math` is a plain object and inherits from
+`Object.prototype` alone, while a constructor such as `Array` is a function and inherits from
+`Function.prototype` first, so a plain read on either walks one of these two.
 """
 
 _LITERAL_RECEIVER_TYPES: dict[type, type] = {
@@ -287,6 +305,23 @@ Deciding this here rather than at each caller is what lets a fold ask about a wh
 it: the recursive case above resolves an inner link, and this resolves the literal the chain starts from.
 The `receiver_type` parameter remains for callers that hold an evaluated receiver — a value whose type is
 known but whose syntax is not a literal — and is consulted only when the syntax settles nothing.
+
+A function literal is deliberately absent, so `(function () {}).call(x)` is not a trusted callee. The
+interpreter's `.call`/`.apply` dispatch carries no prototype guard, unlike its `list` and `str` neighbours,
+so admitting one here would fold a dispatch a patched `Function.prototype` had redirected. Reading a
+property of a function literal is a different question and has its own table below.
+"""
+
+_LITERAL_READ_TYPES: dict[type, type] = dict(_LITERAL_RECEIVER_TYPES)
+_LITERAL_READ_TYPES[JsFunctionExpression] = JsFunctionExpression
+_LITERAL_READ_TYPES[JsArrowFunctionExpression] = JsArrowFunctionExpression
+"""
+The value type of a literal whose *property read* must consult a prototype, extending
+`_LITERAL_RECEIVER_TYPES` with the two function forms. Reading `f.name` walks `Function.prototype`, which a
+program can patch, so the read needs an answer where the method call above must refuse outright: the call
+is unsound to fold because the interpreter cannot guard its dispatch, while the read is merely a question
+about one named intrinsic. A function node maps to itself, since the interpreter represents a function
+value as its own AST node and `_PROTOTYPE_OWNERS` is keyed on that type's name.
 """
 
 
@@ -490,8 +525,8 @@ def container_literal_access_is_plain(node: Node | None) -> bool:
     Whether *node* is a container literal on which a plain member access touches a data slot and nothing
     else: an array or function expression, or an object literal that declares no accessor and installs no
     custom prototype. This is the one shared atom behind every predicate that has to decide what a member
-    access on a freshly built value does — `_is_safe_property_base` here, `EffectModel._base_is_safe` and
-    `EffectModel._base_getter_safe`, and `strict_divergence._fresh_writable_base`.
+    access on a freshly built value does — `EffectModel._base_is_safe` and `EffectModel._base_getter_safe`
+    here, and `strict_divergence._fresh_writable_base`.
 
     Each of those asks a further question this deliberately does not answer, which is why they remain
     distinct predicates rather than aliases of this one: whether the base can be nullish, whether a
@@ -499,6 +534,10 @@ def container_literal_access_is_plain(node: Node | None) -> bool:
     merely accessor-free. What they must not disagree about is this atom. They did: the accessor veto
     lived in only two of the four copies, and the copy without it cleared a getter-carrying literal as
     effect-free, which deleted the getter call outright.
+
+    It answers only what the *literal* declares, so it is never sufficient on its own for a getter-freeness
+    question: `[1, 2]` declares no accessor and still inherits everything on `Array.prototype` and
+    `Object.prototype`. A caller asking about a read must pair this with `EffectModel.read_chain_intact`.
     """
     node = strip_parens(node)
     if isinstance(node, JsObjectExpression):
@@ -508,23 +547,19 @@ def container_literal_access_is_plain(node: Node | None) -> bool:
 
 def _is_safe_property_base(node: Node, defunct: set[str] | None = None) -> bool:
     """
-    Whether a property access on *node* cannot run a custom getter, so the read carries no hidden
-    effect: a primitive literal other than `null`, a container literal whose access is plain, or an
-    identifier in *defunct* (being removed, so its getters are irrelevant to live code).
+    Whether a property access on *node* cannot run a custom getter without consulting any model: only an
+    identifier in *defunct*, which names a binding being removed, so whatever getters it carries are
+    irrelevant to the code that remains.
 
-    `null` is excluded although it is a literal: reading any property of it throws a `TypeError`, which
-    is an effect, so admitting it let the throw be dropped. There is deliberately no member-chain arm —
-    `root.a.b` is not safe merely because *root* is, since `root.a` may be `undefined` and the second read
-    then throws. The model-aware `EffectModel._base_getter_safe` answers the intrinsic-root cases this
-    cannot see, and `_SideEffectScan` consults it for anything this refuses.
+    No literal qualifies here, though the syntax of one fixes its type. Every property read walks a
+    prototype chain the program can patch — `Object.defineProperty(Array.prototype, 'k', { get: … })` makes
+    `[1, 2].k` run user code, and `Object.prototype` roots the chain of even a primitive — so the question
+    cannot be answered from syntax at all. It needs `_globals_written`, which only a model has, and
+    `EffectModel._base_getter_safe` asks it there. `_SideEffectScan` consults that through *member_safe*
+    for everything this refuses, so a caller with a model loses nothing; a caller without one keeps the
+    read, which is the sound direction.
     """
-    if isinstance(node, (JsStringLiteral, JsNumericLiteral, JsBooleanLiteral)):
-        return True
-    if container_literal_access_is_plain(node):
-        return True
-    if isinstance(node, JsIdentifier):
-        return bool(defunct) and node.name in defunct
-    return False
+    return isinstance(node, JsIdentifier) and bool(defunct) and node.name in defunct
 
 
 _CallPredicate = Callable[[JsCallExpression | JsNewExpression], bool]
@@ -1687,6 +1722,35 @@ class EffectModel:
             return False
         return owner not in self._globals_written
 
+    def _prototypes_intact(self, owner: str, roots: frozenset[str]) -> bool:
+        """
+        Whether *owner* and every prototype in *roots* are all provably unmodified. A property read
+        resolves against the whole prototype chain rather than one prototype, so each name the chain passes
+        through has to answer the same question `trusted_prototype` asks of the owner alone.
+        """
+        if self.model.has_reflection_surface():
+            return False
+        return all(name not in self._globals_written for name in (owner, *roots))
+
+    def read_chain_intact(self, value_type: type) -> bool:
+        """
+        Whether every prototype a plain property read on a value of *value_type* consults is unmodified, so
+        the read touches a data slot and runs nothing. Strictly stronger than `trusted_prototype`, which
+        answers the neighbouring question for a method *call*, and the two must not be merged: a method
+        resolves on the prototype that owns it, so `Array.prototype.join` shadows anything installed on
+        `Object.prototype` and a patch there cannot change what `[1, 2].join('-')` means. A read of an
+        arbitrary name has no such shadow — `Object.prototype` roots every chain, so a getter installed
+        there is reached by a read on an array literal, on a primitive, and on `Math` alike.
+
+        Confirmed against Node in both directions rather than reasoned from the specification: patching
+        `Object.prototype.join` leaves `[1, 2].join('-')` intact, while patching `Object.prototype.zz`
+        makes `[1, 2].zz` run a getter.
+        """
+        owner = _PROTOTYPE_OWNERS.get(value_type.__name__)
+        if owner is None:
+            return False
+        return self._prototypes_intact(owner, _INHERITED_CHAIN_ROOTS)
+
     def call_is_foldable(
         self,
         node: JsCallExpression,
@@ -1847,8 +1911,10 @@ class EffectModel:
 
         Non-nullishness is a *different* question from freshness and from getter-freeness, so this shares only
         the container-literal atom with its neighbours: a primitive qualifies here and is not fresh, while a
-        fresh local qualifies as fresh and not here. There is no member-chain arm, because `root.a` may be
-        `undefined` however safe *root* is, and the second read would then throw.
+        fresh local qualifies as fresh and not here. It needs no prototype question either, unlike
+        `_base_getter_safe`: no patch to any prototype can make `[1, 2]` nullish, and a throwing getter
+        reached through a patched chain is that predicate's concern. There is no member-chain arm, because
+        `root.a` may be `undefined` however safe *root* is, and the second read would then throw.
         """
         if container_literal_access_is_plain(node):
             return True
@@ -1866,19 +1932,40 @@ class EffectModel:
     def _base_getter_safe(self, node: Node) -> bool:
         """
         Whether reading a property of *node* cannot run a user-defined getter, so the read carries no
-        hidden effect: a container literal whose access is plain, a primitive, or a pristine intrinsic root.
-        Unlike `_base_is_safe`, the global object does not qualify — a global property such as `location` may
-        be an accessor — so a read through it is treated as an unknown call. Unlike freshness, a primitive and
-        an intrinsic root do qualify: neither is a newly built container, and neither runs user code on a
-        read. There is no member-chain arm, for the reason given on `_base_is_safe`.
+        hidden effect: a literal, or a pristine intrinsic root, whose entire prototype chain the program
+        leaves alone. Unlike `_base_is_safe`, the global object does not qualify — a global property such as
+        `location` may be an accessor — so a read through it is treated as an unknown call. Unlike
+        freshness, a primitive and an intrinsic root do qualify: neither is a newly built container, and
+        neither runs user code on a read of a pristine chain.
+
+        Syntax alone settles the *type* of a literal base but not its behaviour, which is why every arm ends
+        in `read_chain_intact` rather than returning on the node kind. A literal was previously cleared on
+        syntax alone, and that deleted reads which really did run a getter installed on the corresponding
+        prototype — Node-confirmed for array, object, string, boolean, function, and arrow bases, plus an
+        intrinsic root reached through `Object.prototype`. A container literal must additionally declare no
+        accessor of its own, the shared `container_literal_access_is_plain` question, since a getter written
+        into the literal needs no prototype at all. There is no member-chain arm, for the reason given on
+        `_base_is_safe`.
         """
-        if container_literal_access_is_plain(node):
-            return True
-        if isinstance(node, (JsStringLiteral, JsNumericLiteral, JsBooleanLiteral)):
-            return True
-        if isinstance(node, JsIdentifier):
-            return isinstance(self.intrinsic_of(node), str)
+        inner = strip_parens(node)
+        value_type = _LITERAL_READ_TYPES.get(type(inner))
+        if value_type is not None:
+            if self._literal_declares_accessor(inner):
+                return False
+            return self.read_chain_intact(value_type)
+        if isinstance(inner, JsIdentifier) and isinstance(self.intrinsic_of(inner), str):
+            return self._prototypes_intact('Object', _INTRINSIC_CHAIN_ROOTS)
         return False
+
+    def _literal_declares_accessor(self, node: Node) -> bool:
+        """
+        Whether *node* is a container literal that declares an accessor of its own, so a member access on it
+        runs user code with no prototype involved. Separate from the chain question because it needs no
+        model: the getter is written into the expression.
+        """
+        if not isinstance(node, (JsObjectExpression, JsArrayExpression)):
+            return False
+        return not container_literal_access_is_plain(node)
 
     def _getter_free_read(self, member: JsMemberExpression) -> bool:
         """
