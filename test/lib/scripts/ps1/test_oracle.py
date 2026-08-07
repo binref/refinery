@@ -151,6 +151,18 @@ BEHAVIOUR_DEFECTS: dict[str, str] = {
     "$x = 'a'; &('i' + 'ex') '$x = \"b\"'; Write-Host $x":
         'The same write, reached through a computed command name, and here the call itself is '
         'deleted as well.',
+    "function echo { 'from-function' }; echo 'from-alias'":
+        'The call is folded to the function body and prints `from-function`, but a command name '
+        'resolves an alias before a function, and `echo` is the default alias of `Write-Output`, '
+        'so 5.1 never runs the body and the snippet prints `from-alias`.',
+    "zzq 'early'; Set-Alias zzq Write-Output":
+        'The call is rewritten to `Write-Output` and prints `early`, but the alias is defined below '
+        'the use it would have to reach, so 5.1 finds no command named `zzq` at that point and '
+        'throws CommandNotFoundException.',
+    "function f { Set-Alias zzq Write-Output }; f; zzq 'leaked'":
+        'The call is rewritten to `Write-Output` and prints `leaked`, but the alias is defined in '
+        'the body of `f` and does not outlive the call, so `zzq` denotes nothing at the top level '
+        'and 5.1 throws CommandNotFoundException.',
 }
 
 

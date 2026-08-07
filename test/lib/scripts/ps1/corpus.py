@@ -148,6 +148,9 @@ BEHAVIOURS: tuple[str, ...] = (
     "&('Write' + '-Output') 'indirect'",
     "$s = 'abc'; $s.Substring(1, 2)",
     "'a{0}c' -f 'b'",
+    "function echo { 'from-function' }; echo 'from-alias'",
+    "zzq 'early'; Set-Alias zzq Write-Output",
+    "function f { Set-Alias zzq Write-Output }; f; zzq 'leaked'",
 )
 
 
