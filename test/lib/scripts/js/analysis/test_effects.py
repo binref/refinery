@@ -1745,3 +1745,119 @@ class TestFoldsRevealNoTrust(TestBase):
         assertion above would hold for reasons unrelated to install attribution.
         """
         self._stable("console.log('a' + 'b'); console.log(Math.floor(1.7));")
+
+    def test_aliased_install_target_reveals_nothing(self):
+        """
+        A write through an alias is attributed to the intrinsic before any fold collapses the alias, so
+        inlining `m` to `Math` cannot reveal a patch the held answer predates.
+        """
+        self._stable('var m = Math; m.floor = function(){}; console.log(Math.floor(1.7));')
+
+    def test_two_hop_aliased_install_target_reveals_nothing(self):
+        self._stable(
+            'var a = Math; var b = a; b.floor = function(){}; console.log(Math.floor(1.7));')
+
+    def test_guarded_alias_install_target_reveals_nothing(self):
+        self._stable('var m = Math || {}; m.floor = function(){}; console.log(Math.floor(1.7));')
+
+    def test_alias_assigned_after_declaration_reveals_nothing(self):
+        self._stable('var m; m = Math; m.floor = function(){}; console.log(Math.floor(1.7));')
+
+    def test_alias_of_a_prototype_reveals_nothing(self):
+        self._stable(
+            "var p = Array.prototype; p.join = function(){}; console.log([1, 2].join('-'));")
+
+
+class TestAliasedIntrinsicWrites(TestBase):
+    """
+    A property write patches the intrinsic its target *denotes*, not the one it is spelled with. `var m =
+    Math; m.floor = f` mentions `Math` nowhere in the assignment, so attributing the write to the syntactic
+    root left `Math` looking pristine and `Math.floor(1.7)` folding to the built-in.
+
+    A *may* analysis: one branch holding an intrinsic is enough to record it. The direction is forced —
+    missing an alias yields a wrong value, an extra name only an unfolded call — and the aliasing tests below
+    pin the precision that direction must not cost, since a bare alias with no write through it is ordinary
+    minifier output.
+    """
+
+    @staticmethod
+    def _written(source: str) -> frozenset[str]:
+        ast = JsParser(source).parse()
+        return frozenset(build_effects(build_semantic_model(ast))._globals_written)
+
+    def _records(self, source: str, name: str):
+        self.assertEqual(name in self._written(source), True, F'{name} not recorded for {source!r}')
+
+    def _omits(self, source: str, name: str):
+        self.assertEqual(name in self._written(source), False, F'{name} wrongly recorded for {source!r}')
+
+    def test_write_through_a_plain_alias_is_recorded(self):
+        self._records('var m = Math; m.floor = f;', 'Math')
+
+    def test_write_through_a_guarded_alias_is_recorded(self):
+        self._records('var m = Math || {}; m.floor = f;', 'Math')
+
+    def test_write_through_a_conditional_alias_is_recorded(self):
+        self._records('var m = c ? Math : {}; m.floor = f;', 'Math')
+
+    def test_write_through_a_sequence_alias_is_recorded(self):
+        self._records('var m = (0, Math); m.floor = f;', 'Math')
+
+    def test_write_through_a_two_hop_alias_is_recorded(self):
+        self._records('var a = Math; var b = a; b.floor = f;', 'Math')
+
+    def test_write_through_an_alias_assigned_after_declaration_is_recorded(self):
+        self._records('var m; m = Math; m.floor = f;', 'Math')
+
+    def test_write_through_an_alias_reassigned_to_an_intrinsic_is_recorded(self):
+        """
+        The binding holds a plain object on one path and the intrinsic on another, so a *must* analysis
+        would answer that it is never `Math`.
+        """
+        self._records('var m = {}; m = Math; m.floor = f;', 'Math')
+
+    def test_computed_key_write_through_an_alias_is_recorded(self):
+        self._records("var m = Math; m['fl' + 'oor'] = f;", 'Math')
+
+    def test_delete_through_an_alias_is_recorded(self):
+        self._records('var m = Math; delete m.floor;', 'Math')
+
+    def test_update_through_an_alias_is_recorded(self):
+        self._records('var m = Math; m.PI++;', 'Math')
+
+    def test_descriptor_install_through_an_alias_is_recorded(self):
+        self._records("var m = Math; Object.defineProperty(m, 'floor', { value: 1 });", 'Math')
+
+    def test_write_through_an_alias_of_a_prototype_is_recorded(self):
+        self._records('var p = Array.prototype; p.join = f;', 'Array')
+
+    def test_write_through_an_alias_of_a_constructor_is_recorded(self):
+        self._records('var A = Array; A.prototype.join = f;', 'Array')
+
+    def test_a_bare_alias_with_no_write_records_nothing(self):
+        """
+        The precision this must not cost: `var m = Math; m.floor(x)` is ordinary minifier output, and
+        refusing it would unfold every such call.
+        """
+        self._omits('var m = Math; var r = m.floor(1.7);', 'Math')
+
+    def test_a_write_on_an_unrelated_local_records_nothing(self):
+        self._omits('var m = {}; m.floor = f;', 'Math')
+
+    def test_the_result_of_an_intrinsic_call_is_not_an_alias(self):
+        """
+        The false positive a walk over every identifier in the initializer produces: the local holds the
+        *string* `fromCharCode` returned, not `String` itself. Three such aliases were reported on a real
+        sample before the walk was narrowed to value-preserving positions.
+        """
+        self._omits("var s = String.fromCharCode(65); s.x = 1;", 'String')
+
+    def test_the_result_of_a_method_call_is_not_an_alias(self):
+        self._omits("var s = 'ab'.toUpperCase(); s.x = 1;", 'String')
+
+    def test_a_write_through_a_mutually_assigned_pair_terminates(self):
+        """
+        The alias walk follows binding values, so a cycle must not spin. `Math` is still recorded, since
+        one of the two does hold it.
+        """
+        self._records('var a = Math; var b = a; a = b; b.floor = f;', 'Math')

@@ -2091,6 +2091,10 @@ def _globals_written_by_name(model: SemanticModel) -> frozenset[str]:
     a bare `Math = 1` introduces an implicit-global binding for `Math`, as do the destructuring and
     `for`-target forms. Only property writes, deletes, and descriptor installs — which leave the name
     itself a plain read — need the explicit branches below.
+
+    A write target names the intrinsic it patches only when the program spells it out. `var m = Math;
+    m.floor = f` patches `Math` while mentioning it nowhere in the assignment, so the chain root is
+    resolved through the values its binding may hold rather than taken as the name it is spelled with.
     """
     written: set[str] = set()
     pending = [model.root_scope]
@@ -2098,10 +2102,11 @@ def _globals_written_by_name(model: SemanticModel) -> frozenset[str]:
         scope = pending.pop()
         written.update(scope.bindings)
         pending.extend(scope.children)
+    aliases = _IntrinsicAliases(model)
     for node in model.root.walk():
         if isinstance(node, JsCallExpression):
             for base in _accessor_install_targets(node):
-                written.add(base.name)
+                written.update(aliases.names_denoted_by(base))
             continue
         target = None
         if isinstance(node, JsAssignmentExpression):
@@ -2112,8 +2117,93 @@ def _globals_written_by_name(model: SemanticModel) -> frozenset[str]:
             target = node.operand
         base = _member_chain_root(target)
         if base is not None:
-            written.add(base.name)
+            written.update(aliases.names_denoted_by(base))
     return frozenset(written)
+
+
+class _IntrinsicAliases:
+    """
+    Resolves the identifier at the root of a write target to every name it may denote, so that a property
+    write reaching an intrinsic through a local is attributed to the intrinsic rather than to the local.
+    `var m = Math; m.floor = f` must record `Math`, or the write stays invisible to every consumer of
+    `_globals_written` and `Math.floor(1.7)` goes on folding to the built-in.
+
+    A *may* analysis on purpose: every value a binding can hold contributes, so one branch assigning an
+    intrinsic is enough to poison the name. The direction is forced — missing an alias yields a wrong
+    value, while an extra name yields an unfolded call — and it matches how the accessor-install targets
+    are already over-approximated, `Object.defineProperty(0 || Math, …)` among them.
+
+    The backward step is `_denoted_roots`, the same value-preserving walk the install-target scan uses,
+    reused rather than reimplemented for two reasons. It already looks through exactly the forms a fold
+    collapses (`||`, `&&`, `??`, conditional, sequence-last, assignment-RHS, parens), which is what keeps
+    this answer stable while passes run — the pinning contract in
+    `refinery.lib.scripts.js.analysis.cache.ModelCache` requires that this set never *grow* across a pass.
+    And it stops at a call, so `var s = String.fromCharCode(x)` does not alias `String`: the local holds
+    the *result*, and a walk that merely collected identifiers from the initializer reported three such
+    false aliases on a real sample. Its member-chain arm over-approximates in the one remaining direction —
+    `var n = Array.length` reports `Array` — which is sound and measured to cost nothing.
+    """
+
+    def __init__(self, model: SemanticModel):
+        self.model = model
+        self._cache: dict[int, frozenset[str]] = {}
+
+    def names_denoted_by(self, node: JsIdentifier) -> frozenset[str]:
+        """
+        Every intrinsic-root name *node* may denote, including its own when it names one directly. A name
+        that resolves to no binding is a free global and denotes itself.
+        """
+        if node.name in _PURE_INTRINSIC_ROOTS:
+            return frozenset({node.name})
+        binding = self.model.resolve(node)
+        if binding is None:
+            return frozenset({node.name})
+        return self._names_of(binding, set())
+
+    def _names_of(self, binding: Binding, visiting: set[int]) -> frozenset[str]:
+        """
+        Every name a value of *binding* may denote, memoized per binding. The *visiting* set breaks the
+        cycle a mutually-assigning pair (`a = b; b = a`) would otherwise spin on; a binding still on the
+        stack contributes nothing further, since whatever it reaches is already being collected.
+        """
+        key = id(binding)
+        cached = self._cache.get(key)
+        if cached is not None:
+            return cached
+        if key in visiting:
+            return frozenset()
+        visiting.add(key)
+        found: set[str] = set()
+        for root in _binding_value_roots(binding):
+            if root.name in _PURE_INTRINSIC_ROOTS:
+                found.add(root.name)
+                continue
+            inner = self.model.resolve(root)
+            if inner is None:
+                found.add(root.name)
+                continue
+            found |= self._names_of(inner, visiting)
+        visiting.discard(key)
+        result = frozenset(found)
+        self._cache[key] = result
+        return result
+
+
+def _binding_value_roots(binding: Binding) -> Iterator[JsIdentifier]:
+    """
+    Every name a value of *binding* may denote, over its declarations' initializers and the right side of
+    every plain assignment to it. Both are needed: a binding declared empty and assigned later
+    (`var m; m = Math`) holds the intrinsic just as one initialized with it does.
+    """
+    for declaration in binding.declarations:
+        parent = getattr(declaration, 'parent', None)
+        initializer = getattr(parent, 'init', None)
+        if initializer is not None:
+            yield from _denoted_roots(initializer)
+    for reference in binding.writes:
+        parent = getattr(reference, 'parent', None)
+        if isinstance(parent, JsAssignmentExpression) and parent.left is reference:
+            yield from _denoted_roots(parent.right)
 
 
 def _accessor_install_method(node: JsMemberExpression) -> str | None:

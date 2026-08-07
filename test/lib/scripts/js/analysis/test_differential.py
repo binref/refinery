@@ -2071,6 +2071,103 @@ class TestPrototypeChainTrust(TestBase):
             ' console.log(String(f()));')
 
 
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAliasedIntrinsicPatches(TestBase):
+    """
+    A property write patches the intrinsic its target denotes, which need not be the name it is spelled with:
+    `var m = Math; m.floor = f` replaces `Math.floor` while mentioning `Math` nowhere in the assignment.
+    Attributing the write to the syntactic root left the built-in looking pristine, so every later
+    `Math.floor(…)` folded to the original.
+
+    Each patched form is paired with the control it must not cost — above all a bare alias with no write
+    through it, which is ordinary minifier output and must keep folding.
+    """
+
+    def _check(self, source: str):
+        deobfuscated = deobfuscate_source(source)
+        self.assertEqual(
+            behavior(source),
+            behavior(deobfuscated),
+            F'deobfuscation changed observable behavior; result was:\n{deobfuscated}',
+        )
+
+    def test_patch_through_a_plain_alias_is_honored(self):
+        self._check(
+            "var m = Math; m.floor = function () { return 'PATCHED'; };"
+            ' console.log(String(Math.floor(1.7)));')
+
+    def test_patch_through_a_guarded_alias_is_honored(self):
+        self._check(
+            "var m = Math || {}; m.floor = function () { return 'PATCHED'; };"
+            ' console.log(String(Math.floor(1.7)));')
+
+    def test_patch_through_a_sequence_alias_is_honored(self):
+        self._check(
+            "var m = (0, Math); m.floor = function () { return 'PATCHED'; };"
+            ' console.log(String(Math.floor(1.7)));')
+
+    def test_patch_through_a_conditional_alias_is_honored(self):
+        self._check(
+            "var m = 1 ? Math : {}; m.floor = function () { return 'PATCHED'; };"
+            ' console.log(String(Math.floor(1.7)));')
+
+    def test_patch_through_an_alias_assigned_after_declaration_is_honored(self):
+        self._check(
+            "var m; m = Math; m.floor = function () { return 'PATCHED'; };"
+            ' console.log(String(Math.floor(1.7)));')
+
+    def test_patch_through_a_two_hop_alias_is_honored(self):
+        self._check(
+            "var a = Math; var b = a; b.floor = function () { return 'PATCHED'; };"
+            ' console.log(String(Math.floor(1.7)));')
+
+    def test_patch_through_a_computed_key_on_an_alias_is_honored(self):
+        self._check(
+            "var m = Math; m['fl' + 'oor'] = function () { return 'PATCHED'; };"
+            ' console.log(String(Math.floor(1.7)));')
+
+    def test_descriptor_install_through_an_alias_is_honored(self):
+        self._check(
+            "var m = Math; Object.defineProperty(m, 'floor',"
+            " { value: function () { return 'PATCHED'; } });"
+            ' console.log(String(Math.floor(1.7)));')
+
+    def test_prototype_patch_through_a_constructor_alias_is_honored(self):
+        self._check(
+            "var A = Array; A.prototype.join = function () { return 'PATCHED'; };"
+            " console.log([1, 2].join('-'));")
+
+    def test_prototype_patch_through_a_prototype_alias_is_honored(self):
+        self._check(
+            "var p = Array.prototype; p.join = function () { return 'PATCHED'; };"
+            " console.log([1, 2].join('-'));")
+
+    def test_string_patch_through_an_alias_is_honored(self):
+        self._check(
+            "var S = String; S.fromCharCode = function () { return 'PATCHED'; };"
+            ' console.log(String(String.fromCharCode(65)));')
+
+    def test_bare_alias_without_a_write_still_folds(self):
+        self._check('var m = Math; console.log(String(m.floor(1.7)));')
+
+    def test_write_on_an_unrelated_local_still_folds(self):
+        self._check('var m = {}; m.floor = 1; console.log(String(Math.floor(1.7)));')
+
+    def test_write_on_the_result_of_an_intrinsic_call_still_folds(self):
+        """
+        The local holds the string the call returned, not `String`, so treating it as an alias would refuse
+        every `String.fromCharCode` fold in a file that ever stores one of its results.
+        """
+        self._check(
+            "var s = String.fromCharCode(65); s.x = 1;"
+            ' console.log(String(String.fromCharCode(66)));')
+
+    def test_write_on_the_result_of_a_method_call_still_folds(self):
+        self._check(
+            "var s = 'ab'.toUpperCase(); s.x = 1;"
+            ' console.log(String(String.fromCharCode(66)));')
+
+
 class TestHostEntrypointPreservation(TestBase):
     """
     Under the script execution model a top-level `var`/`function` is a property of the global object, so

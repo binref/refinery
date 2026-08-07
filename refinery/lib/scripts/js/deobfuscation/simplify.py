@@ -209,6 +209,12 @@ class JsSimplifications(Transformer):
         performs. Were that not so, a held model would report a patched built-in as pristine and admit a
         fold against it.
 
+        "Every name its target may denote" spans two kinds of collapse, and both must already be accounted
+        for. One is syntactic — `0 || Math` names `Math` before the fold that reduces it — and the other is
+        an alias: `var m = Math; m.floor = f` names `Math` though the assignment mentions only `m`, so
+        inlining the alias reveals nothing the held set lacked. Attribution followed the syntax alone until
+        the alias step was added, which is exactly the stale-permissive case this argument rules out.
+
         The same argument covers the freshness the effect model reports for a container base. A binding is
         judged fresh only when this pass owns every value it takes, and the pass adds no value to any binding;
         the array guarantee that an allocating method's result depends on is withdrawn by a write to
