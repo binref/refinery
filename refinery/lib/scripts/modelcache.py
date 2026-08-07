@@ -9,13 +9,15 @@ every pass.
 `refinery.lib.scripts.js.analysis.cache.ModelCache` and
 `refinery.lib.scripts.ps1.analysis.cache.Ps1ModelCache` are the concrete caches: each subclass
 declares its typed model slots in `_SLOTS` and exposes one lazy property per model built through
-`_lazy`, and inherits the version tracking, edge-triggered invalidation, and transformer-reuse stash
-from here. Keeping the mechanism in one place is why a new language's cache cannot drift from the
-invalidation contract the base establishes.
+`_lazy`, and inherits the version tracking, edge-triggered invalidation, the `ModelCacheBase.pinned`
+suspension of that invalidation, and the transformer-reuse stash from here. Keeping the mechanism in
+one place is why a new language's cache cannot drift from the invalidation contract the base
+establishes.
 """
 from __future__ import annotations
 
-from typing import Callable, TypeVar
+from contextlib import contextmanager
+from typing import Callable, Generator, TypeVar
 
 from refinery.lib.scripts import Node, Transformer, tree_root, tree_version
 
@@ -33,10 +35,16 @@ class ModelCacheBase:
     on next access. Dropping the models together keeps a derived model consistent with the base
     model it was layered on. Because the base owns the whole mechanism, `invalidate` — the one
     method the `refinery.lib.scripts.AnalysisCache` protocol requires — is defined once, not per
-    language.
+    language. `pinned` suspends that mechanism for the length of a block, and lives here for the
+    same reason: it is the one thing that can hold a model across a mutation, so a language cache
+    cannot be allowed to grow its own version of it.
     """
 
     _SLOTS: tuple[str, ...] = ()
+
+    # A class attribute rather than an assignment in `__init__`, because `__init__` calls
+    # `invalidate`, which reads this: an instance attribute would not exist yet at that point.
+    _pins = 0
 
     root: Node
 
@@ -50,8 +58,38 @@ class ModelCacheBase:
         self.invalidate()
 
     def invalidate(self) -> None:
+        if self._pins:
+            return
         for slot in self._SLOTS:
             setattr(self, slot, None)
+
+    @contextmanager
+    def pinned(self: _C) -> Generator[_C, None, None]:
+        """
+        Hold the models for the duration of the block: each is still built on first use, and
+        afterwards the memoized instance is served even as the tree changes underneath it. On exit
+        the pin is released and the models are dropped, so no stale model outlives the block.
+
+        This exists because a transform that both rewrites the tree and consults a model on every
+        rewrite otherwise rebuilds the model per rewrite — the cost is the product of the two, and
+        it dominated deobfuscation runtime. Suppression is counted so that an inner pin cannot
+        release an outer one.
+
+        **The caller must know that its own rewrites cannot make the models it reads more
+        permissive.** That is a property of the specific transform, not of pinning: a pass that
+        could reveal a fact its held model predates would act on the stale, more permissive answer.
+        A pass whose rewrites only ever make facts *more* restrictive is safe, because it then
+        declines where it could have proceeded.
+        """
+        self._ensure_fresh()
+        self._pins += 1
+        try:
+            yield self
+        finally:
+            self._pins -= 1
+            if not self._pins:
+                self._version = tree_version(self.root)
+                self.invalidate()
 
     def _ensure_fresh(self) -> None:
         version = tree_version(self.root)

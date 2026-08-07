@@ -164,14 +164,23 @@ class JsSimplifications(Transformer):
 
     def visit_JsScript(self, node: JsScript):
         """
-        Attach the shared model cache for the whole script, then rewrite. The model, effect, and
-        dominance models are all read from that version-aware cache, so a mid-pass mutation rebuilds them
-        together and the three stay consistent. Simplification only ever removes bindings within a pass,
-        never adds one, so a name the model reports as locally bound stays bound; reading shadowing from
-        it can therefore only over-preserve a global-alias access, never collapse one a local now captures.
+        Attach the shared model cache for the whole script, then rewrite with the models held for the
+        length of the pass. Rebuilding them per rewrite is what made deobfuscation cost the product of
+        tree size and rewrite count; a fold gate is consulted on nearly every rewrite, so each rewrite
+        paid for a full rebuild of the semantic and effect models.
+
+        Holding them is sound because this pass cannot loosen the facts those models report. It only ever
+        removes bindings, never adds one, so a name reported as locally bound stays bound and reading
+        shadowing from a held model can only over-preserve a global-alias access, never collapse one a
+        local now captures. In the same way it cannot reveal an intrinsic as patched: an install is
+        attributed to every name its target may denote, before any fold collapses the target to a plain
+        name, so `_globals_written` and `global_pristine` already account for the rewrites this pass
+        performs. Were that not so, a held model would report a patched built-in as pristine and admit a
+        fold against it.
         """
         self._cache = model_cache(self, node)
-        self.generic_visit(node)
+        with self._cache.pinned():
+            self.generic_visit(node)
         return None
 
     def _resolves_to_local(self, member: JsMemberExpression, name: str) -> bool:

@@ -662,12 +662,29 @@ class JsReflectionInlining(ScriptLevelTransformer):
     _free_global: Callable[[Expression | None], str | None]
 
     def _process_script(self, node: JsScript) -> None:
-        self._read_effect = self._dynamic_read_effect(node)
-        self._alias_name = self._alias_member_name(node)
-        self._free_global = self._free_global_name(node)
-        self._inline_statements(node)
-        self._inline_expressions(node)
-        self._lower_timers(node)
+        """
+        Inline every reflective site in the script, holding the semantic model for the whole pass.
+
+        Each inline splices in code that was a string, so this pass *can* reveal facts its held model
+        predates — `eval('Math.floor = f')` makes a write visible that no pre-inline model could see. What
+        makes holding the model sound is the precondition rather than the absence of such reveals: this
+        transform only ever does work on a script that has a reflective surface, and `has_reflection_surface`
+        being true withdraws trust from every intrinsic (see
+        `refinery.lib.scripts.js.analysis.effects.EffectModel.trusted_intrinsic`). No fold against a
+        built-in can be admitted anywhere inside this window, so a write revealed here cannot be acted on
+        before the pin is released and the model rebuilt. Inlining can only turn that flag off, never on,
+        which leaves the held answer the stricter one.
+
+        Should this transform ever run on a script with no reflective surface, or should that flag stop
+        gating intrinsic trust, this argument does not hold and the pin must be reconsidered.
+        """
+        with model_cache(self, node).pinned():
+            self._read_effect = self._dynamic_read_effect(node)
+            self._alias_name = self._alias_member_name(node)
+            self._free_global = self._free_global_name(node)
+            self._inline_statements(node)
+            self._inline_expressions(node)
+            self._lower_timers(node)
 
     def _dynamic_read_effect(self, root: JsScript) -> Callable[[Node], bool]:
         """

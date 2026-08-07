@@ -34,6 +34,10 @@ class ModelCache(ModelCacheBase):
     same pass — even one not yet announced through `refinery.lib.scripts.Transformer.changed` —
     observes models consistent with the current tree. The derived models are always built on the
     current semantic model, so dropping them together keeps them consistent.
+
+    A transform whose own rewrites cannot change the answers it reads may hold the models for the length
+    of one pass through `pinned`, which suppresses both drops until the pass ends. See that method for
+    the obligation this places on the caller.
     """
 
     _SLOTS = ('_model', '_control_flow', '_effects', '_liveness', '_dominance', '_reaching')
