@@ -99,7 +99,7 @@ _phase2 = DeobfuscationPipeline(
 
 def deobfuscate(
     ast: Ps1Script,
-    max_steps: int = 0,
+    max_steps: int = 5000,
     remove_junk: bool = True,
     preserve_bare_output: bool = False,
 ) -> int:
@@ -107,6 +107,12 @@ def deobfuscate(
     Apply all available deobfuscators to the input. When `remove_junk` is `True`, a second pass
     removes unused variable assignments, uncalled function definitions, and side-effect-free
     expression statements.
+
+    A non-zero `max_steps` bounds the total number of change-producing transformer passes across
+    both phases and raises `refinery.lib.scripts.pipeline.DeobfuscationTimeout` once it is
+    exceeded, so a set of transforms that fails to converge fails loudly instead of hanging. The
+    default is generous — real inputs settle in the low tens of passes — so it never bounds a
+    legitimate deobfuscation, only a runaway loop. Pass `0` to disable the bound entirely.
 
     The two switches are not the same knob at different strengths. `remove_junk` decides whether
     that second pass runs at all, so turning it off also keeps every dead store and uncalled

@@ -292,6 +292,16 @@ class TestPs1Integration(TestPs1):
         with self.assertRaises(DeobfuscationTimeout):
             deobfuscate(ast, max_steps=1)
 
+    def test_a_nonconverging_input_raises_under_the_default_budget(self):
+        """
+        The witness is an alias cycle the pipeline currently rewrites forever; once a later
+        milestone makes it converge, replace it with another non-converging input. The enduring
+        contract is that non-convergence fails loudly under the default budget instead of hanging.
+        """
+        ast = Ps1Parser('Set-Alias aq bq; Set-Alias bq aq; aq').parse()
+        with self.assertRaises(DeobfuscationTimeout):
+            deobfuscate(ast)
+
     def test_string_equality_guard_prunes_dead_branch(self):
         # A folded string comparison must cascade into dead-branch elimination across the pipeline.
         result = self._deobfuscate(

@@ -12,8 +12,15 @@ from refinery.lib.scripts import AnalysisCache, Node, Transformer
 
 class DeobfuscationTimeout(Exception):
     """
-    Raised when the pipeline exceeds the maximum number of transformation steps.
+    Raised when the pipeline exceeds the maximum number of transformation steps. The exception
+    names the group and the transformer whose change exhausted the budget; with an oscillating
+    fixpoint that transformer is the one that failed to settle.
     """
+
+    def __init__(self, group: str, transformer: str):
+        super().__init__(F'transformer {transformer} in group {group} exceeded the step budget')
+        self.group = group
+        self.transformer = transformer
 
 
 class TransformerGroup:
@@ -59,7 +66,7 @@ class TransformerGroup:
                     if cls.self_converging:
                         active.discard(i)
                     if max_steps and steps > max_steps:
-                        raise DeobfuscationTimeout
+                        raise DeobfuscationTimeout(self.name, cls.__name__)
                 else:
                     active.discard(i)
             if not round_changed:

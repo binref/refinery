@@ -12,11 +12,10 @@ from refinery.units import Arg, Chunk, RefineryPartialResult, Unit
 
 
 class AutoDeobfuscationTimeout(RefineryPartialResult):
-    def __init__(self, partial):
-        super().__init__(
-            'The deobfuscation timeout was reached before the data stabilized.',
-            partial=partial,
-        )
+    def __init__(self, partial, reason: str | None = None):
+        message = 'The deobfuscation timeout was reached before the data stabilized'
+        message = F'{message}; {reason}.' if reason else F'{message}.'
+        super().__init__(message, partial=partial)
 
 
 class IterativeDeobfuscator(Unit, abstract=True):
@@ -72,8 +71,8 @@ class IterativeDeobfuscator(Unit, abstract=True):
             self.log_info(F'starting round {k}')
             try:
                 changed = self.transform(ast)
-            except DeobfuscationTimeout:
-                raise AutoDeobfuscationTimeout(_result())
+            except DeobfuscationTimeout as error:
+                raise AutoDeobfuscationTimeout(_result(), reason=str(error)) from error
             if changed:
                 continue
             return _result()

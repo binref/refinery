@@ -27,6 +27,14 @@ def _ChangeN(change: int, key: str = 'default'):
     return _ChangeN
 
 
+class _SettleAfterOne(_ChangeN(1, 'settle')):
+    pass
+
+
+class _NeverSettle(_ChangeN(1000, 'churn')):
+    pass
+
+
 class TestTransformerGroup(unittest.TestCase):
 
     def test_group_runs_until_stable(self):
@@ -64,3 +72,34 @@ class TestDeobfuscationPipeline(unittest.TestCase):
         node.counters.clear()
         with self.assertRaises(DeobfuscationTimeout):
             pipeline.run(node, max_steps=5)
+
+
+class TestDeobfuscationTimeoutReport(unittest.TestCase):
+
+    def test_group_timeout_names_the_transformer_that_kept_changing(self):
+        node = _MockNode()
+        group = TransformerGroup('grp', _SettleAfterOne, _NeverSettle)
+        with self.assertRaises(DeobfuscationTimeout) as context:
+            group.run(node, max_steps=4)
+        self.assertEqual(context.exception.group, 'grp')
+        self.assertEqual(context.exception.transformer, '_NeverSettle')
+
+    def test_pipeline_timeout_names_the_group_that_exhausted_the_budget(self):
+        node = _MockNode()
+        pipeline = DeobfuscationPipeline([
+            TransformerGroup('quiet', _ChangeN(2, 'quiet')),
+            TransformerGroup('noisy', _NeverSettle),
+        ])
+        with self.assertRaises(DeobfuscationTimeout) as context:
+            pipeline.run(node, max_steps=5)
+        self.assertEqual(context.exception.group, 'noisy')
+        self.assertEqual(context.exception.transformer, '_NeverSettle')
+
+    def test_timeout_message_names_group_and_transformer(self):
+        node = _MockNode()
+        group = TransformerGroup('g', _NeverSettle)
+        with self.assertRaises(DeobfuscationTimeout) as context:
+            group.run(node, max_steps=1)
+        self.assertEqual(
+            str(context.exception),
+            'transformer _NeverSettle in group g exceeded the step budget')
