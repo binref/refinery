@@ -19,6 +19,8 @@
 - The `xtw` unit now recognizes more cryptocurrency address types and validates the addresses it extracts.
 - The `chacha20poly1305` unit now supports additional authenticated data and Poly1305 tag verification,
   and the `chacha` unit now accepts the IETF 12-byte nonce.
+- The `js` unit now prints a long array of byte-valued integers as a grid of aligned hexadecimal values
+  instead of one element per line, which makes embedded keys and ciphertext blocks readable.
 - The `vbamc` and `vbapc` units can now extract VBA from Microsoft Access databases.
 - The `docmeta` unit was extended with additional metadata parsers and can now also extract metadata from MS Access databases.
 - The `asn1` unit's parser was substantially improved: It resolves recursive and mutually-recursive type definitions,

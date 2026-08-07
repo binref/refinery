@@ -82,6 +82,8 @@ from refinery.lib.scripts.js.precedence import needs_parens, statement_needs_par
 
 _WORD_UNARY_OPS = frozenset({'typeof', 'void', 'delete'})
 
+_BYTE_GRID_COLUMNS = 15
+
 
 def _is_decorator_member(expr: Node) -> bool:
     """
@@ -279,12 +281,56 @@ class JsSynthesizer(Synthesizer):
 
     def _emit_array_like(self, node):
         self._write('[')
-        if self._comma_separated(node.elements, wrap_sequences=True):
+        if self._byte_grid(node.elements) or self._comma_separated(node.elements, wrap_sequences=True):
             self._newline()
         self._write(']')
 
     visit_JsArrayExpression = _emit_array_like
     visit_JsArrayPattern = _emit_array_like
+
+    def _byte_grid(self, elements: list) -> bool:
+        """
+        Emit *elements* as a grid of fixed-width hex bytes, and report whether that was done. Declines
+        unless every element is an integer literal in `0 .. 255` and there are enough of them to fill more
+        than one row, and unless the array would overflow the line anyway — the grid is an alternative to
+        the one-element-per-line fallback, so where that fallback does not apply the array is left exactly
+        as it was written.
+
+        A byte array printed one element per line costs a screen of vertical space to say very little, and
+        decimal cannot be aligned: `15` and `216` differ in width, so the reader loses the column structure
+        that makes a key or ciphertext block legible. Hex is what buys the alignment, which is why the
+        radix change and the row width are one decision rather than two.
+        """
+        if len(elements) <= _BYTE_GRID_COLUMNS:
+            return False
+        if not all(
+            isinstance(element, JsNumericLiteral)
+            and isinstance(element.value, int)
+            and 0 <= element.value <= 0xFF
+            for element in elements
+        ):
+            return False
+        if not self._overflows_inline(elements):
+            return False
+        self._depth += 1
+        for start in range(0, len(elements), _BYTE_GRID_COLUMNS):
+            row = elements[start:start + _BYTE_GRID_COLUMNS]
+            self._newline()
+            self._write(', '.join(F'0x{element.value:02X}' for element in row))
+            if start + _BYTE_GRID_COLUMNS < len(elements):
+                self._write(',')
+        self._depth -= 1
+        return True
+
+    def _overflows_inline(self, elements: list) -> bool:
+        """
+        Whether emitting *elements* comma-separated on the current line would pass the line limit, and so
+        be broken up. Measured from each element's own spelling, because that is what would be printed:
+        deciding this from the hex form instead would grid an array of small values that fits as written,
+        since `0x05` is wider than `5`.
+        """
+        width = sum(len(element.raw) for element in elements) + 2 * (len(elements) - 1)
+        return self._col + width > self._line_length
 
     def visit_JsObjectExpression(self, node: JsObjectExpression):
         if not node.properties:

@@ -3,6 +3,7 @@ from __future__ import annotations
 from test import TestBase
 
 from refinery.lib.scripts.js.model import (
+    JsArrayExpression,
     JsArrowFunctionExpression,
     JsAssignmentExpression,
     JsAssignmentPattern,
@@ -689,3 +690,168 @@ class TestJsSynthesizer(TestBase):
 
     def test_export_decorated_class(self):
         self._round_trip('export @dec class C {}')
+
+
+class TestByteArrayGrid(TestBase):
+    """
+    A long array of byte-valued integers is printed as a grid of fixed-width hex values instead of one
+    element per line, which is what makes an embedded key or ciphertext block readable rather than a screen
+    of vertical noise. Hex is what buys the alignment — decimal `15` and `216` differ in width — so the
+    radix and the row structure are one feature.
+
+    The refusals carry as much weight as the grid itself. Rewriting a literal's spelling is something this
+    synthesizer otherwise does only under an explicit option, so the trigger has to be exactly the case the
+    grid improves on: an array that would have been broken across lines anyway, every element of which is a
+    byte. An array that fits on its line must come out untouched.
+    """
+
+    @staticmethod
+    def _emit(source: str) -> str:
+        return JsSynthesizer().convert(JsParser(source).parse())
+
+    @staticmethod
+    def _array_values(source: str) -> list:
+        """
+        Every array literal's element values, so a change of spelling can be shown to preserve them.
+        """
+        return [
+            [
+                element.value if isinstance(element, JsNumericLiteral) else type(element).__name__
+                for element in node.elements
+            ]
+            for node in JsParser(source).parse().walk()
+            if isinstance(node, JsArrayExpression)
+        ]
+
+    def _elements(self, values, extra: str = '') -> str:
+        return F'var a = [{", ".join(str(v) for v in values)}{extra}];'
+
+    def test_long_byte_array_is_emitted_as_a_hex_grid(self):
+        """
+        45 three-digit values are 223 columns as written, so this array is one the synthesizer would have
+        broken up regardless; the grid is what it is broken into.
+        """
+        source = self._elements([
+            15, 216, 150, 85, 200, 21, 150, 34, 117, 192, 188, 159, 55, 161, 212,
+            83, 194, 215, 4, 31, 78, 146, 105, 234, 185, 106, 130, 223, 47, 187,
+            13, 224, 180, 158, 51, 156, 78, 186, 68, 66, 223, 80, 190, 158, 27,
+        ])
+        self.assertEqual(
+            'var a = [\n'
+            '  0x0F, 0xD8, 0x96, 0x55, 0xC8, 0x15, 0x96, 0x22, 0x75, 0xC0, 0xBC, 0x9F, 0x37, 0xA1, 0xD4,\n'
+            '  0x53, 0xC2, 0xD7, 0x04, 0x1F, 0x4E, 0x92, 0x69, 0xEA, 0xB9, 0x6A, 0x82, 0xDF, 0x2F, 0xBB,\n'
+            '  0x0D, 0xE0, 0xB4, 0x9E, 0x33, 0x9C, 0x4E, 0xBA, 0x44, 0x42, 0xDF, 0x50, 0xBE, 0x9E, 0x1B\n'
+            '];',
+            self._emit(source),
+        )
+
+    def test_the_grid_preserves_every_value(self):
+        source = self._elements(list(range(256)))
+        self.assertEqual(self._array_values(source), self._array_values(self._emit(source)))
+
+    def test_the_grid_is_stable_under_reprinting(self):
+        source = self._elements(list(range(60)) + [255] * 20)
+        once = self._emit(source)
+        self.assertEqual(once, self._emit(once))
+
+    def test_an_array_that_fits_on_one_line_is_untouched(self):
+        self.assertEqual('var a = [200, 201, 202];', self._emit('var a = [200, 201, 202];'))
+
+    def test_small_values_that_fit_as_decimal_are_untouched(self):
+        """
+        The decision rests on the width of the elements as written, not as hex: `0x05` is wider than `5`, so
+        judging by the hex form would break up a line that was never going to overflow.
+        """
+        source = self._elements([5] * 40)
+        self.assertEqual(source, self._emit(source))
+
+    def test_too_few_values_to_fill_a_row_are_not_rewritten(self):
+        """
+        A long name can push even a two-element array past the line limit, but two values are not a grid —
+        converting them to hex would change how the literals are spelled and return nothing for it. The
+        array is still broken onto its own lines, just left in the radix it was written in.
+        """
+        result = self._emit(F'var {"name" * 32} = [200, 201];')
+        self.assertNotIn('0x', result)
+        self.assertEqual(['  200,', '  201'], result.splitlines()[1:3])
+
+    def test_a_single_out_of_range_value_declines_the_grid(self):
+        """
+        One value above `0xFF` disqualifies the whole array, since a grid of two-digit cells cannot
+        represent it. The array is long enough to overflow, so it still gets broken up — just not gridded.
+        """
+        source = self._elements([200] * 45 + [256])
+        result = self._emit(source)
+        self.assertNotIn('0x', result)
+        self.assertEqual('  200,', result.splitlines()[1])
+
+    def test_a_negative_value_declines_the_grid(self):
+        """
+        `-1` parses as a negation applied to `1`, so a check that only inspected literal values would see a
+        byte here and print `0x01`, dropping the sign.
+        """
+        result = self._emit(self._elements([200] * 45, extra=', -1'))
+        self.assertNotIn('0x', result)
+        self.assertEqual('  -1', result.splitlines()[-2])
+
+    def test_a_hole_declines_the_grid(self):
+        self.assertNotIn('0x', self._emit(self._elements([200] * 45, extra=', ,1')))
+
+    def test_a_spread_declines_the_grid(self):
+        result = self._emit(self._elements([200] * 45, extra=', ...b'))
+        self.assertNotIn('0x', result)
+        self.assertEqual('  ...b', result.splitlines()[-2])
+
+    def test_non_integer_values_decline_the_grid(self):
+        result = self._emit(self._elements([1.5] * 45))
+        self.assertNotIn('0x', result)
+        self.assertEqual('  1.5,', result.splitlines()[1])
+
+    def test_a_source_hex_array_is_gridded_too(self):
+        """
+        The feature is about how bytes are laid out, not about converting decimal, so an array already
+        written in hex gets the same treatment.
+        """
+        source = 'var a = [' + ', '.join(['0xC8'] * 45) + '];'
+        result = self._emit(source)
+        self.assertEqual(self._array_values(source), self._array_values(result))
+        self.assertEqual(
+            '  0xC8, 0xC8, 0xC8, 0xC8, 0xC8, 0xC8, 0xC8, 0xC8, 0xC8, 0xC8, 0xC8, 0xC8, 0xC8, 0xC8, 0xC8,',
+            result.splitlines()[1],
+        )
+
+    def test_an_array_pattern_is_never_gridded(self):
+        """
+        The grid shares its emitter with array destructuring, where the elements are binding targets and a
+        numeric literal cannot appear.
+        """
+        source = 'var [' + ', '.join(F'variable{i}' for i in range(30)) + '] = xs;'
+        result = self._emit(source)
+        self.assertNotIn('0x', result)
+        self.assertEqual('  variable0,', result.splitlines()[1])
+
+    def test_a_gridded_array_nested_in_a_call_stays_valid(self):
+        source = 'f([' + ', '.join(str(200 + (v % 55)) for v in range(45)) + ']);'
+        result = self._emit(source)
+        self.assertEqual(self._array_values(source), self._array_values(result))
+        self.assertEqual(result, self._emit(result))
+        self.assertEqual('f([', result.splitlines()[0])
+        self.assertEqual(']);', result.splitlines()[-1])
+
+    def test_no_byte_array_is_ever_broken_one_element_per_line(self):
+        """
+        Whether to grid is *predicted* from the element widths, while the fallback *measures* overflow as it
+        emits. If those two disagreed, a byte array could decline the grid and then be broken one element per
+        line — the very layout the grid exists to replace. Swept across lengths, values, and the indentation
+        the surrounding declaration forces.
+        """
+        stragglers = []
+        for count in (16, 20, 32, 45, 64, 80):
+            for prefix in (1, 20, 40, 80, 110, 125):
+                for value in (5, 99, 200):
+                    source = F'var {"v" * prefix} = [{", ".join([str(value)] * count)}];'
+                    body = self._emit(source).splitlines()
+                    if any(line.strip().rstrip(',').isdigit() for line in body[1:-1]):
+                        stragglers.append((count, prefix, value))
+        self.assertEqual([], stragglers)
+
