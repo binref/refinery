@@ -1,6 +1,7 @@
 """
-The PowerShell the ps1 tests are quantified over, and the only PowerShell that may be handed to a
-real 5.1 host.
+The PowerShell the ps1 tests are quantified over, and the only PowerShell that may be *run* by a
+real 5.1 host. Parsing is a weaker thing to ask of a host and other modules add sources to it;
+running is not, and `executable()` below is the whole of what may be run.
 
 Every entry here is hand-authored. Nothing is read from disk, downloaded, or derived from a sample,
 and this module imports nothing from `test`, so it cannot reach the sample store even indirectly.

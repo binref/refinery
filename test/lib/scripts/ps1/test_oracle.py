@@ -15,11 +15,14 @@ what 5.1 does and what we do so that a failure can be read without leaving this 
 """
 from __future__ import annotations
 
+import functools
+import inspect
 import sys
 import unittest
 
 from test import TestBase
 from test.lib.scripts.ps1 import corpus
+from test.lib.scripts.ps1.test_parser_shape import CORPUS as SHAPES
 from test.lib.scripts.ps1.oracle import (
     OracleError,
     behaviour,
@@ -73,6 +76,20 @@ DEFECTS: dict[str, str] = {
     '$x > out.txt':
         '5.1 accepts a redirection of an expression. We produce an error node; the narrower bug '
         'is already ledgered at test_parser_shape.py:578.',
+    '1 | 2':
+        '5.1 reports ExpressionsMustBeFirstInPipeline: an expression may stand only as the first '
+        'element of a pipeline, and after a pipe it wants a command. We accept it, so the tool can '
+        'emit a pipeline 5.1 refuses. `dir | & $sb` is how the same thing is written.',
+    "1 | 'a'":
+        'The same rule, with a string as the second element.',
+    'dir | $sb':
+        'The same rule. This is the shape it costs something to get wrong: a script block behind a '
+        'pipe has to be invoked, and 5.1 will not read the bare variable there.',
+    'dir | @{ a = 1 }':
+        'The same rule, with a hash literal as the second element.',
+    'Get-Process | $x > out.txt':
+        'The same rule. `ParseInput` reports the error and still returns a tree, which is why a '
+        'transcript of one can record a shape for a script 5.1 refuses.',
 }
 
 
@@ -229,6 +246,31 @@ def has_parse_error(source: str) -> bool:
     return any(isinstance(node, Ps1ErrorNode) for node in Ps1Parser(source).parse().walk())
 
 
+@functools.cache
+def asked_of_the_host() -> tuple[str, ...]:
+    """
+    Every source 5.1 is asked to parse, deduplicated and in a stable order: the reviewed corpus, and
+    the fragments of `test_parser_shape.py`, whose expected tree was transcribed by hand from a 5.1
+    session. Those fragments stay where they are rather than moving here, because a source is only
+    worth reading beside the tree it is paired with; what they add is the other two questions a host
+    can answer about them, which is whether 5.1 accepts them and whether it accepts what we print.
+
+    Their trees are deliberately not re-derived. 5.1 wraps most nodes in a `NamedBlockAst`,
+    `StatementBlockAst` or `CommandExpressionAst` we have no counterpart for, and names its classes
+    where we name our fields, so a comparison would run through a normalizer of ours — and a
+    hand-transcribed witness is worth more than a re-derivation through our own assumptions.
+
+    Nothing here is executed. `corpus.executable()` remains exactly the text that may be run, which
+    is where the judgement that a script is synthetic, small and safe is recorded.
+    """
+    seen: dict[str, None] = {}
+    for source in corpus.oracle_corpus():
+        seen.setdefault(source, None)
+    for shape in SHAPES:
+        seen.setdefault(inspect.cleandoc(shape.source), None)
+    return tuple(seen)
+
+
 class Ps1OracleTest(TestBase):
     """
     A test that may reach a PowerShell host. The sample store is taken away rather than merely
@@ -272,14 +314,17 @@ class TestPs1OracleMeasuresWhatItClaims(Ps1OracleTest):
 
     def test_every_source_in_a_batch_gets_its_own_report(self):
         sources = ['1', '2', '3', 'if (']
-        self.assertEqual([bool(r.errors) for r in parse_reports(sources)], [False, False, False, True])
+        self.assertEqual(
+            [bool(report.errors) for report in parse_reports(sources)],
+            [False, False, False, True],
+        )
 
     def test_the_corpus_reaches_the_host_unchanged(self):
         """
         The corpus carries smart quotes, carriage returns and here-strings, all of which a code
         page or a line-ending normalization would quietly alter on the way to the host.
         """
-        sources = [*corpus.oracle_corpus(), 'say “hi”', 'line one\rline two', "'‘’‚‛'", '"“”„']
+        sources = [*asked_of_the_host(), 'say “hi”', 'line one\rline two', "'‘’‚‛'", '"“”„']
         self.assertEqual(echo(sources), sources)
 
     def test_a_snippet_that_is_not_in_the_corpus_is_not_executed(self):
@@ -291,7 +336,7 @@ class TestPs1OracleMeasuresWhatItClaims(Ps1OracleTest):
 class TestPs1ParserAgreesWithWindowsPowerShell(Ps1OracleTest):
 
     def test_acceptance_agrees_except_where_recorded(self):
-        sources = corpus.oracle_corpus()
+        sources = asked_of_the_host()
         disagreeing = sorted(
             source
             for source, report in zip(sources, parse_reports(sources))
@@ -301,7 +346,7 @@ class TestPs1ParserAgreesWithWindowsPowerShell(Ps1OracleTest):
 
     def test_every_ledger_entry_is_a_corpus_entry(self):
         listed = set(DIVERGENCES) | set(DEFECTS)
-        self.assertEqual(sorted(listed - set(corpus.oracle_corpus())), [])
+        self.assertEqual(sorted(listed - set(asked_of_the_host())), [])
 
     def test_no_entry_is_both_deliberate_and_a_defect(self):
         self.assertEqual(sorted(set(DIVERGENCES) & set(DEFECTS)), [])
@@ -311,9 +356,9 @@ class TestPs1ParserAgreesWithWindowsPowerShell(Ps1OracleTest):
         The fidelity law checks our output through our own parser, so a spelling both sides are
         wrong about survives it. This asks the language instead.
         """
+        accepted = zip(asked_of_the_host(), parse_reports(asked_of_the_host()))
         sources = [
-            source for source, report in zip(corpus.oracle_corpus(),
-                                             parse_reports(corpus.oracle_corpus()))
+            source for source, report in accepted
             if report.accepted and not has_parse_error(source)
         ]
         rendered = [Ps1Synthesizer().convert(Ps1Parser(source).parse()) for source in sources]
