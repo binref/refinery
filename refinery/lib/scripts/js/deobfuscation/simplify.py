@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from typing import Callable
 
-from refinery.lib.scripts import Node, Transformer
+from refinery.lib.scripts import Expression, Node, Transformer
 from refinery.lib.scripts.js.analysis.cache import ModelCache, model_cache
 from refinery.lib.scripts.js.analysis.dominance import DominanceModel
 from refinery.lib.scripts.js.analysis.effects import GLOBAL_OBJECT, EffectModel
@@ -45,7 +45,11 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     utf16_code_units,
     value_to_node,
 )
-from refinery.lib.scripts.js.deobfuscation.interpreter import BUILTIN_REGISTRY, STATIC_OBJECTS
+from refinery.lib.scripts.js.deobfuscation.interpreter import (
+    BUILTIN_REGISTRY,
+    STATIC_OBJECTS,
+    to_string,
+)
 from refinery.lib.scripts.js.model import (
     JsArrayExpression,
     JsArrowFunctionExpression,
@@ -115,6 +119,33 @@ def _node_to_value(node: Node) -> object:
     """
     ok, value = extract_literal_value(node)
     return value if ok else _UNCONVERTIBLE
+
+
+def concat_string(node: Expression | None) -> str | None:
+    """
+    The string *node* contributes to a `+` concatenation, or `None` when appending it to a string cannot
+    be decided statically.
+
+    This is deliberately narrower than `_node_to_value`: only a primitive literal qualifies. Every
+    primitive converts by an internal specification operation that no program can intercept — patching
+    `Number.prototype.toString`, `valueOf`, or even `Symbol.toPrimitive` leaves `'a' + 1` as `'a1'` — so
+    the result is a property of the syntax alone and needs no fold-admission gate. An array or object
+    literal is excluded precisely because its conversion is interceptable, through `Array.prototype.join`
+    and `Object.prototype.toString`.
+
+    A numeric literal is admitted only when the value the parser stored still denotes the number the
+    source spells. A JS number is a double, so `9007199254740993` denotes `9007199254740992`, while the
+    parser keeps the exact Python integer; converting that would append digits the program never
+    produces. Round-tripping through `float` is what separates the two cases.
+    """
+    if isinstance(node, JsStringLiteral):
+        return node.value
+    ok, value = extract_literal_value(node)
+    if not ok or isinstance(value, list):
+        return None
+    if isinstance(value, int) and not isinstance(value, bool) and float(value) != value:
+        return None
+    return to_string(value)
 
 
 class JsSimplifications(Transformer):
@@ -318,6 +349,8 @@ class JsSimplifications(Transformer):
         right_str = string_value(node.right)
         if op == '+' and left_str is not None and right_str is not None:
             return make_string_literal(left_str + right_str)
+        if op == '+' and (merged := self._merge_concat_tail(node)) is not None:
+            return merged
         left_num = numeric_value(node.left)
         right_num = numeric_value(node.right)
         if left_num is not None and right_num is not None:
@@ -351,6 +384,34 @@ class JsSimplifications(Transformer):
             if result is not None:
                 return JsBooleanLiteral(value=result)
         return None
+
+    def _merge_concat_tail(self, node: JsBinaryExpression) -> JsBinaryExpression | None:
+        """
+        Reassociate `(x + 'a') + 'b'` into `x + 'ab'`. Splitting a string across a `+` chain is a common
+        concealment, and because `+` is left-associative the chain nests as `((x + 'a') + 'b') + 'c'`, so
+        no single node ever has two literal operands and pairwise folding alone never reduces it.
+
+        Merging is legal exactly when the inner node's right operand is a *string* literal. That makes
+        the inner `+` a concatenation whatever `x` is, so the outer operand appends to the same string the
+        unmerged chain would build, and both forms convert `x` once. When the inner right operand is a
+        number the pair cannot be reduced at all: `x + 1 + 2` is `10` for `x = 7` but `'712'` for
+        `x = '7'`, so neither `x + 3` nor `x + '12'` is the chain. The number is left where it binds.
+
+        `x` is not converted here and need not be statically known, so a call or an object with a
+        side-effecting `valueOf` is fine — it stays in place and still runs exactly once.
+        """
+        inner = node.left
+        if not isinstance(inner, JsBinaryExpression) or inner.operator != '+':
+            return None
+        if inner.left is None or (head := string_value(inner.right)) is None:
+            return None
+        if (tail := concat_string(node.right)) is None:
+            return None
+        return JsBinaryExpression(
+            operator='+',
+            left=inner.left,
+            right=make_string_literal(head + tail),
+        )
 
     def visit_JsCallExpression(self, node: JsCallExpression):
         self.generic_visit(node)

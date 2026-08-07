@@ -1045,3 +1045,106 @@ class TestCalleeSequencePreserved(TestJsDeobfuscator):
 
     def test_sequence_callee_collapsed_for_plain_identifier(self):
         self.assertEqual('f(x);', self._simplify('(0, f)(x);'))
+
+
+class TestConcatReassociation(TestJsDeobfuscator):
+    """
+    A `+` chain whose left end is not a literal still has adjacent literals in it, and splitting a
+    string across such a chain is a common concealment. Because `+` is left-associative, `x + 'a' + 'b'`
+    nests as `(x + 'a') + 'b'`, so no single node has two literal operands and pairwise folding alone
+    never touches it.
+    """
+
+    def test_literal_tail_merged_after_identifier(self):
+        self.assertEqual(
+            "f(x + '/Finder.app');",
+            self._simplify("f(x + '/Fi' + 'nde' + 'r.ap' + 'p');"),
+        )
+
+    def test_literal_run_merged_between_identifiers(self):
+        self.assertEqual(
+            "f('p' + x + 'ab' + y + 'cd');",
+            self._simplify("f('p' + x + 'a' + 'b' + y + 'c' + 'd');"),
+        )
+
+    def test_empty_string_joins_dropped(self):
+        self.assertEqual(
+            "f(x + 'ab');",
+            self._simplify("f(x + 'a' + '' + 'b');"),
+        )
+
+    def test_call_result_receiver_merged(self):
+        self.assertEqual(
+            "f(g() + 'ab');",
+            self._simplify("f(g() + 'a' + 'b');"),
+        )
+
+    def test_number_appended_to_string_merged(self):
+        self.assertEqual(
+            "f(x + 'a1');",
+            self._simplify("f(x + 'a' + 1);"),
+        )
+
+    def test_numeric_pair_not_merged(self):
+        """
+        `x + 1 + 2` adds when `x` is numeric and concatenates when `x` is a string, so the pair cannot
+        be reduced without knowing `x`: merging to `x + 3` gives `10` where `7` gives `712`, and merging
+        to `x + '12'` breaks the numeric case instead.
+        """
+        self.assertEqual('f(x + 1 + 2);', self._simplify('f(x + 1 + 2);'))
+
+    def test_number_before_string_not_merged(self):
+        """
+        In `x + 1 + 'b'` the `1` binds to `x` first, so it is `8b` for `x = 7` — merging the trailing
+        pair into `'1b'` would yield `71b`.
+        """
+        self.assertEqual("f(x + 1 + 'b');", self._simplify("f(x + 1 + 'b');"))
+
+    def test_leading_literal_pair_still_folded_wholly(self):
+        self.assertEqual("f('ab' + x);", self._simplify("f('a' + 'b' + x);"))
+
+    def test_parenthesized_right_operand_not_reassociated(self):
+        """
+        `x + ('a' + 'b')` already groups the literals, and the inner fold handles it; the outer node
+        must not then merge `'ab'` into a left operand it does not have.
+        """
+        self.assertEqual("f(x + 'ab');", self._simplify("f(x + ('a' + 'b'));"))
+
+    def test_subtraction_not_reassociated(self):
+        self.assertEqual("f(x - 'a' - 'b');", self._simplify("f(x - 'a' - 'b');"))
+
+    def test_multiplication_inner_not_reassociated(self):
+        """
+        Only a `+` may absorb the literal on its left. For `x = 4`, `x * '1' + '2'` multiplies and then
+        concatenates, giving `'42'`; merging the literals across the `*` would compute `4 * '12'` and give
+        `48`. A subtraction chain alone does not witness this — it is `NaN` either way.
+        """
+        self.assertEqual("f(x * '1' + '2');", self._simplify("f(x * '1' + '2');"))
+
+    def test_array_tail_not_merged(self):
+        """
+        An array converts through `Array.prototype.join`, which a program can replace, so its string form
+        is not a property of the syntax: after `Array.prototype.join = ...`, `x + 'a' + [1, 2]` is not
+        `x + 'a1,2'`. Primitives have no such hook and are merged.
+        """
+        self.assertEqual("f(x + 'a' + [1, 2]);", self._simplify("f(x + 'a' + [1, 2]);"))
+
+    def test_imprecise_integer_tail_not_merged(self):
+        """
+        A JS number is a double, so `9007199254740993` denotes `9007199254740992` and appending it yields
+        `...92`. The parser keeps the exact integer, so merging it would emit a digit string the program
+        never produces.
+        """
+        self.assertEqual(
+            "f(x + 'a' + 9007199254740993);",
+            self._simplify("f(x + 'a' + 9007199254740993);"),
+        )
+
+    def test_representable_integer_tail_merged(self):
+        self.assertEqual(
+            "f(x + 'a9007199254740992');",
+            self._simplify("f(x + 'a' + 9007199254740992);"),
+        )
+
+    def test_template_literal_not_merged(self):
+        self.assertEqual("f(x + `a` + 'b');", self._simplify("f(x + `a` + 'b');"))
