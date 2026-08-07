@@ -6,6 +6,7 @@ from refinery.lib.scripts.analysis.cycles import CycleModel
 from refinery.lib.scripts.ps1.analysis.blocks import build_block_model
 from refinery.lib.scripts.ps1.analysis.cfg import build_control_flow_model
 from refinery.lib.scripts.ps1.analysis.dataflow import Ps1FlowUnknown, build_variable_flow
+from refinery.lib.scripts.ps1.analysis.dominance import build_dominance
 from refinery.lib.scripts.ps1.analysis.model import (
     Ps1SemanticModel,
     build_semantic_model,
@@ -20,7 +21,9 @@ def _models(source: str):
     semantic = build_semantic_model(tree)
     control = build_control_flow_model(tree)
     blocks = build_block_model(tree)
-    flow = build_variable_flow(semantic, control, blocks, CycleModel(control, blocks.body_site))
+    dominance = build_dominance(control)
+    flow = build_variable_flow(
+        semantic, control, dominance, blocks, CycleModel(control, blocks.body_site))
     return tree, semantic, flow
 
 

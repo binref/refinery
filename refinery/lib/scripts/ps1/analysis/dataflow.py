@@ -150,6 +150,7 @@ class Ps1VariableFlow:
         self,
         semantic: Ps1SemanticModel,
         flow: ControlFlowModel,
+        dominators: DominatorModel,
         blocks: Ps1BlockModel,
         cycles: CycleModel,
     ):
@@ -157,8 +158,7 @@ class Ps1VariableFlow:
         self.flow = flow
         self.blocks = blocks
         self.cycles = cycles
-        self._dominators = DominatorModel(flow)
-        self._between = ReachabilityQuery(self._dominators)
+        self._between = ReachabilityQuery(dominators)
         self._unknowns: dict[int, Ps1FlowUnknown] = {}
         self._exits: dict[tuple[int, int], tuple[frozenset[int], frozenset[int]]] = {}
         self._kills: dict[tuple[int, str], frozenset[int]] = {}
@@ -649,10 +649,11 @@ def _scopes_of(scope: Scope) -> Iterator[Scope]:
 def build_variable_flow(
     semantic: Ps1SemanticModel,
     flow: ControlFlowModel,
+    dominators: DominatorModel,
     blocks: Ps1BlockModel,
     cycles: CycleModel,
 ) -> Ps1VariableFlow:
     """
     Build the `Ps1VariableFlow` for a script from the models it joins.
     """
-    return Ps1VariableFlow(semantic, flow, blocks, cycles)
+    return Ps1VariableFlow(semantic, flow, dominators, blocks, cycles)

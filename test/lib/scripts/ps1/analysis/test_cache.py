@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import ast as pyast
+
 from test import TestBase
 
 from refinery.lib.scripts import Transformer, _remove_from_parent, set_body, set_child_list
+from refinery.lib.scripts.ps1.analysis import dataflow
 from refinery.lib.scripts.ps1.analysis.cache import Ps1ModelCache, model_cache
-from refinery.lib.scripts.ps1.model import Ps1IfStatement
+from refinery.lib.scripts.ps1.analysis.model import is_write_occurrence
+from refinery.lib.scripts.ps1.model import Ps1IfStatement, Ps1Variable
 from refinery.lib.scripts.ps1.parser import Ps1Parser
 
 
@@ -41,6 +45,33 @@ class TestPs1ModelCache(TestBase):
         first = cache.cycles
         _remove_from_parent(script.body[1])
         self.assertIsNot(cache.cycles, first)
+
+    def test_dominance_is_memoized_while_the_tree_is_unchanged(self):
+        cache = Ps1ModelCache(self._script("$a = 1\n$b = 2"))
+        first = cache.dominance
+        self.assertIs(cache.dominance, first)
+
+    def test_mutating_the_cached_tree_rebuilds_the_dominance(self):
+        """
+        The dominator trees are computed over the control-flow graphs, which are keyed to node
+        identity, so a model kept across a mutation would order statements the tree no longer holds.
+        """
+        script = self._script("$a = 1\n$b = 2")
+        cache = Ps1ModelCache(script)
+        first = cache.dominance
+        _remove_from_parent(script.body[1])
+        self.assertIsNot(cache.dominance, first)
+
+    def test_variable_flow_from_the_cache_resolves_the_only_write(self):
+        script = self._script("$x = 'a'; Write-Host $x")
+        cache = Ps1ModelCache(script)
+        occurrences = [
+            node for node in script.walk()
+            if isinstance(node, Ps1Variable) and node.name.lower() == 'x'
+        ]
+        write = next(node for node in occurrences if is_write_occurrence(node))
+        read = next(node for node in occurrences if not is_write_occurrence(node))
+        self.assertIs(cache.variable_flow.reaching_definition(read), write)
 
     def test_mutating_an_unrelated_tree_keeps_the_cached_model(self):
         cache = Ps1ModelCache(self._script("$a = 1\n$b = 2"))
@@ -88,3 +119,29 @@ class TestPs1ModelCache(TestBase):
         transformer = Transformer()
         first = model_cache(transformer, self._script("$a = 1"))
         self.assertIsNot(model_cache(transformer, self._script("$b = 2")), first)
+
+
+def _spelled_callee(call: pyast.Call) -> str | None:
+    func = call.func
+    if isinstance(func, pyast.Name):
+        return func.id
+    if isinstance(func, pyast.Attribute):
+        return func.attr
+    return None
+
+
+class TestPs1DataflowDominanceWiring(TestBase):
+
+    def test_dataflow_never_constructs_the_shared_dominator_model(self):
+        """
+        `Ps1VariableFlow` receives the run's dominator model from the cache, so every pass shares
+        one instance; a `DominatorModel(...)` call inside the module would quietly hand it a private
+        copy again. Importing the name for annotations is fine — the call is what may not reappear.
+        """
+        with open(dataflow.__file__, 'r', encoding='utf-8') as fd:
+            tree = pyast.parse(fd.read(), filename=dataflow.__file__)
+        constructions = [
+            node.lineno for node in pyast.walk(tree)
+            if isinstance(node, pyast.Call) and _spelled_callee(node) == 'DominatorModel'
+        ]
+        self.assertEqual(constructions, [])

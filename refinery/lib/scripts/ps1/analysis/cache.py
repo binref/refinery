@@ -12,11 +12,13 @@ from __future__ import annotations
 from refinery.lib.scripts import Transformer
 from refinery.lib.scripts.analysis.cfg import ControlFlowModel
 from refinery.lib.scripts.analysis.cycles import CycleModel
+from refinery.lib.scripts.analysis.dominance import DominatorModel
 from refinery.lib.scripts.modelcache import ModelCacheBase
 from refinery.lib.scripts.ps1.analysis.blocks import Ps1BlockModel, build_block_model
 from refinery.lib.scripts.ps1.analysis.callgraph import Ps1CallGraph, build_call_graph
 from refinery.lib.scripts.ps1.analysis.cfg import build_control_flow_model
 from refinery.lib.scripts.ps1.analysis.dataflow import Ps1VariableFlow, build_variable_flow
+from refinery.lib.scripts.ps1.analysis.dominance import build_dominance
 from refinery.lib.scripts.ps1.analysis.effects import Ps1OutputFlow, build_output_flow
 from refinery.lib.scripts.ps1.analysis.model import Ps1SemanticModel, build_semantic_model
 from refinery.lib.scripts.ps1.analysis.types import TypeOracle
@@ -44,6 +46,7 @@ class Ps1ModelCache(ModelCacheBase):
         '_call_graph',
         '_output_flow',
         '_control_flow',
+        '_dominance',
         '_blocks',
         '_cycles',
         '_variable_flow',
@@ -56,6 +59,7 @@ class Ps1ModelCache(ModelCacheBase):
     _call_graph: Ps1CallGraph | None
     _output_flow: Ps1OutputFlow | None
     _control_flow: ControlFlowModel | None
+    _dominance: DominatorModel | None
     _blocks: Ps1BlockModel | None
     _cycles: CycleModel | None
     _variable_flow: Ps1VariableFlow | None
@@ -101,6 +105,16 @@ class Ps1ModelCache(ModelCacheBase):
         return self._lazy('_control_flow', lambda: build_control_flow_model(self.root))
 
     @property
+    def dominance(self) -> DominatorModel:
+        """
+        Whether one statement of this root is guaranteed to have executed by the time another runs,
+        over `control_flow`. The single place that ordering is answered: a pass that needs to know a
+        write runs before a read, or that a statement after a `return` cannot be reached, asks here
+        rather than reconstructing the relation from the tree.
+        """
+        return self._lazy('_dominance', lambda: build_dominance(self.control_flow))
+
+    @property
     def blocks(self) -> Ps1BlockModel:
         """
         Where each script block of this root runs — at what point, in whose scope, how many times.
@@ -126,12 +140,12 @@ class Ps1ModelCache(ModelCacheBase):
     @property
     def variable_flow(self) -> Ps1VariableFlow:
         """
-        Which write each variable read observes, over `model`, `control_flow`, `blocks` and
-        `cycles`. The one place that question is answered: a pass that decides what a name holds at a
-        point asks here rather than walking the tree for an assignment that looks near enough.
+        Which write each variable read observes, over `model`, `control_flow`, `dominance`, `blocks`
+        and `cycles`. The one place that question is answered: a pass that decides what a name holds
+        at a point asks here rather than walking the tree for an assignment that looks near enough.
         """
         return self._lazy('_variable_flow', lambda: build_variable_flow(
-            self.model, self.control_flow, self.blocks, self.cycles))
+            self.model, self.control_flow, self.dominance, self.blocks, self.cycles))
 
     @property
     def oracle(self) -> TypeOracle:
