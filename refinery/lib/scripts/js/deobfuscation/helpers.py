@@ -868,6 +868,11 @@ def is_safe_iife_inline(
     `refinery.lib.scripts.js.analysis.model.SemanticModel.read_has_dynamic_effect`), an argument reading
     a bare name through a `with` body's dynamic scope counts as effectful — the read may fire the `with`
     object's getter or throw — so it too must not be dropped or reordered.
+
+    Identity stability under duplication is the *may*-allocate direction and must not be merged with
+    `EffectModel._fresh_kind`, which is *must*-allocate: a fresh literal is the thing this refuses to
+    duplicate and the thing that predicate admits. The two agree on the syntax and disagree on the verdict,
+    which is exactly why sharing one predicate between them would be wrong.
     """
     if _param_written(expr, set(param_names)):
         return False

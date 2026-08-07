@@ -1469,6 +1469,11 @@ class EffectModel:
         write (`obj.k`, `obj[i] = v`), never an escape, rebinding, or method call through which the
         container could be aliased out, mutated by other code, or replaced. The tightest form of the
         escape check, since a mutation only stays unobservable while no other code can reach the object.
+
+        Orthogonal to freshness, and deliberately not merged with `_binding_fresh_kind`: this asks where a
+        container *goes*, that asks where it *came from*. Both are needed and neither implies the other — a
+        fresh literal can escape, and a parameter that never escapes was still not built here.
+        `_classify_member_write` is where the two compose.
         """
         for ref in self.model.references(binding):
             if container_reference_role(ref) not in (
@@ -1533,6 +1538,10 @@ class EffectModel:
         `_PURE_CONSTRUCTOR_ROOTS` and its arguments are safe for that root. `Array` — the only such root
         today — throws only on a bad single numeric length, decided by `_array_construct_is_pure`; a root
         added to the set needs its own argument rule wired in here rather than reusing Array's.
+
+        Purity of the construction, not freshness of its result: those are separate questions, and this stays
+        separate from `_fresh_kind` even though that predicate's `new Array(n)` form calls it. A construction
+        can be impure and still yield a fresh object, so a caller wanting freshness must ask `_fresh_kind`.
         """
         root = self.intrinsic_of(call.callee)
         if not (isinstance(root, str) and root in _PURE_CONSTRUCTOR_ROOTS):

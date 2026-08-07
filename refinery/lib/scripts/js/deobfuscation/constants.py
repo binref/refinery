@@ -97,6 +97,10 @@ def _is_primitive_and_pure(node: Node) -> bool:
     `refinery.lib.scripts.js.analysis.effects.side_effect_free` — it rejects expressions
     that allocate objects or access properties, because inlining such expressions into a new
     location can change reference identity or trigger getters at a different point in execution.
+
+    The deliberate complement of `EffectModel._fresh_kind`, over primitives rather than containers, and not
+    to be merged with it: this admits exactly the values that have no identity to duplicate, where that one
+    admits containers whose identity is known to be new. Their answers are disjoint by construction.
     """
     for n in node.walk():
         if isinstance(n, (

@@ -308,6 +308,12 @@ class JsObjectFold(ScopeProcessingTransformer):
         excluded, since its own identity is handled where it is folded; a nested function inside the
         value is not entered, as its body runs only when the function is later called, not when the
         value the object captured is evaluated.
+
+        This is a *may*-allocate question and must not be merged with `EffectModel._fresh_kind`, which is a
+        *must*-allocate one. The two answer about different rewrites: this one about identity duplication
+        under cloning (`o.arr === o.arr` flipping if the fold mints two arrays), that one about whether a
+        write through a base can be observed. They are not even monotone in one another — a bare call counts
+        as allocating here and as `NOT_FRESH` there — so neither implies the other in either direction.
         """
         if isinstance(value, (JsFunctionExpression, JsArrowFunctionExpression)):
             return False
