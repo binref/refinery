@@ -17,6 +17,7 @@ from refinery.lib.scripts.modelcache import ModelCacheBase
 from refinery.lib.scripts.ps1.analysis.blocks import Ps1BlockModel, build_block_model
 from refinery.lib.scripts.ps1.analysis.callgraph import Ps1CallGraph, build_call_graph
 from refinery.lib.scripts.ps1.analysis.cfg import build_control_flow_model
+from refinery.lib.scripts.ps1.analysis.commands import Ps1CommandModel, build_command_model
 from refinery.lib.scripts.ps1.analysis.dataflow import Ps1VariableFlow, build_variable_flow
 from refinery.lib.scripts.ps1.analysis.dominance import build_dominance
 from refinery.lib.scripts.ps1.analysis.effects import Ps1OutputFlow, build_output_flow
@@ -50,6 +51,7 @@ class Ps1ModelCache(ModelCacheBase):
         '_blocks',
         '_cycles',
         '_variable_flow',
+        '_commands',
     )
 
     root: Ps1Script
@@ -63,6 +65,7 @@ class Ps1ModelCache(ModelCacheBase):
     _blocks: Ps1BlockModel | None
     _cycles: CycleModel | None
     _variable_flow: Ps1VariableFlow | None
+    _commands: Ps1CommandModel | None
 
     @property
     def model(self) -> Ps1SemanticModel:
@@ -136,6 +139,20 @@ class Ps1ModelCache(ModelCacheBase):
         `ForEach-Object` body reads as running exactly once.
         """
         return self._lazy('_cycles', lambda: CycleModel(self.control_flow, self.blocks.body_site))
+
+    @property
+    def commands(self) -> Ps1CommandModel:
+        """
+        What each command invocation of this root denotes — a name, nothing, or unknown — over
+        `control_flow` and `dominance`. The one place command identity is answered: a pass that
+        rewrites an alias, folds a call to a function, or reads which command a name runs asks here
+        rather than splitting the alias relation or ignoring the precedence that makes a default
+        alias beat a script function. It reads the script's function names from `call_graph`, the
+        layer that already owns which definitions a name denotes.
+        """
+        return self._lazy('_commands', lambda: build_command_model(
+            self.root, self.control_flow, self.dominance,
+            frozenset(self.call_graph.defined_names)))
 
     @property
     def variable_flow(self) -> Ps1VariableFlow:
