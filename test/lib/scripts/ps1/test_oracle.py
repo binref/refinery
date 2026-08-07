@@ -72,7 +72,8 @@ DEFECTS: dict[str, str] = {
         'the comma. We read an array of two bare words.',
     '$x = a, b':
         'The same shape as an assigned value: 5.1 reads `a` as a command name and reports '
-        'MissingArgument.',
+        'MissingArgument. We read a call to `a` and drop the comma with it, so the assignment '
+        'prints back as `$x = a b`, which is a second defect in the same source.',
     '$x > out.txt':
         '5.1 accepts a redirection of an expression. We produce an error node; the narrower bug '
         'is already ledgered at test_parser_shape.py:578.',

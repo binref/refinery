@@ -217,6 +217,35 @@ class TestPs1Synthesizer(TestBase):
             Ps1Synthesizer().convert(Ps1Parser('class C { [ValidateNotNull()] [int] $P }').parse()),
             'class C {\n  [ValidateNotNull()][int]$P\n}')
 
+    def test_a_word_that_moves_into_a_bracket_is_re_spelled(self):
+        # A comma-built argument needs a bracket to stay one argument, and what stands inside a
+        # bracket is read as a pipeline: 5.1 rejects `foo (a, b)` with MissingArgument and accepts
+        # `foo ('a', 'b')`, so the quotes are what make the bracket legal rather than a preference.
+        self.assertEqual(
+            Ps1Synthesizer().convert(Ps1Parser('foo a, b').parse()), "foo ('a', 'b')")
+        self.assertEqual(
+            Ps1Synthesizer().convert(Ps1Parser('Get-Item -Path a, b').parse()),
+            "Get-Item -Path ('a', 'b')")
+
+    def test_a_word_keeps_its_spelling_in_a_slot_that_reads_one(self):
+        """
+        A command's name and arguments, a hash key, a redirection target, a jump label and a switch
+        pattern are the slots where PowerShell reads a bare word as a value; 5.1 flags none of these
+        words as a command name except the command's own. Each source is already in the
+        synthesizer's own rendering, so what is asserted is that nothing is re-spelled.
+        """
+        for source in (
+            'echo a b c',
+            'Copy-Item . dest',
+            'x > out.txt',
+            'x < in.txt',
+            '@{\n  a = 1\n}',
+            ':o while ($x) {\n  break :o\n}',
+            'switch ($a) {\n  foo {\n    1\n  }\n}',
+        ):
+            with self.subTest(source=source):
+                self.assertEqual(Ps1Synthesizer().convert(Ps1Parser(source).parse()), source)
+
     def test_a_shape_the_language_cannot_write_is_refused(self):
         # A comma operator with nothing to build an array out of has no spelling. Printing the
         # empty array literal the parser used to build emitted nothing at all, which deleted the

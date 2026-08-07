@@ -76,6 +76,38 @@ from refinery.lib.scripts.ps1.token import BACKTICK_ENCODE, KEYWORD_SPELLING
 
 
 class Ps1Synthesizer(Synthesizer):
+    """
+    Two things decide how a node is written, and both are properties of the slot it goes into
+    rather than of the node. How tightly the slot binds decides whether a bracket is needed, and
+    `refinery.lib.scripts.ps1.precedence` is that scale. Whether the slot reads a bare word as a
+    value decides how a leaf is spelled, and that is the flag below.
+
+    A word with no quotes means a value where a command's name and arguments are read, and begins a
+    command everywhere else. So `foo a, b` may keep its words while `foo (a, b)` may not — the
+    bracket makes `a` a command name, and 5.1 then rejects the whole line. The parser's `raw` is
+    only true of the slot it was read from, which is why replaying it is not enough.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._word_slot_ahead = False
+        self._word_slot = False
+
+    def visit(self, node: Node) -> Node | None:
+        """
+        Take the arming set by the slot, so that it applies to this node and no other. A slot that
+        arms nothing yields the quoted spelling, which is the reading that is valid everywhere;
+        forgetting to arm one therefore costs a pair of quotes rather than the meaning of a script.
+        """
+        self._word_slot, self._word_slot_ahead = self._word_slot_ahead, False
+        return super().visit(node)
+
+    def _emit_word(self, node: Expression, minimum: int):
+        """
+        Write `node` into a slot that reads a bare word as a value.
+        """
+        self._word_slot_ahead = True
+        self._emit_operand(node, minimum)
 
     def _emit_block(self, block: Block):
         self._write('{')
@@ -118,6 +150,8 @@ class Ps1Synthesizer(Synthesizer):
     def visit_Ps1StringLiteral(self, node: Ps1StringLiteral):
         if '\n' in node.raw:
             self._write(F'"{self._escape_for_dq(node.value)}"')
+        elif node.is_bare_word and not self._word_slot:
+            self._write(F"'{self._escape_for_sq(node.value)}'")
         else:
             self._write(node.raw)
 
@@ -138,6 +172,10 @@ class Ps1Synthesizer(Synthesizer):
     def _emit_variable_in_dq(self, node: Ps1Variable):
         prefix = '@' if node.splatted else '$'
         self._write(F'{prefix}{{{self._variable_scope_prefix(node)}{node.name}}}')
+
+    @staticmethod
+    def _escape_for_sq(value: str) -> str:
+        return value.replace("'", "''")
 
     @staticmethod
     def _escape_for_dq(value: str) -> str:
@@ -167,6 +205,9 @@ class Ps1Synthesizer(Synthesizer):
         only thing standing between `Binary(Binary(1, '+', 2), '*', 3)` and `1 + 2 * 3`.
         """
         if precedence.needs_brackets(node, minimum):
+            # What stands inside a bracket is read as a pipeline, so the slot the bracket creates
+            # is never one that reads a bare word as a value, whatever the slot outside it was.
+            self._word_slot_ahead = False
             self._write('(')
             self.visit(node)
             self._write(')')
@@ -274,7 +315,7 @@ class Ps1Synthesizer(Synthesizer):
         if node.name:
             # `& 'i' + 'ex'` invokes `i` and then concatenates, so a computed command name needs
             # brackets for the invocation operator to reach the whole expression.
-            self._emit_operand(node.name, precedence.ATOM)
+            self._emit_word(node.name, precedence.ATOM)
         for arg in node.arguments:
             self._write(' ')
             self.visit(arg)
@@ -294,16 +335,12 @@ class Ps1Synthesizer(Synthesizer):
                 self._emit_argument_value(node.value)
 
     def _emit_argument_value(self, value: Expression):
-        # An argument is read back by the rule that reads one bare, which reaches the comma that
-        # builds an array and no further: an operator would reach across the arguments beside this
-        # one, a range re-lexes as a single bare word in argument mode, and a command swallows the
-        # rest of the line.
-        #
-        # The comma itself stays unbracketed even though it joins this argument to the next, and
-        # that is a known gap rather than a choice: what is inside a bracket is read as a pipeline,
-        # so bracketing `a, b` written as bare words turns the first into a command name. Closing
-        # it needs the elements re-spelled as quoted strings, which is the leaf half of this work.
-        self._emit_operand(value, precedence.COMMA)
+        # An argument is read back by the rule that reads one bare, which reaches nothing that an
+        # operator holds together: an operator would reach across the arguments beside this one, a
+        # range re-lexes as a single bare word in argument mode, and a command swallows the rest of
+        # the line. The comma is bracketed too, even though it binds tighter than all of them,
+        # because it is what separates one argument from the next.
+        self._emit_word(value, precedence.COMMA + 1)
 
     def visit_Ps1AssignmentExpression(self, node: Ps1AssignmentExpression):
         if node.target:
@@ -324,9 +361,14 @@ class Ps1Synthesizer(Synthesizer):
         # handed the buffer's elements as separate arguments and throws.
         if len(node.elements) == 1:
             self._write(',')
+        # An array standing where bare words are read as values holds its elements in that same
+        # slot: `foo a, b` passes two words. Bracket the array and they are in a pipeline instead,
+        # where the first would become a command name, so the arming is not passed on.
+        word_slot = self._word_slot
         for i, elem in enumerate(node.elements):
             if i > 0:
                 self._write(', ')
+            self._word_slot_ahead = word_slot
             self._emit_operand(elem, precedence.COMMA + 1)
 
     def visit_Ps1ArrayExpression(self, node: Ps1ArrayExpression):
@@ -340,7 +382,9 @@ class Ps1Synthesizer(Synthesizer):
             self._depth += 1
             for key, value in node.pairs:
                 self._newline()
-                self.visit(key)
+                # A key is read as a word rather than as a command: `@{ Name = 1 }` is a hash of
+                # one entry, not a call to `Name`.
+                self._emit_word(key, precedence.COMMA + 1)
                 self._write(' = ')
                 self.visit(value)
             self._depth -= 1
@@ -468,14 +512,16 @@ class Ps1Synthesizer(Synthesizer):
         op = '>>' if node.append else '>'
         self._write(F'{prefix}{op}')
         if node.target:
+            # A redirection names its file the way a command names an argument, so a path may
+            # stand there without quotes.
             self._write(' ')
-            self.visit(node.target)
+            self._emit_word(node.target, precedence.COMMA + 1)
 
     def visit_Ps1InputRedirection(self, node: Ps1InputRedirection):
         self._write('<')
         if node.source:
             self._write(' ')
-            self.visit(node.source)
+            self._emit_word(node.source, precedence.COMMA + 1)
 
     def visit_Ps1MergingRedirection(self, node: Ps1MergingRedirection):
         # A file redirection of the output stream is written bare, but a merge names its source
@@ -600,7 +646,9 @@ class Ps1Synthesizer(Synthesizer):
             if cond is None:
                 self._write('default ')
             else:
-                self.visit(cond)
+                # A clause is matched against a pattern, so a bare word here is the string it
+                # spells rather than a command to run.
+                self._emit_word(cond, precedence.COMMA + 1)
                 self._write(' ')
             self._emit_block(body)
         self._depth -= 1
@@ -723,8 +771,10 @@ class Ps1Synthesizer(Synthesizer):
     def _visit_jump(self, node: Ps1Jump, name: str):
         self._write(name)
         if suffix := node.label:
+            # The label is read the way an argument is, and the colon in `break :outer` is part of
+            # that spelling rather than of the name: quoted, it would name a label called `:outer`.
             self._write(' ')
-            self.visit(suffix)
+            self._emit_word(suffix, precedence.COMMA + 1)
 
     def _visit_exit(self, node: Ps1Exit, name: str):
         self._write(name)

@@ -77,19 +77,8 @@ MINIMUM_HARVEST = 400
 #: reason, because the law would then be satisfied by writing it down.
 KNOWN_VIOLATIONS: dict[str, str] = {}
 
-#: The same, for the paren-stripped tier. Every entry here is one shape: an argument built with the
-#: comma operator cannot be bracketed until the words inside it are re-spelled as quoted strings,
-#: because what stands inside a bracket is read as a pipeline and a bare word there is a command
-#: name. Bracketing them first would break more than it fixes, so the bracket is withheld and the
-#: loss recorded until the leaf spellings are chosen by the slot they are printed into.
-KNOWN_BRACKET_VIOLATIONS: dict[str, str] = {
-    'New-Object IO.MemoryStream (,$b)':
-        'a comma-built argument needs a bracket that needs its elements re-spelled first',
-    'New-Object IO.MemoryStream(,$b)':
-        'a comma-built argument needs a bracket that needs its elements re-spelled first',
-    'Should -Be [System.Management.Automation.LanguagePrimitives]::ConvertTo($rval, [string])':
-        'a comma-built argument needs a bracket that needs its elements re-spelled first',
-}
+#: The same, for the paren-stripped tier.
+KNOWN_BRACKET_VIOLATIONS: dict[str, str] = {}
 
 
 def _harvested() -> list[str]:

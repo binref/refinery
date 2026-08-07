@@ -61,6 +61,16 @@ class Ps1StringLiteral(Expression, spelling='raw'):
     value: str = ''
     raw: str = "''"
 
+    @property
+    def is_bare_word(self) -> bool:
+        """
+        Whether the recorded spelling carries no quotes. Such a spelling is only valid in the slot
+        it was read from: PowerShell reads a bare word as a value where a command's name and
+        arguments are read, and as the start of a command everywhere else. A node moved out of such
+        a slot therefore has to be re-spelled, which is why `raw` alone cannot be replayed.
+        """
+        return not self.raw.startswith(("'", '"'))
+
 
 @dataclass(repr=False, eq=False)
 class _Ps1Expandable(Expression, spelling='raw'):
