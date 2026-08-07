@@ -72,14 +72,14 @@ class TestEffectModel(TestBase):
         summary = self._summary('function f(n){ return String.fromCharCode(n); }', 'f')
         self.assertTrue(summary.is_pure)
 
-    def test_async_function_is_pure_but_not_value_replaceable(self):
+    def test_async_function_is_pure_but_not_literal_replaceable(self):
         summary = self._summary('async function f(){ return 1; }', 'f')
         self.assertTrue(summary.is_pure)
-        self.assertFalse(summary.is_value_replaceable)
+        self.assertFalse(summary.is_literal_replaceable)
 
-    def test_generator_function_is_not_value_replaceable(self):
+    def test_generator_function_is_not_literal_replaceable(self):
         summary = self._summary('function* f(){ return 1; }', 'f')
-        self.assertFalse(summary.is_value_replaceable)
+        self.assertFalse(summary.is_literal_replaceable)
 
     def test_global_assignment_is_a_global_write(self):
         source = 'function f(){ leaked = 1; } function r(){ return leaked; }'
@@ -225,12 +225,19 @@ class TestEffectModel(TestBase):
         self.assertTrue(summary.writes_global)
 
     def test_fresh_local_returned_after_write_mutates_returned_local(self):
+        """
+        The mutation is real and the flag records it, but the two replacement questions answer differently.
+        A literal replacement is admissible: `value_to_node` builds a new array at every site it fills, so the
+        distinct-object-per-call the mutation depends on survives. Splicing an expression out of the body is
+        not, since it names whatever the body named and guarantees nothing about identity.
+        """
         summary = self._summary('function f(){ var o = []; o[0] = 9; return o; }', 'f')
         self.assertFalse(summary.writes_global)
         self.assertFalse(summary.writes_captured)
         self.assertTrue(summary.mutates_returned_local)
         self.assertFalse(summary.is_pure)
-        self.assertFalse(summary.is_value_replaceable)
+        self.assertTrue(summary.is_literal_replaceable)
+        self.assertFalse(summary.is_expression_replaceable)
 
     def test_fresh_local_passed_to_call_after_write_mutates_returned_local(self):
         summary = self._summary('function f(){ var o = []; o[0] = 9; sink(o); return 1; }', 'f')
@@ -251,7 +258,8 @@ class TestEffectModel(TestBase):
         self.assertFalse(summary.throws)
         self.assertTrue(summary.mutates_returned_local)
         self.assertFalse(summary.is_pure)
-        self.assertFalse(summary.is_value_replaceable)
+        self.assertTrue(summary.is_literal_replaceable)
+        self.assertFalse(summary.is_expression_replaceable)
         self.assertTrue(summary.is_effect_free_when_discarded)
 
     def test_decoder_factory_iife_is_discardable(self):
@@ -300,6 +308,188 @@ class TestEffectModel(TestBase):
         self.assertFalse(summary.writes_global)
         self.assertTrue(summary.is_pure)
 
+    def test_write_to_local_from_allocating_method_is_not_a_global_write(self):
+        """
+        `Array.prototype.slice` returns a newly created array, so a local initialized from it holds a
+        container no other code can reach — exactly as if it had been initialized to `[]`. Requiring a
+        *literal* initializer reported the enclosing function as writing globals when it touched only its
+        own locals, which is the shape every buffer-mixing decoder takes.
+        """
+        summary = self._summary(
+            'function f(){ var s = [1, 2]; var a = s.slice(); a[0] ^= 3; return a; }', 'f')
+        self.assertFalse(summary.writes_global)
+        self.assertFalse(summary.writes_captured)
+
+    def test_write_to_local_from_chained_allocating_methods_is_not_a_global_write(self):
+        summary = self._summary(
+            'function f(){ var s = [1]; var a = s.slice().concat([2]); a[0] ^= 3; return a; }', 'f')
+        self.assertFalse(summary.writes_global)
+
+    def test_write_to_local_from_allocating_method_on_a_parameter_is_a_global_write(self):
+        """
+        A parameter's type is unknown, so `src.slice()` need not be `Array.prototype.slice` at all: a caller
+        may pass an object whose own `slice` returns a shared array, and the write then lands on it. The
+        receiver must be known to be an array, not merely to have a method of that name.
+        """
+        summary = self._summary(
+            'function f(src){ var a = src.slice(); a[0] ^= 3; return a; }', 'f')
+        self.assertTrue(summary.writes_global)
+
+    def test_write_to_local_from_a_fresh_returning_function_is_not_a_global_write(self):
+        """
+        Freshness follows through a call the model resolves to one function whose every `return` yields a
+        fresh container. This is the composition the digest chain relies on: the buffer is the result of an
+        allocating method applied to a value a helper function built.
+        """
+        source = (
+            'function mk(){ var r = []; r.push(1); return r; }'
+            'function f(){ var a = mk().slice(); a[0] ^= 3; return a; }'
+        )
+        summary = self._summary(source, 'f')
+        self.assertFalse(summary.writes_global)
+
+    def test_write_to_local_from_non_allocating_method_is_a_global_write(self):
+        """
+        `reverse` returns the receiver rather than a new array, so a write through the result is a write to
+        whatever the receiver was. Only methods the specification requires to allocate may qualify.
+        """
+        summary = self._summary(
+            'function f(){ var s = [1, 2]; var a = s.reverse(); a[0] = 9; return a; }', 'f')
+        self.assertTrue(summary.mutates_returned_local or summary.writes_global)
+        self.assertFalse(summary.is_pure)
+
+    def test_write_to_local_from_allocating_method_on_a_non_array_is_a_global_write(self):
+        """
+        A receiver carrying its own `slice` shadows `Array.prototype.slice` and may return anything,
+        including a shared array. Freshness of the receiver is not enough: it must be known to be an array,
+        which an object literal is not — even though the literal itself is fresh.
+        """
+        source = (
+            'var shared = [1, 2];'
+            'function f(){ var h = { slice: function(){ return shared; } };'
+            ' var a = h.slice(); a[0] = 9; return a; }'
+        )
+        summary = self._summary(source, 'f')
+        self.assertTrue(summary.writes_global)
+
+    def test_write_to_local_from_a_param_returning_function_is_a_global_write(self):
+        """
+        A helper that returns its own parameter yields whatever the caller owns, so the result is not fresh
+        however the call is spelled.
+        """
+        source = (
+            'function mk(p){ return p; }'
+            'function f(q){ var a = mk(q).slice(); a[0] = 9; return a; }'
+        )
+        summary = self._summary(source, 'f')
+        self.assertFalse(summary.is_pure)
+
+    def test_write_to_local_reassigned_from_outside_is_a_global_write(self):
+        """
+        Every value the binding can hold must be fresh, not merely the one its declaration gives it. A later
+        assignment from an outer container makes a write through the name observable there.
+        """
+        source = 'var outer = [1, 2]; function f(){ var a = []; a = outer; a[0] = 9; return a; }'
+        summary = self._summary(source, 'f')
+        self.assertTrue(summary.writes_global)
+
+    def test_write_to_local_destructured_from_outside_is_a_global_write(self):
+        """
+        The same requirement under a destructuring assignment, which reaches the binding through a pattern
+        rather than a plain assignment target.
+        """
+        source = 'var outer = [[1, 2]]; function f(){ var a = []; [a] = outer; a[0] = 9; return a; }'
+        summary = self._summary(source, 'f')
+        self.assertTrue(summary.writes_global)
+
+    def test_write_to_local_from_allocating_method_on_a_species_receiver_is_observable(self):
+        """
+        `slice` and its neighbours route through ArraySpeciesCreate, which reads
+        `constructor[Symbol.species]` off the receiver, so a program that writes `constructor` decides what
+        the "newly created" array actually is — it can hand back a shared object, or make the call throw by
+        leaving a primitive there. Freshness of the receiver is not enough; its array guarantee is gone.
+        """
+        source = (
+            'function f(){ var a = [1, 2]; a.constructor = c;'
+            ' var x = a.slice(); x[0] = 9; return x; }'
+        )
+        summary = self._summary(source, 'f')
+        self.assertTrue(summary.writes_global)
+
+    def test_write_to_local_from_allocating_method_on_a_proto_written_receiver_is_observable(self):
+        """
+        `__proto__` replaces the prototype that the `constructor` lookup walks, so it reaches the same
+        decision by another route.
+        """
+        source = (
+            'function f(){ var a = [1, 2]; a.__proto__ = p;'
+            ' var x = a.slice(); x[0] = 9; return x; }'
+        )
+        summary = self._summary(source, 'f')
+        self.assertTrue(summary.writes_global)
+
+    def test_write_to_local_from_allocating_method_on_a_computed_key_receiver_is_observable(self):
+        """
+        A computed key that is not a literal may name `constructor`, so it counts. The check is asked only
+        about the references to one binding, which is why this conservatism does not reach the ordinary
+        `s[i] = v` element write on a different local — the next test is the control for that.
+        """
+        source = (
+            "function f(k){ var a = [1, 2]; a[k] = c;"
+            ' var x = a.slice(); x[0] = 9; return x; }'
+        )
+        summary = self._summary(source, 'f')
+        self.assertTrue(summary.writes_global)
+
+    def test_write_to_local_from_allocating_method_on_an_index_written_receiver_is_fresh(self):
+        """
+        The precision control: a receiver written only at numeric-literal indices names no property that can
+        redirect the allocation, so it keeps its array guarantee. Without this the species check would refuse
+        every decoder that fills a buffer before slicing it.
+        """
+        source = (
+            'function f(){ var a = [1, 2]; a[0] = 5; a[1] = 6;'
+            ' var x = a.slice(); x[0] ^= 3; return x; }'
+        )
+        summary = self._summary(source, 'f')
+        self.assertFalse(summary.writes_global)
+
+    def test_write_to_local_from_allocating_method_with_patched_prototype_is_observable(self):
+        """
+        The array guarantee rests on `Array.prototype` being the one the language defines. A program that
+        writes a property on it can make `slice` return anything, so the receiver being a fresh array is not
+        enough on its own.
+        """
+        source = (
+            'Array.prototype.slice = function(){ return shared; };'
+            'function f(){ var a = [1, 2]; var x = a.slice(); x[0] = 9; return x; }'
+        )
+        summary = self._summary(source, 'f')
+        self.assertTrue(summary.writes_global)
+
+    def test_write_to_self_referential_local_is_observable(self):
+        """
+        A binding whose only value is derived from itself has no base case, so nothing establishes that it
+        holds a container at all. Answering from the partial result mid-recursion would let the cycle assert
+        its own conclusion.
+        """
+        source = 'function f(){ var a = a.slice(); a[0] = 9; return a; }'
+        summary = self._summary(source, 'f')
+        self.assertFalse(summary.is_pure)
+
+    def test_write_to_local_from_a_conditionally_returning_function_is_observable(self):
+        """
+        A helper that returns a fresh array on one path and falls off the end on another yields `undefined`
+        there, and a member write on `undefined` throws. Every `return` being fresh is not the same as the
+        call being fresh.
+        """
+        source = (
+            'function mk(c){ if (c) { return []; } }'
+            'function f(){ var a = mk(0); a[0] = 9; return a; }'
+        )
+        summary = self._summary(source, 'f')
+        self.assertTrue(summary.writes_global)
+
     def test_write_to_fresh_object_with_setter_is_a_global_write(self):
         summary = self._summary(
             'function f(){ var o = { set k(v){ g = v; } }; o.k = 9; } var g;', 'f')
@@ -341,15 +531,15 @@ class TestEffectModel(TestBase):
     def test_plain_data_object_does_not_run_accessor(self):
         self.assertFalse(object_member_access_runs_accessor(self._object('x = { a: 1 };')))
 
-    def test_parenthesized_member_write_to_global_is_not_value_replaceable(self):
+    def test_parenthesized_member_write_to_global_is_not_literal_replaceable(self):
         summary = self._summary('function f(){ (g.x) = 9; return 7; }', 'f')
         self.assertTrue(summary.writes_global)
-        self.assertFalse(summary.is_value_replaceable)
+        self.assertFalse(summary.is_literal_replaceable)
 
-    def test_destructuring_member_write_to_global_is_not_value_replaceable(self):
+    def test_destructuring_member_write_to_global_is_not_literal_replaceable(self):
         summary = self._summary('function f(){ [g.x] = arr; return 7; }', 'f')
         self.assertTrue(summary.writes_global)
-        self.assertFalse(summary.is_value_replaceable)
+        self.assertFalse(summary.is_literal_replaceable)
 
     def test_for_in_member_target_to_global_is_a_global_write(self):
         summary = self._summary('function f(){ for (g.x in obj) {} return 7; }', 'f')
@@ -1445,5 +1635,3 @@ class TestFoldsRevealNoTrust(TestBase):
         assertion above would hold for reasons unrelated to install attribution.
         """
         self._stable("console.log('a' + 'b'); console.log(Math.floor(1.7));")
-
-

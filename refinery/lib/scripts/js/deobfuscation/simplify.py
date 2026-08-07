@@ -208,6 +208,13 @@ class JsSimplifications(Transformer):
         name, so `_globals_written` and `global_pristine` already account for the rewrites this pass
         performs. Were that not so, a held model would report a patched built-in as pristine and admit a
         fold against it.
+
+        The same argument covers the freshness the effect model reports for a container base. A binding is
+        judged fresh only when this pass owns every value it takes, and the pass adds no value to any binding;
+        the array guarantee that an allocating method's result depends on is withdrawn by a write to
+        `constructor` or `__proto__`, where a key this pass cannot read counts as possibly naming one. Folding
+        a computed key to a literal therefore moves that answer from withdrawn to withdrawn — never from
+        granted to withdrawn — which is the direction a held model may be stale in.
         """
         self._cache = model_cache(self, node)
         with self._cache.pinned():

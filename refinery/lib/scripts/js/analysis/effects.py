@@ -36,7 +36,7 @@ import enum
 from dataclasses import dataclass, field
 from typing import Callable, Iterator, Sequence
 
-from refinery.lib.scripts import Node
+from refinery.lib.scripts import Expression, Node
 from refinery.lib.scripts.js.analysis.model import (
     FUNCTION_NODES,
     GLOBAL_OBJECT_ALIASES,
@@ -72,6 +72,7 @@ from refinery.lib.scripts.js.model import (
     JsProperty,
     JsPropertyKind,
     JsRestElement,
+    JsReturnStatement,
     JsScript,
     JsSequenceExpression,
     JsSpreadElement,
@@ -114,6 +115,34 @@ _PURE_GLOBAL_FUNCTIONS = frozenset({
     'isNaN',
     'isFinite',
 })
+
+_FRESH_ARRAY_RESULT_METHODS = frozenset({
+    'slice',
+    'concat',
+    'map',
+    'filter',
+    'flat',
+    'flatMap',
+})
+"""
+`Array.prototype` methods the specification requires to return a *newly created* array, so a write through the
+result cannot be observed through the receiver. Membership turns on that guarantee alone and not on any other
+property a method may have: `join` returns a string, `reverse` and `sort` return the receiver itself, and
+`splice` returns a fresh array but also mutates the receiver — none of them belong here.
+
+Each of these routes through ArraySpeciesCreate, which reads `constructor[Symbol.species]` off the receiver, so
+the guarantee holds only for a receiver whose prototype and `constructor` the program has left alone.
+`EffectModel.trusted_prototype` answers the prototype half and `EffectModel._species_written` the per-receiver
+half; the interpreter additionally refuses to model a named property write on an array at all.
+"""
+
+_SPECIES_KEYS = frozenset({'constructor', '__proto__'})
+"""
+The two property names that decide what an allocating `Array.prototype` method returns. ArraySpeciesCreate
+reads `constructor[Symbol.species]` off the receiver, and `__proto__` replaces the prototype that `constructor`
+lookup walks, so writing either can make the "newly created" array be a shared object — or make the call throw,
+by leaving a primitive where a constructor is expected.
+"""
 
 _PURE_INTRINSIC_ROOTS = (
     frozenset(name.split('.', 1)[0] for name in _PURE_INTRINSIC_METHODS) | _PURE_GLOBAL_FUNCTIONS
@@ -291,8 +320,9 @@ class EffectSummary:
     resolved and summarized. A summary with none of these set is `is_pure`. `mutates_returned_local` is
     held apart from those four: it records a write to a fresh local the function owns whose sole route to
     the caller is the value the call returns. Such a write is a real mutation baked into the returned
-    value, so it blocks `is_pure` and `is_value_replaceable`, but not `is_effect_free_when_discarded` — a
-    call whose result is thrown away can never expose it. `wraps_return` is separate:
+    value, so it blocks `is_pure` and `is_expression_replaceable`, but not
+    `is_effect_free_when_discarded` — a call whose result is thrown away can never expose it — and not
+    `is_literal_replaceable`, whose replacement is a fresh object at every site. `wraps_return` is separate:
     it does not bear on purity but records that a call to the function yields a wrapper (a promise from
     an `async` function, an iterator from a generator) rather than the value of its return expression,
     so the call cannot be replaced by that expression. `written_bindings` names, by identity, the outer
@@ -303,6 +333,20 @@ class EffectSummary:
     function must still see the mutation. A binding written but never read anywhere adds nothing, as no
     read can observe the change; likewise a coarse write with no resolvable binding (a dynamic-scope or
     `globalThis.x =` member write) sets `writes_global` but adds nothing here.
+
+    Four properties read these flags, and they are not a scale from strict to permissive — each answers a
+    different question about a *different rewrite*, so a consumer picks by naming the rewrite it is about to
+    perform rather than by how many flags a property excludes:
+
+    - `is_pure` — may the call be deleted outright, result and all? Nothing may be lost, so every flag blocks.
+    - `is_effect_free_when_discarded` — may the call be deleted when its result is already unused? A mutation
+      confined to the returned value is then unreachable, so only that flag is forgiven.
+    - `is_literal_replaceable` — may the call become a literal denoting its value? Throwing and unknown reads
+      are reproduced by actually evaluating it, and `mutates_returned_local` is forgiven because a literal is a
+      fresh object at every site. A rewrite that yields something other than a literal may not use this.
+    - `is_expression_replaceable` — may the call become one expression lifted out of its body, with the rest of
+      the body discarded? Everything the literal case needs, plus a refusal of `mutates_returned_local`, since
+      a lifted expression yields no fresh object.
     """
     writes_global: bool = False
     writes_captured: bool = False
@@ -343,26 +387,46 @@ class EffectSummary:
         return not (self.writes_global or self.writes_captured or self.throws or self.calls_unknown)
 
     @property
-    def is_value_replaceable(self) -> bool:
+    def is_literal_replaceable(self) -> bool:
         """
-        Whether replacing a call to the summarized function with its computed return value drops no
-        observable effect. This holds when the call writes no state visible after it returns — neither a
-        global nor a captured binding, nor a fresh local it mutates and then returns
-        (`mutates_returned_local`), which is a distinct object per call and so cannot be substituted as a
-        shared value — and the call returns its value directly rather than wrapped:
-        an `async` function's call is a promise and a generator's is an iterator, neither equal to the
-        return expression, so `wraps_return` disqualifies it. Unlike `is_pure`, a call that may throw or
-        read unknown state still qualifies: an evaluator that actually executes the call to a value
-        reproduces those, and only a *write* would be silently lost. `is_pure`, which additionally
-        forbids throwing and unknown reads, is the right test for removing a call outright rather than
-        replacing it.
+        Whether a call to the summarized function may be replaced by a *literal* denoting its computed return
+        value. This holds when the call writes no state visible after it returns — neither a global nor a
+        captured binding — and returns its value directly rather than wrapped: an `async` function's call is a
+        promise and a generator's is an iterator, neither equal to the return expression, so `wraps_return`
+        disqualifies it. Unlike `is_pure`, a call that may throw or read unknown state still qualifies: an
+        evaluator that actually executes the call to a value reproduces those, and only a *write* would be
+        silently lost.
+
+        `mutates_returned_local` is tolerated, and the name of this property is what licenses that. Such a
+        mutation is baked into a container the call returns, so the substituted value must be a distinct
+        object per call — which a literal is, because `value_to_node` builds a new array or object literal at
+        every site it fills. A replacement that is *not* a literal has no such guarantee and must not consult
+        this property; see the family note on `EffectSummary`.
         """
         return not (
             self.writes_global
             or self.writes_captured
             or self.wraps_return
-            or self.mutates_returned_local
         )
+
+    @property
+    def is_expression_replaceable(self) -> bool:
+        """
+        Whether a call to the summarized function may be replaced by a single expression lifted out of its
+        body, with everything else the body would have done discarded.
+
+        Everything `is_literal_replaceable` requires is required here, for the same reasons: a write to a
+        global or a capture would be lost, and a wrapped return is not the return expression. Throwing and
+        unknown reads are tolerated identically — the lifted expression sits at the call site and still
+        performs them, so they are reproduced rather than dropped, which is why the discard question is *not*
+        the right one to ask even though statements are being discarded.
+
+        What this additionally forbids is `mutates_returned_local`. The literal case tolerates it because
+        `value_to_node` builds a new array or object at every site it fills, so the distinct container the
+        mutation is baked into survives. A lifted expression is spliced from the body and names whatever the
+        body named, guaranteeing nothing about identity, so a mutated container must not travel this way.
+        """
+        return self.is_literal_replaceable and not self.mutates_returned_local
 
     def absorb(self, other: EffectSummary):
         """
@@ -608,6 +672,28 @@ class _WriteClass(enum.Enum):
     UNOBSERVABLE = 0
     VIA_RESULT = 1
     OBSERVABLE = 2
+
+
+class _FreshKind(enum.Enum):
+    """
+    What an expression is known to evaluate to, for the purpose of deciding whether a write through it can be
+    observed. `NOT_FRESH`: nothing is known, so the value may alias state the caller already holds.
+    `CONTAINER`: a container no other code can reach, built where the expression sits. `ARRAY`: the same, and
+    additionally known to be an array.
+
+    Array-ness is tracked apart from freshness because the two are independent and both are needed: an
+    allocating `Array.prototype` method returns a new array only when the receiver really is an array, and an
+    object literal carrying its own `slice` is a fresh container whose `slice` may hand back a shared one. A
+    boolean would force that second question to be asked separately at the one site that needs it, which is
+    how a predicate acquires a divergent copy.
+    """
+    NOT_FRESH = 0
+    CONTAINER = 1
+    ARRAY = 2
+
+    @property
+    def is_fresh(self) -> bool:
+        return self is not _FreshKind.NOT_FRESH
 
 
 class EffectModel:
@@ -1165,7 +1251,7 @@ class EffectModel:
         binding = self.model.resolve(base)
         if binding is None or not self._owns_binding(binding, func):
             return _WriteClass.OBSERVABLE
-        if not self._fresh_container_origin(binding):
+        if not self._fresh_container_origin(binding, func):
             return _WriteClass.OBSERVABLE
         if not binding.captured and self._container_non_escaping(binding):
             return _WriteClass.UNOBSERVABLE
@@ -1183,34 +1269,169 @@ class EffectModel:
         func_scope = self.model.function_scope(func)
         return func_scope is not None and func_scope.contains(binding.scope)
 
-    def _fresh_container_origin(self, binding: Binding) -> bool:
+    def _fresh_container_origin(self, binding: Binding, func: Node) -> bool:
         """
-        Whether *binding* only ever holds a freshly built container: a rest parameter (always a new
-        array) or a `var`/`let`/`const` whose every declaration initializes it to an object, array, or
-        function literal. A plain parameter, a catch binding, or a local initialized from anything that
-        could alias an external object fails, since a write through it could then be observed elsewhere.
-        An object literal that declares its own getter or setter — or installs a custom prototype
-        through `__proto__:`, which may carry an inherited one — also fails: a member write to such a
-        container can run an accessor, an effect a caller can observe, so the write is not unobservable.
+        Whether *binding* only ever holds a container freshly built inside *func*, so a member write through
+        it cannot be observed anywhere else. The binding-level face of `_fresh_kind`; see that method.
+        """
+        return self._binding_fresh_kind(binding, func, frozenset()).is_fresh
+
+    def _binding_fresh_kind(
+        self, binding: Binding, func: Node, visiting: frozenset[int]
+    ) -> _FreshKind:
+        """
+        The kind of container *binding* is known to hold on every path, judged from inside *func*. A rest
+        parameter is a fresh array by language guarantee. Otherwise the binding must be one *func* owns — a
+        name reaching in from an enclosing scope or the global object denotes a container other code can
+        already reach, however freshly its initializer built it — and *every* value it can take must be
+        fresh: each declaration's initializer and each later write, because a name that holds an outer
+        container even once makes a write through it observable there. A binding written through a pattern
+        rather than a plain assignment target has no single value expression to judge, so it fails.
+
+        A binding whose `constructor` or `__proto__` is written anywhere is never an `ARRAY`, however it was
+        built. Those two properties decide what an allocating `Array.prototype` method actually returns:
+        `slice` and its neighbours route through ArraySpeciesCreate, which reads
+        `constructor[Symbol.species]` off the receiver, so a program that writes either one can make the
+        "new" array be a shared object — or make the call throw, by leaving a primitive there. The container
+        is still fresh, so a write *into* it stays unobservable; it is only the array guarantee that is lost.
+
+        The kind is the weakest of the values, since a consumer may only rely on what holds for all of them.
         """
         if self._is_rest_param(binding):
-            return True
+            return _FreshKind.ARRAY
         if binding.kind not in (BindingKind.VAR, BindingKind.LET, BindingKind.CONST):
-            return False
-        if not binding.declarations:
-            return False
+            return _FreshKind.NOT_FRESH
+        if not self._owns_binding(binding, func):
+            return _FreshKind.NOT_FRESH
+        if not binding.declarations or id(binding) in visiting:
+            return _FreshKind.NOT_FRESH
+        visiting = visiting | {id(binding)}
+        kind = _FreshKind.ARRAY
+        if self._species_written(binding):
+            kind = _FreshKind.CONTAINER
         for decl in binding.declarations:
             declarator = decl.parent
             if not isinstance(declarator, JsVariableDeclarator):
-                return False
-            init = declarator.init
-            if not isinstance(init, (
-                JsArrayExpression, JsObjectExpression, JsFunctionExpression, JsArrowFunctionExpression,
-            )):
-                return False
-            if isinstance(init, JsObjectExpression) and object_member_access_runs_accessor(init):
-                return False
-        return True
+                return _FreshKind.NOT_FRESH
+            kind = _weakest(kind, self._fresh_kind(declarator.init, func, visiting))
+            if not kind.is_fresh:
+                return _FreshKind.NOT_FRESH
+        for ref in self.model.references(binding):
+            if reference_role(ref) is Role.READ:
+                continue
+            parent = ref.parent
+            if not isinstance(parent, JsAssignmentExpression) or parent.left is not ref:
+                return _FreshKind.NOT_FRESH
+            if parent.operator != '=':
+                return _FreshKind.NOT_FRESH
+            kind = _weakest(kind, self._fresh_kind(parent.right, func, visiting))
+            if not kind.is_fresh:
+                return _FreshKind.NOT_FRESH
+        return kind
+
+    def _species_written(self, binding: Binding) -> bool:
+        """
+        Whether any reference to *binding* writes a property that decides what an allocating
+        `Array.prototype` method returns. Only `constructor` and `__proto__` do: ArraySpeciesCreate reads
+        `constructor[Symbol.species]` off the receiver, and `__proto__` replaces the prototype the
+        `constructor` lookup walks.
+
+        A key that is not a literal counts, because it may name either one. That conservatism is affordable
+        here and would not be in a whole-program rule: the question is asked about the handful of references
+        to one binding, so an ordinary `s[i] = v` element write on a *different* binding is untouched. It is
+        also the direction that survives constant folding — a fold turns `a['const' + 'ructor']` into
+        `a.constructor`, moving the answer from unsafe to unsafe rather than from safe to unsafe.
+        """
+        for ref in self.model.references(binding):
+            parent = ref.parent
+            if not isinstance(parent, JsMemberExpression) or parent.object is not ref:
+                continue
+            if not is_member_write_target(parent):
+                continue
+            prop = parent.property
+            if not parent.computed:
+                if isinstance(prop, JsIdentifier) and prop.name in _SPECIES_KEYS:
+                    return True
+            elif isinstance(prop, JsStringLiteral):
+                if prop.value in _SPECIES_KEYS:
+                    return True
+            elif not isinstance(prop, JsNumericLiteral):
+                return True
+        return False
+
+    def _fresh_kind(self, node: Node | None, func: Node, visiting: frozenset[int]) -> _FreshKind:
+        """
+        The kind of container the expression *node* is known to build when evaluated inside *func*, or
+        `NOT_FRESH` when it may evaluate to something other code can already reach. This is a *must* analysis:
+        it answers only for expressions whose result is provably a new object, which is what lets a member
+        write through the result be classified as unobservable.
+
+        Five forms qualify. A container literal builds its value on the spot — unless it is an object literal
+        whose member access runs an accessor, which a caller can observe. An identifier resolves through its
+        binding, which *func* must own. An allocating `Array.prototype` method
+        (`_FRESH_ARRAY_RESULT_METHODS`) returns a new array, but only when the prototype is undisturbed and
+        the receiver is itself known to be an array: a fresh object literal carrying its own `slice` is not,
+        and neither is a value of unknown type such as a plain parameter. A call the model resolves to one
+        function qualifies when every `return` in that function yields a fresh container — and a function with
+        a path that returns no value does not, since that path yields `undefined`. `new Array(...)` is
+        deferred to `_pure_construct`, which owns the argument rule for that root.
+
+        Deliberately *not* a may-allocate analysis. `JsObjectFold._value_allocates` asks the opposite
+        question — whether an expression might mint an object whose identity a fold would duplicate — and
+        answers `True` for any nested call, where this answers `NOT_FRESH` for nearly all of them. The two are
+        not monotone in one another and must not be merged.
+        """
+        node = strip_parens(node)
+        if node is None:
+            return _FreshKind.NOT_FRESH
+        if isinstance(node, JsArrayExpression):
+            return _FreshKind.ARRAY
+        if isinstance(node, JsObjectExpression):
+            if object_member_access_runs_accessor(node):
+                return _FreshKind.NOT_FRESH
+            return _FreshKind.CONTAINER
+        if isinstance(node, (JsFunctionExpression, JsArrowFunctionExpression)):
+            return _FreshKind.CONTAINER
+        if isinstance(node, JsIdentifier):
+            binding = self.model.resolve(node)
+            if binding is None:
+                return _FreshKind.NOT_FRESH
+            return self._binding_fresh_kind(binding, func, visiting)
+        if isinstance(node, JsNewExpression):
+            return _FreshKind.ARRAY if self._pure_construct(node) else _FreshKind.NOT_FRESH
+        if isinstance(node, JsCallExpression):
+            return self._call_fresh_kind(node, func, visiting)
+        return _FreshKind.NOT_FRESH
+
+    def _call_fresh_kind(
+        self, call: JsCallExpression, func: Node, visiting: frozenset[int]
+    ) -> _FreshKind:
+        callee = strip_parens(call.callee)
+        if isinstance(callee, JsMemberExpression) and not callee.computed:
+            prop = callee.property
+            if not isinstance(prop, JsIdentifier) or prop.name not in _FRESH_ARRAY_RESULT_METHODS:
+                return _FreshKind.NOT_FRESH
+            if not self.trusted_prototype(list):
+                return _FreshKind.NOT_FRESH
+            if self._fresh_kind(callee.object, func, visiting) is not _FreshKind.ARRAY:
+                return _FreshKind.NOT_FRESH
+            return _FreshKind.ARRAY
+        if isinstance(callee, JsIdentifier):
+            callee_func = self.unambiguous_function(self.model.resolve(callee))
+            if callee_func is None or id(callee_func) in visiting:
+                return _FreshKind.NOT_FRESH
+            visiting = visiting | {id(callee_func)}
+            returns = [n for n in _body_nodes(callee_func) if isinstance(n, JsReturnStatement)]
+            if not returns or not _returns_on_every_path(callee_func):
+                return _FreshKind.NOT_FRESH
+            kind = _FreshKind.ARRAY
+            for statement in returns:
+                kind = _weakest(kind, self._fresh_kind(statement.argument, callee_func, visiting))
+                if not kind.is_fresh:
+                    return _FreshKind.NOT_FRESH
+            return kind
+
+        return _FreshKind.NOT_FRESH
 
     @staticmethod
     def _is_rest_param(binding: Binding) -> bool:
@@ -1700,6 +1921,32 @@ def object_member_access_runs_accessor(obj: JsObjectExpression) -> bool:
     it names.
     """
     return _object_has_own_accessor(obj) or object_sets_prototype(obj)
+
+
+def _weakest(left: _FreshKind, right: _FreshKind) -> _FreshKind:
+    """
+    The kind that holds for both operands — the weaker of the two, since a consumer may rely only on what is
+    true of every value an expression or binding can take.
+    """
+    return left if left.value <= right.value else right
+
+
+def _returns_on_every_path(func: Node) -> bool:
+    """
+    Whether *func* cannot complete without an explicit `return`, so its call never yields the implicit
+    `undefined`. Deciding this exactly is a control-flow question, and this model has no graph, so the test is
+    the conservative syntactic one: the body's last statement must itself be a `return` or a `throw`. That
+    refuses `if (c) { return x; } else { return y; }`, which does return on every path — a missed opportunity,
+    not an unsound answer, and the direction to err in when a caller is about to treat the result as a
+    container it may write through.
+    """
+    body = getattr(func, 'body', None)
+    statements = getattr(body, 'body', None)
+    if isinstance(body, (JsReturnStatement, JsThrowStatement)):
+        return True
+    if not isinstance(statements, list) or not statements:
+        return isinstance(body, Expression)
+    return isinstance(statements[-1], (JsReturnStatement, JsThrowStatement))
 
 
 def _body_nodes(func: Node) -> Iterator[Node]:

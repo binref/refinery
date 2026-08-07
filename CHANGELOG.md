@@ -27,6 +27,10 @@
   implementation, so `a[i] ^= k`, `o.p **= 2`, `t ||= 1`, and `a[i]++` fold like their expression forms.
   This also fixes a crash: a modulo assignment with an infinite dividend, as in `t %= 5` where `t` is
   `Infinity`, raised an unhandled exception instead of yielding `NaN`.
+- The `js` unit now recognizes a local initialized from an array method that allocates, such as `slice` or
+  `concat`, as holding a container no other code can reach. Functions that build a buffer this way and mix it
+  in place — the shape of most hand-rolled digests and stream ciphers — are now evaluated and inlined at
+  their call sites instead of being reported as writing global state.
 - The `vbamc` and `vbapc` units can now extract VBA from Microsoft Access databases.
 - The `docmeta` unit was extended with additional metadata parsers and can now also extract metadata from MS Access databases.
 - The `asn1` unit's parser was substantially improved: It resolves recursive and mutually-recursive type definitions,

@@ -485,9 +485,10 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
             for func in self._functions:
                 if id(func) in self._pure_nodes:
                     continue
-                if not self._effects.summary_of(func).is_value_replaceable:
+                if not self._effects.summary_of(func).is_literal_replaceable:
                     continue
                 visible_pure = self._visible_pure_names(self._effects.model.function_scope(func))
+
                 if _is_value_closed(func, visible_pure):
                     self._pure_nodes.add(id(func))
                     changed = True
@@ -614,7 +615,7 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
         node: JsCallExpression,
         func: JsFunctionExpression | JsArrowFunctionExpression,
     ) -> None:
-        if self._effects is None or not self._effects.summary_of(func).is_value_replaceable:
+        if self._effects is None or not self._effects.summary_of(func).is_literal_replaceable:
             return
         pure_names = self._visible_pure_names(self._effects.model.scope_of(node))
         if _is_value_closed(func, pure_names):
@@ -659,6 +660,12 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
             result = interpreter.execute(func, args)
         except IrreducibleExpression as irr:
             if gate_unresolved and self._is_unresolved_call(irr.node):
+                return False
+            if not self._effects.summary_of(func).is_expression_replaceable:
+                # Splicing one body expression into the call site discards the rest of the body, so this
+                # exit needs a stricter admission than the literal one that follows: the dropped statements
+                # must carry no effect, and the spliced expression is not a fresh object the way a literal
+                # is, so a mutation the body baked into its returned container cannot come along.
                 return False
             if self._substitution_would_break(irr.node, func, node):
                 return False

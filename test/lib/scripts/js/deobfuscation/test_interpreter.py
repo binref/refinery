@@ -901,4 +901,3 @@ class TestInterpreterCompoundAssignment(TestJsDeobfuscator):
             """
         )
         self.assertEqual(source, self._evaluate(source))
-

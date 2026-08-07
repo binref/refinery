@@ -2251,6 +2251,17 @@ class JsInterpreter:
         return isinstance(obj, dict)
 
     def _set_property(self, obj: Value, key: str, value: Value) -> None:
+        """
+        Store *value* at *key* on *obj*, or refuse when this interpreter cannot model what the store means.
+
+        An array accepts only `length` and a canonical index. Refusing every *named* property on one is not
+        merely a gap in coverage: it is what keeps a function that writes `constructor` or `__proto__` on an
+        array unfoldable. Those two properties decide what `slice` and its neighbours return — the read goes
+        through ArraySpeciesCreate — so a program that sets them can make an apparently fresh array be a
+        shared object, or make the call throw by leaving a primitive there. `EffectModel` refuses such a
+        receiver as well, and both refusals are wanted: a widening here that started modelling named array
+        properties would need that reasoning restated, not silently dropped.
+        """
         if isinstance(obj, dict):
             if key == PROTO_KEY and key not in obj:
                 # Writing `__proto__` runs the accessor Object.prototype carries, which installs a
