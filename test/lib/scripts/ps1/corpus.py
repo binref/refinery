@@ -6,12 +6,17 @@ Every entry here is hand-authored. Nothing is read from disk, downloaded, or der
 and this module imports nothing from `test`, so it cannot reach the sample store even indirectly.
 That is what makes it safe to feed to `refinery`'s 5.1 oracle.
 
-`BEHAVIOURS` is held to a stricter rule than the rest, because it is the only thing that is
-executed. Each entry must be synthetic, small and safe: written by hand for the purpose, short
-enough to take in at a glance, and doing nothing beyond printing — no network, no file writes, no
-process creation, no environment or registry change, no dependence on the state of the machine.
-`refinery.test.lib.scripts.ps1.oracle.behaviour` refuses anything that is not listed here, so
-adding an entry is the review step.
+`BEHAVIOURS` and `CLAIMS` are held to a stricter rule than the rest, because they are the only
+things that are executed. Each entry must be synthetic, small and safe: written by hand for the
+purpose, short enough to take in at a glance, and doing nothing beyond printing — no network, no
+file writes, no process creation, no persistent environment or registry change, no dependence on
+the state of the machine. `refinery.test.lib.scripts.ps1.oracle.behaviour` refuses anything that is
+not listed in one of them, so adding an entry is the review step.
+
+A `$env:` assignment is admitted under that rule and a registry or `[Environment]::SetEnvironment`
+write is not, because the two do different things: `$env:z = '7'` writes a variable of the host
+process, which is discarded when it exits, and is therefore exactly as short-lived as `$x = '7'`.
+Nothing here may write an environment that outlives the process.
 """
 from __future__ import annotations
 
@@ -114,10 +119,11 @@ SPELLINGS: tuple[str, ...] = (
     'New-Object IO.MemoryStream(,$b)',
 )
 
-#: Snippets that are executed. Read the rule in this module's own documentation before adding one:
-#: synthetic, small, safe. Each is written so that its whole behaviour is what it prints, because a
-#: differential that compares output cannot see an effect that produces none — `$x = 5` and a
-#: rewrite that dropped it look alike, `$x = 5; $x` does not.
+#: The constructs a deobfuscation is asked to preserve the behaviour of. Read the rule in this
+#: module's own documentation before adding one: synthetic, small, safe. Each is written so that its
+#: whole behaviour is what it prints, because a differential that compares output cannot see an
+#: effect that produces none — `$x = 5` and a rewrite that dropped it look alike, `$x = 5; $x` does
+#: not.
 BEHAVIOURS: tuple[str, ...] = (
     "'a' + 'b'",
     "'{0}-{1}' -f 'a', 'b'",
@@ -142,11 +148,89 @@ BEHAVIOURS: tuple[str, ...] = (
 )
 
 
+#: The scripts the corruption ledger's beliefs about 5.1 rest on, each of which is run so that the
+#: belief is measured rather than remembered. Same rule as `BEHAVIOURS`: synthetic, small, safe, and
+#: the deobfuscation differential is quantified over these too, since a script written to catch a
+#: change of meaning is the last one that should go unchecked for it.
+#:
+#: Most are the corruption entry's own script, so that what is measured is what is deobfuscated.
+#: The rest are witnesses written for a belief whose own script cannot be run — one that states a
+#: possibility rather than an outcome, such as "the string `Invoke-Expression` runs may carry a
+#: write". A witness makes the mechanism happen instead of leaving it open, which is the part a
+#: host can answer.
+CLAIMS: tuple[str, ...] = (
+    "$x = 'a'; . { Remove-Variable x }; Write-Host $x",
+    "$x = 'a'; . { New-Variable x 'b' -Force }; Write-Host $x",
+    "$x = 'a'; . { Write-Output 'b' -OutVariable x }; Write-Host $x",
+    "Set-Variable global:y 'b'; Write-Host $global:y",
+    "$x = 'a'; $false -and ($x = 'b'); Write-Host $x",
+    "$x = @('b', 'a'); [Array]::Sort($x); Write-Host $x[0]",
+    "trap { continue }; throw 'e'; Write-Host 'after'",
+    "$x = 'a'; function f { Write-Host $x }; f; $x = 'c'",
+    "$v = 'a'; & { Write-Host $v }; $v = 'c'",
+    "$x = 'a'; & { Write-Host $script:x }; $x = 'b'",
+    "$x = 'a'; function f { Write-Host $script:x }; f; $x = 'b'",
+    "$x = 'a'; $sb = { Write-Host $x }; & $sb; $x = 'c'",
+    "$x = 'a'; $sb = { Write-Host $x }; $x = 'c'; & $sb",
+    "$x = 'a'; $sb = { Write-Host $x }; $sb.Invoke(); $x = 'c'",
+    "$x = 'a'; Invoke-Command -ScriptBlock { Write-Host $x }; $x = 'c'",
+    "$x = 'a'; 1..2 | ForEach-Object { Write-Host $x }; $x = 'c'",
+    "$x = 'a'; $ExecutionContext.InvokeCommand.InvokeScript('Write-Host $x'); $x = 'c'",
+    "$x = 'a'; $c = 'Write-Host $x'; function f { iex $c }; f; $x = 'c'",
+    "$x = 'a'; function f { Write-Host (Get-Variable x -ValueOnly) }; f; $x = 'c'",
+    "$x = 'a'; Write-Host (Get-Variable x* | ForEach-Object Value); $x = 'c'",
+    "$x = 'a'; Get-Variable x; $x = 'c'",
+    '$v = 41; & { $v++; Write-Host $v }; Write-Host $v',
+    "$i = 0; $null = [int]::TryParse('42', [ref]$script:i); Write-Host $i",
+    "$env:z = '7'; $ok = [int]::TryParse('42', [ref]$env:z); Write-Host $env:z",
+    '% { Write-Host 1 }',
+    "$x = 'a'; $c = '$script:x = \"b\"'; function f { iex $c }; f; Write-Host $x",
+    "$x = 'a'; &('i' + 'ex') '$x = \"b\"'; Write-Host $x",
+    "& { $env:z = 'set' }; Write-Host $env:z",
+    "$n = 'script:q'; function g($p = (Set-Variable $n 'v')) { }; g; Write-Host $q",
+)
+
+
+#: The corruption ledger's beliefs about what 5.1 reads as a command name. A name runs to
+#: whitespace, which is why a keyword joined to more text is not a keyword, a path is not split at
+#: its punctuation, and a `catch` joined to its type filter is neither. Every belief here is settled
+#: by which tokens 5.1 flags as a command name, so none of these is run.
+NAMES: tuple[str, ...] = (
+    R'.\a.ps1',
+    R'. .\a.ps1',
+    'Copy-Item . dest',
+    'Test-Path .',
+    'Get-ChildItem . -Recurse',
+    'Copy-Item .. dest',
+    R'C:\x\y.exe',
+    'Exit-PSSession',
+    'Break-Glass',
+    'Return-Value',
+    'exit 1',
+    'openssl enc -d -a -in x',
+    'foo.exe -noprofile -file x',
+    'try{foo}catch[System.Exception]{bar}',
+    'try{foo}catch [System.Exception]{bar}',
+    'try{foo}catch{bar}',
+    'Get-Content < in.txt > out.txt',
+    'Get-Content < in.txt',
+    '% { Write-Host 1 }',
+    'ForEach-Object { Write-Host 1 }',
+)
+
+
+def executable() -> frozenset[str]:
+    """
+    Every script a real PowerShell host may be asked to run.
+    """
+    return frozenset(BEHAVIOURS) | frozenset(CLAIMS)
+
+
 def oracle_corpus() -> tuple[str, ...]:
     """
     Everything that may be handed to a 5.1 host, deduplicated and in a stable order.
     """
     seen: dict[str, None] = {}
-    for source in (*SNIPPETS.values(), *PROBES, *SPELLINGS, *BEHAVIOURS):
+    for source in (*SNIPPETS.values(), *PROBES, *SPELLINGS, *BEHAVIOURS, *CLAIMS, *NAMES):
         seen.setdefault(source, None)
     return tuple(seen)

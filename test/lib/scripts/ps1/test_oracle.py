@@ -23,6 +23,8 @@ from test.lib.scripts.ps1 import corpus
 from test.lib.scripts.ps1.oracle import (
     OracleError,
     behaviour,
+    behaviours,
+    command_names,
     echo,
     host_info,
     parse_reports,
@@ -40,6 +42,11 @@ DIVERGENCES: dict[str, str] = {
         'keep its source, which is what Ps1InputRedirection exists for.',
     'echo a < b':
         'The same reservation, reached through a command argument.',
+    'Get-Content < in.txt':
+        'The same reservation. The corruption ledger rests on this one: the operator moves '
+        'nothing, so the file behind it is never written.',
+    'Get-Content < in.txt > out.txt':
+        'The same reservation, with the one redirection 5.1 does support standing behind it.',
     'class C : B { [int] $P; [void] M() { 1 } }':
         '5.1 reports TypeNotFound because ParseInput resolves a class base type against the '
         'assemblies already loaded. That is name resolution, not grammar, and a parser that '
@@ -70,12 +77,147 @@ DEFECTS: dict[str, str] = {
 
 
 #: Snippets whose deobfuscation does not behave like the snippet. Each is a semantics defect: the
-#: tool's first promise is that its output does the same thing as its input.
+#: tool's first promise is that its output does the same thing as its input. Each entry states what
+#: the snippet writes and what its output writes instead, so a failure can be read here.
+#:
+#: Every entry below the first is a claim of the corruption ledger, and every one of them is a
+#: defect that ledger already carries as an `expectedFailure`. That the two agree entry for entry
+#: matters: the ledger reaches its verdict by asking whether a store survived in the tree, and this
+#: reaches it by running both scripts, so neither is evidence for the other.
 BEHAVIOUR_DEFECTS: dict[str, str] = {
     "try { throw 'x' } catch { 'caught' }":
         "The catch body is emptied, so the snippet prints `caught` and its deobfuscation prints "
         "nothing. A bare expression at statement level writes to the output stream, and removal "
         "treats it as having no effect; the same body written `Write-Output 'caught'` survives.",
+    "Set-Variable global:y 'b'; Write-Host $global:y":
+        'The store is dropped, so `b` becomes nothing: a command that writes a variable is not '
+        'read as the store the following read needs.',
+    "$x = 'a'; $false -and ($x = 'b'); Write-Host $x":
+        'The read is folded to `b`, but 5.1 never evaluates the right operand of `-and` when the '
+        'left one is false, so the store never happens and the snippet prints `a`.',
+    "$x = @('b', 'a'); [Array]::Sort($x); Write-Host $x[0]":
+        'The read is folded to `b`, the order from before the sort. `[Array]::Sort` reorders the '
+        'array the variable holds rather than returning a new one, so the snippet prints `a`.',
+    "trap { continue }; throw 'e'; Write-Host 'after'":
+        'The handler is removed, so the throw escapes and nothing is printed. Under 5.1 the trap '
+        'handles it and `continue` resumes at the next statement, which prints `after`.',
+    "$x = 'a'; & { Write-Host $script:x }; $x = 'b'":
+        'The store is removed and the read prints nothing. A child scope resolves `$script:x` to '
+        'the caller, where the store put `a`.',
+    "$x = 'a'; function f { Write-Host $script:x }; f; $x = 'b'":
+        'The same, through a function body rather than a script block.',
+    "$x = 'a'; $sb = { Write-Host $x }; $x = 'c'; & $sb":
+        'The second store is removed and the read folded to `a`. A script block is not a closure: '
+        'it reads the value current when it is invoked, so the snippet prints `c`.',
+    "$x = 'a'; $c = 'Write-Host $x'; function f { iex $c }; f; $x = 'c'":
+        'The store is removed and the read prints nothing. The string names `$x` and resolves it '
+        'in the scope that runs it, so the snippet prints `a`.',
+    "$x = 'a'; Write-Host (Get-Variable x* | ForEach-Object Value); $x = 'c'":
+        'The store is removed and the read prints nothing. The pattern reads a whole set of '
+        'variables without naming any one of them.',
+    "$x = 'a'; Get-Variable x; $x = 'c'":
+        'The store is removed, so the read that follows it fails with VariableNotFound rather '
+        'than emitting the variable.',
+    "$x = 'a'; $c = '$script:x = \"b\"'; function f { iex $c }; f; Write-Host $x":
+        'The read is folded to `a` across a call that rewrites it: the string carries a write to '
+        '`$x`, so the snippet prints `b`.',
+    "$x = 'a'; &('i' + 'ex') '$x = \"b\"'; Write-Host $x":
+        'The same write, reached through a computed command name, and here the call itself is '
+        'deleted as well.',
+}
+
+
+#: What 5.1 writes for each script the corruption ledger's beliefs rest on. Every entry was read off
+#: a running host rather than reasoned about, and the whole table is compared at once, so a belief
+#: that was never true and a belief that has stopped being true fail the same way.
+#:
+#: `INFO` is what `Write-Host` produces, which since 5.0 writes an information record rather than
+#: going straight to the console. An empty one is a read of a variable that holds nothing.
+CLAIM_TRANSCRIPTS: dict[str, tuple[str, ...]] = {
+    "$x = 'a'; . { Remove-Variable x }; Write-Host $x":
+        ('INFO\t',),
+    "$x = 'a'; . { New-Variable x 'b' -Force }; Write-Host $x":
+        ('INFO\tb',),
+    "$x = 'a'; . { Write-Output 'b' -OutVariable x }; Write-Host $x":
+        ('OUT\tSystem.String\tb', 'INFO\tb'),
+    "Set-Variable global:y 'b'; Write-Host $global:y":
+        ('INFO\tb',),
+    "$x = 'a'; $false -and ($x = 'b'); Write-Host $x":
+        ('OUT\tSystem.Boolean\tFalse', 'INFO\ta'),
+    "$x = @('b', 'a'); [Array]::Sort($x); Write-Host $x[0]":
+        ('INFO\ta',),
+    "trap { continue }; throw 'e'; Write-Host 'after'":
+        ('INFO\tafter',),
+    "$x = 'a'; function f { Write-Host $x }; f; $x = 'c'":
+        ('INFO\ta',),
+    "$v = 'a'; & { Write-Host $v }; $v = 'c'":
+        ('INFO\ta',),
+    "$x = 'a'; & { Write-Host $script:x }; $x = 'b'":
+        ('INFO\ta',),
+    "$x = 'a'; function f { Write-Host $script:x }; f; $x = 'b'":
+        ('INFO\ta',),
+    "$x = 'a'; $sb = { Write-Host $x }; & $sb; $x = 'c'":
+        ('INFO\ta',),
+    "$x = 'a'; $sb = { Write-Host $x }; $x = 'c'; & $sb":
+        ('INFO\tc',),
+    "$x = 'a'; $sb = { Write-Host $x }; $sb.Invoke(); $x = 'c'":
+        ('INFO\ta',),
+    "$x = 'a'; Invoke-Command -ScriptBlock { Write-Host $x }; $x = 'c'":
+        ('INFO\ta',),
+    "$x = 'a'; 1..2 | ForEach-Object { Write-Host $x }; $x = 'c'":
+        ('INFO\ta', 'INFO\ta'),
+    "$x = 'a'; $ExecutionContext.InvokeCommand.InvokeScript('Write-Host $x'); $x = 'c'":
+        ('INFO\ta',),
+    "$x = 'a'; $c = 'Write-Host $x'; function f { iex $c }; f; $x = 'c'":
+        ('INFO\ta',),
+    "$x = 'a'; function f { Write-Host (Get-Variable x -ValueOnly) }; f; $x = 'c'":
+        ('INFO\ta',),
+    "$x = 'a'; Write-Host (Get-Variable x* | ForEach-Object Value); $x = 'c'":
+        ('INFO\ta',),
+    "$x = 'a'; Get-Variable x; $x = 'c'":
+        ('OUT\tSystem.Management.Automation.PSVariable'
+         '\tSystem.Management.Automation.PSVariable',),
+    '$v = 41; & { $v++; Write-Host $v }; Write-Host $v':
+        ('INFO\t42', 'INFO\t41'),
+    "$i = 0; $null = [int]::TryParse('42', [ref]$script:i); Write-Host $i":
+        ('INFO\t42',),
+    "$env:z = '7'; $ok = [int]::TryParse('42', [ref]$env:z); Write-Host $env:z":
+        ('INFO\t7',),
+    '% { Write-Host 1 }':
+        ('INFO\t1',),
+    "$x = 'a'; $c = '$script:x = \"b\"'; function f { iex $c }; f; Write-Host $x":
+        ('INFO\tb',),
+    "$x = 'a'; &('i' + 'ex') '$x = \"b\"'; Write-Host $x":
+        ('INFO\tb',),
+    "& { $env:z = 'set' }; Write-Host $env:z":
+        ('INFO\tset',),
+    "$n = 'script:q'; function g($p = (Set-Variable $n 'v')) { }; g; Write-Host $q":
+        ('INFO\tv',),
+}
+
+#: Which words 5.1 read as a command name, for each script whose corruption entry turns on where a
+#: command name ends. A name runs to whitespace: that is one claim, and every entry is a case of it.
+COMMAND_NAMES: dict[str, tuple[str, ...]] = {
+    R'.\a.ps1': (R'.\a.ps1',),
+    R'. .\a.ps1': (R'.\a.ps1',),
+    'Copy-Item . dest': ('Copy-Item',),
+    'Test-Path .': ('Test-Path',),
+    'Get-ChildItem . -Recurse': ('Get-ChildItem',),
+    'Copy-Item .. dest': ('Copy-Item',),
+    R'C:\x\y.exe': (R'C:\x\y.exe',),
+    'Exit-PSSession': ('Exit-PSSession',),
+    'Break-Glass': ('Break-Glass',),
+    'Return-Value': ('Return-Value',),
+    'exit 1': (),
+    'openssl enc -d -a -in x': ('openssl',),
+    'foo.exe -noprofile -file x': ('foo.exe',),
+    'try{foo}catch[System.Exception]{bar}': ('foo', 'catch[System.Exception]', 'bar'),
+    'try{foo}catch [System.Exception]{bar}': ('foo', 'bar'),
+    'try{foo}catch{bar}': ('foo', 'bar'),
+    'Get-Content < in.txt > out.txt': ('Get-Content',),
+    'Get-Content < in.txt': ('Get-Content',),
+    '% { Write-Host 1 }': ('%', 'Write-Host'),
+    'ForEach-Object { Write-Host 1 }': ('ForEach-Object', 'Write-Host'),
 }
 
 
@@ -220,12 +362,57 @@ class TestPs1DeobfuscationPreservesBehaviour(Ps1OracleTest):
         def deobfuscated(snippet: str) -> str:
             return bytes(snippet.encode('utf8') | unit).decode('utf8')
 
-        changed = sorted(
-            snippet for snippet in corpus.BEHAVIOURS
+        rewritten = [
+            snippet for snippet in (*corpus.BEHAVIOURS, *corpus.CLAIMS)
             if deobfuscated(snippet) != snippet
-            and behaviour(snippet, deobfuscated) != behaviour(snippet)
+        ]
+        changed = sorted(
+            snippet
+            for snippet, before, after in zip(
+                rewritten, behaviours(rewritten), behaviours(rewritten, deobfuscated))
+            if before != after
         )
         self.assertEqual(changed, sorted(BEHAVIOUR_DEFECTS))
 
     def test_every_behaviour_defect_is_a_snippet_that_is_run(self):
-        self.assertEqual(sorted(set(BEHAVIOUR_DEFECTS) - set(corpus.BEHAVIOURS)), [])
+        self.assertEqual(sorted(set(BEHAVIOUR_DEFECTS) - corpus.executable()), [])
+
+
+@unittest.skipIf(windows_powershell() is None, 'Windows PowerShell is not available')
+class TestPs1CorruptionLedgerRestsOnMeasuredBeliefs(Ps1OracleTest):
+    """
+    `test_corruptions.py` states in prose what 5.1 does with each of its scripts, measured once by
+    hand. These re-derive those statements from a running host, so that a belief the ledger rests on
+    cannot quietly stop being true — or turn out never to have been.
+
+    Where a belief states a possibility rather than an outcome — "the string `Invoke-Expression`
+    runs *may* carry a write" — its own script leaves the mechanism open and a host has nothing to
+    answer. Such a belief is measured through a witness that makes the mechanism happen instead,
+    which is what the last four entries of `corpus.CLAIMS` are for.
+
+    Two beliefs are reachable no other way and are left as the ledger states them. That
+    `Invoke-Command -ComputerName` runs its block on another machine cannot be shown without one.
+    That a native program receives `-in` as text rather than as an abbreviated parameter name cannot
+    be shown without running the program: what is measured here is the tokenizer half of it, that
+    the spelling reaches the command unaltered.
+    """
+
+    def test_every_belief_about_what_a_script_does_is_what_powershell_does(self):
+        measured = dict(zip(corpus.CLAIMS, behaviours(corpus.CLAIMS)))
+        self.assertEqual(measured, CLAIM_TRANSCRIPTS)
+
+    def test_every_belief_about_where_a_command_name_ends_is_where_powershell_ends_it(self):
+        measured = dict(zip(corpus.NAMES, command_names(corpus.NAMES)))
+        self.assertEqual(measured, COMMAND_NAMES)
+
+    def test_a_keyword_joined_to_more_text_is_not_the_keyword(self):
+        """
+        The comparison the ledger's claim rests on, which a table of command names alone does not
+        make: `exit` is a keyword and produces no command name at all, and `Exit-PSSession` is a
+        command name, so the two are not read the same way.
+        """
+        measured = dict(zip(corpus.NAMES, command_names(corpus.NAMES)))
+        self.assertEqual(
+            (measured['exit 1'], measured['Exit-PSSession']),
+            ((), ('Exit-PSSession',)),
+        )

@@ -17,13 +17,18 @@ class that reaches outside the process is `using module`, which touches the modu
 from __future__ import annotations
 
 import base64
+import concurrent.futures
 import functools
 import json
 import shutil
 import subprocess
 import typing
 
-from test.lib.scripts.ps1.corpus import BEHAVIOURS
+from test.lib.scripts.ps1.corpus import executable
+
+#: How many hosts may run at once. Kept small because the test suite is itself run across several
+#: workers, and each host is a process of its own.
+_HOSTS_AT_ONCE = 4
 
 #: Emitted before every script. The output encoding matters because 5.1 writes redirected output in
 #: the OEM code page by default, which mangles the quote characters the lexer corpus exists to test.
@@ -66,33 +71,46 @@ ConvertTo-Json @{ reports = $reports } -Depth 8 -Compress
 #: between two spellings of the same program and would report every rewrite as a behaviour change —
 #: and for a redirected stream it renders the *harness* line rather than the snippet's. So an error
 #: contributes its identifier and exception type, and nothing positional.
+#:
+#: The snippet is dot-sourced rather than called, so that its top level is the host's top level, as
+#: it is in a script file or an encoded command. Called instead, it would run one scope deeper than
+#: it ever really does, and `$script:` would name the harness rather than the snippet: measured that
+#: way, `$x = 'a'; & { $script:x }` reads empty and `[ref]$script:i` throws.
+#:
+#: The transcript is built by a pipeline rather than a `foreach` over one, because a parenthesized
+#: pipeline is drained before the loop begins: everything a snippet wrote before it threw would be
+#: discarded, and printing then throwing would be indistinguishable from throwing alone.
+#:
+#: Dot-sourcing puts the snippet's variables in the same scope as this script's own, which is what
+#: the `Oracle` in their names is for.
 _BEHAVIOUR_SCRIPT = R'''
 $ErrorActionPreference = 'Continue'
-$snippet = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('@PAYLOAD@'))
-$lines = New-Object System.Collections.ArrayList
-function Add-Line([string] $text) { [void]$lines.Add($text) }
+$OracleSource = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('@PAYLOAD@'))
+$OracleLines = New-Object System.Collections.ArrayList
+function Write-OracleLine([string] $text) { [void]$OracleLines.Add($text) }
 try {
-    foreach ($item in (& ([ScriptBlock]::Create($snippet)) *>&1)) {
-        if ($null -eq $item) {
-            Add-Line "OUT`t`t<null>"
-        } elseif ($item -is [System.Management.Automation.ErrorRecord]) {
-            Add-Line "ERROR`t$($item.FullyQualifiedErrorId)`t$($item.Exception.GetType().FullName)"
-        } elseif ($item -is [System.Management.Automation.WarningRecord]) {
-            Add-Line "WARNING`t$($item.Message)"
-        } elseif ($item -is [System.Management.Automation.VerboseRecord]) {
-            Add-Line "VERBOSE`t$($item.Message)"
-        } elseif ($item -is [System.Management.Automation.DebugRecord]) {
-            Add-Line "DEBUG`t$($item.Message)"
-        } elseif ($item -is [System.Management.Automation.InformationRecord]) {
-            Add-Line "INFO`t$($item.MessageData)"
+    . ([ScriptBlock]::Create($OracleSource)) *>&1 | ForEach-Object {
+        if ($null -eq $_) {
+            Write-OracleLine "OUT`t`t<null>"
+        } elseif ($_ -is [System.Management.Automation.ErrorRecord]) {
+            $OracleType = $_.Exception.GetType().FullName
+            Write-OracleLine "ERROR`t$($_.FullyQualifiedErrorId)`t$OracleType"
+        } elseif ($_ -is [System.Management.Automation.WarningRecord]) {
+            Write-OracleLine "WARNING`t$($_.Message)"
+        } elseif ($_ -is [System.Management.Automation.VerboseRecord]) {
+            Write-OracleLine "VERBOSE`t$($_.Message)"
+        } elseif ($_ -is [System.Management.Automation.DebugRecord]) {
+            Write-OracleLine "DEBUG`t$($_.Message)"
+        } elseif ($_ -is [System.Management.Automation.InformationRecord]) {
+            Write-OracleLine "INFO`t$($_.MessageData)"
         } else {
-            Add-Line "OUT`t$($item.GetType().FullName)`t$item"
+            Write-OracleLine "OUT`t$($_.GetType().FullName)`t$_"
         }
     }
 } catch {
-    Add-Line "THROW`t$($_.FullyQualifiedErrorId)`t$($_.Exception.GetType().FullName)"
+    Write-OracleLine "THROW`t$($_.FullyQualifiedErrorId)`t$($_.Exception.GetType().FullName)"
 }
-[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(($lines -join "`n")))
+[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(($OracleLines -join "`n")))
 '''
 
 #: Hands each source straight back, so that what the host received can be compared with what was
@@ -234,11 +252,27 @@ def parse_reports(sources: typing.Sequence[str], timeout: float = 120.0) -> list
     ]
 
 
+def command_names(
+    sources: typing.Sequence[str],
+    timeout: float = 120.0,
+) -> list[tuple[str, ...]]:
+    """
+    What 5.1 read as a command name in each source. The flag is set by the parser rather than the
+    lexer, so it reports the role a word was given and not how it was spelled: it is what settles
+    where a command name ends, which is the question a path, a native switch and a keyword joined
+    to more text all turn on.
+    """
+    return [
+        tuple(token.text for token in report.tokens if 'CommandName' in token.flags)
+        for report in parse_reports(sources, timeout)
+    ]
+
+
 def behaviour(
     snippet: str,
     rewrite: typing.Callable[[str], str] | None = None,
     timeout: float = 120.0,
-) -> str:
+) -> tuple[str, ...]:
     """
     Run one snippet and return everything it wrote, as one ordered transcript. SECURITY: see this
     module's own documentation — synthetic, small, safe snippets only, and `snippet` must be one
@@ -253,7 +287,7 @@ def behaviour(
     runspace is faster and is not an isolation boundary, because functions survive a reset and
     `$env:` leaks between runspaces in the same process.
     """
-    if snippet not in BEHAVIOURS:
+    if snippet not in executable():
         raise OracleError(
             'only a snippet listed in the corpus may be executed; add it there, which is where '
             'the judgement that it is synthetic, small and safe is recorded'
@@ -264,7 +298,22 @@ def behaviour(
     result = run(_BEHAVIOUR_SCRIPT.replace('@PAYLOAD@', payload), timeout)
     if result.status != 0:
         raise OracleError(F'the host exited with {result.status}: {result.errors.strip()}')
-    return base64.b64decode(result.output.strip()).decode('utf-8')
+    written = base64.b64decode(result.output.strip()).decode('utf-8')
+    return tuple(written.split('\n')) if written else ()
+
+
+def behaviours(
+    snippets: typing.Sequence[str],
+    rewrite: typing.Callable[[str], str] | None = None,
+    timeout: float = 120.0,
+) -> list[tuple[str, ...]]:
+    """
+    What each of `snippets` writes. Still one host process per snippet, so nothing about the
+    isolation changes; the hosts merely wait on each other rather than in turn, which is what makes
+    a table of them affordable to check on every run.
+    """
+    with concurrent.futures.ThreadPoolExecutor(max_workers=_HOSTS_AT_ONCE) as pool:
+        return list(pool.map(lambda snippet: behaviour(snippet, rewrite, timeout), snippets))
 
 
 def echo(sources: typing.Sequence[str], timeout: float = 120.0) -> list[str]:
