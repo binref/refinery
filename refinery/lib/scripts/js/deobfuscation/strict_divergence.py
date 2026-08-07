@@ -30,7 +30,7 @@ the complete runtime divergence taxonomy for code that parses in both modes:
 from __future__ import annotations
 
 from refinery.lib.scripts import Node
-from refinery.lib.scripts.js.analysis.effects import object_member_access_runs_accessor
+from refinery.lib.scripts.js.analysis.effects import container_literal_access_is_plain
 from refinery.lib.scripts.js.analysis.model import (
     FUNCTION_NODES,
     BindingKind,
@@ -43,13 +43,12 @@ from refinery.lib.scripts.js.analysis.model import (
 )
 from refinery.lib.scripts.js.deobfuscation.helpers import walk_receiver_scope
 from refinery.lib.scripts.js.model import (
-    JsArrayExpression,
+    JsArrowFunctionExpression,
     JsBlockStatement,
     JsFunctionDeclaration,
     JsFunctionExpression,
     JsIdentifier,
     JsMemberExpression,
-    JsObjectExpression,
     JsScript,
     JsStringLiteral,
     JsSwitchCase,
@@ -136,13 +135,18 @@ def _fresh_writable_base(base: Node | None) -> bool:
     Whether *base* is an object or array literal whose members are all writable data slots — an array
     literal, or an object literal that declares no accessor and installs no custom prototype (either could
     route a member write through a setter or an inherited non-writable). Every other base — an identifier,
-    a member, a call, `this`, a primitive literal, or a function literal (whose `name`/`length` are
-    non-writable) — may target a non-writable property and is not provably safe.
+    a member, a call, `this`, or a primitive literal — may target a non-writable property and is not
+    provably safe.
+
+    This is `container_literal_access_is_plain` minus the function literal, and the exclusion is the whole
+    reason this stays a separate predicate: a function's `name` and `length` are non-writable, so a write
+    through one is a silent no-op under sloppy and a `TypeError` under strict — exactly the divergence R4
+    detects — while a *read* of them runs no accessor, which is all the shared atom claims.
     """
     inner = strip_parens(base)
-    if isinstance(inner, JsArrayExpression):
-        return True
-    return isinstance(inner, JsObjectExpression) and not object_member_access_runs_accessor(inner)
+    if isinstance(inner, (JsFunctionExpression, JsArrowFunctionExpression)):
+        return False
+    return container_literal_access_is_plain(inner)
 
 
 def _has_block_function(parsed: JsScript) -> bool:

@@ -6,6 +6,7 @@ from refinery.lib.scripts.js.analysis.effects import (
     GLOBAL_OBJECT,
     EffectSummary,
     build_effects,
+    container_literal_access_is_plain,
     object_member_access_runs_accessor,
 )
 from refinery.lib.scripts.js.analysis.model import build_semantic_model
@@ -530,6 +531,52 @@ class TestEffectModel(TestBase):
 
     def test_plain_data_object_does_not_run_accessor(self):
         self.assertFalse(object_member_access_runs_accessor(self._object('x = { a: 1 };')))
+
+    def _atom(self, source: str) -> bool:
+        """
+        `container_literal_access_is_plain` applied to the initializer of `var probe = ...`.
+        """
+        ast = JsParser(F'var probe = {source};').parse()
+        declarator = next(n for n in ast.walk_in_order() if isinstance(n, JsVariableDeclarator))
+        return container_literal_access_is_plain(declarator.init)
+
+    def test_array_literal_access_is_plain(self):
+        self.assertTrue(self._atom('[1, 2]'))
+
+    def test_plain_object_literal_access_is_plain(self):
+        self.assertTrue(self._atom('{ a: 1 }'))
+
+    def test_function_literal_access_is_plain(self):
+        self.assertTrue(self._atom('function () {}'))
+
+    def test_arrow_literal_access_is_plain(self):
+        self.assertTrue(self._atom('() => 1'))
+
+    def test_object_literal_with_getter_access_is_not_plain(self):
+        self.assertFalse(self._atom('{ get k() {} }'))
+
+    def test_object_literal_with_setter_access_is_not_plain(self):
+        self.assertFalse(self._atom('{ set k(v) {} }'))
+
+    def test_object_literal_installing_a_prototype_access_is_not_plain(self):
+        self.assertFalse(self._atom('{ __proto__: p }'))
+
+    def test_parenthesized_container_literal_access_is_plain(self):
+        """
+        The atom strips parentheses, so a grouped literal answers as the literal does. The predicate it
+        replaced did not, and answered `False` for `({ k: 1 })` while answering `True` for `{ k: 1 }`.
+        """
+        self.assertTrue(self._atom('({ a: 1 })'))
+
+    def test_primitive_literal_access_is_not_plain(self):
+        """
+        A primitive is not a container. It is separately getter-safe, which is why `_base_getter_safe`
+        admits it and this does not — the two questions are distinct.
+        """
+        self.assertFalse(self._atom("'s'"))
+
+    def test_identifier_access_is_not_plain(self):
+        self.assertFalse(self._atom('other'))
 
     def test_parenthesized_member_write_to_global_is_not_literal_replaceable(self):
         summary = self._summary('function f(){ (g.x) = 9; return 7; }', 'f')

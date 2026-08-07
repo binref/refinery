@@ -31,6 +31,9 @@
   `concat`, as holding a container no other code can reach. Functions that build a buffer this way and mix it
   in place — the shape of most hand-rolled digests and stream ciphers — are now evaluated and inlined at
   their call sites instead of being reported as writing global state.
+- The `js` unit no longer discards observable effects behind a member read on a literal base. Reading a
+  property of an object literal that carries a getter now runs it, reading any property of `null` still
+  throws, and a chain such as `x.a.b` is no longer assumed safe because `x` is — `x.a` may be `undefined`.
 - The `vbamc` and `vbapc` units can now extract VBA from Microsoft Access databases.
 - The `docmeta` unit was extended with additional metadata parsers and can now also extract metadata from MS Access databases.
 - The `asn1` unit's parser was substantially improved: It resolves recursive and mutually-recursive type definitions,

@@ -485,21 +485,45 @@ def _array_construct_is_pure(arguments: Sequence[Node]) -> bool:
     ))
 
 
+def container_literal_access_is_plain(node: Node | None) -> bool:
+    """
+    Whether *node* is a container literal on which a plain member access touches a data slot and nothing
+    else: an array or function expression, or an object literal that declares no accessor and installs no
+    custom prototype. This is the one shared atom behind every predicate that has to decide what a member
+    access on a freshly built value does — `_is_safe_property_base` here, `EffectModel._base_is_safe` and
+    `EffectModel._base_getter_safe`, and `strict_divergence._fresh_writable_base`.
+
+    Each of those asks a further question this deliberately does not answer, which is why they remain
+    distinct predicates rather than aliases of this one: whether the base can be nullish, whether a
+    primitive or a pristine intrinsic also qualifies, whether every slot is *writable* as opposed to
+    merely accessor-free. What they must not disagree about is this atom. They did: the accessor veto
+    lived in only two of the four copies, and the copy without it cleared a getter-carrying literal as
+    effect-free, which deleted the getter call outright.
+    """
+    node = strip_parens(node)
+    if isinstance(node, JsObjectExpression):
+        return not object_member_access_runs_accessor(node)
+    return isinstance(node, (JsArrayExpression, JsFunctionExpression, JsArrowFunctionExpression))
+
+
 def _is_safe_property_base(node: Node, defunct: set[str] | None = None) -> bool:
     """
     Whether a property access on *node* cannot run a custom getter, so the read carries no hidden
-    effect: the object is a value with no own accessors — a literal, a fresh object/array/function
-    expression, or an identifier in *defunct* (being removed, so its getters are irrelevant to live
-    code). A member chain is safe when its root base is safe.
+    effect: a primitive literal other than `null`, a container literal whose access is plain, or an
+    identifier in *defunct* (being removed, so its getters are irrelevant to live code).
+
+    `null` is excluded although it is a literal: reading any property of it throws a `TypeError`, which
+    is an effect, so admitting it let the throw be dropped. There is deliberately no member-chain arm —
+    `root.a.b` is not safe merely because *root* is, since `root.a` may be `undefined` and the second read
+    then throws. The model-aware `EffectModel._base_getter_safe` answers the intrinsic-root cases this
+    cannot see, and `_SideEffectScan` consults it for anything this refuses.
     """
-    if isinstance(node, (JsStringLiteral, JsNumericLiteral, JsBooleanLiteral, JsNullLiteral)):
+    if isinstance(node, (JsStringLiteral, JsNumericLiteral, JsBooleanLiteral)):
         return True
-    if isinstance(node, (JsObjectExpression, JsArrayExpression, JsFunctionExpression)):
+    if container_literal_access_is_plain(node):
         return True
     if isinstance(node, JsIdentifier):
         return bool(defunct) and node.name in defunct
-    if isinstance(node, JsMemberExpression) and node.object is not None:
-        return _is_safe_property_base(node.object, defunct)
     return False
 
 
@@ -1366,8 +1390,8 @@ class EffectModel:
         it answers only for expressions whose result is provably a new object, which is what lets a member
         write through the result be classified as unobservable.
 
-        Five forms qualify. A container literal builds its value on the spot — unless it is an object literal
-        whose member access runs an accessor, which a caller can observe. An identifier resolves through its
+        Five forms qualify. A container literal builds its value on the spot — unless its member access runs an
+        accessor, the shared `container_literal_access_is_plain` test. An identifier resolves through its
         binding, which *func* must own. An allocating `Array.prototype` method
         (`_FRESH_ARRAY_RESULT_METHODS`) returns a new array, but only when the prototype is undisturbed and
         the receiver is itself known to be an array: a fresh object literal carrying its own `slice` is not,
@@ -1386,12 +1410,8 @@ class EffectModel:
             return _FreshKind.NOT_FRESH
         if isinstance(node, JsArrayExpression):
             return _FreshKind.ARRAY
-        if isinstance(node, JsObjectExpression):
-            if object_member_access_runs_accessor(node):
-                return _FreshKind.NOT_FRESH
-            return _FreshKind.CONTAINER
-        if isinstance(node, (JsFunctionExpression, JsArrowFunctionExpression)):
-            return _FreshKind.CONTAINER
+        if isinstance(node, (JsObjectExpression, JsFunctionExpression, JsArrowFunctionExpression)):
+            return _FreshKind.CONTAINER if container_literal_access_is_plain(node) else _FreshKind.NOT_FRESH
         if isinstance(node, JsIdentifier):
             binding = self.model.resolve(node)
             if binding is None:
@@ -1808,23 +1828,22 @@ class EffectModel:
     def _base_is_safe(self, node: Node) -> bool:
         """
         Whether a property access on *node* cannot throw because *node* is known not to be nullish: a
-        freshly built value, the global object, a pristine intrinsic root, a never-rebound rest parameter,
-        or a member chain on one. A rest parameter is bound to a fresh array at function entry, before any
-        body statement runs — no temporal-dead-zone or hoisted-`undefined` window a flow-insensitive check
-        could miss — so a member access on it is safe wherever it appears, provided the name is never
-        reassigned to a value that could be nullish. A `var`/`let`/`const` local initialized to a literal
-        is deliberately NOT admitted here: its initializer may not have run yet at the access
-        (`function(){ a.x = 1; var a = []; }` throws), which this flow-insensitive predicate cannot rule
-        out.
+        container literal whose access is plain, a primitive literal other than `null`, the global object, a
+        pristine intrinsic root, or a never-rebound rest parameter. A rest parameter is bound to a fresh array
+        at function entry, before any body statement runs — no temporal-dead-zone or hoisted-`undefined` window
+        a flow-insensitive check could miss — so a member access on it is safe wherever it appears, provided the
+        name is never reassigned to a value that could be nullish. A `var`/`let`/`const` local initialized to a
+        literal is deliberately NOT admitted here: its initializer may not have run yet at the access
+        (`function(){ a.x = 1; var a = []; }` throws), which this flow-insensitive predicate cannot rule out.
+
+        Non-nullishness is a *different* question from freshness and from getter-freeness, so this shares only
+        the container-literal atom with its neighbours: a primitive qualifies here and is not fresh, while a
+        fresh local qualifies as fresh and not here. There is no member-chain arm, because `root.a` may be
+        `undefined` however safe *root* is, and the second read would then throw.
         """
-        if isinstance(node, (
-            JsArrayExpression,
-            JsObjectExpression,
-            JsFunctionExpression,
-            JsStringLiteral,
-            JsNumericLiteral,
-            JsBooleanLiteral,
-        )):
+        if container_literal_access_is_plain(node):
+            return True
+        if isinstance(node, (JsStringLiteral, JsNumericLiteral, JsBooleanLiteral)):
             return True
         if isinstance(node, JsIdentifier):
             if node.name in GLOBAL_OBJECT_ALIASES:
@@ -1833,32 +1852,23 @@ class EffectModel:
                 return True
             binding = self.model.resolve(node)
             return binding is not None and self._is_rest_param(binding) and not binding.writes
-        if isinstance(node, JsMemberExpression):
-            return node.object is not None and self._base_is_safe(node.object)
         return False
 
     def _base_getter_safe(self, node: Node) -> bool:
         """
         Whether reading a property of *node* cannot run a user-defined getter, so the read carries no
-        hidden effect: a freshly built value with no accessor of its own and no installed prototype, a
-        primitive, or a pristine intrinsic root. Unlike `_base_is_safe`, the global object does not
-        qualify — a global property such as `location` may be an accessor — so a read through it is
-        treated as an unknown call.
+        hidden effect: a container literal whose access is plain, a primitive, or a pristine intrinsic root.
+        Unlike `_base_is_safe`, the global object does not qualify — a global property such as `location` may
+        be an accessor — so a read through it is treated as an unknown call. Unlike freshness, a primitive and
+        an intrinsic root do qualify: neither is a newly built container, and neither runs user code on a
+        read. There is no member-chain arm, for the reason given on `_base_is_safe`.
         """
-        if isinstance(node, (
-            JsArrayExpression,
-            JsFunctionExpression,
-            JsStringLiteral,
-            JsNumericLiteral,
-            JsBooleanLiteral,
-        )):
+        if container_literal_access_is_plain(node):
             return True
-        if isinstance(node, JsObjectExpression):
-            return not object_member_access_runs_accessor(node)
+        if isinstance(node, (JsStringLiteral, JsNumericLiteral, JsBooleanLiteral)):
+            return True
         if isinstance(node, JsIdentifier):
             return isinstance(self.intrinsic_of(node), str)
-        if isinstance(node, JsMemberExpression):
-            return node.object is not None and self._base_getter_safe(node.object)
         return False
 
     def _getter_free_read(self, member: JsMemberExpression) -> bool:

@@ -1801,6 +1801,110 @@ class TestMemberCalleeChainFolds(TestBase):
 
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestMemberBaseSafety(TestBase):
+    """
+    A member read whose base is a literal was cleared as effect-free on the strength of the base's syntax
+    alone, and three distinct holes in that reasoning let a real effect be deleted: an object literal
+    carrying a getter still runs it, `null` is a literal whose every property read throws, and a chain is
+    not safe merely because its root is — `root.a` may be `undefined`, so `root.a.b` throws.
+
+    Each case pairs the hazard with the control it must not cost, since refusing everything would also make
+    the behavior agree.
+    """
+
+    def _check(self, source: str):
+        deobfuscated = deobfuscate_source(source)
+        self.assertEqual(
+            behavior(source),
+            behavior(deobfuscated),
+            F'deobfuscation changed observable behavior; result was:\n{deobfuscated}',
+        )
+
+    def test_getter_on_object_literal_base_still_runs(self):
+        """
+        The read is dead — nothing uses `t` — but the getter is observable, so the statement must stay.
+        """
+        self._check(
+            "function f() { var t = { get k() { console.log('getter'); return 1; } }.k; }"
+            " f();"
+            " console.log('done');")
+
+    def test_getter_on_object_literal_base_still_runs_through_a_computed_key(self):
+        self._check(
+            "function f() { var t = { get k() { console.log('getter'); return 1; } }['k']; }"
+            " f();"
+            " console.log('done');")
+
+    def test_reading_a_property_of_null_still_throws(self):
+        self._check(
+            'function f() { var t = null.k; }'
+            " try { f(); } catch (e) { console.log('caught ' + e.constructor.name); }"
+            " console.log('done');")
+
+    def test_reading_a_property_of_null_still_throws_uncaught(self):
+        """
+        Uncaught, the throw is the program's whole observable outcome: dropping the read turned a
+        `TypeError` exit into a clean one that went on to print.
+        """
+        self._check(
+            'function f() { var t = null.k; }'
+            ' f();'
+            " console.log('unreachable');")
+
+    def test_chain_through_an_undefined_link_on_a_string_still_throws(self):
+        self._check(
+            'function f() { var t = "s".nope.deeper; }'
+            " try { f(); } catch (e) { console.log('caught ' + e.constructor.name); }"
+            " console.log('done');")
+
+    def test_chain_through_an_undefined_link_on_an_array_still_throws(self):
+        self._check(
+            'function f() { var t = [1, 2].nope.deeper; }'
+            " try { f(); } catch (e) { console.log('caught ' + e.constructor.name); }"
+            " console.log('done');")
+
+    def test_chain_through_an_undefined_link_on_an_object_still_throws(self):
+        self._check(
+            'function f() { var t = { a: 1 }.nope.deeper; }'
+            " try { f(); } catch (e) { console.log('caught ' + e.constructor.name); }"
+            " console.log('done');")
+
+    def test_getter_reached_at_chain_depth_two_still_runs(self):
+        """
+        The root is a plain literal and only the second link carries the accessor, so a rule that judges
+        the chain by its root alone clears this one.
+        """
+        self._check(
+            "function f() { var t = { a: { get k() { console.log('getter'); return 1; } } }.a.k; }"
+            ' f();'
+            " console.log('done');")
+
+    def test_setter_on_object_literal_base_is_not_run_by_a_read(self):
+        """
+        The control for the accessor cases: a literal carrying only a *setter* runs nothing on a read, so
+        the conservative answer must not be reached through the setter's mere presence.
+        """
+        self._check(
+            "function f() { var t = { set k(v) { console.log('setter'); } }.k; }"
+            ' f();'
+            " console.log('done');")
+
+    def test_plain_literal_base_read_still_folds(self):
+        self._check("function f() { console.log({ k: 7 }.k); } f(); console.log('done');")
+
+    def test_valid_two_link_chain_still_folds(self):
+        self._check("function f() { console.log({ a: { k: 5 } }.a.k); } f(); console.log('done');")
+
+    def test_primitive_base_property_read_still_folds(self):
+        self._check("function f() { console.log('abc'.length); } f(); console.log('done');")
+
+    def test_function_literal_base_property_read_still_folds(self):
+        self._check("function f() { console.log((function (a, b) {}).length); } f();")
+
+    def test_arrow_literal_base_property_read_still_folds(self):
+        self._check('function f() { console.log((() => 1).length); } f();')
+
+
 class TestHostEntrypointPreservation(TestBase):
     """
     Under the script execution model a top-level `var`/`function` is a property of the global object, so
