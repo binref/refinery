@@ -10,6 +10,7 @@ from contextlib import contextmanager
 from typing import TypeVar
 
 from refinery.lib.scripts import Block
+from refinery.lib.scripts.ps1 import precedence
 from refinery.lib.scripts.ps1.lexer import (
     _DASH_OPERATORS,
     Ps1Lexer,
@@ -110,10 +111,7 @@ _NON_COMPARISON_DASH_OPS = frozenset({
 })
 _COMPARISON_OPERATORS = frozenset(_DASH_OPERATORS.values()) - _NON_COMPARISON_DASH_OPS
 
-_BINARY_PRECEDENCE: dict[str, int] = {}
-_BINARY_PRECEDENCE.update(dict.fromkeys(('-and', '-or', '-xor'), 10))
-_BINARY_PRECEDENCE.update(dict.fromkeys(('-band', '-bor', '-bxor'), 20))
-_BINARY_PRECEDENCE.update(dict.fromkeys(_COMPARISON_OPERATORS, 30))
+precedence.register_comparisons(_COMPARISON_OPERATORS)
 
 #: The two kinds that spell a bare word. `Ps1Parser._parse_primary_atom` reads one as the string it
 #: spells, because six rules of the grammar reach it holding one: an attribute argument, a class
@@ -909,17 +907,21 @@ class Ps1Parser:
             return self._parse_binary_expression(0)
 
     def _current_binary_precedence(self) -> int | None:
-        if self._current.kind == Ps1TokenKind.DOTDOT:
-            return 70
-        if self._current.kind in (Ps1TokenKind.STAR, Ps1TokenKind.SLASH, Ps1TokenKind.PERCENT):
-            return 50
-        if self._current.kind in (Ps1TokenKind.PLUS, Ps1TokenKind.DASH):
-            return 40
-        if self._current.kind == Ps1TokenKind.OPERATOR:
-            v = self._current.value
-            if v == '-f':
-                return 60
-            return _BINARY_PRECEDENCE.get(v)
+        """
+        The tier of the operator ahead, named from `refinery.lib.scripts.ps1.precedence` so that
+        the synthesizer brackets by the same scale this reads by. The punctuation operators are
+        recognized by token kind rather than by spelling, because the lexer accepts the unicode
+        dashes and quotes an obfuscator substitutes and a spelling lookup would miss them.
+        """
+        kind = self._current.kind
+        if kind is Ps1TokenKind.DOTDOT:
+            return precedence.RANGE
+        if kind in (Ps1TokenKind.STAR, Ps1TokenKind.SLASH, Ps1TokenKind.PERCENT):
+            return precedence.MULTIPLICATIVE
+        if kind in (Ps1TokenKind.PLUS, Ps1TokenKind.DASH):
+            return precedence.ADDITIVE
+        if kind is Ps1TokenKind.OPERATOR:
+            return precedence.BINARY.get(self._current.value)
         return None
 
     def _parse_binary_expression(self, min_prec: int) -> Expression | None:

@@ -29,8 +29,16 @@ import os
 
 from test import TestBase
 
-from refinery.lib.scripts import Node, canonical, child_list_fields, is_well_formed
+from refinery.lib.scripts import (
+    Node,
+    canonical,
+    child_list_fields,
+    is_well_formed,
+    owning_field,
+    owning_list,
+)
 from refinery.lib.scripts.ps1 import model as ps1model
+from refinery.lib.scripts.ps1.model import Ps1ParenExpression
 from refinery.lib.scripts.ps1.parser import Ps1Parser
 from refinery.lib.scripts.ps1.synth import Ps1Synthesizer
 
@@ -131,6 +139,20 @@ MINIMUM_HARVEST = 400
 #: reason, because the law would then be satisfied by writing it down.
 KNOWN_VIOLATIONS: dict[str, str] = {}
 
+#: The same, for the paren-stripped tier. Every entry here is one shape: an argument built with the
+#: comma operator cannot be bracketed until the words inside it are re-spelled as quoted strings,
+#: because what stands inside a bracket is read as a pipeline and a bare word there is a command
+#: name. Bracketing them first would break more than it fixes, so the bracket is withheld and the
+#: loss recorded until the leaf spellings are chosen by the slot they are printed into.
+KNOWN_BRACKET_VIOLATIONS: dict[str, str] = {
+    'New-Object IO.MemoryStream (,$b)':
+        'a comma-built argument needs a bracket that needs its elements re-spelled first',
+    'New-Object IO.MemoryStream(,$b)':
+        'a comma-built argument needs a bracket that needs its elements re-spelled first',
+    'Should -Be [System.Management.Automation.LanguagePrimitives]::ConvertTo($rval, [string])':
+        'a comma-built argument needs a bracket that needs its elements re-spelled first',
+}
+
 
 def _harvested() -> list[str]:
     here = os.path.dirname(__file__)
@@ -159,6 +181,29 @@ def _harvested() -> list[str]:
             if any(hint in text for hint in HINTS):
                 result.append(text)
     return result
+
+
+def _strip_parentheses(root: Node) -> bool:
+    """
+    Replace every parenthesis in the tree with what it holds, and report whether anything moved.
+    """
+    changed = False
+    for node in list(root.walk()):
+        if not isinstance(node, Ps1ParenExpression) or node.expression is None:
+            continue
+        inner = node.expression
+        if (field := owning_field(node)) is not None:
+            holder, name = field
+            setattr(holder, name, inner)
+        elif (entry := owning_list(node)) is not None:
+            holder, name = entry
+            items = getattr(holder, name)
+            items[:] = [inner if item is node else item for item in items]
+        else:
+            continue
+        inner.parent = holder
+        changed = True
+    return changed
 
 
 class TestPs1Fidelity(TestBase):
@@ -266,6 +311,33 @@ class TestPs1Fidelity(TestBase):
                     self.assertTrue(
                         self._is_faithful(tree),
                         F'not faithful at {field}[:{size}]: {self._synth(tree)!r}')
+
+    def test_the_synthesizer_inverts_the_parser_without_the_original_brackets(self):
+        """
+        The generator that reaches the trees a pass actually builds. Every parenthesis is replaced
+        by what it holds, which is what happens whenever a transform folds an expression into the
+        slot a parenthesis used to occupy, and the synthesizer then has to put back exactly the
+        brackets the program needs. A tree that came from a parse carries its own parentheses and
+        so says nothing about whether the printer can do this.
+        """
+        for source in self._corpus():
+            tree = self._parse(source)
+            if not is_well_formed(tree):
+                continue
+            while _strip_parentheses(tree):
+                pass
+            if not is_well_formed(tree):
+                continue
+            with self.subTest(source=source):
+                faithful = self._is_faithful(tree)
+                reason = KNOWN_BRACKET_VIOLATIONS.get(source)
+                if reason is None:
+                    self.assertTrue(faithful, F'not faithful: {self._synth(tree)!r}')
+                else:
+                    self.assertFalse(faithful, F'listed as violating but holds: {reason}')
+
+    def test_every_known_bracket_violation_is_an_input_of_the_corpus(self):
+        self.assertEqual(sorted(set(KNOWN_BRACKET_VIOLATIONS) - set(self._corpus())), [])
 
     def _truncations(self, source: str):
         for index, node in enumerate(self._parse(source).walk_in_order()):

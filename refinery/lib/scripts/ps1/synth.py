@@ -6,6 +6,7 @@ from __future__ import annotations
 import io
 
 from refinery.lib.scripts import Block, Node, Synthesizer
+from refinery.lib.scripts.ps1 import precedence
 from refinery.lib.scripts.ps1.model import (
     Expression,
     Ps1ArrayExpression,
@@ -158,18 +159,44 @@ class Ps1Synthesizer(Synthesizer):
         # double-quoted expandable string is semantically equivalent to the here-string.
         self._emit_expandable_parts(node.parts)
 
+    def _emit_operand(self, node: Expression, minimum: int):
+        """
+        Write `node` into a slot that binds at least as tightly as `minimum`, bracketing it when it
+        does not. Every slot that can absorb what is printed beside it goes through here, naming
+        what it requires; a tree built by a pass carries no parentheses of its own, so this is the
+        only thing standing between `Binary(Binary(1, '+', 2), '*', 3)` and `1 + 2 * 3`.
+        """
+        if precedence.needs_brackets(node, minimum):
+            self._write('(')
+            self.visit(node)
+            self._write(')')
+        else:
+            self.visit(node)
+
     def visit_Ps1BinaryExpression(self, node: Ps1BinaryExpression):
-        spine: list[tuple[str, Expression | None]] = []
-        current: Expression | None = node
-        while isinstance(current, Ps1BinaryExpression):
-            spine.append((current.operator, current.right))
-            current = current.left
-        if current:
-            self.visit(current)
-        for operator, right in reversed(spine):
+        # The left spine is walked rather than recursed through, because a folded concatenation is
+        # thousands of operators deep and recursion would not reach the end of one. Walking stops
+        # where a left operand binds more loosely than its parent, since that one needs a bracket
+        # and so is not part of the same flat chain.
+        spine: list[tuple[str, Expression | None, int]] = []
+        current = node
+        while True:
+            power = precedence.of_operator(current.operator)
+            spine.append((current.operator, current.right, power))
+            left = current.left
+            if (
+                isinstance(left, Ps1BinaryExpression)
+                and precedence.of_operator(left.operator) >= power
+            ):
+                current = left
+                continue
+            break
+        if (head := current.left) is not None:
+            self._emit_operand(head, spine[-1][2])
+        for operator, right, power in reversed(spine):
             self._write(F' {operator} ')
-            if right:
-                self.visit(right)
+            if right is not None:
+                self._emit_operand(right, power + 1)
 
     def visit_Ps1UnaryExpression(self, node: Ps1UnaryExpression):
         if node.prefix:
@@ -181,10 +208,10 @@ class Ps1Synthesizer(Synthesizer):
                 # which would re-lex as the `++`/`--` operator (e.g. `- -5` must not become `--5`).
                 self._write(' ')
             if node.operand:
-                self.visit(node.operand)
+                self._emit_operand(node.operand, precedence.UNARY)
         else:
             if node.operand:
-                self.visit(node.operand)
+                self._emit_operand(node.operand, precedence.UNARY)
             self._write(node.operator)
 
     @staticmethod
@@ -201,11 +228,14 @@ class Ps1Synthesizer(Synthesizer):
     def visit_Ps1CastExpression(self, node: Ps1CastExpression):
         self._write(F'[{node.type_name}]')
         if node.operand:
-            self.visit(node.operand)
+            self._emit_operand(node.operand, precedence.UNARY)
 
     def _emit_member_prefix(self, node: Ps1MemberAccess | Ps1InvokeMember):
         if node.object:
-            self.visit(node.object)
+            # The receiver has to be a primary expression: `.` and `::` bind tighter than anything
+            # written with an operator, so `(Get-Variable Y).Tls` printed bare would read the
+            # member off the last argument of the command rather than off its result.
+            self._emit_operand(node.object, precedence.ATOM)
         self._write(node.access.value)
         if isinstance(node.member, Expression):
             self.visit(node.member)
@@ -217,7 +247,7 @@ class Ps1Synthesizer(Synthesizer):
 
     def visit_Ps1IndexExpression(self, node: Ps1IndexExpression):
         if node.object:
-            self.visit(node.object)
+            self._emit_operand(node.object, precedence.ATOM)
         self._write('[')
         if node.index:
             self.visit(node.index)
@@ -229,7 +259,12 @@ class Ps1Synthesizer(Synthesizer):
         for i, arg in enumerate(node.arguments):
             if i > 0:
                 self._write(', ')
-            self.visit(arg)
+            if precedence.needs_brackets_between_delimiters(arg):
+                self._write('(')
+                self.visit(arg)
+                self._write(')')
+            else:
+                self.visit(arg)
         self._write(')')
 
     def visit_Ps1CommandInvocation(self, node: Ps1CommandInvocation):
@@ -237,7 +272,9 @@ class Ps1Synthesizer(Synthesizer):
             self._write(node.invocation_operator)
             self._write(' ')
         if node.name:
-            self.visit(node.name)
+            # `& 'i' + 'ex'` invokes `i` and then concatenates, so a computed command name needs
+            # brackets for the invocation operator to reach the whole expression.
+            self._emit_operand(node.name, precedence.ATOM)
         for arg in node.arguments:
             self._write(' ')
             self.visit(arg)
@@ -257,19 +294,28 @@ class Ps1Synthesizer(Synthesizer):
                 self._emit_argument_value(node.value)
 
     def _emit_argument_value(self, value: Expression):
-        if isinstance(value, Ps1BinaryExpression):
-            self._write('(')
-            self.visit(value)
-            self._write(')')
-        else:
-            self.visit(value)
+        # An argument is read back by the rule that reads one bare, which reaches the comma that
+        # builds an array and no further: an operator would reach across the arguments beside this
+        # one, a range re-lexes as a single bare word in argument mode, and a command swallows the
+        # rest of the line.
+        #
+        # The comma itself stays unbracketed even though it joins this argument to the next, and
+        # that is a known gap rather than a choice: what is inside a bracket is read as a pipeline,
+        # so bracketing `a, b` written as bare words turns the first into a command name. Closing
+        # it needs the elements re-spelled as quoted strings, which is the leaf half of this work.
+        self._emit_operand(value, precedence.COMMA)
 
     def visit_Ps1AssignmentExpression(self, node: Ps1AssignmentExpression):
         if node.target:
+            # The target is delimited by the operator that follows it, and a multi-assignment
+            # writes through a comma-built list of targets, so this slot brackets nothing either.
             self.visit(node.target)
         self._write(F' {node.operator} ')
-        if node.value:
-            self.visit(node.value)
+        if (value := node.value) is not None:
+            # Nothing is bracketed here. The right side of an assignment runs to the end of the
+            # statement, so there is nothing beside it for a command or an operator to reach into;
+            # an assignment standing somewhere tighter is bracketed by that slot instead.
+            self.visit(value)
 
     def visit_Ps1ArrayLiteral(self, node: Ps1ArrayLiteral):
         # A one-element array is written with the leading unary comma that builds it. Printing the
@@ -281,7 +327,7 @@ class Ps1Synthesizer(Synthesizer):
         for i, elem in enumerate(node.elements):
             if i > 0:
                 self._write(', ')
-            self.visit(elem)
+            self._emit_operand(elem, precedence.COMMA + 1)
 
     def visit_Ps1ArrayExpression(self, node: Ps1ArrayExpression):
         self._write('@(')
@@ -358,10 +404,10 @@ class Ps1Synthesizer(Synthesizer):
 
     def visit_Ps1RangeExpression(self, node: Ps1RangeExpression):
         if node.start:
-            self.visit(node.start)
+            self._emit_operand(node.start, precedence.RANGE)
         self._write('..')
         if node.end:
-            self.visit(node.end)
+            self._emit_operand(node.end, precedence.RANGE + 1)
 
     def _render_to_string(self, node: Node) -> str:
         saved = self._parts
@@ -393,7 +439,10 @@ class Ps1Synthesizer(Synthesizer):
             self.visit(node.variable)
         if node.default_value:
             self._write(' = ')
-            self.visit(node.default_value)
+            # The commas of the parameter list delimit this slot exactly as a command's arguments
+            # delimit theirs, so a default that is a command or is built with a comma needs to say
+            # where it ends.
+            self._emit_operand(node.default_value, precedence.COMMA + 1)
 
     def visit_Ps1ParamBlock(self, node: Ps1ParamBlock):
         for attr in node.attributes:
