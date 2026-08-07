@@ -94,19 +94,31 @@ DEFECTS: dict[str, str] = {
 }
 
 
+#: Snippets whose deobfuscation writes something different from the snippet on purpose. The unit's
+#: default strips a statement whose only effect is a value on the success output stream, treating the
+#: input as a standalone script whose console output is not the artifact; `ps1 -k` keeps it. So a
+#: divergence here is the documented behaviour of that default and not a bug, which is why it is held
+#: apart from `BEHAVIOUR_DEFECTS` the way the parser's `DIVERGENCES` are held apart from its
+#: `DEFECTS`. Both tables are checked against the measured set in both directions, so a divergence
+#: that stops happening and a new one that starts both fail.
+BEHAVIOUR_DIVERGENCES: dict[str, str] = {
+    "try { throw 'x' } catch { 'caught' }":
+        "The catch body is a bare expression whose only effect is the success stream, so the "
+        "default strips it and the snippet's `caught` is not printed; `ps1 -k` keeps it. A real but "
+        "separate defect stands beside this one: `Write-Output 'caught'` in the same place survives, "
+        "so the strip recognises implicit output and not explicit, where it should ask the output "
+        "model about both alike. That asymmetry is a question for the output model, not this table.",
+}
+
 #: Snippets whose deobfuscation does not behave like the snippet. Each is a semantics defect: the
 #: tool's first promise is that its output does the same thing as its input. Each entry states what
 #: the snippet writes and what its output writes instead, so a failure can be read here.
 #:
-#: Every entry below the first is a claim of the corruption ledger, and every one of them is a
-#: defect that ledger already carries as an `expectedFailure`. That the two agree entry for entry
-#: matters: the ledger reaches its verdict by asking whether a store survived in the tree, and this
-#: reaches it by running both scripts, so neither is evidence for the other.
+#: Every entry is a claim of the corruption ledger, and every one of them is a defect that ledger
+#: already carries as an `expectedFailure`. That the two agree entry for entry matters: the ledger
+#: reaches its verdict by asking whether a store survived in the tree, and this reaches it by
+#: running both scripts, so neither is evidence for the other.
 BEHAVIOUR_DEFECTS: dict[str, str] = {
-    "try { throw 'x' } catch { 'caught' }":
-        "The catch body is emptied, so the snippet prints `caught` and its deobfuscation prints "
-        "nothing. A bare expression at statement level writes to the output stream, and removal "
-        "treats it as having no effect; the same body written `Write-Output 'caught'` survives.",
     "Set-Variable global:y 'b'; Write-Host $global:y":
         'The store is dropped, so `b` becomes nothing: a command that writes a variable is not '
         'read as the store the following read needs.',
@@ -415,10 +427,16 @@ class TestPs1DeobfuscationPreservesBehaviour(Ps1OracleTest):
                 rewritten, behaviours(rewritten), behaviours(rewritten, deobfuscated))
             if before != after
         )
-        self.assertEqual(changed, sorted(BEHAVIOUR_DEFECTS))
+        self.assertEqual(changed, sorted({**BEHAVIOUR_DEFECTS, **BEHAVIOUR_DIVERGENCES}))
 
     def test_every_behaviour_defect_is_a_snippet_that_is_run(self):
         self.assertEqual(sorted(set(BEHAVIOUR_DEFECTS) - corpus.executable()), [])
+
+    def test_every_behaviour_divergence_is_a_snippet_that_is_run(self):
+        self.assertEqual(sorted(set(BEHAVIOUR_DIVERGENCES) - corpus.executable()), [])
+
+    def test_no_behaviour_entry_is_both_deliberate_and_a_defect(self):
+        self.assertEqual(sorted(set(BEHAVIOUR_DIVERGENCES) & set(BEHAVIOUR_DEFECTS)), [])
 
 
 @unittest.skipIf(windows_powershell() is None, 'Windows PowerShell is not available')
