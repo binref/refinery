@@ -17,6 +17,7 @@ if TYPE_CHECKING:
 
 from refinery.lib.scripts import Block, Transformer
 from refinery.lib.scripts.ps1.analysis.cache import model_cache
+from refinery.lib.scripts.ps1.analysis.commands import CommandKind, Ps1CommandModel
 from refinery.lib.scripts.ps1.analysis.effects import (
     opens_a_redirection_target,
     takes_output_away,
@@ -1208,6 +1209,7 @@ class Ps1FunctionEvaluator(Transformer):
         self._failed_counts: dict[str, int] = {}
         self._callers: dict[str, set[str]] = {}
         self._ambiguous: set[str] = set()
+        self._commands: Ps1CommandModel | None = None
         self._entry = False
 
     def visit(self, node):
@@ -1227,7 +1229,9 @@ class Ps1FunctionEvaluator(Transformer):
             # Read before the fold rather than after it: folding a call into its value can neither
             # create nor destroy an `Export-ModuleMember` invocation, and asking afterwards drops
             # the whole shared model on the mutation counter to rebuild it for one boolean.
-            exports = model_cache(self, node).call_graph.exports_a_name
+            cache = model_cache(self, node)
+            exports = cache.call_graph.exports_a_name
+            self._commands = cache.commands
             super().visit(node)
             # Folding a call into its value preserves meaning whoever else can reach the name, so
             # the substitution above is unconditional. Deleting the *definition* is a name-keyed
@@ -1297,6 +1301,14 @@ class Ps1FunctionEvaluator(Transformer):
             # expression carries no redirections, so the answer is the same for every call and every
             # spelling — but a call the counter never heard of is one `_remove_resolved_definitions`
             # reads as absent, and it then deletes the definition this call still names.
+            return None
+        if self._commands is not None and (
+            self._commands.denotation(node).kind is not CommandKind.FUNCTION
+        ):
+            # Folding a call into its function body is a claim that the name denotes that function.
+            # An alias of the same name beats it, so `Set-Alias echo X; function echo { }; echo`
+            # runs the alias, not the body — folding it would substitute a value 5.1 never produces.
+            # Counted before the refusal for the reason the redirection guard states.
             return None
         args = self._extract_constant_args(node)
         if args is None:

@@ -47,9 +47,10 @@ import enum
 
 from typing import NamedTuple, Sequence
 
-from refinery.lib.scripts.analysis.cfg import CfgNode, ControlFlowGraph, ControlFlowModel
+from refinery.lib.scripts.analysis.cfg import ControlFlowModel
 from refinery.lib.scripts.analysis.dominance import DominatorModel
 from refinery.lib.scripts.analysis.reaching import ReachabilityQuery
+from refinery.lib.scripts.ps1.analysis.blocks import Ps1BlockModel, Ps1BlockReach
 from refinery.lib.scripts.ps1.ast import (
     get_command_name,
     normalize_command_name,
@@ -61,6 +62,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1CommandArgumentKind,
     Ps1CommandInvocation,
     Ps1Script,
+    Ps1ScriptBlock,
 )
 
 #: The command names that define an alias. `sal` and `nal` are themselves default aliases of
@@ -178,10 +180,12 @@ class Ps1CommandModel:
         root: Ps1Script,
         control_flow: ControlFlowModel,
         reach: ReachabilityQuery,
+        blocks: Ps1BlockModel,
         functions: frozenset[str],
     ):
         self._flow = control_flow
         self._reach = reach
+        self._blocks = blocks
         self._functions = functions
         self._alias_defs: dict[str, list[AliasDefinition]] = {}
         for node in root.walk():
@@ -212,10 +216,8 @@ class Ps1CommandModel:
         name = get_command_name(invocation)
         if name is None:
             return Denotation(CommandKind.UNKNOWN, None)
-        located = self._flow.locate(invocation)
-        if located is None:
+        if self._flow.locate(invocation) is None:
             return Denotation(CommandKind.UNKNOWN, None)
-        graph, use = located
         visited: set[str] = set()
         current = normalize_command_name(name)
         spelling = name
@@ -223,7 +225,7 @@ class Ps1CommandModel:
         while True:
             if current in visited:
                 return Denotation(CommandKind.NOTHING, None)
-            reaching = self._reaching_alias_def(current, graph, use)
+            reaching = self._reaching_alias_def(current, invocation)
             if reaching is not None:
                 if current in KNOWN_ALIAS or reaching.refuse:
                     return Denotation(CommandKind.UNKNOWN, None)
@@ -255,32 +257,58 @@ class Ps1CommandModel:
     def _reaching_alias_def(
         self,
         name: str,
-        graph: ControlFlowGraph,
-        use: CfgNode,
+        invocation: Ps1CommandInvocation,
     ) -> AliasDefinition | None:
         """
-        The one alias definition of `name` whose binding reaches `use` — strictly dominates it, in
-        the same graph — or `None` when none does or more than one might. A definition in another
-        graph is a definition in a scope the use is not in, so it is not among the candidates.
+        The one alias definition of `name` whose binding reaches the use at `invocation`, or `None`
+        when none does or more than one might.
+
+        An alias is session-wide: a `Set-Alias` in one scope is visible in the scopes nested inside
+        it, so a definition at the top level reaches a use inside a `ForEach-Object` block. The use
+        is therefore projected outward — onto the site where each enclosing block runs — and a
+        definition sought in that scope, climbing until one is found or a body is reached that does
+        not run when its site does (a function body, a stored block), which a definition inside does
+        not escape. This is the projection `refinery.lib.scripts.ps1.analysis.dataflow` performs for
+        a variable read; the nearest enclosing scope with a reaching definition wins, so a
+        block-local rebinding shadows an outer one. A definition strictly dominates the projected
+        use, so it is guaranteed to have run before it.
         """
-        definitions: list[tuple[AliasDefinition, CfgNode]] = []
-        for definition in self._alias_defs.get(name, ()):
-            placed = self._flow.locate(definition.node)
-            if placed is not None and placed[0] is graph:
-                definitions.append((definition, placed[1]))
+        definitions = self._alias_defs.get(name, ())
         if not definitions:
             return None
-        return self._reach.reaching_definition(graph, use, definitions)
+        located = self._flow.locate(invocation)
+        while located is not None:
+            graph, use = located
+            candidates = [
+                (definition, placed[1])
+                for definition in definitions
+                if (placed := self._flow.locate(definition.node)) is not None
+                and placed[0] is graph
+            ]
+            if candidates:
+                reaching = self._reach.reaching_definition(graph, use, candidates)
+                if reaching is not None:
+                    return reaching
+            owner = graph.owner
+            if not isinstance(owner, Ps1ScriptBlock):
+                return None
+            facts = self._blocks.facts(owner)
+            if facts.reach is not Ps1BlockReach.IMMEDIATE or facts.site is None:
+                return None
+            located = self._flow.locate(facts.site)
+        return None
 
 
 def build_command_model(
     root: Ps1Script,
     control_flow: ControlFlowModel,
     dominance: DominatorModel,
+    blocks: Ps1BlockModel,
     functions: frozenset[str],
 ) -> Ps1CommandModel:
     """
-    Build the `Ps1CommandModel` for a script from its control-flow model, its dominators, and the set
-    of command names it defines as functions.
+    Build the `Ps1CommandModel` for a script from its control-flow model, its dominators, the block
+    model that says where each script block runs, and the set of command names it defines as
+    functions.
     """
-    return Ps1CommandModel(root, control_flow, ReachabilityQuery(dominance), functions)
+    return Ps1CommandModel(root, control_flow, ReachabilityQuery(dominance), blocks, functions)

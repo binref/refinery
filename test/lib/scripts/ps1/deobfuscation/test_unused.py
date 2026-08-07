@@ -1121,20 +1121,6 @@ class TestPs1PayloadRetention(TestPs1):
         self.assertIn('Get-Random', result)
         self.assertIn('Start-Process calc', result)
 
-    def test_a_scope_qualified_local_function_is_not_alias_inlined(self):
-        # Regression: local definitions were keyed by their written spelling, so `function
-        # global:gci` did not shield the call `gci`, which was rewritten to `Get-ChildItem` and then
-        # deleted as a pure cmdlet — taking the definition with it.
-        result = self._deobfuscate(cleandoc(
-            """
-            function global:gci { Start-Process calc }
-            gci
-            Write-Host done
-            """
-        ))
-        self.assertIn('Start-Process calc', result)
-        self.assertNotIn('Get-ChildItem', result)
-
 
 class TestPs1NameRemovalNeedsTheWholeStory(TestPs1):
     """

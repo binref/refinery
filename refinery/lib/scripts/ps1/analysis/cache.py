@@ -151,7 +151,7 @@ class Ps1ModelCache(ModelCacheBase):
         layer that already owns which definitions a name denotes.
         """
         return self._lazy('_commands', lambda: build_command_model(
-            self.root, self.control_flow, self.dominance,
+            self.root, self.control_flow, self.dominance, self.blocks,
             frozenset(self.call_graph.defined_names)))
 
     @property

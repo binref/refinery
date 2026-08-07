@@ -1,166 +1,59 @@
 """
-Inline command aliases defined via Set-Alias / New-Alias.
+The one pass that rewrites a command name to the command it denotes.
+
+Command identity — which command a name runs, following aliases, honoring the precedence that makes a
+default alias beat a script function, and refusing a name that denotes nothing or cannot be resolved —
+is answered once by `refinery.lib.scripts.ps1.analysis.commands.Ps1CommandModel`. This pass reads that
+answer and does the rewrite; it holds none of the relation itself. Two passes used to split it, one
+resolving script `Set-Alias` definitions and the other the built-in alias and cmdlet tables, and they
+could disagree about the same name; now there is a single rewriter and a single model behind it.
+
+A name is rewritten only when the model resolves it to a concrete command:
+
+- an alias (`CommandKind.ALIAS`) is replaced by the command it resolves to, whether it was defined by
+  a script `Set-Alias` or is one of the built-in aliases;
+- a cmdlet (`CommandKind.CMDLET`) is rewritten to its canonical spelling, which normalizes casing.
+
+Everything else is left exactly as written, which is always meaning-preserving: a name the model
+reports as denoting nothing (an alias cycle, a wildcard target, a use its definition does not reach)
+or as unknown (a computed name, a `Set-Alias` colliding with a built-in, a `-Force`/`-Option`
+rebind) runs the same in the emitted script as in the input, because the surrounding definitions come
+along unchanged.
+
+Alias definitions are left in place. A surviving `Set-Alias` keeps the type world open and costs
+script-wide junk removal, so deleting a definition all of whose uses are resolved is worth doing — but
+it is a name-keyed removal that has to clear the same reachability and export gates the function
+evaluator's definition removal clears, and it is scheduled separately from this rewrite.
 """
 from __future__ import annotations
 
 from refinery.lib.scripts import Node, Transformer
-from refinery.lib.scripts.ps1.ast import get_command_name, string_value
-from refinery.lib.scripts.ps1.data import KNOWN_CMDLETS
-from refinery.lib.scripts.ps1.deobfuscation.helpers import make_string_literal, set_command_name
-from refinery.lib.scripts.ps1.model import (
-    Ps1CommandArgument,
-    Ps1CommandArgumentKind,
-    Ps1CommandInvocation,
-    Ps1StringLiteral,
-)
-
-_ALIAS_COMMANDS = frozenset({'set-alias', 'sal', 'new-alias', 'nal'})
-
-
-def _extract_alias_definition(cmd: Ps1CommandInvocation) -> tuple[str, str] | None:
-    """
-    Extract `(alias_name, target_command)` from a `Set-Alias` / `New-Alias` invocation. Handles:
-
-    - Positional:  `sal aliasName targetCmd`
-    - Named:       `Set-Alias -Name aliasName -Value targetCmd`
-    - Mixed:       `Set-Alias aliasName -Value targetCmd`
-    """
-    alias_name: str | None = None
-    target_name: str | None = None
-
-    positional: list[str] = []
-    for arg in cmd.arguments:
-        if isinstance(arg, Ps1CommandArgument):
-            if arg.kind == Ps1CommandArgumentKind.POSITIONAL:
-                if arg.value is None:
-                    return None
-                sv = string_value(arg.value)
-                if sv is None:
-                    return None
-                positional.append(sv)
-            elif arg.kind == Ps1CommandArgumentKind.NAMED:
-                param = arg.name.lstrip('-').lower()
-                if arg.value is None:
-                    return None
-                sv = string_value(arg.value)
-                if sv is None:
-                    return None
-                if param in ('name', 'n'):
-                    alias_name = sv
-                elif param in ('value', 'v', 'definition', 'd'):
-                    target_name = sv
-        else:
-            sv = string_value(arg)
-            if sv is None:
-                return None
-            positional.append(sv)
-
-    if alias_name is None and len(positional) >= 1:
-        alias_name = positional[0]
-        positional = positional[1:]
-    if target_name is None and len(positional) >= 1:
-        target_name = positional[0]
-
-    if alias_name is None or target_name is None:
-        return None
-    return alias_name, target_name
+from refinery.lib.scripts.ps1.analysis.cache import model_cache
+from refinery.lib.scripts.ps1.analysis.commands import CommandKind
+from refinery.lib.scripts.ps1.deobfuscation.helpers import set_command_name
+from refinery.lib.scripts.ps1.model import Ps1CommandInvocation, Ps1Script
 
 
 class Ps1AliasInlining(Transformer):
     """
-    Replace command invocations that use aliases defined via Set-Alias / sal with their target
-    command names.
-
-    Alias definitions are intentionally kept in the AST: IEX inlining may parse new code in later
-    iterations that references the same alias, so removing the definition prematurely would leave
-    those references unresolved.
+    Rewrite each command name to the command it denotes, as answered by
+    `refinery.lib.scripts.ps1.analysis.commands.Ps1CommandModel`.
     """
 
     def visit(self, node: Node):
-        aliases = self._collect_aliases(node)
-        if not aliases:
+        if not isinstance(node, Ps1Script):
             return None
-        self._normalize_definitions(aliases)
-        self._substitute(node, aliases)
-        return None
-
-    def _collect_aliases(self, root: Node) -> dict[str, tuple[Ps1CommandInvocation, str]]:
-        """
-        Collect alias definitions. Returns a mapping from `lower(alias_name)` to:
-
-            (definition_cmd_node, target_command_name)
-
-        Only aliases defined exactly once are included.
-        """
-        define_counts: dict[str, int] = {}
-        definitions: dict[str, tuple[Ps1CommandInvocation, str]] = {}
-
-        for node in root.walk():
-            if not isinstance(node, Ps1CommandInvocation):
+        commands = model_cache(self, node).commands
+        for invocation in list(node.walk()):
+            if not isinstance(invocation, Ps1CommandInvocation):
                 continue
-            name = get_command_name(node)
-            if name is None or name.lower() not in _ALIAS_COMMANDS:
+            if invocation.name is None:
                 continue
-            result = _extract_alias_definition(node)
-            if result is None:
+            denotation = commands.denotation(invocation)
+            if denotation.target is None:
                 continue
-            alias_name, target_name = result
-            key = alias_name.lower()
-            define_counts[key] = define_counts.get(key, 0) + 1
-            definitions[key] = (node, target_name)
-
-        return {
-            key: val for key, val in definitions.items()
-            if define_counts.get(key, 0) == 1
-        }
-
-    def _normalize_definitions(
-        self,
-        aliases: dict[str, tuple[Ps1CommandInvocation, str]],
-    ):
-        """
-        Normalize the target command name inside alias definition arguments.
-        """
-        for defn_node, target_name in aliases.values():
-            normalized = KNOWN_CMDLETS.get(target_name.lower(), target_name)
-            if normalized == target_name:
+            if denotation.kind not in (CommandKind.ALIAS, CommandKind.CMDLET):
                 continue
-            for arg in defn_node.arguments:
-                literal = None
-                if isinstance(arg, Ps1CommandArgument) and isinstance(arg.value, Ps1StringLiteral):
-                    literal = arg.value
-                elif isinstance(arg, Ps1StringLiteral):
-                    literal = arg
-                if literal is not None and literal.value.lower() == target_name.lower():
-                    rebuilt = make_string_literal(normalized)
-                    literal.value = rebuilt.value
-                    literal.raw = rebuilt.raw
-                    self.mark_changed()
-                    break
-
-    def _substitute(
-        self,
-        root: Node,
-        aliases: dict[str, tuple[Ps1CommandInvocation, str]],
-    ):
-        """
-        Replace aliased command names with their targets.
-        """
-        for node in list(root.walk()):
-            if not isinstance(node, Ps1CommandInvocation):
-                continue
-            name = get_command_name(node)
-            if name is None:
-                continue
-            key = name.lower()
-            info = aliases.get(key)
-            if info is None:
-                continue
-            defn_node, target_name = info
-            if node is defn_node:
-                continue
-            if node.name is None:
-                continue
-            normalized = KNOWN_CMDLETS.get(target_name.lower(), target_name)
-            if set_command_name(node, normalized):
+            if set_command_name(invocation, denotation.target):
                 self.mark_changed()
+        return None

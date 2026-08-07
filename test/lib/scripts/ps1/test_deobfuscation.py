@@ -292,15 +292,21 @@ class TestPs1Integration(TestPs1):
         with self.assertRaises(DeobfuscationTimeout):
             deobfuscate(ast, max_steps=1)
 
-    def test_a_nonconverging_input_raises_under_the_default_budget(self):
+    def test_a_group_that_cannot_settle_within_the_budget_raises_instead_of_hanging(self):
         """
-        The witness is an alias cycle the pipeline currently rewrites forever; once a later
-        milestone makes it converge, replace it with another non-converging input. The enduring
-        contract is that non-convergence fails loudly under the default budget instead of hanging.
+        No naturally non-converging input is known to remain, so the enduring contract — that a
+        transformer group which cannot settle within the step budget fails loudly rather than
+        looping forever — is exercised by starving a convergent input of budget. This script
+        settles in three change-producing passes; a budget of two must raise.
         """
-        ast = Ps1Parser('Set-Alias aq bq; Set-Alias bq aq; aq').parse()
+        ast = Ps1Parser(cleandoc("""
+            $a = 1 + 2 + 3 + 4 + 5
+            $b = 'x' + 'y' + 'z'
+            $c = $a
+            Write-Host $a $b $c
+        """)).parse()
         with self.assertRaises(DeobfuscationTimeout):
-            deobfuscate(ast)
+            deobfuscate(ast, max_steps=2)
 
     def test_string_equality_guard_prunes_dead_branch(self):
         # A folded string comparison must cascade into dead-branch elimination across the pipeline.
@@ -549,9 +555,11 @@ class TestPs1NameTrustSurvivesRewriting(TestPs1):
         out = self._deobfuscate_iterative("$c = . New-Object 'Net.WebClient'\nWrite-Host $c")
         self.assertNotIn('. New-Object', out)
 
-    def test_a_provider_redefinition_shields_the_name_from_alias_expansion(self):
-        # Regression: only `function` definitions shielded a name, so the call was renamed to
-        # `Get-ChildItem`, which the shadow set no longer matched, and then pruned as a pure cmdlet.
+    def test_a_provider_redefinition_is_kept_while_the_bare_call_resolves_to_the_alias(self):
+        # `${function:gci} = { ... }` is an identity-binding assignment that keeps the world
+        # conservative, so the payload is retained; and because a default alias beats a function,
+        # the bare `gci` resolves to the alias Get-ChildItem. Verified against 5.1: with the
+        # provider assignment in scope, `gci` still runs Get-ChildItem.
         out = self._deobfuscate_iterative(cleandoc(
             """
             ${function:gci} = { Start-Process calc }
@@ -559,8 +567,8 @@ class TestPs1NameTrustSurvivesRewriting(TestPs1):
             Write-Host done
             """
         ))
-        self.assertNotIn('Get-ChildItem', out)
-        self.assertRegex(out, r'(?m)^gci$')
+        self.assertIn('Start-Process calc', out)
+        self.assertIn('Get-ChildItem', out)
 
     def test_a_regex_match_that_populates_matches_is_kept(self):
         # Regression: `-match` writes the automatic `$Matches`, which is a store to engine state and

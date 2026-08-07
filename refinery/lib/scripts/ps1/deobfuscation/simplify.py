@@ -10,7 +10,6 @@ from refinery.lib.scripts.ps1.ast import (
 )
 from refinery.lib.scripts.ps1.data import (
     ALL_PARAMETER_NAMES,
-    KNOWN_ALIAS,
     KNOWN_CMDLETS,
     KNOWN_PS_OPERATORS,
     KNOWN_PS_SWITCHES,
@@ -264,21 +263,14 @@ class Ps1Simplifications(LocalFunctionAwareTransformer):
                     parent=node,
                 )
                 self.mark_changed()
-            name_lower = node.name.value.lower()
-            if normalize_command_name(name_lower) not in self._local_functions:
-                alias_target = KNOWN_ALIAS.get(name_lower)
-                if alias_target is not None:
-                    new_value = alias_target
-                else:
-                    new_value = KNOWN_CMDLETS.get(name_lower, node.name.value)
-                if new_value != node.name.value or new_value != node.name.raw:
-                    node.name = Ps1StringLiteral(
-                        offset=node.name.offset,
-                        value=new_value,
-                        raw=new_value,
-                        parent=node,
-                    )
-                    self.mark_changed()
+            if is_bare_command_name(node.name.value) and node.name.raw != node.name.value:
+                node.name = Ps1StringLiteral(
+                    offset=node.name.offset,
+                    value=node.name.value,
+                    raw=node.name.value,
+                    parent=node,
+                )
+                self.mark_changed()
         if node.invocation_operator in ('&', '.'):
             if isinstance(node.name, Ps1StringLiteral):
                 name_val = node.name.value

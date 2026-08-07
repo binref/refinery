@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from test.lib.scripts.ps1.deobfuscation import TestPs1
 
-from refinery.lib.scripts.ps1.deobfuscation import Ps1Simplifications
+from refinery.lib.scripts.ps1.deobfuscation import Ps1AliasInlining, Ps1Simplifications
 
 
 class TestPS1BracketRemoval(TestPs1):
@@ -167,9 +167,9 @@ class TestPs1SimplifyExtra(TestPs1):
         self.assertNotIn('`', result)
 
     def test_gcm_wildcard_not_substituted_as_name(self):
-        # `gcm` normalizes to `Get-Command`, but a wildcard pattern must not become the command
-        # name verbatim.
-        result = self._apply("& (gcm i*e-e*) 'hi'", Ps1Simplifications)
+        # `gcm` resolves to `Get-Command` through alias inlining, but a wildcard pattern must never
+        # become the command name verbatim.
+        result = self._apply("& (gcm i*e-e*) 'hi'", Ps1Simplifications, Ps1AliasInlining)
         self.assertEqual(result, "& (Get-Command i*e-e*) 'hi'")
 
     def test_gcm_concrete_name_resolved(self):

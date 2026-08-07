@@ -4,6 +4,7 @@ from test import TestBase
 
 from refinery.lib.scripts import _remove_from_parent
 from refinery.lib.scripts.ps1.analysis.cache import Ps1ModelCache
+from refinery.lib.scripts.ps1.analysis.blocks import build_block_model
 from refinery.lib.scripts.ps1.analysis.cfg import build_control_flow_model
 from refinery.lib.scripts.ps1.analysis.commands import (
     AliasDefinition,
@@ -164,7 +165,9 @@ class TestPs1CommandModelDirectBuild(TestBase):
         tree = _script("function Get-Content { 'x' }\nGet-Content")
         control_flow = build_control_flow_model(tree)
         dominance = build_dominance(control_flow)
-        model = build_command_model(tree, control_flow, dominance, frozenset({'get-content'}))
+        blocks = build_block_model(tree)
+        model = build_command_model(
+            tree, control_flow, dominance, blocks, frozenset({'get-content'}))
         self.assertEqual(
             model.denotation(_use(tree, 'Get-Content')),
             Denotation(CommandKind.FUNCTION, 'Get-Content'))

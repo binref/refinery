@@ -62,11 +62,11 @@ class TestPs1FunctionEvaluator(TestPs1):
 
     def test_foreach_tochararray(self):
         data = (
-            "Function R ([String]$s){"
+            "Function Rev ([String]$s){"
             "$a = $s.ToCharArray(); $r = '';"
             "ForEach($c in $a){$r = $c + $r};"
             "$r;}"
-            "$x = R 'olleH'\nWrite-Output $x"
+            "$x = Rev 'olleH'\nWrite-Output $x"
         )
         result = self._deobfuscate(data)
         self.assertIn('Hello', result)
@@ -97,12 +97,12 @@ class TestPs1FunctionEvaluator(TestPs1):
 
     def test_return_statement(self):
         data = (
-            "Function R ([String]$s){"
+            "Function Dec ([String]$s){"
             "$r = '';"
             "For($i=0; $i -lt $s.Length; $i+=2){"
             "$r = $r + $s.Substring($i, 1)"
             "}; return $r;}"
-            "$x = R 'HxExLxLxOx'\nWrite-Output $x"
+            "$x = Dec 'HxExLxLxOx'\nWrite-Output $x"
         )
         result = self._deobfuscate(data)
         self.assertIn('HELLO', result)
