@@ -76,6 +76,7 @@ from refinery.lib.scripts.js.model import (
     JsSequenceExpression,
     JsSpreadElement,
     JsStringLiteral,
+    JsTemplateLiteral,
     JsThrowStatement,
     JsUnaryExpression,
     JsUpdateExpression,
@@ -215,6 +216,8 @@ _ACCESSOR_INSTALL_METHODS = frozenset({
     '__defineGetter__',
     '__defineSetter__',
 })
+
+_DENOTED_ROOT_DEPTH_LIMIT = 16
 
 _PROTOTYPE_OWNERS: dict[str, str] = {
     'str': 'String',
@@ -1744,8 +1747,7 @@ def _globals_written_by_name(model: SemanticModel) -> frozenset[str]:
         pending.extend(scope.children)
     for node in model.root.walk():
         if isinstance(node, JsCallExpression):
-            base = _accessor_install_target(node)
-            if base is not None:
+            for base in _accessor_install_targets(node):
                 written.add(base.name)
             continue
         target = None
@@ -1761,30 +1763,105 @@ def _globals_written_by_name(model: SemanticModel) -> frozenset[str]:
     return frozenset(written)
 
 
-def _accessor_install_target(call: JsCallExpression) -> JsIdentifier | None:
+def _accessor_install_method(node: JsMemberExpression) -> str | None:
     """
-    The name whose properties *call* installs an accessor or data descriptor on, or `None`. An
+    The accessor-install method *node* names, through a dotted property or a computed key whose string
+    value is statically known, or `None`. Matching the dotted form alone is what let
+    `Object['defineProperty']` slip past both callers, and a fold rewriting that key to a dot would then
+    reveal the install only after the fact was consumed.
+    """
+    prop = node.property
+    if node.computed:
+        value = _static_string(prop)
+        return value if value in _ACCESSOR_INSTALL_METHODS else None
+    if isinstance(prop, JsIdentifier) and prop.name in _ACCESSOR_INSTALL_METHODS:
+        return prop.name
+    return None
+
+
+def _static_string(node: Node | None) -> str | None:
+    """
+    The string *node* certainly evaluates to, or `None`. It reads a string literal, a substitution-free
+    template, and concatenations of those — the forms a constant fold collapses to a literal.
+
+    This exists so that an analysis answer cannot change as folds fire: a property key the simplifier will
+    turn into `'defineProperty'` must already be read as that name, or a consumer holding the answer across
+    a pass would be told there is no install and then have one appear. It is deliberately a *must*
+    analysis — an unknown value yields `None`, and a key whose value is unknown names no method, since only
+    a key a fold can collapse can reveal an install mid-pass.
+    """
+    node = strip_parens(node)
+    if isinstance(node, JsStringLiteral):
+        return node.value
+    if isinstance(node, JsTemplateLiteral):
+        if node.expressions:
+            return None
+        return ''.join(quasi.value for quasi in node.quasis)
+    if isinstance(node, JsBinaryExpression) and node.operator == '+':
+        left = _static_string(node.left)
+        if left is None:
+            return None
+        right = _static_string(node.right)
+        if right is None:
+            return None
+        return left + right
+    return None
+
+
+def _accessor_install_targets(call: JsCallExpression) -> Iterator[JsIdentifier]:
+    """
+    The names whose properties *call* may install an accessor or data descriptor on. An
     `Object.defineProperty(Math, ...)` replaces a method without ever writing `Math` syntactically, so a
     scan for assignments alone would leave the name looking untouched. The receiver form
-    (`o.__defineGetter__(...)`) attributes to the chain root of the receiver instead of an argument.
+    (`o.__defineGetter__(...)`) attributes to the receiver instead of an argument.
+
+    Every name the target *may* denote is yielded, because a caller collecting writes needs an
+    over-approximation: a missed name is a name that keeps its trust while the program patches it. That is
+    the opposite of `intrinsic_of`, which must certify what a node *does* denote and so takes only the left
+    of `A || B`; here both operands are yielded, since either may survive.
     """
     callee = strip_parens(call.callee)
-    if not isinstance(callee, JsMemberExpression) or callee.computed:
-        return None
-    prop = callee.property
-    if not isinstance(prop, JsIdentifier) or prop.name not in _ACCESSOR_INSTALL_METHODS:
-        return None
-    if prop.name.startswith('__define'):
-        base = strip_parens(callee.object)
-        if isinstance(base, JsIdentifier):
-            return base
-        return _member_chain_root(base)
-    if not call.arguments:
-        return None
-    first = strip_parens(call.arguments[0])
-    if isinstance(first, JsIdentifier):
-        return first
-    return _member_chain_root(first)
+    if not isinstance(callee, JsMemberExpression):
+        return
+    method = _accessor_install_method(callee)
+    if method is None:
+        return
+    if method.startswith('__define'):
+        yield from _denoted_roots(callee.object)
+    elif call.arguments:
+        yield from _denoted_roots(call.arguments[0])
+
+
+def _denoted_roots(node: Node | None, depth: int = 0) -> Iterator[JsIdentifier]:
+    """
+    Every name *node* may denote, looking through the value-preserving forms a constant fold collapses:
+    parentheses, the operands of `||`/`&&`/`??` and the branches of a conditional (either side may be the
+    value), the last expression of a sequence, and the right side of an assignment.
+
+    Resolving only the syntactic form would make this analysis change its answer as folds fire —
+    `Math || 0` names nothing until it collapses to `Math` — which is precisely what a consumer holding the
+    answer across a pass cannot tolerate.
+    """
+    if depth > _DENOTED_ROOT_DEPTH_LIMIT:
+        return
+    cursor = strip_parens(node)
+    if isinstance(cursor, JsIdentifier):
+        yield cursor
+    elif isinstance(cursor, JsMemberExpression):
+        root = _member_chain_root(cursor)
+        if root is not None:
+            yield root
+    elif isinstance(cursor, JsLogicalExpression):
+        yield from _denoted_roots(cursor.left, depth + 1)
+        yield from _denoted_roots(cursor.right, depth + 1)
+    elif isinstance(cursor, JsConditionalExpression):
+        yield from _denoted_roots(cursor.consequent, depth + 1)
+        yield from _denoted_roots(cursor.alternate, depth + 1)
+    elif isinstance(cursor, JsSequenceExpression):
+        if cursor.expressions:
+            yield from _denoted_roots(cursor.expressions[-1], depth + 1)
+    elif isinstance(cursor, JsAssignmentExpression):
+        yield from _denoted_roots(cursor.right, depth + 1)
 
 
 def _member_chain_root(node: Node | None) -> JsIdentifier | None:
@@ -1841,14 +1918,20 @@ def _global_pristine(model: SemanticModel) -> bool:
     reflective surface through which an accessor could be installed at runtime, and installs none
     statically through `Object.defineProperty`, `defineProperties`, or the legacy `__define[GS]etter__`.
     Only under this precondition may a read of a trusted global data property be treated as effect-free.
+
+    A computed key counts as an install, since `Object['define' + 'Property']` reaches the same method as
+    the dotted form; reading the property name alone would let a fold of the key withdraw this trust after
+    a consumer had already relied on it.
+
+    A key whose value is *not* statically known — `Object[k]` — is deliberately not treated as an install.
+    It would deny this trust to nearly every dynamic call, and it buys nothing: a variable key is resolved
+    by substitution in a different pass, never within the one that consumes this answer.
     """
     if model.has_reflection_surface():
         return False
     for node in model.root.walk():
-        if isinstance(node, JsMemberExpression) and not node.computed:
-            prop = node.property
-            if isinstance(prop, JsIdentifier) and prop.name in _ACCESSOR_INSTALL_METHODS:
-                return False
+        if isinstance(node, JsMemberExpression) and _accessor_install_method(node) is not None:
+            return False
     return True
 
 

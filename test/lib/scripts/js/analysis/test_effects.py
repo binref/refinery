@@ -9,6 +9,7 @@ from refinery.lib.scripts.js.analysis.effects import (
     object_member_access_runs_accessor,
 )
 from refinery.lib.scripts.js.analysis.model import build_semantic_model
+from refinery.lib.scripts.js.deobfuscation.simplify import JsSimplifications
 from refinery.lib.scripts.js.model import (
     JsArrayExpression,
     JsBinaryExpression,
@@ -22,6 +23,7 @@ from refinery.lib.scripts.js.model import (
     JsVariableDeclarator,
 )
 from refinery.lib.scripts.js.parser import JsParser
+from refinery.lib.scripts.js.synth import JsSynthesizer
 
 
 class TestEffectModel(TestBase):
@@ -526,6 +528,41 @@ class TestEffectModel(TestBase):
         self.assertFalse(effects.global_pristine)
         self.assertFalse(effects.summary_of(self._func(ast, 'f')).is_pure)
 
+    def test_global_read_voided_by_computed_accessor_install(self):
+        """
+        `Object['defineProperty']` installs the accessor just as the dotted form does, so a global read is
+        no longer getter-free. Reading only dotted property names answered `True` here, and a later fold of
+        the key would then withdraw the trust after a consumer had relied on it.
+        """
+        source = (
+            "Object['defineProperty'](globalThis, 'String', { get: function(){ return 0; } });"
+            ' function f(){ return globalThis.Uint8Array; }'
+        )
+        ast, effects = self._effects(source)
+        self.assertFalse(effects.global_pristine)
+        self.assertFalse(effects.summary_of(self._func(ast, 'f')).is_pure)
+
+    def test_global_read_voided_by_concatenated_accessor_install(self):
+        source = (
+            "Object['define' + 'Property'](globalThis, 'String', { get: function(){ return 0; } });"
+            ' function f(){ return globalThis.Uint8Array; }'
+        )
+        _, effects = self._effects(source)
+        self.assertFalse(effects.global_pristine)
+
+    def test_global_read_survives_a_dynamic_key_call(self):
+        """
+        The precision control: a key whose value is unknown is not an install. Treating it as one would
+        make almost every obfuscated program lose this trust, and it guards nothing — such a key is only
+        resolved in a later pass, which rebuilds this model.
+        """
+        source = (
+            "var o = { f: function(){} }; var k = 'f'; o[k]();"
+            ' function f(){ return globalThis.Uint8Array; }'
+        )
+        _, effects = self._effects(source)
+        self.assertTrue(effects.global_pristine)
+
     def test_global_read_voided_by_reflection_surface(self):
         source = "function f(){ return globalThis.Uint8Array; } eval('1');"
         ast, effects = self._effects(source)
@@ -1027,6 +1064,86 @@ class TestTrustedIntrinsic(TestBase):
     def test_define_getter_on_the_name_is_refused(self):
         self._refuses("Math.__defineGetter__('floor', function(){}); console.log(Math.floor(1.7));")
 
+    def test_define_property_through_a_computed_key_is_refused(self):
+        """
+        `Object['defineProperty']` reaches the same method as the dotted form. Matching only a dotted
+        property name left the install invisible, so the patched name stayed foldable.
+        """
+        self._refuses(
+            "Object['defineProperty'](Math, 'floor', { value: 1 }); console.log(Math.floor(1.7));")
+
+    def test_define_property_through_a_concatenated_key_is_refused(self):
+        self._refuses(
+            "Object['define' + 'Property'](Math, 'floor', { value: 1 }); console.log(Math.floor(1.7));")
+
+    def test_define_property_through_a_template_key_is_refused(self):
+        self._refuses(
+            'Object[`defineProperty`](Math, \'floor\', { value: 1 }); console.log(Math.floor(1.7));')
+
+    def test_define_getter_through_a_concatenated_key_is_refused(self):
+        self._refuses(
+            "Math['__define' + 'Getter__']('floor', function(){}); console.log(Math.floor(1.7));")
+
+    def test_install_on_a_guarded_target_is_refused(self):
+        """
+        The install target is the value the argument denotes, not its syntax: `Math || 0` evaluates to
+        `Math`, so the descriptor lands on the intrinsic.
+        """
+        self._refuses(
+            "Object.defineProperty(Math || 0, 'floor', { value: 1 }); console.log(Math.floor(1.7));")
+
+    def test_install_on_a_target_guarded_from_the_right_is_refused(self):
+        """
+        Which operand survives depends on the values, so both must be attributed. Following only the left
+        of `||` — correct for `intrinsic_of`, which certifies what a node *does* denote — misses this one,
+        because collecting writes needs the opposite approximation.
+        """
+        self._refuses(
+            "Object.defineProperty(0 || Math, 'floor', { value: 1 }); console.log(Math.floor(1.7));")
+
+    def test_install_on_a_conditional_target_is_refused(self):
+        self._refuses(
+            "Object.defineProperty(x ? 0 : Math, 'floor', { value: 1 }); console.log(Math.floor(1.7));")
+
+    def test_install_on_a_sequenced_target_is_refused(self):
+        self._refuses(
+            "Object.defineProperty((0, Math), 'floor', { value: 1 }); console.log(Math.floor(1.7));")
+
+    def test_install_on_an_assigned_target_is_refused(self):
+        self._refuses(
+            "var q; Object.defineProperty(q = Math, 'floor', { value: 1 }); console.log(Math.floor(1.7));")
+
+    def test_install_on_a_guarded_prototype_chain_is_refused(self):
+        self._refuses(
+            "Object.defineProperty(0 || Math.prototype, 'floor', { value: 1 });"
+            ' console.log(Math.floor(1.7));')
+
+    def test_install_on_an_unrelated_object_is_trusted(self):
+        """
+        The precision control for the whole install family: attributing every argument to every name would
+        refuse folds the program never endangered.
+        """
+        self._trusts(
+            "var o = {}; Object['defineProperty'](o, 'floor', { value: 1 }); console.log(Math.floor(1.7));")
+
+    def test_install_on_an_unrelated_guarded_object_is_trusted(self):
+        self._trusts(
+            'var o = {}; Object.defineProperty(0 || o, \'floor\', { value: 1 });'
+            ' console.log(Math.floor(1.7));')
+
+    def test_install_on_another_intrinsic_is_trusted(self):
+        self._trusts(
+            "Object['defineProperty'](String.prototype, 'zz', { value: 1 }); console.log(Math.floor(1.7));")
+
+    def test_dynamic_key_call_on_an_unrelated_object_is_trusted(self):
+        """
+        A key whose value is unknown is not treated as an install. Doing so would refuse a fold for every
+        dynamic call in the program, and it protects nothing: a variable key is resolved by substitution in
+        a later pass, which rebuilds this model.
+        """
+        self._trusts(
+            "var o = { f: function(){} }; var k = 'f'; o[k](); console.log(Math.floor(1.7));")
+
     def test_reflection_surface_refuses_every_name(self):
         """
         A direct `eval` can rebind anything at runtime, so no name is provably intact.
@@ -1254,5 +1371,79 @@ class TestCallIsFoldable(TestBase):
 
     def test_callee_that_is_not_a_name_is_refused(self):
         self.assertFalse(self._foldable('var r = (function () { return 1; })();'))
+
+
+class TestFoldsRevealNoTrust(TestBase):
+    """
+    The program-wide facts a fold gate rests on must not become *less* restrictive as folds fire. A
+    simplification pass reads these facts many times, and a consumer may legitimately hold one answer for
+    the length of a pass; if a rewrite could reveal an intrinsic write that the held answer predates, that
+    consumer would admit a fold against an already-patched built-in.
+
+    Each case therefore hides an install behind a form a fold collapses, and asserts the facts read the same
+    before and after. The direction matters: `_globals_written` growing is the hazard, because the held set
+    is the smaller earlier one, and `global_pristine` going `True` to `False` is the hazard for the same
+    reason. Testing the shapes alone is not enough — an earlier version of this check diffed only the
+    written-name set and reported every channel closed while `global_pristine` was still moving.
+    """
+
+    @staticmethod
+    def _facts(source: str):
+        ast = JsParser(source).parse()
+        model = build_semantic_model(ast)
+        effects = build_effects(model)
+        return (
+            frozenset(effects._globals_written),
+            effects.intrinsics_pristine,
+            effects.global_pristine,
+            model.has_reflection_surface(),
+        )
+
+    def _stable(self, source: str):
+        """
+        Assert one simplification pass leaves every fact a fold gate consumes unchanged.
+        """
+        ast = JsParser(source).parse()
+        JsSimplifications().visit(ast)
+        self.assertEqual(self._facts(source), self._facts(JsSynthesizer().convert(ast)))
+
+    def test_computed_install_key_reveals_nothing(self):
+        self._stable(
+            "Object['defineProperty'](Math, 'floor', { value: 1 }); console.log(Math.floor(1.7));")
+
+    def test_concatenated_install_key_reveals_nothing(self):
+        self._stable(
+            "Object['define' + 'Property'](Math, 'floor', { value: 1 }); console.log(Math.floor(1.7));")
+
+    def test_concatenated_getter_key_reveals_nothing(self):
+        self._stable(
+            "Math['__define' + 'Getter__']('floor', function(){}); console.log(Math.floor(1.7));")
+
+    def test_guarded_install_target_reveals_nothing(self):
+        self._stable(
+            "Object.defineProperty(0 || Math, 'floor', { value: 1 }); console.log(Math.floor(1.7));")
+
+    def test_conditional_install_target_reveals_nothing(self):
+        self._stable(
+            "Object.defineProperty(x ? 0 : Math, 'floor', { value: 1 }); console.log(Math.floor(1.7));")
+
+    def test_sequenced_install_target_reveals_nothing(self):
+        self._stable(
+            "Object.defineProperty((0, Math), 'floor', { value: 1 }); console.log(Math.floor(1.7));")
+
+    def test_install_on_the_global_object_reveals_nothing(self):
+        self._stable(
+            "Object['define' + 'Property'](globalThis, 'zz', { get: function(){ return 7; } });"
+            ' console.log(globalThis.zz);')
+
+    def test_computed_property_write_reveals_nothing(self):
+        self._stable("Math['fl' + 'oor'] = function(){}; console.log(Math.floor(1.7));")
+
+    def test_a_program_that_only_folds_reveals_nothing(self):
+        """
+        The control: a pass that folds but installs nothing must also leave the facts alone, or the
+        assertion above would hold for reasons unrelated to install attribution.
+        """
+        self._stable("console.log('a' + 'b'); console.log(Math.floor(1.7));")
 
 
