@@ -142,6 +142,8 @@ BEHAVIOURS: tuple[str, ...] = (
     "[int]'42' + 1",
     "'a' * 3",
     "$null -eq $undefined",
+    "Write-Host 'a'; return; Write-Host 'b'",
+    "try { return } finally { Write-Host 'f' }",
     "try { throw 'x' } catch { 'caught' }",
     "&('Write' + '-Output') 'indirect'",
     "$s = 'abc'; $s.Substring(1, 2)",
