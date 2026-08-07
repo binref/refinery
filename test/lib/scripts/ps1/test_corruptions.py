@@ -43,6 +43,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1CommandArgument,
     Ps1CommandArgumentKind,
     Ps1CommandInvocation,
+    Ps1ErrorNode,
     Ps1Exit,
     Ps1ExpandableString,
     Ps1ExpressionStatement,
@@ -760,11 +761,22 @@ class TestPs1Corruptions(TestPs1):
         script runs, so reading a handler there would invent one 5.1 never has. Whitespace anywhere
         ahead of the block restores the clause: both `try{foo}catch{bar}` and the form spaced after
         the keyword, `try{foo}catch [System.Exception]{bar}`, catch under 5.1.
+
+        Since 5.1 has no such statement, neither does the tree: a `try` carrying neither a `catch`
+        nor a `finally` has no spelling, so the parser keeps the source it read as an error node
+        rather than building a statement that would print back as a script 5.1 also refuses. What
+        is asserted is therefore that no try statement is read at all, and that the text survives.
         """
+        tree = self._deobfuscated_tree('try{foo}catch[System.Exception]{bar}')
         self.assertEqual(
-            _catch_clause_counts(self._deobfuscated_tree('try{foo}catch[System.Exception]{bar}')),
-            [0],
+            _catch_clause_counts(tree),
+            [],
             'a handler was invented where 5.1 reads a command name and refuses the script',
+        )
+        self.assertEqual(
+            [node.text for node in tree.walk() if isinstance(node, Ps1ErrorNode)],
+            ['try{foo}'],
+            'the source 5.1 refuses was dropped instead of being kept verbatim',
         )
         self.assertEqual(
             _catch_clause_counts(self._deobfuscated_tree('try{foo}catch [System.Exception]{bar}')),

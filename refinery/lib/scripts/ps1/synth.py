@@ -6,7 +6,6 @@ from __future__ import annotations
 import io
 
 from refinery.lib.scripts import Block, Node, Synthesizer
-from refinery.lib.scripts.ps1.deobfuscation.helpers import BACKTICK_ENCODE
 from refinery.lib.scripts.ps1.model import (
     Expression,
     Ps1ArrayExpression,
@@ -72,7 +71,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1Variable,
     Ps1WhileLoop,
 )
-from refinery.lib.scripts.ps1.token import KEYWORD_SPELLING
+from refinery.lib.scripts.ps1.token import BACKTICK_ENCODE, KEYWORD_SPELLING
 
 
 class Ps1Synthesizer(Synthesizer):
@@ -273,6 +272,12 @@ class Ps1Synthesizer(Synthesizer):
             self.visit(node.value)
 
     def visit_Ps1ArrayLiteral(self, node: Ps1ArrayLiteral):
+        # A one-element array is written with the leading unary comma that builds it. Printing the
+        # element alone yields the element, not an array of it, which is why
+        # `New-Object IO.MemoryStream(,$bytes)` must keep its comma: without it the constructor is
+        # handed the buffer's elements as separate arguments and throws.
+        if len(node.elements) == 1:
+            self._write(',')
         for i, elem in enumerate(node.elements):
             if i > 0:
                 self._write(', ')
@@ -368,17 +373,18 @@ class Ps1Synthesizer(Synthesizer):
             self._parts = saved
 
     def visit_Ps1Attribute(self, node: Ps1Attribute):
-        self._write(F'[{node.name}')
-        if node.positional_args or node.named_args:
-            self._write('(')
-            items: list[str] = []
-            for arg in node.positional_args:
-                items.append(self._render_to_string(arg))
-            for key, val in node.named_args:
-                items.append(F'{key}={self._render_to_string(val)}')
-            self._write(', '.join(items))
-            self._write(')')
-        self._write(']')
+        # The argument list is written even when it is empty, because it is what distinguishes an
+        # attribute from a type constraint: `[CmdletBinding]` reads back as the type `CmdletBinding`
+        # and is then dropped, and `class C { [ValidateNotNull()] [int] $P }` loses the `[int]` to
+        # the same confusion.
+        self._write(F'[{node.name}(')
+        items: list[str] = []
+        for arg in node.positional_args:
+            items.append(self._render_to_string(arg))
+        for key, val in node.named_args:
+            items.append(F'{key}={self._render_to_string(val)}')
+        self._write(', '.join(items))
+        self._write(')]')
 
     def visit_Ps1ParameterDeclaration(self, node: Ps1ParameterDeclaration):
         for attr in node.attributes:

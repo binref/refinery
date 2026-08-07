@@ -45,7 +45,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1UnaryExpression,
     Ps1Variable,
 )
-from refinery.lib.scripts.ps1.token import BACKTICK_ESCAPE
+from refinery.lib.scripts.ps1.token import BACKTICK_ENCODE
 
 
 class MutationKind(enum.Enum):
@@ -62,7 +62,6 @@ class VariableMutation(NamedTuple):
     node: Node
 
 
-BACKTICK_ENCODE = {v: F'`{k}' for k, v in BACKTICK_ESCAPE.items()}
 NONPRINT_CONTROL = frozenset(BACKTICK_ENCODE) - {'\n'}
 
 

@@ -16,6 +16,11 @@ BACKTICK_ESCAPE = {
     'v' : '\v',
 }
 
+#: The inverse of `BACKTICK_ESCAPE`: how a character that cannot stand for itself inside a
+#: double-quoted string is written. It belongs beside the table it inverts, and beside the lexer
+#: that reads what it writes, so that reading and writing an escape stay one fact.
+BACKTICK_ENCODE = {v: F'`{k}' for k, v in BACKTICK_ESCAPE.items()}
+
 SINGLE_QUOTES = frozenset("'\u2018\u2019\u201A\u201B")
 DOUBLE_QUOTES = frozenset('"\u201C\u201D\u201E')
 DASHES = frozenset('-\u2013\u2014\u2015')

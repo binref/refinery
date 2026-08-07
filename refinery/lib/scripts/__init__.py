@@ -25,6 +25,8 @@ _SKIP_FIELDS = frozenset(('offset', 'parent', 'leading_comments', 'errors'))
 
 _child_fields_cache: dict[type, list[tuple[str, Kind]]] = {}
 
+_value_fields_cache: dict[type, tuple[str, ...]] = {}
+
 
 def _has_node_type(hint) -> bool:
     if isinstance(hint, type):
@@ -87,18 +89,162 @@ def _compute_children(node: Node) -> tuple[Node, ...]:
     return tuple(result)
 
 
+def child_list_fields(node: Node) -> list[tuple[str, list]]:
+    """
+    The child-list fields of `node`, as name and list pairs. A caller that wants to know where a
+    tree branches into a variable number of children — how many arguments a call has, how many
+    clauses an `if` has — asks here rather than matching on node types, so a node class added later
+    is covered without the caller changing.
+    """
+    return [
+        (name, getattr(node, name))
+        for name, kind in _classify_fields(type(node))
+        if kind in (Kind.ChildList, Kind.TupleList)
+    ]
+
+
+def _value_fields(node_type: type[Node]) -> tuple[str, ...]:
+    try:
+        return _value_fields_cache[node_type]
+    except KeyError:
+        pass
+    skip = _SKIP_FIELDS | node_type.spelling_fields
+    result = tuple(f.name for f in dataclasses.fields(node_type) if f.name not in skip)
+    _value_fields_cache[node_type] = result
+    return result
+
+
+#: How often `canonical` follows `Node.canonical_form` before it concludes that the identifications
+#: a model declares are cyclic. A parenthesis around a parenthesis is two steps, and the shapes that
+#: chain at all are wrappers around wrappers, so the bound is never approached by a real tree.
+_IDENTIFICATION_LIMIT = 64
+
+
+def _canonical_value(value):
+    if isinstance(value, Node):
+        return canonical(value)
+    if isinstance(value, enum.Enum):
+        return (enum.Enum, type(value).__name__, value.name, value.value)
+    if isinstance(value, (list, tuple)):
+        return tuple(_canonical_value(item) for item in value)
+    return value
+
+
+def canonical(node: Node):
+    """
+    A hashable value that identifies the *program* a node spells, so that two trees compare equal
+    exactly when they mean the same thing. This is what makes "the parser and the synthesizer are
+    inverses" a checkable statement: a synthesizer is faithful when `canonical(parse(synth(T)))`
+    equals `canonical(T)` for every well-formed `T`.
+
+    Three things are deliberately compared away, each declared by the model rather than known here:
+    the bookkeeping fields in `_SKIP_FIELDS`, which record where a node came from; the fields a node
+    declares as its `spelling`, which record how a value was written; and the identifications a node
+    makes through `Node.canonical_form`. Everything else is compared, including scalars such as an
+    operator string. Enumerations compare by name as well as value, because an `IntEnum` member is
+    equal to the integer it wraps and would otherwise collide with an unrelated field holding it.
+    """
+    for _ in range(_IDENTIFICATION_LIMIT):
+        form = node.canonical_form()
+        if form is None:
+            break
+        node = form
+    else:
+        raise RecursionError(F'cyclic canonical form at {type(node).__name__}')
+    return (
+        type(node).canonical_type,
+        *(_canonical_value(getattr(node, name)) for name in _value_fields(type(node))),
+    )
+
+
+def is_well_formed(root: Node) -> bool:
+    """
+    Whether every node in the tree at `root` spells something, which is the domain over which
+    `canonical` states a fidelity law. A tree containing a node that `Node.has_spelling` rejects
+    cannot be printed at all, and one containing an `unparsed` node prints source that no parser
+    agreed to read, so re-reading it yields whatever the recovery happens to make of the text.
+    Neither says anything about whether a synthesizer is faithful.
+    """
+    return all(node.has_spelling() and not node.unparsed for node in root.walk())
+
+
 @dataclass(repr=False, eq=False)
 class Node:
     """
     Base class for all AST nodes.
+
+    A subclass declares how it relates to the program it spells using class keywords:
+
+        class Ps1IntegerLiteral(Expression, spelling='raw'):
+            ...
+
+    - `spelling` names the fields that record *how* a value was written rather than *what* it is.
+      `canonical` compares them away, so two nodes that spell the same value differently are the
+      same program. Declarations accumulate down the hierarchy.
+    - `unparsed` marks a node that stands for source text no parser understood. Such a node prints
+      text that reads back as arbitrary other nodes, so it is excluded from `is_well_formed`.
+    - `identity` names another node class this one is the same program as, for two classes that
+      differ only in how the source spelled them — a here-string and a quoted string hold the same
+      value. The two must carry the same value fields, since `canonical` then compares them
+      field by field. Where an identification instead needs to look at the instance, because it
+      holds only for some values, override `canonical_form` instead.
+
+    Two further facts are per-instance rather than per-class and so are methods: `has_spelling`
+    reports whether this node can be printed at all, and `canonical_form` reports the node this one
+    is identified with when comparing programs.
     """
     offset: int = -1
     parent: Node | None = field(default=None, compare=False)
     leading_comments: list[str] = field(default_factory=list, compare=False)
 
+    spelling_fields: typing.ClassVar[frozenset[str]] = frozenset()
+    unparsed: typing.ClassVar[bool] = False
+    canonical_type: typing.ClassVar[str] = 'Node'
+
+    @classmethod
+    def __init_subclass__(
+        cls,
+        spelling: str | typing.Iterable[str] = (),
+        unparsed: bool = False,
+        identity: type[Node] | None = None,
+        **kwargs,
+    ):
+        super().__init_subclass__(**kwargs)
+        if isinstance(spelling, str):
+            spelling = (spelling,)
+        inherited = frozenset()
+        for base in cls.__bases__:
+            inherited |= getattr(base, 'spelling_fields', frozenset())
+        cls.spelling_fields = inherited | frozenset(spelling)
+        cls.canonical_type = cls.__name__ if identity is None else identity.canonical_type
+        if unparsed:
+            cls.unparsed = True
+
     def __post_init__(self):
         for c in _compute_children(self):
             self._adopt(c)
+
+    def has_spelling(self) -> bool:
+        """
+        Whether this node can be written as source at all. A node for which this is false has no
+        spelling in the language, so a synthesizer cannot print it and a parser must never build
+        it: `,` is not a PowerShell expression, and neither is a `do` loop with no condition. The
+        synthesizer refuses such a node rather than printing something else, because printing an
+        approximation of a node that cannot exist is the silent corruption this predicate exists to
+        prevent.
+        """
+        return True
+
+    def canonical_form(self) -> Node | None:
+        """
+        The node this one is identified with when comparing programs, or `None` when it stands for
+        itself. Two shapes are identified: a *transparent wrapper* that spells nothing of its own,
+        such as a parenthesis around an expression, and a *deliberate normalization* between two
+        spellings of one value, such as a here-string and the quoted string holding the same text.
+
+        `canonical` applies this repeatedly, so a form may itself have a form.
+        """
+        return None
 
     def children(self) -> tuple[Node, ...]:
         return _compute_children(self)
@@ -601,11 +747,32 @@ def _clone_node(node: _N) -> _N:
     return clone
 
 
+class UnspellableNode(LookupError):
+    """
+    Raised when a synthesizer is handed a node the model says has no spelling. See
+    `Node.has_spelling`.
+    """
+    def __init__(self, node: Node):
+        super().__init__(F'{type(node).__name__} has no spelling')
+        self.node = node
+
+
 class Synthesizer(Visitor):
     """
     Base class for AST-to-source synthesizers. Provides indentation-aware output buffering shared
     by all language-specific synthesizers.
     """
+
+    def visit(self, node: Node) -> Node | None:
+        """
+        Refuse a node the model declares unspellable rather than printing an approximation of it.
+        A shape that cannot be written is one no parser may produce — the parsers build an error
+        node holding the source instead — so reaching one here means a transform assembled it, and
+        the alternative to failing is emitting a script that quietly means something else.
+        """
+        if not node.has_spelling():
+            raise UnspellableNode(node)
+        return super().visit(node)
 
     def __init__(self, indent: str = '  ', line_length: int = 140):
         super().__init__()

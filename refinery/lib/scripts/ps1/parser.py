@@ -249,6 +249,25 @@ class Ps1Parser:
             return False
         return not _BLOCK_COMMENT.sub('', gap)
 
+    def _error_since(self, offset: int, message: str) -> Ps1ErrorNode:
+        """
+        An error node standing for the source from `offset` up to the last token consumed. This is
+        how a rule declines to build a shape the language has no spelling for — a `do` loop with no
+        `while` and a `try` with neither `catch` nor `finally` are not statements — while still
+        handing back every character it read, so that what an analyst gets out still contains what
+        went in. Recording the span is what makes the recovery a fixed point: the text re-reads as
+        the same error rather than as an empty node that prints nothing.
+
+        The span ends at the last thing actually read: a rule that looked ahead for a keyword it
+        did not find has skipped the newlines in between, and taking those along would grow the
+        text by one line every time the output is read back and printed again.
+        """
+        return Ps1ErrorNode(
+            offset=offset,
+            text=self.source[offset:self._previous_end].rstrip(),
+            message=message,
+        )
+
     def _resync(self, offset: int):
         """
         Rewind to `offset` and drop the lookahead, so that the next read scans the source there
@@ -958,7 +977,8 @@ class Ps1Parser:
             self._skip_newlines()
             operand = self._parse_unary_expression()
             if operand is None:
-                return Ps1ArrayLiteral(offset=tok.offset, elements=[])
+                return Ps1ErrorNode(
+                    offset=tok.offset, text=tok.value, message='comma operator without operand')
             return Ps1ArrayLiteral(offset=tok.offset, elements=[operand])
 
         if tok.kind in (Ps1TokenKind.INCREMENT, Ps1TokenKind.DECREMENT):
@@ -1587,7 +1607,10 @@ class Ps1Parser:
             cond = self._parse_parenthesized_condition()
             return Ps1DoLoop(
                 offset=offset, condition=cond, body=body, is_until=is_until, label=label)
-        return Ps1DoLoop(offset=offset, body=body, label=label)
+        return Ps1ExpressionStatement(
+            offset=offset,
+            expression=self._error_since(offset, 'do loop without while or until'),
+        )
 
     def _parse_for(self, label: str | None = None) -> Ps1ForLoop:
         offset = self._current.offset
@@ -1709,7 +1732,7 @@ class Ps1Parser:
             file=file,
         )
 
-    def _parse_try(self) -> Ps1TryCatchFinally:
+    def _parse_try(self) -> Statement:
         offset = self._current.offset
         self._expect(Ps1TokenKind.TRY)
         self._skip_newlines()
@@ -1738,6 +1761,11 @@ class Ps1Parser:
             self._advance()
             self._skip_newlines()
             finally_block = self._parse_block()
+        if not catch_clauses and finally_block is None:
+            return Ps1ExpressionStatement(
+                offset=offset,
+                expression=self._error_since(offset, 'try without catch or finally'),
+            )
         return Ps1TryCatchFinally(
             offset=offset,
             try_block=try_block,

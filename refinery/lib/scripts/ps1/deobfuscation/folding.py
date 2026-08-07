@@ -381,11 +381,24 @@ def _lookup_hashtable(ht: Ps1HashLiteral, index: Expression) -> _Selection | Non
     return None
 
 
+def _pipeline_output(value: Expression | None) -> Expression | None:
+    """
+    What a pipeline hands to whoever consumes it. A pipeline that emits exactly one object passes
+    that object along; it does not wrap it in a collection. Folding a single match out of
+    `[regex]::Matches(...) | %{ $_.Value }` therefore yields the string, and an array literal of one
+    element here would assign an array where PowerShell assigns a string. Two or more values are a
+    collection either way and are left alone.
+    """
+    if isinstance(value, Ps1ArrayLiteral) and len(value.elements) == 1:
+        return value.elements[0]
+    return value
+
+
 class Ps1ConstantFolding(LocalFunctionAwareTransformer):
 
     def visit_Ps1Pipeline(self, node: Ps1Pipeline):
         if len(node.elements) == 2:
-            result = substituted(node, self._try_fold_regex_pipeline(node))
+            result = substituted(node, _pipeline_output(self._try_fold_regex_pipeline(node)))
             if result is not None:
                 return result
         self.generic_visit(node)

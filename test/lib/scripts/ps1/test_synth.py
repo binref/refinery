@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from test import TestBase
 
+from refinery.lib.scripts import UnspellableNode
+from refinery.lib.scripts.ps1.model import Ps1ArrayLiteral
 from refinery.lib.scripts.ps1.parser import Ps1Parser
 from refinery.lib.scripts.ps1.synth import Ps1Synthesizer
 
@@ -194,4 +196,33 @@ class TestPs1Synthesizer(TestBase):
     def test_catch_multiple_types_comma_separated(self):
         # Multiple catch type filters must be comma-separated; a space between them is a parse error.
         out = Ps1Synthesizer().convert(Ps1Parser('try { $x } catch [A],[B] { $y }').parse())
-        self.assertIn('catch [A], [B]', out)
+        self.assertEqual(
+            out, 'try {\n  $x\n} catch [A], [B] {\n  $y\n}')
+
+    def test_one_element_array_keeps_the_comma_that_builds_it(self):
+        # Without the leading comma the element is written on its own and is no longer an array:
+        # the constructor below is then handed the buffer's bytes as separate arguments and throws.
+        self.assertEqual(Ps1Synthesizer().convert(Ps1Parser('$x = ,1').parse()), '$x = ,1')
+        self.assertEqual(
+            Ps1Synthesizer().convert(Ps1Parser('New-Object IO.MemoryStream(,$b)').parse()),
+            'New-Object IO.MemoryStream (,$b)')
+
+    def test_attribute_keeps_its_argument_list_when_empty(self):
+        # `[CmdletBinding]` without the parentheses reads back as a type constraint rather than an
+        # attribute, and is then dropped; the `[int]` below is lost to the same confusion.
+        self.assertEqual(
+            Ps1Synthesizer().convert(Ps1Parser('function f { [CmdletBinding()] param($x) }').parse()),
+            'function f {\n  [CmdletBinding()]\n  Param($x)\n}')
+        self.assertEqual(
+            Ps1Synthesizer().convert(Ps1Parser('class C { [ValidateNotNull()] [int] $P }').parse()),
+            'class C {\n  [ValidateNotNull()][int]$P\n}')
+
+    def test_a_shape_the_language_cannot_write_is_refused(self):
+        # A comma operator with nothing to build an array out of has no spelling. Printing the
+        # empty array literal the parser used to build emitted nothing at all, which deleted the
+        # assignment's value in silence.
+        self.assertEqual(
+            Ps1Synthesizer().convert(Ps1Parser('$x = ,').parse()), '$x = ,')
+        self.assertRaises(
+            UnspellableNode,
+            Ps1Synthesizer().convert, Ps1ArrayLiteral(elements=[]))
