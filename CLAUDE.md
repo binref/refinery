@@ -81,13 +81,15 @@ The following rules contradict common Python conventions. Check them explicitly:
 
 # Planning
 
-Whenever you make or substantially change a plan: Have it be challenged by 3 agents:
+Whenever you make or substantially change a plan: Have it be challenged by independent agents:
 
-1. one general purpose adversarial critic
-2. one architectural critic: it enforces the above "Architecture is P0" rule
-3. a testability critic which makes sure that the design is testable
+1. general purpose adversarial critic
+2. architectural: enforces "Architecture is P0"
+3. research: design implements state of the art methodology
+4. safety: design has no obvious safety flaws
+5. testability: design is testable
 
-After a plan is written, always pause to compact your context window before an implementation round begins.
+After planning, pause to compact before implementation.
 
 # Code Review Context
 
@@ -104,6 +106,9 @@ produce **only** the following, with no preface, no commentary, and nothing afte
 Your output must match this exactly so that it can be easily copied and pasted.
 
 # Test Coverage
+
+**Main Rule:** All tests are written by an independent subagent, whose task is only to write a meaningful test.
+Describe to this agent what behavior to test, but never give specific instructions for the test criteria.
 
 When you develop a new piece of code, you should also write tests.
 The goal for test coverage is 95%, but this has very important caveats:
