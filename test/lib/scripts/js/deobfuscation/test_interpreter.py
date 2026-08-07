@@ -714,3 +714,191 @@ class TestInterpreterThrowSemantics(TestJsDeobfuscator):
             """
         )
         self.assertEqual("var r = 'fin';", self._evaluate(source))
+
+
+class TestInterpreterCompoundAssignment(TestJsDeobfuscator):
+    """
+    Compound assignment and update expressions, across every operator the parser can emit and every target
+    form it accepts. The interpreter used to answer these from three hand-rolled operator tables that
+    disagreed with each other and with `_eval_binary`: a plain identifier target supported ten operators, a
+    member target only four, and an update expression refused a member target outright. Worse, the identifier
+    table reached `math.fmod` directly, so `Infinity %= 5` raised an uncaught `ValueError` out of the unit.
+
+    Every expected value here is what Node prints for the same program.
+    """
+
+    def _target(self, body: str) -> str:
+        return self._evaluate(F'function f() {{ {body} }}\nvar r = f();')
+
+    def test_modulo_assign_infinite_dividend_is_nan(self):
+        """
+        `Infinity % 5` is `NaN`. Computing it with `math.fmod` raises `ValueError: math domain error`, which
+        is not an `InterpreterError` and so escaped every refusal path and crashed the unit. The canonical
+        operator table has always answered this correctly; the compound path simply did not consult it.
+        """
+        self.assertEqual('var r = NaN;', self._target('var t = Infinity; t %= 5; return t;'))
+
+    def test_modulo_assign_infinite_divisor_keeps_dividend(self):
+        self.assertEqual('var r = 5;', self._target('var t = 5; t %= Infinity; return t;'))
+
+    def test_modulo_assign_by_zero_is_nan(self):
+        """
+        A zero divisor is not an error in JavaScript. Refusing here contradicted `t = t % 0`, which folds.
+        """
+        self.assertEqual('var r = NaN;', self._target('var t = 5; t %= 0; return t;'))
+
+    def test_divide_assign_by_zero_is_infinity(self):
+        self.assertEqual('var r = Infinity;', self._target('var t = 5; t /= 0; return t;'))
+
+    def test_divide_assign_by_negative_zero_is_negative_infinity(self):
+        self.assertEqual('var r = -Infinity;', self._target('var t = 5; t /= -0; return t;'))
+
+    def test_multiply_assign_preserves_negative_zero(self):
+        """
+        `0 * -5` is `-0`, which the synthesizer prints distinctly from `0`. Plain multiplication in Python
+        does not preserve the sign.
+        """
+        self.assertEqual('var r = -0;', self._target('var t = 0; t *= -5; return t;'))
+
+    def test_exponent_assign(self):
+        self.assertEqual('var r = 1024;', self._target('var t = 2; t **= 10; return t;'))
+
+    def test_unsigned_shift_assign_on_negative(self):
+        self.assertEqual('var r = 15;', self._target('var t = -1; t >>>= 28; return t;'))
+
+    def test_logical_or_assign_replaces_falsy(self):
+        self.assertEqual('var r = 7;', self._target('var t = 0; t ||= 7; return t;'))
+
+    def test_logical_and_assign_replaces_truthy(self):
+        self.assertEqual('var r = 7;', self._target('var t = 3; t &&= 7; return t;'))
+
+    def test_nullish_assign_replaces_undefined(self):
+        self.assertEqual('var r = 7;', self._target('var t; t ??= 7; return t;'))
+
+    def test_nullish_assign_keeps_zero(self):
+        """
+        `??=` tests for nullish, not falsy, so a zero is kept where `||=` would replace it.
+        """
+        self.assertEqual('var r = 0;', self._target('var t = 0; t ??= 7; return t;'))
+
+    def test_logical_assign_does_not_evaluate_right_side_when_short_circuiting(self):
+        """
+        The right operand of a logical assignment runs only when the existing value does not already decide
+        the result. Here the operand would increment `n`, so a folded `n` of `0` proves it never ran.
+        """
+        self.assertEqual('var r = 0;', self._target('var n = 0; var t = 3; t ||= (n += 1); return n;'))
+
+    def test_logical_assign_evaluates_right_side_when_not_short_circuiting(self):
+        """
+        The companion case, without which the test above would pass on an implementation that never
+        evaluates the right operand at all.
+        """
+        self.assertEqual('var r = 1;', self._target('var n = 0; var t = 0; t ||= (n += 1); return n;'))
+
+    def test_logical_assign_on_member_does_not_write_when_short_circuiting(self):
+        """
+        A short-circuiting logical assignment performs no write at all — observable in JavaScript through a
+        setter or a frozen object. Reading the member back proves the original value survived untouched.
+        """
+        self.assertEqual('var r = 7;', self._target('var o = { k: 7 }; o.k ||= 9; return o.k;'))
+
+    def test_logical_assign_on_length_does_not_relength_when_short_circuiting(self):
+        """
+        The store a short-circuit skips is observable even where the value would be unchanged, because
+        `length` is not an ordinary slot: assigning to it resizes the array. `a.length ||= 9` on a nonempty
+        array short-circuits, so the array keeps its three elements; a redundant store of the old length
+        would be invisible here, but the same store computed from a stale value would truncate.
+        """
+        self.assertEqual(
+            "var r = '1,2,3|3';",
+            self._target('var a = [1, 2, 3]; a.length ||= 9; return a[0] + "," + a[1] + "," + a[2] + "|" + a.length;'))
+
+    def test_logical_assign_on_length_writes_when_not_short_circuiting(self):
+        """
+        The companion: an empty array has length `0`, so `||=` does not short-circuit and the store runs,
+        growing the array to three holes.
+        """
+        self.assertEqual('var r = 3;', self._target('var a = []; a.length ||= 3; return a.length;'))
+
+    def test_bitwise_assign_on_array_element(self):
+        self.assertEqual('var r = 18;', self._target('var a = [17]; a[0] ^= 3; return a[0];'))
+
+    def test_bitwise_assign_on_computed_element(self):
+        self.assertEqual('var r = 18;', self._target('var a = [17]; var i = 0; a[i] ^= 3; return a[i];'))
+
+    def test_bitwise_assign_on_object_property(self):
+        self.assertEqual('var r = 18;', self._target('var o = { k: 17 }; o.k ^= 3; return o.k;'))
+
+    def test_shift_assign_on_array_element(self):
+        self.assertEqual('var r = 136;', self._target('var a = [17]; a[0] <<= 3; return a[0];'))
+
+    def test_divide_assign_on_array_element(self):
+        self.assertEqual('var r = 8.5;', self._target('var a = [17]; a[0] /= 2; return a[0];'))
+
+    def test_exponent_assign_on_object_property(self):
+        self.assertEqual('var r = 4913;', self._target('var o = { k: 17 }; o.k **= 3; return o.k;'))
+
+    def test_increment_on_array_element(self):
+        self.assertEqual('var r = 18;', self._target('var a = [17]; a[0]++; return a[0];'))
+
+    def test_prefix_increment_on_array_element_yields_new_value(self):
+        self.assertEqual('var r = 18;', self._target('var a = [17]; return ++a[0];'))
+
+    def test_postfix_increment_on_array_element_yields_old_value(self):
+        self.assertEqual('var r = 17;', self._target('var a = [17]; return a[0]++;'))
+
+    def test_decrement_on_object_property(self):
+        self.assertEqual('var r = 16;', self._target('var o = { k: 17 }; o.k--; return o.k;'))
+
+    def test_increment_on_computed_element_evaluates_index_once(self):
+        """
+        `a[i++]++` reads the index expression once, so `i` advances by one rather than two. The returned
+        value encodes both the element and the counter, so a double evaluation cannot hide behind either.
+        """
+        source = 'var a = [17, 20]; var i = 0; a[i++]++; return a[0] * 100 + i;'
+        self.assertEqual('var r = 1801;', self._target(source))
+
+    def test_compound_assign_on_computed_element_evaluates_index_once(self):
+        source = 'var a = [10, 20]; var i = 0; a[i++] += 1; return a[0] * 100 + i;'
+        self.assertEqual('var r = 1101;', self._target(source))
+
+    def test_length_compound_assign_truncates(self):
+        self.assertEqual(
+            'var r = 3;',
+            self._target('var a = [1, 2, 3, 4, 5]; a.length -= 2; return a.length;'))
+
+    def test_length_decrement_truncates(self):
+        self.assertEqual(
+            'var r = 2;',
+            self._target('var a = [1, 2, 3]; a.length--; return a.length;'))
+
+    def test_length_compound_assign_to_fraction_is_refused(self):
+        """
+        `a.length /= 2` on three elements asks for a length of `1.5`, which JavaScript answers with a
+        `RangeError`. The fold must not invent a value for it.
+        """
+        source = inspect.cleandoc(
+            """
+            function f() {
+              var a = [1, 2, 3];
+              a.length /= 2;
+              return a.length;
+            }
+            var r = f();
+            """
+        )
+        self.assertEqual(source, self._evaluate(source))
+
+    def test_length_compound_assign_below_zero_is_refused(self):
+        source = inspect.cleandoc(
+            """
+            function f() {
+              var a = [1];
+              a.length -= 5;
+              return a.length;
+            }
+            var r = f();
+            """
+        )
+        self.assertEqual(source, self._evaluate(source))
+

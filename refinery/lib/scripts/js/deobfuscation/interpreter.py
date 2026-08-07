@@ -29,6 +29,7 @@ from refinery.lib.scripts.js.analysis.effects import object_sets_prototype
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     ARRAY_PROTOTYPE_METHODS,
     JS_NULL,
+    LOGICAL_ASSIGNMENT_OPS,
     OBJECT_PROTOTYPE_MEMBERS,
     PROTO_KEY,
     PROTOTYPE_CHAIN_PROPERTIES,
@@ -1686,9 +1687,20 @@ class JsInterpreter:
         return to_number(left) + to_number(right)
 
     def _eval_binary(self, node: JsBinaryExpression) -> Value:
-        op = node.operator
-        left = self._eval(node.left)
-        right = self._eval(node.right)
+        return self._apply_binary(node.operator, self._eval(node.left), self._eval(node.right))
+
+    def _apply_binary(self, op: str, left: Value, right: Value) -> Value:
+        """
+        Apply the binary operator *op* to two already-evaluated values — the one place this interpreter
+        decides what an operator means. A binary expression and the arithmetic step of a compound assignment
+        ask the same question, so they must ask it here: the three compound paths used to hand-roll their own
+        answers, and the copies disagreed with this one on `-0`, on a zero divisor, and on which operators
+        exist at all.
+
+        `eval_binary_op` handles the numeric operators alone, which is why the string cases resolve first:
+        `+` needs ToPrimitive on both operands and may yield a concatenation, and a relational operator
+        compares two strings lexicographically rather than numerically. Everything after that is a number.
+        """
         if op == '===':
             return self._strict_equal(left, right)
         if op == '!==':
@@ -1700,31 +1712,34 @@ class JsInterpreter:
         if op == '+':
             return self._js_add(left, right)
         if op == 'in':
-            if isinstance(right, dict):
-                key = to_string(left)
-                if key in right:
-                    return True
-                return not self._property_is_absent(right, key)
-            if isinstance(right, list):
-                key = to_string(left)
-                if key in SEQUENCE_DATA_PROPERTIES:
-                    return True
-                index = canonical_array_index(key)
-                if index is not None:
-                    return index < len(right)
-                return not self._property_is_absent(right, key)
-            raise InterpreterError
+            return self._eval_in(left, right)
         if op == 'instanceof':
             raise InterpreterError
         if op in RELATIONAL_OPS:
-            left = _to_primitive(left)
-            right = _to_primitive(right)
-            if isinstance(left, str) and isinstance(right, str):
-                return RELATIONAL_OPS[op](left, right)
+            primitive_left = _to_primitive(left)
+            primitive_right = _to_primitive(right)
+            if isinstance(primitive_left, str) and isinstance(primitive_right, str):
+                return RELATIONAL_OPS[op](primitive_left, primitive_right)
         result = eval_binary_op(op, to_number(left), to_number(right))
         if result is None:
             raise InterpreterError
         return result
+
+    def _eval_in(self, left: Value, right: Value) -> bool:
+        if isinstance(right, dict):
+            key = to_string(left)
+            if key in right:
+                return True
+            return not self._property_is_absent(right, key)
+        if isinstance(right, list):
+            key = to_string(left)
+            if key in SEQUENCE_DATA_PROPERTIES:
+                return True
+            index = canonical_array_index(key)
+            if index is not None:
+                return index < len(right)
+            return not self._property_is_absent(right, key)
+        raise InterpreterError
 
     def _eval_unary(self, node: JsUnaryExpression) -> Value:
         op = node.operator
@@ -1759,20 +1774,51 @@ class JsInterpreter:
         raise InterpreterError
 
     def _eval_update(self, node: JsUpdateExpression) -> Value:
-        if not isinstance(node.argument, JsIdentifier):
+        """
+        Apply `++` or `--`. The target may be a plain identifier or a member, and both must be supported here:
+        `a[i]++` is the same operation as `a[i] += 1` on a value the language has already coerced to a number,
+        so refusing one while folding the other would make the two disagree.
+        """
+        delta = {'++': 1, '--': -1}.get(node.operator)
+        if delta is None:
             raise InterpreterError
-        name = node.argument.name
-        if name not in self._env:
-            raise InterpreterError
-        current = to_number(self._env[name])
-        if node.operator == '++':
-            new_val = current + 1
-        elif node.operator == '--':
-            new_val = current - 1
+        target = node.argument
+        if isinstance(target, JsIdentifier):
+            name = target.name
+            if name not in self._env:
+                raise InterpreterError
+            current = to_number(self._env[name])
+            self._env[name] = current + delta
+        elif isinstance(target, JsMemberExpression):
+            obj = self._eval(target.object)
+            key = self._member_key(target)
+            current = to_number(self._get_property(obj, key))
+            self._set_property(obj, key, current + delta)
         else:
             raise InterpreterError
-        self._env[name] = new_val
-        return new_val if node.prefix else current
+        return current + delta if node.prefix else current
+
+    def _short_circuits(self, operator: str, current: Value) -> bool:
+        """
+        Whether a logical assignment (`&&=`, `||=`, `??=`) is already decided by *current*, so neither its
+        right operand nor the store runs. The three truthiness rules are the ones `_eval_logical` applies to
+        the expression forms, read in the other direction.
+        """
+        if operator == '&&=':
+            return not _truthy(current)
+        if operator == '||=':
+            return _truthy(current)
+        if operator == '??=':
+            return current is not None and current is not JS_NULL
+        raise InterpreterError
+
+    def _compound_value(self, operator: str, current: Value, node: JsAssignmentExpression) -> Value:
+        """
+        The value a compound assignment stores: its right operand evaluated and combined with *current* under
+        the operator the assignment names. *current* is read by the caller before this runs, because
+        JavaScript reads the target before evaluating the right operand — `v += (v = 10)` on `v = 5` is 15.
+        """
+        return self._apply_binary(operator[:-1], current, self._eval(node.right))
 
     def _eval_logical(self, node: JsLogicalExpression) -> Value:
         left = self._eval(node.left)
@@ -1798,40 +1844,26 @@ class JsInterpreter:
             self._env[name] = value
             return value
         current = self._env.get(name)
-        value = self._eval(node.right)
-        if op == '+=':
-            self._env[name] = self._js_add(current, value)
-        elif op == '-=':
-            self._env[name] = to_number(current) - to_number(value)
-        elif op == '*=':
-            self._env[name] = to_number(current) * to_number(value)
-        elif op == '/=':
-            divisor = to_number(value)
-            if divisor == 0:
-                raise InterpreterError
-            self._env[name] = to_number(current) / divisor
-        elif op == '%=':
-            divisor = to_number(value)
-            if divisor == 0:
-                raise InterpreterError
-            self._env[name] = math.fmod(to_number(current), divisor)
-        elif op == '|=':
-            self._env[name] = _to_int32(_to_int(current) | _to_int(value))
-        elif op == '&=':
-            self._env[name] = _to_int32(_to_int(current) & _to_int(value))
-        elif op == '^=':
-            self._env[name] = _to_int32(_to_int(current) ^ _to_int(value))
-        elif op == '<<=':
-            self._env[name] = _to_int32(_to_int32(_to_int(current)) << (_to_int(value) & 0x1F))
-        elif op == '>>=':
-            self._env[name] = _to_int32(
-                _to_int32(_to_int(current)) >> (_to_int(value) & 0x1F)
-            )
-        else:
-            raise InterpreterError
+        if op in LOGICAL_ASSIGNMENT_OPS:
+            if self._short_circuits(op, current):
+                return current
+            self._env[name] = self._eval(node.right)
+            return self._env[name]
+        self._env[name] = self._compound_value(op, current, node)
         return self._env[name]
 
     def _eval_member_assignment(self, node: JsAssignmentExpression) -> Value:
+        """
+        Assign to a member target. The object and key expressions are evaluated exactly once, before the
+        operator is considered, so `a[i++] += 1` advances `i` once — and a logical assignment that
+        short-circuits performs no store at all.
+
+        Skipping that store is what JavaScript specifies rather than an optimization: the language makes it
+        observable through a setter or a frozen object, neither of which this interpreter's value domain has.
+        Within this domain a store of the value just read is idempotent, so no program folded here can tell
+        the difference — the rule is kept because the domain is a subset of the language's, not because a test
+        can witness it.
+        """
         member = node.left
         if not isinstance(member, JsMemberExpression):
             raise InterpreterError
@@ -1839,17 +1871,13 @@ class JsInterpreter:
         key = self._member_key(member)
         if node.operator == '=':
             value = self._eval(node.right)
-        else:
+        elif node.operator in LOGICAL_ASSIGNMENT_OPS:
             old = self._get_property(obj, key)
-            rhs = self._eval(node.right)
-            if node.operator == '+=':
-                value = self._js_add(old, rhs)
-            elif node.operator == '-=':
-                value = to_number(old) - to_number(rhs)
-            elif node.operator == '*=':
-                value = to_number(old) * to_number(rhs)
-            else:
-                raise InterpreterError
+            if self._short_circuits(node.operator, old):
+                return old
+            value = self._eval(node.right)
+        else:
+            value = self._compound_value(node.operator, self._get_property(obj, key), node)
         self._set_property(obj, key, value)
         return value
 

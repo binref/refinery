@@ -326,6 +326,13 @@ BINARY_OPS: dict[str, Callable] = {
     '<<' : lambda a, b: _to_int32(_to_int32(a) << (_to_int32(b) & 0x1F)),
     '>>' : lambda a, b: _to_int32(a) >> (_to_int32(b) & 0x1F),
 }
+"""
+JavaScript's binary operators over two *numbers*. Every entry assumes both operands have already been coerced,
+which is why `+` is `operator.add` here: on numbers that is what `+` means, but on a value that may be a string
+or an object `+` is a different operator entirely — it applies ToPrimitive to both sides and concatenates when
+either is a string. A caller holding uncoerced values must not reach this table for `+`; the interpreter routes
+every operator through `JsInterpreter._apply_binary`, which resolves the string cases before delegating here.
+"""
 
 RELATIONAL_OPS: dict[str, Callable] = {
     '<' : operator.lt,
@@ -333,6 +340,14 @@ RELATIONAL_OPS: dict[str, Callable] = {
     '<=': operator.le,
     '>=': operator.ge,
 }
+
+LOGICAL_ASSIGNMENT_OPS = frozenset({'&&=', '||=', '??='})
+"""
+The assignment operators that short-circuit. Unlike every other compound assignment, these evaluate their
+right operand only when the target's existing value does not already decide the result, and perform no store
+when it does — a distinction JavaScript makes observable through a setter or a frozen object. They therefore
+have no entry in `BINARY_OPS`, whose members are total functions of both operands.
+"""
 
 
 def eval_binary_op(op: str, left: int | float, right: int | float) -> int | float | bool | None:

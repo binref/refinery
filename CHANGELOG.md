@@ -23,6 +23,10 @@
   instead of one element per line, which makes embedded keys and ciphertext blocks readable.
 - The `js` unit now merges string literals that a `+` chain splits across a runtime value,
   so a concealed string like `x + '/Fi' + 'nde' + 'r.ap' + 'p'` is reduced to `x + '/Finder.app'`.
+- The `js` unit now evaluates every compound assignment and update expression through one operator
+  implementation, so `a[i] ^= k`, `o.p **= 2`, `t ||= 1`, and `a[i]++` fold like their expression forms.
+  This also fixes a crash: a modulo assignment with an infinite dividend, as in `t %= 5` where `t` is
+  `Infinity`, raised an unhandled exception instead of yielding `NaN`.
 - The `vbamc` and `vbapc` units can now extract VBA from Microsoft Access databases.
 - The `docmeta` unit was extended with additional metadata parsers and can now also extract metadata from MS Access databases.
 - The `asn1` unit's parser was substantially improved: It resolves recursive and mutually-recursive type definitions,
