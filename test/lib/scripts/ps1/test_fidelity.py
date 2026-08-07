@@ -28,6 +28,7 @@ import ast as pyast
 import os
 
 from test import TestBase
+from test.lib.scripts.ps1.corpus import SNIPPETS
 
 from refinery.lib.scripts import (
     Node,
@@ -41,69 +42,6 @@ from refinery.lib.scripts.ps1 import model as ps1model
 from refinery.lib.scripts.ps1.model import Ps1ParenExpression
 from refinery.lib.scripts.ps1.parser import Ps1Parser
 from refinery.lib.scripts.ps1.synth import Ps1Synthesizer
-
-#: One script per node class, written by hand rather than generated, and kept minimal so that a
-#: failure names the construct it is about. Where a node has a child list, the snippet fills it
-#: with two entries: the generator truncates from there, and a rendering that is only correct at
-#: the cardinality its author had in mind is what this is looking for.
-SNIPPETS: dict[str, str] = {
-    'Block'                   : 'if ($a) { 1 }',
-    'Ps1ArrayExpression'      : '@(1, 2)',
-    'Ps1ArrayLiteral'         : '$x = 1, 2',
-    'Ps1AssignmentExpression' : '$x = 1',
-    'Ps1Attribute'            : 'function f { [CmdletBinding()] param($a) }',
-    'Ps1BinaryExpression'     : '1 + 2',
-    'Ps1BreakStatement'       : 'while ($a) { break }',
-    'Ps1CastExpression'       : '[int]$x',
-    'Ps1CatchClause'          : 'try { 1 } catch [A], [B] { 2 } catch { 3 }',
-    'Ps1ClassDefinition'      : 'class C : B { [int] $P; [void] M() { 1 } }',
-    'Ps1CommandArgument'      : 'Get-Item -Path a b',
-    'Ps1CommandInvocation'    : 'Get-Item a b',
-    'Ps1ContinueStatement'    : 'while ($a) { continue }',
-    'Ps1DataSection'          : 'data d { 1 }',
-    'Ps1DoLoop'               : 'do { 1 } while ($a)',
-    'Ps1EnumDefinition'       : 'enum E { A = 1; B = 2 }',
-    'Ps1EnumMember'           : 'enum E { A = 1; B = 2 }',
-    'Ps1ExitStatement'        : 'exit 1',
-    'Ps1ExpandableHereString' : '@"\na$b\n"@',
-    'Ps1ExpandableString'     : '"a$b c"',
-    'Ps1ExpressionStatement'  : '1',
-    'Ps1FileRedirection'      : 'a > b',
-    'Ps1ForEachLoop'          : 'foreach ($i in $a) { 1 }',
-    'Ps1ForLoop'              : 'for ($i = 0; $i -lt 2; $i++) { 1 }',
-    'Ps1FunctionDefinition'   : 'function f { 1 }',
-    'Ps1HashLiteral'          : '@{ a = 1; b = 2 }',
-    'Ps1HereString'           : "@'\nabc\n'@",
-    'Ps1IfStatement'          : 'if ($a) { 1 } elseif ($b) { 2 } else { 3 }',
-    'Ps1IndexExpression'      : '$x[0]',
-    'Ps1InputRedirection'     : 'a < b',
-    'Ps1IntegerLiteral'       : '1',
-    'Ps1InvokeMember'         : '$x.Substring(1, 2)',
-    'Ps1MemberAccess'         : '$x.Length',
-    'Ps1MergingRedirection'   : 'a 2>&1',
-    'Ps1MethodMember'         : 'class C { [void] M() { 1 } }',
-    'Ps1ParamBlock'           : 'function f { param($a, $b) }',
-    'Ps1ParameterDeclaration' : 'function f { param([int] $a, $b) }',
-    'Ps1ParenExpression'      : '(1)',
-    'Ps1Pipeline'             : 'a | b',
-    'Ps1PipelineElement'      : 'a | b',
-    'Ps1PropertyMember'       : 'class C { [int] $P }',
-    'Ps1RangeExpression'      : '1..2',
-    'Ps1RealLiteral'          : '1.5',
-    'Ps1ReturnStatement'      : 'return 1',
-    'Ps1Script'               : '1',
-    'Ps1ScriptBlock'          : '{ 1; 2 }',
-    'Ps1StringLiteral'        : "'a'",
-    'Ps1SubExpression'        : '$(1; 2)',
-    'Ps1SwitchStatement'      : 'switch ($a) { 1 { "x" } default { "y" } }',
-    'Ps1ThrowStatement'       : 'throw 1',
-    'Ps1TrapStatement'        : 'trap [E] { 1 }',
-    'Ps1TryCatchFinally'      : 'try { 1 } catch { 2 } finally { 3 }',
-    'Ps1TypeExpression'       : 'function f { param([int] $a) }',
-    'Ps1UnaryExpression'      : '-not $x',
-    'Ps1Variable'             : '$x',
-    'Ps1WhileLoop'            : 'while ($a) { 1 }',
-}
 
 #: The test files whose PowerShell string literals are read back into the corpus. These are the
 #: files that hold PowerShell as data; a file that merely mentions it in prose is not listed,
