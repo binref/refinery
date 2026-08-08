@@ -79,10 +79,15 @@ class TestPs1RealWorldSmall(TestUnitBase):
         result = data | self.load() | str
         self.assertIn('Hello World', result)
 
-    def test_alias_survives_iex_inlining(self):
+    def test_alias_definition_goes_once_iex_inlining_took_its_only_use(self):
         data = b"sal x Invoke-Expression; x '[String]::Join('''', @(''Write'', ''-Host''))'"
         result = data | self.load() | str
-        self.assertIn('Set-Alias', result)
+        self.assertEqual(result, "'Write-Host'")
+
+    def test_alias_definition_survives_iex_inlining_when_the_table_is_read_back(self):
+        data = b"sal x Invoke-Expression; x 'Write-Host hello'; Get-Alias x"
+        result = data | self.load() | str
+        self.assertEqual(result, 'Set-Alias x Invoke-Expression\nWrite-Host hello\nGet-Alias x')
 
     def test_case_normalization(self):
         data = (

@@ -51,6 +51,56 @@ def _sole_world_role(source: str) -> WorldRole:
     return Ps1ModelCache(tree).commands.world_role(_sole_invocation(tree))
 
 
+def _binding(source: str) -> tuple[str, str | None, bool, bool] | None:
+    """
+    What `extract_alias_definition` reads out of the one invocation in `source`, without the node it
+    read it from.
+    """
+    definition = extract_alias_definition(_sole_invocation(_script(source)))
+    if definition is None:
+        return None
+    return definition.name, definition.target, definition.refuse, definition.wildcard
+
+
+def _implicated(source: str, name: str) -> frozenset[tuple[str, str | None]]:
+    tree = _script(source)
+    model = Ps1ModelCache(tree).commands
+    return frozenset(
+        (definition.name, definition.target)
+        for definition in model.implicated_definitions(_use(tree, name))
+    )
+
+
+def _every_definition(source: str) -> tuple[tuple[str, str | None], ...]:
+    model = Ps1ModelCache(_script(source)).commands
+    return tuple(
+        (definition.name, definition.target)
+        for definition in model.every_alias_definition()
+    )
+
+
+def _definitions_for(source: str, name: str) -> tuple[tuple[str, str | None], ...]:
+    model = Ps1ModelCache(_script(source)).commands
+    return tuple(
+        (definition.name, definition.target)
+        for definition in model.alias_definitions(name)
+    )
+
+
+def _binding_only(source: str) -> bool:
+    model = Ps1ModelCache(_script(source)).commands
+    definition, = model.every_alias_definition()
+    return model.binding_only_definition(definition)
+
+
+def _introspected(source: str) -> frozenset[str] | None:
+    return Ps1ModelCache(_script(source)).commands.introspected_names()
+
+
+def _reads_success(source: str) -> bool:
+    return Ps1ModelCache(_script(source)).commands.reads_command_success()
+
+
 class TestPs1CommandDenotation(TestBase):
 
     def test_a_builtin_alias_resolves_to_its_cmdlet(self):
@@ -143,6 +193,11 @@ class TestPs1CommandDenotation(TestBase):
         self.assertEqual(
             _denotation('Set-Alias foo Get-Process -Option ReadOnly\nfoo', 'foo'),
             Denotation(CommandKind.UNKNOWN, None))
+
+    def test_the_built_in_name_of_the_alias_reader_resolves_to_it(self):
+        self.assertEqual(
+            _denotation('alias zzq', 'alias'),
+            Denotation(CommandKind.ALIAS, 'Get-Alias'))
 
     def test_a_computed_command_name_is_unknown(self):
         tree = _script("& ('Write' + '-Output')")
@@ -338,6 +393,440 @@ class TestExtractAliasDefinition(TestBase):
     def test_it_returns_none_for_an_invocation_that_is_not_a_definition(self):
         tree = _script('Get-Process')
         self.assertIsNone(extract_alias_definition(_use(tree, 'Get-Process')))
+
+    def test_a_positional_pair_binds_the_name_and_then_the_target(self):
+        for source in (
+            'Set-Alias zzq Write-Output',
+            'sal zzq Write-Output',
+            'New-Alias zzq Write-Output',
+            'nal zzq Write-Output',
+        ):
+            with self.subTest(source):
+                self.assertEqual(_binding(source), ('zzq', 'Write-Output', False, False))
+
+    def test_the_name_and_the_value_parameter_bind_in_either_order(self):
+        """
+        A parameter binds the argument that follows it, so which of the two is written first is not
+        what decides which is the alias and which is the command it names. Reading them by position
+        regardless made `Set-Alias -Value Write-Output -Name zzq` bind the alias `write-output` to
+        `zzq`, which is the binding turned around.
+        """
+        for source in (
+            'Set-Alias -Name zzq -Value Write-Output',
+            'Set-Alias -Value Write-Output -Name zzq',
+            'Set-Alias -Name:zzq -Value:Write-Output',
+            'Set-Alias -Value:Write-Output -Name:zzq',
+            'Set-Alias -NAME zzq -vAlUe Write-Output',
+        ):
+            with self.subTest(source):
+                self.assertEqual(_binding(source), ('zzq', 'Write-Output', False, False))
+
+    def test_a_parameter_abbreviation_binds_what_its_full_spelling_binds(self):
+        for source in (
+            'Set-Alias -Na zzq -Val Write-Output',
+            'Set-Alias -Val Write-Output -Na zzq',
+            'Set-Alias -N zzq -V Write-Output',
+            'Set-Alias -V Write-Output -N zzq',
+        ):
+            with self.subTest(source):
+                self.assertEqual(_binding(source), ('zzq', 'Write-Output', False, False))
+
+    def test_a_mixed_form_reads_the_parameter_first_and_the_rest_by_position(self):
+        for source in (
+            'Set-Alias zzq -Value Write-Output',
+            'Set-Alias -Name zzq Write-Output',
+            'Set-Alias -Value Write-Output zzq',
+        ):
+            with self.subTest(source):
+                self.assertEqual(_binding(source), ('zzq', 'Write-Output', False, False))
+
+    def test_an_argument_beyond_the_name_and_the_value_is_a_reason_to_refuse(self):
+        for source in (
+            'Set-Alias zzq Write-Output -PassThru',
+            'Set-Alias zzq Write-Output -Scope Global',
+            'Set-Alias zzq Write-Output -Force',
+            'Set-Alias zzq Write-Output -Option ReadOnly',
+            'Set-Alias zzq Write-Output -WhatIf',
+            'Set-Alias zzq Write-Output -Description d',
+            'Set-Alias zzq Write-Output extra',
+        ):
+            with self.subTest(source):
+                self.assertEqual(_binding(source), ('zzq', 'Write-Output', True, False))
+
+    def test_an_unrecognized_switch_ends_the_reading_of_positional_arguments(self):
+        """
+        The parser hands a value-taking parameter over as a switch followed by a bare word, so a
+        switch this does not know may have taken the argument that would otherwise read as the name.
+        `Set-Alias -Description d zzq Write-Output` binds `zzq` on a 5.1 host; reading past the
+        switch made it bind `d`.
+        """
+        for source in (
+            'Set-Alias -Description d zzq Write-Output',
+            'Set-Alias -Option ReadOnly zzq Write-Output',
+            'Set-Alias -Scope Global zzq Write-Output',
+        ):
+            with self.subTest(source):
+                self.assertIsNone(_binding(source))
+
+    def test_a_name_bound_before_an_unrecognized_switch_is_left_without_a_target(self):
+        self.assertEqual(
+            _binding('Set-Alias -Name zzq -Description d Write-Output'),
+            ('zzq', None, True, False))
+
+    def test_a_wildcard_target_is_noted_wherever_the_target_is_written(self):
+        for source, target in (
+            ('Set-Alias zzq Get-*', 'Get-*'),
+            ('Set-Alias -Name zzq -Value Get-*', 'Get-*'),
+            ("Set-Alias -Value 'Get-?' -Name zzq", 'Get-?'),
+            ("Set-Alias zzq 'Get-[abc]'", 'Get-[abc]'),
+        ):
+            with self.subTest(source):
+                self.assertEqual(_binding(source), ('zzq', target, False, True))
+
+    def test_a_target_this_cannot_read_is_a_refusal_that_still_names_the_alias(self):
+        for source in (
+            'Set-Alias zzq $x',
+            'Set-Alias -Name zzq -Value $x',
+            'Set-Alias zzq',
+        ):
+            with self.subTest(source):
+                self.assertEqual(_binding(source), ('zzq', None, True, False))
+
+    def test_a_name_this_cannot_read_is_not_a_definition_at_all(self):
+        for source in (
+            'Set-Alias $n Write-Output',
+            'Set-Alias -Name $n -Value Write-Output',
+            'Set-Alias -Value Write-Output',
+            'Set-Alias -Name',
+            'Set-Alias -Name -Value Write-Output',
+            'Set-Alias',
+        ):
+            with self.subTest(source):
+                self.assertIsNone(_binding(source))
+
+    def test_a_scope_qualifier_is_part_of_the_alias_name(self):
+        for source, name in (
+            ('Set-Alias GLOBAL:Zzq Write-Output', 'global:zzq'),
+            ('Set-Alias script:zzq Write-Output', 'script:zzq'),
+        ):
+            with self.subTest(source):
+                self.assertEqual(_binding(source), (name, 'Write-Output', False, False))
+
+    def test_a_command_that_binds_a_name_by_another_route_is_not_a_definition(self):
+        for source in (
+            'Set-Item alias:zzq Write-Output',
+            'Set-Variable zzq Write-Output',
+            'Export-Alias x.csv',
+        ):
+            with self.subTest(source):
+                self.assertIsNone(_binding(source))
+
+
+class TestPs1ImplicatedDefinitions(TestBase):
+    """
+    Which alias definitions a use's answer depends on, asked from the use rather than from the
+    definition. A definition counts wherever the resolution read it — where it was followed, where
+    it is why the resolution refused, and where the name denotes nothing precisely because the
+    definition exists somewhere the use cannot reach — because deleting it changes the answer in all
+    three.
+    """
+
+    def test_a_name_that_resolves_without_a_script_definition_implicates_none(self):
+        for source, name in (
+            ('gci', 'gci'),
+            ('echo', 'echo'),
+            ('Get-Process', 'Get-Process'),
+            ('Set-Alias zzq Write-Output\nzzq', 'Set-Alias'),
+        ):
+            with self.subTest(source):
+                self.assertEqual(_implicated(source, name), frozenset())
+
+    def test_the_definition_a_use_resolves_through_is_the_statement_that_defines_it(self):
+        tree = _script('Set-Alias zzq Write-Output\nzzq')
+        model = Ps1ModelCache(tree).commands
+        implicated, = model.implicated_definitions(_use(tree, 'zzq'))
+        self.assertIs(implicated.node, _use(tree, 'Set-Alias'))
+
+    def test_every_hop_of_an_alias_chain_is_implicated(self):
+        self.assertEqual(
+            _implicated('Set-Alias a b\nSet-Alias b Write-Output\na', 'a'),
+            frozenset({('a', 'b'), ('b', 'Write-Output')}))
+
+    def test_a_definition_the_resolution_refused_because_of_is_implicated(self):
+        for source, name, expected in (
+            ('Set-Alias zzq Write-Output -Force\nzzq', 'zzq', ('zzq', 'Write-Output')),
+            ('Set-Alias zzq Write-Output -Option ReadOnly\nzzq', 'zzq', ('zzq', 'Write-Output')),
+            ('Set-Alias gci Write-Output\ngci', 'gci', ('gci', 'Write-Output')),
+            ('Set-Alias zzq $x\nzzq', 'zzq', ('zzq', None)),
+        ):
+            with self.subTest(source):
+                self.assertEqual(_denotation(source, name), Denotation(CommandKind.UNKNOWN, None))
+                self.assertEqual(_implicated(source, name), frozenset({expected}))
+
+    def test_a_definition_that_leaves_the_name_denoting_nothing_is_implicated(self):
+        for source, name, expected in (
+            ('Set-Alias zzq Get-*\nzzq', 'zzq', frozenset({('zzq', 'Get-*')})),
+            ('Set-Alias a b\nSet-Alias b a\na', 'a', frozenset({('a', 'b'), ('b', 'a')})),
+        ):
+            with self.subTest(source):
+                self.assertEqual(_denotation(source, name), Denotation(CommandKind.NOTHING, None))
+                self.assertEqual(_implicated(source, name), expected)
+
+    def test_a_definition_that_does_not_reach_the_use_is_implicated_by_it(self):
+        for source in (
+            'zzq\nSet-Alias zzq Write-Output',
+            'function f { Set-Alias zzq Write-Output }\nzzq',
+        ):
+            with self.subTest(source):
+                self.assertEqual(_denotation(source, 'zzq'), Denotation(CommandKind.NOTHING, None))
+                self.assertEqual(_implicated(source, 'zzq'), frozenset({('zzq', 'Write-Output')}))
+
+    def test_a_use_no_definition_reaches_implicates_every_definition_of_its_name(self):
+        self.assertEqual(
+            _implicated('zzq\nSet-Alias zzq Write-Output\nSet-Alias zzq Get-Date', 'zzq'),
+            frozenset({('zzq', 'Write-Output'), ('zzq', 'Get-Date')}))
+
+    def test_a_definition_overwritten_before_the_only_use_is_implicated_by_nobody(self):
+        self.assertEqual(
+            _implicated('Set-Alias zzq Get-Date\nSet-Alias zzq Write-Output\nzzq', 'zzq'),
+            frozenset({('zzq', 'Write-Output')}))
+
+
+class TestPs1EveryAliasDefinition(TestBase):
+
+    _REBOUND = 'Set-Alias a X\nSet-Alias b Y\nSet-Alias a Z'
+
+    def test_it_reports_every_definition_the_script_writes_wherever_it_sits(self):
+        source = (
+            'Set-Alias a X\n'
+            'function f { Set-Alias b Y }\n'
+            '@(1) | ForEach-Object { Set-Alias c Z }'
+        )
+        self.assertEqual(
+            _every_definition(source),
+            (('a', 'X'), ('b', 'Y'), ('c', 'Z')))
+
+    def test_it_reports_a_definition_under_every_spelling_that_writes_one(self):
+        self.assertEqual(
+            _every_definition('Set-Alias a X\nsal b Y\nNew-Alias c Z\nnal d W'),
+            (('a', 'X'), ('b', 'Y'), ('c', 'Z'), ('d', 'W')))
+
+    def test_the_definitions_of_one_name_come_in_source_order(self):
+        self.assertEqual(_definitions_for(self._REBOUND, 'a'), (('a', 'X'), ('a', 'Z')))
+        self.assertEqual(_definitions_for(self._REBOUND, 'b'), (('b', 'Y'),))
+
+    def test_every_definition_is_grouped_by_name_and_in_source_order_within_a_group(self):
+        self.assertEqual(
+            _every_definition(self._REBOUND),
+            (('a', 'X'), ('a', 'Z'), ('b', 'Y')))
+
+    def test_a_definition_the_model_will_not_act_on_is_still_one_it_reports(self):
+        for source, expected in (
+            ('Set-Alias zzq Write-Output -Force', ('zzq', 'Write-Output')),
+            ('Set-Alias zzq Get-*', ('zzq', 'Get-*')),
+            ('Set-Alias zzq $x', ('zzq', None)),
+        ):
+            with self.subTest(source):
+                self.assertEqual(_every_definition(source), (expected,))
+
+    def test_a_definition_this_could_not_read_is_absent(self):
+        for source in ('Set-Alias $n Write-Output', 'Set-Alias -Description d zzq Write-Output'):
+            with self.subTest(source):
+                self.assertEqual(_every_definition(source), ())
+
+    def test_a_defining_command_reached_under_the_scripts_own_alias_is_absent(self):
+        """
+        The documented limit: the defining command is matched by spelling, so a `Set-Alias` reached
+        through an alias the script wrote itself binds a name this does not record. A caller that
+        needs every definition accounted for asks `world_role` of every invocation instead.
+        """
+        self.assertEqual(
+            _every_definition('Set-Alias sa Set-Alias\nsa zzq Write-Output'),
+            (('sa', 'Set-Alias'),))
+
+    def test_a_name_no_definition_writes_has_no_definitions(self):
+        self.assertEqual(_definitions_for(self._REBOUND, 'zzq'), ())
+
+
+class TestPs1BindingOnlyDefinition(TestBase):
+    """
+    Whether a definition does nothing but bind its name, so that a script without it differs only in
+    that the name is unbound. Every refusal below is a way for the same statement to do something
+    else besides.
+    """
+
+    def test_a_plain_set_alias_does_nothing_but_bind_its_name(self):
+        for source in (
+            'Set-Alias zzq Write-Output',
+            'set-alias zzq Write-Output',
+            'SET-ALIAS zzq Write-Output',
+            'Set-Alias -Name zzq -Value Write-Output',
+            'Set-Alias -Value Write-Output -Name zzq',
+        ):
+            with self.subTest(source):
+                self.assertTrue(_binding_only(source))
+
+    def test_the_defining_command_is_the_one_the_model_resolves_it_to(self):
+        self.assertTrue(_binding_only('sal zzq Write-Output'))
+
+    def test_a_definition_that_runs_a_script_function_of_the_name_is_not_a_binding(self):
+        """
+        The kind decides this, not the target: a script function named `Set-Alias` denotes
+        `FUNCTION` under a target that is the function's own spelling, so a check that read the
+        target alone called the statement a binding when what it does is run the body — and the
+        removal that followed deleted a call that ran and printed.
+        """
+        for source in (
+            'function Set-Alias { Write-Host 1 }\nSet-Alias zzq Write-Output',
+            'function set-alias { 1 }\nSet-Alias zzq Write-Output',
+            'function global:Set-Alias { 1 }\nSet-Alias zzq Write-Output',
+            'filter Set-Alias { 1 }\nSet-Alias zzq Write-Output',
+        ):
+            with self.subTest(source):
+                self.assertEqual(
+                    _denotation(source, 'Set-Alias'),
+                    Denotation(CommandKind.FUNCTION, 'Set-Alias'))
+                self.assertFalse(_binding_only(source))
+
+    def test_a_function_a_default_alias_shadows_leaves_the_binding_alone(self):
+        """
+        The kind gate must not refuse what the measured precedence still resolves to `Set-Alias`: a
+        default alias beats a script function of its name, so `function sal { }` does not take
+        `sal` over and the statement below is still nothing but a binding.
+        """
+        source = 'function sal { 1 }\nsal zzq Write-Output'
+        self.assertEqual(_denotation(source, 'sal'), Denotation(CommandKind.ALIAS, 'Set-Alias'))
+        self.assertTrue(_binding_only(source))
+
+    def test_new_alias_binds_but_writes_an_error_of_its_own(self):
+        for source in ('New-Alias zzq Write-Output', 'nal zzq Write-Output'):
+            with self.subTest(source):
+                self.assertFalse(_binding_only(source))
+
+    def test_a_name_the_host_already_binds_is_more_than_a_binding(self):
+        for source in (
+            'Set-Alias gci Write-Output',
+            'Set-Alias echo Get-Date',
+            'Set-Alias alias Get-Date',
+        ):
+            with self.subTest(source):
+                self.assertFalse(_binding_only(source))
+
+    def test_a_wildcard_target_is_more_than_a_binding(self):
+        self.assertFalse(_binding_only('Set-Alias zzq Get-*'))
+
+    def test_a_scope_qualified_name_is_more_than_a_binding(self):
+        for source in ('Set-Alias global:zzq Write-Output', 'Set-Alias script:zzq Write-Output'):
+            with self.subTest(source):
+                self.assertFalse(_binding_only(source))
+
+    def test_an_argument_beyond_the_name_and_the_value_is_more_than_a_binding(self):
+        for source in (
+            'Set-Alias zzq Write-Output -PassThru',
+            'Set-Alias zzq Write-Output -Scope Global',
+            'Set-Alias zzq Write-Output -Force',
+            'Set-Alias zzq Write-Output -Option ReadOnly',
+            'Set-Alias zzq Write-Output -WhatIf',
+            'Set-Alias zzq Write-Output extra',
+            'Set-Alias zzq $x',
+        ):
+            with self.subTest(source):
+                self.assertFalse(_binding_only(source))
+
+    def test_a_definition_whose_own_command_the_script_took_over_is_more_than_a_binding(self):
+        self.assertFalse(_binding_only('${function:Set-Alias} = $b\nSet-Alias zzq Write-Output'))
+
+
+class TestPs1IntrospectedNames(TestBase):
+    """
+    A rewrite reaches the uses of an alias, not the mentions of it, so a name the script reads back
+    out of the alias table is still a name its definition is about. `None` is the top element and
+    stands for every name, never for an error.
+    """
+
+    def test_a_reader_given_a_literal_name_reports_that_name(self):
+        for source in (
+            'Get-Alias zzq',
+            'Get-Alias -Name zzq',
+            'Get-Alias -Name:zzq',
+            'gal zzq',
+            'Get-Command zzq',
+            'Get-Help zzq',
+        ):
+            with self.subTest(source):
+                self.assertEqual(_introspected(source), frozenset({'zzq'}))
+
+    def test_the_built_in_name_of_the_alias_reader_is_a_reader(self):
+        """
+        `alias` is the default alias of `Get-Alias` on a 5.1 host. While it was missing from the
+        collected table, `alias zzq` read as a command the metadata does not describe, so the name
+        it reports on was never recorded.
+        """
+        self.assertEqual(_introspected('alias zzq'), frozenset({'zzq'}))
+
+    def test_a_reader_reached_through_the_scripts_own_alias_is_recognized(self):
+        self.assertEqual(_introspected('Set-Alias g Get-Alias\ng zzq'), frozenset({'zzq'}))
+
+    def test_the_alias_variable_namespace_is_a_read_of_the_name(self):
+        for source in ('${alias:zzq}', '$alias:zzq', '$alias:ZZQ'):
+            with self.subTest(source):
+                self.assertEqual(_introspected(source), frozenset({'zzq'}))
+
+    def test_every_name_the_script_reads_is_reported(self):
+        self.assertEqual(
+            _introspected('Get-Alias a\nGet-Command b\n${alias:c}'),
+            frozenset({'a', 'b', 'c'}))
+
+    def test_a_reader_whose_names_this_cannot_list_stands_for_every_name(self):
+        for source in (
+            'Get-Alias $n',
+            'Get-Alias -Name $n',
+            'Get-Alias',
+            'alias',
+            'Get-Alias Get-*',
+            'Get-Alias -Definition Write-Output',
+            'Get-Alias -Scope Global',
+            'Get-Command -CommandType Alias',
+            'Export-Alias out.csv',
+            'Trace-Command -Name x -Expression { 1 }',
+        ):
+            with self.subTest(source):
+                self.assertIsNone(_introspected(source))
+
+    def test_a_script_that_names_no_alias_reports_the_empty_set(self):
+        for source in ('$x = 1', 'Get-Process', 'Set-Alias zzq Write-Output\nzzq 1'):
+            with self.subTest(source):
+                self.assertEqual(_introspected(source), frozenset())
+
+    def test_a_command_this_cannot_identify_is_not_read_as_a_reader(self):
+        """
+        The declared residual, and the stance the closed-world model takes on mutation taken here
+        for the same reason: the collected metadata omits hundreds of host commands, and reading
+        every one of them as a possible reader would answer `None` for almost any script.
+        """
+        for source in ('Some-Unknown-Command zzq', '& $f'):
+            with self.subTest(source):
+                self.assertEqual(_introspected(source), frozenset())
+
+
+class TestPs1ReadsCommandSuccess(TestBase):
+
+    def test_a_read_of_the_success_variable_is_seen_wherever_it_stands(self):
+        for source in (
+            '$?',
+            'if ($?) { 1 }',
+            '$x = $?',
+            '"$?"',
+            'function f { $? }',
+            '@(1) | ForEach-Object { $? }',
+        ):
+            with self.subTest(source):
+                self.assertTrue(_reads_success(source))
+
+    def test_a_script_that_never_reads_it_says_so(self):
+        for source in ('$x = 1', 'Get-Process', 'Set-Alias zzq Write-Output\nzzq 1', "'$?'"):
+            with self.subTest(source):
+                self.assertFalse(_reads_success(source))
 
 
 class TestPs1CommandModelCache(TestBase):

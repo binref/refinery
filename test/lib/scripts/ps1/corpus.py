@@ -165,6 +165,10 @@ BEHAVIOURS: tuple[str, ...] = (
     "Get-Command zzqnope -ErrorAction SilentlyContinue; Set-Alias zzq Write-Output; $?",
     "New-Alias zzq Write-Output; New-Alias zzq Write-Host; zzq 'first-wins'",
     "Set-Alias global:zzq Write-Output; (Get-Alias 'global:zzq').Definition; zzq 'unqualified'",
+    "Set-Alias -Value Write-Output -Name zzq; zzq 'named-out-of-order'",
+    "Set-Alias -N zzq -V Write-Output; zzq 'one-letter'",
+    "Set-Alias -Description d zzq Write-Output; zzq 'described'",
+    "Set-Alias zzq Write-Output -PassThru; zzq 'passthru'",
 )
 
 

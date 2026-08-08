@@ -81,6 +81,173 @@ class TestPs1AliasInlining(TestPs1):
         self.assertEqual(result, "function f {\n  Set-Alias zx Write-Output\n}\nzx 'hi'")
 
 
+class TestPs1AliasDefinitionRemoval(TestPs1):
+
+    def test_a_definition_whose_only_use_the_rewrite_took_is_removed(self):
+        result = self._deobfuscate(cleandoc("""
+            Set-Alias foo Write-Output
+            foo 'hi'
+        """))
+        self.assertEqual(result, "Write-Output 'hi'")
+
+    def test_a_definition_no_use_ever_named_is_removed(self):
+        result = self._deobfuscate(cleandoc("""
+            Set-Alias foo Write-Output
+            Write-Host done
+        """))
+        self.assertEqual(result, 'Write-Host done')
+
+    def test_a_use_the_definition_does_not_reach_keeps_it(self):
+        result = self._deobfuscate(cleandoc("""
+            foo 'a'
+            Set-Alias foo Write-Output
+            foo 'b'
+        """))
+        self.assertEqual(result, cleandoc("""
+            foo 'a'
+            Set-Alias foo Write-Output
+            Write-Output 'b'
+        """))
+
+    def test_a_read_of_the_alias_table_keeps_the_definition_it_names(self):
+        result = self._deobfuscate(cleandoc("""
+            Set-Alias foo Write-Output
+            foo 'hi'
+            Get-Alias foo
+        """))
+        self.assertEqual(result, cleandoc("""
+            Set-Alias foo Write-Output
+            Write-Output 'hi'
+            Get-Alias foo
+        """))
+
+    def test_a_read_through_the_alias_namespace_keeps_the_definition(self):
+        result = self._deobfuscate(cleandoc("""
+            Set-Alias foo Write-Output
+            foo 'hi'
+            ${alias:foo}
+        """))
+        self.assertEqual(result, cleandoc("""
+            Set-Alias foo Write-Output
+            Write-Output 'hi'
+            $alias:foo
+        """))
+
+    def test_a_command_that_opens_the_world_keeps_the_definition(self):
+        result = self._deobfuscate(cleandoc("""
+            Set-Alias foo Write-Output
+            foo 'hi'
+            Invoke-Expression $z
+        """))
+        self.assertEqual(result, cleandoc("""
+            Set-Alias foo Write-Output
+            Write-Output 'hi'
+            Invoke-Expression $z
+        """))
+
+    def test_an_identity_command_this_batch_is_not_taking_keeps_the_definition(self):
+        result = self._deobfuscate(cleandoc("""
+            Set-Alias foo Write-Output
+            foo 'hi'
+            Import-Alias aliases.csv
+        """))
+        self.assertEqual(result, cleandoc("""
+            Set-Alias foo Write-Output
+            Write-Output 'hi'
+            Import-Alias aliases.csv
+        """))
+
+    def test_a_read_of_the_command_success_variable_keeps_the_definition(self):
+        result = self._deobfuscate(cleandoc("""
+            Set-Alias foo Write-Output
+            foo 'hi'
+            Write-Host $?
+        """))
+        self.assertEqual(result, cleandoc("""
+            Set-Alias foo Write-Output
+            Write-Output 'hi'
+            Write-Host $?
+        """))
+
+    def test_a_new_alias_definition_is_inlined_but_not_removed(self):
+        result = self._deobfuscate(cleandoc("""
+            New-Alias foo Write-Output
+            foo 'hi'
+        """))
+        self.assertEqual(result, cleandoc("""
+            New-Alias foo Write-Output
+            Write-Output 'hi'
+        """))
+
+    def test_a_definition_rebinding_a_default_alias_is_kept_with_its_use(self):
+        result = self._deobfuscate(cleandoc("""
+            Set-Alias gci Write-Output
+            gci 'hi'
+        """))
+        self.assertEqual(result, cleandoc("""
+            Set-Alias gci Write-Output
+            gci 'hi'
+        """))
+
+    def test_one_definition_that_must_stay_keeps_the_removable_one_beside_it(self):
+        result = self._deobfuscate(cleandoc("""
+            Set-Alias foo Write-Output
+            foo 'a'
+            Set-Alias bar Write-Output
+            bar 'b'
+            Get-Alias bar
+        """))
+        self.assertEqual(result, cleandoc("""
+            Set-Alias foo Write-Output
+            Write-Output 'a'
+            Set-Alias bar Write-Output
+            Write-Output 'b'
+            Get-Alias bar
+        """))
+
+
+class TestPs1AliasRemovalInsideAProtectedBody(TestPs1):
+
+    def test_an_acting_handler_keeps_the_protected_definition_and_the_batch_with_it(self):
+        result = self._deobfuscate(cleandoc("""
+            Set-Alias zq Write-Output
+            try {
+              Set-Alias zr Write-Output
+              Write-Host 'body'
+            } catch {
+              Write-Host 'caught'
+            }
+            zq 'hi'
+        """))
+        self.assertEqual(result, cleandoc("""
+            Set-Alias zq Write-Output
+            try {
+              Set-Alias zr Write-Output
+              Write-Host 'body'
+            } catch {
+              Write-Host 'caught'
+            }
+            Write-Output 'hi'
+        """))
+
+    def test_an_empty_handler_leaves_the_protected_definition_removable(self):
+        result = self._deobfuscate(cleandoc("""
+            Set-Alias zq Write-Output
+            try {
+              Set-Alias zr Write-Output
+              Write-Host 'body'
+            } catch {
+            }
+            zq 'hi'
+        """))
+        self.assertEqual(result, cleandoc("""
+            try {
+              Write-Host 'body'
+            } catch {}
+            Write-Output 'hi'
+        """))
+
+
 class TestPs1AliasShadowing(TestPs1):
 
     def test_the_emulator_does_not_fold_a_call_a_default_alias_shadows(self):

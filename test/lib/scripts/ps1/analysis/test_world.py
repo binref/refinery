@@ -3,6 +3,7 @@ from __future__ import annotations
 from test import TestBase
 
 from refinery.lib.scripts.ps1.analysis.world import (
+    Ps1TypeWorld,
     WorldRole,
     build_closed_world,
     command_role,
@@ -23,6 +24,11 @@ class Ps1TypeWorldTest(TestBase):
     def _closed(source: str) -> bool:
         script = Ps1Parser(source).parse()
         return build_closed_world(script).world_closed_at(None)
+
+    @staticmethod
+    def _closed_but_for_aliases(source: str) -> bool:
+        script = Ps1Parser(source).parse()
+        return build_closed_world(script).closed_but_for_alias_bindings
 
 
 class TestPs1WorldOpeners(Ps1TypeWorldTest):
@@ -306,6 +312,80 @@ class TestPs1QualifiedOpenerSpellings(Ps1TypeWorldTest):
         for source in ('Set-Content C:\\tmp\\x.txt -Value 1', 'Get-Content .\\notes.txt'):
             with self.subTest(source):
                 self.assertTrue(self._closed(source))
+
+
+class TestPs1ClosedButForAliasBindings(Ps1TypeWorldTest):
+    """
+    Whether the only thing holding a world open is that the script binds aliases, so that a pass
+    which deleted every `Set-Alias` would leave it closed. A caller cannot reach this from
+    `world_closed_at` and the list of what it is about to remove, because a verdict of open names no
+    reason; it is read here so that the two answers cannot disagree about what an opener is.
+    """
+
+    _SHAPES = (
+        ('$x = 1', True, True),
+        ('Get-ChildItem -Recurse', True, True),
+        ('function f { 1 }', True, True),
+        ('&{ 42 }', True, True),
+        ('Set-Alias zzq Write-Output', False, True),
+        ('sal zzq Write-Output', False, True),
+        ('Set-Alias a X\nSet-Alias b Y', False, True),
+        ('function f { Set-Alias zzq Write-Output }', False, True),
+        ("& 'global:Set-Alias' zzq Write-Output", False, True),
+        ('Set-Alias zzq Write-Output\niex $x', False, False),
+        ('Set-Alias zzq Write-Output\n& $f', False, False),
+        ('Set-Alias zzq Write-Output\nAdd-Type -TypeDefinition $s', False, False),
+        ('Set-Alias zzq Write-Output\nclass C { }', False, False),
+        ('Set-Alias zzq Write-Output\n${function:Get-Date} = $b', False, False),
+        ("Set-Alias zzq Write-Output\n. '.\\stage2.ps1'", False, False),
+        ('iex $x', False, False),
+    )
+
+    def test_both_verdicts_over_every_shape(self):
+        for source, closed, but_for_bindings in self._SHAPES:
+            with self.subTest(source):
+                self.assertEqual(self._closed(source), closed)
+                self.assertEqual(self._closed_but_for_aliases(source), but_for_bindings)
+
+    def test_a_closed_world_is_closed_but_for_alias_bindings_as_well(self):
+        for source in (
+            '$x = 1',
+            'Get-ChildItem -Recurse | Where-Object { $_.Name }',
+            'New-Object System.Net.WebClient',
+            'function Get-Date { 1 }',
+        ):
+            with self.subTest(source):
+                self.assertTrue(self._closed(source))
+                self.assertTrue(self._closed_but_for_aliases(source))
+
+    def test_an_identity_change_that_is_not_a_binding_keeps_the_world_open(self):
+        """
+        Only `Set-Alias` is set aside. `New-Alias` throws on a name that already has a binding,
+        `Import-Alias` reads a file this analysis cannot see, and a provider path or a namespace
+        assignment is not a binding this model reads at all, so none of them is something a caller
+        is in a position to delete.
+        """
+        for source in (
+            'New-Alias zzq Write-Output',
+            'nal zzq Write-Output',
+            'Remove-Alias zzq',
+            'Import-Alias .\\a.csv',
+            'Set-Item alias:zzq Write-Output',
+            "$alias:zzq = 'Write-Output'",
+        ):
+            with self.subTest(source):
+                self.assertFalse(self._closed_but_for_aliases(source))
+
+    def test_a_binding_that_is_also_something_else_is_not_only_a_binding(self):
+        for source in ('Set-Alias zzq alias:bar', '. Set-Alias zzq Write-Output'):
+            with self.subTest(source):
+                self.assertFalse(self._closed_but_for_aliases(source))
+
+    def test_a_verdict_left_unstated_takes_the_value_of_the_closed_one(self):
+        for closed in (True, False):
+            with self.subTest(closed=closed):
+                self.assertEqual(
+                    Ps1TypeWorld(closed, frozenset()).closed_but_for_alias_bindings, closed)
 
 
 class TestPs1CommandRole(TestBase):

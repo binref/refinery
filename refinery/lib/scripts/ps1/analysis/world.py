@@ -123,6 +123,11 @@ _ALIAS_CMDLETS = frozenset({
     'set-alias',
 })
 
+#: The subset of the above that binds one name to one command, written out in the script, and
+#: nothing else — the only alias definition a pass is in a position to take out. See
+#: `Ps1TypeWorld.closed_but_for_alias_bindings`.
+_ALIAS_BINDING_COMMANDS = frozenset({'set-alias'})
+
 #: The file extension of a PowerShell script. Invoking one runs its definitions and whatever type
 #: mutations it performs into this session, whichever operator carries the call.
 _SCRIPT_FILE_SUFFIX = '.ps1'
@@ -181,9 +186,40 @@ class Ps1TypeWorld:
     `refinery.lib.scripts.ps1.analysis.types.TypeOracle`.
     """
 
-    def __init__(self, closed: bool, shadowed: frozenset[str]):
+    def __init__(
+        self,
+        closed: bool,
+        shadowed: frozenset[str],
+        closed_but_for_alias_bindings: bool | None = None,
+    ):
+        """
+        A verdict left unstated for `closed_but_for_alias_bindings` takes the value of `closed`,
+        which is the answer for a world that has no opener at all and the conservative one for a
+        world that has an opener this was not told the kind of.
+        """
         self._closed = closed
+        self._closed_but_for_alias_bindings = (
+            closed if closed_but_for_alias_bindings is None else closed_but_for_alias_bindings)
         self._shadowed = shadowed
+
+    @property
+    def closed_but_for_alias_bindings(self) -> bool:
+        """
+        Whether the only thing keeping this world open is that the script binds aliases — so that a
+        pass which deleted every `Set-Alias` would leave it closed.
+
+        A pass cannot work this out from `world_closed_at` and its own list of what it is about to
+        remove, because a verdict of *open* names no reason: it would have to re-walk the tree for
+        every other way the world opens, which is the whole of this model restated in a transform.
+        Asking here instead is one walk, and the two answers cannot disagree about what an opener is.
+
+        Only `Set-Alias` is set aside, not every command that redefines identity. `New-Alias` throws
+        on a name that is already bound, `Import-Alias` reads a file this analysis cannot see, and a
+        provider path such as `Set-Item alias:x` is not a binding this model reads at all — none of
+        them is something a caller is in a position to delete, so a script containing one is one
+        whose world stays open however many `Set-Alias` statements go.
+        """
+        return self._closed_but_for_alias_bindings
 
     def world_closed_at(self, node) -> bool:
         """
@@ -226,13 +262,33 @@ def build_closed_world(root: Ps1Script) -> Ps1TypeWorld:
     because the shadow set needs every redefinition, wherever it sits.
     """
     closed = True
+    closed_but_for_alias_bindings = True
     shadowed: set[str] = set()
     for node in root.walk():
         redefined = _identity_redefinitions(node)
         shadowed.update(record.name for record in redefined)
-        if _opens_world(node, redefined):
-            closed = False
-    return Ps1TypeWorld(closed, frozenset(shadowed))
+        if not _opens_world(node, redefined):
+            continue
+        closed = False
+        if not _opens_world_only_by_binding_an_alias(node):
+            closed_but_for_alias_bindings = False
+    return Ps1TypeWorld(closed, frozenset(shadowed), closed_but_for_alias_bindings)
+
+
+def _opens_world_only_by_binding_an_alias(node) -> bool:
+    """
+    Whether the sole reason `node` opens the world is that it is a `Set-Alias` — see
+    `Ps1TypeWorld.closed_but_for_alias_bindings`. Every other reason the same node might open it is
+    excluded here rather than assumed away, because a `Set-Alias` that also dispatches opaquely or
+    addresses a provider path is still each of those things.
+    """
+    if not isinstance(node, Ps1CommandInvocation):
+        return False
+    if is_opaque_dispatch(node) or runs_another_script_file(node):
+        return False
+    if touches_identity_provider(node):
+        return False
+    return resolve_command_name(node) in _ALIAS_BINDING_COMMANDS
 
 
 class _IdentityBody(enum.Enum):
