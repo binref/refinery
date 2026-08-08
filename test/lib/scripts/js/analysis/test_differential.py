@@ -2404,3 +2404,341 @@ class TestHostEntrypointPreservation(TestBase):
             calls=('run',),
             entrypoints=('run',))
 
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestOverPreciseNumericLiterals(TestBase):
+    """
+    Known-failing. A JavaScript number is an IEEE-754 double, but the parser stores an integer literal as an
+    exact Python `int` (`_parse_int_text`, `refinery/lib/scripts/js/parser.py`), so `9007199254740993`
+    survives as itself where the language says it denotes `9007199254740992`. Every fold that then reads
+    `.value` computes in unbounded integer arithmetic and prints digits the program never produces.
+
+    The rule is per-value, not per-magnitude: `float(value) != value` is exactly the test, and
+    `18014398509481984` is representable while `18014398509481985` is not. The float path is already correct —
+    `1e400` parses to `inf` — so only the integer path is at fault.
+
+    **The fix belongs at the parser, not at the fold sites.** Correcting each consumer would leave the next
+    one to rediscover it; ~222 `.value` reads live in modules that mention `JsNumericLiteral`. The guard to
+    reuse already exists and states this very rule in its docstring: `concat_string` in
+    `refinery/lib/scripts/js/deobfuscation/simplify.py` refuses a literal when `float(value) != value`.
+
+    Deciding what the literal's stored value should become is the design question, and it is not obviously
+    "just call `float`": the synthesizer must keep printing the source spelling where it is faithful, and
+    tests below pin what Node says each case must produce.
+    """
+
+    def _check(self, source: str):
+        deobfuscated = deobfuscate_source(source)
+        self.assertEqual(
+            behavior(source),
+            behavior(deobfuscated),
+            F'deobfuscation changed observable behavior; result was:\n{deobfuscated}',
+        )
+
+    @unittest.expectedFailure
+    def test_decimal_integer_past_the_double_range_is_preserved(self):
+        """
+        Node prints `9007199254740992`; the fold prints `9007199254740993`.
+        """
+        self._check('console.log(String(9007199254740993));')
+
+    @unittest.expectedFailure
+    def test_very_large_decimal_integer_is_preserved(self):
+        """
+        Far enough out that Node switches to exponential form: `1.2345678901234568e+29`.
+        """
+        self._check('console.log(String(123456789012345678901234567890));')
+
+    @unittest.expectedFailure
+    def test_hexadecimal_integer_past_the_double_range_is_preserved(self):
+        """
+        The radix is irrelevant — every branch of `_parse_int_text` returns an exact `int` — so the same
+        defect reaches the hex, octal and binary spellings.
+        """
+        self._check('console.log(String(0x20000000000001));')
+
+    @unittest.expectedFailure
+    def test_octal_integer_past_the_double_range_is_preserved(self):
+        self._check('console.log(String(0o400000000000000001));')
+
+    @unittest.expectedFailure
+    def test_binary_integer_past_the_double_range_is_preserved(self):
+        self._check(
+            'console.log(String(0b100000000000000000000000000000000000000000000000000001));')
+
+    @unittest.expectedFailure
+    def test_sum_that_leaves_the_double_range_is_preserved(self):
+        """
+        Both operands are representable; only the result is not. So a fix that merely rounds each literal at
+        parse time is not sufficient — arithmetic on exact ints has to round too.
+        """
+        self._check('console.log(String(9007199254740992 + 1));')
+
+    @unittest.expectedFailure
+    def test_product_that_leaves_the_double_range_is_preserved(self):
+        self._check('console.log(String(4503599627370496 * 2 + 1));')
+
+    @unittest.expectedFailure
+    def test_bitwise_coercion_of_an_over_precise_integer_is_preserved(self):
+        """
+        The starkest case: Node prints `0`, because ToInt32 sees the rounded double, while the fold prints
+        `1` from the exact int. A reader cannot tell this output is wrong by inspection.
+        """
+        self._check('console.log(String(9007199254740993 | 0));')
+
+    @unittest.expectedFailure
+    def test_equality_of_two_integers_that_round_together_is_preserved(self):
+        """
+        `9007199254740993 === 9007199254740992` is `true` in JavaScript, since both denote the same double.
+        The fold compares exact ints and answers `false`.
+        """
+        self._check('console.log(String(9007199254740993 === 9007199254740992));')
+
+    def test_integer_at_the_edge_of_the_double_range_still_folds(self):
+        """
+        The control, and the boundary the fix must not move: `2**53` is exactly representable and must keep
+        folding. A fix that refuses every large integer would pass the cases above and fail here.
+        """
+        self._check('console.log(String(9007199254740992));')
+
+    def test_representable_large_integer_still_folds(self):
+        """
+        `2**54` is representable though larger than `2**53`, which is why the test is `float(value) != value`
+        and not a magnitude comparison.
+        """
+        self._check('console.log(String(18014398509481984));')
+
+    def test_float_past_the_double_range_still_folds(self):
+        """
+        Already correct — the float path overflows to `Infinity` as the language requires. Pinned so a parser
+        change aimed at the integer path cannot silently break it.
+        """
+        self._check('console.log(String(1e400));')
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestUnaryOperatorFoldCoverage(TestBase):
+    """
+    Known-failing, and a *precision* gap rather than a correctness one: every case below produces the right
+    answer today, it simply produces it unfolded. That distinction decides how these tests are written —
+    asserting `behavior(input) == behavior(output)` would pass immediately and prove nothing, so each case
+    asserts the fold happened instead.
+
+    The cause is two independent unary implementations. `JsSimplifications.visit_JsUnaryExpression`
+    (`refinery/lib/scripts/js/deobfuscation/simplify.py`) folds `!`, `-`, `+`, `~` and `typeof`, each against
+    its own ad-hoc operand test, while `JsInterpreter._eval_unary`
+    (`refinery/lib/scripts/js/deobfuscation/interpreter.py`) evaluates the same operators over a different
+    value domain. There is no shared kernel — no `eval_unary_op` exists anywhere in the tree — so each arm
+    declines a different subset:
+
+    - `~` is gated on `value == value and value not in (inf, -inf)`, so `~NaN` and `~Infinity` are declined
+      although both are `-1`
+    - `typeof` handles only numeric, string and boolean literals; `null`, `undefined`, object, array and
+      function literals fall through
+    - `+` on a string or `null` is not folded at all, though `+'12'` is `12` and `+null` is `0`
+    - `delete` on a property of a local object literal is not folded
+
+    Task #20 consolidated the *binary* operator tables the same way; this is the unary counterpart, and the
+    shape is extract-a-kernel-then-wrap rather than patch-each-arm. Two seams make that worth doing properly:
+    the interpreter's domain includes values (`JsBuffer`, `dict`) that no literal spells, and `delete` has an
+    effect, so a shared kernel must return "declined" rather than guess.
+    """
+
+    def _folds(self, source: str, token: str):
+        """
+        Assert the deobfuscated output no longer contains *token*, i.e. the operator was folded away.
+        """
+        deobfuscated = deobfuscate_source(source)
+        self.assertEqual(
+            token in deobfuscated,
+            False,
+            F'{token!r} was not folded; result was:\n{deobfuscated}',
+        )
+
+    def _preserves(self, source: str):
+        deobfuscated = deobfuscate_source(source)
+        self.assertEqual(
+            behavior(source),
+            behavior(deobfuscated),
+            F'deobfuscation changed observable behavior; result was:\n{deobfuscated}',
+        )
+
+    @unittest.expectedFailure
+    def test_bitwise_not_of_nan_folds(self):
+        """
+        Node: `~NaN` is `-1`. The guard excludes NaN rather than folding it.
+        """
+        self._folds('console.log(String(~NaN));', '~')
+
+    @unittest.expectedFailure
+    def test_bitwise_not_of_infinity_folds(self):
+        """
+        Node: `~Infinity` is `-1`, since ToInt32 maps every non-finite value to zero.
+        """
+        self._folds('console.log(String(~Infinity));', '~')
+
+    @unittest.expectedFailure
+    def test_bitwise_not_of_negative_infinity_folds(self):
+        self._folds('console.log(String(~(-Infinity)));', '~')
+
+    @unittest.expectedFailure
+    def test_typeof_null_folds(self):
+        """
+        Node: `'object'`. `typeof` reads the literal's Python type, and the null literal is not in the table.
+        """
+        self._folds('console.log(typeof null);', 'typeof')
+
+    @unittest.expectedFailure
+    def test_typeof_undefined_folds(self):
+        self._folds('console.log(typeof undefined);', 'typeof')
+
+    @unittest.expectedFailure
+    def test_typeof_an_object_literal_folds(self):
+        self._folds('console.log(typeof {});', 'typeof')
+
+    @unittest.expectedFailure
+    def test_typeof_an_array_literal_folds(self):
+        self._folds('console.log(typeof []);', 'typeof')
+
+    @unittest.expectedFailure
+    def test_typeof_a_function_expression_folds(self):
+        """
+        Node: `'function'`. Worth folding because an obfuscator uses exactly this to test for a callable.
+        """
+        self._folds('console.log(typeof function () {});', 'typeof')
+
+    @unittest.expectedFailure
+    def test_unary_plus_on_a_string_literal_folds(self):
+        """
+        Node: `+'12'` is `12`. Numeric coercion of a string literal is decided by the syntax alone.
+        """
+        self._folds("console.log(String(+'12'));", '+')
+
+    @unittest.expectedFailure
+    def test_unary_plus_on_null_folds(self):
+        self._folds('console.log(String(+null));', '+')
+
+    @unittest.expectedFailure
+    def test_logical_not_of_an_object_literal_folds(self):
+        """
+        Node: `false`. The array literal case already folds, so the two disagree on sibling forms.
+        """
+        self._folds('console.log(String(!{}));', '!')
+
+    @unittest.expectedFailure
+    def test_delete_of_a_property_of_a_local_object_literal_folds(self):
+        """
+        Node: `true`, and the property is gone. This is the case a shared kernel must be able to *decline*
+        rather than guess, since `delete` mutates — included to pin the requirement, not to demand the fold.
+        """
+        self._folds("var o = { a: 1 }; console.log(String(delete o.a));", 'delete')
+
+    def test_typeof_a_numeric_literal_already_folds(self):
+        """
+        The controls: three `typeof` operands are already handled, and a consolidation must not lose them.
+        """
+        self._folds('console.log(typeof 1);', 'typeof')
+
+    def test_typeof_a_string_literal_already_folds(self):
+        self._folds("console.log(typeof 'a');", 'typeof')
+
+    def test_typeof_a_boolean_literal_already_folds(self):
+        self._folds('console.log(typeof true);', 'typeof')
+
+    def test_void_already_folds(self):
+        self._folds('console.log(String(void 7));', 'void')
+
+    def test_logical_not_of_null_already_folds(self):
+        self._folds('console.log(String(!null));', '!')
+
+    def test_bitwise_not_of_a_finite_number_already_folds(self):
+        self._folds('console.log(String(~1e21));', '~')
+
+    def test_every_declined_unary_still_behaves_correctly(self):
+        """
+        The load-bearing control for this whole class: none of the above is a miscompile. If this ever fails,
+        the item has changed from a precision gap to a correctness defect and must be re-triaged as such.
+        """
+        for source in (
+            'console.log(String(~NaN));',
+            'console.log(String(~Infinity));',
+            'console.log(String(~(-Infinity)));',
+            'console.log(typeof null);',
+            'console.log(typeof undefined);',
+            'console.log(typeof {});',
+            'console.log(typeof []);',
+            'console.log(typeof function () {});',
+            "console.log(String(+'12'));",
+            'console.log(String(+null));',
+            'console.log(String(!{}));',
+            'var o = { a: 1 }; console.log(String(delete o.a));',
+        ):
+            with self.subTest(source=source):
+                self._preserves(source)
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestUndeclaredHostObservableGlobals(TestBase):
+    """
+    Known-failing. Under the script execution model a top-level `var` is a property of the global object, so a
+    host reads it by a name the file never mentions. `836a2c51` closed the case where the analyst *names* the
+    entrypoint; what remains is the file whose host contract is not declared, where reachability computed over
+    the file alone judges the global dead and removes it.
+
+    A `function` declaration survives while `var f = function(){}` does not — the two are removed by different
+    sweeps — so the residue is not "globals are dropped" but a specific asymmetry, pinned below.
+
+    **Why this is a design change and not a guard.** Two attempts failed on measurement, and repeating either
+    is wasted work:
+
+    1. A gate in `_localize_pseudo_globals` proved **inert** — output was identical with and without it,
+       because the later dead-store sweep removes the binding anyway.
+    2. Extending the gate to the store sweep broke **46 tests**. The diagnosis: an obfuscator's decoder string
+       table is read in the original source and becomes unread only *because the pass consumed its reads*, so
+       a gate that inspects the tree at removal time cannot tell it from a global the file never reads.
+
+    That is the crux. Distinguishing "never read" from "no longer read" needs the **input-time read set**,
+    captured before any pass runs and threaded through
+    `refinery.lib.scripts.js.analysis.cache.ModelCache` — which also has to respect that cache's pinning
+    contract, since a fact that *grows* mid-pass is precisely what it forbids.
+
+    Note on the oracle: `host_behavior` indexes `globalThis[name]` and calls it only when it holds a function,
+    so it can observe function-valued globals only. A value-valued global needs its own observation, which is
+    why the cases here are function-valued.
+    """
+
+    def _check_host(self, source: str, *, calls: tuple[str, ...]):
+        """
+        Assert a host observes the same thing before and after, with **no** entrypoints declared — the
+        undeclared contract is the whole point, so passing `entrypoints` here would test `836a2c51` instead.
+        """
+        deobfuscated = deobfuscate_source(source)
+        self.assertEqual(
+            host_behavior(source, calls=calls),
+            host_behavior(deobfuscated, calls=calls),
+            F'deobfuscation changed what a host observes; result was:\n{deobfuscated}',
+        )
+
+    @unittest.expectedFailure
+    def test_undeclared_handler_held_by_a_var_survives(self):
+        """
+        Node: `handler=5` before, `handler=undefined` after — the whole file is emitted empty.
+        """
+        self._check_host('var handler = function () { return 5; };', calls=('handler',))
+
+    @unittest.expectedFailure
+    def test_undeclared_handler_held_by_an_arrow_survives(self):
+        self._check_host('var handler = () => 5;', calls=('handler',))
+
+    def test_undeclared_function_declaration_already_survives(self):
+        """
+        The asymmetry that localizes the defect: the declaration form is kept today. A fix must close the
+        `var` form without disturbing this, and comparing the two sweeps is the obvious starting point.
+        """
+        self._check_host('function handler() { return 5; }', calls=('handler',))
+
+    def test_undeclared_declaration_calling_a_helper_already_survives(self):
+        self._check_host(
+            'function help() { return 7; } function handler() { return help(); }',
+            calls=('handler',))
+
