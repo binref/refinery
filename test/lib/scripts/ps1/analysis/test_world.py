@@ -308,6 +308,21 @@ class TestPs1QualifiedOpenerSpellings(Ps1TypeWorldTest):
             with self.subTest(source):
                 self.assertFalse(self._closed(source))
 
+    def test_the_drive_root_spelling_of_an_identity_path_names_the_same_item(self):
+        # `Alias:\gd` and `alias:gd` name one item of one provider; the root separator is only how
+        # the path is written when it starts at the drive. Measured on 5.1, `Set-Item Alias:\gd
+        # -Value Get-Date` binds `gd` and `Get-Item Alias:\gd` reads what it is bound to.
+        for source in (
+            'Set-Item Alias:\\zzq -Value Write-Output',
+            'Set-Item alias:\\zzq -Value Write-Output',
+            'New-Item -Path Alias:\\zzq -Value Write-Output',
+            'Get-Item Alias:\\zzq',
+            'Set-Item Function:\\foo -Value { 1 }',
+            'Get-Content Function:\\foo',
+        ):
+            with self.subTest(source):
+                self.assertFalse(self._closed(source))
+
     def test_an_ordinary_path_argument_is_not_an_identity_write(self):
         for source in ('Set-Content C:\\tmp\\x.txt -Value 1', 'Get-Content .\\notes.txt'):
             with self.subTest(source):

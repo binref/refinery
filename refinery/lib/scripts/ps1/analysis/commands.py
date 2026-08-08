@@ -9,9 +9,12 @@ rewrites a name only where 5.1 would resolve it the same way.
 
 Three outcomes, kept apart because a caller does different things with each:
 
-- **a name** — the invocation resolves to a concrete command, reached through zero or more aliases
+- **a name** — the invocation resolves to a concrete command, reached through a resolution step
   (`CommandKind.ALIAS`), or named directly as a script function (`CommandKind.FUNCTION`) or a known
-  cmdlet (`CommandKind.CMDLET`). `Denotation.target` carries the canonical command name.
+  cmdlet (`CommandKind.CMDLET`). `Denotation.target` carries the canonical command name. A
+  resolution step is an alias, or the implicit `Get-` retry that 5.1 falls back on — see
+  `Ps1CommandModel._resolve`, which is why `alias zzq` reports the name `Get-Alias` rather than the
+  command it in turn denotes.
 - **nothing** (`CommandKind.NOTHING`) — the name denotes no command at this point, so 5.1 raises
   `CommandNotFoundException` and rewriting it is not meaning-preserving. It arises from an alias
   cycle, a wildcard alias target, a use its definition does not reach, or a definition in a scope the
@@ -91,6 +94,7 @@ from refinery.lib.scripts.ps1.analysis.world import (
     touches_identity_provider,
 )
 from refinery.lib.scripts.ps1.ast import (
+    consumes_a_value,
     get_command_name,
     is_opaque_dispatch,
     normalize_command_name,
@@ -113,6 +117,11 @@ from refinery.lib.scripts.ps1.model import (
 #: redefined them means exactly what they say, and one that has is caught as a collision when the
 #: redefined name is later used.
 _ALIAS_DEFINING_COMMANDS = frozenset({'set-alias', 'sal', 'new-alias', 'nal'})
+
+#: The defining command that raises rather than rebinding when the name it is given already has a
+#: binding, so that the *first* definition of a name is the one a later use runs. See
+#: `AliasDefinition.throws_if_bound`.
+_BINDS_ONLY_WHEN_UNBOUND = frozenset({'new-alias'})
 
 #: The parameters of `Set-Alias`/`New-Alias` that carry the alias name and its target, written out
 #: with every prefix PowerShell binds them under: a parameter may be abbreviated to any prefix that
@@ -160,27 +169,35 @@ class AliasDefinition(NamedTuple):
     """
     One `Set-Alias`/`New-Alias` invocation read as a binding: the lowercased alias `name`, the
     `target` command it names (or `None` when the target is not a literal), the defining `node`, and
-    two reasons the binding may not be resolvable. `refuse` marks a definition the model will not act
-    on — `-Force`/`-Option`, or an unreadable target — and `wildcard` marks a target that matches no
-    single command, so the alias denotes nothing.
+    three reasons the binding may not be resolvable. `refuse` marks a definition the model will not
+    act on — `-Force`/`-Option`, or an unreadable target — and `wildcard` marks a target that matches
+    no single command, so the alias denotes nothing.
+
+    `throws_if_bound` marks `New-Alias`, which raises `AliasAlreadyExists` rather than rebinding, so
+    it takes effect only where nothing bound the name before it. That is the opposite of the
+    nearest-definition-wins rule the rest of the resolution runs on, and it is what makes `New-Alias
+    zzq Write-Output; New-Alias zzq Write-Host; zzq` run the *first* one — measured on 5.1.
     """
     name: str
     target: str | None
     node: Ps1CommandInvocation
     refuse: bool
     wildcard: bool
+    throws_if_bound: bool
 
 
-#: The command that reads the whole alias table however it is asked, so that any of its arguments may
-#: name an alias. `Export-Alias` writes every alias when no `-Name` selects one and its first
-#: positional argument is a path rather than a name; `Trace-Command` names trace sources, and what it
-#: reports about a traced command is not bounded by them. Neither is worth binding parameters for
-#: when the sound answer is that every name is read.
+#: The commands that read the whole alias table however they are asked, so that any of their
+#: arguments may name an alias. `Export-Alias` writes every alias when no `-Name` selects one, and
+#: its first positional argument is a path rather than a name; `Trace-Command` names trace sources,
+#: and what it reports about a traced command is not bounded by them. Neither is worth binding
+#: parameters for when the sound answer is that every name is read.
 _TABLE_READING_COMMANDS = frozenset({'export-alias', 'trace-command'})
 
-#: The commands that report on one named command, so that the name they are given is the only one
-#: they read. A form that names none reads the whole table and is treated as one of the above.
-_NAME_READING_COMMANDS = frozenset({'get-alias', 'get-command', 'get-help'})
+#: The commands that report on the named commands they are given, so that those names are the only
+#: ones they read. A form that names none reads the whole table and is treated as one of the above.
+#: `help` is here beside `Get-Help` because it is the 5.1 function that `help` and `man` resolve
+#: to, and a reader the metadata identifies but this does not list reads a name nothing records.
+_NAME_READING_COMMANDS = frozenset({'get-alias', 'get-command', 'get-help', 'help'})
 
 #: The parameters under which the commands above take the name they report on. A bare `n` is not
 #: among them although it is a prefix of `Name`: `Get-Command` also has `-Noun`, so `-N` names
@@ -195,35 +212,57 @@ _SUCCESS_VARIABLE = '?'
 #: The command a definition must denote for its removal to be nothing but the unbinding of a name.
 _SET_ALIAS = 'set-alias'
 
+#: The block reaches that make a script block a value first and code second, so that its statements
+#: are read out as text whether or not anything ever runs them.
+_HELD_BLOCK_REACH = frozenset({Ps1BlockReach.STORED, Ps1BlockReach.UNKNOWN})
 
-def _read_name_argument(cmd: Ps1CommandInvocation) -> str | None:
-    """
-    The literal command name `cmd` reports on, or `None` when it names none, names it with something
-    this cannot read, or selects what to report by anything other than a name. The first positional
-    argument carries it, or `-Name`.
 
-    Any other parameter answers `None` rather than being passed over. `Get-Alias -Definition
-    Write-Output` reports every alias of a command, `-Exclude` reports everything but a pattern, and
-    a parameter this does not know may have taken the very argument that would otherwise have read
-    as the name — the same ambiguity `extract_alias_definition` describes, in the direction where
-    reading on means reporting one name for a form that reports on many.
+def _read_name_arguments(cmd: Ps1CommandInvocation, command: str) -> frozenset[str] | None:
     """
+    The literal command names `cmd` reports on, or `None` when it names none, names one this cannot
+    read, or selects what to report by anything other than a name. `-Name` carries them, and so
+    does every free positional argument.
+
+    **Every one of them is read, not the first.** `-Name` binds an array and sits at position zero,
+    so `Get-Alias ls zzq` reports on both names; stopping at `ls` left `zzq` out of a set whose
+    whole job is to say which names a definition is still about, and the definition went while the
+    statement mentioning it stayed.
+
+    A parameter that takes a value and is not the name answers `None` rather than being passed
+    over. `Get-Alias -Definition Write-Output` reports every alias of a command, `-Exclude` reports
+    everything but a pattern, and a parameter this does not know may have taken the very argument
+    that would otherwise have read as a name — the same ambiguity `extract_alias_definition`
+    describes, in the direction where reading on means reporting one name for a form that reports
+    on many. A parameter that takes no value narrows how the report is written rather than deciding
+    what it is about, and it moves no argument, so reading on past one is safe.
+    """
+    written: list = []
     for argument in cmd.arguments:
         if not isinstance(argument, Ps1CommandArgument):
-            return string_value(argument)
-        if argument.kind is not Ps1CommandArgumentKind.POSITIONAL:
-            if argument.name.lstrip('-').lower() not in _READ_NAME_PARAMS:
+            written.append(argument)
+            continue
+        if argument.kind is Ps1CommandArgumentKind.POSITIONAL:
+            written.append(argument.value)
+            continue
+        if argument.name.lstrip('-').lower() not in _READ_NAME_PARAMS:
+            if consumes_a_value(command, argument.name):
                 return None
-            if argument.kind is Ps1CommandArgumentKind.SWITCH:
-                continue
-        return string_value(argument.value) if argument.value is not None else None
-    return None
+            continue
+        if argument.kind is Ps1CommandArgumentKind.NAMED:
+            written.append(argument.value)
+    names: set[str] = set()
+    for value in written:
+        found = string_value(value) if value is not None else None
+        if found is None:
+            return None
+        names.add(found)
+    return frozenset(names) or None
 
 
 class _Resolution(NamedTuple):
     """
     What `Ps1CommandModel._resolve` found: the `Denotation`, the definitions it consulted on the way,
-    and whether the script itself is why it names no command.
+    and whether a binding it could not read through is why it names no command.
 
     The consulted definitions are what makes a definition's removal decidable. A caller that has
     rewritten every use it could cannot tell from the tree which definitions the uses it left behind
@@ -231,14 +270,20 @@ class _Resolution(NamedTuple):
     nothing precisely because one exists somewhere it cannot reach. All three are recorded, because
     all three are reasons the definition is doing something.
 
-    The second is not a shade of the first — it separates two outcomes `CommandKind.UNKNOWN` and
-    `CommandKind.NOTHING` each cover both of. A name the collected metadata simply does not describe
-    is the host's business and nothing the script did: the world model's deny-list stance applies,
-    an unrecognized command is not treated as a mutator, and `Ps1CommandModel.world_role` answers
-    `WorldRole.NONE`. A name the script bound to something this model could not read through — a
-    `-Force` rebind, a `function:` takeover, a definition that does not statically reach — is a
-    refusal reached *with* evidence, and answering that it leaves the world as it found it would be
-    this model contradicting its own denotation.
+    The last is not a shade of the first — it separates two outcomes `CommandKind.UNKNOWN` and
+    `CommandKind.NOTHING` each cover both of. A name nothing was seen to bind, which the collected
+    metadata simply does not describe, is a refusal reached from ignorance: the world model's
+    deny-list stance applies, an unrecognized command is not treated as a mutator, and
+    `Ps1CommandModel.world_role` answers `WorldRole.NONE`. A name something *was* seen to bind, to
+    something this model could not read through — a `-Force` rebind, a `function:` takeover, a
+    definition that does not statically reach, a `Get-` retry landing on a name the host itself
+    aliases — is a refusal reached *with* evidence, and answering that it leaves the world as it
+    found it would be this model contradicting its own denotation.
+
+    The evidence is usually the script's own, and then the definitions carrying it are in
+    `implicated`; where it is the host's table instead there is nothing to implicate. The two are
+    deliberately not told apart, because what a caller acts on is that the refusal had a reason,
+    not whose it was.
     """
     denotation: Denotation
     implicated: tuple[AliasDefinition, ...]
@@ -250,7 +295,11 @@ def extract_alias_definition(cmd: Ps1CommandInvocation) -> AliasDefinition | Non
     Read `cmd` as an alias definition, or `None` when it is not one or this could not tell which of
     its arguments is the name. Positional (`sal x y`), named (`Set-Alias -Name x -Value y`) and
     mixed forms are all handled, in whichever order they are written; a wildcard target is noted as
-    denoting nothing, and everything else this could not account for is a reason to refuse.
+    denoting nothing, and everything else this could not account for is a reason to refuse. A
+    parameter written where the one before it is still waiting for its value is one of those:
+    `Set-Alias -Value -Name zzq Write-Output` binds nothing on a 5.1 host, because `-Value` is left
+    without an argument, so reading the words as the binding they spell reports a name the script
+    never bound and lets the statement that reports it be deleted.
 
     **A parameter that is not the name or the value makes the binding unreadable, not merely
     uninteresting.** `-PassThru` writes the alias object to the output stream, `-Scope` binds it
@@ -262,10 +311,19 @@ def extract_alias_definition(cmd: Ps1CommandInvocation) -> AliasDefinition | Non
     unrecognized switch does not merely add a reason to refuse: it ends the positional reading,
     and a name that had not been found by then is not found at all. Reading on regardless is how
     that same script came to be read as binding `d` to `zzq`.
+
+    **Which switches those are is asked of the command's own parameter metadata**, through
+    `refinery.lib.scripts.ps1.ast.consumes_a_value`, rather than assumed of every switch. A genuine
+    switch takes no argument, so `Set-Alias -Force ls Get-Content` binds `ls` exactly where
+    `Set-Alias ls Get-Content -Force` does; reading the two differently loses the binding for the
+    one form `-Force` exists for — rebinding a `ReadOnly` default alias — and a name the model
+    holds no definition for resolves through the built-in table instead, so `ls` was rewritten to
+    `Get-ChildItem` in a script that had just made it `Get-Content`.
     """
     name = get_command_name(cmd)
     if name is None or name.lower() not in _ALIAS_DEFINING_COMMANDS:
         return None
+    command = resolve_command_name(cmd) or name.lower()
     alias_name: str | None = None
     target: str | None = None
     target_seen = False
@@ -274,18 +332,23 @@ def extract_alias_definition(cmd: Ps1CommandInvocation) -> AliasDefinition | Non
     awaiting: frozenset[str] | None = None
     positional: list[str | None] = []
     for arg in cmd.arguments:
-        parameter = arg.name.lstrip('-').lower() if (
+        if (
             isinstance(arg, Ps1CommandArgument)
             and arg.kind is not Ps1CommandArgumentKind.POSITIONAL
-        ) else None
-        if parameter is not None:
-            assert isinstance(arg, Ps1CommandArgument)
+        ):
+            if awaiting is not None:
+                refuse = True
+                awaiting = None
+            parameter = arg.name.lstrip('-').lower()
             wanted = (
                 _NAME_PARAMS if parameter in _NAME_PARAMS else
                 _VALUE_PARAMS if parameter in _VALUE_PARAMS else None)
             if wanted is None:
                 refuse = True
-                if arg.kind is Ps1CommandArgumentKind.SWITCH:
+                if (
+                    arg.kind is Ps1CommandArgumentKind.SWITCH
+                    and consumes_a_value(command, arg.name)
+                ):
                     reading_positionals = False
             elif arg.kind is Ps1CommandArgumentKind.SWITCH:
                 awaiting = wanted
@@ -311,9 +374,11 @@ def extract_alias_definition(cmd: Ps1CommandInvocation) -> AliasDefinition | Non
         refuse = True
     if alias_name is None:
         return None
+    throws_if_bound = command in _BINDS_ONLY_WHEN_UNBOUND
     if not target_seen or target is None:
-        return AliasDefinition(alias_name.lower(), None, cmd, True, False)
-    return AliasDefinition(alias_name.lower(), target, cmd, refuse, _has_wildcard(target))
+        return AliasDefinition(alias_name.lower(), None, cmd, True, False, throws_if_bound)
+    return AliasDefinition(
+        alias_name.lower(), target, cmd, refuse, _has_wildcard(target), throws_if_bound)
 
 
 class Ps1CommandModel:
@@ -348,6 +413,7 @@ class Ps1CommandModel:
         self._roles: dict[int, WorldRole] = {}
         self._introspected: frozenset[str] | None = None
         self._introspected_known = False
+        self._reads_success: bool | None = None
 
     def denotation(self, invocation: Ps1CommandInvocation) -> Denotation:
         """
@@ -423,6 +489,13 @@ class Ps1CommandModel:
         - It must carry **no argument** beyond the name and the value, and both must be **literal**.
           `extract_alias_definition` reports this as a refusal, because a parameter it does not
           consume is one it cannot be sure did not consume the name.
+        - It must stand where it **runs**, rather than inside a script block held as a value.
+          PowerShell renders a scriptblock as its own source text, so `Write-Output { Set-Alias x
+          Y }` writes the definition out instead of running it, and a script without the statement
+          writes `{}` — a difference no question about the alias table can see, because the
+          statement never reached the table.
+          `refinery.lib.scripts.ps1.analysis.blocks.Ps1BlockReach` names the two block kinds this
+          covers: one whose value is kept and one handed to something that may not run it.
         """
         node = definition.node
         denotation = self.denotation(node)
@@ -436,7 +509,20 @@ class Ps1CommandModel:
             return False
         if definition.name in KNOWN_ALIAS:
             return False
+        if self._stands_inside_a_held_block(node):
+            return False
         return normalize_command_name(definition.name) == definition.name
+
+    def _stands_inside_a_held_block(self, node: Ps1CommandInvocation) -> bool:
+        cursor = node.parent
+        while cursor is not None:
+            if (
+                isinstance(cursor, Ps1ScriptBlock)
+                and self._blocks.facts(cursor).reach in _HELD_BLOCK_REACH
+            ):
+                return True
+            cursor = cursor.parent
+        return False
 
     def introspected_names(self) -> frozenset[str] | None:
         """
@@ -484,10 +570,10 @@ class Ps1CommandModel:
                 return None
             if reader not in _NAME_READING_COMMANDS:
                 continue
-            name = _read_name_argument(node)
-            if name is None or _has_wildcard(name):
+            found = _read_name_arguments(node, reader)
+            if found is None or any(_has_wildcard(name) for name in found):
                 return None
-            names.add(name.lower())
+            names.update(name.lower() for name in found)
         return frozenset(names)
 
     def reads_command_success(self) -> bool:
@@ -500,7 +586,15 @@ class Ps1CommandModel:
         and taking it out lets the failure before it through to the read. The variable is not the
         only engine state a removal disturbs, but it is the one a script can read back, and this is
         the fact a pass needs to decline the removal rather than reason about it.
+
+        Memoized for as long as the tree is unchanged, like every other whole-tree answer here: the
+        walk is the size of the script and a pass asks once per attempt at a removal.
         """
+        if self._reads_success is None:
+            self._reads_success = self._collect_reads_command_success()
+        return self._reads_success
+
+    def _collect_reads_command_success(self) -> bool:
         return any(
             isinstance(node, Ps1Variable)
             and node.scope is Ps1ScopeModifier.NONE
@@ -530,11 +624,11 @@ class Ps1CommandModel:
         this a different, vacuous question.
 
         `UNKNOWN` is for the two ways nothing static bounds what runs: dispatch that is open by
-        construction, which is the axis the world model runs as an allow-list, and a name the script
-        itself bound to something this model could not read through — see `_Resolution`. The second
-        is why not naming a command is not on its own an answer of `NONE`: `Set-Alias e iex -Force`
-        and `${function:Get-Date} = $x` each leave this model unable to say what a later use runs,
-        and it knows exactly why.
+        construction, which is the axis the world model runs as an allow-list, and a name something
+        was seen to bind to something this model could not read through — see `_Resolution`. The
+        second is why not naming a command is not on its own an answer of `NONE`: `Set-Alias e iex
+        -Force` and `${function:Get-Date} = $x` each leave this model unable to say what a later use
+        runs, and it knows exactly why.
         """
         found = self._roles.get(id(invocation))
         if found is None:
@@ -572,6 +666,39 @@ class Ps1CommandModel:
         `CommandNotFoundException` before and after, and the two errors differ only in a field the
         oracle drops.
 
+        **A `New-Alias` among several definitions of one name is refused, not followed.** The
+        reaching-definition selection answers which write is nearest, which is what a rebinding
+        `Set-Alias` does; `New-Alias` raises instead of rebinding, so where the name has more than
+        one definition the effective one is the *first* that ran, and nearest is exactly the wrong
+        answer. Deciding which one that is needs the order the definitions execute in and what the
+        host already bound, so the model says it cannot tell. Every definition of the name is
+        implicated, because any of them could be the one that took.
+
+        **The last tier is the implicit `Get-` retry**, which 5.1 falls back on for a name nothing
+        else claims — `alias zzq` runs `Get-Alias`, `childitem` runs `Get-ChildItem`. Two things
+        about it are measured and both decide how it is written here:
+
+        - It is a **last resort**, reached only once the alias, function and cmdlet tables have all
+          missed. `function alias { 'from-function' }; alias zzq` writes `from-function`, so a name
+          reached this way loses to every other tier. Putting these names in the built-in alias
+          table instead — which `KNOWN_ALIAS` did for `alias` — claims them *before* the function
+          tier, and a call to the script's own function is then rewritten into a call to the cmdlet,
+          deleting the body that ran.
+        - The retry resolves the prefixed name through the ordinary precedence rather than going
+          straight to a cmdlet: `function Get-Alias { 'from-function' }; alias zzq` also writes
+          `from-function`. So what this reports is a **name**, not a command. Rewriting `alias` to
+          `Get-Alias` is meaning-preserving whichever tier ends up claiming the prefixed spelling,
+          and once rewritten every other model reads an ordinary call — which is what keeps the call
+          graph from deleting a function whose only caller spelled it as a bare noun.
+
+        The prefixed name's own tiers are asked in this same order, and every refusal among them is
+        an unread binding like any other: a script that writes `Set-Alias Get-Alias Get-Date` makes
+        `alias zzq` run `Get-Date`, so that definition is implicated by the bare noun although the
+        noun never named it. Refusing without saying so is what let it be deleted as needed by
+        nobody, after which the noun was rewritten to the name it had rebound. Asking the shadow set
+        before the function tier would refuse every ordinary `function Get-X { }` as well, since a
+        `function` definition puts its name in both.
+
         An inline scriptblock (`&{ ... }`) is not an unread binding: its body stands in the tree, so
         the whole-tree walk reads whatever it does. The unlocatable node is, defensively — a node in
         no control-flow graph is one this model knows nothing about, including whether the script
@@ -599,6 +726,9 @@ class Ps1CommandModel:
                 implicated.append(reaching)
                 if current in KNOWN_ALIAS or reaching.refuse:
                     return resolved(CommandKind.UNKNOWN, None, True)
+                if reaching.throws_if_bound and len(self._alias_defs[current]) > 1:
+                    implicated.extend(self._alias_defs[current])
+                    return resolved(CommandKind.UNKNOWN, None, True)
                 if reaching.wildcard or reaching.target is None:
                     return resolved(CommandKind.NOTHING, None)
                 visited.add(current)
@@ -625,6 +755,20 @@ class Ps1CommandModel:
             return resolved(CommandKind.UNKNOWN, None, True)
         if current in KNOWN_CMDLETS:
             return resolved(CommandKind.CMDLET, KNOWN_CMDLETS[current])
+        prefixed = F'get-{current}'
+        definitions = self._alias_defs.get(prefixed)
+        if definitions is not None:
+            implicated.extend(definitions)
+            return resolved(CommandKind.UNKNOWN, None, True)
+        if prefixed in KNOWN_ALIAS:
+            return resolved(CommandKind.UNKNOWN, None, True)
+        if prefixed in self._functions:
+            return resolved(CommandKind.ALIAS, KNOWN_CMDLETS.get(prefixed, F'Get-{current}'))
+        if prefixed in self._shadowed:
+            return resolved(CommandKind.UNKNOWN, None, True)
+        canonical = KNOWN_CMDLETS.get(prefixed)
+        if canonical is not None:
+            return resolved(CommandKind.ALIAS, canonical)
         return resolved(CommandKind.UNKNOWN, None)
 
     def _reaching_alias_def(

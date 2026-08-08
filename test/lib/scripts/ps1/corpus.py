@@ -168,6 +168,9 @@ BEHAVIOURS: tuple[str, ...] = (
     "Set-Alias -Value Write-Output -Name zzq; zzq 'named-out-of-order'",
     "Set-Alias -N zzq -V Write-Output; zzq 'one-letter'",
     "Set-Alias -Description d zzq Write-Output; zzq 'described'",
+    "function alias { 'from-function' }; Set-Alias zzq Write-Output; alias zzq",
+    "function Get-Alias { 'from-function' }; Set-Alias zzq Write-Output; alias zzq",
+    "Set-Alias -Force zzq Write-Output; zzq 'forced'",
     "Set-Alias zzq Write-Output -PassThru; zzq 'passthru'",
 )
 

@@ -57,9 +57,11 @@ exports, named here because the conditions above would otherwise read as coverin
 """
 from __future__ import annotations
 
+from typing import Sequence
+
 from refinery.lib.scripts import Node, Transformer
 from refinery.lib.scripts.ps1.analysis.cache import Ps1ModelCache, model_cache
-from refinery.lib.scripts.ps1.analysis.commands import CommandKind
+from refinery.lib.scripts.ps1.analysis.commands import AliasDefinition, CommandKind
 from refinery.lib.scripts.ps1.analysis.world import WorldRole
 from refinery.lib.scripts.ps1.ast import standalone_command_statement
 from refinery.lib.scripts.ps1.deobfuscation.helpers import set_command_name
@@ -108,7 +110,7 @@ class Ps1AliasInlining(Transformer):
         """
         cache = model_cache(self, root)
         definitions = list(cache.commands.every_alias_definition())
-        if not definitions or not self._nothing_watches_the_table(root, cache):
+        if not definitions or not self._nothing_watches_the_table(root, cache, definitions):
             return False
         introspected = cache.commands.introspected_names()
         if introspected is None:
@@ -144,7 +146,12 @@ class Ps1AliasInlining(Transformer):
             for definition in cache.commands.implicated_definitions(invocation)
         }
 
-    def _nothing_watches_the_table(self, root: Ps1Script, cache: Ps1ModelCache) -> bool:
+    def _nothing_watches_the_table(
+        self,
+        root: Ps1Script,
+        cache: Ps1ModelCache,
+        definitions: Sequence[AliasDefinition],
+    ) -> bool:
         """
         Whether the alias table is visible only to the script as written — gates 4 and 5.
 
@@ -153,14 +160,19 @@ class Ps1AliasInlining(Transformer):
         and `Ps1CommandModel.world_role` is where that is answered. An invocation whose role is
         `IDENTITY` is allowed exactly when it is one of the definitions being taken, which is also
         the check that catches a defining command this pass never recognized as one.
+
+        The batch arrives here rather than being asked for again, so the set the `IDENTITY`
+        exemption is granted from is the same one the caller vetoes over. The gates are asked in
+        order of what they cost: the two whole-tree walks come after the verdicts the models already
+        hold, since a script with any other opener refuses without either of them being run.
         """
-        if cache.commands.reads_command_success():
-            return False
         if not cache.closed_world.closed_but_for_alias_bindings:
             return False
         if cache.call_graph.exports_a_name:
             return False
-        taken = {id(definition.node) for definition in cache.commands.every_alias_definition()}
+        if cache.commands.reads_command_success():
+            return False
+        taken = {id(definition.node) for definition in definitions}
         for invocation in root.walk():
             if not isinstance(invocation, Ps1CommandInvocation):
                 continue

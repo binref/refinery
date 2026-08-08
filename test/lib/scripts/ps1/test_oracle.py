@@ -114,19 +114,11 @@ BEHAVIOUR_DIVERGENCES: dict[str, str] = {
 #: tool's first promise is that its output does the same thing as its input. Each entry states what
 #: the snippet writes and what its output writes instead, so a failure can be read here.
 #:
-#: Every entry that is a claim of the corruption ledger is also a defect that ledger already carries
-#: as an `expectedFailure`. That the two agree entry for entry matters: the ledger reaches its
-#: verdict by asking whether a store survived in the tree, and this reaches it by running both
-#: scripts, so neither is evidence for the other. An entry that is not a ledger claim is a defect
-#: this differential found on its own, and it is recorded here rather than left to fail because
-#: what it costs to fix is not what it costs to see.
+#: Every entry is a claim of the corruption ledger, and every one of them is a defect that ledger
+#: already carries as an `expectedFailure`. That the two agree entry for entry matters: the ledger
+#: reaches its verdict by asking whether a store survived in the tree, and this reaches it by
+#: running both scripts, so neither is evidence for the other.
 BEHAVIOUR_DEFECTS: dict[str, str] = {
-    "New-Alias zzq Write-Output; New-Alias zzq Write-Host; zzq 'first-wins'":
-        'The use is rewritten to `Write-Host`, so the snippet writes its argument to the success '
-        'stream and its output writes it to the host. `New-Alias` throws on a name that already '
-        'has one, so the second definition never takes and the *first* is what the use runs; the '
-        'command model picks the nearest reaching definition, which is right for `Set-Alias` and '
-        'wrong for this one. The error the second definition raises is written either way.',
     "Set-Variable global:y 'b'; Write-Host $global:y":
         'The store is dropped, so `b` becomes nothing: a command that writes a variable is not '
         'read as the store the following read needs.',

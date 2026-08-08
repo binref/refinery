@@ -465,7 +465,7 @@ def set_command_name(node: Ps1CommandInvocation, name: str) -> bool:
     if node.name is not None and string_value(node.name) == name:
         return False
     offset = node.name.offset if node.name is not None else -1
-    bare = _BARE_COMMAND_NAME.fullmatch(name) is not None
+    bare = is_bare_command_name(name)
     if bare:
         literal: Ps1StringLiteral | Ps1HereString = Ps1StringLiteral(
             offset=offset, value=name, raw=name)

@@ -174,7 +174,6 @@ def is_type(name: str, canonical_lower: str) -> bool:
 KNOWN_ALIAS: dict[str, str] = {
     _name.lower(): _definition for _name, _definition in _COMMANDS['aliases'].items()
 }
-KNOWN_ALIAS.setdefault('alias', 'Get-Alias')
 KNOWN_ALIAS.setdefault('childitem', 'Get-ChildItem')
 KNOWN_ALIAS.setdefault('fhx', 'Format-Hex')
 KNOWN_ALIAS.setdefault('gerr', 'Get-Error')

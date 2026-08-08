@@ -15,7 +15,7 @@ import io
 
 from typing import Iterator, TypeGuard
 
-from refinery.lib.scripts import Block, Node, Statement
+from refinery.lib.scripts import Block, Node, Statement, owning_field
 from refinery.lib.scripts.ps1.data import BUILTIN_VARIABLES, KNOWN_ALIAS, value_parameters
 from refinery.lib.scripts.ps1.model import (
     Expression,
@@ -65,6 +65,13 @@ def standalone_command_statement(cmd: Ps1CommandInvocation) -> Statement | None:
     syntax that a command stands alone, and a pass still owes the redirections written anywhere
     inside it — see `refinery.lib.scripts.ps1.deobfuscation.substitution.carried_redirections`,
     which reads the whole subtree because the carrier is rarely the node the pass is holding.
+
+    A `refinery.lib.scripts.ps1.model.Ps1Pipeline` is itself a statement, so being one is not on its
+    own evidence that it stands as one: a single-stage pipeline written into a value field — the
+    right-hand side of a store, the condition of a loop — would otherwise answer with itself and
+    hand a caller the very shape this refuses. A node its holder keeps in a field rather than in a
+    list is that shape, whichever body the field belongs to, which is why the refusal is spelled
+    against `refinery.lib.scripts.owning_field` and not against a particular body.
     """
     node: Node = cmd
     element = node.parent
@@ -78,7 +85,7 @@ def standalone_command_statement(cmd: Ps1CommandInvocation) -> Statement | None:
     statement = node.parent
     if isinstance(statement, Ps1ExpressionStatement) and statement.expression is node:
         node = statement
-    if not isinstance(node, Statement):
+    if not isinstance(node, Statement) or owning_field(node) is not None:
         return None
     return node
 
@@ -507,6 +514,22 @@ def bound_argument_value(
     return None
 
 
+def consumes_a_value(command: str, written: str) -> bool:
+    """
+    Whether the parameter *written* in a call to *command* takes the bare word that follows it as
+    its value, rather than leaving that word a positional argument of its own. *command* is the
+    canonical name `resolve_command_name` reports.
+
+    The parser has no parameter metadata, so it hands `-Name x` and `-Force C:\\` over in the same
+    shape — a switch followed by a positional. This is the metadata that tells them apart, read
+    through `binds_parameter` because PowerShell binds any unambiguous abbreviation. A caller
+    deciding what an unrecognized parameter did to the argument list needs exactly this: a genuine
+    switch leaves every following word where it stands, so reading the list on past one is safe,
+    and only a value-taking parameter moves the words after it.
+    """
+    return any(binds_parameter(written, parameter) for parameter in value_parameters(command))
+
+
 def free_positional_values(
     cmd: Ps1CommandInvocation, command: str,
 ) -> list[Expression]:
@@ -522,14 +545,13 @@ def free_positional_values(
     scope as an argument in its own right both misnames the variable and appends the word `Global`
     to its value.
     """
-    takes_value = value_parameters(command)
     result: list[Expression] = []
     consumed = False
     for argument in cmd.arguments:
         if not isinstance(argument, Ps1CommandArgument):
             continue
         if argument.kind is Ps1CommandArgumentKind.SWITCH:
-            consumed = any(binds_parameter(argument.name, name) for name in takes_value)
+            consumed = consumes_a_value(command, argument.name)
             continue
         if argument.kind is Ps1CommandArgumentKind.NAMED:
             consumed = False

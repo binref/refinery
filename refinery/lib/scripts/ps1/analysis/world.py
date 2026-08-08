@@ -440,19 +440,23 @@ def touches_identity_provider(cmd: Ps1CommandInvocation) -> bool:
     without `Set-Item` being an aliasing cmdlet. Recognized by the provider the path names, not by
     resolving the aliased target, so an obfuscated or dynamic target cannot slip through.
 
-    The provider is read after the same two decorations `resolve_command_name` strips from a
-    command name, because a path addresses the identical namespace through either:
-    `Microsoft.PowerShell.Core\\Function::Get-Date` is what `function:Get-Date` is short for, and a
-    prefix test keyed on the short spelling reads the long one as an ordinary file path.
+    The provider is read both as written and after the module qualifier `resolve_command_name`
+    strips from a command name, because a path addresses the identical namespace through either
+    and the separator between them is the same character:
+    `Microsoft.PowerShell.Core\\Function::Get-Date` is what `function:Get-Date` is short for and is
+    only found after the strip, while `Alias:\\x` — which is what `Get-ChildItem Alias:` completes
+    to, and what a provider path most often looks like — is only found before it. Reading either
+    spelling alone leaves the other looking like an ordinary file path, which is the direction a
+    deny-list must never fail in.
     """
     for arg in cmd.arguments:
         value = arg.value if isinstance(arg, Ps1CommandArgument) else arg
         text = string_value(value)
         if text is None:
             continue
-        provider = text.rpartition('\\')[2].partition(':')[0].lower()
-        if provider in _IDENTITY_PROVIDERS:
-            return True
+        for spelling in (text, text.rpartition('\\')[2]):
+            if spelling.partition(':')[0].lower() in _IDENTITY_PROVIDERS:
+                return True
     return False
 
 

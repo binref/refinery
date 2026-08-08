@@ -80,6 +80,16 @@ class TestPs1AliasInlining(TestPs1):
         result = self._deobfuscate("function f { Set-Alias zx Write-Output }\nzx 'hi'")
         self.assertEqual(result, "function f {\n  Set-Alias zx Write-Output\n}\nzx 'hi'")
 
+    def test_a_parameter_left_without_its_argument_binds_nothing_and_is_left_intact(self):
+        # `-Value` is followed by another parameter rather than by its argument, so 5.1 fails the
+        # binding with MissingArgument: the command never runs, no alias named `zzq` is created,
+        # and the call below denotes nothing.
+        script = cleandoc("""
+            Set-Alias -Value -Name zzq Write-Output
+            zzq 'hi'
+        """)
+        self.assertEqual(self._deobfuscate(script), script)
+
 
 class TestPs1AliasDefinitionRemoval(TestPs1):
 
@@ -119,6 +129,30 @@ class TestPs1AliasDefinitionRemoval(TestPs1):
             Set-Alias foo Write-Output
             Write-Output 'hi'
             Get-Alias foo
+        """))
+
+    def test_a_read_of_the_help_for_a_name_keeps_the_definition_it_names(self):
+        # `help` is the 5.1 function that reports a command's help and `man` is its default alias,
+        # so either spelling reads the alias table for the name it is handed.
+        result = self._deobfuscate(cleandoc("""
+            Set-Alias foo Write-Output
+            foo 'hi'
+            help foo
+        """))
+        self.assertEqual(result, cleandoc("""
+            Set-Alias foo Write-Output
+            Write-Output 'hi'
+            help foo
+        """))
+        under_its_alias = self._deobfuscate(cleandoc("""
+            Set-Alias bar Write-Output
+            bar 'hi'
+            man bar
+        """))
+        self.assertEqual(under_its_alias, cleandoc("""
+            Set-Alias bar Write-Output
+            Write-Output 'hi'
+            help bar
         """))
 
     def test_a_read_through_the_alias_namespace_keeps_the_definition(self):
@@ -204,6 +238,23 @@ class TestPs1AliasDefinitionRemoval(TestPs1):
             Write-Output 'b'
             Get-Alias bar
         """))
+
+    def test_a_definition_inside_a_block_kept_as_a_value_is_not_removed(self):
+        # A scriptblock renders as the source text between its braces, so the statement is written
+        # out rather than run. Measured on 5.1, `Write-Output { Set-Alias zq Get-Date }` prints
+        # ` Set-Alias zq Get-Date ` and binds nothing, so removing it changes what the script says.
+        printed = cleandoc("""
+            Write-Output {
+              Set-Alias zq Get-Date
+            }
+        """)
+        stored = cleandoc("""
+            $sb = {
+              Set-Alias zq Get-Date
+            }
+        """)
+        self.assertEqual(self._deobfuscate(printed), printed)
+        self.assertEqual(self._deobfuscate(stored), stored)
 
 
 class TestPs1AliasRemovalInsideAProtectedBody(TestPs1):

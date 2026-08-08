@@ -639,7 +639,7 @@ def set_child(parent: Node, attr: str, child: Node | None) -> None:
     _bump_tree_version(parent)
 
 
-def set_value(parent: Node, attr: str, value) -> None:
+def set_value(parent: Node, attr: str, value: object) -> None:
     """
     Replace the value field at `parent.<attr>` — one holding a scalar rather than a child node, such
     as an operator string, a name, or a flag — and advance the mutation counter of the tree `parent`
