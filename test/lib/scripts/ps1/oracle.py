@@ -30,6 +30,14 @@ from test.lib.scripts.ps1.corpus import executable
 #: workers, and each host is a process of its own.
 _HOSTS_AT_ONCE = 4
 
+#: How many characters of JSON one batch of sources may come to. `-EncodedCommand` puts the whole
+#: script on the command line, and Windows refuses one longer than 32767 characters: the script
+#: travels as base64 of UTF-16LE, so each of its characters costs eight thirds of one there, and the
+#: payload is base64 of the JSON at four thirds again. What is left over once the fixed part of the
+#: script is paid for is a few thousand characters of source, which the corpus grew past — so a
+#: payload carries a batch rather than the whole corpus and the reports are concatenated.
+_BATCH_BUDGET = 5000
+
 #: Emitted before every script. The output encoding matters because 5.1 writes redirected output in
 #: the OEM code page by default, which mangles the quote characters the lexer corpus exists to test.
 #: Progress records matter because they are serialized to stderr as CLIXML and would otherwise be
@@ -229,27 +237,21 @@ def host_info(timeout: float = 120.0) -> HostInfo:
 def parse_reports(sources: typing.Sequence[str], timeout: float = 120.0) -> list[ParseReport]:
     """
     What 5.1 makes of each source, without running any of it: the identifiers of the parse errors
-    it reported, and the tokens it read. Every source is measured in one host, so a corpus costs
-    one process rather than one process each.
+    it reported, and the tokens it read. Sources are measured a batch at a time, so a corpus costs a
+    few processes rather than one process each.
 
     Error identifiers are reported rather than messages, which are localized and quote the value
     that offended.
     """
-    if not sources:
-        return []
-    payload = base64.b64encode(json.dumps(list(sources)).encode('utf-8')).decode('ascii')
-    decoded = _decode(run(_PARSE_SCRIPT.replace('@PAYLOAD@', payload), timeout))
-    reports = decoded['reports']
-    if len(reports) != len(sources):
-        raise OracleError(F'asked about {len(sources)} sources and heard about {len(reports)}')
-    return [
-        ParseReport(
-            errors=tuple(report['errors']),
-            tokens=tuple(Token(t['text'], t['kind'], t['flags']) for t in report['tokens']),
-            failed=report['failed'],
-        )
-        for report in reports
-    ]
+    reports: list[ParseReport] = []
+    for batch in _batches(sources):
+        for report in _ask(_PARSE_SCRIPT, batch, 'reports', timeout):
+            reports.append(ParseReport(
+                errors=tuple(report['errors']),
+                tokens=tuple(Token(t['text'], t['kind'], t['flags']) for t in report['tokens']),
+                failed=report['failed'],
+            ))
+    return reports
 
 
 def command_names(
@@ -321,11 +323,43 @@ def echo(sources: typing.Sequence[str], timeout: float = 120.0) -> list[str]:
     What the host received. Nothing here is executed or parsed; this exists so that a transport
     fault is a distinct failure from a disagreement about the language.
     """
-    if not sources:
-        return []
-    payload = base64.b64encode(json.dumps(list(sources)).encode('utf-8')).decode('ascii')
-    echoed = _decode(run(_ECHO_SCRIPT.replace('@PAYLOAD@', payload), timeout))['echoed']
-    return [base64.b64decode(item).decode('utf-8') for item in echoed]
+    return [
+        base64.b64decode(item).decode('utf-8')
+        for batch in _batches(sources)
+        for item in _ask(_ECHO_SCRIPT, batch, 'echoed', timeout)
+    ]
+
+
+def _batches(sources: typing.Sequence[str]) -> typing.Iterator[list[str]]:
+    """
+    `sources` split into runs that each fit in one command line. A source larger than the budget on
+    its own travels alone rather than being split: a source is the unit a report is about, and the
+    oversized one then fails loudly against the command-line limit, which is the honest answer.
+    """
+    batch: list[str] = []
+    size = 0
+    for source in sources:
+        cost = len(json.dumps(source)) + 1
+        if batch and size + cost > _BATCH_BUDGET:
+            yield batch
+            batch, size = [], 0
+        batch.append(source)
+        size += cost
+    if batch:
+        yield batch
+
+
+def _ask(script: str, batch: typing.Sequence[str], field: str, timeout: float) -> list:
+    """
+    Run one of the reporting scripts over one batch and return the field it reports, checked to be
+    one entry per source: a host that answered about fewer sources than it was asked about would
+    otherwise shift every later source's report onto the wrong one.
+    """
+    payload = base64.b64encode(json.dumps(list(batch)).encode('utf-8')).decode('ascii')
+    reported = _decode(run(script.replace('@PAYLOAD@', payload), timeout))[field]
+    if len(reported) != len(batch):
+        raise OracleError(F'asked about {len(batch)} sources and heard about {len(reported)}')
+    return reported
 
 
 def _decode(result: Behaviour) -> dict:
