@@ -29,6 +29,7 @@ from refinery.lib.scripts.ps1.ast import (
     normalize_command_name,
     normalize_dotnet_type_name,
     normalize_type_expression,
+    standalone_command_statement,
     string_value,
 )
 from refinery.lib.scripts.ps1.data import (
@@ -1561,37 +1562,43 @@ class Ps1FunctionEvaluator(Transformer):
         return True
 
     def _remove_dead_calls(self, root, dead_functions: set[str]):
-        if isinstance(root, Ps1Script):
-            body = root.body
-        elif isinstance(root, Block):
-            body = root.body
-        else:
+        """
+        Delete the calls to functions this pass has just deleted, from `root`'s own body.
+
+        Which statement a call *is* comes from
+        `refinery.lib.scripts.ps1.ast.standalone_command_statement`, so this pass and the one that
+        deletes a resolved alias definition mean the same thing by a command standing alone rather
+        than each recognizing the shape privately.
+
+        The redirection refusal is a backstop and is measured to be one: a redirecting call is
+        already refused at the visit, which leaves the definition's replaced and failed counts short
+        of its call count, so the function is never proved inert and its name never reaches here.
+        It is kept because what makes it unreachable is an invariant of a different method, and what
+        it prevents if that invariant ever moves is a file: PowerShell opens the redirection target
+        as it sets the redirection up, so `deadfunc > C:\\log` creates the file although the body
+        writes nothing. Dropping it is the loss
+        `refinery.lib.scripts.ps1.deobfuscation.substitution` refuses for every rewrite, and a
+        removal is entitled to it only by claiming the code does not run at all. This one claims the
+        opposite: the function ran, and nothing was observed.
+        """
+        if not isinstance(root, (Ps1Script, Block)):
             return
+        held = {id(statement) for statement in root.body}
         plan = Ps1RemovalPlan(root)
-        for stmt in body:
-            target = self._get_call_target(stmt)
-            if target is not None and target in dead_functions:
-                plan.propose(stmt)
+        for cmd in root.walk():
+            if not isinstance(cmd, Ps1CommandInvocation):
+                continue
+            name = get_command_name(cmd)
+            if name is None or name.lower() not in dead_functions:
+                continue
+            statement = standalone_command_statement(cmd)
+            if statement is None or id(statement) not in held:
+                continue
+            if carried_redirections(statement):
+                continue
+            plan.propose(statement)
         if plan.commit():
             self.mark_changed()
-
-    @staticmethod
-    def _get_call_target(stmt) -> str | None:
-        if isinstance(stmt, Ps1ExpressionStatement):
-            expr = stmt.expression
-        elif isinstance(stmt, Ps1Pipeline):
-            expr = stmt
-        else:
-            return None
-        if isinstance(expr, Ps1Pipeline) and len(expr.elements) == 1:
-            elem = expr.elements[0]
-            if isinstance(elem, Ps1PipelineElement):
-                expr = elem.expression
-        if isinstance(expr, Ps1CommandInvocation):
-            name = get_command_name(expr)
-            if name:
-                return name.lower()
-        return None
 
 
 class Ps1ForEachPipeline(Transformer):

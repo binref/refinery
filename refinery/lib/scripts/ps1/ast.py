@@ -15,7 +15,7 @@ import io
 
 from typing import Iterator, TypeGuard
 
-from refinery.lib.scripts import Block, Node
+from refinery.lib.scripts import Block, Node, Statement
 from refinery.lib.scripts.ps1.data import BUILTIN_VARIABLES, KNOWN_ALIAS, value_parameters
 from refinery.lib.scripts.ps1.model import (
     Expression,
@@ -35,6 +35,8 @@ from refinery.lib.scripts.ps1.model import (
     Ps1MemberAccess,
     Ps1ParamBlock,
     Ps1ParenExpression,
+    Ps1Pipeline,
+    Ps1PipelineElement,
     Ps1RealLiteral,
     Ps1ScopeModifier,
     Ps1ScriptBlock,
@@ -43,6 +45,42 @@ from refinery.lib.scripts.ps1.model import (
     Ps1TypeExpression,
     Ps1Variable,
 )
+
+
+def standalone_command_statement(cmd: Ps1CommandInvocation) -> Statement | None:
+    """
+    The statement that is nothing but `cmd`, or `None` when the invocation is part of something
+    larger. A pass that has decided one command need not run asks this for the statement to take
+    out, because a command whose value flows anywhere — into a store, into a condition, into the
+    next stage of a pipeline — cannot be removed by removing a statement.
+
+    Only the wrappers that spell nothing of their own are climbed through, which is the same set
+    `refinery.lib.scripts.ps1.model.Ps1Pipeline.canonical_form` and
+    `refinery.lib.scripts.ps1.model.Ps1PipelineElement.canonical_form` identify away: a pipeline of
+    one stage is that stage, and an element that redirects nothing is its expression. An element
+    that *does* redirect is not climbed through, because the redirection is a second thing the
+    statement does and would be reported here as if the invocation were alone in it.
+
+    Whether the statement may then be removed is a different question and not this one's: it is
+    syntax that a command stands alone, and a pass still owes the redirections written anywhere
+    inside it — see `refinery.lib.scripts.ps1.deobfuscation.substitution.carried_redirections`,
+    which reads the whole subtree because the carrier is rarely the node the pass is holding.
+    """
+    node: Node = cmd
+    element = node.parent
+    if isinstance(element, Ps1PipelineElement):
+        if element.redirections or element.expression is not node:
+            return None
+        pipeline = element.parent
+        if not isinstance(pipeline, Ps1Pipeline) or len(pipeline.elements) != 1:
+            return None
+        node = pipeline
+    statement = node.parent
+    if isinstance(statement, Ps1ExpressionStatement) and statement.expression is node:
+        node = statement
+    if not isinstance(node, Statement):
+        return None
+    return node
 
 
 def get_body(node) -> list | None:

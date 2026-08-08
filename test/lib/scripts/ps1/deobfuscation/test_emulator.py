@@ -443,6 +443,18 @@ class TestPs1EmulatorExtra(TestPs1):
         """)
         self.assertEqual(self._apply(source, Ps1FunctionEvaluator), "$x = 'V'")
 
+    def test_a_call_to_a_function_that_emitted_nothing_goes_with_its_definition(self):
+        # The body hands out no code and produces no value, so the call is accounted for with
+        # nothing installed in its place, and the definition it named is left uncalled.
+        source = cleandoc("""
+            function Silent {
+              Invoke-Expression ''
+            }
+            Silent
+            Write-Host 'after'
+        """)
+        self.assertEqual(self._apply(source, Ps1FunctionEvaluator), "Write-Host 'after'")
+
     def test_an_exported_definition_is_not_removed_after_its_calls_are_folded(self):
         # Regression: folding a call into its value is safe whoever else can reach the name, but
         # deleting the definition afterwards is a name-keyed removal, and an exported name has a
@@ -494,6 +506,21 @@ class TestPs1EmulatorRedirections(TestPs1):
             "function F { 'V' }\n$x = F\nF > C:\\o.txt", Ps1FunctionEvaluator)
         self.assertIn('function F', result)
         self.assertIn("$x = 'V'", result)
+
+    def test_a_redirecting_call_to_a_function_that_emitted_nothing_is_kept(self):
+        # PowerShell creates the target as it sets the redirection up, so the statement produces the
+        # file although the body it names writes nothing into it; deleting it as observing nothing
+        # loses the one thing it did. Every spelling is refused, including the merges that create no
+        # file, because a merge still moves records the console would otherwise show.
+        for redirection in (r'> C:\o.txt', r'>> C:\o.txt', '2>&1', '1>&2', r'*> C:\o.txt'):
+            with self.subTest(redirection):
+                self._assertUnchanged(cleandoc(F"""
+                    function Silent {{
+                      Invoke-Expression ''
+                    }}
+                    Silent {redirection}
+                    Write-Host 'after'
+                """), Ps1FunctionEvaluator)
 
     def test_a_value_a_discard_took_away_is_not_read_back(self):
         # `$a = j > $Null` binds `$a` to `$null`, so `$a.Length` is not 4.

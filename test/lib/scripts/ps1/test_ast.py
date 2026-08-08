@@ -2,17 +2,24 @@ from __future__ import annotations
 
 from test import TestBase
 
-from refinery.lib.scripts import Node
+from refinery.lib.scripts import Block, Node
 from refinery.lib.scripts.ps1.ast import (
     bound_argument_value,
     free_positional_values,
+    get_command_name,
     in_evaluation_order,
     is_reference_cast,
+    standalone_command_statement,
 )
 from refinery.lib.scripts.ps1.model import (
     Ps1CastExpression,
     Ps1CommandInvocation,
+    Ps1ExpressionStatement,
+    Ps1Pipeline,
+    Ps1PipelineElement,
+    Ps1Script,
     Ps1StringLiteral,
+    Ps1SubExpression,
     Ps1Variable,
 )
 from refinery.lib.scripts.ps1.parser import Ps1Parser
@@ -58,6 +65,103 @@ class TestPs1EvaluationOrder(TestBase):
         `$x, $y = $y, $x` swaps, so neither target may be ordered before either source.
         """
         self.assertEqual(self._order("$x, $y = $y, $x"), ['$y', '$x', '$x', '$y'])
+
+
+class TestPs1StandaloneCommandStatement(TestBase):
+    """
+    The statement a command is the whole of, which is what a pass that has decided the command need
+    not run has to take out. A command whose value goes anywhere is the whole of nothing, since the
+    statement around it cannot go without the value going too.
+    """
+
+    @staticmethod
+    def _parse(source: str) -> tuple[Ps1Script, Ps1CommandInvocation]:
+        script = Ps1Parser(source).parse()
+        for node in script.walk_in_order():
+            if isinstance(node, Ps1CommandInvocation) and get_command_name(node) == 'target':
+                return script, node
+        raise AssertionError(F'no command named target in {source!r}')
+
+    def test_a_bare_command_is_the_whole_of_the_statement_that_holds_it(self):
+        for source in ('target', "target 'a' -Switch", '& target', '. target'):
+            with self.subTest(source):
+                script, cmd = self._parse(source)
+                self.assertIs(standalone_command_statement(cmd), script.body[0])
+
+    def test_a_redirection_the_command_carries_leaves_it_standing_alone(self):
+        """
+        The redirection is written on the command, so the command is still the whole of what the
+        statement spells. Whether the statement may then be taken out is a different question, and
+        the one `refinery.lib.scripts.ps1.deobfuscation.substitution.carried_redirections` answers.
+        """
+        for source in ('target > C:\\o.txt', 'target 2>&1', 'target >> C:\\o.txt'):
+            with self.subTest(source):
+                script, cmd = self._parse(source)
+                self.assertIs(standalone_command_statement(cmd), script.body[0])
+
+    def test_a_command_that_is_one_stage_of_a_pipeline_is_the_whole_of_nothing(self):
+        for source in ('target | Out-Null', 'Get-ChildItem | target', 'a | target | b'):
+            with self.subTest(source):
+                self.assertIsNone(standalone_command_statement(self._parse(source)[1]))
+
+    def test_a_command_whose_value_is_stored_is_the_whole_of_nothing(self):
+        for source in ('$x = target', '$x += target', '[string]$x = target', '$a[0] = target'):
+            with self.subTest(source):
+                self.assertIsNone(standalone_command_statement(self._parse(source)[1]))
+
+    def test_a_command_that_is_an_argument_is_the_whole_of_nothing(self):
+        for source in ('other (target)', 'other -Value (target)', 'outer (inner (target))'):
+            with self.subTest(source):
+                self.assertIsNone(standalone_command_statement(self._parse(source)[1]))
+
+    def test_a_command_that_is_a_condition_is_the_whole_of_nothing(self):
+        for source in (
+            'if (target) { }',
+            'while (target) { }',
+            'do { } while (target)',
+            'switch (target) { 1 { } }',
+            'foreach ($i in target) { }',
+        ):
+            with self.subTest(source):
+                self.assertIsNone(standalone_command_statement(self._parse(source)[1]))
+
+    def test_a_command_whose_value_leaves_the_body_is_the_whole_of_nothing(self):
+        for source in ('return target', 'throw target'):
+            with self.subTest(source):
+                self.assertIsNone(standalone_command_statement(self._parse(source)[1]))
+
+    def test_a_command_alone_in_a_nested_block_names_the_statement_of_that_block(self):
+        script, cmd = self._parse('if ($true) { target }')
+        block = next(node for node in script.walk_in_order() if isinstance(node, Block))
+        self.assertIs(standalone_command_statement(cmd), block.body[0])
+
+    def test_a_command_alone_in_a_subexpression_names_the_statement_inside_it(self):
+        """
+        Standing alone is syntax, so the statement reported is the one the command stands in and
+        not one the script's own body holds. Which body it came out of is the caller's question.
+        """
+        script, cmd = self._parse('other $(target)')
+        inner = next(node for node in script.walk_in_order() if isinstance(node, Ps1SubExpression))
+        self.assertIs(standalone_command_statement(cmd), inner.body[0])
+
+    @classmethod
+    def _one_stage(cls, redirections: list) -> tuple[Ps1ExpressionStatement, Ps1CommandInvocation]:
+        """
+        A command wrapped in a pipeline of one stage carrying *redirections*. No parser builds this
+        shape — a stage holding a command never takes a redirection of its own, and a pipeline of
+        one is never assembled — so it reaches the accessor only from a transform that built it.
+        """
+        cmd = cls._parse('target')[1]
+        element = Ps1PipelineElement(expression=cmd, redirections=redirections)
+        return Ps1ExpressionStatement(expression=Ps1Pipeline(elements=[element])), cmd
+
+    def test_a_pipeline_of_one_stage_is_climbed_through_to_the_statement_around_it(self):
+        statement, cmd = self._one_stage([])
+        self.assertIs(standalone_command_statement(cmd), statement)
+
+    def test_a_stage_that_redirects_is_not_climbed_through(self):
+        written = self._parse('target > C:\\o.txt')[1]
+        self.assertIsNone(standalone_command_statement(self._one_stage(written.redirections)[1]))
 
 
 class TestPs1ReferenceCast(TestBase):
