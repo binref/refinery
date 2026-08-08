@@ -125,6 +125,16 @@ SPELLINGS: tuple[str, ...] = (
 #: whole behaviour is what it prints, because a differential that compares output cannot see an
 #: effect that produces none — `$x = 5` and a rewrite that dropped it look alike, `$x = 5; $x` does
 #: not.
+#:
+#: The transcript drops an error's message and target, so two `CommandNotFoundException`s read alike:
+#: a witness has to differ in the kind or the count of the lines it writes, which is what the
+#: `Write-Output` against `Write-Host` pairs below are for — one writes to the success stream and the
+#: other to the information stream. A witness may not name `Get-Date` or the working directory for
+#: the same reason a snippet may not depend on the state of the machine.
+#:
+#: Not every question about the alias table can be asked here. `Import-Alias` reads a CSV, and a
+#: corpus entry may not create one, so what it does to the table is a question for a model-level
+#: test rather than for a host.
 BEHAVIOURS: tuple[str, ...] = (
     "'a' + 'b'",
     "'{0}-{1}' -f 'a', 'b'",
@@ -172,6 +182,20 @@ BEHAVIOURS: tuple[str, ...] = (
     "function Get-Alias { 'from-function' }; Set-Alias zzq Write-Output; alias zzq",
     "Set-Alias -Force zzq Write-Output; zzq 'forced'",
     "Set-Alias zzq Write-Output -PassThru; zzq 'passthru'",
+    "$env:zzq = '7'; (item env:zzq).Value",
+    "$env:zzq = '7'; function item { Write-Output 'from-function' }; item env:zzq",
+    "function member { Write-Output 'from-function' }; member",
+    "function variable { Write-Output 'from-function' }; variable zzqnope",
+    "function childitem { Write-Output 'from-function' }; childitem zzqnope",
+    "function gerr { Write-Output 'from-function' }; gerr",
+    "function fhx { Write-Output 'from-function' }; fhx",
+    "function Set-Alias { Write-Output 'nope' }; Set-Alias zzq Write-Output; zzq 'x'",
+    "Set-Alias zzq Write-Host; Set-Alias mk Set-Alias -Force; mk zzq Write-Output; zzq 'x'",
+    "$n = 'zq2'; Set-Alias zq2 Write-Host; Set-Alias $n Write-Output; zq2 'y'",
+    "Set-Alias zzq Write-Host; $c = 'Set-Alias'; & $c zzq Write-Output; zzq 'x'",
+    "Set-Alias zzq Write-Output; Set-Item alias:zzq Write-Host; zzq 'hi'",
+    "Set-Alias zzq Write-Output; Remove-Item alias:zzq; zzq 'hi'",
+    "Set-Alias zq3 Write-Output; ${alias:zq3} = 'Write-Host'; zq3 'z'",
 )
 
 
@@ -218,6 +242,40 @@ CLAIMS: tuple[str, ...] = (
 )
 
 
+#: What the host's own command tables hold, which is the premise the tables in
+#: `refinery.lib.scripts.ps1.data` encode. Those were captured once and have been edited by hand
+#: since; a name added to the alias table that 5.1 does not bind as an alias inverts the resolution
+#: precedence for it, because nothing in ordinary name lookup beats an alias.
+#:
+#: This is the one place a script is asked about the machine on purpose. The rest of the corpus is
+#: written to be independent of it; these read the state of a Windows PowerShell 5.1 installation,
+#: which is the oracle's whole subject, and the ledger they feed is a claim about 5.1 rather than
+#: about the box that ran it. Nothing here writes anything: `Get-Alias` and `Get-Command` read, and
+#: the one entry that loads a module loads one that ships with the host, which is the same thing
+#: every `Get-Alias` capture does implicitly and the reason the CIM block in `data` exists.
+#:
+#: Each name is asked beside a control, because "the host does not bind this" and "the measurement
+#: found nothing" are the same transcript otherwise: `iex` against the disputed aliases, and
+#: `Get-Item` against the commands the disputed entries name.
+TABLES: tuple[str, ...] = (
+    'Get-Alias iex',
+    'Get-Alias item',
+    'Get-Alias member',
+    'Get-Alias variable',
+    'Get-Alias childitem',
+    'Get-Alias gerr',
+    'Get-Alias fhx',
+    'Get-Command Get-Item -Type Cmdlet',
+    'Get-Command Get-Member -Type Cmdlet',
+    'Get-Command Get-Variable -Type Cmdlet',
+    'Get-Command Get-ChildItem -Type Cmdlet',
+    'Get-Command Get-Error -Type Cmdlet',
+    'Get-Command Format-Hex -Type Cmdlet',
+    '(Get-Command help).CommandType',
+    '(Get-Command gcim -ErrorAction SilentlyContinue).CommandType',
+)
+
+
 #: The corruption ledger's beliefs about what 5.1 reads as a command name. A name runs to
 #: whitespace, which is why a keyword joined to more text is not a keyword, a path is not split at
 #: its punctuation, and a `catch` joined to its type filter is neither. Every belief here is settled
@@ -250,7 +308,7 @@ def executable() -> frozenset[str]:
     """
     Every script a real PowerShell host may be asked to run.
     """
-    return frozenset(BEHAVIOURS) | frozenset(CLAIMS)
+    return frozenset(BEHAVIOURS) | frozenset(CLAIMS) | frozenset(TABLES)
 
 
 def oracle_corpus() -> tuple[str, ...]:
@@ -258,6 +316,14 @@ def oracle_corpus() -> tuple[str, ...]:
     Everything that may be handed to a 5.1 host, deduplicated and in a stable order.
     """
     seen: dict[str, None] = {}
-    for source in (*SNIPPETS.values(), *PROBES, *SPELLINGS, *BEHAVIOURS, *CLAIMS, *NAMES):
+    for source in (
+        *SNIPPETS.values(),
+        *PROBES,
+        *SPELLINGS,
+        *BEHAVIOURS,
+        *CLAIMS,
+        *TABLES,
+        *NAMES,
+    ):
         seen.setdefault(source, None)
     return tuple(seen)

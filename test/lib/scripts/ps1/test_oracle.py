@@ -151,6 +151,45 @@ BEHAVIOUR_DEFECTS: dict[str, str] = {
     "$x = 'a'; &('i' + 'ex') '$x = \"b\"'; Write-Host $x":
         'The same write, reached through a computed command name, and here the call itself is '
         'deleted as well.',
+    "$env:zzq = '7'; function item { Write-Output 'from-function' }; item env:zzq":
+        'The function is dropped and the call rewritten to `Get-Item`, which reads the environment '
+        'variable rather than running the body. `item` is not an alias on 5.1 — it is the engine\'s '
+        'implicit `Get-` retry, reached only after alias, function and cmdlet have all missed — so '
+        'a script function named `item` is what runs. Our alias table claims the name instead, and '
+        'the alias tier beats the function tier.',
+    "function member { Write-Output 'from-function' }; member":
+        'The same inversion for `member`; the rewritten `Get-Member` has no input object and fails.',
+    "function variable { Write-Output 'from-function' }; variable zzqnope":
+        'The same inversion for `variable`; the rewritten `Get-Variable` reports VariableNotFound.',
+    "function childitem { Write-Output 'from-function' }; childitem zzqnope":
+        'The same inversion for `childitem`; the rewritten `Get-ChildItem` reports PathNotFound.',
+    "function gerr { Write-Output 'from-function' }; gerr":
+        'The same inversion for `gerr`, and worse: `Get-Error` is PowerShell 7.0, so the rewritten '
+        'name is a command 5.1 does not have and the script raises CommandNotFoundException.',
+    "function fhx { Write-Output 'from-function' }; fhx":
+        'The same as `gerr`, for a name that is neither an alias nor a retry: 5.1 has no '
+        '`Format-Hex` either, so the rewrite invents a command out of an entry the host never had.',
+    "function Set-Alias { Write-Output 'nope' }; Set-Alias zzq Write-Output; zzq 'x'":
+        'The definition is read from its spelling rather than from what the name denotes, so `zzq` '
+        'is treated as bound and rewritten. A function beats a cmdlet, so what 5.1 runs is the '
+        'function; `zzq` is never bound and the snippet raises CommandNotFoundException.',
+    "Set-Alias zzq Write-Host; Set-Alias mk Set-Alias -Force; mk zzq Write-Output; zzq 'x'":
+        'The `-Force` makes the second definition unreadable, so `mk` denotes nothing this model '
+        'holds — and the rebind it performs is invisible. `zzq` is resolved from the first '
+        'definition and written as `Write-Host`, where 5.1 runs `Write-Output`.',
+    "$n = 'zq2'; Set-Alias zq2 Write-Host; Set-Alias $n Write-Output; zq2 'y'":
+        'The same rebind reached through a name the model cannot read. Both definitions are '
+        'deleted as well, so nothing is left that could have rebound the name.',
+    "Set-Alias zzq Write-Host; $c = 'Set-Alias'; & $c zzq Write-Output; zzq 'x'":
+        'The same rebind reached through a command the model cannot resolve.',
+    "Set-Alias zzq Write-Output; Set-Item alias:zzq Write-Host; zzq 'hi'":
+        'The alias table is also a provider drive, and a write to it rebinds the name. The write is '
+        'not read as a definition, so `zzq` keeps resolving to the definition it replaced.',
+    "Set-Alias zzq Write-Output; Remove-Item alias:zzq; zzq 'hi'":
+        'The same drive, unbinding rather than rebinding: 5.1 raises CommandNotFoundException and '
+        'the rewrite resolves the name anyway.',
+    "Set-Alias zq3 Write-Output; ${alias:zq3} = 'Write-Host'; zq3 'z'":
+        'The same drive again, written with variable syntax rather than through a command.',
 }
 
 
@@ -220,6 +259,59 @@ CLAIM_TRANSCRIPTS: dict[str, tuple[str, ...]] = {
         ('INFO\tset',),
     "$n = 'script:q'; function g($p = (Set-Variable $n 'v')) { }; g; Write-Host $q":
         ('INFO\tv',),
+}
+
+#: What the host's own command tables hold, measured. The tables in `refinery.lib.scripts.ps1.data`
+#: are a capture of these that has been edited by hand since, and an alias the host does not bind is
+#: not a harmless surplus: nothing in ordinary name lookup beats an alias, so such an entry takes a
+#: name away from the function or the retry that 5.1 would have given it.
+#:
+#: `ItemNotFoundException` from `Get-Alias` is the host reporting that it binds no such alias, and
+#: `iex` beside it is what tells that apart from a measurement that found nothing at all.
+#:
+#: These are deliberately left out of the deobfuscation differential, which the rest of the
+#: executable corpus is quantified over. A probe of the command tables is not a script whose meaning
+#: is worth preserving — it is the measurement itself, and rewriting `gcim` to `Get-CimInstance`,
+#: which is correct, would make it measure a different thing and report the rewrite as a defect.
+TABLE_TRANSCRIPTS: dict[str, tuple[str, ...]] = {
+    'Get-Alias iex':
+        ('OUT\tSystem.Management.Automation.AliasInfo\tiex',),
+    'Get-Alias item':
+        ('ERROR\tItemNotFoundException,Microsoft.PowerShell.Commands.GetAliasCommand'
+         '\tSystem.Management.Automation.ItemNotFoundException',),
+    'Get-Alias member':
+        ('ERROR\tItemNotFoundException,Microsoft.PowerShell.Commands.GetAliasCommand'
+         '\tSystem.Management.Automation.ItemNotFoundException',),
+    'Get-Alias variable':
+        ('ERROR\tItemNotFoundException,Microsoft.PowerShell.Commands.GetAliasCommand'
+         '\tSystem.Management.Automation.ItemNotFoundException',),
+    'Get-Alias childitem':
+        ('ERROR\tItemNotFoundException,Microsoft.PowerShell.Commands.GetAliasCommand'
+         '\tSystem.Management.Automation.ItemNotFoundException',),
+    'Get-Alias gerr':
+        ('ERROR\tItemNotFoundException,Microsoft.PowerShell.Commands.GetAliasCommand'
+         '\tSystem.Management.Automation.ItemNotFoundException',),
+    'Get-Alias fhx':
+        ('ERROR\tItemNotFoundException,Microsoft.PowerShell.Commands.GetAliasCommand'
+         '\tSystem.Management.Automation.ItemNotFoundException',),
+    'Get-Command Get-Item -Type Cmdlet':
+        ('OUT\tSystem.Management.Automation.CmdletInfo\tGet-Item',),
+    'Get-Command Get-Member -Type Cmdlet':
+        ('OUT\tSystem.Management.Automation.CmdletInfo\tGet-Member',),
+    'Get-Command Get-Variable -Type Cmdlet':
+        ('OUT\tSystem.Management.Automation.CmdletInfo\tGet-Variable',),
+    'Get-Command Get-ChildItem -Type Cmdlet':
+        ('OUT\tSystem.Management.Automation.CmdletInfo\tGet-ChildItem',),
+    'Get-Command Get-Error -Type Cmdlet':
+        ('ERROR\tCommandNotFoundException,Microsoft.PowerShell.Commands.GetCommandCommand'
+         '\tSystem.Management.Automation.CommandNotFoundException',),
+    'Get-Command Format-Hex -Type Cmdlet':
+        ('ERROR\tCommandNotFoundException,Microsoft.PowerShell.Commands.GetCommandCommand'
+         '\tSystem.Management.Automation.CommandNotFoundException',),
+    '(Get-Command help).CommandType':
+        ('OUT\tSystem.Management.Automation.CommandTypes\tFunction',),
+    '(Get-Command gcim -ErrorAction SilentlyContinue).CommandType':
+        ('OUT\tSystem.Management.Automation.CommandTypes\tAlias',),
 }
 
 #: Which words 5.1 read as a command name, for each script whose corruption entry turns on where a
@@ -476,4 +568,35 @@ class TestPs1CorruptionLedgerRestsOnMeasuredBeliefs(Ps1OracleTest):
         self.assertEqual(
             (measured['exit 1'], measured['Exit-PSSession']),
             ((), ('Exit-PSSession',)),
+        )
+
+
+@unittest.skipIf(windows_powershell() is None, 'Windows PowerShell is not available')
+class TestPs1CommandTablesRestOnMeasuredBeliefs(Ps1OracleTest):
+    """
+    `refinery.lib.scripts.ps1.data` holds the host's alias and cmdlet tables, captured once and
+    edited by hand since. Which names those tables contain is the premise every command resolution
+    rests on, and an entry the host does not have is not a harmless surplus: nothing in ordinary
+    name lookup beats an alias, so an invented alias takes a name away from the function or the
+    implicit `Get-` retry 5.1 would have given it.
+
+    These ask the host what it actually binds. They are the only scripts in the corpus written to
+    depend on the machine, and the machine they depend on is a Windows PowerShell 5.1 installation,
+    which is the oracle's subject.
+    """
+
+    def test_every_belief_about_what_the_host_binds_is_what_the_host_binds(self):
+        measured = dict(zip(corpus.TABLES, behaviours(corpus.TABLES)))
+        self.assertEqual(measured, TABLE_TRANSCRIPTS)
+
+    def test_a_name_the_host_binds_is_not_measured_like_one_it_does_not(self):
+        """
+        The comparison the table alone does not make. Every disputed name answers the same way, so
+        without a name the host does bind standing beside them, a probe that had stopped working
+        would read as the host binding nothing.
+        """
+        measured = behaviours(['Get-Alias iex', 'Get-Alias item'])
+        self.assertEqual(
+            [line.split('\t')[0] for transcript in measured for line in transcript],
+            ['OUT', 'ERROR'],
         )
