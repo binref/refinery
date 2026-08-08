@@ -33,13 +33,22 @@ report — the caller keeps it as written. The set of taken-over names is the wo
 (`refinery.lib.scripts.ps1.analysis.world.Ps1TypeWorld.shadowed_names`), so this model and the closed-
 world model cannot disagree about which names the script has shadowed.
 
-**Writability is handled by refusal, not by a rebind table.** Every default alias but `sls` is
-`ReadOnly` or `AllScope`, and a plain `Set-Alias` rebinds neither (measured: `AliasNotWritable` /
-`AliasAllScopeOptionCannotBeRemoved`), so a script `Set-Alias` naming an existing builtin alias almost
-never takes effect. Rather than ship the per-alias `Options` that would say which of the two happened,
-the model treats such a collision — and any `-Force`/`-Option` definition — as unknown and keeps the
-name as written, which is faithful whichever way the rebind went. Precise builtin-rebind resolution
-waits on that metadata.
+**Writability is handled by refusal, not by a rebind table.** Nearly every default alias is
+`ReadOnly` or `AllScope`, and a plain `Set-Alias` rebinds neither — measured on 5.1 as
+`AliasNotWritable` for the first and `AliasAllScopeOptionCannotBeRemoved` for the second — so a
+script `Set-Alias` naming an existing builtin alias almost never takes effect. Which aliases the
+handful of exceptions are is deliberately not written down here: it is a property of the host's
+table rather than of the language, it cannot be measured without reading the state of a machine, and
+nothing below depends on it. Rather than ship the per-alias `Options` that would say which outcome a
+collision had, the model treats every such collision — and any `-Force`/`-Option` definition — as
+unknown and keeps the name as written, which is faithful whichever way the rebind went. Precise
+builtin-rebind resolution waits on that metadata.
+
+**A scope qualifier is part of an alias name, unlike a command name.** `Set-Alias global:foo X`
+creates an alias called `global:foo`, which no later `foo` runs, so a definition is keyed by the
+literal name it writes and `normalize_command_name` is not applied to it. That is the opposite of
+what the same qualifier means on a `function` definition, where `function global:Get-Date` is what a
+later bare `Get-Date` runs.
 
 **What a command does to the world is asked here too**, through `Ps1CommandModel.world_role`, and for
 the same reason the rest is: `refinery.lib.scripts.ps1.analysis.world` follows a name one hop through

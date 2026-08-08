@@ -151,6 +151,20 @@ BEHAVIOURS: tuple[str, ...] = (
     "function echo { 'from-function' }; echo 'from-alias'",
     "zzq 'early'; Set-Alias zzq Write-Output",
     "function f { Set-Alias zzq Write-Output }; f; zzq 'leaked'",
+    "Set-Alias zzq Write-Output; zzq 'resolved'",
+    "Set-Alias zzq iex; zzq 'Write-Output loaded'",
+    "Set-Alias -Na zzq -Val Write-Output; zzq 'abbreviated'",
+    "Set-Alias zzq Write-Output; $n = 'zzq'; & $n 'dispatched'",
+    "Set-Alias zzq *; (Get-Alias zzq).Definition; zzq 'nothing'",
+    "Set-Alias zzq Write-Output; (Get-Alias zzq).Definition",
+    "Set-Alias zzq Write-Output; $n = 'zzq'; (Get-Alias $n).Definition",
+    "Set-Alias zzq Write-Output; (Get-Alias | Where-Object { $_.Name -eq 'zzq' }).Definition",
+    "Set-Alias zzq Write-Output; (alias zzq).Definition",
+    "Set-Alias zzq Write-Output; ${alias:zzq}",
+    "Set-Alias zzq Write-Output; zzq 'exported'; Export-ModuleMember -Alias zzq",
+    "Get-Command zzqnope -ErrorAction SilentlyContinue; Set-Alias zzq Write-Output; $?",
+    "New-Alias zzq Write-Output; New-Alias zzq Write-Host; zzq 'first-wins'",
+    "Set-Alias global:zzq Write-Output; (Get-Alias 'global:zzq').Definition; zzq 'unqualified'",
 )
 
 
