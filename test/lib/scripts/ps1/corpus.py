@@ -196,6 +196,15 @@ BEHAVIOURS: tuple[str, ...] = (
     "Set-Alias zzq Write-Output; Set-Item alias:zzq Write-Host; zzq 'hi'",
     "Set-Alias zzq Write-Output; Remove-Item alias:zzq; zzq 'hi'",
     "Set-Alias zq3 Write-Output; ${alias:zq3} = 'Write-Host'; zq3 'z'",
+    "function Get-Zqfrob { Write-Output 'hit' }; Zqfrob",
+    "Set-Alias Get-Zqal Write-Output; Zqal 'x'",
+    "function Get-Zqfrob { Write-Output 'p' }; function Zqfrob { Write-Output 'b' }; Zqfrob",
+    "function Get-Get-Zqfrob { Write-Output 'hit' }; Get-Zqfrob",
+    "function Get-Zq-Frob { Write-Output 'hit' }; Zq-Frob",
+    "$env:zzq = '7'; function Get-Item { Write-Output 'from-function' }; item env:zzq",
+    "$x = 'a'; function f { Write-Host (variable x -ValueOnly) }; f; $x = 'c'",
+    "$x = 'a'; function f { Write-Host (item variable:x).Value }; f; $x = 'c'",
+    "$x = 'a'; function f { Write-Host (Get-Item variable:x).Value }; f; $x = 'c'",
 )
 
 

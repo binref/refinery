@@ -190,6 +190,13 @@ BEHAVIOUR_DEFECTS: dict[str, str] = {
         'the rewrite resolves the name anyway.',
     "Set-Alias zq3 Write-Output; ${alias:zq3} = 'Write-Host'; zq3 'z'":
         'The same drive again, written with variable syntax rather than through a command.',
+    "function Get-Get-Zqfrob { Write-Output 'hit' }; Get-Zqfrob":
+        'The implicit `Get-` retry is measured to apply only to a name that carries no dash, so 5.1 '
+        'never looks for `Get-Get-Zqfrob` and the snippet raises CommandNotFoundException. We '
+        'prepend the prefix to any unclaimed name, which invents a resolution and runs a body 5.1 '
+        'does not reach.',
+    "function Get-Zq-Frob { Write-Output 'hit' }; Zq-Frob":
+        'The same invented retry, for a dashed name that is not itself `Get-` prefixed.',
 }
 
 
