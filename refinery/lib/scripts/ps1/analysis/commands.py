@@ -683,18 +683,36 @@ class Ps1CommandModel:
 
         What the retry produces is a **name**, not a command, so the prefixed spelling is resolved
         through the ordinary precedence in turn: `function Get-Alias { 'from-function' }; alias zzq`
-        also writes `from-function`. Rewriting `alias` to `Get-Alias` is meaning-preserving whichever
-        tier ends up claiming the prefixed spelling, and once rewritten every other model reads an
-        ordinary call — which is what keeps the call graph from deleting a function whose only
-        caller spelled it as a bare noun.
+        also writes `from-function`. Rewriting `alias` to `Get-Alias` is meaning-preserving
+        whichever tier ends up claiming the prefixed spelling, and once rewritten every other model
+        reads an ordinary call — which is what keeps the call graph from deleting a function whose
+        only caller spelled it as a bare noun.
 
-        The prefixed name's own tiers are asked in this same order, and every refusal among them is
-        an unread binding like any other: a script that writes `Set-Alias Get-Alias Get-Date` makes
-        `alias zzq` run `Get-Date`, so that definition is implicated by the bare noun although the
-        noun never named it. Refusing without saying so is what let it be deleted as needed by
-        nobody, after which the noun was rewritten to the name it had rebound. Asking the shadow set
-        before the function tier would refuse every ordinary `function Get-X { }` as well, since a
-        `function` definition puts its name in both.
+        **Being the last tier is what makes the retry the one resolution an open world can take
+        back, and that is a residual this does not close.** A definition injected by code the walk
+        cannot read — a dot-sourced file, a string an `iex` runs — beats a retry, where it loses to
+        an alias; so `. .\\other.ps1` followed by `item env:x` is rewritten to `Get-Item` although
+        the file may define `function item`. The tiers below are read from `_functions`, `_shadowed`
+        and the host's tables, none of which is closed under a world this model never asked about.
+        The reasoning that made the built-in alias table safe here does not carry over, precisely
+        because an alias outranks an injected function and a retry does not.
+
+        The prefixed name's own tiers are asked in this same sequence but more coarsely, and every
+        refusal among them is an unread binding like any other: a script that writes `Set-Alias
+        Get-Alias Get-Date` makes `alias zzq` run `Get-Date`, so that definition is implicated by
+        the bare noun although the noun never named it. Refusing without saying so is what let it be
+        deleted as needed by nobody, after which the noun was rewritten to the name it had rebound.
+        Asking the shadow set before the function tier would refuse every ordinary
+        `function Get-X { }` as well, since a `function` definition puts its name in both.
+
+        **Coarsely, and that is a known residual.** A definition of the prefixed name is refused for
+        merely existing, where the bare name's is sought by reaching definition and followed; a
+        built-in alias of it is refused where the bare name's is hopped through. So `Set-Alias
+        Get-Item Write-Host` beside `item env:x` answers `UNKNOWN` rather than `Write-Host`, and a
+        bare noun whose prefixed spelling the host binds as an alias — `apppackage` for
+        `Get-AppPackage` — answers `UNKNOWN` although 5.1 resolves it. Both refuse, so both are the
+        safe direction; what they cost is recall, and closing them means making the retry a hop in
+        the loop above rather than a second copy of it.
 
         An inline scriptblock (`&{ ... }`) is not an unread binding: its body stands in the tree, so
         the whole-tree walk reads whatever it does. The unlocatable node is, defensively — a node in
@@ -762,7 +780,7 @@ class Ps1CommandModel:
         if prefixed in KNOWN_ALIAS:
             return resolved(CommandKind.UNKNOWN, None, True)
         if prefixed in self._functions:
-            return resolved(CommandKind.ALIAS, KNOWN_CMDLETS.get(prefixed, F'Get-{current}'))
+            return resolved(CommandKind.ALIAS, KNOWN_CMDLETS.get(prefixed, prefixed.capitalize()))
         if prefixed in self._shadowed:
             return resolved(CommandKind.UNKNOWN, None, True)
         canonical = KNOWN_CMDLETS.get(prefixed)

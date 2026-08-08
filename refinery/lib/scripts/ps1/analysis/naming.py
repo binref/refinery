@@ -88,8 +88,8 @@ class Ps1NamedReference:
 
 
 #: Commands whose first argument is the *name* of a variable, mapped to what they do to it. Resolved
-#: through `refinery.lib.scripts.ps1.ast.resolved_command_names`, so aliases (`sv`, `gv`, `rv`), case
-#: variants and the bare noun `variable` all arrive here already canonical.
+#: through `refinery.lib.scripts.ps1.ast.resolved_command_names`, so aliases (`sv`, `gv`, `rv`),
+#: case variants and the bare noun `variable` all arrive here already canonical.
 _VARIABLE_COMMANDS: dict[str, Ps1NameRole] = {
     'clear-variable': Ps1NameRole.WRITES,
     'get-variable': Ps1NameRole.READS,

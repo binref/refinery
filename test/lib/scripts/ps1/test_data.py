@@ -142,14 +142,7 @@ class TestPs1MetadataReader(unittest.TestCase):
         for present in ('Get-Item', 'Get-Member', 'Get-Variable', 'Get-ChildItem'):
             self.assertIsNotNone(data.command(present), present)
 
-    @unittest.expectedFailure
     def test_the_command_table_answers_for_no_command_the_host_lacks(self):
-        """
-        A recorded defect rather than a law that holds. The leaked record is inert where a leaked
-        *alias* is not — nothing rewrites a name into `Format-Hex`, so it costs a canonical spelling
-        and not a resolution — and taking a record out of the shipped capture is a change to the
-        capture, which is its own piece of work. This states what that work has to make true.
-        """
         # Measured three ways on the 5.1 host the capture itself cites (5.1.26100.8875, Desktop):
         # `Get-Command Format-Hex` reports CommandNotFoundException, `'ab' | Format-Hex` throws, and
         # Microsoft.PowerShell.Utility exports only Format-Custom, Format-List, Format-Table and
@@ -166,7 +159,7 @@ class TestPs1MetadataReader(unittest.TestCase):
         # call to `help` into a call to `Get-Help`.
         self.assertIn('help', data.KNOWN_CMDLETS)
         self.assertIn('get-help', data.KNOWN_CMDLETS)
-        self.assertIsNone(data.KNOWN_ALIAS.get('help'))
+        self.assertNotIn('help', data.KNOWN_ALIAS)
 
     def test_command_output_types_are_declared_and_lowercased(self):
         # Get-Date carries [OutputType([datetime], [string])]; the query lowercases the declared

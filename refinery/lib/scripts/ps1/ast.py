@@ -231,6 +231,21 @@ def implicit_get_retry(name: str) -> str | None:
     the ordinary precedence, so `function Get-Item { }; item` runs the function. A caller that owns
     the script's own tables asks them about the answer in that same order; one that can see only
     the host's tables — see `resolved_command_names` — must read the answer as a possibility.
+
+    **Two tiers of that precedence are not tables at all, and neither is modelled anywhere.** 5.1
+    searches the scripts and the executables on `PATH` before it retries, and both are machine state
+    no capture can carry: `function Get-Hostname { 'x' }; hostname` runs `hostname.exe` and never
+    reaches the function (measured), and `date` runs whatever `date.exe` the box has before it
+    reaches `Get-Date`. So a retry reported here is what the name runs *if nothing outside the
+    session claims it first*, which is the direction that over-reports for a deny-list and the
+    direction that a rewrite built on it gets wrong. Which of the three refusals below is measured
+    against those tiers is the first question to ask of any name added to a table this reads.
+
+    The `KNOWN_CMDLETS` refusal in particular is only as good as that table, which carries records
+    the capturing host had loaded rather than the ones 5.1 ships — `setup`, `describe`, `it`,
+    `mock`, `should` and their neighbours are Pester's. Each of them suppresses a retry 5.1 would
+    perform: `function Get-Setup { 'x' }; setup` reaches the function on a host without Pester, and
+    this answers `None` for it. See the note above `refinery.lib.scripts.ps1.data.KNOWN_ALIAS`.
     """
     name = normalize_command_name(name)
     if not name or '-' in name:
@@ -249,9 +264,10 @@ def resolved_command_names(cmd: Ps1CommandInvocation) -> tuple[str, ...]:
 
     Both names are reported rather than one, because which of them runs is a question about the
     script and this can see only the host's tables. Deciding it needs the function and alias
-    definitions the script makes, which is `analysis.commands.Ps1CommandModel`'s job; a table here
-    that answered `get-item` alone would claim a name a `function item` takes back, and one that
-    answered `item` alone would miss what `item` runs in every script that defines no such function.
+    definitions the script makes, which is
+    `refinery.lib.scripts.ps1.analysis.commands.Ps1CommandModel`'s job; a table here that answered
+    `get-item` alone would claim a name a `function item` takes back, and one that answered `item`
+    alone would miss what `item` runs in every script that defines no such function.
     Reporting both is the conservative reading for a table whose hits withhold an action, and it is
     the only one available at this level.
 

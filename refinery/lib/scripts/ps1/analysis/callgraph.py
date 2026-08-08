@@ -22,9 +22,10 @@ from refinery.lib.scripts.ps1.analysis.types import TypeOracle
 from refinery.lib.scripts.ps1.ast import (
     assignment_target_variables,
     get_command_name,
+    implicit_get_retry,
     is_opaque_dispatch,
     normalize_command_name,
-    resolved_command_names,
+    resolve_command_name,
 )
 from refinery.lib.scripts.ps1.model import (
     Ps1AssignmentExpression,
@@ -45,12 +46,12 @@ _IDENTITY_SCOPES = frozenset({
 
 #: Commands that hand a name to code outside this file. A `.psm1` exporting a function has call
 #: sites in whatever imported it, and no walk over this tree can see them. Read through
-#: `refinery.lib.scripts.ps1.ast.resolved_command_names`, which is the deny-list reading of a name:
+#: `refinery.lib.scripts.ps1.ast.resolve_command_name`, which is the deny-list reading of a name:
 #: a hit here withholds every name-keyed removal, so a spelling that dodges the table is the
 #: dangerous direction. That closes a module qualifier written after the call operator, quoted or
 #: not — `& Microsoft.PowerShell.Core\Export-ModuleMember` arrives as one token either way. Written
 #: as a bare command statement the lexer splits the name at the backslash and the table is dodged;
-#: see `resolve_command_name` for why that hole is the lexer's.
+#: see `refinery.lib.scripts.ps1.ast.resolve_command_name` for why that hole is the lexer's.
 _EXPORTING_COMMANDS = frozenset({
     'export-modulemember',
 })
@@ -239,9 +240,18 @@ def _collides_with_a_definition(
     `& 'MyModule\\Qzmr'` keys as `mymodule\\qzmr` while `function Qzmr` keys as `qzmr`, so nothing
     matches, the definition reads as uncalled, and deleting it leaves a script calling a name it no
     longer defines. `resolved` holds every name a call may run that its written key does not spell,
-    which is the deny-list reading `refinery.lib.scripts.ps1.ast.resolved_command_names` gives — so
-    an alias is here too, and `iex $x` beside a `function Invoke-Expression` collides for the same
+    which is the deny-list reading `refinery.lib.scripts.ps1.ast.resolve_command_name` gives — so an
+    alias is here too, and `iex $x` beside a `function Invoke-Expression` collides for the same
     reason, as does `item` beside a `function Get-Item`, which the implicit `Get-` retry reaches.
+
+    **The two arrive under different conditions, because they sit at opposite ends of the
+    precedence.** An alias is the highest tier and beats a script function, so `iex` reaches
+    `Invoke-Expression` however the script spells its own definitions. The implicit `Get-` retry is
+    the lowest, reached only once the function tier has missed, so `item` reaches `Get-Item` only in
+    a script that defines no `item` of its own — and `build_call_graph` therefore withholds a retry
+    name when the bare key is one this script defines. The set it withholds against is the one
+    `defined_names` reports, which is what the command model's own function tier reads, so the two
+    cannot disagree about which calls the retry is reached from.
 
     **The condition is the collision and not the qualifier.** A quoted executable path is the same
     shape: `& 'C:\\tools\\stage2.exe'` keys as the path and resolves to `stage2.exe`. Reading the
@@ -281,6 +291,7 @@ def build_call_graph(root: Ps1Script, oracle: TypeOracle) -> Ps1CallGraph:
     definitions: dict[str, list[Ps1FunctionDefinition]] = {}
     call_sites: dict[str, list[Ps1CallSite]] = {}
     qualified: list[str] = []
+    retried: dict[str, list[str]] = {}
     readable = oracle.world_closed_at(root)
     exports = False
     for node in root.walk_in_order():
@@ -294,14 +305,21 @@ def build_call_graph(root: Ps1Script, oracle: TypeOracle) -> Ps1CallGraph:
                     readable = False
                 continue
             key = normalize_command_name(name)
-            reachable = resolved_command_names(node)
-            if _EXPORTING_COMMANDS.intersection(reachable):
+            resolved = resolve_command_name(node)
+            if resolved in _EXPORTING_COMMANDS:
                 readable = False
                 exports = True
-            qualified.extend(resolved for resolved in reachable if resolved != key)
+            if resolved is not None and resolved != key:
+                qualified.append(resolved)
+            retry = None if resolved is None else implicit_get_retry(resolved)
+            if retry is not None:
+                retried.setdefault(key, []).append(retry)
             call_sites.setdefault(key, []).append(Ps1CallSite(node, _enclosing_function(node)))
         elif binds_command_identity(node):
             readable = False
+    for key, names in retried.items():
+        if key not in definitions:
+            qualified.extend(names)
     if _collides_with_a_definition(qualified, definitions):
         readable = False
     return Ps1CallGraph(definitions, call_sites, readable, exports)

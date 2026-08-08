@@ -57,7 +57,27 @@ _ACCELERATORS: dict[str, str] = {
     **{_alias.lower(): _full for _alias, _full in _TYPES['accelerators'].items()},
 }
 _TYPE_TABLE: dict[str, dict] = _TYPES['types']
-_COMMAND_TABLE: dict[str, dict] = _COMMANDS['commands']
+
+#: Commands the capture reports that the host does not have. `Format-Hex` is described here exactly
+#: as PowerShell 7 describes it — a `Raw` switch and a `System.String` `Encoding` — and the
+#: `Microsoft.PowerShell.Utility` a 5.1 host loads reports version 7.0.0.0, so the collector read it
+#: from a shadowing 7.0 module rather than from the host it declares itself authoritative for.
+#: Measured three ways on 5.1: `Get-Command Format-Hex` reports CommandNotFoundException, `'ab' |
+#: Format-Hex` throws, and the loaded Utility module exports only `Format-Custom`, `Format-List`,
+#: `Format-Table` and `Format-Wide`. A probe of thirteen commands only PowerShell 6 or 7 ships found
+#: this to be the one that leaked.
+#:
+#: A record for a command the host cannot run is not inert: the wildcard resolver draws its
+#: candidate universe from `KNOWN_CMDLETS`, so `Get-Command Format-H*` had a unique match and was
+#: rewritten into a call to a command 5.1 reports as not found — the same defect the `fhx` alias was
+#: removed for. Withheld from the derived table rather than deleted from the capture, which stays as
+#: collected the way `_PARSER_TYPE_KEYWORDS` above is kept beside it rather than injected into it.
+_MISCOLLECTED_COMMANDS = frozenset({'format-hex'})
+
+_COMMAND_TABLE: dict[str, dict] = {
+    _name: _record for _name, _record in _COMMANDS['commands'].items()
+    if _name.lower() not in _MISCOLLECTED_COMMANDS
+}
 
 #: Member kinds that reflection reports and that the historical views expose. Fields and every
 #: Extended Type System member (`ets_*`) are collected but withheld from these views, because the
@@ -183,14 +203,21 @@ def is_type(name: str, canonical_lower: str) -> bool:
 #: `fhx` and `gerr` were listed too, and neither target is on the host: `Format-Hex` and `Get-Error`
 #: were both measured absent from 5.1, so a bare `gerr` was rewritten into a name the script then
 #: could not run, and the entry injected `Get-Error` as a cmdlet through the loop below on top of
-#: that. `Format-Hex` also stands in the collected command table on its own and is left there for
-#: now: the capture describes it as PowerShell 7 does, so it was read from a shadowing 7.0 module
-#: rather than from the host, and correcting that is a change to the capture rather than to a table
-#: built from one. It is inert where the alias entries were not — nothing rewrites a name *into* a
-#: cmdlet — and `test_data.py` carries the measurement as a recorded defect.
+#: that. `Format-Hex` had leaked into the collected command table on its own as well and is withheld
+#: from it by `_MISCOLLECTED_COMMANDS` above.
 #:
-#: Anything added here has to be measured on a host first, and the ps1 oracle corpus is where such a
-#: measurement is recorded.
+#: **A wrong record in either table is never merely surplus, because two things read them in a
+#: direction it corrupts.** `refinery.lib.scripts.ps1.deobfuscation.wildcards` matches a wildcard
+#: against `KNOWN_CMDLETS` and emits the unique hit as a command, which is what made a `Format-Hex`
+#: record produce a call to a command the host cannot run — the `fhx` defect reached through the
+#: other table. And `refinery.lib.scripts.ps1.ast.implicit_get_retry` refuses a retry for any name
+#: a table claims, so a record the capturing host had merely *loaded* rather than shipped — `setup`,
+#: `describe`, `it`, `mock`, `should` and the rest of the Pester and DSC surface — suppresses a
+#: retry 5.1 performs. That residual is open: it is a question about which records the capture
+#: should have collected at all, and it is named in `implicit_get_retry` beside the retry it costs.
+#:
+#: Anything added to either table has to be measured on a host first, and the ps1 oracle corpus is
+#: where such a measurement is recorded.
 KNOWN_ALIAS: dict[str, str] = {
     _name.lower(): _definition for _name, _definition in _COMMANDS['aliases'].items()
 }

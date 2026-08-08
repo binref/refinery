@@ -76,6 +76,17 @@ class TestPs1CallGraphReadability(TestBase):
                 self.assertTrue(graph.is_readable)
                 self.assertEqual(graph.reachable_names(), frozenset({called}))
 
+    def test_a_bare_noun_the_script_defines_leaves_its_prefixed_definition_unreached(self):
+        for source in (
+            "function Get-Zqfrob { 'P' }\nfunction Zqfrob { 'Q' }\nZqfrob",
+            "function Zqfrob { 'Q' }\nfunction Get-Zqfrob { 'P' }\nZqfrob",
+        ):
+            with self.subTest(source):
+                graph = self._graph(source)
+                self.assertTrue(graph.is_readable)
+                self.assertEqual(sorted(graph.defined_names), ['get-zqfrob', 'zqfrob'])
+                self.assertEqual(graph.reachable_names(), frozenset({'zqfrob'}))
+
     def test_a_module_qualified_export_is_still_read_as_an_export(self):
         graph = self._graph(
             "& 'Microsoft.PowerShell.Core\\Export-ModuleMember' -Function f\nfunction f { 'P' }")
