@@ -16,7 +16,12 @@ import io
 from typing import Iterator, TypeGuard
 
 from refinery.lib.scripts import Block, Node, Statement, owning_field
-from refinery.lib.scripts.ps1.data import BUILTIN_VARIABLES, KNOWN_ALIAS, value_parameters
+from refinery.lib.scripts.ps1.data import (
+    BUILTIN_VARIABLES,
+    KNOWN_ALIAS,
+    KNOWN_CMDLETS,
+    value_parameters,
+)
 from refinery.lib.scripts.ps1.model import (
     Expression,
     Ps1AccessKind,
@@ -204,6 +209,60 @@ def resolve_command_name(cmd: Ps1CommandInvocation) -> str | None:
         return None
     name = normalize_command_name(name.rpartition('\\')[2])
     return KNOWN_ALIAS.get(name, name).lower()
+
+
+def implicit_get_retry(name: str) -> str | None:
+    """
+    The name 5.1 tries next when nothing claims `name`, or `None` when nothing else is tried. This
+    is the engine's implicit `Get-` retry: `item` runs `Get-Item`, `childitem` runs `Get-ChildItem`.
+
+    Two measured properties decide the whole of it, and both are refusals:
+
+    - **It is a last resort.** The retry is reached only once the alias, function and cmdlet tables
+      have all missed, so `function item { }` beats it and a name any table claims never reaches it
+      at all. `help` is the case where getting this wrong costs something: 5.1 spells it as a
+      function and our cmdlet table holds both `help` and `Get-Help`, so a retry that did not ask
+      about the bare name first would resolve `help` to `Get-Help`.
+    - **It applies only to a name that carries no dash.** `Zq-Frob` does not reach `Get-Zq-Frob`,
+      and neither does `Get-Zqfrob` reach `Get-Get-Zqfrob` (both measured). Prefixing regardless
+      invents a resolution for a name 5.1 reports as not found.
+
+    What this reports is a *name*, not a command: the prefixed spelling is then looked up through
+    the ordinary precedence, so `function Get-Item { }; item` runs the function. A caller that owns
+    the script's own tables asks them about the answer in that same order; one that can see only
+    the host's tables — see `resolved_command_names` — must read the answer as a possibility.
+    """
+    name = normalize_command_name(name)
+    if not name or '-' in name:
+        return None
+    if name in KNOWN_ALIAS or name in KNOWN_CMDLETS:
+        return None
+    return F'get-{name}'
+
+
+def resolved_command_names(cmd: Ps1CommandInvocation) -> tuple[str, ...]:
+    """
+    Every lowercased name the call at `cmd` may run, or the empty tuple when its name is not a
+    static literal: what `resolve_command_name` reports, and the implicit `Get-` retry's name where
+    there is one. This is the *deny-list* reading of `implicit_get_retry`, and the caveats on
+    `resolve_command_name` apply to it whole.
+
+    Both names are reported rather than one, because which of them runs is a question about the
+    script and this can see only the host's tables. Deciding it needs the function and alias
+    definitions the script makes, which is `analysis.commands.Ps1CommandModel`'s job; a table here
+    that answered `get-item` alone would claim a name a `function item` takes back, and one that
+    answered `item` alone would miss what `item` runs in every script that defines no such function.
+    Reporting both is the conservative reading for a table whose hits withhold an action, and it is
+    the only one available at this level.
+
+    Only a caller that loses recall without the retry should read this rather than
+    `resolve_command_name`; a table whose hits *grant* something must read neither.
+    """
+    resolved = resolve_command_name(cmd)
+    if resolved is None:
+        return ()
+    retry = implicit_get_retry(resolved)
+    return (resolved,) if retry is None else (resolved, retry)
 
 
 def extract_new_object(cmd: Ps1CommandInvocation) -> tuple[str, list[Expression]] | None:

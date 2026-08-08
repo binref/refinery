@@ -133,6 +133,41 @@ class TestPs1MetadataReader(unittest.TestCase):
     def test_an_unknown_command_is_none(self):
         self.assertIsNone(data.command('Definitely-NotACommand'))
 
+    def test_a_command_only_a_later_powershell_ships_is_absent(self):
+        # Measured on a live 5.1 host: `Get-Command Get-Error` reports CommandNotFoundException,
+        # where every name below resolves. A table that answered for a command the host cannot run
+        # resolves a call onto nothing, which is the defect a bogus alias entry has as well.
+        self.assertIsNone(data.command('Get-Error'))
+        self.assertNotIn('get-error', data.KNOWN_CMDLETS)
+        for present in ('Get-Item', 'Get-Member', 'Get-Variable', 'Get-ChildItem'):
+            self.assertIsNotNone(data.command(present), present)
+
+    @unittest.expectedFailure
+    def test_the_command_table_answers_for_no_command_the_host_lacks(self):
+        """
+        A recorded defect rather than a law that holds. The leaked record is inert where a leaked
+        *alias* is not — nothing rewrites a name into `Format-Hex`, so it costs a canonical spelling
+        and not a resolution — and taking a record out of the shipped capture is a change to the
+        capture, which is its own piece of work. This states what that work has to make true.
+        """
+        # Measured three ways on the 5.1 host the capture itself cites (5.1.26100.8875, Desktop):
+        # `Get-Command Format-Hex` reports CommandNotFoundException, `'ab' | Format-Hex` throws, and
+        # Microsoft.PowerShell.Utility exports only Format-Custom, Format-List, Format-Table and
+        # Format-Wide. The collected record describes PowerShell 7's cmdlet — a `Raw` switch and a
+        # `System.String` `Encoding` — and the loaded Utility module reports 7.0.0.0, so the capture
+        # read it from a shadowing 7.0 module rather than from the host it declares itself
+        # authoritative for.
+        self.assertIsNone(data.command('Format-Hex'))
+        self.assertNotIn('format-hex', data.KNOWN_CMDLETS)
+
+    def test_the_two_names_help_is_reachable_under_are_both_commands(self):
+        # Measured: `help` is a function on 5.1 and both `help` and `Get-Help` resolve. The bare
+        # name being a command of its own is what keeps the implicit `Get-` retry from turning a
+        # call to `help` into a call to `Get-Help`.
+        self.assertIn('help', data.KNOWN_CMDLETS)
+        self.assertIn('get-help', data.KNOWN_CMDLETS)
+        self.assertIsNone(data.KNOWN_ALIAS.get('help'))
+
     def test_command_output_types_are_declared_and_lowercased(self):
         # Get-Date carries [OutputType([datetime], [string])]; the query lowercases the declared
         # full names. Get-Command declares PSObject among its outputs, which is why a later gate
@@ -213,6 +248,14 @@ class TestPs1MetadataViews(unittest.TestCase):
         self.assertEqual(data.KNOWN_ALIAS['gcim'], 'Get-CimInstance')
         self.assertEqual(data.KNOWN_ALIAS['icim'], 'Invoke-CimMethod')
         self.assertIn('get-ciminstance', data.KNOWN_CMDLETS)
+
+    def test_no_bare_noun_the_implicit_get_retry_reaches_is_bound_as_an_alias(self):
+        # Measured: `Get-Alias` reports ItemNotFoundException for each of these names while it finds
+        # `iex`. A name held here outranks a script's own function of that name, so recording one
+        # rewrites a call to the script's function into a call to a cmdlet.
+        nouns = frozenset({'childitem', 'item', 'member', 'variable', 'gerr', 'fhx'})
+        self.assertEqual(nouns.intersection(data.KNOWN_ALIAS), frozenset())
+        self.assertEqual(data.KNOWN_ALIAS['iex'], 'Invoke-Expression')
 
     def test_the_scope_only_pscmdlet_variable_type_is_present(self):
         self.assertEqual(

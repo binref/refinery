@@ -96,6 +96,7 @@ from refinery.lib.scripts.ps1.analysis.world import (
 from refinery.lib.scripts.ps1.ast import (
     consumes_a_value,
     get_command_name,
+    implicit_get_retry,
     is_opaque_dispatch,
     normalize_command_name,
     resolve_command_name,
@@ -675,21 +676,17 @@ class Ps1CommandModel:
         implicated, because any of them could be the one that took.
 
         **The last tier is the implicit `Get-` retry**, which 5.1 falls back on for a name nothing
-        else claims — `alias zzq` runs `Get-Alias`, `childitem` runs `Get-ChildItem`. Two things
-        about it are measured and both decide how it is written here:
+        else claims — `alias zzq` runs `Get-Alias`, `childitem` runs `Get-ChildItem`. Whether there
+        is a retry at all, and what name it tries, is
+        `refinery.lib.scripts.ps1.ast.implicit_get_retry`; that it is reached here and nowhere
+        earlier is what makes it the last resort it is measured to be.
 
-        - It is a **last resort**, reached only once the alias, function and cmdlet tables have all
-          missed. `function alias { 'from-function' }; alias zzq` writes `from-function`, so a name
-          reached this way loses to every other tier. Putting these names in the built-in alias
-          table instead — which `KNOWN_ALIAS` did for `alias` — claims them *before* the function
-          tier, and a call to the script's own function is then rewritten into a call to the cmdlet,
-          deleting the body that ran.
-        - The retry resolves the prefixed name through the ordinary precedence rather than going
-          straight to a cmdlet: `function Get-Alias { 'from-function' }; alias zzq` also writes
-          `from-function`. So what this reports is a **name**, not a command. Rewriting `alias` to
-          `Get-Alias` is meaning-preserving whichever tier ends up claiming the prefixed spelling,
-          and once rewritten every other model reads an ordinary call — which is what keeps the call
-          graph from deleting a function whose only caller spelled it as a bare noun.
+        What the retry produces is a **name**, not a command, so the prefixed spelling is resolved
+        through the ordinary precedence in turn: `function Get-Alias { 'from-function' }; alias zzq`
+        also writes `from-function`. Rewriting `alias` to `Get-Alias` is meaning-preserving whichever
+        tier ends up claiming the prefixed spelling, and once rewritten every other model reads an
+        ordinary call — which is what keeps the call graph from deleting a function whose only
+        caller spelled it as a bare noun.
 
         The prefixed name's own tiers are asked in this same order, and every refusal among them is
         an unread binding like any other: a script that writes `Set-Alias Get-Alias Get-Date` makes
@@ -755,7 +752,9 @@ class Ps1CommandModel:
             return resolved(CommandKind.UNKNOWN, None, True)
         if current in KNOWN_CMDLETS:
             return resolved(CommandKind.CMDLET, KNOWN_CMDLETS[current])
-        prefixed = F'get-{current}'
+        prefixed = implicit_get_retry(current)
+        if prefixed is None:
+            return resolved(CommandKind.UNKNOWN, None)
         definitions = self._alias_defs.get(prefixed)
         if definitions is not None:
             implicated.extend(definitions)

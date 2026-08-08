@@ -151,24 +151,6 @@ BEHAVIOUR_DEFECTS: dict[str, str] = {
     "$x = 'a'; &('i' + 'ex') '$x = \"b\"'; Write-Host $x":
         'The same write, reached through a computed command name, and here the call itself is '
         'deleted as well.',
-    "$env:zzq = '7'; function item { Write-Output 'from-function' }; item env:zzq":
-        'The function is dropped and the call rewritten to `Get-Item`, which reads the environment '
-        'variable rather than running the body. `item` is not an alias on 5.1 — it is the engine\'s '
-        'implicit `Get-` retry, reached only after alias, function and cmdlet have all missed — so '
-        'a script function named `item` is what runs. Our alias table claims the name instead, and '
-        'the alias tier beats the function tier.',
-    "function member { Write-Output 'from-function' }; member":
-        'The same inversion for `member`; the rewritten `Get-Member` has no input object and fails.',
-    "function variable { Write-Output 'from-function' }; variable zzqnope":
-        'The same inversion for `variable`; the rewritten `Get-Variable` reports VariableNotFound.',
-    "function childitem { Write-Output 'from-function' }; childitem zzqnope":
-        'The same inversion for `childitem`; the rewritten `Get-ChildItem` reports PathNotFound.',
-    "function gerr { Write-Output 'from-function' }; gerr":
-        'The same inversion for `gerr`, and worse: `Get-Error` is PowerShell 7.0, so the rewritten '
-        'name is a command 5.1 does not have and the script raises CommandNotFoundException.',
-    "function fhx { Write-Output 'from-function' }; fhx":
-        'The same as `gerr`, for a name that is neither an alias nor a retry: 5.1 has no '
-        '`Format-Hex` either, so the rewrite invents a command out of an entry the host never had.',
     "function Set-Alias { Write-Output 'nope' }; Set-Alias zzq Write-Output; zzq 'x'":
         'The definition is read from its spelling rather than from what the name denotes, so `zzq` '
         'is treated as bound and rewritten. A function beats a cmdlet, so what 5.1 runs is the '
@@ -190,13 +172,6 @@ BEHAVIOUR_DEFECTS: dict[str, str] = {
         'the rewrite resolves the name anyway.',
     "Set-Alias zq3 Write-Output; ${alias:zq3} = 'Write-Host'; zq3 'z'":
         'The same drive again, written with variable syntax rather than through a command.',
-    "function Get-Get-Zqfrob { Write-Output 'hit' }; Get-Zqfrob":
-        'The implicit `Get-` retry is measured to apply only to a name that carries no dash, so 5.1 '
-        'never looks for `Get-Get-Zqfrob` and the snippet raises CommandNotFoundException. We '
-        'prepend the prefix to any unclaimed name, which invents a resolution and runs a body 5.1 '
-        'does not reach.',
-    "function Get-Zq-Frob { Write-Output 'hit' }; Zq-Frob":
-        'The same invented retry, for a dashed name that is not itself `Get-` prefixed.',
 }
 
 
@@ -301,18 +276,18 @@ TABLE_TRANSCRIPTS: dict[str, tuple[str, ...]] = {
     'Get-Alias fhx':
         ('ERROR\tItemNotFoundException,Microsoft.PowerShell.Commands.GetAliasCommand'
          '\tSystem.Management.Automation.ItemNotFoundException',),
-    'Get-Command Get-Item -Type Cmdlet':
+    'Get-Command Get-Item':
         ('OUT\tSystem.Management.Automation.CmdletInfo\tGet-Item',),
-    'Get-Command Get-Member -Type Cmdlet':
+    'Get-Command Get-Member':
         ('OUT\tSystem.Management.Automation.CmdletInfo\tGet-Member',),
-    'Get-Command Get-Variable -Type Cmdlet':
+    'Get-Command Get-Variable':
         ('OUT\tSystem.Management.Automation.CmdletInfo\tGet-Variable',),
-    'Get-Command Get-ChildItem -Type Cmdlet':
+    'Get-Command Get-ChildItem':
         ('OUT\tSystem.Management.Automation.CmdletInfo\tGet-ChildItem',),
-    'Get-Command Get-Error -Type Cmdlet':
+    'Get-Command Get-Error':
         ('ERROR\tCommandNotFoundException,Microsoft.PowerShell.Commands.GetCommandCommand'
          '\tSystem.Management.Automation.CommandNotFoundException',),
-    'Get-Command Format-Hex -Type Cmdlet':
+    'Get-Command Format-Hex':
         ('ERROR\tCommandNotFoundException,Microsoft.PowerShell.Commands.GetCommandCommand'
          '\tSystem.Management.Automation.CommandNotFoundException',),
     '(Get-Command help).CommandType':

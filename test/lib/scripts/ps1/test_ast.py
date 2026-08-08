@@ -7,8 +7,10 @@ from refinery.lib.scripts.ps1.ast import (
     bound_argument_value,
     free_positional_values,
     get_command_name,
+    implicit_get_retry,
     in_evaluation_order,
     is_reference_cast,
+    resolved_command_names,
     standalone_command_statement,
 )
 from refinery.lib.scripts.ps1.model import (
@@ -306,3 +308,84 @@ class TestPs1FreePositionalValues(TestBase):
 
     def test_an_unknown_command_binds_every_positional(self):
         self.assertEqual(self._values("Frobnicate -Foo x 'b'", 'frobnicate'), ['x', 'b'])
+
+
+class TestPs1ImplicitGetRetry(TestBase):
+    """
+    The name a 5.1 host tries once nothing claims the one that was written. `item` runs `Get-Item`
+    only because no alias, no function and no cmdlet claims `item`, so the retry is what a name has
+    left when every table has missed it.
+    """
+
+    def test_a_bare_noun_no_host_table_claims_is_retried_under_the_get_prefix(self):
+        for name, retried in (
+            ('item', 'get-item'),
+            ('member', 'get-member'),
+            ('variable', 'get-variable'),
+            ('childitem', 'get-childitem'),
+        ):
+            with self.subTest(name):
+                self.assertEqual(implicit_get_retry(name), retried)
+
+    def test_a_name_that_carries_a_dash_is_not_retried(self):
+        """
+        Measured on 5.1: `function Get-Zq-Frob { }; Zq-Frob` raises CommandNotFoundException, and so
+        does `function Get-Get-Zqfrob { }; Get-Zqfrob`. The engine prefixes a bare noun and never a
+        name that already carries a dash, so prefixing regardless invents a resolution for a name
+        the host reports as not found.
+        """
+        for name in ('Zq-Frob', 'Get-Zqfrob', 'Get-Item', 'Some-Unknown-Command'):
+            with self.subTest(name):
+                self.assertIsNone(implicit_get_retry(name))
+
+    def test_a_name_a_host_table_already_claims_is_not_retried(self):
+        """
+        `help` is the one that costs something: 5.1 spells it as a function and the host answers to
+        both `help` and `Get-Help`, so a retry that did not ask about the bare name first would
+        resolve `help` to a different command than the one that runs.
+        """
+        for name in ('iex', 'gci', 'echo', 'ls', 'help'):
+            with self.subTest(name):
+                self.assertIsNone(implicit_get_retry(name))
+
+
+class TestPs1ResolvedCommandNames(TestBase):
+    """
+    Every name a call may run, read as a deny-list: the name the call spells and, where the engine
+    would retry it, the prefixed name beside it.
+    """
+
+    @staticmethod
+    def _command(source: str) -> Ps1CommandInvocation:
+        for node in Ps1Parser(source).parse().walk():
+            if isinstance(node, Ps1CommandInvocation):
+                return node
+        raise AssertionError(F'no command in {source!r}')
+
+    def _names(self, source: str) -> tuple[str, ...]:
+        return resolved_command_names(self._command(source))
+
+    def test_a_bare_noun_reports_the_written_name_and_the_retried_one(self):
+        for source, expected in (
+            ('item env:zzq', ('item', 'get-item')),
+            ('variable x -ValueOnly', ('variable', 'get-variable')),
+            ('member', ('member', 'get-member')),
+        ):
+            with self.subTest(source):
+                self.assertEqual(self._names(source), expected)
+
+    def test_a_name_the_engine_does_not_retry_reports_only_itself(self):
+        for source, expected in (
+            ('Get-Item env:zzq', ('get-item',)),
+            ('Zq-Frob', ('zq-frob',)),
+            ('Get-Zqfrob', ('get-zqfrob',)),
+            ('gci', ('get-childitem',)),
+            ('iex $x', ('invoke-expression',)),
+        ):
+            with self.subTest(source):
+                self.assertEqual(self._names(source), expected)
+
+    def test_a_call_whose_name_is_not_written_reports_nothing(self):
+        for source in ('& $f', '. $f'):
+            with self.subTest(source):
+                self.assertEqual(self._names(source), ())

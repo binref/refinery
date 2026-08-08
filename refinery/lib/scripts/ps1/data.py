@@ -171,15 +171,29 @@ def is_type(name: str, canonical_lower: str) -> bool:
     return resolved == canonical_lower
 
 
+#: The aliases the host binds, and nothing else. An entry here is not a harmless surplus: nothing in
+#: ordinary name lookup beats an alias, so a name added here is taken away from whatever 5.1 would
+#: have given it. `childitem`, `item`, `member` and `variable` were listed here once and are not
+#: aliases at all — they are the engine's implicit `Get-` retry, which is a *last resort* reached
+#: only once the alias, function and cmdlet tables have missed, so `function item { }` beats it. As
+#: aliases they claimed the name before the function tier, and a call to the script's own function
+#: was rewritten into a call to the cmdlet, deleting the body that ran. That rule lives in
+#: `refinery.lib.scripts.ps1.ast.implicit_get_retry` instead, where it is a retry.
+#:
+#: `fhx` and `gerr` were listed too, and neither target is on the host: `Format-Hex` and `Get-Error`
+#: were both measured absent from 5.1, so a bare `gerr` was rewritten into a name the script then
+#: could not run, and the entry injected `Get-Error` as a cmdlet through the loop below on top of
+#: that. `Format-Hex` also stands in the collected command table on its own and is left there for
+#: now: the capture describes it as PowerShell 7 does, so it was read from a shadowing 7.0 module
+#: rather than from the host, and correcting that is a change to the capture rather than to a table
+#: built from one. It is inert where the alias entries were not — nothing rewrites a name *into* a
+#: cmdlet — and `test_data.py` carries the measurement as a recorded defect.
+#:
+#: Anything added here has to be measured on a host first, and the ps1 oracle corpus is where such a
+#: measurement is recorded.
 KNOWN_ALIAS: dict[str, str] = {
     _name.lower(): _definition for _name, _definition in _COMMANDS['aliases'].items()
 }
-KNOWN_ALIAS.setdefault('childitem', 'Get-ChildItem')
-KNOWN_ALIAS.setdefault('fhx', 'Format-Hex')
-KNOWN_ALIAS.setdefault('gerr', 'Get-Error')
-KNOWN_ALIAS.setdefault('item', 'Get-Item')
-KNOWN_ALIAS.setdefault('member', 'Get-Member')
-KNOWN_ALIAS.setdefault('variable', 'Get-Variable')
 
 #: The CimCmdlets short forms are module-provided aliases, and a bare pristine `Get-Alias` does not
 #: list them even though their target cmdlets are collected. `run-pwsh.ps1` now imports the modules

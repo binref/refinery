@@ -50,6 +50,32 @@ class TestPs1CallGraphReadability(TestBase):
     def test_a_qualified_call_onto_a_name_nothing_defines_is_readable(self):
         self.assertTrue(self._graph("function Qzmr { 'P' }\n& 'MyModule\\Other'").is_readable)
 
+    def test_a_bare_noun_whose_retry_lands_on_a_definition_keeps_that_definition(self):
+        """
+        Measured on 5.1: `function Get-Item { Write-Output 'from-function' }; item env:zzq` writes
+        `from-function`, so the call reaches the definition although it spells another name. Read by
+        the written key alone the definition is called by nobody, and deleting it takes out the body
+        that runs.
+        """
+        graph = self._graph("function Get-Item { 'P' }\nitem env:zzq")
+        self.assertFalse(graph.is_readable)
+        self.assertEqual(graph.reachable_names(), frozenset({'get-item', 'item'}))
+
+    def test_a_bare_noun_the_script_defines_itself_is_readable(self):
+        graph = self._graph("function item { 'P' }\nitem env:zzq")
+        self.assertTrue(graph.is_readable)
+        self.assertEqual(graph.reachable_names(), frozenset({'item'}))
+
+    def test_a_dashed_call_does_not_reach_the_definition_of_its_prefixed_spelling(self):
+        for source, called in (
+            ("function Get-Zq-Frob { 'P' }\nZq-Frob", 'zq-frob'),
+            ("function Get-Get-Zqfrob { 'P' }\nGet-Zqfrob", 'get-zqfrob'),
+        ):
+            with self.subTest(source):
+                graph = self._graph(source)
+                self.assertTrue(graph.is_readable)
+                self.assertEqual(graph.reachable_names(), frozenset({called}))
+
     def test_a_module_qualified_export_is_still_read_as_an_export(self):
         graph = self._graph(
             "& 'Microsoft.PowerShell.Core\\Export-ModuleMember' -Function f\nfunction f { 'P' }")

@@ -24,7 +24,7 @@ from refinery.lib.scripts.ps1.ast import (
     get_command_name,
     is_opaque_dispatch,
     normalize_command_name,
-    resolve_command_name,
+    resolved_command_names,
 )
 from refinery.lib.scripts.ps1.model import (
     Ps1AssignmentExpression,
@@ -45,7 +45,7 @@ _IDENTITY_SCOPES = frozenset({
 
 #: Commands that hand a name to code outside this file. A `.psm1` exporting a function has call
 #: sites in whatever imported it, and no walk over this tree can see them. Read through
-#: `refinery.lib.scripts.ps1.ast.resolve_command_name`, which is the deny-list reading of a name:
+#: `refinery.lib.scripts.ps1.ast.resolved_command_names`, which is the deny-list reading of a name:
 #: a hit here withholds every name-keyed removal, so a spelling that dodges the table is the
 #: dangerous direction. That closes a module qualifier written after the call operator, quoted or
 #: not — `& Microsoft.PowerShell.Core\Export-ModuleMember` arrives as one token either way. Written
@@ -238,10 +238,10 @@ def _collides_with_a_definition(
 
     `& 'MyModule\\Qzmr'` keys as `mymodule\\qzmr` while `function Qzmr` keys as `qzmr`, so nothing
     matches, the definition reads as uncalled, and deleting it leaves a script calling a name it no
-    longer defines. `resolved` holds the stripped reading of every call whose written key differs
-    from it, which is the deny-list reading `refinery.lib.scripts.ps1.ast.resolve_command_name`
-    gives — so an alias is here too, and `iex $x` beside a `function Invoke-Expression` collides for
-    the same reason.
+    longer defines. `resolved` holds every name a call may run that its written key does not spell,
+    which is the deny-list reading `refinery.lib.scripts.ps1.ast.resolved_command_names` gives — so
+    an alias is here too, and `iex $x` beside a `function Invoke-Expression` collides for the same
+    reason, as does `item` beside a `function Get-Item`, which the implicit `Get-` retry reaches.
 
     **The condition is the collision and not the qualifier.** A quoted executable path is the same
     shape: `& 'C:\\tools\\stage2.exe'` keys as the path and resolves to `stage2.exe`. Reading the
@@ -294,12 +294,11 @@ def build_call_graph(root: Ps1Script, oracle: TypeOracle) -> Ps1CallGraph:
                     readable = False
                 continue
             key = normalize_command_name(name)
-            resolved = resolve_command_name(node)
-            if resolved in _EXPORTING_COMMANDS:
+            reachable = resolved_command_names(node)
+            if _EXPORTING_COMMANDS.intersection(reachable):
                 readable = False
                 exports = True
-            if resolved is not None and resolved != key:
-                qualified.append(resolved)
+            qualified.extend(resolved for resolved in reachable if resolved != key)
             call_sites.setdefault(key, []).append(Ps1CallSite(node, _enclosing_function(node)))
         elif binds_command_identity(node):
             readable = False

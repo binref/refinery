@@ -588,6 +588,54 @@ class TestPs1ImplicitGetPrefix(TestBase):
                 self.assertEqual(
                     _denotation(source, name), Denotation(CommandKind.FUNCTION, name))
 
+    def test_a_function_of_a_bare_noun_takes_it_from_the_cmdlet_the_retry_would_reach(self):
+        """
+        Measured on 5.1: `function item { Write-Output 'from-function' }; item env:zzq` writes
+        `from-function` rather than the environment variable, and the same holds for `member`,
+        `variable` and `childitem`. Each of these nouns reaches its cmdlet only by the retry, so the
+        script's own function of the name is asked first and answers.
+        """
+        for name, prefixed in (
+            ('item', 'Get-Item'),
+            ('member', 'Get-Member'),
+            ('variable', 'Get-Variable'),
+            ('childitem', 'Get-ChildItem'),
+        ):
+            with self.subTest(name):
+                self.assertEqual(
+                    _denotation(F'{name} env:zzq', name),
+                    Denotation(CommandKind.ALIAS, prefixed))
+                self.assertEqual(
+                    _denotation(F"function {name} {{ 'from-function' }}\n{name} env:zzq", name),
+                    Denotation(CommandKind.FUNCTION, name))
+
+    def test_a_name_the_host_has_no_command_for_is_the_scripts_own_function(self):
+        """
+        `gerr` and `fhx` are aliases a later PowerShell ships; 5.1 binds neither name and has no
+        `Get-Error` and no `Format-Hex` at all. Holding either in the built-in alias table would
+        resolve it ahead of the function tier and rewrite the call into one to a command the host
+        does not have.
+        """
+        for name in ('gerr', 'fhx'):
+            with self.subTest(name):
+                self.assertEqual(_denotation(name, name), Denotation(CommandKind.UNKNOWN, None))
+                self.assertEqual(
+                    _denotation(F"function {name} {{ 'from-function' }}\n{name}", name),
+                    Denotation(CommandKind.FUNCTION, name))
+
+    def test_a_name_that_carries_a_dash_does_not_reach_a_prefixed_function(self):
+        """
+        Measured on 5.1: `function Get-Zq-Frob { }; Zq-Frob` raises CommandNotFoundException, as
+        does `function Get-Get-Zqfrob { }; Get-Zqfrob`. The name is no more bounded with such a
+        function written above it than without one, since the retry never reaches it.
+        """
+        for name, prefixed in (('Zq-Frob', 'Get-Zq-Frob'), ('Get-Zqfrob', 'Get-Get-Zqfrob')):
+            with self.subTest(name):
+                self.assertEqual(_denotation(name, name), Denotation(CommandKind.UNKNOWN, None))
+                self.assertEqual(
+                    _denotation(F"function {prefixed} {{ 'from-function' }}\n{name}", name),
+                    Denotation(CommandKind.UNKNOWN, None))
+
     def test_a_script_alias_of_the_bare_name_wins_over_the_retry(self):
         self.assertEqual(
             _denotation('Set-Alias alias Get-Date\nalias zzq', 'alias'),

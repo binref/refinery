@@ -111,6 +111,19 @@ class TestPs1NameCensus(TestBase):
             self._refs("Set-Item Env:ComSpec 'evil'"), [('env:comspec', 'WRITES', 'SCRIPT')])
         self.assertEqual(self._refs('del variable:x'), [('x', 'UNBINDS', 'LOCAL')])
 
+    def test_a_bare_noun_reaching_a_variable_reader_reads_the_same_name(self):
+        """
+        Nothing on a 5.1 host claims `variable` or `item`, so the implicit `Get-` retry runs
+        `Get-Variable` and `Get-Item`. A census keyed on the written spelling alone finds no
+        reference here and leaves the read of `$x` unaccounted for.
+        """
+        for source in ('Get-Variable x -ValueOnly', 'variable x -ValueOnly'):
+            with self.subTest(source):
+                self.assertEqual(self._refs(source), [('x', 'READS', 'LOCAL')])
+        for source in ('Get-Item variable:x', 'item variable:x'):
+            with self.subTest(source):
+                self.assertEqual(self._refs(source), [('x', 'READS', 'LOCAL')])
+
     def test_an_item_command_on_any_other_drive_addresses_no_name(self):
         for source in ("Set-Item C:\\file 5", "Set-Item Function:f 5", "Get-Item HKLM:\\Key"):
             with self.subTest(source):

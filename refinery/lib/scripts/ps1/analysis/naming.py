@@ -35,6 +35,7 @@ from refinery.lib.scripts.ps1.ast import (
     bound_argument_value,
     free_positional_values,
     resolve_command_name,
+    resolved_command_names,
     string_value,
 )
 from refinery.lib.scripts.ps1.model import (
@@ -87,8 +88,8 @@ class Ps1NamedReference:
 
 
 #: Commands whose first argument is the *name* of a variable, mapped to what they do to it. Resolved
-#: through `refinery.lib.scripts.ps1.ast.resolve_command_name`, so aliases (`sv`, `gv`, `rv`) and
-#: case variants arrive here already canonical.
+#: through `refinery.lib.scripts.ps1.ast.resolved_command_names`, so aliases (`sv`, `gv`, `rv`), case
+#: variants and the bare noun `variable` all arrive here already canonical.
 _VARIABLE_COMMANDS: dict[str, Ps1NameRole] = {
     'clear-variable': Ps1NameRole.WRITES,
     'get-variable': Ps1NameRole.READS,
@@ -137,10 +138,14 @@ def named_references(cmd: Ps1CommandInvocation) -> list[Ps1NamedReference]:
     Every reference *cmd* makes to a name addressed as a string, or an empty list when it makes
     none. A single command may make several: `Get-Variable x -OutVariable y` reads one and writes
     another.
+
+    Both names a call may run are asked about, because `variable x` and `item variable:x` reach
+    `Get-Variable` and `Get-Item` through the implicit `Get-` retry and a table keyed on the bare
+    spelling misses them. At most one of the two is in either table, and reading a name a `function
+    variable` would have taken back only over-reports a read, which withholds a removal.
     """
     found: list[Ps1NamedReference] = []
-    command = resolve_command_name(cmd)
-    if command is not None:
+    for command in resolved_command_names(cmd):
         found.extend(_subject_references(cmd, command))
     found.extend(_out_variable_references(cmd))
     return found
@@ -158,6 +163,9 @@ def unreadable_name_target(cmd: Ps1CommandInvocation) -> Ps1NameTarget | None:
     put most scripts permanently in doubt; that is left as a known hole rather than paid for
     everywhere. A reading command is not reported either: not knowing which name was read costs
     nothing, since a read changes no value.
+
+    The implicit `Get-` retry needs no reading here, unlike in `named_references`: it prefixes
+    `Get-`, so the only commands it can reach are readers, and a reader is not reported.
     """
     command = resolve_command_name(cmd)
     if command is None:
