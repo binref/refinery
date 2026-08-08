@@ -544,20 +544,21 @@ def apply_string_method(
     raise StringMethodError
 
 
-class LocalFunctionAwareTransformer(Transformer):
+class OracleAwareTransformer(Transformer):
     """
-    A transform that must not rewrite a command name the script has taken over. The set of such
-    names is the world's — `refinery.lib.scripts.ps1.analysis.world.Ps1TypeWorld.shadowed_names` —
-    rather than a private walk, because the ways to take a name over are more than one: a `function`
-    or `filter` definition, and an assignment into the `function:`/`alias:` namespace. A private
-    collector that saw only the first renamed `gci` to `Get-ChildItem` in a script whose very next
-    statement was `${function:gci} = { <payload> }`, and the pass that prunes pure cmdlets then
-    deleted the call.
+    A transform whose every purity verdict is asked through the run's shared
+    `refinery.lib.scripts.ps1.analysis.types.TypeOracle`, read once at entry from the model cache
+    rather than reconstructed per node. One shared oracle is what keeps two transforms in a run from
+    reaching opposite conclusions about the same node, and reading it before this run's own edits can
+    only make the answer the more open — and so the more conservative — of the two. See
+    `refinery.lib.scripts.ps1.deobfuscation.unused.Ps1DeadStoreElimination` for why the single oracle
+    is load-bearing. Which command a name denotes — the other question a transform must not answer
+    privately — is the command model's, read through
+    `refinery.lib.scripts.ps1.analysis.commands.Ps1CommandModel`.
     """
 
     def __init__(self):
         super().__init__()
-        self._local_functions: frozenset[str] = frozenset()
         self._oracle: TypeOracle | None = None
         self._entry = False
 
@@ -566,14 +567,7 @@ class LocalFunctionAwareTransformer(Transformer):
             return super().visit(node)
         self._entry = True
         try:
-            cache = model_cache(self, node)
-            self._local_functions = cache.closed_world.shadowed_names
-            # Read here beside the shadow set rather than per node, for the reason
-            # `refinery.lib.scripts.ps1.deobfuscation.unused.Ps1DeadStoreElimination` gives: every
-            # purity verdict in a run has to be asked through the same oracle, and one taken before
-            # this run's own edits can only be the more open — and so the more conservative — of the
-            # two. A subclass that asks nothing about purity pays a dictionary lookup for it.
-            self._oracle = cache.oracle
+            self._oracle = model_cache(self, node).oracle
             return super().visit(node)
         finally:
             self._entry = False

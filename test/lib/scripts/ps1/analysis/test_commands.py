@@ -55,6 +55,19 @@ class TestPs1CommandDenotation(TestBase):
             _denotation("function Get-Content { 'x' }\nGet-Content", 'Get-Content'),
             Denotation(CommandKind.FUNCTION, 'Get-Content'))
 
+    def test_a_function_namespace_assignment_takes_the_name_from_its_cmdlet(self):
+        self.assertEqual(
+            _denotation('Get-ChildItem', 'Get-ChildItem'),
+            Denotation(CommandKind.CMDLET, 'Get-ChildItem'))
+        self.assertNotEqual(
+            _denotation("${function:Get-ChildItem} = { 'x' }\nGet-ChildItem", 'Get-ChildItem'),
+            Denotation(CommandKind.CMDLET, 'Get-ChildItem'))
+
+    def test_a_builtin_alias_wins_over_a_function_namespace_assignment(self):
+        self.assertEqual(
+            _denotation("${function:gci} = { 'x' }\ngci", 'gci'),
+            Denotation(CommandKind.ALIAS, 'Get-ChildItem'))
+
     def test_a_cmdlet_named_directly_denotes_its_canonical_spelling(self):
         self.assertEqual(
             _denotation('get-childitem', 'get-childitem'),
@@ -167,7 +180,7 @@ class TestPs1CommandModelDirectBuild(TestBase):
         dominance = build_dominance(control_flow)
         blocks = build_block_model(tree)
         model = build_command_model(
-            tree, control_flow, dominance, blocks, frozenset({'get-content'}))
+            tree, control_flow, dominance, blocks, frozenset({'get-content'}), frozenset({'get-content'}))
         self.assertEqual(
             model.denotation(_use(tree, 'Get-Content')),
             Denotation(CommandKind.FUNCTION, 'Get-Content'))

@@ -25,6 +25,14 @@ of the same name and a function over a cmdlet, so this model resolves an alias b
 function before a cmdlet. A default alias therefore wins over a script `function` of its name, which
 is why `function echo { }; echo` runs `Write-Output` and not the body.
 
+The precedence covers the names a script takes over through the `function:`/`alias:` variable
+namespace (`${function:Get-ChildItem} = { ... }`), not only `function`/`filter` keyword definitions.
+Such an assignment redefines command identity under a spelling this model cannot follow to a body, so
+when no alias wins the name denotes *unknown* rather than the cmdlet the metadata would otherwise
+report — the caller keeps it as written. The set of taken-over names is the world's
+(`refinery.lib.scripts.ps1.analysis.world.Ps1TypeWorld.shadowed_names`), so this model and the closed-
+world model cannot disagree about which names the script has shadowed.
+
 **Writability is handled by refusal, not by a rebind table.** Every default alias but `sls` is
 `ReadOnly` or `AllScope`, and a plain `Set-Alias` rebinds neither (measured: `AliasNotWritable` /
 `AliasAllScopeOptionCannotBeRemoved`), so a script `Set-Alias` naming an existing builtin alias almost
@@ -182,11 +190,13 @@ class Ps1CommandModel:
         reach: ReachabilityQuery,
         blocks: Ps1BlockModel,
         functions: frozenset[str],
+        shadowed: frozenset[str],
     ):
         self._flow = control_flow
         self._reach = reach
         self._blocks = blocks
         self._functions = functions
+        self._shadowed = shadowed
         self._alias_defs: dict[str, list[AliasDefinition]] = {}
         for node in root.walk():
             if not isinstance(node, Ps1CommandInvocation):
@@ -250,6 +260,8 @@ class Ps1CommandModel:
             return Denotation(CommandKind.ALIAS, KNOWN_CMDLETS.get(current, spelling))
         if current in self._functions:
             return Denotation(CommandKind.FUNCTION, spelling)
+        if current in self._shadowed:
+            return Denotation(CommandKind.UNKNOWN, None)
         if current in KNOWN_CMDLETS:
             return Denotation(CommandKind.CMDLET, KNOWN_CMDLETS[current])
         return Denotation(CommandKind.UNKNOWN, None)
@@ -305,10 +317,13 @@ def build_command_model(
     dominance: DominatorModel,
     blocks: Ps1BlockModel,
     functions: frozenset[str],
+    shadowed: frozenset[str],
 ) -> Ps1CommandModel:
     """
     Build the `Ps1CommandModel` for a script from its control-flow model, its dominators, the block
-    model that says where each script block runs, and the set of command names it defines as
-    functions.
+    model that says where each script block runs, the set of command names it defines as `function`
+    or `filter`, and the wider set of names it takes over by any means — the latter from
+    `refinery.lib.scripts.ps1.analysis.world.Ps1TypeWorld.shadowed_names`.
     """
-    return Ps1CommandModel(root, control_flow, ReachabilityQuery(dominance), blocks, functions)
+    return Ps1CommandModel(
+        root, control_flow, ReachabilityQuery(dominance), blocks, functions, shadowed)

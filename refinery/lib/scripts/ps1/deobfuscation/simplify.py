@@ -3,14 +3,15 @@ PowerShell syntax normalization transforms.
 """
 from __future__ import annotations
 
+from refinery.lib.scripts import Node, Transformer
+from refinery.lib.scripts.ps1.analysis.cache import model_cache
+from refinery.lib.scripts.ps1.analysis.commands import CommandKind, Ps1CommandModel
 from refinery.lib.scripts.ps1.ast import (
     get_command_name,
-    normalize_command_name,
     string_value,
 )
 from refinery.lib.scripts.ps1.data import (
     ALL_PARAMETER_NAMES,
-    KNOWN_CMDLETS,
     KNOWN_PS_OPERATORS,
     KNOWN_PS_SWITCHES,
     PS1_KNOWN_VARIABLES,
@@ -18,7 +19,6 @@ from refinery.lib.scripts.ps1.data import (
     TYPE_ARG_COMMANDS,
 )
 from refinery.lib.scripts.ps1.deobfuscation.helpers import (
-    LocalFunctionAwareTransformer,
     is_bare_command_name,
     make_string_literal,
 )
@@ -41,6 +41,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1ParenExpression,
     Ps1RealLiteral,
     Ps1ScopeModifier,
+    Ps1Script,
     Ps1StringLiteral,
     Ps1SubExpression,
     Ps1TypeExpression,
@@ -59,7 +60,22 @@ def _has_wildcard(name: str) -> bool:
     return any(c in name for c in '*?[')
 
 
-class Ps1Simplifications(LocalFunctionAwareTransformer):
+class Ps1Simplifications(Transformer):
+
+    def __init__(self):
+        super().__init__()
+        self._commands: Ps1CommandModel | None = None
+        self._entry = False
+
+    def visit(self, node: Node):
+        if self._entry or not isinstance(node, Ps1Script):
+            return super().visit(node)
+        self._entry = True
+        try:
+            self._commands = model_cache(self, node).commands
+            return super().visit(node)
+        finally:
+            self._entry = False
 
     def visit_Ps1Variable(self, node: Ps1Variable):
         self.generic_visit(node)
@@ -210,26 +226,27 @@ class Ps1Simplifications(LocalFunctionAwareTransformer):
             return canonical
         return name
 
-    def _operator_is_noise(self, operator: str, name: str) -> bool:
+    def _operator_is_noise(self, node: Ps1CommandInvocation) -> bool:
         """
-        Whether dropping `operator` from a call to `name` leaves the same program. `&` always does:
-        it only forces command position. `.` does not — it runs the target in the *caller's* scope,
-        so a script file or a function dot-sourced this way writes its definitions, variables and
-        type-system changes here rather than into a child scope. A compiled cmdlet has no such body
-        and cannot tell the two apart, so only a name the metadata still describes as one may lose
-        the dot.
+        Whether dropping the invocation operator from `node` leaves the same program. `&` always
+        does: it only forces command position. `.` does not — it runs the target in the *caller's*
+        scope, so a script file or a function dot-sourced this way writes its definitions, variables
+        and type-system changes here rather than into a child scope. A compiled cmdlet has no such
+        body and cannot tell the two apart, so the dot may be dropped only from a name the command
+        model resolves to a cmdlet — never from one a `function`/`filter`, a `function:`/`alias:`
+        assignment, or an unresolved `Set-Alias` has taken over, each of which the model reports as
+        something other than a cmdlet.
 
         The world reads the surviving dot as its evidence that off-tree code runs
         (`refinery.lib.scripts.ps1.analysis.world._runs_another_script_file`), so dropping it from
         `. helper` did not merely change scope: the world, rebuilt from the stripped tree, then read
         closed and every grant in the script fired.
         """
-        if operator == '&':
+        if node.invocation_operator == '&':
             return True
-        return (
-            name.lower() in KNOWN_CMDLETS
-            and normalize_command_name(name) not in self._local_functions
-        )
+        if self._commands is None:
+            return False
+        return self._commands.denotation(node).kind is CommandKind.CMDLET
 
     def visit_Ps1CommandInvocation(self, node: Ps1CommandInvocation):
         self.generic_visit(node)
@@ -278,7 +295,7 @@ class Ps1Simplifications(LocalFunctionAwareTransformer):
                     (SIMPLE_IDENTIFIER.match(name_val) or '-' in name_val)
                     and is_bare_command_name(name_val)
                     and not _has_wildcard(name_val)
-                    and self._operator_is_noise(node.invocation_operator, name_val)
+                    and self._operator_is_noise(node)
                 ):
                     node.name = Ps1StringLiteral(
                         offset=node.name.offset,

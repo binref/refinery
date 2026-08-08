@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import inspect
+import re
+
 from test.lib.scripts.ps1.deobfuscation import TestPs1
 
 from refinery.lib.scripts.ps1.deobfuscation import Ps1AliasInlining, Ps1Simplifications
@@ -190,3 +193,44 @@ class TestPs1SimplifyRedirections(TestPs1):
     def test_a_refused_resolution_leaves_every_parent_pointer_true(self):
         source = "& (Get-Command 'Write-Host' > C:\\o.txt) 'hi'"
         self._assertTreeIsIntact(source, source, Ps1Simplifications)
+
+
+class TestPs1CallOperatorRemoval(TestPs1):
+
+    def test_a_leading_dot_is_dropped_from_a_plain_cmdlet(self):
+        self.assertEqual(
+            self._apply('. Get-ChildItem', Ps1Simplifications),
+            'Get-ChildItem')
+
+    def test_a_leading_ampersand_is_dropped_from_a_plain_cmdlet(self):
+        self.assertEqual(
+            self._apply('& Get-ChildItem', Ps1Simplifications),
+            'Get-ChildItem')
+
+    def test_a_dot_is_preserved_when_a_function_redefines_the_cmdlet_name(self):
+        source = inspect.cleandoc("""
+            function Get-ChildItem {
+              'x'
+            }
+            . Get-ChildItem
+        """)
+        self._assertUnchanged(source, Ps1Simplifications)
+
+    def test_a_dot_is_preserved_when_the_function_namespace_redefines_the_cmdlet_name(self):
+        source = inspect.cleandoc("""
+            ${function:Get-ChildItem} = {
+              'x'
+            }
+            . Get-ChildItem
+        """)
+        self._assertUnchanged(source, Ps1Simplifications)
+
+
+class TestPs1SimplifyModuleDependencies(TestPs1):
+
+    def test_the_simplify_module_does_not_reference_builtin_command_tables(self):
+        from refinery.lib.scripts.ps1.deobfuscation import simplify
+        source = inspect.getsource(simplify)
+        for identifier in ('KNOWN_CMDLETS', 'KNOWN_ALIAS'):
+            with self.subTest(identifier=identifier):
+                self.assertNotRegex(source, RF'\b{identifier}\b')

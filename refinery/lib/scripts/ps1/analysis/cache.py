@@ -148,11 +148,12 @@ class Ps1ModelCache(ModelCacheBase):
         rewrites an alias, folds a call to a function, or reads which command a name runs asks here
         rather than splitting the alias relation or ignoring the precedence that makes a default
         alias beat a script function. It reads the script's function names from `call_graph`, the
-        layer that already owns which definitions a name denotes.
+        layer that already owns which definitions a name denotes, and the wider set of names the
+        script takes over from `closed_world`, so the two models agree on what has been shadowed.
         """
         return self._lazy('_commands', lambda: build_command_model(
             self.root, self.control_flow, self.dominance, self.blocks,
-            frozenset(self.call_graph.defined_names)))
+            frozenset(self.call_graph.defined_names), self.closed_world.shadowed_names))
 
     @property
     def variable_flow(self) -> Ps1VariableFlow:
