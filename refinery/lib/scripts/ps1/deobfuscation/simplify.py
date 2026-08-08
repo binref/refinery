@@ -238,7 +238,7 @@ class Ps1Simplifications(Transformer):
         something other than a cmdlet.
 
         The world reads the surviving dot as its evidence that off-tree code runs
-        (`refinery.lib.scripts.ps1.analysis.world._runs_another_script_file`), so dropping it from
+        (`refinery.lib.scripts.ps1.analysis.world.runs_another_script_file`), so dropping it from
         `. helper` did not merely change scope: the world, rebuilt from the stripped tree, then read
         closed and every grant in the script fired.
         """

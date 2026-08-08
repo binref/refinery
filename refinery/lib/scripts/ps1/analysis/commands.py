@@ -41,6 +41,13 @@ the model treats such a collision — and any `-Force`/`-Option` definition — 
 name as written, which is faithful whichever way the rebind went. Precise builtin-rebind resolution
 waits on that metadata.
 
+**What a command does to the world is asked here too**, through `Ps1CommandModel.world_role`, and for
+the same reason the rest is: `refinery.lib.scripts.ps1.analysis.world` follows a name one hop through
+the built-in alias table and cannot follow the script's own, so `Set-Alias e iex` hides a leak from
+it. It cannot be fixed there — this model is built over the shadow set that one produces, so a world
+consulting this one would be a cycle — and the deny-lists themselves stay there, where the argument
+for what belongs on them is written. What is added here is the resolution, not a second list.
+
 **Position and scope come from dominance**, which is why Phase 1a precedes this. A `Set-Alias` binds a
 use only where its statement strictly dominates the use — it is guaranteed to have run — and the
 per-script-block control-flow graphs put a definition in a function body and a use outside it in
@@ -59,9 +66,17 @@ from refinery.lib.scripts.analysis.cfg import ControlFlowModel
 from refinery.lib.scripts.analysis.dominance import DominatorModel
 from refinery.lib.scripts.analysis.reaching import ReachabilityQuery
 from refinery.lib.scripts.ps1.analysis.blocks import Ps1BlockModel, Ps1BlockReach
+from refinery.lib.scripts.ps1.analysis.world import (
+    WorldRole,
+    command_role,
+    runs_another_script_file,
+    touches_identity_provider,
+)
 from refinery.lib.scripts.ps1.ast import (
     get_command_name,
+    is_opaque_dispatch,
     normalize_command_name,
+    resolve_command_name,
     string_value,
 )
 from refinery.lib.scripts.ps1.data import KNOWN_ALIAS, KNOWN_CMDLETS
@@ -129,6 +144,24 @@ class AliasDefinition(NamedTuple):
     node: Ps1CommandInvocation
     refuse: bool
     wildcard: bool
+
+
+class _Resolution(NamedTuple):
+    """
+    What `Ps1CommandModel._resolve` found: the `Denotation`, and whether the script itself is why it
+    names no command.
+
+    The second is not a shade of the first — it separates two outcomes `CommandKind.UNKNOWN` and
+    `CommandKind.NOTHING` each cover both of. A name the collected metadata simply does not describe
+    is the host's business and nothing the script did: the world model's deny-list stance applies,
+    an unrecognized command is not treated as a mutator, and `Ps1CommandModel.world_role` answers
+    `WorldRole.NONE`. A name the script bound to something this model could not read through — a
+    `-Force` rebind, a `function:` takeover, a definition that does not statically reach — is a
+    refusal reached *with* evidence, and answering that it leaves the world as it found it would be
+    this model contradicting its own denotation.
+    """
+    denotation: Denotation
+    unread_binding: bool
 
 
 def extract_alias_definition(cmd: Ps1CommandInvocation) -> AliasDefinition | None:
@@ -204,13 +237,17 @@ class Ps1CommandModel:
             definition = extract_alias_definition(node)
             if definition is not None:
                 self._alias_defs.setdefault(definition.name, []).append(definition)
-        self._memo: dict[int, Denotation] = {}
+        self._memo: dict[int, _Resolution] = {}
+        self._roles: dict[int, WorldRole] = {}
 
     def denotation(self, invocation: Ps1CommandInvocation) -> Denotation:
         """
         What `invocation`'s command name denotes at its position — see this module's own
         documentation for the three outcomes. Memoized for as long as the tree is unchanged.
         """
+        return self._resolution(invocation).denotation
+
+    def _resolution(self, invocation: Ps1CommandInvocation) -> _Resolution:
         found = self._memo.get(id(invocation))
         if found is None:
             found = self._memo[id(invocation)] = self._resolve(invocation)
@@ -222,32 +259,92 @@ class Ps1CommandModel:
         """
         return self._alias_defs.get(name.lower(), ())
 
-    def _resolve(self, invocation: Ps1CommandInvocation) -> Denotation:
+    def world_role(self, invocation: Ps1CommandInvocation) -> WorldRole:
+        """
+        What `invocation` does to the type world and the command table, with the script's own
+        aliases followed — the question
+        `refinery.lib.scripts.ps1.analysis.world.build_closed_world` asks of every node, re-asked
+        where command identity is known. Memoized for as long as the tree is unchanged.
+
+        The world model reads a name one hop through the built-in alias table and no further, so
+        `Set-Alias e iex` followed by `e $payload` reads there as an ordinary command and the world
+        reads closed over a script that runs whatever `$payload` says. It cannot read further: this
+        model is built over the shadow set that one produces, so a world that consulted this one
+        would be a cycle. The refinement therefore belongs here, and it is a refinement rather than
+        a second opinion — the name as written is classified first, so this can only ever name a
+        role where the world named one, or name one where the world named none.
+
+        A command the collected metadata does not describe reads as `WorldRole.NONE`, which is the
+        world model's stance and not a weaker one: mutation is a deny-list there, an unrecognized
+        command is not treated as a mutator, and that residual is the declared soundness gap its own
+        documentation names. Answering `UNKNOWN` for every command outside the metadata would make
+        this a different, vacuous question.
+
+        `UNKNOWN` is for the two ways nothing static bounds what runs: dispatch that is open by
+        construction, which is the axis the world model runs as an allow-list, and a name the script
+        itself bound to something this model could not read through — see `_Resolution`. The second
+        is why not naming a command is not on its own an answer of `NONE`: `Set-Alias e iex -Force`
+        and `${function:Get-Date} = $x` each leave this model unable to say what a later use runs,
+        and it knows exactly why.
+        """
+        found = self._roles.get(id(invocation))
+        if found is None:
+            found = self._roles[id(invocation)] = self._resolve_world_role(invocation)
+        return found
+
+    def _resolve_world_role(self, invocation: Ps1CommandInvocation) -> WorldRole:
+        if is_opaque_dispatch(invocation):
+            return WorldRole.UNKNOWN
+        if runs_another_script_file(invocation):
+            return WorldRole.LEAK
+        written = resolve_command_name(invocation)
+        if written is not None and (role := command_role(written)) is not WorldRole.NONE:
+            return role
+        resolution = self._resolution(invocation)
+        target = resolution.denotation.target
+        if target is not None and (role := command_role(target)) is not WorldRole.NONE:
+            return role
+        if touches_identity_provider(invocation):
+            return WorldRole.IDENTITY
+        if target is None and resolution.unread_binding:
+            return WorldRole.UNKNOWN
+        return WorldRole.NONE
+
+    def _resolve(self, invocation: Ps1CommandInvocation) -> _Resolution:
+        """
+        Resolve `invocation`, recording at every exit that names no command whether the script's own
+        definitions are the reason — see `_Resolution`.
+
+        An inline scriptblock (`&{ ... }`) is not one of them: its body stands in the tree, so the
+        whole-tree walk reads whatever it does. The unlocatable node is, defensively — a node in no
+        control-flow graph is one this model knows nothing about, including whether the script bound
+        the name it carries.
+        """
         name = get_command_name(invocation)
         if name is None:
-            return Denotation(CommandKind.UNKNOWN, None)
+            return _Resolution(Denotation(CommandKind.UNKNOWN, None), False)
         if self._flow.locate(invocation) is None:
-            return Denotation(CommandKind.UNKNOWN, None)
+            return _Resolution(Denotation(CommandKind.UNKNOWN, None), True)
         visited: set[str] = set()
         current = normalize_command_name(name)
         spelling = name
         hops = 0
         while True:
             if current in visited:
-                return Denotation(CommandKind.NOTHING, None)
+                return _Resolution(Denotation(CommandKind.NOTHING, None), False)
             reaching = self._reaching_alias_def(current, invocation)
             if reaching is not None:
                 if current in KNOWN_ALIAS or reaching.refuse:
-                    return Denotation(CommandKind.UNKNOWN, None)
+                    return _Resolution(Denotation(CommandKind.UNKNOWN, None), True)
                 if reaching.wildcard or reaching.target is None:
-                    return Denotation(CommandKind.NOTHING, None)
+                    return _Resolution(Denotation(CommandKind.NOTHING, None), False)
                 visited.add(current)
                 spelling = reaching.target
                 current = normalize_command_name(reaching.target)
                 hops += 1
                 continue
             if current in self._alias_defs:
-                return Denotation(CommandKind.NOTHING, None)
+                return _Resolution(Denotation(CommandKind.NOTHING, None), True)
             builtin = KNOWN_ALIAS.get(current)
             if builtin is not None:
                 visited.add(current)
@@ -257,14 +354,15 @@ class Ps1CommandModel:
                 continue
             break
         if hops > 0:
-            return Denotation(CommandKind.ALIAS, KNOWN_CMDLETS.get(current, spelling))
+            return _Resolution(
+                Denotation(CommandKind.ALIAS, KNOWN_CMDLETS.get(current, spelling)), False)
         if current in self._functions:
-            return Denotation(CommandKind.FUNCTION, spelling)
+            return _Resolution(Denotation(CommandKind.FUNCTION, spelling), False)
         if current in self._shadowed:
-            return Denotation(CommandKind.UNKNOWN, None)
+            return _Resolution(Denotation(CommandKind.UNKNOWN, None), True)
         if current in KNOWN_CMDLETS:
-            return Denotation(CommandKind.CMDLET, KNOWN_CMDLETS[current])
-        return Denotation(CommandKind.UNKNOWN, None)
+            return _Resolution(Denotation(CommandKind.CMDLET, KNOWN_CMDLETS[current]), False)
+        return _Resolution(Denotation(CommandKind.UNKNOWN, None), False)
 
     def _reaching_alias_def(
         self,

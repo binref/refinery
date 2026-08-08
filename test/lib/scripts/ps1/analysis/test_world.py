@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from test import TestBase
 
-from refinery.lib.scripts.ps1.analysis.world import build_closed_world
+from refinery.lib.scripts.ps1.analysis.world import (
+    WorldRole,
+    build_closed_world,
+    command_role,
+)
 from refinery.lib.scripts.ps1.parser import Ps1Parser
 
 
@@ -302,3 +306,116 @@ class TestPs1QualifiedOpenerSpellings(Ps1TypeWorldTest):
         for source in ('Set-Content C:\\tmp\\x.txt -Value 1', 'Get-Content .\\notes.txt'):
             with self.subTest(source):
                 self.assertTrue(self._closed(source))
+
+
+class TestPs1CommandRole(TestBase):
+    """
+    `command_role` is the one reading of the three deny-lists, keyed on a name rather than on a
+    node. Both readers of a role reach the tables through it — the whole-script verdict above and
+    the per-invocation refinement in the command model — so a spelling it misses is a spelling that
+    dodges every table at once, and a role it names wrongly is named wrongly everywhere.
+    """
+
+    def test_a_command_that_runs_data_as_code_is_a_leak(self):
+        for name in ('Invoke-Expression', 'Invoke-Command', 'Start-Job', 'Start-ThreadJob'):
+            with self.subTest(name):
+                self.assertEqual(command_role(name), WorldRole.LEAK)
+
+    def test_a_command_that_mutates_the_type_system_is_a_mutation(self):
+        for name in ('Add-Member', 'Add-Type', 'Import-Module', 'New-Module', 'Update-TypeData'):
+            with self.subTest(name):
+                self.assertEqual(command_role(name), WorldRole.MUTATION)
+
+    def test_a_command_that_redefines_command_identity_is_an_identity_change(self):
+        for name in ('Import-Alias', 'New-Alias', 'Remove-Alias', 'Set-Alias'):
+            with self.subTest(name):
+                self.assertEqual(command_role(name), WorldRole.IDENTITY)
+
+    def test_a_name_no_deny_list_holds_leaves_the_world_as_it_found_it(self):
+        for name in ('Get-ChildItem', 'Write-Output', 'Get-Date', 'Some-Unknown-Command'):
+            with self.subTest(name):
+                self.assertEqual(command_role(name), WorldRole.NONE)
+
+    def test_no_name_denotes_an_unknown_role(self):
+        """
+        Not knowing what runs is a fact about an invocation, never about a name: a name is by
+        construction something the tables can be asked about, so even a spelling no command wears
+        answers with the role it has, which is none.
+        """
+        names = (
+            'Invoke-Expression',
+            'Update-TypeData',
+            'Set-Alias',
+            'Get-ChildItem',
+            "('Inv' + 'oke-Expression')",
+            '',
+        )
+        self.assertEqual(
+            {command_role(name) for name in names},
+            {WorldRole.LEAK, WorldRole.MUTATION, WorldRole.IDENTITY, WorldRole.NONE},
+        )
+
+    def test_a_mutator_keeps_its_role_under_every_qualifier_it_can_arrive_with(self):
+        spellings = (
+            'update-typedata',
+            'Update-TypeData',
+            'UPDATE-TYPEDATA',
+            'global:Update-TypeData',
+            'script:Update-TypeData',
+            'global:script:Update-TypeData',
+            'Microsoft.PowerShell.Utility\\Update-TypeData',
+            'Microsoft.PowerShell.Utility\\global:Update-TypeData',
+        )
+        self.assertEqual({command_role(name) for name in spellings}, {WorldRole.MUTATION})
+
+    def test_a_leak_keeps_its_role_under_every_qualifier_it_can_arrive_with(self):
+        spellings = (
+            'invoke-expression',
+            'Invoke-Expression',
+            'global:Invoke-Expression',
+            'Microsoft.PowerShell.Utility\\Invoke-Expression',
+            'Microsoft.PowerShell.Utility\\script:Invoke-Expression',
+        )
+        self.assertEqual({command_role(name) for name in spellings}, {WorldRole.LEAK})
+
+    def test_a_builtin_alias_spelling_reaches_the_entry_its_target_holds(self):
+        """
+        The one hop through the built-in alias table is part of the key. These eight are the whole
+        of what it buys: every other spelling under which a denied command can arrive is a
+        qualifier. A caller handing over one of them unresolved would otherwise be told by a
+        deny-list that the command does nothing, which is the one direction a deny-list must not
+        fail in.
+        """
+        for name, role in (
+            ('icm', WorldRole.LEAK),
+            ('iex', WorldRole.LEAK),
+            ('sajb', WorldRole.LEAK),
+            ('ipmo', WorldRole.MUTATION),
+            ('nmo', WorldRole.MUTATION),
+            ('ipal', WorldRole.IDENTITY),
+            ('nal', WorldRole.IDENTITY),
+            ('sal', WorldRole.IDENTITY),
+        ):
+            with self.subTest(name):
+                self.assertEqual(command_role(name), role)
+
+    def test_a_builtin_alias_of_a_command_no_deny_list_holds_is_still_none(self):
+        """
+        The hop resolves a spelling; it does not widen the tables. `epal` is the case that matters:
+        exporting aliases to a file is not redefining one, so the aliasing family it belongs to has
+        no claim on the identity list.
+        """
+        for name in ('gci', 'gc', 'epal'):
+            with self.subTest(name):
+                self.assertEqual(command_role(name), WorldRole.NONE)
+
+    def test_an_alias_spelling_collapses_under_a_qualifier_like_any_other(self):
+        spellings = (
+            'ipmo',
+            'IPMO',
+            'global:ipmo',
+            'Microsoft.PowerShell.Core\\ipmo',
+            'Microsoft.PowerShell.Core\\global:ipmo',
+            'Import-Module',
+        )
+        self.assertEqual({command_role(name) for name in spellings}, {WorldRole.MUTATION})

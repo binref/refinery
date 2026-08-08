@@ -14,6 +14,7 @@ from refinery.lib.scripts.ps1.analysis.commands import (
     extract_alias_definition,
 )
 from refinery.lib.scripts.ps1.analysis.dominance import build_dominance
+from refinery.lib.scripts.ps1.analysis.world import WorldRole
 from refinery.lib.scripts.ps1.ast import get_command_name
 from refinery.lib.scripts.ps1.model import Ps1CommandInvocation, Ps1Script
 from refinery.lib.scripts.ps1.parser import Ps1Parser
@@ -30,9 +31,24 @@ def _use(tree: Ps1Script, name: str) -> Ps1CommandInvocation:
     )
 
 
+def _sole_invocation(tree: Ps1Script) -> Ps1CommandInvocation:
+    invocation, = (node for node in tree.walk() if isinstance(node, Ps1CommandInvocation))
+    return invocation
+
+
 def _denotation(source: str, name: str) -> Denotation:
     tree = _script(source)
     return Ps1ModelCache(tree).commands.denotation(_use(tree, name))
+
+
+def _world_role(source: str, name: str) -> WorldRole:
+    tree = _script(source)
+    return Ps1ModelCache(tree).commands.world_role(_use(tree, name))
+
+
+def _sole_world_role(source: str) -> WorldRole:
+    tree = _script(source)
+    return Ps1ModelCache(tree).commands.world_role(_sole_invocation(tree))
 
 
 class TestPs1CommandDenotation(TestBase):
@@ -137,6 +153,179 @@ class TestPs1CommandDenotation(TestBase):
             Denotation(CommandKind.UNKNOWN, None))
 
 
+class TestPs1CommandWorldRole(TestBase):
+    """
+    What an invocation does to the type world and the command table, with the script's own aliases
+    followed. The closed-world model reads a name one hop through the built-in alias table and no
+    further, so every shape where a script alias stands between the invocation and the command it
+    runs is a shape only this model can answer — `Set-Alias e iex` hides a leak from that one.
+    """
+
+    def test_a_leak_named_directly_is_a_leak(self):
+        for source, name in (
+            ('Invoke-Expression $payload', 'Invoke-Expression'),
+            ('iex $payload', 'iex'),
+            ('Invoke-Command -ScriptBlock $sb', 'Invoke-Command'),
+        ):
+            with self.subTest(source):
+                self.assertEqual(_world_role(source, name), WorldRole.LEAK)
+
+    def test_a_script_alias_to_a_leak_is_a_leak(self):
+        for source, name in (
+            ('Set-Alias e iex\ne $payload', 'e'),
+            ('Set-Alias run Invoke-Expression\nrun $payload', 'run'),
+            ('Set-Alias a b\nSet-Alias b iex\na $payload', 'a'),
+        ):
+            with self.subTest(source):
+                self.assertEqual(_world_role(source, name), WorldRole.LEAK)
+
+    def test_a_script_alias_to_a_type_system_mutator_is_a_mutation(self):
+        source = 'Set-Alias utd Update-TypeData\nutd -TypeName System.String -MemberName M'
+        self.assertEqual(_world_role(source, 'utd'), WorldRole.MUTATION)
+
+    def test_a_script_alias_to_an_aliasing_cmdlet_is_an_identity_change(self):
+        source = 'Set-Alias mkalias New-Alias\nmkalias gd Get-Date'
+        self.assertEqual(_world_role(source, 'mkalias'), WorldRole.IDENTITY)
+
+    def test_an_alias_defined_outside_a_block_reaches_a_use_inside_it(self):
+        source = 'Set-Alias e iex\n@(1) | ForEach-Object { e $payload }'
+        self.assertEqual(_world_role(source, 'e'), WorldRole.LEAK)
+
+    def test_a_leak_inside_a_function_body_is_a_leak(self):
+        self.assertEqual(_world_role('function f { iex $payload }', 'iex'), WorldRole.LEAK)
+
+    def test_a_mutator_reached_through_a_pipeline_is_a_mutation(self):
+        source = '$x | Add-Member -MemberType ScriptProperty -Name M -Value { 1 }'
+        self.assertEqual(_world_role(source, 'Add-Member'), WorldRole.MUTATION)
+
+    def test_the_name_as_written_is_classified_before_what_it_was_rebound_to(self):
+        """
+        The refinement may only name a role where the closed-world model named one, or name one
+        where it named none. A script that aliases a mutator's own name to something harmless
+        therefore still reads as a mutation, which is what the world reads from the name as written.
+        """
+        source = 'Set-Alias Update-TypeData Get-Date\nUpdate-TypeData -TypeName System.String'
+        self.assertEqual(_world_role(source, 'Update-TypeData'), WorldRole.MUTATION)
+
+    def test_opaque_dispatch_is_unknown(self):
+        for source in ('& $f', '. $f', '& $env:x'):
+            with self.subTest(source):
+                self.assertEqual(_sole_world_role(source), WorldRole.UNKNOWN)
+
+    def test_running_another_script_file_is_a_leak(self):
+        for source in (". 'helper.ps1'", "& '.\\stage2.ps1'", 'stage2.ps1', '. helper'):
+            with self.subTest(source):
+                self.assertEqual(_sole_world_role(source), WorldRole.LEAK)
+
+    def test_a_command_outside_the_collected_metadata_leaves_the_world_alone(self):
+        """
+        The deliberately permissive half of the line, and the declared soundness gap: mutation is a
+        deny-list, so a command nothing in the script binds and the metadata never described is not
+        treated as a mutator. Answering otherwise for every command outside the metadata would make
+        the question vacuous.
+        """
+        for source, name in (
+            ('Some-Unknown-Command $payload', 'Some-Unknown-Command'),
+            ('curl.exe $url', 'curl.exe'),
+        ):
+            with self.subTest(source):
+                self.assertEqual(_world_role(source, name), WorldRole.NONE)
+
+    def test_an_inline_scriptblock_leaves_the_world_alone(self):
+        """
+        Naming no command is not on its own a reason to refuse: the block's body stands in the tree
+        and the closed-world walk reads whatever it does, so there is no unread binding here.
+        """
+        self.assertEqual(_sole_world_role('&{ $x + 1 }'), WorldRole.NONE)
+
+    def test_a_binding_the_model_could_not_read_through_is_unknown(self):
+        """
+        The other half: a refusal reached with evidence rather than from ignorance. The script binds
+        each of these names to something this model cannot follow — a rebind whose outcome is not
+        static, a `function:` takeover, a definition that does not statically reach the use — so
+        nothing static bounds what the use runs, and answering that it leaves the world as it found
+        it would contradict the model's own denotation.
+        """
+        for source, name in (
+            ('Set-Alias e Invoke-Expression -Force\ne $payload', 'e'),
+            ('Set-Alias e Get-Date -Option ReadOnly\ne $payload', 'e'),
+            ('Set-Alias gci Invoke-Expression\ngci $payload', 'gci'),
+            ('${function:Get-Date} = $blk\nGet-Date', 'Get-Date'),
+            ('e $payload\nSet-Alias e iex', 'e'),
+            ('function f { Set-Alias e iex }\ne $payload', 'e'),
+        ):
+            with self.subTest(source):
+                self.assertEqual(_world_role(source, name), WorldRole.UNKNOWN)
+
+    def test_a_binding_that_names_no_command_at_all_leaves_the_world_alone(self):
+        """
+        Read through rather than refused: the model followed each of these bindings and what it
+        found is that the name runs nothing, since 5.1 raises rather than dispatching. A command
+        that never runs has no role to doubt, which is why not naming one is not by itself unknown.
+        """
+        for source, name in (
+            ('Set-Alias e Invoke-*\ne $payload', 'e'),
+            ('Set-Alias a b\nSet-Alias b a\na $payload', 'a'),
+        ):
+            with self.subTest(source):
+                self.assertEqual(_world_role(source, name), WorldRole.NONE)
+
+
+class TestPs1WorldRoleAgreement(TestBase):
+    """
+    The role an invocation is given and the verdict the closed-world model reaches over it are one
+    fact read twice, and the fact was moved out of that model: for every shape it has always
+    classified, the world is open exactly where the role is not `WorldRole.NONE`. Each source is a
+    single statement, so the whole-script verdict is the verdict on that one invocation.
+    """
+
+    _SHAPES = (
+        ('Invoke-Expression $payload', WorldRole.LEAK),
+        ('iex $payload', WorldRole.LEAK),
+        ("& 'global:iex' $payload", WorldRole.LEAK),
+        ("& 'Microsoft.PowerShell.Utility\\Invoke-Expression' $payload", WorldRole.LEAK),
+        ('Invoke-Command -ScriptBlock $sb', WorldRole.LEAK),
+        ('icm -ScriptBlock $sb', WorldRole.LEAK),
+        ('Start-Job -ScriptBlock $sb', WorldRole.LEAK),
+        ('Start-ThreadJob -ScriptBlock $sb', WorldRole.LEAK),
+        ("& '.\\stage2.ps1'", WorldRole.LEAK),
+        ('stage2.ps1', WorldRole.LEAK),
+        (". 'helper.ps1'", WorldRole.LEAK),
+        ('. helper', WorldRole.LEAK),
+        ('Update-TypeData -TypeName System.String -MemberName M', WorldRole.MUTATION),
+        ('Add-Type -TypeDefinition $source', WorldRole.MUTATION),
+        ('Import-Module Foo', WorldRole.MUTATION),
+        ('ipmo Foo', WorldRole.MUTATION),
+        ('New-Module -ScriptBlock $sb', WorldRole.MUTATION),
+        ('Add-Member -InputObject $o -Name N -Value { 1 }', WorldRole.MUTATION),
+        ('Set-Alias gd Get-Date', WorldRole.IDENTITY),
+        ('sal gd Get-Date', WorldRole.IDENTITY),
+        ('New-Alias gd Get-Date', WorldRole.IDENTITY),
+        ('Remove-Alias gd', WorldRole.IDENTITY),
+        ('Import-Alias .\\aliases.csv', WorldRole.IDENTITY),
+        ('Set-Item alias:utd Update-TypeData', WorldRole.IDENTITY),
+        ("Set-Item 'Microsoft.PowerShell.Core\\Function::Get-Date' -Value 1", WorldRole.IDENTITY),
+        ('& $f', WorldRole.UNKNOWN),
+        ('. $f', WorldRole.UNKNOWN),
+        ('& $env:x', WorldRole.UNKNOWN),
+        ('Get-ChildItem -Recurse', WorldRole.NONE),
+        ('Write-Output $x', WorldRole.NONE),
+        ('Get-Content .\\notes.txt', WorldRole.NONE),
+        ('Some-Unknown-Command $payload', WorldRole.NONE),
+        ('&{ 42 }', WorldRole.NONE),
+    )
+
+    def test_both_readers_agree_on_every_shape_the_world_classifies(self):
+        for source, role in self._SHAPES:
+            with self.subTest(source):
+                tree = _script(source)
+                cache = Ps1ModelCache(tree)
+                invocation = _sole_invocation(tree)
+                self.assertEqual(cache.commands.world_role(invocation), role)
+                self.assertEqual(
+                    cache.closed_world.world_closed_at(invocation), role is WorldRole.NONE)
+
+
 class TestExtractAliasDefinition(TestBase):
 
     def test_it_reads_a_set_alias_invocation_into_its_parts(self):
@@ -170,6 +359,14 @@ class TestPs1CommandModelCache(TestBase):
         model = Ps1ModelCache(tree).commands
         invocation = _use(tree, 'gci')
         self.assertIs(model.denotation(invocation), model.denotation(invocation))
+
+    def test_a_world_role_is_answered_from_the_tree_as_it_now_stands(self):
+        tree = _script('Set-Alias e iex\ne $payload')
+        cache = Ps1ModelCache(tree)
+        use = _use(tree, 'e')
+        self.assertEqual(cache.commands.world_role(use), WorldRole.LEAK)
+        _remove_from_parent(tree.body[0])
+        self.assertEqual(cache.commands.world_role(use), WorldRole.NONE)
 
 
 class TestPs1CommandModelDirectBuild(TestBase):

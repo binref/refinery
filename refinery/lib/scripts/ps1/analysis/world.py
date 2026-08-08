@@ -45,6 +45,7 @@ from refinery.lib.scripts.ps1.ast import (
     unwrap_assignment_target,
     unwrap_parens,
 )
+from refinery.lib.scripts.ps1.data import KNOWN_ALIAS
 from refinery.lib.scripts.ps1.model import (
     Ps1AccessKind,
     Ps1ArrayLiteral,
@@ -63,6 +64,30 @@ from refinery.lib.scripts.ps1.model import (
     Ps1TypeExpression,
     Ps1Variable,
 )
+
+
+class WorldRole(enum.Enum):
+    """
+    What a command does to the type world and the command table. The three opening roles are kept
+    apart rather than collapsed into one boolean because a caller acts differently on each: a pass
+    deleting an alias definition has to know that the invocation blocking it is another alias
+    definition, which it may yet be able to delete too, and not a leak, which it never can.
+
+    `NONE` and `UNKNOWN` are the two ways of not naming a role, and they are as far apart as they
+    are in `refinery.lib.scripts.ps1.analysis.commands.CommandKind`: `NONE` says the command leaves
+    the world as it found it, `UNKNOWN` says nothing static bounds what it runs.
+    """
+    #: Runs code supplied as data, so what it does to the world is whatever that data says.
+    LEAK = enum.auto()
+    #: Mutates the .NET type system, after which reflection no longer describes a type's members.
+    MUTATION = enum.auto()
+    #: Redefines command identity, after which a bareword no longer names what the metadata says.
+    IDENTITY = enum.auto()
+    #: Leaves both intact.
+    NONE = enum.auto()
+    #: Dispatches to whatever an expression yields, so it may be any of the above.
+    UNKNOWN = enum.auto()
+
 
 #: Commands that execute arbitrary code supplied as data. `Invoke-Expression` is the canonical one;
 #: the opaque dispatch and scriptblock-execution forms are recognized syntactically instead. The job
@@ -113,6 +138,37 @@ _IDENTITY_SCOPES = frozenset({
 #: (`Set-Item alias:x ...`). Matched by name rather than by enumerating every aliasing cmdlet, which
 #: is the family the mutation deny-list cannot close by name.
 _IDENTITY_PROVIDERS = ('alias', 'function')
+
+
+def command_role(name: str) -> WorldRole:
+    """
+    What the command `name` does to the world, or `WorldRole.NONE` when no deny-list holds it. Never
+    `WorldRole.UNKNOWN`: a name is by construction something this can look up, and not knowing what
+    an invocation runs is a fact about the invocation rather than about any name.
+
+    The lookup key is the *deny-list* reading `refinery.lib.scripts.ps1.ast.resolve_command_name`
+    describes, taken here rather than owed by the caller: the module and scope qualifiers dropped
+    and one hop through the built-in alias table, so that neither `Microsoft.PowerShell.Utility\\iex`
+    nor `global:iex` nor plain `iex` can dodge a table the bare `Invoke-Expression` matches. Eight
+    of the entries below are reachable only through that hop, so a caller handing over a name it
+    had not resolved would otherwise read a deny-list answer of `NONE` — the one direction a
+    deny-list must never fail in. Taking the key here is what makes that impossible to get wrong at
+    a call site. It is idempotent: no built-in alias names what another one resolves to.
+
+    This is the one place the three tables are read. `refinery.lib.scripts.ps1.analysis.commands`
+    asks the same question of a name it reached by following the script's own aliases — which this
+    module cannot follow, since the command model is built over the shadow set this one produces —
+    and a second reading of the tables there would be a second deny-list to keep in step.
+    """
+    key = normalize_command_name(name.rpartition('\\')[2])
+    key = KNOWN_ALIAS.get(key, key).lower()
+    if key in _LEAK_CMDLETS:
+        return WorldRole.LEAK
+    if key in _MUTATION_CMDLETS:
+        return WorldRole.MUTATION
+    if key in _ALIAS_CMDLETS:
+        return WorldRole.IDENTITY
+    return WorldRole.NONE
 
 
 class Ps1TypeWorld:
@@ -291,17 +347,17 @@ def _opens_world(node, redefined: tuple[_IdentityRedefinition, ...]) -> bool:
 def _command_opens_world(cmd: Ps1CommandInvocation) -> bool:
     if is_opaque_dispatch(cmd):
         return True
-    if _runs_another_script_file(cmd):
+    if runs_another_script_file(cmd):
         return True
     name = resolve_command_name(cmd)
     if name is None:
         return False
-    if name in _LEAK_CMDLETS or name in _MUTATION_CMDLETS or name in _ALIAS_CMDLETS:
+    if command_role(name) is not WorldRole.NONE:
         return True
-    return _touches_identity_provider(cmd)
+    return touches_identity_provider(cmd)
 
 
-def _runs_another_script_file(cmd: Ps1CommandInvocation) -> bool:
+def runs_another_script_file(cmd: Ps1CommandInvocation) -> bool:
     """
     Whether `cmd` runs a `.ps1` file that is not part of this tree, so the analysis cannot see what
     it defines or mutates. Dot-sourcing is the spelling that matters most — it runs the file's
@@ -321,7 +377,7 @@ def _runs_another_script_file(cmd: Ps1CommandInvocation) -> bool:
     )
 
 
-def _touches_identity_provider(cmd: Ps1CommandInvocation) -> bool:
+def touches_identity_provider(cmd: Ps1CommandInvocation) -> bool:
     """
     Whether any argument is a literal path into the `alias:` or `function:` provider, the vector
     that escapes a name-keyed deny-list because `Set-Item alias:x Update-TypeData` mutates identity
