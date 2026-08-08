@@ -215,6 +215,13 @@ class JsSimplifications(Transformer):
         inlining the alias reveals nothing the held set lacked. Attribution followed the syntax alone until
         the alias step was added, which is exactly the stale-permissive case this argument rules out.
 
+        A write need not be in the file at all for the same argument to be needed. An intrinsic handed to
+        code whose writes cannot be enumerated — `patch(Math)` for an unresolvable `patch` — is recorded as
+        written when it *escapes*, and escaping is decided through the same value-forwarding forms, so a
+        fold that collapses `p(0 || Math)` to `p(Math)` finds the name already recorded. What the pass can do
+        is remove an escape, by deleting a dead branch containing one; that shrinks the set, which is the
+        direction a held answer may safely be stale in.
+
         The same argument covers the freshness the effect model reports for a container base. A binding is
         judged fresh only when this pass owns every value it takes, and the pass adds no value to any binding;
         the array guarantee that an allocating method's result depends on is withdrawn by a write to

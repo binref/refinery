@@ -2168,6 +2168,161 @@ class TestAliasedIntrinsicPatches(TestBase):
             ' console.log(String(String.fromCharCode(66)));')
 
 
+class TestEscapedIntrinsicPatches(TestBase):
+    """
+    An intrinsic handed to a function is patched by a write that names it nowhere:
+    `function p(o) { o.floor = f; } p(Math)` replaces `Math.floor` while the assignment mentions only a
+    parameter. Scanning for write targets left the built-in pristine, so every later `Math.floor(…)` folded
+    to the original.
+
+    One case per *route* rather than per form, because the routes are what a forward argument-to-parameter
+    binder cannot follow: it reaches the first of these and none of the rest — a callback, a returned value,
+    `arguments`, spread, rest, a method on an object literal, a container. Asking instead whether the value
+    escapes a position whose effect is known covers them together.
+
+    The controls are the point of the chosen posture, not an afterthought. A call whose callee provably
+    writes nothing keeps folding, so passing an intrinsic to a function that merely reads from it — ordinary
+    code — costs nothing.
+    """
+
+    def _check(self, source: str):
+        deobfuscated = deobfuscate_source(source)
+        self.assertEqual(
+            behavior(source),
+            behavior(deobfuscated),
+            F'deobfuscation changed observable behavior; result was:\n{deobfuscated}',
+        )
+
+    def test_patch_through_a_positional_argument_is_honored(self):
+        self._check(
+            "function p(o) { o.floor = function () { return 'PATCHED'; }; } p(Math);"
+            ' console.log(String(Math.floor(1.7)));')
+
+    def test_patch_through_a_guarded_argument_is_honored(self):
+        self._check(
+            "function p(o) { o.floor = function () { return 'PATCHED'; }; } p(Math || {});"
+            ' console.log(String(Math.floor(1.7)));')
+
+    def test_patch_through_an_alias_argument_is_honored(self):
+        self._check(
+            "function p(o) { o.floor = function () { return 'PATCHED'; }; } var m = Math; p(m);"
+            ' console.log(String(Math.floor(1.7)));')
+
+    def test_patch_through_a_spread_argument_is_honored(self):
+        self._check(
+            "function p(o) { o.floor = function () { return 'PATCHED'; }; } p(...[Math]);"
+            ' console.log(String(Math.floor(1.7)));')
+
+    def test_patch_through_a_rest_parameter_is_honored(self):
+        self._check(
+            "function p() { arguments[0].floor = function () { return 'PATCHED'; }; } p(Math);"
+            ' console.log(String(Math.floor(1.7)));')
+
+    def test_patch_through_the_arguments_object_is_honored(self):
+        self._check(
+            "function p(...r) { r[0].floor = function () { return 'PATCHED'; }; } p(Math);"
+            ' console.log(String(Math.floor(1.7)));')
+
+    def test_patch_through_a_callback_is_honored(self):
+        """
+        The callee is a parameter, so resolving it demands the ordering-free answer. A resolver that fell
+        back to a binding's declaration parent named `each` here — the function that declares `f`, not the
+        one it holds — and reported it write-free, losing the callback's write entirely.
+        """
+        self._check(
+            'function each(f) { f(Math); }'
+            " each(function (o) { o.floor = function () { return 'PATCHED'; }; });"
+            ' console.log(String(Math.floor(1.7)));')
+
+    def test_patch_through_a_returned_intrinsic_is_honored(self):
+        self._check(
+            "function get() { return Math; } get().floor = function () { return 'PATCHED'; };"
+            ' console.log(String(Math.floor(1.7)));')
+
+    def test_patch_through_an_intrinsic_a_callee_returns_is_honored(self):
+        """
+        Not reachable through aliasing: the alias walk stops at a call, so `m` does not denote `Math`. The
+        write is only attributed because letting a callee return its parameter counts as an escape.
+        """
+        self._check(
+            'function get(o) { return o; } var m = get(Math);'
+            " m.floor = function () { return 'PATCHED'; };"
+            ' console.log(String(Math.floor(1.7)));')
+
+    def test_patch_through_an_unknown_computed_key_is_honored(self):
+        """
+        `Array[k]` may be `Array.prototype`, so an unresolvable key has to reach the surface. Node decides
+        what the program does with whichever key it turns out to be.
+        """
+        self._check(
+            "var k = 'prototype'; function p(o) { o.join = function () { return 'PATCHED'; }; }"
+            " p(Array[k]); console.log([1, 2].join('-'));")
+
+    def test_patch_along_a_chain_past_the_depth_limit_is_honored(self):
+        self._check(
+            'function f0(o) { f1(o); } function f1(o) { f2(o); } function f2(o) { f3(o); }'
+            ' function f3(o) { f4(o); }'
+            " function f4(o) { f5(o); } function f5(o) { o.floor = function () { return 'PATCHED'; }; }"
+            ' f0(Math); console.log(String(Math.floor(1.7)));')
+
+    def test_patch_through_a_method_of_an_object_literal_is_honored(self):
+        self._check(
+            "var h = { p: function (o) { o.floor = function () { return 'PATCHED'; }; } }; h.p(Math);"
+            ' console.log(String(Math.floor(1.7)));')
+
+    def test_patch_through_an_intrinsic_stored_in_a_container_is_honored(self):
+        self._check(
+            "var a = [Math]; a[0].floor = function () { return 'PATCHED'; };"
+            ' console.log(String(Math.floor(1.7)));')
+
+    def test_patch_through_a_prototype_argument_is_honored(self):
+        self._check(
+            "function p(o) { o.join = function () { return 'PATCHED'; }; } p(Array.prototype);"
+            " console.log([1, 2].join('-'));")
+
+    def test_patch_through_a_call_two_hops_deep_is_honored(self):
+        self._check(
+            "function q(o) { o.floor = function () { return 'PATCHED'; }; }"
+            ' function p(o) { q(o); } p(Math);'
+            ' console.log(String(Math.floor(1.7)));')
+
+    def test_patch_by_a_callee_that_saves_the_parameter_is_honored(self):
+        self._check(
+            'var save; function p(o) { save = o; } p(Math);'
+            " save.floor = function () { return 'PATCHED'; };"
+            ' console.log(String(Math.floor(1.7)));')
+
+    def test_argument_to_a_reading_callee_still_folds(self):
+        self._check(
+            'function log(o) { return o.PI; } log(Math); console.log(String(Math.floor(1.7)));')
+
+    def test_argument_to_a_callee_that_ignores_it_still_folds(self):
+        self._check(
+            'function ignore(o) { return 1; } ignore(Math); console.log(String(Math.floor(1.7)));')
+
+    def test_argument_to_a_reading_callee_two_hops_deep_still_folds(self):
+        self._check(
+            'function inner(o) { return o.PI; } function outer(o) { return inner(o); } outer(Math);'
+            ' console.log(String(Math.floor(1.7)));')
+
+    def test_method_called_on_a_parameter_still_folds(self):
+        self._check(
+            'function use(o) { return o.floor(1.7); } console.log(String(use(Math)));')
+
+    def test_write_on_a_constant_read_off_an_intrinsic_still_folds(self):
+        """
+        Node decides this: a property written on the number `Math.PI` is invisible to `Math.floor`, so the
+        walk must stop at a non-surface key. Continuing through every member access instead would refuse
+        every file that hands out a constant.
+        """
+        self._check(
+            'function p(v) { v.x = 1; } p(Math.PI); console.log(String(Math.floor(1.7)));')
+
+    def test_write_on_a_method_read_off_an_intrinsic_still_folds(self):
+        self._check(
+            'function p(v) { v.x = 1; } p(Math.floor); console.log(String(Math.floor(1.7)));')
+
+
 class TestHostEntrypointPreservation(TestBase):
     """
     Under the script execution model a top-level `var`/`function` is a property of the global object, so

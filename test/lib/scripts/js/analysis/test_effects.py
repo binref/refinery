@@ -1767,6 +1767,49 @@ class TestFoldsRevealNoTrust(TestBase):
         self._stable(
             "var p = Array.prototype; p.join = function(){}; console.log([1, 2].join('-'));")
 
+    def test_guarded_escape_argument_reveals_nothing(self):
+        """
+        An intrinsic handed to a patching function through a form a fold collapses. `0 || Math` names
+        nothing until the guard folds away, so the escape must be seen through the guard or the pass would
+        reveal the write after the held answer was read.
+        """
+        self._stable(
+            'function p(o) { o.floor = function(){}; } p(0 || Math); console.log(Math.floor(1.7));')
+
+    def test_conditional_escape_argument_reveals_nothing(self):
+        self._stable(
+            'function p(o) { o.floor = function(){}; } p(1 ? Math : 0); console.log(Math.floor(1.7));')
+
+    def test_sequenced_escape_argument_reveals_nothing(self):
+        self._stable(
+            'function p(o) { o.floor = function(){}; } p((1, Math)); console.log(Math.floor(1.7));')
+
+    def test_escape_in_a_dead_branch_reveals_nothing(self):
+        """
+        Removing the branch removes the escape, which shrinks the set — the safe direction. Growing is the
+        hazard, so this pins that the pass does not instead *discover* one.
+        """
+        self._stable(
+            'function p(o) { o.floor = function(){}; } if (false) { p(Math); }'
+            ' console.log(Math.floor(1.7));')
+
+    def test_escape_through_a_folded_write_key_reveals_nothing(self):
+        self._stable(
+            "function p(o) { o['fl' + 'oor'] = function(){}; } p(Math); console.log(Math.floor(1.7));")
+
+    def test_escape_into_a_callback_reveals_nothing(self):
+        self._stable(
+            'function each(f) { f(Math); } each(function (o) { o.floor = function(){}; });'
+            ' console.log(Math.floor(1.7));')
+
+    def test_a_read_only_escape_reveals_nothing(self):
+        """
+        The spared side must be stable too: a callee that only reads through its parameter keeps the
+        intrinsic trusted, and no fold may turn that answer around.
+        """
+        self._stable(
+            'function log(o) { return o.PI; } log(Math); console.log(Math.floor(1.7));')
+
 
 class TestAliasedIntrinsicWrites(TestBase):
     """
@@ -1861,3 +1904,227 @@ class TestAliasedIntrinsicWrites(TestBase):
         one of the two does hold it.
         """
         self._records('var a = Math; var b = a; a = b; b.floor = f;', 'Math')
+
+
+class TestEscapedIntrinsicWrites(TestBase):
+    """
+    An intrinsic handed to code whose writes cannot be enumerated is patched by a write this analysis never
+    sees. `function p(o) { o.floor = f; } p(Math)` writes `Math.floor` while naming `Math` only as an
+    argument, so scanning for write targets left the name pristine and `Math.floor(1.7)` folding to the
+    built-in.
+
+    The question asked is whether the value *escapes*, not where it flows. A binder from each argument to its
+    parameter would reach none of the routes below except the first — a callback, a returned value,
+    `arguments`, spread, rest, and a method on an object literal are all invisible to it — while asking
+    whether a use hands the value onward covers them together.
+
+    Refusal is not blanket. A call whose callee provably writes nothing through a parameter keeps the
+    intrinsic trusted, which is what the omission tests pin: `log(Math)` for a `log` that only reads `o.PI`
+    is ordinary code, and refusing it would unfold every such call.
+    """
+
+    @staticmethod
+    def _written(source: str) -> frozenset[str]:
+        ast = JsParser(source).parse()
+        return frozenset(build_effects(build_semantic_model(ast))._globals_written)
+
+    def _records(self, source: str, name: str):
+        self.assertEqual(name in self._written(source), True, F'{name} not recorded for {source!r}')
+
+    def _omits(self, source: str, name: str):
+        self.assertEqual(name in self._written(source), False, F'{name} wrongly recorded for {source!r}')
+
+    def test_an_intrinsic_passed_to_a_patching_function_is_recorded(self):
+        self._records('function p(o) { o.floor = f; } p(Math);', 'Math')
+
+    def test_an_intrinsic_passed_in_a_later_position_is_recorded(self):
+        self._records('function p(a, o) { o.floor = f; } p(0, Math);', 'Math')
+
+    def test_a_prototype_passed_to_a_patching_function_is_recorded(self):
+        """
+        The argument is a member read, not the intrinsic itself, but `Array.prototype` shares the surface
+        that decides what `[1, 2].join()` means.
+        """
+        self._records('function p(o) { o.join = f; } p(Array.prototype);', 'Array')
+
+    def test_an_alias_passed_to_a_patching_function_is_recorded(self):
+        self._records('function p(o) { o.floor = f; } var m = Math; p(m);', 'Math')
+
+    def test_an_intrinsic_passed_through_a_guard_is_recorded(self):
+        self._records('function p(o) { o.floor = f; } p(Math || {});', 'Math')
+
+    def test_an_intrinsic_spread_into_a_patching_function_is_recorded(self):
+        self._records('function p(o) { o.floor = f; } p(...[Math]);', 'Math')
+
+    def test_an_intrinsic_reaching_a_rest_parameter_is_recorded(self):
+        """
+        No name tracks a rest element's contents, so the callee cannot be shown write-free.
+        """
+        self._records('function p(...r) { r[0].floor = f; } p(Math);', 'Math')
+
+    def test_an_intrinsic_reaching_the_arguments_object_is_recorded(self):
+        self._records('function p() { arguments[0].floor = f; } p(Math);', 'Math')
+
+    def test_an_intrinsic_passed_two_calls_deep_is_recorded(self):
+        self._records('function q(o) { o.floor = f; } function p(o) { q(o); } p(Math);', 'Math')
+
+    def test_an_intrinsic_passed_to_a_callback_is_recorded(self):
+        """
+        The regression test for the callee-resolution defect. The callee `f` is a *parameter*, and a
+        resolver that fell back to a binding's declaration parent answered `each` — the function that
+        declares `f` rather than the one it holds. `each` writes nothing itself, so the callback's write
+        vanished and every other test in this class still passed.
+        """
+        self._records('function each(f) { f(Math); } each(function (o) { o.floor = f; });', 'Math')
+
+    def test_an_intrinsic_passed_to_a_method_of_an_object_literal_is_recorded(self):
+        self._records('var h = { p: function (o) { o.floor = f; } }; h.p(Math);', 'Math')
+
+    def test_an_intrinsic_passed_to_an_unresolvable_callee_is_recorded(self):
+        self._records('p(Math);', 'Math')
+
+    def test_an_intrinsic_passed_to_a_reassigned_callee_is_recorded(self):
+        """
+        Reading the callee's post-reassignment value would report the reading function; ordering the two is
+        exactly what the resolution this rests on refuses to assume.
+        """
+        self._records('function p(o) { return o.PI; } p = function (o) { o.floor = f; }; p(Math);', 'Math')
+
+    def test_an_intrinsic_returned_from_a_function_is_recorded(self):
+        self._records('function get() { return Math; } get().floor = f;', 'Math')
+
+    def test_an_intrinsic_a_callee_returns_is_recorded(self):
+        """
+        Distinct from returning it directly, and not covered by aliasing: the alias walk stops at a call, so
+        `m` does not denote `Math` here. Letting a callee hand its parameter back is therefore its own escape
+        route, and a callee that does so is not write-free however little it writes.
+        """
+        self._records('function get(o) { return o; } var m = get(Math); m.floor = f;', 'Math')
+
+    def test_an_intrinsic_a_callee_returns_parenthesized_is_recorded(self):
+        self._records('function get(o) { return (o); } var m = get(Math); m.floor = f;', 'Math')
+
+    def test_an_intrinsic_a_callee_returns_inside_a_container_is_recorded(self):
+        """
+        These three are why no explicit return check exists: routing the question through `_value_escapes`
+        catches a parameter wrapped on the way out, which a check for a bare returned identifier would not.
+        """
+        self._records('function get(o) { return [o]; } var a = get(Math); a[0].floor = f;', 'Math')
+
+    def test_an_intrinsic_a_callee_returns_in_an_object_is_recorded(self):
+        self._records('function get(o) { return { m: o }; } var h = get(Math); h.m.floor = f;', 'Math')
+
+    def test_an_intrinsic_an_arrow_returns_by_concise_body_is_recorded(self):
+        self._records('var get = (o) => o; var m = get(Math); m.floor = f;', 'Math')
+
+    def test_an_intrinsic_passed_along_a_chain_past_the_depth_limit_is_recorded(self):
+        """
+        The recursion cap is a refusal, not an approval: a chain too long to follow is unproven rather than
+        proven safe, so the write at its end must still be recorded.
+        """
+        self._records(
+            'function f0(o) { f1(o); } function f1(o) { f2(o); } function f2(o) { f3(o); }'
+            ' function f3(o) { f4(o); } function f4(o) { f5(o); } function f5(o) { o.floor = f; }'
+            ' f0(Math);',
+            'Math')
+
+    def test_a_read_only_chain_past_the_depth_limit_is_recorded(self):
+        """
+        The precision the cap costs, stated plainly: this chain writes nothing, yet exceeds the limit and so
+        is refused. Pinned deliberately — if the limit ever moves, this is the test that says what changed.
+        """
+        self._records(
+            'function f0(o) { f1(o); } function f1(o) { f2(o); } function f2(o) { f3(o); }'
+            ' function f3(o) { f4(o); } function f4(o) { f5(o); } function f5(o) { return o.PI; }'
+            ' f0(Math);',
+            'Math')
+
+    def test_a_read_only_chain_within_the_depth_limit_records_nothing(self):
+        self._omits(
+            'function f0(o) { f1(o); } function f1(o) { f2(o); } function f2(o) { return o.PI; }'
+            ' f0(Math);',
+            'Math')
+
+    def test_an_unknown_computed_key_read_off_an_intrinsic_is_recorded(self):
+        """
+        `Array[k]` may be `Array.prototype`, so an unresolvable key must reach the surface. This is the
+        direction opposite to an install key, where an unknown name identifies no method: there a missed
+        guess costs precision, here it costs soundness.
+        """
+        self._records('function p(o) { o.join = f; } p(Array[k]);', 'Array')
+
+    def test_a_known_surface_computed_key_is_recorded(self):
+        self._records("function p(o) { o.join = f; } p(Array['prototype']);", 'Array')
+
+    def test_a_known_non_surface_computed_key_records_nothing(self):
+        self._omits("function p(o) { o.x = 1; } p(Math['PI']);", 'Math')
+
+    def test_an_intrinsic_stored_in_an_array_literal_is_recorded(self):
+        self._records('var a = [Math]; a[0].floor = f;', 'Math')
+
+    def test_an_intrinsic_stored_in_an_object_literal_is_recorded(self):
+        self._records('var h = { m: Math }; h.m.floor = f;', 'Math')
+
+    def test_an_intrinsic_saved_to_a_global_by_a_callee_is_recorded(self):
+        """
+        The callee writes no property, so the write-free check must fail for the other reason: it lets the
+        parameter escape. A parameter denotes no intrinsic name, so `save = o` cannot be spared the way
+        `var m = Math` is — the attribution chain would end there.
+        """
+        self._records('function p(o) { save = o; } p(Math); save.floor = f;', 'Math')
+
+    def test_a_deleting_callee_is_recorded(self):
+        self._records('function p(o) { delete o.floor; } p(Math);', 'Math')
+
+    def test_a_computed_key_write_in_a_callee_is_recorded(self):
+        self._records("function p(o) { o['fl' + 'oor'] = f; } p(Math);", 'Math')
+
+    def test_a_descriptor_install_in_a_callee_is_recorded(self):
+        self._records("function p(o) { Object.defineProperty(o, 'floor', { value: 1 }); } p(Math);", 'Math')
+
+    def test_a_prototype_chain_write_in_a_callee_is_recorded(self):
+        self._records('function p(o) { o.prototype.join = f; } p(Array);', 'Array')
+
+    def test_an_intrinsic_passed_to_a_reading_callee_records_nothing(self):
+        self._omits('function log(o) { return o.PI; } log(Math);', 'Math')
+
+    def test_an_intrinsic_passed_to_a_callee_that_ignores_it_records_nothing(self):
+        self._omits('function ignore(o) { return 1; } ignore(Math);', 'Math')
+
+    def test_an_intrinsic_passed_to_a_reading_callee_two_hops_deep_records_nothing(self):
+        self._omits(
+            'function inner(o) { return o.PI; } function outer(o) { return inner(o); } outer(Math);',
+            'Math')
+
+    def test_a_method_called_on_a_parameter_records_nothing(self):
+        self._omits('function use(o) { return o.floor(1.7); } use(Math);', 'Math')
+
+    def test_a_constant_read_off_an_intrinsic_records_nothing(self):
+        """
+        Node settles the key question: writing a property of the number `Math.PI` cannot change what
+        `Math.floor(1.7)` returns, so handing that value out is harmless. Continuing the walk through every
+        member access instead would refuse every program that prints a constant.
+        """
+        self._omits('function p(v) { v.x = 1; } p(Math.PI);', 'Math')
+
+    def test_a_method_read_off_an_intrinsic_records_nothing(self):
+        self._omits('function p(v) { v.x = 1; } p(Math.floor);', 'Math')
+
+    def test_an_intrinsic_used_as_an_operand_records_nothing(self):
+        self._omits('console.log(typeof Math);', 'Math')
+
+    def test_an_intrinsic_called_as_a_callee_records_nothing(self):
+        self._omits('console.log(parseInt("7"));', 'parseInt')
+
+    def test_a_bare_alias_of_an_intrinsic_records_nothing(self):
+        self._omits('var m = Math; console.log(m.floor(1.7));', 'Math')
+
+    def test_an_alias_assigned_after_declaration_records_nothing(self):
+        """
+        The write-role `m` in `m = Math` is not a value being handed anywhere; reading it as one recorded
+        `Math` for every program that aliases it.
+        """
+        self._omits('var m; m = Math; console.log(m.floor(1.7));', 'Math')
+
+    def test_a_two_hop_alias_records_nothing(self):
+        self._omits('var m = Math; var n = m; console.log(n.floor(1.7));', 'Math')
