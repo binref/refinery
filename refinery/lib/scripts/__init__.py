@@ -438,11 +438,12 @@ _tree_versions: WeakKeyDictionary[Node, int] = WeakKeyDictionary()
 
 def tree_version(root: Node) -> int:
     """
-    The AST-mutation counter for the tree rooted at *root*. Every structural mutation made through
-    `_replace_in_parent`, `_remove_from_parent`, `set_child`, `set_child_list` or `BodyEdit` — and
-    so through `Transformer.generic_visit`, which installs every `visit_X` replacement through the
-    latter two — advances the counter of the one tree it mutates, found by walking from the mutation
-    site up to its topmost ancestor, and leaves every other tree untouched.
+    The AST-mutation counter for the tree rooted at *root*. Every mutation made through
+    `_replace_in_parent`, `_remove_from_parent`, `set_child`, `set_child_list`, `set_value` or
+    `BodyEdit` — and so through `Transformer.generic_visit`, which installs every `visit_X`
+    replacement through `set_child` and `set_child_list` — advances the counter of the one tree it
+    mutates, found by walking from the mutation site up to its topmost ancestor, and leaves every
+    other tree untouched.
     `refinery.lib.scripts.modelcache.ModelCacheBase` records the value
     its own root stood at when its models were built and rebuilds once that root's counter moves,
     so a transform observes models consistent with the current tree even when an earlier mutation
@@ -635,6 +636,24 @@ def set_child(parent: Node, attr: str, child: Node | None) -> None:
     if child is not None:
         child.parent = parent
     setattr(parent, attr, child)
+    _bump_tree_version(parent)
+
+
+def set_value(parent: Node, attr: str, value) -> None:
+    """
+    Replace the value field at `parent.<attr>` — one holding a scalar rather than a child node, such
+    as an operator string, a name, or a flag — and advance the mutation counter of the tree `parent`
+    belongs to.
+
+    A value field is as much part of the program a node spells as its children are: `canonical`
+    compares them, the synthesizer prints them, and the analysis models read them — the block model
+    reads a `refinery.lib.scripts.ps1.model.Ps1CommandInvocation`'s invocation operator to say what
+    scope a body runs in, and the world model reads it as evidence that another script file runs. A
+    pass that assigns such a field directly therefore changes the program without moving the counter
+    every `AnalysisCache` over that tree watches, which is the same silent opt-out a raw
+    `body[:] = ...` makes and is why `set_child_list` exists.
+    """
+    setattr(parent, attr, value)
     _bump_tree_version(parent)
 
 

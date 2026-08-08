@@ -9,7 +9,7 @@ import re
 
 from typing import Callable, Generator, NamedTuple, TypeGuard
 
-from refinery.lib.scripts import Node, Transformer
+from refinery.lib.scripts import Node, Transformer, set_value
 from refinery.lib.scripts.ps1.analysis.cache import model_cache
 from refinery.lib.scripts.ps1.analysis.types import TypeOracle
 from refinery.lib.scripts.ps1.analysis.values import collect_typed_arguments, unwrap_integer
@@ -21,6 +21,7 @@ from refinery.lib.scripts.ps1.ast import (
     unwrap_assignment_target,
 )
 from refinery.lib.scripts.ps1.data import FOREACH_ALIASES, FORMAT_PATTERN, is_type
+from refinery.lib.scripts.ps1.deobfuscation.substitution import substitute_field
 from refinery.lib.scripts.ps1.model import (
     Expression,
     Ps1AccessKind,
@@ -447,20 +448,34 @@ def set_command_name(node: Ps1CommandInvocation, name: str) -> bool:
     operator `&`) when the name is not a bare-safe command token. Returns `True` when the name
     actually changed, so callers should only `mark_changed()` on a `True` result; this guards
     against self-resolving rewrites that would otherwise loop forever.
+
+    Both edits go through the mutation API — the name through
+    `refinery.lib.scripts.ps1.deobfuscation.substitution.substitute_field`, which is the one route
+    by which a part of this tree takes another's place, and the operator through
+    `refinery.lib.scripts.set_value` — so the rewrite advances the tree's mutation counter and every
+    analysis model over it is rebuilt from the name now written rather than the one it replaced.
+    Assigning the two fields directly left that counter standing, and a caller was consistent with
+    the tree only for as long as it also announced the edit through
+    `refinery.lib.scripts.Transformer.mark_changed`, which is a second channel the counter exists so
+    as not to depend on.
+
+    The operator is written only once the name has landed, because a substitution that would drop a
+    redirection is refused and the command then runs exactly as written, call operator included.
     """
     if node.name is not None and string_value(node.name) == name:
         return False
     offset = node.name.offset if node.name is not None else -1
-    if _BARE_COMMAND_NAME.fullmatch(name):
+    bare = _BARE_COMMAND_NAME.fullmatch(name) is not None
+    if bare:
         literal: Ps1StringLiteral | Ps1HereString = Ps1StringLiteral(
             offset=offset, value=name, raw=name)
     else:
         literal = make_string_literal(name)
         literal.offset = offset
-        if not node.invocation_operator:
-            node.invocation_operator = '&'
-    literal.parent = node
-    node.name = literal
+    if not substitute_field(node, 'name', literal):
+        return False
+    if not bare and not node.invocation_operator:
+        set_value(node, 'invocation_operator', '&')
     return True
 
 
