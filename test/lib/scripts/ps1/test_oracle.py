@@ -15,15 +15,21 @@ what 5.1 does and what we do so that a failure can be read without leaving this 
 """
 from __future__ import annotations
 
+import base64
 import functools
 import inspect
+import json
 import sys
 import unittest
 
+from collections.abc import Sequence
+from unittest.mock import patch
+
 from test import TestBase
-from test.lib.scripts.ps1 import corpus
+from test.lib.scripts.ps1 import corpus, oracle
 from test.lib.scripts.ps1.test_parser_shape import CORPUS as SHAPES
 from test.lib.scripts.ps1.oracle import (
+    Behaviour,
     OracleError,
     behaviour,
     behaviours,
@@ -114,10 +120,18 @@ BEHAVIOUR_DIVERGENCES: dict[str, str] = {
 #: tool's first promise is that its output does the same thing as its input. Each entry states what
 #: the snippet writes and what its output writes instead, so a failure can be read here.
 #:
-#: Every entry is a claim of the corruption ledger, and every one of them is a defect that ledger
-#: already carries as an `expectedFailure`. That the two agree entry for entry matters: the ledger
-#: reaches its verdict by asking whether a store survived in the tree, and this reaches it by
+#: The variable entries are each a claim of the corruption ledger as well, and a defect that ledger
+#: already carries as an `expectedFailure`. That the two agree entry for entry matters there: the
+#: ledger reaches its verdict by asking whether a store survived in the tree, and this reaches it by
 #: running both scripts, so neither is evidence for the other.
+#:
+#: **The alias entries have no such second witness, and that is a gap rather than a decision.** They
+#: are held only by this table, and every test in this file is skipped where no PowerShell host is
+#: available — so on a machine without one they ratchet in neither direction, and a fix and a
+#: regression are alike invisible. What `test_corruptions.py` would have to ask of them is which
+#: command a surviving name runs, which is a question about the emitted tree rather than about a
+#: store, so the entries it holds today are not the shape those need. Until it carries them, do not
+#: read this table's agreement as the independent confirmation the paragraph above describes.
 BEHAVIOUR_DEFECTS: dict[str, str] = {
     "Set-Variable global:y 'b'; Write-Host $global:y":
         'The store is dropped, so `b` becomes nothing: a command that writes a variable is not '
@@ -255,27 +269,27 @@ CLAIM_TRANSCRIPTS: dict[str, tuple[str, ...]] = {
 #: executable corpus is quantified over. A probe of the command tables is not a script whose meaning
 #: is worth preserving — it is the measurement itself, and rewriting `gcim` to `Get-CimInstance`,
 #: which is correct, would make it measure a different thing and report the rewrite as a defect.
+#: What `Get-Alias` writes for a name the host binds no alias for, and what `Get-Command` writes for
+#: a name it has no command of. Written once rather than at each name, so that a name whose measured
+#: answer differs from its neighbours' differs visibly.
+_NO_SUCH_ALIAS = (
+    'ERROR\tItemNotFoundException,Microsoft.PowerShell.Commands.GetAliasCommand'
+    '\tSystem.Management.Automation.ItemNotFoundException',
+)
+_NO_SUCH_COMMAND = (
+    'ERROR\tCommandNotFoundException,Microsoft.PowerShell.Commands.GetCommandCommand'
+    '\tSystem.Management.Automation.CommandNotFoundException',
+)
+
 TABLE_TRANSCRIPTS: dict[str, tuple[str, ...]] = {
     'Get-Alias iex':
         ('OUT\tSystem.Management.Automation.AliasInfo\tiex',),
-    'Get-Alias item':
-        ('ERROR\tItemNotFoundException,Microsoft.PowerShell.Commands.GetAliasCommand'
-         '\tSystem.Management.Automation.ItemNotFoundException',),
-    'Get-Alias member':
-        ('ERROR\tItemNotFoundException,Microsoft.PowerShell.Commands.GetAliasCommand'
-         '\tSystem.Management.Automation.ItemNotFoundException',),
-    'Get-Alias variable':
-        ('ERROR\tItemNotFoundException,Microsoft.PowerShell.Commands.GetAliasCommand'
-         '\tSystem.Management.Automation.ItemNotFoundException',),
-    'Get-Alias childitem':
-        ('ERROR\tItemNotFoundException,Microsoft.PowerShell.Commands.GetAliasCommand'
-         '\tSystem.Management.Automation.ItemNotFoundException',),
-    'Get-Alias gerr':
-        ('ERROR\tItemNotFoundException,Microsoft.PowerShell.Commands.GetAliasCommand'
-         '\tSystem.Management.Automation.ItemNotFoundException',),
-    'Get-Alias fhx':
-        ('ERROR\tItemNotFoundException,Microsoft.PowerShell.Commands.GetAliasCommand'
-         '\tSystem.Management.Automation.ItemNotFoundException',),
+    'Get-Alias item': _NO_SUCH_ALIAS,
+    'Get-Alias member': _NO_SUCH_ALIAS,
+    'Get-Alias variable': _NO_SUCH_ALIAS,
+    'Get-Alias childitem': _NO_SUCH_ALIAS,
+    'Get-Alias gerr': _NO_SUCH_ALIAS,
+    'Get-Alias fhx': _NO_SUCH_ALIAS,
     'Get-Command Get-Item':
         ('OUT\tSystem.Management.Automation.CmdletInfo\tGet-Item',),
     'Get-Command Get-Member':
@@ -284,12 +298,8 @@ TABLE_TRANSCRIPTS: dict[str, tuple[str, ...]] = {
         ('OUT\tSystem.Management.Automation.CmdletInfo\tGet-Variable',),
     'Get-Command Get-ChildItem':
         ('OUT\tSystem.Management.Automation.CmdletInfo\tGet-ChildItem',),
-    'Get-Command Get-Error':
-        ('ERROR\tCommandNotFoundException,Microsoft.PowerShell.Commands.GetCommandCommand'
-         '\tSystem.Management.Automation.CommandNotFoundException',),
-    'Get-Command Format-Hex':
-        ('ERROR\tCommandNotFoundException,Microsoft.PowerShell.Commands.GetCommandCommand'
-         '\tSystem.Management.Automation.CommandNotFoundException',),
+    'Get-Command Get-Error': _NO_SUCH_COMMAND,
+    'Get-Command Format-Hex': _NO_SUCH_COMMAND,
     '(Get-Command help).CommandType':
         ('OUT\tSystem.Management.Automation.CommandTypes\tFunction',),
     '(Get-Command gcim -ErrorAction SilentlyContinue).CommandType':
@@ -373,6 +383,66 @@ class TestPs1OracleIsAvailableOnWindows(TestBase):
         self.assertIsNotNone(windows_powershell())
 
 
+#: What a payload holds beyond the sources the budget is charged for: the brackets around them.
+_PAYLOAD_WRAPPER = len('[]')
+
+
+class _RecordingEchoHost:
+    """
+    What the echo script does to a payload, in process, and a record of every payload it was asked
+    about. The JSON is read back out of the script the host was handed rather than serialised again
+    here: what a batch costs is a question about the module's own two halves, and a stand-in that
+    spelled the payload itself would answer it with what the test believes instead.
+    """
+
+    def __init__(self):
+        self.batches: list[str] = []
+
+    def __call__(self, script: str, timeout: float = 120.0) -> Behaviour:
+        head, tail = oracle._ECHO_SCRIPT.split('@PAYLOAD@')
+        batch = base64.b64decode(script[len(head):len(script) - len(tail)]).decode('utf-8')
+        self.batches.append(batch)
+        echoed = [
+            base64.b64encode(source.encode('utf-8')).decode('ascii')
+            for source in json.loads(batch)
+        ]
+        return Behaviour(json.dumps({'echoed': echoed}), '', 0)
+
+
+class TestPs1OracleBatchesFitTheBudget(Ps1OracleTest):
+    """
+    `_BATCH_BUDGET` is a bound on the JSON one batch of sources comes to rather than an estimate of
+    it, so what `_batches` charges for a source has to be what `_ask` then serialises for it. A
+    discrepancy between the two is paid once for every source in a batch, which is why many short
+    sources is the case that tells a bound from an estimate. No host is started, so this measures
+    the same thing wherever the tests run.
+    """
+
+    def _batches_sent(self, sources: Sequence[str]) -> list[str]:
+        host = _RecordingEchoHost()
+        with patch.object(oracle, 'run', host):
+            echo(sources)
+        return host.batches
+
+    def _beyond_the_budget(self, sources: Sequence[str]) -> list[int]:
+        return [
+            len(batch) for batch in self._batches_sent(sources)
+            if len(batch) > oracle._BATCH_BUDGET + _PAYLOAD_WRAPPER
+        ]
+
+    def test_no_batch_of_the_corpus_carries_more_json_than_the_budget(self):
+        self.assertEqual(self._beyond_the_budget(asked_of_the_host()), [])
+
+    def test_no_batch_of_many_short_sources_carries_more_json_than_the_budget(self):
+        self.assertEqual(self._beyond_the_budget(['$x'] * 4000), [])
+
+    def test_every_source_travels_to_a_host_exactly_once_and_in_order(self):
+        sources = list(asked_of_the_host())
+        host = _RecordingEchoHost()
+        with patch.object(oracle, 'run', host):
+            self.assertEqual(echo(sources), sources)
+
+
 @unittest.skipIf(windows_powershell() is None, 'Windows PowerShell is not available')
 class TestPs1OracleMeasuresWhatItClaims(Ps1OracleTest):
     """
@@ -414,6 +484,21 @@ class TestPs1OracleMeasuresWhatItClaims(Ps1OracleTest):
     def test_a_snippet_that_is_not_in_the_corpus_is_not_executed(self):
         with self.assertRaises(OracleError):
             behaviour('Write-Output "not reviewed"')
+
+
+@unittest.skipIf(windows_powershell() is None, 'Windows PowerShell is not available')
+class TestPs1OracleReportsASourceItCannotSend(Ps1OracleTest):
+    """
+    A source too large for one command line is refused by Windows before the host is reached, and
+    the refusal names no script: it arrives as a `FileNotFoundError` that reads as if
+    `powershell.exe` were missing. `OracleError` is what this module declares for a host that could
+    not be run and what every caller is written against, so this reaches one too.
+    """
+
+    def test_a_source_too_large_for_one_command_line_is_an_oracle_error(self):
+        oversized = 'A' * 40000
+        with self.assertRaises(OracleError):
+            parse_reports([oversized])
 
 
 @unittest.skipIf(windows_powershell() is None, 'Windows PowerShell is not available')

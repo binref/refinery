@@ -38,6 +38,12 @@ _HOSTS_AT_ONCE = 4
 #: payload carries a batch rather than the whole corpus and the reports are concatenated.
 _BATCH_BUDGET = 5000
 
+#: How a payload joins the sources in it. Compact, so that one source costs one separator and the
+#: budget above is the bound it says it is: `json.dumps` pads with a space by default, which is a
+#: character per source that `_batches` does not charge for and a batch of short sources is nearly
+#: all of.
+_JSON_SEPARATORS = (',', ':')
+
 #: Emitted before every script. The output encoding matters because 5.1 writes redirected output in
 #: the OEM code page by default, which mangles the quote characters the lexer corpus exists to test.
 #: Progress records matter because they are serialized to stderr as CLIXML and would otherwise be
@@ -205,6 +211,11 @@ def run(script: str, timeout: float = 120.0) -> Behaviour:
     `-EncodedCommand`, which is what keeps quoting, code pages and line endings out of the design:
     a snippet arrives byte for byte. It is also a command rather than a file, so the execution
     policy does not gate it.
+
+    A script too long for one command line is refused by `CreateProcess` rather than by the host,
+    which surfaces as an `OSError` naming no script at all — on Windows a `FileNotFoundError` whose
+    message reads as if `powershell.exe` were missing. It is reported as an `OracleError` like every
+    other way the host cannot be run, so that a caller catching one catches this too.
     """
     powershell = windows_powershell()
     if powershell is None:
@@ -218,6 +229,11 @@ def run(script: str, timeout: float = 120.0) -> Behaviour:
         )
     except subprocess.TimeoutExpired as timedout:
         raise OracleError(F'the host did not finish within {timeout} seconds') from timedout
+    except OSError as refused:
+        raise OracleError(
+            F'the host could not be started for a command line of {len(encoded)} characters: '
+            F'{refused}'
+        ) from refused
     return Behaviour(
         done.stdout.decode('utf-8', 'replace'),
         done.stderr.decode('utf-8', 'replace'),
@@ -238,20 +254,19 @@ def parse_reports(sources: typing.Sequence[str], timeout: float = 120.0) -> list
     """
     What 5.1 makes of each source, without running any of it: the identifiers of the parse errors
     it reported, and the tokens it read. Sources are measured a batch at a time, so a corpus costs a
-    few processes rather than one process each.
+    few processes rather than one process each, and `timeout` bounds one of them — see `_reported`.
 
     Error identifiers are reported rather than messages, which are localized and quote the value
     that offended.
     """
-    reports: list[ParseReport] = []
-    for batch in _batches(sources):
-        for report in _ask(_PARSE_SCRIPT, batch, 'reports', timeout):
-            reports.append(ParseReport(
-                errors=tuple(report['errors']),
-                tokens=tuple(Token(t['text'], t['kind'], t['flags']) for t in report['tokens']),
-                failed=report['failed'],
-            ))
-    return reports
+    return [
+        ParseReport(
+            errors=tuple(report['errors']),
+            tokens=tuple(Token(t['text'], t['kind'], t['flags']) for t in report['tokens']),
+            failed=report['failed'],
+        )
+        for report in _reported(_PARSE_SCRIPT, sources, 'reports', timeout)
+    ]
 
 
 def command_names(
@@ -325,9 +340,31 @@ def echo(sources: typing.Sequence[str], timeout: float = 120.0) -> list[str]:
     """
     return [
         base64.b64decode(item).decode('utf-8')
-        for batch in _batches(sources)
-        for item in _ask(_ECHO_SCRIPT, batch, 'echoed', timeout)
+        for item in _reported(_ECHO_SCRIPT, sources, 'echoed', timeout)
     ]
+
+
+def _reported(
+    script: str,
+    sources: typing.Sequence[str],
+    field: str,
+    timeout: float,
+) -> list:
+    """
+    Every entry of `field` that one of the reporting scripts writes about `sources`, in order.
+
+    The sources travel a batch at a time because `-EncodedCommand` puts the whole payload on the
+    command line, and the hosts wait on each other rather than in turn, as `behaviours` does. So
+    `timeout` bounds one host process and not the whole measurement, which is what it means
+    everywhere else in this module.
+    """
+    batches = list(_batches(sources))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=_HOSTS_AT_ONCE) as pool:
+        return [
+            item
+            for reported in pool.map(lambda batch: _ask(script, batch, field, timeout), batches)
+            for item in reported
+        ]
 
 
 def _batches(sources: typing.Sequence[str]) -> typing.Iterator[list[str]]:
@@ -335,6 +372,10 @@ def _batches(sources: typing.Sequence[str]) -> typing.Iterator[list[str]]:
     `sources` split into runs that each fit in one command line. A source larger than the budget on
     its own travels alone rather than being split: a source is the unit a report is about, and the
     oversized one then fails loudly against the command-line limit, which is the honest answer.
+
+    What a source costs is exactly what it comes to in the payload `_ask` builds — its own JSON plus
+    the one character that separates it from the next — so the budget is the bound it is documented
+    to be rather than an estimate that drifts with the number of sources in a batch.
     """
     batch: list[str] = []
     size = 0
@@ -355,7 +396,8 @@ def _ask(script: str, batch: typing.Sequence[str], field: str, timeout: float) -
     one entry per source: a host that answered about fewer sources than it was asked about would
     otherwise shift every later source's report onto the wrong one.
     """
-    payload = base64.b64encode(json.dumps(list(batch)).encode('utf-8')).decode('ascii')
+    encoded = json.dumps(list(batch), separators=_JSON_SEPARATORS)
+    payload = base64.b64encode(encoded.encode('utf-8')).decode('ascii')
     reported = _decode(run(script.replace('@PAYLOAD@', payload), timeout))[field]
     if len(reported) != len(batch):
         raise OracleError(F'asked about {len(batch)} sources and heard about {len(reported)}')

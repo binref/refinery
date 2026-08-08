@@ -7,12 +7,17 @@ Every entry here is hand-authored. Nothing is read from disk, downloaded, or der
 and this module imports nothing from `test`, so it cannot reach the sample store even indirectly.
 That is what makes it safe to feed to `refinery`'s 5.1 oracle.
 
-`BEHAVIOURS` and `CLAIMS` are held to a stricter rule than the rest, because they are the only
-things that are executed. Each entry must be synthetic, small and safe: written by hand for the
+`BEHAVIOURS`, `CLAIMS` and `TABLES` are held to a stricter rule than the rest, because they are the
+only things that are executed. Each entry must be synthetic, small and safe: written by hand for the
 purpose, short enough to take in at a glance, and doing nothing beyond printing — no network, no
 file writes, no process creation, no persistent environment or registry change, no dependence on
 the state of the machine. `refinery.test.lib.scripts.ps1.oracle.behaviour` refuses anything that is
 not listed in one of them, so adding an entry is the review step.
+
+`TABLES` is the one exception to the last of those, and it is an exception on purpose rather than a
+relaxation: those entries read the command tables of a Windows PowerShell 5.1 installation, which is
+the oracle's whole subject. The rule they are still held to is the rest of it, and the reasoning for
+the exception is recorded where they are defined.
 
 A `$env:` assignment is admitted under that rule and a registry or `[Environment]::SetEnvironment`
 write is not, because the two do different things: `$env:z = '7'` writes a variable of the host
@@ -126,11 +131,11 @@ SPELLINGS: tuple[str, ...] = (
 #: effect that produces none — `$x = 5` and a rewrite that dropped it look alike, `$x = 5; $x` does
 #: not.
 #:
-#: The transcript drops an error's message and target, so two `CommandNotFoundException`s read alike:
-#: a witness has to differ in the kind or the count of the lines it writes, which is what the
-#: `Write-Output` against `Write-Host` pairs below are for — one writes to the success stream and the
-#: other to the information stream. A witness may not name `Get-Date` or the working directory for
-#: the same reason a snippet may not depend on the state of the machine.
+#: The transcript drops an error's message and target, so two `CommandNotFoundException`s read
+#: alike: a witness has to differ in the kind or the count of the lines it writes, which is what the
+#: `Write-Output` against `Write-Host` pairs below are for — one writes to the success stream and
+#: the other to the information stream. A witness may not name `Get-Date` or the working directory
+#: for the same reason a snippet may not depend on the state of the machine.
 #:
 #: Not every question about the alias table can be asked here. `Import-Alias` reads a CSV, and a
 #: corpus entry may not create one, so what it does to the table is a question for a model-level
@@ -313,11 +318,17 @@ NAMES: tuple[str, ...] = (
 )
 
 
+#: Every table whose entries a real host may be asked to *run*, in one place, so that the set the
+#: execution rule is written about and the set handed to a host cannot come apart: a table added to
+#: one and not the other is either runnable but never measured, or listed and refused at run time.
+_EXECUTABLE: tuple[str, ...] = (*BEHAVIOURS, *CLAIMS, *TABLES)
+
+
 def executable() -> frozenset[str]:
     """
     Every script a real PowerShell host may be asked to run.
     """
-    return frozenset(BEHAVIOURS) | frozenset(CLAIMS) | frozenset(TABLES)
+    return frozenset(_EXECUTABLE)
 
 
 def oracle_corpus() -> tuple[str, ...]:
@@ -329,9 +340,7 @@ def oracle_corpus() -> tuple[str, ...]:
         *SNIPPETS.values(),
         *PROBES,
         *SPELLINGS,
-        *BEHAVIOURS,
-        *CLAIMS,
-        *TABLES,
+        *_EXECUTABLE,
         *NAMES,
     ):
         seen.setdefault(source, None)

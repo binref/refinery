@@ -27,6 +27,13 @@ from refinery.lib.scripts.ps1.model import (
 from refinery.lib.scripts.ps1.parser import Ps1Parser
 
 
+def _command(source: str) -> Ps1CommandInvocation:
+    for node in Ps1Parser(source).parse().walk():
+        if isinstance(node, Ps1CommandInvocation):
+            return node
+    raise AssertionError(F'no command in {source!r}')
+
+
 class TestPs1EvaluationOrder(TestBase):
     """
     The order PowerShell evaluates the parts of one statement in, which is where a read and a write
@@ -210,15 +217,8 @@ class TestPs1BoundArgumentValue(TestBase):
     the caller has to know the parameter takes a value.
     """
 
-    @staticmethod
-    def _command(source: str) -> Ps1CommandInvocation:
-        for node in Ps1Parser(source).parse().walk():
-            if isinstance(node, Ps1CommandInvocation):
-                return node
-        raise AssertionError(F'no command in {source!r}')
-
     def _value(self, source: str, parameter: str) -> str | None:
-        found = bound_argument_value(self._command(source), parameter)
+        found = bound_argument_value(_command(source), parameter)
         return None if found is None else found.value
 
     def test_both_spellings_of_a_binding_are_found(self):
@@ -268,16 +268,9 @@ class TestPs1FreePositionalValues(TestBase):
     variable named `Global` exists at all — see `temp/ps1/census_measurements.md`.
     """
 
-    @staticmethod
-    def _command(source: str) -> Ps1CommandInvocation:
-        for node in Ps1Parser(source).parse().walk():
-            if isinstance(node, Ps1CommandInvocation):
-                return node
-        raise AssertionError(F'no command in {source!r}')
-
     def _values(self, source: str, command: str) -> list[str]:
         return [
-            value.value for value in free_positional_values(self._command(source), command)
+            value.value for value in free_positional_values(_command(source), command)
         ]
 
     def test_a_value_taking_parameter_does_not_contribute_a_positional(self):
@@ -355,15 +348,8 @@ class TestPs1ResolvedCommandNames(TestBase):
     would retry it, the prefixed name beside it.
     """
 
-    @staticmethod
-    def _command(source: str) -> Ps1CommandInvocation:
-        for node in Ps1Parser(source).parse().walk():
-            if isinstance(node, Ps1CommandInvocation):
-                return node
-        raise AssertionError(F'no command in {source!r}')
-
     def _names(self, source: str) -> tuple[str, ...]:
-        return resolved_command_names(self._command(source))
+        return resolved_command_names(_command(source))
 
     def test_a_bare_noun_reports_the_written_name_and_the_retried_one(self):
         for source, expected in (
