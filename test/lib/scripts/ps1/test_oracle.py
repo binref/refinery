@@ -127,9 +127,13 @@ BEHAVIOUR_DIVERGENCES: dict[str, str] = {
 #:
 #: An entry this table holds alone would not have that second witness, and every test in this file
 #: is skipped where no PowerShell host is available — so on a machine without one such an entry
-#: ratchets in neither direction, and a fix and a regression are alike invisible. Every entry here
-#: is a variable one, and each is carried by `test_corruptions.py` as well. Anything added that is
-#: not about a store needs a witness of its own shape before this table is read as confirming it.
+#: ratchets in neither direction, and a fix and a regression are alike invisible. Every entry needs
+#: a witness of its own shape somewhere host-free. The variable entries are carried by
+#: `test_corruptions.py`, which asks whether a store survived in the tree; the `[Array]::Reverse`
+#: entries are carried by
+#: `test.lib.scripts.ps1.deobfuscation.test_folding.TestPs1ArrayReverseIsAppliedWhereItIsWritten`,
+#: which asks what the tool emits. Neither of those is evidence for what is written here, because
+#: this reaches its verdict by running both scripts.
 BEHAVIOUR_DEFECTS: dict[str, str] = {
     "Set-Variable global:y 'b'; Write-Host $global:y":
         'The store is dropped, so `b` becomes nothing: a command that writes a variable is not '
@@ -163,6 +167,18 @@ BEHAVIOUR_DEFECTS: dict[str, str] = {
     "$x = 'a'; &('i' + 'ex') '$x = \"b\"'; Write-Host $x":
         'The same write, reached through a computed command name, and here the call itself is '
         'deleted as well.',
+    "$s = 'abc'; [Array]::Reverse($s); Write-Output $s":
+        'The string is emitted reversed. 5.1 binds a String to the `System.Array` parameter by '
+        'converting it to a fresh `Char[]`, reverses that copy and discards it, so the variable is '
+        'left holding `abc`.',
+    "$x = 1, 2, 3; Write-Output $x[0]; [Array]::Reverse($x); Write-Output $x[0]":
+        'The reversal is folded back into the statement that built the array, so the read above it '
+        'reports the order that only holds below it: both reads emit 3 where 5.1 prints 1 and then '
+        '3.',
+    "$x = 1, 2, 3; $x[0] = 9; [Array]::Reverse($x); Write-Output $x":
+        'The same relocation, across a write rather than a read: the element written before the '
+        'reversal ends up at the near end instead of the far one, so `9 2 1` is emitted where 5.1 '
+        'leaves `3 2 9`.',
 }
 
 

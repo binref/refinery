@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import unittest
+
 from test.lib.scripts.ps1.deobfuscation import TestPs1
 
 from refinery.lib.scripts.ps1.deobfuscation import Ps1ConstantFolding, Ps1ConstantInlining
@@ -872,3 +874,39 @@ class TestPs1CountingAnArrayKeepsWhatBuildingItDid(TestPs1):
         # A character is built fresh per index out of a value that was never a node, so nothing is
         # shared and the shape obfuscators actually write keeps working.
         self.assertEqual(self._apply("$r = 'abc'[0, 0, 1]", Ps1ConstantFolding), "$r = 'a', 'a', 'b'")
+
+
+class TestPs1ArrayReverseIsAppliedWhereItIsWritten(TestPs1):
+    """
+    `[Array]::Reverse` reverses in place and returns nothing, so folding it away means moving its
+    effect back to the statement that built the array. That is only faithful where the array is
+    what was passed and where nothing observes it in between.
+
+    Every test here is a defect the tool still has, marked as a failure that is expected so that it
+    ratchets in both directions: the fix has to unmark them. Each is carried a second time by
+    `test/lib/scripts/ps1/corpus.py`, where the same three scripts are run on a 5.1 host and their
+    transcripts compared, so neither witness rests on the other. What is asserted here is the
+    conservative correct output — the transform declining — and a fold that reversed at the right
+    point would be correct too and would rewrite these.
+    """
+
+    @unittest.expectedFailure
+    def test_reversing_a_string_leaves_the_string_unchanged(self):
+        # 5.1 binds a String to the `System.Array` parameter by converting it to a fresh `Char[]`,
+        # reverses that copy and discards it, so the script prints `abc`.
+        source = "$s = 'abc'\n[Array]::Reverse($s)\nWrite-Output $s"
+        self.assertEqual(self._deobfuscate(source), source)
+
+    @unittest.expectedFailure
+    def test_a_read_between_the_assignment_and_the_reversal_sees_the_original_order(self):
+        # 5.1 prints 1 and then 3: the first read runs before the reversal does.
+        source = '$x = 1, 2, 3\nWrite-Output $x[0]\n[Array]::Reverse($x)\nWrite-Output $x[0]'
+        self.assertEqual(self._deobfuscate(source), source)
+
+    @unittest.expectedFailure
+    def test_an_element_written_between_the_assignment_and_the_reversal_is_reversed_with_the_rest(
+        self,
+    ):
+        # 5.1 leaves `3 2 9`: the write lands before the reversal, so it moves to the far end.
+        source = '$x = 1, 2, 3\n$x[0] = 9\n[Array]::Reverse($x)\nWrite-Output $x'
+        self.assertEqual(self._deobfuscate(source), source)
