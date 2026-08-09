@@ -22,7 +22,7 @@ import json
 import sys
 import unittest
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from unittest.mock import patch
 
 from test import TestBase
@@ -299,6 +299,531 @@ TABLE_TRANSCRIPTS: dict[str, tuple[str, ...]] = {
         ('OUT\tSystem.Management.Automation.CommandTypes\tAlias',),
 }
 
+#: What the whole `_UNPARSEABLE_RECEIVER` group of `TYPE_DEFECTS` has in common. 5.1 reads a digit
+#: that starts a token as the start of a number, so a numeric literal cannot stand as a
+#: member-access receiver: `3.ToString()` is a parse error, and in a command argument every numeric
+#: literal is, `0xFF` and `1kb` and `1.5` alike. The unit inlines a folded value into that slot
+#: without parentheses, so `$n = 5; $n.ToString()` becomes a script PowerShell will not read.
+_UNPARSEABLE_RECEIVER = (
+    'The value is folded to a numeric literal left standing as a member-access receiver without '
+    'parentheses, which 5.1 refuses to parse. That is a defect of how a value is spelled rather '
+    'than of what the unit believes it to be, so this phase does not retire it.'
+)
+
+#: What 5.1 makes of a value's type and of an operation's result, measured. The unit has no place to
+#: keep a type — a Char and a one-character String are the same object to it — so every belief about
+#: one was written by us, and this is the table that ends that. Read the rule in `corpus.TYPES`
+#: before adding an entry: two witnesses, and `Write-Host` may not be either of them.
+#:
+#: Nothing here is a claim about the tool. It is what PowerShell does, and it is pinned so that the
+#: commits which give the unit a type cannot quietly move the target they are measured against.
+TYPE_TRANSCRIPTS: dict[str, tuple[str, ...]] = {
+    "$t = @('a', 'b') | ForEach-Object { $_ }; Write-Output $t.GetType().FullName; Write-Output $t":
+        (
+            'OUT\tSystem.String\tSystem.Object[]',
+            'OUT\tSystem.String\ta',
+            'OUT\tSystem.String\tb',
+        ),
+    "$t = @('a', 'b') | ForEach-Object { $_ }; Write-Output ($t -join '-')":
+        ('OUT\tSystem.String\ta-b',),
+    "$t = @('a', 'b') | ForEach-Object { $_ }; foreach ($e in $t) { Write-Output $e }":
+        (
+            'OUT\tSystem.String\ta',
+            'OUT\tSystem.String\tb',
+        ),
+    '$t = 65, 66 | ForEach-Object { [char]$_ }; Write-Output $t.GetType().FullName':
+        ('OUT\tSystem.String\tSystem.Object[]',),
+    '$t = 65, 66 | ForEach-Object { [char]$_ }; Write-Output $t.Count; Write-Output $t':
+        (
+            'OUT\tSystem.Int32\t2',
+            'OUT\tSystem.Char\tA',
+            'OUT\tSystem.Char\tB',
+        ),
+    "$t = 'a-b-c' -split '-' | ForEach-Object { $_ }; Write-Output $t.GetType().FullName":
+        ('OUT\tSystem.String\tSystem.Object[]',),
+    '$t = [char]65; Write-Output $t.GetType().FullName; Write-Output $t':
+        (
+            'OUT\tSystem.String\tSystem.Char',
+            'OUT\tSystem.Char\tA',
+        ),
+    '$t = [char[]](72, 73); Write-Output $t.GetType().FullName; Write-Output $t':
+        (
+            'OUT\tSystem.String\tSystem.Char[]',
+            'OUT\tSystem.Char\tH',
+            'OUT\tSystem.Char\tI',
+        ),
+    "Write-Output ([char[]](72, 73) -is [string]); Write-Output ('HI' -is [string])":
+        (
+            'OUT\tSystem.Boolean\tFalse',
+            'OUT\tSystem.Boolean\tTrue',
+        ),
+    "$t = 'ABC'[0]; Write-Output $t.GetType().FullName; Write-Output $t":
+        (
+            'OUT\tSystem.String\tSystem.Char',
+            'OUT\tSystem.Char\tA',
+        ),
+    "$t = [char[]]'ABC'; Write-Output $t.GetType().FullName; Write-Output $t.Count":
+        (
+            'OUT\tSystem.String\tSystem.Char[]',
+            'OUT\tSystem.Int32\t3',
+        ),
+    "$t = 'ABC'.ToCharArray(); Write-Output $t.GetType().FullName; Write-Output $t.Count":
+        (
+            'OUT\tSystem.String\tSystem.Char[]',
+            'OUT\tSystem.Int32\t3',
+        ),
+    "Write-Output ('x' -replace 'x', [char]65); Write-Output ('x' -replace 'x', 'A')":
+        (
+            'OUT\tSystem.String\tA',
+            'OUT\tSystem.String\tA',
+        ),
+    "Write-Output ([char]114 + [char]53); Write-Output ('r' + '5')":
+        (
+            'OUT\tSystem.String\tr5',
+            'OUT\tSystem.String\tr5',
+        ),
+    "Write-Output ([char]65 + 1); Write-Output ('A' + 1)":
+        (
+            'OUT\tSystem.String\tA1',
+            'OUT\tSystem.String\tA1',
+        ),
+    "Write-Output (1 + [char]65); Write-Output (1 + 'A')":
+        (
+            'OUT\tSystem.Int32\t66',
+            'THROW\tInvalidCastFromStringToInteger\tSystem.Management.Automation.RuntimeException',
+        ),
+    'Write-Output (([char]65) * 3)':
+        ('THROW\tNotADefinedOperationForType\tSystem.Management.Automation.RuntimeException',),
+    "Write-Output ('A' * 3)":
+        ('OUT\tSystem.String\tAAA',),
+    "Write-Output (([char]65).ToString()); Write-Output (('A').ToString())":
+        (
+            'OUT\tSystem.String\tA',
+            'OUT\tSystem.String\tA',
+        ),
+    "Write-Output ('a,b' -split [char]44); Write-Output ('a,b' -split ',')":
+        (
+            'OUT\tSystem.String\ta',
+            'OUT\tSystem.String\tb',
+            'OUT\tSystem.String\ta',
+            'OUT\tSystem.String\tb',
+        ),
+    "Write-Output ('xyx'.Replace([char]120, [char]122)); Write-Output ('xyx'.Replace('x', 'z'))":
+        (
+            'OUT\tSystem.String\tzyz',
+            'OUT\tSystem.String\tzyz',
+        ),
+    "Write-Output ('{0}' -f [char]65); Write-Output ('{0}' -f 'A')":
+        (
+            'OUT\tSystem.String\tA',
+            'OUT\tSystem.String\tA',
+        ),
+    "Write-Output (([char]65, [char]66) -join ''); Write-Output (('A', 'B') -join '')":
+        (
+            'OUT\tSystem.String\tAB',
+            'OUT\tSystem.String\tAB',
+        ),
+    "Write-Output ([string][char]65); Write-Output ([string]'A')":
+        (
+            'OUT\tSystem.String\tA',
+            'OUT\tSystem.String\tA',
+        ),
+    '$c = [char]65; $s = \'A\'; Write-Output "$c"; Write-Output "$s"':
+        (
+            'OUT\tSystem.String\tA',
+            'OUT\tSystem.String\tA',
+        ),
+    "Write-Output ([char]65 -is [char]); Write-Output ('A' -is [char])":
+        (
+            'OUT\tSystem.Boolean\tTrue',
+            'OUT\tSystem.Boolean\tFalse',
+        ),
+    "Write-Output (([char]65).Length); Write-Output (('A').Length)":
+        (
+            'OUT\tSystem.Int32\t1',
+            'OUT\tSystem.Int32\t1',
+        ),
+    "Write-Output (([char]65).Count); Write-Output (('A').Count)":
+        (
+            'OUT\tSystem.Int32\t1',
+            'OUT\tSystem.Int32\t1',
+        ),
+    "Write-Output ([char]65 -eq 'A'); Write-Output ('A' -eq 'A')":
+        (
+            'OUT\tSystem.Boolean\tTrue',
+            'OUT\tSystem.Boolean\tTrue',
+        ),
+    '$c = [char]65; foreach ($e in $c) { Write-Output $e }':
+        ('OUT\tSystem.Char\tA',),
+    "$t = 'AB'.Count; Write-Output $t.GetType().FullName; Write-Output $t":
+        (
+            'OUT\tSystem.String\tSystem.Int32',
+            'OUT\tSystem.Int32\t1',
+        ),
+    '$t = (5).Count; Write-Output $t.GetType().FullName; Write-Output $t':
+        (
+            'OUT\tSystem.String\tSystem.Int32',
+            'OUT\tSystem.Int32\t1',
+        ),
+    '$t = (5).Length; Write-Output $t.GetType().FullName; Write-Output $t':
+        (
+            'OUT\tSystem.String\tSystem.Int32',
+            'OUT\tSystem.Int32\t1',
+        ),
+    "$t = 1 + 'AB'.Count; Write-Output $t.GetType().FullName; Write-Output $t":
+        (
+            'OUT\tSystem.String\tSystem.Int32',
+            'OUT\tSystem.Int32\t2',
+        ),
+    '$t = @(1, 2, 3).Rank; Write-Output $t.GetType().FullName; Write-Output $t':
+        (
+            'OUT\tSystem.String\tSystem.Int32',
+            'OUT\tSystem.Int32\t1',
+        ),
+    '$t = @(1, 2, 3).Count; Write-Output $t.GetType().FullName; Write-Output $t':
+        (
+            'OUT\tSystem.String\tSystem.Int32',
+            'OUT\tSystem.Int32\t3',
+        ),
+    '$t = @(1, 2, 3).Length; Write-Output $t.GetType().FullName; Write-Output $t':
+        (
+            'OUT\tSystem.String\tSystem.Int32',
+            'OUT\tSystem.Int32\t3',
+        ),
+    "$t = 'AB'.Length; Write-Output $t.GetType().FullName; Write-Output $t":
+        (
+            'OUT\tSystem.String\tSystem.Int32',
+            'OUT\tSystem.Int32\t2',
+        ),
+    'Write-Output ((5).PSTypeNames)':
+        (
+            'OUT\tSystem.String\tSystem.Int32',
+            'OUT\tSystem.String\tSystem.ValueType',
+            'OUT\tSystem.String\tSystem.Object',
+        ),
+    "Write-Output (('AB').PSTypeNames)":
+        (
+            'OUT\tSystem.String\tSystem.String',
+            'OUT\tSystem.String\tSystem.Object',
+        ),
+    'Write-Output ((5).PSObject.GetType().FullName)':
+        ('OUT\tSystem.String\tSystem.Management.Automation.PSObject',),
+    '$t = (5).Rank; Write-Output ($null -eq $t)':
+        ('OUT\tSystem.Boolean\tTrue',),
+    "$t = 'AB'.Zqnope; Write-Output ($null -eq $t)":
+        ('OUT\tSystem.Boolean\tTrue',),
+    '$t = (5).Zqnope; Write-Output ($null -eq $t)':
+        ('OUT\tSystem.Boolean\tTrue',),
+    '$t = $null.Count; Write-Output ($null -eq $t); Write-Output $t':
+        (
+            'OUT\tSystem.Boolean\tFalse',
+            'OUT\tSystem.Int32\t0',
+        ),
+    '$f = New-Object IO.MemoryStream; Write-Output $f.Length.GetType().FullName':
+        ('OUT\tSystem.String\tSystem.Int64',),
+    '$f = New-Object IO.MemoryStream; $f.Dispose(); Write-Output $f.Length':
+        ('OUT\t\t<null>',),
+    '$t = @(); Write-Output $t.GetType().FullName; Write-Output $t.Count':
+        (
+            'OUT\tSystem.String\tSystem.Object[]',
+            'OUT\tSystem.Int32\t0',
+        ),
+    '$t = , 1; Write-Output $t.GetType().FullName; Write-Output $t.Count':
+        (
+            'OUT\tSystem.String\tSystem.Object[]',
+            'OUT\tSystem.Int32\t1',
+        ),
+    '$t = 0xFF; Write-Output $t.GetType().FullName; Write-Output $t':
+        (
+            'OUT\tSystem.String\tSystem.Int32',
+            'OUT\tSystem.Int32\t255',
+        ),
+    '$t = 0x7FFFFFFF; Write-Output $t.GetType().FullName; Write-Output $t':
+        (
+            'OUT\tSystem.String\tSystem.Int32',
+            'OUT\tSystem.Int32\t2147483647',
+        ),
+    '$t = 0xFFFFFFFF; Write-Output $t.GetType().FullName; Write-Output $t':
+        (
+            'OUT\tSystem.String\tSystem.Int32',
+            'OUT\tSystem.Int32\t-1',
+        ),
+    '$t = 0xFFFFFFFF -bxor 0x5A; Write-Output $t.GetType().FullName; Write-Output $t':
+        (
+            'OUT\tSystem.String\tSystem.Int32',
+            'OUT\tSystem.Int32\t-91',
+        ),
+    '$t = 0xFFFFFFFFFFFFFFFF; Write-Output $t.GetType().FullName; Write-Output $t':
+        (
+            'OUT\tSystem.String\tSystem.Int64',
+            'OUT\tSystem.Int64\t-1',
+        ),
+    '$t = 1kb; Write-Output $t.GetType().FullName; Write-Output $t':
+        (
+            'OUT\tSystem.String\tSystem.Int32',
+            'OUT\tSystem.Int32\t1024',
+        ),
+    '$t = 1L; Write-Output $t.GetType().FullName; Write-Output $t':
+        (
+            'OUT\tSystem.String\tSystem.Int64',
+            'OUT\tSystem.Int64\t1',
+        ),
+    '$t = 10d; Write-Output $t.GetType().FullName; Write-Output $t':
+        (
+            'OUT\tSystem.String\tSystem.Decimal',
+            'OUT\tSystem.Decimal\t10',
+        ),
+    '$t = 0xFFFFFFFF + 0; Write-Output $t.GetType().FullName; Write-Output $t':
+        (
+            'OUT\tSystem.String\tSystem.Int32',
+            'OUT\tSystem.Int32\t-1',
+        ),
+    '$t = 0xFFFFFFFFFFFFFFFF + 0; Write-Output $t.GetType().FullName; Write-Output $t':
+        (
+            'OUT\tSystem.String\tSystem.Int64',
+            'OUT\tSystem.Int64\t-1',
+        ),
+    '$t = 1kb + 0; Write-Output $t.GetType().FullName; Write-Output $t':
+        (
+            'OUT\tSystem.String\tSystem.Int32',
+            'OUT\tSystem.Int32\t1024',
+        ),
+    '$t = 1L + 0; Write-Output $t.GetType().FullName; Write-Output $t':
+        (
+            'OUT\tSystem.String\tSystem.Int64',
+            'OUT\tSystem.Int64\t1',
+        ),
+    '$t = 10d + 0; Write-Output $t.GetType().FullName; Write-Output $t':
+        (
+            'OUT\tSystem.String\tSystem.Decimal',
+            'OUT\tSystem.Decimal\t10',
+        ),
+    '$t = 2147483648; Write-Output $t.GetType().FullName; Write-Output $t':
+        (
+            'OUT\tSystem.String\tSystem.Int64',
+            'OUT\tSystem.Int64\t2147483648',
+        ),
+    '$t = 1.5; Write-Output $t.GetType().FullName; Write-Output $t':
+        (
+            'OUT\tSystem.String\tSystem.Double',
+            'OUT\tSystem.Double\t1.5',
+        ),
+    '$t = 1e3; Write-Output $t.GetType().FullName; Write-Output $t':
+        (
+            'OUT\tSystem.String\tSystem.Double',
+            'OUT\tSystem.Double\t1000',
+        ),
+    '$t = 2147483647 + 1; Write-Output $t.GetType().FullName; Write-Output $t':
+        (
+            'OUT\tSystem.String\tSystem.Double',
+            'OUT\tSystem.Double\t2147483648',
+        ),
+    '$t = 512MB * 512MB; Write-Output $t.GetType().FullName; Write-Output $t':
+        (
+            'OUT\tSystem.String\tSystem.Double',
+            'OUT\tSystem.Double\t2.88230376151712E+17',
+        ),
+    '$t = 9223372036854775807 + 2; Write-Output $t.GetType().FullName; Write-Output $t':
+        (
+            'OUT\tSystem.String\tSystem.Double',
+            'OUT\tSystem.Double\t9.22337203685478E+18',
+        ),
+    '$t = [decimal]::MaxValue + 1; Write-Output $t.GetType().FullName; Write-Output $t':
+        ('THROW\tRuntimeException\tSystem.Management.Automation.RuntimeException',),
+    "$t = 12 + '0xabc'; Write-Output $t.GetType().FullName; Write-Output $t":
+        (
+            'OUT\tSystem.String\tSystem.Int32',
+            'OUT\tSystem.Int32\t2760',
+        ),
+    "$t = 16 + 'file'; Write-Output $t.GetType().FullName; Write-Output $t":
+        ('THROW\tInvalidCastFromStringToInteger\tSystem.Management.Automation.RuntimeException',),
+    "$t = 5 + '5'; Write-Output $t.GetType().FullName; Write-Output $t":
+        (
+            'OUT\tSystem.String\tSystem.Int32',
+            'OUT\tSystem.Int32\t10',
+        ),
+    "$t = '5' + 5; Write-Output $t.GetType().FullName; Write-Output $t":
+        (
+            'OUT\tSystem.String\tSystem.String',
+            'OUT\tSystem.String\t55',
+        ),
+    "$t = [int]'0x10'; Write-Output $t.GetType().FullName; Write-Output $t":
+        (
+            'OUT\tSystem.String\tSystem.Int32',
+            'OUT\tSystem.Int32\t16',
+        ),
+    '$t = -2147483647 - 1; Write-Output $t.GetType().FullName; Write-Output $t':
+        (
+            'OUT\tSystem.String\tSystem.Int32',
+            'OUT\tSystem.Int32\t-2147483648',
+        ),
+    '$t = -2147483648; Write-Output $t.GetType().FullName; Write-Output $t':
+        (
+            'OUT\tSystem.String\tSystem.Int32',
+            'OUT\tSystem.Int32\t-2147483648',
+        ),
+    '$t = [int64]::MaxValue * 2; Write-Output $t.GetType().FullName; Write-Output $t':
+        (
+            'OUT\tSystem.String\tSystem.Double',
+            'OUT\tSystem.Double\t1.84467440737095E+19',
+        ),
+    '$t = [double]::PositiveInfinity; Write-Output $t.GetType().FullName; Write-Output $t':
+        (
+            'OUT\tSystem.String\tSystem.Double',
+            'OUT\tSystem.Double\tInfinity',
+        ),
+    '$t = [double]::NaN; Write-Output $t.GetType().FullName; Write-Output $t':
+        (
+            'OUT\tSystem.String\tSystem.Double',
+            'OUT\tSystem.Double\tNaN',
+        ),
+    '$t = 10, 20, 30, 20, 10 -ne 20; Write-Output $t.GetType().FullName; Write-Output $t':
+        (
+            'OUT\tSystem.String\tSystem.Object[]',
+            'OUT\tSystem.Int32\t10',
+            'OUT\tSystem.Int32\t30',
+            'OUT\tSystem.Int32\t10',
+        ),
+    '$t = 10, 20, 30 -eq 20; Write-Output $t.GetType().FullName; Write-Output $t':
+        (
+            'OUT\tSystem.String\tSystem.Object[]',
+            'OUT\tSystem.Int32\t20',
+        ),
+    '$t = 10 -ne 20; Write-Output $t.GetType().FullName; Write-Output $t':
+        (
+            'OUT\tSystem.String\tSystem.Boolean',
+            'OUT\tSystem.Boolean\tTrue',
+        ),
+    "$t = [string]('a', 'b'); Write-Output $t.GetType().FullName; Write-Output $t":
+        (
+            'OUT\tSystem.String\tSystem.String',
+            'OUT\tSystem.String\ta b',
+        ),
+    "$OFS = '-'; $t = [string]('a', 'b'); Write-Output $t":
+        ('OUT\tSystem.String\ta-b',),
+    '$OFS = \'-\'; Write-Output "$(1, 2)"':
+        ('OUT\tSystem.String\t1-2',),
+}
+
+
+#: Rows of `corpus.TYPES` whose deobfuscation does not behave like the row. Held apart from
+#: `BEHAVIOUR_DEFECTS` rather than merged into it, because that table carries one entry per defect
+#: with a host-free twin for each, and these share a handful of root causes: the pipeline collapse,
+#: the `$Null` mint, the Char erasure, and one that is not about types at all.
+#:
+#: That last one is `_UNPARSEABLE_RECEIVER`, and it is the largest group here. It is a defect of how
+#: a value is *spelled* rather than of what the unit believes it to be, so the commits of this phase
+#: do not retire it; it is pinned host-free in
+#: `test.lib.scripts.ps1.deobfuscation.test_value_domain` so that it ratchets where a host is not
+#: available, and it is the reason a type witness cannot be read through the deobfuscated script.
+#:
+#: Two entries record something worse than a wrong answer. `'AB'.Count` and `(5).PSObject` are
+#: folded to `$Null`, and the `$Null` then receives a method call, so a script that printed a number
+#: throws instead. A mint that answers wrongly and a mint that stops the script are the same bug and
+#: are not held apart here, but the difference is why the member surface is the first thing the
+#: phase corrects.
+TYPE_DEFECTS: dict[str, str] = {
+    "$t = @('a', 'b') | ForEach-Object { $_ }; Write-Output $t.GetType().FullName; Write-Output $t":
+        'A pipeline builds an Object[]. The emulator collapses a list of one-character strings'
+        'into one string, so both the container type and the element count are lost.',
+    "$t = @('a', 'b') | ForEach-Object { $_ }; Write-Output ($t -join '-')":
+        'The same collapse, seen through a join: one element means the separator never appears.',
+    "$t = @('a', 'b') | ForEach-Object { $_ }; foreach ($e in $t) { Write-Output $e }":
+        'The same collapse, as changed control flow: the loop runs once over one string rather'
+        'than twice over two.',
+    '$t = 65, 66 | ForEach-Object { [char]$_ }; Write-Output $t.GetType().FullName':
+        'The same collapse over Char results, which is the shape a char-building loader writes.',
+    '$t = 65, 66 | ForEach-Object { [char]$_ }; Write-Output $t.Count; Write-Output $t':
+        'The collapse loses the count, and .Count on the result mints $Null where 5.1 answers 2.',
+    "$t = 'a-b-c' -split '-' | ForEach-Object { $_ }; Write-Output $t.GetType().FullName":
+        'The collapse is not about Char at all: any list of one-character strings falls to it.',
+    '$t = [char]65; Write-Output $t.GetType().FullName; Write-Output $t':
+        'A Char folds to a one-character String, so GetType and -is both answer differently.',
+    '$t = [char[]](72, 73); Write-Output $t.GetType().FullName; Write-Output $t':
+        'The same erasure for an array of Char, which folds to one String.',
+    "Write-Output ([char[]](72, 73) -is [string]); Write-Output ('HI' -is [string])":
+        'A Char[] is not a String; the fold makes it answer as though it were.',
+    "$t = 'ABC'[0]; Write-Output $t.GetType().FullName; Write-Output $t":
+        'Indexing a string yields a Char. folding.py:302 produces a String.',
+    "Write-Output (1 + [char]65); Write-Output (1 + 'A')":
+        'The left operand decides: Int + Char is Int32 66, and Int + String parses the string as a'
+        'number. Spelling the Char as a String turns a working line into a throw.',
+    'Write-Output (([char]65) * 3)':
+        'LangSpec 7.6.2 replicates only where the left operand is a String, so 5.1 throws. The'
+        'fold spells the Char as a String and answers AAA.',
+    "Write-Output ([char]65 -is [char]); Write-Output ('A' -is [char])":
+        'The fold makes a Char answer False to -is [char].',
+    "Write-Output (([char]65).Count); Write-Output (('A').Count)":
+        'Count is an engine intrinsic the per-type capture cannot hold, so $Null is minted where'
+        '5.1 answers 1.',
+    '$c = [char]65; foreach ($e in $c) { Write-Output $e }':
+        'The loop variable is a Char in 5.1 and a String after the fold.',
+    "$t = 'AB'.Count; Write-Output $t.GetType().FullName; Write-Output $t":
+        'The minted $Null then receives .GetType(), so the script throws where 5.1 printed'
+        'System.Int32. The mint does not merely answer wrongly, it stops the script.',
+    '$t = (5).Count; Write-Output $t.GetType().FullName; Write-Output $t':
+        'The same, on a scalar receiver.',
+    '$t = (5).Length; Write-Output $t.GetType().FullName; Write-Output $t':
+        'The same, for Length on a scalar.',
+    "$t = 1 + 'AB'.Count; Write-Output $t.GetType().FullName; Write-Output $t":
+        _UNPARSEABLE_RECEIVER,
+    '$t = @(1, 2, 3).Rank; Write-Output $t.GetType().FullName; Write-Output $t':
+        _UNPARSEABLE_RECEIVER,
+    '$t = @(1, 2, 3).Count; Write-Output $t.GetType().FullName; Write-Output $t':
+        _UNPARSEABLE_RECEIVER,
+    '$t = @(1, 2, 3).Length; Write-Output $t.GetType().FullName; Write-Output $t':
+        _UNPARSEABLE_RECEIVER,
+    "$t = 'AB'.Length; Write-Output $t.GetType().FullName; Write-Output $t":
+        _UNPARSEABLE_RECEIVER,
+    'Write-Output ((5).PSTypeNames)':
+        'PSTypeNames is added by the PSObject adapter to every object, so Get-Member -Force cannot'
+        'capture it per type and the mint answers $Null for it.',
+    "Write-Output (('AB').PSTypeNames)":
+        'The same, on a String receiver.',
+    'Write-Output ((5).PSObject.GetType().FullName)':
+        'PSObject is the same kind of intrinsic, and the minted $Null then receives .GetType(), so'
+        'the script throws.',
+    '$t = 0xFF; Write-Output $t.GetType().FullName; Write-Output $t':
+        _UNPARSEABLE_RECEIVER,
+    '$t = 0x7FFFFFFF; Write-Output $t.GetType().FullName; Write-Output $t':
+        _UNPARSEABLE_RECEIVER,
+    '$t = 0xFFFFFFFF; Write-Output $t.GetType().FullName; Write-Output $t':
+        _UNPARSEABLE_RECEIVER,
+    '$t = 0xFFFFFFFF -bxor 0x5A; Write-Output $t.GetType().FullName; Write-Output $t':
+        _UNPARSEABLE_RECEIVER,
+    '$t = 0xFFFFFFFFFFFFFFFF; Write-Output $t.GetType().FullName; Write-Output $t':
+        _UNPARSEABLE_RECEIVER,
+    '$t = 1kb; Write-Output $t.GetType().FullName; Write-Output $t':
+        _UNPARSEABLE_RECEIVER,
+    '$t = 1L; Write-Output $t.GetType().FullName; Write-Output $t':
+        _UNPARSEABLE_RECEIVER,
+    '$t = 10d; Write-Output $t.GetType().FullName; Write-Output $t':
+        _UNPARSEABLE_RECEIVER,
+    '$t = 0xFFFFFFFF + 0; Write-Output $t.GetType().FullName; Write-Output $t':
+        _UNPARSEABLE_RECEIVER,
+    '$t = 0xFFFFFFFFFFFFFFFF + 0; Write-Output $t.GetType().FullName; Write-Output $t':
+        _UNPARSEABLE_RECEIVER,
+    '$t = 1L + 0; Write-Output $t.GetType().FullName; Write-Output $t':
+        _UNPARSEABLE_RECEIVER,
+    '$t = 2147483648; Write-Output $t.GetType().FullName; Write-Output $t':
+        _UNPARSEABLE_RECEIVER,
+    '$t = 1.5; Write-Output $t.GetType().FullName; Write-Output $t':
+        _UNPARSEABLE_RECEIVER,
+    '$t = 1e3; Write-Output $t.GetType().FullName; Write-Output $t':
+        _UNPARSEABLE_RECEIVER,
+    '$t = 2147483647 + 1; Write-Output $t.GetType().FullName; Write-Output $t':
+        _UNPARSEABLE_RECEIVER,
+    '$t = 9223372036854775807 + 2; Write-Output $t.GetType().FullName; Write-Output $t':
+        _UNPARSEABLE_RECEIVER,
+    "$t = [int]'0x10'; Write-Output $t.GetType().FullName; Write-Output $t":
+        _UNPARSEABLE_RECEIVER,
+    '$t = -2147483647 - 1; Write-Output $t.GetType().FullName; Write-Output $t':
+        _UNPARSEABLE_RECEIVER,
+    "$OFS = '-'; $t = [string]('a', 'b'); Write-Output $t":
+        'A collection renders to a String separated by $OFS (LangSpec 6.8), which this script'
+        'sets. The fold bakes in the default separator.',
+}
+
 #: Which words 5.1 read as a command name, for each script whose corruption entry turns on where a
 #: command name ends. A name runs to whitespace: that is one claim, and every entry is a case of it.
 COMMAND_NAMES: dict[str, tuple[str, ...]] = {
@@ -323,6 +848,19 @@ COMMAND_NAMES: dict[str, tuple[str, ...]] = {
     '% { Write-Host 1 }': ('%', 'Write-Host'),
     'ForEach-Object { Write-Host 1 }': ('ForEach-Object', 'Write-Host'),
 }
+
+
+def rewritten_by(unit, snippets: Sequence[str]) -> Callable[[str], str]:
+    """
+    What `unit` makes of each of `snippets`, computed before any host starts and handed back as a
+    lookup. `behaviours` runs its hosts on a thread pool and calls the rewrite from each of them,
+    and a unit is a generator rather than a function: entered from two threads at once it raises
+    `ValueError: generator already executing`, which reads as a broken host rather than as what it
+    is. Rewriting up front is also the more honest boundary, because what the hosts are asked to
+    run is then settled before any measurement begins.
+    """
+    emitted = {snippet: bytes(snippet.encode('utf8') | unit).decode('utf8') for snippet in snippets}
+    return emitted.__getitem__
 
 
 def has_parse_error(source: str) -> bool:
@@ -564,15 +1102,9 @@ class TestPs1DeobfuscationPreservesBehaviour(Ps1OracleTest):
     """
 
     def test_the_output_behaves_like_the_input(self):
-        unit = self.ldu('ps1')
-
-        def deobfuscated(snippet: str) -> str:
-            return bytes(snippet.encode('utf8') | unit).decode('utf8')
-
-        rewritten = [
-            snippet for snippet in (*corpus.BEHAVIOURS, *corpus.CLAIMS)
-            if deobfuscated(snippet) != snippet
-        ]
+        snippets = (*corpus.BEHAVIOURS, *corpus.CLAIMS)
+        deobfuscated = rewritten_by(self.ldu('ps1'), snippets)
+        rewritten = [snippet for snippet in snippets if deobfuscated(snippet) != snippet]
         changed = sorted(
             snippet
             for snippet, before, after in zip(
@@ -616,6 +1148,67 @@ class TestPs1EverySnippetIsStillRewritten(TestBase):
             if bytes(snippet.encode('utf8') | unit).decode('utf8') == snippet
         )
         self.assertEqual(sorted(untouched), sorted(UNREWRITTEN_SNIPPETS))
+
+
+@unittest.skipIf(windows_powershell() is None, 'Windows PowerShell is not available')
+class TestPs1ValueTypesRestOnMeasuredBeliefs(Ps1OracleTest):
+    """
+    What a value's type is, and what an operation produces, asked of the host rather than assumed.
+    The unit answers both from tables and rules we wrote, so every other test of them agrees with us
+    wherever we are wrong; these do not.
+
+    The two questions are kept apart. This class asks only what PowerShell does, so that the table it
+    pins is a measurement and not a comparison, and `TestPs1DeobfuscationPreservesValueTypes` asks
+    whether the unit's output still does it.
+    """
+
+    def test_every_belief_about_a_value_type_is_what_powershell_does(self):
+        measured = dict(zip(corpus.TYPES, behaviours(corpus.TYPES)))
+        self.assertEqual(measured, TYPE_TRANSCRIPTS)
+
+    def test_a_char_and_a_one_character_string_are_told_apart(self):
+        """
+        The comparison the table alone does not make. Every witness in it is a transcript line, and
+        a harness that had stopped reporting the type would make a Char and a String read alike —
+        which is the defect the whole table is about, so it would pass unremarked.
+        """
+        measured = behaviours([
+            '$t = [char]65; Write-Output $t.GetType().FullName; Write-Output $t',
+            "Write-Output ([char]65 -is [char]); Write-Output ('A' -is [char])",
+        ])
+        self.assertEqual(
+            [measured[0][0], measured[1][0], measured[1][1]],
+            [
+                'OUT\tSystem.String\tSystem.Char',
+                'OUT\tSystem.Boolean\tTrue',
+                'OUT\tSystem.Boolean\tFalse',
+            ],
+        )
+
+
+@unittest.skipIf(windows_powershell() is None, 'Windows PowerShell is not available')
+class TestPs1DeobfuscationPreservesValueTypes(Ps1OracleTest):
+    """
+    The same promise `TestPs1DeobfuscationPreservesBehaviour` checks, over the rows written to make
+    a type observable. They are quantified separately and ledgered separately because they share a
+    few root causes rather than being independent defects, and because one of those causes is not
+    about types at all — see `TYPE_DEFECTS`.
+    """
+
+    def test_the_output_behaves_like_the_row(self):
+        rewrite = rewritten_by(self.ldu('ps1'), corpus.TYPES)
+        rows = corpus.TYPES
+        changed = sorted(
+            row for row, before, after in zip(rows, behaviours(rows), behaviours(rows, rewrite))
+            if before != after
+        )
+        self.assertEqual(changed, sorted(TYPE_DEFECTS))
+
+    def test_every_type_defect_is_a_row_that_is_run(self):
+        self.assertEqual(sorted(set(TYPE_DEFECTS) - set(corpus.TYPES)), [])
+
+    def test_no_row_is_ledgered_as_both_a_type_defect_and_a_behaviour_defect(self):
+        self.assertEqual(sorted(set(TYPE_DEFECTS) & set(BEHAVIOUR_DEFECTS)), [])
 
 
 @unittest.skipIf(windows_powershell() is None, 'Windows PowerShell is not available')

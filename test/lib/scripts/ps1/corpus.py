@@ -7,12 +7,12 @@ Every entry here is hand-authored. Nothing is read from disk, downloaded, or der
 and this module imports nothing from `test`, so it cannot reach the sample store even indirectly.
 That is what makes it safe to feed to `refinery`'s 5.1 oracle.
 
-`BEHAVIOURS`, `CLAIMS` and `TABLES` are held to a stricter rule than the rest, because they are the
-only things that are executed. Each entry must be synthetic, small and safe: written by hand for the
-purpose, short enough to take in at a glance, and doing nothing beyond printing — no network, no
-file writes, no process creation, no persistent environment or registry change, no dependence on
-the state of the machine. `refinery.test.lib.scripts.ps1.oracle.behaviour` refuses anything that is
-not listed in one of them, so adding an entry is the review step.
+`BEHAVIOURS`, `CLAIMS`, `TABLES` and `TYPES` are held to a stricter rule than the rest, because they
+are the only things that are executed. Each entry must be synthetic, small and safe: written by hand
+for the purpose, short enough to take in at a glance, and doing nothing beyond printing — no
+network, no file writes, no process creation, no persistent environment or registry change, no
+dependence on the state of the machine. `refinery.test.lib.scripts.ps1.oracle.behaviour` refuses
+anything that is not listed in one of them, so adding an entry is the review step.
 
 `TABLES` is the one exception to the last of those, and it is an exception on purpose rather than a
 relaxation: those entries read the command tables of a Windows PowerShell 5.1 installation, which is
@@ -295,6 +295,115 @@ TABLES: tuple[str, ...] = (
 )
 
 
+#: What a value's type is and what an operation produces, measured rather than assumed. The unit has
+#: no place to keep a type — a Char and a one-character String are the same object to it — so every
+#: belief about one was written by us, which is the condition these exist to end.
+#:
+#: Two witnesses per entry, because one is not enough to see the question. `$t.GetType().FullName`
+#: names the container, and `Write-Output $t` unrolls it so that the transcript's own type column
+#: names each element and prints its value: an `Object[]` of Char and an `Object[]` of String have
+#: the same `FullName` and differ only in the second witness, and an arithmetic answer is wrong in
+#: its value rather than in its type. `Write-Host` cannot be used for either — it writes an
+#: information record carrying `MessageData`, which is the rendered text with the type gone.
+#:
+#: Where a question is whether one spelling behaves like another, the entry prints both and the
+#: comparison is between its own two lines rather than against a remembered answer: that is what
+#: settles where a Char may be written as a String, which the folder does everywhere today and which
+#: 5.1 permits only in some places.
+#:
+#: Assignment is what the value passes through rather than an extra step: `$t = <expression>` is the
+#: shape the defects are about, it evaluates the expression once, and PowerShell does not unwrap a
+#: one-element collection on the way. An entry whose value is `$null` cannot ask `GetType`, which
+#: throws, so it asks `$null -eq` instead.
+TYPES: tuple[str, ...] = (
+    "$t = @('a', 'b') | ForEach-Object { $_ }; Write-Output $t.GetType().FullName; Write-Output $t",
+    "$t = @('a', 'b') | ForEach-Object { $_ }; Write-Output ($t -join '-')",
+    "$t = @('a', 'b') | ForEach-Object { $_ }; foreach ($e in $t) { Write-Output $e }",
+    '$t = 65, 66 | ForEach-Object { [char]$_ }; Write-Output $t.GetType().FullName',
+    '$t = 65, 66 | ForEach-Object { [char]$_ }; Write-Output $t.Count; Write-Output $t',
+    "$t = 'a-b-c' -split '-' | ForEach-Object { $_ }; Write-Output $t.GetType().FullName",
+    '$t = [char]65; Write-Output $t.GetType().FullName; Write-Output $t',
+    '$t = [char[]](72, 73); Write-Output $t.GetType().FullName; Write-Output $t',
+    "Write-Output ([char[]](72, 73) -is [string]); Write-Output ('HI' -is [string])",
+    "$t = 'ABC'[0]; Write-Output $t.GetType().FullName; Write-Output $t",
+    "$t = [char[]]'ABC'; Write-Output $t.GetType().FullName; Write-Output $t.Count",
+    "$t = 'ABC'.ToCharArray(); Write-Output $t.GetType().FullName; Write-Output $t.Count",
+    "Write-Output ('x' -replace 'x', [char]65); Write-Output ('x' -replace 'x', 'A')",
+    "Write-Output ([char]114 + [char]53); Write-Output ('r' + '5')",
+    "Write-Output ([char]65 + 1); Write-Output ('A' + 1)",
+    "Write-Output (1 + [char]65); Write-Output (1 + 'A')",
+    'Write-Output (([char]65) * 3)',
+    "Write-Output ('A' * 3)",
+    "Write-Output (([char]65).ToString()); Write-Output (('A').ToString())",
+    "Write-Output ('a,b' -split [char]44); Write-Output ('a,b' -split ',')",
+    "Write-Output ('xyx'.Replace([char]120, [char]122)); Write-Output ('xyx'.Replace('x', 'z'))",
+    "Write-Output ('{0}' -f [char]65); Write-Output ('{0}' -f 'A')",
+    "Write-Output (([char]65, [char]66) -join ''); Write-Output (('A', 'B') -join '')",
+    "Write-Output ([string][char]65); Write-Output ([string]'A')",
+    '$c = [char]65; $s = \'A\'; Write-Output "$c"; Write-Output "$s"',
+    "Write-Output ([char]65 -is [char]); Write-Output ('A' -is [char])",
+    "Write-Output (([char]65).Length); Write-Output (('A').Length)",
+    "Write-Output (([char]65).Count); Write-Output (('A').Count)",
+    "Write-Output ([char]65 -eq 'A'); Write-Output ('A' -eq 'A')",
+    '$c = [char]65; foreach ($e in $c) { Write-Output $e }',
+    "$t = 'AB'.Count; Write-Output $t.GetType().FullName; Write-Output $t",
+    '$t = (5).Count; Write-Output $t.GetType().FullName; Write-Output $t',
+    '$t = (5).Length; Write-Output $t.GetType().FullName; Write-Output $t',
+    "$t = 1 + 'AB'.Count; Write-Output $t.GetType().FullName; Write-Output $t",
+    '$t = @(1, 2, 3).Rank; Write-Output $t.GetType().FullName; Write-Output $t',
+    '$t = @(1, 2, 3).Count; Write-Output $t.GetType().FullName; Write-Output $t',
+    '$t = @(1, 2, 3).Length; Write-Output $t.GetType().FullName; Write-Output $t',
+    "$t = 'AB'.Length; Write-Output $t.GetType().FullName; Write-Output $t",
+    'Write-Output ((5).PSTypeNames)',
+    "Write-Output (('AB').PSTypeNames)",
+    'Write-Output ((5).PSObject.GetType().FullName)',
+    '$t = (5).Rank; Write-Output ($null -eq $t)',
+    "$t = 'AB'.Zqnope; Write-Output ($null -eq $t)",
+    '$t = (5).Zqnope; Write-Output ($null -eq $t)',
+    '$t = $null.Count; Write-Output ($null -eq $t); Write-Output $t',
+    '$f = New-Object IO.MemoryStream; Write-Output $f.Length.GetType().FullName',
+    '$f = New-Object IO.MemoryStream; $f.Dispose(); Write-Output $f.Length',
+    '$t = @(); Write-Output $t.GetType().FullName; Write-Output $t.Count',
+    '$t = , 1; Write-Output $t.GetType().FullName; Write-Output $t.Count',
+    '$t = 0xFF; Write-Output $t.GetType().FullName; Write-Output $t',
+    '$t = 0x7FFFFFFF; Write-Output $t.GetType().FullName; Write-Output $t',
+    '$t = 0xFFFFFFFF; Write-Output $t.GetType().FullName; Write-Output $t',
+    '$t = 0xFFFFFFFF -bxor 0x5A; Write-Output $t.GetType().FullName; Write-Output $t',
+    '$t = 0xFFFFFFFFFFFFFFFF; Write-Output $t.GetType().FullName; Write-Output $t',
+    '$t = 1kb; Write-Output $t.GetType().FullName; Write-Output $t',
+    '$t = 1L; Write-Output $t.GetType().FullName; Write-Output $t',
+    '$t = 10d; Write-Output $t.GetType().FullName; Write-Output $t',
+    '$t = 0xFFFFFFFF + 0; Write-Output $t.GetType().FullName; Write-Output $t',
+    '$t = 0xFFFFFFFFFFFFFFFF + 0; Write-Output $t.GetType().FullName; Write-Output $t',
+    '$t = 1kb + 0; Write-Output $t.GetType().FullName; Write-Output $t',
+    '$t = 1L + 0; Write-Output $t.GetType().FullName; Write-Output $t',
+    '$t = 10d + 0; Write-Output $t.GetType().FullName; Write-Output $t',
+    '$t = 2147483648; Write-Output $t.GetType().FullName; Write-Output $t',
+    '$t = 1.5; Write-Output $t.GetType().FullName; Write-Output $t',
+    '$t = 1e3; Write-Output $t.GetType().FullName; Write-Output $t',
+    '$t = 2147483647 + 1; Write-Output $t.GetType().FullName; Write-Output $t',
+    '$t = 512MB * 512MB; Write-Output $t.GetType().FullName; Write-Output $t',
+    '$t = 9223372036854775807 + 2; Write-Output $t.GetType().FullName; Write-Output $t',
+    '$t = [decimal]::MaxValue + 1; Write-Output $t.GetType().FullName; Write-Output $t',
+    "$t = 12 + '0xabc'; Write-Output $t.GetType().FullName; Write-Output $t",
+    "$t = 16 + 'file'; Write-Output $t.GetType().FullName; Write-Output $t",
+    "$t = 5 + '5'; Write-Output $t.GetType().FullName; Write-Output $t",
+    "$t = '5' + 5; Write-Output $t.GetType().FullName; Write-Output $t",
+    "$t = [int]'0x10'; Write-Output $t.GetType().FullName; Write-Output $t",
+    '$t = -2147483647 - 1; Write-Output $t.GetType().FullName; Write-Output $t',
+    '$t = -2147483648; Write-Output $t.GetType().FullName; Write-Output $t',
+    '$t = [int64]::MaxValue * 2; Write-Output $t.GetType().FullName; Write-Output $t',
+    '$t = [double]::PositiveInfinity; Write-Output $t.GetType().FullName; Write-Output $t',
+    '$t = [double]::NaN; Write-Output $t.GetType().FullName; Write-Output $t',
+    '$t = 10, 20, 30, 20, 10 -ne 20; Write-Output $t.GetType().FullName; Write-Output $t',
+    '$t = 10, 20, 30 -eq 20; Write-Output $t.GetType().FullName; Write-Output $t',
+    '$t = 10 -ne 20; Write-Output $t.GetType().FullName; Write-Output $t',
+    "$t = [string]('a', 'b'); Write-Output $t.GetType().FullName; Write-Output $t",
+    "$OFS = '-'; $t = [string]('a', 'b'); Write-Output $t",
+    '$OFS = \'-\'; Write-Output "$(1, 2)"',
+)
+
+
 #: The corruption ledger's beliefs about what 5.1 reads as a command name. A name runs to
 #: whitespace, which is why a keyword joined to more text is not a keyword, a path is not split at
 #: its punctuation, and a `catch` joined to its type filter is neither. Every belief here is settled
@@ -326,7 +435,7 @@ NAMES: tuple[str, ...] = (
 #: Every table whose entries a real host may be asked to *run*, in one place, so that the set the
 #: execution rule is written about and the set handed to a host cannot come apart: a table added to
 #: one and not the other is either runnable but never measured, or listed and refused at run time.
-_EXECUTABLE: tuple[str, ...] = (*BEHAVIOURS, *CLAIMS, *TABLES)
+_EXECUTABLE: tuple[str, ...] = (*BEHAVIOURS, *CLAIMS, *TABLES, *TYPES)
 
 
 def executable() -> frozenset[str]:
