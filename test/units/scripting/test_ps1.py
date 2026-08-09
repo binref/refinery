@@ -679,11 +679,10 @@ class TestPs1RealWorldLarge(TestUnitBase):
         )
         self.assertIn(goal, test)
 
-    # Phase 5c gates member-read deletion on a closed type world, and this sample runs an opaque
+    # Member-read deletion is gated on a closed type world, and this sample runs an opaque
     # Invoke-Expression, so its junk member reads (line 701's `$_.Count`) are soundly kept: an ETS
-    # mutation the iex could perform would make them effectful. Phase 7 flow-sensitivity, which tells
-    # a read before the iex from one after it, is what recovers this deletion. Deliberate xfail
-    # during the analysis-layer refactor.
+    # mutation the iex could perform would make them effectful. M4 tells a read before the iex from
+    # one after it, and is what recovers this deletion.
     @unittest.expectedFailure
     def test_junk_statement_downloader(self):
         data = inspect.cleandoc(
@@ -859,10 +858,9 @@ class TestPs1RealWorldLarge(TestUnitBase):
         ).replace('[[C2]]', '62''.60''.178.24')
         self.assertEqual(test, goal)
 
-    # Phase 5c gates member-read deletion on a closed type world, and this sample's goal contains an
-    # opaque Invoke-Expression (line 860), so the ~100 `$Null = <read>` junk statements 5b deleted are
-    # now soundly kept: the iex could ETS-shadow the members they read. Phase 7 flow-sensitivity
-    # recovers the before-leak deletions. Deliberate xfail during the analysis-layer refactor.
+    # Member-read deletion is gated on a closed type world, and this sample's goal contains an opaque
+    # Invoke-Expression (line 860), so the ~100 `$Null = <read>` junk statements are soundly kept:
+    # the iex could ETS-shadow the members they read. M4 recovers the before-leak deletions.
     @unittest.expectedFailure
     def test_null_assignment_sample(self):
         data = self.download_sample('34f5eab91e26c1c2073740ed76af289fdd0df985385d3d198f5be7165d79745f')

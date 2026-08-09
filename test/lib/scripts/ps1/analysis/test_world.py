@@ -5,9 +5,12 @@ from test import TestBase
 from refinery.lib.scripts.ps1.analysis.world import (
     Ps1TypeWorld,
     WorldRole,
+    assigns_an_alias_name,
     build_closed_world,
     command_role,
+    touches_identity_provider,
 )
+from refinery.lib.scripts.ps1.model import Ps1CommandInvocation
 from refinery.lib.scripts.ps1.parser import Ps1Parser
 
 
@@ -401,6 +404,103 @@ class TestPs1ClosedButForAliasBindings(Ps1TypeWorldTest):
             with self.subTest(closed=closed):
                 self.assertEqual(
                     Ps1TypeWorld(closed, frozenset()).closed_but_for_alias_bindings, closed)
+
+
+class TestPs1IdentityProviderArguments(Ps1TypeWorldTest):
+    """
+    Whether an argument addresses the `alias:` or `function:` provider. The drive separator is the
+    whole of the difference: measured on 5.1, `Get-Content alias:gci` reads `Get-ChildItem` out of
+    the alias drive, while `Get-Content alias` looks for a file named `alias` in the current
+    directory and fails when there is none.
+    """
+
+    @staticmethod
+    def _touches(source: str) -> bool:
+        script = Ps1Parser(source).parse()
+        command, = (node for node in script.walk() if isinstance(node, Ps1CommandInvocation))
+        return touches_identity_provider(command)
+
+    def test_a_drive_qualified_argument_addresses_the_provider(self):
+        for source in (
+            'Set-Item alias:zzq Write-Output',
+            'Remove-Item alias:zzq',
+            'New-Item -Path alias:zzq -Value Write-Output',
+            'Get-Content alias:gci',
+            'Get-Content ALIAS:gci',
+            'Set-Item function:foo -Value { 1 }',
+            'Get-Content Function:\\foo',
+        ):
+            with self.subTest(source):
+                self.assertTrue(self._touches(source))
+                self.assertFalse(self._closed(source))
+
+    def test_an_argument_that_only_spells_a_provider_name_is_an_ordinary_path(self):
+        for source in (
+            'Get-Content alias',
+            'Set-Content function -Value 1',
+            'Get-Content .\\alias.txt',
+            'Remove-Item aliases.csv',
+            'Set-Content aliasfunction -Value 1',
+        ):
+            with self.subTest(source):
+                self.assertFalse(self._touches(source))
+                self.assertTrue(self._closed(source))
+
+    def test_a_drive_that_holds_no_command_identity_is_not_one_of_these(self):
+        for source in (
+            'Get-Content env:PATH',
+            'Set-Item variable:x -Value 1',
+            'Get-Content C:\\tmp\\x.txt',
+        ):
+            with self.subTest(source):
+                self.assertFalse(self._touches(source))
+                self.assertTrue(self._closed(source))
+
+
+class TestPs1AliasNamespaceAssignments(TestBase):
+    """
+    Which assignments bind a command name through the `alias:` namespace. Measured on 5.1, every
+    shape in the first test leaves the alias drive holding a definition for `zzq` that the statement
+    put there, the `+=` form by appending to the definition the name already carried.
+    """
+
+    @staticmethod
+    def _assigns(source: str) -> bool:
+        script = Ps1Parser(source).parse()
+        return any(assigns_an_alias_name(node) for node in script.walk())
+
+    def test_a_write_through_the_alias_namespace_binds_a_command_name(self):
+        for source in (
+            "$alias:zzq = 'Get-Date'",
+            "${alias:zzq} = 'Get-Date'",
+            "$ALIAS:zzq = 'Get-Date'",
+            "$alias:zzq += 'Get-Date'",
+            "$alias:zzq, $y = 'Get-Date', 2",
+            "$y, $alias:zzq = 1, 'Get-Date'",
+        ):
+            with self.subTest(source):
+                self.assertTrue(self._assigns(source))
+
+    def test_the_qualifier_belongs_inside_the_namespace_and_not_in_front_of_it(self):
+        """
+        Measured on 5.1: `${alias:global:zzq} = 'Get-Date'` puts an item into the alias drive, where
+        `$global:alias:zzq = 'Get-Date'` makes a global *variable* named `alias:zzq` and leaves the
+        alias drive with nothing in it.
+        """
+        self.assertTrue(self._assigns("${alias:global:zzq} = 'Get-Date'"))
+        self.assertFalse(self._assigns("$global:alias:zzq = 'Get-Date'"))
+
+    def test_an_assignment_that_writes_no_alias_name_is_not_one(self):
+        for source in (
+            '$x = 1',
+            "$alias = 'Get-Date'",
+            "$aliaszzq = 'Get-Date'",
+            "$env:alias = 'Get-Date'",
+            '$y = $alias:zzq',
+            '${function:foo} = { 1 }',
+        ):
+            with self.subTest(source):
+                self.assertFalse(self._assigns(source))
 
 
 class TestPs1CommandRole(TestBase):

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from test import TestBase
 
-from refinery.lib.scripts import _remove_from_parent
+from refinery.lib.scripts import Node, _remove_from_parent
 from refinery.lib.scripts.ps1.analysis.cache import Ps1ModelCache
 from refinery.lib.scripts.ps1.analysis.blocks import build_block_model
 from refinery.lib.scripts.ps1.analysis.cfg import build_control_flow_model
@@ -16,7 +16,11 @@ from refinery.lib.scripts.ps1.analysis.commands import (
 from refinery.lib.scripts.ps1.analysis.dominance import build_dominance
 from refinery.lib.scripts.ps1.analysis.world import WorldRole
 from refinery.lib.scripts.ps1.ast import get_command_name
-from refinery.lib.scripts.ps1.model import Ps1CommandInvocation, Ps1Script
+from refinery.lib.scripts.ps1.model import (
+    Ps1AssignmentExpression,
+    Ps1CommandInvocation,
+    Ps1Script,
+)
 from refinery.lib.scripts.ps1.parser import Ps1Parser
 
 
@@ -105,6 +109,16 @@ def _introspected(source: str) -> frozenset[str] | None:
 
 def _reads_success(source: str) -> bool:
     return Ps1ModelCache(_script(source)).commands.reads_command_success()
+
+
+def _unread_bindings(source: str) -> tuple[Node, ...]:
+    return tuple(Ps1ModelCache(_script(source)).commands.unread_alias_bindings())
+
+
+def _unread_bindings_reaching(source: str, name: str) -> tuple[Node, ...]:
+    tree = _script(source)
+    model = Ps1ModelCache(tree).commands
+    return tuple(model.unread_alias_bindings_reaching(_use(tree, name)))
 
 
 class TestPs1CommandDenotation(TestBase):
@@ -1069,6 +1083,163 @@ class TestPs1IntrospectedNames(TestBase):
         for source in ('Some-Unknown-Command zzq', '& $f'):
             with self.subTest(source):
                 self.assertEqual(_introspected(source), frozenset())
+
+
+class TestPs1UnreadAliasBindings(TestBase):
+    """
+    A statement that may bind an alias without this model having read which name it binds to what.
+    Measured on 5.1, every rebinding below leaves `zzq` running `Get-Date` where the script bound it
+    to `Write-Output` — the removal leaves it running nothing at all — so an answer of
+    `Write-Output` for a use downstream of one is the command the script replaced.
+    """
+
+    _REBINDINGS = (
+        'Set-Alias sx Set-Alias\nsx zzq Get-Date',
+        'Set-Alias -Description d zzq Get-Date',
+        'Set-Alias $n Get-Date',
+        '& $c zzq Get-Date',
+        'Set-Item alias:zzq Get-Date',
+        'Remove-Item alias:zzq',
+        "$alias:zzq = 'Get-Date'",
+    )
+
+    @staticmethod
+    def _rebound_then_used(rebinding: str) -> str:
+        return F'Set-Alias zzq Write-Output\n{rebinding}\nzzq'
+
+    @staticmethod
+    def _used_then_rebound(rebinding: str) -> str:
+        return F'Set-Alias zzq Write-Output\nzzq\n{rebinding}'
+
+    def test_a_use_below_a_binding_this_could_not_read_denotes_no_known_command(self):
+        for rebinding in self._REBINDINGS:
+            with self.subTest(rebinding):
+                self.assertEqual(
+                    _denotation(self._rebound_then_used(rebinding), 'zzq'),
+                    Denotation(CommandKind.UNKNOWN, None))
+
+    def test_a_use_above_such_a_binding_denotes_what_the_definition_above_it_wrote(self):
+        for rebinding in self._REBINDINGS:
+            with self.subTest(rebinding):
+                self.assertEqual(
+                    _denotation(self._used_then_rebound(rebinding), 'zzq'),
+                    Denotation(CommandKind.ALIAS, 'Write-Output'))
+
+    def test_a_definition_this_read_below_such_a_binding_answers_a_use_below_both(self):
+        """
+        Measured on 5.1: `$alias:zzq = 'Get-Date'` followed by `Set-Alias zzq Write-Output` leaves
+        `zzq` running `Write-Output`, because the second statement rebinds what the first wrote.
+        """
+        self.assertEqual(
+            _denotation("$alias:zzq = 'Get-Date'\nSet-Alias zzq Write-Output\nzzq", 'zzq'),
+            Denotation(CommandKind.ALIAS, 'Write-Output'))
+
+    def test_a_script_whose_every_binding_this_read_reports_none_unread(self):
+        for source in (
+            'Set-Alias zzq Write-Output\nzzq',
+            'Set-Alias a X\nSet-Alias b Y\na\nb',
+            'Set-Alias zzq Get-*\nzzq',
+            'Set-Alias a b\nSet-Alias b a\na',
+            'New-Alias zzq Write-Output\nzzq',
+            'Get-Alias zzq',
+            'Export-Alias out.csv',
+            'Get-ChildItem -Recurse',
+        ):
+            with self.subTest(source):
+                self.assertEqual(_unread_bindings(source), ())
+
+    def test_each_rebinding_this_could_not_read_is_reported_as_exactly_one(self):
+        for rebinding in self._REBINDINGS:
+            with self.subTest(rebinding):
+                self.assertEqual(len(_unread_bindings(self._rebound_then_used(rebinding))), 1)
+
+    def test_a_command_this_could_not_read_is_reported_as_the_invocation_it_is(self):
+        tree = _script('Set-Alias zzq Write-Output\nSet-Item alias:zzq Get-Date\nzzq')
+        node, = Ps1ModelCache(tree).commands.unread_alias_bindings()
+        self.assertIs(node, _use(tree, 'Set-Item'))
+
+    def test_a_namespace_write_this_could_not_read_is_reported_as_the_assignment_it_is(self):
+        tree = _script("Set-Alias zzq Write-Output\n$alias:zzq = 'Get-Date'\nzzq")
+        node, = Ps1ModelCache(tree).commands.unread_alias_bindings()
+        assignment, = (
+            child for child in tree.walk() if isinstance(child, Ps1AssignmentExpression))
+        self.assertIs(node, assignment)
+
+    def test_an_alias_table_command_that_is_no_definition_this_reads_is_an_unread_binding(self):
+        for source in ('Remove-Alias zzq', 'Import-Alias .\\a.csv'):
+            with self.subTest(source):
+                self.assertEqual(len(_unread_bindings(source)), 1)
+
+    def test_such_a_binding_reaches_a_use_below_it_and_no_use_above_it(self):
+        for rebinding in self._REBINDINGS:
+            with self.subTest(rebinding):
+                self.assertEqual(
+                    len(_unread_bindings_reaching(self._rebound_then_used(rebinding), 'zzq')), 1)
+                self.assertEqual(
+                    _unread_bindings_reaching(self._used_then_rebound(rebinding), 'zzq'), ())
+
+    def test_a_use_in_a_script_this_read_whole_is_reached_by_no_such_binding(self):
+        for source, name in (
+            ('Set-Alias zzq Write-Output\nzzq', 'zzq'),
+            ('Set-Alias zzq Get-*\nzzq', 'zzq'),
+            ('New-Alias zzq Write-Output\nzzq', 'zzq'),
+            ('Get-ChildItem -Recurse', 'Get-ChildItem'),
+        ):
+            with self.subTest(source):
+                self.assertEqual(_unread_bindings_reaching(source, name), ())
+
+    def test_such_a_binding_is_reported_where_nothing_uses_the_name_it_spells(self):
+        for rebinding in self._REBINDINGS:
+            with self.subTest(rebinding):
+                source = F'Set-Alias zzq Write-Output\n{rebinding}\nGet-ChildItem'
+                self.assertEqual(len(_unread_bindings(source)), 1)
+
+    def test_a_name_the_script_never_binds_is_computed_while_the_report_says_it_may_not_be(self):
+        """
+        The two answers are separate facts and a caller needs both. Measured on 5.1, with `$n`
+        holding `Get-ChildItem`, `Set-Alias $n Get-Date` makes the `Get-ChildItem` below it run
+        `Get-Date` — yet the denotation there is still the cmdlet, and it is
+        `unread_alias_bindings_reaching` that reports the model incomplete at that use.
+        """
+        below = 'Set-Alias zzq Write-Output\nSet-Alias $n Get-Date\nGet-ChildItem'
+        above = 'Set-Alias zzq Write-Output\nGet-ChildItem\nSet-Alias $n Get-Date'
+        for source in (below, above):
+            with self.subTest(source):
+                self.assertEqual(
+                    _denotation(source, 'Get-ChildItem'),
+                    Denotation(CommandKind.CMDLET, 'Get-ChildItem'))
+        self.assertEqual(len(_unread_bindings_reaching(below, 'Get-ChildItem')), 1)
+        self.assertEqual(_unread_bindings_reaching(above, 'Get-ChildItem'), ())
+
+    def test_a_binding_this_could_not_read_is_reported_wherever_the_use_it_reaches_stands(self):
+        source = "Set-Alias zzq Write-Output\n$alias:zzq = 'Get-Date'\n@(1) | ForEach-Object { zzq }"
+        self.assertEqual(len(_unread_bindings_reaching(source, 'zzq')), 1)
+        self.assertEqual(_denotation(source, 'zzq'), Denotation(CommandKind.UNKNOWN, None))
+
+
+class TestPs1ADefiningStatementThatRunsAScriptFunction(TestBase):
+    """
+    Measured on 5.1: a script `function Set-Alias` takes the name over, so the statement below it
+    runs that body and binds no alias at all — `zzq` afterwards is reported as an unrecognized
+    command. The statement still spells a binding of `zzq` to `Write-Output`, and the one answer the
+    use may not be given is that target.
+    """
+
+    _SOURCE = "function Set-Alias { 'ran' }\nSet-Alias zzq Write-Output\nzzq"
+
+    def test_the_statement_denotes_the_script_function_it_runs(self):
+        self.assertEqual(
+            _denotation(self._SOURCE, 'Set-Alias'), Denotation(CommandKind.FUNCTION, 'Set-Alias'))
+
+    def test_the_statement_is_still_reported_as_a_definition_of_the_name_it_spells(self):
+        self.assertEqual(_every_definition(self._SOURCE), (('zzq', 'Write-Output'),))
+
+    def test_the_statement_is_a_binding_this_could_not_read(self):
+        self.assertEqual(len(_unread_bindings(self._SOURCE)), 1)
+        self.assertEqual(len(_unread_bindings_reaching(self._SOURCE, 'zzq')), 1)
+
+    def test_the_use_below_it_denotes_no_known_command(self):
+        self.assertEqual(_denotation(self._SOURCE, 'zzq'), Denotation(CommandKind.UNKNOWN, None))
 
 
 class TestPs1ReadsCommandSuccess(TestBase):

@@ -60,6 +60,14 @@ it. It cannot be fixed there — this model is built over the shadow set that on
 consulting this one would be a cycle — and the deny-lists themselves stay there, where the argument
 for what belongs on them is written. What is added here is the resolution, not a second list.
 
+**Whether the alias table this answers from is the whole one is asked here too.** A binding written
+by a statement whose own command this could not resolve — `Set-Alias mk Set-Alias -Force` followed
+by `mk zzq Write-Output` — takes a name back without ever entering the table, and a resolution that
+answered from the table anyway would name the command the script had just stopped running.
+`unread_alias_bindings` reports those statements, and the resolution treats each as a kill: a use
+before one still resolves, a use after one is refused with evidence. What such a statement did to a
+name the script never defines is the open-world residual `Ps1CommandModel._resolve` declares.
+
 **Whether a definition is still doing anything is asked here too.** A pass that has rewritten every
 use it could would otherwise have to work out which definitions the uses it left behind still resolve
 through, and that is this model's own resolution run backwards. `implicated_definitions` reports it
@@ -69,7 +77,7 @@ statement does besides bind, who reads the name back out of the alias table rath
 whether the engine state a statement writes is read. What to do with those answers is not decided
 here; see `refinery.lib.scripts.ps1.deobfuscation.aliases`.
 
-**Position and scope come from dominance**, which is why Phase 1a precedes this. A `Set-Alias` binds a
+**Position and scope come from dominance**, which is why the ordering models precede this. A `Set-Alias` binds a
 use only where its statement strictly dominates the use — it is guaranteed to have run — and the
 per-script-block control-flow graphs put a definition in a function body and a use outside it in
 different graphs, so the body's definition cannot reach the outer use. The reaching-definition
@@ -83,14 +91,18 @@ import enum
 
 from typing import NamedTuple, Sequence
 
-from refinery.lib.scripts.analysis.cfg import ControlFlowModel
+from refinery.lib.scripts import Node
+from refinery.lib.scripts.analysis.cfg import CfgNode, ControlFlowGraph, ControlFlowModel
 from refinery.lib.scripts.analysis.dominance import DominatorModel
 from refinery.lib.scripts.analysis.reaching import ReachabilityQuery
 from refinery.lib.scripts.ps1.analysis.blocks import Ps1BlockModel, Ps1BlockReach
 from refinery.lib.scripts.ps1.analysis.world import (
     WorldRole,
+    assigns_an_alias_name,
     command_role,
+    may_touch_identity_provider,
     runs_another_script_file,
+    runs_code_in_the_calling_scope,
     touches_identity_provider,
 )
 from refinery.lib.scripts.ps1.ast import (
@@ -260,6 +272,35 @@ def _read_name_arguments(cmd: Ps1CommandInvocation, command: str) -> frozenset[s
     return frozenset(names) or None
 
 
+class _BinderReach(NamedTuple):
+    """
+    Where one binder's binding can be ordered: the control-flow node it runs at in each graph it can
+    be projected into, keyed by that graph's identity, and whether the projection ran out before it
+    reached one that runs where it is written.
+
+    `unordered` is not "reaches everything" spelled differently. A binder in a function body binds
+    whenever that function is called, which may be before the definition it invalidates, after it,
+    or not at all — so there is no node to compare against and every definition is refused.
+    """
+    binder: Node
+    sites: dict[int, CfgNode]
+    unordered: bool
+
+
+class _Binding(NamedTuple):
+    """
+    What the alias table holds for one name at one use: the `definition` that reaches it, or the
+    fact that a binding this model could not read may have `rebound` the name before it got there.
+
+    The two are kept apart from "no definition reaches" because they are different answers. A name
+    the script defines out of reach of a use denotes nothing — 5.1 raises — while a name a binding
+    may have rebound denotes something this cannot name, and a caller that treated the second as the
+    first would emit a `CommandNotFoundException` where the script ran a command.
+    """
+    definition: AliasDefinition | None
+    rebound: bool
+
+
 class _Resolution(NamedTuple):
     """
     What `Ps1CommandModel._resolve` found: the `Denotation`, the definitions it consulted on the way,
@@ -382,6 +423,26 @@ def extract_alias_definition(cmd: Ps1CommandInvocation) -> AliasDefinition | Non
         alias_name.lower(), target, cmd, refuse, _has_wildcard(target), throws_if_bound)
 
 
+def _collect_alias_definitions(root: Ps1Script) -> dict[str, list[AliasDefinition]]:
+    """
+    Every invocation of the script that spells an alias definition, grouped by the name it binds and
+    in source order within each group.
+
+    Read by spelling, which is what makes this a *seed*: a script that has taken `Set-Alias` over
+    with a function of its own spells a definition that never binds anything, and one that reaches a
+    defining command under a name of its own spells no definition where there is one.
+    `build_command_model` settles both against a model built over this.
+    """
+    collected: dict[str, list[AliasDefinition]] = {}
+    for node in root.walk_in_order():
+        if not isinstance(node, Ps1CommandInvocation):
+            continue
+        definition = extract_alias_definition(node)
+        if definition is not None:
+            collected.setdefault(definition.name, []).append(definition)
+    return collected
+
+
 class Ps1CommandModel:
     """
     What each command invocation of one script denotes. Build it through `build_command_model`; every
@@ -396,25 +457,56 @@ class Ps1CommandModel:
         blocks: Ps1BlockModel,
         functions: frozenset[str],
         shadowed: frozenset[str],
+        definitions: dict[str, list[AliasDefinition]] | None = None,
+        binders: tuple[Node, ...] = (),
     ):
+        """
+        `definitions` replaces the alias table this would otherwise read out of the tree, and
+        `binders` names the nodes that may bind an alias without this having read the binding. Both
+        are what `build_command_model` computes from a first instance of this class and hands to a
+        second; neither is something a caller works out for itself.
+        """
         self._root = root
         self._flow = control_flow
         self._reach = reach
         self._blocks = blocks
         self._functions = functions
         self._shadowed = shadowed
-        self._alias_defs: dict[str, list[AliasDefinition]] = {}
-        for node in root.walk_in_order():
-            if not isinstance(node, Ps1CommandInvocation):
-                continue
-            definition = extract_alias_definition(node)
-            if definition is not None:
-                self._alias_defs.setdefault(definition.name, []).append(definition)
+        self._alias_defs = (
+            _collect_alias_definitions(root) if definitions is None else definitions)
+        self._binders = binders
+        self._binder_reach = tuple(self._project_binder(binder) for binder in binders)
+        self._binders_run_unordered = any(reach.unordered for reach in self._binder_reach)
+        self._sites_by_graph: dict[int, list[CfgNode]] = {}
         self._memo: dict[int, _Resolution] = {}
         self._roles: dict[int, WorldRole] = {}
         self._introspected: frozenset[str] | None = None
         self._introspected_known = False
         self._reads_success: bool | None = None
+
+    def _project_binder(self, binder: Node) -> _BinderReach:
+        """
+        Where `binder`'s binding can be ordered: the node it stands at in its own control-flow
+        graph, and the site of each enclosing block that runs where it is written, by the same
+        outward projection `_reaching_alias_binding` performs on a use.
+
+        A binder the projection cannot carry out to the script — one in a function body, one in a
+        block held as a value, one in no graph at all — runs at a time nothing here orders, and is
+        reported as such rather than as reaching a particular few nodes.
+        """
+        sites: dict[int, CfgNode] = {}
+        located = self._flow.locate(binder)
+        while located is not None:
+            graph, node = located
+            sites[id(graph)] = node
+            owner = graph.owner
+            if not isinstance(owner, Ps1ScriptBlock):
+                return _BinderReach(binder, sites, False)
+            facts = self._blocks.facts(owner)
+            if facts.reach is not Ps1BlockReach.IMMEDIATE or facts.site is None:
+                break
+            located = self._flow.locate(facts.site)
+        return _BinderReach(binder, sites, True)
 
     def denotation(self, invocation: Ps1CommandInvocation) -> Denotation:
         """
@@ -499,12 +591,7 @@ class Ps1CommandModel:
           covers: one whose value is kept and one handed to something that may not run it.
         """
         node = definition.node
-        denotation = self.denotation(node)
-        if denotation.kind not in (CommandKind.ALIAS, CommandKind.CMDLET):
-            return False
-        if denotation.target is None:
-            return False
-        if normalize_command_name(denotation.target) != _SET_ALIAS:
+        if _denotes_a_defining_command(self, node) != _SET_ALIAS:
             return False
         if definition.refuse or definition.wildcard or definition.target is None:
             return False
@@ -548,6 +635,12 @@ class Ps1CommandModel:
         possible reader would make this answer `None` for almost any script — and it carries the same
         residual. `alias`, the built-in name of `Get-Alias`, being absent from the collected alias
         table was therefore a soundness bug rather than a recall one.
+
+        A name refused **with evidence** is the opposite case and answers `None`. Something was seen
+        to bind it to something this model could not read through, so whether the statement is a
+        reader is precisely what is not known — and a set that passed over it would report that
+        nobody reads a name the statement may be reporting on, which is the fail-open direction
+        every whole-tree answer here has.
         """
         if not self._introspected_known:
             self._introspected = self._collect_introspected_names()
@@ -563,7 +656,10 @@ class Ps1CommandModel:
                 continue
             if not isinstance(node, Ps1CommandInvocation):
                 continue
-            target = self.denotation(node).target
+            resolution = self._resolution(node)
+            if resolution.unread_binding:
+                return None
+            target = resolution.denotation.target
             if target is None:
                 continue
             reader = normalize_command_name(target)
@@ -714,6 +810,21 @@ class Ps1CommandModel:
         safe direction; what they cost is recall, and closing them means making the retry a hop in
         the loop above rather than a second copy of it.
 
+        **A binding this model could not read takes its name back**, wherever it runs between a
+        definition and a use. `Set-Alias mk Set-Alias -Force` followed by `mk zzq Write-Output`
+        binds `zzq` through a statement whose own name this cannot resolve, so an earlier
+        `Set-Alias zzq Write-Host` no longer says what a later `zzq` runs. Those statements are
+        `unread_alias_bindings`, and `_reaching_alias_binding` hands them to the reaching-definition
+        selection as kills — which is why a use before them still resolves, and why the loader that
+        rebinds a name and then uses it is unaffected.
+
+        **What such a binding did to a name the script never defines is not modelled**, and that is
+        the same open-world residual the paragraph above declares. A binder may bind `ls` as readily
+        as `zzq`, and this still answers `Get-ChildItem` for it. Closing that means refusing every
+        resolution downstream of any opaque dispatch, which is most of the scripts this exists for;
+        what is closed here is the narrower claim the model actually makes, that the table it built
+        from the script's own definitions says what those names run.
+
         An inline scriptblock (`&{ ... }`) is not an unread binding: its body stands in the tree, so
         the whole-tree walk reads whatever it does. The unlocatable node is, defensively — a node in
         no control-flow graph is one this model knows nothing about, including whether the script
@@ -736,7 +847,11 @@ class Ps1CommandModel:
         while True:
             if current in visited:
                 return resolved(CommandKind.NOTHING, None)
-            reaching = self._reaching_alias_def(current, invocation)
+            binding = self._reaching_alias_binding(current, invocation)
+            if binding.rebound:
+                implicated.extend(self._alias_defs[current])
+                return resolved(CommandKind.UNKNOWN, None, True)
+            reaching = binding.definition
             if reaching is not None:
                 implicated.append(reaching)
                 if current in KNOWN_ALIAS or reaching.refuse:
@@ -788,14 +903,13 @@ class Ps1CommandModel:
             return resolved(CommandKind.ALIAS, canonical)
         return resolved(CommandKind.UNKNOWN, None)
 
-    def _reaching_alias_def(
+    def _reaching_alias_binding(
         self,
         name: str,
         invocation: Ps1CommandInvocation,
-    ) -> AliasDefinition | None:
+    ) -> _Binding:
         """
-        The one alias definition of `name` whose binding reaches the use at `invocation`, or `None`
-        when none does or more than one might.
+        What the alias table holds for `name` at the use in `invocation` — see `_Binding`.
 
         An alias is session-wide: a `Set-Alias` in one scope is visible in the scopes nested inside
         it, so a definition at the top level reaches a use inside a `ForEach-Object` block. The use
@@ -806,10 +920,26 @@ class Ps1CommandModel:
         a variable read; the nearest enclosing scope with a reaching definition wins, so a
         block-local rebinding shadows an outer one. A definition strictly dominates the projected
         use, so it is guaranteed to have run before it.
+
+        A binder standing at the use's own node is not among the kills. A command's name is resolved
+        before the command runs, so whatever it goes on to bind cannot decide which command it was —
+        and a binder that killed its own use would answer that `mkalias gd Get-Date` cannot tell
+        what `mkalias` is.
+
+        **A binder is a kill, and it is asked about only where the script defines the name.** A
+        binding this model could not read may rebind anything, so a definition it does not run
+        between is untouched and one it does is gone — which is what
+        `refinery.lib.scripts.analysis.reaching.ReachabilityQuery.reaching_definition` already means
+        by a kill, and why the binders are handed to it rather than compared by position. Where the
+        script defines no such name there is nothing to invalidate and the answer is the same either
+        way: what a binder may have bound to a name this model never saw defined is the open-world
+        residual `_resolve` declares, not a fact the alias table holds.
         """
         definitions = self._alias_defs.get(name, ())
         if not definitions:
-            return None
+            return _Binding(None, False)
+        if self._binders_run_unordered:
+            return _Binding(None, True)
         located = self._flow.locate(invocation)
         while located is not None:
             graph, use = located
@@ -820,17 +950,217 @@ class Ps1CommandModel:
                 and placed[0] is graph
             ]
             if candidates:
-                reaching = self._reach.reaching_definition(graph, use, candidates)
+                kills = [id(site) for site in self._binder_sites_in(graph) if site is not use]
+                reaching = self._reach.reaching_definition(graph, use, candidates, kills)
                 if reaching is not None:
-                    return reaching
+                    return _Binding(reaching, False)
+                if self._a_binder_reaches(graph, use):
+                    return _Binding(None, True)
             owner = graph.owner
             if not isinstance(owner, Ps1ScriptBlock):
-                return None
+                break
             facts = self._blocks.facts(owner)
             if facts.reach is not Ps1BlockReach.IMMEDIATE or facts.site is None:
-                return None
+                break
             located = self._flow.locate(facts.site)
+        return _Binding(None, False)
+
+    def _binder_sites_in(self, graph: ControlFlowGraph) -> list[CfgNode]:
+        found = self._sites_by_graph.get(id(graph))
+        if found is None:
+            found = self._sites_by_graph[id(graph)] = [
+                site for reach in self._binder_reach
+                if (site := reach.sites.get(id(graph))) is not None
+            ]
+        return found
+
+    def _a_binder_reaches(self, graph: ControlFlowGraph, use: CfgNode) -> bool:
+        """
+        Whether any binder recorded in `graph` runs on some path to `use`, its own node aside.
+
+        Asked to tell the two ways no definition reaches apart: one a binder took away, and one that
+        was never going to reach anyway. They arrive here as the same `None` and mean opposite
+        things — a name nothing bound raises, a name something rebound runs whatever it rebound it
+        to.
+        """
+        return any(
+            site is not use and id(use) in self._reach.reachable(site, forward=True)
+            for site in self._binder_sites_in(graph)
+        )
+
+    def unread_alias_bindings(self) -> Sequence[Node]:
+        """
+        Every node that may bind an alias whose binding this model did not read — a defining command
+        reached under a name this could not resolve, a computed alias name, a provider path into the
+        `alias:` drive, an opaque dispatch, an `Invoke-Expression` or a dot-source. Empty means the
+        script's alias table is exactly what `every_alias_definition` reports, so every resolution
+        through it is complete.
+
+        **A use whose own name this could not resolve is one of them**, which is what makes the set
+        larger than the statements that look like definitions. `Set-Alias mk Set-Alias -Force`
+        followed by `mk zzq Write-Output` binds `zzq` through a statement that spells no binding at
+        all, and there is no reading of `mk` under which this is a definition — the only thing known
+        about it is that it is a command this model cannot name, and a command it cannot name may
+        be a defining one.
+
+        That is broader than it has to be, and the residual is the same one the deferred discovery
+        pass would close. A refusal reached through a definition this model *did* read has a known
+        candidate set — the host's binding and the definition's target — and where neither of those
+        is a defining command the use cannot bind anything: `Set-Alias gci Write-Output; gci` is
+        reported although `gci` runs either `Get-ChildItem` or `Write-Output`. Narrowing it means
+        carrying the candidates rather than a single answer, which is the may-set formulation, so
+        the refusal stays whole rather than being narrowed by a second rule that would have to say
+        what a resolution already knows.
+
+        Public, and carrying the nodes rather than a boolean, because every whole-tree answer here
+        is derived from resolutions and each of them fails *open* under a refusal it was not told
+        about: an empty `implicated_definitions` reads as "removable", an empty `introspected_names`
+        as "no names read". A caller that must know whether this model saw the whole table asks, and
+        a test that must tell "incomplete" from "this one name is computed" reads the same fact.
+        """
+        return self._binders
+
+    def unread_alias_bindings_reaching(self, invocation: Ps1CommandInvocation) -> Sequence[Node]:
+        """
+        The subset of `unread_alias_bindings` that may have run before `invocation`, so that a
+        caller can say which binding is why a name it expected to resolve did not.
+
+        Empty for an invocation no binder reaches, including one that runs before every binder in
+        the script — a binding takes effect from where it runs, and refusing a use ahead of it would
+        refuse the loader this exists to unpack over a rebind it never saw.
+        """
+        return tuple(
+            reach.binder for reach in self._binder_reach
+            if self._binder_may_precede(reach, invocation)
+        )
+
+    def _binder_may_precede(self, reach: _BinderReach, invocation: Ps1CommandInvocation) -> bool:
+        if reach.unordered:
+            return True
+        located = self._flow.locate(invocation)
+        while located is not None:
+            graph, use = located
+            site = reach.sites.get(id(graph))
+            if site is not None and id(use) in self._reach.reachable(site, forward=True):
+                return True
+            owner = graph.owner
+            if not isinstance(owner, Ps1ScriptBlock):
+                return False
+            facts = self._blocks.facts(owner)
+            if facts.reach is not Ps1BlockReach.IMMEDIATE or facts.site is None:
+                return True
+            located = self._flow.locate(facts.site)
+        return True
+
+
+def _denotes_a_defining_command(model: Ps1CommandModel, node: Ps1CommandInvocation) -> str | None:
+    """
+    The alias-defining command `node` denotes, or `None` when it denotes something else.
+
+    The kind is checked as well as the target, because a script defining `function Set-Alias { … }`
+    denotes `FUNCTION` under a target that is the function's own spelling. Reading the target alone
+    says the statement binds a name when what it does is run that body — which is how a call that
+    ran came to be deleted, and how a binding that never happened came to be resolved through.
+    """
+    denotation = model.denotation(node)
+    if denotation.kind not in (CommandKind.ALIAS, CommandKind.CMDLET):
         return None
+    if denotation.target is None:
+        return None
+    command = normalize_command_name(denotation.target)
+    return command if command in _ALIAS_DEFINING_COMMANDS else None
+
+
+class _SettledTable(NamedTuple):
+    """
+    The seeded alias table after the model has been asked about the statements that spell it: the
+    `definitions` to build the second model over — `None` when the seed needs no correcting — and
+    the `unread` statements whose binding this could not read, which are binders like any other.
+    """
+    definitions: dict[str, list[AliasDefinition]] | None
+    unread: tuple[Ps1CommandInvocation, ...]
+
+
+def _settle_alias_definitions(model: Ps1CommandModel) -> _SettledTable:
+    """
+    The seeded alias table with every entry whose own invocation does not denote a defining command
+    marked refused.
+
+    `extract_alias_definition` matches by spelling, so the seed holds a binding for every statement
+    that *reads* as one. Asking the model what each of those statements denotes is the same
+    resolution the table is there to serve, one step earlier: a script that has taken `Set-Alias`
+    over with a function of its own binds nothing, and a table that says otherwise resolves later
+    uses through a binding that never happened.
+
+    **Refused, not removed.** A statement that spells a binding of `ls` and does something else is
+    still a statement about `ls`, and dropping it would let the name fall through to the host's
+    table and be rewritten to `Get-ChildItem` — the definition's absence answering more confidently
+    than its presence did. Marking it refused keeps the name occupied by the one thing that is
+    known about it, which is that this model cannot say what it holds.
+    """
+    settled: dict[str, list[AliasDefinition]] = {}
+    unread: list[Ps1CommandInvocation] = []
+    for definition in model.every_alias_definition():
+        if _denotes_a_defining_command(model, definition.node) is None:
+            unread.append(definition.node)
+            definition = definition._replace(refuse=True)
+        settled.setdefault(definition.name, []).append(definition)
+    return _SettledTable(settled if unread else None, tuple(unread))
+
+
+def _may_bind_an_alias(model: Ps1CommandModel, node: Ps1CommandInvocation) -> bool:
+    role = model.world_role(node)
+    if role is WorldRole.IDENTITY or may_touch_identity_provider(node):
+        return True
+    if role is WorldRole.LEAK:
+        return runs_code_in_the_calling_scope(node, model.denotation(node).target)
+    return role is WorldRole.UNKNOWN and model.denotation(node).kind is CommandKind.UNKNOWN
+
+
+def _unread_alias_binders(
+    model: Ps1CommandModel,
+    root: Ps1Script,
+    read: frozenset[int],
+) -> tuple[Node, ...]:
+    """
+    Every node that may bind an alias and is not one of the `read` definitions the alias table
+    holds — the set `Ps1CommandModel.unread_alias_bindings` reports.
+
+    **May bind is `WorldRole.IDENTITY`, or `WorldRole.UNKNOWN` over a name that denotes something.**
+    The first is the deny-list the world model already keeps, re-asked where the script's own
+    aliases are followed. It is neither of the other two opening roles: `MUTATION` is
+    `Import-Module`, which does bind aliases but binds them on nearly every real script, and `LEAK`
+    runs its code somewhere this table is not — a `Start-Job` block in another runspace, an
+    `Invoke-Expression` that already arrives as `UNKNOWN` when its callee is computed. Reading
+    either as a binder refuses the loaders this exists to unpack.
+
+    The second is the two ways nothing static bounds what a node runs, and the denotation is asked
+    beside the role because `WorldRole.UNKNOWN` also covers a name that denotes **nothing**. A use
+    ahead of its own definition runs no command at all — 5.1 raises — so it binds nothing, and
+    reading the evidence behind its refusal as a possible binding lets every such use invalidate
+    the table it was refused by.
+
+    **A binding the model read is not among them**, or a readable `Set-Alias` would invalidate its
+    own use and no alias would resolve anywhere. That includes one read but refused — a `-Force`
+    rebind is in the table under the name it writes, and the resolution refuses it exactly where it
+    reaches, which is finer than anything a whole-node refusal could say.
+
+    The two binding forms that have no `world_role` to ask are named directly:
+    `refinery.lib.scripts.ps1.analysis.world.assigns_an_alias_name` for the `alias:` namespace write,
+    which is an assignment rather than a command, and `may_touch_identity_provider` for an item
+    cmdlet whose path is an expression — the deny-list keyed on the drive a *literal* names cannot
+    see `Set-Item $p Write-Host`, and the world model deliberately does not widen for it.
+    """
+    binders: list[Node] = []
+    for node in root.walk_in_order():
+        if id(node) in read:
+            continue
+        if isinstance(node, Ps1CommandInvocation):
+            if _may_bind_an_alias(model, node):
+                binders.append(node)
+        elif assigns_an_alias_name(node):
+            binders.append(node)
+    return tuple(binders)
 
 
 def build_command_model(
@@ -846,6 +1176,42 @@ def build_command_model(
     model that says where each script block runs, the set of command names it defines as `function`
     or `filter`, and the wider set of names it takes over by any means — the latter from
     `refinery.lib.scripts.ps1.analysis.world.Ps1TypeWorld.shadowed_names`.
+
+    **Two questions about the alias table can only be asked of a model that has one**, so a seed is
+    built first and the answer is a second model carrying what the seed reported: which of the
+    statements that spell a binding actually denote one, and which nodes may bind without this
+    having read the binding. A script whose table the seed read whole — every script with no alias
+    at all, and most that have them — gets the seed itself back.
+
+    Two immutable instances rather than one that learns. A model that gained the binder set after
+    answering questions would have memoized the answers it gave before it had them, and clearing
+    that memo by hand is a discipline the next query to be added would not know about. The seed's
+    memo is discarded with the seed.
+
+    **One round is enough**, and the reason is the shape of the refusal rather than a fixpoint
+    argument. A node the second model refuses where the seed did not is one a binder reaches; if
+    that refusal would make it a binder in turn, everything it could reach is downstream of it and
+    therefore downstream of the binder that refused it, so already refused. A third model would
+    have nothing left to say.
     """
-    return Ps1CommandModel(
+    seed = Ps1CommandModel(
         root, control_flow, ReachabilityQuery(dominance), blocks, functions, shadowed)
+    settled = _settle_alias_definitions(seed)
+    unread = {id(node) for node in settled.unread}
+    read = frozenset(
+        id(definition.node) for definition in seed.every_alias_definition()
+        if id(definition.node) not in unread
+    )
+    binders = _unread_alias_binders(seed, root, read)
+    if settled.definitions is None and not binders:
+        return seed
+    return Ps1CommandModel(
+        root,
+        control_flow,
+        ReachabilityQuery(dominance),
+        blocks,
+        functions,
+        shadowed,
+        settled.definitions if settled.definitions is not None else _collect_alias_definitions(root),
+        binders,
+    )

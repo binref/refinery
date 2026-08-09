@@ -125,13 +125,11 @@ BEHAVIOUR_DIVERGENCES: dict[str, str] = {
 #: ledger reaches its verdict by asking whether a store survived in the tree, and this reaches it by
 #: running both scripts, so neither is evidence for the other.
 #:
-#: **The alias entries have no such second witness, and that is a gap rather than a decision.** They
-#: are held only by this table, and every test in this file is skipped where no PowerShell host is
-#: available — so on a machine without one they ratchet in neither direction, and a fix and a
-#: regression are alike invisible. What `test_corruptions.py` would have to ask of them is which
-#: command a surviving name runs, which is a question about the emitted tree rather than about a
-#: store, so the entries it holds today are not the shape those need. Until it carries them, do not
-#: read this table's agreement as the independent confirmation the paragraph above describes.
+#: An entry this table holds alone would not have that second witness, and every test in this file
+#: is skipped where no PowerShell host is available — so on a machine without one such an entry
+#: ratchets in neither direction, and a fix and a regression are alike invisible. Every entry here
+#: is a variable one, and each is carried by `test_corruptions.py` as well. Anything added that is
+#: not about a store needs a witness of its own shape before this table is read as confirming it.
 BEHAVIOUR_DEFECTS: dict[str, str] = {
     "Set-Variable global:y 'b'; Write-Host $global:y":
         'The store is dropped, so `b` becomes nothing: a command that writes a variable is not '
@@ -165,27 +163,6 @@ BEHAVIOUR_DEFECTS: dict[str, str] = {
     "$x = 'a'; &('i' + 'ex') '$x = \"b\"'; Write-Host $x":
         'The same write, reached through a computed command name, and here the call itself is '
         'deleted as well.',
-    "function Set-Alias { Write-Output 'nope' }; Set-Alias zzq Write-Output; zzq 'x'":
-        'The definition is read from its spelling rather than from what the name denotes, so `zzq` '
-        'is treated as bound and rewritten. A function beats a cmdlet, so what 5.1 runs is the '
-        'function; `zzq` is never bound and the snippet raises CommandNotFoundException.',
-    "Set-Alias zzq Write-Host; Set-Alias mk Set-Alias -Force; mk zzq Write-Output; zzq 'x'":
-        'The `-Force` makes the second definition unreadable, so `mk` denotes nothing this model '
-        'holds — and the rebind it performs is invisible. `zzq` is resolved from the first '
-        'definition and written as `Write-Host`, where 5.1 runs `Write-Output`.',
-    "$n = 'zq2'; Set-Alias zq2 Write-Host; Set-Alias $n Write-Output; zq2 'y'":
-        'The same rebind reached through a name the model cannot read. Both definitions are '
-        'deleted as well, so nothing is left that could have rebound the name.',
-    "Set-Alias zzq Write-Host; $c = 'Set-Alias'; & $c zzq Write-Output; zzq 'x'":
-        'The same rebind reached through a command the model cannot resolve.',
-    "Set-Alias zzq Write-Output; Set-Item alias:zzq Write-Host; zzq 'hi'":
-        'The alias table is also a provider drive, and a write to it rebinds the name. The write is '
-        'not read as a definition, so `zzq` keeps resolving to the definition it replaced.',
-    "Set-Alias zzq Write-Output; Remove-Item alias:zzq; zzq 'hi'":
-        'The same drive, unbinding rather than rebinding: 5.1 raises CommandNotFoundException and '
-        'the rewrite resolves the name anyway.',
-    "Set-Alias zq3 Write-Output; ${alias:zq3} = 'Write-Host'; zq3 'z'":
-        'The same drive again, written with variable syntax rather than through a command.',
 }
 
 
@@ -596,6 +573,33 @@ class TestPs1DeobfuscationPreservesBehaviour(Ps1OracleTest):
 
     def test_no_behaviour_entry_is_both_deliberate_and_a_defect(self):
         self.assertEqual(sorted(set(BEHAVIOUR_DIVERGENCES) & set(BEHAVIOUR_DEFECTS)), [])
+
+
+#: The corpus snippets the tool emits unchanged. See `TestPs1EverySnippetIsStillRewritten`.
+UNREWRITTEN_SNIPPETS: frozenset[str] = frozenset()
+
+
+class TestPs1EverySnippetIsStillRewritten(TestBase):
+    """
+    The differential above runs only the snippets the tool rewrites, so a snippet it stops rewriting
+    leaves that comparison rather than failing it — and leaving it reads exactly like the defect
+    being fixed. This closes that direction, and needs no host to do it, so it ratchets on a machine
+    where every other test in this file is skipped.
+
+    What it does not close is a snippet the tool rewrites *less*. Nearly every snippet here is
+    changed by the console strip alone, so the emitted text differs from the source whether or not
+    the name a refusal was about was resolved. A refusal that narrowed rather than stopped the
+    rewrite is caught by the differential where the snippet's behaviour changes and by
+    `test_aliases.py` where it does not.
+    """
+
+    def test_every_corpus_snippet_is_rewritten(self):
+        unit = self.ldu('ps1')
+        untouched = frozenset(
+            snippet for snippet in (*corpus.BEHAVIOURS, *corpus.CLAIMS)
+            if bytes(snippet.encode('utf8') | unit).decode('utf8') == snippet
+        )
+        self.assertEqual(sorted(untouched), sorted(UNREWRITTEN_SNIPPETS))
 
 
 @unittest.skipIf(windows_powershell() is None, 'Windows PowerShell is not available')

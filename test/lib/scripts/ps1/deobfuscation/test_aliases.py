@@ -80,6 +80,28 @@ class TestPs1AliasInlining(TestPs1):
         result = self._deobfuscate("function f { Set-Alias zx Write-Output }\nzx 'hi'")
         self.assertEqual(result, "function f {\n  Set-Alias zx Write-Output\n}\nzx 'hi'")
 
+    def test_a_use_before_a_rebinding_takes_the_binding_that_reaches_it(self):
+        result = self._deobfuscate(cleandoc("""
+            Set-Alias foo Write-Output
+            foo 'a'
+            Set-Alias foo Write-Host
+            foo 'b'
+        """))
+        self.assertEqual(result, cleandoc("""
+            Write-Output 'a'
+            Write-Host 'b'
+        """))
+
+    def test_a_definition_reached_under_a_script_alias_is_inlined_and_removed(self):
+        # `zsa` names Set-Alias, so the second statement binds `foo` to Write-Output exactly as a
+        # bare `Set-Alias foo Write-Output` would, and 5.1 prints `hi` for the last line.
+        result = self._deobfuscate(cleandoc("""
+            Set-Alias zsa Set-Alias
+            zsa foo Write-Output
+            foo 'hi'
+        """))
+        self.assertEqual(result, "Write-Output 'hi'")
+
     def test_a_parameter_left_without_its_argument_binds_nothing_and_is_left_intact(self):
         # `-Value` is followed by another parameter rather than by its argument, so 5.1 fails the
         # binding with MissingArgument: the command never runs, no alias named `zzq` is created,
@@ -177,6 +199,34 @@ class TestPs1AliasDefinitionRemoval(TestPs1):
             Set-Alias foo Write-Output
             Write-Output 'hi'
             Invoke-Expression $z
+        """))
+
+    def test_a_command_whose_own_name_is_a_variable_keeps_the_definition(self):
+        # `& $env:C` runs whichever command the environment names, `Get-Alias` among them, and that
+        # one lists `foo`. The use above it is still rewritten: the binding reaching it is readable.
+        result = self._deobfuscate(cleandoc("""
+            Set-Alias foo Write-Output
+            foo 'hi'
+            & $env:C
+        """))
+        self.assertEqual(result, cleandoc("""
+            Set-Alias foo Write-Output
+            Write-Output 'hi'
+            & $env:C
+        """))
+
+    def test_a_later_unbind_of_the_name_keeps_the_definition(self):
+        # With the definition gone there is no `alias:foo` left to remove and 5.1 reports
+        # `Cannot find path`, an error the script as written does not produce.
+        result = self._deobfuscate(cleandoc("""
+            Set-Alias foo Write-Output
+            foo 'hi'
+            Remove-Item alias:foo
+        """))
+        self.assertEqual(result, cleandoc("""
+            Set-Alias foo Write-Output
+            Write-Output 'hi'
+            Remove-Item alias:foo
         """))
 
     def test_an_identity_command_this_batch_is_not_taking_keeps_the_definition(self):
@@ -329,3 +379,112 @@ class TestPs1AliasShadowing(TestPs1):
             Write-Host done
         """))
         self.assertIn('Start-Process calc', open_world)
+
+
+class TestPs1AliasRebindingTheToolCannotRead(TestPs1):
+    """
+    Each script rebinds `foo` by a statement whose effect on the alias table the tool cannot read,
+    so the use below it no longer denotes Write-Output and may not be rewritten into it.
+    """
+
+    def test_a_rebinding_reached_under_a_script_alias_keeps_the_later_use(self):
+        # `zsa` names Set-Alias, so the third statement binds whatever name `$env:N` holds. When
+        # that is `foo`, 5.1 prints `WARNING: hi` for the last line rather than `hi`.
+        result = self._deobfuscate(cleandoc("""
+            Set-Alias zsa Set-Alias
+            Set-Alias foo Write-Output
+            zsa -Name $env:N -Value Write-Warning
+            foo 'hi'
+        """))
+        self.assertEqual(result, cleandoc("""
+            Set-Alias zsa Set-Alias
+            Set-Alias foo Write-Output
+            Set-Alias -Name $env:N -Value Write-Warning
+            foo 'hi'
+        """))
+
+    def test_a_rebinding_whose_name_is_a_variable_keeps_the_later_use(self):
+        # 5.1 binds the name `$env:N` holds; when that is `foo`, the last line prints `WARNING: hi`.
+        script = cleandoc("""
+            Set-Alias foo Write-Output
+            Set-Alias $env:N Write-Warning
+            foo 'hi'
+        """)
+        self.assertEqual(self._deobfuscate(script), script)
+
+    def test_a_rebinding_dispatched_through_a_variable_command_keeps_the_later_use(self):
+        # `&` runs the command `$env:C` names; when that is `Set-Alias`, the statement binds `foo`
+        # to Write-Warning and the last line prints `WARNING: hi`.
+        script = cleandoc("""
+            Set-Alias foo Write-Output
+            & $env:C foo Write-Warning
+            foo 'hi'
+        """)
+        self.assertEqual(self._deobfuscate(script), script)
+
+    def test_a_write_into_the_alias_drive_keeps_the_later_use(self):
+        # The Alias provider makes `Set-Item alias:foo` the same rebinding as `Set-Alias foo`, so
+        # 5.1 prints `WARNING: hi` for the last line.
+        script = cleandoc("""
+            Set-Alias foo Write-Output
+            Set-Item alias:foo Write-Warning
+            foo 'hi'
+        """)
+        self.assertEqual(self._deobfuscate(script), script)
+
+    def test_an_unbind_through_the_alias_drive_keeps_the_later_use(self):
+        # After the removal no command named `foo` is left, so 5.1 fails the last line with
+        # CommandNotFoundException and prints nothing.
+        script = cleandoc("""
+            Set-Alias foo Write-Output
+            Remove-Item alias:foo
+            foo 'hi'
+        """)
+        self.assertEqual(self._deobfuscate(script), script)
+
+    def test_an_assignment_into_the_alias_namespace_keeps_the_later_use(self):
+        # Assigning `$alias:foo` goes through the same provider as `Set-Item alias:foo`, so 5.1
+        # prints `WARNING: hi` for the last line.
+        script = cleandoc("""
+            Set-Alias foo Write-Output
+            $alias:foo = 'Write-Warning'
+            foo 'hi'
+        """)
+        self.assertEqual(self._deobfuscate(script), script)
+
+
+class TestPs1AliasDefiningCommandShadowing(TestPs1):
+
+    def test_a_script_function_named_set_alias_beats_the_cmdlet_and_binds_nothing(self):
+        # A function beats a cmdlet of the same name and no default alias is called `Set-Alias`, so
+        # 5.1 prints `shadowed` for the second statement and then fails `foo` with
+        # CommandNotFoundException.
+        script = cleandoc("""
+            function Set-Alias {
+              Write-Host 'shadowed'
+            }
+            Set-Alias foo Write-Output
+            foo 'hi'
+        """)
+        self.assertEqual(self._deobfuscate(script), script)
+
+    def test_a_call_of_a_function_named_set_alias_is_not_removed_as_an_unused_definition(self):
+        # The call prints `shadowed` and binds nothing, so it is not a definition that no use names.
+        script = cleandoc("""
+            function Set-Alias {
+              Write-Host 'shadowed'
+            }
+            Set-Alias foo Write-Output
+            Write-Host done
+        """)
+        self.assertEqual(self._deobfuscate(script), script)
+
+    def test_a_default_alias_for_set_alias_beats_a_script_function_of_that_name(self):
+        # `sal` is the default alias of Set-Alias and an alias beats a function, so 5.1 never runs
+        # the body: the second statement binds `foo` and the last one prints `hi`.
+        result = self._deobfuscate(cleandoc("""
+            function sal { Write-Host 'shadowed' }
+            sal foo Write-Output
+            foo 'hi'
+        """))
+        self.assertEqual(result, "Write-Output 'hi'")

@@ -19,7 +19,7 @@ aliasing spelling, a `using module` statement, a computed provider path — is a
 recall gap: a mutator the list misses leaves the world reading closed, which fires the grants and
 deletes the reads that mutator makes effectful. Every name added to it buys correctness, not recall.
 
-This is a leaf model in Phase 5c — a one-shot whole-script verdict — cached in
+This is a leaf model — a one-shot whole-script verdict — cached in
 `refinery.lib.scripts.ps1.analysis.cache.Ps1ModelCache` and queried through
 `refinery.lib.scripts.ps1.analysis.types.TypeOracle`. `Ps1TypeWorld.world_closed_at` takes the read
 node so a flow-sensitive successor can make the answer depend on where the read sits relative to the
@@ -101,6 +101,10 @@ _LEAK_CMDLETS = frozenset({
     'start-threadjob',
 })
 
+#: The subset of the above that runs its code in the scope that called it, so that a command or
+#: variable the code writes lands in this script's own tables. See `runs_code_in_the_calling_scope`.
+_CALLER_SCOPE_LEAKS = frozenset({'invoke-expression'})
+
 #: Commands that mutate the .NET type system, so reflection can no longer be trusted to describe a
 #: type's members. Curated and documented rather than derived — the module docstring says why a
 #: mutation allow-list would be vacuous. Names are compared after alias resolution.
@@ -143,6 +147,18 @@ _IDENTITY_SCOPES = frozenset({
 #: (`Set-Item alias:x ...`). Matched by name rather than by enumerating every aliasing cmdlet, which
 #: is the family the mutation deny-list cannot close by name.
 _IDENTITY_PROVIDERS = ('alias', 'function')
+
+#: The cmdlets whose subject is a provider path, so that one they are given as an expression may be
+#: a path into an identity provider however it is spelled. See `may_touch_identity_provider`.
+_ITEM_CMDLETS = frozenset({
+    'clear-item',
+    'copy-item',
+    'move-item',
+    'new-item',
+    'remove-item',
+    'rename-item',
+    'set-item',
+})
 
 
 def command_role(name: str) -> WorldRole:
@@ -223,7 +239,7 @@ class Ps1TypeWorld:
 
     def world_closed_at(self, node) -> bool:
         """
-        Whether the type world is closed at `node`. In Phase 5c this is the whole-script verdict and
+        Whether the type world is closed at `node`. Today this is the whole-script verdict and
         `node` is not consulted — it is a forward-declared seam for the flow-sensitive successor,
         which will make the answer depend on whether a leak reaches this read rather than whether
         the script contains one anywhere.
@@ -448,6 +464,11 @@ def touches_identity_provider(cmd: Ps1CommandInvocation) -> bool:
     to, and what a provider path most often looks like — is only found before it. Reading either
     spelling alone leaves the other looking like an ordinary file path, which is the direction a
     deny-list must never fail in.
+
+    **The colon is what makes it a path.** A drive qualifier is a name followed by `:`, so a bare
+    `alias` is an ordinary word and `Write-Output 'alias'` addresses nothing. Reading the part before
+    the separator without checking that there was one answers `True` for every argument that happens
+    to spell a provider's name, which opened the world over a string.
     """
     for arg in cmd.arguments:
         value = arg.value if isinstance(arg, Ps1CommandArgument) else arg
@@ -455,9 +476,81 @@ def touches_identity_provider(cmd: Ps1CommandInvocation) -> bool:
         if text is None:
             continue
         for spelling in (text, text.rpartition('\\')[2]):
-            if spelling.partition(':')[0].lower() in _IDENTITY_PROVIDERS:
+            drive, separator, _ = spelling.partition(':')
+            if separator and drive.lower() in _IDENTITY_PROVIDERS:
                 return True
     return False
+
+
+def runs_code_in_the_calling_scope(cmd: Ps1CommandInvocation, resolved: str | None) -> bool:
+    """
+    Whether `cmd` runs code this analysis cannot read *in the scope it is written in*, so a command
+    table that code writes is this script's own. `resolved` is the command name after the caller has
+    followed the script's own aliases, since `Set-Alias e iex` puts one behind any spelling.
+
+    `WorldRole.LEAK` is not this question, and the difference is the scope rather than the leak.
+    `Invoke-Expression` and dot-sourcing run their code where they stand — measured on 5.1,
+    `Invoke-Expression 'Set-Alias zzq Get-Date'` leaves `zzq` bound to `Get-Date` afterwards — so
+    what they run may rebind any name. `Start-Job` and `Start-ThreadJob` run in another runspace,
+    `Invoke-Command` opens a child scope, and a script file invoked with `&` or as a bareword gets a
+    child scope too: a binding any of them performs is gone before the next statement here.
+
+    The dot-source test is the operator rather than the file, which is the opposite of
+    `runs_another_script_file`'s reason for existing: there the file is opaque however it is called,
+    here the operator is what decides whose tables the file writes. An inline `.{ ... }` is excluded
+    with the same test that excludes it there — its body stands in the tree, so whatever it binds is
+    read like any other statement.
+    """
+    if isinstance(cmd.name, Ps1StringLiteral) and cmd.invocation_operator == '.':
+        return True
+    if resolved is None:
+        return False
+    return normalize_command_name(resolved.rpartition('\\')[2]) in _CALLER_SCOPE_LEAKS
+
+
+def may_touch_identity_provider(cmd: Ps1CommandInvocation) -> bool:
+    """
+    Whether `cmd` may address the `alias:` or `function:` provider — `touches_identity_provider`
+    widened to the item cmdlets carrying a path this cannot read.
+
+    `Set-Item $p Write-Host` addresses whatever `$p` spells, and a script that computes the drive
+    qualifier (`('Ali' + 'as:') + $n`) addresses it through a spelling no literal reading finds. The
+    item cmdlets are named because the provider path is what they take: widening every command this
+    way would say that any call with a variable argument may rebind a name.
+
+    Held apart from `touches_identity_provider` rather than replacing it, because the two answer
+    different questions and pay differently for being wrong. Opening the *type world* on this would
+    cost every member-read grant in a script that merely deletes a file by variable, and the
+    mutation deny-list this belongs to is documented as carrying a computed-path residual. Refusing
+    an *alias resolution* on it costs only the names that script also binds, which is the claim
+    `refinery.lib.scripts.ps1.analysis.commands` is making complete.
+    """
+    if touches_identity_provider(cmd):
+        return True
+    if normalize_command_name(resolve_command_name(cmd) or '') not in _ITEM_CMDLETS:
+        return False
+    return any(
+        string_value(arg.value if isinstance(arg, Ps1CommandArgument) else arg) is None
+        for arg in cmd.arguments
+    )
+
+
+def assigns_an_alias_name(node) -> bool:
+    """
+    Whether `node` binds a command name by writing the `alias:` variable namespace — `${alias:x} =
+    'Write-Host'`, which rebinds `x` without any command being invoked at all.
+
+    This is the one binding form that is not an invocation, so a caller asking what a script does to
+    the alias table through `refinery.lib.scripts.ps1.analysis.commands.Ps1CommandModel.world_role`
+    alone never sees it. It is stated here beside the rest of the identity rules rather than in the
+    command model, which reads the tables and does not own them.
+    """
+    if not isinstance(node, Ps1AssignmentExpression):
+        return False
+    return any(
+        variable.scope is Ps1ScopeModifier.ALIAS
+        for variable in assignment_target_variables(node.target)
+    )
 
 
 def _is_type_accelerator_mutation(node: Ps1InvokeMember) -> bool:

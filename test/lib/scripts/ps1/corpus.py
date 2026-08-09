@@ -201,6 +201,8 @@ BEHAVIOURS: tuple[str, ...] = (
     "Set-Alias zzq Write-Output; Set-Item alias:zzq Write-Host; zzq 'hi'",
     "Set-Alias zzq Write-Output; Remove-Item alias:zzq; zzq 'hi'",
     "Set-Alias zq3 Write-Output; ${alias:zq3} = 'Write-Host'; zq3 'z'",
+    "Set-Alias zzq Write-Output; Invoke-Expression 'Set-Alias zzq Write-Host'; zzq 'x'",
+    "$h = @{ k = 'Set-Alias zzq Write-Host' }; Set-Alias zzq Write-Output; iex $h.k; zzq 'x'",
     "function Get-Zqfrob { Write-Output 'hit' }; Zqfrob",
     "Set-Alias Get-Zqal Write-Output; Zqal 'x'",
     "function Get-Zqfrob { Write-Output 'p' }; function Zqfrob { Write-Output 'b' }; Zqfrob",
