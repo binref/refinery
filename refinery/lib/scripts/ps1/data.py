@@ -74,6 +74,18 @@ _TYPE_TABLE: dict[str, dict] = _TYPES['types']
 #: collected the way `_PARSER_TYPE_KEYWORDS` above is kept beside it rather than injected into it.
 _MISCOLLECTED_COMMANDS = frozenset({'format-hex'})
 
+#: The bare nouns that name a program Windows itself ships, so that 5.1 runs the program rather than
+#: retrying the name with a `Get-` prefix — the Application tier, which sits above that retry and
+#: which no capture of the session's tables can describe. `tpm` opens `C:\Windows\system32\tpm.msc`,
+#: and `Get-Tpm` is what we answered for it.
+#:
+#: Derived by intersecting every PATHEXT-matching file in `System32` and `Windows` with the 523 bare
+#: nouns `refinery.lib.scripts.ps1.ast.implicit_get_retry` rewrites; `tpm` is the whole intersection.
+#: A program the analyst installed cannot be here and is the declared residual: `date` resolves to
+#: Git's `date.exe` on the development box and to `Get-Date` on one without it, and nothing readable
+#: from a script says which. This is a floor under that residual rather than a fix for it.
+PROGRAM_NAMES = frozenset({'tpm'})
+
 _COMMAND_TABLE: dict[str, dict] = {
     _name: _record for _name, _record in _COMMANDS['commands'].items()
     if _name.lower() not in _MISCOLLECTED_COMMANDS
@@ -211,10 +223,13 @@ def is_type(name: str, canonical_lower: str) -> bool:
 #: against `KNOWN_CMDLETS` and emits the unique hit as a command, which is what made a `Format-Hex`
 #: record produce a call to a command the host cannot run — the `fhx` defect reached through the
 #: other table. And `refinery.lib.scripts.ps1.ast.implicit_get_retry` refuses a retry for any name
-#: a table claims, so a record the capturing host had merely *loaded* rather than shipped — `setup`,
-#: `describe`, `it`, `mock`, `should` and the rest of the Pester and DSC surface — suppresses a
-#: retry 5.1 performs. That residual is open: it is a question about which records the capture
-#: should have collected at all, and it is named in `implicit_get_retry` beside the retry it costs.
+#: a table claims, so a record for a command the host does not have suppresses a retry 5.1 performs.
+#: The dash-free records were suspected of being that and are not: all 27 were measured on 5.1 and
+#: every one resolves. Ten are the engine's own default session functions (`cd..`, `cd\`, `help`,
+#: `importsystemmodules`, `mkdir`, `more`, `oss`, `pause`, `prompt`, `tabexpansion2`), fifteen are
+#: Pester, PSDesiredStateConfiguration and PSReadLine — all shipped with Windows and autoloaded by
+#: command name, so 5.1 really does resolve `describe` and `configuration` on a stock box — and
+#: `powershell` and `powershell_ise.exe` are programs, where suppressing the retry is the answer.
 #:
 #: Anything added to either table has to be measured on a host first, and the ps1 oracle corpus is
 #: where such a measurement is recorded.

@@ -13,6 +13,11 @@ from refinery.lib.scripts.ps1.ast import (
     resolved_command_names,
     standalone_command_statement,
 )
+from refinery.lib.scripts.ps1.data import (
+    KNOWN_ALIAS,
+    KNOWN_CMDLETS,
+    PROGRAM_NAMES,
+)
 from refinery.lib.scripts.ps1.model import (
     Ps1CastExpression,
     Ps1CommandInvocation,
@@ -340,6 +345,50 @@ class TestPs1ImplicitGetRetry(TestBase):
         for name in ('iex', 'gci', 'echo', 'ls', 'help'):
             with self.subTest(name):
                 self.assertIsNone(implicit_get_retry(name))
+
+
+class TestPs1ImplicitGetRetryYieldsToAProgramWindowsShips(TestBase):
+    """
+    The tier the retry is not the last of: 5.1 searches the executables on `PATH` before it prefixes
+    a bare noun, so a noun that names a program the machine has runs the program instead. Measured
+    on this machine, intersecting every program Windows itself ships against the nouns the retry
+    rewrites leaves `tpm` alone, which is `C:\\Windows\\system32\\tpm.msc`.
+    """
+
+    @staticmethod
+    def _tables(name: str) -> tuple[bool, bool, bool]:
+        """
+        Whether an alias claims *name*, whether a cmdlet claims it, and whether the name the retry
+        would produce is a cmdlet: everything the retry reads apart from the program tier.
+        """
+        return (
+            name in KNOWN_ALIAS,
+            name in KNOWN_CMDLETS,
+            F'get-{name}' in KNOWN_CMDLETS,
+        )
+
+    def test_a_noun_naming_a_shipped_program_is_not_retried_where_an_ordinary_one_is(self):
+        self.assertIsNone(implicit_get_retry('tpm'))
+        self.assertEqual(implicit_get_retry('item'), 'get-item')
+
+    def test_the_two_nouns_are_told_apart_by_the_program_and_by_nothing_else(self):
+        """
+        `Get-Tpm` is a cmdlet the table carries and nothing claims the bare `tpm`, so every table
+        the retry reads answers for `tpm` exactly what it answers for `item`. Were the refusal a
+        missing cmdlet rather than the program, `tpm` would be rewritten like any other noun.
+        """
+        self.assertEqual(self._tables('tpm'), (False, False, True))
+        self.assertEqual(self._tables('item'), (False, False, True))
+        self.assertEqual(sorted(PROGRAM_NAMES.intersection({'item', 'tpm'})), ['tpm'])
+
+    def test_the_refusal_reaches_the_script_the_unit_emits(self):
+        unit = self.ldu('ps1')
+
+        def emitted(source: str) -> str:
+            return bytes(source.encode('utf8') | unit).decode('utf8')
+
+        self.assertEqual(emitted('item'), 'Get-Item')
+        self.assertEqual(emitted('tpm'), 'tpm')
 
 
 class TestPs1ResolvedCommandNames(TestBase):

@@ -20,6 +20,7 @@ from refinery.lib.scripts.ps1.data import (
     BUILTIN_VARIABLES,
     KNOWN_ALIAS,
     KNOWN_CMDLETS,
+    PROGRAM_NAMES,
     value_parameters,
 )
 from refinery.lib.scripts.ps1.model import (
@@ -232,25 +233,20 @@ def implicit_get_retry(name: str) -> str | None:
     the script's own tables asks them about the answer in that same order; one that can see only
     the host's tables — see `resolved_command_names` — must read the answer as a possibility.
 
-    **Two tiers of that precedence are not tables at all, and neither is modelled anywhere.** 5.1
-    searches the scripts and the executables on `PATH` before it retries, and both are machine state
-    no capture can carry: `function Get-Hostname { 'x' }; hostname` runs `hostname.exe` and never
-    reaches the function (measured), and `date` runs whatever `date.exe` the box has before it
-    reaches `Get-Date`. So a retry reported here is what the name runs *if nothing outside the
-    session claims it first*, which is the direction that over-reports for a deny-list and the
-    direction that a rewrite built on it gets wrong. Which of the three refusals below is measured
-    against those tiers is the first question to ask of any name added to a table this reads.
-
-    The `KNOWN_CMDLETS` refusal in particular is only as good as that table, which carries records
-    the capturing host had loaded rather than the ones 5.1 ships — `setup`, `describe`, `it`,
-    `mock`, `should` and their neighbours are Pester's. Each of them suppresses a retry 5.1 would
-    perform: `function Get-Setup { 'x' }; setup` reaches the function on a host without Pester, and
-    this answers `None` for it. See the note above `refinery.lib.scripts.ps1.data.KNOWN_ALIAS`.
+    **Two tiers of that precedence are not tables at all.** 5.1 searches the scripts and the
+    executables on `PATH` before it retries, and both are machine state no capture can carry:
+    `function Get-Hostname { 'x' }; hostname` runs `hostname.exe` and never reaches the function
+    (measured). What that tier costs was measured rather than assumed, and it is one name:
+    intersecting every program Windows ships against the 523 nouns this rewrites leaves `tpm` alone,
+    which `refinery.lib.scripts.ps1.data.PROGRAM_NAMES` refuses. A program the analyst installed is
+    the part that stays open — `date` is Git's `date.exe` on a box that has Git and `Get-Date` on
+    one that does not — and it is one instance of the wider residual that the retry, being the
+    lowest tier, is the resolution an unread definition takes back.
     """
     name = normalize_command_name(name)
     if not name or '-' in name:
         return None
-    if name in KNOWN_ALIAS or name in KNOWN_CMDLETS:
+    if name in KNOWN_ALIAS or name in KNOWN_CMDLETS or name in PROGRAM_NAMES:
         return None
     return F'get-{name}'
 
