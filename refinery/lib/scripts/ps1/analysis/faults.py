@@ -486,7 +486,7 @@ class Ps1FaultReach:
         self._given = control_flow
         self._model: ControlFlowModel | None = None
         self._forward: dict[int, Ps1FaultRouting] = {}
-        self._backward: dict[int, bool] = {}
+        self._step_over: dict[int, bool] = {}
         self._handled: set[int] | None = None
         self._ending: dict[int, bool] = {}
         self._stopping: bool | None = None
@@ -694,10 +694,7 @@ class Ps1FaultReach:
             # The climb left the handler behind, so the node this would answer about stands for the
             # statement around it and every question below reads the wrong element.
             return True
-        remembered = self._backward.get(id(start))
-        if remembered is None:
-            remembered = self._backward[id(start)] = self._removal_matters(graph, start, may_raise)
-        return remembered
+        return self._removal_matters(graph, start, may_raise)
 
     def _removal_matters(
         self, graph: ControlFlowGraph, start: CfgNode, may_raise: Callable[[Node], bool],
@@ -738,7 +735,18 @@ class Ps1FaultReach:
         handler catches, because one redirected raiser is enough to keep the trap; equal successors
         share all downstream behaviour, so this only ever keeps a trap — never removes a load-bearing
         one — which is the sound direction for a may-analysis.
+
+        Remembered per handler for the life of this model. It reads only the graph, so the answer
+        is a property of where the handler sits and not of any question a caller brings — unlike the
+        rest of the transpose, whose raiser set is filtered by an injected predicate and is
+        therefore recomputed each time rather than memoized.
         """
+        remembered = self._step_over.get(id(handler))
+        if remembered is None:
+            remembered = self._step_over[id(handler)] = self._soft_step_over(handler)
+        return remembered
+
+    def _soft_step_over(self, handler: Node) -> bool:
         located = self._control_flow.locate(handler)
         if located is None or located[1].element is not handler:
             return False

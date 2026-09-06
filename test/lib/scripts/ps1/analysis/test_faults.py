@@ -388,6 +388,15 @@ class TestPs1FaultPointsIn(TestBase):
 
 class TestPs1RemovingATrapIsJudgedByWhereItsErrorsWouldGoInstead(TestBase):
 
+    def test_the_transpose_honours_the_predicate_it_is_given_not_an_earlier_verdict(self):
+        tree, reach = _model("""
+            trap { 'h' }
+            [int]'a'
+        """)
+        trap = tree.body[0]
+        self.assertTrue(reach.removing_a_handler_is_observed(trap, lambda node: True))
+        self.assertFalse(reach.removing_a_handler_is_observed(trap, lambda node: False))
+
     def test_a_trap_matters_only_while_its_block_still_holds_something_that_may_raise(self):
         guarding, guarding_reach = _model("""
             trap { 'o' }
