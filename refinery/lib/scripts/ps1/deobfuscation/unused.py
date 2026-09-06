@@ -432,7 +432,7 @@ class Ps1JunkStatementRemoval(Transformer):
             if path.sink is OutputSink.CAPTURED:
                 continue
             removable = self._removable_in_body(
-                parent, flow.resolved(path), called, cache.world_reach, cache.faults)
+                parent, flow.resolved(path), path.guarded, called, cache.world_reach, cache.faults)
             for statement in body:
                 if statement in removable:
                     plans.propose_in(parent, statement)
@@ -612,27 +612,32 @@ class Ps1JunkStatementRemoval(Transformer):
         self,
         parent: Node,
         sink: OutputSink,
+        guarded: bool,
         called: frozenset[str],
         world: Ps1WorldReach,
         faults: Ps1FaultReach,
     ) -> set[Node]:
         """
         What this pass would drop from the statement list `parent` owns, where `sink` is the
-        *resolved* destination of what that body writes. Both set-level guards are answered here,
-        against the **pre-veto** survivors, which is the polarity they require — see
+        *resolved* destination of what that body writes and `guarded` says that body runs only on a
+        fault. Both set-level guards are answered here, against the **pre-veto** survivors, which is
+        the polarity they require — see
         `refinery.lib.scripts.ps1.deobfuscation.removal.Ps1RemovalPlan`.
 
         A `DISCARD` emits nothing wherever the body's output goes, so nothing about the output makes
         one worth keeping and a body of them turns a junk function inert. It is not by itself a
         licence to drop, because emission is all it claims: a call returning `System.Void` emits as
         little as a discard idiom and can still raise, which is the removal veto's to weigh and not
-        this. An `OUTPUT` writes a value someone could see, and dropping it needs three separate
+        this. An `OUTPUT` writes a value someone could see, and dropping it needs four separate
         things to hold, none of which implies another:
 
         - the caller asks for it, which is `bare_output_is_preserved` read the other way round;
         - the value provably reaches the host and nothing else, which is `sink`. A body whose writes
           land anywhere else keeps every one of them — that is the whole of what the resolution
           across the call graph buys, and the reason this is not the positional answer;
+        - the body runs on the normal path and not only on a fault, which is `guarded` read the other
+          way round. A `trap` or `catch` body's value is console output exactly when the handler
+          fires; deleting it as noise drops what the script prints when it recovers from an error;
         - evaluating it cannot raise, which is `expression_cannot_fault`. `[Int]'abc'` and `1/0`
           are `OUTPUT` like `42` is, and both terminate the script where they stand, so deleting one
           resumes execution that had stopped — and does it across a function boundary, where the
@@ -640,7 +645,11 @@ class Ps1JunkStatementRemoval(Transformer):
         """
         body = get_body(parent)
         removable: set[Node] = set()
-        strip_bare_output = sink is OutputSink.HOST and not bare_output_is_preserved(self.options)
+        strip_bare_output = (
+            sink is OutputSink.HOST
+            and not guarded
+            and not bare_output_is_preserved(self.options)
+        )
         for stmt in body:
             if isinstance(stmt, Ps1FunctionDefinition):
                 # `called` is every call site standing in this tree, which is only the whole story

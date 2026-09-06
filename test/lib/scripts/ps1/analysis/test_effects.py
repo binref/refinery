@@ -27,6 +27,7 @@ from refinery.lib.scripts.ps1.ast import get_body, get_command_name
 from refinery.lib.scripts.ps1.data import resolve_type
 from refinery.lib.scripts.ps1.model import (
     Ps1ArrayExpression,
+    Ps1CatchClause,
     Ps1CommandInvocation,
     Ps1DataSection,
     Ps1ExpressionStatement,
@@ -35,6 +36,8 @@ from refinery.lib.scripts.ps1.model import (
     Ps1InvokeMember,
     Ps1ScriptBlock,
     Ps1SubExpression,
+    Ps1TrapStatement,
+    Ps1TryCatchFinally,
     Ps1UnaryExpression,
 )
 from refinery.lib.scripts.ps1.parser import Ps1Parser
@@ -1392,6 +1395,46 @@ class TestPs1OpenWorldNameTrust(Ps1EffectsTest):
         # The two questions the world answers must fail in the same direction, or a caller that
         # forgets the world gets a member grant refused and a name grant handed to it.
         self.assertFalse(is_side_effect_free(self._expression('Get-Date'), _NO_WORLD))
+
+
+class TestPs1OutputPathMarksAHandlerBodyGuarded(Ps1EffectsTest):
+    """
+    A `trap` or `catch` body runs only when the region it guards faults, so a value it writes is
+    console output on the fault path and not the normal one. `output_path` marks such a body
+    `guarded`, which is what keeps the junk strip from taking its bare output for normal-path noise.
+    A `finally` body always runs and a `try` body runs before anything faults, so neither is guarded,
+    and a value written by ordinary flow is not either.
+    """
+
+    def test_a_trap_body_is_guarded(self):
+        trap = self._first("trap { 'h' }; 1", Ps1TrapStatement)
+        assert isinstance(trap, Ps1TrapStatement)
+        self.assertTrue(output_path(trap.body).guarded)
+
+    def test_a_catch_body_is_guarded(self):
+        clause = self._first("try { 1 } catch { 'h' }", Ps1CatchClause)
+        assert isinstance(clause, Ps1CatchClause)
+        self.assertTrue(output_path(clause.body).guarded)
+
+    def test_a_catch_body_inside_a_function_stays_guarded_across_the_boundary(self):
+        clause = self._first("function f { try { 1 } catch { 'h' } }", Ps1CatchClause)
+        assert isinstance(clause, Ps1CatchClause)
+        path = output_path(clause.body)
+        self.assertIs(path.sink, OutputSink.CALLER)
+        self.assertTrue(path.guarded)
+
+    def test_a_finally_body_is_not_guarded(self):
+        construct = self._first("try { 1 } finally { 'h' }", Ps1TryCatchFinally)
+        assert isinstance(construct, Ps1TryCatchFinally)
+        self.assertFalse(output_path(construct.finally_block).guarded)
+
+    def test_a_try_body_is_not_guarded(self):
+        construct = self._first("try { 'h' } catch { 1 }", Ps1TryCatchFinally)
+        assert isinstance(construct, Ps1TryCatchFinally)
+        self.assertFalse(output_path(construct.try_block).guarded)
+
+    def test_a_statement_reached_by_ordinary_flow_is_not_guarded(self):
+        self.assertFalse(output_path(self._statement("'h'")).guarded)
 
 
 class TestPs1WhetherAnExpressionCanFaultIsDecidedByTheScriptToo(Ps1EffectsTest):

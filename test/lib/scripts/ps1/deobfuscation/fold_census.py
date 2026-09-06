@@ -19,8 +19,6 @@ FOLDS: dict[str, str] = {
         '3',
     'while ($a) { break }':
         '',
-    'try { 1 } catch [A], [B] { 2 } catch { 3 }':
-        '1',
     'while ($a) { continue }':
         '',
     'do { 1 } while ($a)':
@@ -40,7 +38,7 @@ FOLDS: dict[str, str] = {
     'trap [E] { 1 }':
         '',
     'try { 1 } catch { 2 } finally { 3 }':
-        '1',
+        'try {\n  1\n} catch {\n  2\n} finally {}',
     '-not $x':
         '$True',
     'while ($a) { 1 }':
@@ -89,8 +87,6 @@ FOLDS: dict[str, str] = {
         '$True',
     "Write-Host 'a'; return; Write-Host 'b'":
         "Write-Host 'a'\nreturn",
-    "try { throw 'x' } catch { 'caught' }":
-        "try {\n  throw 'x'\n} catch {}",
     "&('Write' + '-Output') 'indirect'":
         "Write-Output 'indirect'",
     "$s = 'abc'; $s.Substring(1, 2)":

@@ -1595,9 +1595,16 @@ class Ps1OutputPath(NamedTuple):
     `function` is the definition whose body was left on the way out, and is set exactly when `sink`
     is `OutputSink.CALLER`: it is the handle `Ps1OutputFlow` needs to carry the question across the
     boundary that position cannot see past.
+
+    `guarded` is set when the outward walk left a `trap` or `catch` body — a handler that runs only
+    when the region it guards faults. Such a body's value reaches `sink` on the fault path and not the
+    normal one, so a caller pruning normal-path console noise must leave it alone: it is emitted
+    exactly when the handler fires, which the position of the handler statement cannot say. A
+    `finally` body is not guarded, because it runs whether or not the region faults.
     """
     sink: OutputSink
     function: Ps1FunctionDefinition | None
+    guarded: bool = False
 
 
 def _output_writes_through(cursor, prev) -> bool:
@@ -1663,22 +1670,25 @@ def output_path(node) -> Ps1OutputPath:
     handful of positions, while a call site sits in every position an expression can.
     """
     cursor = node
+    guarded = False
     while True:
         if takes_output_away(cursor):
-            return Ps1OutputPath(OutputSink.CAPTURED, None)
+            return Ps1OutputPath(OutputSink.CAPTURED, None, guarded)
         if isinstance(cursor, (Ps1SubExpression, Ps1ArrayExpression, Ps1DataSection)):
-            return Ps1OutputPath(OutputSink.CAPTURED, None)
+            return Ps1OutputPath(OutputSink.CAPTURED, None, guarded)
         if isinstance(cursor, Ps1ScriptBlock):
             holder = cursor.parent
             if isinstance(holder, Ps1FunctionDefinition) and holder.body is cursor:
-                return Ps1OutputPath(OutputSink.CALLER, holder)
+                return Ps1OutputPath(OutputSink.CALLER, holder, guarded)
             if _scriptblock_is_captured(cursor):
-                return Ps1OutputPath(OutputSink.CAPTURED, None)
+                return Ps1OutputPath(OutputSink.CAPTURED, None, guarded)
         if isinstance(cursor, Ps1Script):
-            return Ps1OutputPath(OutputSink.HOST, None)
+            return Ps1OutputPath(OutputSink.HOST, None, guarded)
         parent = cursor.parent
         if parent is None or not _output_writes_through(parent, cursor):
-            return Ps1OutputPath(OutputSink.CAPTURED, None)
+            return Ps1OutputPath(OutputSink.CAPTURED, None, guarded)
+        if isinstance(parent, (Ps1TrapStatement, Ps1CatchClause)):
+            guarded = True
         cursor = parent
 
 

@@ -123,12 +123,6 @@ DEFECTS: dict[str, str] = {
 #: tables are checked against the measured set in both directions, so a divergence that stops
 #: happening and a new one that starts both fail.
 BEHAVIOUR_DIVERGENCES: dict[str, str] = {
-    "try { throw 'x' } catch { 'caught' }":
-        "The catch body is a bare expression whose only effect is the success stream, so the "
-        "default strips it and the snippet's `caught` is not printed; `ps1 -k` keeps it. A real but "
-        "separate defect stands beside this one: `Write-Output 'caught'` in the same place survives, "
-        "so the strip recognises implicit output and not explicit, where it should ask the output "
-        "model about both alike. That asymmetry is a question for the output model, not this table.",
     "try { zzq0000=5; 'tail' } catch {}; 'next'":
         'Nothing is carried out of the `try` any more: the drop claims the bareword raised, and a '
         'raise abandons the rest of its block. What runs first at script scope is the strip, which '
