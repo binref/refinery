@@ -444,12 +444,14 @@ class TestPs1ATrapBodyThatOnlyProducesAValueIsALiveHandler(_Ps1FaultEscalation):
     """
     A `trap` body that neither assigns nor calls anything is still a live handler: it runs when its
     block raises, and the value it produces is written to the output stream. The raise is what makes
-    that value appear, so it survives.
+    that value appear, so removing the `trap` would silence an output the script made, and it is
+    kept.
 
-    The deobfuscator deletes the raise and the `trap` with it, silencing an output the script made.
+    A command whose errors the model does not read counts as a raise the handler may be offered, so
+    the same `trap` is kept above one of those too — the sound over-keep the precise-raiser test
+    settles for rather than proving a benign command cannot terminate.
     """
 
-    @unittest.expectedFailure
     def test_a_raising_cast_under_a_trap_whose_body_is_a_bare_value_is_kept(self):
         self._assertKept(F"""
             trap {{ 5 }}
@@ -457,13 +459,17 @@ class TestPs1ATrapBodyThatOnlyProducesAValueIsALiveHandler(_Ps1FaultEscalation):
             {_ANCHOR}
         """)
 
+    def test_a_trap_whose_body_is_a_bare_value_is_kept_above_a_command_the_model_cannot_clear(self):
+        self._assertKept(F"""
+            trap {{ 5 }}
+            {_ANCHOR}
+        """)
 
-class TestPs1ATrapBodyThatProducesNothingLeavesTheRaiseRemovable(_Ps1FaultEscalation):
+
+class TestPs1ATrapWithAnEmptyBodyLeavesTheRaiseRemovable(_Ps1FaultEscalation):
     """
     A `trap` with an empty body writes nothing and lets execution resume, so it changes no code the
-    script runs and the raise under it may go. The bare value that makes the other `trap` live is
-    written only when its block raises, so with nothing raising in that block the `trap` writes
-    nothing and may go itself.
+    script runs and the raise under it may go with it.
     """
 
     def test_a_raising_cast_under_a_trap_whose_body_is_empty_is_removed(self):
@@ -473,11 +479,18 @@ class TestPs1ATrapBodyThatProducesNothingLeavesTheRaiseRemovable(_Ps1FaultEscala
             {_ANCHOR}
         """, _ANCHOR)
 
-    def test_a_trap_whose_body_is_a_bare_value_with_nothing_raising_is_removed(self):
-        self._assertDeobfuscatesTo(F"""
-            trap {{ 5 }}
-            {_ANCHOR}
-        """, _ANCHOR)
+
+class TestPs1ATrapInASubexpressionKeepsItsWholeGuardedBracket(_Ps1FaultEscalation):
+    """
+    A `trap` written among the statements of a `$( )` guards a raise beside it there, and its body
+    goes to the output stream when that raise fires, so the whole bracket survives: `$x` receives
+    `h` on 5.1 rather than the empty value the emptied bracket would leave. The reader places the
+    bracket-internal cast, the transpose reads it as a real raiser, and the handler that writes over
+    it is kept.
+    """
+
+    def test_a_trap_beside_a_raising_cast_inside_a_subexpression_is_kept(self):
+        self._assertKept("$x = $(trap { 'h' }; [int]'a')")
 
 
 class TestPs1AReadOfErrorObservesARaiseNoHandlerTook(_Ps1FaultEscalation):

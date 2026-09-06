@@ -17,6 +17,7 @@ from refinery.lib.scripts import (
 from refinery.lib.scripts.ps1.analysis.effects import (
     emptying_unhooks_a_handler,
     fault_is_observed,
+    statement_can_raise,
 )
 from refinery.lib.scripts.ps1.analysis.faults import Ps1FaultReach
 from refinery.lib.scripts.ps1.analysis.worldflow import Ps1WorldReach
@@ -339,7 +340,10 @@ class Ps1RemovalPlan:
         if faults is None:
             return True
         if _removes_a_handler(proposal.statement):
-            return faults.removing_a_handler_is_observed(proposal.statement)
+            return faults.removing_a_handler_is_observed(
+                proposal.statement,
+                lambda raiser: statement_can_raise(raiser, faults, self.world),
+            )
         if not self.removals_may_fault:
             return False
         return fault_is_observed(proposal.statement, faults, self.world)

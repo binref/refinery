@@ -7,6 +7,7 @@ from test import TestBase
 from refinery.lib.scripts import Statement
 from refinery.lib.scripts.analysis.cfg import ControlFlowModel
 from refinery.lib.scripts.ps1.analysis.cfg import build_control_flow_model
+from refinery.lib.scripts.ps1.analysis.effects import statement_can_raise
 from refinery.lib.scripts.ps1.analysis.faults import (
     Ps1FaultReach,
     Ps1FaultRouting,
@@ -32,6 +33,14 @@ def _parse(source: str) -> Ps1Script:
 def _model(source: str) -> tuple[Ps1Script, Ps1FaultReach]:
     tree = _parse(source)
     return tree, build_fault_reach(build_control_flow_model(tree))
+
+
+def _may_raise(reach: Ps1FaultReach):
+    """
+    The real fault-possibility predicate the transpose is injected with, so the unit tests judge a
+    `trap` by the raisers a removal site sees rather than by every statement its block offers.
+    """
+    return lambda node: statement_can_raise(node, reach)
 
 
 #: The subexpression that `TestPs1ATrapWrittenInASubexpressionGuardsThatSubexpression` is measured
@@ -383,46 +392,46 @@ class TestPs1RemovingATrapIsJudgedByWhereItsErrorsWouldGoInstead(TestBase):
         guarding, guarding_reach = _model("""
             trap { 'o' }
             if ($c) {
-                trap { 'i' }
-                'a'
+                trap { continue }
+                [int]'a'
             }
         """)
         alone, alone_reach = _model("""
             trap { 'o' }
             if ($c) {
-                trap { 'i' }
+                trap { continue }
             }
         """)
         self.assertTrue(guarding_reach.removing_a_handler_is_observed(
-            guarding.body[1].clauses[0][1].body[0]))
+            guarding.body[1].clauses[0][1].body[0], _may_raise(guarding_reach)))
         self.assertFalse(alone_reach.removing_a_handler_is_observed(
-            alone.body[1].clauses[0][1].body[0]))
+            alone.body[1].clauses[0][1].body[0], _may_raise(alone_reach)))
 
-    def test_a_trap_at_script_scope_may_go_although_the_raise_it_guards_is_observed(self):
+    def test_a_trap_at_script_scope_may_go_where_the_only_statement_it_guards_cannot_raise(self):
         tree, reach = _model("""
             trap { 'h' }
             'a'
         """)
         self.assertTrue(reach.observed_at(tree.body[1]))
-        self.assertFalse(reach.removing_a_handler_is_observed(tree.body[0]))
+        self.assertFalse(reach.removing_a_handler_is_observed(tree.body[0], _may_raise(reach)))
 
-    def test_a_trap_in_a_try_block_may_go_only_where_the_catch_clause_swallows(self):
+    def test_a_resuming_trap_in_a_try_block_may_go_only_where_the_catch_clause_swallows(self):
         acting, acting_reach = _model("""
             try {
-                trap { 'h' }
-                'a'
+                trap { continue }
+                [int]'a'
             } catch { 'c' }
         """)
         swallowing, swallowing_reach = _model("""
             try {
-                trap { 'h' }
-                'a'
+                trap { continue }
+                [int]'a'
             } catch { }
         """)
         self.assertTrue(acting_reach.removing_a_handler_is_observed(
-            acting.body[0].try_block.body[0]))
+            acting.body[0].try_block.body[0], _may_raise(acting_reach)))
         self.assertFalse(swallowing_reach.removing_a_handler_is_observed(
-            swallowing.body[0].try_block.body[0]))
+            swallowing.body[0].try_block.body[0], _may_raise(swallowing_reach)))
 
 
 class TestPs1AResumingTrapOverASoftErrorInABracketedStatementListIsKept(TestBase):
@@ -443,7 +452,7 @@ class TestPs1AResumingTrapOverASoftErrorInABracketedStatementListIsKept(TestBase
         trap = tree.body[0]
         if not isinstance(trap, Ps1TrapStatement):
             self.fail('the source does not open with a trap')
-        return reach.removing_a_handler_is_observed(trap)
+        return reach.removing_a_handler_is_observed(trap, _may_raise(reach))
 
     def test_a_soft_error_inside_a_subexpression_keeps_the_trap_that_resumes_past_it(self):
         self.assertTrue(self._trap_removal_is_observed(
@@ -660,7 +669,7 @@ class TestPs1AStopPreferenceIsWhatMakesTheTrapUnderItWorthKeeping(TestBase):
             'after'
         """)
         trap = next(node for node in tree.walk_in_order() if isinstance(node, Ps1TrapStatement))
-        return reach.removing_a_handler_is_observed(trap)
+        return reach.removing_a_handler_is_observed(trap, _may_raise(reach))
 
     def _observations(self, assignments: list[str]) -> dict[str, bool]:
         return {

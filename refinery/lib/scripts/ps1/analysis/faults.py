@@ -23,7 +23,7 @@ rather than guessing, and a caller reads it as *unknown* wherever a caller might
 """
 from __future__ import annotations
 
-from typing import Iterator, NamedTuple
+from typing import Callable, Iterator, NamedTuple
 
 from refinery.lib.scripts import Node, tree_root
 from refinery.lib.scripts.analysis.cfg import (
@@ -639,29 +639,37 @@ class Ps1FaultReach:
         routing = self.routing_at(node)
         return routing is None or routing.leaves_the_body
 
-    def removing_a_handler_is_observed(self, handler: Node) -> bool:
+    def removing_a_handler_is_observed(
+        self, handler: Node, may_raise: Callable[[Node], bool],
+    ) -> bool:
         """
         Whether deleting *handler* may change which code runs — the transpose, and the question
         asked before a `trap` is deleted.
 
         A `trap` cannot itself raise, so the forward question answers nothing about removing one:
-        what changes is where the errors of *other* statements go. Two things have to be true for
-        that to matter, and asking only one gets it wrong in either direction.
+        what changes is where the errors of *other* statements go. Three things have to be true for
+        that to matter, and asking fewer gets it wrong in some direction.
 
-        **Something has to still reach it.** Walking the exceptional edges backwards from the
-        handler's own node finds exactly the statements whose errors it may be offered, and a
-        handler nothing reaches is one whose deletion re-routes nothing — which is how a `trap` left
-        behind by the removal of the only raise in its block becomes removable in turn. The walk
-        crosses other handlers, because a `catch` that misses hands the error on and the statement
-        that raised it is behind that clause rather than at it.
+        **Something that may actually raise has to still reach it.** Walking the exceptional edges
+        backwards from the handler's own node finds the statements whose errors it may be offered,
+        and *may_raise* keeps only those that can raise a terminating error at all — a `trap` beside
+        a bare constant guards nothing, and one left behind by the removal of the only raise in its
+        block becomes removable in turn. That predicate is injected rather than computed here,
+        because whether an expression can fault is a fact of the semantic model this module holds
+        none of; the caller reads it off
+        `refinery.lib.scripts.ps1.analysis.effects.statement_can_raise`, the same
+        `expression_cannot_fault` the forward question asks. The walk crosses other handlers,
+        because a `catch` that misses hands the error on and the statement that raised it is behind
+        that clause rather than at it.
 
-        **What the handler itself emits is deliberately not asked here**, and it is a hole: a body
-        that writes runs exactly when the handler is offered an error, so `trap { 'h' }` beside a
-        raise puts `h` on the output stream where an unhandled error writes only its record — and
-        this reports it removable. Asking `handler_acts` of the handler under test closes it and
-        costs the injected-noise shape `refinery.lib.scripts.ps1.deobfuscation.deadcode`
-        deliberately drops, because `_raisers` counts every statement the block offers rather than
-        every statement that may raise. The two are one question and it is not settled here.
+        **A handler that acts and is reached by a raiser is load bearing.** A body that writes runs
+        exactly when the handler is offered an error, so `trap { 'h' }` beside a raise puts `h` on
+        the output stream where an unhandled error writes only its record. `handler_acts` of the
+        handler under test decides it, and the precise raisers are what keep this from over-holding
+        a `trap` beside a constant that cannot raise — the injected-noise shape
+        `refinery.lib.scripts.ps1.deobfuscation.deadcode` drops is one whose block offers the
+        handler no statement that may raise, so it is removed by the raiser test before this one is
+        reached.
 
         **And what it would fall back to has to act.** Deleting a handler sends its errors to
         whatever the graph records as its fallback, so the question is asked again there: an empty
@@ -688,16 +696,20 @@ class Ps1FaultReach:
             return True
         remembered = self._backward.get(id(start))
         if remembered is None:
-            remembered = self._backward[id(start)] = self._removal_matters(graph, start)
+            remembered = self._backward[id(start)] = self._removal_matters(graph, start, may_raise)
         return remembered
 
-    def _removal_matters(self, graph: ControlFlowGraph, start: CfgNode) -> bool:
-        raisers = self._raisers(graph, start)
+    def _removal_matters(
+        self, graph: ControlFlowGraph, start: CfgNode, may_raise: Callable[[Node], bool],
+    ) -> bool:
+        raisers = [raiser for raiser in self._raisers(graph, start) if may_raise(raiser)]
         if not raisers:
             return False
         if any(self._terminates(raiser) for raiser in raisers):
             return True
         element = start.element
+        if isinstance(element, Ps1TrapStatement) and handler_acts(element):
+            return True
         routing = self._routing(graph, start)
         if isinstance(element, Ps1TrapStatement) and routing.leaves_the_body:
             return True

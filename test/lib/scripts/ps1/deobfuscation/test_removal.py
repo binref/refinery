@@ -563,20 +563,20 @@ class TestPs1DeadCodeEliminationDoesNotUnhookAHandler(TestPs1):
         self.assertNotIn('trap', result)
 
 
-class TestPs1DeadCodeEliminationKeepsATrapOverABlockThatRaises(TestPs1):
+class TestPs1DeadCodeEliminationKeepsATrapOverABlockThatMayRaise(TestPs1):
     """
     A `trap` runs when the block it is written in raises, and a bare value in its body goes to the
-    output stream, so deleting one over a block that raises silences an output the script made.
+    output stream, so deleting one over a block that may raise silences an output the script made.
     Measured on 5.1: `trap { 'TRAP_OUTPUT' }` above `$Null = [Int]'abc'` and `'AFTER'` prints
-    `TRAP_OUTPUT` and then `AFTER`, while the same `trap` above `Write-Host 'keep'` prints only
-    `keep`, because nothing in that block raises and the handler never runs.
+    `TRAP_OUTPUT` and then `AFTER`, while the same `trap` above a bare `'keep'` prints only `keep`,
+    because a string literal cannot raise and the handler never runs.
 
-    The deobfuscator deletes the `trap` in both. It reads the handler body for what running it
-    would do and never asks whether the block it guards can raise, so the two scripts are the same
-    question to it and the removal that is right for the second is wrong for the first.
+    Only a block that provably holds nothing able to raise lets the acting `trap` go. A command
+    whose errors the model does not read is taken as able to raise, so the `trap` above one is kept
+    — a benign command the analysis cannot clear costs a junk `trap` rather than a dropped output,
+    which is the sound direction for the transpose.
     """
 
-    @unittest.expectedFailure
     def test_a_trap_whose_body_writes_is_kept_above_a_statement_that_raises(self):
         self._assertUnchanged(cleandoc("""
             trap {
@@ -586,14 +586,22 @@ class TestPs1DeadCodeEliminationKeepsATrapOverABlockThatRaises(TestPs1):
             'AFTER'
         """), Ps1DeadCodeElimination)
 
-    def test_the_same_trap_above_a_statement_that_does_not_raise_is_removed(self):
+    def test_the_same_trap_above_a_statement_that_provably_cannot_raise_is_removed(self):
         result = self._apply(cleandoc("""
+            trap {
+              'TRAP_OUTPUT'
+            }
+            'keep'
+        """), Ps1DeadCodeElimination)
+        self.assertEqual(result, "'keep'")
+
+    def test_the_same_trap_above_a_command_the_model_cannot_clear_is_kept(self):
+        self._assertUnchanged(cleandoc("""
             trap {
               'TRAP_OUTPUT'
             }
             Write-Host 'keep'
         """), Ps1DeadCodeElimination)
-        self.assertEqual(result, "Write-Host 'keep'")
 
 
 class TestPs1DeadCodeEliminationDoesNotCarryATrapOutOfItsBlock(TestPs1):

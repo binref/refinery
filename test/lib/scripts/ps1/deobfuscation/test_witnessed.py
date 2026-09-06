@@ -372,12 +372,15 @@ def _expression_cannot_fault_without_the_world(
     )
 
 
-def _removing_a_handler_asked_at_the_handler(self: faults.Ps1FaultReach, handler: Node) -> bool:
+def _removing_a_handler_asked_at_the_handler(
+    self: faults.Ps1FaultReach, handler: Node, may_raise,
+) -> bool:
     """
     The transpose answered by the forward question, which is the confusion the two queries exist to
     prevent. A `trap` raises nothing, so where an error raised *at* it would go is a question about
     a position nothing raises at, and its answer says nothing about the errors the removal re-routes
-    or about what they would fall back to.
+    or about what they would fall back to. The injected raiser predicate the real transpose takes is
+    accepted and ignored, so the mutation is noticed as a wrong answer rather than a broken call.
     """
     return self.observed_at(handler)
 

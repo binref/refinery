@@ -2008,6 +2008,35 @@ def fault_is_observed(
     return not judged
 
 
+def statement_can_raise(
+    stmt: Node,
+    faults: Ps1FaultReach,
+    world: Ps1WorldReach | None = None,
+) -> bool:
+    """
+    Whether evaluating *stmt* may raise where it stands — the fault-possibility half of the
+    transpose, asked of a statement a `trap` guards to decide whether that guard is load bearing.
+
+    This is `fault_is_observed`'s first clause read on its own: a statement whose fault is one
+    expression that `expression_cannot_fault` clears cannot reach a handler, so a `trap` written
+    over nothing but such statements guards nothing and may go. Everything else may raise, which is
+    the direction that keeps a handler rather than dropping one — a command whose errors the model
+    does not read, a statement that is not one expression, a cast on the wrong operand.
+
+    It is built here rather than in `refinery.lib.scripts.ps1.analysis.faults` because the predicate
+    that decides it lives here, and it is injected into
+    `refinery.lib.scripts.ps1.analysis.faults.Ps1FaultReach.removing_a_handler_is_observed` the way
+    `expression_cannot_fault` is asked forward: the fault module stays free of the semantic model
+    and takes the answer as a function. `world` widens the one bare-variable read
+    `expression_cannot_fault` clears under a closed world, and is left out where a caller has none,
+    which is the fail-closed direction — an unread world keeps the handler.
+    """
+    operand = fault_operand(stmt)
+    if operand is None:
+        return True
+    return not expression_cannot_fault(operand, stmt, faults, world)
+
+
 def emptying_unhooks_a_handler(block: Node) -> bool:
     """
     Whether clearing *block* would leave a `catch` clause that acts with nothing left to trigger it:

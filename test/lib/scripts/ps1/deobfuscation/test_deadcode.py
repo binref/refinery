@@ -514,7 +514,7 @@ class TestPs1DeadCodeExtra(TestPs1):
 
     def test_trap_with_inert_body_removed(self):
         result = self._apply(
-            "trap { 5; 'hello' }\nWrite-Host 'keep'", Ps1DeadCodeElimination)
+            "trap { continue }\nWrite-Host 'keep'", Ps1DeadCodeElimination)
         self.assertEqual(result, "Write-Host 'keep'")
 
     def test_function_nested_block_return_value_preserved(self):
