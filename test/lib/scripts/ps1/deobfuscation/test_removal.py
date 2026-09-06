@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import unittest
 
 from inspect import cleandoc
 
@@ -667,24 +666,22 @@ class TestPs1DeadCodeEliminationDoesNotCarryATrapOutOfItsBlock(TestPs1):
 
 class TestPs1DeadCodeEliminationDoesNotCarryStatementsIntoAResumingBlock(TestPs1):
     """
-    The mirror of the class above, and the half nothing asks about. A `trap { continue }` resumes
-    the block it guards at the statement after the one that threw, so a raise inside a *nested*
-    block abandons the rest of that block and carries on after it — measured on 5.1:
+    The mirror of the class above. A `trap { continue }` resumes the block it guards at the statement
+    after the one that threw, so a raise inside a *nested* block abandons the rest of that block and
+    carries on after it — measured on 5.1:
     `trap { continue }; if ($true) { throw 'e'; Write-Host 'tail' }; Write-Host 'next'` writes
     `next` alone.
 
-    Resolving the `if` into the statements it holds puts them at the level the handler resumes into,
-    so the raise now resumes at `tail` and the output writes a line the input never writes. That is
-    a semantics defect and not a recall one: the deobfuscated script runs code the original does
-    not. `Ps1RemovalPlan._vetoed` refuses a replacement that carries a handler *out* of its block;
-    what is missing is the question about the block a replacement is spliced *into*.
-
-    Closing it is a measured trade rather than a one-line gate — a script that wraps its whole body
-    in resuming traps is exactly the shape this pass earns its recall on — so it is pinned here
-    rather than fixed in passing.
+    Resolving the `if` into the statements it holds would put them at the level the handler resumes
+    into, so the raise would then resume at `tail` and the output would write a line the input never
+    writes — a semantics defect, the deobfuscated script running code the original does not.
+    `Ps1RemovalPlan._vetoed` refuses a replacement that carries a handler *out* of its block, and now
+    refuses one spliced *into* a body a resuming trap guards where a spliced statement other than the
+    last can raise. The `switch` fold splices its matched arm the same way and is refused the same
+    way; a `trap { break }` re-raises and draws no resumption edge, so the identical branch under one
+    is still resolved.
     """
 
-    @unittest.expectedFailure
     def test_a_branch_resolved_into_a_block_a_resuming_trap_guards_keeps_that_branch(self):
         self._assertUnchanged(cleandoc("""
             trap {
@@ -696,6 +693,42 @@ class TestPs1DeadCodeEliminationDoesNotCarryStatementsIntoAResumingBlock(TestPs1
             }
             Write-Host 'next'
         """), Ps1DeadCodeElimination)
+
+    def test_a_switch_arm_resolved_into_a_block_a_resuming_trap_guards_keeps_that_switch(self):
+        self._assertUnchanged(cleandoc("""
+            trap {
+              continue
+            }
+            switch (1) {
+              1 {
+                throw 'e'
+                Write-Host 'tail'
+              }
+            }
+            Write-Host 'next'
+        """), Ps1DeadCodeElimination)
+
+    def test_a_branch_of_statements_that_cannot_raise_is_resolved_although_a_resuming_trap_guards_it(self):
+        """
+        The gate is precise, not "any splice of two into a resuming body": neither `'a'` nor `'b'`
+        can raise, so no resumption target moves and the branch resolves. The now-unguarded resuming
+        trap goes with it.
+        """
+        result = self._apply(cleandoc("""
+            trap {
+              continue
+            }
+            if ($True) {
+              'a'
+              'b'
+            }
+            Write-Host 'c'
+        """), Ps1DeadCodeElimination)
+        self.assertEqual(result, cleandoc("""
+            'a'
+            'b'
+            Write-Host 'c'
+        """))
 
     def test_the_same_branch_under_a_trap_that_does_not_resume_is_resolved(self):
         """
@@ -711,6 +744,28 @@ class TestPs1DeadCodeEliminationDoesNotCarryStatementsIntoAResumingBlock(TestPs1
             if ($True) {
               throw 'e'
               Write-Host 'tail'
+            }
+            Write-Host 'next'
+        """), Ps1DeadCodeElimination)
+        self.assertEqual(result, cleandoc("""
+            trap {
+              break
+            }
+            throw 'e'
+            Write-Host 'tail'
+            Write-Host 'next'
+        """))
+
+    def test_the_same_switch_under_a_trap_that_does_not_resume_is_resolved(self):
+        result = self._apply(cleandoc("""
+            trap {
+              break
+            }
+            switch (1) {
+              1 {
+                throw 'e'
+                Write-Host 'tail'
+              }
             }
             Write-Host 'next'
         """), Ps1DeadCodeElimination)

@@ -630,6 +630,26 @@ class Ps1FaultReach:
             }
         return bool(self._handled - {id(body)})
 
+    def guarded_by_a_resuming_trap(self, node: Node) -> bool:
+        """
+        Whether a `trap` set that *resumes* guards *node* — one that, after taking a terminating
+        error, carries execution on at the statement after the one that raised, rather than
+        re-raising it (`trap { break }`) or letting it leave the body.
+
+        The control-flow builder draws a `RESUMPTION_FORWARD` edge out of a guarded statement only
+        where its block's trap set resumes — a `trap { continue }`, or a trap whose body runs off its
+        end — and draws none for a re-raising set, so the mere existence of that edge answers the
+        question. This is why a splice into such a body is load bearing: the edge lands on the next
+        statement of the block, and splicing more statements after a raiser moves what that next
+        statement is. Read off the descended graph the reader already holds; a node it places nowhere
+        is guarded by nothing here.
+        """
+        located = self._control_flow.locate(node)
+        if located is None:
+            return False
+        graph, start = located
+        return _resumption_slot(graph, start) is not None
+
     def leaves_the_body(self, node: Node) -> bool:
         """
         Whether an error raised at *node* may get past every handler of the body it is in, so that

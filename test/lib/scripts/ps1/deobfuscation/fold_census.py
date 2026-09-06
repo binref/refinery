@@ -1416,9 +1416,8 @@ FOLDS: dict[str, str] = {
     "trap { continue }; [int]'a'; Write-Host 'after'":
         "[int]'a'\nWrite-Host 'after'",
     "trap { continue }; if ($true) { throw 'e'; Write-Host 'tail' }; Write-Host 'next'":
-        "trap {\n  continue\n}\nthrow 'e'\nWrite-Host 'tail'\nWrite-Host 'next'",
-    "trap { continue }; switch (1) { 1 { throw 'e'; Write-Host 'tail' } }; Write-Host 'next'":
-        "trap {\n  continue\n}\nthrow 'e'\nWrite-Host 'tail'\nWrite-Host 'next'",
+        "trap {\n  continue\n}\nif ($True) {\n  throw 'e'\n  Write-Host 'tail'\n}"
+        "\nWrite-Host 'next'",
     "trap { continue }; foreach ($i in 1..2) { throw 'e'; Write-Host 'tail' }; "
     "Write-Host 'next'":
         "trap {\n  continue\n}\nforeach ($i in 1, 2) {\n  throw 'e'\n  Write-Host 'tail'\n}"

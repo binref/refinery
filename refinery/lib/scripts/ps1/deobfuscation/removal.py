@@ -317,15 +317,23 @@ class Ps1RemovalPlan:
         statement's errors go and everything about where the rest of the target body's do; see
         `_rescopes_a_handler`.
 
-        **The mirror of that question is open**, and this class does not ask it: a replacement
-        spliced *into* a block that a resuming `trap` already guards moves the point that handler
-        carries on at. A raise inside a nested block abandons the rest of that block and resumes
-        after it, so resolving the block into the statements it holds puts them where the handler
-        resumes — measured on 5.1 as
+        **The mirror of that question is asked beside it**: a replacement spliced *into* a block
+        that a resuming `trap` already guards moves the point that handler carries on at. A raise
+        inside a nested block abandons the rest of that block and resumes after it, so resolving the
+        block into the statements it holds puts them where the handler resumes — measured on 5.1 as
         `trap { continue }; if ($true) { throw 'e'; Write-Host 'tail' }; Write-Host 'next'`, which
-        writes `next` alone while the rewritten script writes `tail` too. The corpus row of that
-        name carries the transcript and the `BEHAVIOUR_DEFECTS` entry; closing it is a recall trade
-        that has not been measured, so it is stated here rather than gated.
+        writes `next` alone while the unrefused splice would write `tail` too. The splice is refused
+        where the target body is guarded by a trap set that resumes and a spliced statement other
+        than the last can raise, because only a raiser with a tail behind it in the block gains a
+        successor the block abandoned. A one-statement replacement, or one whose raiser is last,
+        moves nothing. Whether a statement can raise is the same over-approximation
+        `refinery.lib.scripts.ps1.analysis.effects.statement_can_raise` answers for the transpose, so
+        the refusal fires whenever a splice would move a resumption and over-refuses only a splice
+        that provably cannot; whether a resuming trap guards the target is read straight off the
+        control-flow graph, which draws a resumption edge only for a trap set that resumes.
+
+        A plan opened to substitute holds no fault model, so this half is skipped there: the two
+        `substitute_statement` splice sites are not gated and are a stated follow-on.
 
         **A handler and a statement that might fault are opposite questions**, and reading one as
         the other invents a wrong answer in each direction. Deleting a `trap` re-routes errors the
@@ -335,7 +343,17 @@ class Ps1RemovalPlan:
         `fault_is_observed`, and only for a pass that cannot rule the fault out itself.
         """
         if proposal.replacement:
-            return _rescopes_a_handler(proposal.replacement)
+            if _rescopes_a_handler(proposal.replacement):
+                return True
+            faults = self.faults
+            return (
+                faults is not None
+                and faults.guarded_by_a_resuming_trap(proposal.statement)
+                and any(
+                    statement_can_raise(raiser, faults, self.world)
+                    for raiser in proposal.replacement[:-1]
+                )
+            )
         faults = self.faults
         if faults is None:
             return True

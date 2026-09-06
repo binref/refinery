@@ -249,18 +249,6 @@ BEHAVIOUR_DEFECTS: dict[str, str] = {
         '`Ps1Simplifications` rewrites `$($x)` to `$x` before the alias relation is built, minting '
         'a share the script does not have, so the defect is in that pass rather than in the '
         'aliasing.',
-    "trap { continue }; if ($true) { throw 'e'; Write-Host 'tail' }; Write-Host 'next'":
-        'The handler is kept and the `if` around the raise is resolved into the statements it '
-        'holds, which moves the point the handler resumes at: a raise inside a nested block '
-        'abandons the rest of that block and carries on after it, so `tail` does not run, and once '
-        'the two statements stand at script scope the raise resumes at `tail` and it does. '
-        '`Ps1RemovalPlan` refuses to carry a `trap` *out* of the block it is written in '
-        '(`_rescopes_a_handler`); this is the mirror of that, splicing statements *into* a block a '
-        'resuming handler already guards, and nothing asks about it.',
-    "trap { continue }; switch (1) { 1 { throw 'e'; Write-Host 'tail' } }; Write-Host 'next'":
-        'The same defect reached through the other construct that resolves into the statements '
-        'one of its blocks holds. A `switch` on a constant is folded to the arm that matches, '
-        'and the arm body lands where the handler resumes.',
     "trap { continue }; iex 'throw 1'; Write-Host 'after'":
         'The handler is removed, and the removal is self-inflicting: a command that runs a string '
         'is read as raising nothing, so the `trap` goes in one round, and a later round then '
