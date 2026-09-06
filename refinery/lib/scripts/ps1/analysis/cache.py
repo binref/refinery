@@ -167,11 +167,12 @@ class Ps1ModelCache(ModelCacheBase):
         question every removing pass used to answer for itself by looking at the statement's
         immediate holder, which reads a handler one nesting level away as no handler at all.
 
-        The transpose that weighs deleting a `trap` reads one further graph — this root at the finer
-        granularity that descends into a `$( )` or `@( )` — so a soft error stepping over inside such
-        a construct is the local path it is rather than detail hidden in the one node the coarse
-        graph gives the whole statement. The reader draws that itself, on demand, from the root it
-        already holds, so only a script whose trap removal turns on such a step-over ever pays for it.
+        It answers off a graph that descends into a `$( )` or `@( )`, so a soft error stepping over
+        inside such a construct — and a `trap` written among its statements — is a point in its own
+        right rather than detail hidden in the one node the coarse `control_flow` gives the whole
+        statement. The reader draws that itself, on demand, from the root the passed model owns, and
+        only for a script that writes such a bracket at all: one that writes none has the same graph
+        either way, so `control_flow` is reused for it unchanged.
 
         Purely syntactic like the graphs it reads, so it joins nothing else and orders nothing else.
         """

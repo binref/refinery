@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import unittest
-
 from inspect import cleandoc
 
 from test import TestBase
@@ -495,9 +493,11 @@ class TestPs1ATrapWrittenInASubexpressionGuardsThatSubexpression(TestBase):
     and `$(trap { continue }); [int]'a'; Write-Host 'after'` writes nothing at all, so the same
     handler guards no part of the block the bracket is written in.
 
-    The control-flow builder descends into neither bracket, so it places no node for such a `trap`
-    and none for the statements it stands beside. Only the second half of the measurement survives
-    that, and it survives for the wrong reason: the handler is invisible rather than out of scope.
+    The reader reads the sub-statement graph, so it places the `trap` and the statements it stands
+    beside: a raise inside the bracket is offered to the handler written among them, and a raise
+    outside the bracket is offered to no trap written inside one. Both halves of the measurement hold
+    for the reason the measurement gives — the handler's scope is the bracket — rather than the second
+    surviving only because the handler was invisible.
     """
 
     def _bracket(self, source: str) -> tuple[Ps1TrapStatement, Statement, Ps1FaultReach]:
@@ -511,12 +511,10 @@ class TestPs1ATrapWrittenInASubexpressionGuardsThatSubexpression(TestBase):
             self.fail('the bracket does not open with a trap')
         return trap, raise_site, reach
 
-    @unittest.expectedFailure
     def test_a_raise_in_a_subexpression_is_offered_to_the_trap_written_beside_it(self):
         trap, raise_site, reach = self._bracket(_TRAP_IN_A_SUBEXPRESSION)
         self.assertEqual(reach.routing_at(raise_site), Ps1FaultRouting((trap,), False))
 
-    @unittest.expectedFailure
     def test_a_raise_in_an_array_expression_is_offered_to_the_trap_written_beside_it(self):
         trap, raise_site, reach = self._bracket(_TRAP_IN_AN_ARRAY_EXPRESSION)
         self.assertEqual(reach.routing_at(raise_site), Ps1FaultRouting((trap,), False))
@@ -552,6 +550,31 @@ class TestPs1TheBracketFixturesHoldTheShapeTheirPinsAssume(TestBase):
             {source: self._which_statements_are_traps(source) for source in sources},
             {source: [[True, False]] for source in sources},
         )
+
+
+class TestPs1TheReaderPlacesBracketInternalStatementsWithoutATrapToKeep(TestBase):
+    """
+    The reader offers a bracket-written raise to a `trap` beside it because it reads one sub-statement
+    graph, not because a `trap` makes it descend. A `$( )` holding no handler at all has its inner
+    statements placed just the same: `routing_at` returns a routing that guards them for nothing, and
+    `points_in` over the statement the bracket sits in reaches them.
+    """
+
+    def _bracket_of(self, source: str) -> tuple[Ps1Script, Ps1SubExpression, Ps1FaultReach]:
+        tree, reach = _model(source)
+        bracket = next(
+            node for node in tree.walk_in_order()
+            if isinstance(node, Ps1SubExpression)
+        )
+        return tree, bracket, reach
+
+    def test_a_bracket_internal_statement_with_no_handler_is_placed_and_guarded_by_nothing(self):
+        _, bracket, reach = self._bracket_of("$x = $('a'; 'b')")
+        self.assertEqual(reach.routing_at(bracket.body[1]), Ps1FaultRouting((), False))
+
+    def test_points_in_the_statement_holding_the_bracket_reach_the_bracket_internals(self):
+        tree, bracket, reach = self._bracket_of("$x = $('a'; 'b')")
+        self.assertLessEqual(set(bracket.body), set(reach.points_in(tree.body[0])))
 
 
 class TestPs1ACommandToldToStopEndsTheScriptHoweverItIsTold(TestBase):

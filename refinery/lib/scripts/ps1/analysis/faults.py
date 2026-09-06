@@ -474,18 +474,17 @@ class Ps1FaultReach:
     by the graph the builder already wired, so this needs no semantic model, no call graph and no
     world. It is a view rather than a solver — every answer is one walk over the exceptional edges,
     memoized per node for the life of the model, and the model itself is discarded whenever the tree
-    moves. The trap-removal transpose reads one further graph — the same script at the sub-statement
-    granularity `refinery.lib.scripts.ps1.analysis.cfg.build_control_flow_model` draws with
-    `descend`, built here from this reader's own root on first demand — so that a soft error stepping
-    over inside a `$( )` or `@( )` is a path it can read. It builds that itself rather than taking it
-    from a caller, so no caller can hand it a reader that silently cannot see the step-over and
-    removes a load-bearing trap.
+    moves. The graph it reads is the sub-statement one
+    `refinery.lib.scripts.ps1.analysis.cfg.build_control_flow_model` draws with `descend`, so that a
+    soft error stepping over inside a `$( )` or `@( )` — and a `trap` written among those inner
+    statements — is a point it places rather than detail hidden in the one node the coarse graph
+    gives the whole statement. It draws that itself from its own root on first demand, so no caller
+    can hand it a graph too coarse to see the step-over and remove a load-bearing trap.
     """
 
     def __init__(self, control_flow: ControlFlowModel):
-        self._control_flow = control_flow
-        self._fine: ControlFlowModel | None = None
-        self._descendable: bool | None = None
+        self._given = control_flow
+        self._model: ControlFlowModel | None = None
         self._forward: dict[int, Ps1FaultRouting] = {}
         self._backward: dict[int, bool] = {}
         self._handled: set[int] | None = None
@@ -493,6 +492,26 @@ class Ps1FaultReach:
         self._stopping: bool | None = None
         self._strict: bool | None = None
         self._strict_v2: bool | None = None
+
+    @property
+    def _control_flow(self) -> ControlFlowModel:
+        """
+        The one graph every question is read off, descended so that a `$( )` or `@( )` shows its
+        inner statements as points of their own. Built once from this reader's own root — the tree
+        the model passed to the constructor was drawn over — and only where the script writes such a
+        bracket at all: a script that writes none draws an identical graph under `descend`, which
+        expands only those constructs, so the passed model is the descended one already and is reused
+        unchanged. The empty model a caller may construct owns no root and is likewise returned as it
+        is.
+        """
+        if self._model is None:
+            root = self._script
+            self._model = self._given
+            if isinstance(root, Ps1Script) and any(
+                isinstance(node, STATEMENT_LIST_EXPRESSIONS) for node in root.walk()
+            ):
+                self._model = build_control_flow_model(root, descend=True)
+        return self._model
 
     def routing_at(self, node: Node) -> Ps1FaultRouting | None:
         """
@@ -691,40 +710,6 @@ class Ps1FaultReach:
             return True
         return self._observed_from(graph, fallback)
 
-    def _fine_model(self) -> ControlFlowModel | None:
-        """
-        The finer control-flow graph the trap-removal transpose reads, built once on first demand
-        from this reader's own root — the same tree the coarse model was built over, redrawn with
-        `descend`. `None` only where the graphs place no script at all (an empty model), which reaches
-        no trap to weigh. Building it here rather than taking it from a caller is what removes the
-        blind reader: there is no way to construct one that cannot see the step-over.
-        """
-        if self._fine is None:
-            root = self._script
-            if isinstance(root, Ps1Script):
-                self._fine = build_control_flow_model(root, descend=True)
-        return self._fine
-
-    def _has_a_descendable_soft_source(self) -> bool:
-        """
-        Whether the script writes a soft-error source inside a `STATEMENT_LIST_EXPRESSIONS` construct
-        anywhere. A soft raiser standing at statement level steps over to the same statement a
-        resuming `trap` lands on, so it never makes the trap load bearing; only one inside such a
-        construct has a local step-over that differs from where the trap resumes. The finer graph is
-        therefore worth building only where this holds, which the common `trap { continue }` over a
-        bare cast or division does not — read before `_fine_model` so that shape pays for no second
-        whole-script graph.
-        """
-        if self._descendable is None:
-            root = self._script
-            self._descendable = root is not None and any(
-                is_soft_error_source(statement)
-                for node in root.walk()
-                if isinstance(node, STATEMENT_LIST_EXPRESSIONS)
-                for statement in node.body
-            )
-        return self._descendable
-
     def _soft_step_over_is_observed(self, handler: Node) -> bool:
         """
         Whether removing a resuming `trap` changes what runs because it catches a
@@ -732,20 +717,17 @@ class Ps1FaultReach:
 
         A failed cast inside `$( )` steps over to the next statement *within* the subexpression, and
         the subexpression then yields that value; the trap instead resumes past the whole statement
-        the `$( )` sits in. Where those two land differently the trap is load-bearing, and the coarse
-        graph cannot tell them apart because the whole statement is one node there. Read on the finer
-        graph, the raiser has both edges: a `NORMAL` one to its local step-over and a
-        `RESUMPTION_FORWARD` one to the slot the trap resumes at. Existential over the soft raisers
-        the handler catches, because one redirected raiser is enough to keep the trap; equal
-        successors share all downstream behaviour, so this only ever keeps a trap — never removes a
-        load-bearing one — which is the sound direction for a may-analysis.
+        the `$( )` sits in. Where those two land differently the trap is load-bearing, and a coarse
+        graph could not tell them apart because the whole statement is one node there. On the
+        sub-statement graph this reader reads, the raiser has both edges: a `NORMAL` one to its local
+        step-over and a `RESUMPTION_FORWARD` one to the slot the trap resumes at. A soft raiser
+        standing at statement level has those two edges land on the same slot, so it never keeps the
+        trap; only one inside a `$( )` or `@( )` can differ. Existential over the soft raisers the
+        handler catches, because one redirected raiser is enough to keep the trap; equal successors
+        share all downstream behaviour, so this only ever keeps a trap — never removes a load-bearing
+        one — which is the sound direction for a may-analysis.
         """
-        if not self._has_a_descendable_soft_source():
-            return False
-        fine = self._fine_model()
-        if fine is None:
-            return False
-        located = fine.locate(handler)
+        located = self._control_flow.locate(handler)
         if located is None or located[1].element is not handler:
             return False
         graph, start = located
@@ -829,11 +811,13 @@ class Ps1FaultReach:
     @property
     def _script(self) -> Node | None:
         """
-        The tree the graphs were built over, read off a graph's owner rather than taken as an
-        argument: a graph owner is a node of that tree, and a whole-script fact has to be asked of
-        the whole script rather than of the statements the graphs happen to place.
+        The tree the graphs were built over, read off the passed model's owner rather than taken as
+        an argument: a graph owner is a node of that tree, and a whole-script fact has to be asked of
+        the whole script rather than of the statements the graphs happen to place. It reads the model
+        the constructor was handed, not the descended one `_control_flow` derives, so the root the
+        descended build needs is available without asking the build for it.
         """
-        for graph in self._control_flow.graphs.values():
+        for graph in self._given.graphs.values():
             return tree_root(graph.owner)
         return None
 
@@ -955,8 +939,9 @@ class Ps1FaultReach:
 
 def build_fault_reach(control_flow: ControlFlowModel) -> Ps1FaultReach:
     """
-    The `Ps1FaultReach` over one script's control-flow graphs. The finer graph the trap-removal
-    transpose also reads is drawn by the reader itself from the same root, so nothing is passed here
-    but the coarse model.
+    The `Ps1FaultReach` over one script. The reader reads its own root off *control_flow* and draws
+    the sub-statement graph it answers from there, so the coarse model is passed only to locate the
+    root — and reused unchanged for a script that writes no `$( )` or `@( )`, whose graph is the same
+    under `descend`.
     """
     return Ps1FaultReach(control_flow)
