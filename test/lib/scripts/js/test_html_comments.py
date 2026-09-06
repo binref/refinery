@@ -22,15 +22,13 @@ from __future__ import annotations
 
 import unittest
 
-from typing import Iterable
-
 from test import TestBase
 from test.lib.scripts.js.analysis.differential import (
     behavior,
     node_executable,
     node_reads_as_a_program,
 )
-from test.lib.scripts.js.ledger import folded, printed, prints, well_formed
+from test.lib.scripts.js.ledger import each_well_formed, folded, printed, prints
 
 from refinery.lib.scripts.js.parser import JsParser
 from refinery.lib.scripts.js.strict import StrictViolation, collect_strict_violations
@@ -62,12 +60,13 @@ A_FILE_HOLDING_A_COMMENT_A_STATEMENT_CARRIES = {
 #: A file holding a comment that no statement carries: one at the end of the file, and one leading
 #: the body of a clause rather than a statement of a list. The parser drops each, which changes
 #: nothing a script prints and is what
-#: `test.lib.scripts.js.test_unfixed_defects.TestCommentWithNoFollowingStatement` pins.
+#: `test.lib.scripts.js.test_unfixed_defects.TestCommentWithNoFollowingStatement` pins; the lexer
+#: records the delimiter all the same, so the module rule reads it.
 A_FILE_HOLDING_A_COMMENT_NO_STATEMENT_CARRIES = {
     'console.log(1); <!-- note'                                 : prints('1'),
     'console.log(1);\n<!--'                                     : prints('1'),
     'if (1) <!-- c\nconsole.log(5);'                            : prints('5'),
-    'console.log(1); --> note console.log(2);'        : prints('1', '2'),
+    'console.log(1);\n--> note'                                   : prints('1'),
 }
 
 #: A file spelling the characters of a delimiter where they are no delimiter, mapped to what Node
@@ -139,30 +138,24 @@ class TestWhatNodeMakesOfTheTwoDelimiters(TestBase):
 
 class TestTheVerdictAnswersAsNodeDoes(TestBase):
 
-    @staticmethod
-    def _well_formed(programs: Iterable[str]) -> dict[str, bool]:
-        return {program: well_formed(program) for program in programs}
-
     def test_a_file_holding_a_comment_is_a_program(self):
         rows = _every_file_holding_a_comment()
-        self.assertEqual(self._well_formed(rows), {source: True for source in rows})
+        self.assertEqual(each_well_formed(rows), {source: True for source in rows})
 
     def test_a_file_spelling_no_comment_is_a_program(self):
         rows = A_FILE_SPELLING_THE_CHARACTERS_WHERE_THEY_OPEN_NO_COMMENT
-        self.assertEqual(self._well_formed(rows), {source: True for source in rows})
+        self.assertEqual(each_well_formed(rows), {source: True for source in rows})
 
     def test_a_closer_behind_a_statement_on_its_line_is_no_program(self):
         rows = A_FILE_NODE_REFUSES_OVER_A_MISPLACED_CLOSER
-        self.assertEqual(self._well_formed(rows), {source: False for source in rows})
+        self.assertEqual(each_well_formed(rows), {source: False for source in rows})
 
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestAFileKeepsWhatItPrints(TestBase):
     """
     What each file prints is what the host prints for it, and the text the printer hands back has
-    to print the same, as does the text the deobfuscator hands back. `<!--` read as two operators
-    left text the host refused outright; `-->` read as a decrement left a program that printed the
-    output ahead of the delimiter and then threw a `ReferenceError` over the word behind it.
+    to print the same, as does the text the deobfuscator hands back.
     """
 
     def test_a_file_holding_a_comment_prints_the_same_through_printer_and_deobfuscator(self):
@@ -193,22 +186,30 @@ class TestPrintingAFileHoldingACommentIsIdempotent(TestBase):
 class TestTheCollectorReportsTheDelimitersUnderTheModuleGoal(TestBase):
     """
     A module refuses both delimiters and a script reads them, so the one rule the collector has
-    about them is reported only when the tree is read as module code, once per statement such a
-    comment leads, and about nothing that spells the characters where they open no comment.
+    about them is reported only when the tree is read as module code, once per file at the first
+    delimiter the lexer read, whether or not a statement carries the comment, and about nothing
+    that spells the characters where they open no comment.
     """
 
-    def test_every_file_holding_a_comment_a_statement_carries_is_reported_on_as_a_module(self):
-        rows = A_FILE_HOLDING_A_COMMENT_A_STATEMENT_CARRIES
+    def test_every_file_holding_a_comment_is_reported_on_as_a_module(self):
+        rows = _every_file_holding_a_comment()
         self.assertEqual(
-            {source: set(the_module_rule_reported_in(source)) for source in rows},
-            {source: {'html-comment'} for source in rows},
+            {source: the_module_rule_reported_in(source) for source in rows},
+            {source: ['html-comment'] for source in rows},
         )
 
-    def test_a_comment_leading_a_statement_is_reported_at_that_statement(self):
-        source = 'console.log(1);\n--> note\nconsole.log(2);'
+    def test_the_first_delimiter_is_reported_where_it_stands(self):
+        rows = {
+            'console.log(1);\n--> note\nconsole.log(2);' : 16,
+            '<!-- a\n--> b\nconsole.log(1);'             : 0,
+            'console.log(1); <!-- note'                  : 16,
+        }
         self.assertEqual(
-            collect_strict_violations(JsParser(source).parse(), module=True),
-            [StrictViolation(source.rindex('console'), 'html-comment')],
+            {
+                source: collect_strict_violations(JsParser(source).parse(), module=True)
+                for source in rows
+            },
+            {source: [StrictViolation(offset, 'html-comment')] for source, offset in rows.items()},
         )
 
     def test_nothing_is_reported_about_a_file_spelling_no_comment(self):

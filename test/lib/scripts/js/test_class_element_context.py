@@ -25,25 +25,24 @@ from __future__ import annotations
 
 import unittest
 
-from typing import Iterable, Sequence
-
 from test import TestBase
 from test.lib.scripts.js.analysis.differential import (
-    JsEvaluation,
     behavior,
-    completion_values,
     node_executable,
 )
 from test.lib.scripts.js.corpus import SNIPPETS
-from test.lib.scripts.js.ledger import folded, printed, prints, well_formed
-from test.lib.scripts.js.test_directive_prologue import NOT_A_PROGRAM
+from test.lib.scripts.js.ledger import each_well_formed, folded, printed, prints
 from test.lib.scripts.js.test_parameter_grammar import (
     A_FUNCTION_EXPRESSION_NAME_ITS_OWN_KIND_LEAVES_ALONE,
     A_FUNCTION_EXPRESSION_NAME_ONLY_THE_ENCLOSING_KIND_RESERVES,
     THE_SAME_BINDING_INSIDE_A_PLAIN_FUNCTION,
+    every_one_of,
+    refused,
+    reported,
 )
 
 from refinery.lib.scripts.js.model import (
+    AwaitReading,
     JsAwaitExpression,
     JsForOfStatement,
     JsIdentifier,
@@ -52,7 +51,6 @@ from refinery.lib.scripts.js.model import (
     names_a_property,
 )
 from refinery.lib.scripts.js.parser import JsParser
-from refinery.lib.scripts.js.strict import collect_strict_violations
 
 #: A class element binding or referring to a word its own context refuses, written so that the
 #: word stands where a name stands. Node refuses every one of these files, and the collector
@@ -160,63 +158,39 @@ A_CLASS_ELEMENT_THAT_PRINTS = {
         prints('7'),
 }
 
-#: What the parser must have read each spelling of the two words as, in terms of the context the
-#: model answers for the node: an `await` operator stands only where the model reads the operator,
-#: a `for await` head only where it does not refuse the word, and a name only where it is one.
-THE_READING_THE_TREE_MUST_STAND_IN = {
-    'await operator' : 'OPERATOR',
-    'for await'      : 'OPERATOR',
-    'await name'     : 'NAME',
-    'yield operator' : 'True',
-    'yield name'     : 'False',
-}
+#: The kinds of thing the parser reads a spelling of `await` or `yield` as. Each stands only where
+#: the context the model answers for its node reads it that way: an `await` operator where the
+#: model reads the operator, a `for await` head where the model reads the head, and a name where
+#: the word is one.
+THE_KINDS_OF_READING = frozenset({
+    'await operator',
+    'for await',
+    'await name',
+    'yield operator',
+    'yield name',
+})
 
 
-def _refused(programs: Sequence[str]) -> dict[str, bool]:
-    """
-    Whether Node refuses to read each of *programs* as a program at all. Each is compiled and run
-    in a context of its own, so a refusal is a fact about that one text.
-    """
-    return {
-        program: value == NOT_A_PROGRAM
-        for program, value in zip(programs, completion_values(programs, JsEvaluation.SCRIPT))
-    }
-
-
-def _reported(programs: Iterable[str], *, strict: bool) -> dict[str, bool]:
-    return {
-        program: bool(collect_strict_violations(JsParser(program).parse(), strict=strict))
-        for program in programs
-    }
-
-
-def _every_one_of(programs: Iterable[str], answer: bool) -> dict[str, bool]:
-    return {program: answer for program in programs}
-
-
-def _well_formed(programs: Iterable[str]) -> dict[str, bool]:
-    return {program: well_formed(program) for program in programs}
-
-
-def _readings_taken_in(source: str) -> list[tuple[str, str]]:
+def _readings_taken_in(source: str) -> list[tuple[str, bool]]:
     """
     Every spelling of `await` and `yield` in the tree of *source*, as the kind of thing the parser
-    read it as and the reading the model answers for its position, in tree order.
+    read it as and whether the context the model answers for its position reads it that way, in
+    tree order.
     """
-    readings: list[tuple[str, str]] = []
+    readings: list[tuple[str, bool]] = []
     for node in JsParser(source).parse().walk():
         context = code_context_at(node)
         if isinstance(node, JsAwaitExpression):
-            readings.append(('await operator', context.await_reading.name))
+            readings.append(('await operator', context.await_reading is AwaitReading.OPERATOR))
         elif isinstance(node, JsForOfStatement) and node.is_await:
-            readings.append(('for await', context.await_reading.name))
+            readings.append(('for await', context.reads_for_await))
         elif isinstance(node, JsYieldExpression):
-            readings.append(('yield operator', str(context.yield_is_operator)))
+            readings.append(('yield operator', context.yield_is_operator))
         elif isinstance(node, JsIdentifier) and not names_a_property(node):
             if node.name == 'await':
-                readings.append(('await name', context.await_reading.name))
+                readings.append(('await name', context.await_reading is AwaitReading.NAME))
             elif node.name == 'yield':
-                readings.append(('yield name', str(context.yield_is_operator)))
+                readings.append(('yield name', not context.yield_is_operator))
     return readings
 
 
@@ -225,15 +199,15 @@ class TestWhatNodeMakesOfAClassElementsOwnCode(TestBase):
 
     def test_node_refuses_every_element_naming_a_word_it_refuses(self):
         rows = A_CLASS_ELEMENT_NAMING_A_WORD_IT_REFUSES
-        self.assertEqual(_refused(rows), _every_one_of(rows, True))
+        self.assertEqual(refused(rows), every_one_of(rows, True))
 
     def test_node_refuses_every_element_with_a_reading_it_does_not_have(self):
         rows = A_CLASS_ELEMENT_WITH_A_READING_IT_DOES_NOT_HAVE
-        self.assertEqual(_refused(rows), _every_one_of(rows, True))
+        self.assertEqual(refused(rows), every_one_of(rows, True))
 
     def test_node_reads_every_element_read_as_the_enclosure_would(self):
         rows = A_CLASS_ELEMENT_NODE_READS
-        self.assertEqual(_refused(rows), _every_one_of(rows, False))
+        self.assertEqual(refused(rows), every_one_of(rows, False))
 
     def test_node_prints_what_each_printing_file_is_recorded_as_printing(self):
         rows = A_CLASS_ELEMENT_THAT_PRINTS
@@ -248,15 +222,15 @@ class TestTheVerdictAnswersAsNodeDoes(TestBase):
 
     def test_an_element_naming_a_word_it_refuses_is_no_program(self):
         rows = A_CLASS_ELEMENT_NAMING_A_WORD_IT_REFUSES
-        self.assertEqual(_well_formed(rows), _every_one_of(rows, False))
+        self.assertEqual(each_well_formed(rows), every_one_of(rows, False))
 
     def test_an_element_with_a_reading_it_does_not_have_is_no_program(self):
         rows = A_CLASS_ELEMENT_WITH_A_READING_IT_DOES_NOT_HAVE
-        self.assertEqual(_well_formed(rows), _every_one_of(rows, False))
+        self.assertEqual(each_well_formed(rows), every_one_of(rows, False))
 
     def test_an_element_read_as_the_enclosure_would_is_a_program(self):
         rows = A_CLASS_ELEMENT_NODE_READS
-        self.assertEqual(_well_formed(rows), _every_one_of(rows, True))
+        self.assertEqual(each_well_formed(rows), every_one_of(rows, True))
 
     def test_await_in_an_instance_initializer_is_the_name_it_was_written_as(self):
         source = 'async function f() { class C { p = await; } }'
@@ -274,17 +248,17 @@ class TestTheCollectorReportsWhereTheTreeSpellsTheRefusedWord(TestBase):
 
     def test_it_reports_on_every_element_naming_a_word_it_refuses_under_a_sloppy_seed(self):
         rows = A_CLASS_ELEMENT_NAMING_A_WORD_IT_REFUSES
-        self.assertEqual(_reported(rows, strict=False), _every_one_of(rows, True))
+        self.assertEqual(reported(rows, strict=False), every_one_of(rows, True))
 
     def test_it_reports_on_every_one_of_them_under_a_strict_seed(self):
         rows = A_CLASS_ELEMENT_NAMING_A_WORD_IT_REFUSES
-        self.assertEqual(_reported(rows, strict=True), _every_one_of(rows, True))
+        self.assertEqual(reported(rows, strict=True), every_one_of(rows, True))
 
     def test_it_reports_nothing_about_an_element_node_reads_under_either_seed(self):
         rows = A_CLASS_ELEMENT_NODE_READS
         self.assertEqual(
             {source: (sloppy, strict) for (source, sloppy), strict in zip(
-                _reported(rows, strict=False).items(), _reported(rows, strict=True).values()
+                reported(rows, strict=False).items(), reported(rows, strict=True).values()
             )},
             {source: (False, False) for source in rows},
         )
@@ -331,14 +305,11 @@ class TestTheParserReadsEachWordAsTheModelSaysItStands(TestBase):
         readings = {source: _readings_taken_in(source) for source in self._programs()}
         self.assertEqual(
             readings,
-            {
-                source: [(kind, THE_READING_THE_TREE_MUST_STAND_IN[kind]) for kind, _ in taken]
-                for source, taken in readings.items()
-            },
+            {source: [(kind, True) for kind, _ in taken] for source, taken in readings.items()},
         )
 
     def test_the_corpus_spells_every_kind_of_reading(self):
         self.assertEqual(
             {kind for taken in map(_readings_taken_in, self._programs()) for kind, _ in taken},
-            set(THE_READING_THE_TREE_MUST_STAND_IN),
+            THE_KINDS_OF_READING,
         )

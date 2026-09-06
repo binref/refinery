@@ -5,6 +5,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from fnmatch import fnmatchcase
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from refinery.lib.scripts.js.model import JsScript
 
 
 @dataclass(frozen=True)
@@ -48,6 +52,16 @@ def module_execution(options: object | None) -> bool:
     transformer run standalone, or with no options attached — defaults to the script model.
     """
     return isinstance(options, DeobfuscationOptions) and options.module
+
+
+def runs_as_module(options: object | None, root: JsScript) -> bool:
+    """
+    Whether the file at *root* runs under the module execution model: *options* selects it, or the
+    file spells module syntax, which no host loads as a script. Every reader of the model asks here,
+    so that no file is judged under the script model by one pass and under the module model by
+    another.
+    """
+    return module_execution(options) or root.module
 
 
 def is_host_entrypoint(options: object | None, name: str) -> bool:

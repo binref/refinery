@@ -281,47 +281,54 @@ HTML_OPEN_COMMENT = '<!--'
 HTML_CLOSE_COMMENT = '-->'
 
 
-def is_html_comment(comment: str) -> bool:
-    """
-    Whether *comment* is one of the two that script code reads and module code refuses (§B.1.1): a
-    comment opened by `<!--`, or by `-->` at the head of its line.
-    """
-    return comment.startswith((HTML_OPEN_COMMENT, HTML_CLOSE_COMMENT))
-
-
 @dataclass(frozen=True)
 class JsLexerState:
     """
     What a rewind has to put back. The position is not part of it, because a rewind always goes to
-    the start of a token the parser is already holding: it is the template nesting alone that no
-    longer follows from that offset once scanning has moved past it.
+    the start of a token the parser is already holding; what no longer follows from that offset
+    once scanning has moved past it is the template nesting, whether the scan stands at the head of
+    its line, and whether it has read an HTML-like comment yet.
     """
     template_depth: int
     brace_stack: tuple[int, ...]
+    line_head: bool
+    html_comment: int | None
 
 
 @dataclass
 class JsLexer:
     source: str
     pos: int = 0
+    html_comment: int | None = None
+    """
+    The offset of the first HTML-like comment delimiter the scan has read (§B.1.1): a `<!--`
+    anywhere, or a `-->` at the head of its line. Module code refuses both, and the parser carries
+    the fact onto the script it builds, since the comment such a delimiter opens may stand where no
+    statement of the tree carries it.
+    """
     _template_depth: int = 0
     _brace_stack: list[int] = field(default_factory=list)
     _line_head: bool = True
     """
     Whether nothing but whitespace and comments stands between the last line terminator and the
     scan position, which is the one place `-->` opens a comment rather than spelling a decrement
-    and a `>` (§B.1.1). It is not part of `JsLexerState`: a rewind resumes either where the scan
-    already stood or directly behind a regular expression literal, and `scan_regexp` accounts for
-    that token itself.
+    and a `>` (§B.1.1).
     """
 
     def capture(self) -> JsLexerState:
-        return JsLexerState(self._template_depth, tuple(self._brace_stack))
+        return JsLexerState(
+            self._template_depth,
+            tuple(self._brace_stack),
+            self._line_head,
+            self.html_comment,
+        )
 
     def rewind(self, pos: int, state: JsLexerState) -> None:
         self.pos = pos
         self._template_depth = state.template_depth
         self._brace_stack = list(state.brace_stack)
+        self._line_head = state.line_head
+        self.html_comment = state.html_comment
 
     def scan_regexp(self) -> JsToken | None:
         """
@@ -367,7 +374,7 @@ class JsLexer:
             self.pos += 1
         return self.pos > start
 
-    def _read_line_comment(self, opener_length: int = 2) -> str:
+    def _read_line_comment(self) -> str:
         """
         Consume a comment that runs to the end of its line: one opened by `//`, one opened by
         either HTML-like delimiter, and the `#!` line, which is one. The end is looked for at once
@@ -376,9 +383,15 @@ class JsLexer:
         """
         start = self.pos
         src = self.source
-        end = _LINE_TERMINATOR.search(src, self.pos + opener_length)
+        end = _LINE_TERMINATOR.search(src, start)
         self.pos = end.start() if end else len(src)
         return src[start:self.pos]
+
+    def _read_html_comment(self) -> JsToken:
+        start = self.pos
+        if self.html_comment is None:
+            self.html_comment = start
+        return JsToken(JsTokenKind.COMMENT, self._read_line_comment(), start)
 
     def _read_block_comment(self) -> tuple[str, bool]:
         start = self.pos
@@ -602,17 +615,10 @@ class JsLexer:
 
     def tokenize(self) -> Generator[JsToken, None, None]:
         """
-        Every token of the source in order, ending in `EOF`. The scan itself is `_scan`; this keeps
-        `_line_head` current over what it yields, since every token but a comment moves the scan
-        off the head of its line and only a line terminator puts it back there.
+        Every token of the source in order, ending in `EOF`. A line terminator puts the scan at the
+        head of a line and every token but a comment moves it off again, which is what decides
+        whether a `-->` opens a comment.
         """
-        for token in self._scan():
-            self._line_head = token.kind is JsTokenKind.NEWLINE or (
-                token.kind is JsTokenKind.COMMENT and self._line_head
-            )
-            yield token
-
-    def _scan(self) -> Generator[JsToken, None, None]:
         src = self.source
         length = len(src)
 
@@ -631,10 +637,12 @@ class JsLexer:
 
             if c == '\r' and self.pos + 1 < length and src[self.pos + 1] == '\n':
                 self.pos += 2
+                self._line_head = True
                 yield JsToken(JsTokenKind.NEWLINE, '\r\n', start)
                 continue
             if c in LINE_TERMINATORS:
                 self.pos += 1
+                self._line_head = True
                 yield JsToken(JsTokenKind.NEWLINE, c, start)
                 continue
 
@@ -642,20 +650,21 @@ class JsLexer:
                 text = self._read_line_comment()
                 yield JsToken(JsTokenKind.COMMENT, text, start)
                 continue
-            if src.startswith(HTML_OPEN_COMMENT, self.pos):
-                text = self._read_line_comment(len(HTML_OPEN_COMMENT))
-                yield JsToken(JsTokenKind.COMMENT, text, start)
+            if c2 == '<!' and src.startswith(HTML_OPEN_COMMENT, start):
+                yield self._read_html_comment()
                 continue
-            if self._line_head and src.startswith(HTML_CLOSE_COMMENT, self.pos):
-                text = self._read_line_comment(len(HTML_CLOSE_COMMENT))
-                yield JsToken(JsTokenKind.COMMENT, text, start)
+            if c2 == '--' and self._line_head and src.startswith(HTML_CLOSE_COMMENT, start):
+                yield self._read_html_comment()
                 continue
             if c2 == '/*':
                 text, has_newline = self._read_block_comment()
                 yield JsToken(JsTokenKind.COMMENT, text, start)
                 if has_newline:
+                    self._line_head = True
                     yield JsToken(JsTokenKind.NEWLINE, '', self.pos)
                 continue
+
+            self._line_head = False
 
             if c == "'":
                 text, terminated = self._read_string("'")

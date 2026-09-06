@@ -51,10 +51,8 @@ from refinery.lib.scripts.js.model import (
     JsConditionalExpression,
     JsContinueStatement,
     JsDoWhileStatement,
-    JsExportAllDeclaration,
     JsExportDefaultDeclaration,
     JsExportNamedDeclaration,
-    JsExportSpecifier,
     JsExpressionStatement,
     JsForInStatement,
     JsForOfStatement,
@@ -540,22 +538,18 @@ def is_use_position(node: JsIdentifier) -> bool:
     """
     Whether an identifier occupies a position where it reads or writes a value, as opposed to naming
     a property, a key, a label, or something across a module boundary. `names_a_property` answers
-    for the four positions that name a property; what is added here is the positions that name
-    something else the program cannot refer to — the name a module is re-exported under, a label,
-    either side of an import specifier, and an export specifier that names nothing local. The local
-    half of an export list without a `from` clause reads the binding it names, which is why an
-    engine refuses to link `export { a };` where nothing declares `a`; with the clause the same half
-    names a binding of the module the clause spells and nothing local at all. Where nothing renames,
-    one node fills both halves of the specifier, and that node is the local half and reads. Binding
-    sites are not excluded here; `SemanticModel.is_reference` is the binding-aware predicate that
-    also excludes them.
+    for every position that names what a value carries, the far side of a module boundary among
+    them; what is added here is the two positions that name something else the program cannot
+    refer to: a label, and the binding an import creates. The local half of an export list without
+    a `from` clause reads the binding it names, which is why an engine refuses to link
+    `export { a };` where nothing declares `a`; where nothing renames, one node fills both halves
+    of the specifier, and that node is the local half and reads. Binding sites are not excluded
+    here; `SemanticModel.is_reference` is the binding-aware predicate that also excludes them.
     """
     p = node.parent
     if p is None:
         return False
     if names_a_property(node):
-        return False
-    if isinstance(p, JsExportAllDeclaration) and p.exported is node:
         return False
     if isinstance(p, (JsBreakStatement, JsContinueStatement, JsLabeledStatement)) and p.label is node:
         return False
@@ -565,13 +559,6 @@ def is_use_position(node: JsIdentifier) -> bool:
         JsImportNamespaceSpecifier,
     )):
         return False
-    if isinstance(p, JsExportSpecifier):
-        declaration = p.parent
-        return (
-            p.local is node
-            and isinstance(declaration, JsExportNamedDeclaration)
-            and declaration.source is None
-        )
     return True
 
 

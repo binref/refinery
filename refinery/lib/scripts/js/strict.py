@@ -32,7 +32,7 @@ import enum
 from dataclasses import dataclass
 
 from refinery.lib.scripts import Node, Statement
-from refinery.lib.scripts.js.lexer import has_legacy_numeric_escape, is_html_comment
+from refinery.lib.scripts.js.lexer import has_legacy_numeric_escape
 from refinery.lib.scripts.js.model import (
     FUNCTION_NODES,
     SCRIPT_CONTEXT,
@@ -81,7 +81,6 @@ from refinery.lib.scripts.js.model import (
     JsVarKind,
     JsWithStatement,
     JsYieldExpression,
-    code_context_at,
     code_context_within,
     names_a_property,
     strip_parens,
@@ -102,9 +101,9 @@ class StrictViolation:
     initializer or static block are refused in *either* mode, so a caller that treats an empty
     result as "sloppy code is safe" is reading it right, and one that treats a non-empty result as
     "only strict code would refuse this" is not. Two more ask neither about the mode but about the
-    goal symbol: `await-in-module` records a name a module refuses to bind, and `html-comment` a
-    comment delimiter only script code has; both are reported only when the tree is read as module
-    code.
+    goal symbol: `await-in-module` records a name a module refuses to bind or to refer to, and
+    `html-comment` a comment delimiter only script code has; both are reported only when the tree
+    is read as module code.
     """
     offset: int
     rule: str
@@ -542,56 +541,38 @@ def _child_strictness(node: Node, strict: bool) -> bool:
     return strict
 
 
-def reserved_by_function_kind(node: Node) -> frozenset[str]:
+def _check_kind_reserved(node: Node, context: CodeContext, out: list[StrictViolation]) -> None:
     """
-    The names that may name nothing at *node*, because of the kind of function whose code *node* is.
-    Unlike the strict-mode reserved words this holds in either mode: `function* g(yield) {}` and
+    Report a name that may name nothing where it stands because of the kind of code it is: `await`
+    where it is the operator or refused outright, and `yield` where it is the operator. Unlike the
+    strict-mode reserved words this holds in either mode: `function* g(yield) {}` and
     `async function h(await) {}` are texts no engine reads, sloppy file or not.
 
-    Whose kind that is, `refinery.lib.scripts.js.model.code_context_within` decides. The region a
-    function reserves for is its own parameter list and its own body, and it stops at every function
-    written inside it — `function* g() { function h(yield) {} }` is a program, because `h`'s code
-    is `h`'s and not the generator's. An arrow is the exception in half: its parameters are still the
-    enclosing function's code and inherit the reservation, while its body is its own and does not,
-    so `(yield) => {}` inside a generator is refused and `() => { var yield = 1; }` is not. A class
-    field initializer and a static block are contexts of their own, and the static ones refuse
-    `await` in every position, whatever encloses the class.
+    Which context a name stands in, `refinery.lib.scripts.js.model.code_context_within` decides.
+    The region a function reserves for is its own parameter list and its own body, and it stops at
+    every function written inside it — `function* g() { function h(yield) {} }` is a program,
+    because `h`'s code is `h`'s and not the generator's. An arrow is the exception in half: its
+    parameters are still the enclosing function's code and inherit the reservation, while its body
+    is its own and does not, so `(yield) => {}` inside a generator is refused and
+    `() => { var yield = 1; }` is not. A class field initializer and a static block are contexts of
+    their own, and the static ones refuse `await` in every position, whatever encloses the class.
 
     A function's name is governed by one context and never by two, but which one depends on how the
-    function is written. A declaration's name is bound outside it and takes the enclosing context, so
-    `function* yield() {}` is read at the top level and refused inside a generator. An expression's
-    name is bound inside it and takes its own kind alone (§15.2.1, §15.5.1, §15.8.1), so
-    `x = (function* yield() {})` is refused while `function* g() { var f = function yield() {}; }` is
-    read.
+    function is written. A declaration's name is bound outside it and takes the enclosing context,
+    so `function* yield() {}` is read at the top level and refused inside a generator. An
+    expression's name is bound inside it and takes its own kind alone (§15.2.1, §15.5.1, §15.8.1),
+    so `x = (function* yield() {})` is refused while `function* g() { var f = function yield() {}; }`
+    is read.
     """
-    return reserved_names(code_context_at(node))
-
-
-def reserved_names(context: CodeContext) -> frozenset[str]:
-    """
-    The words `reserved_by_function_kind` answers with for code read under *context*.
-    """
-    reserved: set[str] = set()
-    if context.await_reading is not AwaitReading.NAME:
-        reserved.add('await')
-    if context.yield_is_operator:
-        reserved.add('yield')
-    return frozenset(reserved)
-
-
-_KIND_RESERVABLE = frozenset({'yield', 'await'})
-"""
-Every name any function kind reserves, which is what `reserved_names` can ever answer with. A name
-outside this set is reserved by no kind, so the context it stands in cannot change the answer.
-"""
-
-
-def _check_kind_reserved(node: Node, context: CodeContext, out: list[StrictViolation]) -> None:
-    if not isinstance(node, JsIdentifier) or node.name not in _KIND_RESERVABLE:
+    if not isinstance(node, JsIdentifier):
         return
-    if names_a_property(node):
+    if node.name == 'await':
+        reserved = context.await_reading is not AwaitReading.NAME
+    elif node.name == 'yield':
+        reserved = context.yield_is_operator
+    else:
         return
-    if node.name in reserved_names(context):
+    if reserved and not names_a_property(node):
         out.append(StrictViolation(node.offset, 'reserved-by-function-kind', node.name))
 
 
@@ -663,11 +644,11 @@ def _flag_name(ident: JsIdentifier, strict: bool, module: bool, out: list[Strict
     escapes denote, which is what ECMA-262 states these rules over: a StringValue is asked for, not
     the text that spelled it.
 
-    Two of the rules are strict-mode ones, and one is a module one. `await` names nothing a module
-    binds — §13.1.1 refuses it wherever the goal symbol is Module, in every function nesting and
-    async code or not, where a script under `"use strict"` binds it freely — so the word is
-    module-reserved and not strict-reserved, and is reported under *module* rather than under
-    *strict*.
+    Two of the rules are strict-mode ones, and one is a module one. `await` names nothing in a
+    module — §13.1.1 refuses it as a binding, a reference and a label wherever the goal symbol is
+    Module, in every function nesting and async code or not, where a script under `"use strict"`
+    binds it freely — so the word is module-reserved and not strict-reserved, and is reported under
+    *module* rather than under *strict*, here for the bindings and in `_check_names` for the rest.
 
     V8 asks the text at two of the strict positions this reaches. `function f(ev\\u0061l) {}` and
     `argum\\u0065nts = 1` are accepted there under strict where `function f(eval) {}` and
@@ -804,6 +785,8 @@ def _check_names(
             return
         if cur_strict and node.name in _STRICT_RESERVED:
             out.append(StrictViolation(node.offset, 'reserved-word', node.name))
+        elif module and node.name == 'await':
+            out.append(StrictViolation(node.offset, 'await-in-module', node.name))
         elif node.name == 'arguments' and context.arguments_reserved:
             out.append(StrictViolation(node.offset, 'arguments-in-class-initializer', node.name))
 
@@ -811,14 +794,12 @@ def _check_names(
 def _check_html_comment(node: Node, module: bool, out: list[StrictViolation]) -> None:
     """
     An HTML-like comment is script grammar alone (§B.1.1): a module refuses `<!--` anywhere and
-    `-->` at the head of a line, so a tree read as module code is reported on at every statement
-    such a comment leads.
+    `-->` at the head of a line. The lexer records the first delimiter it read on the script,
+    since the comment one opens may stand where no node of the tree carries it, so a tree read as
+    module code is reported on once, at that delimiter.
     """
-    if not module:
-        return
-    for comment in node.leading_comments:
-        if is_html_comment(comment):
-            out.append(StrictViolation(node.offset, 'html-comment'))
+    if module and isinstance(node, JsScript) and node.html_comment is not None:
+        out.append(StrictViolation(node.html_comment, 'html-comment'))
 
 
 def collect_strict_violations(
@@ -836,16 +817,19 @@ def collect_strict_violations(
 
     *module* asks the tree as though its goal symbol were Module, which unlike strictness is a fact of
     the whole file and never reset by a nested region: it adds the two rules a module carries beyond
-    a strict script, that `await` names nothing a binding may be and that the HTML-like comment
-    delimiters open no comment. It is off by default, since a tree read on its own is a Script; a
-    caller weighing text against a module destination seeds it True.
+    a strict script, that `await` names nothing, bound or referred to, and that the HTML-like
+    comment delimiters open no comment. It is off by default, since a tree read on its own is a
+    Script; a caller weighing text against a module destination seeds it True.
 
     *context* is what the code at *node* reads `await`, `yield` and `arguments` as, and every
     region below derives its own from it through
     `refinery.lib.scripts.js.model.code_context_within`. A tree read on its own stands at the top
-    level of a script; a caller weighing text against a splice site seeds the site's context, so
+    level of a file; a caller weighing text against a splice site seeds the site's context, so
     that a payload legal as a script is reported on where the site would refuse it — `arguments` in
     a class field initializer, `await` in a static block, `yield` in a generator body.
+
+    A node the parser stores under two fields of its parent — a shorthand property's key and
+    value, the local and exported halves of `export { x }` — is one node and is visited once.
 
     Not every rule asks about the mode. A Use Strict Directive under a parameter list that is not
     simple, a repeated name where the grammar requires a unique list, the arity of an accessor, a
@@ -859,9 +843,13 @@ def collect_strict_violations(
     """
     out: list[StrictViolation] = []
     handled: set[int] = set()
+    visited: set[int] = set()
     stack: list[tuple[Node, bool, CodeContext]] = [(node, strict, context)]
     while stack:
         current, current_strict, current_context = stack.pop()
+        if id(current) in visited:
+            continue
+        visited.add(id(current))
         child_strict = _child_strictness(current, current_strict)
         _check_node(current, current_strict, out)
         _check_kind_reserved(current, current_context, out)

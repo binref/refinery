@@ -16,7 +16,7 @@ import inspect
 import unittest
 
 from enum import Enum, auto
-from typing import Callable, Mapping, NamedTuple
+from typing import Callable, Iterable, Mapping, NamedTuple
 
 from test.lib.scripts.js.analysis.differential import (
     behavior,
@@ -42,6 +42,13 @@ def a_program(text: str) -> str:
 
 def well_formed(source: str) -> bool:
     return is_well_formed(JsParser(source).parse())
+
+
+def each_well_formed(programs: Iterable[str]) -> dict[str, bool]:
+    """
+    `well_formed` asked of each of *programs*, keyed by the program.
+    """
+    return {program: well_formed(program) for program in programs}
 
 
 def printed(source: str) -> str:

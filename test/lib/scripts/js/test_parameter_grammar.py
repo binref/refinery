@@ -36,13 +36,13 @@ from test.lib.scripts.js.analysis.differential import (
     completion_values,
     node_executable,
 )
+from test.lib.scripts.js.ledger import each_well_formed
 from test.lib.scripts.js.test_directive_prologue import (
     A_FUNCTION_WRITTEN_AS,
     A_PARAMETER_LIST,
     NOT_A_PROGRAM,
 )
 
-from refinery.lib.scripts import is_well_formed
 from refinery.lib.scripts.js.model import (
     JsArrowFunctionExpression,
     JsFunctionDeclaration,
@@ -400,7 +400,7 @@ def _under_a_strict_seed(source: str) -> str:
     return F"'use strict';\n{source}"
 
 
-def _refused(programs: Sequence[str]) -> dict[str, bool]:
+def refused(programs: Sequence[str]) -> dict[str, bool]:
     """
     Whether Node refuses to read each of *programs* as a program at all. Each is compiled and run in
     a context of its own, so a refusal is a fact about that one text.
@@ -411,7 +411,7 @@ def _refused(programs: Sequence[str]) -> dict[str, bool]:
     }
 
 
-def _reported(programs: Iterable[str], *, strict: bool) -> dict[str, bool]:
+def reported(programs: Iterable[str], *, strict: bool) -> dict[str, bool]:
     """
     Whether `refinery.lib.scripts.js.strict.collect_strict_violations` reports anything at all about
     each of *programs* under the seeded mode.
@@ -423,10 +423,10 @@ def _reported(programs: Iterable[str], *, strict: bool) -> dict[str, bool]:
 
 
 def _refused_under_a_strict_seed(programs: Iterable[str]) -> dict[str, bool]:
-    return _refused([_under_a_strict_seed(program) for program in programs])
+    return refused([_under_a_strict_seed(program) for program in programs])
 
 
-def _every_one_of(programs: Iterable[str], answer: bool) -> dict[str, bool]:
+def every_one_of(programs: Iterable[str], answer: bool) -> dict[str, bool]:
     return {program: answer for program in programs}
 
 
@@ -446,12 +446,12 @@ class TestWhereNodeRefusesARepeatedParameterName(TestBase):
 
     def test_node_refuses_each_position_the_corpus_records(self):
         rows = _a_repeated_name_in_every_position()
-        self.assertEqual(_refused(list(rows)), rows)
+        self.assertEqual(refused(list(rows)), rows)
 
     def test_a_strict_file_refuses_a_repeated_name_in_every_position(self):
         rows = _a_repeated_name_in_every_position()
         strict = [_under_a_strict_seed(program) for program in rows]
-        self.assertEqual(_refused(strict), _every_one_of(strict, True))
+        self.assertEqual(refused(strict), every_one_of(strict, True))
 
     def test_node_reads_every_one_of_those_positions_with_no_name_repeated(self):
         rows = [
@@ -459,18 +459,18 @@ class TestWhereNodeRefusesARepeatedParameterName(TestBase):
             for position in A_FUNCTION_STANDING_AS.values()
             for params in A_PARAMETER_LIST
         ]
-        self.assertEqual(_refused(rows), _every_one_of(rows, False))
+        self.assertEqual(refused(rows), every_one_of(rows, False))
 
 
 class TestTheCollectorReportsARepeatedParameterNameWhereNodeDoes(TestBase):
 
     def test_it_reports_on_exactly_the_positions_a_sloppy_file_refuses(self):
         rows = _a_repeated_name_in_every_position()
-        self.assertEqual(_reported(rows, strict=False), rows)
+        self.assertEqual(reported(rows, strict=False), rows)
 
     def test_it_reports_on_every_position_under_a_strict_seed(self):
         rows = _a_repeated_name_in_every_position()
-        self.assertEqual(_reported(rows, strict=True), _every_one_of(rows, True))
+        self.assertEqual(reported(rows, strict=True), every_one_of(rows, True))
 
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
@@ -478,11 +478,11 @@ class TestWhichParameterListsAnAccessorMayBeWrittenWith(TestBase):
 
     def test_node_refuses_each_getter_the_corpus_records(self):
         rows = _every_list_in(A_GETTER_STANDING_AS.values(), A_LIST_A_GETTER_MAY_TAKE)
-        self.assertEqual(_refused(list(rows)), rows)
+        self.assertEqual(refused(list(rows)), rows)
 
     def test_node_refuses_each_setter_the_corpus_records(self):
         rows = _every_list_in(A_SETTER_STANDING_AS.values(), A_LIST_A_SETTER_MAY_TAKE)
-        self.assertEqual(_refused(list(rows)), rows)
+        self.assertEqual(refused(list(rows)), rows)
 
     def test_a_strict_file_refuses_and_reads_the_same_accessors(self):
         rows = {
@@ -499,18 +499,18 @@ class TestTheCollectorReportsAnAccessorsArityWhereNodeDoes(TestBase):
 
     def test_it_reports_on_exactly_the_getters_node_refuses(self):
         rows = _every_list_in(A_GETTER_STANDING_AS.values(), A_LIST_A_GETTER_MAY_TAKE)
-        self.assertEqual(_reported(rows, strict=False), rows)
+        self.assertEqual(reported(rows, strict=False), rows)
 
     def test_it_reports_on_exactly_the_setters_node_refuses(self):
         rows = _every_list_in(A_SETTER_STANDING_AS.values(), A_LIST_A_SETTER_MAY_TAKE)
-        self.assertEqual(_reported(rows, strict=False), rows)
+        self.assertEqual(reported(rows, strict=False), rows)
 
     def test_the_seeded_mode_moves_no_accessor(self):
         rows = {
             **_every_list_in(A_GETTER_STANDING_AS.values(), A_LIST_A_GETTER_MAY_TAKE),
             **_every_list_in(A_SETTER_STANDING_AS.values(), A_LIST_A_SETTER_MAY_TAKE),
         }
-        self.assertEqual(_reported(rows, strict=True), rows)
+        self.assertEqual(reported(rows, strict=True), rows)
 
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
@@ -518,11 +518,11 @@ class TestWhereADirectiveMayStandUnderAParameterList(TestBase):
 
     def test_node_refuses_a_body_that_declares_one_under_a_list_that_is_not_simple(self):
         rows = _every_body_under(A_LIST_THAT_IS_NOT_SIMPLE)
-        self.assertEqual(_refused(list(rows)), rows)
+        self.assertEqual(refused(list(rows)), rows)
 
     def test_node_reads_every_one_of_those_bodies_under_a_list_that_is_simple(self):
         rows = _every_body_under(A_LIST_THAT_IS_SIMPLE)
-        self.assertEqual(_refused(list(rows)), _every_one_of(rows, False))
+        self.assertEqual(refused(list(rows)), every_one_of(rows, False))
 
     def test_a_strict_file_refuses_the_same_bodies(self):
         rows = _every_body_under(A_LIST_THAT_IS_NOT_SIMPLE)
@@ -533,42 +533,42 @@ class TestWhereADirectiveMayStandUnderAParameterList(TestBase):
 
     def test_node_decides_each_accessor_the_corpus_records(self):
         rows = AN_ACCESSOR_HOLDING_THE_DIRECTIVE
-        self.assertEqual(_refused(list(rows)), dict(rows))
+        self.assertEqual(refused(list(rows)), dict(rows))
 
     def test_node_reads_an_arrow_whose_body_is_an_expression(self):
         rows = AN_ARROW_WHOSE_BODY_IS_AN_EXPRESSION
-        self.assertEqual(_refused(rows), _every_one_of(rows, False))
+        self.assertEqual(refused(rows), every_one_of(rows, False))
 
     def test_node_decides_each_nested_function_the_corpus_records(self):
         rows = A_FUNCTION_WRITTEN_INTO_ANOTHERS_PARAMETER_LIST
-        self.assertEqual(_refused(list(rows)), dict(rows))
+        self.assertEqual(refused(list(rows)), dict(rows))
 
 
 class TestTheCollectorReportsADirectiveWhereNodeRefusesOne(TestBase):
 
     def test_it_reports_on_exactly_the_bodies_that_declare_one(self):
         rows = _every_body_under(A_LIST_THAT_IS_NOT_SIMPLE)
-        self.assertEqual(_reported(rows, strict=False), rows)
+        self.assertEqual(reported(rows, strict=False), rows)
 
     def test_it_reports_on_none_of_them_under_a_list_that_is_simple(self):
         rows = _every_body_under(A_LIST_THAT_IS_SIMPLE)
-        self.assertEqual(_reported(rows, strict=False), _every_one_of(rows, False))
+        self.assertEqual(reported(rows, strict=False), every_one_of(rows, False))
 
     def test_the_seeded_mode_moves_no_body(self):
         rows = _every_body_under(A_LIST_THAT_IS_NOT_SIMPLE)
-        self.assertEqual(_reported(rows, strict=True), rows)
+        self.assertEqual(reported(rows, strict=True), rows)
 
     def test_it_reports_on_exactly_the_accessors_node_refuses(self):
         rows = AN_ACCESSOR_HOLDING_THE_DIRECTIVE
-        self.assertEqual(_reported(rows, strict=False), dict(rows))
+        self.assertEqual(reported(rows, strict=False), dict(rows))
 
     def test_it_reports_on_no_arrow_whose_body_is_an_expression(self):
         rows = AN_ARROW_WHOSE_BODY_IS_AN_EXPRESSION
-        self.assertEqual(_reported(rows, strict=False), _every_one_of(rows, False))
+        self.assertEqual(reported(rows, strict=False), every_one_of(rows, False))
 
     def test_it_reports_on_exactly_the_nested_functions_node_refuses(self):
         rows = A_FUNCTION_WRITTEN_INTO_ANOTHERS_PARAMETER_LIST
-        self.assertEqual(_reported(rows, strict=False), dict(rows))
+        self.assertEqual(reported(rows, strict=False), dict(rows))
 
 
 class TestWhichShapesADirectiveIsPermittedUnderAreTheSameOnesTheCollectorReads(TestBase):
@@ -586,13 +586,13 @@ class TestWhichShapesADirectiveIsPermittedUnderAreTheSameOnesTheCollectorReads(T
                 for params, simple in A_PARAMETER_LIST.items()
             }
             with self.subTest(shape=shape):
-                self.assertEqual(_reported(rows, strict=False), rows)
+                self.assertEqual(reported(rows, strict=False), rows)
 
     def test_the_collector_reports_on_none_of_those_lists_with_an_empty_body(self):
         for shape, template in A_FUNCTION_WRITTEN_AS.items():
             rows = [template.format(params=params, body='') for params in A_PARAMETER_LIST]
             with self.subTest(shape=shape):
-                self.assertEqual(_reported(rows, strict=False), _every_one_of(rows, False))
+                self.assertEqual(reported(rows, strict=False), every_one_of(rows, False))
 
 
 class TestWhichGrammarAFunctionTakesItsParametersThrough(TestBase):
@@ -638,14 +638,14 @@ class TestWhereTheStrictnessThatRefusesARepeatedNameComesFrom(TestBase):
 
     def test_node_decides_each_file_the_corpus_records(self):
         rows = A_REPEATED_NAME_MADE_AN_ERROR_BY
-        self.assertEqual(_refused(list(rows)), dict(rows))
+        self.assertEqual(refused(list(rows)), dict(rows))
 
 
 class TestTheCollectorReadsTheStrictnessFromTheSamePlace(TestBase):
 
     def test_it_reports_on_exactly_the_files_node_refuses(self):
         rows = A_REPEATED_NAME_MADE_AN_ERROR_BY
-        self.assertEqual(_reported(rows, strict=False), dict(rows))
+        self.assertEqual(reported(rows, strict=False), dict(rows))
 
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
@@ -653,22 +653,22 @@ class TestANameTheKindOfFunctionReserves(TestBase):
 
     def test_node_refuses_every_one_of_them_as_a_sloppy_file(self):
         rows = A_NAME_THE_KIND_OF_FUNCTION_RESERVES
-        self.assertEqual(_refused(rows), _every_one_of(rows, True))
+        self.assertEqual(refused(rows), every_one_of(rows, True))
 
     def test_node_refuses_every_one_of_them_as_a_strict_file(self):
         rows = A_NAME_THE_KIND_OF_FUNCTION_RESERVES
         self.assertEqual(
             _refused_under_a_strict_seed(rows),
-            _every_one_of([_under_a_strict_seed(program) for program in rows], True),
+            every_one_of([_under_a_strict_seed(program) for program in rows], True),
         )
 
     def test_node_refuses_the_same_word_used_to_name_a_declaration(self):
         rows = A_BINDING_THE_KIND_OF_FUNCTION_RESERVES
-        self.assertEqual(_refused(rows), _every_one_of(rows, True))
+        self.assertEqual(refused(rows), every_one_of(rows, True))
 
     def test_node_reads_those_declarations_inside_a_function_of_no_reserving_kind(self):
         rows = THE_SAME_BINDING_INSIDE_A_PLAIN_FUNCTION
-        self.assertEqual(_refused(list(rows)), dict(rows))
+        self.assertEqual(refused(list(rows)), dict(rows))
 
 
 class TestTheCollectorReportsANameTheKindOfFunctionReserves(TestBase):
@@ -680,11 +680,11 @@ class TestTheCollectorReportsANameTheKindOfFunctionReserves(TestBase):
 
     def test_it_reports_on_every_name_node_refuses_under_a_sloppy_seed(self):
         rows = A_NAME_THE_KIND_OF_FUNCTION_RESERVES
-        self.assertEqual(_reported(rows, strict=False), _every_one_of(rows, True))
+        self.assertEqual(reported(rows, strict=False), every_one_of(rows, True))
 
     def test_it_reports_on_every_one_of_them_under_a_strict_seed(self):
         rows = A_NAME_THE_KIND_OF_FUNCTION_RESERVES
-        self.assertEqual(_reported(rows, strict=True), _every_one_of(rows, True))
+        self.assertEqual(reported(rows, strict=True), every_one_of(rows, True))
 
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
@@ -699,26 +699,26 @@ class TestWhichContextGovernsAFunctionsOwnName(TestBase):
 
     def test_node_refuses_every_expression_named_by_a_word_its_own_kind_reserves(self):
         rows = A_FUNCTION_EXPRESSION_NAMED_BY_A_WORD_ITS_OWN_KIND_RESERVES
-        self.assertEqual(_refused(rows), _every_one_of(rows, True))
+        self.assertEqual(refused(rows), every_one_of(rows, True))
 
     def test_node_refuses_them_under_a_strict_seed_too(self):
         rows = A_FUNCTION_EXPRESSION_NAMED_BY_A_WORD_ITS_OWN_KIND_RESERVES
         self.assertEqual(
             _refused_under_a_strict_seed(rows),
-            _every_one_of([_under_a_strict_seed(program) for program in rows], True),
+            every_one_of([_under_a_strict_seed(program) for program in rows], True),
         )
 
     def test_node_reads_an_expression_whose_own_kind_reserves_neither_word(self):
         rows = A_FUNCTION_EXPRESSION_NAME_ITS_OWN_KIND_LEAVES_ALONE
-        self.assertEqual(_refused(rows), _every_one_of(rows, False))
+        self.assertEqual(refused(rows), every_one_of(rows, False))
 
     def test_node_reads_the_same_word_naming_a_declaration(self):
         rows = A_DECLARATION_WHOSE_NAME_THE_ENCLOSING_CONTEXT_GOVERNS
-        self.assertEqual(_refused(rows), _every_one_of(rows, False))
+        self.assertEqual(refused(rows), every_one_of(rows, False))
 
     def test_node_reads_an_expression_only_the_kind_around_it_reserves_the_name_of(self):
         rows = A_FUNCTION_EXPRESSION_NAME_ONLY_THE_ENCLOSING_KIND_RESERVES
-        self.assertEqual(_refused(rows), _every_one_of(rows, False))
+        self.assertEqual(refused(rows), every_one_of(rows, False))
 
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
@@ -731,26 +731,26 @@ class TestWhichContextGovernsAClassExpressionsOwnName(TestBase):
 
     def test_node_refuses_every_class_expression_the_kind_around_it_reserves_the_name_of(self):
         rows = A_CLASS_EXPRESSION_NAME_THE_ENCLOSING_KIND_RESERVES
-        self.assertEqual(_refused(rows), _every_one_of(rows, True))
+        self.assertEqual(refused(rows), every_one_of(rows, True))
 
 
 class TestTheCollectorReadsAFunctionsOwnNameFromTheSamePlace(TestBase):
 
     def test_it_reports_on_every_expression_named_by_a_word_its_own_kind_reserves(self):
         rows = A_FUNCTION_EXPRESSION_NAMED_BY_A_WORD_ITS_OWN_KIND_RESERVES
-        self.assertEqual(_reported(rows, strict=False), _every_one_of(rows, True))
+        self.assertEqual(reported(rows, strict=False), every_one_of(rows, True))
 
     def test_it_reports_on_them_under_a_strict_seed_too(self):
         rows = A_FUNCTION_EXPRESSION_NAMED_BY_A_WORD_ITS_OWN_KIND_RESERVES
-        self.assertEqual(_reported(rows, strict=True), _every_one_of(rows, True))
+        self.assertEqual(reported(rows, strict=True), every_one_of(rows, True))
 
     def test_it_reports_on_no_expression_whose_own_kind_reserves_neither_word(self):
         rows = A_FUNCTION_EXPRESSION_NAME_ITS_OWN_KIND_LEAVES_ALONE
-        self.assertEqual(_reported(rows, strict=False), _every_one_of(rows, False))
+        self.assertEqual(reported(rows, strict=False), every_one_of(rows, False))
 
     def test_it_reports_on_no_declaration_the_enclosing_context_leaves_alone(self):
         rows = A_DECLARATION_WHOSE_NAME_THE_ENCLOSING_CONTEXT_GOVERNS
-        self.assertEqual(_reported(rows, strict=False), _every_one_of(rows, False))
+        self.assertEqual(reported(rows, strict=False), every_one_of(rows, False))
 
 
 #: The four kinds of function, spelled the way the source writes one.
@@ -910,19 +910,19 @@ class TestTheCollectorRefusesAReservedFunctionNameWhereNodeDoes(TestBase):
 
     def test_it_reports_on_exactly_the_named_expressions_node_refuses(self):
         rows = A_NAMED_FUNCTION_EXPRESSION_UNDER_EVERY_ENCLOSING_KIND
-        self.assertEqual(_reported(rows, strict=False), _node_refuses(rows))
+        self.assertEqual(reported(rows, strict=False), _node_refuses(rows))
 
     def test_it_reports_on_exactly_the_named_declarations_node_refuses(self):
         rows = A_NAMED_FUNCTION_DECLARATION_OF_EVERY_KIND
-        self.assertEqual(_reported(rows, strict=False), _node_refuses(rows))
+        self.assertEqual(reported(rows, strict=False), _node_refuses(rows))
 
     def test_it_reports_on_exactly_the_named_expressions_a_strict_file_refuses(self):
         rows = A_NAMED_FUNCTION_EXPRESSION_UNDER_EVERY_ENCLOSING_KIND
-        self.assertEqual(_reported(rows, strict=True), _refused_as_a_strict_file(rows))
+        self.assertEqual(reported(rows, strict=True), _refused_as_a_strict_file(rows))
 
     def test_it_reports_on_exactly_the_named_declarations_a_strict_file_refuses(self):
         rows = A_NAMED_FUNCTION_DECLARATION_OF_EVERY_KIND
-        self.assertEqual(_reported(rows, strict=True), _refused_as_a_strict_file(rows))
+        self.assertEqual(reported(rows, strict=True), _refused_as_a_strict_file(rows))
 
 
 class TestTheVerdictRefusesAFunctionNameWhereNodeDoes(TestBase):
@@ -930,14 +930,8 @@ class TestTheVerdictRefusesAFunctionNameWhereNodeDoes(TestBase):
     `refinery.lib.scripts.is_well_formed` is the tool's answer to the question Node was asked of
     every file above, so the two agree on all of them: a declaration named by a word the kind of the
     enclosing function reserves is no program, and neither is an expression named by a word its own
-    kind reserves, while the names only some other kind reserves are programs. The declarations of
-    `A_BINDING_THE_KIND_OF_FUNCTION_RESERVES` used to come back well formed with the name read as
-    absent, printed as `class {\\n    {;\\n  }`.
+    kind reserves, while the names only some other kind reserves are programs.
     """
-
-    @staticmethod
-    def _well_formed(programs: Iterable[str]) -> dict[str, bool]:
-        return {program: is_well_formed(JsParser(program).parse()) for program in programs}
 
     def test_a_name_the_kind_of_function_reserves_is_no_program(self):
         rows = [
@@ -946,18 +940,18 @@ class TestTheVerdictRefusesAFunctionNameWhereNodeDoes(TestBase):
             *A_FUNCTION_EXPRESSION_NAMED_BY_A_WORD_ITS_OWN_KIND_RESERVES,
             *A_CLASS_EXPRESSION_NAME_THE_ENCLOSING_KIND_RESERVES,
         ]
-        self.assertEqual(self._well_formed(rows), _every_one_of(rows, False))
+        self.assertEqual(each_well_formed(rows), every_one_of(rows, False))
 
     def test_a_name_only_some_other_kind_reserves_is_a_program(self):
         rows = [
             *A_FUNCTION_EXPRESSION_NAME_ITS_OWN_KIND_LEAVES_ALONE,
             *A_FUNCTION_EXPRESSION_NAME_ONLY_THE_ENCLOSING_KIND_RESERVES,
         ]
-        self.assertEqual(self._well_formed(rows), _every_one_of(rows, True))
+        self.assertEqual(each_well_formed(rows), every_one_of(rows, True))
 
     def test_the_same_declaration_inside_a_plain_function_is_a_program_where_node_reads_it(self):
         rows = THE_SAME_BINDING_INSIDE_A_PLAIN_FUNCTION
         self.assertEqual(
-            self._well_formed(rows),
+            each_well_formed(rows),
             {source: not refused for source, refused in rows.items()},
         )

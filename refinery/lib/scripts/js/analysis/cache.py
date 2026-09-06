@@ -22,7 +22,7 @@ from refinery.lib.scripts.js.analysis.liveness import LivenessModel, build_liven
 from refinery.lib.scripts.js.analysis.model import SemanticModel, build_semantic_model
 from refinery.lib.scripts.js.analysis.reaching import ReachingModel, build_reaching
 from refinery.lib.scripts.js.model import JsCallExpression, JsNewExpression, JsScript
-from refinery.lib.scripts.js.options import is_host_entrypoint, module_execution
+from refinery.lib.scripts.js.options import is_host_entrypoint, runs_as_module
 from refinery.lib.scripts.modelcache import ModelCacheBase
 
 
@@ -106,7 +106,7 @@ class ModelCache(ModelCacheBase):
         return self._lazy('_assignment', lambda: build_definite_assignment(
             self.model,
             self.control_flow,
-            module_scope=module_execution(self.options),
+            module_scope=runs_as_module(self.options, self.root),
             host_entrypoint=lambda name: is_host_entrypoint(self.options, name),
         ))
 

@@ -17,7 +17,7 @@ from refinery.lib.scripts import (
     Node,
     _clone_node,
     _replace_in_parent,
-    is_well_formed,
+    spells_its_source,
 )
 from refinery.lib.scripts.js.analysis.cache import model_cache
 from refinery.lib.scripts.js.analysis.effects import side_effect_free
@@ -53,7 +53,6 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
 from refinery.lib.scripts.js.deobfuscation.strict_divergence import diverges_under_strict
 from refinery.lib.scripts.js.model import (
     SCRIPT_CONTEXT,
-    AwaitReading,
     CodeContext,
     JsArrowFunctionExpression,
     JsAssignmentExpression,
@@ -61,6 +60,7 @@ from refinery.lib.scripts.js.model import (
     JsBlockStatement,
     JsCallExpression,
     JsExpressionStatement,
+    JsForOfStatement,
     JsFunctionExpression,
     JsIdentifier,
     JsMemberExpression,
@@ -76,10 +76,11 @@ from refinery.lib.scripts.js.model import (
     JsVariableDeclarator,
     Statement,
     code_context_at,
+    function_context,
     strip_parens,
     wraps_return,
 )
-from refinery.lib.scripts.js.options import module_execution
+from refinery.lib.scripts.js.options import runs_as_module
 from refinery.lib.scripts.js.strict import (
     collect_strict_violations,
     declares_use_strict,
@@ -105,7 +106,6 @@ class ReflectedScope(enum.Enum):
 def _try_parse(
     code: str,
     *,
-    top_level_await: bool,
     strict: bool,
     module: bool = False,
     context: CodeContext = SCRIPT_CONTEXT,
@@ -116,25 +116,33 @@ def _try_parse(
     file around it, so text the parser did not read would be printed as source it never agreed to,
     and a literal the code left open would run on into whatever follows it at the call site.
 
-    Recovery makes the parser total, so raising is not the test. The test is whether the tree is
-    well formed, which is precisely the domain over which printing it back means what it said. A
-    payload cut off in the middle of a construct is the case that makes the difference: the parser
-    finishes it by writing the token it was waiting for, so `x = f(1, 2` reads as a call that runs,
-    and only the repair the parser records keeps that from being spliced into the file as though it
-    had been written whole.
+    Recovery makes the parser total, so raising is not the test. The test is whether the tree
+    spells its source, which `refinery.lib.scripts.spells_its_source` decides and which is
+    precisely the domain over which printing it back means what it said. A payload cut off in the
+    middle of a construct is the case that makes the difference: the parser finishes it by writing
+    the token it was waiting for, so `x = f(1, 2` reads as a call that runs, and only the repair the
+    parser records keeps that from being spliced into the file as though it had been written whole.
 
-    Well formed is not the whole of it. A text can spell a tree the printer reproduces exactly and
-    still be one the language refuses to read — a repeated parameter where the grammar wants a unique
-    list, an accessor of the wrong arity, a Use Strict Directive under a parameter list that may hold
-    none. Evaluated, such a text is a `SyntaxError` the call site catches and the program carries on
-    from; spliced into the file, it takes the whole file down with it, and nothing runs at all. So it
-    is refused here, which leaves the `eval` or `Function` call standing to throw exactly what it threw
-    before.
+    Spelling its source is not the whole of it. A text can spell a tree the printer reproduces
+    exactly and still be one the language refuses to read — a repeated parameter where the grammar
+    wants a unique list, an accessor of the wrong arity, a Use Strict Directive under a parameter
+    list that may hold none. Evaluated, such a text is a `SyntaxError` the call site catches and
+    the program carries on from; spliced into the file, it takes the whole file down with it, and
+    nothing runs at all. So it is refused here, which leaves the `eval` or `Function` call standing
+    to throw exactly what it threw before.
+
+    Every surface evaluates its text with the Script goal — a direct `eval` inside an `async`
+    function included (§19.2.1.1) — so `await` is a name throughout the text and a `for await`
+    head stands only inside an `async` function written in it. A text awaiting at its own top level
+    is therefore a `SyntaxError` the call site catches, whatever the destination reads `await` as,
+    and `_has_top_level_await` refuses it so that the call stands to throw as it did. The text is
+    read the way a file is, and a file's top level reads a `for await` head, which is why that gate
+    is asked after the parse rather than of it.
 
     *context* is what the splice site reads `await`, `yield` and `arguments` as, seeded into the
     collector so that a payload legal as a script is refused where the site would refuse it: a
     reference to `arguments` from a class field initializer, `await` bound in a static block,
-    `typeof yield` in a generator body.
+    `typeof yield` in a generator body, `typeof await` in an `async` one.
 
     *strict* is the mode at the destination, and it is the mode the text has to be legal in, whichever
     mode it would have run in where it stood. A body a `Function` constructor builds runs sloppy in the
@@ -143,12 +151,13 @@ def _try_parse(
     site catches and carries on from. The two arrive by different routes at the same requirement, which
     is why one seed answers for every surface.
 
-    *module* is the destination's goal symbol, told apart from its mode because a module carries one
-    rule beyond a strict script: `await` names nothing it may bind. The reflected text runs its code as
-    a script wherever it stood, so a payload binding `await` is legal there and a `SyntaxError` only
-    once inlined into a module — the very throw that would take the file down where the call it
-    replaced merely raised one the site caught. So it is refused here, on the same seed and for the same
-    reason as a strict violation, whichever surface the text reached the file through.
+    *module* is the destination's goal symbol, told apart from its mode because a module carries two
+    rules beyond a strict script: `await` names nothing in it, and the HTML-like comment delimiters
+    open no comment. The reflected text runs its code as a script wherever it stood, so a payload
+    naming `await` is legal there and a `SyntaxError` only once inlined into a module — the very
+    throw that would take the file down where the call it replaced merely raised one the site
+    caught. So it is refused here, on the same seed and for the same reason as a strict violation,
+    whichever surface the text reached the file through.
 
     Module-only syntax is refused for the same reason and needs no mode to decide it. Every surface
     that reaches here evaluates its text as a Script, where an `import` or `export` declaration is a
@@ -165,27 +174,16 @@ def _try_parse(
     """
     try:
         from refinery.lib.scripts.js.parser import JsParser
-        parsed = JsParser(code, top_level_await=top_level_await).parse()
+        parsed = JsParser(code).parse()
     except Exception:
         return None
-    if not parsed.body or not is_well_formed(parsed):
+    if not parsed.body or parsed.module or not spells_its_source(parsed):
         return None
-    if parsed.module:
+    if _has_top_level_await(parsed.body):
         return None
     if collect_strict_violations(parsed, strict=strict, module=module, context=context):
         return None
     return parsed
-
-
-def _site_in_async_function(site: Node) -> bool:
-    """
-    Whether *site* reads `await` as the operator, so a direct `eval` there runs where it is one.
-    That is the parameter list and body of an `async` function, and not a class field initializer
-    or static block written inside one, each being a context of its own. Global-scope reflected code
-    (indirect `eval`, a `Function` body, a string call) runs in the global sloppy scope instead,
-    where `await` is an ordinary identifier and never an operator.
-    """
-    return code_context_at(site).await_reading is AwaitReading.OPERATOR
 
 
 def _try_eval_string_arg(node: Expression, model: SemanticModel) -> str | None:
@@ -607,7 +605,6 @@ def _try_unpack_function_constructor(
     getters, setters = mapping
     parsed = _try_parse(
         code,
-        top_level_await=False,
         strict=strict_mode_at(node),
         module=module,
         context=code_context_at(node),
@@ -652,10 +649,16 @@ def _is_pack_shaped(
 
 def _has_top_level_await(stmts: list[Statement]) -> bool:
     """
-    Return `True` if any `refinery.lib.scripts.js.model.JsAwaitExpression` in `stmts` is at the top
-    level, i.e. not inside a nested function boundary.
+    Whether *stmts* await outside every function written in them: an `await` expression or a
+    `for await` head that no `async` function within the text encloses. Reflected text is read
+    with the Script goal, which has no top-level `await`, so such a text is a `SyntaxError` at the
+    call that evaluates it, whatever the destination would read.
     """
-    return any(isinstance(n, JsAwaitExpression) for s in stmts for n in walk_scope(s))
+    return any(
+        isinstance(n, JsAwaitExpression) or (isinstance(n, JsForOfStatement) and n.is_await)
+        for s in stmts
+        for n in walk_scope(s)
+    )
 
 
 def _has_top_level_return(stmts: list[Statement]) -> bool:
@@ -952,7 +955,7 @@ class JsReflectionInlining(ScriptLevelTransformer):
             if model.scope_of(member) is None:
                 return None
             name = model.global_alias_member_name(
-                member, module_scope=module_execution(self.options))
+                member, module_scope=runs_as_module(self.options, root))
             if name is not None and name in self._spliced_names:
                 return None
             return name
@@ -1091,6 +1094,9 @@ class JsReflectionInlining(ScriptLevelTransformer):
         `globalThis`, its free names must still denote the same global, and a top-level declaration
         (whose global or transient environment a local function cannot reproduce) or a `return`/`await`
         that a plain function body cannot host declines the lowering, leaving the string timer intact.
+        The body lands inside that wrapper and not as text at the site, so the words it is weighed
+        against are those a plain function reads: `await` and `yield` are names there, and
+        `arguments` is the wrapper's own, whatever the site reads them as.
         """
         code = _extract_string_call_code(
             node,
@@ -1102,9 +1108,14 @@ class JsReflectionInlining(ScriptLevelTransformer):
         if code is None:
             return
         resolved = self._resolve_reflected_body(
-            code, node, root, ReflectedScope.GLOBAL_EVAL, at_global_scope=False,
+            code,
+            node,
+            root,
+            ReflectedScope.GLOBAL_EVAL,
+            at_global_scope=False,
+            destination=function_context(False, False),
         )
-        if resolved is None or _has_top_level_await(resolved.body):
+        if resolved is None:
             return
         block = JsBlockStatement(body=resolved.body)
         wrapper = JsFunctionExpression(params=[], body=block)
@@ -1142,13 +1153,13 @@ class JsReflectionInlining(ScriptLevelTransformer):
             parsed = self._resolve_reflected_body(
                 sync, stmt, root, ReflectedScope.GLOBAL_EVAL, at_global_scope,
             )
-            if parsed is None or _has_top_level_await(parsed.body):
+            if parsed is None:
                 return None
             return parsed.body
         pack = _try_unpack_function_constructor(
             node,
             free_global_name=self._free_global,
-            module=module_execution(self.options) or root.module,
+            module=runs_as_module(self.options, root),
         )
         if pack is not None:
             packed, site_resolved = pack
@@ -1271,22 +1282,22 @@ class JsReflectionInlining(ScriptLevelTransformer):
         at_global_scope: bool,
         *,
         binds: bool = False,
+        destination: CodeContext | None = None,
     ) -> JsScript | None:
         """
         Parse reflectively evaluated *code* and admit it through `_admit_reflected_body`, or decline
         (`None`). A body that binds parameters or observes its arguments (*binds*) cannot be inlined
-        as text, so it declines before the parse.
+        as text, so it declines before the parse. *destination* is the context the text is read in
+        once spliced, where that is not *site*'s own: a string timer's body lands inside a plain
+        function of its own.
         """
         if binds:
             return None
-        resolves_globally = scope is not ReflectedScope.DIRECT_EVAL
-        top_level_await = not resolves_globally and _site_in_async_function(site)
         parsed = _try_parse(
             code,
-            top_level_await=top_level_await,
             strict=strict_mode_at(site),
-            module=module_execution(self.options) or root.module,
-            context=code_context_at(site),
+            module=runs_as_module(self.options, root),
+            context=code_context_at(site) if destination is None else destination,
         )
         if parsed is None:
             return None
@@ -1361,7 +1372,7 @@ class JsReflectionInlining(ScriptLevelTransformer):
                     continue
                 binding = root_model.lookup(name, site_scope)
                 if binding is not None and not root_model.reaches_global_object(
-                    binding, module_scope=module_execution(self.options),
+                    binding, module_scope=runs_as_module(self.options, root),
                 ):
                     return None
         if declared and not self._reflected_declarations_safe(
@@ -1423,7 +1434,7 @@ class JsReflectionInlining(ScriptLevelTransformer):
         if not hoisted:
             return True
         if scope is ReflectedScope.GLOBAL_EVAL:
-            if module_execution(self.options) or not at_global_scope:
+            if runs_as_module(self.options, root) or not at_global_scope:
                 return False
         elif strict_mode_at(site) or declares_use_strict(body_model.root):
             return False

@@ -82,7 +82,7 @@ from refinery.lib.scripts.js.model import (
     strip_parens,
 )
 from refinery.lib.scripts.js.numbers import exact_integer
-from refinery.lib.scripts.js.options import module_execution
+from refinery.lib.scripts.js.options import runs_as_module
 from refinery.lib.scripts.js.precedence import parens_required
 from refinery.lib.scripts.js.strict import joins_directive_prologue, spelling_states
 
@@ -261,7 +261,7 @@ class JsSimplifications(Transformer):
         if isinstance(base, JsIdentifier) and base.name not in SAME_REALM_GLOBAL_OBJECT_ALIASES:
             return None
         return self.model.global_alias_member_name(
-            member, module_scope=module_execution(self.options))
+            member, module_scope=runs_as_module(self.options, self.model.root))
 
     def _resolve_in(self, node: JsBinaryExpression, key: str) -> bool | None:
         """

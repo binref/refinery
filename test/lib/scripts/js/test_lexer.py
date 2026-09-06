@@ -89,6 +89,13 @@ def _tokens_of(source: str) -> list[tuple[JsTokenKind, str]]:
     return result
 
 
+def _html_comment_of(source: str) -> int | None:
+    lexer = JsLexer(source)
+    for _ in lexer.tokenize():
+        pass
+    return lexer.html_comment
+
+
 class TestJsLexer(TestBase):
 
     def _tokens(self, source: str) -> list[tuple[JsTokenKind, str]]:
@@ -1001,3 +1008,12 @@ class TestScriptCodeHasTwoMoreCommentOpeners(TestBase):
                 (JsTokenKind.IDENTIFIER, 'b'),
             ],
         )
+
+    def test_the_scan_records_where_the_first_delimiter_stands(self):
+        rows = {
+            'x <!-- a\n--> b'   : 2,
+            '--> a\nx <!-- b'   : 0,
+            'x /* a */ --> b'   : None,
+            "'<!--' + `-->`"    : None,
+        }
+        self.assertEqual({source: _html_comment_of(source) for source in rows}, rows)

@@ -111,7 +111,7 @@ from refinery.lib.scripts.js.numbers import (
 )
 from refinery.lib.scripts.js.options import (
     is_host_entrypoint,
-    module_execution,
+    runs_as_module,
 )
 from refinery.lib.scripts.js.strict import (
     directive_prologue,
@@ -2159,7 +2159,7 @@ def a_host_reaches_the_binding(model: SemanticModel, binding: Binding, options: 
     """
     if not is_host_entrypoint(options, binding.name):
         return False
-    return model.reaches_global_object(binding, module_scope=module_execution(options))
+    return model.reaches_global_object(binding, module_scope=runs_as_module(options, model.root))
 
 
 def nothing_still_names(model: SemanticModel, removed: Sequence[Node]) -> bool:

@@ -72,10 +72,6 @@ from test.lib.scripts.js.ledger import (
 from test.lib.scripts.js.test_parameter_grammar import (
     A_FUNCTION_EXPRESSION_NAME_ONLY_THE_ENCLOSING_KIND_RESERVES,
 )
-from test.lib.scripts.js.test_html_comments import (
-    A_FILE_HOLDING_A_COMMENT_NO_STATEMENT_CARRIES,
-    the_module_rule_reported_in,
-)
 from test.lib.scripts.js.test_parser_recovery import (
     A_POSITION_NAMING_A_BINDING_THE_FILE_CREATES,
     A_WORD_NO_MODULE_MAY_BIND,
@@ -194,6 +190,26 @@ class TestABindingNamedByAWordNoModuleMayBindIsNoProgram(TestBase):
             {source: well_formed(source) for source in sources},
             {source: False for source in sources},
         )
+
+
+class TestAModulesTopLevelAwaitIsAProgram(TestBase):
+    """
+    A module awaits at its top level (§16.2.1), and the goal symbol is not known while parsing:
+    the parser reads the top level of every file under the script context, where `await` is a
+    name, so `await 1` is read as that name followed by a statement of its own, with the repair
+    recorded. The file prints back as `export {  };`, `await;`, `1;`, which no host reads, and
+    `refinery.lib.scripts.is_well_formed` answers `False` for a program a host runs. The `for await`
+    head at the top level is read already; the operator waits for a top level whose goal is open to
+    read `await` followed by an expression as the operator.
+    """
+
+    @unittest.expectedFailure
+    def test_a_top_level_await_beside_module_syntax_still_behaves_so(self):
+        """
+        Node prints `2` for this file read as a module.
+        """
+        source = 'export {}; await 1; console.log(2);'
+        self.assertEqual(before_and_after(source, module=True), (prints('2'), prints('2')))
 
 
 class TestRecoveryKeepsTheSourceText(TestBase):
@@ -327,8 +343,7 @@ class TestCommentWithNoFollowingStatement(TestBase):
     """
     A comment is carried by the statement it precedes in a statement list, which leaves a comment
     that precedes nothing, and one that precedes a clause body rather than a listed statement, with
-    no carrier. Whatever holds such a comment once one does has to be read by the one rule that
-    asks about comments, the module goal's refusal of the HTML-like delimiters.
+    no carrier.
     """
 
     @unittest.expectedFailure
@@ -340,21 +355,6 @@ class TestCommentWithNoFollowingStatement(TestBase):
         """
         sources = ['x = 1;\n/* note */', 'x = 1;\n// note', 'x = 1;\n/* note']
         self.assertEqual(tuple(printed(source) for source in sources), tuple(sources))
-
-    @unittest.expectedFailure
-    def test_the_module_rule_reads_a_comment_no_statement_carries(self):
-        """
-        Node refuses each file of
-        `test.lib.scripts.js.test_html_comments.A_FILE_HOLDING_A_COMMENT_NO_STATEMENT_CARRIES`
-        as a module, as it refuses every file holding an HTML-like comment, and the collector has
-        to report the delimiter under the module goal wherever the tree holds it. It holds it
-        nowhere today, the comment having no carrier, so nothing is reported.
-        """
-        rows = A_FILE_HOLDING_A_COMMENT_NO_STATEMENT_CARRIES
-        self.assertEqual(
-            {source: the_module_rule_reported_in(source) for source in rows},
-            {source: ['html-comment'] for source in rows},
-        )
 
 
 class TestALiteralNoElementOfWhichRunsIsCounted(TestBase):

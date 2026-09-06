@@ -157,21 +157,28 @@ def canonical(node: Node):
     )
 
 
-def is_well_formed(root: Node) -> bool:
+def spells_its_source(root: Node) -> bool:
     """
-    Whether the tree at `root` spells the source it was read from, which is the domain over which
-    `canonical` states a fidelity law. Four things take a tree out of it. A node that
-    `Node.has_spelling` rejects cannot be printed at all; an `unparsed` node prints source that no
-    parser agreed to read, so re-reading it yields whatever the recovery happens to make of the
-    text; a node that `Node.is_recovered` reports as repaired prints a program the file did not
-    hold; and a tree that `Node.early_errors` reports on prints, however faithfully, a text the
-    language refuses to read. None of the four says anything about whether a synthesizer is
-    faithful.
+    Whether the tree at `root` spells the source it was read from. Three things take a tree out of
+    it. A node that `Node.has_spelling` rejects cannot be printed at all; an `unparsed` node prints
+    source that no parser agreed to read, so re-reading it yields whatever the recovery happens to
+    make of the text; and a node that `Node.is_recovered` reports as repaired prints a program the
+    file did not hold. None of the three says anything about whether a synthesizer is faithful.
     """
     return all(
         node.has_spelling() and not node.unparsed and not node.is_recovered()
         for node in root.walk()
-    ) and not root.early_errors()
+    )
+
+
+def is_well_formed(root: Node) -> bool:
+    """
+    Whether the tree at `root` is a program: it spells its source, which `spells_its_source`
+    decides and which is the domain over which `canonical` states a fidelity law, and the language
+    reads that text, which `Node.early_errors` reports on under the file's own mode and goal. A
+    tree the language refuses prints, however faithfully, a text no engine loads.
+    """
+    return spells_its_source(root) and not root.early_errors()
 
 
 @dataclass(repr=False, eq=False)

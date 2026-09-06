@@ -10,8 +10,9 @@ Nothing here holds state either, so a pass may ask any of it at any point of a r
 from __future__ import annotations
 
 import enum
+import functools
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 
 from refinery.lib.scripts import Expression, Node, Statement
@@ -627,7 +628,7 @@ class JsExportAllDeclaration(Statement):
 
 
 @dataclass(repr=False, eq=False)
-class JsScript(Statement, spelling=('module', 'recovered')):
+class JsScript(Statement, spelling=('module', 'recovered', 'html_comment')):
     body: list[Statement] = field(default_factory=list)
     #: Whether the source is module code, which the host decides (§16.1) and the syntax only reports:
     #: an `import` or `export` declaration, or `import.meta`, can appear in nothing else. It is a
@@ -640,6 +641,11 @@ class JsScript(Statement, spelling=('module', 'recovered')):
     #: what it spells, so two scripts differing only here are the same program. Nothing ever clears
     #: it, because no later pass can put back a token the source never held.
     recovered: bool = False
+    #: The offset of the first HTML-like comment delimiter the lexer read in this file (§B.1.1), or
+    #: `None` where it read none. Module code refuses both delimiters, and the comment one opens may
+    #: stand where no statement carries it, so the fact is kept on the script rather than looked for
+    #: among the comments the tree holds. It is a spelling field for the reason `recovered` is.
+    html_comment: int | None = None
 
     def is_recovered(self) -> bool:
         return self.recovered
@@ -677,36 +683,72 @@ class AwaitReading(enum.Enum):
 class CodeContext:
     """
     The grammar parameters a piece of code is read under: what `await` is, whether `yield` is the
-    operator rather than a name, and whether `arguments` may be referred to at all. The parser
-    descends it and the early-error collector threads it, both through `code_context_within`, so
-    that the tree a text is read into and the errors reported over that tree agree on what every
-    word is.
+    operator rather than a name, whether `arguments` may be referred to at all, and whether the
+    code is the top level of a file. The parser descends it and the early-error collector threads
+    it, both through `code_context_within`, so that the tree a text is read into and the errors
+    reported over that tree agree on what every word is.
+
+    The top level is set apart because its goal symbol is not known while parsing: `await` is read
+    as a name there, as a script reads it, but a `for await` head is read as well, since that is
+    one way a module spells its top-level `await`. Below a function or a class element the goal
+    decides nothing, and a `for await` head stands only where `await` is the operator.
     """
     await_reading: AwaitReading
     yield_is_operator: bool
     arguments_reserved: bool
+    top_level: bool
+
+    @property
+    def reads_for_await(self) -> bool:
+        """
+        Whether a `for await` head is read here: where `await` is the operator, and at the top
+        level of a file, whose goal may make it one.
+        """
+        return self.await_reading is AwaitReading.OPERATOR or self.top_level
 
 
-SCRIPT_CONTEXT = CodeContext(AwaitReading.NAME, False, False)
+SCRIPT_CONTEXT = CodeContext(AwaitReading.NAME, False, False, True)
 """
-The context the top level of a script is read under: both words are names and `arguments` is free.
+The context the top level of a file is read under: both words are names, `arguments` is free, and
+the goal symbol is open.
 """
 
 
+@functools.cache
 def function_context(is_async: bool, is_generator: bool) -> CodeContext:
     """
     The context the parameter list and the body of a function of the given kind are read under.
     """
-    return CodeContext(AwaitReading.OPERATOR if is_async else AwaitReading.NAME, is_generator, False)
+    return CodeContext(
+        AwaitReading.OPERATOR if is_async else AwaitReading.NAME,
+        is_generator,
+        False,
+        False,
+    )
 
 
+@functools.cache
 def class_element_context(static: bool) -> CodeContext:
     """
     The context a class element's own code is read under: a field initializer, or a static block.
     Each is a function context of its own that reserves `arguments` (§15.7.1) and reads `yield` as
     a name; a static one refuses `await` outright, where an instance initializer reads it as a name.
     """
-    return CodeContext(AwaitReading.RESERVED if static else AwaitReading.NAME, False, True)
+    return CodeContext(
+        AwaitReading.RESERVED if static else AwaitReading.NAME,
+        False,
+        True,
+        False,
+    )
+
+
+def arrow_body_context(is_async: bool, enclosing: CodeContext) -> CodeContext:
+    """
+    The context an arrow function's body is read under, given that the arrow stands in
+    *enclosing*: the context a function of its kind gives its body, except that an arrow has no
+    `arguments` of its own (§15.7.1) and so keeps the reservation it stands in.
+    """
+    return replace(function_context(is_async, False), arguments_reserved=enclosing.arguments_reserved)
 
 
 def code_context_within(parent: Node, child: Node, enclosing: CodeContext) -> CodeContext:
@@ -718,9 +760,8 @@ def code_context_within(parent: Node, child: Node, enclosing: CodeContext) -> Co
     A function body takes the readings its own kind gives it, and so does the name of a function
     expression, which is bound inside it (§15.2.1); a declaration's name is bound outside it and
     keeps the enclosure's. An arrow's parameters are still the enclosing code and keep its
-    readings, except that an `async` arrow reads `await` as the operator there too; its body is its
-    own and resets both words, but keeps the `arguments` reservation, since an arrow has no
-    `arguments` of its own (§15.7.1). A class element's own code is what `class_element_context`
+    readings, except that an `async` arrow reads `await` as the operator there too; its body is
+    what `arrow_body_context` says. A class element's own code is what `class_element_context`
     says, whatever encloses the class.
     """
     if isinstance(parent, JsStaticBlock):
@@ -728,14 +769,11 @@ def code_context_within(parent: Node, child: Node, enclosing: CodeContext) -> Co
     if isinstance(parent, JsPropertyDefinition):
         return class_element_context(parent.is_static) if child is parent.value else enclosing
     if isinstance(parent, JsArrowFunctionExpression):
-        await_reading = AwaitReading.OPERATOR if parent.is_async else enclosing.await_reading
         if any(child is param for param in parent.params):
-            return CodeContext(await_reading, enclosing.yield_is_operator, enclosing.arguments_reserved)
-        if parent.is_async:
-            await_reading = AwaitReading.OPERATOR
-        else:
-            await_reading = AwaitReading.NAME
-        return CodeContext(await_reading, False, enclosing.arguments_reserved)
+            if parent.is_async and enclosing.await_reading is not AwaitReading.OPERATOR:
+                return replace(enclosing, await_reading=AwaitReading.OPERATOR)
+            return enclosing
+        return arrow_body_context(parent.is_async, enclosing)
     if isinstance(parent, JsFunctionDeclaration):
         return enclosing if child is parent.id else function_context(parent.is_async, parent.generator)
     if isinstance(parent, JsFunctionExpression):
@@ -747,7 +785,7 @@ def code_context_at(node: Node, root_context: CodeContext = SCRIPT_CONTEXT) -> C
     """
     The context *node* is read under, folded from the root of its tree down through
     `code_context_within`. *root_context* is what the root itself stands in: the top level of a
-    script by default, and the splice site's context for a tree about to be inlined there.
+    file by default, and the splice site's context for a tree about to be inlined there.
     """
     chain: list[Node] = []
     cursor: Node | None = node

@@ -10,6 +10,7 @@ from refinery.lib.scripts.js.lexer import (
     identifier_string_value,
 )
 from refinery.lib.scripts.js.model import (
+    SCRIPT_CONTEXT,
     AwaitReading,
     CodeContext,
     Expression,
@@ -95,6 +96,7 @@ from refinery.lib.scripts.js.model import (
     JsWithStatement,
     JsYieldExpression,
     Statement,
+    arrow_body_context,
     class_element_context,
     function_context,
 )
@@ -158,7 +160,7 @@ class JsParser:
             return int(text, 8)
         return int(text)
 
-    def __init__(self, source: str, *, top_level_await: bool = False):
+    def __init__(self, source: str):
         self._lexer = JsLexer(source)
         self._source = source
         self._tokens = self._lexer.tokenize()
@@ -168,7 +170,7 @@ class JsParser:
         self._ahead_newline: bool = False
         self._ahead_state: tuple[JsLexerState, int] | None = None
         self._no_in: bool = False
-        self._context: CodeContext = function_context(top_level_await, False)
+        self._context: CodeContext = SCRIPT_CONTEXT
         self._pending_comments: list[str] = []
         self._recovered: bool = False
         self._prev_end: int = 0
@@ -330,7 +332,7 @@ class JsParser:
         own kind and not the enclosing one, so `function* g() { var f = function yield() {}; }` is a
         program whose name would otherwise be dropped; and where the name really is an early error
         the tree must still spell it, so that
-        `refinery.lib.scripts.js.strict.reserved_by_function_kind` reports it rather than the
+        `refinery.lib.scripts.js.strict.collect_strict_violations` reports it rather than the
         parameter list being read starting at the name.
         """
         return (
@@ -455,7 +457,12 @@ class JsParser:
     def _parse_program(self) -> JsScript:
         offset = self._current.offset
         body = self._parse_statement_list(JsTokenKind.EOF)
-        return JsScript(body=body, offset=offset, recovered=self._recovered)
+        return JsScript(
+            body=body,
+            offset=offset,
+            recovered=self._recovered,
+            html_comment=self._lexer.html_comment,
+        )
 
     def _parse_statement(
         self,
@@ -795,19 +802,17 @@ class JsParser:
 
     def _parse_for_statement(self) -> Statement:
         """
-        A `for await` head is read wherever `await` is not reserved outright, rather than only where
-        it is the operator: the goal symbol is not known while parsing, and at the top level of a
-        file the loop is how a module spells its legal top-level `await`. A static block and a
-        static field initializer refuse the word in every position, and the loop head is one.
+        A `for await` head is read where `await` is the operator and at the top level of a file,
+        which `refinery.lib.scripts.js.model.CodeContext.reads_for_await` decides: the goal symbol
+        is not known while parsing, and a module spells a legal top-level `await` this way among
+        others. Anywhere else the word is a name or refused outright, and the head is read as a
+        plain `for` whose parenthesis is missing, with the repair recorded.
         """
         offset = self._current.offset
         self._expect(JsTokenKind.FOR)
 
         is_await = False
-        if (
-            self._context.await_reading is not AwaitReading.RESERVED
-            and self._eat(JsTokenKind.AWAIT)
-        ):
+        if self._context.reads_for_await and self._eat(JsTokenKind.AWAIT):
             is_await = True
 
         self._expect(JsTokenKind.LPAREN)
@@ -2306,7 +2311,7 @@ class JsParser:
             return arrow
 
     def _parse_arrow_body(self, is_async: bool = False) -> Expression | JsBlockStatement:
-        with self._function_body_context(is_async, False):
+        with self._code_context(arrow_body_context(is_async, self._context)):
             if self._at(JsTokenKind.LBRACE):
                 return self._parse_block_statement()
             return self._parse_assignment_expression()

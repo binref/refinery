@@ -5,8 +5,9 @@ import unittest
 
 from test import TestBase
 from test.lib.scripts.js.analysis.differential import behavior, node_executable
+from test.lib.scripts.js.ledger import a_program, well_formed
 
-from refinery.lib.scripts import Statement, is_well_formed, set_body
+from refinery.lib.scripts import Statement, set_body
 from refinery.lib.scripts.js.model import JsBlockStatement, JsScript
 from refinery.lib.scripts.js.parser import JsParser
 from refinery.lib.scripts.js.strict import (
@@ -211,8 +212,23 @@ class TestJsStrict(TestBase):
             with self.subTest(source=source):
                 self.assertEqual(self._violations(source, strict=True, module=False), [])
 
-    def test_await_reference_in_module_clean(self):
-        for source in ['typeof await', '({await: 1})', 'o.await', 'x.await = 1']:
+    def test_await_referred_to_in_module_flagged(self):
+        rows = {
+            'typeof await'                   : [7],
+            'f(await)'                       : [2],
+            'function g() { return await; }' : [22],
+            'var o = { await };'             : [10],
+            'await: for (;;) break await;'   : [0, 22],
+        }
+        for source, offsets in rows.items():
+            with self.subTest(source=source):
+                self.assertEqual(
+                    self._violations(source, strict=True, module=True),
+                    [StrictViolation(offset, 'await-in-module', 'await') for offset in offsets],
+                )
+
+    def test_await_as_a_property_name_in_module_clean(self):
+        for source in ['({await: 1})', 'o.await', 'x.await = 1', 'class C { await() {} }']:
             with self.subTest(source=source):
                 self.assertEqual(self._violations(source, strict=True, module=True), [])
 
@@ -588,15 +604,15 @@ class TestAReplacementHoldingTheDirectiveBehindAnotherStatement(TestBase):
 #: admits one in sloppy code, reading it as a block holding it; strict code has no such rule and
 #: the grammar refuses a declaration where it requires a statement.
 A_FUNCTION_DECLARATION_AS_AN_IF_CLAUSE = {
-    'sloppy': inspect.cleandoc("""
+    'sloppy': a_program("""
         if (1) function W() { return 1; }
         console.log(W());
-        """) + '\n',
-    'strict': inspect.cleandoc("""
+        """),
+    'strict': a_program("""
         'use strict';
         if (1) function W() { return 1; }
         console.log(W());
-        """) + '\n',
+        """),
 }
 
 
@@ -619,14 +635,10 @@ class TestTheVerdictReadsTheFileUnderItsOwnModeAndGoal(TestBase):
     text with the module syntax taken out is one.
     """
 
-    @staticmethod
-    def _well_formed(source: str) -> bool:
-        return is_well_formed(JsParser(source).parse())
-
     def test_a_clause_position_declaration_is_refused_in_strict_code_only(self):
         self.assertEqual(
             {
-                mode: self._well_formed(source)
+                mode: well_formed(source)
                 for mode, source in A_FUNCTION_DECLARATION_AS_AN_IF_CLAUSE.items()
             },
             {'sloppy': True, 'strict': False},
@@ -635,13 +647,13 @@ class TestTheVerdictReadsTheFileUnderItsOwnModeAndGoal(TestBase):
     def test_a_strict_error_beside_module_syntax_is_no_program(self):
         rows = A_STRICT_ERROR_UNDER_MODULE_SYNTAX
         self.assertEqual(
-            {source: self._well_formed(source) for source in rows},
+            {source: well_formed(source) for source in rows},
             {source: False for source in rows},
         )
 
     def test_the_same_files_without_the_module_syntax_are_programs(self):
         rows = THE_SAME_FILES_WITHOUT_THE_MODULE_SYNTAX
         self.assertEqual(
-            {source: self._well_formed(source) for source in rows},
+            {source: well_formed(source) for source in rows},
             {source: True for source in rows},
         )

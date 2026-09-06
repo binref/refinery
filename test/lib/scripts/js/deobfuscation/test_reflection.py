@@ -1979,7 +1979,6 @@ class TestAConsumedTemporaryStillNamedKeepsItsDeclaration(TestBase):
                 self.assertEqual(row.read(), row.required())
 
 
-
 class TestAPayloadIsWeighedAgainstTheContextOfItsSite(TestJsDeobfuscator):
     """
     A payload is read as a script, where `await`, `yield` and `arguments` are names, and is spliced
@@ -1993,7 +1992,7 @@ class TestAPayloadIsWeighedAgainstTheContextOfItsSite(TestJsDeobfuscator):
     def _reflect(self, source: str) -> str:
         return self._run_transformer(source, JsReflectionInlining)
 
-    def test_a_static_initializer_refuses_the_await_operator_its_async_enclosure_reads(self):
+    def test_a_static_initializer_refuses_an_await_operator_payload(self):
         source = 'async function f() { class C { static p = eval("await 1;"); } }'
         self.assertEqual(
             inspect.cleandoc(
@@ -2156,6 +2155,20 @@ class TestAFileSpellingModuleSyntaxIsAModuleDestination(TestJsDeobfuscator):
             self._reflect('export const tag = 1;\nvar _m = Function("return 1")(); sink(_m);'),
         )
 
+    def test_a_payload_referring_to_await_is_left_standing_beside_an_export(self):
+        rows = [
+            'export const tag = 1;\n(0, eval)("console.log(typeof await);");',
+            'export const tag = 1;\nvar g = Function("return typeof await");\nconsole.log(g());',
+        ]
+        self.assertEqual(
+            {source: self._reflect(source) for source in rows},
+            {source: source for source in rows},
+        )
+
+    def test_a_global_declaration_an_indirect_eval_makes_is_left_standing_beside_an_export(self):
+        source = 'export const t = 1;\n(0, eval)("var x = 1;");\nconsole.log(globalThis.x);'
+        self.assertEqual(source, self._reflect(source))
+
 
 class TestAnHtmlCommentPayloadInlinesOnlyAtAScriptDestination(TestJsDeobfuscator):
     """
@@ -2170,7 +2183,8 @@ class TestAnHtmlCommentPayloadInlinesOnlyAtAScriptDestination(TestJsDeobfuscator
 
     def _reflect_module(self, source: str) -> str:
         return self._run_transformer(
-            source, JsReflectionInlining, DeobfuscationOptions(module=True))
+            source, JsReflectionInlining, DeobfuscationOptions(module=True)
+        )
 
     def test_an_opener_payload_is_inlined_into_a_script(self):
         rows = {
@@ -2208,4 +2222,118 @@ class TestAnHtmlCommentPayloadInlinesOnlyAtAScriptDestination(TestJsDeobfuscator
         self.assertEqual(
             {source: self._reflect(source) for source in rows},
             {source: source for source in rows},
+        )
+
+    def test_a_payload_holding_one_where_no_statement_carries_it_is_left_standing(self):
+        rows = [
+            'export const tag = 1;\neval("f(<!-- x\\n1);");',
+            'export const tag = 1;\n(0, eval)("console.log(1); <!-- x");',
+        ]
+        self.assertEqual(
+            {source: self._reflect_module(source) for source in rows},
+            {source: source for source in rows},
+        )
+
+
+class TestAPayloadIsScriptCodeWhereverItIsEvaluated(TestJsDeobfuscator):
+    """
+    Every reflective surface evaluates its text with the Script goal, a direct `eval` inside an
+    `async` function included, so an `await` operator or a `for await` head at the payload's own
+    top level is a `SyntaxError` the call site catches, whatever the site itself reads `await` as.
+    The same text inlined would run, so the call is left standing to throw as it did; a head inside
+    an `async` function the payload writes is the payload's own and is inlined.
+    """
+
+    def _reflect(self, source: str) -> str:
+        return self._run_transformer(source, JsReflectionInlining)
+
+    def test_an_await_operator_payload_is_left_standing_in_an_async_body(self):
+        source = inspect.cleandoc(
+            """
+            async function f() {
+              try {
+                eval("await 1");
+                console.log("ran");
+              } catch (e) {
+                console.log(e.name);
+              }
+            }
+            f();
+            """
+        )
+        self.assertEqual(source, self._reflect(source))
+
+    def test_an_await_operator_payload_is_left_standing_in_an_arrow_parameter_of_an_async_body(self):
+        source = inspect.cleandoc(
+            """
+            async function f() {
+              return ((x = eval("await 1")) => x)();
+            }
+            """
+        )
+        self.assertEqual(source, self._reflect(source))
+
+    def test_a_for_await_payload_is_left_standing_at_every_site(self):
+        rows = [
+            'function f() {\n  eval("for await (const x of []) {}");\n}',
+            'async function f() {\n  eval("for await (const x of []) {}");\n}',
+            'async function f() {\n  (0, eval)("for await (const x of []) {}");\n}',
+            'async function f() {\n  var g = Function("for await (const x of []) {}");\n  g();\n}',
+            '(0, eval)("for await (const x of []) {}");',
+        ]
+        self.assertEqual(
+            {source: self._reflect(source) for source in rows},
+            {source: source for source in rows},
+        )
+
+    def test_a_for_await_head_inside_an_async_function_of_the_payload_is_inlined(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                (async () => {
+                  for await (const x of []) {}
+                })();
+                """
+            ),
+            self._reflect('eval("(async () => { for await (const x of []) {} })();");'),
+        )
+
+
+class TestAStringTimerBodyIsWeighedAgainstItsWrapper(TestJsDeobfuscator):
+    """
+    A string timer's body is lowered into a plain function of its own rather than spliced at the
+    site, so the words it is weighed against are the wrapper's: `await` and `yield` are names in it
+    whatever function encloses the timer, and a body naming them is lowered where a splice at the
+    site would have been refused.
+    """
+
+    def _reflect(self, source: str) -> str:
+        return self._run_transformer(source, JsReflectionInlining)
+
+    def test_a_body_naming_await_is_lowered_inside_an_async_function(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                async function f() {
+                  setTimeout(function() {
+                    console.log(typeof await);
+                  }, 10);
+                }
+                """
+            ),
+            self._reflect('async function f() { setTimeout("console.log(typeof await)", 10); }'),
+        )
+
+    def test_a_body_naming_yield_is_lowered_inside_a_generator(self):
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function* g() {
+                  setInterval(function() {
+                    console.log(typeof yield);
+                  }, 10);
+                }
+                """
+            ),
+            self._reflect('function* g() { setInterval("console.log(typeof yield)", 10); }'),
         )
