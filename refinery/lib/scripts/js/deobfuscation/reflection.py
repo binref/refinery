@@ -22,7 +22,6 @@ from refinery.lib.scripts import (
 from refinery.lib.scripts.js.analysis.cache import model_cache
 from refinery.lib.scripts.js.analysis.effects import side_effect_free
 from refinery.lib.scripts.js.analysis.model import (
-    FUNCTION_NODES,
     REFLECTIVE_INTRINSICS,
     SYNC_EVAL_NAMES,
     TIMER_NAMES,
@@ -33,7 +32,6 @@ from refinery.lib.scripts.js.analysis.model import (
     SemanticModel,
     build_semantic_model,
     crosses_dynamic_scope,
-    enclosing_function,
     is_member_write_target,
     is_simple_assignment_target,
     name_uses_in_scope,
@@ -54,6 +52,9 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
 )
 from refinery.lib.scripts.js.deobfuscation.strict_divergence import diverges_under_strict
 from refinery.lib.scripts.js.model import (
+    SCRIPT_CONTEXT,
+    AwaitReading,
+    CodeContext,
     JsArrowFunctionExpression,
     JsAssignmentExpression,
     JsAwaitExpression,
@@ -74,6 +75,7 @@ from refinery.lib.scripts.js.model import (
     JsUnaryExpression,
     JsVariableDeclarator,
     Statement,
+    code_context_at,
     strip_parens,
     wraps_return,
 )
@@ -106,6 +108,7 @@ def _try_parse(
     top_level_await: bool,
     strict: bool,
     module: bool = False,
+    context: CodeContext = SCRIPT_CONTEXT,
 ) -> JsScript | None:
     """
     The tree the reflected code spells, or `None` where it spells no program. Inlining is the one
@@ -127,6 +130,11 @@ def _try_parse(
     from; spliced into the file, it takes the whole file down with it, and nothing runs at all. So it
     is refused here, which leaves the `eval` or `Function` call standing to throw exactly what it threw
     before.
+
+    *context* is what the splice site reads `await`, `yield` and `arguments` as, seeded into the
+    collector so that a payload legal as a script is refused where the site would refuse it: a
+    reference to `arguments` from a class field initializer, `await` bound in a static block,
+    `typeof yield` in a generator body.
 
     *strict* is the mode at the destination, and it is the mode the text has to be legal in, whichever
     mode it would have run in where it stood. A body a `Function` constructor builds runs sloppy in the
@@ -164,19 +172,20 @@ def _try_parse(
         return None
     if parsed.module:
         return None
-    if collect_strict_violations(parsed, strict=strict, module=module):
+    if collect_strict_violations(parsed, strict=strict, module=module, context=context):
         return None
     return parsed
 
 
 def _site_in_async_function(site: Node) -> bool:
     """
-    Whether *site* sits inside an `async` function, so a direct `eval` there runs where `await` is an
-    operator. Global-scope reflected code (indirect `eval`, a `Function` body, a string call) runs in
-    the global sloppy scope instead, where `await` is an ordinary identifier and never an operator.
+    Whether *site* reads `await` as the operator, so a direct `eval` there runs where it is one.
+    That is the parameter list and body of an `async` function, and not a class field initializer
+    or static block written inside one, each being a context of its own. Global-scope reflected code
+    (indirect `eval`, a `Function` body, a string call) runs in the global sloppy scope instead,
+    where `await` is an ordinary identifier and never an operator.
     """
-    func = enclosing_function(site)
-    return isinstance(func, FUNCTION_NODES) and func.is_async
+    return code_context_at(site).await_reading is AwaitReading.OPERATOR
 
 
 def _try_eval_string_arg(node: Expression, model: SemanticModel) -> str | None:
@@ -596,7 +605,13 @@ def _try_unpack_function_constructor(
     if mapping is None:
         return None
     getters, setters = mapping
-    parsed = _try_parse(code, top_level_await=False, strict=strict_mode_at(node), module=module)
+    parsed = _try_parse(
+        code,
+        top_level_await=False,
+        strict=strict_mode_at(node),
+        module=module,
+        context=code_context_at(node),
+    )
     if parsed is None:
         return None
     if not param_name:
@@ -1131,7 +1146,10 @@ class JsReflectionInlining(ScriptLevelTransformer):
                 return None
             return parsed.body
         pack = _try_unpack_function_constructor(
-            node, free_global_name=self._free_global, module=module_execution(self.options))
+            node,
+            free_global_name=self._free_global,
+            module=module_execution(self.options) or root.module,
+        )
         if pack is not None:
             packed, site_resolved = pack
             admitted = self._admit_reflected_body(
@@ -1267,7 +1285,8 @@ class JsReflectionInlining(ScriptLevelTransformer):
             code,
             top_level_await=top_level_await,
             strict=strict_mode_at(site),
-            module=module_execution(self.options),
+            module=module_execution(self.options) or root.module,
+            context=code_context_at(site),
         )
         if parsed is None:
             return None

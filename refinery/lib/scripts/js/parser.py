@@ -10,6 +10,8 @@ from refinery.lib.scripts.js.lexer import (
     identifier_string_value,
 )
 from refinery.lib.scripts.js.model import (
+    AwaitReading,
+    CodeContext,
     Expression,
     JsArrayExpression,
     JsArrayPattern,
@@ -93,6 +95,8 @@ from refinery.lib.scripts.js.model import (
     JsWithStatement,
     JsYieldExpression,
     Statement,
+    class_element_context,
+    function_context,
 )
 from refinery.lib.scripts.js.strict import mark_directives, mark_module
 from refinery.lib.scripts.js.token import RESERVED_WORD_NAMES, JsToken, JsTokenKind
@@ -164,8 +168,7 @@ class JsParser:
         self._ahead_newline: bool = False
         self._ahead_state: tuple[JsLexerState, int] | None = None
         self._no_in: bool = False
-        self._in_async: bool = top_level_await
-        self._in_generator: bool = False
+        self._context: CodeContext = function_context(top_level_await, False)
         self._pending_comments: list[str] = []
         self._recovered: bool = False
         self._prev_end: int = 0
@@ -293,9 +296,11 @@ class JsParser:
         """
         Whether the token can serve as an ordinary binding or reference name. Several contextual
         keywords (`as`, `from`, `of`, `let`, `async`) are always valid names, while `await` and
-        `yield` are valid names except inside an async function or a generator respectively. This is
-        the identifier acceptance of `_parse_primary_expression` itself, so a name-reading site
-        accepts exactly the tokens the expression grammar would treat as a reference.
+        `yield` are names only where the context the code is read under says so: `yield` is the
+        operator in a generator, and `await` is the operator in an async function and reserved
+        outright in a static class element. This is the identifier acceptance of
+        `_parse_primary_expression` itself, so a name-reading site accepts exactly the tokens the
+        expression grammar would treat as a reference.
         """
         kind = token.kind
         return (
@@ -307,8 +312,8 @@ class JsParser:
                 JsTokenKind.LET,
                 JsTokenKind.ASYNC,
             )
-            or (kind is JsTokenKind.AWAIT and not self._in_async)
-            or (kind is JsTokenKind.YIELD and not self._in_generator)
+            or (kind is JsTokenKind.AWAIT and self._context.await_reading is AwaitReading.NAME)
+            or (kind is JsTokenKind.YIELD and not self._context.yield_is_operator)
         )
 
     def _at_binding_identifier(self) -> bool:
@@ -319,7 +324,7 @@ class JsParser:
         Whether the token standing here names the function whose `function` keyword was just read.
         Only a name or the parameter list may stand in that position, so `yield` and `await` are
         read as the name wherever they appear rather than through `_at_binding_identifier`, whose
-        answer is about the enclosing function's kind.
+        answer is about the context the function stands in.
 
         That answer is the wrong one here in both directions. A function expression's name takes its
         own kind and not the enclosing one, so `function* g() { var f = function yield() {}; }` is a
@@ -389,14 +394,21 @@ class JsParser:
             self._no_in = saved
 
     @contextmanager
-    def _function_body_context(self, is_async: bool, is_generator: bool):
-        saved = (self._in_async, self._in_generator)
-        self._in_async = is_async
-        self._in_generator = is_generator
+    def _code_context(self, context: CodeContext):
+        """
+        Read what the body does under *context*, which is what the model's
+        `refinery.lib.scripts.js.model.code_context_within` answers for the node being built, and
+        restore the enclosure's context afterwards.
+        """
+        saved = self._context
+        self._context = context
         try:
             yield
         finally:
-            self._in_async, self._in_generator = saved
+            self._context = saved
+
+    def _function_body_context(self, is_async: bool, is_generator: bool):
+        return self._code_context(function_context(is_async, is_generator))
 
     def parse(self) -> JsScript:
         script = self._parse_program()
@@ -782,11 +794,20 @@ class JsParser:
         return JsDoWhileStatement(test=test, body=body, offset=offset)
 
     def _parse_for_statement(self) -> Statement:
+        """
+        A `for await` head is read wherever `await` is not reserved outright, rather than only where
+        it is the operator: the goal symbol is not known while parsing, and at the top level of a
+        file the loop is how a module spells its legal top-level `await`. A static block and a
+        static field initializer refuse the word in every position, and the loop head is one.
+        """
         offset = self._current.offset
         self._expect(JsTokenKind.FOR)
 
         is_await = False
-        if self._eat(JsTokenKind.AWAIT):
+        if (
+            self._context.await_reading is not AwaitReading.RESERVED
+            and self._eat(JsTokenKind.AWAIT)
+        ):
             is_await = True
 
         self._expect(JsTokenKind.LPAREN)
@@ -1106,23 +1127,25 @@ class JsParser:
         return self._parse_class_impl(as_expression=False, decorators=decorators)
 
     def _parse_class_body(self) -> JsClassBody:
-        offset = self._current.offset
-        self._expect(JsTokenKind.LBRACE)
-        members: list[JsMethodDefinition | JsPropertyDefinition | JsStaticBlock] = []
-        while not self._at(JsTokenKind.RBRACE, JsTokenKind.EOF):
-            if self._eat(JsTokenKind.SEMICOLON):
-                continue
-            decorators = self._parse_decorators()
-            member = self._parse_class_member()
-            if decorators and isinstance(member, (JsMethodDefinition, JsPropertyDefinition)):
-                member.decorators = decorators
-                member._adopt(*decorators)
-            members.append(member)
-        self._expect(JsTokenKind.RBRACE)
-        return JsClassBody(body=members, offset=offset)
+        with self._with_no_in(False):
+            offset = self._current.offset
+            self._expect(JsTokenKind.LBRACE)
+            members: list[JsMethodDefinition | JsPropertyDefinition | JsStaticBlock] = []
+            while not self._at(JsTokenKind.RBRACE, JsTokenKind.EOF):
+                if self._eat(JsTokenKind.SEMICOLON):
+                    continue
+                decorators = self._parse_decorators()
+                member = self._parse_class_member()
+                if decorators and isinstance(member, (JsMethodDefinition, JsPropertyDefinition)):
+                    member.decorators = decorators
+                    member._adopt(*decorators)
+                members.append(member)
+            self._expect(JsTokenKind.RBRACE)
+            return JsClassBody(body=members, offset=offset)
 
     def _parse_static_block(self, offset: int) -> JsStaticBlock:
-        block = self._parse_block_statement()
+        with self._code_context(class_element_context(static=True)):
+            block = self._parse_block_statement()
         return JsStaticBlock(body=block.body, offset=offset)
 
     def _parse_class_member(self) -> JsMethodDefinition | JsPropertyDefinition | JsStaticBlock:
@@ -1208,7 +1231,8 @@ class JsParser:
     ) -> JsPropertyDefinition:
         value = None
         if self._eat(JsTokenKind.EQUALS):
-            value = self._parse_assignment_expression()
+            with self._code_context(class_element_context(static=is_static)):
+                value = self._parse_assignment_expression()
         self._eat_semicolon()
         return JsPropertyDefinition(
             key=key,
@@ -1583,7 +1607,7 @@ class JsParser:
         attaching to it: a `yield` that the line terminator restriction left without an argument
         ends the expression, and the slash that opens the next statement is not its divisor.
         """
-        if self._at(JsTokenKind.YIELD) and self._in_generator:
+        if self._at(JsTokenKind.YIELD) and self._context.yield_is_operator:
             return self._parse_yield_expression()
         left = self._parse_conditional_expression()
         if self._current.kind.is_assignment:
@@ -1659,7 +1683,7 @@ class JsParser:
             operand = self._parse_unary_expression()
             return JsUnaryExpression(
                 operator='-', operand=operand, prefix=True, offset=tok.offset)
-        if self._at(JsTokenKind.AWAIT) and self._in_async:
+        if self._at(JsTokenKind.AWAIT) and self._context.await_reading is AwaitReading.OPERATOR:
             tok = self._advance()
             operand = self._parse_unary_expression()
             return JsAwaitExpression(argument=operand, offset=tok.offset)

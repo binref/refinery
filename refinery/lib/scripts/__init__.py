@@ -160,16 +160,18 @@ def canonical(node: Node):
 def is_well_formed(root: Node) -> bool:
     """
     Whether the tree at `root` spells the source it was read from, which is the domain over which
-    `canonical` states a fidelity law. Three things take a tree out of it. A node that
+    `canonical` states a fidelity law. Four things take a tree out of it. A node that
     `Node.has_spelling` rejects cannot be printed at all; an `unparsed` node prints source that no
     parser agreed to read, so re-reading it yields whatever the recovery happens to make of the
-    text; and a node that `Node.is_recovered` reports as repaired prints a program the file did not
-    hold. None of the three says anything about whether a synthesizer is faithful.
+    text; a node that `Node.is_recovered` reports as repaired prints a program the file did not
+    hold; and a tree that `Node.early_errors` reports on prints, however faithfully, a text the
+    language refuses to read. None of the four says anything about whether a synthesizer is
+    faithful.
     """
     return all(
         node.has_spelling() and not node.unparsed and not node.is_recovered()
         for node in root.walk()
-    )
+    ) and not root.early_errors()
 
 
 @dataclass(repr=False, eq=False)
@@ -253,6 +255,15 @@ class Node:
         this at the root of the file, since a token it stepped over belongs to no node at all.
         """
         return False
+
+    def early_errors(self) -> typing.Sequence[object]:
+        """
+        The constructs in the tree at this node that the language refuses to read although the
+        parser read them, so that a file holding one is a program no engine loads. A node kind that
+        can name none answers nothing, which is the default; the root node of a language answers
+        with what its early-error pass reports under the file's own mode and goal.
+        """
+        return ()
 
     def canonical_form(self) -> Node | None:
         """

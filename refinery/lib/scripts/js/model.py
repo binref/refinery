@@ -12,9 +12,13 @@ from __future__ import annotations
 import enum
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from refinery.lib.scripts import Expression, Node, Statement
 from refinery.lib.scripts.js.numbers import to_js_number
+
+if TYPE_CHECKING:
+    from refinery.lib.scripts.js.strict import StrictViolation
 
 
 class JsPropertyKind(enum.Enum):
@@ -640,12 +644,121 @@ class JsScript(Statement, spelling=('module', 'recovered')):
     def is_recovered(self) -> bool:
         return self.recovered
 
+    def early_errors(self) -> list[StrictViolation]:
+        """
+        What the language refuses in the file under its own mode and goal: the early errors
+        `refinery.lib.scripts.js.strict.collect_strict_violations` reports over the tree read as a
+        script, or as a module where the file spells module syntax.
+        """
+        from refinery.lib.scripts.js.strict import collect_strict_violations
+        return collect_strict_violations(self, module=self.module)
+
 
 #: The three nodes that hold a function body. A class or object method holds a
 #: `JsFunctionExpression` as its value, so it needs no entry of its own.
 FUNCTION_NODES = (JsFunctionDeclaration, JsFunctionExpression, JsArrowFunctionExpression)
 
 JsFunctionNode = JsFunctionDeclaration | JsFunctionExpression | JsArrowFunctionExpression
+
+
+class AwaitReading(enum.Enum):
+    """
+    What the word `await` is where a piece of code stands. It names a binding or a reference in a
+    script and in every function that is not `async`; it is the operator in an `async` function's
+    parameter list and body; and it is neither in a class static block or a static field
+    initializer, where the language refuses the word in every position.
+    """
+    NAME = enum.auto()
+    OPERATOR = enum.auto()
+    RESERVED = enum.auto()
+
+
+@dataclass(frozen=True)
+class CodeContext:
+    """
+    The grammar parameters a piece of code is read under: what `await` is, whether `yield` is the
+    operator rather than a name, and whether `arguments` may be referred to at all. The parser
+    descends it and the early-error collector threads it, both through `code_context_within`, so
+    that the tree a text is read into and the errors reported over that tree agree on what every
+    word is.
+    """
+    await_reading: AwaitReading
+    yield_is_operator: bool
+    arguments_reserved: bool
+
+
+SCRIPT_CONTEXT = CodeContext(AwaitReading.NAME, False, False)
+"""
+The context the top level of a script is read under: both words are names and `arguments` is free.
+"""
+
+
+def function_context(is_async: bool, is_generator: bool) -> CodeContext:
+    """
+    The context the parameter list and the body of a function of the given kind are read under.
+    """
+    return CodeContext(AwaitReading.OPERATOR if is_async else AwaitReading.NAME, is_generator, False)
+
+
+def class_element_context(static: bool) -> CodeContext:
+    """
+    The context a class element's own code is read under: a field initializer, or a static block.
+    Each is a function context of its own that reserves `arguments` (§15.7.1) and reads `yield` as
+    a name; a static one refuses `await` outright, where an instance initializer reads it as a name.
+    """
+    return CodeContext(AwaitReading.RESERVED if static else AwaitReading.NAME, False, True)
+
+
+def code_context_within(parent: Node, child: Node, enclosing: CodeContext) -> CodeContext:
+    """
+    The context *child* is read under, given that *parent* is read under *enclosing*. This is the
+    one transition every reader of the context takes, so that the parser descending the tree, the
+    collector threading it, and `code_context_at` folding it agree on every node.
+
+    A function body takes the readings its own kind gives it, and so does the name of a function
+    expression, which is bound inside it (§15.2.1); a declaration's name is bound outside it and
+    keeps the enclosure's. An arrow's parameters are still the enclosing code and keep its
+    readings, except that an `async` arrow reads `await` as the operator there too; its body is its
+    own and resets both words, but keeps the `arguments` reservation, since an arrow has no
+    `arguments` of its own (§15.7.1). A class element's own code is what `class_element_context`
+    says, whatever encloses the class.
+    """
+    if isinstance(parent, JsStaticBlock):
+        return class_element_context(static=True)
+    if isinstance(parent, JsPropertyDefinition):
+        return class_element_context(parent.is_static) if child is parent.value else enclosing
+    if isinstance(parent, JsArrowFunctionExpression):
+        await_reading = AwaitReading.OPERATOR if parent.is_async else enclosing.await_reading
+        if any(child is param for param in parent.params):
+            return CodeContext(await_reading, enclosing.yield_is_operator, enclosing.arguments_reserved)
+        if parent.is_async:
+            await_reading = AwaitReading.OPERATOR
+        else:
+            await_reading = AwaitReading.NAME
+        return CodeContext(await_reading, False, enclosing.arguments_reserved)
+    if isinstance(parent, JsFunctionDeclaration):
+        return enclosing if child is parent.id else function_context(parent.is_async, parent.generator)
+    if isinstance(parent, JsFunctionExpression):
+        return function_context(parent.is_async, parent.generator)
+    return enclosing
+
+
+def code_context_at(node: Node, root_context: CodeContext = SCRIPT_CONTEXT) -> CodeContext:
+    """
+    The context *node* is read under, folded from the root of its tree down through
+    `code_context_within`. *root_context* is what the root itself stands in: the top level of a
+    script by default, and the splice site's context for a tree about to be inlined there.
+    """
+    chain: list[Node] = []
+    cursor: Node | None = node
+    while cursor is not None:
+        chain.append(cursor)
+        cursor = cursor.parent
+    chain.reverse()
+    context = root_context
+    for parent, child in zip(chain, chain[1:]):
+        context = code_context_within(parent, child, context)
+    return context
 
 
 def is_async_function(func: JsFunctionNode) -> bool:
@@ -705,9 +818,9 @@ def callee_form_sensitive(node: Node | None) -> bool:
 def names_a_property(node: Node) -> bool:
     """
     Whether *node* spells the name of a property and reads nothing. A member written with a dot, a
-    key of an object literal, the name of a class member, and the key of an import attribute are the
-    four positions the language has for such a name, and in each of them the text is a name the
-    value carries rather than one the program looks up.
+    key of an object literal, the name of a class member, the key of an import attribute, and a
+    name on the far side of a module boundary are the positions the language has for such a name,
+    and in each of them the text is a name the value carries rather than one the program looks up.
 
     A computed key is not one of these: what stands inside the brackets is an expression and is
     read like any other. Neither is a shorthand property, which is written like a key and is both:
@@ -720,6 +833,12 @@ def names_a_property(node: Node) -> bool:
         import d from 'm' with { 'type': 'json' }
 
     names an attribute and not a binding, and so does the same clause written without the quotes.
+
+    A name across the module boundary is an IdentifierName the grammar takes wider than a name the
+    file could bind: `import { yield as v }`, `export { v as yield }`, `export * as yield from`,
+    and both words of `export { yield } from "m"` name what another module carries. The shorthand
+    `import { yield }` is the one spelling that is the far side and the binding at once, and it
+    is read as the binding.
     """
     parent = node.parent
     if isinstance(parent, JsMemberExpression):
@@ -730,6 +849,15 @@ def names_a_property(node: Node) -> bool:
         return parent.key is node and not parent.computed
     if isinstance(parent, JsImportAttribute):
         return parent.key is node
+    if isinstance(parent, JsImportSpecifier):
+        return parent.imported is node and parent.local is not node
+    if isinstance(parent, JsExportSpecifier):
+        declaration = parent.parent
+        if isinstance(declaration, JsExportNamedDeclaration) and declaration.source is not None:
+            return True
+        return parent.exported is node and parent.local is not node
+    if isinstance(parent, JsExportAllDeclaration):
+        return parent.exported is node
     return False
 
 

@@ -42,6 +42,7 @@ from test.lib.scripts.js.test_directive_prologue import (
     NOT_A_PROGRAM,
 )
 
+from refinery.lib.scripts import is_well_formed
 from refinery.lib.scripts.js.model import (
     JsArrowFunctionExpression,
     JsFunctionDeclaration,
@@ -289,8 +290,7 @@ A_NAME_THE_KIND_OF_FUNCTION_RESERVES = [
 ]
 
 #: The same reservation asked of a declaration's name rather than of a parameter or a reference.
-#: Node refuses every one of these too, and what the tool makes of them is pinned in
-#: `test.lib.scripts.js.test_unfixed_defects`.
+#: Node refuses every one of these too.
 A_BINDING_THE_KIND_OF_FUNCTION_RESERVES = [
     'function* g() { function yield() {} }',
     'function* g() { class yield {} }',
@@ -923,3 +923,41 @@ class TestTheCollectorRefusesAReservedFunctionNameWhereNodeDoes(TestBase):
     def test_it_reports_on_exactly_the_named_declarations_a_strict_file_refuses(self):
         rows = A_NAMED_FUNCTION_DECLARATION_OF_EVERY_KIND
         self.assertEqual(_reported(rows, strict=True), _refused_as_a_strict_file(rows))
+
+
+class TestTheVerdictRefusesAFunctionNameWhereNodeDoes(TestBase):
+    """
+    `refinery.lib.scripts.is_well_formed` is the tool's answer to the question Node was asked of
+    every file above, so the two agree on all of them: a declaration named by a word the kind of the
+    enclosing function reserves is no program, and neither is an expression named by a word its own
+    kind reserves, while the names only some other kind reserves are programs. The declarations of
+    `A_BINDING_THE_KIND_OF_FUNCTION_RESERVES` used to come back well formed with the name read as
+    absent, printed as `class {\\n    {;\\n  }`.
+    """
+
+    @staticmethod
+    def _well_formed(programs: Iterable[str]) -> dict[str, bool]:
+        return {program: is_well_formed(JsParser(program).parse()) for program in programs}
+
+    def test_a_name_the_kind_of_function_reserves_is_no_program(self):
+        rows = [
+            *A_NAME_THE_KIND_OF_FUNCTION_RESERVES,
+            *A_BINDING_THE_KIND_OF_FUNCTION_RESERVES,
+            *A_FUNCTION_EXPRESSION_NAMED_BY_A_WORD_ITS_OWN_KIND_RESERVES,
+            *A_CLASS_EXPRESSION_NAME_THE_ENCLOSING_KIND_RESERVES,
+        ]
+        self.assertEqual(self._well_formed(rows), _every_one_of(rows, False))
+
+    def test_a_name_only_some_other_kind_reserves_is_a_program(self):
+        rows = [
+            *A_FUNCTION_EXPRESSION_NAME_ITS_OWN_KIND_LEAVES_ALONE,
+            *A_FUNCTION_EXPRESSION_NAME_ONLY_THE_ENCLOSING_KIND_RESERVES,
+        ]
+        self.assertEqual(self._well_formed(rows), _every_one_of(rows, True))
+
+    def test_the_same_declaration_inside_a_plain_function_is_a_program_where_node_reads_it(self):
+        rows = THE_SAME_BINDING_INSIDE_A_PLAIN_FUNCTION
+        self.assertEqual(
+            self._well_formed(rows),
+            {source: not refused for source, refused in rows.items()},
+        )

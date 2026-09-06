@@ -70,7 +70,6 @@ from test.lib.scripts.js.ledger import (
     well_formed,
 )
 from test.lib.scripts.js.test_parameter_grammar import (
-    A_BINDING_THE_KIND_OF_FUNCTION_RESERVES,
     A_FUNCTION_EXPRESSION_NAME_ONLY_THE_ENCLOSING_KIND_RESERVES,
 )
 from test.lib.scripts.js.test_parser_recovery import (
@@ -80,18 +79,6 @@ from test.lib.scripts.js.test_parser_recovery import (
 from test.lib.scripts.js.test_truncated_source import FOLDS_ANSWERED_WITH_A_PROGRAM
 
 from refinery.lib.scripts import UnspellableNode
-from refinery.lib.scripts.js.model import (
-    JsIdentifier,
-    JsPropertyDefinition,
-)
-from refinery.lib.scripts.js.parser import JsParser
-
-
-def _sole_property_definition(source: str) -> JsPropertyDefinition:
-    return [
-        node for node in JsParser(source).parse().walk()
-        if isinstance(node, JsPropertyDefinition)
-    ][0]
 
 
 def _dropped_source_characters(source: str, printed: str) -> str:
@@ -112,111 +99,6 @@ def _dropped_source_characters(source: str, printed: str) -> str:
     return ''.join(missing)
 
 
-class TestClassBodyIsItsOwnFunctionContext(TestBase):
-    """
-    A class body does not belong to the function that encloses it. Each field initializer is a
-    function context of its own and so is each static block, and both are strict code, so `await`
-    and `yield` mean there what they mean in a fresh body that is neither async nor a generator.
-    A static block goes one step further and bans `await` outright, in every position and of its
-    own accord, so that the word is no more a name there than it is an operator.
-    """
-
-    @unittest.expectedFailure
-    def test_await_in_a_field_initializer_is_a_name(self):
-        """
-        Node accepts `async function f() { class C { p = await; } }`, and with `var await = 41` in
-        scope `new C().p` is `41`. The initializer is not an async context, so `await` there is an
-        ordinary identifier reference and not the operator the enclosing function would give it.
-        """
-        source = 'async function f() { class C { p = await; } }'
-        self.assertEqual(type(_sole_property_definition(source).value), JsIdentifier)
-        self.assertEqual(
-            printed(source), 'async function f() {\n  class C {\n    p = await;\n  }\n}'
-        )
-
-    @unittest.expectedFailure
-    def test_the_await_operator_is_not_available_in_a_field_initializer(self):
-        """
-        Node refuses `async function f() { class C { p = await x; } }` with `SyntaxError:
-        Unexpected identifier 'x'`, because `await` there is a name and no name may be followed by
-        another one. Reading an operator the grammar does not offer in that position turns a file
-        an engine rejects into a tree that claims to be a program.
-        """
-        self.assertEqual(well_formed('async function f() { class C { p = await x; } }'), False)
-
-    @unittest.expectedFailure
-    def test_a_class_static_block_bans_await_whatever_encloses_the_class(self):
-        """
-        Node refuses `class C { static { var await = 1; } }` with `SyntaxError: Unexpected reserved
-        word`, and refuses the same class standing inside a plain function and inside an `async`
-        one with the same message. The ban is the block's own, because the block is its own function
-        context: no enclosure has to supply it and none can lift it.
-
-        The `async` row is why this entry is quantified over three rather than written about one.
-        The word is reserved throughout an async function's body, so a parser that lets that
-        reservation reach through the class body into the block refuses that row for a reason of
-        the enclosure's — the right answer by accident — while reading the other two as programs.
-        """
-        sources = [
-            'class C { static { var await = 1; } }',
-            'function f() { class C { static { var await = 1; } } }',
-            'async function f() { class C { static { var await = 1; } } }',
-        ]
-        self.assertEqual(
-            {source: well_formed(source) for source in sources},
-            {source: False for source in sources},
-        )
-
-    @unittest.expectedFailure
-    def test_yield_in_a_field_initializer_is_refused(self):
-        """
-        Node refuses `function* f() { class C { p = yield; } }` with `SyntaxError: Unexpected
-        strict mode reserved word`. The initializer is not the generator's body, so `yield` is not
-        the operator, and a class body is strict code, where `yield` is not a usable name either.
-        """
-        self.assertEqual(well_formed('function* f() { class C { p = yield; } }'), False)
-
-    @unittest.expectedFailure
-    def test_yield_is_banned_in_a_class_static_block(self):
-        """
-        Node refuses `function* f() { class C { static { yield; } } }` with `SyntaxError:
-        Unexpected strict mode reserved word`, for the reason the field initializer is refused for:
-        the block is its own context and it is strict.
-        """
-        self.assertEqual(well_formed('function* f() { class C { static { yield; } } }'), False)
-
-
-class TestABindingNamedByAWordItsFunctionKindReservesIsNoProgram(TestBase):
-    """
-    A class whose name is a word the enclosing function kind reserves is read as though the name
-    were absent, and what the printer then writes is not JavaScript:
-    `function* g() { class yield {} }` comes back as `class {\n    {;\n  }`, and the `await`
-    twin inside an `async` function comes back the same way. The two function declarations of the
-    corpus are read with their names now, so their text comes back exactly as it went in.
-
-    Node refuses each of the four inputs this entry is quantified over, so what those four cost is
-    not a program: it is that `refinery.lib.scripts.is_well_formed` answers `True` for the tree,
-    which is the domain every fidelity law is stated over — a caller told the tree is well formed
-    compares text that is not a program against the file it came from, and a printer under no
-    obligation is asked for one anyway.
-    """
-
-    @unittest.expectedFailure
-    def test_a_binding_the_kind_of_function_reserves_is_not_a_well_formed_program(self):
-        """
-        Node refuses all four files of
-        `test.lib.scripts.js.test_parameter_grammar.A_BINDING_THE_KIND_OF_FUNCTION_RESERVES`, which
-        the law in that module pins against the engine along with the controls that part the kind of
-        function from the mode: the same declarations are read inside a plain function, except
-        `class yield`, which every strict region refuses for a reason of its own.
-        """
-        rows = A_BINDING_THE_KIND_OF_FUNCTION_RESERVES
-        self.assertEqual(
-            {source: well_formed(source) for source in rows},
-            {source: False for source in rows},
-        )
-
-
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestAnExpressionNamedByAWordOnlyTheEnclosingKindReservesIsAProgram(TestBase):
     """
@@ -233,7 +115,8 @@ class TestAnExpressionNamedByAWordOnlyTheEnclosingKindReservesIsAProgram(TestBas
     expression without one, so that what came back opened `var f = function(() {` — a text Node
     refuses. A declaration's name and a class expression's name are read under whatever encloses
     them instead, which is what makes the four files of
-    `TestABindingNamedByAWordItsFunctionKindReservesIsNoProgram` no programs to begin with.
+    `test.lib.scripts.js.test_parameter_grammar.A_BINDING_THE_KIND_OF_FUNCTION_RESERVES` no
+    programs to begin with.
     """
 
     def test_printing_one_of_them_gives_a_program_that_runs_the_same_way(self):
@@ -282,12 +165,11 @@ class TestABindingNamedByAWordNoModuleMayBindIsNoProgram(TestBase):
     which reads every word of both in every boundary position with no repair. A refusal that
     reaches a name across the boundary therefore turns that law red rather than this entry green.
 
-    The words the language reserves outright are refused already in four of the five binding
-    positions. The words only strict code and only a module reserve are read in all five, and the
-    shorthand `import { yield } from "m";`, whose one word is a boundary name and a binding at
-    once, is read for every word of the corpus. Each file so read prints back exactly as it went
-    in, so what they cost is what the four files of
-    `TestABindingNamedByAWordItsFunctionKindReservesIsNoProgram` cost:
+    The words the language reserves outright are refused in four of the five binding positions,
+    and every word only strict code or only a module reserves is refused in all five. What is left
+    is the shorthand `import { class } from "m";`, whose one word is a boundary name and a binding
+    at once and is read as the boundary name for every word the language reserves outright, so
+    that a module binding `class` prints back exactly as it went in. What that costs is that
     `refinery.lib.scripts.is_well_formed` answers `True` for a tree that is not a program, which is
     the domain every fidelity law is stated over, and a consumer reading that tree finds a module
     binding a name no module has.
@@ -307,56 +189,6 @@ class TestABindingNamedByAWordNoModuleMayBindIsNoProgram(TestBase):
         self.assertEqual(
             {source: well_formed(source) for source in sources},
             {source: False for source in sources},
-        )
-
-    @unittest.expectedFailure
-    def test_the_shorthand_import_binds_the_word_the_shorthand_re_export_only_passes_on(self):
-        """
-        The word in `import { yield } from "m";` names a binding as well as the far side of the
-        boundary, and the word in `export { yield } from "m";` names the far side twice over, which
-        is why the host refuses the first and reads the second.
-        """
-        sources = ['import { yield } from "m";', 'export { yield } from "m";']
-        self.assertEqual([well_formed(source) for source in sources], [False, True])
-
-
-#: A function declaration written as the whole of an `if` clause, in each of the modes. Annex B.3.4
-#: admits one in sloppy code, reading it as a block holding it; strict code has no such rule and the
-#: grammar refuses a declaration where it requires a statement.
-A_FUNCTION_DECLARATION_AS_AN_IF_CLAUSE = {
-    'sloppy': a_program("""
-        if (1) function W() { return 1; }
-        console.log(W());
-        """),
-    'strict': a_program("""
-        'use strict';
-        if (1) function W() { return 1; }
-        console.log(W());
-        """),
-}
-
-
-class TestAFunctionDeclarationIsAClauseOnlyWhereAnnexBSaysSo(TestBase):
-    """
-    `if (x) function f() {}` is a program in sloppy code and no program in strict code: §B.3.4 gives
-    the sloppy grammar an extra production reading the declaration as the block that would hold it,
-    and strict code keeps the rule that a clause is a Statement, which a Declaration is not. Node
-    runs the first and refuses the second with a `SyntaxError`.
-
-    The parser reads both, so a file the engine would not load comes back as a deobfuscated program.
-    That is mishandling of invalid input and never what a release is held for, which is why this is
-    here and not in the other file; it is written down because the placement of a block-declared
-    function is decided by the same production and a reader of that code will look for it.
-    """
-
-    @unittest.expectedFailure
-    def test_a_clause_position_declaration_is_refused_in_strict_code(self):
-        self.assertEqual(
-            {
-                mode: well_formed(source)
-                for mode, source in A_FUNCTION_DECLARATION_AS_AN_IF_CLAUSE.items()
-            },
-            {'sloppy': True, 'strict': False},
         )
 
 

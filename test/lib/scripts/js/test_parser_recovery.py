@@ -630,7 +630,8 @@ class TestAModuleTakesAWiderNameAcrossItsBoundaryThanItBinds(TestBase):
     reserved word stands in.
 
     What is pinned is the accepting half of that: every spelling the host reads is read here
-    without a repair, and printed back as the file wrote it.
+    without a repair, and printed back as the file wrote it; and the one spelling that is both
+    positions at once, the shorthand import, which binds.
     """
 
     @staticmethod
@@ -662,3 +663,17 @@ class TestAModuleTakesAWiderNameAcrossItsBoundaryThanItBinds(TestBase):
                     {source: self._read_and_printed(source) for source in sources},
                     {source: (True, source) for source in sources},
                 )
+
+    def test_the_shorthand_import_binds_the_word_the_shorthand_re_export_only_passes_on(self):
+        """
+        The word in `import { yield } from "m";` names a binding as well as the far side of the
+        boundary, and the word in `export { yield } from "m";` names the far side twice over, which
+        is why the host refuses the first and reads the second.
+        """
+        self.assertEqual(
+            {
+                source: is_well_formed(JsParser(source).parse())
+                for source in ['import { yield } from "m";', 'export { yield } from "m";']
+            },
+            {'import { yield } from "m";': False, 'export { yield } from "m";': True},
+        )

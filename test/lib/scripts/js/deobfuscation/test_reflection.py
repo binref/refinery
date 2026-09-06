@@ -1978,3 +1978,181 @@ class TestAConsumedTemporaryStillNamedKeepsItsDeclaration(TestBase):
             with self.subTest(label):
                 self.assertEqual(row.read(), row.required())
 
+
+
+class TestAPayloadIsWeighedAgainstTheContextOfItsSite(TestJsDeobfuscator):
+    """
+    A payload is read as a script, where `await`, `yield` and `arguments` are names, and is spliced
+    into a site that may read them otherwise: a static block or a static initializer refuses `await`
+    in every position, a field initializer refuses a reference to `arguments` through any arrow, an
+    `async` body reads `await` as the operator and a generator's body `yield`. Node refuses every
+    file the splice would write, so the call is left standing to do what it did; the same payload
+    at a site reading the words as a script does is inlined.
+    """
+
+    def _reflect(self, source: str) -> str:
+        return self._run_transformer(source, JsReflectionInlining)
+
+    def test_a_static_initializer_refuses_the_await_operator_its_async_enclosure_reads(self):
+        source = 'async function f() { class C { static p = eval("await 1;"); } }'
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                async function f() {
+                  class C {
+                    static p = eval("await 1;");
+                  }
+                }
+                """
+            ),
+            self._reflect(source),
+        )
+
+    def test_a_static_initializer_refuses_arguments(self):
+        source = 'function g() { class C { static p = eval("arguments"); } }'
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function g() {
+                  class C {
+                    static p = eval("arguments");
+                  }
+                }
+                """
+            ),
+            self._reflect(source),
+        )
+
+    def test_an_instance_initializer_refuses_arguments(self):
+        self.assertEqual(
+            'class C {\n  p = eval("arguments");\n}',
+            self._reflect('class C { p = eval("arguments"); }'),
+        )
+
+    def test_an_initializer_refuses_arguments_through_an_arrow(self):
+        source = 'function f() { class C { p = () => eval("arguments"); } }'
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function f() {
+                  class C {
+                    p = () => eval("arguments");
+                  }
+                }
+                """
+            ),
+            self._reflect(source),
+        )
+
+    def test_a_static_block_refuses_a_binding_named_await(self):
+        source = 'class C { static { eval("var await = 1;"); } }'
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                class C {
+                  static {
+                    eval("var await = 1;");
+                  }
+                }
+                """
+            ),
+            self._reflect(source),
+        )
+
+    def test_a_generator_body_refuses_yield_as_a_name(self):
+        self.assertEqual(
+            'function* g() {\n  (0, eval)("typeof yield");\n}',
+            self._reflect('function* g() { (0, eval)("typeof yield"); }'),
+        )
+
+    def test_a_generator_body_refuses_yield_as_a_name_from_a_function_body(self):
+        source = 'function* g() { var h = Function("return typeof yield"); console.log(h()); }'
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                function* g() {
+                  var h = Function("return typeof yield");
+                  console.log(h());
+                }
+                """
+            ),
+            self._reflect(source),
+        )
+
+    def test_an_async_body_refuses_await_as_a_name_from_a_function_body(self):
+        source = (
+            'async function f() { var g = Function("return typeof await"); console.log(g()); } f();'
+        )
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                async function f() {
+                  var g = Function("return typeof await");
+                  console.log(g());
+                }
+                f();
+                """
+            ),
+            self._reflect(source),
+        )
+
+    def test_a_site_reading_the_words_as_a_script_does_takes_the_same_payloads(self):
+        rows = {
+            'class C { static { console.log(eval("1 + 1")); } }':
+                'class C {\n  static {\n    console.log(1 + 1);\n  }\n}',
+            'class C { p = eval("1 + 1"); }':
+                'class C {\n  p = 1 + 1;\n}',
+            'function g() { class C { m() { return eval("arguments"); } } }':
+                'function g() {\n  class C {\n    m() {\n      return arguments;\n    }\n  }\n}',
+            'function* g() { (0, eval)("typeof x"); }':
+                'function* g() {\n  typeof x;\n}',
+            'function g() { var h = Function("return typeof yield"); console.log(h()); }':
+                'function g() {\n  console.log(typeof yield);\n}',
+            'function f() { var g = Function("return typeof await"); console.log(g()); } f();':
+                'function f() {\n  console.log(typeof await);\n}\nf();',
+            'async function f() { var g = Function("return typeof x"); console.log(g()); } f();':
+                'async function f() {\n  console.log(typeof x);\n}\nf();',
+        }
+        self.assertEqual({source: self._reflect(source) for source in rows}, rows)
+
+
+class TestAFileSpellingModuleSyntaxIsAModuleDestination(TestJsDeobfuscator):
+    """
+    A file with an `import` or `export` in it is module code whatever the options say, so a payload
+    a module refuses — one binding `await` — is left standing at both surfaces under the script
+    model too, where the same payload in a file spelling no module syntax is inlined. A payload the
+    module reads is still inlined there.
+    """
+
+    def _reflect(self, source: str) -> str:
+        return self._run_transformer(source, JsReflectionInlining)
+
+    def test_an_indirect_eval_binding_await_is_left_standing_beside_an_export(self):
+        source = (
+            'export const tag = 1;\n'
+            '(0, eval)("console.log(function (await) { return await + 2; }(1));");'
+        )
+        self.assertEqual(source, self._reflect(source))
+
+    def test_a_function_body_binding_await_is_left_standing_beside_an_export(self):
+        source = (
+            'export const tag = 1;\n'
+            "var _m = Function('return function (await) { return await; }')();\n"
+            'sink(_m);'
+        )
+        self.assertEqual(source, self._reflect(source))
+
+    def test_the_same_function_body_is_inlined_where_no_module_syntax_is_spelled(self):
+        self.assertEqual(
+            'var _m = function(await) {\n  return await;\n};\nsink(_m);',
+            self._reflect(
+                "var _m = Function('return function (await) { return await; }')(); sink(_m);"
+            ),
+        )
+
+    def test_a_function_body_the_module_reads_is_still_inlined_beside_an_export(self):
+        self.assertEqual(
+            'export const tag = 1;\nvar _m = 1;\nsink(_m);',
+            self._reflect('export const tag = 1;\nvar _m = Function("return 1")(); sink(_m);'),
+        )
+

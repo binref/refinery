@@ -6,7 +6,7 @@ import unittest
 from test import TestBase
 from test.lib.scripts.js.analysis.differential import behavior, node_executable
 
-from refinery.lib.scripts import Statement, set_body
+from refinery.lib.scripts import Statement, is_well_formed, set_body
 from refinery.lib.scripts.js.model import JsBlockStatement, JsScript
 from refinery.lib.scripts.js.parser import JsParser
 from refinery.lib.scripts.js.strict import (
@@ -581,4 +581,67 @@ class TestAReplacementHoldingTheDirectiveBehindAnotherStatement(TestBase):
         self.assertEqual(
             {order: self._the_statements_beside_the_directive(order) for order in orders},
             {order: [index for index in order if index != 0] for order in orders},
+        )
+
+
+#: A function declaration written as the whole of an `if` clause, in each of the modes. Annex B.3.4
+#: admits one in sloppy code, reading it as a block holding it; strict code has no such rule and
+#: the grammar refuses a declaration where it requires a statement.
+A_FUNCTION_DECLARATION_AS_AN_IF_CLAUSE = {
+    'sloppy': inspect.cleandoc("""
+        if (1) function W() { return 1; }
+        console.log(W());
+        """) + '\n',
+    'strict': inspect.cleandoc("""
+        'use strict';
+        if (1) function W() { return 1; }
+        console.log(W());
+        """) + '\n',
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestNodeReadsAClausePositionDeclarationOnlyWhereAnnexBSaysSo(TestBase):
+
+    def test_node_runs_the_sloppy_file_and_refuses_the_strict_one(self):
+        self.assertEqual(
+            {mode: behavior(source) for mode, source in A_FUNCTION_DECLARATION_AS_AN_IF_CLAUSE.items()},
+            {'sloppy': ('1\n', None), 'strict': ('', 'SyntaxError')},
+        )
+
+
+class TestTheVerdictReadsTheFileUnderItsOwnModeAndGoal(TestBase):
+    """
+    `refinery.lib.scripts.is_well_formed` asks the root of a file for its early errors, and a
+    script's root answers with what `collect_strict_violations` reports under the mode the file
+    declares and the goal its syntax spells. So a clause-position declaration is a program only
+    below no directive, a strict error beside module syntax makes a file no program, and the same
+    text with the module syntax taken out is one.
+    """
+
+    @staticmethod
+    def _well_formed(source: str) -> bool:
+        return is_well_formed(JsParser(source).parse())
+
+    def test_a_clause_position_declaration_is_refused_in_strict_code_only(self):
+        self.assertEqual(
+            {
+                mode: self._well_formed(source)
+                for mode, source in A_FUNCTION_DECLARATION_AS_AN_IF_CLAUSE.items()
+            },
+            {'sloppy': True, 'strict': False},
+        )
+
+    def test_a_strict_error_beside_module_syntax_is_no_program(self):
+        rows = A_STRICT_ERROR_UNDER_MODULE_SYNTAX
+        self.assertEqual(
+            {source: self._well_formed(source) for source in rows},
+            {source: False for source in rows},
+        )
+
+    def test_the_same_files_without_the_module_syntax_are_programs(self):
+        rows = THE_SAME_FILES_WITHOUT_THE_MODULE_SYNTAX
+        self.assertEqual(
+            {source: self._well_formed(source) for source in rows},
+            {source: True for source in rows},
         )

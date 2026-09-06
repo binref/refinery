@@ -11,15 +11,19 @@ lists constantly, so every pass that moves, inserts, removes or folds a statemen
 question of the same names — a pass that re-derives the rules is a pass that gets a different answer.
 
 The second is the early errors: `collect_strict_violations` walks a parsed tree, threading strictness
-down through function bodies, class bodies and prologues, and records a `StrictViolation` at every
-construct the language refuses. The tree is never altered. Most of those constructs are refused only
-by a strict region, which is what the seeded mode is for; several are refused whatever mode the program
-runs in, and are named at `StrictViolation`.
+down through function bodies, class bodies and prologues along with the
+`refinery.lib.scripts.js.model.CodeContext` each region is read under, and records a
+`StrictViolation` at every construct the language refuses. The tree is never altered. Most of those
+constructs are refused only by a strict region, which is what the seeded mode is for; several are
+refused whatever mode the program runs in, and are named at `StrictViolation`.
 
-The intended consumer is the reflection transform, which inlines payloads from always-sloppy surfaces
-(`Function`, indirect `eval`, string timers) and must refuse an inlining that a strict destination would
-reject. That wiring is deliberately not part of this module: a payload with no strict violation can still
-diverge at runtime, so `collect_strict_violations` is necessary but not sufficient for that decision.
+Two consumers read it. `refinery.lib.scripts.is_well_formed` asks the root of a file for its early
+errors under the file's own mode and goal, so that a tree the language refuses is outside the domain
+every fidelity law is stated over. The reflection transform inlines payloads from always-sloppy
+surfaces (`Function`, indirect `eval`, string timers) and must refuse an inlining that its
+destination would reject; that wiring is deliberately not part of this module, since a payload with
+no strict violation can still diverge at runtime, so `collect_strict_violations` is necessary but
+not sufficient for that decision.
 """
 from __future__ import annotations
 
@@ -31,6 +35,9 @@ from refinery.lib.scripts import Node, Statement
 from refinery.lib.scripts.js.lexer import has_legacy_numeric_escape
 from refinery.lib.scripts.js.model import (
     FUNCTION_NODES,
+    SCRIPT_CONTEXT,
+    AwaitReading,
+    CodeContext,
     JsArrayPattern,
     JsArrowFunctionExpression,
     JsAssignmentExpression,
@@ -74,6 +81,8 @@ from refinery.lib.scripts.js.model import (
     JsVarKind,
     JsWithStatement,
     JsYieldExpression,
+    code_context_at,
+    code_context_within,
     names_a_property,
     strip_parens,
 )
@@ -87,13 +96,14 @@ class StrictViolation:
     otherwise. The parse tree is never changed.
 
     Most rules record that the code at `offset` would be a `SyntaxError` if its enclosing region ran in
-    strict mode. Four do not: a Use Strict Directive under a parameter list that is not simple, a
-    repeated name in a list the grammar requires to be unique, the arity of an accessor, and a name
-    reserved by the kind of function it stands in are refused in *either* mode, so a caller that treats
-    an empty result as "sloppy code is safe" is reading it right, and one that treats a non-empty
-    result as "only strict code would refuse this" is not. One more asks neither about the mode but
-    about the goal symbol: `await-in-module` records a name a module refuses to bind, reported only
-    when the tree is read as module code.
+    strict mode. Five do not: a Use Strict Directive under a parameter list that is not simple, a
+    repeated name in a list the grammar requires to be unique, the arity of an accessor, a name
+    reserved by the kind of function it stands in, and `arguments` referred to from a class field
+    initializer or static block are refused in *either* mode, so a caller that treats an empty
+    result as "sloppy code is safe" is reading it right, and one that treats a non-empty result as
+    "only strict code would refuse this" is not. One more asks neither about the mode but about the
+    goal symbol: `await-in-module` records a name a module refuses to bind, reported only when the
+    tree is read as module code.
     """
     offset: int
     rule: str
@@ -531,75 +541,56 @@ def _child_strictness(node: Node, strict: bool) -> bool:
     return strict
 
 
-def _reserved_by_own_kind(fn: JsFunctionNode) -> frozenset[str]:
-    """
-    The names *fn* reserves by being the kind of function it is: a generator reserves `yield` and an
-    async function reserves `await`, because inside one the word is an operator and cannot also name
-    anything.
-    """
-    names: set[str] = set()
-    if isinstance(fn, (JsFunctionDeclaration, JsFunctionExpression)) and fn.generator:
-        names.add('yield')
-    if fn.is_async:
-        names.add('await')
-    return frozenset(names)
-
-
 def reserved_by_function_kind(node: Node) -> frozenset[str]:
     """
     The names that may name nothing at *node*, because of the kind of function whose code *node* is.
     Unlike the strict-mode reserved words this holds in either mode: `function* g(yield) {}` and
     `async function h(await) {}` are texts no engine reads, sloppy file or not.
 
-    The region a function reserves for is its own parameter list and its own body, and it stops at
-    every function written inside it — `function* g() { function h(yield) {} }` is a program, because
-    `h`'s code is `h`'s and not the generator's. An arrow is the exception in half: its parameters are
-    still the enclosing function's code and inherit the reservation, while its body is its own and
-    does not, so `(yield) => {}` inside a generator is refused and `() => { var yield = 1; }` is not.
+    Whose kind that is, `refinery.lib.scripts.js.model.code_context_within` decides. The region a
+    function reserves for is its own parameter list and its own body, and it stops at every function
+    written inside it — `function* g() { function h(yield) {} }` is a program, because `h`'s code
+    is `h`'s and not the generator's. An arrow is the exception in half: its parameters are still the
+    enclosing function's code and inherit the reservation, while its body is its own and does not,
+    so `(yield) => {}` inside a generator is refused and `() => { var yield = 1; }` is not. A class
+    field initializer and a static block are contexts of their own, and the static ones refuse
+    `await` in every position, whatever encloses the class.
 
     A function's name is governed by one context and never by two, but which one depends on how the
     function is written. A declaration's name is bound outside it and takes the enclosing context, so
-    `function* yield() {}` is read at the top level and refused inside a generator; naming itself
-    therefore skips this function's own reservation and keeps climbing. An expression's name is bound
-    inside it and takes its own kind alone (§15.2.1, §15.5.1, §15.8.1), so
+    `function* yield() {}` is read at the top level and refused inside a generator. An expression's
+    name is bound inside it and takes its own kind alone (§15.2.1, §15.5.1, §15.8.1), so
     `x = (function* yield() {})` is refused while `function* g() { var f = function yield() {}; }` is
-    read; naming itself therefore answers here and does not climb at all.
+    read.
+    """
+    return reserved_names(code_context_at(node))
+
+
+def reserved_names(context: CodeContext) -> frozenset[str]:
+    """
+    The words `reserved_by_function_kind` answers with for code read under *context*.
     """
     reserved: set[str] = set()
-    cursor: Node = node
-    parent = cursor.parent
-    while parent is not None:
-        if isinstance(parent, FUNCTION_NODES):
-            if isinstance(parent, JsFunctionExpression) and cursor is parent.id:
-                return _reserved_by_own_kind(parent)
-            names_itself = isinstance(parent, JsFunctionDeclaration) and cursor is parent.id
-            if not names_itself:
-                reserved |= _reserved_by_own_kind(parent)
-                inherits = (
-                    isinstance(parent, JsArrowFunctionExpression)
-                    and any(cursor is param for param in parent.params)
-                )
-                if not inherits:
-                    break
-        cursor, parent = parent, parent.parent
+    if context.await_reading is not AwaitReading.NAME:
+        reserved.add('await')
+    if context.yield_is_operator:
+        reserved.add('yield')
     return frozenset(reserved)
 
 
 _KIND_RESERVABLE = frozenset({'yield', 'await'})
 """
-Every name any function kind reserves, which is what `_reserved_by_own_kind` can ever answer with. A
-name outside this set is reserved by no kind, so asking which kinds enclose it cannot change the
-answer — and that question is a climb to the nearest enclosing function, asked once per identifier in
-the tree.
+Every name any function kind reserves, which is what `reserved_names` can ever answer with. A name
+outside this set is reserved by no kind, so the context it stands in cannot change the answer.
 """
 
 
-def _check_kind_reserved(node: Node, out: list[StrictViolation]) -> None:
+def _check_kind_reserved(node: Node, context: CodeContext, out: list[StrictViolation]) -> None:
     if not isinstance(node, JsIdentifier) or node.name not in _KIND_RESERVABLE:
         return
     if names_a_property(node):
         return
-    if node.name in reserved_by_function_kind(node):
+    if node.name in reserved_names(context):
         out.append(StrictViolation(node.offset, 'reserved-by-function-kind', node.name))
 
 
@@ -783,6 +774,7 @@ def _check_names(
     cur_strict: bool,
     child_strict: bool,
     module: bool,
+    context: CodeContext,
     out: list[StrictViolation],
     handled: set[int],
 ) -> None:
@@ -807,13 +799,12 @@ def _check_names(
         if not isinstance(node.left, JsVariableDeclaration):
             _flag_bound(node.left, cur_strict, module, out, handled)
     elif isinstance(node, JsIdentifier):
-        if (
-            id(node) not in handled
-            and cur_strict
-            and node.name in _STRICT_RESERVED
-            and not names_a_property(node)
-        ):
+        if id(node) in handled or names_a_property(node):
+            return
+        if cur_strict and node.name in _STRICT_RESERVED:
             out.append(StrictViolation(node.offset, 'reserved-word', node.name))
+        elif node.name == 'arguments' and context.arguments_reserved:
+            out.append(StrictViolation(node.offset, 'arguments-in-class-initializer', node.name))
 
 
 def collect_strict_violations(
@@ -821,6 +812,7 @@ def collect_strict_violations(
     *,
     strict: bool = False,
     module: bool = False,
+    context: CodeContext = SCRIPT_CONTEXT,
 ) -> list[StrictViolation]:
     """
     Every early error in the tree rooted at *node*, in source order. *strict* seeds the strictness of
@@ -833,25 +825,33 @@ def collect_strict_violations(
     strict script, that `await` names nothing a binding may be. It is off by default, since a tree read
     on its own is a Script; a caller weighing text against a module destination seeds it True.
 
+    *context* is what the code at *node* reads `await`, `yield` and `arguments` as, and every
+    region below derives its own from it through
+    `refinery.lib.scripts.js.model.code_context_within`. A tree read on its own stands at the top
+    level of a script; a caller weighing text against a splice site seeds the site's context, so
+    that a payload legal as a script is reported on where the site would refuse it — `arguments` in
+    a class field initializer, `await` in a static block, `yield` in a generator body.
+
     Not every rule asks about the mode. A Use Strict Directive under a parameter list that is not
-    simple, a repeated name where the grammar requires a unique list, the arity of an accessor, and a
-    name a generator or an async function reserves are refused whatever mode the program runs in, so a
-    sloppy seed can report on a tree with no `"use strict"` anywhere in it. That is what makes a sloppy
-    seed a usable gate on text about to be spliced into a destination whose mode is not yet known.
+    simple, a repeated name where the grammar requires a unique list, the arity of an accessor, a
+    name a generator or an async function reserves, and `arguments` in a class field initializer or
+    static block are refused whatever mode the program runs in, so a sloppy seed can report on a
+    tree with no `"use strict"` anywhere in it. That is what makes a sloppy seed a usable gate on
+    text about to be spliced into a destination whose mode is not yet known.
 
     An empty result means the tree has no parse error under the seeded mode; it does not imply the tree
     behaves identically in strict mode, since some divergences surface only at runtime.
     """
     out: list[StrictViolation] = []
     handled: set[int] = set()
-    stack: list[tuple[Node, bool]] = [(node, strict)]
+    stack: list[tuple[Node, bool, CodeContext]] = [(node, strict, context)]
     while stack:
-        current, current_strict = stack.pop()
+        current, current_strict, current_context = stack.pop()
         child_strict = _child_strictness(current, current_strict)
         _check_node(current, current_strict, out)
-        _check_kind_reserved(current, out)
-        _check_names(current, current_strict, child_strict, module, out, handled)
+        _check_kind_reserved(current, current_context, out)
+        _check_names(current, current_strict, child_strict, module, current_context, out, handled)
         for child in current.children():
-            stack.append((child, child_strict))
+            stack.append((child, child_strict, code_context_within(current, child, current_context)))
     out.sort(key=lambda violation: violation.offset)
     return out
