@@ -72,6 +72,10 @@ from test.lib.scripts.js.ledger import (
 from test.lib.scripts.js.test_parameter_grammar import (
     A_FUNCTION_EXPRESSION_NAME_ONLY_THE_ENCLOSING_KIND_RESERVES,
 )
+from test.lib.scripts.js.test_html_comments import (
+    A_FILE_HOLDING_A_COMMENT_NO_STATEMENT_CARRIES,
+    the_module_rule_reported_in,
+)
 from test.lib.scripts.js.test_parser_recovery import (
     A_POSITION_NAMING_A_BINDING_THE_FILE_CREATES,
     A_WORD_NO_MODULE_MAY_BIND,
@@ -321,8 +325,10 @@ class TestPrintingIsIdempotent(TestBase):
 
 class TestCommentWithNoFollowingStatement(TestBase):
     """
-    A comment is carried by the statement it precedes, which leaves a comment that precedes nothing
-    with no carrier.
+    A comment is carried by the statement it precedes in a statement list, which leaves a comment
+    that precedes nothing, and one that precedes a clause body rather than a listed statement, with
+    no carrier. Whatever holds such a comment once one does has to be read by the one rule that
+    asks about comments, the module goal's refusal of the HTML-like delimiters.
     """
 
     @unittest.expectedFailure
@@ -334,6 +340,21 @@ class TestCommentWithNoFollowingStatement(TestBase):
         """
         sources = ['x = 1;\n/* note */', 'x = 1;\n// note', 'x = 1;\n/* note']
         self.assertEqual(tuple(printed(source) for source in sources), tuple(sources))
+
+    @unittest.expectedFailure
+    def test_the_module_rule_reads_a_comment_no_statement_carries(self):
+        """
+        Node refuses each file of
+        `test.lib.scripts.js.test_html_comments.A_FILE_HOLDING_A_COMMENT_NO_STATEMENT_CARRIES`
+        as a module, as it refuses every file holding an HTML-like comment, and the collector has
+        to report the delimiter under the module goal wherever the tree holds it. It holds it
+        nowhere today, the comment having no carrier, so nothing is reported.
+        """
+        rows = A_FILE_HOLDING_A_COMMENT_NO_STATEMENT_CARRIES
+        self.assertEqual(
+            {source: the_module_rule_reported_in(source) for source in rows},
+            {source: ['html-comment'] for source in rows},
+        )
 
 
 class TestALiteralNoElementOfWhichRunsIsCounted(TestBase):
@@ -1622,96 +1643,6 @@ class TestAnUnreadableKeyMayRebindAWrapperThroughTheGlobalObject(TestBase):
             "  console.log('real', a);\n"
             '};\n'
             '1;',
-        )
-
-
-@unittest.skipIf(node_executable() is None, 'node.js is not available')
-class TestScriptCodeHasTwoMoreCommentOpeners(TestBase):
-    """
-    Script code reads two comment delimiters beyond `//` and `/*`, held over from the years a
-    script was written inside an HTML comment so that a browser which did not know the tag printed
-    nothing instead of the source. Each runs to the end of its line the way `//` does, and only one
-    of them is free to stand anywhere.
-
-    `<!--` opens a comment wherever a comment may open, the middle of an expression included, so
-    `var y = x <!-- note` declares `y` and holds what `x` holds. `-->` opens one only where nothing
-    but whitespace and comments precedes it on its line, the head of the file counting as such a
-    line; anywhere else those three characters are the decrement operator and `>`, which is what
-    makes `a-->b` the program `a-- > b`. Node reads a script holding either delimiter and refuses
-    the same file read as a module with `SyntaxError: HTML comments are not allowed in modules`,
-    the two being script grammar and nothing else; it refuses `console.log(1); --> note` and
-    `var a = 1; /* c */ --> note` with `SyntaxError: Unexpected token '>'`, a statement in front of
-    the delimiter on its line being what the positional restriction is about.
-
-    Neither delimiter is read here, `<!--` being taken for `<` against `!` and `-->` for a
-    decrement against `>`, and what that costs runs in both directions at once. Ten of the files
-    below are refused, `refinery.lib.scripts.is_well_formed` answering `False` for programs a host
-    runs; the eleventh, `var y = x <!-- note`, is called a program and comes back as
-    `var y = x < !--note;`, which reads the word behind the delimiter and throws over it. What the
-    printer writes for the rest is text resegmented into statements the file never held: a `-->`
-    comment becomes a statement of its own with the comment text standing behind it as a second, so
-    a file that printed `1` and `2` comes back printing `1` and then throwing.
-
-    Off the release gate deliberately: both delimiters stand in the input in plain sight, so
-    an analyst who meets one recognizes the HTML wrapper and cuts it — a work-around,
-    where the gate is for the wrong answers an analyst cannot see.
-    """
-
-    @unittest.expectedFailure
-    def test_a_file_a_host_reads_is_a_well_formed_program(self):
-        """
-        The delimiters in every position that decides one: at the head of a file, behind a
-        statement, at the end of one, inside a function body, and behind whitespace, a comment and
-        a comment that spans lines. The three files that hold neither delimiter and the two the
-        host refuses are answered here already, and they stand in the same answer so that a fix
-        reading `-->` wherever it is written turns `a-->b` red.
-        """
-        rows = {
-            '<!-- note\nconsole.log(1);': True,
-            'console.log(1); <!-- note': True,
-            'console.log(1);\n<!--': True,
-            'var x = 1;\nvar y = x <!-- note\nconsole.log(y);': True,
-            '--> note\nconsole.log(1);': True,
-            'console.log(1);\n--> note\nconsole.log(2);': True,
-            'console.log(1);\n   --> note\nconsole.log(2);': True,
-            'console.log(1);\n/* c */ --> note\nconsole.log(2);': True,
-            'console.log(1); /* c\n */ --> note\nconsole.log(2);': True,
-            'function f() {\n--> note\nreturn 1;\n}\nconsole.log(f());': True,
-            'var a = 2, b = 0;\nconsole.log(a-->b);': True,
-            "console.log('-->');": True,
-            'console.log(`x\n--> y`);': True,
-            'console.log(1); --> note': False,
-            'var a = 1; /* c */ --> note': False,
-        }
-        self.assertEqual({source: well_formed(source) for source in rows}, rows)
-
-    @unittest.expectedFailure
-    def test_the_text_printed_for_one_prints_what_the_file_prints(self):
-        """
-        What each of these files prints is what the host prints for it, and the text the printer
-        hands back has to print the same. `<!--` read as two operators leaves text the host refuses
-        outright; `-->` read as a decrement leaves a program that prints the output ahead of the
-        delimiter and then throws a `ReferenceError` over the word behind it, which is a file's
-        second half going missing behind an answer that reads as one.
-        """
-        programs = {
-            '<!-- note\nconsole.log(1);': '1\n',
-            'console.log(1); <!-- note': '1\n',
-            'console.log(1);\n<!--': '1\n',
-            'var x = 1;\nvar y = x <!-- note\nconsole.log(y);': '1\n',
-            '--> note\nconsole.log(1);': '1\n',
-            'console.log(1);\n--> note\nconsole.log(2);': '1\n2\n',
-            'console.log(1);\n   --> note\nconsole.log(2);': '1\n2\n',
-            'console.log(1);\n/* c */ --> note\nconsole.log(2);': '1\n2\n',
-            'console.log(1); /* c\n */ --> note\nconsole.log(2);': '1\n2\n',
-            'function f() {\n--> note\nreturn 1;\n}\nconsole.log(f());': '1\n',
-            'var a = 2, b = 0;\nconsole.log(a-->b);': 'true\n',
-            "console.log('-->');": '-->\n',
-            'console.log(`x\n--> y`);': 'x\n--> y\n',
-        }
-        self.assertEqual(
-            {source: behavior(printed(source)) for source in programs},
-            {source: (prints, None) for source, prints in programs.items()},
         )
 
 

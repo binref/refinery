@@ -2156,3 +2156,56 @@ class TestAFileSpellingModuleSyntaxIsAModuleDestination(TestJsDeobfuscator):
             self._reflect('export const tag = 1;\nvar _m = Function("return 1")(); sink(_m);'),
         )
 
+
+class TestAnHtmlCommentPayloadInlinesOnlyAtAScriptDestination(TestJsDeobfuscator):
+    """
+    Script code reads `<!--` and a line-head `-->` as comment openers and module code refuses both
+    (§B.1.1), so a payload holding one is inlined where the destination is a script and left
+    standing where it is a module, whether the module is asked for or spelled by the file's own
+    syntax.
+    """
+
+    def _reflect(self, source: str) -> str:
+        return self._run_transformer(source, JsReflectionInlining)
+
+    def _reflect_module(self, source: str) -> str:
+        return self._run_transformer(
+            source, JsReflectionInlining, DeobfuscationOptions(module=True))
+
+    def test_an_opener_payload_is_inlined_into_a_script(self):
+        rows = {
+            'eval("<!-- x\\nconsole.log(1);");': '<!-- x\nconsole.log(1);',
+            '(0, eval)("<!-- x\\nconsole.log(1);");': '<!-- x\nconsole.log(1);',
+            'var f = Function("<!-- x\\nreturn 1"); console.log(f());': 'console.log(1);',
+        }
+        self.assertEqual({source: self._reflect(source) for source in rows}, rows)
+
+    def test_a_closer_payload_is_inlined_into_a_script(self):
+        self.assertEqual(
+            '1;\n--> x\nconsole.log(2);',
+            self._reflect('eval("1;\\n--> x\\nconsole.log(2);");'),
+        )
+
+    def test_a_payload_holding_either_is_left_standing_where_a_module_is_asked_for(self):
+        rows = [
+            'eval("<!-- x\\nconsole.log(1);");',
+            '(0, eval)("<!-- x\\nconsole.log(1);");',
+            'eval("1;\\n--> x\\nconsole.log(2);");',
+            'var f = Function("<!-- x\\nreturn 1");\nconsole.log(f());',
+        ]
+        self.assertEqual(
+            {source: self._reflect_module(source) for source in rows},
+            {source: source for source in rows},
+        )
+
+    def test_a_payload_holding_either_is_left_standing_beside_an_export(self):
+        rows = [
+            'export const tag = 1;\neval("<!-- x\\nconsole.log(1);");',
+            'export const tag = 1;\n(0, eval)("<!-- x\\nconsole.log(1);");',
+            'export const tag = 1;\neval("1;\\n--> x\\nconsole.log(2);");',
+            'export const tag = 1;\nvar f = Function("<!-- x\\nreturn 1");\nconsole.log(f());',
+        ]
+        self.assertEqual(
+            {source: self._reflect(source) for source in rows},
+            {source: source for source in rows},
+        )

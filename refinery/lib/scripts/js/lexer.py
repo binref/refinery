@@ -277,6 +277,18 @@ _ONE_CHAR_OPS: dict[str, JsTokenKind] = {
 }
 
 
+HTML_OPEN_COMMENT = '<!--'
+HTML_CLOSE_COMMENT = '-->'
+
+
+def is_html_comment(comment: str) -> bool:
+    """
+    Whether *comment* is one of the two that script code reads and module code refuses (§B.1.1): a
+    comment opened by `<!--`, or by `-->` at the head of its line.
+    """
+    return comment.startswith((HTML_OPEN_COMMENT, HTML_CLOSE_COMMENT))
+
+
 @dataclass(frozen=True)
 class JsLexerState:
     """
@@ -294,6 +306,14 @@ class JsLexer:
     pos: int = 0
     _template_depth: int = 0
     _brace_stack: list[int] = field(default_factory=list)
+    _line_head: bool = True
+    """
+    Whether nothing but whitespace and comments stands between the last line terminator and the
+    scan position, which is the one place `-->` opens a comment rather than spelling a decrement
+    and a `>` (§B.1.1). It is not part of `JsLexerState`: a rewind resumes either where the scan
+    already stood or directly behind a regular expression literal, and `scan_regexp` accounts for
+    that token itself.
+    """
 
     def capture(self) -> JsLexerState:
         return JsLexerState(self._template_depth, tuple(self._brace_stack))
@@ -321,6 +341,7 @@ class JsLexer:
         text = self._read_regexp()
         if text is None:
             return None
+        self._line_head = False
         return JsToken(JsTokenKind.REGEXP, text, start)
 
     def _peek(self, count: int = 1) -> str:
@@ -346,16 +367,16 @@ class JsLexer:
             self.pos += 1
         return self.pos > start
 
-    def _read_line_comment(self) -> str:
+    def _read_line_comment(self, opener_length: int = 2) -> str:
         """
-        Consume a comment that runs to the end of its line, and the `#!` line, which is one. The end
-        is looked for at once rather than one character at a time, because a comment is the longest
-        run of characters this scan ever walks and the run is over as soon as a terminator is
-        anywhere in it.
+        Consume a comment that runs to the end of its line: one opened by `//`, one opened by
+        either HTML-like delimiter, and the `#!` line, which is one. The end is looked for at once
+        rather than one character at a time, because a comment is the longest run of characters
+        this scan ever walks and the run is over as soon as a terminator is anywhere in it.
         """
         start = self.pos
         src = self.source
-        end = _LINE_TERMINATOR.search(src, self.pos + 2)
+        end = _LINE_TERMINATOR.search(src, self.pos + opener_length)
         self.pos = end.start() if end else len(src)
         return src[start:self.pos]
 
@@ -580,6 +601,18 @@ class JsLexer:
         return JsToken(JsTokenKind.IDENTIFIER, word, start)
 
     def tokenize(self) -> Generator[JsToken, None, None]:
+        """
+        Every token of the source in order, ending in `EOF`. The scan itself is `_scan`; this keeps
+        `_line_head` current over what it yields, since every token but a comment moves the scan
+        off the head of its line and only a line terminator puts it back there.
+        """
+        for token in self._scan():
+            self._line_head = token.kind is JsTokenKind.NEWLINE or (
+                token.kind is JsTokenKind.COMMENT and self._line_head
+            )
+            yield token
+
+    def _scan(self) -> Generator[JsToken, None, None]:
         src = self.source
         length = len(src)
 
@@ -607,6 +640,14 @@ class JsLexer:
 
             if c2 == '//':
                 text = self._read_line_comment()
+                yield JsToken(JsTokenKind.COMMENT, text, start)
+                continue
+            if src.startswith(HTML_OPEN_COMMENT, self.pos):
+                text = self._read_line_comment(len(HTML_OPEN_COMMENT))
+                yield JsToken(JsTokenKind.COMMENT, text, start)
+                continue
+            if self._line_head and src.startswith(HTML_CLOSE_COMMENT, self.pos):
+                text = self._read_line_comment(len(HTML_CLOSE_COMMENT))
                 yield JsToken(JsTokenKind.COMMENT, text, start)
                 continue
             if c2 == '/*':

@@ -32,7 +32,7 @@ import enum
 from dataclasses import dataclass
 
 from refinery.lib.scripts import Node, Statement
-from refinery.lib.scripts.js.lexer import has_legacy_numeric_escape
+from refinery.lib.scripts.js.lexer import has_legacy_numeric_escape, is_html_comment
 from refinery.lib.scripts.js.model import (
     FUNCTION_NODES,
     SCRIPT_CONTEXT,
@@ -101,9 +101,10 @@ class StrictViolation:
     reserved by the kind of function it stands in, and `arguments` referred to from a class field
     initializer or static block are refused in *either* mode, so a caller that treats an empty
     result as "sloppy code is safe" is reading it right, and one that treats a non-empty result as
-    "only strict code would refuse this" is not. One more asks neither about the mode but about the
-    goal symbol: `await-in-module` records a name a module refuses to bind, reported only when the
-    tree is read as module code.
+    "only strict code would refuse this" is not. Two more ask neither about the mode but about the
+    goal symbol: `await-in-module` records a name a module refuses to bind, and `html-comment` a
+    comment delimiter only script code has; both are reported only when the tree is read as module
+    code.
     """
     offset: int
     rule: str
@@ -807,6 +808,19 @@ def _check_names(
             out.append(StrictViolation(node.offset, 'arguments-in-class-initializer', node.name))
 
 
+def _check_html_comment(node: Node, module: bool, out: list[StrictViolation]) -> None:
+    """
+    An HTML-like comment is script grammar alone (§B.1.1): a module refuses `<!--` anywhere and
+    `-->` at the head of a line, so a tree read as module code is reported on at every statement
+    such a comment leads.
+    """
+    if not module:
+        return
+    for comment in node.leading_comments:
+        if is_html_comment(comment):
+            out.append(StrictViolation(node.offset, 'html-comment'))
+
+
 def collect_strict_violations(
     node: Node,
     *,
@@ -821,9 +835,10 @@ def collect_strict_violations(
     the offending code sits in an inherently strict region.
 
     *module* asks the tree as though its goal symbol were Module, which unlike strictness is a fact of
-    the whole file and never reset by a nested region: it adds the one rule a module carries beyond a
-    strict script, that `await` names nothing a binding may be. It is off by default, since a tree read
-    on its own is a Script; a caller weighing text against a module destination seeds it True.
+    the whole file and never reset by a nested region: it adds the two rules a module carries beyond
+    a strict script, that `await` names nothing a binding may be and that the HTML-like comment
+    delimiters open no comment. It is off by default, since a tree read on its own is a Script; a
+    caller weighing text against a module destination seeds it True.
 
     *context* is what the code at *node* reads `await`, `yield` and `arguments` as, and every
     region below derives its own from it through
@@ -850,6 +865,7 @@ def collect_strict_violations(
         child_strict = _child_strictness(current, current_strict)
         _check_node(current, current_strict, out)
         _check_kind_reserved(current, current_context, out)
+        _check_html_comment(current, module, out)
         _check_names(current, current_strict, child_strict, module, current_context, out, handled)
         for child in current.children():
             stack.append((child, child_strict, code_context_within(current, child, current_context)))

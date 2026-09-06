@@ -79,16 +79,20 @@ def _code_points_of_category(*categories: str) -> set[int]:
     return {cp for cp in range(0x110000) if unicodedata.category(chr(cp)) in wanted}
 
 
+def _tokens_of(source: str) -> list[tuple[JsTokenKind, str]]:
+    lexer = JsLexer(source)
+    result = []
+    for tok in lexer.tokenize():
+        if tok.kind == JsTokenKind.EOF:
+            break
+        result.append((tok.kind, tok.value))
+    return result
+
+
 class TestJsLexer(TestBase):
 
     def _tokens(self, source: str) -> list[tuple[JsTokenKind, str]]:
-        lexer = JsLexer(source)
-        result = []
-        for tok in lexer.tokenize():
-            if tok.kind == JsTokenKind.EOF:
-                break
-            result.append((tok.kind, tok.value))
-        return result
+        return _tokens_of(source)
 
     def _token_kinds(self, source: str) -> list[JsTokenKind]:
         return [k for k, _ in self._tokens(source)]
@@ -859,4 +863,141 @@ class TestTheCharactersNodeReadsANameFrom(TestBase):
                 for index, code in enumerate(rows)
             },
             _where_each_character_may_stand(),
+        )
+
+
+class TestScriptCodeHasTwoMoreCommentOpeners(TestBase):
+    """
+    `<!--` opens a comment wherever a comment may open, and `-->` opens one only where nothing but
+    whitespace and comments precedes it on its line, the head of the file counting as such a line
+    (§B.1.1). Each runs to the end of its line the way `//` does; anywhere else the characters of
+    `-->` are the decrement operator and `>`.
+    """
+
+    def test_the_opener_opens_a_comment_wherever_it_stands(self):
+        rows = {
+            '<!-- note\ny': [
+                (JsTokenKind.COMMENT, '<!-- note'),
+                (JsTokenKind.NEWLINE, '\n'),
+                (JsTokenKind.IDENTIFIER, 'y'),
+            ],
+            'x <!-- note\ny': [
+                (JsTokenKind.IDENTIFIER, 'x'),
+                (JsTokenKind.COMMENT, '<!-- note'),
+                (JsTokenKind.NEWLINE, '\n'),
+                (JsTokenKind.IDENTIFIER, 'y'),
+            ],
+            'x <!--': [
+                (JsTokenKind.IDENTIFIER, 'x'),
+                (JsTokenKind.COMMENT, '<!--'),
+            ],
+            'a <!--b': [
+                (JsTokenKind.IDENTIFIER, 'a'),
+                (JsTokenKind.COMMENT, '<!--b'),
+            ],
+            'x /* c */ <!-- d\ny': [
+                (JsTokenKind.IDENTIFIER, 'x'),
+                (JsTokenKind.COMMENT, '/* c */'),
+                (JsTokenKind.COMMENT, '<!-- d'),
+                (JsTokenKind.NEWLINE, '\n'),
+                (JsTokenKind.IDENTIFIER, 'y'),
+            ],
+        }
+        self.assertEqual({source: _tokens_of(source) for source in rows}, rows)
+
+    def test_the_closer_opens_a_comment_at_the_head_of_its_line(self):
+        rows = {
+            '--> note\ny': [
+                (JsTokenKind.COMMENT, '--> note'),
+                (JsTokenKind.NEWLINE, '\n'),
+                (JsTokenKind.IDENTIFIER, 'y'),
+            ],
+            'x\n--> note\ny': [
+                (JsTokenKind.IDENTIFIER, 'x'),
+                (JsTokenKind.NEWLINE, '\n'),
+                (JsTokenKind.COMMENT, '--> note'),
+                (JsTokenKind.NEWLINE, '\n'),
+                (JsTokenKind.IDENTIFIER, 'y'),
+            ],
+            'x\n   --> note': [
+                (JsTokenKind.IDENTIFIER, 'x'),
+                (JsTokenKind.NEWLINE, '\n'),
+                (JsTokenKind.COMMENT, '--> note'),
+            ],
+            'x\n/* c */ --> note': [
+                (JsTokenKind.IDENTIFIER, 'x'),
+                (JsTokenKind.NEWLINE, '\n'),
+                (JsTokenKind.COMMENT, '/* c */'),
+                (JsTokenKind.COMMENT, '--> note'),
+            ],
+            'x /* c\n */ --> note': [
+                (JsTokenKind.IDENTIFIER, 'x'),
+                (JsTokenKind.COMMENT, '/* c\n */'),
+                (JsTokenKind.NEWLINE, ''),
+                (JsTokenKind.COMMENT, '--> note'),
+            ],
+            'x // c\n--> note': [
+                (JsTokenKind.IDENTIFIER, 'x'),
+                (JsTokenKind.COMMENT, '// c'),
+                (JsTokenKind.NEWLINE, '\n'),
+                (JsTokenKind.COMMENT, '--> note'),
+            ],
+            '#!/usr/bin/env node\n--> note': [
+                (JsTokenKind.NEWLINE, '\n'),
+                (JsTokenKind.COMMENT, '--> note'),
+            ],
+            'x\r\n--> note': [
+                (JsTokenKind.IDENTIFIER, 'x'),
+                (JsTokenKind.NEWLINE, '\r\n'),
+                (JsTokenKind.COMMENT, '--> note'),
+            ],
+            '-->': [
+                (JsTokenKind.COMMENT, '-->'),
+            ],
+        }
+        self.assertEqual({source: _tokens_of(source) for source in rows}, rows)
+
+    def test_the_closer_is_a_decrement_and_a_greater_than_anywhere_else(self):
+        rows = {
+            'a-->b': [
+                (JsTokenKind.IDENTIFIER, 'a'),
+                (JsTokenKind.DEC, '--'),
+                (JsTokenKind.GT, '>'),
+                (JsTokenKind.IDENTIFIER, 'b'),
+            ],
+            'x; --> note': [
+                (JsTokenKind.IDENTIFIER, 'x'),
+                (JsTokenKind.SEMICOLON, ';'),
+                (JsTokenKind.DEC, '--'),
+                (JsTokenKind.GT, '>'),
+                (JsTokenKind.IDENTIFIER, 'note'),
+            ],
+            'x /* c */ --> note': [
+                (JsTokenKind.IDENTIFIER, 'x'),
+                (JsTokenKind.COMMENT, '/* c */'),
+                (JsTokenKind.DEC, '--'),
+                (JsTokenKind.GT, '>'),
+                (JsTokenKind.IDENTIFIER, 'note'),
+            ],
+        }
+        self.assertEqual({source: _tokens_of(source) for source in rows}, rows)
+
+    def test_neither_delimiter_is_read_inside_a_literal(self):
+        rows = {
+            "'-->'": [(JsTokenKind.STRING_SINGLE, "'-->'")],
+            '"<!--"': [(JsTokenKind.STRING_DOUBLE, '"<!--"')],
+            '`x\n--> y`': [(JsTokenKind.TEMPLATE_FULL, '`x\n--> y`')],
+        }
+        self.assertEqual({source: _tokens_of(source) for source in rows}, rows)
+
+    def test_a_shift_takes_both_angle_brackets_before_the_opener_is_looked_for(self):
+        self.assertEqual(
+            _tokens_of('a <<!--b'),
+            [
+                (JsTokenKind.IDENTIFIER, 'a'),
+                (JsTokenKind.LT2, '<<'),
+                (JsTokenKind.BANG, '!'),
+                (JsTokenKind.DEC, '--'),
+                (JsTokenKind.IDENTIFIER, 'b'),
+            ],
         )
