@@ -249,6 +249,29 @@ def infinitize(it: _T | Iterable[_T]) -> Iterable[_T]:
         return itertools.repeat(it)
 
 
+class RecursionDepth:
+    """
+    A context manager that raises the interpreter's recursion limit for a recursive operation
+    that needs more of it than the ambient limit provides, and restores the prior limit on exit.
+    A limit lower than the ambient one is left untouched. Some third-party packages raise the
+    process-wide limit as a side effect of being imported and never restore it, so a caller that
+    needs a deep limit only for the duration of one call should ask for it here rather than trust
+    that the import already did it.
+    """
+    def __init__(self, depth: int):
+        self.depth = depth
+        self.default = sys.getrecursionlimit()
+
+    def __enter__(self):
+        if self.depth > self.default:
+            sys.setrecursionlimit(self.depth)
+        return self
+
+    def __exit__(self, *_):
+        sys.setrecursionlimit(self.default)
+        return False
+
+
 class NoLogging:
     """
     A context manager to prevent various unwanted kinds of logging messages to appear.

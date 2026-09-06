@@ -1,26 +1,10 @@
 from __future__ import annotations
 
-import sys
-
 from refinery.lib.meta import MV
 from refinery.lib.suffixtree import SuffixTree
+from refinery.lib.tools import RecursionDepth
 from refinery.lib.types import INF, Param
 from refinery.units import Arg, RefineryPartialResult, Unit
-
-
-class stackdepth:
-    def __init__(self, depth):
-        self.depth = depth
-        self.default = sys.getrecursionlimit()
-
-    def __enter__(self):
-        if self.depth > self.default:
-            sys.setrecursionlimit(self.depth)
-        return self
-
-    def __exit__(self, *args):
-        sys.setrecursionlimit(self.default)
-        return False
 
 
 class drp(Unit):
@@ -68,7 +52,7 @@ class drp(Unit):
         )
 
     def _get_patterns(self, data):
-        with stackdepth(len(data)):
+        with RecursionDepth(len(data)):
             tree = SuffixTree(data)
         min_size = self.args.min
         max_size = self.args.max

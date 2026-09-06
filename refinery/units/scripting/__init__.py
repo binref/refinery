@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import abc
 import codecs
-import sys
 
 from refinery.lib.id import guess_text_encoding
 from refinery.lib.scripts import Node
 from refinery.lib.scripts.pipeline import DeobfuscationTimeout
+from refinery.lib.tools import RecursionDepth
 from refinery.lib.types import Param, buf
 from refinery.units import Arg, Chunk, RefineryPartialResult, Unit
 
@@ -41,15 +41,12 @@ class IterativeDeobfuscator(Unit, abstract=True):
         ...
 
     def process(self, data: Chunk) -> buf:
-        old_limit = sys.getrecursionlimit()
-        sys.setrecursionlimit(max(old_limit, 10000))
         try:
-            return self._process(data)
+            with RecursionDepth(10000):
+                return self._process(data)
         except RecursionError:
             self.log_warn('input nesting exceeded the interpreter stack; leaving it unchanged')
             return data
-        finally:
-            sys.setrecursionlimit(old_limit)
 
     def _process(self, data: Chunk) -> buf:
         self.log_info('parsing input data')

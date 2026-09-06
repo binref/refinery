@@ -12,12 +12,13 @@ from typing import Generator, NamedTuple, TypeVar, get_args, get_origin, overloa
 
 from refinery.lib.shared.xdis import xdis
 from refinery.lib.structures import MemoryFile, StructReader
-from refinery.lib.tools import NoLogging, normalize_word_separators
+from refinery.lib.tools import NoLogging, RecursionDepth, normalize_word_separators
 from refinery.lib.types import buf
 
 _T = TypeVar('_T')
 
 _MAX_MARSHAL_STACK_DEPTH = 2000
+_DECOMPILER_RECURSION_DEPTH = 5000
 
 SYS_PYTHON = (
     sys.version_info.major,
@@ -124,31 +125,32 @@ def decompile_buffer(buffer: Code | buf, file_name: str | None = None) -> buf:
         else:
             yield 'uncompyle6', dc
 
-    engines = dict(_engines())
+    with RecursionDepth(_DECOMPILER_RECURSION_DEPTH):
+        engines = dict(_engines())
 
-    if not engines:
-        errors += '# (all missing, install one of the above to enable decompilation)'
+        if not engines:
+            errors += '# (all missing, install one of the above to enable decompilation)'
 
-    for code in codes:
-        for name, decompile in engines.items():
-            with io.StringIO(newline='') as output, NoLogging(NoLogging.Mode.ALL):
-                try:
-                    decompile(
-                        co=code.container,
-                        bytecode_version=code.version,
-                        out=output,
-                        timestamp=code.timestamp,
-                        code_objects=code.code_objects,
-                        is_pypy=code.is_pypi,
-                        magic_int=code.magic,
-                    )
-                except Exception as E:
-                    errors += '\n'.join(F'# {line}' for line in (
-                        F'Error while decompiling with {name}:', *str(E).splitlines(True)))
-                    errors += '\n'
-                else:
-                    python = output.getvalue()
-                    break
+        for code in codes:
+            for name, decompile in engines.items():
+                with io.StringIO(newline='') as output, NoLogging(NoLogging.Mode.ALL):
+                    try:
+                        decompile(
+                            co=code.container,
+                            bytecode_version=code.version,
+                            out=output,
+                            timestamp=code.timestamp,
+                            code_objects=code.code_objects,
+                            is_pypy=code.is_pypi,
+                            magic_int=code.magic,
+                        )
+                    except Exception as E:
+                        errors += '\n'.join(F'# {line}' for line in (
+                            F'Error while decompiling with {name}:', *str(E).splitlines(True)))
+                        errors += '\n'
+                    else:
+                        python = output.getvalue()
+                        break
     if python:
         # removes leading comments
         python = python.splitlines(True)
