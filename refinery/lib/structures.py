@@ -22,7 +22,6 @@ from typing import (
     Generic,
     Iterable,
     NamedTuple,
-    Sized,
     TypeVar,
     cast,
     get_origin,
@@ -161,6 +160,7 @@ class MemoryFileMethods(Generic[T, B]):
         maxlen: int | None = None,
         name: str = '',
     ) -> None:
+        maxlen = maxlen or None
         if isinstance(data, type):
             if not issubclass(data, bytearray):
                 raise TypeError(data.__name__)
@@ -400,89 +400,62 @@ class MemoryFileMethods(Generic[T, B]):
         del self._data[self._cursor:]
         return self.tell()
 
+    def _writable_buffer(self) -> tuple[bytearray | memoryview, int | None]:
+        """
+        The buffer that write operations modify, along with the number of bytes it can hold or `None`
+        when it can grow without bound. A `bytearray` grows unless the file was created with a size
+        limit. A `memoryview` is a window of fixed extent and every position is relative to it.
+        """
+        out = self._data
+        if isinstance(out, bytearray):
+            return out, self._maxlen
+        if isinstance(out, memoryview) and not out.readonly:
+            return out, len(out)
+        raise PermissionError
+
     def write_byte(self, byte: int) -> None:
         if isinstance(self._data, bytes):
             raise TypeError
-        if isinstance(self._data, memoryview):
-            raise NotImplementedError
-        limit = self._maxlen
-        cc = self._cursor
-        nc = cc + 1
-        if limit and nc > limit:
+        out, limit = self._writable_buffer()
+        cursor = self._cursor
+        if limit is not None and cursor >= limit:
             raise LimitExceeded(bytes((byte,)))
         try:
-            if cc < len(self._data):
-                self._data[cc] = byte
-            else:
-                self._data.append(byte)
+            if cursor < len(out):
+                out[cursor] = byte
+            elif isinstance(out, bytearray):
+                out.append(byte)
         except Exception as T:
             raise OSError(str(T)) from T
-        else:
-            self._cursor = nc
+        self._cursor = cursor + 1
 
     def write(self, _data: Buffer | Iterable[int]) -> int:
-        out = self._data
-        end = len(out)
-
-        if isinstance(out, memoryview):
-            if out.readonly:
-                raise PermissionError
-            out = out.obj
-        if not isinstance(out, bytearray):
-            raise PermissionError
-
-        try:
-            getbuf = cast('Buffer', _data).__buffer__
-        except AttributeError:
-            data = cast('Iterable[int]', _data)
-        else:
-            data = getbuf(0)
-
+        out, limit = self._writable_buffer()
         beginning = self._cursor
-        limit = self._maxlen
-
-        if limit is None and beginning == end:
-            out[end:] = data
-            self._cursor = end = len(out)
-            return end - beginning
         try:
-            size = len(cast(Sized, data))
-        except Exception:
-            it = iter(data)
-            cursor = 0
-            for cursor, b in enumerate(it, beginning):
-                out[cursor] = b
-                if cursor >= end - 1:
-                    break
-            else:
-                cursor += 1
-                self._cursor = cursor
-                return cursor - beginning
+            data = memoryview(cast('Buffer', _data))
+        except TypeError:
+            it = iter(cast('Iterable[int]', _data))
             if limit is None:
-                out[end:] = bytes(it)
+                data = bytes(it)
             else:
-                out[end:limit] = bytes(itertools.islice(it, 0, limit - end))
-                try:
-                    b = next(it)
-                except StopIteration:
-                    self._cursor = limit
-                    return limit - beginning
-                else:
-                    rest = bytearray((b,))
-                    rest[1:] = it
-                    raise LimitExceeded(rest)
+                data = bytes(itertools.islice(it, max(limit - beginning, 0)))
+            rest = bytearray(it)
+            size = len(data)
         else:
-            if limit and size + beginning > limit:
+            rest = None
+            size = data.nbytes
+            if limit is not None and size and beginning + size > limit:
                 raise LimitExceeded(bytes(data))
-            self._cursor += size
-            try:
-                out[beginning:self._cursor] = data
-            except Exception as T:
-                self._cursor = beginning
-                raise OSError(str(T)) from T
-            return size
-        self._cursor = end = len(out)
-        return end - beginning
+        stop = beginning + size
+        try:
+            out[beginning:stop] = data
+        except Exception as T:
+            raise OSError(str(T)) from T
+        self._cursor = stop
+        if rest:
+            raise LimitExceeded(rest)
+        return size
 
     def __getitem__(self, slice):
         result = self._data[slice]

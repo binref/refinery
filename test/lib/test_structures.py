@@ -3,7 +3,7 @@ import io
 import math
 import itertools
 
-from refinery.lib.structures import StructReader, StructReaderBits, MemoryFile
+from refinery.lib.structures import StructReader, StructReaderBits, MemoryFile, LimitExceeded
 
 from .. import TestBase
 
@@ -632,6 +632,113 @@ class TestStructuresExtended(TestBase):
         mem = MemoryFile(b'Hello')
         with self.assertRaises(TypeError):
             mem.write_byte(0x41)
+
+    def test_memoryfile_write_through_sliced_view_lands_inside_the_window(self):
+        backing = bytearray(8)
+        mem = MemoryFile(memoryview(backing)[2:6])
+        self.assertEqual(mem.write(b'xy'), 2)
+        self.assertEqual(mem.tell(), 2)
+        mem.seek(3)
+        mem.write(b'Q')
+        self.assertEqual(backing, b'\0\0xy\0Q\0\0')
+
+    def test_memoryfile_write_past_end_of_view_writes_nothing(self):
+        backing = bytearray(b'ABCDEFGH')
+        mem = MemoryFile(memoryview(backing)[2:6])
+        mem.seek(1)
+        with self.assertRaises(LimitExceeded) as raised:
+            mem.write(b'wxyz')
+        self.assertEqual(bytes(raised.exception), b'wxyz')
+        self.assertEqual(backing, b'ABCDEFGH')
+        self.assertEqual(mem.tell(), 1)
+
+    def test_memoryfile_write_iterable_through_sliced_view(self):
+        backing = bytearray(8)
+        mem = MemoryFile(memoryview(backing)[2:6])
+        self.assertEqual(mem.write(iter(b'xy')), 2)
+        self.assertEqual(backing, b'\0\0xy\0\0\0\0')
+        self.assertEqual(mem.tell(), 2)
+
+    def test_memoryfile_write_iterable_past_end_of_view_fills_window_and_raises_rest(self):
+        backing = bytearray(b'ABCDEFGH')
+        mem = MemoryFile(memoryview(backing)[2:6])
+        with self.assertRaises(LimitExceeded) as raised:
+            mem.write(iter(b'uvwxyz'))
+        self.assertEqual(bytes(raised.exception), b'yz')
+        self.assertEqual(backing, b'ABuvwxGH')
+        self.assertEqual(mem.tell(), 4)
+
+    def test_memoryfile_append_through_view_of_whole_buffer_is_refused(self):
+        backing = bytearray(b'abcd')
+        mem = MemoryFile(memoryview(backing))
+        mem.seek(0, io.SEEK_END)
+        with self.assertRaises(LimitExceeded):
+            mem.write(b'x')
+        self.assertEqual(backing, b'abcd')
+
+    def test_memoryfile_write_through_strided_view_uses_view_positions(self):
+        backing = bytearray(8)
+        mem = MemoryFile(memoryview(backing)[1::2])
+        mem.write(b'abc')
+        self.assertEqual(backing, b'\0a\0b\0c\0\0')
+
+    def test_memoryfile_write_byte_through_sliced_view(self):
+        backing = bytearray(8)
+        mem = MemoryFile(memoryview(backing)[5:7])
+        mem.write_byte(0x41)
+        mem.write_byte(0x42)
+        with self.assertRaises(LimitExceeded):
+            mem.write_byte(0x43)
+        self.assertEqual(backing, b'\0\0\0\0\0AB\0')
+        self.assertEqual(mem.tell(), 2)
+
+    def test_memoryfile_write_byte_readonly_view(self):
+        mem = MemoryFile(memoryview(bytearray(b'Hello')).toreadonly())
+        with self.assertRaises(PermissionError):
+            mem.write_byte(0x41)
+
+    def test_memoryfile_write_iterable_at_end_of_limited_buffer(self):
+        mem = MemoryFile(bytearray(b'ab'), maxlen=5)
+        mem.seek(2)
+        self.assertEqual(mem.write(iter(b'cd')), 2)
+        self.assertEqual(mem.getvalue(), b'abcd')
+        self.assertEqual(mem.tell(), 4)
+
+    def test_memoryfile_write_empty_iterable_moves_nothing(self):
+        mem = MemoryFile(bytearray(b'abc'), maxlen=10)
+        mem.seek(2)
+        self.assertEqual(mem.write(iter(())), 0)
+        self.assertEqual(mem.tell(), 2)
+        self.assertEqual(mem.getvalue(), b'abc')
+
+    def test_memoryfile_write_iterable_growing_below_limit_reports_actual_size(self):
+        mem = MemoryFile(bytearray(b'12345678'), maxlen=10)
+        self.assertEqual(mem.write(iter(range(9))), 9)
+        self.assertEqual(mem.tell(), 9)
+        self.assertEqual(mem.getvalue(), bytes(range(9)))
+
+    def test_memoryfile_write_iterable_beyond_limit_fills_to_limit_and_raises_rest(self):
+        mem = MemoryFile(bytearray(b'ab'), maxlen=4)
+        with self.assertRaises(LimitExceeded) as raised:
+            mem.write(iter(b'cdefg'))
+        self.assertEqual(bytes(raised.exception), b'g')
+        self.assertEqual(mem.getvalue(), b'cdef')
+        self.assertEqual(mem.tell(), 4)
+
+    def test_memoryfile_write_beyond_limit_writes_nothing(self):
+        mem = MemoryFile(bytearray(b'ab'), maxlen=4)
+        with self.assertRaises(LimitExceeded) as raised:
+            mem.write(b'cdefg')
+        self.assertEqual(bytes(raised.exception), b'cdefg')
+        self.assertEqual(mem.getvalue(), b'ab')
+        self.assertEqual(mem.tell(), 0)
+
+    def test_memoryfile_zero_limit_means_no_limit(self):
+        mem = MemoryFile(bytearray(b'abc'), maxlen=0)
+        mem.seek(0, io.SEEK_END)
+        mem.write_byte(0x64)
+        self.assertEqual(mem.write(b'efg'), 3)
+        self.assertEqual(mem.getvalue(), b'abcdefg')
 
     def test_memoryfile_replay(self):
         mem = MemoryFile(bytearray())
