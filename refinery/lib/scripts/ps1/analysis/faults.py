@@ -641,14 +641,25 @@ class Ps1FaultReach:
         end — and draws none for a re-raising set, so the mere existence of that edge answers the
         question. This is why a splice into such a body is load bearing: the edge lands on the next
         statement of the block, and splicing more statements after a raiser moves what that next
-        statement is. Read off the descended graph the reader already holds; a node it places nowhere
-        is guarded by nothing here.
+        statement is.
+
+        Read off the descended graph the reader already holds. A `for` loop and a `try` are keyed to
+        no node of their own — the builder gives each of their parts a node and names the statement
+        after none of them — so `locate` places the construct itself nowhere, where an `if`, a
+        `switch` and a `while` are each keyed to their head. The resumption of the block still reaches
+        those parts: every point the construct owns that sits at the block's level draws the same edge
+        to the same slot, so where the construct itself is placed nowhere, a point inside it that
+        resumes answers for it. A construct the graph places nothing of, parts included, is guarded by
+        nothing here.
         """
         located = self._control_flow.locate(node)
-        if located is None:
-            return False
-        graph, start = located
-        return _resumption_slot(graph, start) is not None
+        if located is not None:
+            return _resumption_slot(*located) is not None
+        for inner in self.points_in(node):
+            placed = self._control_flow.locate(inner)
+            if placed is not None and _resumption_slot(*placed) is not None:
+                return True
+        return False
 
     def leaves_the_body(self, node: Node) -> bool:
         """

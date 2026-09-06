@@ -447,9 +447,10 @@ class TestPs1AResumingTrapIsTheOnlyKindThatGuardsASplicePoint(TestBase):
     """
     A `trap { continue }` resumes the block it guards at the statement after the one that threw, and
     the control-flow builder records that as a resumption edge; a `trap { break }` re-raises and
-    draws none. `guarded_by_a_resuming_trap` reads that edge alone, so it is the discriminator a
-    splice into the block is judged by — a splice that moves the resumption target is refused only
-    where the guard resumes.
+    draws none. `guarded_by_a_resuming_trap` reads that edge, so it is the discriminator a splice
+    into the block is judged by — a splice that moves the resumption target is refused only where the
+    guard resumes. A `for` and a `try` are keyed to no node of their own, so the guard is read off a
+    point inside them; the answer is the same as for the constructs that carry a node.
     """
 
     def test_a_continue_trap_guards_the_statements_it_resumes_over(self):
@@ -469,6 +470,34 @@ class TestPs1AResumingTrapIsTheOnlyKindThatGuardsASplicePoint(TestBase):
     def test_a_statement_under_no_trap_is_guarded_by_no_resumption(self):
         tree, reach = _model('$x = 1')
         self.assertFalse(reach.guarded_by_a_resuming_trap(tree.body[0]))
+
+    def test_a_for_loop_keyed_to_no_node_is_guarded_by_the_resuming_block_around_it(self):
+        tree, reach = _model("""
+            trap { continue }
+            for ($i = 0; $i -lt 2; $i++) { $x = 1 }
+        """)
+        self.assertTrue(reach.guarded_by_a_resuming_trap(tree.body[1]))
+
+    def test_a_try_keyed_to_no_node_is_guarded_by_the_resuming_block_around_it(self):
+        tree, reach = _model("""
+            trap { continue }
+            try { $x = 1 } catch { }
+        """)
+        self.assertTrue(reach.guarded_by_a_resuming_trap(tree.body[1]))
+
+    def test_a_for_loop_under_a_break_trap_is_guarded_by_no_resumption(self):
+        tree, reach = _model("""
+            trap { break }
+            for ($i = 0; $i -lt 2; $i++) { $x = 1 }
+        """)
+        self.assertFalse(reach.guarded_by_a_resuming_trap(tree.body[1]))
+
+    def test_a_try_under_a_break_trap_is_guarded_by_no_resumption(self):
+        tree, reach = _model("""
+            trap { break }
+            try { $x = 1 } catch { }
+        """)
+        self.assertFalse(reach.guarded_by_a_resuming_trap(tree.body[1]))
 
 
 class TestPs1AResumingTrapOverASoftErrorInABracketedStatementListIsKept(TestBase):

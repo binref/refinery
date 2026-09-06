@@ -678,8 +678,9 @@ class TestPs1DeadCodeEliminationDoesNotCarryStatementsIntoAResumingBlock(TestPs1
     `Ps1RemovalPlan._vetoed` refuses a replacement that carries a handler *out* of its block, and now
     refuses one spliced *into* a body a resuming trap guards where a spliced statement other than the
     last can raise. The `switch` fold splices its matched arm the same way and is refused the same
-    way; a `trap { break }` re-raises and draws no resumption edge, so the identical branch under one
-    is still resolved.
+    way, and so are the `for` and `try` folds — the two constructs the graph keys to no node of their
+    own, where the guard is read off a point inside them instead. A `trap { break }` re-raises and
+    draws no resumption edge, so the identical construct under one is still resolved.
     """
 
     def test_a_branch_resolved_into_a_block_a_resuming_trap_guards_keeps_that_branch(self):
@@ -708,6 +709,31 @@ class TestPs1DeadCodeEliminationDoesNotCarryStatementsIntoAResumingBlock(TestPs1
             Write-Host 'next'
         """), Ps1DeadCodeElimination)
 
+    def test_a_for_loop_resolved_into_a_block_a_resuming_trap_guards_keeps_that_loop(self):
+        self._assertUnchanged(cleandoc("""
+            trap {
+              continue
+            }
+            for ($i = 0; $True; $i++) {
+              throw 'e'
+              Write-Host 'tail'
+              break
+            }
+            Write-Host 'next'
+        """), Ps1DeadCodeElimination)
+
+    def test_a_try_resolved_into_a_block_a_resuming_trap_guards_keeps_that_try(self):
+        self._assertUnchanged(cleandoc("""
+            trap {
+              continue
+            }
+            try {} catch {} finally {
+              throw 'e'
+              Write-Host 'tail'
+            }
+            Write-Host 'next'
+        """), Ps1DeadCodeElimination)
+
     def test_a_branch_of_statements_that_cannot_raise_is_resolved_although_a_resuming_trap_guards_it(self):
         """
         The gate is precise, not "any splice of two into a resuming body": neither `'a'` nor `'b'`
@@ -719,6 +745,27 @@ class TestPs1DeadCodeEliminationDoesNotCarryStatementsIntoAResumingBlock(TestPs1
               continue
             }
             if ($True) {
+              'a'
+              'b'
+            }
+            Write-Host 'c'
+        """), Ps1DeadCodeElimination)
+        self.assertEqual(result, cleandoc("""
+            'a'
+            'b'
+            Write-Host 'c'
+        """))
+
+    def test_a_try_of_statements_that_cannot_raise_is_resolved_although_a_resuming_trap_guards_it(self):
+        """
+        The precision control for the construct the graph keys to no node of its own: the `finally`
+        body cannot raise, so no resumption moves and the `try` resolves even under a resuming trap.
+        """
+        result = self._apply(cleandoc("""
+            trap {
+              continue
+            }
+            try {} catch {} finally {
               'a'
               'b'
             }
@@ -776,6 +823,47 @@ class TestPs1DeadCodeEliminationDoesNotCarryStatementsIntoAResumingBlock(TestPs1
             throw 'e'
             Write-Host 'tail'
             Write-Host 'next'
+        """))
+
+    def test_the_same_for_under_a_trap_that_does_not_resume_is_resolved(self):
+        result = self._apply(cleandoc("""
+            trap {
+              break
+            }
+            for ($i = 0; $True; $i++) {
+              throw 'e'
+              Write-Host 'tail'
+              break
+            }
+            Write-Host 'next'
+        """), Ps1DeadCodeElimination)
+        self.assertEqual(result, cleandoc("""
+            trap {
+              break
+            }
+            $i = 0
+            throw 'e'
+            Write-Host 'tail'
+            Write-Host 'next'
+        """))
+
+    def test_the_same_try_under_a_trap_that_does_not_resume_is_resolved(self):
+        result = self._apply(cleandoc("""
+            trap {
+              break
+            }
+            try {} catch {} finally {
+              throw 'e'
+              Write-Host 'tail'
+            }
+            Write-Host 'next'
+        """), Ps1DeadCodeElimination)
+        self.assertEqual(result, cleandoc("""
+            trap {
+              break
+            }
+            throw 'e'
+            Write-Host 'tail'
         """))
 
 
