@@ -11,6 +11,7 @@ from refinery.lib.scripts.ps1.analysis.effects import (
     StatementEffect,
     _reflection_read_is_pure,
     body_is_inert,
+    certainly_throws,
     expression_cannot_fault,
     is_fault_free,
     is_side_effect_free,
@@ -934,6 +935,91 @@ class TestPs1FaultFreedomRefusesAnOutcomeItCannotKnow(Ps1EffectsTest):
         ):
             with self.subTest(source):
                 self.assertFalse(is_fault_free(self._expression(source)))
+
+
+class TestPs1CertainThrowProvesWhatTheHostRaisesOn(Ps1EffectsTest):
+    """
+    `certainly_throws` is the must-throw dual of `is_fault_free`: every row here terminates on a 5.1
+    host, and the domain reaches that throw value-precisely on the operand in hand. Being a certain
+    throw is a strong claim a code-deleting transform acts on, so a row is granted only where the
+    host was observed to raise — the value-domain oracle in `test_value_facts` pins each of these
+    throws against a captured transcript.
+    """
+
+    def test_an_expression_the_host_certainly_raises_on_is_a_certain_throw(self):
+        for source in (
+            "[Int]'abc'",
+            "[Int]'1_0'",
+            "[Int]'0b10'",
+            "[Int]'1kb'",
+            '[Byte]999',
+            '[Byte]-1',
+            '[SByte]200',
+            '[Int]2147483648',
+            '[Char]65536',
+            "[Char]'ab'",
+            '1 / 0',
+            '7 % 0',
+            '1d / 0d',
+            "1 + 'abc'",
+            "'abc' -band 5",
+            '@(1, 2) * 2147483648',
+        ):
+            with self.subTest(source):
+                self.assertTrue(certainly_throws(self._expression(source)))
+
+    def test_a_throw_statement_is_a_certain_throw_whatever_it_raises(self):
+        for source in ('throw', "throw 'boom'", 'throw (Get-Thing)'):
+            with self.subTest(source):
+                self.assertTrue(certainly_throws(self._statement(source)))
+
+
+class TestPs1CertainThrowDeclinesEverythingItCannotProve(Ps1EffectsTest):
+    """
+    The load-bearing property is no false positive: where an expression can ever not throw, or the
+    domain cannot prove it must, `certainly_throws` answers `False`. That covers three kinds of row —
+    a value the host converts, a throw guarded by short-circuit or by strict-mode, and an operand the
+    domain does not hold — and each `False` is a fold declined, never a wrong deletion.
+    """
+
+    def test_a_value_the_host_converts_is_not_a_certain_throw(self):
+        # 5.1 reads all of these rather than throwing: an exponent, a thousands separator, a
+        # fraction, a hex pattern, the empty string, and a thousands-separated arithmetic operand.
+        for source in (
+            "[Int]'1e3'",
+            "[Int]'1,000'",
+            "[Int]'3.9'",
+            "[Int]''",
+            "[Int]'0x10'",
+            "1 + '1,000'",
+            "1 + '1kb'",
+        ):
+            with self.subTest(source):
+                self.assertFalse(certainly_throws(self._expression(source)))
+
+    def test_a_throw_that_a_path_may_skip_is_not_certain(self):
+        # `-and`/`-or` never evaluate the right operand once the left settles the result, so a
+        # certain throw parked there is not certain for the whole expression: 5.1 answers these.
+        for source in ('$false -and (1 / 0)', "$true -or [Int]'abc'"):
+            with self.subTest(source):
+                self.assertFalse(certainly_throws(self._expression(source)))
+
+    def test_a_string_that_only_concatenates_or_repeats_is_not_coerced(self):
+        # A String on the left of `+` or `*` joins or repeats and is never read as a number, so it
+        # cannot be the numeric-coercion throw the same text is on the right of an operator.
+        for source in ("'abc' + 1", "'abc' * 2"):
+            with self.subTest(source):
+                self.assertFalse(certainly_throws(self._expression(source)))
+
+    def test_an_index_out_of_range_is_mode_dependent_and_never_certain(self):
+        # `@(1, 2)[9]` is `$null` in the default mode and throws only under Set-StrictMode 3, so a
+        # certain throw would be a claim about a mode the script may not be in.
+        self.assertFalse(certainly_throws(self._expression('@(1, 2)[9]')))
+
+    def test_an_operand_the_domain_does_not_hold_is_not_a_certain_throw(self):
+        for source in ("[Int]$x", '1 / $x', '$x + 1', 'Get-Thing', "[DateTime]'x'"):
+            with self.subTest(source):
+                self.assertFalse(certainly_throws(self._expression(source)))
 
 
 class TestPs1FaultFreedomAndSideEffectFreedomAreIndependent(Ps1EffectsTest):

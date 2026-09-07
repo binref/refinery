@@ -104,6 +104,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1StringLiteral,
     Ps1SubExpression,
     Ps1SwitchStatement,
+    Ps1ThrowStatement,
     Ps1TrapStatement,
     Ps1TryCatchFinally,
     Ps1TypeExpression,
@@ -1113,6 +1114,32 @@ def is_fault_free(node) -> bool:
             return isinstance(stmt, Ps1ExpressionStatement) and is_fault_free(stmt.expression)
         return len(node.body) == 0
     return False
+
+
+def certainly_throws(node) -> bool:
+    """
+    Whether evaluating `node` is guaranteed to raise a terminating error under every runtime state
+    consistent with what is known — the must-throw dual of `is_fault_free`'s cannot-throw, and the
+    opposite polarity from `may_throw`. `False` is *not knowing*, never a claim of safety: an
+    expression this cannot prove throws answers `False` exactly as one that provably cannot does, so
+    a caller must read this only where a false positive is the cost it cannot pay and a false
+    negative merely declines to act.
+
+    **The value domain is the one that knows**, and this reads its `ALWAYS`: a leaf is certain only
+    where a value-precise computation on concrete operands reaches a throw 5.1 also takes — an
+    overflow, a division by zero, a String the invariant coercion cannot read — never from the
+    measured grid, which is a witnessed lower bound. An unknown operand makes the outcome `MAYBE`
+    (the domain answers `UNKNOWN` for an unread variable rather than reading it as `$null`), so
+    `[int]$x` is never certain and nothing built on this ever fires on a guessed value.
+
+    **A `throw` statement is the one certain throw that is not a value**: reaching it transfers
+    control abnormally whatever its argument is, so it answers `True` directly. Everything else is
+    the expression's outcome — including a statement the value domain names nothing for, which is
+    `MAYBE` and so `False`.
+    """
+    if isinstance(node, Ps1ThrowStatement):
+        return True
+    return evaluate(node).certainly_throws
 
 
 def may_be_dropped(node, world: Ps1WorldReach) -> bool:

@@ -12,6 +12,8 @@ import unittest
 
 from refinery.lib.scripts import Node, set_child, set_child_list, set_value
 from refinery.lib.scripts.ps1.analysis.values import (
+    MAYBE,
+    NEVER,
     NOTHING,
     Ps1Constant,
     Ps1Outcome,
@@ -75,7 +77,7 @@ def _typed_as(name: Ps1TypeName | None) -> Ps1VariableTyping:
 
 def _int32_array(*values: int) -> Ps1Outcome:
     elements = tuple(Ps1Constant(INT32, value) for value in values)
-    return Ps1Outcome(False, Ps1Constant(OBJECT_ARRAY, elements))
+    return Ps1Outcome(NEVER, Ps1Constant(OBJECT_ARRAY, elements))
 
 
 class TestPs1EvaluateAnswersTheSameWhetherOrNotItRemembers(unittest.TestCase):
@@ -121,9 +123,9 @@ class TestPs1EvaluateAnswersTheSameWhetherOrNotItRemembers(unittest.TestCase):
         inner = node.left
         self.assertIsInstance(inner, Ps1ParenExpression)
         before = evaluate(inner)
-        self.assertEqual(evaluate(node), Ps1Outcome(False, Ps1Constant(INT32, 9)))
+        self.assertEqual(evaluate(node), Ps1Outcome(NEVER, Ps1Constant(INT32, 9)))
         self.assertEqual(evaluate(inner), before)
-        self.assertEqual(before, Ps1Outcome(False, Ps1Constant(INT32, 3)))
+        self.assertEqual(before, Ps1Outcome(NEVER, Ps1Constant(INT32, 3)))
 
 
 class TestPs1EvaluateAnswersForTheTreeAsItStandsNow(unittest.TestCase):
@@ -135,22 +137,22 @@ class TestPs1EvaluateAnswersForTheTreeAsItStandsNow(unittest.TestCase):
 
     def test_a_replaced_operand_is_the_operand_the_answer_is_built_from(self):
         node = _expression('2 + 3')
-        self.assertEqual(evaluate(node), Ps1Outcome(False, Ps1Constant(INT32, 5)))
+        self.assertEqual(evaluate(node), Ps1Outcome(NEVER, Ps1Constant(INT32, 5)))
         set_child(node, 'right', _expression('40'))
-        self.assertEqual(evaluate(node), Ps1Outcome(False, Ps1Constant(INT32, 42)))
+        self.assertEqual(evaluate(node), Ps1Outcome(NEVER, Ps1Constant(INT32, 42)))
 
     def test_a_replaced_operator_is_the_operator_the_answer_is_built_from(self):
         node = _expression('2 + 3')
-        self.assertEqual(evaluate(node), Ps1Outcome(False, Ps1Constant(INT32, 5)))
+        self.assertEqual(evaluate(node), Ps1Outcome(NEVER, Ps1Constant(INT32, 5)))
         set_value(node, 'operator', '*')
-        self.assertEqual(evaluate(node), Ps1Outcome(False, Ps1Constant(INT32, 6)))
+        self.assertEqual(evaluate(node), Ps1Outcome(NEVER, Ps1Constant(INT32, 6)))
 
     def test_a_replacement_deep_in_the_expression_reaches_the_answer_for_the_whole(self):
         node = _binary('(1 + 1) * 10')
         inner = _parenthesized_binary(node.left)
-        self.assertEqual(evaluate(node), Ps1Outcome(False, Ps1Constant(INT32, 20)))
+        self.assertEqual(evaluate(node), Ps1Outcome(NEVER, Ps1Constant(INT32, 20)))
         set_child(inner, 'right', _expression('4'))
-        self.assertEqual(evaluate(node), Ps1Outcome(False, Ps1Constant(INT32, 50)))
+        self.assertEqual(evaluate(node), Ps1Outcome(NEVER, Ps1Constant(INT32, 50)))
 
     def test_a_replaced_array_element_is_the_element_the_array_is_built_from(self):
         node = _expression('1, 2')
@@ -160,7 +162,7 @@ class TestPs1EvaluateAnswersForTheTreeAsItStandsNow(unittest.TestCase):
 
     def test_a_constant_operand_replaced_by_a_variable_stops_naming_a_value(self):
         node = _expression("'a' + 'b'")
-        self.assertEqual(evaluate(node), Ps1Outcome(False, Ps1Constant(STRING, 'ab')))
+        self.assertEqual(evaluate(node), Ps1Outcome(NEVER, Ps1Constant(STRING, 'ab')))
         set_child(node, 'right', _expression('$x'))
         self.assertEqual(evaluate(node), NOTHING)
 
@@ -168,14 +170,14 @@ class TestPs1EvaluateAnswersForTheTreeAsItStandsNow(unittest.TestCase):
         node = _expression('$x + 1')
         self.assertEqual(evaluate(node), NOTHING)
         set_child(node, 'left', _expression('41'))
-        self.assertEqual(evaluate(node), Ps1Outcome(False, Ps1Constant(INT32, 42)))
+        self.assertEqual(evaluate(node), Ps1Outcome(NEVER, Ps1Constant(INT32, 42)))
 
     def test_an_edit_to_another_tree_does_not_change_the_answer_here(self):
         node = _expression('2 + 3')
         answer = evaluate(node)
         set_value(_expression('2 + 3'), 'operator', '*')
         self.assertEqual(evaluate(node), answer)
-        self.assertEqual(answer, Ps1Outcome(False, Ps1Constant(INT32, 5)))
+        self.assertEqual(answer, Ps1Outcome(NEVER, Ps1Constant(INT32, 5)))
 
 
 class TestPs1EvaluateKeepsTheTypingsOfDifferentCallersApart(unittest.TestCase):
@@ -224,7 +226,7 @@ class TestPs1EvaluateKeepsTheTypingsOfDifferentCallersApart(unittest.TestCase):
     def test_two_typings_that_disagree_only_about_one_variable_answer_differently(self):
         node = _expression('$f.Length -band $g.Length')
         both = evaluate(node, _typed_as(STRING))
-        self.assertEqual(both, Ps1Outcome(True, Ps1Typed(INT32)))
+        self.assertEqual(both, Ps1Outcome(MAYBE, Ps1Typed(INT32)))
         only_f = evaluate(node, lambda variable: STRING if variable.name == 'f' else None)
         self.assertEqual(only_f, NOTHING)
         self.assertEqual(evaluate(node, _typed_as(STRING)), both)

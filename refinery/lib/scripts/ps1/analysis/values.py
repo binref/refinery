@@ -17,8 +17,10 @@ value of this type*. When an interval or a known-bits refinement is built it bec
 
 Throwing is a separate axis, which is why an operation answers a `Ps1Outcome` rather than a fact:
 `[int] $s` over a String is *an Int32, or it throws*, and a domain that had to fold that into one
-element could only answer that it knows nothing. `may_throw` is `False` only where this module
-claims an operation cannot throw; not knowing is `Ps1Outcome(True, UNKNOWN)`.
+element could only answer that it knows nothing. The axis is three-valued (`Ps1Throws`): `NEVER`
+where this module claims an operation cannot throw, `ALWAYS` where it claims one must, and `MAYBE`
+for the rest — both a throw known on some state and one this declines to judge. `may_throw` and
+`certainly_throws` are the two readings of it; not knowing is `Ps1Outcome(MAYBE, UNKNOWN)`.
 
 `read` is what the source pins an expression to, `convert` a cast, `apply` an operator and `render`
 the way back, and each of those answers about one step. `evaluate` is the composition over a whole
@@ -39,6 +41,7 @@ from __future__ import annotations
 
 import dataclasses
 import decimal
+import enum
 import functools
 import math
 import operator as operator_module
@@ -617,34 +620,111 @@ class Ps1Constant(Ps1Fact):
         return F'Constant({self.type}, {self.payload!r})'
 
 
+class Ps1Throws(enum.Enum):
+    """
+    How an operation stands with respect to throwing, on one three-valued axis. `NEVER` is a claim
+    this module makes that the operation *cannot* throw; `ALWAYS` a claim that it *must*, under every
+    runtime state consistent with what is known; `MAYBE` is everything between, which is both an
+    operation known to throw on *some* state and one this module simply declines to judge — the two
+    are the same answer here because a reader of the may-throw side stops on either.
+
+    The two are duals of one predicate rather than two axes: an over-approximation ("might it
+    throw?", `not NEVER`) and an under-approximation ("must it throw?", `ALWAYS`) of the same
+    question. Keeping them one field is what makes `ALWAYS ⇒ may_throw` structural — a certain throw
+    can never read as safe — and what keeps the whole judgement inside `evaluate`'s single walk
+    rather than a second recursion that could drift from it.
+    """
+    NEVER = 'never'
+    MAYBE = 'maybe'
+    ALWAYS = 'always'
+
+
+#: The three axis values, named once at module scope so the several places that construct an outcome
+#: read alike, the way `UNKNOWN` and `NULL` already do for the value side.
+NEVER = Ps1Throws.NEVER
+MAYBE = Ps1Throws.MAYBE
+ALWAYS = Ps1Throws.ALWAYS
+
+
 class Ps1Outcome(typing.NamedTuple):
     """
-    What an operation does: the fact it produces, and whether it may instead throw. The two are
-    separate because they are not alternatives — an operation that yields an Int32 *or* throws is
-    both, and a domain that had to choose could only answer `UNKNOWN` and lose the type it knows.
+    What an operation does: the fact it produces, and how it stands with respect to throwing. The
+    two are separate because they are not alternatives — an operation that yields an Int32 *or*
+    throws is both, and a domain that had to choose could only answer `UNKNOWN` and lose the type it
+    knows.
 
-    Both fields are read in the same direction, which is what makes the two of them one answer:
-    `may_throw` is `False` only where this module claims the operation *cannot* throw, exactly as
-    `UNKNOWN` is the value of one that names none. Not knowing anything is therefore
-    `Ps1Outcome(True, UNKNOWN)` and not `Ps1Outcome(False, UNKNOWN)` — the latter is a claim of
+    The throw axis is a `Ps1Throws`, and the value is read in the same direction as the may-throw
+    side of it: `UNKNOWN` is the value of an operation that names none, exactly as `MAYBE` is where
+    this claims neither safety nor a certain throw. Not knowing anything is therefore
+    `Ps1Outcome(MAYBE, UNKNOWN)` and not `Ps1Outcome(NEVER, UNKNOWN)` — the latter is a claim of
     safety made by the one answer that has no grounds for any claim. It made generalising an operand
     *remove* a throw: `1 / $x` for a divisor this module could not type answered that it cannot
-    throw, where the same division over a divisor it could type answered that it can. Only
-    `render` refusing to spell an `UNKNOWN` kept that out of a fold, which is a guard that holds one
-    operation deep and no further.
+    throw, where the same division over a divisor it could type answered that it can. Only `render`
+    refusing to spell an `UNKNOWN` kept that out of a fold, which is a guard that holds one operation
+    deep and no further.
 
-    An operation known to throw and one this module declines to judge are the same outcome here,
-    which is what *may* means. Telling them apart would want a consumer that acts on a certain
-    throw, and there is none: the reader of this axis folds, and both answers stop it.
+    `may_throw` and `certainly_throws` are the two readings of the axis a caller wants, and they
+    project from the one field so that the invariant `ALWAYS ⇒ may_throw` cannot be got wrong. A
+    fold reads `may_throw` and stops on anything but `NEVER`; a transform that deletes or reroutes
+    code reads `certainly_throws` and acts only on `ALWAYS`.
     """
 
-    may_throw: bool
+    throws: Ps1Throws
     value: Ps1Fact
+
+    @property
+    def may_throw(self) -> bool:
+        """
+        Whether the operation might throw — `False` only where this module claims it cannot.
+        """
+        return self.throws is not NEVER
+
+    @property
+    def certainly_throws(self) -> bool:
+        """
+        Whether the operation is guaranteed to throw under every state consistent with what is
+        known. A negative here is *not knowing*, never a claim of safety — that is `may_throw`.
+        """
+        return self.throws is ALWAYS
 
 
 #: The refusal, named once so that the several places that decline read alike. It claims nothing on
 #: either axis — no value, and no freedom from a throw.
-NOTHING = Ps1Outcome(True, UNKNOWN)
+NOTHING = Ps1Outcome(MAYBE, UNKNOWN)
+
+
+def _throw_join(*axes: Ps1Throws) -> Ps1Throws:
+    """
+    The throw axis of a sequence of sub-expressions 5.1 evaluates left to right, each up to the
+    first throw. It is `ALWAYS` if any one of them is — either a prior one throws, or none does and
+    that one does, so the sequence throws on every state — and `NEVER` only where every one is; a
+    single `MAYBE` with no `ALWAYS` beside it makes the sequence `MAYBE`.
+    """
+    if any(axis is ALWAYS for axis in axes):
+        return ALWAYS
+    if all(axis is NEVER for axis in axes):
+        return NEVER
+    return MAYBE
+
+
+def _demoted_throw(axis: Ps1Throws) -> Ps1Throws:
+    """
+    The throw axis of an operand a short-circuiting operator may never evaluate. A certain throw in
+    a position that can be skipped is no longer certain, so `ALWAYS` caps at `MAYBE`; the other two
+    already say the operand might or might not throw and are unchanged.
+    """
+    return MAYBE if axis is ALWAYS else axis
+
+
+def _throws_from_cell(may: bool) -> Ps1Throws:
+    """
+    The throw axis a measured grid cell contributes. A cell's silence about throwing is a witnessed
+    lower bound rather than a bound, so a cell never grants `ALWAYS`: it says `MAYBE` where it
+    recorded a throw and `NEVER` only where the value domain, not the cell, has established safety
+    for the values in hand — which is why every leaf `ALWAYS` in this module comes from a
+    value-precise computation and none from the grid.
+    """
+    return MAYBE if may else NEVER
 
 
 def type_of(fact: Ps1Fact) -> Ps1TypeName | None:
@@ -929,7 +1009,7 @@ def fact_of(payload: object) -> Ps1Fact:
     if isinstance(payload, str):
         return Ps1Constant(_STRING, payload)
     if isinstance(payload, (list, tuple)):
-        return _collected(Ps1Outcome(False, fact_of(one)) for one in payload).value
+        return _collected(Ps1Outcome(NEVER, fact_of(one)) for one in payload).value
     return UNKNOWN
 
 
@@ -954,7 +1034,7 @@ def _pinned(node: Node | None) -> Ps1Outcome:
     refusal, and a refusal claims nothing on either axis.
     """
     fact = read(node)
-    return NOTHING if fact is UNKNOWN else Ps1Outcome(False, fact)
+    return NOTHING if fact is UNKNOWN else Ps1Outcome(NEVER, fact)
 
 
 def _array(
@@ -998,7 +1078,7 @@ def _subexpression(
     if stream is None:
         return NOTHING
     if not stream:
-        return Ps1Outcome(False, NULL)
+        return Ps1Outcome(NEVER, NULL)
     if len(stream) == 1:
         return stream[0]
     return _collected(stream)
@@ -1023,7 +1103,7 @@ def _stream(
             and inner.type in (_OBJECT_ARRAY, _CHAR_ARRAY)
             and isinstance(inner.payload, tuple)
         ):
-            outcomes.extend(Ps1Outcome(outcome.may_throw, one) for one in inner.payload)
+            outcomes.extend(Ps1Outcome(outcome.throws, one) for one in inner.payload)
         else:
             outcomes.append(outcome)
     return outcomes
@@ -1040,7 +1120,7 @@ def _collected(outcomes: typing.Iterable[Ps1Outcome]) -> Ps1Outcome:
     if not all(_is_value(outcome.value) for outcome in gathered):
         return NOTHING
     return Ps1Outcome(
-        any(outcome.may_throw for outcome in gathered),
+        _throw_join(*(outcome.throws for outcome in gathered)),
         Ps1Constant(_OBJECT_ARRAY, tuple(outcome.value for outcome in gathered)),
     )
 
@@ -1339,7 +1419,18 @@ class _Throws(Exception):
     """
     Raised by a kernel for an application that PowerShell answers by throwing, so that a throw is
     reported as one rather than as a refusal. The two are different answers: a throw is knowledge.
+
+    `certain` is whether the throw was computed value-precisely — an overflow, a division by zero, a
+    character out of range, a string the invariant numeric coercion cannot read — so that 5.1 is
+    *guaranteed* to throw for the operands in hand. It defaults to `True` because every leaf that
+    raises here is such a computation; the one exception is a string coercion the source numeral
+    lexer declined, which over-rejects what 5.1 accepts (`1 + '1,000'` is 1001), so the two sites
+    that raise for it pass `certain=False` unless `_coercion_rejects` confirms the reject.
     """
+
+    def __init__(self, certain: bool = True):
+        super().__init__()
+        self.certain = certain
 
 
 def apply(operator: str, left: Ps1Fact, right: Ps1Fact) -> Ps1Outcome:
@@ -1376,12 +1467,12 @@ def apply(operator: str, left: Ps1Fact, right: Ps1Fact) -> Ps1Outcome:
     if not cell.may_throw or _throws_are_modelled(operator, left, right):
         try:
             computed = _kernel(operator, left, right)
-        except _Throws:
-            return Ps1Outcome(True, UNKNOWN)
+        except _Throws as throw:
+            return Ps1Outcome(ALWAYS if throw.certain else MAYBE, UNKNOWN)
         if computed is not None:
             stamped = _typed_result(operator, computed, left, right, cell.types)
             if stamped is not UNKNOWN:
-                return Ps1Outcome(False, stamped)
+                return Ps1Outcome(NEVER, stamped)
     return _from_binary_cell(cell, _spans(left, right))
 
 
@@ -1493,7 +1584,7 @@ def _negated(operand: Ps1Fact) -> Ps1Outcome:
     coerced = _coerced_numeral(operand)
     if coerced is not None:
         if not isinstance(coerced, Ps1Constant):
-            return NOTHING
+            return Ps1Outcome(ALWAYS if _coercion_is_certain_reject(operand) else MAYBE, UNKNOWN)
         operand = coerced
     source = _grid_type(operand)
     cell = None if source is None else unary_outcome('-', source)
@@ -1504,12 +1595,12 @@ def _negated(operand: Ps1Fact) -> Ps1Outcome:
         return NOTHING
     try:
         computed = _computed(operator_module.sub, 0, number)
-    except _Throws:
-        return Ps1Outcome(True, UNKNOWN)
+    except _Throws as throw:
+        return Ps1Outcome(ALWAYS if throw.certain else MAYBE, UNKNOWN)
     if computed is None:
         return NOTHING
     stamped = _stamped(computed, cell.types)
-    return NOTHING if stamped is UNKNOWN else Ps1Outcome(False, stamped)
+    return NOTHING if stamped is UNKNOWN else Ps1Outcome(NEVER, stamped)
 
 
 def _negatable(operand: Ps1Fact) -> int | float | decimal.Decimal | None:
@@ -1564,7 +1655,7 @@ def apply_unary(operator: str, operand: Ps1Fact) -> Ps1Outcome:
         return NOTHING
     low, high = _INTEGER_RANGE[width]
     complement = ~number
-    return Ps1Outcome(False, Ps1Constant(width, complement % (high + 1) if low == 0 else complement))
+    return Ps1Outcome(NEVER, Ps1Constant(width, complement % (high + 1) if low == 0 else complement))
 
 
 def _to_char_array(fact: Ps1Fact) -> Ps1Outcome:
@@ -1583,7 +1674,7 @@ def _to_char_array(fact: Ps1Fact) -> Ps1Outcome:
     """
     if isinstance(fact, Ps1Constant) and fact.type == _STRING and isinstance(fact.payload, str):
         characters = tuple(Ps1Constant(_CHAR, one) for one in fact.payload)
-        return Ps1Outcome(False, Ps1Constant(_CHAR_ARRAY, characters))
+        return Ps1Outcome(NEVER, Ps1Constant(_CHAR_ARRAY, characters))
     elements = _elements(fact)
     if elements is None:
         return NOTHING
@@ -1591,9 +1682,9 @@ def _to_char_array(fact: Ps1Fact) -> Ps1Outcome:
     for element in elements:
         outcome = convert(element, _CHAR)
         if outcome.may_throw or outcome.value is UNKNOWN:
-            return Ps1Outcome(True, UNKNOWN)
+            return Ps1Outcome(MAYBE, UNKNOWN)
         converted.append(outcome.value)
-    return Ps1Outcome(False, Ps1Constant(_CHAR_ARRAY, tuple(converted)))
+    return Ps1Outcome(NEVER, Ps1Constant(_CHAR_ARRAY, tuple(converted)))
 
 
 def convert(fact: Ps1Fact, target: Ps1TypeName) -> Ps1Outcome:
@@ -1629,13 +1720,16 @@ def convert(fact: Ps1Fact, target: Ps1TypeName) -> Ps1Outcome:
     if not cell.may_throw or _cast_throws_are_modelled(target):
         try:
             computed = _cast(target, fact)
-        except _Throws:
-            return Ps1Outcome(True, UNKNOWN)
+        except _Throws as throw:
+            return Ps1Outcome(ALWAYS if throw.certain else MAYBE, UNKNOWN)
         if computed is not None:
             stamped = _stamped(computed, cell.types)
             if stamped is not UNKNOWN:
-                return Ps1Outcome(False, stamped)
-    return _from_conversion_cell(cell, _spans(fact))
+                return Ps1Outcome(NEVER, stamped)
+    outcome = _from_conversion_cell(cell, _spans(fact))
+    if _string_cast_certainly_throws(fact, target):
+        return Ps1Outcome(ALWAYS, outcome.value)
+    return outcome
 
 
 def evaluate(
@@ -1726,7 +1820,7 @@ def _evaluated(
     """
     literal = read(node)
     if literal is not UNKNOWN:
-        return Ps1Outcome(False, literal)
+        return Ps1Outcome(NEVER, literal)
     if isinstance(node, Ps1ParenExpression):
         return evaluate(node.expression, type_of_variable)
     if isinstance(node, (Ps1ArrayLiteral, Ps1ArrayExpression)):
@@ -1742,7 +1836,7 @@ def _evaluated(
     if isinstance(node, Ps1TypeExpression) or not isinstance(node, Expression):
         return NOTHING
     named = resolve_expression_type(node, type_of_variable)
-    return NOTHING if named is None else Ps1Outcome(True, Ps1Typed(named))
+    return NOTHING if named is None else Ps1Outcome(MAYBE, Ps1Typed(named))
 
 
 def _evaluated_cast(
@@ -1768,9 +1862,9 @@ def _evaluated_cast(
     operand = evaluate(node.operand, type_of_variable)
     if operand.value is not UNKNOWN:
         converted = convert(operand.value, target)
-        return Ps1Outcome(operand.may_throw or converted.may_throw, converted.value)
+        return Ps1Outcome(_throw_join(operand.throws, converted.throws), converted.value)
     named = _cast_names(target)
-    return NOTHING if named is None else Ps1Outcome(True, named)
+    return NOTHING if named is None else Ps1Outcome(MAYBE, named)
 
 
 def _evaluated_unary(
@@ -1782,7 +1876,13 @@ def _evaluated_unary(
     """
     operand = _operand(node.operand, type_of_variable)
     applied = apply_unary(node.operator, operand.value)
-    return Ps1Outcome(operand.may_throw or applied.may_throw, applied.value)
+    return Ps1Outcome(_throw_join(operand.throws, applied.throws), applied.value)
+
+
+#: The operators that may not evaluate their right operand at all, so a certain throw standing there
+#: is not certain for the whole expression. These are the only two 5.1 short-circuits — `? :` and
+#: `??` are 5.1 parse errors and never reach here.
+_SHORT_CIRCUIT = frozenset({'-and', '-or'})
 
 
 def _evaluated_binary(
@@ -1792,19 +1892,24 @@ def _evaluated_binary(
     """
     An operator, which is `apply` over both of its operands.
 
-    A short-circuiting operator is answered here rather than excepted, and the answer is weaker than
-    the host's on purpose. `-and` and `-or` are measured, so `apply` has a cell for them; what no
-    cell can carry is that the right operand may never run at all. So `$false -and (1 / 0)` is
-    reported as a value that may throw where 5.1 answers `$false` and cannot throw. The error is a
-    fold refused and never a wrong answer: a throw is over-claimed rather than dropped, and the
-    right operand it was claimed for is the one whose value is unknown, which refuses the cell
-    anyway. Reading the left operand alone where it settles the result is a fold this does not take.
+    A short-circuiting operator is answered here rather than excepted, and its right operand's throw
+    axis is capped on purpose. `-and` and `-or` are measured, so `apply` has a cell for them; what no
+    cell can carry is that the right operand may never run at all. So a right operand that is a
+    *certain* throw is not one for the whole expression — `$false -and (1 / 0)` answers `$false` on
+    the host and cannot throw — which is why `_demoted_throw` caps its `ALWAYS` at `MAYBE`. The
+    may-throw side still over-claims there (a throw reported for a fold rather than dropped), which is
+    a fold refused and never a wrong answer; reading the left operand alone where it settles the
+    result is a fold this does not take. Every other operator evaluates both operands eagerly, so an
+    operand's certain throw is the whole expression's.
     """
     left = _operand(node.left, type_of_variable)
     right = _operand(node.right, type_of_variable)
     applied = apply(node.operator, left.value, right.value)
+    right_throws = right.throws
+    if node.operator.lower() in _SHORT_CIRCUIT:
+        right_throws = _demoted_throw(right_throws)
     return Ps1Outcome(
-        left.may_throw or right.may_throw or applied.may_throw, applied.value)
+        _throw_join(left.throws, right_throws, applied.throws), applied.value)
 
 
 def _operand(
@@ -1817,7 +1922,7 @@ def _operand(
     """
     numeral = _folded_numeral(node)
     if numeral is not None:
-        return Ps1Outcome(False, numeral)
+        return Ps1Outcome(NEVER, numeral)
     return evaluate(node, type_of_variable)
 
 
@@ -2031,6 +2136,65 @@ def _pattern_at_width(bounds: tuple[int, int], magnitude: int) -> int:
     return magnitude if magnitude <= high else magnitude - span
 
 
+#: The shape of a String that 5.1's invariant numeric coercion can read a number out of, made a
+#: *superset* of what 5.1 truly accepts so that a String this does NOT match is one 5.1 is certain to
+#: reject. It is deliberately not the source numeral lexer `_numeral`, which rejects `'1,000'` where
+#: 5.1 reads 1000, so a reject decided by that would over-claim a throw. Measured, the coercion
+#: accepts a sign, thousands separators, a fraction and an exponent (`[int]'1e3'` is 1000,
+#: `[int]'1,000'` is 1000, `[int]'3.9'` is 4); a `0x` bit pattern is `_CAST_HEX`. Being a superset is
+#: the load-bearing property: it may match a String 5.1 rejects (a missed throw, sound), but it must
+#: match every String 5.1 accepts, or a throw would be claimed for a value that converts.
+_COERCION_NUMERIC = re.compile(r'[+-]?[0-9,]*\.?[0-9]*(?:[eE][+-]?[0-9]+)?\Z')
+
+
+def _coercion_rejects(text: str) -> bool:
+    """
+    Whether 5.1 is *certain* to throw reading a number out of the String `text` — a positive
+    under-approximation used only to sharpen a throw from *may* to *must*, never to license a fold.
+    `True` only where no invariant numeric coercion can read `text`; an empty or all-whitespace
+    String, or one that looks numeric, answers `False` — 5.1 may accept it, so no throw is claimed.
+    Measured rejects: `'abc'`, `'1_0'`, `'0b10'`, `'1kb'`, `'5L'`. Measured non-rejects: `'1e3'`,
+    `'1,000'`, `'3.9'`, `'0x10'`, `''`.
+
+    Position is not this predicate's concern and is settled before it: a String on the left of `+`
+    or `*` concatenates or repeats and never coerces, so `'abc' + 1` and `'abc' * 2` reach no caller
+    of this. Context is settled by which caller reaches it: a cast asks it for the spellings the
+    value path declined, and arithmetic only for the ones the numeral lexer declined — which is why
+    `[int]'1kb'` throws (the lexer's multiplier is not a cast's) while `1 + '1kb'` is 1025 (the lexer
+    reads it, so this is never asked).
+    """
+    trimmed = text.strip(_CAST_TRIM)
+    if not trimmed or _CAST_HEX.match(trimmed):
+        return False
+    return _COERCION_NUMERIC.match(trimmed) is None
+
+
+def _coercion_is_certain_reject(fact: Ps1Fact) -> bool:
+    """
+    Whether `fact` is a String an arithmetic or bitwise coercion is certain to throw on. The kernel
+    already knows this operand is the one being coerced to a number, so this only has to decide the
+    spelling; see `_coercion_rejects`.
+    """
+    return (
+        isinstance(fact, Ps1Constant)
+        and fact.type == _STRING
+        and isinstance(fact.payload, str)
+        and _coercion_rejects(fact.payload)
+    )
+
+
+def _string_cast_certainly_throws(fact: Ps1Fact, target: Ps1TypeName) -> bool:
+    """
+    Whether `[target] fact` is a String-to-integer cast 5.1 is certain to throw on. The value path
+    (`_from_string`) declines such a String rather than computing it, so the cell answers *an
+    integer or a throw*; this is what sharpens that *may* to a *must*. It is confined to an integer
+    target because those are the ones whose reject `_coercion_rejects` was measured against — a Char
+    cast throws by length, which `_from_string` already raises for, and every other target is left
+    to the cell.
+    """
+    return target in _INTEGER_RANGE and _coercion_is_certain_reject(fact)
+
+
 def _numeric_source(fact: Ps1Constant) -> int | float | decimal.Decimal | None:
     """
     The number a cast reads this value as, or `None` for a value no cast here computes from. The
@@ -2200,7 +2364,7 @@ def _from_binary_cell(cell, spanned: bool) -> Ps1Outcome:
     """
     if not spanned:
         return NOTHING
-    return Ps1Outcome(cell.may_throw, _cell_value(cell))
+    return Ps1Outcome(_throws_from_cell(cell.may_throw), _cell_value(cell))
 
 
 def _from_conversion_cell(cell, spanned: bool) -> Ps1Outcome:
@@ -2216,8 +2380,8 @@ def _from_conversion_cell(cell, spanned: bool) -> Ps1Outcome:
     """
     named = _cell_value(cell)
     if spanned:
-        return Ps1Outcome(cell.may_throw, named)
-    return Ps1Outcome(True, named if isinstance(named, Ps1Typed) else UNKNOWN)
+        return Ps1Outcome(_throws_from_cell(cell.may_throw), named)
+    return Ps1Outcome(MAYBE, named if isinstance(named, Ps1Typed) else UNKNOWN)
 
 
 #: The .NET `TypeCode` each type the domain computes in carries. The numbers are not an ordering
@@ -2562,7 +2726,7 @@ def _numeric_pair(left: Ps1Fact, right: Ps1Fact):
         coerced = _coerced_numeral(operand)
         if coerced is not None:
             if not isinstance(coerced, Ps1Constant):
-                raise _Throws
+                raise _Throws(_coercion_is_certain_reject(operand))
             operand = coerced
         fact = operand
         if _is_domain_integer(fact):
@@ -2832,7 +2996,7 @@ def _bitwise_operand(fact: Ps1Fact) -> int | None:
     if coerced is None:
         return None
     if not isinstance(coerced, Ps1Constant):
-        raise _Throws
+        raise _Throws(_coercion_is_certain_reject(fact))
     return _integer_payload(coerced) if _is_domain_integer(coerced) else None
 
 
@@ -2999,7 +3163,16 @@ def _compared(operator: str, left: Ps1Fact, right: Ps1Fact) -> bool | None:
         return _compared_as_text(comparison, left, right)
     if type_of(left) == _BOOLEAN:
         return _compared_as_truth(comparison, left, right)
-    operands = _numeric_pair(left, right)
+    try:
+        operands = _numeric_pair(left, right)
+    except _Throws:
+        # An ordering that cannot read a number out of a text is a throw — `1 -lt 'abc'` ends the
+        # script — but an equality is not: 5.1 answers `1 -eq 'abc'` with `$false`, never a throw.
+        # The domain still declines to compute the equality (it over-claims a *may*-throw as before),
+        # so the throw is kept but capped so nothing reads this coercion as a *certain* one.
+        if comparison.equality:
+            raise _Throws(False)
+        raise
     return None if operands is None else comparison.decides(*operands)
 
 

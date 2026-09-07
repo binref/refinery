@@ -33,7 +33,10 @@ from test.lib.scripts.ps1.corpus import (
 from test.lib.scripts.ps1.test_oracle import TYPE_TRANSCRIPTS
 
 from refinery.lib.scripts.ps1.analysis.values import (
+    ALWAYS,
     INFINITY,
+    MAYBE,
+    NEVER,
     NOTHING,
     NULL,
     UNKNOWN,
@@ -1656,7 +1659,7 @@ def _operand_of(node) -> Ps1Outcome:
     the whole have to be asked about the same operand or the law below compares two expressions.
     """
     folded = read_operand(node)
-    return Ps1Outcome(False, folded) if folded is not UNKNOWN else evaluate(node)
+    return Ps1Outcome(NEVER, folded) if folded is not UNKNOWN else evaluate(node)
 
 
 def _corpus_steps() -> tuple[_Step, ...]:
@@ -2017,13 +2020,25 @@ class TestPs1CollectedIntegers(unittest.TestCase):
 class TestPs1Outcome(unittest.TestCase):
 
     def test_the_refusal_names_no_value_and_claims_no_absence_of_a_throw(self):
-        self.assertEqual(NOTHING, Ps1Outcome(True, UNKNOWN))
+        self.assertEqual(NOTHING, Ps1Outcome(MAYBE, UNKNOWN))
         self.assertIsNone(type_of(NOTHING.value))
 
     def test_an_outcome_carries_a_type_and_a_possible_throw_at_once(self):
-        outcome = Ps1Outcome(True, Ps1Typed(INT32))
-        self.assertEqual(outcome, (True, Ps1Typed(INT32)))
+        outcome = Ps1Outcome(MAYBE, Ps1Typed(INT32))
+        self.assertEqual(outcome, (MAYBE, Ps1Typed(INT32)))
         self.assertEqual(type_of(outcome.value), INT32)
+        self.assertTrue(outcome.may_throw)
+        self.assertFalse(outcome.certainly_throws)
+
+    def test_the_two_readings_of_the_throw_axis_project_from_the_one_field(self):
+        self.assertEqual(
+            [(o.may_throw, o.certainly_throws) for o in (
+                Ps1Outcome(NEVER, UNKNOWN),
+                Ps1Outcome(MAYBE, UNKNOWN),
+                Ps1Outcome(ALWAYS, UNKNOWN),
+            )],
+            [(False, False), (True, False), (True, True)],
+        )
 
 
 class TestPs1LiteralFacts(unittest.TestCase):
@@ -2469,7 +2484,7 @@ class TestPs1MeasuredCasts(unittest.TestCase):
         self.assertEqual(
             pinned,
             {
-                expression: Ps1Outcome(False, _measured_fact(expression))
+                expression: Ps1Outcome(NEVER, _measured_fact(expression))
                 for expression in pinned
             },
         )
@@ -2510,7 +2525,7 @@ class TestPs1MeasuredCasts(unittest.TestCase):
         for expression in NESTED_CASTS:
             with self.subTest(expression):
                 self.assertEqual(
-                    _converted(expression), Ps1Outcome(False, _measured_fact(expression)))
+                    _converted(expression), Ps1Outcome(NEVER, _measured_fact(expression)))
 
     def test_a_cast_the_host_threw_on_pins_no_value_and_reports_the_throw(self):
         """
@@ -2518,28 +2533,37 @@ class TestPs1MeasuredCasts(unittest.TestCase):
         yielding zero for a String that spells no number. A row where the domain sees the throw for
         itself names no value at all; one where it declines the spelling keeps the type its cell
         names — an Int32, or it throws — and that type is not a claim that a value came out.
+
+        The throw axis is `ALWAYS` for every row the domain proves throws for the operand in hand: a
+        value the target's width or range cannot hold, and a String the invariant coercion cannot
+        read (`'abc'`, `'1_0'`, `'0b1010'`, `'0o17'`, `'1kb'`). Three rows the host throws on the
+        domain still only *may* throw here, because it declines them soundly rather than proving
+        them: an exponent String (`[byte]'1e3'`, whose overflow it does not compute), an
+        all-whitespace one (`[int]'   '`, which is not the empty String it converts to zero), and
+        `[byte](200 * 2)`, whose operand is an operator `read` does not fold, so `convert` is handed
+        an unknown — `evaluate`, which folds the 400, proves that one (see the evaluate twin below).
         """
         self.assertEqual(
             {expression: _converted(expression) for expression in THROWN},
             {
-                '[byte]300'       : Ps1Outcome(True, UNKNOWN),
-                '[byte]-1'        : Ps1Outcome(True, UNKNOWN),
-                '[byte]400'       : Ps1Outcome(True, UNKNOWN),
-                '[byte](200 * 2)' : Ps1Outcome(True, UNKNOWN),
-                '[int]2147483648' : Ps1Outcome(True, UNKNOWN),
-                '[char]65536'     : Ps1Outcome(True, UNKNOWN),
-                '[char]-1'        : Ps1Outcome(True, UNKNOWN),
-                "[byte]'-1'"      : Ps1Outcome(True, UNKNOWN),
-                "[byte]'0x100'"   : Ps1Outcome(True, UNKNOWN),
-                "[char]'AB'"      : Ps1Outcome(True, UNKNOWN),
-                "[char]''"        : Ps1Outcome(True, UNKNOWN),
-                "[int]'abc'"      : Ps1Outcome(True, Ps1Typed(INT32)),
-                "[int]'   '"      : Ps1Outcome(True, Ps1Typed(INT32)),
-                "[int]'1_0'"      : Ps1Outcome(True, Ps1Typed(INT32)),
-                "[int]'0b1010'"   : Ps1Outcome(True, Ps1Typed(INT32)),
-                "[int]'0o17'"     : Ps1Outcome(True, Ps1Typed(INT32)),
-                "[int]'1kb'"      : Ps1Outcome(True, Ps1Typed(INT32)),
-                "[byte]'1e3'"     : Ps1Outcome(True, Ps1Typed(BYTE)),
+                '[byte]300'       : Ps1Outcome(ALWAYS, UNKNOWN),
+                '[byte]-1'        : Ps1Outcome(ALWAYS, UNKNOWN),
+                '[byte]400'       : Ps1Outcome(ALWAYS, UNKNOWN),
+                '[byte](200 * 2)' : Ps1Outcome(MAYBE, UNKNOWN),
+                '[int]2147483648' : Ps1Outcome(ALWAYS, UNKNOWN),
+                '[char]65536'     : Ps1Outcome(ALWAYS, UNKNOWN),
+                '[char]-1'        : Ps1Outcome(ALWAYS, UNKNOWN),
+                "[byte]'-1'"      : Ps1Outcome(ALWAYS, UNKNOWN),
+                "[byte]'0x100'"   : Ps1Outcome(ALWAYS, UNKNOWN),
+                "[char]'AB'"      : Ps1Outcome(ALWAYS, UNKNOWN),
+                "[char]''"        : Ps1Outcome(ALWAYS, UNKNOWN),
+                "[int]'abc'"      : Ps1Outcome(ALWAYS, Ps1Typed(INT32)),
+                "[int]'   '"      : Ps1Outcome(MAYBE, Ps1Typed(INT32)),
+                "[int]'1_0'"      : Ps1Outcome(ALWAYS, Ps1Typed(INT32)),
+                "[int]'0b1010'"   : Ps1Outcome(ALWAYS, Ps1Typed(INT32)),
+                "[int]'0o17'"     : Ps1Outcome(ALWAYS, Ps1Typed(INT32)),
+                "[int]'1kb'"      : Ps1Outcome(ALWAYS, Ps1Typed(INT32)),
+                "[byte]'1e3'"     : Ps1Outcome(MAYBE, Ps1Typed(BYTE)),
             },
         )
 
@@ -2570,9 +2594,9 @@ class TestPs1CharConversions(unittest.TestCase):
         Measured, `[int][char]65` is Int32 65 and `[string][char]65` is `A`.
         """
         self.assertEqual(
-            convert(Ps1Constant(CHAR, 'A'), INT32), Ps1Outcome(False, Ps1Constant(INT32, 65)))
+            convert(Ps1Constant(CHAR, 'A'), INT32), Ps1Outcome(NEVER, Ps1Constant(INT32, 65)))
         self.assertEqual(
-            convert(Ps1Constant(CHAR, 'A'), STRING), Ps1Outcome(False, Ps1Constant(STRING, 'A')))
+            convert(Ps1Constant(CHAR, 'A'), STRING), Ps1Outcome(NEVER, Ps1Constant(STRING, 'A')))
 
     def test_a_char_reaches_no_target_the_corpus_does_not_measure(self):
         """
@@ -2600,16 +2624,16 @@ class TestPs1CastsThatReadAString(unittest.TestCase):
         self.assertEqual(_measured("[sbyte]'0x80'"), ('System.SByte', '-128'))
         self.assertEqual(_measured("[uint16]'0xFFFF'"), ('System.UInt16', '65535'))
         self.assertEqual(_measured("[int]'0xFFFFFFFF'"), ('System.Int32', '-1'))
-        self.assertEqual(_converted("[byte]'0x80'"), Ps1Outcome(False, Ps1Constant(BYTE, 128)))
-        self.assertEqual(_converted("[sbyte]'0x80'"), Ps1Outcome(False, Ps1Constant(SBYTE, -128)))
+        self.assertEqual(_converted("[byte]'0x80'"), Ps1Outcome(NEVER, Ps1Constant(BYTE, 128)))
+        self.assertEqual(_converted("[sbyte]'0x80'"), Ps1Outcome(NEVER, Ps1Constant(SBYTE, -128)))
         self.assertEqual(
-            _converted("[uint16]'0xFFFF'"), Ps1Outcome(False, Ps1Constant(UINT16, 65535)))
+            _converted("[uint16]'0xFFFF'"), Ps1Outcome(NEVER, Ps1Constant(UINT16, 65535)))
         self.assertEqual(
-            _converted("[int]'0xFFFFFFFF'"), Ps1Outcome(False, Ps1Constant(INT32, -1)))
+            _converted("[int]'0xFFFFFFFF'"), Ps1Outcome(NEVER, Ps1Constant(INT32, -1)))
 
     def test_a_hexadecimal_string_the_target_width_does_not_hold_throws(self):
         self.assertEqual(_throws(_transcript("[byte]'0x100'")), True)
-        self.assertEqual(_converted("[byte]'0x100'"), Ps1Outcome(True, UNKNOWN))
+        self.assertEqual(_converted("[byte]'0x100'"), Ps1Outcome(ALWAYS, UNKNOWN))
 
     def test_a_decimal_string_carries_a_sign_where_a_hexadecimal_one_carries_a_pattern(self):
         """
@@ -2618,8 +2642,8 @@ class TestPs1CastsThatReadAString(unittest.TestCase):
         """
         self.assertEqual(_throws(_transcript("[byte]'-1'")), True)
         self.assertEqual(_measured("[int]'+7'"), ('System.Int32', '7'))
-        self.assertEqual(_converted("[byte]'-1'"), Ps1Outcome(True, UNKNOWN))
-        self.assertEqual(_converted("[int]'+7'"), Ps1Outcome(False, Ps1Constant(INT32, 7)))
+        self.assertEqual(_converted("[byte]'-1'"), Ps1Outcome(ALWAYS, UNKNOWN))
+        self.assertEqual(_converted("[int]'+7'"), Ps1Outcome(NEVER, Ps1Constant(INT32, 7)))
 
     def test_a_string_spelling_a_half_is_rounded_to_the_even_neighbour(self):
         """
@@ -2627,8 +2651,8 @@ class TestPs1CastsThatReadAString(unittest.TestCase):
         """
         self.assertEqual(_measured("[int]'7.5'"), ('System.Int32', '8'))
         self.assertEqual(_measured("[int]'2.5'"), ('System.Int32', '2'))
-        self.assertEqual(_converted("[int]'7.5'"), Ps1Outcome(False, Ps1Constant(INT32, 8)))
-        self.assertEqual(_converted("[int]'2.5'"), Ps1Outcome(False, Ps1Constant(INT32, 2)))
+        self.assertEqual(_converted("[int]'7.5'"), Ps1Outcome(NEVER, Ps1Constant(INT32, 8)))
+        self.assertEqual(_converted("[int]'2.5'"), Ps1Outcome(NEVER, Ps1Constant(INT32, 2)))
 
     def test_the_empty_string_is_a_zero_and_a_string_of_spaces_is_not(self):
         """
@@ -2638,17 +2662,17 @@ class TestPs1CastsThatReadAString(unittest.TestCase):
         self.assertEqual(_measured("[int]''"), ('System.Int32', '0'))
         self.assertEqual(_measured("[int]' 5 '"), ('System.Int32', '5'))
         self.assertEqual(_throws(_transcript("[int]'   '")), True)
-        self.assertEqual(_converted("[int]''"), Ps1Outcome(False, Ps1Constant(INT32, 0)))
-        self.assertEqual(_converted("[int]' 5 '"), Ps1Outcome(False, Ps1Constant(INT32, 5)))
-        self.assertEqual(_converted("[int]'   '"), Ps1Outcome(True, Ps1Typed(INT32)))
+        self.assertEqual(_converted("[int]''"), Ps1Outcome(NEVER, Ps1Constant(INT32, 0)))
+        self.assertEqual(_converted("[int]' 5 '"), Ps1Outcome(NEVER, Ps1Constant(INT32, 5)))
+        self.assertEqual(_converted("[int]'   '"), Ps1Outcome(MAYBE, Ps1Typed(INT32)))
 
     def test_a_string_is_true_by_holding_characters_rather_than_by_what_they_spell(self):
         self.assertEqual(_measured("[bool]'0'"), ('System.Boolean', 'True'))
         self.assertEqual(_measured("[bool]'a'"), ('System.Boolean', 'True'))
         self.assertEqual(_measured("[bool]''"), ('System.Boolean', 'False'))
-        self.assertEqual(_converted("[bool]'0'"), Ps1Outcome(False, Ps1Constant(BOOLEAN, True)))
-        self.assertEqual(_converted("[bool]'a'"), Ps1Outcome(False, Ps1Constant(BOOLEAN, True)))
-        self.assertEqual(_converted("[bool]''"), Ps1Outcome(False, Ps1Constant(BOOLEAN, False)))
+        self.assertEqual(_converted("[bool]'0'"), Ps1Outcome(NEVER, Ps1Constant(BOOLEAN, True)))
+        self.assertEqual(_converted("[bool]'a'"), Ps1Outcome(NEVER, Ps1Constant(BOOLEAN, True)))
+        self.assertEqual(_converted("[bool]''"), Ps1Outcome(NEVER, Ps1Constant(BOOLEAN, False)))
 
     def test_a_one_character_string_is_that_char_and_every_other_length_throws(self):
         """
@@ -2657,14 +2681,14 @@ class TestPs1CastsThatReadAString(unittest.TestCase):
         self.assertEqual(_measured("[char]'A'"), ('System.Char', 'A'))
         self.assertEqual(_throws(_transcript("[char]'AB'")), True)
         self.assertEqual(_throws(_transcript("[char]''")), True)
-        self.assertEqual(_converted("[char]'A'"), Ps1Outcome(False, Ps1Constant(CHAR, 'A')))
-        self.assertEqual(_converted("[char]'AB'"), Ps1Outcome(True, UNKNOWN))
-        self.assertEqual(_converted("[char]''"), Ps1Outcome(True, UNKNOWN))
+        self.assertEqual(_converted("[char]'A'"), Ps1Outcome(NEVER, Ps1Constant(CHAR, 'A')))
+        self.assertEqual(_converted("[char]'AB'"), Ps1Outcome(ALWAYS, UNKNOWN))
+        self.assertEqual(_converted("[char]''"), Ps1Outcome(ALWAYS, UNKNOWN))
 
     def test_a_cast_to_string_is_the_string_it_was_handed(self):
         self.assertEqual(_measured("[string]'foo'"), ('System.String', 'foo'))
         self.assertEqual(
-            _converted("[string]'foo'"), Ps1Outcome(False, Ps1Constant(STRING, 'foo')))
+            _converted("[string]'foo'"), Ps1Outcome(NEVER, Ps1Constant(STRING, 'foo')))
 
     def test_a_spelling_two_targets_read_apart_is_declined_by_both(self):
         """
@@ -2673,8 +2697,8 @@ class TestPs1CastsThatReadAString(unittest.TestCase):
         """
         self.assertEqual(_measured("[int]'1e3'"), ('System.Int32', '1000'))
         self.assertEqual(_throws(_transcript("[byte]'1e3'")), True)
-        self.assertEqual(_converted("[int]'1e3'"), Ps1Outcome(True, Ps1Typed(INT32)))
-        self.assertEqual(_converted("[byte]'1e3'"), Ps1Outcome(True, Ps1Typed(BYTE)))
+        self.assertEqual(_converted("[int]'1e3'"), Ps1Outcome(MAYBE, Ps1Typed(INT32)))
+        self.assertEqual(_converted("[byte]'1e3'"), Ps1Outcome(MAYBE, Ps1Typed(BYTE)))
 
     def test_a_spelling_only_python_reads_as_a_number_is_no_number_here(self):
         """
@@ -2683,8 +2707,8 @@ class TestPs1CastsThatReadAString(unittest.TestCase):
         """
         self.assertEqual(_throws(_transcript("[int]'1_0'")), True)
         self.assertEqual(_throws(_transcript("[int]'0b1010'")), True)
-        self.assertEqual(_converted("[int]'1_0'"), Ps1Outcome(True, Ps1Typed(INT32)))
-        self.assertEqual(_converted("[int]'0b1010'"), Ps1Outcome(True, Ps1Typed(INT32)))
+        self.assertEqual(_converted("[int]'1_0'"), Ps1Outcome(ALWAYS, Ps1Typed(INT32)))
+        self.assertEqual(_converted("[int]'0b1010'"), Ps1Outcome(ALWAYS, Ps1Typed(INT32)))
 
 
 class TestPs1ConvertRefusals(unittest.TestCase):
@@ -2703,7 +2727,7 @@ class TestPs1ConvertRefusals(unittest.TestCase):
         """
         self.assertEqual(convert(UNKNOWN, INT32), NOTHING)
         self.assertEqual(convert(Ps1Typed(DOUBLE), INT32).value, Ps1Typed(INT32))
-        self.assertEqual(convert(NULL, INT32), Ps1Outcome(False, Ps1Constant(INT32, 0)))
+        self.assertEqual(convert(NULL, INT32), Ps1Outcome(NEVER, Ps1Constant(INT32, 0)))
 
     def test_a_cast_the_grid_does_not_cover_is_refused_rather_than_assumed(self):
         """
@@ -2733,7 +2757,7 @@ class TestPs1OutcomeIsWeakOnBothAxes(unittest.TestCase):
     """
 
     def test_an_operand_nothing_is_known_about_leaves_both_axes_unclaimed(self):
-        unclaimed = Ps1Outcome(True, UNKNOWN)
+        unclaimed = Ps1Outcome(MAYBE, UNKNOWN)
         for operator in GRID_OPERATORS:
             for fact in OPERANDS:
                 with self.subTest(F'{fact!r} {operator}'):
@@ -2745,19 +2769,20 @@ class TestPs1OutcomeIsWeakOnBothAxes(unittest.TestCase):
 
     def test_generalising_a_divisor_does_not_take_away_the_throw_it_had(self):
         """
-        Division by a zero divisor is where the two axes came apart: the domain reports a possible
-        throw for the pair it is handed, and an answer for a divisor it knows less about must not
-        be that the division is safe. `Ps1Outcome(False, UNKNOWN)` reads as exactly that to the
-        folding pass, which folds an outcome that cannot throw.
+        Division by a zero divisor is where the two axes came apart: the domain proves the throw for
+        the concrete pair it is handed — a certain throw — and an answer for a divisor it knows less
+        about must not weaken that to *safe*. `Ps1Outcome(NEVER, UNKNOWN)` reads as safe to the
+        folding pass, which folds an outcome that cannot throw; a generalised divisor keeps at least
+        `MAYBE`, never `NEVER`.
         """
         five = Ps1Constant(INT32, 5)
         zero = Ps1Constant(INT32, 0)
-        self.assertEqual(apply('/', five, zero), Ps1Outcome(True, UNKNOWN))
+        self.assertEqual(apply('/', five, zero), Ps1Outcome(ALWAYS, UNKNOWN))
         self.assertEqual(apply('/', five, Ps1Typed(INT32)).may_throw, True)
-        self.assertEqual(apply('/', five, UNKNOWN), Ps1Outcome(True, UNKNOWN))
+        self.assertEqual(apply('/', five, UNKNOWN), Ps1Outcome(MAYBE, UNKNOWN))
         self.assertEqual(apply('/', Ps1Typed(INT32), zero).may_throw, True)
-        self.assertEqual(apply('%', five, zero), Ps1Outcome(True, UNKNOWN))
-        self.assertEqual(apply('%', five, UNKNOWN), Ps1Outcome(True, UNKNOWN))
+        self.assertEqual(apply('%', five, zero), Ps1Outcome(ALWAYS, UNKNOWN))
+        self.assertEqual(apply('%', five, UNKNOWN), Ps1Outcome(MAYBE, UNKNOWN))
 
     def test_generalising_an_operand_never_takes_away_a_throw(self):
         """
@@ -2834,7 +2859,7 @@ class TestPs1ZeroDivisors(unittest.TestCase):
             with self.subTest(operator):
                 outcome = apply(
                     operator, Ps1Constant(DOUBLE, 1.5), Ps1Constant(DOUBLE, 0.0))
-                self.assertEqual(outcome, Ps1Outcome(False, Ps1Typed(DOUBLE)))
+                self.assertEqual(outcome, Ps1Outcome(NEVER, Ps1Typed(DOUBLE)))
                 self.assertIsNone(render(outcome.value))
 
 
@@ -2880,7 +2905,7 @@ class TestPs1MeasuredOperators(unittest.TestCase):
         self.assertEqual(
             {expression: _applied(expression) for expression in PINNED_OPERATIONS},
             {
-                expression: Ps1Outcome(False, _measured_operation_fact(expression))
+                expression: Ps1Outcome(NEVER, _measured_operation_fact(expression))
                 for expression in PINNED_OPERATIONS
             },
         )
@@ -2999,7 +3024,7 @@ class TestPs1MeasuredComplement(unittest.TestCase):
         self.assertEqual(
             pinned,
             {
-                expression: Ps1Outcome(False, _measured_complement_fact(expression))
+                expression: Ps1Outcome(NEVER, _measured_complement_fact(expression))
                 for expression in pinned
             },
         )
@@ -3023,8 +3048,8 @@ class TestPs1MeasuredComplement(unittest.TestCase):
         self.assertEqual(_measured_complement('-bnot 0xFFFFFFFF'), ('System.Int32', '0'))
         self.assertEqual(_measured_complement('-bnot 0xFF'), ('System.Int32', '-256'))
         self.assertEqual(
-            _complemented('-bnot 0xFFFFFFFF'), Ps1Outcome(False, Ps1Constant(INT32, 0)))
-        self.assertEqual(_complemented('-bnot 0xFF'), Ps1Outcome(False, Ps1Constant(INT32, -256)))
+            _complemented('-bnot 0xFFFFFFFF'), Ps1Outcome(NEVER, Ps1Constant(INT32, 0)))
+        self.assertEqual(_complemented('-bnot 0xFF'), Ps1Outcome(NEVER, Ps1Constant(INT32, -256)))
 
     def test_a_narrow_operand_widens_where_a_wide_one_keeps_its_width(self):
         """
@@ -3036,11 +3061,11 @@ class TestPs1MeasuredComplement(unittest.TestCase):
         self.assertEqual(_measured_complement('-bnot 1L'), ('System.Int64', '-2'))
         self.assertEqual(
             _measured_complement('-bnot [uint32]7'), ('System.UInt32', '4294967288'))
-        self.assertEqual(_complemented('-bnot [byte]5'), Ps1Outcome(False, Ps1Constant(INT32, -6)))
-        self.assertEqual(_complemented('-bnot 1L'), Ps1Outcome(False, Ps1Constant(INT64, -2)))
+        self.assertEqual(_complemented('-bnot [byte]5'), Ps1Outcome(NEVER, Ps1Constant(INT32, -6)))
+        self.assertEqual(_complemented('-bnot 1L'), Ps1Outcome(NEVER, Ps1Constant(INT64, -2)))
         self.assertEqual(
             _complemented('-bnot [uint32]7'),
-            Ps1Outcome(False, Ps1Constant(UINT32, 4294967288)),
+            Ps1Outcome(NEVER, Ps1Constant(UINT32, 4294967288)),
         )
 
     def test_an_operand_that_is_no_integer_is_complemented_at_what_converting_it_reaches(self):
@@ -3081,11 +3106,11 @@ class TestPs1MeasuredComplement(unittest.TestCase):
                 )
             },
             {
-                '-bnot 1.5'      : Ps1Outcome(False, Ps1Constant(INT32, -3)),
-                '-bnot $null'    : Ps1Outcome(False, Ps1Constant(INT32, -1)),
-                "-bnot '5'"      : Ps1Outcome(False, Ps1Constant(INT32, -6)),
-                '-bnot [char]65' : Ps1Outcome(False, Ps1Constant(INT32, -66)),
-                '-bnot $true'    : Ps1Outcome(False, Ps1Constant(INT32, -2)),
+                '-bnot 1.5'      : Ps1Outcome(NEVER, Ps1Constant(INT32, -3)),
+                '-bnot $null'    : Ps1Outcome(NEVER, Ps1Constant(INT32, -1)),
+                "-bnot '5'"      : Ps1Outcome(NEVER, Ps1Constant(INT32, -6)),
+                '-bnot [char]65' : Ps1Outcome(NEVER, Ps1Constant(INT32, -66)),
+                '-bnot $true'    : Ps1Outcome(NEVER, Ps1Constant(INT32, -2)),
             },
         )
 
@@ -3099,7 +3124,7 @@ class TestPs1MeasuredComplement(unittest.TestCase):
         self.assertEqual(_measured_complement('-bnot 1.5'), ('System.Int32', '-3'))
         self.assertEqual(
             _measured_complement('-bnot 3000000000.0'), ('System.UInt32', '1294967295'))
-        self.assertEqual(_complemented('-bnot 1.5'), Ps1Outcome(False, Ps1Constant(INT32, -3)))
+        self.assertEqual(_complemented('-bnot 1.5'), Ps1Outcome(NEVER, Ps1Constant(INT32, -3)))
         self.assertEqual(_complemented('-bnot 3000000000.0'), NOTHING)
 
     def test_a_complement_the_host_threw_on_names_no_value_and_reports_the_throw(self):
@@ -3109,7 +3134,7 @@ class TestPs1MeasuredComplement(unittest.TestCase):
         """
         self.assertEqual(
             {expression: _complemented(expression) for expression in THROWN_COMPLEMENTS},
-            {expression: Ps1Outcome(True, UNKNOWN) for expression in THROWN_COMPLEMENTS},
+            {expression: Ps1Outcome(MAYBE, UNKNOWN) for expression in THROWN_COMPLEMENTS},
         )
         self.assertEqual(_throws(_transcript("[int]'abc'")), True)
 
@@ -3130,7 +3155,7 @@ class TestPs1MeasuredComplement(unittest.TestCase):
     def test_an_operand_nothing_is_known_about_leaves_both_axes_unclaimed(self):
         for operand in (UNKNOWN, Ps1Typed(INT32), Ps1Typed(DOUBLE), Ps1Typed(STRING)):
             with self.subTest(repr(operand)):
-                self.assertEqual(apply_unary('-bnot', operand), Ps1Outcome(True, UNKNOWN))
+                self.assertEqual(apply_unary('-bnot', operand), Ps1Outcome(MAYBE, UNKNOWN))
 
     def test_a_measured_complement_is_answered_the_same_however_its_operator_is_cased(self):
         self.assertEqual(
@@ -3177,7 +3202,7 @@ class TestPs1MeasuredNegation(unittest.TestCase):
         self.assertEqual(
             pinned,
             {
-                expression: Ps1Outcome(False, _measured_negation_fact(expression))
+                expression: Ps1Outcome(NEVER, _measured_negation_fact(expression))
                 for expression in pinned
             },
         )
@@ -3196,9 +3221,15 @@ class TestPs1MeasuredNegation(unittest.TestCase):
         )
 
     def test_a_negation_the_host_threw_on_names_no_value_and_reports_the_throw(self):
+        # Both name no value; the axis parts them by whether the domain proves the throw. `- 'abc'`
+        # is the compiled `0 - 'abc'`, whose String coercion the invariant reader rejects — a certain
+        # throw — while `- @()` is a MethodNotFound the domain declines rather than proves.
         self.assertEqual(
             {expression: _negated(expression) for expression in THROWN_NEGATIONS},
-            {expression: Ps1Outcome(True, UNKNOWN) for expression in THROWN_NEGATIONS},
+            {
+                "- 'abc'": Ps1Outcome(ALWAYS, UNKNOWN),
+                '- @()': Ps1Outcome(MAYBE, UNKNOWN),
+            },
         )
 
     def test_no_measured_negation_is_answered_with_a_type_the_host_did_not_print(self):
@@ -3278,8 +3309,8 @@ class TestPs1MeasuredNegation(unittest.TestCase):
                         context.prec = precision
                         answered = apply_unary('-', Ps1Constant(DECIMAL, value))
                         restored = apply_unary('-', Ps1Constant(DECIMAL, negated))
-                    self.assertEqual(answered, Ps1Outcome(False, Ps1Constant(DECIMAL, negated)))
-                    self.assertEqual(restored, Ps1Outcome(False, Ps1Constant(DECIMAL, value)))
+                    self.assertEqual(answered, Ps1Outcome(NEVER, Ps1Constant(DECIMAL, negated)))
+                    self.assertEqual(restored, Ps1Outcome(NEVER, Ps1Constant(DECIMAL, value)))
 
     def test_a_floating_zero_negates_to_the_zero_a_subtraction_from_zero_produces(self):
         """
@@ -3291,7 +3322,7 @@ class TestPs1MeasuredNegation(unittest.TestCase):
         for operand in (0.0, -0.0):
             with self.subTest(repr(operand)):
                 answered = apply_unary('-', Ps1Constant(DOUBLE, operand))
-                self.assertEqual(answered, Ps1Outcome(False, Ps1Constant(DOUBLE, 0.0)))
+                self.assertEqual(answered, Ps1Outcome(NEVER, Ps1Constant(DOUBLE, 0.0)))
                 self.assertEqual(_sign_of(answered.value), 1.0)
                 self.assertEqual(
                     _sign_of(apply('-', Ps1Constant(INT32, 0), Ps1Constant(DOUBLE, operand)).value),
@@ -3369,11 +3400,11 @@ class TestPs1ACollectionOfOneCountsItsElementByARuleOfItsOwn(unittest.TestCase):
         """
         self.assertEqual(
             _evaluated('@() + (0 -shl $true)'),
-            Ps1Outcome(False, Ps1Constant(OBJECT_ARRAY, (Ps1Typed(INT32),))),
+            Ps1Outcome(NEVER, Ps1Constant(OBJECT_ARRAY, (Ps1Typed(INT32),))),
         )
         self.assertEqual(
             convert(Ps1Constant(OBJECT_ARRAY, (Ps1Typed(INT32),)), BOOLEAN),
-            Ps1Outcome(True, Ps1Typed(BOOLEAN)),
+            Ps1Outcome(MAYBE, Ps1Typed(BOOLEAN)),
         )
         self.assertIsNone(is_truthy(_slot('@() + (0 -shl $true)')))
 
@@ -3388,8 +3419,8 @@ class TestPs1TruthRefusesWhateverEitherStepMayThrowOn(unittest.TestCase):
 
     def test_a_definite_value_that_may_throw_on_the_way_to_it_is_counted_as_nothing(self):
         self.assertEqual(_throws(_transcript("[int]'abc'")), True)
-        self.assertEqual(_evaluated("$null * [int]'abc'"), Ps1Outcome(True, NULL))
-        self.assertEqual(convert(NULL, BOOLEAN), Ps1Outcome(False, Ps1Constant(BOOLEAN, False)))
+        self.assertEqual(_evaluated("$null * [int]'abc'"), Ps1Outcome(ALWAYS, NULL))
+        self.assertEqual(convert(NULL, BOOLEAN), Ps1Outcome(NEVER, Ps1Constant(BOOLEAN, False)))
         self.assertIsNone(is_truthy(_slot("$null * [int]'abc'")))
 
     def test_a_condition_the_host_threw_on_is_counted_as_nothing(self):
@@ -3418,11 +3449,11 @@ class TestPs1PlusIsDecidedByItsLeftOperand(unittest.TestCase):
         )
         self.assertEqual(
             apply('+', Ps1Constant(CHAR, 'A'), Ps1Constant(INT32, 1)),
-            Ps1Outcome(False, Ps1Constant(STRING, 'A1')),
+            Ps1Outcome(NEVER, Ps1Constant(STRING, 'A1')),
         )
         self.assertEqual(
             apply('+', Ps1Constant(INT32, 1), Ps1Constant(CHAR, 'A')),
-            Ps1Outcome(False, Ps1Constant(INT32, 66)),
+            Ps1Outcome(NEVER, Ps1Constant(INT32, 66)),
         )
 
     def test_two_chars_join_into_the_two_character_string_the_host_printed(self):
@@ -3432,7 +3463,7 @@ class TestPs1PlusIsDecidedByItsLeftOperand(unittest.TestCase):
         )
         self.assertEqual(
             apply('+', Ps1Constant(CHAR, 'r'), Ps1Constant(CHAR, '5')),
-            Ps1Outcome(False, Ps1Constant(STRING, 'r5')),
+            Ps1Outcome(NEVER, Ps1Constant(STRING, 'r5')),
         )
 
     def test_nothing_but_a_string_or_a_char_on_the_left_is_answered_with_a_join(self):
@@ -3454,7 +3485,7 @@ class TestPs1PlusIsDecidedByItsLeftOperand(unittest.TestCase):
         self.assertEqual(
             sorted(str(one) for one in joining), ['System.Char', 'System.String'])
         self.assertEqual(
-            apply('+', NULL, Ps1Constant(CHAR, 'A')), Ps1Outcome(False, Ps1Constant(CHAR, 'A')))
+            apply('+', NULL, Ps1Constant(CHAR, 'A')), Ps1Outcome(NEVER, Ps1Constant(CHAR, 'A')))
 
     def test_what_a_join_appends_is_what_a_cast_of_the_right_operand_to_string_names(self):
         """
@@ -3480,7 +3511,7 @@ class TestPs1PlusIsDecidedByItsLeftOperand(unittest.TestCase):
         one that was written: measured, `'a' + 1.50d` is `a1.50`.
         """
         self.assertEqual(_measured("'a' + 1.50d"), ('System.String', 'a1.50'))
-        self.assertEqual(_applied("'a' + 1.50d"), Ps1Outcome(False, Ps1Constant(STRING, 'a1.50')))
+        self.assertEqual(_applied("'a' + 1.50d"), Ps1Outcome(NEVER, Ps1Constant(STRING, 'a1.50')))
 
     def test_a_right_operand_whose_text_only_a_session_settles_is_not_joined(self):
         """
@@ -3500,11 +3531,11 @@ class TestPs1PlusIsDecidedByItsLeftOperand(unittest.TestCase):
         """
         self.assertEqual(_measured("'5' + 5"), ('System.String', '55'))
         self.assertEqual(_measured("'a' + 1.5"), ('System.String', 'a1.5'))
-        self.assertEqual(_applied("'5' + 1.5"), Ps1Outcome(False, Ps1Constant(STRING, '51.5')))
+        self.assertEqual(_applied("'5' + 1.5"), Ps1Outcome(NEVER, Ps1Constant(STRING, '51.5')))
 
     def test_a_right_operand_whose_text_is_written_here_is_joined_all_the_same(self):
-        self.assertEqual(_applied("'5' + 5"), Ps1Outcome(False, Ps1Constant(STRING, '55')))
-        self.assertEqual(_applied('[char]65 + 1'), Ps1Outcome(False, Ps1Constant(STRING, 'A1')))
+        self.assertEqual(_applied("'5' + 5"), Ps1Outcome(NEVER, Ps1Constant(STRING, '55')))
+        self.assertEqual(_applied('[char]65 + 1'), Ps1Outcome(NEVER, Ps1Constant(STRING, 'A1')))
 
 
 class TestPs1AComparisonIsDecidedByItsLeftOperand(unittest.TestCase):
@@ -3540,7 +3571,7 @@ class TestPs1AComparisonIsDecidedByItsLeftOperand(unittest.TestCase):
         self.assertEqual(
             {expression: _applied(expression) for expression in DECIDED_COMPARISON_ROWS},
             {
-                expression: Ps1Outcome(False, _measured_operation_fact(expression))
+                expression: Ps1Outcome(NEVER, _measured_operation_fact(expression))
                 for expression in DECIDED_COMPARISON_ROWS
             },
         )
@@ -3611,9 +3642,9 @@ class TestPs1AComparisonIsDecidedByItsLeftOperand(unittest.TestCase):
             },
         )
         self.assertEqual(
-            _applied("'1.0' -eq 1"), Ps1Outcome(False, Ps1Constant(BOOLEAN, False)))
+            _applied("'1.0' -eq 1"), Ps1Outcome(NEVER, Ps1Constant(BOOLEAN, False)))
         self.assertEqual(
-            _applied("1 -eq '1.0'"), Ps1Outcome(False, Ps1Constant(BOOLEAN, True)))
+            _applied("1 -eq '1.0'"), Ps1Outcome(NEVER, Ps1Constant(BOOLEAN, True)))
 
     def test_a_boolean_on_the_left_asks_whether_the_right_operand_is_true_and_not_whether_it_is_one(
         self,
@@ -3637,9 +3668,9 @@ class TestPs1AComparisonIsDecidedByItsLeftOperand(unittest.TestCase):
             },
         )
         self.assertEqual(
-            _applied('$true -eq 2'), Ps1Outcome(False, Ps1Constant(BOOLEAN, True)))
+            _applied('$true -eq 2'), Ps1Outcome(NEVER, Ps1Constant(BOOLEAN, True)))
         self.assertEqual(
-            _applied('2 -eq $true'), Ps1Outcome(False, Ps1Constant(BOOLEAN, False)))
+            _applied('2 -eq $true'), Ps1Outcome(NEVER, Ps1Constant(BOOLEAN, False)))
 
     def test_an_absent_operand_is_settled_by_presence_rather_than_converted_to_the_other_side(self):
         """
@@ -3671,9 +3702,9 @@ class TestPs1AComparisonIsDecidedByItsLeftOperand(unittest.TestCase):
             },
         )
         self.assertEqual(
-            _applied('$false -gt $null'), Ps1Outcome(False, Ps1Constant(BOOLEAN, True)))
+            _applied('$false -gt $null'), Ps1Outcome(NEVER, Ps1Constant(BOOLEAN, True)))
         self.assertEqual(
-            _applied('$false -eq $null'), Ps1Outcome(False, Ps1Constant(BOOLEAN, False)))
+            _applied('$false -eq $null'), Ps1Outcome(NEVER, Ps1Constant(BOOLEAN, False)))
 
     def test_the_case_sensitive_spelling_of_a_comparison_is_a_different_question(self):
         self.assertEqual(
@@ -3689,9 +3720,9 @@ class TestPs1AComparisonIsDecidedByItsLeftOperand(unittest.TestCase):
             },
         )
         self.assertEqual(
-            _applied("'A' -ceq 'a'"), Ps1Outcome(False, Ps1Constant(BOOLEAN, False)))
+            _applied("'A' -ceq 'a'"), Ps1Outcome(NEVER, Ps1Constant(BOOLEAN, False)))
         self.assertEqual(
-            _applied("'A' -ieq 'a'"), Ps1Outcome(False, Ps1Constant(BOOLEAN, True)))
+            _applied("'A' -ieq 'a'"), Ps1Outcome(NEVER, Ps1Constant(BOOLEAN, True)))
 
 
 class TestPs1TheDecimalTypeKeepsItsDigits(unittest.TestCase):
@@ -3836,13 +3867,13 @@ class TestPs1TheTextAValueWrites(unittest.TestCase):
         self.assertEqual(
             {join: _applied(join) for join, _ in JOINED_AGAINST_ITS_TEXT},
             {
-                join: Ps1Outcome(False, Ps1Constant(STRING, F'a{_measured(cast)[1]}'))
+                join: Ps1Outcome(NEVER, Ps1Constant(STRING, F'a{_measured(cast)[1]}'))
                 for join, cast in JOINED_AGAINST_ITS_TEXT
             },
         )
         self.assertEqual(
             {cast: _converted(cast) for _, cast in JOINED_AGAINST_ITS_TEXT},
-            {cast: Ps1Outcome(False, _measured_fact(cast)) for _, cast in JOINED_AGAINST_ITS_TEXT},
+            {cast: Ps1Outcome(NEVER, _measured_fact(cast)) for _, cast in JOINED_AGAINST_ITS_TEXT},
         )
 
     def test_a_cast_to_string_writes_the_scale_a_decimal_was_written_with(self):
@@ -3863,7 +3894,7 @@ class TestPs1TheTextAValueWrites(unittest.TestCase):
         self.assertEqual(
             {expression: _converted(expression) for expression in DECIMAL_TEXTS},
             {
-                expression: Ps1Outcome(False, _measured_fact(expression))
+                expression: Ps1Outcome(NEVER, _measured_fact(expression))
                 for expression in DECIMAL_TEXTS
             },
         )
@@ -3873,11 +3904,11 @@ class TestPs1TheTextAValueWrites(unittest.TestCase):
         self.assertEqual(_measured('[string]$true'), ('System.String', 'True'))
         self.assertEqual(_measured('[string]$false'), ('System.String', 'False'))
         self.assertEqual(
-            _applied("'a' + [char]65"), Ps1Outcome(False, Ps1Constant(STRING, 'aA')))
+            _applied("'a' + [char]65"), Ps1Outcome(NEVER, Ps1Constant(STRING, 'aA')))
         self.assertEqual(
-            _converted('[string]$true'), Ps1Outcome(False, Ps1Constant(STRING, 'True')))
+            _converted('[string]$true'), Ps1Outcome(NEVER, Ps1Constant(STRING, 'True')))
         self.assertEqual(
-            _converted('[string]$false'), Ps1Outcome(False, Ps1Constant(STRING, 'False')))
+            _converted('[string]$false'), Ps1Outcome(NEVER, Ps1Constant(STRING, 'False')))
 
 
 class TestPs1AnOperandShapeTheHostAbortsOnIsNeverGivenAValue(unittest.TestCase):
@@ -3889,10 +3920,28 @@ class TestPs1AnOperandShapeTheHostAbortsOnIsNeverGivenAValue(unittest.TestCase):
     """
 
     def test_every_operation_the_host_aborted_on_names_no_value_and_reports_the_throw(self):
-        self.assertEqual(
-            {expression: _evaluated(expression) for expression in THROWN_OPERATIONS},
-            {expression: NOTHING for expression in THROWN_OPERATIONS},
+        outcomes = {expression: _evaluated(expression) for expression in THROWN_OPERATIONS}
+        self.assertTrue(all(o.value is UNKNOWN and o.may_throw for o in outcomes.values()))
+
+    def test_the_operations_the_domain_proves_throw_are_the_value_precise_ones(self):
+        """
+        A throw the host took is `ALWAYS` exactly where the domain reaches it value-precisely — a
+        decimal overflow, a division by zero, and a String an integer coercion certainly rejects.
+        The rest are proven throws the domain declines (an unread multiplier, an infinite double, a
+        collection repeat, a Boolean product), so they stay `MAYBE`: kept as possible throws, never
+        claimed as certain.
+        """
+        certain = sorted(
+            expression for expression in THROWN_OPERATIONS
+            if _evaluated(expression).certainly_throws
         )
+        self.assertEqual(certain, sorted((
+            "'1_0' -band 15",
+            '16 + \'file\'',
+            '1d / 0d',
+            '79228162514264337593543950335d + 1d',
+            '79228162514264337593543950335d - -1d',
+        )))
 
     def test_no_condition_the_host_aborted_on_is_counted_true_or_false(self):
         self.assertEqual(
@@ -3944,7 +3993,7 @@ class TestPs1AnOperandShapeTheHostAbortsOnIsNeverGivenAValue(unittest.TestCase):
         )
         self.assertEqual(
             {expression: _applied(expression) for expression in computed[1:]},
-            {expression: NOTHING for expression in computed[1:]},
+            {expression: Ps1Outcome(ALWAYS, UNKNOWN) for expression in computed[1:]},
         )
         self.assertEqual(
             str(_payload(_applied(computed[0]).value)), _measured_operation(computed[0])[1])
@@ -4003,7 +4052,7 @@ class TestPs1CellsTheWitnessesReach(unittest.TestCase):
         )
         self.assertEqual(
             _applied("1 + '2147483648'"),
-            Ps1Outcome(False, Ps1Constant(INT64, 2147483649)),
+            Ps1Outcome(NEVER, Ps1Constant(INT64, 2147483649)),
         )
 
     def test_a_cell_over_operands_the_witnesses_reach_is_still_the_answer(self):
@@ -4013,10 +4062,10 @@ class TestPs1CellsTheWitnessesReach(unittest.TestCase):
         captured from.
         """
         self.assertEqual(_measured_operation_fact('$null * 1'), NULL)
-        self.assertEqual(apply('*', NULL, Ps1Typed(INT32)), Ps1Outcome(False, NULL))
+        self.assertEqual(apply('*', NULL, Ps1Typed(INT32)), Ps1Outcome(NEVER, NULL))
         self.assertEqual(_cell('-band', INT32, INT32).single_type, INT32)
         self.assertEqual(
-            apply('-band', Ps1Typed(INT32), Ps1Typed(INT32)), Ps1Outcome(False, Ps1Typed(INT32)))
+            apply('-band', Ps1Typed(INT32), Ps1Typed(INT32)), Ps1Outcome(NEVER, Ps1Typed(INT32)))
 
 
 class TestPs1SpanRestsOnTheShippedGrid(unittest.TestCase):
@@ -4073,14 +4122,14 @@ class TestPs1CastNamesItsTargetWhereAnOperatorNamesNothing(unittest.TestCase):
         self.assertEqual(
             {cell: answer for cell, answer in answers.items() if cell not in EVERY_WITNESS_THREW},
             {
-                cell: Ps1Outcome(True, Ps1Typed(_type(cell[0])))
+                cell: Ps1Outcome(MAYBE, Ps1Typed(_type(cell[0])))
                 for cell in answers
                 if cell not in EVERY_WITNESS_THREW
             },
         )
         self.assertEqual(
             {cell: answers[cell] for cell in EVERY_WITNESS_THREW},
-            {cell: Ps1Outcome(True, UNKNOWN) for cell in EVERY_WITNESS_THREW},
+            {cell: Ps1Outcome(MAYBE, UNKNOWN) for cell in EVERY_WITNESS_THREW},
         )
 
     def test_such_a_cast_no_longer_claims_that_it_cannot_throw(self):
@@ -4090,7 +4139,7 @@ class TestPs1CastNamesItsTargetWhereAnOperatorNamesNothing(unittest.TestCase):
         type is what a cast produces or throws trying, so it stands where the silence does not.
         """
         self.assertEqual(_cast_cell(STRING, CHAR).may_throw, False)
-        self.assertEqual(convert(Ps1Typed(CHAR), STRING), Ps1Outcome(True, Ps1Typed(STRING)))
+        self.assertEqual(convert(Ps1Typed(CHAR), STRING), Ps1Outcome(MAYBE, Ps1Typed(STRING)))
 
     def test_an_operator_over_the_same_source_is_left_without_an_answer(self):
         """
@@ -4100,9 +4149,9 @@ class TestPs1CastNamesItsTargetWhereAnOperatorNamesNothing(unittest.TestCase):
         operator re-reads the string as the numeral it spells and promotes over that.
         """
         self.assertEqual(_measured("[int]'1e3'"), ('System.Int32', '1000'))
-        self.assertEqual(_converted("[int]'1e3'"), Ps1Outcome(True, Ps1Typed(INT32)))
+        self.assertEqual(_converted("[int]'1e3'"), Ps1Outcome(MAYBE, Ps1Typed(INT32)))
         self.assertEqual(_measured("1 + '1e3'"), ('System.Double', '1001'))
-        self.assertEqual(_applied("1 + '1e3'"), Ps1Outcome(False, Ps1Constant(DOUBLE, 1001.0)))
+        self.assertEqual(_applied("1 + '1e3'"), Ps1Outcome(NEVER, Ps1Constant(DOUBLE, 1001.0)))
 
 
 class TestPs1EvaluateComposesTheOneStepReaders(unittest.TestCase):
@@ -4118,7 +4167,7 @@ class TestPs1EvaluateComposesTheOneStepReaders(unittest.TestCase):
     def test_a_literal_evaluates_to_the_fact_the_host_printed_for_it(self):
         self.assertEqual(
             {expression: _evaluated(expression) for expression in DECIDED},
-            {expression: Ps1Outcome(False, MEASURED[expression]) for expression in DECIDED},
+            {expression: Ps1Outcome(NEVER, MEASURED[expression]) for expression in DECIDED},
         )
 
     def test_a_measured_cast_is_answered_as_the_single_step_answers_it(self):
@@ -4135,7 +4184,7 @@ class TestPs1EvaluateComposesTheOneStepReaders(unittest.TestCase):
         self.assertEqual(
             {expression: _evaluated(expression) for expression in NESTED_CASTS},
             {
-                expression: Ps1Outcome(False, _measured_fact(expression))
+                expression: Ps1Outcome(NEVER, _measured_fact(expression))
                 for expression in NESTED_CASTS
             },
         )
@@ -4148,7 +4197,7 @@ class TestPs1EvaluateComposesTheOneStepReaders(unittest.TestCase):
         composed = {
             expression: _evaluated(expression)
             for expression in OPERATION_ROWS
-            if _applied(expression) != NOTHING
+            if _applied(expression).value is not UNKNOWN
         }
         self.assertEqual(len(composed), 196)
         self.assertEqual(
@@ -4158,13 +4207,13 @@ class TestPs1EvaluateComposesTheOneStepReaders(unittest.TestCase):
         self.assertEqual(_applied('10 - $null + 3'), NOTHING)
         self.assertEqual(
             _evaluated('10 - $null + 3'),
-            Ps1Outcome(False, _measured_operation_fact('10 - $null + 3')),
+            Ps1Outcome(NEVER, _measured_operation_fact('10 - $null + 3')),
         )
 
     def test_a_parenthesis_is_worth_what_it_encloses(self):
         self.assertEqual(_read('([int]1.5)'), UNKNOWN)
         self.assertEqual(
-            _evaluated('([int]1.5)'), Ps1Outcome(False, _measured_fact('[int]1.5')))
+            _evaluated('([int]1.5)'), Ps1Outcome(NEVER, _measured_fact('[int]1.5')))
         self.assertEqual(_evaluated('(([int]1.5))'), _evaluated('([int]1.5)'))
 
     def test_an_array_holds_what_each_of_its_elements_comes_to(self):
@@ -4172,7 +4221,7 @@ class TestPs1EvaluateComposesTheOneStepReaders(unittest.TestCase):
         self.assertEqual(
             _evaluated('[int]1.5, 007'),
             Ps1Outcome(
-                False,
+                NEVER,
                 Ps1Constant(OBJECT_ARRAY, (_measured_fact('[int]1.5'), MEASURED['007'])),
             ),
         )
@@ -4204,7 +4253,7 @@ class TestPs1EvaluateComposesTheOneStepReaders(unittest.TestCase):
                 expression: evaluate(_slot(expression), lambda var: STRING)
                 for expression in reached
             },
-            {expression: Ps1Outcome(True, Ps1Typed(INT32)) for expression in reached},
+            {expression: Ps1Outcome(MAYBE, Ps1Typed(INT32)) for expression in reached},
         )
         self.assertEqual(evaluate(_slot('$s.Length, 1'), lambda var: STRING), NOTHING)
 
@@ -4222,19 +4271,21 @@ class TestPs1EvaluateComposesACastOfAStringWithAJoin(unittest.TestCase):
         self.assertEqual(_measured("[int]'0x10'"), ('System.Int32', '16'))
         self.assertEqual(_measured("'5' + 5"), ('System.String', '55'))
         self.assertEqual(
-            _evaluated("'v' + [int]'0x10'"), Ps1Outcome(False, Ps1Constant(STRING, 'v16')))
+            _evaluated("'v' + [int]'0x10'"), Ps1Outcome(NEVER, Ps1Constant(STRING, 'v16')))
 
     def test_a_cast_over_a_join_reads_the_text_the_join_produced(self):
         self.assertEqual(_measured("[int]'5'"), ('System.Int32', '5'))
-        self.assertEqual(_evaluated("[int]('1' + '0')"), Ps1Outcome(False, Ps1Constant(INT32, 10)))
+        self.assertEqual(_evaluated("[int]('1' + '0')"), Ps1Outcome(NEVER, Ps1Constant(INT32, 10)))
 
     def test_a_step_the_host_threw_on_leaves_the_join_with_a_throw_and_no_value(self):
+        # The cast throws when 5.1 evaluates it, before the eager `+`, so the whole join is a
+        # certain throw — where the declined-spelling twin below only *may* throw.
         self.assertEqual(_throws(_transcript("[char]'AB'")), True)
-        self.assertEqual(_evaluated("'x' + [char]'AB'"), Ps1Outcome(True, UNKNOWN))
+        self.assertEqual(_evaluated("'x' + [char]'AB'"), Ps1Outcome(ALWAYS, UNKNOWN))
 
     def test_a_step_whose_spelling_is_declined_leaves_the_join_with_no_value(self):
         self.assertEqual(_measured("[int]'1e3'"), ('System.Int32', '1000'))
-        self.assertEqual(_evaluated("'x' + [int]'1e3'"), Ps1Outcome(True, UNKNOWN))
+        self.assertEqual(_evaluated("'x' + [int]'1e3'"), Ps1Outcome(MAYBE, UNKNOWN))
 
 
 class TestPs1EvaluateAgreesOrRefuses(unittest.TestCase):
@@ -4254,7 +4305,7 @@ class TestPs1EvaluateAgreesOrRefuses(unittest.TestCase):
         self.assertEqual(
             [
                 site.source for site in compared
-                if evaluate(site.node) != Ps1Outcome(False, read(site.node))
+                if evaluate(site.node) != Ps1Outcome(NEVER, read(site.node))
             ],
             [],
         )
@@ -4317,7 +4368,7 @@ class TestPs1EvaluateAgreesOrRefuses(unittest.TestCase):
         self.assertEqual(
             {expression: _evaluated(expression) for expression in MISREAD_SPELLINGS},
             {
-                expression: Ps1Outcome(False, MEASURED[expression])
+                expression: Ps1Outcome(NEVER, MEASURED[expression])
                 for expression in MISREAD_SPELLINGS
             },
         )
@@ -4368,11 +4419,14 @@ class TestPs1EvaluateIsNoStrongerThanItsSteps(unittest.TestCase):
         self.assertEqual([row.source for row in named if not row.elements_named], [])
 
     def test_an_element_that_names_only_a_type_leaves_the_array_unknown(self):
-        self.assertEqual(_evaluated("[int]'abc'"), Ps1Outcome(True, Ps1Typed(INT32)))
+        # The element is a certain throw the domain proves, but the array collapses to *nothing*
+        # rather than carrying that up: an element naming only a type is not a value, so the array
+        # is unknown and its own certainty is not established here (a sound miss, not a wrong claim).
+        self.assertEqual(_evaluated("[int]'abc'"), Ps1Outcome(ALWAYS, Ps1Typed(INT32)))
         self.assertEqual(_evaluated("([int]'abc'), 1"), NOTHING)
         self.assertEqual(
             _evaluated('$null, 1'),
-            Ps1Outcome(False, Ps1Constant(OBJECT_ARRAY, (NULL, Ps1Constant(INT32, 1)))),
+            Ps1Outcome(NEVER, Ps1Constant(OBJECT_ARRAY, (NULL, Ps1Constant(INT32, 1)))),
         )
 
 
@@ -4399,16 +4453,18 @@ class TestPs1EvaluateCarriesAThrowUp(unittest.TestCase):
         """
         5.1 throws for `[int]'abc'`, and neither operation below can throw over the fact that cast
         leaves behind: the grid records one type and no throw for an Int32 `-band` an Int32 and for
-        a `[string]` of an Int32. What may throw is the expression, which is what runs.
+        a `[string]` of an Int32. So the throw is the operand's, carried up — the operand certainly
+        throws, both operators evaluate it eagerly, and each expression is therefore a certain throw
+        that keeps the result type the surviving step would have named.
         """
         self.assertEqual(_throws(_transcript("[int]'abc'")), True)
         thrown = _evaluated("[int]'abc'")
-        self.assertEqual(thrown, Ps1Outcome(True, Ps1Typed(INT32)))
+        self.assertEqual(thrown, Ps1Outcome(ALWAYS, Ps1Typed(INT32)))
         self.assertEqual(
-            apply('-band', thrown.value, Ps1Constant(INT32, 1)), Ps1Outcome(False, Ps1Typed(INT32)))
-        self.assertEqual(_evaluated("[int]'abc' -band 1"), Ps1Outcome(True, Ps1Typed(INT32)))
-        self.assertEqual(convert(thrown.value, STRING), Ps1Outcome(False, Ps1Typed(STRING)))
-        self.assertEqual(_evaluated("[string]([int]'abc')"), Ps1Outcome(True, Ps1Typed(STRING)))
+            apply('-band', thrown.value, Ps1Constant(INT32, 1)), Ps1Outcome(NEVER, Ps1Typed(INT32)))
+        self.assertEqual(_evaluated("[int]'abc' -band 1"), Ps1Outcome(ALWAYS, Ps1Typed(INT32)))
+        self.assertEqual(convert(thrown.value, STRING), Ps1Outcome(NEVER, Ps1Typed(STRING)))
+        self.assertEqual(_evaluated("[string]([int]'abc')"), Ps1Outcome(ALWAYS, Ps1Typed(STRING)))
 
     def test_an_operand_nothing_is_known_about_leaves_the_expression_able_to_throw(self):
         for expression in ('$x -band 1', '1 -band $x', '[int]$x', '$x, 1', '($x)'):
@@ -4417,7 +4473,7 @@ class TestPs1EvaluateCarriesAThrowUp(unittest.TestCase):
 
     def test_an_answer_that_names_no_value_never_claims_it_cannot_throw(self):
         self.assertEqual(
-            [site.source for site in SITES if evaluate(site.node) == Ps1Outcome(False, UNKNOWN)],
+            [site.source for site in SITES if evaluate(site.node) == Ps1Outcome(NEVER, UNKNOWN)],
             [],
         )
 
@@ -4451,7 +4507,7 @@ class TestPs1EvaluateNamesACastsTarget(unittest.TestCase):
         ]
         self.assertEqual(passing, ['array'])
         self.assertEqual(_evaluated('[array]$x'), NOTHING)
-        self.assertEqual(_evaluated('[array]$null'), Ps1Outcome(False, NULL))
+        self.assertEqual(_evaluated('[array]$null'), Ps1Outcome(NEVER, NULL))
 
     def test_every_other_target_is_named_over_a_value_nothing_is_known_about(self):
         named = {
@@ -4461,7 +4517,7 @@ class TestPs1EvaluateNamesACastsTarget(unittest.TestCase):
         }
         self.assertEqual(
             named,
-            {target: Ps1Outcome(True, Ps1Typed(_type(target))) for target in named},
+            {target: Ps1Outcome(MAYBE, Ps1Typed(_type(target))) for target in named},
         )
 
     def test_a_target_the_grid_never_measured_names_nothing(self):
@@ -4479,31 +4535,37 @@ class TestPs1EvaluateNamesACastsTarget(unittest.TestCase):
         self.assertEqual(
             {expression: _evaluated(expression) for expression in THROWN},
             {
-                '[byte]300'       : Ps1Outcome(True, UNKNOWN),
-                '[byte]-1'        : Ps1Outcome(True, UNKNOWN),
-                '[byte]400'       : Ps1Outcome(True, UNKNOWN),
-                '[byte](200 * 2)' : Ps1Outcome(True, UNKNOWN),
-                '[int]2147483648' : Ps1Outcome(True, UNKNOWN),
-                '[char]65536'     : Ps1Outcome(True, UNKNOWN),
-                '[char]-1'        : Ps1Outcome(True, UNKNOWN),
-                "[byte]'-1'"      : Ps1Outcome(True, UNKNOWN),
-                "[byte]'0x100'"   : Ps1Outcome(True, UNKNOWN),
-                "[char]'AB'"      : Ps1Outcome(True, UNKNOWN),
-                "[char]''"        : Ps1Outcome(True, UNKNOWN),
-                "[int]'abc'"      : Ps1Outcome(True, Ps1Typed(INT32)),
-                "[int]'   '"      : Ps1Outcome(True, Ps1Typed(INT32)),
-                "[int]'1_0'"      : Ps1Outcome(True, Ps1Typed(INT32)),
-                "[int]'0b1010'"   : Ps1Outcome(True, Ps1Typed(INT32)),
-                "[int]'0o17'"     : Ps1Outcome(True, Ps1Typed(INT32)),
-                "[int]'1kb'"      : Ps1Outcome(True, Ps1Typed(INT32)),
-                "[byte]'1e3'"     : Ps1Outcome(True, Ps1Typed(BYTE)),
+                '[byte]300'       : Ps1Outcome(ALWAYS, UNKNOWN),
+                '[byte]-1'        : Ps1Outcome(ALWAYS, UNKNOWN),
+                '[byte]400'       : Ps1Outcome(ALWAYS, UNKNOWN),
+                '[byte](200 * 2)' : Ps1Outcome(ALWAYS, UNKNOWN),
+                '[int]2147483648' : Ps1Outcome(ALWAYS, UNKNOWN),
+                '[char]65536'     : Ps1Outcome(ALWAYS, UNKNOWN),
+                '[char]-1'        : Ps1Outcome(ALWAYS, UNKNOWN),
+                "[byte]'-1'"      : Ps1Outcome(ALWAYS, UNKNOWN),
+                "[byte]'0x100'"   : Ps1Outcome(ALWAYS, UNKNOWN),
+                "[char]'AB'"      : Ps1Outcome(ALWAYS, UNKNOWN),
+                "[char]''"        : Ps1Outcome(ALWAYS, UNKNOWN),
+                "[int]'abc'"      : Ps1Outcome(ALWAYS, Ps1Typed(INT32)),
+                "[int]'   '"      : Ps1Outcome(MAYBE, Ps1Typed(INT32)),
+                "[int]'1_0'"      : Ps1Outcome(ALWAYS, Ps1Typed(INT32)),
+                "[int]'0b1010'"   : Ps1Outcome(ALWAYS, Ps1Typed(INT32)),
+                "[int]'0o17'"     : Ps1Outcome(ALWAYS, Ps1Typed(INT32)),
+                "[int]'1kb'"      : Ps1Outcome(ALWAYS, Ps1Typed(INT32)),
+                "[byte]'1e3'"     : Ps1Outcome(MAYBE, Ps1Typed(BYTE)),
             },
         )
+        # `evaluate` and `convert` over the read operand agree on every row but one: the operand of
+        # `[byte](200 * 2)` is an operator `read` does not fold, so `convert` is handed an unknown
+        # and only *may* throw, where `evaluate` folds the 400 and proves the throw.
+        folds_only_under_evaluate = '[byte](200 * 2)'
         self.assertEqual(
-            {expression: _evaluated(expression) for expression in THROWN},
-            {expression: _converted(expression) for expression in THROWN},
+            {e: _evaluated(e) for e in THROWN if e != folds_only_under_evaluate},
+            {e: _converted(e) for e in THROWN if e != folds_only_under_evaluate},
         )
-        self.assertEqual(_evaluated('[byte]$x'), Ps1Outcome(True, Ps1Typed(BYTE)))
+        self.assertEqual(_evaluated(folds_only_under_evaluate), Ps1Outcome(ALWAYS, UNKNOWN))
+        self.assertEqual(_converted(folds_only_under_evaluate), Ps1Outcome(MAYBE, UNKNOWN))
+        self.assertEqual(_evaluated('[byte]$x'), Ps1Outcome(MAYBE, Ps1Typed(BYTE)))
 
 
 class TestPs1EvaluateRefusesATypeLiteral(unittest.TestCase):
@@ -4610,7 +4672,7 @@ class TestPs1OperatorCaseDoesNotChangeTheAnswer(unittest.TestCase):
         self.assertEqual(
             {expression: _cased(expression, str.upper) for expression in pinned},
             {
-                expression: Ps1Outcome(False, _measured_operation_fact(expression))
+                expression: Ps1Outcome(NEVER, _measured_operation_fact(expression))
                 for expression in pinned
             },
         )
