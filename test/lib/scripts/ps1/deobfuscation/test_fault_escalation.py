@@ -268,18 +268,89 @@ class TestPs1ATypedCatchThatMatchesShieldsAnEnclosingCatch(_Ps1FaultEscalation):
 class TestPs1AnEmptyCatchDoesNotCoverWhatFollowsTheRaiseInItsBlock(_Ps1FaultEscalation):
     """
     An empty `catch` swallows the error, but the raise still abandons the rest of its `try` block,
-    so a statement written after it there never runs. The raise is the only reason that statement is
-    dead, and it cannot be dropped while the statement stands.
+    so a statement written after it there never runs. A proven raise folds the whole construct away
+    — the swallowed error and the dead tail with it — leaving only what stands after the `try`. What
+    the tail must never do is run, and it does not: the fold drops it rather than resurrecting it,
+    which is the wrong answer a raise deleted on its own would give.
     """
 
-    def test_a_raising_cast_before_another_statement_of_the_same_try_block_is_kept(self):
-        self._assertKept(F"""
+    def test_a_proven_raise_before_a_dead_tail_folds_the_construct_away(self):
+        self._assertDeobfuscatesTo(F"""
             try {{
               {_RAISE}
               {_FOLLOWER}
             }} catch {{ }}
             {_ANCHOR}
+        """, _ANCHOR)
+
+
+class TestPs1AProvenThrowFoldsTheTryConstruct(_Ps1FaultEscalation):
+    """
+    A `try` body proven to throw runs the statements before the throw, then the body of the `catch`
+    that takes it, then the `finally`, and nothing else. A terminating error abandons the rest of
+    the block, so the statements after the throw are dead and go. This is the aggressive dual of the
+    keep `TestPs1ASoftFaultBeforeALiveTailInAnEmptyCatchIsKept` makes: that one holds a construct
+    whose throw it cannot prove, this one folds one whose throw it can.
+
+    A `throw` and a cast of a non-numeric literal are both proven throws, and an empty `catch`, a
+    bare catch-all and a universally typed one all take every error, so each lifts its body out
+    over the throw.
+    """
+
+    def test_a_proven_raise_under_an_empty_catch_folds_to_nothing(self):
+        self._assertDeobfuscatesTo(F"try {{ {_RAISE} }} catch {{ }}", '')
+
+    def test_a_throw_lifts_the_body_of_the_catch_that_takes_it(self):
+        self._assertDeobfuscatesTo(F"try {{ throw 'x' }} catch {{ {_HANDLER} }}", _HANDLER)
+
+    def test_a_proven_cast_lifts_the_body_of_a_bare_catch(self):
+        self._assertDeobfuscatesTo(F"try {{ {_RAISE} }} catch {{ {_HANDLER} }}", _HANDLER)
+
+    def test_a_dead_tail_after_the_throw_goes_while_the_handler_body_is_lifted(self):
+        self._assertDeobfuscatesTo(F"""
+            try {{
+              {_RAISE}
+              {_FOLLOWER}
+            }} catch {{ {_HANDLER} }}
+        """, _HANDLER)
+
+    def test_a_universally_typed_catch_takes_the_throw_and_lifts_its_body(self):
+        self._assertDeobfuscatesTo(
+            F"try {{ {_RAISE} }} catch [System.Exception] {{ {_HANDLER} }}", _HANDLER)
+
+    def test_an_empty_catch_beside_a_finally_folds_to_the_finally(self):
+        self._assertDeobfuscatesTo(
+            F"try {{ {_RAISE} }} catch {{ }} finally {{ {_HANDLER} }}", _HANDLER)
+
+
+class TestPs1AProvenThrowIsNotFoldedWhereTheLiftWouldChangeWhatRuns(_Ps1FaultEscalation):
+    """
+    The fold lifts the `catch` body out of its construct, and three things a lifted body could
+    observe are refused rather than reasoned about, so the construct is left whole. A body naming
+    `$_` or `$PSItem` loses the error record those hold only inside a `catch`. A read of `$Error`
+    anywhere in the script would answer a different count once the raise that filled it is gone. And
+    a `catch` body beside a `finally` runs the `finally` before it leaves, which a flat sequence of
+    the two does not preserve if the body does not complete normally.
+    """
+
+    def test_a_catch_that_reads_the_error_variable_is_not_folded(self):
+        self._assertKept(F"try {{ {_RAISE} }} catch {{ Write-Host $_ }}")
+
+    def test_a_catch_that_reads_the_error_item_is_not_folded(self):
+        self._assertKept(F"try {{ {_RAISE} }} catch {{ Write-Host $PSItem }}")
+
+    def test_a_later_read_of_the_error_record_stops_the_fold(self):
+        # A `throw` rather than the discard `_RAISE`, so that folding the construct is the only way
+        # the raise could go: a discarded cast under an empty `catch` is removed on its own by a
+        # separate limit, which would collapse the construct here whether the fold declined or not.
+        self._assertKept(F"""
+            try {{ throw 'x' }} catch {{ }}
+            Write-Host $Error.Count
         """)
+
+    def test_a_catch_body_beside_a_finally_is_not_folded(self):
+        self._assertKept(
+            F"try {{ {_RAISE} }} catch {{ {_HANDLER} }} finally {{ {_OUTER_HANDLER} }}")
 
 
 class TestPs1AnEmptyCatchCoversARaiseThatIsLastInItsBlock(_Ps1FaultEscalation):
@@ -308,12 +379,16 @@ class TestPs1ASoftFaultBeforeALiveTailInAnEmptyCatchIsKept(_Ps1FaultEscalation):
     """
     A statement whose fault its own `try` catches, written before a live statement of the same block
     under an empty `catch`, is the only reason that live statement is dead — the empty `catch`
-    swallows the fault and resumes past the tail. It is kept whatever the caught-terminating fault
-    is: a possible division by zero the analysis cannot rule out, a bitwise operator over a string
-    that does not convert (whose spelling the normalize pass canonicalizes before the removal weighs
-    it), or a command the script's `Stop` preference makes terminating. A command left to its default
-    non-terminating error is the control: 5.1 reports it and steps over it, so the tail runs whether
-    the command stands or not and the discard goes.
+    swallows the fault and resumes past the tail. It is kept whenever the analysis cannot *prove*
+    the fault, whatever the caught-terminating fault is: a possible division by zero it cannot rule
+    out, a bitwise operator over a string of unknown value (whose spelling the normalize pass
+    canonicalizes before the removal weighs it), or a command the script's `Stop` preference makes
+    terminating. A command left to its default non-terminating error is the control: 5.1 reports it
+    and steps over it, so the tail runs whether the command stands or not and the discard goes.
+
+    A fault the analysis *proves* is not kept here but folded away with the construct around it, in
+    `TestPs1AProvenThrowFoldsTheTryConstruct`: this class is the may-throw region that fold cannot
+    reach, so a certain operand (a literal `'zz' -bxor 3`) belongs there, not here.
     """
 
     def test_a_possible_division_by_zero_before_a_live_tail_is_kept(self):
@@ -328,14 +403,16 @@ class TestPs1ASoftFaultBeforeALiveTailInAnEmptyCatchIsKept(_Ps1FaultEscalation):
         # The normalize pass canonicalizes `-bxor` to `-BXor` before the removal weighs it, and the
         # veto has to read the operator it actually sees; the expected output is compared directly
         # because the synthesizer renders the operator lower-case where the pipeline canonicalizes it.
+        # The operand is a variable of unknown value, so the fault is possible rather than proven and
+        # the fold leaves it to this keep.
         self.assertEqual(
             self._deobfuscate(inspect.cleandoc(F"""
                 try {{
-                  $Null = ('zz' -bxor 3)
+                  $Null = ($PSCommandPath -bxor 3)
                   {_FOLLOWER}
                 }} catch {{ }}
             """)),
-            "try {\n  $Null = ('zz' -BXor 3)\n  Write-Host 'FOLLOWER_RAN'\n} catch {}",
+            "try {\n  $Null = ($PSCommandPath -BXor 3)\n  Write-Host 'FOLLOWER_RAN'\n} catch {}",
         )
 
     def test_a_command_discard_before_a_live_tail_under_a_stop_preference_is_kept(self):

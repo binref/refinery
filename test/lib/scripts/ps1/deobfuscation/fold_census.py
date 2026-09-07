@@ -39,6 +39,8 @@ FOLDS: dict[str, str] = {
         '',
     'try { 1 } catch { 2 } finally { 3 }':
         'try {\n  1\n} catch {\n  2\n} finally {}',
+    "try { throw 'x' } catch { 'caught' }":
+        "'caught'",
     '-not $x':
         '$True',
     'while ($a) { 1 }':

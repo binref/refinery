@@ -394,7 +394,7 @@ class TestPs1DeadCodeExtra(TestPs1):
     def test_a_try_body_that_may_raise_keeps_its_construct(self):
         # Dissolving moves these out of the `try`, where the empty `catch` was swallowing what they
         # raise; each one is side-effect-free, which is what used to be asked and does not answer it.
-        for body in ("[Math]::Sqrt(9)", "[Int]'abc'", '1 / $d', '$a[$i]'):
+        for body in ('[Math]::Sqrt(9)', '[Int]$d', '1 / $d', '$a[$i]'):
             with self.subTest(body):
                 self._assertUnchanged(cleandoc(
                     F"""

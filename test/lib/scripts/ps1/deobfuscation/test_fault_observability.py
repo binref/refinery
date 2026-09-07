@@ -21,6 +21,13 @@ _RAISE = "$Null = [Int]'abc'"
 #: A second spelling of the same fault, so that no claim below rests on the cast in particular.
 _RAISE_DIV = '$Null = 1/0'
 
+#: The same two faults on operands the analysis cannot read, so each is a *possible* terminating
+#: error rather than a proven one. A proven throw directly in a `try` body is folded away with the
+#: construct around it (`test_fault_escalation.TestPs1AProvenThrowFoldsTheTryConstruct`), so the veto
+#: that keeps a raise a handler depends on is witnessed on a fault this removal pass still weighs.
+_MAY_RAISE = '$Null = [Int]$env:FOO'
+_MAY_RAISE_DIV = '$Null = 1 / $PID'
+
 #: Statements that Windows PowerShell 5.1 runs to completion. Each is a discarded value that emits
 #: nothing and mutates nothing, exactly like `_RAISE`, and differs from it only in raising no error
 #: for a handler to observe. A pass that decides a removal by asking whether a statement can raise
@@ -96,13 +103,15 @@ class TestPs1ARaisingStatementDirectlyInAGuardedTryBlockIsKept(TestPs1):
     """
     A `catch` clause with a body runs when the `try` block it belongs to raises a terminating error,
     so deleting the only statement that can raise means the handler no longer runs. The statement
-    therefore survives, however little else there is to observe about it.
+    therefore survives, however little else there is to observe about it. The fault is a possible
+    one rather than a proven one, because a proven throw here is folded into the handler with the
+    construct around it rather than left for this veto to keep.
     """
 
     def test_a_raising_cast_directly_in_the_try_block_is_kept(self):
         self._assertKept(F"""
             try {{
-              {_RAISE}
+              {_MAY_RAISE}
               {_ANCHOR}
             }} catch {{
               {_HANDLER}
@@ -112,7 +121,7 @@ class TestPs1ARaisingStatementDirectlyInAGuardedTryBlockIsKept(TestPs1):
     def test_a_raising_division_directly_in_the_try_block_is_kept(self):
         self._assertKept(F"""
             try {{
-              {_RAISE_DIV}
+              {_MAY_RAISE_DIV}
               {_ANCHOR}
             }} catch {{
               {_HANDLER}

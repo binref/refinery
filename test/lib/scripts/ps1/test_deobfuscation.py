@@ -554,13 +554,14 @@ class TestPs1ErrorHandlerSurvival(TestPs1):
 
     def test_an_empty_catch_lets_a_noise_bareword_go_and_keeps_what_may_emit(self):
         # An empty `catch` licenses *deleting* a statement that raises, and licenses nothing wider.
-        # `[Int]'abc'` is the case where the two halves of that disagree: measured on PowerShell
-        # 5.1, the construct prints nothing when the cast fails and prints `5` when it succeeds, so
-        # it can be neither deleted nor moved out, and the whole of it stays. The bareword goes on
-        # the separate guess that nothing defines it.
+        # `[Int]$env:FOO` is the case where the two halves of that disagree: the cast prints nothing
+        # when it fails and the number when it succeeds, and the analysis cannot read the operand to
+        # tell which, so it can be neither deleted nor moved out and the whole of it stays. A proven
+        # throw would fold the construct away instead; this is the possible one that does not. The
+        # bareword goes on the separate guess that nothing defines it.
         out = self._deobfuscate_iterative(
-            "try { foo =5 } catch {}\ntry { [Int]'abc' } catch {}\nWrite-Host 'keep'")
-        self.assertEqual(out, "try {\n  [Int]'abc'\n} catch {}\nWrite-Host 'keep'")
+            "try { foo =5 } catch {}\ntry { [Int]$env:FOO } catch {}\nWrite-Host 'keep'")
+        self.assertEqual(out, "try {\n  [Int]$env:FOO\n} catch {}\nWrite-Host 'keep'")
 
 
 class TestPs1NameTrustSurvivesRewriting(TestPs1):

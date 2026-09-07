@@ -439,6 +439,7 @@ CONTRIBUTION: dict[str, Contribution] = {
             "trap { continue }; [int]'a'; Write-Host 'after'",
             "trap { continue }; zzq0000=5; Write-Host 'after'",
             "trap { }; [int]'a'; Write-Host 'after'",
+            "try { throw 'x' } catch { 'caught' }",
             "try { zzqq0 =5 } catch {}; Write-Host 'after'",
         ),
         changed=(

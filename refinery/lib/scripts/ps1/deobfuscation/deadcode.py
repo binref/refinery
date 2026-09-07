@@ -13,9 +13,11 @@ from refinery.lib.scripts import (
 from refinery.lib.scripts.analysis.cfg import Projection
 from refinery.lib.scripts.analysis.dominance import DominatorModel
 from refinery.lib.scripts.ps1.analysis.cache import Ps1ModelCache, model_cache
-from refinery.lib.scripts.ps1.analysis.cfg import swallows_every_error
+from refinery.lib.scripts.ps1.analysis.cfg import certain_catch_all, swallows_every_error
 from refinery.lib.scripts.ps1.analysis.effects import (
     OutputSink,
+    certainly_throws,
+    fault_operand,
     is_fault_free,
     is_side_effect_free,
     output_sink,
@@ -56,6 +58,11 @@ from refinery.lib.scripts.ps1.model import (
 )
 
 _PATH_EXTENSIONS = frozenset({'.exe', '.ps1', '.cmd', '.bat', '.com', '.vbs', '.msi'})
+
+#: The automatic variables that hold the current error record, live only inside a `catch` or `trap`
+#: body. A handler body naming one of them cannot be lifted out of its `catch`, because outside it
+#: the name reads whatever the enclosing pipeline last bound rather than the error.
+_ERROR_RECORD_VARIABLES = frozenset({'_', 'psitem'})
 
 
 def _carries_assignment_marker(cmd: Ps1CommandInvocation, name: str) -> bool:
@@ -742,22 +749,32 @@ class Ps1DeadCodeElimination(Transformer):
 
     def _prune_try(self, node: Ps1TryCatchFinally, cache: Ps1ModelCache) -> list[Statement] | None:
         """
-        Resolve a `try`/`catch`/`finally` into what its `try` body leaves behind, followed by the
-        `finally` body, which always runs. An empty or absent try body needs no separate case
-        because `_try_body_survivors` accepts it vacuously.
+        Resolve a `try`/`catch`/`finally` into the code that certainly runs in its place, by one of
+        two disjoint routes.
 
-        Both routes require every `catch` clause to be empty, because a handler with a body is live
-        code whose reachability this pass cannot decide. An empty try body is no license to drop
-        one: emptiness here is rarely how the source was written, it is what an earlier pass left
-        behind, so it is evidence about that pass and not about whether the original body could
-        throw.
+        The first is the certain-throw fold, `_collapse_through_certain_throw`: a body proven to
+        throw runs its fault-free prefix, then the handler that takes the throw, then the `finally`,
+        and everything after the throw is dead. The second is the no-throw dissolution below: a body
+        that cannot throw at all is the same statements outside the construct as inside it, followed
+        by the `finally` that always runs. The two never both apply — one needs a proven throw and
+        the other a proven absence of one — so the order between them is free.
 
-        What an empty `catch` licenses is narrower than it looks, and this used to take it as broad.
-        It licenses *deleting* a statement that raises, since the error was being swallowed either
-        way. It does not license moving one out, and every statement here is moved, not deleted —
-        so the gate is fault-freedom rather than purity, and a body whose statements merely look
-        harmless keeps its construct.
+        The dissolution requires every `catch` clause to be empty, because a handler with a body is
+        live code whose reachability it cannot decide; the fold lifts exactly such a body, but only
+        where the throw that reaches it is proven. An empty or absent try body needs no separate
+        case because `_try_body_survivors` accepts it vacuously, and emptiness is no license to drop
+        a `catch`: it is rarely how the source was written, it is what an earlier pass left behind,
+        so it is evidence about that pass and not about whether the original body could throw.
+
+        What an empty `catch` licenses for the dissolution is narrower than it looks, and this used
+        to take it as broad. It licenses *deleting* a statement that raises, since the error was
+        being swallowed either way. It does not license moving one out, and every statement here is
+        moved, not deleted — so the gate is fault-freedom rather than purity, and a body whose
+        statements merely look harmless keeps its construct.
         """
+        folded = self._collapse_through_certain_throw(node, cache)
+        if folded is not None:
+            return folded
         for clause in node.catch_clauses:
             if clause.body is not None and clause.body.body:
                 return None
@@ -766,6 +783,69 @@ class Ps1DeadCodeElimination(Transformer):
             return None
         finally_body = node.finally_block.body if node.finally_block is not None else []
         return survivors + list(finally_body)
+
+    @staticmethod
+    def _statement_certainly_throws(stmt: Statement) -> bool:
+        """
+        Whether *stmt* is proven to raise a terminating error under every state. A `throw` is one
+        whatever its argument; every other statement is read through `fault_operand`, so a
+        `$Null =`/`[Void]` discard is judged by what it evaluates — `$Null = [Int]'abc'` throws in
+        the cast before the assignment `certainly_throws` would otherwise read nothing certain in.
+        """
+        if certainly_throws(stmt):
+            return True
+        operand = fault_operand(stmt)
+        return operand is not None and certainly_throws(operand)
+
+    def _collapse_through_certain_throw(
+        self, node: Ps1TryCatchFinally, cache: Ps1ModelCache,
+    ) -> list[Statement] | None:
+        """
+        Fold a `try` body certain to throw into the statements certain to run: the fault-free prefix
+        that precedes the throw, then the body of the `catch` that takes it, then the `finally`.
+        Everything after the throw in the `try` body is dead — a terminating error abandons the rest
+        of the block — and is dropped.
+
+        Every part of that is proven rather than guessed. `_statement_certainly_throws` fires only
+        where the value domain computes a throw 5.1 also takes, so a body the analysis cannot decide
+        is left whole for the discard remover to keep (`deletion_is_observable`). The statements
+        before the throw must be provably fault-free, so control is certain to reach it. And the
+        landing handler must be certain — `certain_catch_all` declines a narrow `catch` that might
+        take the error first — so the body lifted out is the one that runs.
+
+        Three things a lifted `catch` body could observe are refused rather than reasoned about. A
+        read of the error record anywhere in the script (`$Error`, `$?`, `$StackTrace`) is refused,
+        because the fold removes the raise that would fill it. A body naming `$_` or `$PSItem` is
+        refused, because those hold the current error only inside the `catch`. And a non-empty
+        `catch` body beside a non-empty `finally` is left alone, because a handler that does not
+        complete normally runs its `finally` before it leaves, which the flat sequence would not.
+        """
+        handler = certain_catch_all(node)
+        if handler is None:
+            return None
+        body = node.try_block.body if node.try_block is not None else []
+        prefix: list[Statement] = []
+        for stmt in body:
+            if self._statement_certainly_throws(stmt):
+                break
+            if not isinstance(stmt, Ps1ExpressionStatement):
+                return None
+            if stmt.expression is not None and not is_fault_free(stmt.expression):
+                return None
+            prefix.append(stmt)
+        else:
+            return None
+        if cache.commands.reads_the_error_record():
+            return None
+        handler_body = handler.body.body if handler.body is not None else []
+        for statement in handler_body:
+            for element in statement.walk():
+                if is_builtin_variable(element, _ERROR_RECORD_VARIABLES):
+                    return None
+        finally_body = node.finally_block.body if node.finally_block is not None else []
+        if handler_body and finally_body:
+            return None
+        return prefix + list(handler_body) + list(finally_body)
 
     @staticmethod
     def _prune_trap(node: Ps1TrapStatement, cache: Ps1ModelCache) -> list[Statement] | None:

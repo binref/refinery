@@ -154,6 +154,23 @@ def swallows_every_error(statement: Ps1TryCatchFinally) -> bool:
     return any(_catch_takes_every_error(clause) for clause in statement.catch_clauses)
 
 
+def certain_catch_all(statement: Ps1TryCatchFinally) -> Ps1CatchClause | None:
+    """
+    The one `catch` clause certain to take every terminating error the `try` body of *statement*
+    raises, or `None` when no clause is certain to. It is the first clause, and only when that
+    clause takes every error: a clause is tried in order, so a narrower one written first might
+    take a specific error before the catch-all is offered it, and which handler runs then depends
+    on the error's type rather than on the text. That is the reading `swallows_every_error` does not
+    make — it asks only whether *some* clause is a catch-all — and it is the one a caller that lifts
+    a handler body out needs, since it names *which* body runs.
+    """
+    clauses = statement.catch_clauses
+    if not clauses:
+        return None
+    first = clauses[0]
+    return first if _catch_takes_every_error(first) else None
+
+
 def _jump_label(statement: Ps1Jump) -> str | None:
     """
     The label a `break` or `continue` names, or `None` when it names none or names one this cannot
