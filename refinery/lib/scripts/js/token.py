@@ -163,6 +163,7 @@ class JsTokenKind(enum.Enum):
 
     NEWLINE         = 'newline'          # noqa
     COMMENT         = 'comment'          # noqa
+    HASHBANG        = 'hashbang'         # noqa
     ERROR           = 'error'            # noqa
     EOF             = 'eof'              # noqa
 

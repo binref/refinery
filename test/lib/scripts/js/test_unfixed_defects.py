@@ -62,6 +62,7 @@ from test.lib.scripts.js.ledger import (
     before_and_after,
     before_and_after_in_a_host,
     each_program_still_prints,
+    each_well_formed,
     evaluated_in_a_body,
     folded,
     one_expected_failure_per_program,
@@ -258,6 +259,57 @@ class TestASourcePhaseImportIsAProgram(TestBase):
     def test_a_source_phase_import_prints_back_as_written(self):
         source = "import source x from 'm';"
         self.assertEqual((well_formed(source), printed(source)), (True, source))
+
+
+class TestANumeralTheLanguageRefusesIsNoProgram(TestBase):
+    """
+    Node refuses `x = <spelling>;` for every spelling below: §12.9.3 reads a numeral by its
+    productions and refuses the source character behind it where that is an IdentifierStart or a
+    digit, which `test.lib.scripts.js.test_lexer` states over the tokens. The parser reads the
+    numeral the lexer ended and then whatever stands behind it as the next token, so `3in y` is
+    read as `3 in y` and printed as a program a host runs.
+    """
+
+    @unittest.expectedFailure
+    def test_a_numeral_pressed_against_a_name_or_a_digit_is_refused(self):
+        spellings = [
+            '004E',
+            '007e1',
+            '01n',
+            '00n',
+            '09n',
+            '08_1',
+            '09_1',
+            '0_1',
+            '0_0',
+            '0_',
+            '0e',
+            '0x',
+            '0b',
+            '0o',
+            '0b2',
+            '0x_1',
+            '0x1_',
+            '0x1g',
+            '0x1n_',
+            '1n1',
+            '1_',
+            '1__0',
+            '1_e3',
+            '1e',
+            '1e_1',
+            '1e+',
+            '1e3e',
+            '1.e',
+            '1._5',
+            '1.5_',
+            '1_.5',
+            '.5_',
+            '3in y',
+            '1.toString()',
+        ]
+        programs = [F'x = {spelling};' for spelling in spellings]
+        self.assertEqual(each_well_formed(programs), {program: False for program in programs})
 
 
 class TestRecoveryKeepsTheSourceText(TestBase):

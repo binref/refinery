@@ -89,6 +89,16 @@ def _tokens_of(source: str) -> list[tuple[JsTokenKind, str]]:
     return result
 
 
+def _tokens_with_termination(source: str) -> list[tuple[JsTokenKind, str, bool]]:
+    lexer = JsLexer(source)
+    result = []
+    for tok in lexer.tokenize():
+        if tok.kind == JsTokenKind.EOF:
+            break
+        result.append((tok.kind, tok.value, tok.terminated))
+    return result
+
+
 def _html_comment_of(source: str) -> int | None:
     lexer = JsLexer(source)
     for _ in lexer.tokenize():
@@ -341,10 +351,13 @@ class TestJsLexer(TestBase):
             JsTokenKind.IDENTIFIER,
         ])
 
-    def test_shebang_skipped_at_start(self):
+    def test_a_hash_bang_line_is_one_token_at_the_start(self):
         tokens = self._tokens('#!/usr/bin/env node\nvar x = 1;')
-        self.assertEqual(tokens[0], (JsTokenKind.NEWLINE, '\n'))
-        self.assertEqual(tokens[1], (JsTokenKind.VAR, 'var'))
+        self.assertEqual(tokens[:3], [
+            (JsTokenKind.HASHBANG, '#!/usr/bin/env node'),
+            (JsTokenKind.NEWLINE, '\n'),
+            (JsTokenKind.VAR, 'var'),
+        ])
 
     def test_shebang_only_at_position_zero(self):
         tokens = self._tokens('var x;\n#!/usr/bin/env node')
@@ -554,7 +567,7 @@ class TestJsLexer(TestBase):
 
     def test_a_hash_bang_line_ends_at_a_line_terminator_and_that_ending_ends_a_line(self):
         """
-        Node runs each of these programs. The first line is a comment of which no token survives,
+        Node runs each of these programs. The first line is a comment that is one token of its own,
         and the terminator that ends it is a line ending exactly as the one that ends any other
         comment is. A carriage return and a line feed together are one ending and not two.
         """
@@ -563,6 +576,7 @@ class TestJsLexer(TestBase):
             with self.subTest(ending=' '.join(_spelled(map(ord, ending)))):
                 source = F'#!x{ending}y;'
                 self.assertEqual(self._bounded_tokens(source), [
+                    (JsTokenKind.HASHBANG, '#!x'),
                     (JsTokenKind.NEWLINE, ending),
                     (JsTokenKind.IDENTIFIER, 'y'),
                     (JsTokenKind.SEMICOLON, ';'),
@@ -570,11 +584,14 @@ class TestJsLexer(TestBase):
                 ])
                 self.assertEqual(self._statements(source), 1)
 
-    def test_a_file_that_is_only_a_hash_bang_line_holds_no_token(self):
+    def test_a_file_that_is_only_a_hash_bang_line_holds_only_that_token(self):
         """
         Node runs this file, and it prints nothing. The line is over without a terminator to end it.
         """
-        self.assertEqual(self._bounded_tokens('#!/usr/bin/env node'), [(JsTokenKind.EOF, '')])
+        self.assertEqual(self._bounded_tokens('#!/usr/bin/env node'), [
+            (JsTokenKind.HASHBANG, '#!/usr/bin/env node'),
+            (JsTokenKind.EOF, ''),
+        ])
         self.assertEqual(self._statements('#!/usr/bin/env node'), 0)
 
     def test_a_joiner_may_stand_inside_a_name_and_may_not_open_one(self):
@@ -950,6 +967,7 @@ class TestScriptCodeHasTwoMoreCommentOpeners(TestBase):
                 (JsTokenKind.COMMENT, '--> note'),
             ],
             '#!/usr/bin/env node\n--> note': [
+                (JsTokenKind.HASHBANG, '#!/usr/bin/env node'),
                 (JsTokenKind.NEWLINE, '\n'),
                 (JsTokenKind.COMMENT, '--> note'),
             ],
@@ -1017,3 +1035,136 @@ class TestScriptCodeHasTwoMoreCommentOpeners(TestBase):
             "'<!--' + `-->`"    : None,
         }
         self.assertEqual({source: _html_comment_of(source) for source in rows}, rows)
+
+
+class TestANumeralEndsWhereTheGrammarEndsOne(TestBase):
+    """
+    §12.9.3 reads a numeral by its productions: a separator stands between two digits of one run
+    and nowhere else, a radix prefix needs digits, an exponent needs a digit behind its sign, a
+    legacy octal literal takes no separator, fraction, exponent or `n`, a `0`-led literal takes no
+    separator, and the source character behind a numeral may be neither an IdentifierStart nor a
+    digit. Node compiles `x = <spelling>;` for every spelling of the first table and refuses it
+    for every spelling of the second.
+    """
+
+    def test_a_numeral_node_compiles_is_one_terminated_token(self):
+        rows = {
+            '1_000': (JsTokenKind.INTEGER, '1_000'),
+            '0x1_F': (JsTokenKind.INTEGER, '0x1_F'),
+            '0b1_0': (JsTokenKind.INTEGER, '0b1_0'),
+            '0o7_7': (JsTokenKind.INTEGER, '0o7_7'),
+            '1_0.5_0e1_0': (JsTokenKind.FLOAT, '1_0.5_0e1_0'),
+            '10n': (JsTokenKind.BIGINT, '10n'),
+            '0x1fn': (JsTokenKind.BIGINT, '0x1fn'),
+            '0b1n': (JsTokenKind.BIGINT, '0b1n'),
+            '0o7n': (JsTokenKind.BIGINT, '0o7n'),
+            '0n': (JsTokenKind.BIGINT, '0n'),
+            '1_0n': (JsTokenKind.BIGINT, '1_0n'),
+            '010': (JsTokenKind.INTEGER, '010'),
+            '00': (JsTokenKind.INTEGER, '00'),
+            '08': (JsTokenKind.INTEGER, '08'),
+            '09.5': (JsTokenKind.FLOAT, '09.5'),
+            '09e1': (JsTokenKind.FLOAT, '09e1'),
+            '08.5e1': (JsTokenKind.FLOAT, '08.5e1'),
+            '0': (JsTokenKind.INTEGER, '0'),
+            '0.5': (JsTokenKind.FLOAT, '0.5'),
+            '0.5_5': (JsTokenKind.FLOAT, '0.5_5'),
+            '0.0e0': (JsTokenKind.FLOAT, '0.0e0'),
+            '0e0': (JsTokenKind.FLOAT, '0e0'),
+            '0.e1': (JsTokenKind.FLOAT, '0.e1'),
+            '5.': (JsTokenKind.FLOAT, '5.'),
+            '5.e1': (JsTokenKind.FLOAT, '5.e1'),
+            '1.e1': (JsTokenKind.FLOAT, '1.e1'),
+            '.5': (JsTokenKind.FLOAT, '.5'),
+            '.5e-1': (JsTokenKind.FLOAT, '.5e-1'),
+            '1e-3': (JsTokenKind.FLOAT, '1e-3'),
+            '1E+3': (JsTokenKind.FLOAT, '1E+3'),
+            '0b0': (JsTokenKind.INTEGER, '0b0'),
+            '0O17': (JsTokenKind.INTEGER, '0O17'),
+            '0B1': (JsTokenKind.INTEGER, '0B1'),
+            '0X1f': (JsTokenKind.INTEGER, '0X1f'),
+        }
+        self.assertEqual(
+            {source: _tokens_with_termination(source) for source in rows},
+            {source: [(kind, text, True)] for source, (kind, text) in rows.items()},
+        )
+
+    def test_a_numeral_node_refuses_ends_where_the_grammar_ends_it_and_is_unterminated(self):
+        rows = {
+            '004E': [(JsTokenKind.INTEGER, '004', False), (JsTokenKind.IDENTIFIER, 'E', True)],
+            '007e1': [(JsTokenKind.INTEGER, '007', False), (JsTokenKind.IDENTIFIER, 'e1', True)],
+            '01n': [(JsTokenKind.INTEGER, '01', False), (JsTokenKind.IDENTIFIER, 'n', True)],
+            '00n': [(JsTokenKind.INTEGER, '00', False), (JsTokenKind.IDENTIFIER, 'n', True)],
+            '09n': [(JsTokenKind.INTEGER, '09', False), (JsTokenKind.IDENTIFIER, 'n', True)],
+            '08_1': [(JsTokenKind.INTEGER, '08', False), (JsTokenKind.IDENTIFIER, '_1', True)],
+            '09_1': [(JsTokenKind.INTEGER, '09', False), (JsTokenKind.IDENTIFIER, '_1', True)],
+            '0_1': [(JsTokenKind.INTEGER, '0', False), (JsTokenKind.IDENTIFIER, '_1', True)],
+            '0_0': [(JsTokenKind.INTEGER, '0', False), (JsTokenKind.IDENTIFIER, '_0', True)],
+            '0_': [(JsTokenKind.INTEGER, '0', False), (JsTokenKind.IDENTIFIER, '_', True)],
+            '0e': [(JsTokenKind.INTEGER, '0', False), (JsTokenKind.IDENTIFIER, 'e', True)],
+            '0x': [(JsTokenKind.INTEGER, '0x', False)],
+            '0b': [(JsTokenKind.INTEGER, '0b', False)],
+            '0o': [(JsTokenKind.INTEGER, '0o', False)],
+            '0b2': [(JsTokenKind.INTEGER, '0b', False), (JsTokenKind.INTEGER, '2', True)],
+            '0x_1': [(JsTokenKind.INTEGER, '0x', False), (JsTokenKind.IDENTIFIER, '_1', True)],
+            '0x1_': [(JsTokenKind.INTEGER, '0x1', False), (JsTokenKind.IDENTIFIER, '_', True)],
+            '0x1g': [(JsTokenKind.INTEGER, '0x1', False), (JsTokenKind.IDENTIFIER, 'g', True)],
+            '0x1n_': [(JsTokenKind.BIGINT, '0x1n', False), (JsTokenKind.IDENTIFIER, '_', True)],
+            '1n1': [(JsTokenKind.BIGINT, '1n', False), (JsTokenKind.INTEGER, '1', True)],
+            '1_': [(JsTokenKind.INTEGER, '1', False), (JsTokenKind.IDENTIFIER, '_', True)],
+            '1__0': [(JsTokenKind.INTEGER, '1', False), (JsTokenKind.IDENTIFIER, '__0', True)],
+            '1_e3': [(JsTokenKind.INTEGER, '1', False), (JsTokenKind.IDENTIFIER, '_e3', True)],
+            '1e': [(JsTokenKind.INTEGER, '1', False), (JsTokenKind.IDENTIFIER, 'e', True)],
+            '1e_1': [(JsTokenKind.INTEGER, '1', False), (JsTokenKind.IDENTIFIER, 'e_1', True)],
+            '1e+': [
+                (JsTokenKind.INTEGER, '1', False),
+                (JsTokenKind.IDENTIFIER, 'e', True),
+                (JsTokenKind.PLUS, '+', True),
+            ],
+            '1e3e': [(JsTokenKind.FLOAT, '1e3', False), (JsTokenKind.IDENTIFIER, 'e', True)],
+            '1.e': [(JsTokenKind.FLOAT, '1.', False), (JsTokenKind.IDENTIFIER, 'e', True)],
+            '1._5': [(JsTokenKind.FLOAT, '1.', False), (JsTokenKind.IDENTIFIER, '_5', True)],
+            '1.5_': [(JsTokenKind.FLOAT, '1.5', False), (JsTokenKind.IDENTIFIER, '_', True)],
+            '1_.5': [
+                (JsTokenKind.INTEGER, '1', False),
+                (JsTokenKind.IDENTIFIER, '_', True),
+                (JsTokenKind.FLOAT, '.5', True),
+            ],
+            '.5_': [(JsTokenKind.FLOAT, '.5', False), (JsTokenKind.IDENTIFIER, '_', True)],
+            '3in y': [
+                (JsTokenKind.INTEGER, '3', False),
+                (JsTokenKind.IN, 'in', True),
+                (JsTokenKind.IDENTIFIER, 'y', True),
+            ],
+            '1.toString()': [
+                (JsTokenKind.FLOAT, '1.', False),
+                (JsTokenKind.IDENTIFIER, 'toString', True),
+                (JsTokenKind.LPAREN, '(', True),
+                (JsTokenKind.RPAREN, ')', True),
+            ],
+        }
+        self.assertEqual({source: _tokens_with_termination(source) for source in rows}, rows)
+
+
+class TestABlockCommentReportsWhetherItWasClosed(TestBase):
+    """
+    Node refuses a file that ends inside a block comment (§12.4, MultiLineComment). The comment
+    runs to the end of the file either way; whether `*/` ended it is the one fact the text does
+    not carry, so the token carries it.
+    """
+
+    def test_a_block_comment_is_terminated_exactly_where_the_closer_was_found(self):
+        rows = {
+            'x /**/ y': [
+                (JsTokenKind.IDENTIFIER, 'x', True),
+                (JsTokenKind.COMMENT, '/**/', True),
+                (JsTokenKind.IDENTIFIER, 'y', True),
+            ],
+            'x /* c */': [(JsTokenKind.IDENTIFIER, 'x', True), (JsTokenKind.COMMENT, '/* c */', True)],
+            'x /* c *': [(JsTokenKind.IDENTIFIER, 'x', True), (JsTokenKind.COMMENT, '/* c *', False)],
+            'x /* c /': [(JsTokenKind.IDENTIFIER, 'x', True), (JsTokenKind.COMMENT, '/* c /', False)],
+            'x /* c': [(JsTokenKind.IDENTIFIER, 'x', True), (JsTokenKind.COMMENT, '/* c', False)],
+            'x /*': [(JsTokenKind.IDENTIFIER, 'x', True), (JsTokenKind.COMMENT, '/*', False)],
+            '/* a\n b': [(JsTokenKind.COMMENT, '/* a\n b', False), (JsTokenKind.NEWLINE, '', True)],
+        }
+        self.assertEqual({source: _tokens_with_termination(source) for source in rows}, rows)

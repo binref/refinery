@@ -393,7 +393,7 @@ class JsLexer:
             self.html_comment = start
         return JsToken(JsTokenKind.COMMENT, self._read_line_comment(), start)
 
-    def _read_block_comment(self) -> tuple[str, bool]:
+    def _read_block_comment(self) -> tuple[str, bool, bool]:
         start = self.pos
         src = self.source
         length = len(src)
@@ -402,12 +402,12 @@ class JsLexer:
         while self.pos < length - 1:
             if src[self.pos] == '*' and src[self.pos + 1] == '/':
                 self.pos += 2
-                return src[start:self.pos], has_newline
+                return src[start:self.pos], has_newline, True
             if src[self.pos] in LINE_TERMINATORS:
                 has_newline = True
             self.pos += 1
         self.pos = length
-        return src[start:self.pos], has_newline
+        return src[start:self.pos], has_newline, False
 
     def _read_string_escape(self) -> str:
         self.pos += 1
@@ -523,26 +523,68 @@ class JsLexer:
         self.pos = start
         return None
 
-    def _read_prefixed_int(self, start: int, valid_digits: str) -> JsToken:
+    def _read_digits(self, digits: str | frozenset[str], separators: bool) -> bool:
+        """
+        Consume a run of *digits*, with a `_` allowed between two of them where *separators* says
+        so (§12.9.3), and report whether any digit was read. A `_` that no digit follows is not
+        part of the run.
+        """
         src = self.source
         length = len(src)
-        while self.pos < length and src[self.pos] in valid_digits:
+        start = self.pos
+        while self.pos < length:
+            c = src[self.pos]
+            if c in digits:
+                self.pos += 1
+            elif (
+                separators
+                and c == '_'
+                and self.pos > start
+                and self.pos + 1 < length
+                and src[self.pos + 1] in digits
+            ):
+                self.pos += 1
+            else:
+                break
+        return self.pos > start
+
+    def _numeral(self, kind: JsTokenKind, start: int) -> JsToken:
+        """
+        The numeral read from *start* to here. One that an IdentifierStart or a digit follows
+        immediately is refused by the grammar (§12.9.3), and is handed over unterminated so that
+        the parser refuses it rather than reading a name pressed against a number.
+        """
+        src = self.source
+        terminated = not (
+            self.pos < len(src)
+            and (src[self.pos] in _DECIMAL or _opens_a_name(src[self.pos]) or src[self.pos] == '\\')
+        )
+        return JsToken(kind, src[start:self.pos], start, terminated)
+
+    def _read_prefixed_int(self, start: int, digits: str) -> JsToken:
+        self.pos += 2
+        if not self._read_digits(digits, True):
+            return JsToken(JsTokenKind.INTEGER, self.source[start:self.pos], start, False)
+        if self.pos < len(self.source) and self.source[self.pos] == 'n':
             self.pos += 1
-        if self.pos < length and src[self.pos] == 'n':
-            self.pos += 1
-            return JsToken(JsTokenKind.BIGINT, src[start:self.pos], start)
-        return JsToken(JsTokenKind.INTEGER, src[start:self.pos], start)
+            return self._numeral(JsTokenKind.BIGINT, start)
+        return self._numeral(JsTokenKind.INTEGER, start)
 
     def _read_number(self) -> JsToken:
         """
-        The numeric literal that begins here. The digits after the point are optional where there
-        are digits in front of it — `3.` is the number three — which is what makes `1..toString()`
-        a call on a numeral rather than a member of a member. The point belongs to the numeral
-        whenever it can, so `1.toString()` is a numeral with a name behind it and no program at all.
+        The numeric literal that begins here, read by the productions of §12.9.3. The digits after
+        the point are optional where there are digits in front of it — `3.` is the number three —
+        which makes `1..toString()` a call on a numeral rather than a member of a member. The point
+        belongs to the numeral whenever it can, so `1.toString()` is a numeral with a name pressed
+        against it and no program at all.
 
         A literal that opens with the point has no such option: `.5` needs its digits, and the
-        point that would follow them belongs to whatever comes next. Neither has a prefixed literal,
-        which ends at its digits.
+        point that would follow them belongs to whatever comes next. A prefixed literal ends at its
+        digits, an exponent needs a digit behind its sign, and a separator stands between two
+        digits of one run and nowhere else, and never behind a leading `0`, which is a run of its
+        own. A legacy octal literal, `0` followed by octal digits, takes no separator, no fraction,
+        no exponent and no `n`; `0` followed by digits one of which is `8` or `9` is decimal, and
+        takes a fraction and an exponent but no separator.
         """
         start = self.pos
         src = self.source
@@ -551,49 +593,53 @@ class JsLexer:
         if src[self.pos] == '0' and self.pos + 1 < length:
             nc = src[self.pos + 1]
             if nc in 'xX':
-                self.pos += 2
-                return self._read_prefixed_int(start, '0123456789abcdefABCDEF_')
+                return self._read_prefixed_int(start, '0123456789abcdefABCDEF')
             if nc in 'oO':
-                self.pos += 2
-                return self._read_prefixed_int(start, '01234567_')
+                return self._read_prefixed_int(start, '01234567')
             if nc in 'bB':
-                self.pos += 2
-                return self._read_prefixed_int(start, '01_')
+                return self._read_prefixed_int(start, '01')
+            if nc in _DECIMAL:
+                self.pos += 1
+                self._read_digits(_DECIMAL, False)
+                legacy_octal = all(c in '01234567' for c in src[start:self.pos])
+                if legacy_octal:
+                    return self._numeral(JsTokenKind.INTEGER, start)
+                return self._read_fraction_and_exponent(start, False)
 
-        while self.pos < length and (src[self.pos] in _DECIMAL or src[self.pos] == '_'):
+        if src[self.pos] == '0':
             self.pos += 1
+        else:
+            self._read_digits(_DECIMAL, True)
         has_integer_part = self.pos > start
+        if self.pos < length and src[self.pos] == 'n' and has_integer_part:
+            self.pos += 1
+            return self._numeral(JsTokenKind.BIGINT, start)
+        return self._read_fraction_and_exponent(start, True)
 
+    def _read_fraction_and_exponent(self, start: int, separators: bool) -> JsToken:
+        src = self.source
+        length = len(src)
+        has_integer_part = self.pos > start
         is_float = False
         if self.pos < length and src[self.pos] == '.':
             next_pos = self.pos + 1
             if next_pos < length and src[next_pos] in _DECIMAL:
                 is_float = True
                 self.pos += 1
-                while self.pos < length and (
-                    src[self.pos] in _DECIMAL or src[self.pos] == '_'
-                ):
-                    self.pos += 1
+                self._read_digits(_DECIMAL, separators)
             elif has_integer_part:
                 is_float = True
                 self.pos += 1
-
         if self.pos < length and src[self.pos] in 'eE':
-            is_float = True
-            self.pos += 1
-            if self.pos < length and src[self.pos] in '+-':
-                self.pos += 1
-            while self.pos < length and (
-                src[self.pos] in _DECIMAL or src[self.pos] == '_'
-            ):
-                self.pos += 1
-
-        if not is_float and self.pos < length and src[self.pos] == 'n':
-            self.pos += 1
-            return JsToken(JsTokenKind.BIGINT, src[start:self.pos], start)
-
+            exponent = self.pos + 1
+            if exponent < length and src[exponent] in '+-':
+                exponent += 1
+            if exponent < length and src[exponent] in _DECIMAL:
+                is_float = True
+                self.pos = exponent
+                self._read_digits(_DECIMAL, separators)
         kind = JsTokenKind.FLOAT if is_float else JsTokenKind.INTEGER
-        return JsToken(kind, src[start:self.pos], start)
+        return self._numeral(kind, start)
 
     def _read_identifier_or_keyword(self) -> JsToken:
         start = self.pos
@@ -623,7 +669,7 @@ class JsLexer:
         length = len(src)
 
         if self.pos == 0 and src.startswith('#!'):
-            self._read_line_comment()
+            yield JsToken(JsTokenKind.HASHBANG, self._read_line_comment(), 0)
 
         while True:
             self._skip_whitespace()
@@ -657,8 +703,8 @@ class JsLexer:
                 yield self._read_html_comment()
                 continue
             if c2 == '/*':
-                text, has_newline = self._read_block_comment()
-                yield JsToken(JsTokenKind.COMMENT, text, start)
+                text, has_newline, terminated = self._read_block_comment()
+                yield JsToken(JsTokenKind.COMMENT, text, start, terminated)
                 if has_newline:
                     self._line_head = True
                     yield JsToken(JsTokenKind.NEWLINE, '', self.pos)

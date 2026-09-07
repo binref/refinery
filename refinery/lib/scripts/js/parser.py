@@ -183,6 +183,8 @@ class JsParser:
             if tok.kind == JsTokenKind.NEWLINE:
                 had_newline = True
                 continue
+            if tok.kind == JsTokenKind.HASHBANG:
+                continue
             if tok.kind == JsTokenKind.COMMENT:
                 self._pending_comments.append(tok.value)
                 continue
