@@ -270,11 +270,8 @@ class TestPs1AnEmptyCatchDoesNotCoverWhatFollowsTheRaiseInItsBlock(_Ps1FaultEsca
     An empty `catch` swallows the error, but the raise still abandons the rest of its `try` block,
     so a statement written after it there never runs. The raise is the only reason that statement is
     dead, and it cannot be dropped while the statement stands.
-
-    The deobfuscator deletes the raise and leaves the statement behind, which starts running it.
     """
 
-    @unittest.expectedFailure
     def test_a_raising_cast_before_another_statement_of_the_same_try_block_is_kept(self):
         self._assertKept(F"""
             try {{
@@ -304,6 +301,62 @@ class TestPs1AnEmptyCatchCoversARaiseThatIsLastInItsBlock(_Ps1FaultEscalation):
               {_FOLLOWER}
             }} catch {{ }}
             {_ANCHOR}
+        """)
+
+
+class TestPs1ASoftFaultBeforeALiveTailInAnEmptyCatchIsKept(_Ps1FaultEscalation):
+    """
+    A statement whose fault its own `try` catches, written before a live statement of the same block
+    under an empty `catch`, is the only reason that live statement is dead — the empty `catch`
+    swallows the fault and resumes past the tail. It is kept whatever the caught-terminating fault
+    is: a possible division by zero the analysis cannot rule out, a bitwise operator over a string
+    that does not convert (whose spelling the normalize pass canonicalizes before the removal weighs
+    it), or a command the script's `Stop` preference makes terminating. A command left to its default
+    non-terminating error is the control: 5.1 reports it and steps over it, so the tail runs whether
+    the command stands or not and the discard goes.
+    """
+
+    def test_a_possible_division_by_zero_before_a_live_tail_is_kept(self):
+        self._assertKept(F"""
+            try {{
+              $Null = ($PID / $PID)
+              {_FOLLOWER}
+            }} catch {{ }}
+        """)
+
+    def test_a_bitwise_operator_over_a_string_before_a_live_tail_is_kept(self):
+        # The normalize pass canonicalizes `-bxor` to `-BXor` before the removal weighs it, and the
+        # veto has to read the operator it actually sees; the expected output is compared directly
+        # because the synthesizer renders the operator lower-case where the pipeline canonicalizes it.
+        self.assertEqual(
+            self._deobfuscate(inspect.cleandoc(F"""
+                try {{
+                  $Null = ('zz' -bxor 3)
+                  {_FOLLOWER}
+                }} catch {{ }}
+            """)),
+            "try {\n  $Null = ('zz' -BXor 3)\n  Write-Host 'FOLLOWER_RAN'\n} catch {}",
+        )
+
+    def test_a_command_discard_before_a_live_tail_under_a_stop_preference_is_kept(self):
+        self._assertKept(F"""
+            $ErrorActionPreference = 'Stop'
+            try {{
+              $Null = (Get-ChildItem 'Z:\\nope')
+              {_FOLLOWER}
+            }} catch {{ }}
+        """)
+
+    def test_a_command_discard_before_a_live_tail_with_no_stop_preference_is_removed(self):
+        self._assertDeobfuscatesTo(F"""
+            try {{
+              $Null = (Get-ChildItem 'Z:\\nope')
+              {_FOLLOWER}
+            }} catch {{ }}
+        """, F"""
+            try {{
+              {_FOLLOWER}
+            }} catch {{ }}
         """)
 
 

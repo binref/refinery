@@ -721,19 +721,19 @@ class TestPs1RemovalGuardsAreWitnessed(TestBase):
             notices='test_a_quoted_module_qualified_call_keeps_the_definition_it_resolves_onto')
 
     def test_walking_the_routing_rather_than_reading_a_position_is_witnessed(self):
-        # The defect the rebuild was for. Patched in `removal`, which imported the name and is the
-        # guard's only reader. The one position the old reading did see stays green, and so does
-        # every statement that runs to completion, so what the mutation costs is exactly the raises
-        # a graph walk finds and a syntactic position cannot.
+        # The defect the rebuild was for. Patched in `effects`, where `deletion_is_observable` reads
+        # the name for the handler half of its answer. The one position the old reading did see stays
+        # green, and so does every statement that runs to completion, so what the mutation costs is
+        # exactly the raises a graph walk finds and a syntactic position cannot.
         self._assertWitnessed(
             [_NESTED_GUARD, _DIRECT_GUARD],
-            patch.object(removal, 'fault_is_observed', _fault_observed_where_the_clause_is_written),
+            patch.object(effects, 'fault_is_observed', _fault_observed_where_the_clause_is_written),
             notices='test_a_raising_cast_in_a_nested_if_body_is_kept')
 
     def test_the_short_circuit_on_a_statement_that_cannot_raise_is_witnessed(self):
         self._assertWitnessed(
             [_NESTED_GUARD],
-            patch.object(removal, 'fault_is_observed', _fault_observed_wherever_an_error_would_go),
+            patch.object(effects, 'fault_is_observed', _fault_observed_wherever_an_error_would_go),
             notices='test_a_quiet_cast_in_a_nested_if_body_is_removed')
 
     def test_the_strict_mode_gate_on_a_deleted_variable_read_is_witnessed(self):

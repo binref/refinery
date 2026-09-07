@@ -670,6 +670,55 @@ class Ps1FaultReach:
         routing = self.routing_at(node)
         return routing is None or routing.leaves_the_body
 
+    def an_empty_catch_skips_a_live_tail(self, node: Node) -> bool:
+        """
+        Whether a fault raised at *node* is taken by an **empty** `catch` that resumes past a live
+        statement still standing after *node* in its own block — the position fact behind the
+        body-tail keep.
+
+        A position question and nothing more: it says where a fault at *node* would go and what the
+        fault path skips, never whether *node* can raise. The caller pairs it with the raise
+        predicate, the way every removal site pairs a position with a fault of its own.
+
+        An empty `catch` is the only handler that matters here. One that *acts* already makes the
+        fault observable through `observed_at`, so pairing this with it would only re-derive that
+        keep. Emptiness is read from the body directly rather than through `handler_acts`, so the
+        answer is a property of where the handler sits and not of a predicate a caller may be
+        mutating. The tail is live exactly when *node*'s fall-through successor is not the slot the
+        empty `catch` resumes to: equal successors mean the fault steps over to where the code went
+        anyway (the raiser is last in the block, or stands at script scope with no catch at all), and
+        deleting it changes nothing.
+        """
+        located = self._control_flow.locate(node)
+        if located is None:
+            return False
+        graph, start = located
+        normal = _normal_successors(graph, start)
+        if not normal:
+            return False
+        routing = self._routing(graph, start)
+        for handler in routing.handlers:
+            if not isinstance(handler, Ps1CatchClause):
+                continue
+            if handler.body is not None and handler.body.body:
+                continue
+            placed = self._control_flow.locate(handler)
+            if placed is None:
+                continue
+            if normal != _normal_successors(placed[0], placed[1]):
+                return True
+        return False
+
+    def error_is_terminating(self, node: Node) -> bool:
+        """
+        Whether a fault raised at *node* is terminating rather than reported and stepped over — the
+        script writes `Stop` to `$ErrorActionPreference`, or the raise is one of the terminating
+        shapes `ends_the_script` names (a command with `-ErrorAction Stop` among them). It is what
+        makes a command's error one a `try` catches, and it is `_terminates` under a name a caller
+        outside the module may read.
+        """
+        return self._terminates(node)
+
     def removing_a_handler_is_observed(
         self, handler: Node, may_raise: Callable[[Node], bool],
     ) -> bool:

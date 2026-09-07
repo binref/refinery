@@ -672,6 +672,35 @@ _FALLIBLE_BINARY_OPERATORS = frozenset({
 _FALLIBLE_UNARY_OPERATORS = frozenset({'-bnot'})
 
 
+def _reaches_a_raising_leaf(node: Node, *, commands: bool) -> bool:
+    """
+    Whether the subtree of `node` holds a leaf that can raise, where `commands` decides whether a
+    command invocation counts as one. The walk and its stop rule are shared by the two public
+    predicates below so that the leaf roster — and the case-fold on the operator spellings the
+    normalize pass canonicalizes — live in one place.
+
+    The walk stops at a `STATEMENT_LIST_EXPRESSIONS` construct and at a nested script block, because a
+    source inside one becomes that construct's own node in the finer control-flow graph: claiming it
+    here would double-count a raiser the descent already isolated.
+    """
+    def raises(element: Node) -> bool:
+        if isinstance(element, (Ps1CastExpression, Ps1InvokeMember)):
+            return True
+        if commands and isinstance(element, Ps1CommandInvocation):
+            return True
+        if isinstance(element, Ps1BinaryExpression) and element.operator.lower() in _FALLIBLE_BINARY_OPERATORS:
+            return True
+        if isinstance(element, Ps1UnaryExpression) and element.operator.lower() in _FALLIBLE_UNARY_OPERATORS:
+            return True
+        for child in element.children():
+            if isinstance(child, (Ps1ScriptBlock, *STATEMENT_LIST_EXPRESSIONS)):
+                continue
+            if raises(child):
+                return True
+        return False
+    return raises(node)
+
+
 def is_soft_error_source(node: Node) -> bool:
     """
     Whether evaluating `node` can raise a *statement-terminating* (soft) error — one PowerShell
@@ -700,25 +729,23 @@ def is_soft_error_source(node: Node) -> bool:
     Deliberately *not* sources: a property access `x.m` and an index `x[i]`, which under the default
     (non-strict) semantics yield `$null` rather than raising — only strict mode makes them fault, and
     that arming is read elsewhere. A comparison or a logical operator does not raise either.
-
-    The walk stops at a `STATEMENT_LIST_EXPRESSIONS` construct and at a nested script block, because a
-    soft source inside one becomes that construct's own node in the finer control-flow graph: claiming
-    it here would double-count a raiser the descent already isolated.
     """
-    def raises(element: Node) -> bool:
-        if isinstance(element, (Ps1CastExpression, Ps1InvokeMember, Ps1CommandInvocation)):
-            return True
-        if isinstance(element, Ps1BinaryExpression) and element.operator in _FALLIBLE_BINARY_OPERATORS:
-            return True
-        if isinstance(element, Ps1UnaryExpression) and element.operator in _FALLIBLE_UNARY_OPERATORS:
-            return True
-        for child in element.children():
-            if isinstance(child, (Ps1ScriptBlock, *STATEMENT_LIST_EXPRESSIONS)):
-                continue
-            if raises(child):
-                return True
-        return False
-    return raises(node)
+    return _reaches_a_raising_leaf(node, commands=True)
+
+
+def raises_a_caught_terminating_error(node: Node) -> bool:
+    """
+    Whether evaluating `node` can raise a fault a `try` catches *without* consulting the script's
+    error preferences — `is_soft_error_source` minus the command invocation.
+
+    A cast, a fallible operator and a method call raise a genuinely terminating error the `try`
+    catches whatever the preferences say. A command's *default* error is non-terminating: 5.1 reports
+    it and steps over it, so the `try` does not catch it and a statement after the command still runs
+    — deleting the command therefore changes nothing on that path. A command becomes catchable only
+    under `Stop`, which is a fact of the script rather than of the shape and is read from the fault
+    model (`Ps1FaultReach`), not here.
+    """
+    return _reaches_a_raising_leaf(node, commands=False)
 
 
 def unwrap_assignment_target(target: Node | None) -> Node | None:

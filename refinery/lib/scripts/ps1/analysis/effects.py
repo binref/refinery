@@ -59,6 +59,8 @@ from refinery.lib.scripts.ps1.ast import (
     get_param_block,
     is_builtin_variable,
     is_reference_cast,
+    is_soft_error_source,
+    raises_a_caught_terminating_error,
     unwrap_parens,
 )
 from refinery.lib.scripts.ps1.model import (
@@ -1288,7 +1290,8 @@ def statement_effect(stmt, world: Ps1WorldReach) -> StatementEffect:
     **`DISCARD` is a claim about emission and about nothing else.** It used to be read as *always
     safe to drop*, which held only because the one thing it admitted was a discard idiom over a pure
     expression. A call returning `System.Void` emits as little and can still throw, so what decides
-    whether dropping it changes anything is the removal veto — `fault_is_observed` — and not this.
+    whether dropping it changes anything is the removal veto — `deletion_is_observable` — and not
+    this.
     """
     if not isinstance(stmt, Ps1ExpressionStatement):
         return StatementEffect.EFFECT
@@ -2033,6 +2036,46 @@ def fault_is_observed(
         if faults.observed_at(site):
             return True
     return not judged
+
+
+def _fault_the_try_catches(operand: Node, faults: Ps1FaultReach) -> bool:
+    """
+    Whether evaluating *operand* may raise a terminating error a `try` catches. A cast, a fallible
+    operator and a method call raise one whatever the error preferences say; a command raises one
+    only where the script makes its error terminating, which `Ps1FaultReach.error_is_terminating`
+    reads from `Stop`. The default command error is non-terminating — reported and stepped over — so
+    the `try` does not catch it and a statement after it still runs.
+    """
+    if raises_a_caught_terminating_error(operand):
+        return True
+    return is_soft_error_source(operand) and faults.error_is_terminating(operand)
+
+
+def deletion_is_observable(
+    stmt: Node,
+    faults: Ps1FaultReach,
+    world: Ps1WorldReach | None = None,
+) -> bool:
+    """
+    Whether deleting *stmt* may change what the script does — the removal veto. Two ways it can, and
+    a removal site has to refuse on either.
+
+    The first is `fault_is_observed`: the error *stmt* would raise reaches a handler that acts, or
+    ends a body. The second is answered here: a statement that raises a fault its own `try` catches,
+    written before a live statement of the same block, is the only reason that statement is dead —
+    an empty `catch` swallows the error and resumes past the tail, so deleting the raiser starts the
+    tail running. `refinery.lib.scripts.ps1.analysis.faults.Ps1FaultReach.an_empty_catch_skips_a_live_tail`
+    is the position half and `_fault_the_try_catches` the raise half, paired over `fault_operand` so
+    that a `$Null =`/`[Void]` discard is judged by what it evaluates.
+    """
+    operand = fault_operand(stmt)
+    if (
+        operand is not None
+        and faults.an_empty_catch_skips_a_live_tail(stmt)
+        and _fault_the_try_catches(operand, faults)
+    ):
+        return True
+    return fault_is_observed(stmt, faults, world)
 
 
 def statement_can_raise(

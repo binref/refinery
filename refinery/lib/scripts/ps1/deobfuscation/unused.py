@@ -505,7 +505,7 @@ class Ps1JunkStatementRemoval(Transformer):
         module the guard protects — it uses the function here — so `function j { $Null = 1 }` beside
         a bare `j` reduces to nothing, while the same definition standing alone survives.
 
-        `fault_is_observed` is applied for the same reason it is applied when a body is pruned:
+        `deletion_is_observable` is applied for the same reason it is applied when a body is pruned:
         emptying a `try` body beside a handler that does something is what makes the handler read as
         unreachable. Both removal sites have to answer that question the same way, and this one
         did not.

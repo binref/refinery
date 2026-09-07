@@ -15,8 +15,8 @@ from refinery.lib.scripts import (
     reattach,
 )
 from refinery.lib.scripts.ps1.analysis.effects import (
+    deletion_is_observable,
     emptying_unhooks_a_handler,
-    fault_is_observed,
     statement_can_raise,
 )
 from refinery.lib.scripts.ps1.analysis.faults import Ps1FaultReach
@@ -143,9 +143,9 @@ class Ps1RemovalPlan:
 
     `removals_may_fault` is the one thing about a pass this class does have to be told, because the
     fault refusal is not the same question for every pass either.
-    `refinery.lib.scripts.ps1.analysis.effects.fault_is_observed` asks both halves of it — whether
-    what the removal takes away can raise, and where the error would go — so a pass that cannot rule
-    the first half out for itself says so and lets the veto weigh it statement by statement.
+    `refinery.lib.scripts.ps1.analysis.effects.deletion_is_observable` asks it — whether what the
+    removal takes away can raise, and where the error would go — so a pass that cannot rule the first
+    half out for itself says so and lets the veto weigh it statement by statement.
     `Ps1DeadCodeElimination` can rule it out: it removes pure constants and constructs whose
     condition it has already proved constant, neither of which can raise, so it skips the veto
     entirely. The set-level refusal stands beside both — the batch must not leave a protected body
@@ -338,9 +338,9 @@ class Ps1RemovalPlan:
         **A handler and a statement that might fault are opposite questions**, and reading one as
         the other invents a wrong answer in each direction. Deleting a `trap` re-routes errors the
         `trap` did not raise, so what decides it is whether anything is left that can still reach it
-        — and asking `fault_is_observed` of a `trap` instead asks where an error raised *at* the
+        — and asking `deletion_is_observable` of a `trap` instead asks where an error raised *at* the
         `trap` would go, which is a position nothing raises at. Deleting anything else is
-        `fault_is_observed`, and only for a pass that cannot rule the fault out itself.
+        `deletion_is_observable`, and only for a pass that cannot rule the fault out itself.
         """
         if proposal.replacement:
             if _rescopes_a_handler(proposal.replacement):
@@ -364,7 +364,7 @@ class Ps1RemovalPlan:
             )
         if not self.removals_may_fault:
             return False
-        return fault_is_observed(proposal.statement, faults, self.world)
+        return deletion_is_observable(proposal.statement, faults, self.world)
 
     def _allowed(self) -> list[_Proposal]:
         """
@@ -605,7 +605,7 @@ class Ps1RemovalPlans:
 
         Every verdict is reached before the first edit lands, and every edit lands before the first
         repair. A veto is a question about the tree —
-        `refinery.lib.scripts.ps1.analysis.effects.fault_is_observed` reads it through the
+        `refinery.lib.scripts.ps1.analysis.effects.deletion_is_observable` reads it through the
         control-flow graphs, which are built from the tree as it stands and are dropped the moment
         it moves — so a plan that emptied a `catch` body would change the answer for the `try`
         body's plan, and which plan that is would be decided by nothing better than the order the
