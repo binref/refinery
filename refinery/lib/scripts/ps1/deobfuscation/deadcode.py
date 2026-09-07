@@ -26,6 +26,7 @@ from refinery.lib.scripts.ps1.analysis.values import integer_of, is_truthy, read
 from refinery.lib.scripts.ps1.ast import get_body, is_builtin_variable, unwrap_parens
 from refinery.lib.scripts.ps1.data import COMPARISON_OPS, KNOWN_CMDLETS
 from refinery.lib.scripts.ps1.deobfuscation.helpers import (
+    is_pipeline_item,
     store_dropped_to_value,
     switch_matches,
 )
@@ -50,6 +51,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1ScriptBlock,
     Ps1StringLiteral,
     Ps1SwitchStatement,
+    Ps1ThrowStatement,
     Ps1TrapStatement,
     Ps1TryCatchFinally,
     Ps1UnaryExpression,
@@ -58,11 +60,6 @@ from refinery.lib.scripts.ps1.model import (
 )
 
 _PATH_EXTENSIONS = frozenset({'.exe', '.ps1', '.cmd', '.bat', '.com', '.vbs', '.msi'})
-
-#: The automatic variables that hold the current error record, live only inside a `catch` or `trap`
-#: body. A handler body naming one of them cannot be lifted out of its `catch`, because outside it
-#: the name reads whatever the enclosing pipeline last bound rather than the error.
-_ERROR_RECORD_VARIABLES = frozenset({'_', 'psitem'})
 
 
 def _carries_assignment_marker(cmd: Ps1CommandInvocation, name: str) -> bool:
@@ -809,9 +806,17 @@ class Ps1DeadCodeElimination(Transformer):
         Every part of that is proven rather than guessed. `_statement_certainly_throws` fires only
         where the value domain computes a throw 5.1 also takes, so a body the analysis cannot decide
         is left whole for the discard remover to keep (`deletion_is_observable`). The statements
-        before the throw must be provably fault-free, so control is certain to reach it. And the
-        landing handler must be certain — `certain_catch_all` declines a narrow `catch` that might
-        take the error first — so the body lifted out is the one that runs.
+        before the throw must be provably fault-free, so control is certain to reach it. The landing
+        handler must be certain — `certain_catch_all` declines a narrow `catch` that might take the
+        error first — and the fault model must actually route the throw to it: a `trap` written in
+        the body is hoisted over the whole block and may take the error before the `catch`, or resume
+        past the throw so the `catch` never runs, which `routing_at` sees and this refuses.
+
+        A `throw` that is dropped rather than lifted must lose nothing but the raise. A value-domain
+        certain throw is computed over constants and evaluates nothing observable, but a `throw`
+        evaluates its argument — an assignment, a command, a write to the host — before the error
+        the lift stands in for, so a `throw` whose argument is not side-effect-free keeps its
+        construct rather than have that effect dropped with the raise.
 
         Three things a lifted `catch` body could observe are refused rather than reasoned about. A
         read of the error record anywhere in the script (`$Error`, `$?`, `$StackTrace`) is refused,
@@ -825,23 +830,29 @@ class Ps1DeadCodeElimination(Transformer):
             return None
         body = node.try_block.body if node.try_block is not None else []
         prefix: list[Statement] = []
+        raiser: Statement | None = None
         for stmt in body:
             if self._statement_certainly_throws(stmt):
+                raiser = stmt
                 break
             if not isinstance(stmt, Ps1ExpressionStatement):
                 return None
             if stmt.expression is not None and not is_fault_free(stmt.expression):
                 return None
             prefix.append(stmt)
-        else:
+        if raiser is None:
+            return None
+        if isinstance(raiser, Ps1ThrowStatement) and raiser.pipeline is not None:
+            if not is_side_effect_free(raiser.pipeline, cache.world_reach):
+                return None
+        routing = cache.faults.routing_at(raiser)
+        if routing is None or handler not in routing.handlers:
             return None
         if cache.commands.reads_the_error_record():
             return None
         handler_body = handler.body.body if handler.body is not None else []
-        for statement in handler_body:
-            for element in statement.walk():
-                if is_builtin_variable(element, _ERROR_RECORD_VARIABLES):
-                    return None
+        if any(is_pipeline_item(element) for stmt in handler_body for element in stmt.walk()):
+            return None
         finally_body = node.finally_block.body if node.finally_block is not None else []
         if handler_body and finally_body:
             return None

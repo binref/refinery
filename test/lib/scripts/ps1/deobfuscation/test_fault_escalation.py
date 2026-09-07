@@ -353,6 +353,39 @@ class TestPs1AProvenThrowIsNotFoldedWhereTheLiftWouldChangeWhatRuns(_Ps1FaultEsc
             F"try {{ {_RAISE} }} catch {{ {_HANDLER} }} finally {{ {_OUTER_HANDLER} }}")
 
 
+class TestPs1AThrowThatEvaluatesAnEffectIsNotFolded(_Ps1FaultEscalation):
+    """
+    A `throw` evaluates its argument before it raises, and that evaluation runs on 5.1 whether or
+    not the error is later caught: `throw ($x = 5)` assigns, `throw (Write-Host 'a')` writes to the
+    host. The fold drops the throwing statement and stands the lifted `catch` body in for the raise,
+    so a `throw` whose argument is not side-effect-free is left whole rather than have that effect
+    dropped with it. A `throw` of a literal has no such effect and folds, which
+    `TestPs1AProvenThrowFoldsTheTryConstruct` covers.
+    """
+
+    def test_a_throw_of_an_assignment_argument_is_not_folded(self):
+        self._assertKept(F"try {{ throw ($script:x = 5) }} catch {{ {_HANDLER} }}")
+
+    def test_a_throw_of_a_command_argument_is_not_folded(self):
+        self._assertKept(F"try {{ throw (Write-Host 'a') }} catch {{ {_HANDLER} }}")
+
+
+class TestPs1ATrapInTheTryBodyTakesTheThrowBeforeTheCatch(_Ps1FaultEscalation):
+    """
+    A `trap` written in the `try` body is hoisted over the whole block, so a `trap { continue }`
+    there takes the throw and resumes past it — the `catch` never runs. The fold reads the landing
+    handler off the fault routing rather than off the `catch` clauses alone, so it declines to lift
+    a `catch` body the trap keeps the throw from ever reaching, whichever side of the throw the trap
+    is written on.
+    """
+
+    def test_a_resuming_trap_after_the_throw_keeps_the_construct(self):
+        self._assertKept(F"try {{ throw 'x'; trap {{ continue }} }} catch {{ {_HANDLER} }}")
+
+    def test_a_resuming_trap_before_the_throw_keeps_the_construct(self):
+        self._assertKept(F"try {{ trap {{ continue }}; throw 'x' }} catch {{ {_HANDLER} }}")
+
+
 class TestPs1AnEmptyCatchCoversARaiseThatIsLastInItsBlock(_Ps1FaultEscalation):
     """
     With the same statement written before the raise rather than after it, nothing in the `try`

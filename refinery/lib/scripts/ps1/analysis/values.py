@@ -666,8 +666,10 @@ class Ps1Outcome(typing.NamedTuple):
     `may_throw` and `certainly_throws` are the two readings of the axis a caller wants, and they
     project from the one field so that the invariant `ALWAYS ⇒ may_throw` cannot be got wrong. A
     fold reads `may_throw` and stops on anything but `NEVER`; `certainly_throws` is for the
-    transform that deletes or reroutes code, which will act only on `ALWAYS` — it has no reader
-    yet, and the `no false positive` obligation on `ALWAYS` is what that reader will rest on.
+    transform that deletes or reroutes code, which acts only on `ALWAYS` — the certain-throw fold
+    `refinery.lib.scripts.ps1.deobfuscation.deadcode.Ps1DeadCodeElimination._collapse_through_certain_throw`
+    reads it to drop a dead tail and lift a handler, and the `no false positive` obligation on
+    `ALWAYS` is what that fold rests on.
     """
 
     throws: Ps1Throws

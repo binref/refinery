@@ -2064,9 +2064,10 @@ def deletion_is_observable(
     ends a body. The second is answered here: a statement that raises a fault its own `try` catches,
     written before a live statement of the same block, is the only reason that statement is dead —
     an empty `catch` swallows the error and resumes past the tail, so deleting the raiser starts the
-    tail running. `refinery.lib.scripts.ps1.analysis.faults.Ps1FaultReach.an_empty_catch_skips_a_live_tail`
-    is the position half and `_fault_the_try_catches` the raise half, paired over `fault_operand` so
-    that a `$Null =`/`[Void]` discard is judged by what it evaluates.
+    tail running.
+    `refinery.lib.scripts.ps1.analysis.faults.Ps1FaultReach.an_empty_catch_skips_a_live_tail` is the
+    position half and `_fault_the_try_catches` the raise half, paired over `fault_operand` so that a
+    `$Null =`/`[Void]` discard is judged by what it evaluates.
     """
     operand = fault_operand(stmt)
     if (
