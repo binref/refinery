@@ -212,6 +212,54 @@ class TestAModulesTopLevelAwaitIsAProgram(TestBase):
         self.assertEqual(before_and_after(source, module=True), (prints('2'), prints('2')))
 
 
+class TestAUsingDeclarationIsAProgram(TestBase):
+    """
+    A `using` declaration binds a value whose disposer runs when the block holding it is left,
+    `await using` awaits that disposer, and `for (using x of y)` disposes on every iteration
+    (ECMAScript 2026, explicit resource management). Node runs every program below and prints `2`
+    and then `1`; a script may not spell the declaration at its top level, which is why each
+    stands in a block or a body. The parser knows no such declaration: it reads `using` as a name
+    that is a statement of its own and the binding behind it as an assignment to a name the file
+    never declares, with the repair recorded, and the program it answers with throws a
+    `ReferenceError`. The declaration waits for a node of its own, since a removal of a dead
+    binding must see that leaving the block runs the disposer.
+    """
+
+    @unittest.expectedFailure
+    def test_a_using_declaration_disposes_its_value_when_its_block_is_left(self):
+        rows = {
+            'a block': '{ using x = { [Symbol.dispose]() { console.log(1); } }; console.log(2); }',
+            'a function body': (
+                'function f() { using x = { [Symbol.dispose]() { console.log(1); } }; console.log(2); }'
+                ' f();'
+            ),
+            'an async function body': (
+                'async function f() {'
+                ' await using x = { [Symbol.asyncDispose]() { console.log(1); } }; console.log(2); }'
+                ' f();'
+            ),
+            'a for-of head': 'for (using x of [{ [Symbol.dispose]() { console.log(1); } }]) console.log(2);',
+        }
+        self.assertEqual(
+            {name: before_and_after(source) for name, source in rows.items()},
+            {name: (prints('2', '1'), prints('2', '1')) for name in rows},
+        )
+
+
+class TestASourcePhaseImportIsAProgram(TestBase):
+    """
+    `import source x from 'm'` binds `x` to the module source of `m` rather than to its namespace
+    (ECMAScript 2026, source phase imports), and Node compiles the file as a module. The parser
+    reads `import source x` as a module declaration with no specifier and refuses it, so the file
+    prints back as three statements, the second of which is the word `from`.
+    """
+
+    @unittest.expectedFailure
+    def test_a_source_phase_import_prints_back_as_written(self):
+        source = "import source x from 'm';"
+        self.assertEqual((well_formed(source), printed(source)), (True, source))
+
+
 class TestRecoveryKeepsTheSourceText(TestBase):
     """
     `refinery.lib.scripts.js.model.JsErrorNode` promises that a span no parser could read is kept
