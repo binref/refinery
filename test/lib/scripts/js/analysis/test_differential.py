@@ -6604,26 +6604,28 @@ class TestAFileThatOpensWithAHashBangLine(TestBase):
     def test_a_file_is_read_the_same_whichever_terminator_ends_its_hash_bang_line(self):
         """
         Node prints `1` for each of the five spellings, and each deobfuscates to the one program
-        they all are.
+        they all are, the `#!` line kept at its head and ended by the line feed the printer writes.
         """
         for ending in _LINE_ENDINGS:
             with self.subTest(ending=' '.join(F'U+{ord(c):04X}' for c in ending)):
                 source = F'#!/usr/bin/env node{ending}console.log(1);'
                 self._prints(source, '1\n')
-                self.assertEqual(deobfuscate_source(source), 'console.log(1);')
+                self.assertEqual(deobfuscate_source(source), '#!/usr/bin/env node\nconsole.log(1);')
 
     def test_what_the_hash_bang_line_says_is_not_code(self):
         """
         Node prints `1` and never `boom`: the call written on the first line is inside the comment
-        the line is, and the one written below it is the whole program.
+        the line is, and the one written below it is the whole program. The line comes back as it
+        was written, a comment still.
         """
         source = F"#!console.log('boom'){chr(0x000A)}console.log(1);"
         self._prints(source, '1\n')
-        self.assertEqual(deobfuscate_source(source), 'console.log(1);')
+        self.assertEqual(deobfuscate_source(source), "#!console.log('boom')\nconsole.log(1);")
 
     def test_a_file_whose_hash_bang_line_is_all_of_it_prints_nothing(self):
         source = '#!/usr/bin/env node'
         self.assertEqual(behavior(source), ('', None))
+        self.assertEqual(deobfuscate_source(source), source)
         self.assertEqual(behavior(deobfuscate_source(source)), ('', None))
 
     def test_the_statements_below_a_hash_bang_line_end_where_their_lines_end(self):

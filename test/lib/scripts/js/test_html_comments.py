@@ -57,16 +57,22 @@ A_FILE_HOLDING_A_COMMENT_A_STATEMENT_CARRIES = {
     'console.log(1);\u2028--> note\u2028console.log(2);'        : prints('1', '2'),
 }
 
-#: A file holding a comment that no statement carries: one at the end of the file, and one leading
-#: the body of a clause rather than a statement of a list. The parser drops each, which changes
-#: nothing a script prints and is what
-#: `test.lib.scripts.js.test_unfixed_defects.TestCommentWithNoFollowingStatement` pins; the lexer
-#: records the delimiter all the same, so the module rule reads it.
+#: A file holding a comment that no statement of a list carries: one at the end of the file, which
+#: the file carries, and one leading the body of a clause, which the body's statement carries. Each
+#: prints back holding its comment, as `A_FILE_HOLDING_A_COMMENT_NO_STATEMENT_CARRIES_PRINTED`
+#: records, and the lexer records the delimiter, so the module rule reads it.
 A_FILE_HOLDING_A_COMMENT_NO_STATEMENT_CARRIES = {
     'console.log(1); <!-- note'                                 : prints('1'),
     'console.log(1);\n<!--'                                     : prints('1'),
     'if (1) <!-- c\nconsole.log(5);'                            : prints('5'),
     'console.log(1);\n--> note'                                   : prints('1'),
+}
+
+A_FILE_HOLDING_A_COMMENT_NO_STATEMENT_CARRIES_PRINTED = {
+    'console.log(1); <!-- note'                                 : 'console.log(1);\n<!-- note',
+    'console.log(1);\n<!--'                                     : 'console.log(1);\n<!--',
+    'if (1) <!-- c\nconsole.log(5);'                            : 'if (1) {\n  <!-- c\n  console.log(5);\n}',
+    'console.log(1);\n--> note'                                   : 'console.log(1);\n--> note',
 }
 
 #: A file spelling the characters of a delimiter where they are no delimiter, mapped to what Node
@@ -181,6 +187,10 @@ class TestPrintingAFileHoldingACommentIsIdempotent(TestBase):
             {source: printed(printed(source)) for source in rows},
             {source: printed(source) for source in rows},
         )
+
+    def test_a_comment_no_statement_carries_prints_back_with_the_file(self):
+        rows = A_FILE_HOLDING_A_COMMENT_NO_STATEMENT_CARRIES_PRINTED
+        self.assertEqual({source: printed(source) for source in rows}, rows)
 
 
 class TestTheCollectorReportsTheDelimitersUnderTheModuleGoal(TestBase):

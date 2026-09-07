@@ -1168,3 +1168,20 @@ class TestABlockCommentReportsWhetherItWasClosed(TestBase):
             '/* a\n b': [(JsTokenKind.COMMENT, '/* a\n b', False), (JsTokenKind.NEWLINE, '', True)],
         }
         self.assertEqual({source: _tokens_with_termination(source) for source in rows}, rows)
+
+    def test_the_lexer_records_where_the_comment_the_file_ends_inside_began(self):
+        rows = {
+            'x /* c */': None,
+            'x // c': None,
+            'x /* c': 2,
+            'x /* c */ y /* d': 12,
+            '/*': 0,
+        }
+
+        def open_comment(source: str) -> int | None:
+            lexer = JsLexer(source)
+            for _ in lexer.tokenize():
+                pass
+            return lexer.open_comment
+
+        self.assertEqual({source: open_comment(source) for source in rows}, rows)

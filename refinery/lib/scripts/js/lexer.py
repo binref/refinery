@@ -287,12 +287,14 @@ class JsLexerState:
     What a rewind has to put back. The position is not part of it, because a rewind always goes to
     the start of a token the parser is already holding; what no longer follows from that offset
     once scanning has moved past it is the template nesting, whether the scan stands at the head of
-    its line, and whether it has read an HTML-like comment yet.
+    its line, whether it has read an HTML-like comment yet, and whether it has run into the comment
+    the file ends inside.
     """
     template_depth: int
     brace_stack: tuple[int, ...]
     line_head: bool
     html_comment: int | None
+    open_comment: int | None
 
 
 @dataclass
@@ -305,6 +307,12 @@ class JsLexer:
     anywhere, or a `-->` at the head of its line. Module code refuses both, and the parser carries
     the fact onto the script it builds, since the comment such a delimiter opens may stand where no
     statement of the tree carries it.
+    """
+    open_comment: int | None = None
+    """
+    The offset of the block comment the file ends inside, or `None` where the file ends outside
+    every comment. Such a comment runs to the end of the file, and the parser carries the fact onto
+    the script it builds, since the comment itself is carried like any other.
     """
     _template_depth: int = 0
     _brace_stack: list[int] = field(default_factory=list)
@@ -321,6 +329,7 @@ class JsLexer:
             tuple(self._brace_stack),
             self._line_head,
             self.html_comment,
+            self.open_comment,
         )
 
     def rewind(self, pos: int, state: JsLexerState) -> None:
@@ -329,6 +338,7 @@ class JsLexer:
         self._brace_stack = list(state.brace_stack)
         self._line_head = state.line_head
         self.html_comment = state.html_comment
+        self.open_comment = state.open_comment
 
     def scan_regexp(self) -> JsToken | None:
         """
@@ -704,6 +714,8 @@ class JsLexer:
                 continue
             if c2 == '/*':
                 text, has_newline, terminated = self._read_block_comment()
+                if not terminated:
+                    self.open_comment = start
                 yield JsToken(JsTokenKind.COMMENT, text, start, terminated)
                 if has_newline:
                     self._line_head = True

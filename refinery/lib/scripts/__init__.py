@@ -21,7 +21,7 @@ class Kind(enum.IntEnum):
     TupleList = 3
 
 
-_SKIP_FIELDS = frozenset(('offset', 'parent', 'leading_comments', 'errors'))
+_SKIP_FIELDS = frozenset(('offset', 'parent', 'leading_comments', 'trailing_comments', 'errors'))
 
 _child_fields_cache: dict[type, list[tuple[str, Kind]]] = {}
 
@@ -210,6 +210,9 @@ class Node:
     offset: int = -1
     parent: Node | None = field(default=None, compare=False)
     leading_comments: list[str] = field(default_factory=list, compare=False)
+    #: The comments standing behind the last item of a list this node holds — a block, a class
+    #: body, a switch, a file — which no item of the list can carry.
+    trailing_comments: list[str] = field(default_factory=list, compare=False)
 
     spelling_fields: typing.ClassVar[frozenset[str]] = frozenset()
     unparsed: typing.ClassVar[bool] = False
@@ -818,6 +821,7 @@ def _clone_node(node: _N) -> _N:
     clone = copy.copy(node)
     clone.parent = None
     clone.leading_comments = list(node.leading_comments)
+    clone.trailing_comments = list(node.trailing_comments)
     for field_name, kind in _classify_fields(type(node)):
         if kind == Kind.ChildNode:
             value = getattr(node, field_name)

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import random
 import unittest
 
 from typing import NamedTuple
 
 from test import TestBase
 from test.lib.scripts.js.analysis.differential import node_executable
+from test.lib.scripts.js.test_comment_carriers import every_program_holding_a_comment
 from test.lib.scripts.js.deobfuscation.test_escaped_identifiers import (
     AN_ESCAPED_ACCESSOR_TERMINAL,
     AN_ESCAPED_ASYNC_TERMINAL,
@@ -738,6 +740,10 @@ A_FILE_THE_PARSER_REFUSES = {
     'class C { m(a b) {} }': ('a b', 'expected COMMA'),
     "try { f(); } catch (e 'beta') {}": ("try { f(); } catch (e 'beta') {}", 'expected RPAREN'),
     'switch (x) { case 1 break; }': ('case 1 break;', 'expected COLON'),
+    'x = "abc\n': ('x = "abc\n', 'a string literal the line ends inside'),
+    'x = "abc\r\ny;': ('x = "abc\r\n', 'a string literal the line ends inside'),
+    'while (a) "b;\nc();': ('"b;\n', 'a string literal the line ends inside'),
+    'f("abc\n, 1);': ('"abc\n', 'a string literal the line ends inside'),
 }
 
 
@@ -749,7 +755,9 @@ class TestAFileTheParserRefusesComesBackAsItWasWritten(TestBase):
     because a tool that reads its own output otherwise changes a file every pass. The span kept
     is the statement or list item the refused token stood in: a whole statement for most of these,
     the two elements pressed together for an argument or parameter list, and the one clause for
-    the switch.
+    the switch. A span ending in a string a line terminator ended takes the terminator with it:
+    `x = "abc` at the end of a file is a string the file ended inside, which is a different tree,
+    and a print that put the span last would otherwise read back as that.
     """
 
     def test_no_character_of_the_file_is_dropped(self):
@@ -944,3 +952,71 @@ class TestAFileNestedTooDeepToReadIsRefusedAndNeverCrashes(TestBase):
             {name: self._read(shape(1000)) for name, shape in A_CHAIN_NESTED.items()},
             {name: (True, True, []) for name in A_CHAIN_NESTED},
         )
+
+
+#: What one edit puts into a program: a bracket, a quote, a slash, a separator, a character that
+#: begins no token, a comment opener of each kind.
+AN_INSERTION = (
+    ')',
+    '}',
+    ']',
+    '(',
+    '{',
+    '[',
+    ';',
+    ',',
+    "'",
+    '"',
+    '`',
+    '/',
+    '*',
+    ':',
+    '?',
+    '=>',
+    '@',
+    '#',
+    '-->',
+    '<!--',
+    '/* c */',
+    '// c' + chr(10),
+)
+
+
+def every_file_one_edit_away(source: str, rng: random.Random, count: int) -> list[str]:
+    """
+    *count* files one edit away from *source*: a character deleted, or one of `AN_INSERTION` put
+    in, at a position *rng* picks.
+    """
+    mutants: list[str] = []
+    for _ in range(count):
+        position = rng.randrange(len(source) + 1)
+        if rng.random() < 0.4 and position < len(source):
+            mutants.append(source[:position] + source[position + 1:])
+        else:
+            mutants.append(source[:position] + rng.choice(AN_INSERTION) + source[position:])
+    return mutants
+
+
+class TestAFileOneEditAwayFromAProgramComesBackAsItWasWritten(TestBase):
+    """
+    Over every program the hand-written corpora of this module and of
+    `test.lib.scripts.js.test_comment_carriers` hold, eight files one edit away from it, from a
+    fixed seed. Whatever the edit made of the program, printing the print changes nothing; and
+    where the edit made a file the parser refuses somewhere, the print drops no character the file
+    holds. A mutant that is a program still is asked only the first, since the printer writes a
+    program in its own form, where a trailing comma or a separating semicolon is not kept.
+    """
+
+    def test_every_mutant_prints_to_itself_and_a_refused_one_drops_nothing(self):
+        rng = random.Random(20260907)
+        programs = [stop.whole for stop in _STOPS.values()]
+        programs.extend(every_program_holding_a_comment())
+        mutants = [mutant for program in programs for mutant in every_file_one_edit_away(program, rng, 8)]
+        outcome: dict[str, tuple[str, bool]] = {}
+        for mutant in mutants:
+            tree = JsParser(mutant).parse()
+            once = JsSynthesizer().convert(tree)
+            twice = JsSynthesizer().convert(JsParser(once).parse())
+            dropped = '' if is_well_formed(tree) else dropped_source_characters(mutant, once)
+            outcome[mutant] = (dropped, twice == once)
+        self.assertEqual(outcome, {mutant: ('', True) for mutant in mutants})

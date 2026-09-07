@@ -1460,10 +1460,9 @@ class JsInterpreter:
         A second default clause is an early error, so a switch carrying one is not a program and is
         refused rather than interpreted as though the first of them governed.
         """
-        cases = node.cases
-        for case in cases:
-            if not isinstance(case, JsSwitchCase):
-                raise InterpreterError
+        cases = [case for case in node.cases if isinstance(case, JsSwitchCase)]
+        if len(cases) != len(node.cases):
+            raise InterpreterError
         defaults = [index for index, case in enumerate(cases) if case.test is None]
         if len(defaults) > 1:
             raise InterpreterError

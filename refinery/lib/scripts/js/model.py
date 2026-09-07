@@ -653,6 +653,10 @@ class JsScript(Statement, spelling=('module', 'recovered', 'html_comment')):
     #: stand where no statement carries it, so the fact is kept on the script rather than looked for
     #: among the comments the tree holds. It is a spelling field for the reason `recovered` is.
     html_comment: int | None = None
+    #: Whether the file ended outside every comment. A block comment the file ends inside runs to
+    #: the end of the file, is the last of the file's `trailing_comments`, and makes the file no
+    #: program, which `early_errors` reports.
+    terminated: bool = True
 
     def is_recovered(self) -> bool:
         return self.recovered
@@ -662,8 +666,8 @@ class JsScript(Statement, spelling=('module', 'recovered', 'html_comment')):
         What the language refuses in the file under its own mode and goal: the early errors
         `refinery.lib.scripts.js.strict.collect_strict_violations` reports over the tree read as a
         script, or as a module where the file spells module syntax, and every construct the file
-        ended inside — a literal, a block, a class body or a switch — which an engine refuses as
-        an unexpected end of input.
+        ended inside — a literal, a comment, a block, a class body or a switch — which an engine
+        refuses as an unexpected end of input.
         """
         from refinery.lib.scripts.js.strict import collect_strict_violations
         return collect_strict_violations(self, module=self.module)

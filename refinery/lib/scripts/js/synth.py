@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Callable
+from typing import Callable, Sequence, TypeVar
 
 from refinery.lib.scripts import Node, Synthesizer
 from refinery.lib.scripts.js.deobfuscation.helpers import (
@@ -97,6 +97,12 @@ from refinery.lib.scripts.js.token import spells_only_a_name
 from refinery.lib.scripts.js.utf16 import from_code_units
 from refinery.lib.tools import RecursionDepth
 
+_N = TypeVar('_N', bound=Node)
+
+#: A node holding a braced list the file may end inside, and carrying the comments behind its last
+#: item.
+_ListOwner = JsBlockStatement | JsStaticBlock | JsClassBody | JsSwitchStatement
+
 _WORD_UNARY_OPS = frozenset({'typeof', 'void', 'delete'})
 
 _BYTE_GRID_COLUMNS = 15
@@ -161,12 +167,28 @@ class JsSynthesizer(Synthesizer):
         if not self._cut:
             super()._newline()
 
-    def _emit_leading_comments(self, node: Node):
-        if self._strip_comments or not node.leading_comments:
-            return
-        for comment in node.leading_comments:
+    def _carried(self, comments: list[str]) -> list[str]:
+        """
+        The comments the printer writes of those a node carries: none where comments are stripped.
+        Text the parser could not read is written as it stood, and a comment inside it stays.
+        """
+        return [] if self._strip_comments else comments
+
+    def _emit_leading_comments(self, node: Node, *, inline: bool = False):
+        """
+        The comments that led *node*, each on a line of its own — or, *inline*, on the line the node
+        is written on wherever the comment is a block comment, which ends before the node does.
+        Unread text opening with `-->` may not be left at the head of a line (see `_separate`), and
+        the comments leading such text are block comments by construction: a `-->` behind a line
+        comment stands at the head of the next line, where it opens a comment of its own.
+        """
+        inline = inline or self._opens_html_close_comment(node)
+        for comment in self._carried(node.leading_comments):
             self._write(comment)
-            self._newline()
+            if inline and comment.startswith('/*'):
+                self._write(' ')
+            else:
+                self._newline()
 
     @staticmethod
     def _opens_html_close_comment(stmt: Node) -> bool:
@@ -182,6 +204,36 @@ class JsSynthesizer(Synthesizer):
             self._write(' ')
         else:
             self._newline()
+
+    def _emit_braced(
+        self,
+        items: Sequence[_N],
+        emit: Callable[[_N], object],
+        *,
+        owner: _ListOwner | None = None,
+    ):
+        """
+        Write *items* between braces, each on a line of its own led by the comments it carries and
+        followed by the comments *owner* carries behind its last item. An owner the file ended
+        inside has no closing brace, and the output is cut behind what it holds.
+        """
+        self._write('{')
+        self._depth += 1
+        for item in items:
+            self._separate(item)
+            self._emit_leading_comments(item)
+            emit(item)
+        trailing = self._carried(owner.trailing_comments) if owner is not None else []
+        for comment in trailing:
+            self._newline()
+            self._write(comment)
+        self._depth -= 1
+        if owner is not None and not owner.terminated:
+            self._cut = True
+            return
+        if items or trailing:
+            self._newline()
+        self._write('}')
 
     def _emit_block_node(self, block: JsBlockStatement, *, prologue: bool = False):
         self._emit_block(block.body, prologue=prologue, owner=block)
@@ -200,23 +252,8 @@ class JsSynthesizer(Synthesizer):
         ordinary statements, and passing `True` for one of those would parenthesize a string that
         governs nothing.
         """
-        self._write('{')
-        self._depth += 1
-        self._emit_statements(body, prologue=prologue)
-        self._depth -= 1
-        if owner is not None and not owner.terminated:
-            self._cut = True
-            return
-        if body:
-            self._newline()
-        self._write('}')
-
-    def _emit_statements(self, body: list[Statement], *, prologue: bool):
         promoted = promoted_use_strict(body) if prologue else []
-        for stmt in body:
-            self._separate(stmt)
-            self._emit_leading_comments(stmt)
-            self._emit_body_statement(stmt, promoted)
+        self._emit_braced(body, lambda stmt: self._emit_body_statement(stmt, promoted), owner=owner)
 
     def _emit_body_statement(self, stmt: Statement, promoted: list[JsExpressionStatement]):
         """
@@ -731,19 +768,7 @@ class JsSynthesizer(Synthesizer):
         self._emit_element(node.right, True)
 
     def visit_JsClassBody(self, node: JsClassBody):
-        self._write('{')
-        self._depth += 1
-        for member in node.body:
-            self._separate(member)
-            self._emit_leading_comments(member)
-            self.visit(member)
-        self._depth -= 1
-        if not node.terminated:
-            self._cut = True
-            return
-        if node.body:
-            self._newline()
-        self._write('}')
+        self._emit_braced(node.body, self.visit, owner=node)
 
     def visit_JsMethodDefinition(self, node: JsMethodDefinition):
         self._emit_decorators(node.decorators)
@@ -824,8 +849,10 @@ class JsSynthesizer(Synthesizer):
         block the printer put there, and the file would read back with a different shape.
         """
         if isinstance(stmt, JsBlockStatement):
+            self._emit_leading_comments(stmt, inline=True)
             self._emit_block_node(stmt)
         elif isinstance(stmt, JsErrorNode):
+            self._emit_leading_comments(stmt, inline=True)
             self.visit(stmt)
         else:
             self._emit_block([stmt])
@@ -929,19 +956,8 @@ class JsSynthesizer(Synthesizer):
         self._write('switch (')
         if node.discriminant:
             self.visit(node.discriminant)
-        self._write(') {')
-        self._depth += 1
-        for case in node.cases:
-            self._separate(case)
-            self._emit_leading_comments(case)
-            self.visit(case)
-        self._depth -= 1
-        if not node.terminated:
-            self._cut = True
-            return
-        if node.cases:
-            self._newline()
-        self._write('}')
+        self._write(') ')
+        self._emit_braced(node.cases, self.visit, owner=node)
 
     def visit_JsSwitchCase(self, node: JsSwitchCase):
         if node.test:
@@ -1010,6 +1026,7 @@ class JsSynthesizer(Synthesizer):
             self.visit(node.label)
         self._write(': ')
         if node.body:
+            self._emit_leading_comments(node.body, inline=True)
             self.visit(node.body)
 
     def visit_JsWithStatement(self, node: JsWithStatement):
@@ -1181,9 +1198,28 @@ class JsSynthesizer(Synthesizer):
             self.visit(exported)
 
     def visit_JsScript(self, node: JsScript):
+        """
+        The file: the `#!` line it opens with, its statements, and the comments standing behind the
+        last of them, of which the last may be one the file ended inside. Those stood at the end of
+        the file, inside whatever construct the file ended in, and are written behind the cut that
+        construct made — the cut keeps back what the file did not hold, and it held them.
+        """
         promoted = promoted_use_strict(node.body)
-        for i, stmt in enumerate(node.body):
-            if i > 0:
+        lines = 0
+        for comment in self._carried(node.leading_comments):
+            if lines:
+                self._newline()
+            self._write(comment)
+            lines += 1
+        for stmt in node.body:
+            if lines:
                 self._separate(stmt)
             self._emit_leading_comments(stmt)
             self._emit_body_statement(stmt, promoted)
+            lines += 1
+        for comment in self._carried(node.trailing_comments):
+            self._cut = False
+            if lines:
+                self._newline()
+            self._write(comment)
+            lines += 1

@@ -16,7 +16,8 @@ class ppjscript(Unit):
         indent: Param[int, Arg.Number('-i', help=(
             'Number of space characters used for indentation in the output. Default is {default}.'))] = 4,
         strip_comments: Param[bool, Arg.Switch('-c', help=(
-            'Remove all comments from the input.'))] = False,
+            'Remove all comments from the input. Text the parser could not read is copied as it was '
+            'written, and a comment inside it stays.'))] = False,
         keep_escapes: Param[bool, Arg.Switch('-E', help=(
             'Preserve unnecessary escape sequences in string literals.'))] = False,
     ):

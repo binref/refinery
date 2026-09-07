@@ -312,30 +312,25 @@ class TestTruncatedSource(TestBase):
             with self.subTest(name):
                 self.assertEqual(self._template_runs_of(_TRUNCATIONS[name].whole), runs)
 
-    def test_a_tree_is_well_formed_after_the_cut_only_where_the_cut_left_nothing_open(self):
+    def test_no_tree_is_well_formed_after_the_cut(self):
         """
-        Two different things a cut leaves open take a tree out of the fidelity domain, and a file
-        can hold either without the other. A literal the cut ran into is spelled by no text, which
-        the literal itself reports; a construct the cut ran into is finished by the parser writing
-        the token it was waiting for, which the file reports. Only a cut inside a comment at the top
-        level leaves neither, because a comment is not part of the program and nothing encloses it.
+        Whatever the cut ran into says so. A literal the cut ran into records the delimiter it is
+        missing; a block the cut ran into records that nothing closed it; a comment the cut ran
+        into is the last thing the file holds, and the file records that it ended inside one. Node
+        refuses every cut file, and so every tree reports that it is no program.
         """
-        expected = {
-            'string_at_top_level': False,
-            'template_at_top_level': False,
-            'template_hole_at_top_level': False,
-            'regexp_at_top_level': False,
-            'comment_at_top_level': True,
-            'string_in_function_body': False,
-            'template_in_function_body': False,
-            'template_hole_in_function_body': False,
-            'regexp_in_function_body': False,
-            'comment_in_function_body': False,
-        }
-        for name, well_formed in expected.items():
-            with self.subTest(name):
-                script = JsParser(_TRUNCATIONS[name].cut).parse()
-                self.assertEqual(is_well_formed(script), well_formed)
+        names = list(_TRUNCATIONS)
+        self.assertEqual(
+            {name: is_well_formed(JsParser(_TRUNCATIONS[name].cut).parse()) for name in names},
+            {name: False for name in names},
+        )
+
+    def test_only_a_cut_inside_a_comment_ends_the_file_inside_one(self):
+        names = list(_TRUNCATIONS)
+        self.assertEqual(
+            {name: JsParser(_TRUNCATIONS[name].cut).parse().terminated for name in names},
+            {name: name not in ('comment_at_top_level', 'comment_in_function_body') for name in names},
+        )
 
     def test_every_whole_file_and_every_intact_file_is_well_formed(self):
         sources = {name: case.whole for name, case in _TRUNCATIONS.items()}
@@ -392,14 +387,26 @@ class TestTruncatedSource(TestBase):
                     twice = self._print(JsParser(once).parse(), unescape_strings)
                     self.assertEqual(twice, once)
 
-    def test_the_comment_the_cut_left_open_leaves_no_trace_in_the_output(self):
-        for name in ('comment_at_top_level', 'comment_in_function_body'):
+    def test_the_comment_the_cut_left_open_is_the_last_line_of_the_output(self):
+        """
+        The comment runs to the end of the file and the file carries it, so the output is what the
+        text before the comment prints, then the comment as it was written at the head of a line,
+        and nothing behind it: no closing brace for the function body the second cut is inside of,
+        which is where the file ended.
+        """
+        expected = {
+            'comment_at_top_level': '\n/* the registry maps each name to the handler that reads it',
+            'comment_in_function_body': (
+                '\n/* the handler is the function that was registered under this name'
+            ),
+        }
+        for name, tail in expected.items():
             for unescape_strings in (False, True):
                 with self.subTest(name, unescape_strings=unescape_strings):
                     truncation = _TRUNCATIONS[name]
                     without = self._print(JsParser(truncation.head).parse(), unescape_strings)
                     printed = self._print(JsParser(truncation.cut).parse(), unescape_strings)
-                    self.assertEqual(printed, without)
+                    self.assertEqual(printed, without + tail)
 
     def test_a_cut_file_prints_to_text_that_prints_and_parses_to_itself(self):
         for name, truncation in _TRUNCATIONS.items():

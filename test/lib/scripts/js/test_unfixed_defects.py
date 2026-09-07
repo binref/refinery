@@ -235,24 +235,6 @@ class TestASourcePhaseImportIsAProgram(TestBase):
         self.assertEqual((well_formed(source), printed(source)), (True, source))
 
 
-class TestCommentWithNoFollowingStatement(TestBase):
-    """
-    A comment is carried by the statement it precedes in a statement list, which leaves a comment
-    that precedes nothing, and one that precedes a clause body rather than a listed statement, with
-    no carrier.
-    """
-
-    @unittest.expectedFailure
-    def test_a_comment_that_no_statement_follows_is_kept(self):
-        """
-        A trailing note, marker, or half-written annotation is text the file contains, and a
-        deobfuscator that drops it loses source it was handed. Each of these three programs is
-        already in the form the printer emits, so each has to print back exactly as written.
-        """
-        sources = ['x = 1;\n/* note */', 'x = 1;\n// note', 'x = 1;\n/* note']
-        self.assertEqual(tuple(printed(source) for source in sources), tuple(sources))
-
-
 class TestALiteralNoElementOfWhichRunsIsCounted(TestBase):
     """
     An array literal's `length` is the number of positions it was written with, and reading it

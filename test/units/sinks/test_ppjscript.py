@@ -20,6 +20,14 @@ class TestPPJscript(TestUnitBase):
         self.assertIn('var x = 1;', result)
         self.assertIn('var y = 2;', result)
 
+    def test_comment_stripping_keeps_a_comment_inside_text_the_parser_could_not_read(self):
+        result = '@@@ /* c */ var x = 1;' | self.load(strip_comments=True) | str
+        self.assertEqual(result, '@@@ /* c */ var x = 1;')
+
+    def test_comment_stripping_strips_the_hash_bang_line_and_the_comment_behind_the_last_statement(self):
+        result = '#!/usr/bin/env node\nvar x = 1; /* tail */' | self.load(strip_comments=True) | str
+        self.assertEqual(result, 'var x = 1;')
+
     def test_unescape_strings(self):
         result = 'var x = "\\x41\\x42\\x43";' | self.load() | str
         self.assertIn('"ABC"', result)
