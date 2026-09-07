@@ -95,6 +95,7 @@ from refinery.lib.scripts.js.precedence import (
 from refinery.lib.scripts.js.strict import promoted_use_strict, spelling_states
 from refinery.lib.scripts.js.token import spells_only_a_name
 from refinery.lib.scripts.js.utf16 import from_code_units
+from refinery.lib.tools import RecursionDepth
 
 _WORD_UNARY_OPS = frozenset({'typeof', 'void', 'delete'})
 
@@ -140,6 +141,25 @@ class JsSynthesizer(Synthesizer):
         super().__init__(indent, line_length)
         self._unescape_strings = unescape_strings
         self._strip_comments = strip_comments
+        self._cut = False
+
+    def convert(self, node: Node) -> str:
+        self._cut = False
+        with RecursionDepth(10000):
+            return super().convert(node)
+
+    def _write(self, text: str):
+        """
+        Nothing is written past the end of the file. A construct the file ended inside — a
+        literal, a block — writes what it holds and then cuts the output, so that no closing
+        bracket, quote or semicolon the file did not hold is written behind it.
+        """
+        if not self._cut:
+            super()._write(text)
+
+    def _newline(self):
+        if not self._cut:
+            super()._newline()
 
     def _emit_leading_comments(self, node: Node):
         if self._strip_comments or not node.leading_comments:
@@ -148,7 +168,31 @@ class JsSynthesizer(Synthesizer):
             self._write(comment)
             self._newline()
 
-    def _emit_block(self, body: list[Statement], *, prologue: bool = False):
+    @staticmethod
+    def _opens_html_close_comment(stmt: Node) -> bool:
+        """
+        Whether *stmt* is unread text opening with `-->`, which at the head of a line would open a
+        comment and swallow the line: such text is written on the line of what precedes it, where
+        the lexer read it as the decrement and the `>` it is.
+        """
+        return isinstance(stmt, JsErrorNode) and stmt.text.startswith('-->')
+
+    def _separate(self, stmt: Node):
+        if self._opens_html_close_comment(stmt):
+            self._write(' ')
+        else:
+            self._newline()
+
+    def _emit_block_node(self, block: JsBlockStatement, *, prologue: bool = False):
+        self._emit_block(block.body, prologue=prologue, owner=block)
+
+    def _emit_block(
+        self,
+        body: list[Statement],
+        *,
+        prologue: bool = False,
+        owner: JsBlockStatement | JsStaticBlock | None = None,
+    ):
         """
         Write *body* as a braced block. *prologue* says that this block is a body a Directive
         Prologue opens — a function body or a class static block — where a `'use strict'` standing
@@ -160,6 +204,9 @@ class JsSynthesizer(Synthesizer):
         self._depth += 1
         self._emit_statements(body, prologue=prologue)
         self._depth -= 1
+        if owner is not None and not owner.terminated:
+            self._cut = True
+            return
         if body:
             self._newline()
         self._write('}')
@@ -167,7 +214,7 @@ class JsSynthesizer(Synthesizer):
     def _emit_statements(self, body: list[Statement], *, prologue: bool):
         promoted = promoted_use_strict(body) if prologue else []
         for stmt in body:
-            self._newline()
+            self._separate(stmt)
             self._emit_leading_comments(stmt)
             self._emit_body_statement(stmt, promoted)
 
@@ -227,6 +274,7 @@ class JsSynthesizer(Synthesizer):
             return False
         save_pos = self._parts.tell()
         save_col = self._col
+        save_cut = self._cut
         overflow = False
         for i, node in enumerate(nodes):
             if i > 0:
@@ -240,6 +288,7 @@ class JsSynthesizer(Synthesizer):
         self._parts.seek(save_pos)
         self._parts.truncate()
         self._col = save_col
+        self._cut = save_cut
         self._depth += 1
         for i, node in enumerate(nodes):
             if i > 0 or lead_newline:
@@ -283,10 +332,12 @@ class JsSynthesizer(Synthesizer):
         self._write(node.raw)
 
     def visit_JsStringLiteral(self, node: JsStringLiteral):
-        if self._unescape_strings and node.value is not None:
+        if self._unescape_strings and node.value is not None and node.terminated:
             self._write(self._encode_string(node.value, node.raw))
         else:
             self._write(node.raw)
+        if not node.terminated:
+            self._cut = True
 
     @staticmethod
     def _encode_string(value: str, raw: str) -> str:
@@ -349,13 +400,18 @@ class JsSynthesizer(Synthesizer):
     def visit_JsTemplateLiteral(self, node: JsTemplateLiteral):
         self._write('`')
         expressions = iter(node.expressions)
-        for quasi in node.quasis:
+        for index, quasi in enumerate(node.quasis):
+            if not quasi.opened:
+                self._cut = True
             self.visit(quasi)
+            if not quasi.terminated:
+                self._cut = True
             expression = next(expressions, None)
             if expression is not None:
                 self._write('${')
                 self.visit(expression)
-                self._write('}')
+                if index + 1 < len(node.quasis) and node.quasis[index + 1].opened:
+                    self._write('}')
         self._write('`')
 
     def visit_JsTemplateElement(self, node: JsTemplateElement):
@@ -474,7 +530,7 @@ class JsSynthesizer(Synthesizer):
                 self._emit_params(node.value.params)
                 self._write(' ')
                 if node.value.body:
-                    self._emit_block(node.value.body.body, prologue=True)
+                    self._emit_block_node(node.value.body, prologue=True)
             return
         if node.shorthand:
             if isinstance(node.value, JsAssignmentPattern):
@@ -601,7 +657,7 @@ class JsSynthesizer(Synthesizer):
         self._emit_params(node.params)
         self._write(' ')
         if node.body:
-            self._emit_block(node.body.body, prologue=True)
+            self._emit_block_node(node.body, prologue=True)
 
     visit_JsFunctionExpression = _emit_function
 
@@ -615,7 +671,7 @@ class JsSynthesizer(Synthesizer):
         self._write(' => ')
         if node.body:
             if isinstance(node.body, JsBlockStatement):
-                self._emit_block(node.body.body, prologue=True)
+                self._emit_block_node(node.body, prologue=True)
             elif isinstance(node.body, JsSequenceExpression) or statement_needs_parens(node.body):
                 self._write('(')
                 self.visit(node.body)
@@ -678,9 +734,13 @@ class JsSynthesizer(Synthesizer):
         self._write('{')
         self._depth += 1
         for member in node.body:
-            self._newline()
+            self._separate(member)
+            self._emit_leading_comments(member)
             self.visit(member)
         self._depth -= 1
+        if not node.terminated:
+            self._cut = True
+            return
         if node.body:
             self._newline()
         self._write('}')
@@ -701,7 +761,7 @@ class JsSynthesizer(Synthesizer):
             self._emit_params(node.value.params)
             self._write(' ')
             if node.value.body:
-                self._emit_block(node.value.body.body, prologue=True)
+                self._emit_block_node(node.value.body, prologue=True)
 
     def visit_JsPropertyDefinition(self, node: JsPropertyDefinition):
         self._emit_decorators(node.decorators)
@@ -715,7 +775,7 @@ class JsSynthesizer(Synthesizer):
 
     def visit_JsStaticBlock(self, node: JsStaticBlock):
         self._write('static ')
-        self._emit_block(node.body, prologue=True)
+        self._emit_block(node.body, prologue=True, owner=node)
 
     def visit_JsExpressionStatement(self, node: JsExpressionStatement):
         expr = node.expression
@@ -729,7 +789,7 @@ class JsSynthesizer(Synthesizer):
         self._write(';')
 
     def visit_JsBlockStatement(self, node: JsBlockStatement):
-        self._emit_block(node.body)
+        self._emit_block_node(node)
 
     def visit_JsEmptyStatement(self, node: JsEmptyStatement):
         self._write(';')
@@ -758,8 +818,15 @@ class JsSynthesizer(Synthesizer):
             self._emit_statement_body(node.alternate)
 
     def _emit_statement_body(self, stmt: Statement):
+        """
+        The body of a clause, written as a block. Text the parser could not read is written as it
+        was written, with no block put around it: a brace inside such text would close or open the
+        block the printer put there, and the file would read back with a different shape.
+        """
         if isinstance(stmt, JsBlockStatement):
-            self._emit_block(stmt.body)
+            self._emit_block_node(stmt)
+        elif isinstance(stmt, JsErrorNode):
+            self.visit(stmt)
         else:
             self._emit_block([stmt])
 
@@ -865,9 +932,13 @@ class JsSynthesizer(Synthesizer):
         self._write(') {')
         self._depth += 1
         for case in node.cases:
-            self._newline()
+            self._separate(case)
+            self._emit_leading_comments(case)
             self.visit(case)
         self._depth -= 1
+        if not node.terminated:
+            self._cut = True
+            return
         if node.cases:
             self._newline()
         self._write('}')
@@ -881,20 +952,21 @@ class JsSynthesizer(Synthesizer):
             self._write('default:')
         self._depth += 1
         for stmt in node.body:
-            self._newline()
+            self._separate(stmt)
+            self._emit_leading_comments(stmt)
             self.visit(stmt)
         self._depth -= 1
 
     def visit_JsTryStatement(self, node: JsTryStatement):
         self._write('try ')
         if node.block:
-            self._emit_block(node.block.body)
+            self._emit_block_node(node.block)
         if node.handler:
             self._write(' ')
             self.visit(node.handler)
         if node.finalizer:
             self._write(' finally ')
-            self._emit_block(node.finalizer.body)
+            self._emit_block_node(node.finalizer)
 
     def visit_JsCatchClause(self, node: JsCatchClause):
         self._write('catch')
@@ -904,7 +976,7 @@ class JsSynthesizer(Synthesizer):
             self._write(')')
         self._write(' ')
         if node.body:
-            self._emit_block(node.body.body)
+            self._emit_block_node(node.body)
 
     def visit_JsThrowStatement(self, node: JsThrowStatement):
         self._write('throw ')
@@ -1112,6 +1184,6 @@ class JsSynthesizer(Synthesizer):
         promoted = promoted_use_strict(node.body)
         for i, stmt in enumerate(node.body):
             if i > 0:
-                self._newline()
+                self._separate(stmt)
             self._emit_leading_comments(stmt)
             self._emit_body_statement(stmt, promoted)

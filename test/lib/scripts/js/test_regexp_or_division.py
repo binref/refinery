@@ -385,13 +385,13 @@ class TestJsRegExpOrDivision(TestBase):
     def test_a_backslash_does_not_carry_a_regexp_over_the_end_of_its_line(self):
         """
         A backslash before a line break continues a string literal, and node reads the two lines it
-        joins as one. It continues no regular expression, so there are three readings and not one:
-        the slash that opened nothing, the backslash it left standing alone, and the slash on the
-        next line, which divides.
+        joins as one. It continues no regular expression, so there are two readings and not one:
+        the statement whose slash opened nothing, which is kept as the text of its line, and the
+        slash on the next line, which divides.
         """
         self.assertEqual(
             self._slash_readings(A_BACKSLASH_BEFORE_THE_LINE_BREAK),
-            [PARSE_ERROR, PARSE_ERROR, DIVISION])
+            [PARSE_ERROR, DIVISION])
 
     def test_a_slash_that_spells_no_regexp_prints_a_source_that_reads_back_as_itself(self):
         """

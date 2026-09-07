@@ -15,6 +15,7 @@ from __future__ import annotations
 import inspect
 import unittest
 
+from collections import Counter
 from enum import Enum, auto
 from typing import Callable, Iterable, Mapping, NamedTuple
 
@@ -42,6 +43,23 @@ def a_program(text: str) -> str:
 
 def well_formed(source: str) -> bool:
     return is_well_formed(JsParser(source).parse())
+
+
+def dropped_source_characters(source: str, printed: str) -> str:
+    """
+    The characters of *source* that *printed* does not account for, whitespace aside. Layout is the
+    printer's to choose, so only a character that went missing is reported.
+    """
+    available = Counter(character for character in printed if not character.isspace())
+    missing: list[str] = []
+    for character in source:
+        if character.isspace():
+            continue
+        if available[character] > 0:
+            available[character] -= 1
+        else:
+            missing.append(character)
+    return ''.join(missing)
 
 
 def each_well_formed(programs: Iterable[str]) -> dict[str, bool]:

@@ -17,6 +17,7 @@ def guess_language(data: str | bytearray | bytes | memoryview) -> str | None:
     """
     best_name: str | None = None
     best_errors = INF()
+    best_refusals = INF()
 
     from refinery.lib.scripts.js.model import JsErrorNode
     from refinery.lib.scripts.js.parser import JsParser
@@ -38,14 +39,17 @@ def guess_language(data: str | bytearray | bytes | memoryview) -> str | None:
     for name, parser_type, error_type in backends:
         try:
             ast = parser_type(data).parse()
-            errors = sum(
-                len(n.text) for n in ast.walk() if isinstance(n, error_type))
+            unread = [n for n in ast.walk() if isinstance(n, error_type)]
+            errors = sum(len(n.text) for n in unread)
+            refusals = len(unread) + sum(
+                1 for n in ast.walk() if getattr(n, 'terminated', True) is False)
         except Exception:
             continue
-        if errors < best_errors:
+        if (refusals, errors) < (best_refusals, best_errors):
+            best_refusals = refusals
             best_errors = errors
             best_name = name
-            if errors == 0:
+            if refusals == 0:
                 break
 
     if best_name is None or best_errors * 2 > len(data):

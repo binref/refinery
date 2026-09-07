@@ -284,9 +284,16 @@ A_NAME_THE_KIND_OF_FUNCTION_RESERVES = [
     'function* g() { var yield = 1; }',
     'var o = { *m(yield) {} };',
     'async function h(await) {}',
-    'async function h(a = await) {}',
     'var f = async (await) => {};',
     'var o = { async m(await) {} };',
+]
+
+#: The same reservation where the reserved word stands with nothing behind it. Node refuses the
+#: file as a sloppy one and as a strict one alike, but the parser refuses it first: `await` with no
+#: operand is no expression at all, so the declaration is kept as the text it stands in and the
+#: collector has no name to report on.
+A_NAME_THE_PARSER_REFUSES_TO_READ = [
+    'async function h(a = await) {}',
 ]
 
 #: The same reservation asked of a declaration's name rather than of a parameter or a reference.
@@ -652,11 +659,11 @@ class TestTheCollectorReadsTheStrictnessFromTheSamePlace(TestBase):
 class TestANameTheKindOfFunctionReserves(TestBase):
 
     def test_node_refuses_every_one_of_them_as_a_sloppy_file(self):
-        rows = A_NAME_THE_KIND_OF_FUNCTION_RESERVES
+        rows = [*A_NAME_THE_KIND_OF_FUNCTION_RESERVES, *A_NAME_THE_PARSER_REFUSES_TO_READ]
         self.assertEqual(refused(rows), every_one_of(rows, True))
 
     def test_node_refuses_every_one_of_them_as_a_strict_file(self):
-        rows = A_NAME_THE_KIND_OF_FUNCTION_RESERVES
+        rows = [*A_NAME_THE_KIND_OF_FUNCTION_RESERVES, *A_NAME_THE_PARSER_REFUSES_TO_READ]
         self.assertEqual(
             _refused_under_a_strict_seed(rows),
             every_one_of([_under_a_strict_seed(program) for program in rows], True),
@@ -936,6 +943,7 @@ class TestTheVerdictRefusesAFunctionNameWhereNodeDoes(TestBase):
     def test_a_name_the_kind_of_function_reserves_is_no_program(self):
         rows = [
             *A_NAME_THE_KIND_OF_FUNCTION_RESERVES,
+            *A_NAME_THE_PARSER_REFUSES_TO_READ,
             *A_BINDING_THE_KIND_OF_FUNCTION_RESERVES,
             *A_FUNCTION_EXPRESSION_NAMED_BY_A_WORD_ITS_OWN_KIND_RESERVES,
             *A_CLASS_EXPRESSION_NAME_THE_ENCLOSING_KIND_RESERVES,

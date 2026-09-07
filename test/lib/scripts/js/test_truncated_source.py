@@ -6,14 +6,13 @@ from typing import NamedTuple
 
 from test import TestBase
 
-from refinery.lib.scripts import Expression, UnspellableNode, canonical, is_well_formed
+from refinery.lib.scripts import Expression, canonical, is_well_formed
 from refinery.lib.scripts.guess import guess_language
 from refinery.lib.scripts.js.model import (
     JsBlockStatement,
     JsFunctionDeclaration,
     JsScript,
     JsStringLiteral,
-    JsTemplateElement,
     JsTemplateLiteral,
     JsVariableDeclaration,
 )
@@ -345,52 +344,53 @@ class TestTruncatedSource(TestBase):
             with self.subTest(name):
                 self.assertEqual(is_well_formed(JsParser(source).parse()), True)
 
-    def test_the_synthesizer_refuses_the_literal_the_cut_left_open(self):
+    def test_the_synthesizer_prints_the_literal_the_cut_left_open_and_the_file_ends_there(self):
+        """
+        The literal is written as the file wrote it, with no closing quote or backtick the file did
+        not hold, and nothing is written behind it: the block a function body opened is not closed
+        either, since the file did not close it.
+        """
         expected = {
-            'string_at_top_level': JsStringLiteral,
-            'template_at_top_level': JsTemplateElement,
-            'template_hole_at_top_level': JsTemplateElement,
-            'string_in_function_body': JsStringLiteral,
-            'template_in_function_body': JsTemplateElement,
-            'template_hole_in_function_body': JsTemplateElement,
+            'string_at_top_level': "const banner = 'loading the alpha module",
+            'template_at_top_level': 'const banner = `loading ${registry.alpha} and everything after it',
+            'template_hole_at_top_level': 'const banner = `loading ${Object.keys(registry',
+            'string_in_function_body': "  const label = 'describing the handler for ",
+            'template_in_function_body': '  const label = `handler ${handler} registered for ',
+            'template_hole_in_function_body': '  const label = `handler ${handler.toString(',
         }
-        for name, node_type in expected.items():
-            for unescape_strings in (False, True):
-                with self.subTest(name, unescape_strings=unescape_strings):
-                    script = JsParser(_TRUNCATIONS[name].cut).parse()
-                    with self.assertRaises(UnspellableNode) as refusal:
-                        self._print(script, unescape_strings)
-                    self.assertEqual(type(refusal.exception.node), node_type)
-
-    def test_the_synthesizer_prints_the_cut_regexp_as_the_arithmetic_it_was_reread_as(self):
-        expected = {
-            'regexp_at_top_level': ['const pattern = / ^ alpha - [0 - 9] + ;'],
-            'regexp_in_function_body': [
-                '  const clean = name.replace(/[^] - z0 - 9);',
-                '}',
-            ],
-        }
-        for name, tail in expected.items():
+        for name, last_line in expected.items():
             for unescape_strings in (False, True):
                 with self.subTest(name, unescape_strings=unescape_strings):
                     script = JsParser(_TRUNCATIONS[name].cut).parse()
                     printed = self._print(script, unescape_strings)
-                    self.assertEqual(printed.splitlines()[-len(tail):], tail)
+                    self.assertEqual(printed.splitlines()[-1], last_line)
+                    self.assertEqual(printed.endswith(last_line), True)
 
-    def test_printing_the_cut_regexp_again_is_a_fixed_point_only_in_the_function_body(self):
+    def test_the_synthesizer_prints_the_cut_regexp_as_written(self):
+        """
+        A regular expression the cut left open is a slash that opens no literal, and the statement
+        holding it is text the parser could not read: it is written as it was written, and the
+        file ends there.
+        """
         expected = {
-            'regexp_at_top_level': ['const pattern = / ^ alpha - [0 - 9] + ;;'],
-            'regexp_in_function_body': [
-                '  const clean = name.replace(/[^] - z0 - 9);',
-                '}',
-            ],
+            'regexp_at_top_level': 'const pattern = /^alpha-[0-9]+',
+            'regexp_in_function_body': '  const clean = name.replace(/[^a-z0-9',
         }
-        for name, tail in expected.items():
+        for name, last_line in expected.items():
+            for unescape_strings in (False, True):
+                with self.subTest(name, unescape_strings=unescape_strings):
+                    script = JsParser(_TRUNCATIONS[name].cut).parse()
+                    printed = self._print(script, unescape_strings)
+                    self.assertEqual(printed.splitlines()[-1], last_line)
+                    self.assertEqual(printed.endswith(last_line), True)
+
+    def test_printing_the_cut_regexp_again_is_a_fixed_point(self):
+        for name in ('regexp_at_top_level', 'regexp_in_function_body'):
             for unescape_strings in (False, True):
                 with self.subTest(name, unescape_strings=unescape_strings):
                     once = self._print(JsParser(_TRUNCATIONS[name].cut).parse(), unescape_strings)
                     twice = self._print(JsParser(once).parse(), unescape_strings)
-                    self.assertEqual(twice.splitlines()[-len(tail):], tail)
+                    self.assertEqual(twice, once)
 
     def test_the_comment_the_cut_left_open_leaves_no_trace_in_the_output(self):
         for name in ('comment_at_top_level', 'comment_in_function_body'):
@@ -401,21 +401,15 @@ class TestTruncatedSource(TestBase):
                     printed = self._print(JsParser(truncation.cut).parse(), unescape_strings)
                     self.assertEqual(printed, without)
 
-    def test_a_cut_that_prints_round_trips_in_text_and_in_tree_or_in_neither(self):
-        expected = {
-            'regexp_at_top_level': False,
-            'regexp_in_function_body': True,
-            'comment_at_top_level': True,
-            'comment_in_function_body': True,
-        }
-        for name, stable in expected.items():
+    def test_a_cut_file_prints_to_text_that_prints_and_parses_to_itself(self):
+        for name, truncation in _TRUNCATIONS.items():
             for unescape_strings in (False, True):
                 with self.subTest(name, unescape_strings=unescape_strings):
-                    script = JsParser(_TRUNCATIONS[name].cut).parse()
+                    script = JsParser(truncation.cut).parse()
                     printed = self._print(script, unescape_strings)
                     again = JsParser(printed).parse()
-                    self.assertEqual(self._print(again, unescape_strings) == printed, stable)
-                    self.assertEqual(canonical(again) == canonical(script), stable)
+                    self.assertEqual(self._print(again, unescape_strings), printed)
+                    self.assertEqual(canonical(again), canonical(script))
 
     def test_a_whole_file_prints_to_text_that_prints_and_parses_to_itself(self):
         for name, truncation in _TRUNCATIONS.items():
@@ -481,18 +475,24 @@ class TestAFoldOverALiteralTheCutLeftOpen(TestBase):
     What the deobfuscator makes of a buffer that ends inside a literal a fold reaches. The buffer
     is not a program — Node refuses every `cut` in either table and accepts every `whole` — and
     the one thing the tool may not answer with is a program, because an analyst reading it has no
-    way left to tell that the file they handed over was cut. The literal was never closed, so no
-    text spells it, and refusing to print is the only answer that keeps that true.
+    way left to tell that the file they handed over was cut. The literal was never closed, so the
+    fold does not reach it: the expression is written as the file wrote it and the file ends
+    inside the literal, exactly as it was handed over.
     """
 
     def _deobfuscated(self, source: str) -> str:
         return source.encode('utf8') | js() | str
 
-    def test_a_fold_that_reaches_a_literal_the_cut_left_open_is_refused(self):
-        for name, truncation in _FOLDS.items():
+    def test_a_fold_that_reaches_a_literal_the_cut_left_open_leaves_the_file_cut(self):
+        expected = {
+            'template_at_top_level': 'const banner = `loading ` + `the alpha module',
+            'argument_at_top_level': "console.log('loading ' + 'the alpha module",
+        }
+        for name, last_line in expected.items():
             with self.subTest(name):
-                with self.assertRaises(UnspellableNode):
-                    self._deobfuscated(truncation.cut)
+                deobfuscated = self._deobfuscated(_FOLDS[name].cut)
+                self.assertEqual(deobfuscated.splitlines()[-1], last_line)
+                self.assertEqual(deobfuscated.endswith(last_line), True)
 
     def test_the_same_file_with_its_delimiter_restored_deobfuscates_to_a_program(self):
         """

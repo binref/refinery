@@ -1,8 +1,23 @@
 from __future__ import annotations
 
+import unittest
+
 from typing import NamedTuple
 
 from test import TestBase
+from test.lib.scripts.js.analysis.differential import node_executable
+from test.lib.scripts.js.deobfuscation.test_escaped_identifiers import (
+    AN_ESCAPED_ACCESSOR_TERMINAL,
+    AN_ESCAPED_ASYNC_TERMINAL,
+    AN_ESCAPED_KEYWORD_OPERATOR,
+    AN_ESCAPED_STATIC_TERMINAL,
+)
+from test.lib.scripts.js.ledger import (
+    before_and_after,
+    dropped_source_characters,
+    printed,
+    well_formed,
+)
 
 from refinery.lib.scripts import is_well_formed
 from refinery.lib.scripts.js.model import JsErrorNode
@@ -99,12 +114,12 @@ what the tool does with them is pinned on its own.
 class TestParserRecoveryAlwaysPrints(TestBase):
     """
     `refinery.lib.scripts.js.parser.JsParser` never raises, so every question about a broken file is
-    answered by the tree it recovers. The tree may hold a
-    `refinery.lib.scripts.js.model.JsErrorNode`, which keeps the source it stands for, but it may
-    not hold a shape the model calls unspellable: `refinery.lib.scripts.Synthesizer.visit` refuses
-    those, and a recovery that builds one turns a file that merely fails to parse into a crash of
-    the tools that print it. What is pinned here is that no such shape is reached, that the text
-    comes back, and that the tree says it is not a program.
+    answered by the tree it recovers. A construct the parser cannot finish reading is kept as the
+    text it stands in: a `refinery.lib.scripts.js.model.JsErrorNode` reading, verbatim, the
+    statement or list item the construct began at up to where the file stopped, and nothing is
+    written that the file did not hold. What is pinned here is that the text comes back, that
+    printing it again writes the same text, which span is the one kept, and that the tree says it
+    is not a program. Node refuses every print here, since none of the cuts was made whole.
     """
 
     def _print(self, source: str) -> str:
@@ -119,65 +134,66 @@ class TestParserRecoveryAlwaysPrints(TestBase):
 
     def test_a_source_that_stops_mid_construct_prints_the_text_it_read(self):
         expected = {
-            'var_with_no_name': 'var ;',
-            'const_with_no_name': 'const ;',
-            'member_access_with_no_name': 'registry.;',
-            'optional_member_access_with_no_name': 'registry?.;',
-            'chained_member_access_with_no_name': 'registry.alpha.;',
-            'new_meta_property_with_no_name': 'function build() {\n  new.;\n}',
-            'object_getter_with_no_name': 'const o = { get () {} };',
-            'object_setter_with_no_name': 'const o = { set () {} };',
-            'object_async_method_with_no_name': 'const o = { async () {} };',
-            'catch_parameter_with_no_name': 'try {\n  names.pop();\n} catch () {}',
-            'label_with_no_statement': 'outer: ',
-            'super_member_with_no_name': 'class Foo extends Object {\n  m() {\n    super.;\n  }\n}',
-            'class_heritage_with_no_name': 'class Foo extends  {}',
-            'export_default_with_no_value': 'export default ;',
-            'computed_member_with_no_key': 'registry[];',
-            'spread_with_no_argument': 'const o = { ... };',
-            'for_head_with_no_binding': 'for (const ; ; ) {\n  \n}',
-            'switch_case_with_no_test': 'switch (names.length) {\n  case :\n}',
-            'arrow_with_no_body': 'const f = () => ;',
+            'var_with_no_name': 'var',
+            'const_with_no_name': 'const',
+            'member_access_with_no_name': 'registry.',
+            'optional_member_access_with_no_name': 'registry?.',
+            'chained_member_access_with_no_name': 'registry.alpha.',
+            'new_meta_property_with_no_name': 'function build() {\n  new.',
+            'object_getter_with_no_name': 'const o = { get',
+            'object_setter_with_no_name': 'const o = { set',
+            'object_async_method_with_no_name': 'const o = { async',
+            'catch_parameter_with_no_name': 'try { names.pop(); } catch (',
+            'label_with_no_statement': 'outer:',
+            'super_member_with_no_name': 'class Foo extends Object {\n  m() {\n    super.',
+            'class_heritage_with_no_name': 'class Foo extends',
+            'export_default_with_no_value': 'export default',
+            'computed_member_with_no_key': 'registry[',
+            'spread_with_no_argument': 'const o = { ...',
+            'for_head_with_no_binding': 'for (const',
+            'switch_case_with_no_test': 'switch (names.length) {\n  case',
+            'arrow_with_no_body': 'const f = () =>',
         }
-        for name, tail in expected.items():
-            with self.subTest(name):
-                self.assertEqual(self._print(_STOPS[name].cut), F'{_HEAD}{tail}')
+        self.assertEqual(
+            {name: self._print(_STOPS[name].cut) for name in expected},
+            {name: F'{_HEAD}{tail}' for name, tail in expected.items()},
+        )
 
     def test_a_source_that_stops_mid_construct_is_not_a_well_formed_program(self):
-        for name, stop in _STOPS.items():
-            with self.subTest(name):
-                self.assertEqual(is_well_formed(JsParser(stop.cut).parse()), False)
+        self.assertEqual(
+            {name: is_well_formed(JsParser(stop.cut).parse()) for name, stop in _STOPS.items()},
+            {name: False for name in _STOPS},
+        )
 
-    def test_the_position_a_source_stops_at_is_kept_as_an_error_node(self):
+    def test_the_construct_a_source_stops_inside_is_kept_as_an_error_node(self):
+        """
+        The span kept begins where the statement or list item the construct belongs to began: a
+        member access keeps the object it hangs off, an object member keeps the literal that
+        opened in front of it, a method body keeps only the statement inside it, and a `case`
+        keeps only its clause, since a switch is a list the parser reads clause by clause.
+        """
         expected = {
-            'var_with_no_name': [('', 'expected a name')],
-            'const_with_no_name': [('', 'expected a name')],
-            'member_access_with_no_name': [('', 'expected a property name')],
-            'optional_member_access_with_no_name': [('', 'expected a property name')],
-            'chained_member_access_with_no_name': [('', 'expected a property name')],
-            'new_meta_property_with_no_name': [('', 'expected a property name')],
-            'object_getter_with_no_name': [('', 'expected a name')],
-            'object_setter_with_no_name': [('', 'expected a name')],
-            'object_async_method_with_no_name': [('', 'expected a name')],
-            'catch_parameter_with_no_name': [('', 'expected a name')],
-            'label_with_no_statement': [('', 'unexpected token')],
-            'super_member_with_no_name': [('', 'expected a property name')],
-            'class_heritage_with_no_name': [('', 'unexpected token')],
-            'export_default_with_no_value': [('', 'unexpected token')],
-            'computed_member_with_no_key': [('', 'unexpected token')],
-            'spread_with_no_argument': [('', 'unexpected token')],
-            'for_head_with_no_binding': [
-                ('', 'expected a name'),
-                ('', 'unexpected token'),
-                ('', 'unexpected token'),
-                ('', 'unexpected token'),
-            ],
-            'switch_case_with_no_test': [('', 'unexpected token')],
-            'arrow_with_no_body': [('', 'unexpected token')],
+            'var_with_no_name': [('var', 'expected a name')],
+            'const_with_no_name': [('const', 'expected a name')],
+            'member_access_with_no_name': [('registry.', 'expected a property name')],
+            'optional_member_access_with_no_name': [('registry?.', 'expected a property name')],
+            'chained_member_access_with_no_name': [('registry.alpha.', 'expected a property name')],
+            'new_meta_property_with_no_name': [('new.', 'expected a property name')],
+            'object_getter_with_no_name': [('const o = { get', 'expected RBRACE')],
+            'object_setter_with_no_name': [('const o = { set', 'expected RBRACE')],
+            'object_async_method_with_no_name': [('const o = { async', 'expected RBRACE')],
+            'catch_parameter_with_no_name': [('try { names.pop(); } catch (', 'expected a name')],
+            'label_with_no_statement': [('outer:', 'unexpected token')],
+            'super_member_with_no_name': [('super.', 'expected a property name')],
+            'class_heritage_with_no_name': [('class Foo extends', 'unexpected token')],
+            'export_default_with_no_value': [('export default', 'unexpected token')],
+            'computed_member_with_no_key': [('registry[', 'unexpected token')],
+            'spread_with_no_argument': [('const o = { ...', 'expected RBRACE')],
+            'for_head_with_no_binding': [('for (const', 'expected a name')],
+            'switch_case_with_no_test': [('case', 'unexpected token')],
+            'arrow_with_no_body': [('const f = () =>', 'unexpected token')],
         }
-        for name, errors in expected.items():
-            with self.subTest(name):
-                self.assertEqual(self._errors(_STOPS[name].cut), errors)
+        self.assertEqual({name: self._errors(_STOPS[name].cut) for name in expected}, expected)
 
     def test_writing_the_text_the_cut_took_yields_a_program_that_prints(self):
         expected = {
@@ -209,75 +225,49 @@ class TestParserRecoveryAlwaysPrints(TestBase):
                 self.assertEqual(is_well_formed(JsParser(whole).parse()), True)
                 self.assertEqual(self._print(whole), F'{_HEAD}{tail}')
 
-    def test_the_printer_reads_back_what_it_printed_for_a_source_that_stops_mid_construct(self):
+    def test_printing_what_was_printed_for_a_source_that_stops_mid_construct_writes_it_again(self):
         """
-        The output of a recovery is itself input to the tool, and an error node prints as the text
-        it kept rather than as a form any parser agreed to read, so the second pass reads something
-        else than the first built. What may not happen is a refusal on the second pass: the tool
-        would then fail on a file it wrote itself. Only the label keeps its spelling; the rest drift
-        by the character the recovery could not attribute, and the drift is pinned rather than
-        described.
+        The output of a recovery is itself input to the tool, and the text an error node keeps is
+        read back as that same text: a print that changed on the second pass would be a tool that
+        reads its own output as something other than what it wrote.
         """
-        expected = {
-            'var_with_no_name': 'var ;;',
-            'const_with_no_name': 'const ;;',
-            'member_access_with_no_name': 'registry.;;',
-            'optional_member_access_with_no_name': 'registry?.;;',
-            'chained_member_access_with_no_name': 'registry.alpha.;;',
-            'new_meta_property_with_no_name': 'function build() {\n  new.;;\n}',
-            'object_getter_with_no_name': 'const o = { get() {} };',
-            'object_setter_with_no_name': 'const o = { set() {} };',
-            'object_async_method_with_no_name': 'const o = { async() {} };',
-            'catch_parameter_with_no_name': 'try {\n  names.pop();\n} catch ()) {}',
-            'label_with_no_statement': 'outer: ',
-            'super_member_with_no_name':
-                'class Foo extends Object {\n  m() {\n    super.;;\n  }\n}',
-            'class_heritage_with_no_name': 'class Foo extends {} {}',
-            'export_default_with_no_value': 'export default ;;',
-            'computed_member_with_no_key': 'registry[]];',
-            'spread_with_no_argument': 'const o = { ...}, ; };',
-            'for_head_with_no_binding': 'for (const ;; ); }) {\n  \n}',
-            'switch_case_with_no_test': 'switch (names.length) {\n  case ::\n}',
-            'arrow_with_no_body': 'const f = () => ;;',
-        }
-        for name, tail in expected.items():
-            with self.subTest(name):
-                once = self._print(_STOPS[name].cut)
-                self.assertEqual(self._print(once), F'{_HEAD}{tail}')
+        once = {name: self._print(stop.cut) for name, stop in _STOPS.items()}
+        self.assertEqual({name: self._print(text) for name, text in once.items()}, once)
 
     def test_ppjscript_prints_a_source_that_stops_mid_construct(self):
         expected = {
-            'var_with_no_name': 'var ;',
-            'const_with_no_name': 'const ;',
-            'member_access_with_no_name': 'registry.;',
-            'optional_member_access_with_no_name': 'registry?.;',
-            'chained_member_access_with_no_name': 'registry.alpha.;',
-            'new_meta_property_with_no_name': 'function build() {\n    new.;\n}',
-            'object_getter_with_no_name': 'const o = { get () {} };',
-            'object_setter_with_no_name': 'const o = { set () {} };',
-            'object_async_method_with_no_name': 'const o = { async () {} };',
-            'catch_parameter_with_no_name': 'try {\n    names.pop();\n} catch () {}',
-            'label_with_no_statement': 'outer: ',
-            'super_member_with_no_name':
-                'class Foo extends Object {\n    m() {\n        super.;\n    }\n}',
-            'class_heritage_with_no_name': 'class Foo extends  {}',
-            'export_default_with_no_value': 'export default ;',
-            'computed_member_with_no_key': 'registry[];',
-            'spread_with_no_argument': 'const o = { ... };',
-            'for_head_with_no_binding': 'for (const ; ; ) {\n    \n}',
-            'switch_case_with_no_test': 'switch (names.length) {\n    case :\n}',
-            'arrow_with_no_body': 'const f = () => ;',
+            'var_with_no_name': 'var',
+            'const_with_no_name': 'const',
+            'member_access_with_no_name': 'registry.',
+            'optional_member_access_with_no_name': 'registry?.',
+            'chained_member_access_with_no_name': 'registry.alpha.',
+            'new_meta_property_with_no_name': 'function build() {\n    new.',
+            'object_getter_with_no_name': 'const o = { get',
+            'object_setter_with_no_name': 'const o = { set',
+            'object_async_method_with_no_name': 'const o = { async',
+            'catch_parameter_with_no_name': 'try { names.pop(); } catch (',
+            'label_with_no_statement': 'outer:',
+            'super_member_with_no_name': 'class Foo extends Object {\n    m() {\n        super.',
+            'class_heritage_with_no_name': 'class Foo extends',
+            'export_default_with_no_value': 'export default',
+            'computed_member_with_no_key': 'registry[',
+            'spread_with_no_argument': 'const o = { ...',
+            'for_head_with_no_binding': 'for (const',
+            'switch_case_with_no_test': 'switch (names.length) {\n    case',
+            'arrow_with_no_body': 'const f = () =>',
         }
-        for name, tail in expected.items():
-            with self.subTest(name):
-                printed = _STOPS[name].cut.encode('utf8') | ppjscript() | str
-                self.assertEqual(printed, F'{_HEAD}{tail}')
+        self.assertEqual(
+            {name: _STOPS[name].cut.encode('utf8') | ppjscript() | str for name in expected},
+            {name: F'{_HEAD}{tail}' for name, tail in expected.items()},
+        )
 
 
 class TestParserRecoveryOverAMalformedNamePosition(TestBase):
     """
     The same law where a name position holds a token that is not a name. Nothing was cut off here,
-    so the parser has text to keep, and what it kept is what comes back.
+    so the statement holding the position is kept whole, up to the semicolon or the closing brace
+    that ends it: the token that was not a name stays where it stood, inside the text that comes
+    back, and a brace that closes the enclosing block is the block's and never the text's.
     """
 
     def _print(self, source: str) -> str:
@@ -285,53 +275,62 @@ class TestParserRecoveryOverAMalformedNamePosition(TestBase):
 
     def test_a_malformed_name_position_prints_the_text_it_read(self):
         expected = {
-            'doubled_dot': 'registry..;\nalpha;',
-            'dot_before_a_semicolon': 'registry.;;',
+            'doubled_dot': 'registry..alpha;',
+            'dot_before_a_semicolon': 'registry.;',
             'dot_before_a_bracket': 'registry.];',
             'dot_before_a_string': "registry.'alpha';",
             'new_dot_before_a_string': "function f() {\n  new.'target';\n}",
-            'label_before_a_closing_brace': 'function f() {\n  outer: }\n}',
+            'label_before_a_closing_brace': 'function f() {\n  outer:\n}',
         }
-        for name, tail in expected.items():
-            with self.subTest(name):
-                self.assertEqual(self._print(F'{_HEAD}{_MALFORMED[name]}'), F'{_HEAD}{tail}')
+        self.assertEqual(
+            {name: self._print(F'{_HEAD}{_MALFORMED[name]}') for name in expected},
+            {name: F'{_HEAD}{tail}' for name, tail in expected.items()},
+        )
 
     def test_a_malformed_name_position_is_not_a_well_formed_program(self):
-        for name, tail in _MALFORMED.items():
-            with self.subTest(name):
-                self.assertEqual(is_well_formed(JsParser(F'{_HEAD}{tail}').parse()), False)
+        self.assertEqual(
+            {name: is_well_formed(JsParser(F'{_HEAD}{tail}').parse()) for name, tail in _MALFORMED.items()},
+            {name: False for name in _MALFORMED},
+        )
 
-    def test_the_token_that_was_not_a_name_is_kept_as_an_error_node(self):
+    def test_the_statement_holding_the_token_that_was_not_a_name_is_kept_as_an_error_node(self):
         expected = {
-            'doubled_dot': [('.', 'expected a property name')],
-            'dot_before_a_semicolon': [(';', 'expected a property name')],
-            'dot_before_a_bracket': [(']', 'expected a property name')],
-            'dot_before_a_string': [("'alpha'", 'expected a property name')],
-            'new_dot_before_a_string': [("'target'", 'expected a property name')],
-            'label_before_a_closing_brace': [('}', 'unexpected token')],
+            'doubled_dot': [('registry..alpha;', 'expected a property name')],
+            'dot_before_a_semicolon': [('registry.;', 'expected a property name')],
+            'dot_before_a_bracket': [('registry.];', 'expected a property name')],
+            'dot_before_a_string': [("registry.'alpha';", 'expected a property name')],
+            'new_dot_before_a_string': [("new.'target';", 'expected a property name')],
+            'label_before_a_closing_brace': [('outer:', 'unexpected token')],
         }
-        for name, errors in expected.items():
-            with self.subTest(name):
-                script = JsParser(F'{_HEAD}{_MALFORMED[name]}').parse()
-                self.assertEqual([
+        self.assertEqual(
+            {
+                name: [
                     (node.text, node.message)
-                    for node in script.walk_in_order()
+                    for node in JsParser(F'{_HEAD}{_MALFORMED[name]}').parse().walk_in_order()
                     if isinstance(node, JsErrorNode)
-                ], errors)
+                ]
+                for name in expected
+            },
+            expected,
+        )
+
+    def test_printing_what_was_printed_for_a_malformed_name_position_writes_it_again(self):
+        once = {name: self._print(F'{_HEAD}{tail}') for name, tail in _MALFORMED.items()}
+        self.assertEqual({name: self._print(text) for name, text in once.items()}, once)
 
     def test_ppjscript_prints_a_malformed_name_position(self):
         expected = {
-            'doubled_dot': 'registry..;\nalpha;',
-            'dot_before_a_semicolon': 'registry.;;',
+            'doubled_dot': 'registry..alpha;',
+            'dot_before_a_semicolon': 'registry.;',
             'dot_before_a_bracket': 'registry.];',
             'dot_before_a_string': "registry.'alpha';",
             'new_dot_before_a_string': "function f() {\n    new.'target';\n}",
-            'label_before_a_closing_brace': 'function f() {\n    outer: }\n}',
+            'label_before_a_closing_brace': 'function f() {\n    outer:\n}',
         }
-        for name, tail in expected.items():
-            with self.subTest(name):
-                printed = F'{_HEAD}{_MALFORMED[name]}'.encode('utf8') | ppjscript() | str
-                self.assertEqual(printed, F'{_HEAD}{tail}')
+        self.assertEqual(
+            {name: F'{_HEAD}{_MALFORMED[name]}'.encode('utf8') | ppjscript() | str for name in expected},
+            {name: F'{_HEAD}{tail}' for name, tail in expected.items()},
+        )
 
 
 #: Module declarations that stop before the specifier they read from. A module host refuses every
@@ -500,12 +499,11 @@ SOURCES_THAT_STOP_INSIDE_A_CONSTRUCT = {
 
 class TestAFileThatStopsInsideAConstructIsNotAProgram(TestBase):
     """
-    A file cut in the middle of a construct still has to be answered with a tree, so the parser
-    writes the token it was waiting for and steps over what stood in its place. What comes back is
-    then a program the file does not hold — `x = f(1, 2` prints as the call `x = f(1, 2);`, and
-    `try {} catch` as a handler with a body nobody wrote — and the only thing keeping a caller from
-    comparing that fabrication against the source it came from is that the parser records having
-    made it.
+    A file cut in the middle of a construct still has to be answered with a tree. The parser keeps
+    what it could not finish reading as the text it stands in, and a block, a class body or a
+    switch the file ends inside keeps the statements it holds and records that nothing closed it,
+    so what comes back is what was handed over — `x = f(1, 2` prints as `x = f(1, 2` and
+    `try {} catch` as `try {} catch` — and the tree says it is not a program.
 
     No engine reads any of these. `new vm.Script` refuses every row but the export declarations,
     each with `SyntaxError: Unexpected end of input` except `x = f(1, 2` and `x = f(g(1), 2`, which
@@ -523,24 +521,52 @@ class TestAFileThatStopsInsideAConstructIsNotAProgram(TestBase):
     def _well_formed(source: str) -> bool:
         return is_well_formed(JsParser(source).parse())
 
-    def test_a_file_that_stops_inside_a_construct_is_not_a_well_formed_program(self):
-        sources = [
+    @staticmethod
+    def _printed(source: str) -> str:
+        return JsSynthesizer().convert(JsParser(source).parse())
+
+    @staticmethod
+    def _sources() -> list[str]:
+        return [
             source
             for group in SOURCES_THAT_STOP_INSIDE_A_CONSTRUCT.values()
             for source in group
         ]
+
+    def test_a_file_that_stops_inside_a_construct_is_not_a_well_formed_program(self):
+        sources = self._sources()
         self.assertEqual(
             {source: self._well_formed(source) for source in sources},
             {source: False for source in sources},
         )
 
+    def test_a_file_that_stops_inside_a_construct_drops_no_character_and_prints_to_itself(self):
+        """
+        Layout is the printer's: `for (;;) {` comes back as `for (; ; ) {`. What may not change is
+        the characters the file holds, and the print of the print.
+        """
+        sources = self._sources()
+        printed = {source: self._printed(source) for source in sources}
+        self.assertEqual(
+            {
+                source: (dropped_source_characters(source, text), self._printed(text) == text)
+                for source, text in printed.items()
+            },
+            {source: ('', True) for source in sources},
+        )
+
     def test_a_bracket_the_file_closes_with_something_else_is_not_a_well_formed_program(self):
         """
         Node refuses `var x = (1 + 2; g(x);` with `SyntaxError: Unexpected token ';'`. The file does
-        not stop anywhere — it runs to its end — and what the recovery does here is drop the `;` it
-        found and write the `)` it wanted, so a file written closed is what the tree reports.
+        not stop anywhere — it runs to its end — and the declaration is kept as the text it is:
+        a bracket it opened and never closed holds everything behind it, the `;` and the call
+        included, so the text runs to the end of the file.
         """
-        self.assertEqual(self._well_formed('var x = (1 + 2; g(x);'), False)
+        source = 'var x = (1 + 2; g(x);'
+        self.assertEqual(
+            (self._well_formed(source), self._printed(source)),
+            (False, 'var x = (1 + 2; g(x);'),
+        )
 
 
 #: Names a module may bind. `node --check` on a `.mjs` file accepts every one of them in every
@@ -676,4 +702,245 @@ class TestAModuleTakesAWiderNameAcrossItsBoundaryThanItBinds(TestBase):
                 for source in ['import { yield } from "m";', 'export { yield } from "m";']
             },
             {'import { yield } from "m";': False, 'export { yield } from "m";': True},
+        )
+
+
+#: Files no engine reads, each mapped to the text the parser could not read and its reason. Node
+#: refuses every one of them: `Unexpected end of input` for the ones that stop short, `Invalid
+#: regular expression: missing /` for `x = /ab+`, `Unexpected token ')'` for `x = ()` and
+#: `x = (a,)`, `Unexpected token '...'` for `x = (...a)`, `Unexpected identifier 'b'` for the four
+#: with two names pressed together, `missing ) after argument list` for the two argument lists,
+#: `Unexpected string` for the catch parameter and `Unexpected token 'break'` for the case clause.
+A_FILE_THE_PARSER_REFUSES = {
+    'x = /ab+': ('x = /ab+', 'unexpected token'),
+    'var': ('var', 'expected a name'),
+    'var a = 1,': ('var a = 1,', 'expected a name'),
+    'x = y.': ('x = y.', 'expected a property name'),
+    'x = a?.': ('x = a?.', 'expected a property name'),
+    'delete a.': ('delete a.', 'expected a property name'),
+    'x = { get': ('x = { get', 'expected RBRACE'),
+    'x = ()': ('x = ()', 'a parameter list with no arrow behind it'),
+    'x = (a,)': ('x = (a,)', 'a parameter list with no arrow behind it'),
+    'x = (...a)': ('x = (...a)', 'a parameter list with no arrow behind it'),
+    'x = new': ('x = new', 'unexpected token'),
+    'throw new': ('throw new', 'unexpected token'),
+    'if (a)': ('if (a)', 'unexpected token'),
+    'while (a)': ('while (a)', 'unexpected token'),
+    'with (o)': ('with (o)', 'unexpected token'),
+    'for (const v of a)': ('for (const v of a)', 'unexpected token'),
+    'if (a) { f(); } else': ('if (a) { f(); } else', 'unexpected token'),
+    'class D extends': ('class D extends', 'unexpected token'),
+    'x = y[a b]': ('x = y[a b]', 'expected RBRACKET'),
+    'x = y.replace(/[^a-z': ('x = y.replace(/[^a-z', 'expected RPAREN'),
+    "f('alpha' 'beta');": ("'alpha' 'beta'", 'expected COMMA'),
+    "x = new C('alpha' 'beta');": ("'alpha' 'beta'", 'expected COMMA'),
+    'function f(a b) { return a; }': ('a b', 'expected COMMA'),
+    'class C { m(a b) {} }': ('a b', 'expected COMMA'),
+    "try { f(); } catch (e 'beta') {}": ("try { f(); } catch (e 'beta') {}", 'expected RPAREN'),
+    'switch (x) { case 1 break; }': ('case 1 break;', 'expected COLON'),
+}
+
+
+class TestAFileTheParserRefusesComesBackAsItWasWritten(TestBase):
+    """
+    `refinery.lib.scripts.js.model.JsErrorNode` promises that a span no parser could read is kept
+    verbatim, so that what an analyst gets back still contains what was written; and printing a
+    parse and parsing that print reaches a fixed point, including for a source no engine accepts,
+    because a tool that reads its own output otherwise changes a file every pass. The span kept
+    is the statement or list item the refused token stood in: a whole statement for most of these,
+    the two elements pressed together for an argument or parameter list, and the one clause for
+    the switch.
+    """
+
+    def test_no_character_of_the_file_is_dropped(self):
+        rows = A_FILE_THE_PARSER_REFUSES
+        self.assertEqual(
+            {source: dropped_source_characters(source, printed(source)) for source in rows},
+            {source: '' for source in rows},
+        )
+
+    def test_printing_the_print_writes_it_again(self):
+        once = {source: printed(source) for source in A_FILE_THE_PARSER_REFUSES}
+        self.assertEqual({source: printed(text) for source, text in once.items()}, once)
+
+    def test_the_text_the_parser_could_not_read_is_kept_as_an_error_node(self):
+        self.assertEqual(
+            {
+                source: [
+                    (node.text, node.message)
+                    for node in JsParser(source).parse().walk_in_order()
+                    if isinstance(node, JsErrorNode)
+                ]
+                for source in A_FILE_THE_PARSER_REFUSES
+            },
+            {source: [span] for source, span in A_FILE_THE_PARSER_REFUSES.items()},
+        )
+
+    def test_none_of_them_is_a_well_formed_program(self):
+        rows = A_FILE_THE_PARSER_REFUSES
+        self.assertEqual({source: well_formed(source) for source in rows}, {source: False for source in rows})
+
+
+#: Spellings of a numeral the language refuses (§12.9.3): a separator not between two digits of
+#: one run or behind a leading `0`, a radix prefix with no digits, an exponent with no digit behind
+#: its sign, a legacy octal literal with a fraction, an exponent or an `n`, and a numeral an
+#: IdentifierStart or a digit is pressed against. Node refuses `x = <spelling>;` for every one of
+#: them, and `test.lib.scripts.js.test_lexer` states which token the lexer ends each at.
+A_NUMERAL_THE_LANGUAGE_REFUSES = (
+    '004E',
+    '007e1',
+    '01n',
+    '00n',
+    '09n',
+    '08_1',
+    '09_1',
+    '0_1',
+    '0_0',
+    '0_',
+    '0e',
+    '0x',
+    '0b',
+    '0o',
+    '0b2',
+    '0x_1',
+    '0x1_',
+    '0x1g',
+    '0x1n_',
+    '1n1',
+    '1_',
+    '1__0',
+    '1_e3',
+    '1e',
+    '1e_1',
+    '1e+',
+    '1e3e',
+    '1.e',
+    '1._5',
+    '1.5_',
+    '1_.5',
+    '.5_',
+    '3in y',
+    '1.toString()',
+)
+
+
+class TestANumeralTheLanguageRefusesIsNoProgram(TestBase):
+
+    def test_the_statement_holding_the_numeral_is_kept_as_text_and_is_no_program(self):
+        programs = [F'x = {spelling};' for spelling in A_NUMERAL_THE_LANGUAGE_REFUSES]
+        self.assertEqual(
+            {
+                program: (
+                    well_formed(program),
+                    printed(program),
+                    [
+                        (node.text, node.message)
+                        for node in JsParser(program).parse().walk_in_order()
+                        if isinstance(node, JsErrorNode)
+                    ],
+                )
+                for program in programs
+            },
+            {
+                program: (False, program, [(program, 'a numeral the language refuses')])
+                for program in programs
+            },
+        )
+
+
+#: Files whose parse once needed a token the source did not write. Four of the tables come from
+#: `test.lib.scripts.js.deobfuscation.test_escaped_identifiers`, where the law they belong to is
+#: stated: a terminal word of the grammar is matched by the characters typed, so an escaped
+#: spelling of `get`, `set`, `static`, `async`, `instanceof` or `in` is a name standing where the
+#: grammar wanted a word. The last two are the same shape with nothing escaped about it, and `let`
+#: spelled with an escape where a declaration would begin. Node refuses every one of them with a
+#: `SyntaxError` and prints nothing.
+A_FILE_THE_PARSER_REFUSES_THAT_AN_ENGINE_REFUSES_TOO = (
+    *AN_ESCAPED_ACCESSOR_TERMINAL,
+    *AN_ESCAPED_STATIC_TERMINAL,
+    *AN_ESCAPED_ASYNC_TERMINAL,
+    *AN_ESCAPED_KEYWORD_OPERATOR,
+    "console.log('alpha' 'beta');",
+    'l\\u0065t x = 1; console.log(x);',
+)
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAFileTheParserRefusesIsNotAnsweredWithAProgram(TestBase):
+    """
+    Standing where the grammar requires one token and finding another, the parser keeps the
+    statement or list item it was reading as the text it is, so what comes back holds the text no
+    engine agreed to read and is refused by the engine as the file was. This was an entry of
+    `test.lib.scripts.js.test_unfixed_defects` while the parser wrote the token it wanted instead,
+    and it stays as the regression test that entry became.
+    """
+
+    def test_a_file_the_parser_refuses_comes_back_refused(self):
+        rows = A_FILE_THE_PARSER_REFUSES_THAT_AN_ENGINE_REFUSES_TOO
+        refused = ('', 'SyntaxError')
+        self.assertEqual(
+            {source: (well_formed(source), before_and_after(source)) for source in rows},
+            {source: (False, (refused, refused)) for source in rows},
+        )
+
+
+#: A construct nested inside itself *n* times, for every construct the parser reads by descending
+#: into it, mapped to the length of the text left unread when *n* is a thousand: the levels above
+#: the budget are read, and the innermost list item or statement holding the level past it is the
+#: text it is. Node reads each of them a thousand deep.
+A_CONSTRUCT_NESTED = {
+    'parentheses': (lambda n: '(' * n + '1' + ')' * n + ';', 1603),
+    'arrays': (lambda n: '[' * n + ']' * n + ';', 1602),
+    'calls': (lambda n: 'f(' * n + 'x' + ')' * n + ';', 2404),
+    'blocks': (lambda n: '{' * n + '}' * n, 1600),
+    'objects': (lambda n: 'a = ' + '{b:' * n + '1' + '}' * n + ';', 3207),
+    'ifs': (lambda n: 'if (a) ' * n + 'x;', 5609),
+    'functions': (lambda n: 'function f() {' * n + '}' * n, 12000),
+    'conditionals': (lambda n: 'a ? ' * n + '1' + ' : 2' * n + ';', 8002),
+}
+
+#: The same, for the two shapes the parser reads in a loop rather than by descending.
+A_CHAIN_NESTED = {
+    'binary operators': lambda n: 'a' + ' + a' * n + ';',
+    'member accesses': lambda n: 'a' + '.b' * n + ';',
+}
+
+
+class TestAFileNestedTooDeepToReadIsRefusedAndNeverCrashes(TestBase):
+    """
+    The parser descends once per level of nesting and refuses to descend past a budget, so that a
+    file nested a thousand deep is answered with the text it could not read rather than with a
+    `RecursionError` from inside the tools that read and print it. A hundred levels are read; a
+    thousand are refused at the budget, and what is printed prints to itself; and a chain the
+    parser reads in a loop has no depth to refuse.
+    """
+
+    def _read(self, source: str) -> tuple[bool, bool, list[tuple[int, str]]]:
+        text = printed(source)
+        return (
+            well_formed(source),
+            printed(text) == text,
+            [
+                (len(node.text), node.message)
+                for node in JsParser(source).parse().walk_in_order()
+                if isinstance(node, JsErrorNode)
+            ],
+        )
+
+    def test_a_hundred_levels_are_read_and_a_thousand_are_refused(self):
+        self.assertEqual(
+            {
+                name: (self._read(shape(100)), self._read(shape(1000)))
+                for name, (shape, _) in A_CONSTRUCT_NESTED.items()
+            },
+            {
+                name: ((True, True, []), (False, True, [(unread, 'nesting too deep')]))
+                for name, (_, unread) in A_CONSTRUCT_NESTED.items()
+            },
+        )
+
+    def test_a_chain_a_thousand_long_is_read(self):
+        self.assertEqual(
+            {name: self._read(shape(1000)) for name, shape in A_CHAIN_NESTED.items()},
+            {name: (True, True, []) for name in A_CHAIN_NESTED},
         )

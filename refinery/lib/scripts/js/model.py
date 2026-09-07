@@ -146,9 +146,6 @@ class JsStringLiteral(Expression, spelling='raw'):
         """
         return self.raw[1:-1] if self.terminated else self.raw[1:]
 
-    def has_spelling(self) -> bool:
-        return self.terminated
-
 
 @dataclass(repr=False, eq=False)
 class JsRegExpLiteral(Expression, spelling='raw'):
@@ -182,9 +179,9 @@ class JsTemplateElement(Node, spelling='raw'):
     raw: str = ''
     tail: bool = False
     terminated: bool = True
-
-    def has_spelling(self) -> bool:
-        return self.terminated
+    #: Whether the `}` that closes the hole in front of this run was there. Only the run behind a
+    #: hole the file ended inside lacks it, and such a run holds no text at all.
+    opened: bool = True
 
 
 @dataclass(repr=False, eq=False)
@@ -211,7 +208,7 @@ class JsArrayExpression(Expression):
 
 @dataclass(repr=False, eq=False)
 class JsObjectExpression(Expression):
-    properties: list[JsProperty | JsSpreadElement] = field(default_factory=list)
+    properties: list[JsProperty | JsSpreadElement | JsErrorNode] = field(default_factory=list)
 
 
 @dataclass(repr=False, eq=False)
@@ -357,7 +354,7 @@ class JsArrayPattern(Expression):
 
 @dataclass(repr=False, eq=False)
 class JsObjectPattern(Expression):
-    properties: list[JsProperty | JsRestElement] = field(default_factory=list)
+    properties: list[JsProperty | JsRestElement | JsErrorNode] = field(default_factory=list)
 
 
 @dataclass(repr=False, eq=False)
@@ -373,7 +370,10 @@ class JsRestElement(Expression):
 
 @dataclass(repr=False, eq=False)
 class JsClassBody(Node):
-    body: list[JsMethodDefinition | JsPropertyDefinition | JsStaticBlock] = field(default_factory=list)
+    body: list[JsMethodDefinition | JsPropertyDefinition | JsStaticBlock | JsErrorNode] = field(default_factory=list)
+    #: Whether the closing brace was there. The file may end inside a class body, and a body the
+    #: file ends inside prints the elements it holds and nothing after them.
+    terminated: bool = True
 
 
 @dataclass(repr=False, eq=False)
@@ -398,6 +398,7 @@ class JsPropertyDefinition(Node):
 @dataclass(repr=False, eq=False)
 class JsStaticBlock(Node):
     body: list[Statement] = field(default_factory=list)
+    terminated: bool = True
 
 
 @dataclass(repr=False, eq=False)
@@ -414,6 +415,11 @@ class JsExpressionStatement(Statement, spelling='directive'):
 @dataclass(repr=False, eq=False)
 class JsBlockStatement(Statement):
     body: list[Statement] = field(default_factory=list)
+    #: Whether the closing brace was there. A file carved out of memory ends inside a block more
+    #: often than anywhere else, and the block keeps the statements it holds and says that nothing
+    #: closed it: printing what it holds and nothing after it is what keeps the file's end where the
+    #: file had it. `refinery.lib.scripts.js.model.JsScript.early_errors` reports it.
+    terminated: bool = True
 
 
 @dataclass(repr=False, eq=False)
@@ -478,7 +484,8 @@ class JsForOfStatement(Statement):
 @dataclass(repr=False, eq=False)
 class JsSwitchStatement(Statement):
     discriminant: Expression | None = None
-    cases: list[JsSwitchCase] = field(default_factory=list)
+    cases: list[JsSwitchCase | JsErrorNode] = field(default_factory=list)
+    terminated: bool = True
 
 
 @dataclass(repr=False, eq=False)
@@ -580,10 +587,10 @@ class JsImportAttribute(Node):
 @dataclass(repr=False, eq=False)
 class JsImportDeclaration(Statement):
     specifiers: list[
-        JsImportSpecifier | JsImportDefaultSpecifier | JsImportNamespaceSpecifier
+        JsImportSpecifier | JsImportDefaultSpecifier | JsImportNamespaceSpecifier | JsErrorNode
     ] = field(default_factory=list)
     source: JsStringLiteral | None = None
-    attributes: list[JsImportAttribute] = field(default_factory=list)
+    attributes: list[JsImportAttribute | JsErrorNode] = field(default_factory=list)
     attributes_keyword: str = ''
 
 
@@ -608,9 +615,9 @@ class JsExportSpecifier(Node):
 @dataclass(repr=False, eq=False)
 class JsExportNamedDeclaration(Statement):
     declaration: Statement | None = None
-    specifiers: list[JsExportSpecifier] = field(default_factory=list)
+    specifiers: list[JsExportSpecifier | JsErrorNode] = field(default_factory=list)
     source: JsStringLiteral | None = None
-    attributes: list[JsImportAttribute] = field(default_factory=list)
+    attributes: list[JsImportAttribute | JsErrorNode] = field(default_factory=list)
     attributes_keyword: str = ''
 
 
@@ -623,7 +630,7 @@ class JsExportDefaultDeclaration(Statement):
 class JsExportAllDeclaration(Statement):
     source: JsStringLiteral | None = None
     exported: Expression | None = None
-    attributes: list[JsImportAttribute] = field(default_factory=list)
+    attributes: list[JsImportAttribute | JsErrorNode] = field(default_factory=list)
     attributes_keyword: str = ''
 
 
@@ -654,7 +661,9 @@ class JsScript(Statement, spelling=('module', 'recovered', 'html_comment')):
         """
         What the language refuses in the file under its own mode and goal: the early errors
         `refinery.lib.scripts.js.strict.collect_strict_violations` reports over the tree read as a
-        script, or as a module where the file spells module syntax.
+        script, or as a module where the file spells module syntax, and every construct the file
+        ended inside — a literal, a block, a class body or a switch — which an engine refuses as
+        an unexpected end of input.
         """
         from refinery.lib.scripts.js.strict import collect_strict_violations
         return collect_strict_violations(self, module=self.module)

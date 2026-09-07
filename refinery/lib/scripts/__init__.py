@@ -817,6 +817,7 @@ def _clone_node(node: _N) -> _N:
     """
     clone = copy.copy(node)
     clone.parent = None
+    clone.leading_comments = list(node.leading_comments)
     for field_name, kind in _classify_fields(type(node)):
         if kind == Kind.ChildNode:
             value = getattr(node, field_name)

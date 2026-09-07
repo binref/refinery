@@ -791,6 +791,16 @@ def _check_names(
             out.append(StrictViolation(node.offset, 'arguments-in-class-initializer', node.name))
 
 
+def _check_terminated(node: Node, out: list[StrictViolation]) -> None:
+    """
+    A construct the file ended inside — a literal, a block, a class body, a switch, the file's
+    last comment — is one every engine refuses as an unexpected end of input, whatever the mode
+    and the goal. The node says so itself, and the tree holding it is no program.
+    """
+    if getattr(node, 'terminated', True) is False:
+        out.append(StrictViolation(node.offset, 'unterminated'))
+
+
 def _check_html_comment(node: Node, module: bool, out: list[StrictViolation]) -> None:
     """
     An HTML-like comment is script grammar alone (§B.1.1): a module refuses `<!--` anywhere and
@@ -852,6 +862,7 @@ def collect_strict_violations(
         visited.add(id(current))
         child_strict = _child_strictness(current, current_strict)
         _check_node(current, current_strict, out)
+        _check_terminated(current, out)
         _check_kind_reserved(current, current_context, out)
         _check_html_comment(current, module, out)
         _check_names(current, current_strict, child_strict, module, current_context, out, handled)

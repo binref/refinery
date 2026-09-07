@@ -51,6 +51,7 @@ from refinery.lib.scripts.js.model import (
     JsConditionalExpression,
     JsContinueStatement,
     JsDoWhileStatement,
+    JsErrorNode,
     JsExportDefaultDeclaration,
     JsExportNamedDeclaration,
     JsExpressionStatement,
@@ -927,7 +928,12 @@ def statement_list_of(node: Node) -> list[Statement] | None:
     if isinstance(node, JsScript):
         return node.body
     if isinstance(node, JsSwitchStatement):
-        return [statement for case in node.cases for statement in case.body]
+        return [
+            statement
+            for case in node.cases
+            if isinstance(case, JsSwitchCase)
+            for statement in case.body
+        ]
     if isinstance(node, JsBlockStatement):
         return node.body
     if isinstance(node, JsStaticBlock):
@@ -1236,7 +1242,7 @@ def walk_receiver_scope(root: Node) -> Iterator[Node]:
                 stack.append(node.super_class)
             if node.body is not None:
                 for member in node.body.body:
-                    if isinstance(member, JsStaticBlock):
+                    if isinstance(member, (JsStaticBlock, JsErrorNode)):
                         continue
                     if member.computed and member.key is not None:
                         stack.append(member.key)
@@ -2534,8 +2540,9 @@ class SemanticModel:
                     self._mark_declaration_exported(node.declaration)
                 elif node.source is None:
                     for specifier in node.specifiers:
-                        if isinstance(specifier.local, JsIdentifier):
-                            self._mark_binding_exported(self.resolve(specifier.local))
+                        local = getattr(specifier, 'local', None)
+                        if isinstance(local, JsIdentifier):
+                            self._mark_binding_exported(self.resolve(local))
             elif isinstance(node, JsExportDefaultDeclaration):
                 self._mark_declaration_exported(node.declaration)
 
@@ -3351,7 +3358,7 @@ class _ScopeBuilder:
             if not isinstance(stmt, JsImportDeclaration):
                 continue
             for spec in stmt.specifiers:
-                local = spec.local
+                local = getattr(spec, 'local', None)
                 if isinstance(local, JsIdentifier):
                     self._declare(scope, local.name, BindingKind.IMPORT, local)
 
@@ -3512,9 +3519,10 @@ class _ScopeBuilder:
         if node.discriminant is not None:
             self._visit(node.discriminant, enclosing)
         sscope = self._new_scope(ScopeKind.BLOCK, node, enclosing)
-        for case in node.cases:
+        cases = [case for case in node.cases if isinstance(case, JsSwitchCase)]
+        for case in cases:
             self._collect_lexical(case.body, sscope)
-        for case in node.cases:
+        for case in cases:
             self.model._node_scope[id(case)] = sscope
             if case.test is not None:
                 self._visit(case.test, sscope)

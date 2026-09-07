@@ -40,6 +40,7 @@ from refinery.lib.scripts.js.model import (
     JsObjectPattern,
     JsReturnStatement,
     JsScript,
+    JsSwitchCase,
     JsSwitchStatement,
     JsThrowStatement,
     JsTryStatement,
@@ -159,8 +160,11 @@ class _Builder(CfgBuilder):
         return self.opaque(statement, frontier)
 
     def _switch(self, statement: JsSwitchStatement, frontier: list[CfgNode]) -> list[CfgNode]:
-        arms: list[Sequence[Node]] = [list(case.body) for case in statement.cases]
-        exhaustive = any(case.test is None for case in statement.cases)
+        cases = [case for case in statement.cases if isinstance(case, JsSwitchCase)]
+        if len(cases) != len(statement.cases):
+            return self.opaque(statement, frontier)
+        arms: list[Sequence[Node]] = [list(case.body) for case in cases]
+        exhaustive = any(case.test is None for case in cases)
         return self.dispatch(
             statement, arms, frontier, arm_flow=ArmFlow.SEQUENTIAL, exhaustive=exhaustive)
 

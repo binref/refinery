@@ -29,8 +29,6 @@ from __future__ import annotations
 import inspect
 import unittest
 
-from collections import Counter
-
 from test import TestBase
 from test.lib.scripts.js.analysis.differential import (
     behavior,
@@ -44,12 +42,6 @@ from test.lib.scripts.js.deobfuscation.test_array_length_reads import (
 from test.lib.scripts.js.deobfuscation.test_call_answers_a_wrapper import (
     a_string_array_whose_rotation_runs,
 )
-from test.lib.scripts.js.deobfuscation.test_escaped_identifiers import (
-    AN_ESCAPED_ACCESSOR_TERMINAL,
-    AN_ESCAPED_ASYNC_TERMINAL,
-    AN_ESCAPED_KEYWORD_OPERATOR,
-    AN_ESCAPED_STATIC_TERMINAL,
-)
 from test.lib.scripts.js.deobfuscation.test_stringarray import (
     A_PRESET_BESIDE_AN_ACCESSOR_CALL_NOTHING_CAN_ANSWER,
 )
@@ -62,7 +54,6 @@ from test.lib.scripts.js.ledger import (
     before_and_after,
     before_and_after_in_a_host,
     each_program_still_prints,
-    each_well_formed,
     evaluated_in_a_body,
     folded,
     one_expected_failure_per_program,
@@ -80,24 +71,6 @@ from test.lib.scripts.js.test_parser_recovery import (
 from test.lib.scripts.js.test_truncated_source import FOLDS_ANSWERED_WITH_A_PROGRAM
 
 from refinery.lib.scripts import UnspellableNode
-
-
-def _dropped_source_characters(source: str, printed: str) -> str:
-    """
-    The characters of `source` that `printed` does not account for, whitespace aside. Layout is the
-    printer's to choose and a recovery may add brackets, so only a character that went missing is
-    reported.
-    """
-    available = Counter(character for character in printed if not character.isspace())
-    missing: list[str] = []
-    for character in source:
-        if character.isspace():
-            continue
-        if available[character] > 0:
-            available[character] -= 1
-        else:
-            missing.append(character)
-    return ''.join(missing)
 
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
@@ -197,20 +170,21 @@ class TestAModulesTopLevelAwaitIsAProgram(TestBase):
     """
     A module awaits at its top level (§16.2.1), and the goal symbol is not known while parsing:
     the parser reads the top level of every file under the script context, where `await` is a
-    name, so `await 1` is read as that name followed by a statement of its own, with the repair
-    recorded. The file prints back as `export {  };`, `await;`, `1;`, which no host reads, and
-    `refinery.lib.scripts.is_well_formed` answers `False` for a program a host runs. The `for await`
-    head at the top level is read already; the operator waits for a top level whose goal is open to
-    read `await` followed by an expression as the operator.
+    name, so `await 1` is a name with a number pressed against it, which no statement spells, and
+    the statement is kept as the text it is. The file prints back as it was written and still
+    behaves so, but `refinery.lib.scripts.is_well_formed` answers `False` for a program a host
+    runs, and no pass reads the statement. The `for await` head at the top level is read already;
+    the operator waits for a top level whose goal is open to read `await` followed by an
+    expression as the operator.
     """
 
     @unittest.expectedFailure
-    def test_a_top_level_await_beside_module_syntax_still_behaves_so(self):
+    def test_a_top_level_await_beside_module_syntax_is_a_program(self):
         """
-        Node prints `2` for this file read as a module.
+        Node prints `2` for `export {}; await 1; console.log(2);` read as a module.
         """
-        source = 'export {}; await 1; console.log(2);'
-        self.assertEqual(before_and_after(source, module=True), (prints('2'), prints('2')))
+        source = 'export {}; await 1;'
+        self.assertEqual((well_formed(source), printed(source)), (True, 'export {  };\nawait 1;'))
 
 
 class TestAUsingDeclarationIsAProgram(TestBase):
@@ -219,15 +193,15 @@ class TestAUsingDeclarationIsAProgram(TestBase):
     `await using` awaits that disposer, and `for (using x of y)` disposes on every iteration
     (ECMAScript 2026, explicit resource management). Node runs every program below and prints `2`
     and then `1`; a script may not spell the declaration at its top level, which is why each
-    stands in a block or a body. The parser knows no such declaration: it reads `using` as a name
-    that is a statement of its own and the binding behind it as an assignment to a name the file
-    never declares, with the repair recorded, and the program it answers with throws a
-    `ReferenceError`. The declaration waits for a node of its own, since a removal of a dead
-    binding must see that leaving the block runs the disposer.
+    stands in a block or a body. The parser knows no such declaration: `using` is a name with a
+    name pressed against it, which no statement spells, so the declaration is kept as the text it
+    is. The program still runs as written, but `refinery.lib.scripts.is_well_formed` answers
+    `False` for it and no pass reads the declaration. It waits for a node of its own, since a
+    removal of a dead binding must see that leaving the block runs the disposer.
     """
 
     @unittest.expectedFailure
-    def test_a_using_declaration_disposes_its_value_when_its_block_is_left(self):
+    def test_a_using_declaration_is_a_program_that_disposes_its_value_when_its_block_is_left(self):
         rows = {
             'a block': '{ using x = { [Symbol.dispose]() { console.log(1); } }; console.log(2); }',
             'a function body': (
@@ -242,8 +216,8 @@ class TestAUsingDeclarationIsAProgram(TestBase):
             'a for-of head': 'for (using x of [{ [Symbol.dispose]() { console.log(1); } }]) console.log(2);',
         }
         self.assertEqual(
-            {name: before_and_after(source) for name, source in rows.items()},
-            {name: (prints('2', '1'), prints('2', '1')) for name in rows},
+            {name: (well_formed(source), before_and_after(source)) for name, source in rows.items()},
+            {name: (True, (prints('2', '1'), prints('2', '1'))) for name in rows},
         )
 
 
@@ -251,192 +225,14 @@ class TestASourcePhaseImportIsAProgram(TestBase):
     """
     `import source x from 'm'` binds `x` to the module source of `m` rather than to its namespace
     (ECMAScript 2026, source phase imports), and Node compiles the file as a module. The parser
-    reads `import source x` as a module declaration with no specifier and refuses it, so the file
-    prints back as three statements, the second of which is the word `from`.
+    reads `import source x` as a module declaration with no specifier and refuses it, so the
+    declaration is kept as the text it is, printed back as written and not a program.
     """
 
     @unittest.expectedFailure
     def test_a_source_phase_import_prints_back_as_written(self):
         source = "import source x from 'm';"
         self.assertEqual((well_formed(source), printed(source)), (True, source))
-
-
-class TestANumeralTheLanguageRefusesIsNoProgram(TestBase):
-    """
-    Node refuses `x = <spelling>;` for every spelling below: §12.9.3 reads a numeral by its
-    productions and refuses the source character behind it where that is an IdentifierStart or a
-    digit, which `test.lib.scripts.js.test_lexer` states over the tokens. The parser reads the
-    numeral the lexer ended and then whatever stands behind it as the next token, so `3in y` is
-    read as `3 in y` and printed as a program a host runs.
-    """
-
-    @unittest.expectedFailure
-    def test_a_numeral_pressed_against_a_name_or_a_digit_is_refused(self):
-        spellings = [
-            '004E',
-            '007e1',
-            '01n',
-            '00n',
-            '09n',
-            '08_1',
-            '09_1',
-            '0_1',
-            '0_0',
-            '0_',
-            '0e',
-            '0x',
-            '0b',
-            '0o',
-            '0b2',
-            '0x_1',
-            '0x1_',
-            '0x1g',
-            '0x1n_',
-            '1n1',
-            '1_',
-            '1__0',
-            '1_e3',
-            '1e',
-            '1e_1',
-            '1e+',
-            '1e3e',
-            '1.e',
-            '1._5',
-            '1.5_',
-            '1_.5',
-            '.5_',
-            '3in y',
-            '1.toString()',
-        ]
-        programs = [F'x = {spelling};' for spelling in spellings]
-        self.assertEqual(each_well_formed(programs), {program: False for program in programs})
-
-
-class TestRecoveryKeepsTheSourceText(TestBase):
-    """
-    `refinery.lib.scripts.js.model.JsErrorNode` promises that a span no parser could read is kept
-    verbatim, so that what an analyst gets back still contains what was written.
-    """
-
-    @unittest.expectedFailure
-    def test_no_source_character_is_dropped_by_recovery(self):
-        """
-        Node refuses both of these, with `Unexpected identifier 'b'` and `Invalid regular
-        expression: missing /`, which is precisely when that promise carries the analysis. Whatever
-        the recovery makes of the text, no character of it may be missing from what is printed:
-        a dropped character is a payload the analyst never sees.
-        """
-        sources = ['x = y[a b]', 'x = y.replace(/[^a-z']
-        dropped = tuple(_dropped_source_characters(s, printed(s)) for s in sources)
-        self.assertEqual(dropped, ('', ''))
-
-    @unittest.expectedFailure
-    def test_the_token_a_repair_steps_over_is_still_in_what_isprinted(self):
-        """
-        Node refuses all six of these: `missing ) after argument list` for the two argument lists,
-        `Unexpected identifier 'b'` for the two parameter lists, `Unexpected string` for the catch
-        parameter, and `Unexpected token 'break'` for the case clause. Standing where the grammar
-        requires one token and finding another, `JsParser._expect` writes the token it wanted and
-        steps over the one that was there, so `f('alpha' 'beta');` comes back as `f('alpha');` and
-        the `break` of the case clause is nowhere in what comes back at all. No error node is built
-        for the token that went and no other node holds its text, so the entire record of it is
-        that the file is reported as one the parser repaired.
-        """
-        sources = [
-            "f('alpha' 'beta');",
-            "x = new C('alpha' 'beta');",
-            'function f(a b) { return a; }',
-            'class C { m(a b) {} }',
-            "try { f(); } catch (e 'beta') {}",
-            'switch (x) { case 1 break; }',
-        ]
-        self.assertEqual(
-            [_dropped_source_characters(source, printed(source)) for source in sources],
-            [''] * len(sources),
-        )
-
-
-class TestPrintingIsIdempotent(TestBase):
-    """
-    Printing a parse and parsing that print has to reach a fixed point, including for a source no
-    engine accepts, because a tool that reads its own output otherwise changes a file every pass.
-    """
-
-    @unittest.expectedFailure
-    def test_printing_an_unterminated_regular_expression_twice_is_stable(self):
-        """
-        Node refuses `x = /ab+` with `SyntaxError: Invalid regular expression: missing /`, so what
-        the parser makes of it is a recovery and its shape is the project's to choose. Whichever
-        shape that is, printing the parse of the print must give the print back unchanged.
-        """
-        once = printed('x = /ab+')
-        self.assertEqual(printed(once), once)
-
-    @unittest.expectedFailure
-    def test_printing_a_name_the_source_never_wrote_twice_is_stable(self):
-        """
-        Node refuses each of these six with `SyntaxError: Unexpected end of input`. Where a binding
-        name, a property name, or a method name was expected and none was written, the recovery
-        leaves a `refinery.lib.scripts.js.model.JsErrorNode` holding no text, and the printer writes
-        nothing for it: whatever stood after the gap comes to rest against the word in front of it,
-        and the next read takes that for the name the source never wrote. `var ;` binds a name
-        spelled `;`, `x = y.;` reads the `;` as the property, and `x = { get () {} }` reads the
-        accessor keyword as the method name.
-        """
-        sources = ['var', 'var a = 1,', 'x = y.', 'x = a?.', 'delete a.', 'x = { get']
-        once = [printed(source) for source in sources]
-        self.assertEqual([printed(text) for text in once], once)
-
-    @unittest.expectedFailure
-    def test_printing_a_parameter_list_with_no_arrow_behind_it_twice_is_stable(self):
-        """
-        Node refuses `x = ()` and `x = (a,)` with `SyntaxError: Unexpected token ')'`, `x = (...a)`
-        with `SyntaxError: Unexpected token '...'`, and the two `new` forms with `SyntaxError:
-        Unexpected end of input`. A bracket holding nothing, a trailing comma, or a rest element is
-        spelled by an arrow head and by no other expression, so the recovery builds an arrow
-        function whose body is an error node reading `a parameter list with no arrow behind it`.
-        The printer writes the `=>` the file never had and nothing for the body, and the terminator
-        that comes to rest behind the arrow is what the next read gives the body. In the two `new`
-        forms the bracketed list is one the printer itself wrote for a callee the source left
-        empty, so the arrow arrives on the second print and the text is still growing on the third.
-        """
-        sources = ['x = ()', 'x = (a,)', 'x = (...a)', 'x = new', 'throw new']
-        once = [printed(source) for source in sources]
-        self.assertEqual([printed(text) for text in once], once)
-
-    @unittest.expectedFailure
-    def test_printing_a_statement_the_source_never_wrote_twice_is_stable(self):
-        """
-        Node refuses each of these five with `SyntaxError: Unexpected end of input`. Each is a
-        statement whose body the file stops short of, and the recovery stands an error node holding
-        no text where that body belongs. The printer gives a single statement a block of its own,
-        so it writes a line for a statement that spells nothing and the block comes out as a blank
-        line between braces; reading that back finds a block with no statement in it at all, which
-        prints tight. The first print is longer than every print after it.
-        """
-        sources = [
-            'if (a)',
-            'while (a)',
-            'with (o)',
-            'for (const v of a)',
-            'if (a) { f(); } else',
-        ]
-        once = [printed(source) for source in sources]
-        self.assertEqual([printed(text) for text in once], once)
-
-    @unittest.expectedFailure
-    def test_printing_a_heritage_clause_the_source_never_wrote_twice_is_stable(self):
-        """
-        Node refuses `class D extends` with `SyntaxError: Unexpected end of input` and refuses what
-        printing it gives back with the same message. The recovery leaves an error node holding no
-        text where the superclass belongs and the printer writes nothing for it, so
-        `class D extends  {}` offers the class body to the slot an expression is read from. The next
-        parse takes those braces for an object literal superclass, leaves the class with a body
-        nobody wrote, and prints `class D extends {} {}`, which Node accepts: two passes turn a file
-        that was cut into a program saying something the file never said.
-        """
-        once = printed('class D extends')
-        self.assertEqual(printed(once), once)
 
 
 class TestCommentWithNoFollowingStatement(TestBase):
@@ -1498,54 +1294,36 @@ class TestAFileRefusedWithNothingFabricatedIsNotAnsweredWithAProgram(TestBase):
         )
 
 
-#: Further shapes of the repair `A_FILE_THE_PARSER_REPAIRED` is about, one written with no escape at
-#: all so that the family is not read as being about escapes, and one spelling `let` where a
-#: declaration would begin.
-A_REPAIR_WITH_NOTHING_ESCAPED_ABOUT_IT = (
-    "console.log('alpha' 'beta');",
-    _spelled_with_an_escaped_identifier('lESCAPED_ET x = 1; console.log(x);'),
-)
-
-
-#: Every file whose parse needed a token the source did not write. Four of the tables come from
-#: `test.lib.scripts.js.deobfuscation.test_escaped_identifiers`, where the law they belong to is
-#: stated: a terminal word of the grammar is matched by the characters typed, so an escaped
-#: spelling of `get`, `set`, `static`, `async`, `instanceof` or `in` is a name standing where the
-#: grammar wanted a word, and the parser writes the separator that would have to be there.
-A_FILE_THE_PARSER_REPAIRED = (
-    *AN_ESCAPED_ACCESSOR_TERMINAL,
-    *AN_ESCAPED_STATIC_TERMINAL,
-    *AN_ESCAPED_ASYNC_TERMINAL,
-    *AN_ESCAPED_KEYWORD_OPERATOR,
-    *A_REPAIR_WITH_NOTHING_ESCAPED_ABOUT_IT,
+#: Files the parser refuses, each in a shape a pass over the tree turns into a program: a fold
+#: reaches past the unread text, a removal takes the function holding it, or a removal takes the
+#: dead store whose value is the literal the file ends inside. Node refuses all three with a
+#: `SyntaxError` and prints nothing.
+A_FILE_THE_PARSER_REFUSED_THAT_A_PASS_ANSWERS_WITH_A_PROGRAM = (
+    'console.log(1 + 1); function f() { g(',
+    'function f() { a; ret[urn b; } g();',
+    "x = 'abc",
 )
 
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
-class TestAFileTheParserRepairedIsNotAnsweredWithAProgram(TestBase):
+class TestAFileTheParserRefusedIsNotAnsweredWithAProgram(TestBase):
     """
-    Standing where the grammar requires one token and finding another, the parser writes the token
-    it wanted and reads on. It records that it did — `refinery.lib.scripts.is_well_formed` answers
-    `False` for every file here — and nothing between that record and the printer reads it, so what
-    comes back is a program built out of text no engine agreed to read.
+    A file the parser refuses is kept as the text no engine agreed to read, and
+    `refinery.lib.scripts.is_well_formed` answers `False` for it; but nothing between that answer
+    and the passes reads it, so the passes run over the tree around the unread text as if it were
+    a program. A fold computes `console.log(2)` beside a function the file ends inside, a removal
+    deletes the function whose body holds the text, and a removal deletes the dead store whose
+    value is the string the file ends inside; each answer is a program built out of a file that
+    was not one: the first prints `2`, the second throws a `ReferenceError` and the third is the
+    empty program, where Node prints nothing for any of them.
 
-    Two of these are the expensive shape. `[] instanceof Array` and `'a' in {a: 1}` written with an
-    escaped operator lose the operator and keep both operands, so the file comes back printing them;
-    and `class C { get x(){} }` written the same way comes back declaring a field beside a method,
-    which runs and prints a function where Node refuses the file outright.
-
-    `test_a_file_the_language_refuses_is_refused` states the same cost for the files where nothing
-    was repaired at all. That one needs a refusal mechanism to be built; this one needs only a
-    reader for the record the parser already keeps.
+    `test_a_file_the_language_refuses_is_refused` states the same cost for the files where the
+    parser read everything and the language refuses the result.
     """
 
     @unittest.expectedFailure
-    def test_a_file_the_parser_repaired_is_refused(self):
-        """
-        Node refuses every program of `A_FILE_THE_PARSER_REPAIRED` with a `SyntaxError` and prints
-        nothing for it. Each deobfuscation is a file that parses, and five of them print.
-        """
-        rows = A_FILE_THE_PARSER_REPAIRED
+    def test_a_file_the_parser_refused_is_refused(self):
+        rows = A_FILE_THE_PARSER_REFUSED_THAT_A_PASS_ANSWERS_WITH_A_PROGRAM
         refused = ('', 'SyntaxError')
         self.assertEqual(
             {source: (well_formed(source), before_and_after(source)) for source in rows},

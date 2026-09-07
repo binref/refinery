@@ -105,9 +105,9 @@ BRACKETED_LISTS_AFTER_ASYNC_THAT_NO_ARROW_FOLLOWS = [
 ]
 
 A_LINE_BREAK_BEFORE_THE_ARROW = [
-    ('(a)', ['(a);', PARSE_ERROR, 'a;']),
-    ('(a, b)', ['(a, b);', PARSE_ERROR, 'a;']),
-    ('a', ['a;', PARSE_ERROR, 'a;']),
+    ('(a)', ['(a);', (PARSE_ERROR, '=> a')]),
+    ('(a, b)', ['(a, b);', (PARSE_ERROR, '=> a')]),
+    ('a', ['a;', (PARSE_ERROR, '=> a')]),
 ]
 
 AN_ARROW_WITH_A_BLOCK_BODY = 'f = a => {}'
@@ -118,9 +118,15 @@ A_FUNCTION_EXPRESSION = 'f = function () {}'
 A_TAIL_AFTER_AN_ARROW_WITH_A_BLOCK_BODY = [
     ('[0]', ['f = a => {};', '[0];']),
     ('(1)', ['f = a => {};', '(1);']),
-    ('.b', ['f = a => {};', PARSE_ERROR, 'b;']),
+    ('.b', ['f = a => {};', (PARSE_ERROR, '.b')]),
     ('`t`', ['f = a => {};', '`t`;']),
 ]
+"""
+What a tail on the line below a block-bodied arrow is read as. Node accepts the first, second and
+fourth of these files and refuses the third with `Unexpected token '.'`; on the same line it
+refuses all four, since no tail may follow a block body, and so does the parser, which keeps the
+whole line as the text it could not read.
+"""
 
 A_TAIL_AFTER_AN_ARROW_WITH_A_CONCISE_BODY = [
     ('[0]', ['f = a => b[0];']),
@@ -205,14 +211,15 @@ ONE_STATEMENT_AFTER_A_CONCISE_BODY = [
 
 class TestJsArrowFunction(TestBase):
 
-    def _statements(self, source: str) -> list[str]:
+    def _statements(self, source: str) -> list[str | tuple[str, str]]:
         """
         The statements of the program, each printed back to source, in the order they are written.
-        A span the parser could not read is named `PARSE_ERROR` instead, which no printed statement
-        equals, so a program that lost a statement to a recovery cannot pass for one that read it.
+        A span the parser could not read is `PARSE_ERROR` paired with the text it holds, which no
+        printed statement equals, so a program that lost a statement to a recovery cannot pass for
+        one that read it, and a span that swallowed a statement shows which one.
         """
         return [
-            PARSE_ERROR if isinstance(node, JsErrorNode) else JsSynthesizer().convert(node)
+            (PARSE_ERROR, node.text) if isinstance(node, JsErrorNode) else JsSynthesizer().convert(node)
             for node in JsParser(source).parse().body
         ]
 
@@ -261,33 +268,36 @@ class TestJsArrowFunction(TestBase):
                     (type(expression), JsSynthesizer().convert(expression)),
                     (JsParenthesizedExpression, printed))
 
-    def test_a_list_that_no_expression_spells_is_read_as_an_arrow_head_without_a_body(self):
+    def test_a_list_that_no_expression_spells_is_kept_as_the_text_it_is(self):
         """
         Node rejects each of these four, because the empty list, the rest element and the trailing
-        comma are shapes of a parameter list and of nothing else. The parser therefore binds the
-        parameters it read and has no body to give them.
+        comma are shapes of a parameter list and of nothing else, and no arrow follows to bind
+        them. The parser keeps the list as the text it could not read, and writes no arrow the
+        file never had.
         """
-        for source, parameters in LISTS_THAT_NO_EXPRESSION_SPELLS:
+        for source, _ in LISTS_THAT_NO_EXPRESSION_SPELLS:
             with self.subTest(source=source):
-                arrow = self._arrow(source)
-                self.assertEqual(self._parameters(arrow), parameters)
-                self.assertEqual(type(arrow.body), JsErrorNode)
+                self.assertEqual(self._statements(source), [(PARSE_ERROR, source)])
 
     def test_every_statement_written_after_such_a_list_comes_back_as_the_source_wrote_it(self):
         """
         Node rejects every file below, because the list is a parameter list and the body that would
-        bind it was never written. The parser has to make something of the list either way, and
-        whatever that is, the statements that follow are the analyst's file: reading one of them as
-        the missing body loses it, and so does dropping it.
+        bind it was never written. The statements that follow are the analyst's file: written on
+        the line below the list, each comes back as itself; written on the same line, the first of
+        them is inside the text the list's statement runs to, since a statement no grammar reads
+        ends where its line does, and every statement after that one comes back as itself.
         """
         for source, _ in LISTS_THAT_NO_EXPRESSION_SPELLS:
             for statements in STATEMENTS_WRITTEN_AFTER_A_LIST_NO_EXPRESSION_SPELLS:
                 written = '\n'.join(statements)
-                for separator in (' ', '\n'):
-                    with self.subTest(source=source, written=written, separator=separator):
-                        self.assertEqual(
-                            self._statements(F'{source}{separator}{written}'),
-                            [*self._statements(source), *statements])
+                with self.subTest(source=source, written=written, separator='\n'):
+                    self.assertEqual(
+                        self._statements(F'{source}\n{written}'),
+                        [(PARSE_ERROR, source), *statements])
+                with self.subTest(source=source, written=written, separator=' '):
+                    self.assertEqual(
+                        self._statements(F'{source} {written}'),
+                        [(PARSE_ERROR, F'{source} {statements[0]}'), *statements[1:]])
 
     def test_a_bracketed_list_after_async_that_no_arrow_follows_is_a_call_argument_list(self):
         """
@@ -305,7 +315,8 @@ class TestJsArrowFunction(TestBase):
     def test_an_arrow_on_the_line_below_its_head_binds_no_parameters(self):
         """
         Node rejects all three: no line break may stand between a parameter list and its arrow.
-        What was written is left an expression, and the arrow that follows it is read by nothing.
+        What was written is left an expression, and the arrow with the body behind it is one span
+        of text the parser could not read.
         """
         for head, expected in A_LINE_BREAK_BEFORE_THE_ARROW:
             with self.subTest(head=head):
@@ -316,7 +327,7 @@ class TestJsArrowFunction(TestBase):
             with self.subTest(tail=tail):
                 self.assertEqual(
                     self._on_both_sides_of_a_line_break(AN_ARROW_WITH_A_BLOCK_BODY, tail),
-                    (expected, expected))
+                    ([(PARSE_ERROR, F'{AN_ARROW_WITH_A_BLOCK_BODY} {tail}')], expected))
 
     def test_a_tail_after_an_arrow_whose_body_is_an_expression_belongs_to_that_expression(self):
         for tail, expected in A_TAIL_AFTER_AN_ARROW_WITH_A_CONCISE_BODY:

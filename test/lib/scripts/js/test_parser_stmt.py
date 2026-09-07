@@ -557,33 +557,41 @@ class TestJsParserStatements(TestBase):
         self.assertIsNone(script.body[0].argument)
         self.assertIsInstance(script.body[1], JsExpressionStatement)
 
-    def test_error_recovery(self):
+    def _shapes(self, statements: list) -> list[type | tuple[str, str]]:
+        """
+        The statements as their node types, with an unread span as its text and message instead:
+        the one shape whose identity is the text it holds.
+        """
+        return [
+            (statement.text, statement.message) if isinstance(statement, JsErrorNode) else type(statement)
+            for statement in statements
+        ]
+
+    def test_garbage_before_a_statement_is_unread_text_up_to_the_semicolon(self):
+        """
+        Node refuses `@@@ var x = 1;`. A statement begins where the garbage stands, and a statement
+        no grammar reads runs to the semicolon that ends it, so the declaration written behind the
+        garbage is inside the unread text and not a declaration the file holds.
+        """
         script = self._parse_all('@@@ var x = 1;')
-        has_error = False
-        has_var = False
-        for stmt in script.body:
-            if isinstance(stmt, JsErrorNode):
-                has_error = True
-            if isinstance(stmt, JsVariableDeclaration):
-                has_var = True
-        self.assertTrue(has_error)
-        self.assertTrue(has_var)
+        self.assertEqual(self._shapes(script.body), [('@@@ var x = 1;', 'unexpected token')])
 
-    def test_error_recovery_between_valid_statements(self):
+    def test_a_statement_before_the_garbage_is_read_and_the_rest_of_the_line_is_not(self):
         script = self._parse_all('var a = 1; ### var b = 2;')
-        declarations = [s for s in script.body if isinstance(s, JsVariableDeclaration)]
-        errors = [s for s in script.body if isinstance(s, JsErrorNode)]
-        self.assertEqual(len(declarations), 2)
-        self.assertGreater(len(errors), 0)
+        self.assertEqual(
+            self._shapes(script.body),
+            [JsVariableDeclaration, ('### var b = 2;', 'unexpected token')],
+        )
 
-    def test_error_recovery_inside_block(self):
+    def test_garbage_inside_a_block_is_unread_text_of_that_block(self):
         script = self._parse_all('function f() { var a = 1; @@@ var b = 2; }')
-        self.assertIsInstance(script.body[0], JsFunctionDeclaration)
+        self.assertEqual(self._shapes(script.body), [JsFunctionDeclaration])
         block = script.body[0].body
-        declarations = [s for s in block.body if isinstance(s, JsVariableDeclaration)]
-        errors = [s for s in block.body if isinstance(s, JsErrorNode)]
-        self.assertEqual(len(declarations), 2)
-        self.assertGreater(len(errors), 0)
+        assert isinstance(block, JsBlockStatement)
+        self.assertEqual(
+            self._shapes(block.body),
+            [JsVariableDeclaration, ('@@@ var b = 2;', 'unexpected token')],
+        )
 
     def test_error_recovery_all_garbage(self):
         script = self._parse_all('@@@')
