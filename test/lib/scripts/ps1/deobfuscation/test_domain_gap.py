@@ -80,16 +80,25 @@ from refinery.lib.scripts.ps1.parser import Ps1Parser
 #: host never runs. The five rises come back down by teaching `apply` the code point of a shift
 #: count; the fall does not come back, the gap is smaller because the interpreter stopped answering
 #: where it should not.
+#:
+#: Eight rows then rose together, by 616 in total, and `System.Object[]` alone held. What was added
+#: is not a fold the domain lost but a false throw it stopped claiming: `-and`, `-or`, `-xor`, the
+#: pattern and `-like` operators, `-contains`/`-in`, `-split` and `-f` all fell through `_kernel` to
+#: `_numeric_pair`, whose refusal of a String no number reads was raised as a *certain* throw — an
+#: answer that is neither a value nor the clean decline this census counts, so the gap went unseen.
+#: `_kernel` now declines an operator that reads no number from its operands before it reaches the
+#: pair, so each is the honest decline it always was. `System.Object[]` does not move because an
+#: array left reaches these operators by a path that already declined without the pair.
 GAP: dict[str, int] = {
-    'System.String': 1714,
+    'System.String': 2133,
     'System.Object[]': 1317,
-    'System.Char': 1068,
-    'System.Int64': 1104,
-    'System.Int32': 715,
-    'System.Double': 605,
-    'System.Byte': 429,
-    'System.Boolean': 246,
-    'System.Void': 163,
+    'System.Char': 1125,
+    'System.Int64': 1132,
+    'System.Int32': 750,
+    'System.Double': 640,
+    'System.Byte': 450,
+    'System.Boolean': 260,
+    'System.Void': 170,
 }
 
 #: The witness spellings the reader cannot make a fact of, so the census is quantified over the

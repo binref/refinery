@@ -977,9 +977,10 @@ class TestPs1CertainThrowProvesWhatTheHostRaisesOn(Ps1EffectsTest):
 class TestPs1CertainThrowDeclinesEverythingItCannotProve(Ps1EffectsTest):
     """
     The load-bearing property is no false positive: where an expression can ever not throw, or the
-    domain cannot prove it must, `certainly_throws` answers `False`. That covers three kinds of row —
-    a value the host converts, a throw guarded by short-circuit or by strict-mode, and an operand the
-    domain does not hold — and each `False` is a fold declined, never a wrong deletion.
+    domain cannot prove it must, `certainly_throws` answers `False`. That covers a value the host
+    converts, a throw guarded by short-circuit or by strict-mode, an operand the domain does not
+    hold, and an operator that never reads its String operand as a number — and each `False` is a
+    fold declined, never a wrong deletion.
     """
 
     def test_a_value_the_host_converts_is_not_a_certain_throw(self):
@@ -998,9 +999,17 @@ class TestPs1CertainThrowDeclinesEverythingItCannotProve(Ps1EffectsTest):
                 self.assertFalse(certainly_throws(self._expression(source)))
 
     def test_a_throw_that_a_path_may_skip_is_not_certain(self):
-        # `-and`/`-or` never evaluate the right operand once the left settles the result, so a
-        # certain throw parked there is not certain for the whole expression: 5.1 answers these.
-        for source in ('$false -and (1 / 0)', "$true -or [Int]'abc'"):
+        # `-and`/`-or` may never evaluate the right operand, so a certain throw parked there is not
+        # certain for the whole expression: 5.1 answers `$false -and (1 / 0)` with `$false`. The
+        # right operand is capped unconditionally, so a left that *forces* the right to run
+        # (`$true -and`, `$false -or`) is declined too rather than proven — a sound under-claim
+        # this pass does not refine with left-value analysis; 5.1 does end the script on those two.
+        for source in (
+            '$false -and (1 / 0)',
+            "$true -or [Int]'abc'",
+            '$true -and (1 / 0)',
+            '$false -or (1 / 0)',
+        ):
             with self.subTest(source):
                 self.assertFalse(certainly_throws(self._expression(source)))
 
@@ -1019,6 +1028,34 @@ class TestPs1CertainThrowDeclinesEverythingItCannotProve(Ps1EffectsTest):
     def test_an_operand_the_domain_does_not_hold_is_not_a_certain_throw(self):
         for source in ("[Int]$x", '1 / $x', '$x + 1', 'Get-Thing', "[DateTime]'x'"):
             with self.subTest(source):
+                self.assertFalse(certainly_throws(self._expression(source)))
+
+    def test_an_operator_that_never_reads_its_string_as_a_number_is_not_a_certain_throw(self):
+        # A String no number can be read out of is a certain throw only where the operator coerces
+        # it to one; a logical, pattern, membership, split or format operator never does, so 5.1
+        # answers each of these with a value rather than ending the script.
+        for source in (
+            "$false -and 'abc'",
+            "$true -or 'abc'",
+            "'abc' -xor $true",
+            "'a,b' -split ','",
+            "'abc' -like '*b*'",
+            "'abc' -match 'b'",
+            "'x' -in 1, 2, 3",
+            "'abc' -contains 'a'",
+            "'{0}' -f 'x'",
+        ):
+            with self.subTest(source):
+                self.assertFalse(certainly_throws(self._expression(source)))
+
+    def test_a_hex_prefixed_or_whitespace_wrapped_cast_string_is_not_a_certain_throw(self):
+        # 5.1's integer cast reads a `&h`, `#` or `0x` hex pattern, and trims a String of Unicode
+        # whitespace before reading it, so a bit pattern or a number wrapped in a vertical tab, a
+        # form feed or a non-breaking space converts rather than throwing.
+        sources = ["[Int]'&hFF'", "[Int]'#FF'", "[Int]'0xFF'"]
+        sources += [F"[Int]'{pad}5'" for pad in (chr(0x0B), chr(0x0C), chr(0xA0))]
+        for source in sources:
+            with self.subTest(repr(source)):
                 self.assertFalse(certainly_throws(self._expression(source)))
 
 

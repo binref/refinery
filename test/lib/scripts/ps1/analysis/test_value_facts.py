@@ -2778,9 +2778,9 @@ class TestPs1OutcomeIsWeakOnBothAxes(unittest.TestCase):
         five = Ps1Constant(INT32, 5)
         zero = Ps1Constant(INT32, 0)
         self.assertEqual(apply('/', five, zero), Ps1Outcome(ALWAYS, UNKNOWN))
-        self.assertEqual(apply('/', five, Ps1Typed(INT32)).may_throw, True)
+        self.assertEqual(apply('/', five, Ps1Typed(INT32)), Ps1Outcome(MAYBE, UNKNOWN))
         self.assertEqual(apply('/', five, UNKNOWN), Ps1Outcome(MAYBE, UNKNOWN))
-        self.assertEqual(apply('/', Ps1Typed(INT32), zero).may_throw, True)
+        self.assertEqual(apply('/', Ps1Typed(INT32), zero), Ps1Outcome(MAYBE, UNKNOWN))
         self.assertEqual(apply('%', five, zero), Ps1Outcome(ALWAYS, UNKNOWN))
         self.assertEqual(apply('%', five, UNKNOWN), Ps1Outcome(MAYBE, UNKNOWN))
 

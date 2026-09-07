@@ -660,13 +660,14 @@ class Ps1Outcome(typing.NamedTuple):
     safety made by the one answer that has no grounds for any claim. It made generalising an operand
     *remove* a throw: `1 / $x` for a divisor this module could not type answered that it cannot
     throw, where the same division over a divisor it could type answered that it can. Only `render`
-    refusing to spell an `UNKNOWN` kept that out of a fold, which is a guard that holds one operation
-    deep and no further.
+    refusing to spell an `UNKNOWN` kept that out of a fold, which is a guard that holds one
+    operation deep and no further.
 
     `may_throw` and `certainly_throws` are the two readings of the axis a caller wants, and they
     project from the one field so that the invariant `ALWAYS ⇒ may_throw` cannot be got wrong. A
-    fold reads `may_throw` and stops on anything but `NEVER`; a transform that deletes or reroutes
-    code reads `certainly_throws` and acts only on `ALWAYS`.
+    fold reads `may_throw` and stops on anything but `NEVER`; `certainly_throws` is for the
+    transform that deletes or reroutes code, which will act only on `ALWAYS` — it has no reader
+    yet, and the `no false positive` obligation on `ALWAYS` is what that reader will rest on.
     """
 
     throws: Ps1Throws
@@ -1682,7 +1683,7 @@ def _to_char_array(fact: Ps1Fact) -> Ps1Outcome:
     for element in elements:
         outcome = convert(element, _CHAR)
         if outcome.may_throw or outcome.value is UNKNOWN:
-            return Ps1Outcome(MAYBE, UNKNOWN)
+            return Ps1Outcome(ALWAYS if outcome.certainly_throws else MAYBE, UNKNOWN)
         converted.append(outcome.value)
     return Ps1Outcome(NEVER, Ps1Constant(_CHAR_ARRAY, tuple(converted)))
 
@@ -1864,7 +1865,7 @@ def _evaluated_cast(
         converted = convert(operand.value, target)
         return Ps1Outcome(_throw_join(operand.throws, converted.throws), converted.value)
     named = _cast_names(target)
-    return NOTHING if named is None else Ps1Outcome(MAYBE, named)
+    return NOTHING if named is None else Ps1Outcome(_throw_join(operand.throws, MAYBE), named)
 
 
 def _evaluated_unary(
@@ -2141,10 +2142,16 @@ def _pattern_at_width(bounds: tuple[int, int], magnitude: int) -> int:
 #: reject. It is deliberately not the source numeral lexer `_numeral`, which rejects `'1,000'` where
 #: 5.1 reads 1000, so a reject decided by that would over-claim a throw. Measured, the coercion
 #: accepts a sign, thousands separators, a fraction and an exponent (`[int]'1e3'` is 1000,
-#: `[int]'1,000'` is 1000, `[int]'3.9'` is 4); a `0x` bit pattern is `_CAST_HEX`. Being a superset is
-#: the load-bearing property: it may match a String 5.1 rejects (a missed throw, sound), but it must
-#: match every String 5.1 accepts, or a throw would be claimed for a value that converts.
+#: `[int]'1,000'` is 1000, `[int]'3.9'` is 4). Being a superset is the load-bearing property: it may
+#: match a String 5.1 rejects (a missed throw, sound), but it must match every String 5.1 accepts,
+#: or a throw would be claimed for a value that converts.
 _COERCION_NUMERIC = re.compile(r'[+-]?[0-9,]*\.?[0-9]*(?:[eE][+-]?[0-9]+)?\Z')
+
+#: The hex spellings 5.1's integer cast reads through its .NET converter, which the decimal grammar
+#: above does not carry: a `0x`, `&h` or `#` prefix on hex digits. Measured, `[int]'0xFF'`,
+#: `[int]'&hFF'` and `[int]'#FF'` are each 255, so a certain throw must never be claimed for one —
+#: the value path (`_from_string`) still computes only the `0x` form, which is a sound recall gap.
+_COERCION_HEX = re.compile(r'(?:0[xX]|&[hH]|#)[0-9a-fA-F]+\Z')
 
 
 def _coercion_rejects(text: str) -> bool:
@@ -2152,9 +2159,15 @@ def _coercion_rejects(text: str) -> bool:
     Whether 5.1 is *certain* to throw reading a number out of the String `text` — a positive
     under-approximation used only to sharpen a throw from *may* to *must*, never to license a fold.
     `True` only where no invariant numeric coercion can read `text`; an empty or all-whitespace
-    String, or one that looks numeric, answers `False` — 5.1 may accept it, so no throw is claimed.
-    Measured rejects: `'abc'`, `'1_0'`, `'0b10'`, `'1kb'`, `'5L'`. Measured non-rejects: `'1e3'`,
-    `'1,000'`, `'3.9'`, `'0x10'`, `''`.
+    String, one that looks numeric, or a hex bit pattern answers `False` — 5.1 may accept it, so
+    no throw is claimed. Measured rejects: `'abc'`, `'1_0'`, `'0b10'`, `'1kb'`, `'5L'`. Measured
+    non-rejects: `'1e3'`, `'1,000'`, `'3.9'`, `'0x10'`, `'&hFF'`, `'#FF'`, `''`.
+
+    Whitespace is stripped with `str.strip` rather than `_CAST_TRIM`, because 5.1's cast trims a
+    String with the culture-aware `String.Trim` before reading it: a vertical tab, a form feed and a
+    non-breaking space all convert to the number they wrap, where `_CAST_TRIM` would leave them and
+    this would reject it. Stripping a *superset* of what 5.1 strips is the sound direction: it can
+    only decline to claim a throw, never invent one.
 
     Position is not this predicate's concern and is settled before it: a String on the left of `+`
     or `*` concatenates or repeats and never coerces, so `'abc' + 1` and `'abc' * 2` reach no caller
@@ -2163,8 +2176,8 @@ def _coercion_rejects(text: str) -> bool:
     `[int]'1kb'` throws (the lexer's multiplier is not a cast's) while `1 + '1kb'` is 1025 (the lexer
     reads it, so this is never asked).
     """
-    trimmed = text.strip(_CAST_TRIM)
-    if not trimmed or _CAST_HEX.match(trimmed):
+    trimmed = text.strip()
+    if not trimmed or _COERCION_HEX.match(trimmed):
         return False
     return _COERCION_NUMERIC.match(trimmed) is None
 
@@ -2618,6 +2631,8 @@ def _kernel(operator: str, left: Ps1Fact, right: Ps1Fact) -> _Number | None:
         if elements is not None:
             return _filtered(operator, elements, right)
         return _compared(operator, left, right)
+    if operator not in _NUMERIC_BINARY:
+        return None
     operands = _numeric_pair(left, right)
     if operands is None:
         return None
@@ -3111,6 +3126,12 @@ _ARITHMETIC = {
     '-': operator_module.sub,
     '*': operator_module.mul,
 }
+
+#: The binary operators whose operands 5.1 reads as numbers, and the only ones `_kernel` consults a
+#: `_numeric_pair` for. A String no number can be read out of is a throw *for these* — `1 + 'x'`
+#: ends the script — but not for an operator that never coerces it (`-match`, `-split`, `-and`,
+#: `-f`, …), which is why the pair, and the certain throw its reject raises, is gated to these.
+_NUMERIC_BINARY = frozenset(_ARITHMETIC) | {'/', '%'}
 
 _BITWISE: dict[str, Callable[[int, int], int]] = {
     '-band': int.__and__,
