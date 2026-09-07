@@ -17,7 +17,7 @@ import unittest
 
 from collections import Counter
 from enum import Enum, auto
-from typing import Callable, Iterable, Mapping, NamedTuple
+from typing import Callable, Iterable, Iterator, Mapping, NamedTuple
 
 from test.lib.scripts.js.analysis.differential import (
     behavior,
@@ -26,8 +26,10 @@ from test.lib.scripts.js.analysis.differential import (
 )
 
 from refinery.lib.scripts import is_well_formed
+from refinery.lib.scripts.js.lexer import JsLexer
 from refinery.lib.scripts.js.parser import JsParser
 from refinery.lib.scripts.js.synth import JsSynthesizer
+from refinery.lib.scripts.js.token import JsTokenKind
 from refinery.units.scripting.js import js
 
 NL = chr(10)
@@ -45,20 +47,78 @@ def well_formed(source: str) -> bool:
     return is_well_formed(JsParser(source).parse())
 
 
+class _Spelled(NamedTuple):
+    """
+    One thing a file spells that this oracle can see: a single character of code, or the whole text
+    of one comment. Whitespace is none of them, layout being the printer's to choose.
+    """
+    text: str
+    is_comment: bool
+
+
+def _without_whitespace(text: str) -> str:
+    return ''.join(character for character in text if not character.isspace())
+
+
+def _spelled_in(text: str) -> Iterator[_Spelled]:
+    """
+    Every character of code and every comment *text* spells, in the order it writes them.
+
+    The comments are the ones `refinery.lib.scripts.js.lexer.JsLexer` reads rather than every run
+    of characters between a pair of delimiters, since a delimiter standing inside a string or a
+    template opens no comment and its characters are code.
+    """
+    cut = 0
+    for token in JsLexer(text).tokenize():
+        if token.kind is not JsTokenKind.COMMENT:
+            continue
+        for character in text[cut:token.offset]:
+            if not character.isspace():
+                yield _Spelled(character, False)
+        yield _Spelled(token.value, True)
+        cut = token.offset + len(token.value)
+    for character in text[cut:]:
+        if not character.isspace():
+            yield _Spelled(character, False)
+
+
 def dropped_source_characters(source: str, printed: str) -> str:
     """
-    The characters of *source* that *printed* does not account for, whitespace aside. Layout is the
-    printer's to choose, so only a character that went missing is reported.
+    The characters of *source* that *printed* does not account for, whitespace aside, in the order
+    *source* writes them; the empty string where every one of them is accounted for.
+
+    Code and comments are asked for separately, because the printer may move a comment and may not
+    move code. Each character of code has to stand in *printed* in the order *source* wrote it, and
+    each comment *source* holds has to be one *printed* holds too, wherever in the file it now
+    stands. A comment *printed* does not hold as a comment is looked for as code where it stands.
+    A file spelling `x = / /* c` needs that: the `/*` in it stands inside a regular expression and
+    opens no comment, and only a text that writes those two characters together reads as though it
+    did.
+
+    So the layout the printer chooses is accepted, and so is a comment moved to a statement
+    boundary. A character of code that went missing is reported, so is one that came back in
+    another place, and so is a comment that went missing.
     """
-    available = Counter(character for character in printed if not character.isspace())
+    written = list(_spelled_in(printed))
+    code = ''.join(part.text for part in written if not part.is_comment)
+    comments = Counter(_without_whitespace(part.text) for part in written if part.is_comment)
     missing: list[str] = []
-    for character in source:
-        if character.isspace():
+    cursor = 0
+    for part in _spelled_in(source):
+        spelling = _without_whitespace(part.text)
+        if part.is_comment and comments[spelling] > 0:
+            comments[spelling] -= 1
             continue
-        if available[character] > 0:
-            available[character] -= 1
+        position = cursor
+        for character in spelling:
+            position = code.find(character, position)
+            if position < 0:
+                break
+            position += 1
+        if position < 0:
+            missing.append(part.text)
         else:
-            missing.append(character)
+            cursor = position
     return ''.join(missing)
 
 

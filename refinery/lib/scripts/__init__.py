@@ -14,6 +14,16 @@ from dataclasses import dataclass, field
 from typing import Callable, Generator, Protocol, TypeVar
 from weakref import WeakKeyDictionary
 
+from refinery.lib.tools import RecursionDepth
+
+#: The interpreter recursion limit under which a whole tree is read, printed or compared. Each
+#: entry point that descends a tree raises the limit to this depth once, for the duration of the
+#: call, so that how deep a tree may be is decided by the parser rather than by whatever ambient
+#: limit the process happens to run under. The JS parser's nesting limit is derived from it: one
+#: level of nesting costs a fixed number of interpreter frames, and the limit is the number of
+#: levels that fit below this depth.
+TREE_RECURSION_DEPTH = 10000
+
 
 class Kind(enum.IntEnum):
     ChildNode = 1
@@ -122,12 +132,26 @@ _IDENTIFICATION_LIMIT = 64
 
 def _canonical_value(value):
     if isinstance(value, Node):
-        return canonical(value)
+        return _canonical(value)
     if isinstance(value, enum.Enum):
         return (enum.Enum, type(value).__name__, value.name, value.value)
     if isinstance(value, (list, tuple)):
         return tuple(_canonical_value(item) for item in value)
     return value
+
+
+def _canonical(node: Node):
+    for _ in range(_IDENTIFICATION_LIMIT):
+        form = node.canonical_form()
+        if form is None:
+            break
+        node = form
+    else:
+        raise RecursionError(F'cyclic canonical form at {type(node).__name__}')
+    return (
+        type(node).canonical_type,
+        *(_canonical_value(getattr(node, name)) for name in _value_fields(type(node))),
+    )
 
 
 def canonical(node: Node):
@@ -143,18 +167,12 @@ def canonical(node: Node):
     makes through `Node.canonical_form`. Everything else is compared, including scalars such as an
     operator string. Enumerations compare by name as well as value, because an `IntEnum` member is
     equal to the integer it wraps and would otherwise collide with an unrelated field holding it.
+
+    The comparison descends the whole tree, so it runs under `TREE_RECURSION_DEPTH` rather than the
+    ambient interpreter limit, which a tree the parser accepts can exhaust on its own.
     """
-    for _ in range(_IDENTIFICATION_LIMIT):
-        form = node.canonical_form()
-        if form is None:
-            break
-        node = form
-    else:
-        raise RecursionError(F'cyclic canonical form at {type(node).__name__}')
-    return (
-        type(node).canonical_type,
-        *(_canonical_value(getattr(node, name)) for name in _value_fields(type(node))),
-    )
+    with RecursionDepth(TREE_RECURSION_DEPTH):
+        return _canonical(node)
 
 
 def spells_its_source(root: Node) -> bool:

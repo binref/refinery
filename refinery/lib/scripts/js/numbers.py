@@ -188,6 +188,37 @@ def _decimal_literal(match: re.Match[str] | None) -> float | None:
     return apply_sign(float('inf') if magnitude == 'Infinity' else float(magnitude), negative)
 
 
+def integer_of_numeral(digits: str) -> int:
+    """
+    The integer a NumericLiteral spells once its separators and any BigInt suffix are gone: the
+    digits behind a `0x`, `0o` or `0b` prefix in that base, a `0`-led run of octal digits as the
+    legacy octal literal it is, and anything else in base ten.
+    """
+    if len(digits) > 1 and digits[0] == '0':
+        radix = _PREFIXED_RADIX.get(digits[1].lower())
+        if radix is not None:
+            return int(digits[2:], radix)
+        if all(d in '01234567' for d in digits):
+            return int(digits, 8)
+    return int(digits)
+
+
+def number_of_numeral(digits: str) -> float:
+    """
+    The Number a NumericLiteral spells once its separators are gone. A decimal spelling goes to
+    `float` as it stands, which is linear in the digits and answers an infinity past the double
+    range, where building the integer first would run into the interpreter's limit on the digits
+    of a decimal conversion and raise for a literal the language reads. A prefixed or legacy octal
+    spelling has no such limit and is read as the integer it is.
+    """
+    if len(digits) > 1 and digits[0] == '0' and (
+        digits[1].lower() in _PREFIXED_RADIX
+        or all(d in '01234567' for d in digits)
+    ):
+        return to_js_number(integer_of_numeral(digits))
+    return float(digits)
+
+
 def _read_non_decimal_integer(text: str) -> float | None:
     """
     The Number named by *text* when the whole of it is a NonDecimalIntegerLiteral, and `None`

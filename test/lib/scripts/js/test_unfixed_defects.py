@@ -57,6 +57,7 @@ from test.lib.scripts.js.ledger import (
     evaluated_in_a_body,
     folded,
     one_expected_failure_per_program,
+    dropped_source_characters,
     printed,
     prints,
     well_formed,
@@ -67,10 +68,10 @@ from test.lib.scripts.js.test_parameter_grammar import (
 from test.lib.scripts.js.test_parser_recovery import (
     A_POSITION_NAMING_A_BINDING_THE_FILE_CREATES,
     A_WORD_NO_MODULE_MAY_BIND,
+    unread_spans,
 )
-from test.lib.scripts.js.test_truncated_source import FOLDS_ANSWERED_WITH_A_PROGRAM
 
-from refinery.lib.scripts import UnspellableNode
+from refinery.lib.scripts.js.parser import JsParser
 
 
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
@@ -171,20 +172,29 @@ class TestAModulesTopLevelAwaitIsAProgram(TestBase):
     A module awaits at its top level (§16.2.1), and the goal symbol is not known while parsing:
     the parser reads the top level of every file under the script context, where `await` is a
     name, so `await 1` is a name with a number pressed against it, which no statement spells, and
-    the statement is kept as the text it is. The file prints back as it was written and still
-    behaves so, but `refinery.lib.scripts.is_well_formed` answers `False` for a program a host
-    runs, and no pass reads the statement. The `for await` head at the top level is read already;
-    the operator waits for a top level whose goal is open to read `await` followed by an
-    expression as the operator.
+    the statement is kept as the text it is. Keeping it is enough for the module to go on behaving
+    as it did, which is the half of this asked of an engine and which holds; what does not is that
+    `refinery.lib.scripts.is_well_formed` answers `False` for a file a host runs, so no law stated
+    over programs reaches this one and no pass reads the statement. The `for await` head at the top
+    level is read already; the operator waits for a top level whose goal is open to read `await`
+    followed by an expression as the operator.
     """
 
+    @unittest.skipIf(node_executable() is None, 'node.js is not available')
+    def test_a_module_awaiting_at_its_top_level_still_behaves_so(self):
+        """
+        Node prints `2` for `export {}; await 1; console.log(2);` read as a module, and prints `2`
+        for the text the deobfuscation writes for it.
+        """
+        source = 'export {}; await 1; console.log(2);'
+        self.assertEqual(before_and_after(source, module=True), (prints('2'), prints('2')))
+
     @unittest.expectedFailure
-    def test_a_top_level_await_beside_module_syntax_is_a_program(self):
+    def test_a_top_level_await_beside_module_syntax_is_a_well_formed_program(self):
         """
-        Node prints `2` for `export {}; await 1; console.log(2);` read as a module.
+        Node compiles `export {}; await 1;` as a module.
         """
-        source = 'export {}; await 1;'
-        self.assertEqual((well_formed(source), printed(source)), (True, 'export {  };\nawait 1;'))
+        self.assertEqual(well_formed('export {}; await 1;'), True)
 
 
 class TestAUsingDeclarationIsAProgram(TestBase):
@@ -1140,45 +1150,6 @@ class TestAStringArrayHolderNoLoopReadsIsStillResolved(TestBase):
         )
 
 
-class TestACarvedFileIsNotAnsweredWithAProgram(TestBase):
-    """
-    A buffer carved out of memory can stop in the middle of a literal, and the literal it stopped
-    inside is then spelled by no text at all. Refusing to print is the only answer that keeps that
-    visible, because an analyst holding a clean program has no way left to tell that the file they
-    handed over was cut.
-    """
-
-    @unittest.expectedFailure
-    def test_a_fold_that_reaches_a_literal_the_cut_left_open_is_refused(self):
-        """
-        Node refuses every carved file in
-        `test.lib.scripts.js.test_truncated_source.FOLDS_ANSWERED_WITH_A_PROGRAM` and accepts each
-        of them with its delimiter restored, so the missing quote is the whole of the difference
-        between a program and a buffer that is not one. In each of these the declaration the cut
-        left open is read by nothing before the cut, so it is dropped as dead code and the literal
-        no text spells never reaches the printer: what comes back is the head of the file, whole,
-        and it says nothing about what was lost.
-        """
-        carved = FOLDS_ANSWERED_WITH_A_PROGRAM
-        self.assertEqual(
-            {name: _refuses_to_print(fold.cut) for name, fold in carved.items()},
-            {name: True for name in carved},
-        )
-
-
-def _refuses_to_print(source: str) -> bool:
-    """
-    Whether `refinery.js` declines to write anything for *source*, which is the only answer that can
-    be given for a buffer holding a literal no text spells.
-    """
-    try:
-        folded(source)
-    except UnspellableNode:
-        return True
-    else:
-        return False
-
-
 def _spelled_with_an_escaped_identifier(source: str) -> str:
     """
     *source* with each placeholder replaced by the unicode escape spelling the characters it names.
@@ -1273,43 +1244,6 @@ class TestAFileRefusedWithNothingFabricatedIsNotAnsweredWithAProgram(TestBase):
         self.assertEqual(
             {source: well_formed(source) for source in rows},
             {source: False for source in rows},
-        )
-
-
-#: Files the parser refuses, each in a shape a pass over the tree turns into a program: a fold
-#: reaches past the unread text, a removal takes the function holding it, or a removal takes the
-#: dead store whose value is the literal the file ends inside. Node refuses all three with a
-#: `SyntaxError` and prints nothing.
-A_FILE_THE_PARSER_REFUSED_THAT_A_PASS_ANSWERS_WITH_A_PROGRAM = (
-    'console.log(1 + 1); function f() { g(',
-    'function f() { a; ret[urn b; } g();',
-    "x = 'abc",
-)
-
-
-@unittest.skipIf(node_executable() is None, 'node.js is not available')
-class TestAFileTheParserRefusedIsNotAnsweredWithAProgram(TestBase):
-    """
-    A file the parser refuses is kept as the text no engine agreed to read, and
-    `refinery.lib.scripts.is_well_formed` answers `False` for it; but nothing between that answer
-    and the passes reads it, so the passes run over the tree around the unread text as if it were
-    a program. A fold computes `console.log(2)` beside a function the file ends inside, a removal
-    deletes the function whose body holds the text, and a removal deletes the dead store whose
-    value is the string the file ends inside; each answer is a program built out of a file that
-    was not one: the first prints `2`, the second throws a `ReferenceError` and the third is the
-    empty program, where Node prints nothing for any of them.
-
-    `test_a_file_the_language_refuses_is_refused` states the same cost for the files where the
-    parser read everything and the language refuses the result.
-    """
-
-    @unittest.expectedFailure
-    def test_a_file_the_parser_refused_is_refused(self):
-        rows = A_FILE_THE_PARSER_REFUSED_THAT_A_PASS_ANSWERS_WITH_A_PROGRAM
-        refused = ('', 'SyntaxError')
-        self.assertEqual(
-            {source: (well_formed(source), before_and_after(source)) for source in rows},
-            {source: (False, (refused, refused)) for source in rows},
         )
 
 
@@ -1906,3 +1840,37 @@ class TestADeepChainOfLocalsOverflowsTheRewriter(TestBase):
     @unittest.expectedFailure
     def test_a_chain_of_four_hundred_locals_is_deobfuscated(self):
         self.assertEqual('console.log(1);', deobfuscate_source(_a_chain_of_local_increments(400)))
+
+
+class TestACommentBehindTheLastStatementOfALiftedBlockIsKept(TestBase):
+    """
+    A block carries the comments standing behind its last statement, and a fold that lifts the
+    statements out of the block — the body of `if (true)` — puts them where the block stood and
+    throws the block away, comments included. No pass carries comments when it rebuilds a
+    statement list, and the printer can write only what the tree holds.
+    """
+
+    @unittest.expectedFailure
+    def test_the_comment_survives_the_fold_that_lifts_the_block(self):
+        source = 'if (true) { console.log(1); /* c */ } console.log(2);'
+        self.assertEqual(dropped_source_characters(source, deobfuscate_source(source)), '')
+
+
+class TestAClassHeritageTheFileRefusesEndsWhereTheStatementDoes(TestBase):
+    """
+    Node refuses `class C extends { m(){} } g = 1;` with `SyntaxError: Unexpected identifier 'g'`.
+    The heritage is the object literal, the class body is missing, and the statement the parser
+    refuses runs to the end of its line: the assignment written behind it goes into the text
+    kept for the class instead of being read as the statement it is. A refused clause body stops
+    at the word that continues its statement, and a refused class stops nowhere before its line
+    ends.
+    """
+
+    @unittest.expectedFailure
+    def test_the_assignment_behind_the_refused_class_is_read_as_a_statement(self):
+        source = 'class C extends { m(){} } g = 1;'
+        tree = JsParser(source).parse()
+        self.assertEqual(
+            (unread_spans(tree), len(tree.body)),
+            (['class C extends { m(){} }'], 2),
+        )

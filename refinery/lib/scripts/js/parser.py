@@ -4,7 +4,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any, Callable, Literal, TypeVar, overload
 
-from refinery.lib.scripts import Node
+from refinery.lib.scripts import TREE_RECURSION_DEPTH, Node
 from refinery.lib.scripts.js.lexer import (
     JsLexer,
     JsLexerState,
@@ -15,6 +15,7 @@ from refinery.lib.scripts.js.lexer import (
 from refinery.lib.scripts.js.model import (
     SCRIPT_CONTEXT,
     AwaitReading,
+    Closable,
     CodeContext,
     Expression,
     JsArrayExpression,
@@ -103,6 +104,7 @@ from refinery.lib.scripts.js.model import (
     class_element_context,
     function_context,
 )
+from refinery.lib.scripts.js.numbers import number_of_numeral
 from refinery.lib.scripts.js.strict import mark_directives, mark_module
 from refinery.lib.scripts.js.token import RESERVED_WORD_NAMES, JsToken, JsTokenKind
 from refinery.lib.scripts.js.utf16 import is_well_formed as is_well_formed_unicode
@@ -161,6 +163,15 @@ class JsParseError(Exception):
         self.offset = offset
 
 
+class JsMissingSemicolon(JsParseError):
+    """
+    A statement that ended where the language supplies no semicolon: the token standing there
+    continues the statement on its line, and a print that broke the line in front of that token
+    would let the language supply the semicolon and read a program the file did not hold. The text
+    kept for such a statement takes the token in.
+    """
+
+
 _CLOSERS = {
     JsTokenKind.RPAREN: JsTokenKind.LPAREN,
     JsTokenKind.RBRACKET: JsTokenKind.LBRACKET,
@@ -193,24 +204,33 @@ _DIVISION_FOLLOWS = frozenset({
     JsTokenKind.DEC,
 })
 
-_STRING_KINDS = frozenset({JsTokenKind.STRING_SINGLE, JsTokenKind.STRING_DOUBLE})
-
-#: How deep statements and expressions may nest before the parser refuses to read further in. A
-#: level of nesting costs up to some thirty-five interpreter frames, and `JsParser.parse` runs
-#: under a recursion depth of ten thousand.
-_NESTING_LIMIT = 200
+#: The budget a descent into nested statements and expressions spends before the parser refuses to
+#: read further in. A statement takes three of it, a bracketed level one of three as well — a
+#: literal's through the assignment, unary and `new` levels it descends, a binding pattern's
+#: directly — and any other expression level one, since a statement level costs up to some
+#: thirty-five interpreter frames where an expression level costs some ten, and `JsParser.parse`
+#: runs under `TREE_RECURSION_DEPTH`: two hundred nested statements or brackets, or six hundred
+#: prefix operators, are read, and the next level is refused. Two hundred is also where the
+#: printer, which measures each list inside every list around it, still answers at once.
+_NESTING_LIMIT = 600
+_STATEMENT_COST = 3
+_PATTERN_COST = 3
+_EXPRESSION_COST = 1
 
 
 @dataclass(frozen=True)
 class _Boundary:
     """
     Where the text of a list item the parser could not read ends. `stops` are the tokens that begin
-    the next item or end the list and are left standing; `consumes` the token that ends the item
-    itself and goes with it; `line_bound` whether a line terminator ends it; and `continued` the
-    words that carry a block-bodied item on past a block that closed at the nesting it began at, or
-    `None` for an item no block ends.
+    the next item or end the list and are left standing; `clause_stops` the words that continue
+    the statement the item is the clause body of, which end it only where an operand just ended,
+    since behind a dot they are the member names they spell; `consumes` the token that ends the
+    item itself and goes with it; `line_bound` whether a line terminator ends it; and `continued`
+    the words that carry a block-bodied item on past a block that closed at the nesting it began
+    at, or `None` for an item no block ends.
     """
     stops: frozenset[JsTokenKind] = frozenset()
+    clause_stops: frozenset[JsTokenKind] = frozenset()
     consumes: frozenset[JsTokenKind] = frozenset()
     line_bound: bool = False
     continued: frozenset[JsTokenKind] | None = None
@@ -236,24 +256,36 @@ _BLOCK_STATEMENTS: dict[JsTokenKind, frozenset[JsTokenKind]] = {
     JsTokenKind.FUNCTION: frozenset(),
     JsTokenKind.CLASS: frozenset(),
     JsTokenKind.AT: frozenset(),
+    JsTokenKind.EXPORT: frozenset(),
 }
 
 _T = TypeVar('_T', bound=Node)
+_C = TypeVar('_C', bound=Closable)
+
+
+class _Nesting:
+    """
+    A level of nesting the parser descends into, entered with `with`. The descent is refused where
+    the budget is spent, and *cost* is the share of the budget one level takes.
+    """
+    __slots__ = ('parser', 'cost')
+
+    def __init__(self, parser: JsParser, cost: int):
+        self.parser = parser
+        self.cost = cost
+
+    def __enter__(self) -> None:
+        parser = self.parser
+        parser._depth += self.cost
+        if parser._depth > _NESTING_LIMIT:
+            parser._depth -= self.cost
+            raise JsParseError('nesting too deep', parser._current.offset)
+
+    def __exit__(self, *_: object) -> None:
+        self.parser._depth -= self.cost
 
 
 class JsParser:
-
-    @staticmethod
-    def _parse_int_text(text: str) -> int:
-        if text.startswith(('0x', '0X')):
-            return int(text, 16)
-        if text.startswith(('0o', '0O')):
-            return int(text, 8)
-        if text.startswith(('0b', '0B')):
-            return int(text, 2)
-        if len(text) > 1 and text[0] == '0' and all(d in '01234567' for d in text):
-            return int(text, 8)
-        return int(text)
 
     def __init__(self, source: str):
         self._lexer = JsLexer(source)
@@ -272,6 +304,11 @@ class JsParser:
         self._prev: JsToken = self._current
         self._hashbang: str | None = None
         self._depth: int = 0
+        self._nested_statement = _Nesting(self, _STATEMENT_COST)
+        self._nested_pattern = _Nesting(self, _PATTERN_COST)
+        self._nested_expression = _Nesting(self, _EXPRESSION_COST)
+        self._truncated: bool = False
+        self._clause_stops: frozenset[JsTokenKind] = frozenset()
         self._advance()
 
     def _pull_token(self) -> tuple[JsToken, bool]:
@@ -290,19 +327,50 @@ class JsParser:
             break
         return tok, had_newline
 
+    def _closing_index(self, tok: JsToken) -> int | None:
+        """
+        The index in `_brackets` of the opener *tok* closes, or `None` where it closes nothing. A
+        closing brace closes the nearest open brace, since braces are the skeleton a file keeps; a
+        closing parenthesis or bracket closes the innermost open bracket and no other. A closer that
+        closes nothing is text, wherever it stands.
+        """
+        if tok.kind not in _CLOSERS:
+            return None
+        opener = _CLOSERS[tok.kind]
+        if tok.kind is JsTokenKind.RBRACE:
+            for index in range(len(self._brackets) - 1, -1, -1):
+                if self._brackets[index] is opener:
+                    return index
+            return None
+        if self._brackets and self._brackets[-1] is opener:
+            return len(self._brackets) - 1
+        return None
+
     def _track_bracket(self, tok: JsToken) -> None:
         if tok.kind in _OPENERS:
             self._brackets.append(tok.kind)
-        elif tok.kind in _CLOSERS:
-            opener = _CLOSERS[tok.kind]
-            if opener in self._brackets:
-                while self._brackets.pop() is not opener:
-                    pass
+            return
+        index = self._closing_index(tok)
+        if index is not None:
+            del self._brackets[index:]
 
     def _take_comments(self) -> list[str]:
         comments = [tok.value for tok in self._pending_comments]
         self._pending_comments.clear()
         return comments
+
+    def _take_comments_between(self, start: int, end: int) -> list[str]:
+        """
+        The pending comments standing between the offsets *start* and *end*, taken; the ones in
+        front of *start* stay pending, since the item holding the list they stood in front of may
+        yet be refused, and the ones behind *end* were pulled by a lookahead and belong to what
+        comes next.
+        """
+        taken = [tok.value for tok in self._pending_comments if start < tok.offset < end]
+        self._pending_comments = [
+            tok for tok in self._pending_comments if not start < tok.offset < end
+        ]
+        return taken
 
     @property
     def _prev_end(self) -> int:
@@ -320,10 +388,6 @@ class JsParser:
             return prev
         self._current, self._preceded_by_newline = self._pull_token()
         return prev
-
-    def _drain_comments(self, node):
-        if self._pending_comments:
-            node.leading_comments.extend(self._take_comments())
 
     def _peek(self) -> JsToken:
         return self._current
@@ -376,31 +440,25 @@ class JsParser:
 
     def _expect(self, kind: JsTokenKind) -> JsToken:
         """
-        The token that must stand here, where it does. Where it does not, the parser writes it
-        itself and steps over what was there, so that a file it cannot read is still answered with a
-        tree. That answer is a program the source does not hold, in both directions at once — a
-        bracket nobody wrote is invented and the token that stood in its place is dropped — so the
-        file is recorded as one the parser repaired. `JsScript.recovered` carries that to
-        `refinery.lib.scripts.is_well_formed`, which is what keeps a truncated payload from being
-        spliced into a host file as though it had been written whole.
+        The token that must stand here, consumed where it does. Where it does not, the construct
+        being read is refused, and the item holding it keeps its source verbatim: writing the token
+        instead would answer a file no engine reads with a program the source does not hold.
         """
         if self._current.kind == kind:
             return self._advance()
         raise JsParseError(F'expected {kind.name}', self._current.offset)
 
-    def _require(self, kind: JsTokenKind) -> None:
+    def _line_ended_string(self, tok: JsToken) -> bool:
         """
-        The token the grammar requires here, consumed where it stands here. Where it does not the
-        parser goes on without it and records the repair, leaving what is here to be read as
-        whatever comes next.
-
-        This is what a list separator wants, and it is why `_expect` is the wrong primitive for one:
-        what follows a missing comma is the next element of the list, not a token to be thrown away,
-        so `{ a: 1 b: 2 }` is a file the parser reports having repaired and still prints everything
-        that was written in.
+        Whether *tok* is a string literal a line terminator ended rather than the file: text no
+        engine reads and no literal spells, where a string the file ended inside is kept as the cut
+        it is.
         """
-        if self._eat(kind) is None:
-            raise JsParseError(F'expected {kind.name}', self._current.offset)
+        return (
+            tok.kind.is_string
+            and not tok.terminated
+            and tok.offset + len(tok.value) < len(self._source)
+        )
 
     @staticmethod
     def _numeral_ends(tok: JsToken) -> None:
@@ -497,11 +555,11 @@ class JsParser:
         before a closing brace, and at the end of the file, so those three are the whole of what a
         statement may end with instead of a semicolon.
 
-        Where none of them stands here the parser writes the semicolon anyway, which is a repair
-        like any other: `x = 1 y = 2` is a file no engine reads, and left unrecorded it comes back
-        as the two statements the parser split it into. The one place the language inserts a
-        semicolon on no such condition is after a `do` loop's `while` clause, which reads the
-        semicolon it may find with `_eat` rather than asking here.
+        Where none of them stands here the statement is refused and kept as text: `x = 1 y = 2` is
+        a file no engine reads, and read as the two statements a parser could split it into it
+        would come back as a program. The one place the language inserts a semicolon on no such
+        condition is after a `do` loop's `while` clause, which reads the semicolon it may find with
+        `_eat` rather than asking here.
         """
         if self._eat(JsTokenKind.SEMICOLON):
             return True
@@ -509,7 +567,7 @@ class JsParser:
             return True
         if self._preceded_by_newline:
             return True
-        raise JsParseError('expected ;', self._current.offset)
+        raise JsMissingSemicolon('expected ;', self._current.offset)
 
     @contextmanager
     def _with_no_in(self, value: bool):
@@ -538,7 +596,7 @@ class JsParser:
         return self._code_context(function_context(is_async, is_generator))
 
     def parse(self) -> JsScript:
-        with RecursionDepth(10000):
+        with RecursionDepth(TREE_RECURSION_DEPTH):
             script = self._parse_program()
         mark_directives(script)
         mark_module(script)
@@ -559,52 +617,34 @@ class JsParser:
         expression and inherits the suppression rather than ending it.
         """
         body: list[Statement] = []
-        with self._with_no_in(False):
+        clause_stops = frozenset(stop) - {JsTokenKind.RBRACE, JsTokenKind.EOF}
+        with self._with_no_in(False), self._clauses(clause_stops):
             while not self._at(*stop):
-                try:
-                    stmt = self._parse_statement()
-                except JsParseError as error:
-                    stmt = self._unread_token(error)
+                stmt = self._parse_statement()
                 if stmt is not None:
                     body.append(stmt)
         return body
 
-    def _closes_the_enclosure(self, tok: JsToken) -> bool:
-        """
-        Whether *tok* is a closing bracket that closes a bracket the enclosing constructs hold open:
-        a closing brace closing any open brace, since braces are the skeleton a file keeps, or a
-        closing parenthesis or bracket closing the innermost open bracket. Such a token belongs to
-        the enclosure and is never taken into text an inner list keeps.
-        """
-        if tok.kind not in _CLOSERS:
-            return False
-        opener = _CLOSERS[tok.kind]
-        if tok.kind is JsTokenKind.RBRACE:
-            return opener in self._brackets
-        return bool(self._brackets) and self._brackets[-1] is opener
-
-    def _unread_token(self, error: JsParseError) -> JsErrorNode:
-        """
-        The one token standing here, kept as itself: what a list holds where no item could begin.
-        A token that closes the enclosure is the enclosure's, and the refusal is handed on to it.
-        """
-        if self._closes_the_enclosure(self._current):
-            raise error
-        comments = self._take_comments()
-        tok = self._advance()
-        node = JsErrorNode(offset=tok.offset, text=tok.value, message=error.message)
-        node.leading_comments.extend(comments)
-        return node
-
     @contextmanager
-    def _nested(self):
-        self._depth += 1
+    def _clauses(self, stops: frozenset[JsTokenKind]):
+        """
+        Read with *stops* as the words that end a refused clause body: a statement list's own stop
+        tokens for the items it holds, or the word that continues the statement a clause body
+        stands in, `else` behind the consequent of an `if` and `while` behind the body of a `do`.
+        """
+        saved = self._clause_stops
+        self._clause_stops = stops
         try:
-            if self._depth > _NESTING_LIMIT:
-                raise JsParseError('nesting too deep', self._current.offset)
             yield
         finally:
-            self._depth -= 1
+            self._clause_stops = saved
+
+    def _closes_the_enclosure(self, tok: JsToken) -> bool:
+        """
+        Whether *tok* closes a bracket the enclosing constructs hold open. Such a token belongs to
+        the enclosure and is never taken into text an inner list keeps.
+        """
+        return self._closing_index(tok) is not None
 
     def _skip_to_boundary(self, mark: int, base: int, boundary: _Boundary) -> None:
         """
@@ -623,8 +663,8 @@ class JsParser:
             tok = self._current
             opened = len(self._brackets) > base
             if tok.kind in _CLOSERS:
-                opener = _CLOSERS[tok.kind]
-                if opened and opener in self._brackets[base:]:
+                index = self._closing_index(tok)
+                if index is not None and index >= base:
                     self._advance()
                     if (
                         boundary.continued is not None
@@ -634,12 +674,14 @@ class JsParser:
                     ):
                         break
                     continue
-                if self._closes_the_enclosure(tok):
+                if index is not None:
                     break
                 self._advance()
                 continue
             if not opened:
                 if tok.kind in boundary.stops:
+                    break
+                if tok.kind in boundary.clause_stops and self._prev.kind in _DIVISION_FOLLOWS:
                     break
                 if boundary.line_bound and self._preceded_by_newline and self._prev_end > mark:
                     break
@@ -664,14 +706,18 @@ class JsParser:
         """
         The source from *mark* to the boundary of the item that could not be read, kept verbatim. An
         item that consumed nothing is no item, and the refusal is handed back to the list. An item
-        ending in a string a line terminator ended takes the terminator with it, since the same
-        text at the end of a file spells a string the file ended inside.
+        refused for want of a semicolon takes the token that stood where the semicolon would, so
+        that no print separates the two. An item ending in a string a line terminator ended takes
+        the terminator with it, since the same text at the end of a file spells a string the file
+        ended inside.
         """
+        if isinstance(error, JsMissingSemicolon) and not self._at(JsTokenKind.EOF):
+            self._advance()
         self._skip_to_boundary(mark, base, boundary)
         end = self._prev_end
         if end <= mark:
             raise error
-        if self._prev.kind in _STRING_KINDS and not self._prev.terminated and end < len(self._source):
+        if self._line_ended_string(self._prev):
             end += 2 if self._source.startswith('\r\n', end) else 1
         self._pending_comments = [
             tok for tok in self._pending_comments if not mark <= tok.offset < end
@@ -694,9 +740,10 @@ class JsParser:
         """
         mark = self._current.offset
         base = len(self._brackets)
-        comments = list(self._pending_comments) if carries_comments else []
+        comments: list[JsToken] = []
         if carries_comments:
-            self._pending_comments.clear()
+            comments = [tok for tok in self._pending_comments if tok.offset < mark]
+            del self._pending_comments[:len(comments)]
         try:
             item = reader()
         except JsParseError as error:
@@ -705,7 +752,8 @@ class JsParser:
             except JsParseError:
                 self._pending_comments[:0] = comments
                 raise
-        item.leading_comments[:0] = [tok.value for tok in comments]
+        if comments:
+            item.leading_comments[:0] = [tok.value for tok in comments]
         return item
 
     @overload
@@ -715,7 +763,7 @@ class JsParser:
         reader: Callable[[], _T],
         *,
         holes: Literal[True],
-    ) -> tuple[list[_T | JsErrorNode | None], bool]:
+    ) -> tuple[list[_T | JsErrorNode | None], bool, bool]:
         ...
 
     @overload
@@ -725,7 +773,7 @@ class JsParser:
         reader: Callable[[], _T],
         *,
         holes: Literal[False] = False,
-    ) -> tuple[list[_T | JsErrorNode], bool]:
+    ) -> tuple[list[_T | JsErrorNode], bool, bool]:
         ...
 
     def _comma_list(
@@ -734,33 +782,30 @@ class JsParser:
         reader: Callable[[], _T],
         *,
         holes: bool = False,
-    ) -> tuple[list[Any], bool]:
+    ) -> tuple[list[Any], bool, bool]:
         """
-        The items between here and *closer*, separated by commas, and whether a comma stood behind
-        the last of them. The closer is consumed, and a file that ends before it is refused: a list
-        of expressions the file ends inside is text, and the statement holding it keeps it as such.
-        An item the reader refuses is kept as its text up to the next comma or the closer, and
-        where no item could begin at all, the token standing there begins the text; a rest element
-        may only stand last. With *holes*, a comma standing where an item would is an element that
-        was left out.
+        The items between here and *closer*, separated by commas, whether a comma stood behind the
+        last of them, and whether the closer was there. The closer is consumed where it is; where
+        the file ended first, the list is one the file ended inside, and the caller records that on
+        the node holding it or refuses the node. An item the reader refuses is kept as its text up
+        to the next comma or the closer, and where no item could begin at all, the token standing
+        there begins the text; a rest element may only stand last. With *holes*, a comma standing
+        where an item would is an element that was left out.
         """
         items: list[_T | JsErrorNode | None] = []
-        trailing_comma = False
 
         def item_and_separator() -> _T:
             item = reader()
-            if isinstance(item, JsRestElement) and not self._at(closer):
+            if isinstance(item, JsRestElement) and not self._at(closer, JsTokenKind.EOF):
                 raise JsParseError('a rest element must stand last', self._current.offset)
-            if not self._at(closer):
+            if not self._at(closer, JsTokenKind.EOF):
                 self._expect(JsTokenKind.COMMA)
             return item
 
         while not self._at(closer, JsTokenKind.EOF):
-            trailing_comma = False
             if holes and self._at(JsTokenKind.COMMA):
                 items.append(None)
                 self._advance()
-                trailing_comma = True
                 continue
             mark = self._current.offset
             base = len(self._brackets)
@@ -773,9 +818,9 @@ class JsParser:
                 items.append(self._unread_item(mark, base, error, _COMMA_ITEM))
             if isinstance(items[-1], JsErrorNode):
                 self._eat(JsTokenKind.COMMA)
-            trailing_comma = self._prev.kind is JsTokenKind.COMMA
-        self._expect(closer)
-        return items, trailing_comma
+        trailing_comma = self._prev.kind is JsTokenKind.COMMA
+        closed = self._eat(closer) is not None
+        return items, trailing_comma, closed
 
     def _parse_program(self) -> JsScript:
         offset = self._current.offset
@@ -785,7 +830,7 @@ class JsParser:
             offset=offset,
             recovered=self._recovered,
             html_comment=self._lexer.html_comment,
-            terminated=self._lexer.open_comment is None,
+            terminated=self._lexer.open_comment is None and not self._truncated,
         )
         if self._hashbang is not None:
             script.leading_comments.append(self._hashbang)
@@ -801,11 +846,15 @@ class JsParser:
         continued = _BLOCK_STATEMENTS.get(self._current.kind)
         if self._at_async_function():
             continued = frozenset()
-        boundary = _STATEMENT if continued is None else _Boundary(
-            consumes=_STATEMENT.consumes, line_bound=True, continued=continued)
+        boundary = _Boundary(
+            clause_stops=self._clause_stops,
+            consumes=_STATEMENT.consumes,
+            line_bound=True,
+            continued=continued,
+        )
 
         def statement() -> Statement:
-            with self._nested():
+            with self._nested_statement:
                 stmt = self._read_statement(
                     single_statement=single_statement, annex_b_function=annex_b_function)
             if stmt is None:
@@ -925,32 +974,42 @@ class JsParser:
 
     def _parse_block_statement(self) -> JsBlockStatement:
         offset = self._current.offset
-        self._expect(JsTokenKind.LBRACE)
+        opened = self._expect(JsTokenKind.LBRACE).offset
         body = self._parse_statement_list(JsTokenKind.RBRACE, JsTokenKind.EOF)
         block = JsBlockStatement(body=body, offset=offset)
-        self._close_list(block, JsTokenKind.RBRACE)
+        self._close_list(block, JsTokenKind.RBRACE, opened)
         return block
 
     def _close_list(
         self,
         owner: JsBlockStatement | JsStaticBlock | JsClassBody | JsSwitchStatement,
         closer: JsTokenKind,
+        opened: int,
     ) -> None:
         """
-        Close the list *owner* holds. The comments standing behind its last item are its trailing
-        comments, and whether its closing bracket was there is recorded on it, which is the one
-        fact a truncated construct carries: where the file ended instead, the comments stay pending
-        and end as the file's tail, since the owner may yet be refused along with the item it
-        stands in, and the file's end is what carries them then. Anything else standing here is
-        refused.
+        Close the list *owner* holds, whose opening bracket stood at *opened*. The comments standing
+        between the brackets behind its last item are its trailing comments, and whether its closing
+        bracket was there is recorded on it, which is the one fact a truncated construct carries:
+        where the file ended instead, the comments stay pending and end as the file's tail, since
+        the owner may yet be refused along with the item it stands in, and the file's end is what
+        carries them then. Anything else standing here is refused.
         """
         if self._at(closer):
-            owner.trailing_comments.extend(self._take_comments())
+            owner.trailing_comments.extend(
+                self._take_comments_between(opened, self._current.offset))
             self._advance()
         elif self._at(JsTokenKind.EOF):
-            owner.terminated = False
+            self._file_ends_inside(owner)
         else:
             raise JsParseError(F'expected {closer.name}', self._current.offset)
+
+    def _file_ends_inside(self, node: Closable) -> None:
+        """
+        Record that the file ended inside *node*, on the node and on the file: a pass may yet take
+        the node out of the tree, and the file stays one the language refuses.
+        """
+        node.terminated = False
+        self._truncated = True
 
     def _parse_variable_declaration(self) -> JsVariableDeclaration:
         offset = self._current.offset
@@ -996,11 +1055,12 @@ class JsParser:
         return JsVariableDeclarator(id=id_node, init=init, offset=offset)
 
     def _parse_binding_pattern(self) -> Expression:
-        if self._at(JsTokenKind.LBRACKET):
-            return self._parse_array_pattern()
-        if self._at(JsTokenKind.LBRACE):
-            return self._parse_object_pattern()
-        return self._parse_binding_identifier()
+        with self._nested_pattern:
+            if self._at(JsTokenKind.LBRACKET):
+                return self._parse_array_pattern()
+            if self._at(JsTokenKind.LBRACE):
+                return self._parse_object_pattern()
+            return self._parse_binding_identifier()
 
     def _parse_binding_identifier(self) -> Expression:
         offset = self._current.offset
@@ -1074,8 +1134,18 @@ class JsParser:
     def _parse_array_pattern(self) -> JsArrayPattern:
         offset = self._current.offset
         self._expect(JsTokenKind.LBRACKET)
-        elements, _ = self._comma_list(JsTokenKind.RBRACKET, self._parse_binding_element, holes=True)
-        return JsArrayPattern(elements=elements, offset=offset)
+        elements, _, closed = self._comma_list(
+            JsTokenKind.RBRACKET, self._parse_binding_element, holes=True)
+        return self._closed(JsArrayPattern(elements=elements, offset=offset), closed)
+
+    def _closed(self, node: _C, closed: bool) -> _C:
+        """
+        *node*, holding a bracketed list, with the fact recorded where *closed* says the file
+        ended before the list's closing bracket.
+        """
+        if not closed:
+            self._file_ends_inside(node)
+        return node
 
     def _parse_object_pattern(self) -> JsObjectPattern:
         offset = self._current.offset
@@ -1086,8 +1156,8 @@ class JsParser:
                 return self._parse_rest_element()
             return self._parse_object_pattern_property()
 
-        properties, _ = self._comma_list(JsTokenKind.RBRACE, member)
-        return JsObjectPattern(properties=properties, offset=offset)
+        properties, _, closed = self._comma_list(JsTokenKind.RBRACE, member)
+        return self._closed(JsObjectPattern(properties=properties, offset=offset), closed)
 
     def _parse_object_pattern_property(self) -> JsProperty:
         offset = self._current.offset
@@ -1130,7 +1200,8 @@ class JsParser:
         self._expect(JsTokenKind.LPAREN)
         test = self._parse_expression()
         self._expect(JsTokenKind.RPAREN)
-        consequent = self._parse_statement(single_statement=True, annex_b_function=True)
+        with self._clauses(self._clause_stops | {JsTokenKind.ELSE}):
+            consequent = self._parse_statement(single_statement=True, annex_b_function=True)
         alternate = None
         if self._eat(JsTokenKind.ELSE):
             alternate = self._parse_statement(single_statement=True, annex_b_function=True)
@@ -1149,7 +1220,8 @@ class JsParser:
     def _parse_do_while_statement(self) -> JsDoWhileStatement:
         offset = self._current.offset
         self._expect(JsTokenKind.DO)
-        body = self._parse_statement(single_statement=True)
+        with self._clauses(self._clause_stops | {JsTokenKind.WHILE}):
+            body = self._parse_statement(single_statement=True)
         self._expect(JsTokenKind.WHILE)
         self._expect(JsTokenKind.LPAREN)
         test = self._parse_expression()
@@ -1247,16 +1319,13 @@ class JsParser:
         self._expect(JsTokenKind.LPAREN)
         discriminant = self._parse_expression()
         self._expect(JsTokenKind.RPAREN)
-        self._expect(JsTokenKind.LBRACE)
+        opened = self._expect(JsTokenKind.LBRACE).offset
         cases: list[JsSwitchCase | JsErrorNode] = []
         while not self._at(JsTokenKind.RBRACE, JsTokenKind.EOF):
-            try:
-                cases.append(self._read_item(
-                    self._parse_switch_case, _SWITCH_CLAUSE, carries_comments=True))
-            except JsParseError as error:
-                cases.append(self._unread_token(error))
+            cases.append(self._read_item(
+                self._parse_switch_case, _SWITCH_CLAUSE, carries_comments=True))
         switch = JsSwitchStatement(discriminant=discriminant, cases=cases, offset=offset)
-        self._close_list(switch, JsTokenKind.RBRACE)
+        self._close_list(switch, JsTokenKind.RBRACE, opened)
         return switch
 
     def _parse_switch_case(self) -> JsSwitchCase:
@@ -1319,11 +1388,16 @@ class JsParser:
         return JsReturnStatement(argument=argument, offset=offset)
 
     def _parse_throw_statement(self) -> JsThrowStatement:
+        """
+        A `throw` takes its expression, on the same line: no line terminator may stand between
+        the two (§14.14), and there is no `throw` without an expression, so a `throw` the line
+        ends behind is refused rather than read as one that throws nothing.
+        """
         offset = self._current.offset
         self._expect(JsTokenKind.THROW)
-        argument = None
-        if not self._preceded_by_newline:
-            argument = self._parse_expression()
+        if self._preceded_by_newline:
+            raise JsParseError('no line terminator may follow throw', self._current.offset)
+        argument = self._parse_expression()
         self._eat_semicolon()
         return JsThrowStatement(argument=argument, offset=offset)
 
@@ -1400,7 +1474,9 @@ class JsParser:
 
     def _parse_formal_parameters(self) -> list[Expression]:
         self._expect(JsTokenKind.LPAREN)
-        params, _ = self._comma_list(JsTokenKind.RPAREN, self._parse_binding_element)
+        params, _, closed = self._comma_list(JsTokenKind.RPAREN, self._parse_binding_element)
+        if not closed:
+            raise JsParseError('a parameter list the file ends inside', self._current.offset)
         return params
 
     def _parse_decorators(self) -> list[JsDecorator]:
@@ -1473,18 +1549,15 @@ class JsParser:
     def _parse_class_body(self) -> JsClassBody:
         with self._with_no_in(False):
             offset = self._current.offset
-            self._expect(JsTokenKind.LBRACE)
+            opened = self._expect(JsTokenKind.LBRACE).offset
             members: list[JsMethodDefinition | JsPropertyDefinition | JsStaticBlock | JsErrorNode] = []
             while not self._at(JsTokenKind.RBRACE, JsTokenKind.EOF):
                 if self._eat(JsTokenKind.SEMICOLON):
                     continue
-                try:
-                    members.append(self._read_item(
-                        self._parse_class_element, _CLASS_ELEMENT, carries_comments=True))
-                except JsParseError as error:
-                    members.append(self._unread_token(error))
+                members.append(self._read_item(
+                    self._parse_class_element, _CLASS_ELEMENT, carries_comments=True))
             body = JsClassBody(body=members, offset=offset)
-            self._close_list(body, JsTokenKind.RBRACE)
+            self._close_list(body, JsTokenKind.RBRACE, opened)
             return body
 
     def _parse_class_element(self) -> JsMethodDefinition | JsPropertyDefinition | JsStaticBlock:
@@ -1497,10 +1570,10 @@ class JsParser:
 
     def _parse_static_block(self, offset: int) -> JsStaticBlock:
         with self._code_context(class_element_context(static=True)):
-            self._expect(JsTokenKind.LBRACE)
+            opened = self._expect(JsTokenKind.LBRACE).offset
             body = self._parse_statement_list(JsTokenKind.RBRACE, JsTokenKind.EOF)
             static = JsStaticBlock(body=body, offset=offset)
-            self._close_list(static, JsTokenKind.RBRACE)
+            self._close_list(static, JsTokenKind.RBRACE, opened)
         return static
 
     def _parse_class_member(self) -> JsMethodDefinition | JsPropertyDefinition | JsStaticBlock:
@@ -1665,7 +1738,9 @@ class JsParser:
             value = self._parse_string_literal()
             return JsImportAttribute(key=key, value=value, offset=key.offset)
 
-        attributes, _ = self._comma_list(JsTokenKind.RBRACE, attribute)
+        attributes, _, closed = self._comma_list(JsTokenKind.RBRACE, attribute)
+        if not closed:
+            raise JsParseError('import attributes the file ends inside', self._current.offset)
         return keyword, attributes
 
     def _module_specifier(self) -> JsStringLiteral | None:
@@ -1676,7 +1751,7 @@ class JsParser:
         spelled by nothing states a module whose name is the empty string, which is a module the
         file could have named and did not.
         """
-        if self._at(JsTokenKind.STRING_SINGLE, JsTokenKind.STRING_DOUBLE):
+        if self._current.kind.is_string:
             return self._parse_string_literal()
         return None
 
@@ -1684,7 +1759,7 @@ class JsParser:
         offset = self._current.offset
         self._expect(JsTokenKind.IMPORT)
 
-        if self._at(JsTokenKind.STRING_SINGLE, JsTokenKind.STRING_DOUBLE):
+        if self._current.kind.is_string:
             source = self._parse_string_literal()
             keyword, attributes = self._parse_import_attributes()
             self._eat_semicolon()
@@ -1759,7 +1834,7 @@ class JsParser:
         surrogate spelling no character a boundary name may carry, so a string holding one is read
         with the repair recorded.
         """
-        if self._at(JsTokenKind.STRING_SINGLE, JsTokenKind.STRING_DOUBLE):
+        if self._current.kind.is_string:
             literal = self._parse_string_literal()
             if literal.value is None or not is_well_formed_unicode(literal.value):
                 self._recovered = True
@@ -1792,7 +1867,9 @@ class JsParser:
                 self._recovered = True
             return JsImportSpecifier(imported=imported, local=local, offset=spec_offset)
 
-        specs, _ = self._comma_list(JsTokenKind.RBRACE, specifier)
+        specs, _, closed = self._comma_list(JsTokenKind.RBRACE, specifier)
+        if not closed:
+            raise JsParseError('named imports the file ends inside', self._current.offset)
         return specs
 
     def _parse_export_declaration(
@@ -1871,7 +1948,9 @@ class JsParser:
                 exported = self._parse_module_export_name()
             return JsExportSpecifier(local=local, exported=exported, offset=spec_offset)
 
-        specifiers, _ = self._comma_list(JsTokenKind.RBRACE, specifier)
+        specifiers, _, closed = self._comma_list(JsTokenKind.RBRACE, specifier)
+        if not closed:
+            raise JsParseError('named exports the file ends inside', self._current.offset)
         source = None
         keyword, attributes = '', []
         if self._at(JsTokenKind.FROM):
@@ -1944,7 +2023,7 @@ class JsParser:
         """
         if self._at(JsTokenKind.YIELD) and self._context.yield_is_operator:
             return self._parse_yield_expression()
-        with self._nested():
+        with self._nested_expression:
             left = self._parse_conditional_expression()
         if self._current.kind.is_assignment:
             op = self._advance().value
@@ -1990,7 +2069,8 @@ class JsParser:
                 break
             op = self._advance().value
             next_prec = prec if prec == _PREC_EXPONENTIATION else prec + 1
-            right = self._parse_binary_expression(next_prec)
+            with self._nested_expression:
+                right = self._parse_binary_expression(next_prec)
             self._no_arrow_operand(right)
             node_type = JsLogicalExpression if logical else JsBinaryExpression
             left = node_type(
@@ -2008,6 +2088,10 @@ class JsParser:
             raise JsParseError('an arrow function as an operand', operand.offset)
 
     def _parse_unary_expression(self) -> Expression:
+        with self._nested_expression:
+            return self._read_unary_expression()
+
+    def _read_unary_expression(self) -> Expression:
         if self._at(
             JsTokenKind.BANG,
             JsTokenKind.TILDE,
@@ -2155,7 +2239,7 @@ class JsParser:
 
         Where the text behind the dot spells no word at all there is no name to build. An identifier
         with no name spells nothing — printing it writes the dot and stops, which is not a program —
-        so what was read is handed back as itself instead.
+        so the member access is refused and the item holding it keeps its text.
         """
         tok = self._current
         if tok.kind is JsTokenKind.PRIVATE_IDENTIFIER:
@@ -2178,17 +2262,18 @@ class JsParser:
         self._expect(JsTokenKind.RBRACKET)
         return key
 
-    def _parse_argument_list(self) -> list[Expression]:
+    def _parse_argument_list(self) -> tuple[list[Expression], bool]:
         """
-        The arguments between the brackets of a call. Each is written `[+In]`, so `in` is an operator
-        here however the call was reached: what a `for` head suppresses is a relational operator
-        standing in the head itself, and a bracket the head encloses is a fresh expression again.
-        Owning that here rather than at each call site is what keeps `for (new Set("k" in b); ; )`
-        reading the same way `for (f("k" in b); ; )` does.
+        The arguments between the brackets of a call, and whether the closing bracket was there.
+        Each is written `[+In]`, so `in` is an operator here however the call was reached: what a
+        `for` head suppresses is a relational operator standing in the head itself, and a bracket
+        the head encloses is a fresh expression again. Owning that here rather than at each call
+        site is what keeps `for (new Set("k" in b); ; )` reading the same way `for (f("k" in b); ; )`
+        does.
         """
         with self._with_no_in(False):
-            args, _ = self._comma_list(JsTokenKind.RPAREN, self._parse_element_expression)
-        return args
+            args, _, closed = self._comma_list(JsTokenKind.RPAREN, self._parse_element_expression)
+        return args, closed
 
     def _parse_element_expression(self) -> Expression:
         """
@@ -2207,11 +2292,16 @@ class JsParser:
         optional: bool,
     ) -> JsCallExpression:
         self._expect(JsTokenKind.LPAREN)
-        args = self._parse_argument_list()
-        return JsCallExpression(
+        args, closed = self._parse_argument_list()
+        call = JsCallExpression(
             callee=callee, arguments=args, optional=optional, offset=callee.offset)
+        return self._closed(call, closed)
 
     def _parse_new_expression(self) -> Expression:
+        with self._nested_expression:
+            return self._read_new_expression()
+
+    def _read_new_expression(self) -> Expression:
         if self._at(JsTokenKind.NEW):
             offset = self._current.offset
             self._advance()
@@ -2228,6 +2318,7 @@ class JsParser:
                 callee = self._name_or_error(tok.value, tok.offset, may_be_reserved=False)
             else:
                 callee = self._parse_new_expression()
+                self._no_arrow_operand(callee)
             while True:
                 if self._eat(JsTokenKind.DOT):
                     prop = self._member_property()
@@ -2243,10 +2334,12 @@ class JsParser:
                 else:
                     break
             args: list[Expression] = []
+            closed = True
             if self._at(JsTokenKind.LPAREN):
                 self._advance()
-                args = self._parse_argument_list()
-            return JsNewExpression(callee=callee, arguments=args, offset=offset)
+                args, closed = self._parse_argument_list()
+            new = JsNewExpression(callee=callee, arguments=args, offset=offset)
+            return self._closed(new, closed)
         return self._parse_primary_expression()
 
     def _parse_primary_expression(self) -> Expression:
@@ -2279,7 +2372,7 @@ class JsParser:
             self._numeral_ends(tok)
             self._advance()
             raw = tok.value
-            value = self._parse_int_text(raw.replace('_', ''))
+            value = number_of_numeral(raw.replace('_', ''))
             return JsNumericLiteral(value=value, raw=raw, offset=offset)
 
         if self._at(JsTokenKind.FLOAT):
@@ -2292,11 +2385,9 @@ class JsParser:
         if self._at(JsTokenKind.BIGINT):
             self._numeral_ends(tok)
             self._advance()
-            raw = tok.value
-            value = self._parse_int_text(raw.replace('_', '').rstrip('n'))
-            return JsBigIntLiteral(value=value, raw=raw, offset=offset)
+            return JsBigIntLiteral(raw=tok.value, offset=offset)
 
-        if self._at(JsTokenKind.STRING_SINGLE, JsTokenKind.STRING_DOUBLE):
+        if self._current.kind.is_string:
             return self._parse_string_literal()
 
         if self._at(JsTokenKind.SLASH, JsTokenKind.SLASH_ASSIGN):
@@ -2305,6 +2396,10 @@ class JsParser:
         if self._at(JsTokenKind.REGEXP):
             self._advance()
             raw = tok.value
+            if not tok.terminated:
+                literal = JsRegExpLiteral(pattern=raw[1:], raw=raw, offset=offset)
+                self._file_ends_inside(literal)
+                return literal
             last_slash = raw.rfind('/')
             pattern = raw[1:last_slash]
             flags = raw[last_slash + 1:]
@@ -2352,20 +2447,21 @@ class JsParser:
         and no literal spells, and is refused, so that the statement holding it is kept as written.
         """
         tok = self._current
-        if not tok.terminated and tok.offset + len(tok.value) < len(self._source):
+        if self._line_ended_string(tok):
             raise JsParseError('a string literal the line ends inside', tok.offset)
         self._advance()
         raw = tok.value
         end = len(raw) - 1 if tok.terminated else len(raw)
-        return JsStringLiteral(
+        literal = JsStringLiteral(
             value=decode_js_string_body(raw[1:end]),
             raw=raw,
-            terminated=tok.terminated,
             offset=tok.offset,
         )
+        if not tok.terminated:
+            self._file_ends_inside(literal)
+        return literal
 
-    @staticmethod
-    def _template_element(tok: JsToken, tail: bool) -> JsTemplateElement:
+    def _template_element(self, tok: JsToken, tail: bool) -> JsTemplateElement:
         """
         One run of text of a template literal, taken from the token without the delimiters around
         it: one character opens every run, and the one that ends it is a backtick where the run
@@ -2377,13 +2473,15 @@ class JsParser:
         raw = tok.value
         end = len(raw) - (1 if tail else 2) if tok.terminated else len(raw)
         text = raw[1:end]
-        return JsTemplateElement(
+        element = JsTemplateElement(
             value=decode_js_template_body(text),
             raw=text,
             tail=tail,
-            terminated=tok.terminated,
             offset=tok.offset,
         )
+        if not tok.terminated:
+            self._file_ends_inside(element)
+        return element
 
     def _parse_template_literal(self) -> JsTemplateLiteral:
         offset = self._current.offset
@@ -2408,7 +2506,9 @@ class JsParser:
                 try:
                     expressions.append(self._read_item(hole, _TEMPLATE_HOLE))
                 except JsParseError as error:
-                    if not self._at(JsTokenKind.TEMPLATE_MIDDLE, JsTokenKind.TEMPLATE_TAIL):
+                    if not self._at(
+                        JsTokenKind.TEMPLATE_MIDDLE, JsTokenKind.TEMPLATE_TAIL, JsTokenKind.EOF,
+                    ):
                         raise
                     expressions.append(JsErrorNode(
                         text='', message=error.message, offset=self._current.offset))
@@ -2417,16 +2517,19 @@ class JsParser:
                 break
             elif self._at(JsTokenKind.TEMPLATE_MIDDLE):
                 quasis.append(self._template_element(self._advance(), False))
-            else:
-                quasis.append(JsTemplateElement(
+            elif self._at(JsTokenKind.EOF):
+                tail = JsTemplateElement(
                     value='',
                     raw='',
                     tail=True,
-                    terminated=False,
                     opened=False,
                     offset=self._current.offset,
-                ))
+                )
+                self._file_ends_inside(tail)
+                quasis.append(tail)
                 break
+            else:
+                raise JsParseError('expected the template to resume', self._current.offset)
 
         return JsTemplateLiteral(
             quasis=quasis, expressions=expressions, offset=offset)
@@ -2435,9 +2538,9 @@ class JsParser:
         with self._with_no_in(False):
             offset = self._current.offset
             self._expect(JsTokenKind.LBRACKET)
-            elements, _ = self._comma_list(
+            elements, _, closed = self._comma_list(
                 JsTokenKind.RBRACKET, self._parse_element_expression, holes=True)
-        return JsArrayExpression(elements=elements, offset=offset)
+        return self._closed(JsArrayExpression(elements=elements, offset=offset), closed)
 
     def _parse_object_literal(self) -> JsObjectExpression:
         with self._with_no_in(False):
@@ -2451,8 +2554,8 @@ class JsParser:
                     return JsSpreadElement(argument=self._parse_assignment_expression(), offset=so)
                 return self._parse_object_property()
 
-            properties, _ = self._comma_list(JsTokenKind.RBRACE, member)
-        return JsObjectExpression(properties=properties, offset=offset)
+            properties, _, closed = self._comma_list(JsTokenKind.RBRACE, member)
+        return self._closed(JsObjectExpression(properties=properties, offset=offset), closed)
 
     def _parse_object_property(self) -> JsProperty:
         offset = self._current.offset
@@ -2578,20 +2681,15 @@ class JsParser:
             raw = tok.value
             text = raw.replace('_', '')
             return JsNumericLiteral(
-                value=float(text) if tok.kind == JsTokenKind.FLOAT else self._parse_int_text(text),
+                value=float(text) if tok.kind == JsTokenKind.FLOAT else number_of_numeral(text),
                 raw=raw,
                 offset=tok.offset,
             )
         if self._at(JsTokenKind.BIGINT):
             self._numeral_ends(tok)
             self._advance()
-            raw = tok.value
-            return JsBigIntLiteral(
-                value=self._parse_int_text(raw.replace('_', '').rstrip('n')),
-                raw=raw,
-                offset=tok.offset,
-            )
-        if self._at(JsTokenKind.STRING_SINGLE, JsTokenKind.STRING_DOUBLE):
+            return JsBigIntLiteral(raw=tok.value, offset=tok.offset)
+        if self._current.kind.is_string:
             return self._parse_string_literal()
         if self._at(JsTokenKind.PRIVATE_IDENTIFIER):
             if not class_element:
@@ -2617,10 +2715,11 @@ class JsParser:
         `(...a) => a` and `(b, ...a) => a`.
 
         Where such a list has no arrow behind it, the head stands with nothing to give its
-        parameters, and what is missing is recorded where the body would be. Demanding the arrow
-        instead consumes whatever does stand there — the semicolon ending the statement, say —
-        and the body then reads the statement behind it, so `x = (a,); y = 2;` would take the
-        second line into a function nobody wrote and leave nothing to say that it had.
+        parameters, and the statement holding it is refused. Demanding the arrow instead would
+        consume whatever does stand there — the semicolon ending the statement, say — and the body
+        would then read the statement behind it, so `x = (a,); y = 2;` would take the second line
+        into a function nobody wrote and leave nothing to say that it had. A list the file ended
+        inside is the parenthesized expression it holds, one the file ended inside.
         """
         with self._with_no_in(False):
             offset = self._current.offset
@@ -2631,14 +2730,14 @@ class JsParser:
                     return self._parse_rest_element()
                 return self._parse_assignment_expression()
 
-            items, trailing_comma = self._comma_list(JsTokenKind.RPAREN, item)
+            items, trailing_comma, closed = self._comma_list(JsTokenKind.RPAREN, item)
             head_only = (
                 not items
                 or trailing_comma
                 or isinstance(items[-1], JsRestElement)
             )
 
-            if self._at(JsTokenKind.ARROW) and not self._preceded_by_newline:
+            if closed and self._at(JsTokenKind.ARROW) and not self._preceded_by_newline:
                 self._advance()
                 body = self._parse_arrow_body(is_async)
             elif head_only:
@@ -2646,7 +2745,8 @@ class JsParser:
             else:
                 expression = items[0] if len(items) == 1 else JsSequenceExpression(
                     expressions=items, offset=offset)
-                return JsParenthesizedExpression(expression=expression, offset=offset)
+                return self._closed(
+                    JsParenthesizedExpression(expression=expression, offset=offset), closed)
 
             arrow = JsArrowFunctionExpression(
                 params=[self._to_param(item) for item in items],
@@ -2731,8 +2831,8 @@ class JsParser:
 
             if self._at(JsTokenKind.LPAREN):
                 self._advance()
-                args = self._parse_argument_list()
-                if self._at(JsTokenKind.ARROW) and not self._preceded_by_newline:
+                args, closed = self._parse_argument_list()
+                if closed and self._at(JsTokenKind.ARROW) and not self._preceded_by_newline:
                     self._advance()
                     params = [self._to_param(arg) for arg in args]
                     body = self._parse_arrow_body(True)
@@ -2740,12 +2840,13 @@ class JsParser:
                         params=params, body=body, is_async=True, offset=offset)
                     self._record_source(arrow, offset)
                     return arrow
-                return JsCallExpression(
+                call = JsCallExpression(
                     callee=JsIdentifier(name='async', offset=offset),
                     arguments=args,
                     optional=False,
                     offset=offset,
                 )
+                return self._closed(call, closed)
 
         return JsIdentifier(name='async', offset=offset)
 

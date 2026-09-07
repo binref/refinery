@@ -325,7 +325,7 @@ A_WRAPPER_THE_EXPANSION_IS_RIGHT_FOR = {
         _prints('11', '12'),
         _the_answer("""
             console.log(11);
-            export {  };
+            export {};
             console.log(12);
             """),
         module=True,

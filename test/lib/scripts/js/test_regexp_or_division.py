@@ -3,6 +3,7 @@ from __future__ import annotations
 import inspect
 
 from test import TestBase
+from test.lib.scripts.js.ledger import dropped_source_characters
 
 from refinery.lib.scripts.js.model import (
     JsAssignmentExpression,
@@ -10,6 +11,7 @@ from refinery.lib.scripts.js.model import (
     JsErrorNode,
     JsRegExpLiteral,
     JsYieldExpression,
+    file_ended_inside,
 )
 from refinery.lib.scripts.js.parser import JsParser
 from refinery.lib.scripts.js.synth import JsSynthesizer
@@ -224,7 +226,10 @@ A_YIELD_WHOSE_STAR_STANDS_ON_THE_NEXT_LINE = inspect.cleandoc("""
     }
 """)
 
-A_REGEXP_THAT_NEVER_CLOSES = [
+#: A file that ends before the slash it opened is closed. Everything behind the slash is the body
+#: of the literal, the brackets standing in it included, so what the file ends inside is the
+#: literal and every construct the literal left open. Node refuses each of them.
+A_REGEXP_THE_FILE_ENDS_INSIDE = [
     '/ zzz',
     'var x = / zzz',
     'a = / zzz',
@@ -232,6 +237,10 @@ A_REGEXP_THAT_NEVER_CLOSES = [
     '[/ zzz]',
     'function f(){ return / zzz }',
 ]
+
+#: The same files with a line behind them, where the line ends the scan instead: no literal begins
+#: at the slash, and the statement it stands in is text the parser could not read.
+A_REGEXP_THAT_NEVER_CLOSES = [F'{source}\nqqq;' for source in A_REGEXP_THE_FILE_ENDS_INSIDE]
 
 A_CLOSING_SLASH_ON_THE_NEXT_LINE = inspect.cleandoc("""
     var x = / zzz
@@ -377,6 +386,25 @@ class TestJsRegExpOrDivision(TestBase):
         for source in A_REGEXP_THAT_NEVER_CLOSES:
             with self.subTest(source=source):
                 self.assertEqual(self._slash_readings(source), [PARSE_ERROR])
+
+    def test_a_slash_the_file_ends_behind_opens_the_literal_the_file_ends_inside(self):
+        for source in A_REGEXP_THE_FILE_ENDS_INSIDE:
+            with self.subTest(source=source):
+                script = JsParser(source).parse()
+                literal = next(
+                    node for node in script.walk() if isinstance(node, JsRegExpLiteral))
+                self.assertEqual(
+                    (self._slash_readings(source), file_ended_inside(literal), script.terminated),
+                    ([source[source.index('/'):]], True, False),
+                )
+
+    def test_a_file_that_ends_inside_a_regexp_keeps_every_character_of_it(self):
+        for source in A_REGEXP_THE_FILE_ENDS_INSIDE:
+            with self.subTest(source=source):
+                printed = JsSynthesizer().convert(JsParser(source).parse())
+                again = JsSynthesizer().convert(JsParser(printed).parse())
+                self.assertEqual(
+                    (dropped_source_characters(source, printed), again), ('', printed))
 
     def test_a_slash_on_the_next_line_closes_no_regexp_opened_on_this_one(self):
         self.assertEqual(

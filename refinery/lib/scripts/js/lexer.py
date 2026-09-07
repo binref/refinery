@@ -355,11 +355,12 @@ class JsLexer:
         start = self.pos
         if self._peek() != '/':
             return None
-        text = self._read_regexp()
-        if text is None:
+        literal = self._read_regexp()
+        if literal is None:
             return None
         self._line_head = False
-        return JsToken(JsTokenKind.REGEXP, text, start)
+        text, terminated = literal
+        return JsToken(JsTokenKind.REGEXP, text, start, terminated)
 
     def _peek(self, count: int = 1) -> str:
         return self.source[self.pos:self.pos + count]
@@ -491,12 +492,14 @@ class JsLexer:
         return self._scan_template_content(
             start, JsTokenKind.TEMPLATE_TAIL, JsTokenKind.TEMPLATE_MIDDLE, -1)
 
-    def _read_regexp(self) -> str | None:
+    def _read_regexp(self) -> tuple[str, bool] | None:
         """
-        The RegularExpressionLiteral that begins here, or `None` where the text spells none. A
-        backslash escapes the character after it but never a line terminator, so a literal that
-        reaches the end of its line is unterminated rather than continued, and the position is
-        restored so that the same text can be read again as whatever else it may be.
+        The RegularExpressionLiteral that begins here and whether its closing slash was there, or
+        `None` where the text spells none. A backslash escapes the character after it but never a
+        line terminator, so a literal that reaches the end of its line spells none, and the position
+        is restored so that the same text can be read again as whatever else it may be; one that
+        reaches the end of the file behind at least the one character a body needs is the literal
+        the file ended inside.
 
         RegularExpressionFirstChar admits neither a slash nor a star, which is what leaves `//` and
         `/*` to spell the two comments and nothing else.
@@ -526,12 +529,15 @@ class JsLexer:
                 self.pos += 1
                 while self.pos < length and src[self.pos].isalpha():
                     self.pos += 1
-                return src[start:self.pos]
+                return src[start:self.pos], True
             if c in LINE_TERMINATORS:
-                break
+                self.pos = start
+                return None
             self.pos += 1
-        self.pos = start
-        return None
+        if self.pos == start + 1:
+            self.pos = start
+            return None
+        return src[start:self.pos], False
 
     def _read_digits(self, digits: str | frozenset[str], separators: bool) -> bool:
         """
@@ -593,8 +599,9 @@ class JsLexer:
         digits, an exponent needs a digit behind its sign, and a separator stands between two
         digits of one run and nowhere else, and never behind a leading `0`, which is a run of its
         own. A legacy octal literal, `0` followed by octal digits, takes no separator, no fraction,
-        no exponent and no `n`; `0` followed by digits one of which is `8` or `9` is decimal, and
-        takes a fraction and an exponent but no separator.
+        no exponent and no `n`; `0` followed by digits one of which is `8` or `9` is decimal, whose
+        integer part takes no separator and whose fraction and exponent take them as any other
+        decimal's do.
         """
         start = self.pos
         src = self.source
@@ -614,7 +621,7 @@ class JsLexer:
                 legacy_octal = all(c in '01234567' for c in src[start:self.pos])
                 if legacy_octal:
                     return self._numeral(JsTokenKind.INTEGER, start)
-                return self._read_fraction_and_exponent(start, False)
+                return self._read_fraction_and_exponent(start)
 
         if src[self.pos] == '0':
             self.pos += 1
@@ -624,9 +631,9 @@ class JsLexer:
         if self.pos < length and src[self.pos] == 'n' and has_integer_part:
             self.pos += 1
             return self._numeral(JsTokenKind.BIGINT, start)
-        return self._read_fraction_and_exponent(start, True)
+        return self._read_fraction_and_exponent(start)
 
-    def _read_fraction_and_exponent(self, start: int, separators: bool) -> JsToken:
+    def _read_fraction_and_exponent(self, start: int) -> JsToken:
         src = self.source
         length = len(src)
         has_integer_part = self.pos > start
@@ -636,7 +643,7 @@ class JsLexer:
             if next_pos < length and src[next_pos] in _DECIMAL:
                 is_float = True
                 self.pos += 1
-                self._read_digits(_DECIMAL, separators)
+                self._read_digits(_DECIMAL, True)
             elif has_integer_part:
                 is_float = True
                 self.pos += 1
@@ -647,7 +654,7 @@ class JsLexer:
             if exponent < length and src[exponent] in _DECIMAL:
                 is_float = True
                 self.pos = exponent
-                self._read_digits(_DECIMAL, separators)
+                self._read_digits(_DECIMAL, True)
         kind = JsTokenKind.FLOAT if is_float else JsTokenKind.INTEGER
         return self._numeral(kind, start)
 

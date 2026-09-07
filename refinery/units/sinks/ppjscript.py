@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from refinery.lib.scripts.js.parser import JsParser
 from refinery.lib.scripts.js.synth import JsSynthesizer
-from refinery.lib.tools import RecursionDepth
 from refinery.lib.types import Param
 from refinery.units import Arg, Unit
 
@@ -29,8 +28,7 @@ class ppjscript(Unit):
 
     def process(self, data: bytearray):
         code = data.decode(self.codec)
-        with RecursionDepth(10000):
-            ast = JsParser(code).parse()
+        ast = JsParser(code).parse()
         synth = JsSynthesizer(
             indent=' ' * self.args.indent,
             unescape_strings=not self.args.keep_escapes,

@@ -16,7 +16,7 @@ from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 
 from refinery.lib.scripts import Expression, Node, Statement
-from refinery.lib.scripts.js.numbers import to_js_number
+from refinery.lib.scripts.js.numbers import integer_of_numeral, to_js_number
 
 if TYPE_CHECKING:
     from refinery.lib.scripts.js.strict import StrictViolation
@@ -112,8 +112,17 @@ class JsNumericLiteral(Expression, spelling='raw'):
 
 @dataclass(repr=False, eq=False)
 class JsBigIntLiteral(Expression, spelling='raw'):
-    value: int = 0
+    """
+    A BigInt literal. `raw` is how the source spelled it, and the exact integer it denotes is read
+    off that spelling when it is asked for: converting a long decimal spelling is bounded by the
+    interpreter's limit on the digits of an integer conversion, and reading a file must not be
+    hostage to that limit for a value the file may never have read.
+    """
     raw: str = '0n'
+
+    @property
+    def value(self) -> int:
+        return integer_of_numeral(self.raw[:-1].replace('_', ''))
 
 
 @dataclass(repr=False, eq=False)
@@ -152,6 +161,7 @@ class JsRegExpLiteral(Expression, spelling='raw'):
     pattern: str = ''
     flags: str = ''
     raw: str = '//'
+    terminated: bool = True
 
 
 @dataclass(repr=False, eq=False)
@@ -204,11 +214,14 @@ class JsThisExpression(Expression):
 @dataclass(repr=False, eq=False)
 class JsArrayExpression(Expression):
     elements: list[Expression | None] = field(default_factory=list)
+    #: Whether the closing bracket was there; `file_ended_inside` says what its absence means.
+    terminated: bool = True
 
 
 @dataclass(repr=False, eq=False)
 class JsObjectExpression(Expression):
     properties: list[JsProperty | JsSpreadElement | JsErrorNode] = field(default_factory=list)
+    terminated: bool = True
 
 
 @dataclass(repr=False, eq=False)
@@ -312,12 +325,14 @@ class JsCallExpression(Expression):
     callee: Expression | None = None
     arguments: list[Expression] = field(default_factory=list)
     optional: bool = False
+    terminated: bool = True
 
 
 @dataclass(repr=False, eq=False)
 class JsNewExpression(Expression):
     callee: Expression | None = None
     arguments: list[Expression] = field(default_factory=list)
+    terminated: bool = True
 
 
 @dataclass(repr=False, eq=False)
@@ -345,16 +360,19 @@ class JsTaggedTemplateExpression(Expression):
 @dataclass(repr=False, eq=False)
 class JsParenthesizedExpression(Expression):
     expression: Expression | None = None
+    terminated: bool = True
 
 
 @dataclass(repr=False, eq=False)
 class JsArrayPattern(Expression):
     elements: list[Expression | None] = field(default_factory=list)
+    terminated: bool = True
 
 
 @dataclass(repr=False, eq=False)
 class JsObjectPattern(Expression):
     properties: list[JsProperty | JsRestElement | JsErrorNode] = field(default_factory=list)
+    terminated: bool = True
 
 
 @dataclass(repr=False, eq=False)
@@ -418,7 +436,7 @@ class JsBlockStatement(Statement):
     #: Whether the closing brace was there. A file carved out of memory ends inside a block more
     #: often than anywhere else, and the block keeps the statements it holds and says that nothing
     #: closed it: printing what it holds and nothing after it is what keeps the file's end where the
-    #: file had it. `refinery.lib.scripts.js.model.JsScript.early_errors` reports it.
+    #: file had it. `early_errors` reports it.
     terminated: bool = True
 
 
@@ -510,6 +528,13 @@ class JsCatchClause(Node):
 @dataclass(repr=False, eq=False)
 class JsThrowStatement(Statement):
     argument: Expression | None = None
+
+    def has_spelling(self) -> bool:
+        """
+        A `throw` takes its expression on the same line, and nothing else: the parser refuses a
+        `throw` with nothing behind it, and this is what says so if a transform assembles one.
+        """
+        return self.argument is not None
 
 
 @dataclass(repr=False, eq=False)
@@ -974,3 +999,37 @@ def accessor_install_method(node: JsMemberExpression) -> str | None:
     """
     name = static_property_key(node)
     return name if name in ACCESSOR_INSTALL_METHODS else None
+
+
+Closable = (
+    JsStringLiteral
+    | JsRegExpLiteral
+    | JsTemplateElement
+    | JsArrayExpression
+    | JsObjectExpression
+    | JsParenthesizedExpression
+    | JsCallExpression
+    | JsNewExpression
+    | JsArrayPattern
+    | JsObjectPattern
+    | JsClassBody
+    | JsStaticBlock
+    | JsBlockStatement
+    | JsSwitchStatement
+    | JsScript
+)
+"""
+The node kinds that carry `terminated`: a construct with a closing delimiter the file may end
+before, which `file_ended_inside` reads.
+"""
+
+
+def file_ended_inside(node: Node) -> bool:
+    """
+    Whether *node* is a construct the file ended inside: a literal, a bracketed list, a block, a
+    class body, a switch, or the file itself, whose closing delimiter the parser never saw because
+    the file ended first. Such a node holds what the file held and says that nothing closed it: a
+    printer writes what it holds and nothing after it, an engine refuses the file as an unexpected
+    end of input, and the parser sets the flag at the end of the file and nowhere else.
+    """
+    return isinstance(node, Closable) and not node.terminated

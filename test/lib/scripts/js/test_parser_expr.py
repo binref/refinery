@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from test import TestBase
 
+from refinery.lib.scripts import is_well_formed
 from refinery.lib.scripts.js.parser import JsParser
 from refinery.lib.scripts.js.model import (
     JsArrayExpression,
@@ -83,6 +84,33 @@ class TestJsParserExpressions(TestBase):
         expr = self._parse_expr('100n')
         self.assertIsInstance(expr, JsBigIntLiteral)
         self.assertEqual(expr.value, 100)
+
+    def test_a_decimal_numeral_past_the_double_range_is_an_infinity(self):
+        expr = self._parse_expr('1' * 4301)
+        self.assertIsInstance(expr, JsNumericLiteral)
+        self.assertEqual(expr.value, float('inf'))
+
+    def test_a_numeral_longer_than_an_integer_conversion_allows_is_read_and_printed(self):
+        """
+        Node compiles each of these. A decimal spelling of more than 4300 digits is past the limit
+        the interpreter puts on converting a string to an integer, and a Number literal never
+        needs that conversion; a BigInt literal keeps its spelling and answers its value only when
+        asked for it.
+        """
+        sources = {
+            'number': 'x = ' + '1' * 4301 + ';',
+            'bigint': 'x = ' + '1' * 4301 + 'n;',
+            'number key': 'x = { ' + '1' * 4301 + ': 1 };',
+            'bigint key': 'x = { ' + '1' * 4301 + 'n: 1 };',
+            'hexadecimal': 'x = 0x' + 'f' * 5000 + ';',
+        }
+        self.assertEqual(
+            {
+                name: (is_well_formed(tree := JsParser(source).parse()), JsSynthesizer().convert(tree))
+                for name, source in sources.items()
+            },
+            {name: (True, source) for name, source in sources.items()},
+        )
 
     def test_string_single(self):
         expr = self._parse_expr("'hello'")

@@ -4,7 +4,7 @@ import abc
 import codecs
 
 from refinery.lib.id import guess_text_encoding
-from refinery.lib.scripts import Node
+from refinery.lib.scripts import TREE_RECURSION_DEPTH, Node
 from refinery.lib.scripts.pipeline import DeobfuscationTimeout
 from refinery.lib.tools import RecursionDepth
 from refinery.lib.types import Param, buf
@@ -42,7 +42,7 @@ class IterativeDeobfuscator(Unit, abstract=True):
 
     def process(self, data: Chunk) -> buf:
         try:
-            with RecursionDepth(10000):
+            with RecursionDepth(TREE_RECURSION_DEPTH):
                 return self._process(data)
         except RecursionError:
             self.log_warn('input nesting exceeded the interpreter stack; leaving it unchanged')

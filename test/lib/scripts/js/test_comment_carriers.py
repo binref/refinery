@@ -268,7 +268,7 @@ A_COMMENT_NO_CARRIER_STANDS_AT = {
         'export var x = 1;',
     ),
     'export default /* c */ function f() {}': (
-        'export default function f() {\n  /* c */\n}',
+        'export default function f() {}\n/* c */',
         'export default function f() {}',
     ),
     'x = f(/* c */ 1); y = 2;': (
@@ -353,26 +353,44 @@ A_COMMENT_LEADING_UNREAD_TEXT = {
         'x = 1;\n@@@\n/* c */',
         'x = 1;\n@@@',
     ),
+    'async /*c*/ function f a b {}': (
+        'async /*c*/ function f a b {}',
+        'async /*c*/ function f a b {}',
+    ),
+    'switch (a) { case 1: async /*c*/ function f a {} }': (
+        'switch (a) {\n  case 1:\n    async /*c*/ function f a {}\n}',
+        'switch (a) {\n  case 1:\n    async /*c*/ function f a {}\n}',
+    ),
+    'x = /* c */ { b() {} d };': (
+        'x = { b() {} d };\n/* c */',
+        'x = { b() {} d };',
+    ),
+    '/*c*/ #!x\nvar y = 1;': (
+        '/*c*/\n#!x\nvar y = 1;',
+        '\n#!x\nvar y = 1;',
+    ),
 }
 
 #: A file that ends inside a block comment, which Node refuses. The comment is the last thing the
-#: file holds and comes back last, whatever the file ended inside besides.
+#: file holds and comes back last, whatever the file ended inside besides — and comes back even
+#: where comments are stripped, since it is the file's cut and a print without it would be a
+#: program the file is not.
 A_COMMENT_THE_FILE_ENDS_INSIDE = {
     'x = 1; /* a': (
         'x = 1;\n/* a',
-        'x = 1;',
+        'x = 1;\n/* a',
     ),
     '/* a': (
         '/* a',
-        '',
+        '/* a',
     ),
     'function f() { x; /* a': (
         'function f() {\n  x;\n/* a',
-        'function f() {\n  x;',
+        'function f() {\n  x;\n/* a',
     ),
     'x = y[a /* c': (
         'x = y[a\n/* c',
-        'x = y[a',
+        'x = y[a\n/* c',
     ),
 }
 
@@ -496,11 +514,15 @@ class TestAFileIsAProgramWhereNodeReadsOne(TestBase):
             self._by_group(),
         )
 
-    def test_the_file_says_whether_it_ended_inside_a_comment(self):
+    def test_the_file_says_whether_it_ended_inside_a_construct(self):
         rows = every_file_holding_a_comment()
+        ended_inside = {
+            *A_COMMENT_THE_FILE_ENDS_INSIDE,
+            *A_COMMENT_BEFORE_THE_END_OF_A_LIST_THE_FILE_ENDS_INSIDE,
+        }
         self.assertEqual(
             {source: JsParser(source).parse().terminated for source in rows},
-            {source: source not in A_COMMENT_THE_FILE_ENDS_INSIDE for source in rows},
+            {source: source not in ended_inside for source in rows},
         )
 
     @unittest.skipIf(node_executable() is None, 'node.js is not available')

@@ -82,6 +82,7 @@ from refinery.lib.scripts.js.model import (
     JsWithStatement,
     JsYieldExpression,
     code_context_within,
+    file_ended_inside,
     names_a_property,
     strip_parens,
 )
@@ -793,11 +794,10 @@ def _check_names(
 
 def _check_terminated(node: Node, out: list[StrictViolation]) -> None:
     """
-    A construct the file ended inside — a literal, a block, a class body, a switch, the file's
-    last comment — is one every engine refuses as an unexpected end of input, whatever the mode
-    and the goal. The node says so itself, and the tree holding it is no program.
+    A construct the file ended inside is one every engine refuses as an unexpected end of input,
+    whatever the mode and the goal. The node says so itself, and the tree holding it is no program.
     """
-    if getattr(node, 'terminated', True) is False:
+    if file_ended_inside(node):
         out.append(StrictViolation(node.offset, 'unterminated'))
 
 

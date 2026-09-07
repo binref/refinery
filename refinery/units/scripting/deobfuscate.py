@@ -14,7 +14,8 @@ if TYPE_CHECKING:
     from refinery.lib.scripts.vba.parser import VbaParser
     from refinery.lib.scripts.vba.synth import VbaSynthesizer
 
-from refinery.lib.types import INF, Param
+from refinery.lib.scripts.guess import ScriptBackend, select_backend
+from refinery.lib.types import Param
 from refinery.units import Arg
 from refinery.units.scripting import IterativeDeobfuscator
 
@@ -87,27 +88,16 @@ class defu(IterativeDeobfuscator):
         yield _Backend('js', JsParser, js_deobfuscate, JsSynthesizer, JsErrorNode)
 
     def parse(self, data: str) -> Node:
-        best_ast: Node | None = None
-        best_errors = INF()
-        best_backend = None
-        for backend in self._backends():
-            try:
-                ast = backend.parser(data).parse()
-                errors = sum(
-                    len(n.text) for n in ast.walk() if isinstance(n, backend.error))
-            except Exception:
-                continue
-            if errors < best_errors:
-                best_errors = errors
-                best_ast = ast
-                best_backend = backend
-                if errors == 0:
-                    break
-        if best_backend is None or best_ast is None or best_errors * 2 > len(data):
+        backends = {backend.name: backend for backend in self._backends()}
+        guess = select_backend(data, [
+            ScriptBackend(backend.name, backend.parser, backend.error)
+            for backend in backends.values()
+        ])
+        if guess is None:
             raise ValueError('none of the available parsers was able to parse the input')
-        self._backend = best_backend
-        self.log_info(F'using {best_backend.name} with {best_errors / len(data) * 100:.2f}% errors')
-        return best_ast
+        self._backend = backends[guess.name]
+        self.log_info(F'using {guess.name} with {guess.errors / len(data) * 100:.2f}% errors')
+        return guess.tree
 
     def transform(self, ast: Node) -> int:
         keyword = self._backend.keep_output

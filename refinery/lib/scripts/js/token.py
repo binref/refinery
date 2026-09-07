@@ -167,6 +167,10 @@ class JsTokenKind(enum.Enum):
     ERROR           = 'error'            # noqa
     EOF             = 'eof'              # noqa
 
+    #: A kind is a singleton compared by identity, so its identity is its hash; the base class
+    #: hashes the member's name through a Python-level call on every set or dictionary lookup.
+    __hash__ = object.__hash__
+
     @property
     def is_keyword(self):
         return self in _KEYWORDS_SET
@@ -174,6 +178,10 @@ class JsTokenKind(enum.Enum):
     @property
     def is_assignment(self):
         return self in _ASSIGNMENT_SET
+
+    @property
+    def is_string(self):
+        return self in _STRING_SET
 
 
 KEYWORDS: dict[str, JsTokenKind] = {
@@ -298,6 +306,8 @@ def spells_only_a_name(name: str) -> bool:
         and name not in SPELLING_REFUSED_NAMES
     )
 
+
+_STRING_SET = frozenset({JsTokenKind.STRING_SINGLE, JsTokenKind.STRING_DOUBLE})
 
 _ASSIGNMENT_SET = frozenset({
     JsTokenKind.EQUALS,

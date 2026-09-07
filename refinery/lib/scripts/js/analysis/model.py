@@ -97,6 +97,7 @@ from refinery.lib.scripts.js.model import (
     JsVarKind,
     JsWhileStatement,
     JsWithStatement,
+    file_ended_inside,
     names_a_property,
     static_property_key,
     strip_parens,
@@ -446,8 +447,11 @@ class Binding:
 class Scope:
     """
     A lexical scope. `node` is the AST node that introduces it (the script, a function, a block, a
-    catch clause, a class, or a `with`). `is_dynamic` marks a `with` body, whose bindings cannot be
-    resolved statically because the object supplies them at run time.
+    catch clause, a class, or a `with`). `is_dynamic` marks a scope whose bindings cannot be
+    resolved statically: a `with` body, whose object supplies them at run time, and a parameter or
+    catch scope declared by a pattern the parser could not read, which spells names this model
+    cannot see (`pattern_binds_unread_names`). A name that would resolve across either boundary
+    resolves to nothing instead, since the binding it denotes may be one that is not there.
 
     A direct `eval` is not marked here even though it too can inject a name. It would have to mark the
     whole enclosing function, which would make every name in a function containing one unresolvable,
@@ -574,29 +578,64 @@ def name_uses_in_scope(names: set[str], scope: Scope) -> Iterator[JsIdentifier]:
             yield node
 
 
-def pattern_identifiers(target: Node | None) -> Iterator[JsIdentifier]:
+def is_unread_source(node: Node) -> bool:
     """
-    Yield every binding-site identifier introduced by a declaration target, descending through
-    destructuring patterns (`[a, {b: c}]`, `{x, ...rest}`), default patterns, and rest elements. A
-    member-expression target (`[a.b] = ...`) introduces no binding and yields nothing.
+    Whether *node* is source this model never read: a span the parser could not read at all, or a
+    construct the file ended inside, whose closing delimiter and everything that would have
+    followed it the file never held. Nothing says what such a span references, so every binding in
+    scope where one stands may be read or written by it, and none of them is provably unused.
+    """
+    return isinstance(node, JsErrorNode) or file_ended_inside(node)
+
+
+def pattern_targets(target: Node | None) -> Iterator[Node]:
+    """
+    Yield every node standing in a binding position of a declaration target, descending through
+    destructuring patterns (`[a, {b: c}]`, `{x, ...rest}`), default patterns, and rest elements.
+    What stands there is an identifier wherever the target binds a name, a member expression where
+    it binds none (`[a.b] = ...`), and a span the parser could not read wherever the source spelled
+    a binding position with text no grammar reads.
     """
     if target is None:
         return
-    if isinstance(target, JsIdentifier):
-        yield target
-    elif isinstance(target, JsArrayPattern):
+    if isinstance(target, JsArrayPattern):
         for element in target.elements:
-            yield from pattern_identifiers(element)
+            yield from pattern_targets(element)
     elif isinstance(target, JsObjectPattern):
         for prop in target.properties:
             if isinstance(prop, JsRestElement):
-                yield from pattern_identifiers(prop.argument)
+                yield from pattern_targets(prop.argument)
             elif isinstance(prop, JsProperty):
-                yield from pattern_identifiers(prop.value)
+                yield from pattern_targets(prop.value)
+            else:
+                yield prop
     elif isinstance(target, JsAssignmentPattern):
-        yield from pattern_identifiers(target.left)
+        yield from pattern_targets(target.left)
     elif isinstance(target, JsRestElement):
-        yield from pattern_identifiers(target.argument)
+        yield from pattern_targets(target.argument)
+    else:
+        yield target
+
+
+def pattern_identifiers(target: Node | None) -> Iterator[JsIdentifier]:
+    """
+    Yield every binding-site identifier introduced by a declaration target. A member-expression
+    target (`[a.b] = ...`) introduces no binding and yields nothing, and neither does a binding
+    position the parser could not read, which `pattern_binds_unread_names` is what reports.
+    """
+    for node in pattern_targets(target):
+        if isinstance(node, JsIdentifier):
+            yield node
+
+
+def pattern_binds_unread_names(target: Node | None) -> bool:
+    """
+    Whether a declaration target holds source this model never read in a binding position, so the
+    names it binds are not the names `pattern_identifiers` yields: the unread span may spell one
+    this model cannot see. A scope such a target declares into holds a binding no lookup can find,
+    which is what `Scope.is_dynamic` says of a scope whose declarations are not statically known.
+    """
+    return any(is_unread_source(node) for node in pattern_targets(target))
 
 
 def reference_role(node: ReferenceNode) -> Role:
@@ -1778,6 +1817,7 @@ class SemanticModel:
         self._opaque_surface_sites: list[Node] | None = None
         self._dispatch_surface_reached: bool | None = None
         self._function_direct_eval_sites: dict[int, list[Node]] = {}
+        self._function_unread_source_sites: dict[int, list[Node]] = {}
         self.root_scope: Scope = _ScopeBuilder(self).build(root)
         self._build_def_use()
 
@@ -2270,13 +2310,14 @@ class SemanticModel:
 
     def has_reflection_surface(self) -> bool:
         """
-        Whether the program still contains a construct through which code could reference a global by
-        name at runtime: a value-read of the `eval` or `Function` intrinsic in any form — a direct or
-        indirect call, an alias (`var e = eval`), a comma sequence (`(0, eval)`), or a member access
-        (`window.eval`, `g['Function']`) — a string-valued timer, a dynamic property access on the
-        global object (`window[expr]`), or a `with` statement. Computed conservatively (over-reporting
-        is safe): while any such surface remains, a dead global must not be removed, because reflective
-        code may read it.
+        Whether the program still contains a construct through which code could reference a global
+        by name at runtime: a value-read of the `eval` or `Function` intrinsic in any form — a
+        direct or indirect call, an alias (`var e = eval`), a comma sequence (`(0, eval)`), or a
+        member access (`window.eval`, `g['Function']`) — a string-valued timer, a dynamic property
+        access on the global object (`window[expr]`), a `with` statement, or a span of source this
+        model never read, which may spell a name nothing here records. Computed conservatively
+        (over-reporting is safe): while any such surface remains, a dead global must not be removed,
+        because reflective code may read it.
         """
         self._ensure_reflection_detected()
         assert self._reflection_surface is not None
@@ -2286,50 +2327,58 @@ class SemanticModel:
         """
         Whether a runtime name lookup could read or write *binding* without a reference this model
         records. Derived over the precise dynamic-scope facts. A global is reachable through any
-        reflective surface — `eval`, `Function`, a string timer, dynamic global access, `with` — all of
-        which run in the global scope, so it defers to the whole-program `has_reflection_surface`. A
-        function-local is reachable only from within its own function and only by name: a `with` body that
-        names it (a `dynamic_references` entry) or a direct `eval` in the function
-        (`local_reachable_by_direct_eval`). A `with` that never names it cannot reach it, and reflective
-        code in the global scope cannot name a local — so the local answer is exact, while the global one
-        stays conservative (any surface).
+        reflective surface — `eval`, `Function`, a string timer, dynamic global access, `with` — all
+        of which run in the global scope, so it defers to the whole-program
+        `has_reflection_surface`. A function-local is reachable only from within its own function
+        and only by name: a `with` body that names it (a `dynamic_references` entry), a direct
+        `eval` in the function (`local_reachable_by_direct_eval`), or a span of the function this
+        model never read (`unread_source_can_reach`), which may spell the name where nothing records
+        that it does. A `with` that never names it cannot reach it, and reflective code in the
+        global scope cannot name a local — so the local answer is exact, while the global one stays
+        conservative (any surface).
         """
         owner = binding.scope.var_scope
         if owner is None or owner.kind is ScopeKind.SCRIPT:
             return self.has_reflection_surface()
-        return bool(binding.dynamic_refs) or self._function_has_direct_eval(owner.node)
+        return (
+            bool(binding.dynamic_refs)
+            or self._function_has_direct_eval(owner.node)
+            or bool(self._unread_source_sites(owner.node))
+        )
 
     def reachable_by_opaque_reflection(self, binding: Binding) -> bool:
         """
-        Whether an opaque reflective surface — a value-read of `eval` or `Function`, a string timer, or a
-        dynamic access on the global object — could name *binding* at runtime with no reference this model
-        records. Unlike `reflection_can_reach`, a `with` body is not counted: a `with` that names the
-        binding is attributed precisely as a `dynamic_references` entry, so a caller that already consults
-        `dynamic_refs` needs only the opaque surfaces here, the ones that leave no attributable reference.
-        A global is reachable through any such surface, all of which run in the global scope; a
-        function-local only through a direct `eval` in its own function, since a surface running in the
-        global scope cannot name a local. The boolean companion of `reflection_surface_sites` — true
-        exactly when that site list is non-empty.
+        Whether an opaque reflective surface — a value-read of `eval` or `Function`, a string timer,
+        a dynamic access on the global object, or a span of source this model never read — could
+        name *binding* at runtime with no reference this model records. Unlike
+        `reflection_can_reach`, a `with` body is not counted: a `with` that names the binding is
+        attributed precisely as a `dynamic_references` entry, so a caller that already consults
+        `dynamic_refs` needs only the opaque surfaces here, the ones that leave no attributable
+        reference. A global is reachable through any such surface, all of which run in the global
+        scope; a function-local only through a direct `eval` or an unread span in its own function,
+        since a surface running in the global scope cannot name a local. The boolean companion of
+        `reflection_surface_sites` — true exactly when that site list is non-empty.
         """
         return bool(self.reflection_surface_sites(binding))
 
     def reflection_surface_sites(self, binding: Binding) -> list[Node]:
         """
         The AST nodes of the opaque reflective surfaces that could name *binding* at runtime with no
-        reference this model records — the points no reflected invocation of it can precede. A caller
-        ranks a definition against these to prove it runs before every such invocation, the site-level
-        companion of `reachable_by_opaque_reflection`. For a global (script-scope) binding they are the
-        whole-program opaque surfaces (`_opaque_reflection_sites`), each running in the global scope and
-        able to name any global; for a function-local, the direct `eval` sites in its owning function
-        (`_direct_eval_sites`), the only opaque surface that runs in the local's own scope and can name
-        it. Empty exactly when the binding is not opaque-reflection reachable. A `with` surface is not
-        included — a `with` that names the binding is attributed as a `dynamic_references` entry a caller
-        consults separately.
+        reference this model records — the points no reflected invocation of it can precede. A
+        caller ranks a definition against these to prove it runs before every such invocation, the
+        site-level companion of `reachable_by_opaque_reflection`. For a global (script-scope)
+        binding they are the whole-program opaque surfaces (`_opaque_reflection_sites`), each
+        running in the global scope and able to name any global; for a function-local, the direct
+        `eval` sites in its owning function (`_direct_eval_sites`) and the spans of that function
+        this model never read (`_unread_source_sites`), the only opaque surfaces that stand in the
+        local's own scope and can name it. Empty exactly when the binding is not opaque-reflection
+        reachable. A `with` surface is not included — a `with` that names the binding is attributed
+        as a `dynamic_references` entry a caller consults separately.
         """
         owner = binding.scope.var_scope
         if owner is None or owner.kind is ScopeKind.SCRIPT:
             return self._opaque_reflection_sites()
-        return self._direct_eval_sites(owner.node)
+        return self._direct_eval_sites(owner.node) + self._unread_source_sites(owner.node)
 
     def local_reachable_by_direct_eval(self, binding: Binding) -> bool:
         """
@@ -2346,6 +2395,27 @@ class SemanticModel:
         if owner is None or owner.kind is ScopeKind.SCRIPT:
             return False
         return self._function_has_direct_eval(owner.node)
+
+    def unread_source_can_reach(self, binding: Binding) -> bool:
+        """
+        Whether a span of source this model never read stands where it could name *binding*. Such a
+        span is text the file holds at a definite position, and nothing says what it references, so
+        everything in scope where it stands may be read or written by it with no reference this
+        model records. A binding of the script is within reach of every span in the file; a
+        function-local only of one inside its own function, since no span outside it can name a
+        local.
+
+        This is not folded into the `eval` answers, even though both surfaces are opaque, because
+        the two are known to different degrees. Whether an `eval` anywhere in a file rebinds a given
+        global is a question about text no one has, and freezing every global on it is the
+        over-approximation `local_reachable_by_direct_eval` documents as refused; an unread span is
+        the file's own text, standing in one place, and refusing to count it is what drops the write
+        that text spells.
+        """
+        owner = binding.scope.var_scope
+        if owner is None or owner.kind is ScopeKind.SCRIPT:
+            return bool(self._unread_source_sites(self.root))
+        return bool(self._unread_source_sites(owner.node))
 
     def free_name_reachable_by_direct_eval(self, node: Node) -> bool:
         """
@@ -2389,19 +2459,22 @@ class SemanticModel:
         Whether a dynamic scope could rebind *binding* — give the name a new value through a surface
         the static `writes` set does not record. A `with` body that names it as an assignment target
         may rebind it (the target may instead be a property of the `with` object, but may equally be
-        this binding, so it is treated as a possible rebind), and a direct `eval` in its owning
-        function can rebind it opaquely. A member write or method call through the name does not
-        rebind it — the name keeps its value — so only a dynamic reference whose role is not a plain
-        read counts. A write through an object that aliases the binding — `indefinite_writes` — is
-        counted here too: it replaces the value under the name while leaving no entry that says with
-        what. A consumer that judges a binding's value stable from `writes` alone must also consult
-        this, since none of these reassignments leaves a `writes` entry; a script-scope binding
-        reassigned only through an opaque `eval` stays the documented residual, as
-        `local_reachable_by_direct_eval` reports it false there.
+        this binding, so it is treated as a possible rebind), a direct `eval` in its owning function
+        can rebind it opaquely, and so can a span of source this model never read
+        (`unread_source_can_reach`), whose text may spell an assignment to the name. A member write
+        or method call through the name does not rebind it — the name keeps its value — so only a
+        dynamic reference whose role is not a plain read counts. A write through an object that
+        aliases the binding — `indefinite_writes` — is counted here too: it replaces the value under
+        the name while leaving no entry that says with what. A consumer that judges a binding's
+        value stable from `writes` alone must also consult this, since none of these reassignments
+        leaves a `writes` entry; a script-scope binding reassigned only through an opaque `eval`
+        stays the documented residual, as `local_reachable_by_direct_eval` reports it false there.
         """
         if binding.has_indefinite_write:
             return True
         if self.local_reachable_by_direct_eval(binding):
+            return True
+        if self.unread_source_can_reach(binding):
             return True
         return any(
             reference_role(ref) is not Role.READ
@@ -2456,6 +2529,21 @@ class SemanticModel:
     def _function_has_direct_eval(self, function: Node) -> bool:
         return bool(self._direct_eval_sites(function))
 
+    def _unread_source_sites(self, function: Node) -> list[Node]:
+        """
+        The spans within *function* that this model never read — text the parser could not read, and
+        a construct the file ended inside (see `is_unread_source`). Each stands where the function's
+        own locals are in scope and says nothing about what it references, so it can name any of
+        them with no reference this model records, exactly as a direct `eval` can. Nested functions
+        are included, since a span inside one names the enclosing locals too. Computed once per
+        function and memoized.
+        """
+        cached = self._function_unread_source_sites.get(id(function))
+        if cached is None:
+            cached = [node for node in function.walk() if is_unread_source(node)]
+            self._function_unread_source_sites[id(function)] = cached
+        return cached
+
     def _reads_reflective_intrinsic(self, node: JsIdentifier) -> bool:
         """
         Whether *node* obtains the genuine `eval`/`Function` intrinsic as a value: a read of the bare name
@@ -2476,18 +2564,25 @@ class SemanticModel:
 
     def _ensure_reflection_detected(self) -> None:
         """
-        Populate the reflection-surface memos in a single AST walk. A `with` statement contributes only
-        to the whole-program surface; every other surface — an `import()`, a value-read of the
-        `eval`/`Function` intrinsic, a reflective global-object member, or a string-valued timer — is
-        opaque, and its node is collected so a caller can order a definition against the site. The
-        whole-program surface is present when any opaque site exists or a `with` statement is seen.
+        Populate the reflection-surface memos in a single AST walk. A `with` statement contributes
+        only to the whole-program surface; every other surface — a span of source this model never
+        read, an `import()`, a value-read of the `eval`/`Function` intrinsic, a reflective
+        global-object member, or a string-valued timer — is opaque, and its node is collected so a
+        caller can order a definition against the site. The whole-program surface is present when
+        any opaque site exists or a `with` statement is seen.
+
+        The unread span is tested before the shapes are, because a construct the file ended inside
+        is one of those shapes: an unterminated call is a call, and what matters about it is the
+        source that never followed it rather than what it would compute.
         """
         if self._reflection_surface is not None:
             return
         sites: list[Node] = []
         saw_with = False
         for node in self.root.walk():
-            if isinstance(node, JsWithStatement):
+            if is_unread_source(node):
+                sites.append(node)
+            elif isinstance(node, JsWithStatement):
                 saw_with = True
             elif isinstance(node, JsImportExpression):
                 sites.append(node)
@@ -2506,10 +2601,11 @@ class SemanticModel:
     def _opaque_reflection_sites(self) -> list[Node]:
         """
         The AST nodes of the whole-program opaque reflective surfaces — a value-read of the
-        `eval`/`Function` intrinsic, a reflective global-object member, a string-valued timer, or an
-        `import()`. A `with` statement is not opaque (its body's accesses are attributed as dynamic
-        references) and is excluded. Computed once and memoized; empty exactly when the program has no
-        opaque surface, which `_has_opaque_reflection_surface` reports as its non-emptiness.
+        `eval`/`Function` intrinsic, a reflective global-object member, a string-valued timer, an
+        `import()`, or a span of source this model never read. A `with` statement is not opaque (its
+        body's accesses are attributed as dynamic references) and is excluded. Computed once and
+        memoized; empty exactly when the program has no opaque surface, which
+        `_has_opaque_reflection_surface` reports as its non-emptiness.
         """
         self._ensure_reflection_detected()
         assert self._opaque_surface_sites is not None
@@ -2540,9 +2636,10 @@ class SemanticModel:
                     self._mark_declaration_exported(node.declaration)
                 elif node.source is None:
                     for specifier in node.specifiers:
-                        local = getattr(specifier, 'local', None)
-                        if isinstance(local, JsIdentifier):
-                            self._mark_binding_exported(self.resolve(local))
+                        if isinstance(specifier, JsErrorNode):
+                            continue
+                        if isinstance(specifier.local, JsIdentifier):
+                            self._mark_binding_exported(self.resolve(specifier.local))
             elif isinstance(node, JsExportDefaultDeclaration):
                 self._mark_declaration_exported(node.declaration)
 
@@ -3358,9 +3455,10 @@ class _ScopeBuilder:
             if not isinstance(stmt, JsImportDeclaration):
                 continue
             for spec in stmt.specifiers:
-                local = getattr(spec, 'local', None)
-                if isinstance(local, JsIdentifier):
-                    self._declare(scope, local.name, BindingKind.IMPORT, local)
+                if isinstance(spec, JsErrorNode):
+                    continue
+                if isinstance(spec.local, JsIdentifier):
+                    self._declare(scope, spec.local.name, BindingKind.IMPORT, spec.local)
 
     def _collect_lexical(self, stmts: list, scope: Scope):
         """
@@ -3451,6 +3549,8 @@ class _ScopeBuilder:
         for param in node.params:
             for ident in pattern_identifiers(param):
                 self._declare(params, ident.name, BindingKind.PARAM, ident)
+            if pattern_binds_unread_names(param):
+                params.is_dynamic = True
         if not is_arrow:
             self._declare(params, 'arguments', BindingKind.ARGUMENTS, None)
         body = node.body
@@ -3534,6 +3634,8 @@ class _ScopeBuilder:
         if node.param is not None:
             for ident in pattern_identifiers(node.param):
                 self._declare(cscope, ident.name, BindingKind.CATCH, ident)
+            if pattern_binds_unread_names(node.param):
+                cscope.is_dynamic = True
             self._visit(node.param, cscope)
         if node.body is not None:
             self._visit(node.body, cscope)

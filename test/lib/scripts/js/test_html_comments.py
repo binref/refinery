@@ -28,8 +28,9 @@ from test.lib.scripts.js.analysis.differential import (
     node_executable,
     node_reads_as_a_program,
 )
-from test.lib.scripts.js.ledger import each_well_formed, folded, printed, prints
+from test.lib.scripts.js.ledger import each_well_formed, folded, printed, prints, well_formed
 
+from refinery.lib.scripts.js.model import JsErrorNode
 from refinery.lib.scripts.js.parser import JsParser
 from refinery.lib.scripts.js.strict import StrictViolation, collect_strict_violations
 
@@ -234,4 +235,107 @@ class TestTheCollectorReportsTheDelimitersUnderTheModuleGoal(TestBase):
         self.assertEqual(
             {source: collect_strict_violations(JsParser(source).parse()) for source in rows},
             {source: [] for source in rows},
+        )
+
+
+_ALPHA = 'a' * 35
+_BETA = 'b' * 35
+_GAMMA = 'c' * 36
+_DELTA = 'd' * 36
+_VALUE = 'z' * 60
+
+#: A list too long for one line whose second item begins with the closer, mapped to the text the
+#: printer writes for it. The item stays behind the item in front of it, because a line beginning
+#: with those three characters is a line whose rest is a comment. Node refuses each of these files
+#: and the text written for each: `SyntaxError: Unexpected token '>'` for the call and the array,
+#: and `Unexpected token '--'` for the parameter list and the object.
+A_WRAPPED_LIST_HOLDING_A_CLOSER = {
+    F'f({_ALPHA}, --> 1, {_BETA}, {_GAMMA}, {_DELTA});':
+        F'f(\n  {_ALPHA}, --> 1,\n  {_BETA},\n  {_GAMMA},\n  {_DELTA}\n);',
+    F'x = [{_ALPHA}, --> 1, {_BETA}, {_GAMMA}, {_DELTA}];':
+        F'x = [\n  {_ALPHA}, --> 1,\n  {_BETA},\n  {_GAMMA},\n  {_DELTA}\n];',
+    F'function g({_ALPHA}, --> 1, {_BETA}, {_GAMMA}, {_DELTA}) {{}}':
+        F'function g(\n  {_ALPHA}, --> 1,\n  {_BETA},\n  {_GAMMA},\n  {_DELTA}\n) {{}}',
+    F'x = {{p1: {_VALUE}, p2: {_VALUE}, p3: {_VALUE}, --> 1, p4: {_VALUE}}};':
+        F'x = {{ p1: {_VALUE}, p2: {_VALUE}, p3: {_VALUE}, --> 1,\n  p4: {_VALUE}\n}};',
+}
+
+#: The same four lists with an item the language reads where the closer stood, mapped to the text
+#: the printer writes for them. Node reads every one of these files and every text written for one,
+#: and the printer puts that item at the head of a line, which is the place the closer may not go.
+A_WRAPPED_LIST_HOLDING_A_READABLE_ITEM = {
+    F'f({_ALPHA}, 1, {_BETA}, {_GAMMA}, {_DELTA});':
+        F'f(\n  {_ALPHA},\n  1,\n  {_BETA},\n  {_GAMMA},\n  {_DELTA}\n);',
+    F'x = [{_ALPHA}, 1, {_BETA}, {_GAMMA}, {_DELTA}];':
+        F'x = [\n  {_ALPHA},\n  1,\n  {_BETA},\n  {_GAMMA},\n  {_DELTA}\n];',
+    F'function g({_ALPHA}, e1, {_BETA}, {_GAMMA}, {_DELTA}) {{}}':
+        F'function g(\n  {_ALPHA},\n  e1,\n  {_BETA},\n  {_GAMMA},\n  {_DELTA}\n) {{}}',
+    F'x = {{p1: {_VALUE}, p2: {_VALUE}, p3: {_VALUE}, p9: 1, p4: {_VALUE}}};':
+        F'x = {{ p1: {_VALUE}, p2: {_VALUE}, p3: {_VALUE},\n  p9: 1,\n  p4: {_VALUE}\n}};',
+}
+
+
+class TestAWrappedListNeverPutsTheCloserAtALineHead(TestBase):
+    """
+    A list too long for one line is broken over several, and an item beginning with `-->` written
+    at the head of one of them opens a comment that swallows the rest of that line. The item is
+    written behind what precedes it instead, which is where those three characters are the
+    decrement operator and `>` and nothing is a comment.
+    """
+
+    def test_wrapped_list_item_opening_html_close_comment_is_not_written_at_a_line_head(self):
+        rows = A_WRAPPED_LIST_HOLDING_A_CLOSER
+        self.assertEqual({source: printed(source) for source in rows}, rows)
+
+    def test_a_list_holding_an_item_the_language_reads_is_broken_at_that_item(self):
+        rows = A_WRAPPED_LIST_HOLDING_A_READABLE_ITEM
+        self.assertEqual({source: printed(source) for source in rows}, rows)
+
+    def test_printing_the_print_of_a_list_holding_the_closer_writes_it_again(self):
+        once = {source: printed(source) for source in A_WRAPPED_LIST_HOLDING_A_CLOSER}
+        self.assertEqual({source: printed(text) for source, text in once.items()}, once)
+
+    def test_the_item_reads_back_as_the_text_no_parser_could_read(self):
+        rows = A_WRAPPED_LIST_HOLDING_A_CLOSER
+        self.assertEqual(
+            {
+                source: [
+                    node.text
+                    for node in JsParser(printed(source)).parse().walk_in_order()
+                    if isinstance(node, JsErrorNode)
+                ]
+                for source in rows
+            },
+            {source: ['--> 1'] for source in rows},
+        )
+
+    def test_neither_the_file_nor_the_text_written_for_it_is_a_program(self):
+        rows = A_WRAPPED_LIST_HOLDING_A_CLOSER
+        self.assertEqual(
+            {source: (well_formed(source), well_formed(text)) for source, text in rows.items()},
+            {source: (False, False) for source in rows},
+        )
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestNodeAnswersTheSameAboutAWrappedList(TestBase):
+
+    def test_node_refuses_a_list_holding_the_closer_and_the_text_written_for_it(self):
+        rows = A_WRAPPED_LIST_HOLDING_A_CLOSER
+        self.assertEqual(
+            {
+                source: (node_reads_as_a_program(source), node_reads_as_a_program(text))
+                for source, text in rows.items()
+            },
+            {source: (False, False) for source in rows},
+        )
+
+    def test_node_reads_a_list_holding_an_item_the_language_reads(self):
+        rows = A_WRAPPED_LIST_HOLDING_A_READABLE_ITEM
+        self.assertEqual(
+            {
+                source: (node_reads_as_a_program(source), node_reads_as_a_program(text))
+                for source, text in rows.items()
+            },
+            {source: (True, True) for source in rows},
         )

@@ -652,7 +652,7 @@ class TestJsLexer(TestBase):
         self.assertEqual(
             self._scan_regexp('/zzz/ .flags'), (JsToken(JsTokenKind.REGEXP, '/zzz/', 0), 5))
 
-    def test_a_regexp_scan_that_finds_no_end_of_the_literal_reads_nothing_and_stays(self):
+    def test_a_regexp_scan_that_reaches_the_end_of_its_line_reads_nothing_and_stays(self):
         """
         Node refuses each of these programs. No regular expression literal reaches over the end of
         the line it begins on, neither in its pattern nor inside a character class, and a backslash
@@ -660,14 +660,26 @@ class TestJsLexer(TestBase):
         still the operator it may have to be read as.
         """
         for source in [
-            'x = / zzz',
-            'x = /[zzz',
             A_LINE_BREAK_BEFORE_THE_CLOSING_SLASH,
             A_LINE_BREAK_BEHIND_A_BACKSLASH,
             A_LINE_BREAK_INSIDE_A_CHARACTER_CLASS,
         ]:
             with self.subTest(source=source):
                 self.assertEqual(self._scan_regexp(source, 4), (None, 4))
+
+    def test_a_regexp_scan_that_reaches_the_end_of_the_file_reads_the_literal_it_ends_inside(self):
+        """
+        Node refuses each of these programs. A file that ends before the closing slash ends inside
+        the literal, which is what the scan reports: the text runs to the end of the file and the
+        token says that nothing closed it. A lone slash is no such literal — a body needs one
+        character at least — so the scan reads nothing and stays.
+        """
+        for source, text in [('x = / zzz', '/ zzz'), ('x = /[zzz', '/[zzz')]:
+            with self.subTest(source=source):
+                self.assertEqual(
+                    self._scan_regexp(source, 4),
+                    (JsToken(JsTokenKind.REGEXP, text, 4, False), len(source)))
+        self.assertEqual(self._scan_regexp('x = /', 4), (None, 4))
 
     def test_a_regexp_scan_where_no_slash_stands_reads_nothing_and_stays(self):
         for source, pos in [('zzz', 0), ('x + y', 2), ('x = zzz', 4), (' /zzz/', 0), ('', 0)]:
@@ -1041,15 +1053,20 @@ class TestANumeralEndsWhereTheGrammarEndsOne(TestBase):
     """
     §12.9.3 reads a numeral by its productions: a separator stands between two digits of one run
     and nowhere else, a radix prefix needs digits, an exponent needs a digit behind its sign, a
-    legacy octal literal takes no separator, fraction, exponent or `n`, a `0`-led literal takes no
-    separator, and the source character behind a numeral may be neither an IdentifierStart nor a
-    digit. Node compiles `x = <spelling>;` for every spelling of the first table and refuses it
-    for every spelling of the second.
+    legacy octal literal takes no separator, fraction, exponent or `n`, the integer part of a
+    `0`-led decimal takes no separator while its fraction and exponent take them, and the source
+    character behind a numeral may be neither an IdentifierStart nor a digit. Node compiles
+    `x = <spelling>;` for every spelling of the first table and refuses it for every spelling of
+    the second.
     """
 
     def test_a_numeral_node_compiles_is_one_terminated_token(self):
         rows = {
             '1_000': (JsTokenKind.INTEGER, '1_000'),
+            '08.1_1': (JsTokenKind.FLOAT, '08.1_1'),
+            '08e1_0': (JsTokenKind.FLOAT, '08e1_0'),
+            '09.5_5': (JsTokenKind.FLOAT, '09.5_5'),
+            '08.1_1e2_2': (JsTokenKind.FLOAT, '08.1_1e2_2'),
             '0x1_F': (JsTokenKind.INTEGER, '0x1_F'),
             '0b1_0': (JsTokenKind.INTEGER, '0b1_0'),
             '0o7_7': (JsTokenKind.INTEGER, '0o7_7'),

@@ -128,14 +128,6 @@ _FOLDS = {
         "console.log('loading ' + 'the alpha module",
         "');\n",
     ),
-}
-"""
-Files whose last statement is a constant expression the tool computes, cut in the middle of one of
-the literals that expression is built from. Node accepts every `whole` here and refuses every `cut`,
-so the closing quote is the whole of the difference between a program and a buffer that is not one.
-"""
-
-FOLDS_ANSWERED_WITH_A_PROGRAM = {
     'concatenation_at_top_level': Truncation(
         _TOP_LEVEL,
         "const banner = 'loading ' + 'the alpha module",
@@ -158,13 +150,12 @@ FOLDS_ANSWERED_WITH_A_PROGRAM = {
     ),
 }
 """
-The same kind of file, cut the same way, where the literal the cut left open stands in a declaration
-nothing goes on to read: the declaration is dropped before anything is printed, so the literal never
-reaches the printer at all. Nothing here is a program either, and the answer these are given is
-pinned in `test.lib.scripts.js.test_unfixed_defects`.
+Files whose last statement is a constant expression the tool computes, cut in the middle of one of
+the literals that expression is built from — some of them declarations that nothing before the cut
+goes on to read, which the missing tail of the file may. Node accepts every `whole` here and
+refuses every `cut`, so the closing quote is the whole of the difference between a program and a
+buffer that is not one.
 """
-
-_EVERY_FOLD = {**_FOLDS, **FOLDS_ANSWERED_WITH_A_PROGRAM}
 
 
 def _string_continued_over(line_ending: str) -> str:
@@ -325,11 +316,18 @@ class TestTruncatedSource(TestBase):
             {name: False for name in names},
         )
 
-    def test_only_a_cut_inside_a_comment_ends_the_file_inside_one(self):
+    def test_every_cut_file_says_the_file_ended_inside_a_construct(self):
         names = list(_TRUNCATIONS)
         self.assertEqual(
             {name: JsParser(_TRUNCATIONS[name].cut).parse().terminated for name in names},
-            {name: name not in ('comment_at_top_level', 'comment_in_function_body') for name in names},
+            {name: False for name in names},
+        )
+
+    def test_no_whole_file_says_the_file_ended_inside_a_construct(self):
+        names = list(_TRUNCATIONS)
+        self.assertEqual(
+            {name: JsParser(_TRUNCATIONS[name].whole).parse().terminated for name in names},
+            {name: True for name in names},
         )
 
     def test_every_whole_file_and_every_intact_file_is_well_formed(self):
@@ -363,9 +361,8 @@ class TestTruncatedSource(TestBase):
 
     def test_the_synthesizer_prints_the_cut_regexp_as_written(self):
         """
-        A regular expression the cut left open is a slash that opens no literal, and the statement
-        holding it is text the parser could not read: it is written as it was written, and the
-        file ends there.
+        A regular expression the cut left open is the literal the file ended inside: it is written
+        as it was written, and the file ends there.
         """
         expected = {
             'regexp_at_top_level': 'const pattern = /^alpha-[0-9]+',
@@ -465,7 +462,7 @@ class TestTruncatedSource(TestBase):
     def test_a_slash_inside_a_character_class_does_not_end_the_regexp(self):
         self.assertEqual(
             canonical(_last_initializer(JsParser(_INTACT['slash_inside_character_class']).parse())),
-            ('JsRegExpLiteral', '^[/a-z]+$', ''),
+            ('JsRegExpLiteral', '^[/a-z]+$', '', True),
         )
 
     def test_the_language_is_still_recognized_after_the_cut(self):
@@ -480,11 +477,12 @@ class TestTruncatedSource(TestBase):
 class TestAFoldOverALiteralTheCutLeftOpen(TestBase):
     """
     What the deobfuscator makes of a buffer that ends inside a literal a fold reaches. The buffer
-    is not a program — Node refuses every `cut` in either table and accepts every `whole` — and
-    the one thing the tool may not answer with is a program, because an analyst reading it has no
-    way left to tell that the file they handed over was cut. The literal was never closed, so the
-    fold does not reach it: the expression is written as the file wrote it and the file ends
-    inside the literal, exactly as it was handed over.
+    is not a program — Node refuses every `cut` in the table and accepts every `whole` — and the
+    one thing the tool may not answer with is a program, because an analyst reading it has no way
+    left to tell that the file they handed over was cut. The literal was never closed, so the fold
+    does not reach it, and the missing tail may read the declaration holding it, so no removal
+    takes it: the expression is written as the file wrote it and the file ends inside the literal,
+    exactly as it was handed over.
     """
 
     def _deobfuscated(self, source: str) -> str:
@@ -494,6 +492,10 @@ class TestAFoldOverALiteralTheCutLeftOpen(TestBase):
         expected = {
             'template_at_top_level': 'const banner = `loading ` + `the alpha module',
             'argument_at_top_level': "console.log('loading ' + 'the alpha module",
+            'concatenation_at_top_level': "const banner = 'loading ' + 'the alpha module",
+            'array_at_top_level': "const parts = ['loading ', 'the alpha module",
+            'concatenation_in_function_body': "  const label = 'describing ' + 'the handler",
+            'call_result_in_function_body': "  const label = 'describing the handler'.toUpperCase() + 'x",
         }
         for name, last_line in expected.items():
             with self.subTest(name):
@@ -506,7 +508,7 @@ class TestAFoldOverALiteralTheCutLeftOpen(TestBase):
         Each closed file differs from the carved one by the single character the carve took, so a
         corpus the tool refused for some other reason would leave the refusal above saying nothing.
         """
-        for name, truncation in _EVERY_FOLD.items():
+        for name, truncation in _FOLDS.items():
             with self.subTest(name):
                 printed = self._deobfuscated(truncation.whole)
                 self.assertEqual(is_well_formed(JsParser(printed).parse()), True)

@@ -22,10 +22,50 @@ from test.lib.scripts.js.ledger import (
 )
 
 from refinery.lib.scripts import is_well_formed
-from refinery.lib.scripts.js.model import JsErrorNode
+from refinery.lib.scripts.js.model import (
+    JsCallExpression,
+    JsDoWhileStatement,
+    JsErrorNode,
+    JsExpressionStatement,
+    JsIfStatement,
+    JsRegExpLiteral,
+    JsScript,
+    JsSwitchCase,
+    JsSwitchStatement,
+    Node,
+    file_ended_inside,
+)
 from refinery.lib.scripts.js.parser import JsParser
 from refinery.lib.scripts.js.synth import JsSynthesizer
 from refinery.units.sinks.ppjscript import ppjscript
+
+
+def unread_spans(tree: Node) -> list[str]:
+    """
+    The text every `refinery.lib.scripts.js.model.JsErrorNode` of *tree* keeps, in the order the
+    file writes them.
+    """
+    return [node.text for node in tree.walk_in_order() if isinstance(node, JsErrorNode)]
+
+
+def spans_written_in_order(text: str, spans: list[str]) -> bool:
+    """
+    Whether *text* writes each of *spans* verbatim, one behind the other in the order given.
+    """
+    cursor = 0
+    for span in spans:
+        found = text.find(span, cursor)
+        if found < 0:
+            return False
+        cursor = found + len(span)
+    return True
+
+
+def a_span_the_parser_kept(node: object) -> tuple[type, str]:
+    """
+    The kind of *node*, and the text it keeps where it is a span no parser could read.
+    """
+    return type(node), node.text if isinstance(node, JsErrorNode) else ''
 
 
 _HEAD = 'const registry = {};\nconst names = Object.keys(registry);\n'
@@ -95,6 +135,8 @@ _STOPS = {
         'switch (names.length) { case', ' 1: break; }\n'),
     'arrow_with_no_body': Stop(
         'const f = () =>', ' registry;\n'),
+    'member_access_in_a_template_with_no_name': Stop(
+        'String(`a${registry.', 'alpha}b`);\n'),
 }
 
 
@@ -155,6 +197,7 @@ class TestParserRecoveryAlwaysPrints(TestBase):
             'for_head_with_no_binding': 'for (const',
             'switch_case_with_no_test': 'switch (names.length) {\n  case',
             'arrow_with_no_body': 'const f = () =>',
+            'member_access_in_a_template_with_no_name': 'String(`a${registry.',
         }
         self.assertEqual(
             {name: self._print(_STOPS[name].cut) for name in expected},
@@ -170,9 +213,10 @@ class TestParserRecoveryAlwaysPrints(TestBase):
     def test_the_construct_a_source_stops_inside_is_kept_as_an_error_node(self):
         """
         The span kept begins where the statement or list item the construct belongs to began: a
-        member access keeps the object it hangs off, an object member keeps the literal that
-        opened in front of it, a method body keeps only the statement inside it, and a `case`
-        keeps only its clause, since a switch is a list the parser reads clause by clause.
+        member access keeps the object it hangs off, a method body keeps only the statement inside
+        it, and a `case` keeps only its clause, since a switch is a list the parser reads clause by
+        clause. A bracketed list the file ends inside is kept as the list it is, so what an object
+        literal contributes is the member the file stopped inside and not the literal around it.
         """
         expected = {
             'var_with_no_name': [('var', 'expected a name')],
@@ -181,19 +225,21 @@ class TestParserRecoveryAlwaysPrints(TestBase):
             'optional_member_access_with_no_name': [('registry?.', 'expected a property name')],
             'chained_member_access_with_no_name': [('registry.alpha.', 'expected a property name')],
             'new_meta_property_with_no_name': [('new.', 'expected a property name')],
-            'object_getter_with_no_name': [('const o = { get', 'expected RBRACE')],
-            'object_setter_with_no_name': [('const o = { set', 'expected RBRACE')],
-            'object_async_method_with_no_name': [('const o = { async', 'expected RBRACE')],
+            'object_getter_with_no_name': [('get', 'expected a property name')],
+            'object_setter_with_no_name': [('set', 'expected a property name')],
+            'object_async_method_with_no_name': [('async', 'expected a property name')],
             'catch_parameter_with_no_name': [('try { names.pop(); } catch (', 'expected a name')],
             'label_with_no_statement': [('outer:', 'unexpected token')],
             'super_member_with_no_name': [('super.', 'expected a property name')],
             'class_heritage_with_no_name': [('class Foo extends', 'unexpected token')],
             'export_default_with_no_value': [('export default', 'unexpected token')],
             'computed_member_with_no_key': [('registry[', 'unexpected token')],
-            'spread_with_no_argument': [('const o = { ...', 'expected RBRACE')],
+            'spread_with_no_argument': [('...', 'unexpected token')],
             'for_head_with_no_binding': [('for (const', 'expected a name')],
             'switch_case_with_no_test': [('case', 'unexpected token')],
             'arrow_with_no_body': [('const f = () =>', 'unexpected token')],
+            'member_access_in_a_template_with_no_name':
+                [('registry.', 'expected a property name')],
         }
         self.assertEqual({name: self._errors(_STOPS[name].cut) for name in expected}, expected)
 
@@ -220,6 +266,7 @@ class TestParserRecoveryAlwaysPrints(TestBase):
             'for_head_with_no_binding': 'for (const x of names) {\n  registry[x] = 1;\n}',
             'switch_case_with_no_test': 'switch (names.length) {\n  case 1:\n    break;\n}',
             'arrow_with_no_body': 'const f = () => registry;',
+            'member_access_in_a_template_with_no_name': 'String(`a${registry.alpha}b`);',
         }
         for name, tail in expected.items():
             with self.subTest(name):
@@ -257,6 +304,7 @@ class TestParserRecoveryAlwaysPrints(TestBase):
             'for_head_with_no_binding': 'for (const',
             'switch_case_with_no_test': 'switch (names.length) {\n    case',
             'arrow_with_no_body': 'const f = () =>',
+            'member_access_in_a_template_with_no_name': 'String(`a${registry.',
         }
         self.assertEqual(
             {name: _STOPS[name].cut.encode('utf8') | ppjscript() | str for name in expected},
@@ -709,18 +757,25 @@ class TestAModuleTakesAWiderNameAcrossItsBoundaryThanItBinds(TestBase):
 
 #: Files no engine reads, each mapped to the text the parser could not read and its reason. Node
 #: refuses every one of them: `Unexpected end of input` for the ones that stop short, `Invalid
-#: regular expression: missing /` for `x = /ab+`, `Unexpected token ')'` for `x = ()` and
-#: `x = (a,)`, `Unexpected token '...'` for `x = (...a)`, `Unexpected identifier 'b'` for the four
-#: with two names pressed together, `missing ) after argument list` for the two argument lists,
-#: `Unexpected string` for the catch parameter and `Unexpected token 'break'` for the case clause.
+#: regular expression: missing /` for the lone slash, `Unexpected token ')'` for `x = ()`, for
+#: `x = (a,)` and for the two files holding a stray closer, `Unexpected token '...'` for
+#: `x = (...a)`, `Unexpected identifier 'b'` for the three with two names pressed together,
+#: `missing ) after argument list` for the two argument lists, `Unexpected string` for the catch
+#: parameter, `Unexpected token 'break'` for the case clause, `Missing } in template expression`
+#: for the three templates, `Unexpected token '}'` for the three clause bodies and for
+#: `{ throw }`, `Illegal newline after throw` for the three files breaking the line behind
+#: `throw`, `Malformed arrow function parameter list` for the two arrows behind `new`, and
+#: `Invalid or unexpected token` for the six files whose line ends inside a string. The import
+#: declaration is module code, which `node --check` on a `.mjs` file refuses with `Unexpected
+#: identifier 'c'`.
 A_FILE_THE_PARSER_REFUSES = {
-    'x = /ab+': ('x = /ab+', 'unexpected token'),
+    'x = /': ('x = /', 'unexpected token'),
     'var': ('var', 'expected a name'),
     'var a = 1,': ('var a = 1,', 'expected a name'),
     'x = y.': ('x = y.', 'expected a property name'),
     'x = a?.': ('x = a?.', 'expected a property name'),
     'delete a.': ('delete a.', 'expected a property name'),
-    'x = { get': ('x = { get', 'expected RBRACE'),
+    'x = { get': ('get', 'expected a property name'),
     'x = ()': ('x = ()', 'a parameter list with no arrow behind it'),
     'x = (a,)': ('x = (a,)', 'a parameter list with no arrow behind it'),
     'x = (...a)': ('x = (...a)', 'a parameter list with no arrow behind it'),
@@ -733,15 +788,32 @@ A_FILE_THE_PARSER_REFUSES = {
     'if (a) { f(); } else': ('if (a) { f(); } else', 'unexpected token'),
     'class D extends': ('class D extends', 'unexpected token'),
     'x = y[a b]': ('x = y[a b]', 'expected RBRACKET'),
-    'x = y.replace(/[^a-z': ('x = y.replace(/[^a-z', 'expected RPAREN'),
     "f('alpha' 'beta');": ("'alpha' 'beta'", 'expected COMMA'),
     "x = new C('alpha' 'beta');": ("'alpha' 'beta'", 'expected COMMA'),
     'function f(a b) { return a; }': ('a b', 'expected COMMA'),
     'class C { m(a b) {} }': ('a b', 'expected COMMA'),
     "try { f(); } catch (e 'beta') {}": ("try { f(); } catch (e 'beta') {}", 'expected RPAREN'),
     'switch (x) { case 1 break; }': ('case 1 break;', 'expected COLON'),
+    'import a, { b c, d } from "m";': ('b c', 'expected COMMA'),
+    'f(`${`a}`); g();': ('`${`a}`', 'expected the template to resume'),
+    '[`${`a}`, b]; g();': ('`${`a}`, b', 'expected the template to resume'),
+    'f(`${a`b}`, c); g();': ('`${a`b}`, c', 'expected the template to resume'),
+    'if (a) foo(});': ('}', 'unexpected token'),
+    'while (a) foo(});': ('}', 'unexpected token'),
+    'if (a) var x = f(});': ('}', 'unexpected token'),
+    '{ throw }': ('throw', 'unexpected token'),
+    'throw\n1;': ('throw', 'no line terminator may follow throw'),
+    'throw\n': ('throw', 'no line terminator may follow throw'),
+    'function f() { throw\n  new Error("x"); }':
+        ('throw', 'no line terminator may follow throw'),
+    'new x => y;': ('new x => y;', 'an arrow function as an operand'),
+    'new (x) => y;': ('new (x) => y;', 'an arrow function as an operand'),
+    'f([a ) b], c); g=1; h=2;': ('a ) b', 'expected COMMA'),
+    'x = ([a, )]); y = 1;': (')', 'unexpected token'),
     'x = "abc\n': ('x = "abc\n', 'a string literal the line ends inside'),
     'x = "abc\r\ny;': ('x = "abc\r\n', 'a string literal the line ends inside'),
+    'x = "abc\rz;': ('x = "abc\r', 'a string literal the line ends inside'),
+    'x = "abc\nz;': ('x = "abc\n', 'a string literal the line ends inside'),
     'while (a) "b;\nc();': ('"b;\n', 'a string literal the line ends inside'),
     'f("abc\n, 1);': ('"abc\n', 'a string literal the line ends inside'),
 }
@@ -758,6 +830,9 @@ class TestAFileTheParserRefusesComesBackAsItWasWritten(TestBase):
     the switch. A span ending in a string a line terminator ended takes the terminator with it:
     `x = "abc` at the end of a file is a string the file ended inside, which is a different tree,
     and a print that put the span last would otherwise read back as that.
+
+    None of these prints reads as a program either: a print that did would answer a file no engine
+    reads with one an engine runs.
     """
 
     def test_no_character_of_the_file_is_dropped(self):
@@ -787,6 +862,218 @@ class TestAFileTheParserRefusesComesBackAsItWasWritten(TestBase):
     def test_none_of_them_is_a_well_formed_program(self):
         rows = A_FILE_THE_PARSER_REFUSES
         self.assertEqual({source: well_formed(source) for source in rows}, {source: False for source in rows})
+
+    def test_none_of_them_prints_a_well_formed_program(self):
+        rows = A_FILE_THE_PARSER_REFUSES
+        self.assertEqual(
+            {source: well_formed(printed(source)) for source in rows},
+            {source: False for source in rows},
+        )
+
+    def test_a_clause_body_holding_unread_text_is_written_without_a_block(self):
+        """
+        A clause takes one statement and the braces a printer adds around it are a block, which is
+        a statement the source did not write. Where the body is text no parser could read, those
+        braces close the text off from what follows and the print reads back as a different file.
+        """
+        sources = [
+            'if (a) foo(});',
+            'while (a) foo(});',
+            'if (a) var x = f(});',
+            'if (a) foo(}); else if (b) foo(});',
+        ]
+        self.assertEqual(
+            {source: printed(source) for source in sources},
+            {source: source for source in sources},
+        )
+
+    def test_a_line_ended_string_is_not_followed_by_a_second_line_terminator(self):
+        """
+        The span kept for a string a line ended holds that line terminator, so a printer writing
+        one of its own behind the span puts a line into the file that nobody wrote.
+        """
+        sources = ['x = "abc\rz;', 'x = "abc\nz;', 'x = "abc\r\nz;']
+        self.assertEqual(
+            {source: printed(source) for source in sources},
+            {source: source for source in sources},
+        )
+
+    def test_a_legal_trailing_comma_is_the_printers_to_drop_where_the_file_is_refused_elsewhere(
+        self,
+    ):
+        """
+        `x = [1, 2, ]` is a program the printer writes in its own form, and the file being refused
+        somewhere else does not turn the rest of it into text to keep verbatim. What the refusal
+        keeps is the item the parser could not read, and nothing around it.
+        """
+        source = 'x = [1, 2, ]; y = (a b);'
+        self.assertEqual(printed(source), 'x = [1, 2];\ny = (a b);')
+        self.assertEqual(unread_spans(JsParser(source).parse()), ['a b'])
+        self.assertEqual(well_formed(source), False)
+
+
+#: Files that end inside a regular expression literal, mapped to the constructs nothing closed,
+#: outermost first. Node refuses each with `SyntaxError: Invalid regular expression: missing /`.
+#: A literal the file ends inside is the literal it is and not text the parser refused, which is
+#: what tells `x = /ab` apart from `x = /`, where the one slash spells no literal at all and stays
+#: unread text.
+A_FILE_THAT_ENDS_INSIDE_A_REGULAR_EXPRESSION = {
+    'x = /ab': (JsScript, JsRegExpLiteral),
+    'x = /ab+': (JsScript, JsRegExpLiteral),
+    'x = y.replace(/[^a-z': (JsScript, JsCallExpression, JsRegExpLiteral),
+}
+
+
+class TestAFileThatEndsInsideARegularExpressionKeepsTheLiteralOpen(TestBase):
+    """
+    This was an entry of `A_FILE_THE_PARSER_REFUSES` while such a file came back as text the
+    parser could not read, and it stays as the regression test that entry became.
+    """
+
+    def test_the_constructs_nothing_closed_are_the_ones_the_file_ends_inside(self):
+        rows = A_FILE_THAT_ENDS_INSIDE_A_REGULAR_EXPRESSION
+        self.assertEqual(
+            {
+                source: tuple(
+                    type(node)
+                    for node in JsParser(source).parse().walk_in_order()
+                    if file_ended_inside(node)
+                )
+                for source in rows
+            },
+            dict(rows),
+        )
+
+    def test_the_literal_is_no_span_the_parser_refused(self):
+        rows = A_FILE_THAT_ENDS_INSIDE_A_REGULAR_EXPRESSION
+        self.assertEqual(
+            {source: unread_spans(JsParser(source).parse()) for source in rows},
+            {source: [] for source in rows},
+        )
+
+    def test_the_file_is_written_back_as_it_stands_and_is_no_program(self):
+        rows = A_FILE_THAT_ENDS_INSIDE_A_REGULAR_EXPRESSION
+        self.assertEqual(
+            {source: (printed(source), well_formed(source)) for source in rows},
+            {source: (source, False) for source in rows},
+        )
+
+
+class TestASpanTheParserCouldNotReadEndsWhereItsStatementDoes(TestBase):
+    """
+    A clause takes one statement, so a body no parser could read has to end where that statement
+    ends and the rest of the file has to stay outside it: at the `else` of an `if`, at the `while`
+    of a `do`, at the next `case` of a switch, at the statement behind a declaration. A span that
+    ran on would swallow what follows it into text nothing reads again.
+
+    Node refuses `if (x) foo bar`, `do foo bar`, and the switch, each with `SyntaxError:
+    Unexpected identifier 'bar'`. The two declarations are module code, which `node --check` on a
+    `.mjs` file refuses with `SyntaxError: Unexpected identifier 'B'`.
+
+    Every shape is asked of the print as well, since one that only survives a single pass is a
+    file the tool rewrites every time it reads it.
+    """
+
+    @staticmethod
+    def _both_readings(source: str) -> dict[str, str]:
+        return {'as written': source, 'as printed': printed(source)}
+
+    @staticmethod
+    def _head(text: str):
+        return JsParser(text).parse().body[0]
+
+    def test_an_if_keeps_its_else_behind_a_consequent_it_could_not_read(self):
+        source = 'if (x) foo bar\nelse y();\nz();'
+
+        def shape(text: str) -> tuple[type, tuple[type, str], bool]:
+            statement = self._head(text)
+            is_if = isinstance(statement, JsIfStatement)
+            return (
+                type(statement),
+                a_span_the_parser_kept(statement.consequent if is_if else None),
+                is_if and statement.alternate is not None,
+            )
+
+        readings = self._both_readings(source)
+        self.assertEqual(
+            {label: shape(text) for label, text in readings.items()},
+            {label: (JsIfStatement, (JsErrorNode, 'foo bar'), True) for label in readings},
+        )
+
+    def test_a_do_while_keeps_its_test_behind_a_body_it_could_not_read(self):
+        source = 'do foo bar\nwhile (x);\nz();'
+
+        def shape(text: str) -> tuple[type, tuple[type, str]]:
+            statement = self._head(text)
+            is_do = isinstance(statement, JsDoWhileStatement)
+            return (
+                type(statement),
+                a_span_the_parser_kept(statement.body if is_do else None),
+            )
+
+        readings = self._both_readings(source)
+        self.assertEqual(
+            {label: shape(text) for label, text in readings.items()},
+            {label: (JsDoWhileStatement, (JsErrorNode, 'foo bar')) for label in readings},
+        )
+
+    def test_a_switch_keeps_its_next_case_behind_a_clause_body_it_could_not_read(self):
+        source = 'switch (k) { case 1: foo bar case 2: y(); }'
+
+        def shape(text: str) -> tuple[type, int, list[tuple[type, str]]]:
+            statement = self._head(text)
+            if not isinstance(statement, JsSwitchStatement):
+                return (type(statement), 0, [])
+            first = statement.cases[0]
+            body = first.body if isinstance(first, JsSwitchCase) else [first]
+            return (
+                type(statement),
+                len(statement.cases),
+                [a_span_the_parser_kept(node) for node in body],
+            )
+
+        readings = self._both_readings(source)
+        self.assertEqual(
+            {label: shape(text) for label, text in readings.items()},
+            {
+                label: (JsSwitchStatement, 2, [(JsErrorNode, 'foo bar')])
+                for label in readings
+            },
+        )
+
+    def test_a_declaration_the_parser_refuses_keeps_the_statements_written_behind_it(self):
+        rows = {
+            'export class A B { m() {} } g = 1; h = 2;': [
+                (JsErrorNode, 'export class A B { m() {} }'),
+                (JsExpressionStatement, ''),
+                (JsExpressionStatement, ''),
+            ],
+            'export default class A B {} g = 1;': [
+                (JsErrorNode, 'export default class A B {}'),
+                (JsExpressionStatement, ''),
+            ],
+        }
+        self.assertEqual(
+            {
+                source: [
+                    a_span_the_parser_kept(statement)
+                    for statement in JsParser(source).parse().body
+                ]
+                for source in rows
+            },
+            rows,
+        )
+
+    def test_a_case_body_that_could_hold_the_next_case_prints_no_program(self):
+        """
+        The slash behind `y;` opens a regular expression literal, and `case` on the same line as
+        that literal ends nothing, which is why no engine reads the file. A span cut at that word
+        would put the literal in one clause and `case 2` in the next, and the printer writes a
+        clause on a line of its own, where the break behind the literal ends the statement and the
+        file an engine refused comes back as one it runs.
+        """
+        source = 'switch (x) { case 1: y; / a */ case 2: z; }'
+        self.assertEqual(well_formed(printed(source)), False)
 
 
 #: Spellings of a numeral the language refuses (§12.9.3): a separator not between two digits of
@@ -860,9 +1147,10 @@ class TestANumeralTheLanguageRefusesIsNoProgram(TestBase):
 #: `test.lib.scripts.js.deobfuscation.test_escaped_identifiers`, where the law they belong to is
 #: stated: a terminal word of the grammar is matched by the characters typed, so an escaped
 #: spelling of `get`, `set`, `static`, `async`, `instanceof` or `in` is a name standing where the
-#: grammar wanted a word. The last two are the same shape with nothing escaped about it, and `let`
-#: spelled with an escape where a declaration would begin. Node refuses every one of them with a
-#: `SyntaxError` and prints nothing.
+#: grammar wanted a word. The last four are the same shape with nothing escaped about it: two names
+#: pressed together, `let` spelled with an escape where a declaration would begin, and an arrow
+#: function written as the operand of `new`, which the grammar takes no arrow function for. Node
+#: refuses every one of them with a `SyntaxError` and prints nothing.
 A_FILE_THE_PARSER_REFUSES_THAT_AN_ENGINE_REFUSES_TOO = (
     *AN_ESCAPED_ACCESSOR_TERMINAL,
     *AN_ESCAPED_STATIC_TERMINAL,
@@ -870,6 +1158,10 @@ A_FILE_THE_PARSER_REFUSES_THAT_AN_ENGINE_REFUSES_TOO = (
     *AN_ESCAPED_KEYWORD_OPERATOR,
     "console.log('alpha' 'beta');",
     'l\\u0065t x = 1; console.log(x);',
+    ' #!/usr/bin/env node\nvar x = 1;',
+    '\ufeff#!/usr/bin/env node\nvar x = 1;',
+    'new x => y;',
+    'new (x) => y;',
 )
 
 
@@ -893,18 +1185,22 @@ class TestAFileTheParserRefusesIsNotAnsweredWithAProgram(TestBase):
 
 
 #: A construct nested inside itself *n* times, for every construct the parser reads by descending
-#: into it, mapped to the length of the text left unread when *n* is a thousand: the levels above
-#: the budget are read, and the innermost list item or statement holding the level past it is the
-#: text it is. Node reads each of them a thousand deep.
+#: into it. Node reads each of them a hundred deep and a thousand deep.
 A_CONSTRUCT_NESTED = {
-    'parentheses': (lambda n: '(' * n + '1' + ')' * n + ';', 1603),
-    'arrays': (lambda n: '[' * n + ']' * n + ';', 1602),
-    'calls': (lambda n: 'f(' * n + 'x' + ')' * n + ';', 2404),
-    'blocks': (lambda n: '{' * n + '}' * n, 1600),
-    'objects': (lambda n: 'a = ' + '{b:' * n + '1' + '}' * n + ';', 3207),
-    'ifs': (lambda n: 'if (a) ' * n + 'x;', 5609),
-    'functions': (lambda n: 'function f() {' * n + '}' * n, 12000),
-    'conditionals': (lambda n: 'a ? ' * n + '1' + ' : 2' * n + ';', 8002),
+    'parentheses': lambda n: '(' * n + '1' + ')' * n + ';',
+    'arrays': lambda n: '[' * n + ']' * n + ';',
+    'calls': lambda n: 'f(' * n + 'x' + ')' * n + ';',
+    'blocks': lambda n: '{' * n + '}' * n,
+    'objects': lambda n: 'a = ' + '{b:' * n + '1' + '}' * n + ';',
+    'ifs': lambda n: 'if (a) ' * n + 'x;',
+    'functions': lambda n: 'function f() {' * n + '}' * n,
+    'conditionals': lambda n: 'a ? ' * n + '1' + ' : 2' * n + ';',
+    'array patterns': lambda n: 'var ' + '[' * n + 'a' + ']' * n + ' = 1;',
+    'object patterns': lambda n: 'var ' + '{a:' * n + 'a' + '}' * n + ' = 1;',
+    'parameter patterns': lambda n: 'function f(' + '[' * n + 'a' + ']' * n + ') {}',
+    'prefix operators': lambda n: 'x = ' + '!' * n + 'y;',
+    'new': lambda n: 'z = ' + 'new ' * n + 'y;',
+    'exponentiations': lambda n: 'z = ' + 'a ** ' * n + '1;',
 }
 
 #: The same, for the two shapes the parser reads in a loop rather than by descending.
@@ -919,17 +1215,21 @@ class TestAFileNestedTooDeepToReadIsRefusedAndNeverCrashes(TestBase):
     The parser descends once per level of nesting and refuses to descend past a budget, so that a
     file nested a thousand deep is answered with the text it could not read rather than with a
     `RecursionError` from inside the tools that read and print it. A hundred levels are read; a
-    thousand are refused at the budget, and what is printed prints to itself; and a chain the
-    parser reads in a loop has no depth to refuse.
+    thousand are refused at the budget, and the file still comes back whole: the one span the
+    parser kept is text the file wrote, the print drops no character, and printing it writes it
+    again. Where the budget falls is the parser's to choose and no engine answers it, which is why
+    nothing here counts how much of a file was left unread. A chain the parser reads in a loop has
+    no depth to refuse.
     """
 
-    def _read(self, source: str) -> tuple[bool, bool, list[tuple[int, str]]]:
+    def _read(self, source: str) -> tuple[bool, bool, str, list[tuple[str, bool]]]:
         text = printed(source)
         return (
             well_formed(source),
             printed(text) == text,
+            dropped_source_characters(source, text),
             [
-                (len(node.text), node.message)
+                (node.message, node.text in source)
                 for node in JsParser(source).parse().walk_in_order()
                 if isinstance(node, JsErrorNode)
             ],
@@ -939,18 +1239,21 @@ class TestAFileNestedTooDeepToReadIsRefusedAndNeverCrashes(TestBase):
         self.assertEqual(
             {
                 name: (self._read(shape(100)), self._read(shape(1000)))
-                for name, (shape, _) in A_CONSTRUCT_NESTED.items()
+                for name, shape in A_CONSTRUCT_NESTED.items()
             },
             {
-                name: ((True, True, []), (False, True, [(unread, 'nesting too deep')]))
-                for name, (_, unread) in A_CONSTRUCT_NESTED.items()
+                name: (
+                    (True, True, '', []),
+                    (False, True, '', [('nesting too deep', True)]),
+                )
+                for name in A_CONSTRUCT_NESTED
             },
         )
 
     def test_a_chain_a_thousand_long_is_read(self):
         self.assertEqual(
             {name: self._read(shape(1000)) for name, shape in A_CHAIN_NESTED.items()},
-            {name: (True, True, []) for name in A_CHAIN_NESTED},
+            {name: (True, True, '', []) for name in A_CHAIN_NESTED},
         )
 
 
@@ -1001,22 +1304,23 @@ class TestAFileOneEditAwayFromAProgramComesBackAsItWasWritten(TestBase):
     """
     Over every program the hand-written corpora of this module and of
     `test.lib.scripts.js.test_comment_carriers` hold, eight files one edit away from it, from a
-    fixed seed. Whatever the edit made of the program, printing the print changes nothing; and
-    where the edit made a file the parser refuses somewhere, the print drops no character the file
-    holds. A mutant that is a program still is asked only the first, since the printer writes a
-    program in its own form, where a trailing comma or a separating semicolon is not kept.
+    fixed seed. Whatever the edit made of the program, printing the print changes nothing, and
+    every span the parser could not read comes back verbatim and in the order the file wrote it.
+
+    What the file holds around such a span is the printer's to write in its own form, where a
+    trailing comma or a separating semicolon is not kept: an edit that refuses one statement of a
+    file leaves the rest of it a program, and `x = [1, 2, ]; y = (a b);` is such a file.
     """
 
-    def test_every_mutant_prints_to_itself_and_a_refused_one_drops_nothing(self):
+    def test_every_mutant_prints_to_itself_and_keeps_every_span_it_could_not_read(self):
         rng = random.Random(20260907)
         programs = [stop.whole for stop in _STOPS.values()]
         programs.extend(every_program_holding_a_comment())
         mutants = [mutant for program in programs for mutant in every_file_one_edit_away(program, rng, 8)]
-        outcome: dict[str, tuple[str, bool]] = {}
+        outcome: dict[str, tuple[bool, bool]] = {}
         for mutant in mutants:
             tree = JsParser(mutant).parse()
             once = JsSynthesizer().convert(tree)
             twice = JsSynthesizer().convert(JsParser(once).parse())
-            dropped = '' if is_well_formed(tree) else dropped_source_characters(mutant, once)
-            outcome[mutant] = (dropped, twice == once)
-        self.assertEqual(outcome, {mutant: ('', True) for mutant in mutants})
+            outcome[mutant] = (spans_written_in_order(once, unread_spans(tree)), twice == once)
+        self.assertEqual(outcome, {mutant: (True, True) for mutant in mutants})

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Callable, Sequence, TypeVar
 
-from refinery.lib.scripts import Node, Synthesizer
+from refinery.lib.scripts import TREE_RECURSION_DEPTH, Node, Synthesizer
 from refinery.lib.scripts.js.deobfuscation.helpers import (
     escape_js_string,
     escape_js_template_text,
@@ -93,7 +93,7 @@ from refinery.lib.scripts.js.precedence import (
     statement_needs_parens,
 )
 from refinery.lib.scripts.js.strict import promoted_use_strict, spelling_states
-from refinery.lib.scripts.js.token import spells_only_a_name
+from refinery.lib.scripts.js.token import LINE_TERMINATORS, spells_only_a_name
 from refinery.lib.scripts.js.utf16 import from_code_units
 from refinery.lib.tools import RecursionDepth
 
@@ -148,24 +148,54 @@ class JsSynthesizer(Synthesizer):
         self._unescape_strings = unescape_strings
         self._strip_comments = strip_comments
         self._cut = False
+        self._ends_line = False
+        self._unparsed_holders: dict[int, bool] = {}
 
     def convert(self, node: Node) -> str:
         self._cut = False
-        with RecursionDepth(10000):
+        self._ends_line = False
+        self._unparsed_holders = {}
+        with RecursionDepth(TREE_RECURSION_DEPTH):
             return super().convert(node)
 
     def _write(self, text: str):
         """
-        Nothing is written past the end of the file. A construct the file ended inside — a
-        literal, a block — writes what it holds and then cuts the output, so that no closing
-        bracket, quote or semicolon the file did not hold is written behind it.
+        Nothing is written past the end of the file. A construct the file ended inside — a literal,
+        a bracketed list, a block — writes what it holds and then cuts the output, so that no
+        closing bracket, quote or semicolon the file did not hold is written behind it. Whether the
+        text written last ended a line is kept, since unread text may carry its own terminator.
         """
-        if not self._cut:
-            super()._write(text)
+        if self._cut or not text:
+            return
+        super()._write(text)
+        self._ends_line = text[-1] in LINE_TERMINATORS
 
     def _newline(self):
-        if not self._cut:
-            super()._newline()
+        """
+        A line break, unless the text written last already ended the line: unread text ending in
+        a string a line terminator ended carries that terminator, and writing another would put a
+        blank line into the file that the next read keeps as text of its own.
+        """
+        if self._cut:
+            return
+        if self._ends_line:
+            self._write(self._indent * self._depth)
+            return
+        super()._newline()
+        self._ends_line = False
+
+    def _holds_unparsed_text(self, node: Node) -> bool:
+        """
+        Whether *node* is, or holds, text the parser could not read. Each node is asked once per
+        print: a clause body may hold another, and each asks about its own.
+        """
+        key = id(node)
+        answer = self._unparsed_holders.get(key)
+        if answer is None:
+            answer = node.unparsed or any(
+                self._holds_unparsed_text(child) for child in node.children())
+            self._unparsed_holders[key] = answer
+        return answer
 
     def _carried(self, comments: list[str]) -> list[str]:
         """
@@ -194,12 +224,26 @@ class JsSynthesizer(Synthesizer):
     def _opens_html_close_comment(stmt: Node) -> bool:
         """
         Whether *stmt* is unread text opening with `-->`, which at the head of a line would open a
-        comment and swallow the line: such text is written on the line of what precedes it, where
-        the lexer read it as the decrement and the `>` it is.
+        comment and swallow the line, whatever whitespace or delimited comment stood in front of it
+        there: such text is written on the line of what precedes it, behind a token, where the
+        lexer read it as the decrement and the `>` it is.
         """
         return isinstance(stmt, JsErrorNode) and stmt.text.startswith('-->')
 
+    @staticmethod
+    def _opens_hashbang(node: Node) -> bool:
+        """
+        Whether *node* is unread text opening with `#!`, which at the very start of a file is the
+        hash-bang line and nowhere else: such text is never what the output opens with.
+        """
+        return isinstance(node, JsErrorNode) and node.text.startswith('#!')
+
     def _separate(self, stmt: Node):
+        """
+        The line break in front of an item of a list, which every writer that breaks a line in
+        front of an item asks for here: unread text that would read differently at the head of a
+        line stays on the line before it.
+        """
         if self._opens_html_close_comment(stmt):
             self._write(' ')
         else:
@@ -307,11 +351,22 @@ class JsSynthesizer(Synthesizer):
         lead_newline: bool = True,
         wrap_sequences: bool = False,
     ) -> bool:
+        """
+        Write *nodes* separated by commas, on one line where they fit and one to a line where they
+        do not, and report which. The fit is measured by writing the line and taking it back. Where
+        the indentation alone already runs past the line length, nothing fits and the measurement
+        is skipped: every line written there overflows, so the answer is known, and measuring at
+        every level of a deeply nested list would write each list once for every list around it.
+        """
         if not nodes:
             return False
+        if len(self._indent) * self._depth > self._line_length:
+            self._emit_one_to_a_line(nodes, lead_newline, wrap_sequences)
+            return True
         save_pos = self._parts.tell()
         save_col = self._col
         save_cut = self._cut
+        save_ends_line = self._ends_line
         overflow = False
         for i, node in enumerate(nodes):
             if i > 0:
@@ -326,15 +381,19 @@ class JsSynthesizer(Synthesizer):
         self._parts.truncate()
         self._col = save_col
         self._cut = save_cut
+        self._ends_line = save_ends_line
+        self._emit_one_to_a_line(nodes, lead_newline, wrap_sequences)
+        return True
+
+    def _emit_one_to_a_line(self, nodes: list, lead_newline: bool, wrap_sequences: bool):
         self._depth += 1
         for i, node in enumerate(nodes):
             if i > 0 or lead_newline:
-                self._newline()
+                self._separate(node)
             self._emit_element(node, wrap_sequences)
             if i < len(nodes) - 1:
                 self._write(',')
         self._depth -= 1
-        return True
 
     def _emit_params(self, params: list):
         self._write('(')
@@ -394,6 +453,8 @@ class JsSynthesizer(Synthesizer):
 
     def visit_JsRegExpLiteral(self, node: JsRegExpLiteral):
         self._write(node.raw)
+        if not node.terminated:
+            self._cut = True
 
     def visit_JsBooleanLiteral(self, node: JsBooleanLiteral):
         self._write('true' if node.value else 'false')
@@ -432,9 +493,16 @@ class JsSynthesizer(Synthesizer):
         return from_code_units(name)
 
     def visit_JsErrorNode(self, node: JsErrorNode):
+        if self._opens_hashbang(node) and self._parts.tell() == 0:
+            self._newline()
         self._write(node.text)
 
     def visit_JsTemplateLiteral(self, node: JsTemplateLiteral):
+        """
+        The literal, whose runs spell its text and whose delimiters the printer writes: every run
+        but the last is followed by the hole it opens, and the hole is closed by the run behind it
+        wherever the file held that run. A hole the file ended inside holds nothing.
+        """
         self._write('`')
         expressions = iter(node.expressions)
         for index, quasi in enumerate(node.quasis):
@@ -443,12 +511,14 @@ class JsSynthesizer(Synthesizer):
             self.visit(quasi)
             if not quasi.terminated:
                 self._cut = True
+            if index + 1 == len(node.quasis):
+                break
+            self._write('${')
             expression = next(expressions, None)
             if expression is not None:
-                self._write('${')
                 self.visit(expression)
-                if index + 1 < len(node.quasis) and node.quasis[index + 1].opened:
-                    self._write('}')
+            if node.quasis[index + 1].opened:
+                self._write('}')
         self._write('`')
 
     def visit_JsTemplateElement(self, node: JsTemplateElement):
@@ -472,6 +542,8 @@ class JsSynthesizer(Synthesizer):
         wrapped = self._byte_grid(elements) or self._comma_separated(elements, wrap_sequences=True)
         if elements and elements[-1] is None:
             self._write(',')
+        if not node.terminated:
+            self._cut = True
         if wrapped:
             self._newline()
         self._write(']')
@@ -542,10 +614,12 @@ class JsSynthesizer(Synthesizer):
                 breaking = True
                 self._depth += 1
             if breaking:
-                self._newline()
+                self._separate(prop)
             else:
                 self._write(' ')
             self.visit(prop)
+        if not node.terminated:
+            self._cut = True
         if breaking:
             self._depth -= 1
             self._newline()
@@ -641,7 +715,17 @@ class JsSynthesizer(Synthesizer):
         if node.optional:
             self._write('?.')
         self._write('(')
-        if self._comma_separated(node.arguments, wrap_sequences=True):
+        self._emit_arguments(node)
+
+    def _emit_arguments(self, node: JsCallExpression | JsNewExpression):
+        """
+        The arguments of *node* behind the bracket already written, and the bracket that closes
+        them where the file held it.
+        """
+        wrapped = self._comma_separated(node.arguments, wrap_sequences=True)
+        if not node.terminated:
+            self._cut = True
+        if wrapped:
             self._newline()
         self._write(')')
 
@@ -649,9 +733,7 @@ class JsSynthesizer(Synthesizer):
         self._write('new ')
         self._emit_child(node.callee, node)
         self._write('(')
-        if self._comma_separated(node.arguments, wrap_sequences=True):
-            self._newline()
-        self._write(')')
+        self._emit_arguments(node)
 
     def visit_JsSequenceExpression(self, node: JsSequenceExpression):
         """
@@ -684,6 +766,8 @@ class JsSynthesizer(Synthesizer):
         self._write('(')
         if node.expression:
             self.visit(node.expression)
+        if not node.terminated:
+            self._cut = True
         self._write(')')
 
     def _emit_function(self, node):
@@ -757,6 +841,8 @@ class JsSynthesizer(Synthesizer):
             else:
                 self._write(' ')
             self.visit(prop)
+        if not node.terminated:
+            self._cut = True
         if node.properties:
             self._write(' ')
         self._write('}')
@@ -844,14 +930,15 @@ class JsSynthesizer(Synthesizer):
 
     def _emit_statement_body(self, stmt: Statement):
         """
-        The body of a clause, written as a block. Text the parser could not read is written as it
-        was written, with no block put around it: a brace inside such text would close or open the
-        block the printer put there, and the file would read back with a different shape.
+        The body of a clause, written as a block. Text the parser could not read, and a statement
+        holding such text, is written as it was written, with no block put around it: a brace
+        inside such text would close or open the block the printer put there, and the file would
+        read back with a different shape.
         """
         if isinstance(stmt, JsBlockStatement):
             self._emit_leading_comments(stmt, inline=True)
             self._emit_block_node(stmt)
-        elif isinstance(stmt, JsErrorNode):
+        elif self._holds_unparsed_text(stmt):
             self._emit_leading_comments(stmt, inline=True)
             self.visit(stmt)
         else:
@@ -1061,7 +1148,7 @@ class JsSynthesizer(Synthesizer):
                 default_spec = spec
             elif isinstance(spec, JsImportNamespaceSpecifier):
                 namespace_spec = spec
-            elif isinstance(spec, JsImportSpecifier):
+            else:
                 named_specs.append(spec)
         if default_spec:
             if default_spec.local:
@@ -1091,11 +1178,22 @@ class JsSynthesizer(Synthesizer):
     ):
         if not node.attributes_keyword:
             return
-        self._write(F' {node.attributes_keyword} {{ ')
-        for i, attr in enumerate(node.attributes):
+        self._write(F' {node.attributes_keyword} ')
+        self._emit_braced_list(node.attributes)
+
+    def _emit_braced_list(self, items: Sequence[Node]):
+        """
+        A list of module specifiers or import attributes between braces, on one line, with the
+        braces closed up where the list is empty.
+        """
+        if not items:
+            self._write('{}')
+            return
+        self._write('{ ')
+        for i, item in enumerate(items):
             if i > 0:
                 self._write(', ')
-            self.visit(attr)
+            self.visit(item)
         self._write(' }')
 
     def visit_JsImportAttribute(self, node: JsImportAttribute):
@@ -1157,12 +1255,7 @@ class JsSynthesizer(Synthesizer):
         if node.declaration:
             self.visit(node.declaration)
             return
-        self._write('{ ')
-        for i, spec in enumerate(node.specifiers):
-            if i > 0:
-                self._write(', ')
-            self.visit(spec)
-        self._write(' }')
+        self._emit_braced_list(node.specifiers)
         if node.source:
             self._write(' from ')
             self.visit(node.source)
@@ -1217,9 +1310,24 @@ class JsSynthesizer(Synthesizer):
             self._emit_leading_comments(stmt)
             self._emit_body_statement(stmt, promoted)
             lines += 1
-        for comment in self._carried(node.trailing_comments):
+        for comment in self._tail_comments(node):
             self._cut = False
             if lines:
                 self._newline()
             self._write(comment)
             lines += 1
+
+    def _tail_comments(self, node: JsScript) -> list[str]:
+        """
+        The comments the file ends with, of which the last is kept even where comments are
+        stripped when the file ended inside it: that comment is the file's cut, and a print
+        without it would be a program the file is not.
+        """
+        comments = node.trailing_comments
+        if self._strip_comments:
+            return [c for c in comments[-1:] if self._ends_the_file_inside(c)]
+        return comments
+
+    @staticmethod
+    def _ends_the_file_inside(comment: str) -> bool:
+        return comment.startswith('/*') and not (len(comment) >= 4 and comment.endswith('*/'))
