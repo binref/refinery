@@ -114,12 +114,17 @@ class ModelCache(ModelCacheBase):
         """
         Whether *call* may be cleared by the purity oracle at all: its callee is a trusted
         intrinsic, or a local function whose definition reaches the call, so a call textually before
-        a not-yet-established function keeps its runtime throw. This is the one composition of the
-        effect and dominance models every consumer shares, so no pass can pair a purity verdict with
-        a weaker establishment reading than another.
+        a not-yet-established function keeps its runtime throw. The callee's summary may also defer
+        outer `let`/`const`/`class` bindings its body reads (`EffectSummary.dead_zone_reads`); the
+        call keeps its throw unless each such binding's declaration is guaranteed to have run first,
+        judged by the same dominance model. This is the one composition of the effect and dominance
+        models every consumer shares, so no pass can pair a purity verdict with a weaker
+        establishment reading than another.
         """
         return self.effects.call_clearable(
-            call, lambda func: self.dominance.established_before(func, call)
+            call,
+            lambda func: self.dominance.established_before(func, call),
+            lambda binding: self.dominance.past_dead_zone(binding, call),
         )
 
     def read_established(self, node: JsIdentifier) -> bool:
@@ -143,9 +148,7 @@ class ModelCache(ModelCacheBase):
             return True
         if binding is None or not binding.is_lexical:
             return False
-        return bool(binding.declarations) and all(
-            self.dominance.runs_before(site, node) for site in binding.declarations
-        )
+        return self.dominance.past_dead_zone(binding, node)
 
 
 def model_cache(transformer: Transformer, root: JsScript) -> ModelCache:

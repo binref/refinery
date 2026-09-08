@@ -343,6 +343,43 @@ class TestUnusedCodeRemoval(TestJsDeobfuscator):
             self._remove_unused(source),
         )
 
+    def test_dead_store_calling_a_dead_zone_reader_is_kept(self):
+        """
+        A dead store holding a call to a function that reads an outer `let` in that binding's dead
+        zone throws a `ReferenceError` at the call, so the store is not removable. The reformatted
+        program is returned unchanged.
+        """
+        source = 'function f() { return q; }\nvar dead = f();\nlet q = 1;\nconsole.log(2);\n'
+        self.assertEqual(self._run_transformers(source), self._remove_unused(source))
+
+    def test_dead_store_calling_an_established_reader_is_removed(self):
+        """
+        The same reader called after its `let` declaration reads no dead zone, so the discarded call
+        is pure and the store, the now-uncalled function, and the unread binding all go. This is the
+        control the dead-zone case is refused against: identical but for declaration order, it must
+        still reduce.
+        """
+        source = 'function f() { return q; }\nlet q = 1;\nvar dead = f();\nconsole.log(2);\n'
+        self.assertEqual('console.log(2);', self._remove_unused(source))
+
+    def test_dead_store_calling_a_generator_dead_zone_reader_is_removed(self):
+        """
+        Calling a generator returns an iterator without running its body, so a dead-zone read in the
+        body never executes and the discarded call throws nothing. The dead store is removed even
+        though the body would read `q` before its declaration.
+        """
+        source = 'function* gen() { return q; }\nvar dead = gen();\nlet q = 1;\nconsole.log(2);\n'
+        self.assertEqual('console.log(2);', self._remove_unused(source))
+
+    def test_dead_store_calling_a_reader_of_its_own_dead_zone_local_is_removed(self):
+        """
+        A function reading a `let` it declares itself orders that read against the declaration in its
+        own body, so a call to it is safe with respect to the binding. The owned binding is filtered
+        out of the deferred dead-zone set and the discarded call is removed.
+        """
+        source = 'function f() { let x = 1; return x; }\nvar dead = f();\nconsole.log(2);\n'
+        self.assertEqual('console.log(2);', self._remove_unused(source))
+
     def test_store_to_captured_binding_is_kept(self):
         source = inspect.cleandoc(
             """

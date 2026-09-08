@@ -2132,9 +2132,15 @@ class JsInterpreter:
 
         `is_effect_free_when_discarded` rather than `is_pure`, which is stricter than this position
         needs: it tolerates a mutation the callback confines to a fresh local it returns. It does
-        not tolerate a throw — `throws` blocks both — so a callback that reads a name the
-        specification does not mandate on the global object is refused here, even though such a
-        throw would surface as a real `_ThrowSignal` an emulated `try/catch` observes.
+        not tolerate a throw the summary records in `throws` — a read of a name the specification
+        does not mandate on the global object sets that flag, so such a callback is refused here,
+        even though the throw would surface as a real `_ThrowSignal` an emulated `try/catch`
+        observes. A throw the summary defers per binding rather than recording in `throws` — a
+        `dead_zone_reads` read of an outer `let`/`const`/`class` binding, which fires only inside
+        that binding's dead zone — is not reflected in `is_effect_free_when_discarded` and so passes
+        this gate; it is refused downstream instead, where `_eval_array_hof` runs the callback and
+        the dead-zone read raises the same `_ThrowSignal` that aborts the fold, exactly as evaluating
+        the read at its own site would.
 
         Purity is not sufficient on its own either. A write to a *script-scope* `var` reports
         `writes_captured=False`, because that binding is not captured from the callback's perspective, so it

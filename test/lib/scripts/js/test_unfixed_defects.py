@@ -761,12 +761,17 @@ class TestAReadOfALexicalBindingBeforeItsDeclarationThrows(TestBase):
 
 #: A program whose only throw is a `let`/`const`/`class` read in a function body reached before the
 #: declaration runs, mapped to the `ReferenceError` Node ends it with. The read is a dead-zone throw
-#: at the call, but the callee's effect summary is computed once, without a call site, and never
-#: records it, so a discarded call to the function — a dead store — is dropped as pure.
+#: at the call, reached directly and through a transitive callee, for a function, an arrow, and a
+#: class binding. A discarded call to such a function — a dead store — must keep the throw.
 A_DEAD_ZONE_READ_REACHED_THROUGH_A_CALL = {
     'function f() { return q; }\nvar dead = f();\nlet q = 1;\nconsole.log(2);\n': ('', 'ReferenceError'),
     'function f() { return q; }\nvar dead = f();\nconst q = 1;\nconsole.log(2);\n': ('', 'ReferenceError'),
     'var g = () => q;\nvar dead = g();\nlet q = 1;\nconsole.log(2);\n': ('', 'ReferenceError'),
+    'function g() { return q; }\nfunction f() { return g(); }\n'
+    'var dead = f();\nlet q = 1;\nconsole.log(2);\n': ('', 'ReferenceError'),
+    'var g = () => q;\nvar f = () => g();\n'
+    'var dead = f();\nlet q = 1;\nconsole.log(2);\n': ('', 'ReferenceError'),
+    'function f() { return C; }\nvar dead = f();\nclass C {}\nconsole.log(2);\n': ('', 'ReferenceError'),
 }
 
 
@@ -774,21 +779,101 @@ A_DEAD_ZONE_READ_REACHED_THROUGH_A_CALL = {
 class TestADeadZoneReadReachedThroughACallStillThrows(TestBase):
     """
     A function whose body reads a `let`/`const`/`class` binding throws a `ReferenceError` when it is
-    called before the declaration runs. The direct-read fix reaches such a read only through
-    `EffectModel.read_throws`; the interprocedural effect summary a discarded call is dropped through
-    is computed once for the function, without a call site, and never consults it. So a dead store
-    holding a call to such a function is removed and Node's
+    called before the declaration runs, and so does one whose transitive callee does the read. A
+    discarded call to such a function — a dead store — is a call that runs the body, so removing it
+    would drop Node's
 
         Cannot access 'q' before initialization
 
-    is dropped: each program prints `2`. Preserving it needs the summary to record the lexical
-    bindings the body reads and the call site to check each is established — a call-site-aware
-    interprocedural fact this analysis does not yet carry.
+    and print `2` instead. The effect summary records the outer lexical bindings a call may read
+    (`EffectSummary.dead_zone_reads`, unioned across `absorb` so a transitive read carries) and the
+    removal's call site refuses the drop unless every such binding's declaration is ordered before
+    the call, so each program here keeps its throw.
+    """
+
+    def test_a_dead_store_call_to_a_dead_zone_reader_still_throws(self):
+        rows = A_DEAD_ZONE_READ_REACHED_THROUGH_A_CALL
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            {source: (answer, answer) for source, answer in rows.items()},
+        )
+
+
+#: A program whose function reads a `let`/`const`/`class` binding it declares itself, from a point in
+#: its own body before that declaration runs, mapped to the `ReferenceError` Node ends it with. The
+#: read is in the binding's dead zone, but the binding is owned by the function, so it is filtered out
+#: of the call-site-relative `EffectSummary.dead_zone_reads`: judging it needs the ordering of the
+#: read against the declaration inside the body, which the effect summary — sitting below the
+#: dominance model — cannot see. Reached through a named function, an arrow, and a class binding.
+AN_OWNED_DEAD_ZONE_READ_BEFORE_ITS_DECLARATION = {
+    'function outer() { var d = c; let c = 1; return d; }\n'
+    'var x = outer();\nconsole.log(2);\n': ('', 'ReferenceError'),
+    'var outer = () => { var d = c; let c = 1; return d; };\n'
+    'var x = outer();\nconsole.log(2);\n': ('', 'ReferenceError'),
+    'function outer() { var d = C; class C {} return d; }\n'
+    'var x = outer();\nconsole.log(2);\n': ('', 'ReferenceError'),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAnOwnedDeadZoneReadBeforeItsDeclarationStillThrows(TestBase):
+    """
+    A function that reads a `let`/`const`/`class` binding it declares itself, before that declaration
+    runs in its own body, throws a `ReferenceError` on the call:
+
+        Cannot access 'c' before initialization
+
+    The interprocedural dead-store fix records the outer lexical bindings a call may read and refuses
+    to drop the call while any is unestablished, but a binding the function owns is filtered out of
+    that set — it is checked at the callee's call site, where an owned binding is out of scope, and
+    the summary sits below the dominance model that would order the read against the declaration
+    inside the body. So the call is judged pure and the dead store dropped: each program prints `2`.
+    Preserving it needs a dominance-aware summary fact for an owned lexical read before its own
+    declaration, which is a distinct analysis from the call-site establishment this fix carries.
     """
 
     @unittest.expectedFailure
-    def test_a_dead_store_call_to_a_dead_zone_reader_still_throws(self):
-        rows = A_DEAD_ZONE_READ_REACHED_THROUGH_A_CALL
+    def test_a_dead_store_call_to_an_owned_dead_zone_reader_still_throws(self):
+        rows = AN_OWNED_DEAD_ZONE_READ_BEFORE_ITS_DECLARATION
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            {source: (answer, answer) for source, answer in rows.items()},
+        )
+
+
+#: A program whose dead-zone reader is called through a dead assignment store (`x = f()` with `x`
+#: itself fully dead) rather than a declarator initializer, mapped to the `ReferenceError` Node ends
+#: it with. A fully dead assignment target orphans the callee `f` into the removal's `defunct` set,
+#: after which the model-free clearance drops a call to that name unconditionally — never consulting
+#: the `EffectSummary.dead_zone_reads` gate the declarator path checks. Reached directly, through an
+#: array right-hand side, and through a transitive callee.
+A_DEAD_ASSIGNMENT_TO_A_DEAD_ZONE_READER = {
+    'function f() { return q; }\nvar x;\nx = f();\nlet q = 1;\nconsole.log(2);\n': ('', 'ReferenceError'),
+    'function f() { return q; }\nvar x;\nx = [f()];\nlet q = 1;\nconsole.log(2);\n': ('', 'ReferenceError'),
+    'function g() { return q; }\nfunction f() { return g(); }\n'
+    'var x;\nx = f();\nlet q = 1;\nconsole.log(2);\n': ('', 'ReferenceError'),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestADeadAssignmentToADeadZoneReaderStillThrows(TestBase):
+    """
+    A dead-zone reader called through a dead assignment store — `x = f()` where `x` is itself never
+    read — throws a `ReferenceError` on the call:
+
+        Cannot access 'q' before initialization
+
+    A fully dead assignment target lets the removal orphan the callee `f` into its `defunct` set, and
+    the model-free clearance then treats a call to a defunct name as free unconditionally, bypassing
+    the `dead_zone_reads` establishment gate the declarator-initializer path consults. So the store,
+    the call, and its throw are dropped: each program prints `2`. Closing it means gating the
+    defunct-call clearance (or the orphan promotion) on the same dead-zone check the declarator path
+    already applies.
+    """
+
+    @unittest.expectedFailure
+    def test_a_dead_assignment_call_to_a_dead_zone_reader_still_throws(self):
+        rows = A_DEAD_ASSIGNMENT_TO_A_DEAD_ZONE_READER
         self.assertEqual(
             {source: before_and_after(source) for source in rows},
             {source: (answer, answer) for source, answer in rows.items()},

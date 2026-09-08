@@ -578,10 +578,15 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
         """
         Whether a pure call may be dropped: its callee is a trusted intrinsic, or a local function whose
         definition reaches the call, so a call textually before a not-yet-established function keeps its
-        runtime throw.
+        runtime throw. A callee whose summary defers outer `let`/`const`/`class` reads
+        (`EffectSummary.dead_zone_reads`) keeps its throw unless each such binding's declaration is
+        guaranteed to have run before the call, so a dead store to a dead-zone reader is not dropped.
         """
         return self.effects.call_clearable(
-            call, lambda func: self.reaching.dominance.established_before(func, call))
+            call,
+            lambda func: self.reaching.dominance.established_before(func, call),
+            lambda binding: self.reaching.dominance.past_dead_zone(binding, call),
+        )
 
     def _member_read_ok(self, member: JsMemberExpression) -> bool:
         """
