@@ -1989,6 +1989,22 @@ class SemanticModel:
         binding = self.lookup(node.name, scope, cross_dynamic=True)
         return binding is None or binding.kind is BindingKind.IMPLICIT_GLOBAL
 
+    def reads_lexical_binding(self, node: JsIdentifier) -> bool:
+        """
+        Whether *node* is a read of a `let`, `const`, or `class` binding: a name that resolves for
+        certain, yet may still raise a `ReferenceError` when the read runs before the declaration
+        that ends the binding's temporal dead zone. The companion flag to `read_may_throw`, which
+        instead flags a name that may denote no binding at all; together they are the complete set of
+        reads a discarding context must not drop without a proof the read is past its establishing
+        point. Whether the read is in fact in the dead zone is an ordering question this layer does
+        not answer — a caller's establishment proof (`ModelCache.read_established`) decides it against
+        the dominance model — so this flags every lexical read and leaves the clearing to that proof.
+        """
+        if not self.is_reference(node) or reference_role(node) is Role.WRITE:
+            return False
+        binding = self.resolve(node)
+        return binding is not None and binding.is_lexical
+
     def naming_binding(self, function: Node) -> Binding | None:
         """
         The binding that gives *function* a name through which it can be invoked: the declared name of a

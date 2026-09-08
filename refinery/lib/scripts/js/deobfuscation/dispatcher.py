@@ -695,7 +695,7 @@ class JsDispatcherUnwrapper(ScopeProcessingTransformer):
                 argument,
                 discarded=True,
                 reads_may_throw=True,
-                read_established=cache.assignment.read_established,
+                read_established=cache.read_established,
             )
             for argument in call.arguments[3:]
         )

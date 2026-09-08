@@ -226,7 +226,7 @@ class JsObjectFold(ScopeProcessingTransformer):
             ):
                 continue
             changed, can_remove = self._inline_references(
-                model, cache.effects, binding, prop_map, self, cache.assignment.read_established
+                model, cache.effects, binding, prop_map, self, cache.read_established
             )
             if changed:
                 if can_remove:

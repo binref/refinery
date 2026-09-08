@@ -27,7 +27,7 @@ from __future__ import annotations
 
 from refinery.lib.scripts import Node, _remove_from_parent, owning_list
 from refinery.lib.scripts.js.analysis.assignment import DefiniteAssignmentModel
-from refinery.lib.scripts.js.analysis.cache import model_cache
+from refinery.lib.scripts.js.analysis.cache import ModelCache, model_cache
 from refinery.lib.scripts.js.analysis.effects import EffectModel, object_member_access_runs_accessor
 from refinery.lib.scripts.js.analysis.liveness import LivenessModel
 from refinery.lib.scripts.js.analysis.model import (
@@ -383,6 +383,7 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
         self._liveness: LivenessModel | None = None
         self._reaching: ReachingModel | None = None
         self._defassign: DefiniteAssignmentModel | None = None
+        self._cache: ModelCache | None = None
 
     def visit_JsScript(self, node: JsScript):
         """
@@ -396,6 +397,7 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
             previously_changed = self.changed
             self.changed = False
             cache = model_cache(self, node)
+            self._cache = cache
             self._model = cache.model
             self._effects = cache.effects
             self._liveness = cache.liveness
@@ -569,6 +571,7 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
         returns (a decoder-factory IIFE building a scratch container) is removable, its mutation being
         unobservable once the result is thrown away.
         """
+        assert self._cache is not None
         return self.effects.is_side_effect_free(
             node,
             defunct,
@@ -576,7 +579,7 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
             call_established=self._call_established,
             discarded=True,
             reads_may_throw=True,
-            read_established=self.assignment.read_established,
+            read_established=self._cache.read_established,
         )
 
     def _call_established(self, call: JsCallExpression | JsNewExpression) -> bool:

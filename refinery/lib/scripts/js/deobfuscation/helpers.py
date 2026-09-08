@@ -1939,7 +1939,7 @@ def _effect_oracles(
     def arg_may_throw(node: Node) -> bool:
         cache = model_cache(transformer, root)
         return not cache.effects.is_side_effect_free(
-            node, reads_may_throw=True, read_established=cache.assignment.read_established)
+            node, reads_may_throw=True, read_established=cache.read_established)
 
     return call_pure, read_effect, call_established, arg_may_throw
 

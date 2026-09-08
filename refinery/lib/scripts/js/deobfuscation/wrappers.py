@@ -171,7 +171,7 @@ class JsCallWrapperInliner(ScriptLevelTransformer):
                 and not effects.is_side_effect_free(
                     argument,
                     reads_may_throw=True,
-                    read_established=cache.assignment.read_established,
+                    read_established=cache.read_established,
                 )
                 for name, argument in zip(info.param_names, ast_node.arguments)
             ):

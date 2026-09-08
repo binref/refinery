@@ -188,7 +188,7 @@ class JsDeadCodeElimination(BodyProcessingTransformer):
         effects = self.effects
         if effects is not None:
             assert self._root is not None
-            established = model_cache(self, self._root).assignment.read_established
+            established = model_cache(self, self._root).read_established
             return effects.is_side_effect_free(
                 test, reads_may_throw=True, read_established=established)
         return side_effect_free(test)

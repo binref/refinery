@@ -1058,14 +1058,20 @@ class EffectModel:
         self, node: Node, read_established: Callable[[JsIdentifier], bool],
     ) -> bool:
         """
-        Whether reading *node* fires a `with` object's getter or may throw a `ReferenceError` no
-        write *read_established* vouches a completed creating write for. The predicate
-        `throwing_read_effect` composes, exposed directly so a caller that queries one node at a
-        time (the reflective inliner) allocates no closure per read.
+        Whether reading *node* fires a `with` object's getter or may throw a `ReferenceError`
+        *read_established* does not vouch the read is past — a creating write that has completed, or a
+        lexical binding whose declaration has run, ending its temporal dead zone. A read of a
+        `let`/`const`/`class` binding is a candidate here even though the name resolves, since it
+        throws all the same while the declaration has not run; the establishment proof clears it once
+        the declaration is ordered before the read. The predicate `throwing_read_effect` composes,
+        exposed directly so a caller that queries one node at a time (the reflective inliner)
+        allocates no closure per read.
         """
         if self.model.read_has_dynamic_effect(node):
             return True
-        if not isinstance(node, JsIdentifier) or not self.model.read_may_throw(node):
+        if not isinstance(node, JsIdentifier):
+            return False
+        if not (self.model.read_may_throw(node) or self.model.reads_lexical_binding(node)):
             return False
         return not read_established(node)
 

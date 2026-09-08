@@ -721,12 +721,11 @@ A_READ_IN_THE_DEAD_ZONE_OF_A_LEXICAL_BINDING = {
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestAReadOfALexicalBindingBeforeItsDeclarationThrows(TestBase):
     """
-    A `let` or `const` binding exists from the moment its block is entered and holds no value until
-    its declaration runs. A read in between resolves to it and throws a `ReferenceError` all the
-    same, which is the one way a name is bound and unreadable at once. The analysis stops at the
-    resolution, so `SemanticModel.read_may_throw` answers `False` and the read is one that cannot
-    fail: the store holding it is a store nothing reads, the function it leaves empty has no
-    effect, and the discarded call goes. What comes back runs to the end and prints.
+    A `let`, `const`, or `class` binding exists from the moment its block is entered and holds no
+    value until its declaration runs. A read in between resolves to it and throws a `ReferenceError`
+    all the same, which is the one way a name is bound and unreadable at once. So the store holding
+    such a read is not dead, the function around it is not empty, and its discarded call is not
+    droppable — the deobfuscation keeps them and the throw with them.
 
     `typeof` is no defence, which is where a dead zone parts company with a name that denotes no
     binding at all. Node prints `1` for
@@ -741,17 +740,8 @@ class TestAReadOfALexicalBindingBeforeItsDeclarationThrows(TestBase):
 
     and for the same program with the declaration written in front of the read; both of those calls
     are discarded rightly.
-
-    Resolving the read correctly is the whole of what is missing. The sweep that removes the store
-    does ask its question of the read now — a store holding a name nothing binds is kept, with a
-    definite-assignment model deciding when a creating write has certainly run
-    (`refinery.lib.scripts.js.analysis.assignment.DefiniteAssignmentModel`) — but that question is
-    only reached for a read `SemanticModel.read_may_throw` flags, and a dead zone read resolves, so
-    it is never flagged; a dead zone read is the case where the name does resolve and the answer is
-    still that the read may not happen.
     """
 
-    @unittest.expectedFailure
     def test_a_read_before_the_declaration_runs_still_throws(self):
         """
         Node refuses each program of `A_READ_IN_THE_DEAD_ZONE_OF_A_LEXICAL_BINDING` having printed
@@ -759,9 +749,8 @@ class TestAReadOfALexicalBindingBeforeItsDeclarationThrows(TestBase):
 
             Cannot access 'q' before initialization
 
-        Every deobfuscation prints `1`: the three programs that call a function come back as
-        `void 0;` in front of the print, and the one written as a block comes back as an empty
-        block.
+        The deobfuscation preserves that: each program's dead-zone read keeps its store, the function
+        around it, and its call, so what comes back throws exactly as the input does.
         """
         rows = A_READ_IN_THE_DEAD_ZONE_OF_A_LEXICAL_BINDING
         self.assertEqual(

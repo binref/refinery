@@ -614,7 +614,8 @@ class JsSimplifications(Transformer):
         return JsSequenceExpression(expressions=[test, kept])
 
     def _read_established(self, node: JsIdentifier) -> bool:
-        return self.assignment.read_established(node)
+        assert self._cache is not None
+        return self._cache.read_established(node)
 
     def visit_JsConditionalExpression(self, node: JsConditionalExpression):
         self.generic_visit(node)
@@ -633,12 +634,7 @@ class JsSimplifications(Transformer):
             e for i, e in enumerate(node.expressions)
             if i == len(node.expressions) - 1
             or not is_simple_expression(e)
-            or self.model.read_has_dynamic_effect(e)
-            or (
-                isinstance(e, JsIdentifier)
-                and self.model.read_may_throw(e)
-                and not self._read_established(e)
-            )
+            or self.effects.read_throws(e, self._read_established)
         ]
         if len(filtered) == len(node.expressions):
             return None

@@ -21,7 +21,7 @@ from refinery.lib.scripts.js.analysis.effects import EffectModel, build_effects
 from refinery.lib.scripts.js.analysis.liveness import LivenessModel, build_liveness
 from refinery.lib.scripts.js.analysis.model import SemanticModel, build_semantic_model
 from refinery.lib.scripts.js.analysis.reaching import ReachingModel, build_reaching
-from refinery.lib.scripts.js.model import JsCallExpression, JsNewExpression, JsScript
+from refinery.lib.scripts.js.model import JsCallExpression, JsIdentifier, JsNewExpression, JsScript
 from refinery.lib.scripts.js.options import is_host_entrypoint, runs_as_module
 from refinery.lib.scripts.modelcache import ModelCacheBase
 
@@ -121,6 +121,28 @@ class ModelCache(ModelCacheBase):
         return self.effects.call_clearable(
             call, lambda func: self.dominance.established_before(func, call)
         )
+
+    def read_established(self, node: JsIdentifier) -> bool:
+        """
+        Whether reading *node* cannot be the evaluation that raises a `ReferenceError`: the one
+        composition of the establishment and dominance models every discarding context shares, so no
+        pass drops a read another would keep. True when a creating write has certainly completed
+        (`refinery.lib.scripts.js.analysis.assignment.DefiniteAssignmentModel.read_established`, the
+        implicit-global case), or when *node* reads a `let`/`const`/`class` binding whose declaration
+        is guaranteed to have run first, ending its temporal dead zone
+        (`refinery.lib.scripts.js.analysis.dominance.DominanceModel.runs_before` over the binding's
+        declarations). A lexical read the ordering cannot vouch for — one that may run in the dead
+        zone — is not established, so the sweep keeps the store and the throw with it. This
+        generalizes the write-only proof the consumers threaded before: every context that dropped a
+        read the moment a creating write reached it now keeps a lexical read the same context would
+        move out of its dead zone.
+        """
+        if self.assignment.read_established(node):
+            return True
+        binding = self.model.resolve(node)
+        if binding is None or not binding.is_lexical:
+            return False
+        return all(self.dominance.runs_before(site, node) for site in binding.declarations)
 
 
 def model_cache(transformer: Transformer, root: JsScript) -> ModelCache:
