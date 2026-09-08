@@ -748,6 +748,52 @@ def raises_a_caught_terminating_error(node: Node) -> bool:
     return _reaches_a_raising_leaf(node, commands=False)
 
 
+def is_void_cast(node: Node) -> TypeGuard[Ps1CastExpression]:
+    """
+    Whether a node is a cast to `[Void]`, the discard idiom that throws a value away. The name is
+    resolved rather than compared as text, so every spelling of the type — `[System.Void]` among
+    them — is the same idiom.
+    """
+    return (
+        isinstance(node, Ps1CastExpression)
+        and is_type(node.type_name, 'System.Void')
+    )
+
+
+def is_null_discard(node: Node) -> TypeGuard[Ps1AssignmentExpression]:
+    """
+    Whether a node is the `$Null = ...` discard idiom, which evaluates its right-hand side and puts
+    nothing on the output.
+    """
+    return (
+        isinstance(node, Ps1AssignmentExpression)
+        and node.operator == '='
+        and is_builtin_variable(node.target, {'null'})
+    )
+
+
+def fault_operand(stmt: Node) -> Node | None:
+    """
+    The expression whose fault is `stmt`'s fault, or `None` where `stmt` is not one expression.
+
+    A discard idiom performs no work of its own: `$Null = X` and `[Void]X` evaluate `X`, name
+    nothing and emit nothing, so what either of them can raise is what `X` can raise. Asking the
+    statement's own expression instead asks about an assignment, which no reading of the value
+    domain calls safe, and every discarded constant in an obfuscated script then reads as something
+    that might throw.
+    """
+    if not isinstance(stmt, Ps1ExpressionStatement):
+        return None
+    expression = stmt.expression
+    if expression is None:
+        return None
+    if is_void_cast(expression):
+        return expression.operand
+    if is_null_discard(expression):
+        return expression.value
+    return expression
+
+
 def unwrap_assignment_target(target: Node | None) -> Node | None:
     """
     Peel type-constraint casts and parentheses from an assignment target, so `[Type]$x` and `($x)`

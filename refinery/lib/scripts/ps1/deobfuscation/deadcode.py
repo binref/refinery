@@ -17,13 +17,17 @@ from refinery.lib.scripts.ps1.analysis.cfg import certain_catch_all, swallows_ev
 from refinery.lib.scripts.ps1.analysis.effects import (
     OutputSink,
     certainly_throws,
-    fault_operand,
     is_fault_free,
     is_side_effect_free,
     output_sink,
 )
 from refinery.lib.scripts.ps1.analysis.values import integer_of, is_truthy, read
-from refinery.lib.scripts.ps1.ast import get_body, is_builtin_variable, unwrap_parens
+from refinery.lib.scripts.ps1.ast import (
+    fault_operand,
+    get_body,
+    is_builtin_variable,
+    unwrap_parens,
+)
 from refinery.lib.scripts.ps1.data import COMPARISON_OPS, KNOWN_CMDLETS
 from refinery.lib.scripts.ps1.deobfuscation.helpers import (
     is_pipeline_item,

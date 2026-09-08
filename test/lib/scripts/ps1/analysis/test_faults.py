@@ -18,7 +18,9 @@ from refinery.lib.scripts.ps1.analysis.faults import (
 from refinery.lib.scripts.ps1.ast import get_body, resolve_command_name
 from refinery.lib.scripts.ps1.model import (
     Ps1ArrayExpression,
+    Ps1CastExpression,
     Ps1CommandInvocation,
+    Ps1ExpressionStatement,
     Ps1Script,
     Ps1SubExpression,
     Ps1TrapStatement,
@@ -902,3 +904,57 @@ class TestPs1WhetherAnErrorLeavesTheBodyItWasRaisedIn(TestBase):
         )
         self.assertFalse(faults.escapes_the_body(point))
         self.assertTrue(faults.observed_at(point))
+
+
+class TestPs1ARaiseEscapesAFiringTrapBodyOnlyWhereItsBlockProvablyFiresTheTrap(TestBase):
+    """
+    A `trap` does not guard its own body, so a raise among its statements leaves the body and ends
+    the scope the `trap` belongs to — but only where the `trap` actually runs, which is where a
+    statement of the block it guards raises an error that fires it. The predicate reads that off the
+    raisers of the `trap`'s own node, so it turns on which statement stands in the block and not on
+    where the raise itself is written.
+
+    The firing test counts only a statement-terminating or terminating raise, so a block whose only
+    raiser is a plain command reads as not firing and leaves the body raise removable — the model
+    half of `TestPs1ATrapBodyNothingTriggersLeavesTheRaiseInItRemovable`. A raise behind a function
+    or `& { }` boundary inside the body is in no `trap` body here; the deletion pass keeps it for a
+    different reason, so this is the unit fact and not an integration removal.
+    """
+
+    def _first_trap_body_statement(self, source: str) -> tuple[Ps1FaultReach, Statement]:
+        tree, faults = _model(source)
+        trap = next(node for node in tree.walk() if isinstance(node, Ps1TrapStatement))
+        body = get_body(trap.body)
+        self.assertIsNotNone(body)
+        assert body is not None
+        return faults, body[0]
+
+    def test_a_body_raise_escapes_where_a_cast_in_its_block_fires_the_trap(self):
+        faults, body_raise = self._first_trap_body_statement("""
+            trap { $null = [int]'a' }
+            $null = [int]'b'
+        """)
+        self.assertTrue(faults.escapes_a_firing_trap_body(body_raise))
+
+    def test_the_same_body_raise_does_not_escape_where_only_a_command_may_fire_the_trap(self):
+        faults, body_raise = self._first_trap_body_statement("""
+            trap { $null = [int]'a' }
+            Write-Host 'x'
+        """)
+        self.assertFalse(faults.escapes_a_firing_trap_body(body_raise))
+
+    def test_a_raise_in_no_trap_body_escapes_no_firing_trap(self):
+        tree, faults = _model("$null = [int]'a'")
+        self.assertFalse(faults.escapes_a_firing_trap_body(tree.body[0]))
+
+    def test_a_body_raise_behind_a_scriptblock_boundary_escapes_no_firing_trap(self):
+        tree, faults = _model("""
+            trap { & { [int]'a' } }
+            $null = [int]'b'
+        """)
+        inner = next(
+            node for node in tree.walk()
+            if isinstance(node, Ps1ExpressionStatement)
+            and isinstance(node.expression, Ps1CastExpression)
+        )
+        self.assertFalse(faults.escapes_a_firing_trap_body(inner))

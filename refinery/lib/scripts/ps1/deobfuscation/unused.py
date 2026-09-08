@@ -13,7 +13,6 @@ from refinery.lib.scripts.ps1.analysis.effects import (
     StatementEffect,
     body_is_inert,
     expression_cannot_fault,
-    fault_operand,
     is_side_effect_free,
     opens_a_redirection_target,
     output_path,
@@ -28,6 +27,7 @@ from refinery.lib.scripts.ps1.ast import (
     assignment_of,
     assignment_target_is_all_variables,
     assignment_target_variables,
+    fault_operand,
     get_body,
     normalize_command_name,
 )
@@ -66,7 +66,7 @@ def _writes_only_what_cannot_fault(
     `DISCARD`, and it goes through the same gate *over the same operand* for that reason: a bare
     `$x` answered fault-free at one of the two sites and not at the other would be deleted as a
     discard and kept as an output in one script, and so would one the two sites disagreed about
-    which expression to weigh. `refinery.lib.scripts.ps1.analysis.effects.fault_operand` is that
+    which expression to weigh. `refinery.lib.scripts.ps1.ast.fault_operand` is that
     one reading, and it answers `None` for a statement that is not one expression.
     """
     operand = fault_operand(stmt)

@@ -40,7 +40,9 @@ from refinery.lib.scripts.ps1.ast import (
     binding_key,
     binds_parameter,
     bound_argument_value,
+    fault_operand,
     is_soft_error_source,
+    raises_a_caught_terminating_error,
     resolve_command_name,
     string_value,
 )
@@ -56,6 +58,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1IntegerLiteral,
     Ps1RealLiteral,
     Ps1Script,
+    Ps1ScriptBlock,
     Ps1ThrowStatement,
     Ps1TrapStatement,
     Ps1Variable,
@@ -455,6 +458,29 @@ def _normal_successors(graph: ControlFlowGraph, node: CfgNode) -> frozenset[CfgN
     )
 
 
+def _enclosing_trap_body(node: Node) -> Ps1TrapStatement | None:
+    """
+    The `trap` whose body *node* stands in, or `None` where *node* is in no trap body. Assumes
+    *node* is a body statement — a `trap`'s own type filter is not one, and the veto that reaches
+    here has already restricted itself to a statement with a `fault_operand`.
+
+    The walk stops at the first `Ps1ScriptBlock` because a `trap` reached only across a function or a
+    stored scriptblock boundary does not guard the scope *node* runs in: a raise there ends the inner
+    scope, and whatever the outer `trap` does is a question about the call, not about deleting the
+    raise. The bodies of `if`/`while`/`for`/`switch`/`try` and of a named block (`begin`/`process`/
+    `end`) are a `Block` rather than a `Ps1ScriptBlock`, so a raise nested in one still finds the
+    `trap` it shares a scope with.
+    """
+    cursor = node.parent
+    while cursor is not None:
+        if isinstance(cursor, Ps1TrapStatement):
+            return cursor
+        if isinstance(cursor, Ps1ScriptBlock):
+            return None
+        cursor = cursor.parent
+    return None
+
+
 def _resumption_slot(graph: ControlFlowGraph, node: CfgNode) -> CfgNode | None:
     """
     The slot a resuming handler carries *node*'s error to — the `CfgEdge.RESUMPTION_FORWARD`
@@ -708,6 +734,82 @@ class Ps1FaultReach:
             if normal != _normal_successors(placed[0], placed[1]):
                 return True
         return False
+
+    def fault_the_try_catches(self, operand: Node) -> bool:
+        """
+        Whether evaluating *operand* may raise a terminating error a `try` catches. A cast, a
+        fallible operator and a method call raise one whatever the error preferences say; a command
+        raises one only where the script makes its error terminating, which `error_is_terminating`
+        reads from `Stop`. The default command error is non-terminating — reported and stepped over —
+        so the `try` does not catch it and a statement after it still runs.
+
+        It is the fault model's rather than the effect layer's because its command arm reads the
+        script's error preferences, a judgment `error_is_terminating` already owns here; the
+        expression arm is the pure `raises_a_caught_terminating_error` shape from `ast`.
+        """
+        if raises_a_caught_terminating_error(operand):
+            return True
+        return is_soft_error_source(operand) and self.error_is_terminating(operand)
+
+    def _fires_a_trap(self, raiser: Node) -> bool:
+        """
+        Whether *raiser* provably fires the `trap` its block is guarded by — a statement-terminating
+        or terminating error, the only errors a `trap` runs on. A cast, a fallible operator, a method
+        call or a command a `Stop` makes terminating is read through `fault_the_try_catches` over the
+        raiser's `fault_operand`; a bare `throw` or a global `Stop` is read through
+        `error_is_terminating`.
+
+        This under-approximates on purpose. It is the dual of the transpose's over-approximation: the
+        transpose keeps a `trap` when *anything* its block holds may raise, so a plain command counts
+        there; this decides whether to *delete* a body raise the `trap` would let end the scope, and a
+        plain command whose default error is non-terminating does not fire the `trap`, so counting it
+        would keep the junk body raise the deletion pass is written to drop. Excluding the plain
+        command is therefore the price of that removal, named in the plan's Known limits, not a
+        shortcut.
+        """
+        operand = fault_operand(raiser)
+        if operand is not None and self.fault_the_try_catches(operand):
+            return True
+        return self.error_is_terminating(raiser)
+
+    def escapes_a_firing_trap_body(self, node: Node) -> bool:
+        """
+        Whether *node* is a raise in the body of a `trap` that fires, whose error therefore leaves
+        the body and ends the scope the `trap` belongs to. A `trap` does not guard its own body, so a
+        raise among its statements is not offered back to it: it ends the script at script scope, or
+        the function where the `trap` is written inside one. Deleting such a raise runs the remainder
+        of the body — and the scope past it — that the original abandoned, which is why it is the
+        position half of a keep.
+
+        Three things have to hold. The raise stands in a `trap` body (`_enclosing_trap_body`, which
+        stops at a function/scriptblock boundary). Its error actually leaves that body rather than
+        being taken by a handler nested inside it (`escapes_the_body`). And the `trap` fires: some
+        statement its block guards raises a firing error (`_fires_a_trap` over the trap node's
+        raisers). A `trap` the graph places nowhere fires for nothing and is refused.
+        """
+        trap = _enclosing_trap_body(node)
+        if trap is None or not self.escapes_the_body(node):
+            return False
+        located = self._control_flow.locate(trap)
+        if located is None:
+            return False
+        return any(self._fires_a_trap(raiser) for raiser in self._raisers(*located))
+
+    def deleting_the_raise_resurrects_a_continuation(self, node: Node) -> bool:
+        """
+        Whether a live continuation runs only because a raise at *node* pre-empts it, so deleting the
+        raise starts that continuation. The one position predicate the removal veto pairs with the
+        raise half `fault_the_try_catches`. Two mechanisms resurrect a continuation and both are the
+        same observable: an empty `catch` resumes past the tail of a `try` body
+        (`an_empty_catch_skips_a_live_tail`), and a firing `trap` body raise ends the scope the tail
+        would otherwise have kept running in (`escapes_a_firing_trap_body`). A future mechanism — a
+        `finally` that abandons — is a third disjunct here, not a fourth copy of the conjunction the
+        veto pairs it into.
+        """
+        return (
+            self.an_empty_catch_skips_a_live_tail(node)
+            or self.escapes_a_firing_trap_body(node)
+        )
 
     def error_is_terminating(self, node: Node) -> bool:
         """

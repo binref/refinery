@@ -44,6 +44,16 @@ _STOPPING_RAISE = 'Get-Item nope -ErrorAction Stop'
 #: `$ErrorActionPreference` the only reason a `trap` over it is load bearing.
 _UNSPECIFIED_RAISE = 'Get-Item nope'
 
+#: A command 5.1 answers with a parameter-binding failure — a terminating error that fires a `trap`
+#: with no `-ErrorAction Stop` anywhere. The firing gate counts no plain command, so a `trap` body
+#: raise this fires is deleted although the host keeps it; the delete is tracked by an xfail below.
+_BINDING_FAILURE_RAISE = 'Get-Item -BogusParam foo'
+
+#: A member access on `$Null`, which under `Set-StrictMode` raises a statement-terminating error
+#: that fires a `trap`. `is_soft_error_source` excludes member and index access by design, so the
+#: firing gate does not count this either — the second tracked unsound delete.
+_STRICT_MEMBER_RAISE = '$Null.Nonexistent'
+
 
 class _Ps1FaultEscalation(TestPs1):
 
@@ -715,11 +725,13 @@ class TestPs1ARaiseInATrapBodyEndsThatBody(_Ps1FaultEscalation):
     to that guard, and an enclosing `catch` clause or a second, live `trap` runs its body over it.
     In each of these the raise inside the `trap` body decides what runs next, so it survives.
 
-    The deobfuscator reads a `trap` body as statements no error can leave. It deletes the raise
-    there and runs the remainder of the body that the original abandoned.
+    The deobfuscator used to read a `trap` body as statements no error can leave. It deleted the
+    raise there and ran the remainder of the body that the original abandoned. The keep fires only
+    where the `trap` provably fires — a cast, a fallible operator, a method call, a `throw`, or a
+    command a `Stop` makes terminating in the block the `trap` guards — so a `trap` nothing triggers
+    still leaves its dead body raise removable (`TestPs1ATrapBodyNothingTriggersLeavesTheRaiseInItRemovable`).
     """
 
-    @unittest.expectedFailure
     def test_a_raising_cast_before_another_statement_of_the_same_trap_body_is_kept(self):
         self._assertKept(F"""
             trap {{
@@ -731,7 +743,6 @@ class TestPs1ARaiseInATrapBodyEndsThatBody(_Ps1FaultEscalation):
             {_ANCHOR}
         """)
 
-    @unittest.expectedFailure
     def test_a_raising_cast_in_the_trap_body_of_a_function_is_kept(self):
         self._assertKept(F"""
             function Invoke-Thing {{
@@ -743,6 +754,37 @@ class TestPs1ARaiseInATrapBodyEndsThatBody(_Ps1FaultEscalation):
               {_RAISE}
             }}
             Invoke-Thing
+            {_ANCHOR}
+        """)
+
+    def test_a_raising_cast_in_a_nested_block_of_a_firing_trap_body_is_kept(self):
+        """
+        The raise sits in a loop body nested in the `trap` body. Its scope is still the `trap`'s,
+        because a `foreach` body is an ordinary block and not a new scope, so the escaped error ends
+        the same script and the raise is live. The keep has to find the `trap` across that block: a
+        walk that stopped at the first block rather than at a function or scriptblock boundary would
+        read the raise as in no `trap` body and delete it.
+        """
+        self._assertKept(F"""
+            trap {{
+              {_HANDLER}
+              foreach ($i in 1) {{
+                {_RAISE}
+              }}
+              {_FOLLOWER}
+            }}
+            {_RAISE}
+            {_ANCHOR}
+        """)
+
+    def test_a_trap_body_raise_a_stopping_command_fires_is_kept(self):
+        self._assertKept(F"""
+            trap {{
+              {_HANDLER}
+              {_RAISE}
+              {_FOLLOWER}
+            }}
+            {_STOPPING_RAISE}
             {_ANCHOR}
         """)
 
@@ -796,6 +838,107 @@ class TestPs1ATrapBodyNothingTriggersLeavesTheRaiseInItRemovable(_Ps1FaultEscala
               {_HANDLER}
               {_FOLLOWER}
             }}
+            {_ANCHOR}
+        """)
+
+
+class TestPs1AFiringTrapBodyRaiseDependsOnWhichBlockFiresTheTrap(_Ps1FaultEscalation):
+    """
+    A `trap` in a named block is fired only by a raise in that same block. A raise in the body of a
+    `process`-block `trap` ends the function where the `process` block itself holds a raiser that
+    fires the `trap`, so it is kept; a raiser in `begin` fires nothing in `process`, so the same
+    body raise is dead and removable. Which block fires the `trap` is the whole of what decides it.
+    """
+
+    def test_a_process_block_trap_body_raise_a_process_raiser_fires_is_kept(self):
+        self._assertKept(F"""
+            function Invoke-Thing {{
+              process {{
+                trap {{
+                  {_HANDLER}
+                  {_RAISE}
+                  {_FOLLOWER}
+                }}
+                {_STOPPING_RAISE}
+              }}
+            }}
+            Invoke-Thing
+        """)
+
+    def test_a_process_block_trap_body_raise_a_begin_raiser_never_fires_is_removed(self):
+        self._assertDeobfuscatesTo(F"""
+            function Invoke-Thing {{
+              begin {{
+                {_STOPPING_RAISE}
+              }}
+              process {{
+                trap {{
+                  {_HANDLER}
+                  {_RAISE}
+                  {_FOLLOWER}
+                }}
+              }}
+            }}
+            Invoke-Thing
+        """, F"""
+            function Invoke-Thing {{
+              begin {{
+                {_STOPPING_RAISE}
+              }}
+              process {{
+                trap {{
+                  {_HANDLER}
+                  {_FOLLOWER}
+                }}
+              }}
+            }}
+            Invoke-Thing
+        """)
+
+
+class TestPs1ABindingFailureFiringATrapBodyIsAKnownUnsoundDelete(_Ps1FaultEscalation):
+    """
+    A parameter-binding failure is a terminating error that fires a `trap` with no `-ErrorAction
+    Stop` anywhere, so a raise in the fired `trap`'s body ends the scope and is live — on 5.1 the
+    script exits non-zero having run only the handler. The firing gate counts a cast, a fallible
+    operator, a method call, a `throw` or a `Stop`-terminated command, not a plain command that
+    terminates on its own, so it reads the `trap` as not firing and deletes the body raise. Counting
+    a plain command would regress `TestPs1ATrapBodyNothingTriggersLeavesTheRaiseInItRemovable`; the
+    fix needs an open-world command-firing notion.
+    """
+
+    @unittest.expectedFailure
+    def test_a_trap_body_raise_a_binding_failure_fires_is_kept(self):
+        self._assertKept(F"""
+            trap {{
+              {_HANDLER}
+              {_RAISE}
+              {_FOLLOWER}
+            }}
+            {_BINDING_FAILURE_RAISE}
+            {_ANCHOR}
+        """)
+
+
+class TestPs1AStrictModeMemberFiringATrapBodyIsAKnownUnsoundDelete(_Ps1FaultEscalation):
+    """
+    Under `Set-StrictMode` a member access on `$Null` raises a statement-terminating error that
+    fires a `trap`, so a raise in the fired body is live — on 5.1 the script exits non-zero having
+    run only the handler. `is_soft_error_source` excludes member and index access by design, since
+    only strict mode makes them fault and the firing gate does not read that arming, so it reads the
+    `trap` as not firing and deletes the body raise.
+    """
+
+    @unittest.expectedFailure
+    def test_a_trap_body_raise_a_strict_mode_member_fires_is_kept(self):
+        self._assertKept(F"""
+            Set-StrictMode -Version Latest
+            trap {{
+              {_HANDLER}
+              {_RAISE}
+              {_FOLLOWER}
+            }}
+            {_STRICT_MEMBER_RAISE}
             {_ANCHOR}
         """)
 

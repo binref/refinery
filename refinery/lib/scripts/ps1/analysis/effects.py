@@ -33,7 +33,7 @@ from __future__ import annotations
 
 import enum
 
-from typing import Iterator, NamedTuple, Sequence, TypeGuard
+from typing import Iterator, NamedTuple, Sequence
 
 from refinery.lib.scripts import Block, Node
 from refinery.lib.scripts.ps1 import data
@@ -52,15 +52,16 @@ from refinery.lib.scripts.ps1.analysis.values import (
 from refinery.lib.scripts.ps1.analysis.worldflow import Ps1WorldReach
 from refinery.lib.scripts.ps1.ast import (
     extract_new_object,
+    fault_operand,
     get_body,
     get_command_name,
     get_member_name,
     get_named_blocks,
     get_param_block,
     is_builtin_variable,
+    is_null_discard,
     is_reference_cast,
-    is_soft_error_source,
-    raises_a_caught_terminating_error,
+    is_void_cast,
     unwrap_parens,
 )
 from refinery.lib.scripts.ps1.model import (
@@ -68,7 +69,6 @@ from refinery.lib.scripts.ps1.model import (
     Ps1AccessKind,
     Ps1ArrayExpression,
     Ps1ArrayLiteral,
-    Ps1AssignmentExpression,
     Ps1Attribute,
     Ps1BinaryExpression,
     Ps1CastExpression,
@@ -1227,18 +1227,6 @@ class StatementEffect(enum.Enum):
     DISCARD = 'discard'
 
 
-def _is_void_cast(node) -> TypeGuard[Ps1CastExpression]:
-    """
-    Whether a node is a cast to `[Void]`, the discard idiom that throws a value away. The name is
-    resolved rather than compared as text, so every spelling of the type — `[System.Void]` among
-    them — is the same idiom.
-    """
-    return (
-        isinstance(node, Ps1CastExpression)
-        and data.is_type(node.type_name, 'System.Void')
-    )
-
-
 def _emits_nothing(expr, world: Ps1WorldReach) -> bool:
     """
     Whether evaluating *expr* as a standalone statement writes nothing to the output stream.
@@ -1268,18 +1256,6 @@ def _emits_nothing(expr, world: Ps1WorldReach) -> bool:
     return {name.name for name in candidate_types(expr, world)} == {'System.Void'}
 
 
-def _is_null_discard(node) -> TypeGuard[Ps1AssignmentExpression]:
-    """
-    Whether a node is the `$Null = ...` discard idiom, which evaluates its right-hand side and puts
-    nothing on the output.
-    """
-    return (
-        isinstance(node, Ps1AssignmentExpression)
-        and node.operator == '='
-        and is_builtin_variable(node.target, {'null'})
-    )
-
-
 def statement_effect(stmt, world: Ps1WorldReach) -> StatementEffect:
     """
     Classify the observable effect of a standalone statement as a `StatementEffect`. This is the one
@@ -1298,7 +1274,7 @@ def statement_effect(stmt, world: Ps1WorldReach) -> StatementEffect:
     expr = stmt.expression
     if expr is None:
         return StatementEffect.DISCARD
-    if _is_void_cast(expr):
+    if is_void_cast(expr):
         if is_side_effect_free(expr.operand, world):
             return StatementEffect.DISCARD
         return StatementEffect.EFFECT
@@ -1321,7 +1297,7 @@ def statement_effect(stmt, world: Ps1WorldReach) -> StatementEffect:
         if prefix_is_pure and _pipeline_final_is_pure(expr, world):
             return StatementEffect.OUTPUT
         return StatementEffect.EFFECT
-    if _is_null_discard(expr):
+    if is_null_discard(expr):
         if expr.value is not None and is_side_effect_free(expr.value, world):
             return StatementEffect.DISCARD
         return StatementEffect.EFFECT
@@ -1859,28 +1835,6 @@ def build_output_flow(graph: Ps1CallGraph) -> Ps1OutputFlow:
     ))
 
 
-def fault_operand(stmt: Node) -> Node | None:
-    """
-    The expression whose fault is *stmt*'s fault, or `None` where *stmt* is not one expression.
-
-    A discard idiom performs no work of its own: `$Null = X` and `[Void]X` evaluate `X`, name
-    nothing and emit nothing, so what either of them can raise is what `X` can raise. Asking the
-    statement's own expression instead asks about an assignment, which no reading of the value
-    domain calls safe, and every discarded constant in an obfuscated script then reads as something
-    that might throw.
-    """
-    if not isinstance(stmt, Ps1ExpressionStatement):
-        return None
-    expression = stmt.expression
-    if expression is None:
-        return None
-    if _is_void_cast(expression):
-        return expression.operand
-    if _is_null_discard(expression):
-        return expression.value
-    return expression
-
-
 def _is_bare_variable_read(node: Node) -> bool:
     """
     Whether *node* is an unqualified variable read and nothing else — the one expression shape whose
@@ -2038,19 +1992,6 @@ def fault_is_observed(
     return not judged
 
 
-def _fault_the_try_catches(operand: Node, faults: Ps1FaultReach) -> bool:
-    """
-    Whether evaluating *operand* may raise a terminating error a `try` catches. A cast, a fallible
-    operator and a method call raise one whatever the error preferences say; a command raises one
-    only where the script makes its error terminating, which `Ps1FaultReach.error_is_terminating`
-    reads from `Stop`. The default command error is non-terminating — reported and stepped over — so
-    the `try` does not catch it and a statement after it still runs.
-    """
-    if raises_a_caught_terminating_error(operand):
-        return True
-    return is_soft_error_source(operand) and faults.error_is_terminating(operand)
-
-
 def deletion_is_observable(
     stmt: Node,
     faults: Ps1FaultReach,
@@ -2061,19 +2002,21 @@ def deletion_is_observable(
     a removal site has to refuse on either.
 
     The first is `fault_is_observed`: the error *stmt* would raise reaches a handler that acts, or
-    ends a body. The second is answered here: a statement that raises a fault its own `try` catches,
-    written before a live statement of the same block, is the only reason that statement is dead —
-    an empty `catch` swallows the error and resumes past the tail, so deleting the raiser starts the
-    tail running.
-    `refinery.lib.scripts.ps1.analysis.faults.Ps1FaultReach.an_empty_catch_skips_a_live_tail` is the
-    position half and `_fault_the_try_catches` the raise half, paired over `fault_operand` so that a
-    `$Null =`/`[Void]` discard is judged by what it evaluates.
+    ends a body. The second is answered here: a statement that raises a fault a `try` would catch,
+    written before a live continuation that runs only because the raise pre-empts it, is dead only
+    for that reason — deleting the raiser starts the continuation running. Two mechanisms resurrect
+    such a continuation and both are one observable: an empty `catch` swallows the error and resumes
+    past the tail of the `try` body, and a firing `trap` body raise ends the scope that would
+    otherwise run on past it.
+    `refinery.lib.scripts.ps1.analysis.faults.Ps1FaultReach.deleting_the_raise_resurrects_a_continuation`
+    is the position half and `Ps1FaultReach.fault_the_try_catches` the raise half, paired over
+    `fault_operand` so that a `$Null =`/`[Void]` discard is judged by what it evaluates.
     """
     operand = fault_operand(stmt)
     if (
         operand is not None
-        and faults.an_empty_catch_skips_a_live_tail(stmt)
-        and _fault_the_try_catches(operand, faults)
+        and faults.fault_the_try_catches(operand)
+        and faults.deleting_the_raise_resurrects_a_continuation(stmt)
     ):
         return True
     return fault_is_observed(stmt, faults, world)
