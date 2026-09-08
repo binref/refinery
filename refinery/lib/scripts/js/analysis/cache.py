@@ -128,21 +128,24 @@ class ModelCache(ModelCacheBase):
         composition of the establishment and dominance models every discarding context shares, so no
         pass drops a read another would keep. True when a creating write has certainly completed
         (`refinery.lib.scripts.js.analysis.assignment.DefiniteAssignmentModel.read_established`, the
-        implicit-global case), or when *node* reads a `let`/`const`/`class` binding whose declaration
-        is guaranteed to have run first, ending its temporal dead zone
+        implicit-global case), or when *node* reads a `let`/`const`/`class` binding whose
+        declaration is guaranteed to have run first, ending its temporal dead zone
         (`refinery.lib.scripts.js.analysis.dominance.DominanceModel.runs_before` over the binding's
         declarations). A lexical read the ordering cannot vouch for — one that may run in the dead
-        zone — is not established, so the sweep keeps the store and the throw with it. This
-        generalizes the write-only proof the consumers threaded before: every context that dropped a
-        read the moment a creating write reached it now keeps a lexical read the same context would
-        move out of its dead zone.
+        zone, or one whose binding carries no declaration site to order against — is not
+        established, so the sweep keeps the store and the throw with it. This generalizes the
+        write-only proof the consumers threaded before: every context that dropped a read the moment
+        a creating write reached it now keeps a lexical read the same context would move out of its
+        dead zone.
         """
-        if self.assignment.read_established(node):
-            return True
         binding = self.model.resolve(node)
+        if self.assignment.definitely_assigned_at(binding, node):
+            return True
         if binding is None or not binding.is_lexical:
             return False
-        return all(self.dominance.runs_before(site, node) for site in binding.declarations)
+        return bool(binding.declarations) and all(
+            self.dominance.runs_before(site, node) for site in binding.declarations
+        )
 
 
 def model_cache(transformer: Transformer, root: JsScript) -> ModelCache:

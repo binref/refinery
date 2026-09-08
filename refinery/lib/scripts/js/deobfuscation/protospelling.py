@@ -210,7 +210,8 @@ def _owner_of_literal(node: Node | None, effects: EffectModel) -> str | None:
         if any(isinstance(element, JsSpreadElement) for element in node.elements):
             return None
         if any(
-            element is not None and not effects.is_side_effect_free(element, discarded=True)
+            element is not None and not effects.is_side_effect_free(
+                element, discarded=True, reads_may_throw=True)
             for element in node.elements
         ):
             return None

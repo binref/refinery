@@ -1059,19 +1059,19 @@ class EffectModel:
     ) -> bool:
         """
         Whether reading *node* fires a `with` object's getter or may throw a `ReferenceError`
-        *read_established* does not vouch the read is past — a creating write that has completed, or a
-        lexical binding whose declaration has run, ending its temporal dead zone. A read of a
+        *read_established* does not vouch the read is past — a creating write that has completed, or
+        a lexical binding whose declaration has run, ending its temporal dead zone. A read of a
         `let`/`const`/`class` binding is a candidate here even though the name resolves, since it
-        throws all the same while the declaration has not run; the establishment proof clears it once
-        the declaration is ordered before the read. The predicate `throwing_read_effect` composes,
-        exposed directly so a caller that queries one node at a time (the reflective inliner)
-        allocates no closure per read.
+        throws all the same while the declaration has not run; the establishment proof clears it
+        once the declaration is ordered before the read. The predicate `throwing_read_effect`
+        composes, exposed directly so a caller that queries one node at a time (the reflective
+        inliner) allocates no closure per read.
         """
         if self.model.read_has_dynamic_effect(node):
             return True
         if not isinstance(node, JsIdentifier):
             return False
-        if not (self.model.read_may_throw(node) or self.model.reads_lexical_binding(node)):
+        if not self.model.read_may_raise_reference_error(node):
             return False
         return not read_established(node)
 
@@ -1079,12 +1079,14 @@ class EffectModel:
         """
         Whether reading *node* fires a `with` object's getter or may throw a `ReferenceError` — the
         whole of the *read_effect* contract `side_effect_free` states, of which
-        `read_has_dynamic_effect` alone answers the getter half. `read_may_throw` asks about a
-        reference the program neither declares nor is certain the host defines, so an allocation
-        discarded to answer its shape keeps the throw that reading it would have raised.
+        `read_has_dynamic_effect` alone answers the getter half. `read_may_raise_reference_error`
+        asks whether the read may not resolve (a name the program neither declares nor is certain the
+        host defines) or resolves to a lexical binding that may be in its temporal dead zone; with no
+        establishment proof to clear the dead-zone case it fails closed, so an allocation discarded to
+        answer its shape keeps the throw that reading it would have raised.
         """
         return self.model.read_has_dynamic_effect(node) or (
-            isinstance(node, JsIdentifier) and self.model.read_may_throw(node)
+            isinstance(node, JsIdentifier) and self.model.read_may_raise_reference_error(node)
         )
 
     def binding_is_immutable_container(

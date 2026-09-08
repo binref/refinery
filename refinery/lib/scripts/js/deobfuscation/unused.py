@@ -26,7 +26,6 @@ This transformer performs four phases:
 from __future__ import annotations
 
 from refinery.lib.scripts import Node, _remove_from_parent, owning_list
-from refinery.lib.scripts.js.analysis.assignment import DefiniteAssignmentModel
 from refinery.lib.scripts.js.analysis.cache import ModelCache, model_cache
 from refinery.lib.scripts.js.analysis.effects import EffectModel, object_member_access_runs_accessor
 from refinery.lib.scripts.js.analysis.liveness import LivenessModel
@@ -382,7 +381,6 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
         self._effects: EffectModel | None = None
         self._liveness: LivenessModel | None = None
         self._reaching: ReachingModel | None = None
-        self._defassign: DefiniteAssignmentModel | None = None
         self._cache: ModelCache | None = None
 
     def visit_JsScript(self, node: JsScript):
@@ -402,7 +400,6 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
             self._effects = cache.effects
             self._liveness = cache.liveness
             self._reaching = cache.reaching
-            self._defassign = cache.assignment
             self._has_reflection = self._model.has_reflection_surface()
             self._remove_dead_stores(node)
             self._localize_pseudo_globals(node)
@@ -435,11 +432,6 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
     def reaching(self) -> ReachingModel:
         assert self._reaching is not None
         return self._reaching
-
-    @property
-    def assignment(self) -> DefiniteAssignmentModel:
-        assert self._defassign is not None
-        return self._defassign
 
     def _remove_dead_stores(self, root: JsScript):
         """

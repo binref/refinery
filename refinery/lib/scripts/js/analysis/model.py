@@ -1994,16 +1994,28 @@ class SemanticModel:
         Whether *node* is a read of a `let`, `const`, or `class` binding: a name that resolves for
         certain, yet may still raise a `ReferenceError` when the read runs before the declaration
         that ends the binding's temporal dead zone. The companion flag to `read_may_throw`, which
-        instead flags a name that may denote no binding at all; together they are the complete set of
-        reads a discarding context must not drop without a proof the read is past its establishing
-        point. Whether the read is in fact in the dead zone is an ordering question this layer does
-        not answer — a caller's establishment proof (`ModelCache.read_established`) decides it against
-        the dominance model — so this flags every lexical read and leaves the clearing to that proof.
+        instead flags a name that may denote no binding at all; together they are the complete set
+        of reads a discarding context must not drop without a proof the read is past its
+        establishing point. Whether the read is in fact in the dead zone is an ordering question
+        this layer does not answer — a caller's establishment proof (`ModelCache.read_established`)
+        decides it against the dominance model — so this flags every lexical read and leaves the
+        clearing to that proof.
         """
         if not self.is_reference(node) or reference_role(node) is Role.WRITE:
             return False
         binding = self.resolve(node)
         return binding is not None and binding.is_lexical
+
+    def read_may_raise_reference_error(self, node: JsIdentifier) -> bool:
+        """
+        Whether evaluating *node* as a read may raise a `ReferenceError`: it may denote no binding at
+        all (`read_may_throw`) or it reads a `let`/`const`/`class` binding that may still be in its
+        temporal dead zone (`reads_lexical_binding`). The one flag a discarding context tests before
+        dropping a read; a context holding an ordering proof clears the dead-zone case through it
+        (`EffectModel.read_throws`), a context holding none fails closed and keeps the read
+        (`EffectModel._read_effectful_or_throwing`).
+        """
+        return self.read_may_throw(node) or self.reads_lexical_binding(node)
 
     def naming_binding(self, function: Node) -> Binding | None:
         """

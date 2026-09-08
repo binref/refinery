@@ -749,10 +749,110 @@ class TestAReadOfALexicalBindingBeforeItsDeclarationThrows(TestBase):
 
             Cannot access 'q' before initialization
 
-        The deobfuscation preserves that: each program's dead-zone read keeps its store, the function
-        around it, and its call, so what comes back throws exactly as the input does.
+        The deobfuscation preserves that: each program's dead-zone read keeps its store, the
+        function around it, and its call, so what comes back throws exactly as the input does.
         """
         rows = A_READ_IN_THE_DEAD_ZONE_OF_A_LEXICAL_BINDING
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            {source: (answer, answer) for source, answer in rows.items()},
+        )
+
+
+#: A program whose only throw is a `let`/`const`/`class` read in a function body reached before the
+#: declaration runs, mapped to the `ReferenceError` Node ends it with. The read is a dead-zone throw
+#: at the call, but the callee's effect summary is computed once, without a call site, and never
+#: records it, so a discarded call to the function — a dead store — is dropped as pure.
+A_DEAD_ZONE_READ_REACHED_THROUGH_A_CALL = {
+    'function f() { return q; }\nvar dead = f();\nlet q = 1;\nconsole.log(2);\n': ('', 'ReferenceError'),
+    'function f() { return q; }\nvar dead = f();\nconst q = 1;\nconsole.log(2);\n': ('', 'ReferenceError'),
+    'var g = () => q;\nvar dead = g();\nlet q = 1;\nconsole.log(2);\n': ('', 'ReferenceError'),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestADeadZoneReadReachedThroughACallStillThrows(TestBase):
+    """
+    A function whose body reads a `let`/`const`/`class` binding throws a `ReferenceError` when it is
+    called before the declaration runs. The direct-read fix reaches such a read only through
+    `EffectModel.read_throws`; the interprocedural effect summary a discarded call is dropped through
+    is computed once for the function, without a call site, and never consults it. So a dead store
+    holding a call to such a function is removed and Node's
+
+        Cannot access 'q' before initialization
+
+    is dropped: each program prints `2`. Preserving it needs the summary to record the lexical
+    bindings the body reads and the call site to check each is established — a call-site-aware
+    interprocedural fact this analysis does not yet carry.
+    """
+
+    @unittest.expectedFailure
+    def test_a_dead_store_call_to_a_dead_zone_reader_still_throws(self):
+        rows = A_DEAD_ZONE_READ_REACHED_THROUGH_A_CALL
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            {source: (answer, answer) for source, answer in rows.items()},
+        )
+
+
+#: A program folding `o.x` to its literal value where `o` is a `let`/`const` binding read before its
+#: declaration, mapped to the `ReferenceError` Node ends it with. The fold rewrites the member access
+#: to the value and drops evaluation of the base `o`, whose read is a dead-zone throw.
+A_FOLDED_MEMBER_BASE_IN_A_DEAD_ZONE = {
+    'function f() { return o.x; }\nf();\nlet o = { x: 1 };\nconsole.log(2);\n': ('', 'ReferenceError'),
+    'var y = (function () { return o.x; })();\nlet o = { x: 1 };\nconsole.log(2);\n': ('', 'ReferenceError'),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAFoldedMemberBaseReadInADeadZoneStillThrows(TestBase):
+    """
+    Folding an object-literal property access `o.x` to the property's value discards evaluation of
+    the base `o`. Where `o` is a `let`/`const` binding read before its declaration, the base read is
+    a dead-zone `ReferenceError`:
+
+        Cannot access 'o' before initialization
+
+    The object fold guards its property values against a dead-zone read but not the base of the
+    access it rewrites, so it folds `o.x` to `1` and drops the throw: each program prints `2`.
+    """
+
+    @unittest.expectedFailure
+    def test_a_folded_member_base_read_before_its_declaration_still_throws(self):
+        rows = A_FOLDED_MEMBER_BASE_IN_A_DEAD_ZONE
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            {source: (answer, answer) for source, answer in rows.items()},
+        )
+
+
+#: A program writing to a `let`/`const` binding before its declaration runs, mapped to the
+#: `ReferenceError` Node ends it with. A write to a lexical binding in its temporal dead zone throws
+#: as a read does, but the model flags only reads, so dead-store elimination drops the write.
+A_WRITE_IN_THE_DEAD_ZONE_OF_A_LEXICAL_BINDING = {
+    '{ x = 5; let x; }\nconsole.log(1);\n': ('', 'ReferenceError'),
+    'function f() { q = 5; let q = 1; }\nf();\nconsole.log(1);\n': ('', 'ReferenceError'),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAWriteInTheDeadZoneOfALexicalBindingStillThrows(TestBase):
+    """
+    A write to a `let`/`const`/`class` binding before its declaration runs throws a `ReferenceError`
+    just as a read does — the assignment to the uninitialized binding — which Node ends the program
+    with:
+
+        Cannot access 'x' before initialization
+
+    The read-side flags exclude a write (`SemanticModel.read_may_throw` and `reads_lexical_binding`
+    both answer `False` for a write position), and there is no write-side companion, so the store
+    `x = 5` is judged dead and removed: each program prints `1`. A compound assignment reads too and
+    is already kept; only a bare `=` write in the dead zone leaks.
+    """
+
+    @unittest.expectedFailure
+    def test_a_write_before_the_declaration_runs_still_throws(self):
+        rows = A_WRITE_IN_THE_DEAD_ZONE_OF_A_LEXICAL_BINDING
         self.assertEqual(
             {source: before_and_after(source) for source in rows},
             {source: (answer, answer) for source, answer in rows.items()},

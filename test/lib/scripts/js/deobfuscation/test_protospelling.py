@@ -217,6 +217,35 @@ class TestAReceiverTheRewriteDropsIsFirstAskedWhatItRuns(TestJsDeobfuscator):
         )
 
 
+#: Programs whose array-literal receiver reads a name whose evaluation throws — a free name, and a
+#: `let` read before its declaration — mapped to the `ReferenceError` Node ends each with. The
+#: rewrite drops the receiver, so folding `[name].__proto__` to `Array.prototype` would drop the
+#: throw; the third would then also mutate `Array.prototype`.
+A_RECEIVER_WHOSE_ELEMENT_THROWS = {
+    '[zzz].__proto__;\nconsole.log(1);\n': ('', 'ReferenceError'),
+    '[q].__proto__;\nlet q = 1;\nconsole.log(1);\n': ('', 'ReferenceError'),
+    '[q].__proto__.foo = function () {};\nlet q = 1;\n': ('', 'ReferenceError'),
+}
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAReceiverWhoseElementThrowsIsLeftAlone(TestJsDeobfuscator):
+    """
+    An element read that throws is part of what dropping the receiver would lose. Node ends each
+    program with a `ReferenceError` — `zzz is not defined` for the free name,
+    `Cannot access 'q' before initialization` for the dead-zone read — and folding `[name].__proto__`
+    to `Array.prototype` would drop it, the third program then mutating `Array.prototype` as well.
+    The rewrite is refused and the throw kept.
+    """
+
+    def test_a_receiver_whose_element_throws_is_left_alone(self):
+        rows = A_RECEIVER_WHOSE_ELEMENT_THROWS
+        self.assertEqual(
+            {source: before_and_after(source) for source in rows},
+            {source: (answer, answer) for source, answer in rows.items()},
+        )
+
+
 @unittest.skipIf(node_executable() is None, 'node.js is not available')
 class TestAMechanismWrittenUnderAnotherNameStillRefusesTheRewrite(TestJsDeobfuscator):
     """

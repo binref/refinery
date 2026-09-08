@@ -908,7 +908,8 @@ class JsReflectionInlining(ScriptLevelTransformer):
             if not all(
                 cache.effects.is_side_effect_free(
                     argument, None,
-                    call_established=cache.call_established, discarded=True)
+                    call_established=cache.call_established, discarded=True,
+                    reads_may_throw=True, read_established=cache.read_established)
                 for argument in construction.arguments
             ):
                 continue
