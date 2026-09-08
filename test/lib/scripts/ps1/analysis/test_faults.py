@@ -958,3 +958,24 @@ class TestPs1ARaiseEscapesAFiringTrapBodyOnlyWhereItsBlockProvablyFiresTheTrap(T
             and isinstance(node.expression, Ps1CastExpression)
         )
         self.assertFalse(faults.escapes_a_firing_trap_body(inner))
+
+    def test_a_body_raise_a_handler_nested_in_the_trap_body_takes_escapes_no_firing_trap(self):
+        """
+        The raise stands in a `try` inside the `trap` body whose `catch` takes it, so the error
+        never leaves the `trap` body and deleting the raise resurrects nothing — the `escapes_the_body`
+        conjunct, not the firing of the outer block, is what refuses the keep. The block still fires
+        the `trap` (a cast follows it), so a predicate that skipped the escape check would read this
+        as an escaping raise and wrongly keep it.
+        """
+        tree, faults = _model("""
+            trap {
+              try { [int]'a' } catch { 'h' }
+            }
+            $null = [int]'b'
+        """)
+        inner = next(
+            node for node in tree.walk()
+            if isinstance(node, Ps1ExpressionStatement)
+            and isinstance(node.expression, Ps1CastExpression)
+        )
+        self.assertFalse(faults.escapes_a_firing_trap_body(inner))

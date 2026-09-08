@@ -54,6 +54,11 @@ _BINDING_FAILURE_RAISE = 'Get-Item -BogusParam foo'
 #: firing gate does not count this either — the second tracked unsound delete.
 _STRICT_MEMBER_RAISE = '$Null.Nonexistent'
 
+#: A read of a never-set variable, which under `Set-StrictMode` raises a statement-terminating error
+#: that fires a `trap`. `is_soft_error_source` counts no bare variable read, so the firing gate
+#: misses it the way it misses the member access above — the third tracked unsound delete.
+_STRICT_UNSET_VAR_RAISE = '$ThisVarWasNeverSet'
+
 
 class _Ps1FaultEscalation(TestPs1):
 
@@ -939,6 +944,31 @@ class TestPs1AStrictModeMemberFiringATrapBodyIsAKnownUnsoundDelete(_Ps1FaultEsca
               {_FOLLOWER}
             }}
             {_STRICT_MEMBER_RAISE}
+            {_ANCHOR}
+        """)
+
+
+class TestPs1AStrictModeUnsetVariableFiringATrapBodyIsAKnownUnsoundDelete(_Ps1FaultEscalation):
+    """
+    Under `Set-StrictMode` a read of a never-set variable raises a statement-terminating error that
+    fires a `trap`, so a raise in the fired body is live — on 5.1 the script exits non-zero having
+    run only the handler. `is_soft_error_source` counts no bare variable read, and the firing gate
+    does not read the strict-mode arming, so it reads the `trap` as not firing and deletes the body
+    raise. This is the same strict-mode family as
+    `TestPs1AStrictModeMemberFiringATrapBodyIsAKnownUnsoundDelete`; a never-set read is the spelling
+    that class's `member and index access` wording leaves out.
+    """
+
+    @unittest.expectedFailure
+    def test_a_trap_body_raise_a_strict_mode_unset_variable_read_fires_is_kept(self):
+        self._assertKept(F"""
+            Set-StrictMode -Version Latest
+            trap {{
+              {_HANDLER}
+              {_RAISE}
+              {_FOLLOWER}
+            }}
+            {_STRICT_UNSET_VAR_RAISE}
             {_ANCHOR}
         """)
 

@@ -2008,9 +2008,9 @@ def deletion_is_observable(
     such a continuation and both are one observable: an empty `catch` swallows the error and resumes
     past the tail of the `try` body, and a firing `trap` body raise ends the scope that would
     otherwise run on past it.
-    `refinery.lib.scripts.ps1.analysis.faults.Ps1FaultReach.deleting_the_raise_resurrects_a_continuation`
-    is the position half and `Ps1FaultReach.fault_the_try_catches` the raise half, paired over
-    `fault_operand` so that a `$Null =`/`[Void]` discard is judged by what it evaluates.
+    `Ps1FaultReach.deleting_the_raise_resurrects_a_continuation` is the position half and
+    `Ps1FaultReach.fault_the_try_catches` the raise half, paired over `fault_operand` so that a
+    `$Null =`/`[Void]` discard is judged by what it evaluates.
     """
     operand = fault_operand(stmt)
     if (
