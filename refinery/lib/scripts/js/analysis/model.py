@@ -164,63 +164,75 @@ prototype-yielding key hands out the surface a write would displace the dispatch
 the chain.
 """
 
-GUARANTEED_GLOBALS = frozenset({
-    'globalThis',
-    'NaN',
-    'Infinity',
-    'undefined',
-    'eval',
-    'isFinite',
-    'isNaN',
-    'parseFloat',
-    'parseInt',
-    'decodeURI',
-    'decodeURIComponent',
-    'encodeURI',
-    'encodeURIComponent',
-    'Object',
-    'Function',
-    'Boolean',
-    'Symbol',
-    'BigInt',
-    'Error',
-    'AggregateError',
-    'EvalError',
-    'RangeError',
-    'ReferenceError',
-    'SyntaxError',
-    'TypeError',
-    'URIError',
-    'Number',
-    'Math',
-    'Date',
-    'String',
-    'RegExp',
-    'Array',
-    'Int8Array',
-    'Uint8Array',
-    'Uint8ClampedArray',
-    'Int16Array',
-    'Uint16Array',
-    'Int32Array',
-    'Uint32Array',
-    'Float32Array',
-    'Float64Array',
-    'BigInt64Array',
-    'BigUint64Array',
-    'Map',
-    'Set',
-    'WeakMap',
-    'WeakSet',
-    'WeakRef',
-    'FinalizationRegistry',
-    'ArrayBuffer',
-    'DataView',
-    'JSON',
-    'Promise',
-    'Reflect',
-    'Proxy',
-})
+GUARANTEED_GLOBAL_TYPEOF: dict[str, str] = {
+    'globalThis': 'object',
+    'NaN': 'number',
+    'Infinity': 'number',
+    'undefined': 'undefined',
+    'eval': 'function',
+    'isFinite': 'function',
+    'isNaN': 'function',
+    'parseFloat': 'function',
+    'parseInt': 'function',
+    'decodeURI': 'function',
+    'decodeURIComponent': 'function',
+    'encodeURI': 'function',
+    'encodeURIComponent': 'function',
+    'Object': 'function',
+    'Function': 'function',
+    'Boolean': 'function',
+    'Symbol': 'function',
+    'BigInt': 'function',
+    'Error': 'function',
+    'AggregateError': 'function',
+    'EvalError': 'function',
+    'RangeError': 'function',
+    'ReferenceError': 'function',
+    'SyntaxError': 'function',
+    'TypeError': 'function',
+    'URIError': 'function',
+    'Number': 'function',
+    'Math': 'object',
+    'Date': 'function',
+    'String': 'function',
+    'RegExp': 'function',
+    'Array': 'function',
+    'Int8Array': 'function',
+    'Uint8Array': 'function',
+    'Uint8ClampedArray': 'function',
+    'Int16Array': 'function',
+    'Uint16Array': 'function',
+    'Int32Array': 'function',
+    'Uint32Array': 'function',
+    'Float32Array': 'function',
+    'Float64Array': 'function',
+    'BigInt64Array': 'function',
+    'BigUint64Array': 'function',
+    'Map': 'function',
+    'Set': 'function',
+    'WeakMap': 'function',
+    'WeakSet': 'function',
+    'WeakRef': 'function',
+    'FinalizationRegistry': 'function',
+    'ArrayBuffer': 'function',
+    'DataView': 'function',
+    'JSON': 'object',
+    'Promise': 'function',
+    'Reflect': 'object',
+    'Proxy': 'function',
+}
+"""
+Maps each `GUARANTEED_GLOBALS` name to the string its `typeof` yields. Because the name resolves in
+every host to a value of a fixed type — a constructor or built-in function (`'function'`), a namespace
+object such as `Math`/`JSON`/`Reflect` or `globalThis` itself (`'object'`), the two numeric constants
+(`'number'`), or `undefined` — the operator's result is host-independent, unlike a host-conditional
+alias (`window`, `self`, …) whose `typeof` is `'undefined'` where the host omits the name. This is what
+lets a simplification fold `typeof globalThis !== 'undefined'` to `true` for a name it can prove
+pristine; the values were established under Node 24. `GUARANTEED_GLOBALS` is the key set of this map, so
+the two cannot drift.
+"""
+
+GUARANTEED_GLOBALS = frozenset(GUARANTEED_GLOBAL_TYPEOF)
 """
 Names the ECMAScript specification mandates as properties of the global object and that every mainstream
 engine exposes unconditionally, so a bare read of one is guaranteed to resolve rather than throw a
@@ -229,7 +241,7 @@ sets in `refinery.lib.scripts.js.analysis.effects` — used to decide whether `<
 collapsed to the bare `name` without turning the member read's `undefined` into a throw. It excludes host
 and alias names (`window`, `self`, `global`, `top`, `frames`, `console`, timers, `Buffer`, …) that are not
 universal, and `SharedArrayBuffer`/`Atomics`, which a conformant host may withhold outside a
-cross-origin-isolated context.
+cross-origin-isolated context. `GUARANTEED_GLOBAL_TYPEOF` additionally records the `typeof` of each.
 """
 
 _PATTERN_CONTAINERS = (

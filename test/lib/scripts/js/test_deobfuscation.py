@@ -414,12 +414,18 @@ class TestGlobalAliasStripping(TestJsDeobfuscator):
         )
 
     def test_dead_global_property_is_removed(self):
+        """
+        The base is `globalThis`, whose read resolves in every host, so a store to a property nothing
+        reads is a dead store to remove. A host-conditional base such as `global` would keep the store,
+        whose base read may throw; that case is `test_unused`'s
+        `test_the_write_is_kept_through_a_host_conditional_base`.
+        """
         source = inspect.cleandoc(
             """
-            global['_V'] = "7-4111";
-            global['_W'] = "dead";
+            globalThis['_V'] = "7-4111";
+            globalThis['_W'] = "dead";
             (async () => {
-                const c = global;
+                const c = globalThis;
                 console.log(c._V);
             })()
             """
@@ -427,7 +433,7 @@ class TestGlobalAliasStripping(TestJsDeobfuscator):
         self.assertEqual(
             inspect.cleandoc(
                 """
-                global._V = "7-4111";
+                globalThis._V = "7-4111";
                 (async () => {
                   console.log(_V);
                 })();

@@ -1686,6 +1686,44 @@ class TestGlobalValueNameOperands(TestJsDeobfuscator):
         self.assertEqual("f(x + 'aInfinity');", self._simplify("f(x + 'a' + Infinity);"))
 
 
+class TestTypeofAGuaranteedGlobalIsFolded(TestJsDeobfuscator):
+    """
+    `typeof` of a name the specification mandates on the global object is host-independent — the name
+    resolves in every host to a value of a fixed type — so it folds to a constant string. Node says
+    what `typeof` answers for each below. A host-conditional alias (`window`) and a name a conformant
+    host may withhold (`SharedArrayBuffer`) are left standing, since their `typeof` is `'undefined'`
+    where the name is absent; a name the program reassigns or shadows is left standing too, since the
+    value it now holds may be of another type.
+    """
+
+    def test_a_pristine_guaranteed_global_folds_to_its_type_string(self):
+        """
+        Node: `object`, `function`, `object`, `object`, `function`, `undefined`.
+        """
+        self.assertEqual("'object';", self._simplify('typeof globalThis;'))
+        self.assertEqual("'function';", self._simplify('typeof Object;'))
+        self.assertEqual("'object';", self._simplify('typeof Math;'))
+        self.assertEqual("'object';", self._simplify('typeof JSON;'))
+        self.assertEqual("'function';", self._simplify('typeof Array;'))
+        self.assertEqual("'undefined';", self._simplify('typeof undefined;'))
+
+    def test_a_host_conditional_or_withheld_name_is_left_standing(self):
+        for name in ('window', 'self', 'global', 'top', 'frames', 'SharedArrayBuffer', 'Atomics'):
+            with self.subTest(name=name):
+                self.assertEqual(F'typeof {name};', self._simplify(F'typeof {name};'))
+
+    def test_a_reassigned_or_shadowed_global_is_left_standing(self):
+        """
+        Node: after `Object = 5`, `typeof Object` is `number`, not `function`, and a parameter named
+        `Object` holds whatever the caller passed.
+        """
+        self.assertEqual('Object = 5;\ntypeof Object;', self._simplify('Object = 5;\ntypeof Object;'))
+        self.assertEqual(
+            'function f(Object) {\n  return typeof Object;\n}',
+            self._simplify('function f(Object) { return typeof Object; }'),
+        )
+
+
 class TestStringMethodsIndexInUtf16CodeUnits(TestJsDeobfuscator):
     """
     A `String.prototype` method that takes or returns an index or a length counts in UTF-16 code

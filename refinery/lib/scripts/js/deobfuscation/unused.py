@@ -977,6 +977,11 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
         `(function (w) { ... })(window)` hands the object to a body that reads them through `w`.
         While `_the_global_object_escapes` finds any such position, nothing is removed, because no
         property can be proven unread.
+
+        A base whose own read may throw is no candidate at all: `window.x = 1` reads `window` before it
+        writes, so in a host without `window` the statement raises a `ReferenceError` that removing it
+        would drop (`SemanticModel.read_may_throw`). Only `globalThis` and a bound alias resolve for
+        certain, so only a write through one of those is a dead store to sweep.
         """
         write_stmts: dict[str, list[JsExpressionStatement]] = {}
         for node in walk_scope(parent):
@@ -991,6 +996,7 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
                 or lhs.computed
                 or not isinstance(lhs.object, JsIdentifier)
                 or lhs.object.name not in SAME_REALM_GLOBAL_OBJECT_ALIASES
+                or self.model.read_may_throw(lhs.object)
             ):
                 continue
             name = self.model.global_alias_member_name(lhs)

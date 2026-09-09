@@ -702,6 +702,14 @@ A_GLOBAL_PROPERTY_READ_THROUGH_A_SECOND_ALIAS = (
     'globalThis._V = 1;\nfunction f() { return global._V; }\nf();\nconsole.log(1);\n'
 )
 
+#: The same hole reached through a bare assignment rather than a second alias: `foo = 1` mints the
+#: global `foo` without naming any alias, so it resolves neither `global` nor any other, and yet
+#: `global.foo` collapses to `foo`. Node defines `global` and prints `1`, so the text carries the
+#: answer.
+A_GLOBAL_PROPERTY_ESTABLISHED_BY_A_BARE_ASSIGNMENT = (
+    'foo = 1;\nfunction f() { return global.foo; }\nf();\nconsole.log(1);\n'
+)
+
 
 class TestACrossAliasGlobalPropertyCollapseKeepsItsBaseThrow(TestBase):
     """
@@ -710,13 +718,14 @@ class TestACrossAliasGlobalPropertyCollapseKeepsItsBaseThrow(TestBase):
     proves `global` resolved before the read, so folding the read to `_V` drops no throw.
 
     The proof is charged to the property's binding, not to the alias that wrote it, so a property
-    established through one alias and read through another borrows a resolution it was never given:
-    `globalThis._V = 1` establishes `_V` and resolves `globalThis`, and `global._V` then collapses
-    to `_V` though nothing resolved `global` — a browser, which lacks `global`, throws a
-    `ReferenceError` on the base that the fold has removed. Charging the proof to the alias
-    spelling, so only a write through `global` vouches for a later read through `global`, is what
-    closes it, and it belongs with the host-existence work that gives each alias its own resolution
-    fact.
+    whose binding was established without resolving the reading alias borrows a resolution it was
+    never given. Two writes do that. A write through a second alias — `globalThis._V = 1` establishes
+    `_V` and resolves `globalThis`, and `global._V` then collapses to `_V` though nothing resolved
+    `global`. And a bare assignment — `foo = 1` mints `foo` while naming no alias at all, and
+    `global.foo` collapses just the same. A browser, which lacks `global`, throws a `ReferenceError`
+    on the base that either fold has removed. Charging the proof to the alias spelling, so only a
+    resolution of `global` vouches for a later read through `global`, is what closes it, and it
+    belongs with the host-existence work that gives each alias its own resolution fact.
     """
 
     @unittest.expectedFailure
@@ -731,6 +740,53 @@ class TestACrossAliasGlobalPropertyCollapseKeepsItsBaseThrow(TestBase):
             folded(A_GLOBAL_PROPERTY_READ_THROUGH_A_SECOND_ALIAS),
             'globalThis._V = 1;\nfunction f() {\n  return global._V;\n}\nf();\nconsole.log(1);',
         )
+
+    @unittest.expectedFailure
+    def test_a_property_established_by_a_bare_assignment_keeps_its_base_throw(self):
+        """
+        Node defines `global` and prints `1` for `A_GLOBAL_PROPERTY_ESTABLISHED_BY_A_BARE_ASSIGNMENT`,
+        so the text carries the answer. The read `global.foo` must be kept, because the bare `foo = 1`
+        that established `foo` resolved no `global`; the deobfuscation collapses it to `foo` instead.
+        """
+        self.assertEqual(
+            folded(A_GLOBAL_PROPERTY_ESTABLISHED_BY_A_BARE_ASSIGNMENT),
+            'foo = 1;\nfunction f() {\n  return global.foo;\n}\nf();\nconsole.log(1);',
+        )
+
+
+#: Degenerate global-object finders whose body throws a `TypeError` rather than a `ReferenceError`,
+#: each mapped to the text a sound fold writes for it — the call kept in place. `null.x` reads a
+#: property off `null`, and `k = globalThis` and `k++` each write a `const`; Node answers all three
+#: with a `TypeError`, so calling the finder does not return the global object and rewriting the call
+#: to `globalThis` drops the throw. The finder's throw-freedom check reasons only about the
+#: `ReferenceError` a host-conditional read raises and is blind to a `TypeError`, so it clears these
+#: and folds the call anyway. Charging it to see a member read off a non-object and a write to a
+#: constant is what closes the class.
+A_DEGENERATE_FINDER_THAT_THROWS_A_TYPEERROR = {
+    'function g() { var o = null; return o.x || globalThis; }\nvar x = g();\nconsole.log(x);\n':
+        'function g() {\n  return null.x || globalThis;\n}\nvar x = g();\nconsole.log(x);',
+    'function g() { const k = globalThis; k = globalThis; return k; }\nvar x = g();\nconsole.log(x);\n':
+        'function g() {\n  const k = globalThis;\n  k = globalThis;\n  return k;\n}'
+        '\nvar x = g();\nconsole.log(x);',
+    'function g() { const k = globalThis; k++; return k; }\nvar x = g();\nconsole.log(x);\n':
+        'function g() {\n  const k = globalThis;\n  k++;\n  return k;\n}\nvar x = g();\nconsole.log(x);',
+}
+
+
+class TestADegenerateFinderThatThrowsATypeErrorIsKept(TestBase):
+    """
+    A global-object finder is folded to `globalThis` only where calling it cannot throw, so a finder
+    whose body would throw does not qualify. The throw-freedom check sees the `ReferenceError` a
+    host-conditional alias read raises but not the `TypeError` a member read off `null`, a write to a
+    `const`, or an update of one raises, so a body doing one of those is cleared and its call folded —
+    dropping a throw the input would have raised. The fix is to teach the check those `TypeError`
+    sources; until then the fold proceeds and the rows below record it.
+    """
+
+    @unittest.expectedFailure
+    def test_a_finder_whose_body_throws_a_typeerror_is_kept(self):
+        rows = A_DEGENERATE_FINDER_THAT_THROWS_A_TYPEERROR
+        self.assertEqual({source: folded(source) for source in rows}, rows)
 
 
 #: A program reading a `let` or `const` binding from a point its declaration has not run past,

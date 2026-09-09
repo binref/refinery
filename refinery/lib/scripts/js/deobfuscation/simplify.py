@@ -10,6 +10,7 @@ from refinery.lib.scripts.js.analysis.dominance import DominanceModel
 from refinery.lib.scripts.js.analysis.effects import GLOBAL_OBJECT, EffectModel
 from refinery.lib.scripts.js.analysis.model import (
     FUNCTION_NODES,
+    GUARANTEED_GLOBAL_TYPEOF,
     GUARANTEED_GLOBALS,
     SAME_REALM_GLOBAL_OBJECT_ALIASES,
     Binding,
@@ -230,36 +231,36 @@ class JsSimplifications(Transformer):
         binding = self.model.lookup(name, scope)
         return binding is not None and binding.kind is not BindingKind.IMPLICIT_GLOBAL
 
-    def _alias_property_defined(self, member: JsMemberExpression, name: str) -> bool:
+    def _alias_collapse_is_sound(
+        self, member: JsMemberExpression, base: JsIdentifier, name: str
+    ) -> bool:
         """
-        Whether a bare read of *name* where *member* sits is guaranteed to resolve, so collapsing
-        `<global-alias>.name` to `name` cannot turn the member read's `undefined` into a
-        `ReferenceError`. A free name must be one the specification mandates on the global object
-        (`GUARANTEED_GLOBALS`); a name the program itself defines as a global (an implicit global) exists
-        only after its establishing write, so it is admitted only when a write is proven to run before
-        this read — interprocedurally, so a top-level write still covers a read inside a function invoked
-        after it, but strictly, so a same-statement or earlier read is declined.
+        Whether collapsing `<global-alias>.name` — base *base*, property *name* — to the bare `name`
+        preserves both throws the access can raise, so the rewrite drops neither. The binding of *name*
+        is resolved once and answers both.
+
+        The property must be defined, so the `undefined` a resolvable read yields where the property is
+        absent does not become a `ReferenceError`: a free name must be one the specification mandates on
+        the global object (`GUARANTEED_GLOBALS`); a name the program itself defines as a global (an
+        implicit global) exists only after its establishing write, so it is admitted only when a write
+        is proven to run before this read — interprocedurally, so a top-level write still covers a read
+        inside a function invoked after it, but strictly, so a same-statement or earlier read is
+        declined.
+
+        The base must resolve, so the `ReferenceError` an absent host raises reading it is not dropped:
+        a base the language mandates in every host (`globalThis`) or a bound local never throws
+        (`SemanticModel.read_may_throw`). A host-conditional alias (`window`, `self`, `top`, `frames`,
+        `global`) may not resolve — but where *name* is a global the program itself defines rather than
+        a specification intrinsic, its establishing write was made through this same alias and so
+        already resolved it on every path that reaches this read, which is exactly the case the property
+        check admits by finding a binding.
         """
         binding = self.model.lookup(name, self.model.scope_of(member))
         if binding is None:
-            return name in GUARANTEED_GLOBALS
+            if name not in GUARANTEED_GLOBALS:
+                return False
+            return not self.model.read_may_throw(base)
         return self.assignment.definitely_assigned_at(binding, member)
-
-    def _alias_base_resolves(self, member: JsMemberExpression, name: str) -> bool:
-        """
-        Whether reading *member*'s base cannot throw a `ReferenceError`, so collapsing
-        `<global-alias>.name` to `name` drops no throw the absent base would have raised. A base the
-        language mandates in every host (`globalThis`) or a bound local never throws
-        (`SemanticModel.read_may_throw`). A host-conditional alias (`window`, `self`, `top`,
-        `frames`, `global`) may not resolve — but where *name* is a global the program itself
-        defines rather than a specification intrinsic, its establishing write was made through this
-        same alias and so already resolved it on every path that reaches this read, which is exactly
-        the case `_alias_property_defined` admits by finding a binding.
-        """
-        base = member.object
-        if isinstance(base, JsIdentifier) and self.model.read_may_throw(base):
-            return self.model.lookup(name, self.model.scope_of(member)) is not None
-        return True
 
     def _names_a_global(self, member: JsMemberExpression) -> str | None:
         """
@@ -703,8 +704,7 @@ class JsSimplifications(Transformer):
             and isinstance(node.property, JsIdentifier)
             and (self._names_a_global(node) is not None or self._global_object_alias_base(node))
             and not self._resolves_to_local(node, node.property.name)
-            and self._alias_property_defined(node, node.property.name)
-            and self._alias_base_resolves(node, node.property.name)
+            and self._alias_collapse_is_sound(node, node.object, node.property.name)
         ):
             if in_read_position and not is_invocation_target(node):
                 return node.property
@@ -924,13 +924,35 @@ class JsSimplifications(Transformer):
                 return False
         return True
 
+    def _typeof_guaranteed_global(self, operand: Node | None) -> str | None:
+        """
+        The string `typeof <operand>` yields when *operand* is a bare read of a name the specification
+        mandates on the global object (`GUARANTEED_GLOBAL_TYPEOF`) that the program leaves pristine and
+        does not shadow at this site — `None` otherwise. Such a name resolves in every host to a value
+        of a fixed type, so its `typeof` is host-independent, unlike a host-conditional alias (`window`,
+        `self`, …) whose `typeof` is `'undefined'` where the host omits it and an object where it does
+        not. This is what lets a `typeof globalThis !== 'undefined'` guard fold to `true`, so
+        `refinery.lib.scripts.js.deobfuscation.deadcode.JsDeadCodeElimination` can prune the arm it
+        protects and a global-object finder reduce to `return globalThis`. Pristineness is
+        `refinery.lib.scripts.js.analysis.effects.EffectModel.trusted_intrinsic`, which refuses a name
+        the program reassigns, shadows anywhere, or could reach through a reflection surface — any of
+        which could give `typeof` a different answer.
+        """
+        node = strip_parens(operand)
+        if not isinstance(node, JsIdentifier) or node.name not in GUARANTEED_GLOBAL_TYPEOF:
+            return None
+        if self.effects.trusted_intrinsic(node) is None:
+            return None
+        return GUARANTEED_GLOBAL_TYPEOF[node.name]
+
     def visit_JsUnaryExpression(self, node: JsUnaryExpression):
         """
         Fold a unary operator against its operand. Everything that is a function of the operand's value
         is answered by the shared `UNARY_OPS` kernel, so that a fold performed here and the same
         operator applied by the interpreter cannot disagree; what is left is the two questions a value
         cannot answer — the type of an object whose identity no literal spells, and whether a `delete`
-        may be dropped.
+        may be dropped. A third, `typeof` of a pristine guaranteed global, is a value the operator hides
+        rather than one the operand denotes, so it is decided by name (`_typeof_guaranteed_global`).
 
         A value whose spelling still needs a unary operator is left alone. `-Infinity` and `void 0` are
         how those two values are written, so folding one of them produces the expression it replaces:
@@ -950,6 +972,10 @@ class JsSimplifications(Transformer):
                 return make_string_literal(kind)
             if op == '!':
                 return JsBooleanLiteral(value=False)
+        if op == 'typeof':
+            typed = self._typeof_guaranteed_global(operand)
+            if typed is not None:
+                return make_string_literal(typed)
         apply = UNARY_OPS.get(op)
         if apply is None:
             return None

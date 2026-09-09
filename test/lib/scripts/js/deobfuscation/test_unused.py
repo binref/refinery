@@ -1986,15 +1986,25 @@ A_GLOBAL_PROPERTY_WRITE_AN_UNSPELLED_READ_OBSERVES: dict[str, str] = {
     ]
 }
 
-#: A dead write under each same-realm spelling the sweep may act on, mapped to the text the
-#: deobfuscation writes for it. The removal trusts an alias spelling to denote this realm's global
-#: object, which is a host assumption rather than a language one — under Node a bare `window` read
-#: throws — so these rows pin the text only and stay out of the Node twin, whose host lacks the
-#: names.
-A_DEAD_GLOBAL_PROPERTY_WRITE_UNDER_EACH_SAME_REALM_SPELLING: dict[str, str] = {
-    'window.q = 1;\nconsole.log(3);': 'console.log(3);',
-    'self.q = 1;\nconsole.log(3);': 'console.log(3);',
-    'global.q = 1;\nconsole.log(3);': 'console.log(3);',
+#: A dead write whose base resolves in every host, mapped to the text the deobfuscation writes for
+#: it: `globalThis` is the one same-realm spelling the language mandates, so its read cannot throw and
+#: a store to a property nothing reads is a dead store to remove. The row joins the Node twin, since it
+#: runs and prints the same before and after.
+A_DEAD_GLOBAL_PROPERTY_WRITE_THROUGH_A_CERTAIN_BASE: dict[str, str] = {
+    'globalThis.q = 1;\nconsole.log(3);': 'console.log(3);',
+}
+
+#: The same dead write through a host-conditional spelling, mapped to the program itself. A bare
+#: `window`/`self`/`global` read may not resolve — under Node it throws a `ReferenceError` — so
+#: removing the store would drop the throw the base raises where the host lacks the name, and the write
+#: is kept. These rows pin the text only and stay out of the Node twin, whose host lacks the names.
+A_DEAD_GLOBAL_PROPERTY_WRITE_THROUGH_A_HOST_CONDITIONAL_BASE: dict[str, str] = {
+    source: source
+    for source in [
+        'window.q = 1;\nconsole.log(3);',
+        'self.q = 1;\nconsole.log(3);',
+        'global.q = 1;\nconsole.log(3);',
+    ]
 }
 
 #: The same dead write through the two spellings the removal set leaves out, mapped to the program
@@ -2015,8 +2025,12 @@ class TestAGlobalPropertyWriteSurvivesWhereTheGlobalObjectEscapes(TestJsDeobfusc
         rows = A_GLOBAL_PROPERTY_WRITE_AN_UNSPELLED_READ_OBSERVES
         self.assertEqual({source: self._deobfuscate(source) for source in rows}, rows)
 
-    def test_the_write_is_removed_under_each_same_realm_spelling(self):
-        rows = A_DEAD_GLOBAL_PROPERTY_WRITE_UNDER_EACH_SAME_REALM_SPELLING
+    def test_the_write_is_removed_through_a_base_that_resolves(self):
+        rows = A_DEAD_GLOBAL_PROPERTY_WRITE_THROUGH_A_CERTAIN_BASE
+        self.assertEqual({source: self._deobfuscate(source) for source in rows}, rows)
+
+    def test_the_write_is_kept_through_a_host_conditional_base(self):
+        rows = A_DEAD_GLOBAL_PROPERTY_WRITE_THROUGH_A_HOST_CONDITIONAL_BASE
         self.assertEqual({source: self._deobfuscate(source) for source in rows}, rows)
 
     def test_the_write_is_kept_under_a_spelling_of_another_realms_global(self):
@@ -2093,6 +2107,7 @@ class TestNodePrintsTheSameWhereTheGlobalObjectEscapes(TestJsDeobfuscator):
         rows = {
             **A_GLOBAL_PROPERTY_WRITE_AN_UNSPELLED_READ_OBSERVES,
             **A_DEAD_PROPERTY_WRITE_ON_ANOTHER_REALMS_GLOBAL,
+            **A_DEAD_GLOBAL_PROPERTY_WRITE_THROUGH_A_CERTAIN_BASE,
         }
         self.assertEqual(
             {source: behavior(self._deobfuscate(source)) for source in rows},

@@ -137,6 +137,37 @@ class TestScrambleStringDecoder(TestJsDeobfuscator):
         )
         self.assertEqual(self._run_transformer(source, JsScrambleStringDecoder), expected)
 
+    @unittest.expectedFailure
+    def test_a_decoder_install_through_a_host_conditional_alias_keeps_its_base_throw(self):
+        """
+        `global.decode = decode` reads `global` before it writes, so in a host that lacks `global` —
+        a browser — the installation raises a `ReferenceError`. Here the decoder is reached only
+        through the bare `decode(...)` calls the pass substitutes, so the installation is redundant
+        infrastructure the pass removes; removing it drops that throw, and the output prints the URL
+        where the input refused to run. Keeping the throw without keeping the whole cipher machinery
+        needs the redundant install rewritten to a base-read residue, which only a base that cannot
+        resolve calls for, and which belongs with the host-existence work. The pass strikes the whole
+        statement instead, so `global.decode` is gone from what it writes.
+        """
+        source = inspect.cleandoc(
+            """
+            class Scramble {
+              constructor(pw, salt) {
+                this.masterKey = pb(pw, salt, 200000, 32, 'sha256');
+                this.rounds = 3;
+              }
+              decode(input) { return decrypt(input, this.masterKey, this.rounds); }
+            }
+            var key = '2aaa9053353088d4d49b5bf32f403f2d85b3df97c9a9beedfcdbb1ecc27ba9c6';
+            var salt = 'fec5863b88643968ecff0c2c8afecbaf';
+            var instance = new Scramble(key, salt);
+            function decode(x) { return instance.decode(x); }
+            global.decode = decode;
+            var url = decode('hJQxp9Pvj3X2QId3C4RuMOe1C4EpuSg2b/8JyqzSWjrQm+VgNNg=');
+            """
+        )
+        self.assertIn('global.decode', self._run_transformer(source, JsScrambleStringDecoder))
+
     _CIPHER_CLASS = inspect.cleandoc(
         """
         class Scramble {
