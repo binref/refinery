@@ -47,6 +47,7 @@ from refinery.lib.scripts.ps1.analysis.values import (
 from refinery.lib.scripts.ps1.ast import (
     assignment_of,
     assignment_target_variables,
+    get_member_name,
     unwrap_assignment_target,
     unwrap_parens,
 )
@@ -174,6 +175,12 @@ _PS1_SKIP_VARIABLES = (
 _PS1_ENGINE_VARIABLES = _PS1_AUTOMATIC_VARIABLES | frozenset(_PS1_DEFAULT_VARIABLES)
 
 _MIN_EXPANSION_BUDGET = 256
+
+#: The members whose value the receiver's shape decides, folded to a small integer by
+#: `refinery.lib.scripts.ps1.deobfuscation.folding.Ps1ConstantFolding._fold_shape_member`. A
+#: reference at one of these positions is what the expansion budget charges for the digits of the
+#: count rather than for the whole collection it reads.
+_SHAPE_MEMBERS = frozenset({'length', 'count', 'rank'})
 
 
 def _collect_mutated_variables(root: Node) -> set[str]:
@@ -467,6 +474,26 @@ def _ancestor_past_parens(node: Node) -> Node | None:
     while isinstance(parent, Ps1ParenExpression):
         parent = parent.parent
     return parent
+
+
+def _shape_member_of(var: Ps1Variable) -> str | None:
+    """
+    The lowercased shape member — `length`, `count` or `rank` — a reference reads off *var* through
+    any parentheses, or `None` where *var* is not the receiver of one.
+
+    A reference there folds to the digits of a count once *var* is inlined to its constant
+    collection, so it costs the expansion budget those digits and not the whole value, the same way
+    a constant index costs it one element. `_ancestor_past_parens` is what climbs the parentheses
+    5.1 folds through, so `(($a)).Length` is read the same as `$a.Length`.
+    """
+    ancestor = _ancestor_past_parens(var)
+    if not isinstance(ancestor, Ps1MemberAccess):
+        return None
+    name = get_member_name(ancestor.member)
+    if name is None:
+        return None
+    lowered = name.lower()
+    return lowered if lowered in _SHAPE_MEMBERS else None
 
 
 def _accumulation_terms(node: Node) -> tuple[str, Expression] | None:
@@ -836,6 +863,15 @@ class Ps1ConstantInlining(Transformer):
         every reference before any of them is installed. Purely a size heuristic: it withholds an
         inlining that is correct, and it is asked before the flow model so that a script full of
         references to one large array does not pay for a reaching-definition query per reference.
+
+        The budget bounds *net* growth, so it credits the one definition inlining retires. When the
+        walk's every reference to a key is installed, that key's read count reaches zero and the
+        dead-store pass removes the assignment that held its value, so the first reference's growth
+        is the definition moved to where it is read rather than a copy of it: the growth that
+        remains is the duplication across the *further* references. Charging every reference and
+        crediting the retired definition is what keeps a constant read once — a base64 blob that
+        feeds a single `[Convert]::FromBase64String` — from being withheld on a small script, where
+        inlining it is size-neutral and is what exposes the fold that collapses it.
         """
         synth = Ps1Synthesizer()
         script_size = len(synth.convert(root))
@@ -875,9 +911,18 @@ class Ps1ConstantInlining(Transformer):
                 key = _candidate_key(node)
                 if key is None or key not in table.values or is_write_occurrence(node):
                     continue
+                shape = _shape_member_of(node)
+                array = array_literals[key] if shape is not None else None
+                if array is not None:
+                    count = 1 if shape == 'rank' else len(array.elements)
+                    expansion[key] += max(0, len(str(count)) - (1 + len(node.name)))
+                    continue
                 expansion[key] += max(0, value_lengths[key] - (1 + len(node.name)))
 
-        return {key for key in table.values if expansion[key] > max_budget}
+        return {
+            key for key in table.values
+            if expansion[key] - value_lengths[key] > max_budget
+        }
 
     def _substitute(self, root: Node, state: _Inlining):
         """

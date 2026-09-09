@@ -20,6 +20,7 @@ from refinery.lib.scripts.ps1.analysis.effects import (
     is_fault_free,
     is_side_effect_free,
     output_sink,
+    resuming_trap_step_over_is_observed,
 )
 from refinery.lib.scripts.ps1.analysis.values import integer_of, is_truthy, read
 from refinery.lib.scripts.ps1.ast import (
@@ -545,7 +546,13 @@ class Ps1DeadCodeElimination(Transformer):
         # a whole, and an empty guarded body is evidence about an earlier pass rather than about the
         # code, so the unreachability deletion stays out of every handler body.
         deletes_unreachable = not self._within_handler_body(parent)
-        plan = Ps1RemovalPlan(parent, removals_may_fault=False, faults=cache.faults)
+        plan = Ps1RemovalPlan(
+            parent,
+            removals_may_fault=False,
+            faults=cache.faults,
+            soft_step_over_observed=lambda handler: resuming_trap_step_over_is_observed(
+                handler, cache.faults, cache.world_reach),
+        )
         for stmt in get_body(parent):
             if (
                 deletes_unreachable

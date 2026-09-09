@@ -4,10 +4,13 @@ from inspect import cleandoc
 
 from test import TestBase
 
-from refinery.lib.scripts import Statement
+from refinery.lib.scripts import Node, Statement
 from refinery.lib.scripts.analysis.cfg import ControlFlowModel
 from refinery.lib.scripts.ps1.analysis.cfg import build_control_flow_model
-from refinery.lib.scripts.ps1.analysis.effects import statement_can_raise
+from refinery.lib.scripts.ps1.analysis.effects import (
+    resuming_trap_step_over_is_observed,
+    statement_can_raise,
+)
 from refinery.lib.scripts.ps1.analysis.faults import (
     Ps1FaultReach,
     Ps1FaultRouting,
@@ -15,6 +18,8 @@ from refinery.lib.scripts.ps1.analysis.faults import (
     ends_the_script,
     handler_acts,
 )
+from refinery.lib.scripts.ps1.analysis.world import measure_world
+from refinery.lib.scripts.ps1.analysis.worldflow import build_world_reach
 from refinery.lib.scripts.ps1.ast import get_body, resolve_command_name
 from refinery.lib.scripts.ps1.model import (
     Ps1ArrayExpression,
@@ -43,6 +48,22 @@ def _may_raise(reach: Ps1FaultReach):
     `trap` by the raisers a removal site sees rather than by every statement its block offers.
     """
     return lambda node: statement_can_raise(node, reach)
+
+
+def _handler_removal_is_observed(tree: Ps1Script, reach: Ps1FaultReach, handler: Node) -> bool:
+    """
+    The composed verdict the dead-code pass reads: `removing_a_handler_is_observed` weighing the
+    real fault-possibility predicate and the real soft-step-over predicate together, so a unit test
+    judges a resuming `trap` exactly as the pass does rather than by the always-keep default the
+    reader falls back on when a caller supplies neither.
+    """
+    control_flow = build_control_flow_model(tree)
+    world = build_world_reach(measure_world(tree), lambda: control_flow)
+    return reach.removing_a_handler_is_observed(
+        handler,
+        _may_raise(reach),
+        lambda trap: resuming_trap_step_over_is_observed(trap, reach, world),
+    )
 
 
 #: The subexpression that `TestPs1ATrapWrittenInASubexpressionGuardsThatSubexpression` is measured
@@ -413,10 +434,10 @@ class TestPs1RemovingATrapIsJudgedByWhereItsErrorsWouldGoInstead(TestBase):
                 trap { continue }
             }
         """)
-        self.assertTrue(guarding_reach.removing_a_handler_is_observed(
-            guarding.body[1].clauses[0][1].body[0], _may_raise(guarding_reach)))
-        self.assertFalse(alone_reach.removing_a_handler_is_observed(
-            alone.body[1].clauses[0][1].body[0], _may_raise(alone_reach)))
+        self.assertTrue(_handler_removal_is_observed(
+            guarding, guarding_reach, guarding.body[1].clauses[0][1].body[0]))
+        self.assertFalse(_handler_removal_is_observed(
+            alone, alone_reach, alone.body[1].clauses[0][1].body[0]))
 
     def test_a_trap_at_script_scope_may_go_where_the_only_statement_it_guards_cannot_raise(self):
         tree, reach = _model("""
@@ -424,7 +445,7 @@ class TestPs1RemovingATrapIsJudgedByWhereItsErrorsWouldGoInstead(TestBase):
             'a'
         """)
         self.assertTrue(reach.observed_at(tree.body[1]))
-        self.assertFalse(reach.removing_a_handler_is_observed(tree.body[0], _may_raise(reach)))
+        self.assertFalse(_handler_removal_is_observed(tree, reach, tree.body[0]))
 
     def test_a_resuming_trap_in_a_try_block_may_go_only_where_the_catch_clause_swallows(self):
         acting, acting_reach = _model("""
@@ -439,10 +460,10 @@ class TestPs1RemovingATrapIsJudgedByWhereItsErrorsWouldGoInstead(TestBase):
                 [int]'a'
             } catch { }
         """)
-        self.assertTrue(acting_reach.removing_a_handler_is_observed(
-            acting.body[0].try_block.body[0], _may_raise(acting_reach)))
-        self.assertFalse(swallowing_reach.removing_a_handler_is_observed(
-            swallowing.body[0].try_block.body[0], _may_raise(swallowing_reach)))
+        self.assertTrue(_handler_removal_is_observed(
+            acting, acting_reach, acting.body[0].try_block.body[0]))
+        self.assertFalse(_handler_removal_is_observed(
+            swallowing, swallowing_reach, swallowing.body[0].try_block.body[0]))
 
 
 class TestPs1AResumingTrapIsTheOnlyKindThatGuardsASplicePoint(TestBase):
@@ -520,7 +541,7 @@ class TestPs1AResumingTrapOverASoftErrorInABracketedStatementListIsKept(TestBase
         trap = tree.body[0]
         if not isinstance(trap, Ps1TrapStatement):
             self.fail('the source does not open with a trap')
-        return reach.removing_a_handler_is_observed(trap, _may_raise(reach))
+        return _handler_removal_is_observed(tree, reach, trap)
 
     def test_a_soft_error_inside_a_subexpression_keeps_the_trap_that_resumes_past_it(self):
         self.assertTrue(self._trap_removal_is_observed(
@@ -528,6 +549,17 @@ class TestPs1AResumingTrapOverASoftErrorInABracketedStatementListIsKept(TestBase
 
     def test_a_soft_error_that_is_the_last_statement_of_the_subexpression_keeps_the_trap(self):
         self.assertTrue(self._trap_removal_is_observed(
+            "trap { continue }; $x = $('a'; [int]'b'); Write-Host $x"))
+
+    def test_a_last_statement_soft_error_whose_bracket_value_is_unread_lets_the_trap_go(self):
+        """
+        Measured on 5.1: `trap { continue }; $x = $('a'; [int]'b')` leaves `$x` unset because the
+        `trap` resumes past the assignment, where without the `trap` the bracket yields the `'a'` it
+        collected before the error and `$x` is `a`. The two differ only in `$x`, so with nothing that
+        reads `$x` the difference is unobservable and the trap may go; the reader is what makes the
+        twin above load bearing.
+        """
+        self.assertFalse(self._trap_removal_is_observed(
             "trap { continue }; $x = $('a'; [int]'b')"))
 
     def test_a_division_by_zero_inside_a_subexpression_keeps_the_trap(self):
@@ -545,6 +577,32 @@ class TestPs1AResumingTrapOverASoftErrorInABracketedStatementListIsKept(TestBase
     def test_a_soft_error_at_script_scope_whose_step_over_reconverges_lets_the_trap_go(self):
         self.assertFalse(self._trap_removal_is_observed(
             "trap { continue }; [int]'a'; Write-Host 'after'"))
+
+    def test_a_soft_error_in_a_loop_body_lets_the_trap_go(self):
+        self.assertFalse(self._trap_removal_is_observed(
+            "trap { continue }; for ($i = 0; $i -lt 3; $i++) { $y = 1 % 0 }; Write-Host 'after'"))
+
+    def test_a_soft_error_before_a_live_tail_in_an_if_body_keeps_the_trap(self):
+        """
+        With the `trap`, a statement-terminating error raised in the `if` body resumes past the whole
+        `if`, so `'tail'` never runs; delete the `trap` and 5.1 reports the error and steps over to
+        `'tail'` within the body. The two runs differ on the success stream, so the trap is load
+        bearing. The observability reader weighs the raiser by whether it can raise and the region it
+        skips by what that region emits, so it keeps the trap for the live `'tail'` an `if` body holds
+        the same as for one a bracket holds.
+        """
+        self.assertTrue(self._trap_removal_is_observed(
+            "trap { continue }; if ($true) { [int]'a'; 'tail' }; Write-Host 'after'"))
+
+    def test_a_soft_error_in_a_for_body_inside_a_subexpression_keeps_the_trap(self):
+        """
+        The same one level deeper: a soft error in a `for` body written inside a `$( )` decides
+        whether the bracket yields `'in'` into `$x` or the assignment is abandoned and `$x` stays
+        unset, and `Write-Host $x` reads that on the continuation. The reader weighs the raiser
+        wherever it stands rather than only in the raiser's direct parent, so it keeps the trap.
+        """
+        self.assertTrue(self._trap_removal_is_observed(
+            "trap { continue }; $x = $(for ($i = 0; $i -lt 1; $i++) { [int]'a' }; 'in'); Write-Host $x"))
 
     def test_a_subexpression_that_raises_no_soft_error_lets_the_trap_go(self):
         self.assertFalse(self._trap_removal_is_observed(
@@ -737,7 +795,7 @@ class TestPs1AStopPreferenceIsWhatMakesTheTrapUnderItWorthKeeping(TestBase):
             'after'
         """)
         trap = next(node for node in tree.walk_in_order() if isinstance(node, Ps1TrapStatement))
-        return reach.removing_a_handler_is_observed(trap, _may_raise(reach))
+        return _handler_removal_is_observed(tree, reach, trap)
 
     def _observations(self, assignments: list[str]) -> dict[str, bool]:
         return {

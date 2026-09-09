@@ -31,6 +31,7 @@ from refinery.lib.scripts.analysis.cfg import (
     CfgNode,
     ControlFlowGraph,
     ControlFlowModel,
+    normal_reach,
 )
 from refinery.lib.scripts.ps1.analysis.cfg import build_control_flow_model
 from refinery.lib.scripts.ps1.ast import (
@@ -492,6 +493,26 @@ def _resumption_slot(graph: ControlFlowGraph, node: CfgNode) -> CfgNode | None:
     return None
 
 
+class Ps1SoftStepOver(NamedTuple):
+    """
+    One soft raiser a resuming `trap` catches whose local step-over lands off where the trap resumes,
+    paired with the region the trap therefore skips and the continuation past it.
+
+    `skipped` are the statements that run on the untrapped fall-through from the raiser's local
+    step-over up to the reconvergence point — what a resuming `trap` abandons. `continuation` are the
+    ids of the nodes that run forward from the reconvergence point, shared by the trapped and
+    untrapped runs; a skipped write is observable exactly when one of them reads it. Both are read off
+    `CfgEdge.NORMAL` edges alone: the plain control flow, never the error edges, which would route the
+    walk back through the handler into the very block it stepped out of. This is the graph shape the
+    step-over is decided over; whether a skipped statement is *observable* is a fact of the semantic
+    model and is decided by the reader the transpose is handed, not here.
+    """
+    graph: ControlFlowGraph
+    raiser: Node
+    skipped: tuple[Node, ...]
+    continuation: frozenset[int]
+
+
 class Ps1FaultReach:
     """
     The fault routing of one script, read off its control-flow graphs.
@@ -512,7 +533,8 @@ class Ps1FaultReach:
         self._given = control_flow
         self._model: ControlFlowModel | None = None
         self._forward: dict[int, Ps1FaultRouting] = {}
-        self._step_over: dict[int, bool] = {}
+        self._divergences: dict[int, list[Ps1SoftStepOver]] = {}
+        self._reaching: dict[int, tuple[CfgNode, ...]] = {}
         self._handled: set[int] | None = None
         self._ending: dict[int, bool] = {}
         self._stopping: bool | None = None
@@ -822,7 +844,10 @@ class Ps1FaultReach:
         return self._terminates(node)
 
     def removing_a_handler_is_observed(
-        self, handler: Node, may_raise: Callable[[Node], bool],
+        self,
+        handler: Node,
+        may_raise: Callable[[Node], bool],
+        soft_step_over_observed: Callable[[Node], bool] = lambda _handler: True,
     ) -> bool:
         """
         Whether deleting *handler* may change which code runs — the transpose, and the question
@@ -867,6 +892,14 @@ class Ps1FaultReach:
             trap [System.IO.IOException] { }
 
         guards nothing and is still the whole reason a script stops where it does.
+
+        **And a resuming `trap` is load bearing when the region it skips is observable.** A soft
+        error caught by a resuming `trap` would, untrapped, step over to the next statement in its
+        own block and carry on; the trap abandons that block and lands past it. Whether the abandoned
+        region does anything a run can see — writes the output stream, or a name a later statement
+        reads — is a fact of the semantic model, so it is injected as *soft_step_over_observed* over
+        the `soft_step_over_divergences` this reader reports; it defaults to always-observed so a
+        caller that cannot judge it keeps the trap.
         """
         located = self._control_flow.locate(handler)
         if located is None:
@@ -876,10 +909,14 @@ class Ps1FaultReach:
             # The climb left the handler behind, so the node this would answer about stands for the
             # statement around it and every question below reads the wrong element.
             return True
-        return self._removal_matters(graph, start, may_raise)
+        return self._removal_matters(graph, start, may_raise, soft_step_over_observed)
 
     def _removal_matters(
-        self, graph: ControlFlowGraph, start: CfgNode, may_raise: Callable[[Node], bool],
+        self,
+        graph: ControlFlowGraph,
+        start: CfgNode,
+        may_raise: Callable[[Node], bool],
+        soft_step_over_observed: Callable[[Node], bool],
     ) -> bool:
         raisers = [raiser for raiser in self._raisers(graph, start) if may_raise(raiser)]
         if not raisers:
@@ -894,55 +931,57 @@ class Ps1FaultReach:
             return True
         if any(handler_acts(handler) for handler in routing.handlers):
             return True
-        if isinstance(element, Ps1TrapStatement) and self._soft_step_over_is_observed(element):
+        if isinstance(element, Ps1TrapStatement) and soft_step_over_observed(element):
             return True
         fallback = graph.fallback_of(start)
         if fallback is None:
             return True
         return self._observed_from(graph, fallback)
 
-    def _soft_step_over_is_observed(self, handler: Node) -> bool:
+    def soft_step_over_divergences(self, handler: Node) -> list[Ps1SoftStepOver]:
         """
-        Whether removing a resuming `trap` changes what runs because it catches a
-        statement-terminating error whose local step-over differs from where the trap resumes.
+        The soft raisers a resuming *handler* catches whose local step-over lands off where the trap
+        resumes, each paired with the region the trap therefore skips and the continuation past it —
+        the graph shape a reader weighs to decide whether deleting the trap changes what runs.
 
-        A failed cast inside `$( )` steps over to the next statement *within* the subexpression, and
-        the subexpression then yields that value; the trap instead resumes past the whole statement
-        the `$( )` sits in. Where those two land differently the trap is load-bearing, and a coarse
-        graph could not tell them apart because the whole statement is one node there. On the
-        sub-statement graph this reader reads, the raiser has both edges: a `NORMAL` one to its local
-        step-over and a `RESUMPTION_FORWARD` one to the slot the trap resumes at. A soft raiser
-        standing at statement level has those two edges land on the same slot, so it never keeps the
-        trap; only one inside a `$( )` or `@( )` can differ. Existential over the soft raisers the
-        handler catches, because one redirected raiser is enough to keep the trap; equal successors
-        share all downstream behaviour, so this only ever keeps a trap — never removes a load-bearing
-        one — which is the sound direction for a may-analysis.
+        Empty for a handler the graph places nowhere, one the climb left behind, and one no soft
+        raiser diverges under: a soft error at statement level steps over to the same slot the trap
+        resumes at, so its skipped region is empty and it reports nothing. Read off `CfgEdge.NORMAL`
+        edges alone — the region skipped is `normal_reach` from the raiser's local step-over up to the
+        reconvergence, the continuation is `normal_reach` from the reconvergence — so no error edge
+        routes the walk back through the handler into the block it stepped out of.
 
-        Remembered per handler for the life of this model. It reads only the graph, so the answer
-        is a property of where the handler sits and not of any question a caller brings — unlike the
-        rest of the transpose, whose raiser set is filtered by an injected predicate and is
-        therefore recomputed each time rather than memoized.
+        Remembered per handler for the life of this model, because it reads only the graph — the same
+        lifetime and reasoning as the routing this reader memoizes.
         """
-        remembered = self._step_over.get(id(handler))
+        remembered = self._divergences.get(id(handler))
         if remembered is None:
-            remembered = self._step_over[id(handler)] = self._soft_step_over(handler)
+            remembered = self._divergences[id(handler)] = self._soft_step_over_divergences(handler)
         return remembered
 
-    def _soft_step_over(self, handler: Node) -> bool:
+    def _soft_step_over_divergences(self, handler: Node) -> list[Ps1SoftStepOver]:
         located = self._control_flow.locate(handler)
         if located is None or located[1].element is not handler:
-            return False
+            return []
         graph, start = located
-        for raiser in self._exceptional_closure(graph, start, forward=False):
+        by_id = {id(node): node for node in graph.nodes}
+        result: list[Ps1SoftStepOver] = []
+        for raiser in self._reaching_raise_nodes(graph, start):
             element = raiser.element
             if element is None or not is_soft_error_source(element):
                 continue
             local = _normal_successors(graph, raiser)
             slot = _resumption_slot(graph, raiser)
             resumed = _normal_successors(graph, slot) if slot is not None else frozenset()
-            if local != resumed:
-                return True
-        return False
+            if not resumed or local == resumed:
+                continue
+            skipped: list[Node] = []
+            for node_id in normal_reach(local, barrier=resumed):
+                skipped_element = by_id[node_id].element
+                if skipped_element is not None and skipped_element is not element:
+                    skipped.append(skipped_element)
+            result.append(Ps1SoftStepOver(graph, element, tuple(skipped), normal_reach(resumed)))
+        return result
 
     def _observed_from(self, graph: ControlFlowGraph, arrival: CfgNode) -> bool:
         """
@@ -976,6 +1015,21 @@ class Ps1FaultReach:
                 handlers.append(node.element)
         return Ps1FaultRouting(tuple(handlers), leaves)
 
+    def _reaching_raise_nodes(
+        self, graph: ControlFlowGraph, start: CfgNode,
+    ) -> tuple[CfgNode, ...]:
+        """
+        The graph nodes whose errors *start* may be offered — the backward walk over the exceptional
+        edges — remembered for the life of this model. The raiser list the transpose reads and the
+        soft-step-over divergences both flood backward from the same handler node, so the flood is
+        walked once however many of them ask; the two differ only in which of these nodes they keep.
+        """
+        remembered = self._reaching.get(id(start))
+        if remembered is None:
+            remembered = self._reaching[id(start)] = tuple(
+                self._exceptional_closure(graph, start, forward=False))
+        return remembered
+
     def _raisers(self, graph: ControlFlowGraph, start: CfgNode) -> list[Node]:
         """
         The statements whose errors *start* may be offered, which is the backward walk over the
@@ -984,7 +1038,7 @@ class Ps1FaultReach:
         """
         return [
             node.element
-            for node in self._exceptional_closure(graph, start, forward=False)
+            for node in self._reaching_raise_nodes(graph, start)
             if node.element is not None
             and not isinstance(node.element, (Ps1CatchClause, Ps1TrapStatement))
         ]

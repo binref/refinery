@@ -3,7 +3,7 @@ The single route by which a PowerShell cleanup pass removes or rewrites statemen
 """
 from __future__ import annotations
 
-from typing import NamedTuple
+from typing import Callable, NamedTuple
 
 from refinery.lib.scripts import (
     BodyEdit,
@@ -169,6 +169,7 @@ class Ps1RemovalPlan:
         *,
         faults: Ps1FaultReach | None,
         world: Ps1WorldReach | None = None,
+        soft_step_over_observed: Callable[[Node], bool] | None = None,
     ):
         """
         `faults` is the model the removal verdicts are reached against, and `None` says this plan
@@ -183,6 +184,14 @@ class Ps1RemovalPlan:
         the veto asks the context-free question alone, which is what every pass got before the
         world was offered — see
         `refinery.lib.scripts.ps1.analysis.effects.expression_cannot_fault`.
+
+        `soft_step_over_observed` is the reader the `trap` transpose is handed for its step-over
+        branch — whether the region a resuming `trap` skips is observable. It is injected rather than
+        read off `world` because that judgment is one of emission and liveness the fault reader holds
+        none of, and it is kept apart from `world` so that giving the `trap` pass this reader does not
+        change what the `may_raise` half or the replacement veto ask of `statement_can_raise`, which
+        stay the context-free questions every pass has asked. Absent, the branch keeps a resuming trap
+        rather than removing it on a guess.
         """
         self.parent = parent
         self.attr = attr
@@ -190,6 +199,7 @@ class Ps1RemovalPlan:
         self.all_or_nothing = all_or_nothing
         self.faults = faults
         self.world = world
+        self._soft_step_over_observed = soft_step_over_observed
         self._proposals: dict[int, _Proposal] = {}
 
     def propose(
@@ -358,9 +368,16 @@ class Ps1RemovalPlan:
         if faults is None:
             return True
         if _removes_a_handler(proposal.statement):
+            observed = self._soft_step_over_observed
+            if observed is None:
+                return faults.removing_a_handler_is_observed(
+                    proposal.statement,
+                    lambda raiser: statement_can_raise(raiser, faults, self.world),
+                )
             return faults.removing_a_handler_is_observed(
                 proposal.statement,
                 lambda raiser: statement_can_raise(raiser, faults, self.world),
+                observed,
             )
         if not self.removals_may_fault:
             return False

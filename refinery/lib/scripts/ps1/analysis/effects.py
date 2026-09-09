@@ -32,15 +32,17 @@ read as incomplete rather than as done.
 from __future__ import annotations
 
 import enum
+import weakref
 
 from typing import Iterator, NamedTuple, Sequence
 
-from refinery.lib.scripts import Block, Node
+from refinery.lib.scripts import Block, Node, tree_root
+from refinery.lib.scripts.analysis.cfg import ControlFlowGraph
 from refinery.lib.scripts.ps1 import data
 from refinery.lib.scripts.ps1.dotnet import Ps1TypeName
 from refinery.lib.scripts.ps1.analysis.arguments import Ps1WrittenSlots, written_slots
 from refinery.lib.scripts.ps1.analysis.callgraph import Ps1CallGraph
-from refinery.lib.scripts.ps1.analysis.faults import Ps1FaultReach
+from refinery.lib.scripts.ps1.analysis.faults import Ps1FaultReach, Ps1SoftStepOver
 from refinery.lib.scripts.ps1.analysis.values import (
     UNKNOWN,
     candidate_types,
@@ -55,6 +57,7 @@ from refinery.lib.scripts.ps1.ast import (
     fault_operand,
     get_body,
     get_command_name,
+    resolve_command_name,
     get_member_name,
     get_named_blocks,
     get_param_block,
@@ -69,6 +72,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1AccessKind,
     Ps1ArrayExpression,
     Ps1ArrayLiteral,
+    Ps1AssignmentExpression,
     Ps1Attribute,
     Ps1BinaryExpression,
     Ps1CastExpression,
@@ -2020,6 +2024,201 @@ def deletion_is_observable(
     ):
         return True
     return fault_is_observed(stmt, faults, world)
+
+
+#: Commands that read a variable named by data rather than spelled, so one on a trap's continuation
+#: may read any name and no skipped write over it can be called dead. Resolved through
+#: `resolve_command_name`, so every spelling arrives canonical. `Invoke-Expression` is deliberately
+#: absent: the analysis already treats the code it runs as unseen for reads (see
+#: `refinery.lib.scripts.ps1.analysis.opaque`), the same contract the dead-store passes rely on.
+_DYNAMIC_VARIABLE_READERS = frozenset({'get-variable'})
+
+
+class _ContinuationReads:
+    """
+    Where each name is read across one script, indexed so a resuming trap's step-over reader can ask
+    whether a skipped write is read on a continuation without re-walking the tree per name. Built once
+    per control-flow graph and cached against it, because the reads a graph is asked about do not
+    change while the graph stands.
+
+    `by_name` maps a name to the graph nodes whose statements read it — the statement each read sits
+    in, resolved once by climbing to the first placed ancestor. `in_a_body` is the names read inside a
+    function or stored scriptblock, which a call on the continuation may run wherever the body sits.
+    `dynamic_readers` is the nodes of commands that read a variable named by data, which may read any
+    name; a continuation reaching one keeps every skipped write.
+    """
+
+    def __init__(self, graph: ControlFlowGraph):
+        self.by_name: dict[str, set[int]] = {}
+        self.in_a_body: set[str] = set()
+        self.dynamic_readers: set[int] = set()
+        for node in tree_root(graph.owner).walk():
+            if isinstance(node, Ps1CommandInvocation):
+                resolved = resolve_command_name(node)
+                if resolved is not None and resolved.lower() in _DYNAMIC_VARIABLE_READERS:
+                    placed = _placed_statement(node, graph)
+                    if placed is not None:
+                        self.dynamic_readers.add(placed)
+                continue
+            if not isinstance(node, Ps1Variable) or _writes_the_variable(node):
+                continue
+            name = node.name.lower()
+            if _within_a_stored_body(node):
+                self.in_a_body.add(name)
+                continue
+            placed = _placed_statement(node, graph)
+            if placed is not None:
+                self.by_name.setdefault(name, set()).add(placed)
+
+    def read_on(self, name: str, continuation: frozenset[int]) -> bool:
+        if name in self.in_a_body:
+            return True
+        if not self.dynamic_readers.isdisjoint(continuation):
+            return True
+        return not self.by_name.get(name, frozenset()).isdisjoint(continuation)
+
+
+_reads_by_graph: 'weakref.WeakKeyDictionary[ControlFlowGraph, _ContinuationReads]' = (
+    weakref.WeakKeyDictionary())
+
+
+def _continuation_reads(graph: ControlFlowGraph) -> _ContinuationReads:
+    index = _reads_by_graph.get(graph)
+    if index is None:
+        index = _reads_by_graph[graph] = _ContinuationReads(graph)
+    return index
+
+
+def resuming_trap_step_over_is_observed(
+    handler: Node,
+    faults: Ps1FaultReach,
+    world: Ps1WorldReach,
+) -> bool:
+    """
+    Whether a resuming `trap` is load bearing because the region it skips over a soft error is
+    observable — the reader `Ps1FaultReach.removing_a_handler_is_observed` is handed for its
+    step-over branch, which this module owns because the judgment is one of emission and liveness the
+    fault reader holds none of.
+
+    A soft error caught by a resuming `trap` would, untrapped, step over to the next statement in its
+    own block and carry on there; the `trap` abandons that block and resumes past it. The difference
+    is observable exactly when a statement the trap skips does something a later run can see: writes
+    the output stream, performs an external effect, or writes a name a statement on the shared
+    continuation reads. `faults` reports the graph shape — the skipped statements and the continuation
+    past them — and this weighs each skipped statement over that shape. Existential over every
+    divergence and every statement it skips: one observable statement keeps the trap, and every doubt
+    is resolved by keeping, so the reader only ever over-keeps.
+    """
+    divergences = faults.soft_step_over_divergences(handler)
+    if not divergences:
+        return False
+    reads = _continuation_reads(divergences[0].graph)
+    for divergence in divergences:
+        for element in divergence.skipped:
+            if _skipped_statement_is_observable(element, divergence, world, reads):
+                return True
+    return False
+
+
+def _skipped_statement_is_observable(
+    element: Node,
+    divergence: Ps1SoftStepOver,
+    world: Ps1WorldReach,
+    reads: _ContinuationReads,
+) -> bool:
+    """
+    Whether *element*, run on the untrapped fall-through the trap skips, does something observable.
+
+    A statement that emits to the output stream is observable outright. Otherwise it is observable
+    only for a *real* effect — a command, a method call, or a write of a name read on the continuation
+    — never merely because it *might throw*: a failing cast or a member read that faults is the trap's
+    own business, not an output the run produces, so a pure loop condition `$i -lt $x.Length` and a
+    dead counter `$i++` are not observable although neither is side-effect-free. This is why the
+    reducible-write test walks for effects rather than reading `is_side_effect_free`, whose purity
+    folds in the fault potential the trap already accounts for.
+    """
+    if isinstance(element, Ps1ExpressionStatement):
+        effect = statement_effect(element, world)
+        if effect is StatementEffect.OUTPUT:
+            return True
+        if effect is StatementEffect.DISCARD:
+            return False
+    for node in element.walk():
+        if isinstance(node, (Ps1CommandInvocation, Ps1InvokeMember)):
+            return True
+    return any(
+        reads.read_on(name, divergence.continuation)
+        for name in _local_writes(element)
+    )
+
+
+def _local_writes(element: Node) -> list[str]:
+    """
+    The unqualified local names *element* writes — an assignment target or a `++`/`--` operand that
+    is a plain `$name`. A scope-qualified target (`$script:`/`$global:`/`$env:`) is deliberately
+    absent: its reads may sit in a scope or a place the reach never visits, so it is never counted
+    dead, and leaving it out of the writes makes a statement that writes only such a name reach the
+    caller with no name to prove dead — kept, which is the sound direction.
+    """
+    names: list[str] = []
+    for node in element.walk():
+        if isinstance(node, Ps1AssignmentExpression) and isinstance(node.target, Ps1Variable):
+            if _is_plain_local(node.target):
+                names.append(node.target.name.lower())
+        if isinstance(node, Ps1UnaryExpression) and node.operator in ('++', '--'):
+            if isinstance(node.operand, Ps1Variable) and _is_plain_local(node.operand):
+                names.append(node.operand.name.lower())
+    return names
+
+
+def _is_plain_local(variable: Ps1Variable) -> bool:
+    """
+    Whether *variable* names an ordinary local — no scope qualifier and no provider drive — so its
+    every read is a `$name` this analysis can find. A `$script:`/`$global:`/`$env:` name may be read
+    from a scope or a place the reach never visits, so a write to one is never called dead here.
+    """
+    return variable.scope in (Ps1ScopeModifier.NONE, Ps1ScopeModifier.LOCAL) and not variable.drive
+
+
+def _writes_the_variable(variable: Ps1Variable) -> bool:
+    """
+    Whether *variable* stands in a position that writes it rather than reads it — the target of an
+    assignment or the operand of `++`/`--` — so a name search does not read a store as a use.
+    """
+    parent = variable.parent
+    if isinstance(parent, Ps1AssignmentExpression) and parent.target is variable:
+        return True
+    if isinstance(parent, Ps1UnaryExpression) and parent.operator in ('++', '--'):
+        return parent.operand is variable
+    return False
+
+
+def _within_a_stored_body(node: Node) -> bool:
+    """
+    Whether *node* stands inside a function body or a scriptblock the script stores rather than runs
+    where it is written — code a call may run at a point the straight-line reach never visits.
+    """
+    cursor = node.parent
+    while cursor is not None:
+        if isinstance(cursor, Ps1ScriptBlock):
+            return True
+        cursor = cursor.parent
+    return False
+
+
+def _placed_statement(node: Node, graph: ControlFlowGraph) -> int | None:
+    """
+    The id of the graph node standing for the statement *node* sits in, or `None` where the graph
+    places nothing over it. The graph places statements, not the expressions inside them, so the walk
+    climbs to the first ancestor the graph holds a node for.
+    """
+    cursor: Node | None = node
+    while cursor is not None:
+        placed = graph.node_of(cursor)
+        if placed is not None:
+            return id(placed)
+        cursor = cursor.parent
+    return None
 
 
 def statement_can_raise(

@@ -85,6 +85,13 @@ class CfgEdge(enum.Flag):
 #: is, which is the one question every flow-sensitive consumer asks of the kind.
 RAISE_TAKEN = CfgEdge.ERROR_CARRYING | CfgEdge.RESUMPTION_HUB | CfgEdge.RESUMPTION_FORWARD
 
+#: The raw bit masks the two hot edge-kind predicates test. `enum.Flag.__and__` rebuilds a member on
+#: every call — its `_get_value`/`__call__`/`__new__` cost dominates a graph flood, which asks these
+#: of millions of edges — so the predicates read the stored member's `.value` and mask it as a plain
+#: integer. The result is identical; only the construction of a throwaway member is skipped.
+_ERROR_CARRYING_MASK = CfgEdge.ERROR_CARRYING.value
+_RAISE_TAKEN_MASK = RAISE_TAKEN.value
+
 
 class Projection(enum.Enum):
     """
@@ -311,6 +318,47 @@ def reachable_from_any(sources: Iterable[CfgNode]) -> frozenset[int]:
     return frozenset(flood(sources, forward=True, projection=Projection.MAY))
 
 
+def normal_reach(
+    sources: Iterable[CfgNode], *, barrier: Iterable[CfgNode] = (),
+) -> frozenset[int]:
+    """
+    The ids of the nodes forward-reachable from *any* of *sources* over `CfgEdge.NORMAL` edges only,
+    each source included, never expanding *through* a node of *barrier*.
+
+    This is the plain-control-flow reach — where a run carries on when nothing throws — as opposed to
+    `flood`/`Projection`, which read a resuming handler and follow the error edges beside the plain
+    ones. The two questions the resuming-trap step-over asks both want this reading and neither wants
+    the error edges: the region a resumed trap *skips* is what runs on the fall-through from the soft
+    error's local step-over up to the reconvergence point (seed *sources* at the step-over, put the
+    reconvergence nodes in *barrier*), and the continuation a skipped write is read on is what runs
+    forward from the reconvergence point (seed *sources* there, no barrier). Following an error edge
+    would route either walk back through a handler into the very block it stepped out of, reading a
+    read that the continuation never performs.
+
+    *barrier* is seeded into the visited set, so a walk never enters one and the returned set excludes
+    it: the cut is `reach(sources) \\ through(barrier)`, not the unsound difference
+    `reach(sources) - reach(barrier)`, which would drop a node the barrier merely *also* reaches by a
+    back-edge around it.
+    """
+    barrier_ids = {id(node) for node in barrier}
+    seen: set[int] = set(barrier_ids)
+    stack: list[CfgNode] = []
+    for source in sources:
+        if id(source) not in seen:
+            seen.add(id(source))
+            stack.append(source)
+    while stack:
+        node = stack.pop()
+        for target in node.successors:
+            if id(target) in seen:
+                continue
+            if node.graph.edge_kind(node, target) is not CfgEdge.NORMAL:
+                continue
+            seen.add(id(target))
+            stack.append(target)
+    return frozenset(seen - barrier_ids)
+
+
 class ControlFlowGraph:
     """
     The control-flow graph of one function or script body. `entry` and `exit` are synthetic; every
@@ -364,7 +412,7 @@ class ControlFlowGraph:
         asks — where an error goes — and it is *narrower* than `raise_taken`, because a handler that
         resumes swallows the error and carries on along an edge no error travels.
         """
-        return bool(self.edge_kind(source, target) & CfgEdge.ERROR_CARRYING)
+        return bool(self.edge_kind(source, target).value & _ERROR_CARRYING_MASK)
 
     def raise_taken(self, source: CfgNode, target: CfgNode) -> bool:
         """
@@ -376,7 +424,7 @@ class ControlFlowGraph:
         resumption edge answers it although no error travels along it: the statement that resumed
         the block is precisely the one that did not finish.
         """
-        return bool(self.edge_kind(source, target) & RAISE_TAKEN)
+        return bool(self.edge_kind(source, target).value & _RAISE_TAKEN_MASK)
 
     @property
     def hub_bound(self) -> Set[int]:
