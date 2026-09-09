@@ -652,33 +652,28 @@ class TestABareGlobalObjectAliasIsNotCertainToResolve(TestBase):
     `window`, `global`, `self`, `top` and `frames` are names a host may put on its global object,
     and no host puts all of them there. A bare read of one may therefore find nothing, and finding
     nothing is a `ReferenceError`: Node refuses `window`, `self`, `top` and `frames`, a browser
-    refuses `global`. `SemanticModel.read_may_throw` answers `False` for every one of the five,
-    which asserts that whoever runs the file defines the name — the assertion it refuses to make
-    for any other name the program neither declares nor assigns.
+    refuses `global`. `SemanticModel.read_may_throw` answers that each of the five may throw — the
+    one spelling it vouches for is `globalThis`, which the language mandates in every host and
+    `GUARANTEED_GLOBALS` holds. The host-conditional five are answered may-throw, so a function
+    whose body only reads one is not a function with no effect, its discarded call is not removed,
+    and the declaration stays with it. What comes back throws exactly as the input does.
 
-    A function whose body only reads one is then a function with no effect, its discarded call is
-    removed, and the declaration goes with it, so a program whose one failure was that read comes
-    back as one that runs to the end and prints. `globalThis` is the spelling the language mandates
-    rather than the host, which is why `GUARANTEED_GLOBALS` holds it, and it is not what this entry
-    is about.
-
-    Fixing this is not free, because the same host assumption is made a second time elsewhere:
-    `EffectModel._base_is_safe` clears a property access whose base is one of these five names as
-    one that cannot throw on a nullish base, which is the identical claim that whoever runs the
-    file defines the name, made about a member read rather than about a bare one. An
-    implementation that stops vouching for the five here has to answer for that clause in the same
-    breath, or the analysis holds two contradictory answers to one question: a bare `window` that
-    may throw, and a `window.x` whose base is certain to be there.
+    The same host assumption used to be made a second time and is refused there too:
+    `EffectModel._base_is_safe` no longer clears a property access whose base is one of the five, so
+    a bare `window` and a `window.x` agree the read may throw. `JsGlobalFinderInlining` makes the
+    third: it folds a global-object finder's call to `globalThis` only where calling the finder
+    cannot throw in any host, so a finder that reads a bare host alias on a path some host runs is
+    kept. An analyst who names the host with a pin recovers the resolved reading of the alias that
+    host defines.
     """
 
     @unittest.skipIf(node_executable() is None, 'node.js is not available')
-    @unittest.expectedFailure
     def test_a_read_of_an_alias_the_running_host_lacks_still_throws(self):
         """
         Node refuses each program of `A_READ_OF_AN_ALIAS_THE_RUNNING_HOST_LACKS` having printed
         nothing, with a `ReferenceError` reading `window is not defined` and the same for `self`,
-        `top` and `frames`. Every deobfuscation prints `1`: `console.log(1);` is the whole of what
-        comes back for each of them.
+        `top` and `frames`. The deobfuscation preserves that: the function around the read, its
+        call, and the throw are all kept, so what comes back refuses exactly as the input does.
         """
         rows = A_READ_OF_AN_ALIAS_THE_RUNNING_HOST_LACKS
         self.assertEqual(
@@ -686,18 +681,55 @@ class TestABareGlobalObjectAliasIsNotCertainToResolve(TestBase):
             {source: (answer, answer) for source, answer in rows.items()},
         )
 
-    @unittest.expectedFailure
     def test_a_read_of_the_alias_the_running_host_defines_is_kept_all_the_same(self):
         """
         Node prints `1` for `A_READ_OF_THE_ALIAS_ONLY_ANOTHER_HOST_LACKS` and prints `1` for its
         deobfuscation, so running the two decides nothing about this alias and the text is what
-        carries the answer. The text pinned is the one this program takes today when the name is
-        one the analysis does not vouch for: written with `zzz` in place of `global`, it comes back
+        carries the answer. The text pinned is the one this program takes now that `global` is a
+        name the analysis does not vouch for: written with `zzz` in place of `global`, it comes back
         with its function and its call in place and only the layout changed.
         """
         self.assertEqual(
             folded(A_READ_OF_THE_ALIAS_ONLY_ANOTHER_HOST_LACKS),
             'function f() {\n  return global;\n}\nf();\nconsole.log(1);',
+        )
+
+
+#: A program that establishes a global property through one alias and reads it back through
+#: another. Node defines `global` and prints `1`, so the answer is pinned as the text a correct
+#: implementation writes rather than as what an engine makes of it.
+A_GLOBAL_PROPERTY_READ_THROUGH_A_SECOND_ALIAS = (
+    'globalThis._V = 1;\nfunction f() { return global._V; }\nf();\nconsole.log(1);\n'
+)
+
+
+class TestACrossAliasGlobalPropertyCollapseKeepsItsBaseThrow(TestBase):
+    """
+    A member read on a host-conditional alias collapses to a bare name only where reading the base
+    cannot throw, which a write through the same alias establishes: `global._V = 1; global._V`
+    proves `global` resolved before the read, so folding the read to `_V` drops no throw.
+
+    The proof is charged to the property's binding, not to the alias that wrote it, so a property
+    established through one alias and read through another borrows a resolution it was never given:
+    `globalThis._V = 1` establishes `_V` and resolves `globalThis`, and `global._V` then collapses
+    to `_V` though nothing resolved `global` — a browser, which lacks `global`, throws a
+    `ReferenceError` on the base that the fold has removed. Charging the proof to the alias
+    spelling, so only a write through `global` vouches for a later read through `global`, is what
+    closes it, and it belongs with the host-existence work that gives each alias its own resolution
+    fact.
+    """
+
+    @unittest.expectedFailure
+    def test_a_property_read_through_a_second_alias_keeps_its_base_throw(self):
+        """
+        Node defines `global` and prints `1` for `A_GLOBAL_PROPERTY_READ_THROUGH_A_SECOND_ALIAS`, so
+        the engine decides nothing and the text carries the answer. The read `global._V` must be
+        kept, because the write that established `_V` went through `globalThis` and left `global`
+        unresolved; the deobfuscation collapses it to `_V` instead.
+        """
+        self.assertEqual(
+            folded(A_GLOBAL_PROPERTY_READ_THROUGH_A_SECOND_ALIAS),
+            'globalThis._V = 1;\nfunction f() {\n  return global._V;\n}\nf();\nconsole.log(1);',
         )
 
 

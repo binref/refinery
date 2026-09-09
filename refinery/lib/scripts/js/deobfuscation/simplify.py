@@ -245,6 +245,22 @@ class JsSimplifications(Transformer):
             return name in GUARANTEED_GLOBALS
         return self.assignment.definitely_assigned_at(binding, member)
 
+    def _alias_base_resolves(self, member: JsMemberExpression, name: str) -> bool:
+        """
+        Whether reading *member*'s base cannot throw a `ReferenceError`, so collapsing
+        `<global-alias>.name` to `name` drops no throw the absent base would have raised. A base the
+        language mandates in every host (`globalThis`) or a bound local never throws
+        (`SemanticModel.read_may_throw`). A host-conditional alias (`window`, `self`, `top`,
+        `frames`, `global`) may not resolve — but where *name* is a global the program itself
+        defines rather than a specification intrinsic, its establishing write was made through this
+        same alias and so already resolved it on every path that reaches this read, which is exactly
+        the case `_alias_property_defined` admits by finding a binding.
+        """
+        base = member.object
+        if isinstance(base, JsIdentifier) and self.model.read_may_throw(base):
+            return self.model.lookup(name, self.model.scope_of(member)) is not None
+        return True
+
     def _names_a_global(self, member: JsMemberExpression) -> str | None:
         """
         The global *member* names, read under the execution model this run was asked for and only
@@ -688,6 +704,7 @@ class JsSimplifications(Transformer):
             and (self._names_a_global(node) is not None or self._global_object_alias_base(node))
             and not self._resolves_to_local(node, node.property.name)
             and self._alias_property_defined(node, node.property.name)
+            and self._alias_base_resolves(node, node.property.name)
         ):
             if in_read_position and not is_invocation_target(node):
                 return node.property

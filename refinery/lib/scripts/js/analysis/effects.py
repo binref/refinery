@@ -2214,12 +2214,18 @@ class EffectModel:
 
     def _base_is_global_object(self, node: Node) -> bool:
         """
-        Whether *node* denotes the global object itself: an unshadowed global-object alias identifier,
-        always safe because the global object is never in a temporal dead zone. A local that only holds
-        the global from an establishing definition is resolved separately by `_trusted_global_alias_read`,
-        whose caller orders that definition before the read.
+        Whether *node* denotes the global object through a base read that itself cannot throw: an
+        unshadowed `globalThis`, the one global-object alias the language mandates in every host.
+        Both callers remove code on the strength of this answer — `_base_is_safe` clears a property
+        access and `_is_trusted_global_read` clears a getter — so a host-conditional alias
+        (`window`, `self`, `top`, `frames`, `global`) is refused here: it denotes the global object
+        where it resolves, but a host that lacks it throws a `ReferenceError` on the base read, and
+        clearing that read would drop the throw (`SemanticModel.read_may_throw`). An analyst who
+        pins the host recovers the alias as certain. A local that only holds the global from an
+        establishing definition is resolved separately by `_trusted_global_alias_read`, whose caller
+        orders that definition before the read.
         """
-        if isinstance(node, JsIdentifier) and node.name in GLOBAL_OBJECT_ALIASES:
+        if isinstance(node, JsIdentifier) and node.name == 'globalThis':
             return self.model.lookup(node.name, self.model.scope_of(node)) is None
         return False
 

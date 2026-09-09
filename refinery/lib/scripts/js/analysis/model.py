@@ -1957,13 +1957,14 @@ class SemanticModel:
 
         A name resolves for certain when a declaration binds it, or when the specification mandates
         it on the global object (`GUARANTEED_GLOBALS`) — the same existence allowlist that decides
-        whether a global-alias member read may be collapsed to a bare name. A
-        `GLOBAL_OBJECT_ALIASES` spelling resolves too, which is a *host* assumption rather than a
-        language one: no host defines all of them, so a bare `window` throws under Node exactly as a
-        bare `global` throws in a browser. It is admitted because the effect analysis already rests
-        on it — `_base_is_safe` clears a property access on an alias — and answering otherwise here
-        would leave that clause standing with nothing left for it to decide. Everything else may not
-        be there:
+        whether a global-alias member read may be collapsed to a bare name. `globalThis` is on that
+        list and resolves everywhere; the other `GLOBAL_OBJECT_ALIASES` spellings (`window`, `self`,
+        `top`, `frames`, `global`) are a *host* assumption rather than a language one, and are not
+        admitted here: no host defines all of them, so a bare `window` throws under Node exactly as
+        a bare `global` throws in a browser. An analyst who knows the host recovers the resolved
+        reading with a pin; unpinned, the read is answered may-throw so no pass drops the
+        `ReferenceError` the absent host raises, and `_base_is_safe` agrees, refusing to clear a
+        property access on such an alias. Everything else may not be there:
 
         - a free name, which reaches the host and may simply not exist
         - a name whose only binding is an `IMPLICIT_GLOBAL`, which the assignment that creates it
@@ -1981,7 +1982,7 @@ class SemanticModel:
         """
         if not self.is_reference(node) or reference_role(node) is Role.WRITE:
             return False
-        if node.name in GUARANTEED_GLOBALS or node.name in GLOBAL_OBJECT_ALIASES:
+        if node.name in GUARANTEED_GLOBALS:
             return False
         if tolerates_unresolvable(node):
             return False

@@ -20,7 +20,7 @@ global-object alias — so only a function that does nothing but compute the glo
 """
 from __future__ import annotations
 
-from typing import Iterator
+from typing import Iterator, Sequence
 
 from refinery.lib.scripts import Node, _replace_in_parent
 from refinery.lib.scripts.js.analysis.cache import model_cache
@@ -39,18 +39,37 @@ from refinery.lib.scripts.js.model import (
     JsArrayExpression,
     JsArrowFunctionExpression,
     JsAssignmentExpression,
+    JsBinaryExpression,
     JsBlockStatement,
+    JsBooleanLiteral,
+    JsBreakStatement,
     JsCallExpression,
     JsConditionalExpression,
+    JsContinueStatement,
+    JsDoWhileStatement,
+    JsEmptyStatement,
+    JsExpressionStatement,
+    JsForStatement,
     JsFunctionDeclaration,
     JsFunctionExpression,
     JsIdentifier,
+    JsIfStatement,
+    JsLabeledStatement,
     JsLogicalExpression,
     JsMemberExpression,
+    JsNullLiteral,
+    JsNumericLiteral,
     JsReturnStatement,
     JsScript,
+    JsSequenceExpression,
+    JsStringLiteral,
     JsThisExpression,
+    JsTryStatement,
+    JsUnaryExpression,
+    JsUpdateExpression,
+    JsVariableDeclaration,
     JsVariableDeclarator,
+    JsWhileStatement,
     strip_parens,
     wraps_return,
 )
@@ -162,6 +181,8 @@ def _is_finder(func: Node, model: SemanticModel, effects: EffectModel) -> bool:
             return False
     returns = [node for node in _own_nodes(func) if isinstance(node, JsReturnStatement)]
     if not returns:
+        return False
+    if not _finder_cannot_throw(func, model, effects):
         return False
     taint = _global_taint(func, model)
     return all(
@@ -316,6 +337,161 @@ def _binding_within(binding: Binding | None, func: Node, model: SemanticModel) -
         return False
     func_scope = model.function_scope(func)
     return func_scope is not None and func_scope.contains(binding.scope)
+
+
+def _finder_cannot_throw(func: Node, model: SemanticModel, effects: EffectModel) -> bool:
+    """
+    Whether calling *func* cannot raise a `ReferenceError` in any host, so replacing the call with
+    `globalThis` drops no throw. The fold lifts the finder's return value and discards its body,
+    unlike an expression replacement (`EffectSummary.is_expression_replaceable`), which reproduces a
+    throw where the call stood; a finder that reads a host-conditional alias (`window`, `self`,
+    `top`, `frames`, `global`) on a path some host runs would have that throw silently dropped.
+
+    A read of such an alias is safe only where a host lacking it never evaluates the read: inside a
+    `try` that catches, past a `globalThis` short-circuit that leaves it unevaluated, or as a
+    `typeof`/`delete` operand, which `SemanticModel.read_may_throw` already answers cannot throw.
+    `globalThis` and any bound local read the same way. The host-existence fact is not re-encoded
+    here: each read defers to `read_may_throw` and each called closure to its
+    `EffectSummary.throws`, so this judgment is only the control flow deciding which of those reads
+    a lacking host reaches. A construct not modelled here is refused, keeping the fold sound at the
+    cost of at most a fold a host pin would recover.
+    """
+    body = getattr(func, 'body', None)
+    if isinstance(func, JsArrowFunctionExpression) and not isinstance(body, JsBlockStatement):
+        return _throwless_expr(body, func, model, effects)
+    return isinstance(body, JsBlockStatement) and _throwless_stmts(body.body, func, model, effects)
+
+
+def _throwless_stmts(
+    stmts: Sequence[Node], func: Node, model: SemanticModel, effects: EffectModel
+) -> bool:
+    return all(_throwless_stmt(stmt, func, model, effects) for stmt in stmts)
+
+
+def _throwless_stmt(
+    stmt: Node | None, func: Node, model: SemanticModel, effects: EffectModel
+) -> bool:
+    if stmt is None or isinstance(stmt, (
+        JsEmptyStatement, JsBreakStatement, JsContinueStatement, JsFunctionDeclaration,
+    )):
+        return True
+    if isinstance(stmt, JsReturnStatement):
+        return _throwless_expr(stmt.argument, func, model, effects)
+    if isinstance(stmt, JsExpressionStatement):
+        return _throwless_expr(stmt.expression, func, model, effects)
+    if isinstance(stmt, JsVariableDeclaration):
+        return all(_throwless_expr(d.init, func, model, effects) for d in stmt.declarations)
+    if isinstance(stmt, JsBlockStatement):
+        return _throwless_stmts(stmt.body, func, model, effects)
+    if isinstance(stmt, JsLabeledStatement):
+        return _throwless_stmt(stmt.body, func, model, effects)
+    if isinstance(stmt, JsIfStatement):
+        return (
+            _throwless_expr(stmt.test, func, model, effects)
+            and _throwless_stmt(stmt.consequent, func, model, effects)
+            and _throwless_stmt(stmt.alternate, func, model, effects)
+        )
+    if isinstance(stmt, JsTryStatement):
+        handler = stmt.handler
+        trapped = handler is not None and _throwless_stmt(handler.body, func, model, effects)
+        block_ok = trapped or _throwless_stmt(stmt.block, func, model, effects)
+        return block_ok and _throwless_stmt(stmt.finalizer, func, model, effects)
+    if isinstance(stmt, JsForStatement):
+        init = stmt.init
+        init_ok = (
+            _throwless_stmt(init, func, model, effects)
+            if isinstance(init, JsVariableDeclaration)
+            else _throwless_expr(init, func, model, effects)
+        )
+        return (
+            init_ok
+            and _throwless_expr(stmt.test, func, model, effects)
+            and _throwless_expr(stmt.update, func, model, effects)
+            and _throwless_stmt(stmt.body, func, model, effects)
+        )
+    if isinstance(stmt, (JsWhileStatement, JsDoWhileStatement)):
+        return (
+            _throwless_expr(stmt.test, func, model, effects)
+            and _throwless_stmt(stmt.body, func, model, effects)
+        )
+    return False
+
+
+def _throwless_expr(
+    expr: Node | None, func: Node, model: SemanticModel, effects: EffectModel
+) -> bool:
+    if expr is None:
+        return True
+    expr = strip_parens(expr)
+    if isinstance(expr, JsIdentifier):
+        return not model.read_may_throw(expr)
+    if isinstance(expr, (
+        JsThisExpression,
+        JsNumericLiteral,
+        JsStringLiteral,
+        JsBooleanLiteral,
+        JsNullLiteral,
+        JsFunctionExpression,
+        JsArrowFunctionExpression,
+    )):
+        return True
+    if isinstance(expr, JsArrayExpression):
+        return all(_throwless_expr(element, func, model, effects) for element in expr.elements)
+    if isinstance(expr, (JsUnaryExpression, JsUpdateExpression)):
+        operand = expr.operand if isinstance(expr, JsUnaryExpression) else expr.argument
+        return _throwless_expr(operand, func, model, effects)
+    if isinstance(expr, JsBinaryExpression):
+        return (
+            _throwless_expr(expr.left, func, model, effects)
+            and _throwless_expr(expr.right, func, model, effects)
+        )
+    if isinstance(expr, JsLogicalExpression):
+        if expr.operator in ('||', '??') and _guaranteed_truthy(expr.left, model):
+            return _throwless_expr(expr.left, func, model, effects)
+        return (
+            _throwless_expr(expr.left, func, model, effects)
+            and _throwless_expr(expr.right, func, model, effects)
+        )
+    if isinstance(expr, JsConditionalExpression):
+        return (
+            _throwless_expr(expr.test, func, model, effects)
+            and _throwless_expr(expr.consequent, func, model, effects)
+            and _throwless_expr(expr.alternate, func, model, effects)
+        )
+    if isinstance(expr, JsSequenceExpression):
+        return all(_throwless_expr(part, func, model, effects) for part in expr.expressions)
+    if isinstance(expr, JsAssignmentExpression):
+        return (
+            _throwless_expr(expr.left, func, model, effects)
+            and _throwless_expr(expr.right, func, model, effects)
+        )
+    if isinstance(expr, JsMemberExpression):
+        base_ok = _throwless_expr(expr.object, func, model, effects)
+        key_ok = not expr.computed or _throwless_expr(expr.property, func, model, effects)
+        return base_ok and key_ok
+    if isinstance(expr, JsCallExpression):
+        if not _throwless_expr(expr.callee, func, model, effects):
+            return False
+        if not all(_throwless_expr(arg, func, model, effects) for arg in expr.arguments):
+            return False
+        closures = _callee_closures(expr.callee, func, model)
+        return bool(closures) and all(not effects.summary_of(c).throws for c in closures)
+    return False
+
+
+def _guaranteed_truthy(expr: Node | None, model: SemanticModel) -> bool:
+    """
+    Whether *expr* evaluates to a truthy value in every host, so a `||`/`??` whose left it is
+    never evaluates the right. Only `globalThis` qualifies as a leaf — the one global-object alias
+    the language mandates everywhere, always a truthy object — and a `||`/`??` chain is truthy where
+    its own left is.
+    """
+    expr = strip_parens(expr)
+    if isinstance(expr, JsIdentifier):
+        return expr.name == 'globalThis' and _is_global_alias(expr, model)
+    if isinstance(expr, JsLogicalExpression) and expr.operator in ('||', '??'):
+        return _guaranteed_truthy(expr.left, model)
+    return False
 
 
 def _is_global_alias(node: Node, model: SemanticModel) -> bool:

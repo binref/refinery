@@ -897,8 +897,14 @@ class TestEffectModel(TestBase):
     def test_global_intrinsic_read_is_pure(self):
         self.assertTrue(self._summary('function f(){ return globalThis.Uint8Array; }', 'f').is_pure)
 
-    def test_global_intrinsic_read_through_window_alias_is_pure(self):
-        self.assertTrue(self._summary('function f(){ return window.String; }', 'f').is_pure)
+    def test_intrinsic_read_through_host_alias_may_throw(self):
+        """
+        A host-conditional alias may not resolve, so a member read through `window` may throw a
+        `ReferenceError` on the base and the summary is not pure; the same read through
+        `globalThis`, which the language mandates in every host, stays pure.
+        """
+        self.assertTrue(self._summary('function f(){ return window.String; }', 'f').throws)
+        self.assertTrue(self._summary('function f(){ return globalThis.String; }', 'f').is_pure)
 
     def test_host_global_intrinsic_read_is_pure(self):
         self.assertTrue(self._summary('function f(){ return globalThis.TextDecoder; }', 'f').is_pure)

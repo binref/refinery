@@ -22,13 +22,73 @@ class TestGlobalFinderInlining(TestJsDeobfuscator):
             '''
         ))
 
-    def test_finder_result_assignment_becomes_globalthis(self):
-        self.assertEqual(self._find('function g() { return window; } var x = g();'), inspect.cleandoc(
+    def test_short_circuit_chain_result_assignment_becomes_globalthis(self):
+        source = 'function g() { return globalThis || global || window; } var x = g();'
+        self.assertEqual(self._find(source), inspect.cleandoc(
+            '''
+            function g() {
+              return globalThis || global || window;
+            }
+            var x = globalThis;
+            '''
+        ))
+
+    def test_bare_host_alias_finder_is_not_substituted(self):
+        """
+        A finder that just returns `window` throws where the host lacks it (Node refuses `window`),
+        so folding its call to `globalThis` would drop that `ReferenceError`; the call is kept.
+        """
+        source = inspect.cleandoc(
             '''
             function g() {
               return window;
             }
-            var x = globalThis;
+            g();
+            '''
+        )
+        self.assertEqual(source, self._find(source))
+
+    def test_host_read_before_the_anchor_is_not_substituted(self):
+        """
+        The `globalThis` anchor is reached only after a bare `window.bar` read that runs first and
+        throws where the host lacks `window`, so the finder is not throw-free and its call is kept.
+        """
+        source = inspect.cleandoc(
+            '''
+            function g() {
+              window.bar;
+              return globalThis;
+            }
+            g();
+            '''
+        )
+        self.assertEqual(source, self._find(source))
+
+    def test_trapped_host_thunks_are_recognized(self):
+        source = (
+            'function g() {'
+            ' var a = [function () { return globalThis; }, function () { return global; },'
+            ' function () { return window; }];'
+            ' for (var i = 0; i < a.length; i++) { try { return a[i](); } catch (e) {} }'
+            ' } g();'
+        )
+        self.assertEqual(self._find(source), inspect.cleandoc(
+            '''
+            function g() {
+              var a = [function() {
+                return globalThis;
+              }, function() {
+                return global;
+              }, function() {
+                return window;
+              }];
+              for (var i = 0; i < a.length; i++) {
+                try {
+                  return a[i]();
+                } catch (e) {}
+              }
+            }
+            globalThis;
             '''
         ))
 
