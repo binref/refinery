@@ -1989,22 +1989,31 @@ class SemanticModel:
         binding = self.lookup(node.name, scope, cross_dynamic=True)
         return binding is None or binding.kind is BindingKind.IMPLICIT_GLOBAL
 
-    def reads_lexical_binding(self, node: JsIdentifier) -> bool:
+    def lexical_binding_read(self, node: JsIdentifier) -> Binding | None:
         """
-        Whether *node* is a read of a `let`, `const`, or `class` binding: a name that resolves for
-        certain, yet may still raise a `ReferenceError` when the read runs before the declaration
-        that ends the binding's temporal dead zone. The companion flag to `read_may_throw`, which
-        instead flags a name that may denote no binding at all; together they are the complete set
-        of reads a discarding context must not drop without a proof the read is past its
-        establishing point. Whether the read is in fact in the dead zone is an ordering question
-        this layer does not answer — a caller's establishment proof (`ModelCache.read_established`)
-        decides it against the dominance model — so this flags every lexical read and leaves the
-        clearing to that proof.
+        The `let`/`const`/`class` binding *node* reads, or `None` when *node* is not a read of
+        one. A read of such a binding resolves for certain, yet may still raise a
+        `ReferenceError` when it runs before the declaration that ends the binding's temporal
+        dead zone; a caller that needs the binding — to defer it to a call site
+        (`EffectSummary.dead_zone_reads`) — takes it from here rather than resolving a second
+        time. Whether the read is in fact in the dead zone is an ordering question this layer
+        does not answer — a caller's establishment proof (`ModelCache.read_established`) decides
+        it against the dominance model.
         """
         if not self.is_reference(node) or reference_role(node) is Role.WRITE:
-            return False
+            return None
         binding = self.resolve(node)
-        return binding is not None and binding.is_lexical
+        return binding if binding is not None and binding.is_lexical else None
+
+    def reads_lexical_binding(self, node: JsIdentifier) -> bool:
+        """
+        Whether *node* is a read of a `let`, `const`, or `class` binding. The companion flag to
+        `read_may_throw`, which instead flags a name that may denote no binding at all; together
+        they are the complete set of reads a discarding context must not drop without a proof the
+        read is past its establishing point. The binding itself, when a caller needs it, comes from
+        `lexical_binding_read`.
+        """
+        return self.lexical_binding_read(node) is not None
 
     def read_may_raise_reference_error(self, node: JsIdentifier) -> bool:
         """

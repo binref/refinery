@@ -2236,6 +2236,46 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
         self.assertEqual(expected, result)
 
 
+class TestAHofCallbackReadingADeadZoneBindingKeepsItsThrow(TestJsDeobfuscator):
+    """
+    The higher-order fold evaluates a callback for the array it produces.
+    `_callback_is_contained` admits a callback that reads an outer `let`/`const` binding — that
+    read is a `dead_zone_reads` throw deferred by the summary, not a `throws` flag — and relies
+    on the fold to abort when the read is unresolved. So a `.map` whose callback reads a binding
+    still in its dead zone must survive, while the same callback reading an established binding
+    must fold. The two together pin the abort: were the fold to start resolving the outer
+    binding, the dead-zone case would fold to a wrong array and drop the `ReferenceError` Node
+    raises.
+    """
+
+    def test_a_callback_reading_a_dead_zone_binding_is_not_folded(self):
+        source = 'var out = [1, 2].map(function (x) { return q + x; });\nlet q = 10;\nconsole.log(out);\n'
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var out = [1, 2].map(function(x) {
+                  return q + x;
+                });
+                let q = 10;
+                console.log(out);
+                """
+            ),
+            self._deobfuscate(source),
+        )
+
+    def test_a_callback_reading_an_established_binding_is_folded(self):
+        source = 'const q = 10;\nvar out = [1, 2].map(function (x) { return q + x; });\nconsole.log(out);\n'
+        self.assertEqual(
+            inspect.cleandoc(
+                """
+                var out = [11, 12];
+                console.log(out);
+                """
+            ),
+            self._deobfuscate(source),
+        )
+
+
 class TestHostEntrypointDefinitions(TestJsDeobfuscator):
     """
     Once every call to a function has folded to its result, the evaluator deletes the definition. That is

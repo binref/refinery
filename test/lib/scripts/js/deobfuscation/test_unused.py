@@ -373,9 +373,9 @@ class TestUnusedCodeRemoval(TestJsDeobfuscator):
 
     def test_dead_store_calling_a_reader_of_its_own_dead_zone_local_is_removed(self):
         """
-        A function reading a `let` it declares itself orders that read against the declaration in its
-        own body, so a call to it is safe with respect to the binding. The owned binding is filtered
-        out of the deferred dead-zone set and the discarded call is removed.
+        A function reading a `let` it declares itself orders that read against the declaration
+        in its own body, so a call to it is safe with respect to the binding. The owned binding
+        is filtered out of the deferred dead-zone set and the discarded call is removed.
         """
         source = 'function f() { let x = 1; return x; }\nvar dead = f();\nconsole.log(2);\n'
         self.assertEqual('console.log(2);', self._remove_unused(source))

@@ -132,13 +132,14 @@ class DominanceModel(DominatorModel):
 
     def past_dead_zone(self, binding: Binding, reference: Node) -> bool:
         """
-        Whether *reference* is guaranteed to run past *binding*'s temporal dead zone: every declaration of
-        this `let`/`const`/`class` binding executes first, so a read at *reference* cannot raise a
-        `ReferenceError`. Distinct from `binding_established_before`, which orders the singular value's
-        establishing write: a dead zone ends at the DECLARATION, not at the first value assignment, so a
-        `let` declared before *reference* but reassigned afterward is past its dead zone here while
-        `binding_established_before` — reasoning about the value — answers `False`. `False` when the binding
-        carries no declaration to order, so the dead zone's end cannot be proven.
+        Whether *reference* is guaranteed to run past *binding*'s temporal dead zone: every
+        declaration of this `let`/`const`/`class` binding executes first, so a read at *reference*
+        cannot raise a `ReferenceError`. Distinct from `binding_established_before`, which orders
+        the singular value's establishing write: a dead zone ends at the DECLARATION, not at the
+        first value assignment, so a `let` declared before *reference* but reassigned afterward is
+        past its dead zone here while `binding_established_before` — reasoning about the value —
+        answers `False`. `False` when the binding carries no declaration to order, so the dead
+        zone's end cannot be proven.
         """
         return bool(binding.declarations) and all(
             self.runs_before(site, reference) for site in binding.declarations

@@ -2137,10 +2137,16 @@ class JsInterpreter:
         even though the throw would surface as a real `_ThrowSignal` an emulated `try/catch`
         observes. A throw the summary defers per binding rather than recording in `throws` — a
         `dead_zone_reads` read of an outer `let`/`const`/`class` binding, which fires only inside
-        that binding's dead zone — is not reflected in `is_effect_free_when_discarded` and so passes
-        this gate; it is refused downstream instead, where `_eval_array_hof` runs the callback and
-        the dead-zone read raises the same `_ThrowSignal` that aborts the fold, exactly as evaluating
-        the read at its own site would.
+        that binding's dead zone — is not reflected in `is_effect_free_when_discarded` and so
+        passes this gate; the fold that consumes the callback refuses it downstream anyway. The
+        interpreter models no dead zone, so when `_eval_array_hof` runs the callback the outer
+        lexical name is simply absent from its environment and `_eval_identifier` raises
+        `IrreducibleExpression`, which `_evaluate_expression_and_replace` catches beside
+        `_ThrowSignal` and abandons the fold, keeping the call. The soundness of leaving that to
+        the fold rests on the read staying unresolved: were a future change to seed outer lexical
+        names into a callback closure (as hoisted `var` names already are), the read would fold to
+        a value and drop the throw, and this gate would then need an explicit `dead_zone_reads`
+        refusal.
 
         Purity is not sufficient on its own either. A write to a *script-scope* `var` reports
         `writes_captured=False`, because that binding is not captured from the callback's perspective, so it

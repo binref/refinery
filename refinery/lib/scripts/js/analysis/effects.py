@@ -430,16 +430,17 @@ class EffectSummary:
     read can observe the change; likewise a coarse write with no resolvable binding (a dynamic-scope or
     `globalThis.x =` member write) sets `writes_global` but adds nothing here.
 
-    `dead_zone_reads` mirrors `written_bindings` for a read that throws only at some call sites: it names,
-    by identity, the outer `let`/`const`/`class` bindings a call to this function may read (directly or
-    through a transitive callee) before that binding is initialized, which is a `ReferenceError` the
-    function raises iff the call lands in the binding's temporal dead zone. The flow-insensitive summary
-    cannot collapse this to `throws` — that flag fires at *every* call, but this read throws only inside the
-    dead zone and is safe after the declaration — so it is deferred per binding to the call site, which owns
-    the ordering judgment. A binding the function itself owns is dropped from the set at completion (see
-    `_scan`): the set is consulted at the callee's call site, where an owned binding is out of scope and
-    unjudgeable, and the summary layer sits below the dominance model and cannot order the owned binding's
-    own dead zone either.
+    `dead_zone_reads` mirrors `written_bindings` for a read that throws only at some call sites: it
+    names, by identity, the outer `let`/`const`/`class` bindings a call to this function may read
+    (directly or through a transitive callee) before that binding is initialized, which is a
+    `ReferenceError` the function raises iff the call lands in the binding's temporal dead zone.
+    The flow-insensitive summary cannot collapse this to `throws` — that flag fires at *every*
+    call, but this read throws only inside the dead zone and is safe after the declaration — so it
+    is deferred per binding to the call site, which owns the ordering judgment. A binding the
+    function itself owns is dropped from the set at completion (see `_scan`): the set is consulted
+    at the callee's call site, where an owned binding is out of scope and unjudgeable, and the
+    summary layer sits below the dominance model and cannot order the owned binding's own dead zone
+    either.
 
     Four properties read these flags, and they are not a scale from strict to permissive — each answers a
     different question about a *different rewrite*, so a consumer picks by naming the rewrite it is about to
@@ -473,12 +474,13 @@ class EffectSummary:
         here, since a caller that uses the result observes that mutation; `is_effect_free_when_discarded`
         is the companion test for a call whose result is thrown away, which tolerates it.
 
-        A `dead_zone_reads` throw is NOT reflected here: it fires only inside a binding's dead zone, not at
-        every call, so it cannot set `throws`. A consumer that EVALUATES the call (a value fold, a HOF fold)
-        needs no extra guard — the dead-zone read manifests as the evaluation throwing, which aborts the
-        rewrite exactly as reading the binding would. A consumer that DELETES the call without evaluating it
-        (the dead-store and orphan sweeps, via `call_clearable`) must gate on the call-site establishment of
-        every `dead_zone_reads` binding; reading `is_pure` alone would drop the throw.
+        A `dead_zone_reads` throw is NOT reflected here: it fires only inside a binding's dead
+        zone, not at every call, so it cannot set `throws`. A consumer that EVALUATES the call (a
+        value fold, a HOF fold) needs no extra guard — the dead-zone read manifests as the
+        evaluation throwing, which aborts the rewrite exactly as reading the binding would. A
+        consumer that DELETES the call without evaluating it (the dead-store and orphan sweeps, via
+        `call_clearable`) must gate on the call-site establishment of every `dead_zone_reads`
+        binding; reading `is_pure` alone would drop the throw.
         """
         return not (
             self.writes_global
@@ -499,9 +501,10 @@ class EffectSummary:
         (a store to a global, a store to an enclosing capture, a leak into an unknown callee, a throw), so
         excluding only `mutates_returned_local` here stays sound.
 
-        As with `is_pure`, a `dead_zone_reads` throw is not reflected here — the read raises regardless of
-        whether the result is used — so a consumer that deletes the call on the strength of this property
-        must additionally gate on call-site establishment of every `dead_zone_reads` binding.
+        As with `is_pure`, a `dead_zone_reads` throw is not reflected here — the read raises
+        regardless of whether the result is used — so a consumer that deletes the call on the
+        strength of this property must additionally gate on call-site establishment of every
+        `dead_zone_reads` binding.
         """
         return not (self.writes_global or self.writes_captured or self.throws or self.calls_unknown)
 
@@ -974,24 +977,26 @@ class EffectModel:
         binding_established: Callable[[Binding], bool],
     ) -> bool:
         """
-        Whether *call* may be cleared with respect to ordering — its callee in place before the call runs,
-        and every outer lexical binding its body may read past that binding's temporal dead zone. Two
-        ordering judgments the caller supplies, since only its layer can make them: *callee_established*
-        tests a resolved named local callee, and *binding_established* tests a `dead_zone_reads` binding
-        (whether the call sits after the binding's declaration). A trusted pure intrinsic qualifies
-        unconditionally. Otherwise the callee resolves to a function, and the call is refused unless every
-        binding the callee's summary defers here is `binding_established` — a dead-zone read would throw a
-        `ReferenceError` the deletion of the call would silently drop, which no establishment of the callee
-        itself excuses. Past that gate, an inline function-expression callee (defined at the call site,
-        hence always in place) qualifies, and a call resolving to a single named local function qualifies
-        when *callee_established* accepts it; an unresolved or ambiguous callee does not.
+        Whether *call* may be cleared with respect to ordering — its callee in place before the
+        call runs, and every outer lexical binding its body may read past that binding's
+        temporal dead zone. Two ordering judgments the caller supplies, since only its layer can
+        make them: *callee_established* tests a resolved named local callee, and
+        *binding_established* tests a `dead_zone_reads` binding (whether the call sits after the
+        binding's declaration). A trusted pure intrinsic qualifies unconditionally. Otherwise
+        the callee resolves to a function, and the call is refused unless every binding the
+        callee's summary defers here is `binding_established` — a dead-zone read would throw a
+        `ReferenceError` the deletion of the call would silently drop, which no establishment of
+        the callee itself excuses. Past that gate, an inline function-expression callee (defined
+        at the call site, hence always in place) qualifies, and a call resolving to a single
+        named local function qualifies when *callee_established* accepts it; an unresolved or
+        ambiguous callee does not.
 
-        The resolution, the intrinsic case, the dead-zone gate, and the inline-callee case live here so
-        callers supply only the ordering judgments their layer can make. An ordering-free caller passes
-        `binding_established = lambda binding: False`, which refuses any callee that reads an outer lexical
-        binding. This certifies establishment ONLY, not purity — a caller deciding whether a call may be
-        dropped must conjoin it with `is_pure_call`, as `side_effect_free` does, since an established callee
-        may still run an effectful body.
+        The resolution, the intrinsic case, the dead-zone gate, and the inline-callee case live
+        here so callers supply only the ordering judgments their layer can make. An ordering-free
+        caller passes `binding_established = lambda binding: False`, which refuses any callee that
+        reads an outer lexical binding. This certifies establishment ONLY, not purity — a caller
+        deciding whether a call may be dropped must conjoin it with `is_pure_call`, as
+        `side_effect_free` does, since an established callee may still run an effectful body.
         """
         resolved = self._resolve_callee(call)
         if resolved is _PURE:
@@ -1007,14 +1012,15 @@ class EffectModel:
 
     def _established_call_default(self, call: JsCallExpression | JsNewExpression) -> bool:
         """
-        The ordering-free floor for `is_side_effect_free`: clears a trusted pure intrinsic, an inline
-        function-expression callee (established at its call site), or a call to a hoisted function
-        declaration (empty `establishment_sites`), whose value is in place before any statement runs. A
-        non-hoisted named local callee — a `const`/`let`/`var` initializer or a bare assignment — is
-        refused, since this model cannot order the definition against the call; a caller that can supplies
-        its own `call_established`. Being ordering-free, it passes `lambda binding: False` for the dead-zone
-        gate, so a callee reading any outer lexical binding is refused here — the fail-closed floor a caller
-        with a dominance model lifts by supplying its own `binding_established`.
+        The ordering-free floor for `is_side_effect_free`: clears a trusted pure intrinsic, an
+        inline function-expression callee (established at its call site), or a call to a hoisted
+        function declaration (empty `establishment_sites`), whose value is in place before any
+        statement runs. A non-hoisted named local callee — a `const`/`let`/`var` initializer or a
+        bare assignment — is refused, since this model cannot order the definition against the
+        call; a caller that can supplies its own `call_established`. Being ordering-free, it passes
+        `lambda binding: False` for the dead-zone gate, so a callee reading any outer lexical
+        binding is refused here — the fail-closed floor a caller with a dominance model lifts by
+        supplying its own `binding_established`.
         """
         return self.call_clearable(
             call,
@@ -1410,10 +1416,9 @@ class EffectModel:
             elif isinstance(node, JsIdentifier):
                 if not summary.throws and self.model.read_may_throw(node):
                     summary.throws = True
-                if self.model.reads_lexical_binding(node):
-                    binding = self.model.resolve(node)
-                    if binding is not None:
-                        summary.dead_zone_reads.add(binding)
+                lexical_read = self.model.lexical_binding_read(node)
+                if lexical_read is not None:
+                    summary.dead_zone_reads.add(lexical_read)
                 if reference_role(node) is not Role.READ:
                     self._account_write(summary, node, func)
             elif isinstance(node, JsMemberExpression):
@@ -1432,13 +1437,14 @@ class EffectModel:
                 self._account_call(summary, node)
             elif isinstance(node, JsImportExpression):
                 summary.calls_unknown = True
-        summary.dead_zone_reads = {
-            binding
-            for binding in summary.dead_zone_reads
-            if not self._owns_binding(binding, func)
-        }
-        if isinstance(func, FUNCTION_NODES) and is_generator_function(func):
-            summary.dead_zone_reads.clear()
+        if isinstance(func, FUNCTION_NODES) and not is_generator_function(func):
+            summary.dead_zone_reads = {
+                binding
+                for binding in summary.dead_zone_reads
+                if not self._owns_binding(binding, func)
+            }
+        else:
+            summary.dead_zone_reads = set()
         return summary
 
     def _account_write(self, summary: EffectSummary, target: JsIdentifier, func: Node):

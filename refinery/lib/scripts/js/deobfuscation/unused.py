@@ -580,7 +580,8 @@ class JsUnusedCodeRemoval(BodyProcessingTransformer):
         definition reaches the call, so a call textually before a not-yet-established function keeps its
         runtime throw. A callee whose summary defers outer `let`/`const`/`class` reads
         (`EffectSummary.dead_zone_reads`) keeps its throw unless each such binding's declaration is
-        guaranteed to have run before the call, so a dead store to a dead-zone reader is not dropped.
+        guaranteed to have run before the call, so a dead store to a dead-zone reader is not
+        dropped.
         """
         return self.effects.call_clearable(
             call,
