@@ -675,13 +675,10 @@ class TestPs1AReadOfErrorObservesARaiseNoHandlerTook(_Ps1FaultEscalation):
     """
     Windows PowerShell 5.1 records every terminating error in `$Error` whether or not a handler ran,
     so a script with no `catch` and no `trap` anywhere can still branch on the raise having happened
-    and can still read the record it left. The raise is what puts that record there and survives.
-
-    The deobfuscator decides a removal from handlers alone. It finds none, deletes the raise, and
-    leaves a script whose `$Error` is empty where the original's was not.
+    and can still read the record it left. The raise is what puts that record there, and a read of
+    `$Error` reachable after it observes the difference, so the raise is kept.
     """
 
-    @unittest.expectedFailure
     def test_a_raising_cast_a_later_count_of_error_observes_is_kept(self):
         self._assertKept(F"""
             {_RAISE}
@@ -691,11 +688,54 @@ class TestPs1AReadOfErrorObservesARaiseNoHandlerTook(_Ps1FaultEscalation):
             {_ANCHOR}
         """)
 
-    @unittest.expectedFailure
     def test_a_raising_cast_a_later_read_of_its_error_record_observes_is_kept(self):
         self._assertKept(F"""
             {_RAISE}
             Write-Host $Error[0].Exception.Message
+        """)
+
+    def test_a_stacktrace_read_after_the_raise_observes_it_and_keeps_it(self):
+        self._assertKept(F"""
+            {_RAISE}
+            Write-Host $StackTrace
+        """)
+
+    def test_a_named_reference_read_of_error_after_the_raise_keeps_it(self):
+        self._assertDeobfuscatesTo(F"""
+            {_RAISE}
+            Write-Host (Get-Variable Error).Value.Count
+        """, F"""
+            {_RAISE}
+            Write-Host $Error.Count
+        """)
+
+    def test_the_identical_error_read_moved_before_the_raise_leaves_it_removable(self):
+        self._assertDeobfuscatesTo(F"""
+            Write-Host $Error[0].Exception.Message
+            {_RAISE}
+            {_ANCHOR}
+        """, F"""
+            Write-Host $Error[0].Exception.Message
+            {_ANCHOR}
+        """)
+
+
+class TestPs1AReadOfErrorInACalledFunctionObservesTheRaise(_Ps1FaultEscalation):
+    """
+    `$Error` is session-global, so a read inside a function called after the raise observes the
+    record on a 5.1 host as surely as one written beside it — deleting the raise empties what the
+    call reads. The error-record channel is intraprocedural: it orders the read against the raise in
+    the raiser's own body and a read in the callee's body is out of that body's reach, so this raise
+    is deleted although the host keeps it. Closing it needs the call graph the interprocedural
+    milestone (cluster 1f) builds; until then the delete is tracked here.
+    """
+
+    @unittest.expectedFailure
+    def test_a_raise_before_a_call_whose_body_reads_error_is_kept(self):
+        self._assertKept(F"""
+            function Show-Count {{ Write-Host ($Error.Count) }}
+            {_RAISE}
+            Show-Count
         """)
 
 

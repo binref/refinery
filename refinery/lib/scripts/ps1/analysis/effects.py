@@ -42,6 +42,7 @@ from refinery.lib.scripts.ps1 import data
 from refinery.lib.scripts.ps1.dotnet import Ps1TypeName
 from refinery.lib.scripts.ps1.analysis.arguments import Ps1WrittenSlots, written_slots
 from refinery.lib.scripts.ps1.analysis.callgraph import Ps1CallGraph
+from refinery.lib.scripts.ps1.analysis.errorstate import Ps1ErrorStateReach
 from refinery.lib.scripts.ps1.analysis.faults import Ps1FaultReach, Ps1SoftStepOver
 from refinery.lib.scripts.ps1.analysis.model import occurrence_role
 from refinery.lib.scripts.ps1.analysis.values import (
@@ -2003,27 +2004,45 @@ def deletion_is_observable(
     stmt: Node,
     faults: Ps1FaultReach,
     world: Ps1WorldReach | None = None,
+    error_state: Ps1ErrorStateReach | None = None,
 ) -> bool:
     """
-    Whether deleting *stmt* may change what the script does — the removal veto. Two ways it can, and
-    a removal site has to refuse on either.
+    Whether deleting *stmt* may change what the script does — the removal veto. Three ways it can,
+    and a removal site has to refuse on any.
 
     The first is `fault_is_observed`: the error *stmt* would raise reaches a handler that acts, or
-    ends a body. The second is answered here: a statement that raises a fault a `try` would catch,
-    written before a live continuation that runs only because the raise pre-empts it, is dead only
-    for that reason — deleting the raiser starts the continuation running. Two mechanisms resurrect
-    such a continuation and both are one observable: an empty `catch` swallows the error and resumes
-    past the tail of the `try` body, and a firing `trap` body raise ends the scope that would
-    otherwise run on past it.
+    ends a body. The second is a resurrected continuation: a statement that raises a fault a `try`
+    would catch, written before a live continuation that runs only because the raise pre-empts it,
+    is dead only for that reason — deleting the raiser starts the continuation running. Two
+    mechanisms resurrect such a continuation and both are one observable: an empty `catch` swallows
+    the error and resumes past the tail of the `try` body, and a firing `trap` body raise ends the
+    scope that would otherwise run on past it.
     `Ps1FaultReach.deleting_the_raise_resurrects_a_continuation` is the position half and
     `Ps1FaultReach.fault_the_try_catches` the raise half, paired over `fault_operand` so that a
     `$Null =`/`[Void]` discard is judged by what it evaluates.
+
+    The third is a read of the record the raise leaves behind. Windows PowerShell 5.1 files every
+    terminating error in `$Error` whether or not a handler ran, so a later read of that record
+    observes the raise even where no handler took it, and deleting the raiser empties a `$Error` the
+    original filled. This is paired the same way: *stmt* has to be able to leave a record —
+    `statement_can_raise`, the can-fault over-approximation the transpose also uses, so a raiser the
+    analysis proves cannot fault leaves none and stays removable — and a persistent-record read has
+    to be reachable after it, which `refinery.lib.scripts.ps1.analysis.errorstate.Ps1ErrorStateReach`
+    answers positionally. `error_state=None` skips the channel, the fail-open direction a caller with
+    no such model takes, consistent with `world=None`. `$?`'s reset rule is a query cluster 4 adds to
+    that model, not a fourth clause here.
     """
     operand = fault_operand(stmt)
     if (
         operand is not None
         and faults.fault_the_try_catches(operand)
         and faults.deleting_the_raise_resurrects_a_continuation(stmt)
+    ):
+        return True
+    if (
+        error_state is not None
+        and statement_can_raise(stmt, faults, world)
+        and error_state.persistent_read_observed_after(stmt)
     ):
         return True
     return fault_is_observed(stmt, faults, world)

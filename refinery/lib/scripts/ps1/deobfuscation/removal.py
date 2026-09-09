@@ -19,6 +19,7 @@ from refinery.lib.scripts.ps1.analysis.effects import (
     emptying_unhooks_a_handler,
     statement_can_raise,
 )
+from refinery.lib.scripts.ps1.analysis.errorstate import Ps1ErrorStateReach
 from refinery.lib.scripts.ps1.analysis.faults import Ps1FaultReach
 from refinery.lib.scripts.ps1.analysis.worldflow import Ps1WorldReach
 from refinery.lib.scripts.ps1.model import (
@@ -169,6 +170,7 @@ class Ps1RemovalPlan:
         *,
         faults: Ps1FaultReach | None,
         world: Ps1WorldReach | None = None,
+        error_state: Ps1ErrorStateReach | None = None,
         soft_step_over_observed: Callable[[Node], bool] | None = None,
     ):
         """
@@ -185,6 +187,14 @@ class Ps1RemovalPlan:
         world was offered — see
         `refinery.lib.scripts.ps1.analysis.effects.expression_cannot_fault`.
 
+        `error_state` is the third model the veto may consult, a sibling of `world`: whether a read
+        of the record a raise leaves in `$Error`/`$StackTrace` is reachable after the raiser, which
+        keeps a raise no handler took but a later read observes. Optional and threaded exactly where
+        `world` is, because it answers the same removals — those a pass cannot rule out as fault-free.
+        Absent, that channel is skipped and the veto asks the handler question alone, which is what
+        every pass got before the model existed — see
+        `refinery.lib.scripts.ps1.analysis.effects.deletion_is_observable`.
+
         `soft_step_over_observed` is the reader the `trap` transpose is handed for its step-over
         branch — whether the region a resuming `trap` skips is observable. It is injected rather than
         read off `world` because that judgment is one of emission and liveness the fault reader holds
@@ -199,6 +209,7 @@ class Ps1RemovalPlan:
         self.all_or_nothing = all_or_nothing
         self.faults = faults
         self.world = world
+        self.error_state = error_state
         self._soft_step_over_observed = soft_step_over_observed
         self._proposals: dict[int, _Proposal] = {}
 
@@ -375,7 +386,8 @@ class Ps1RemovalPlan:
             )
         if not self.removals_may_fault:
             return False
-        return deletion_is_observable(proposal.statement, faults, self.world)
+        return deletion_is_observable(
+            proposal.statement, faults, self.world, self.error_state)
 
     def _allowed(self) -> list[_Proposal]:
         """
@@ -464,9 +476,15 @@ class Ps1RemovalPlans:
     veto has nothing to say about them: it declines deletions, and none of these is one.
     """
 
-    def __init__(self, faults: Ps1FaultReach, world: Ps1WorldReach | None = None):
+    def __init__(
+        self,
+        faults: Ps1FaultReach,
+        world: Ps1WorldReach | None = None,
+        error_state: Ps1ErrorStateReach | None = None,
+    ):
         self.faults = faults
         self.world = world
+        self.error_state = error_state
         #: Every plan this opens may remove, so unlike `Ps1RemovalPlan` there is no
         #: substitution-only spelling of this class: a caller holding one is a pass that deletes.
         self._plans: dict[tuple[int, str], Ps1RemovalPlan] = {}
@@ -516,6 +534,7 @@ class Ps1RemovalPlans:
                 attr,
                 faults=self.faults,
                 world=self.world,
+                error_state=self.error_state,
             )
             return plan
 

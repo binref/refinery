@@ -217,20 +217,27 @@ class TestPs1AStatementThatRaisesIsVisibleInTheErrorRecord(_Ps1AutomaticVariable
     """
     `$Error` collects a record for every error the engine reports, so a script that raises before
     reading `$Error.Count` sees one where a script that does not raise sees zero. The raising
-    statement is what makes that difference, so a script reading `$Error` afterwards cannot lose it.
-
-    The deobfuscator deletes the raising statement as junk — it prints nothing and assigns nothing —
-    without asking what the statements after it read. The reader is left in place and now answers
-    from an empty `$Error`.
+    statement is what makes that difference, and a read of `$Error` reachable after it observes the
+    difference, so the raising statement — which prints nothing and assigns nothing, and which a
+    removal weighing handlers alone would delete as junk — is kept.
     """
 
-    @unittest.expectedFailure
     def test_a_raising_statement_before_a_read_of_the_error_count_is_kept(self):
         self._assertKept(F'{_FAULTS}\nWrite-Host ($Error.Count)')
 
-    @unittest.expectedFailure
     def test_a_raising_statement_before_a_guard_on_the_error_count_is_kept(self):
         self._assertKept(F'{_FAULTS}\nif ($Error.Count) {{ {_PAYLOAD} }} else {{ {_OTHER} }}')
+
+    def test_a_success_flag_read_after_the_raise_does_not_keep_it(self):
+        """
+        `$?` is a different automatic variable from the error record, and every statement resets it,
+        so a read of it is the success channel a later increment adds to this same model — not the
+        persistent-error channel this one does. This increment must therefore not keep the raise on
+        the strength of a `$?` read, and the raise is removed although a `$?` read follows it.
+        """
+        self._assertDeobfuscatesTo(
+            F'{_FAULTS}\n{_SUCCEEDS}\nWrite-Host $?',
+            F'{_SUCCEEDS}\nWrite-Host $?')
 
 
 class TestPs1TheTokenVariablesStayEmptyForTheWholeOfAScript(_Ps1AutomaticVariables):

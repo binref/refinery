@@ -25,6 +25,10 @@ from refinery.lib.scripts.ps1.analysis.commands import Ps1CommandModel, build_co
 from refinery.lib.scripts.ps1.analysis.dataflow import Ps1VariableFlow, build_variable_flow
 from refinery.lib.scripts.ps1.analysis.dominance import build_dominance
 from refinery.lib.scripts.ps1.analysis.effects import Ps1OutputFlow, build_output_flow
+from refinery.lib.scripts.ps1.analysis.errorstate import (
+    Ps1ErrorStateReach,
+    build_error_state_reach,
+)
 from refinery.lib.scripts.ps1.analysis.faults import Ps1FaultReach, build_fault_reach
 from refinery.lib.scripts.ps1.analysis.model import Ps1SemanticModel, build_semantic_model
 from refinery.lib.scripts.ps1.analysis.world import (
@@ -63,6 +67,7 @@ class Ps1ModelCache(ModelCacheBase):
         '_cycles',
         '_variable_flow',
         '_commands',
+        '_error_state',
         '_used_before_defined',
     )
 
@@ -79,6 +84,7 @@ class Ps1ModelCache(ModelCacheBase):
     _cycles: CycleModel | None
     _variable_flow: Ps1VariableFlow | None
     _commands: Ps1CommandModel | None
+    _error_state: Ps1ErrorStateReach | None
     _used_before_defined: frozenset[str] | None
 
     @property
@@ -228,6 +234,19 @@ class Ps1ModelCache(ModelCacheBase):
         return self._lazy('_commands', lambda: build_command_model(
             self.root, self.control_flow, self.dominance, self.blocks,
             frozenset(self.call_graph.defined_names), self.closed_world.shadowed_names))
+
+    @property
+    def error_state(self) -> Ps1ErrorStateReach:
+        """
+        Where each read of the persistent error record (`$Error`/`$StackTrace`) this root places
+        stands, over `commands`, `control_flow` and `dominance`. The removal veto reads this to keep
+        a raise whose record a later read observes, the way it reads `output_flow` to keep a write a
+        reader observes — a distinct observable channel with its own first-class model rather than a
+        scattered whole-script gate. It reads the split read-sites from `commands`, which owns which
+        name is the record and which is the success flag, and orders them with `dominance`.
+        """
+        return self._lazy('_error_state', lambda: build_error_state_reach(
+            self.commands.error_state_read_sites(), self.control_flow, self.dominance))
 
     @property
     def variable_flow(self) -> Ps1VariableFlow:

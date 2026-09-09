@@ -138,7 +138,7 @@ class Ps1UnusedVariableRemoval(Transformer):
                 candidates[binding] = mutations
         if not candidates:
             return None
-        plans = Ps1RemovalPlans(cache.faults, world)
+        plans = Ps1RemovalPlans(cache.faults, world, cache.error_state)
         planned: dict[int, _MutationEdit] = {}
         installed: set[int] = set()
         claimed: set[int] = set()
@@ -421,7 +421,7 @@ class Ps1JunkStatementRemoval(Transformer):
         # function is not this pass's to reason about: pruning its body or deleting it with the
         # calls that never reach it erases the error the earlier call raised.
         unreached = cache.used_before_defined
-        plans = Ps1RemovalPlans(cache.faults, cache.world_reach)
+        plans = Ps1RemovalPlans(cache.faults, cache.world_reach, cache.error_state)
         for parent in node.walk():
             body = get_body(parent)
             if body is None:
@@ -533,7 +533,8 @@ class Ps1JunkStatementRemoval(Transformer):
         """
         if not graph.is_readable:
             return
-        commands = model_cache(self, node).commands
+        cache = model_cache(self, node)
+        commands = cache.commands
         reads_success = commands.reads_command_success()
         function_reads = commands.function_drive_reads()
         groups: dict[str, list[Node]] = {}
@@ -564,7 +565,7 @@ class Ps1JunkStatementRemoval(Transformer):
             survivors = self._survivors(get_body(node), removable_definitions)
             if pruning_erases_body(node, survivors):
                 return
-        plans = Ps1RemovalPlans(model_cache(self, node).faults, world)
+        plans = Ps1RemovalPlans(cache.faults, world, cache.error_state)
         for group in groups.values():
             for statement in group:
                 plans.propose(statement)
@@ -726,7 +727,8 @@ class Ps1DeadStoreElimination(Transformer):
         if not dead:
             self.generic_visit(node)
             return None
-        plan = Ps1RemovalPlan(node, faults=cache.faults, world=world)
+        plan = Ps1RemovalPlan(
+            node, faults=cache.faults, world=world, error_state=cache.error_state)
         for stmt in dead:
             if not isinstance(stmt, Ps1ExpressionStatement):
                 continue

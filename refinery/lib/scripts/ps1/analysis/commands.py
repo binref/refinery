@@ -189,6 +189,28 @@ class Denotation(NamedTuple):
         return self.kind in (CommandKind.ALIAS, CommandKind.FUNCTION, CommandKind.CMDLET)
 
 
+class Ps1ErrorReadSites(NamedTuple):
+    """
+    The statements of one script that read back what a raise leaves behind, split by the two channels
+    a raise writes and kept apart because they observe a raise under different rules.
+
+    `persistent` is every node-placed read of `$Error`/`$StackTrace`, the record a terminating error
+    leaves in place session-globally: a variable sigil and a cmdlet named-reference
+    (`Get-Variable Error`) alike, since both name the store and neither survives inlining as text. A
+    read of one observes a raise from anywhere forward-reachable before it.
+
+    `success` is every node-placed read of `$?`, which every statement resets, so only a read that
+    runs immediately after a raise observes it — the rule `refinery.lib.scripts.ps1.analysis.errorstate`
+    layers on the persistent one for cluster 4.
+
+    A read spelled in string text or built from a payload is in neither: it has no control-flow node
+    until it is inlined, so it has no position, and the whole-script text scan
+    `Ps1CommandModel.reads_the_error_record` owns it. These are the reads the graph places.
+    """
+    persistent: frozenset[Node]
+    success: frozenset[Node]
+
+
 class AliasDefinition(NamedTuple):
     """
     One `Set-Alias`/`New-Alias` invocation read as a binding: the lowercased alias `name`, the
@@ -558,6 +580,7 @@ class Ps1CommandModel:
         self._introspected_known = False
         self._reads_success: bool | None = None
         self._reads_error_record: bool | None = None
+        self._error_read_sites: Ps1ErrorReadSites | None = None
         self._function_drive_reads: frozenset[str] | None = None
 
     def _project_binder(self, binder: Node) -> _BinderReach:
@@ -889,6 +912,45 @@ class Ps1CommandModel:
                 ):
                     return True
         return False
+
+    def error_state_read_sites(self) -> Ps1ErrorReadSites:
+        """
+        The statements this script places that read back what a raise leaves behind — see
+        `Ps1ErrorReadSites` for the split. This is the node-placed half of the same knowledge
+        `reads_the_error_record` answers whole-script: it names the reads the control-flow graph
+        can order, so `refinery.lib.scripts.ps1.analysis.errorstate` can ask whether one runs after a
+        raise rather than merely anywhere in the file. The text and payload spellings the whole-script
+        bool also catches have no node and are deliberately absent, since a position is exactly what
+        they lack until they are inlined.
+
+        Split by channel here, where the naming knowledge already lives, so the reach model layered on
+        this composes position with a rule per channel rather than re-deriving which name is which.
+        Memoized for as long as the tree is unchanged, like every other whole-tree answer here.
+        """
+        if self._error_read_sites is None:
+            self._error_read_sites = self._collect_error_state_read_sites()
+        return self._error_read_sites
+
+    def _collect_error_state_read_sites(self) -> Ps1ErrorReadSites:
+        persistent: set[Node] = set()
+        success: set[Node] = set()
+        for node in self._root.walk():
+            if isinstance(node, Ps1Variable):
+                if node.splatted:
+                    continue
+                if node.name.lower() in _ERROR_RECORD_VARIABLES:
+                    persistent.add(node)
+                elif node.scope is Ps1ScopeModifier.NONE and node.name == _SUCCESS_VARIABLE:
+                    success.add(node)
+            elif isinstance(node, Ps1CommandInvocation):
+                for reference in named_references(node):
+                    if reference.role is not Ps1NameRole.READS:
+                        continue
+                    if reference.key in _ERROR_RECORD_VARIABLES:
+                        persistent.add(node)
+                    elif reference.key == _SUCCESS_VARIABLE:
+                        success.add(node)
+        return Ps1ErrorReadSites(frozenset(persistent), frozenset(success))
 
     def world_role(self, invocation: Ps1CommandInvocation) -> WorldRole:
         """
