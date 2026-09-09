@@ -789,6 +789,96 @@ class TestADegenerateFinderThatThrowsATypeErrorIsKept(TestBase):
         self.assertEqual({source: folded(source) for source in rows}, rows)
 
 
+#: A finder whose only call runs a closure that reads a `const` the closure itself declares, from a
+#: point before that declaration. Node throws a `ReferenceError` calling the finder, so a correct
+#: deobfuscation keeps the call and throws the same.
+A_FINDER_CALLING_A_CLOSURE_THAT_READS_ITS_OWN_DEAD_ZONE = (
+    'function g() { return (function () { var x = c; const c = globalThis; return c; })(); }\n'
+    'var y = g();\nconsole.log(y);\n'
+)
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAFinderReadingAnOwnedBindingsDeadZoneThroughAClosureIsKept(TestBase):
+    """
+    The finder fold keeps a call whose body directly reads a `let`/`const` in its own dead zone
+    (`JsGlobalFinderInlining` defers such a read to `dominance.past_dead_zone`). It does not keep one
+    where the dead-zone read is made by a closure the finder calls: `_FinderThrowFreedom` asks the
+    closure's `EffectSummary`, and `EffectModel` strips the bindings a function owns from its
+    `dead_zone_reads` while `read_may_throw` — which fills `throws` — does not model the dead zone, so
+    a closure reading its own `const` in its own dead zone reports neither. The call is folded and the
+    `ReferenceError` it raises in every host is dropped. Closing it needs the closure's own dead-zone
+    read to reach its summary.
+    """
+
+    @unittest.expectedFailure
+    def test_a_finder_calling_a_closure_reading_its_own_dead_zone_is_kept(self):
+        """
+        Node throws `ReferenceError: Cannot access 'c' before initialization` running the input; a
+        correct deobfuscation keeps the call and throws the same, so the two agree.
+        """
+        source = A_FINDER_CALLING_A_CLOSURE_THAT_READS_ITS_OWN_DEAD_ZONE
+        self.assertEqual(before_and_after(source), (('', 'ReferenceError'), ('', 'ReferenceError')))
+
+
+#: A finder whose one global-valued `return` sits in a `try` block that a caught throw skips: reading
+#: `window.p` throws where the host lacks `window`, the empty `catch` swallows it, and the finder
+#: returns `undefined` rather than a global object. Node prints `undefined`, so a correct
+#: deobfuscation keeps the call and prints the same.
+A_FINDER_WHOSE_GLOBAL_RETURN_A_CAUGHT_THROW_SKIPS = (
+    'function g() { try { window.p; return self; } catch (e) {} }\n'
+    'var x = g();\nconsole.log(typeof x);\n'
+)
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAFinderWhoseGlobalReturnACaughtThrowSkipsIsKept(TestBase):
+    """
+    The finder fold recognizes a function as global-object-valued from its `return` expressions, but a
+    `return` inside a `try` block need not be reached: a throw earlier in the block sends control to a
+    catching handler that returns nothing, so the finder answers `undefined` in a host where the block
+    throws. Folding its call to `globalThis` then substitutes a global object for `undefined` — a value
+    divergence, not a dropped throw. Recognition would have to see that a global-valued return the
+    finder relies on is not guaranteed to run.
+    """
+
+    @unittest.expectedFailure
+    def test_a_finder_whose_global_return_is_skipped_by_a_caught_throw_is_kept(self):
+        """
+        Node prints `undefined` running the input (the caught throw skips `return self`); a correct
+        deobfuscation keeps the call and prints the same, so the two agree.
+        """
+        source = A_FINDER_WHOSE_GLOBAL_RETURN_A_CAUGHT_THROW_SKIPS
+        self.assertEqual(before_and_after(source), (('undefined\n', None), ('undefined\n', None)))
+
+
+#: A reflective `eval` reached through a host-conditional alias base. `window.eval(code)` reads
+#: `window` before the call, so where the host lacks it (Node) the whole statement throws a
+#: `ReferenceError`. A correct deobfuscation keeps the call and throws the same.
+AN_INDIRECT_EVAL_THROUGH_A_HOST_CONDITIONAL_ALIAS = "window.eval('console.log(1);');\n"
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestAnIndirectEvalThroughAHostConditionalAliasKeepsItsBaseThrow(TestBase):
+    """
+    `JsReflectionInlining` folds `<alias>.eval(code)` to the code it runs, discarding the base read.
+    For `globalThis` that base resolves in every host and the fold is sound, but for a host-conditional
+    alias (`window`, `self`, `top`, `frames`, `global`) the base read throws a `ReferenceError` where
+    the host lacks the name, and discarding it drops that throw — the same base-read gate the finder
+    fold, the alias-member collapse, and the dead-write sweep already apply, not yet applied to the
+    reflective-inline site. An analyst who names the host with a pin recovers the resolved reading.
+    """
+
+    @unittest.expectedFailure
+    def test_an_indirect_eval_through_a_host_conditional_alias_is_kept(self):
+        """
+        Node throws `ReferenceError: window is not defined` running the input; a correct deobfuscation
+        keeps the call and throws the same, so the two agree.
+        """
+        source = AN_INDIRECT_EVAL_THROUGH_A_HOST_CONDITIONAL_ALIAS
+        self.assertEqual(before_and_after(source), (('', 'ReferenceError'), ('', 'ReferenceError')))
+
+
 #: A program reading a `let` or `const` binding from a point its declaration has not run past,
 #: mapped to the behavior Node gives it. The read is reached four ways: through the initializer of a
 #: later declarator, through an assignment, through `typeof`, and with no function in the file.

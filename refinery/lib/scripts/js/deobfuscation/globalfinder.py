@@ -65,7 +65,6 @@ from refinery.lib.scripts.js.model import (
     JsSequenceExpression,
     JsStringLiteral,
     JsThisExpression,
-    JsThrowStatement,
     JsTryStatement,
     JsUnaryExpression,
     JsUpdateExpression,
@@ -353,14 +352,24 @@ class _FinderThrowFreedom:
     `frames`, `global`) on a path some host runs would have that throw silently dropped.
 
     A read of such an alias is safe only where a host lacking it never evaluates the read: past a
-    `globalThis` short-circuit that leaves it unevaluated, inside a `try` that catches, after an
-    unconditional `return` that makes it unreachable, or as a `typeof`/`delete` operand, which
-    `SemanticModel.read_may_throw` already answers cannot throw. `globalThis` and any bound local read
-    the same way. The host-existence fact is not re-encoded here: each read defers to `read_may_throw`,
-    each called closure to `EffectSummary.throws` for the host reads it makes and to the dominance model
-    for a dead-zone read it defers, so this judgment is only the control flow deciding which of those
-    reads a lacking host reaches. A construct not modelled here is refused, keeping the fold sound at the
-    cost of at most a fold a host pin would recover.
+    `globalThis` short-circuit that leaves it unevaluated, inside a `try` whose handler catches the
+    throw, after an unconditional `return` that makes it unreachable, or as a `typeof`/`delete` operand,
+    which `SemanticModel.read_may_throw` already answers cannot throw. `globalThis` and any bound local
+    read the same way. A read of a `let`/`const`/`class` the finder itself declares throws while it
+    stands in that binding's temporal dead zone, a `ReferenceError` in every host, so a bare read defers
+    to `dominance.past_dead_zone` exactly as a called closure's dead-zone read does. The host-existence
+    fact is not re-encoded here: each read defers to `read_may_throw`, each called closure to
+    `EffectSummary.throws` for the host reads it makes and to the dominance model for a dead-zone read it
+    defers, so this judgment is only the control flow deciding which of those reads a lacking host
+    reaches. A construct not modelled here is refused, keeping the fold sound at the cost of at most a
+    fold a host pin would recover; a binding target that is not a plain identifier — a destructuring or
+    defaulted parameter, declarator, or catch clause, whose defaults and computed keys evaluate reads a
+    lacking host reaches — is one such refusal.
+
+    A `try` reaches its handler on any throw its block raises, not only a `ReferenceError`, and the walk
+    proves only `ReferenceError`-freedom, never that the block cannot throw at all. So a present handler
+    may run, and its body is what must be `ReferenceError`-free; the block behind a handler is left
+    unwalked, since the handler catches whatever it raises.
 
     One host read it cannot see through is one a called closure makes inside its own catching `try`:
     `EffectSummary.throws` is flow-insensitive and reports that read, so a finder calling such a closure
@@ -376,6 +385,8 @@ class _FinderThrowFreedom:
         self.dominance = dominance
 
     def certifies(self) -> bool:
+        if not all(isinstance(param, JsIdentifier) for param in getattr(self.func, 'params', ())):
+            return False
         body = getattr(self.func, 'body', None)
         return isinstance(body, JsBlockStatement) and self._stmts(body.body)
 
@@ -403,7 +414,10 @@ class _FinderThrowFreedom:
         if isinstance(stmt, JsExpressionStatement):
             return self._expr(stmt.expression)
         if isinstance(stmt, JsVariableDeclaration):
-            return all(self._expr(d.init) for d in stmt.declarations)
+            return all(
+                isinstance(d.id, JsIdentifier) and self._expr(d.init)
+                for d in stmt.declarations
+            )
         if isinstance(stmt, JsBlockStatement):
             return self._stmts(stmt.body)
         if isinstance(stmt, JsLabeledStatement):
@@ -416,8 +430,12 @@ class _FinderThrowFreedom:
             )
         if isinstance(stmt, JsTryStatement):
             handler = stmt.handler
-            trapped = handler is not None and self._stmt(handler.body)
-            block_ok = trapped or self._stmt(stmt.block)
+            if handler is not None:
+                if handler.param is not None and not isinstance(handler.param, JsIdentifier):
+                    return False
+                block_ok = self._stmt(handler.body)
+            else:
+                block_ok = self._stmt(stmt.block)
             return block_ok and self._stmt(stmt.finalizer)
         if isinstance(stmt, JsForStatement):
             init = stmt.init
@@ -441,7 +459,10 @@ class _FinderThrowFreedom:
             return True
         expr = strip_parens(expr)
         if isinstance(expr, JsIdentifier):
-            return not self.model.read_may_throw(expr)
+            if self.model.read_may_throw(expr):
+                return False
+            binding = self.model.lexical_binding_read(expr)
+            return binding is None or self.dominance.past_dead_zone(binding, expr)
         if isinstance(expr, (
             JsThisExpression,
             JsNumericLiteral,

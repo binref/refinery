@@ -391,3 +391,160 @@ class TestGlobalFinderInlining(TestJsDeobfuscator):
             '''
         )
         self.assertEqual(source, self._find(source))
+
+    def test_a_read_in_the_finder_bodys_own_dead_zone_is_not_substituted(self):
+        """
+        The finder reads `c` before the `const c` that declares it, so calling it throws a
+        `ReferenceError` (Node: `Cannot access 'c' before initialization`) in every host. Folding the
+        call to `globalThis` would drop that throw; the call is kept. The dead zone of the finder's own
+        binding is what the substitution must see, exactly as it does for a called closure.
+        """
+        source = inspect.cleandoc(
+            '''
+            function g() {
+              var r = c;
+              const c = globalThis;
+              return r;
+            }
+            var x = g();
+            '''
+        )
+        self.assertEqual(source, self._find(source))
+
+    def test_a_read_past_the_finder_bodys_own_declaration_is_substituted(self):
+        """
+        The control for the own-dead-zone case: the same read runs after `const c`, past the dead zone,
+        so it cannot throw and the finder folds.
+        """
+        source = 'function g() { const c = globalThis; var r = c; return r; } var x = g();'
+        self.assertEqual(self._find(source), inspect.cleandoc(
+            '''
+            function g() {
+              const c = globalThis;
+              var r = c;
+              return r;
+            }
+            var x = globalThis;
+            '''
+        ))
+
+    def test_a_captured_read_reached_before_its_declaration_is_not_substituted(self):
+        """
+        The finder reads the outer `const G` in a body statement, but its only call runs before that
+        declaration, so calling it throws a `ReferenceError` in every host. The call is kept.
+        """
+        source = inspect.cleandoc(
+            '''
+            function g() {
+              var u = G + 1;
+              return globalThis;
+            }
+            g();
+            const G = 5;
+            '''
+        )
+        self.assertEqual(source, self._find(source))
+
+    def test_a_captured_read_past_its_declaration_is_substituted(self):
+        """
+        The control: the same finder, with `const G` declared before the call, so the read runs past the
+        dead zone and the finder folds.
+        """
+        source = 'const G = 5; function g() { var u = G + 1; return globalThis; } g();'
+        self.assertEqual(self._find(source), inspect.cleandoc(
+            '''
+            const G = 5;
+            function g() {
+              var u = G + 1;
+              return globalThis;
+            }
+            globalThis;
+            '''
+        ))
+
+    def test_a_parameter_default_reading_a_host_alias_is_not_substituted(self):
+        """
+        A finder call the fold makes takes no arguments, so every parameter default runs; the default
+        `window` throws a `ReferenceError` where the host lacks it (Node), so the call is kept.
+        """
+        source = inspect.cleandoc(
+            '''
+            function g(a = window) {
+              return globalThis;
+            }
+            g();
+            '''
+        )
+        self.assertEqual(source, self._find(source))
+
+    def test_a_parameter_the_body_ignores_does_not_block_substitution(self):
+        """
+        The control: a plain parameter evaluates no default, so it reads nothing a host may lack and the
+        finder folds.
+        """
+        source = 'function g(a) { return globalThis; } g();'
+        self.assertEqual(self._find(source), inspect.cleandoc(
+            '''
+            function g(a) {
+              return globalThis;
+            }
+            globalThis;
+            '''
+        ))
+
+    def test_a_destructuring_default_reading_a_host_alias_is_not_substituted(self):
+        """
+        Destructuring `[]` leaves `a` undefined, so its default `window` is evaluated and throws a
+        `ReferenceError` where the host lacks it (Node). The declarator target is not a plain identifier,
+        so the finder is kept.
+        """
+        source = inspect.cleandoc(
+            '''
+            function g() {
+              var [a = window] = [];
+              return globalThis;
+            }
+            g();
+            '''
+        )
+        self.assertEqual(source, self._find(source))
+
+    def test_a_catch_handler_reading_a_host_alias_is_not_substituted(self):
+        """
+        The `try` block throws a `TypeError` reading `null.x`, so the handler runs and its `return
+        window` throws a `ReferenceError` where the host lacks `window` (Node). A present handler runs on
+        any block throw, so its body must be throw-free; here it is not, and the finder is kept.
+        """
+        source = inspect.cleandoc(
+            '''
+            function g() {
+              try {
+                null.x;
+                return globalThis;
+              } catch (e) {
+                return window;
+              }
+            }
+            g();
+            '''
+        )
+        self.assertEqual(source, self._find(source))
+
+    def test_a_catch_parameter_default_reading_a_host_alias_is_not_substituted(self):
+        """
+        The block throws, the handler runs, and destructuring the thrown value assigns `e` its default
+        `window`, which throws a `ReferenceError` where the host lacks it (Node). The catch parameter is
+        not a plain identifier, so the finder is kept.
+        """
+        source = inspect.cleandoc(
+            '''
+            function g() {
+              try {
+                throw 0;
+              } catch ({ e = window }) {}
+              return globalThis;
+            }
+            g();
+            '''
+        )
+        self.assertEqual(source, self._find(source))
