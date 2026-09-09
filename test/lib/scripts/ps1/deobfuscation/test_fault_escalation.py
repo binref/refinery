@@ -709,6 +709,12 @@ class TestPs1AReadOfErrorObservesARaiseNoHandlerTook(_Ps1FaultEscalation):
             Write-Host $Error.Count
         """)
 
+    def test_a_splatted_read_of_the_error_record_after_the_raise_keeps_it(self):
+        self._assertKept(F"""
+            {_RAISE}
+            Write-Output @Error
+        """)
+
     def test_the_identical_error_read_moved_before_the_raise_leaves_it_removable(self):
         self._assertDeobfuscatesTo(F"""
             Write-Host $Error[0].Exception.Message
@@ -720,14 +726,16 @@ class TestPs1AReadOfErrorObservesARaiseNoHandlerTook(_Ps1FaultEscalation):
         """)
 
 
-class TestPs1AReadOfErrorInACalledFunctionObservesTheRaise(_Ps1FaultEscalation):
+class TestPs1AReadOfErrorInASeparateBodyIsAKnownInterproceduralGap(_Ps1FaultEscalation):
     """
-    `$Error` is session-global, so a read inside a function called after the raise observes the
-    record on a 5.1 host as surely as one written beside it — deleting the raise empties what the
-    call reads. The error-record channel is intraprocedural: it orders the read against the raise in
-    the raiser's own body and a read in the callee's body is out of that body's reach, so this raise
-    is deleted although the host keeps it. Closing it needs the call graph the interprocedural
-    milestone (cluster 1f) builds; until then the delete is tracked here.
+    `$Error` is session-global, so a read reached after the raise observes the record on a 5.1 host
+    as surely as one written beside it — deleting the raise empties what the read sees. The
+    error-record channel orders reads against the raise per body, so a read the graphs place in a
+    *different* body than the raiser's is out of reach and the raise is deleted although the host
+    keeps it. That is one gap with several spellings — a called function, an inline or pipeline
+    scriptblock, a dot-sourced block — each of which owns its own control-flow graph. Closing it
+    needs the interprocedural milestone (cluster 1f); until then each spelling's delete is tracked
+    here so none is merely mentioned.
     """
 
     @unittest.expectedFailure
@@ -736,6 +744,20 @@ class TestPs1AReadOfErrorInACalledFunctionObservesTheRaise(_Ps1FaultEscalation):
             function Show-Count {{ Write-Host ($Error.Count) }}
             {_RAISE}
             Show-Count
+        """)
+
+    @unittest.expectedFailure
+    def test_a_raise_before_a_pipeline_scriptblock_that_reads_error_is_kept(self):
+        self._assertKept(F"""
+            {_RAISE}
+            1..3 | ForEach-Object {{ Write-Host ($Error.Count) }}
+        """)
+
+    @unittest.expectedFailure
+    def test_a_raise_before_a_dot_sourced_block_that_reads_error_is_kept(self):
+        self._assertKept(F"""
+            {_RAISE}
+            . {{ Write-Host ($Error.Count) }}
         """)
 
 

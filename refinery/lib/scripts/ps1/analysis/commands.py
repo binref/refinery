@@ -936,8 +936,6 @@ class Ps1CommandModel:
         success: set[Node] = set()
         for node in self._root.walk():
             if isinstance(node, Ps1Variable):
-                if node.splatted:
-                    continue
                 if node.name.lower() in _ERROR_RECORD_VARIABLES:
                     persistent.add(node)
                 elif node.scope is Ps1ScopeModifier.NONE and node.name == _SUCCESS_VARIABLE:

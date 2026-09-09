@@ -61,9 +61,10 @@ class Ps1ErrorStateReach:
     ):
         """
         `persistent_placements` pairs each placed `$Error`/`$StackTrace` read with the identity of
-        the graph that places it, so a read in a called function's body is never mistaken for one
-        reachable in the raiser's own. `success_sites` is the `$?` channel, received and held for
-        cluster 4, which places and queries it the way this places and queries the persistent one.
+        the graph that places it, so a read in a separate body — a called function, an inline or
+        pipeline scriptblock, a dot-sourced block — is never mistaken for one reachable in the
+        raiser's own. `success_sites` is the `$?` channel, received and held for cluster 4, which
+        places and queries it the way this places and queries the persistent one.
         """
         self._persistent_placements = persistent_placements
         self._success_sites = success_sites
@@ -78,11 +79,14 @@ class Ps1ErrorStateReach:
         preserving. True when some placed `$Error`/`$StackTrace` read, other than one *node* itself
         stands for, is forward-reachable from *node* in *node*'s own graph.
 
-        A read in another graph — a called function's body — is not reachable here, because per-body
-        reachability stops at the call site; `$Error` being session-global makes that a known
-        interprocedural gap this model does not close, not a soundness claim. A *node* the graphs
-        place nowhere answers `False`, the fail-open pole the veto reads as "keep on the handler
-        question alone".
+        Reachability is per body, so a read the graphs place in a *different* body than *node*'s is
+        not seen here: a called function's body, an inline or pipeline scriptblock (`& { }`,
+        `1..3 | ForEach-Object { }`), and a dot-sourced block (`. { }`) each own their own graph.
+        `$Error` is session-global, so such a read does observe the raise on a 5.1 host and deleting
+        the raiser is unsound — a known limit this model does not close, the same one the
+        interprocedural milestone (cluster 1f) closes and which the fixture tests track by xfail. A
+        *node* the graphs place nowhere answers `False`, the fail-open pole the veto reads as "keep on
+        the handler question alone".
         """
         located = self._control_flow.locate(node)
         if located is None:

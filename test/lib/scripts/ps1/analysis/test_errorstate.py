@@ -79,6 +79,13 @@ class TestPs1PersistentReadObservedAfterAnswersFromReachability(TestBase):
         """)
         self.assertTrue(reach.persistent_read_observed_after(_raiser(tree)))
 
+    def test_a_splatted_read_of_the_record_after_the_raiser_is_observed(self):
+        tree, reach = _reach("""
+            $Null = [Int]'abc'
+            Write-Output @Error
+        """)
+        self.assertTrue(reach.persistent_read_observed_after(_raiser(tree)))
+
 
 class TestPs1TheErrorReadSitesSplitTheTwoChannels(TestBase):
     """
