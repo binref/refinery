@@ -114,6 +114,12 @@ _COMMAND_TABLE: dict[str, dict] = {
 #: reflection-only member set. The query API exposes them for the migration that consumes them.
 _VIEW_MEMBER_KINDS = frozenset({'method', 'property'})
 
+#: The members whose value the receiver's shape decides rather than anything it holds — the count of
+#: a collection and the dimension of an array. They are pure by construction, which is why the folder
+#: computes them off a literal receiver and the trap-removal reader may treat a bare read of one as
+#: droppable where it keeps a read of any other member, whose getter it cannot prove pure.
+SHAPE_MEMBERS = frozenset({'length', 'count', 'rank'})
+
 
 def _view_members(record: dict) -> dict[str, dict]:
     return {

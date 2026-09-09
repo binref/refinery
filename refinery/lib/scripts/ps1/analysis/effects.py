@@ -43,6 +43,7 @@ from refinery.lib.scripts.ps1.dotnet import Ps1TypeName
 from refinery.lib.scripts.ps1.analysis.arguments import Ps1WrittenSlots, written_slots
 from refinery.lib.scripts.ps1.analysis.callgraph import Ps1CallGraph
 from refinery.lib.scripts.ps1.analysis.faults import Ps1FaultReach, Ps1SoftStepOver
+from refinery.lib.scripts.ps1.analysis.model import occurrence_role
 from refinery.lib.scripts.ps1.analysis.values import (
     UNKNOWN,
     candidate_types,
@@ -53,6 +54,8 @@ from refinery.lib.scripts.ps1.analysis.values import (
 )
 from refinery.lib.scripts.ps1.analysis.worldflow import Ps1WorldReach
 from refinery.lib.scripts.ps1.ast import (
+    assignment_target_is_all_variables,
+    assignment_target_variables,
     extract_new_object,
     fault_operand,
     get_body,
@@ -2042,25 +2045,35 @@ class _ContinuationReads:
     change while the graph stands.
 
     `by_name` maps a name to the graph nodes whose statements read it — the statement each read sits
-    in, resolved once by climbing to the first placed ancestor. `in_a_body` is the names read inside a
-    function or stored scriptblock, which a call on the continuation may run wherever the body sits.
-    `dynamic_readers` is the nodes of commands that read a variable named by data, which may read any
-    name; a continuation reaching one keeps every skipped write.
+    in, resolved once by climbing to the first placed ancestor. An occurrence counts as a read when
+    it `occurrence_role.observes` the value, so a `++`/`--`, a compound assignment and a store
+    through an index or member read the name as well as write it; only a plain `=` store, a
+    `foreach` variable and a parameter replace the value without reading it. `in_a_body` is the
+    names read inside a function or stored scriptblock, which a call on the continuation may run
+    wherever the body sits. `dynamic_readers` is the nodes of commands that read a variable named by
+    data, which may read any name; a continuation reaching one keeps every skipped write.
+    `dynamic_reader_in_a_body` marks such a command written inside a stored body, which a call on
+    the continuation may run from anywhere, so it keeps every skipped write the way `in_a_body`
+    keeps the names read there.
     """
 
     def __init__(self, graph: ControlFlowGraph):
         self.by_name: dict[str, set[int]] = {}
         self.in_a_body: set[str] = set()
         self.dynamic_readers: set[int] = set()
+        self.dynamic_reader_in_a_body = False
         for node in tree_root(graph.owner).walk():
             if isinstance(node, Ps1CommandInvocation):
                 resolved = resolve_command_name(node)
-                if resolved is not None and resolved.lower() in _DYNAMIC_VARIABLE_READERS:
-                    placed = _placed_statement(node, graph)
-                    if placed is not None:
-                        self.dynamic_readers.add(placed)
+                if resolved is not None and resolved in _DYNAMIC_VARIABLE_READERS:
+                    if _within_a_stored_body(node):
+                        self.dynamic_reader_in_a_body = True
+                    else:
+                        placed = _placed_statement(node, graph)
+                        if placed is not None:
+                            self.dynamic_readers.add(placed)
                 continue
-            if not isinstance(node, Ps1Variable) or _writes_the_variable(node):
+            if not isinstance(node, Ps1Variable) or not occurrence_role(node).observes:
                 continue
             name = node.name.lower()
             if _within_a_stored_body(node):
@@ -2071,7 +2084,7 @@ class _ContinuationReads:
                 self.by_name.setdefault(name, set()).add(placed)
 
     def read_on(self, name: str, continuation: frozenset[int]) -> bool:
-        if name in self.in_a_body:
+        if self.dynamic_reader_in_a_body or name in self.in_a_body:
             return True
         if not self.dynamic_readers.isdisjoint(continuation):
             return True
@@ -2130,12 +2143,23 @@ def _skipped_statement_is_observable(
     Whether *element*, run on the untrapped fall-through the trap skips, does something observable.
 
     A statement that emits to the output stream is observable outright. Otherwise it is observable
-    only for a *real* effect — a command, a method call, or a write of a name read on the continuation
-    — never merely because it *might throw*: a failing cast or a member read that faults is the trap's
-    own business, not an output the run produces, so a pure loop condition `$i -lt $x.Length` and a
-    dead counter `$i++` are not observable although neither is side-effect-free. This is why the
-    reducible-write test walks for effects rather than reading `is_side_effect_free`, whose purity
-    folds in the fault potential the trap already accounts for.
+    only for a *real* effect — a command, a method call, a read of a member whose getter is not
+    provably pure, or a write the continuation can see — never merely because it *might throw*: a
+    failing cast is the trap's own business, not an output the run produces, so a pure loop condition
+    `$i -lt $x.Length` and a dead counter `$i++` are not observable although neither is
+    side-effect-free. This is why the reducible-write test walks for effects rather than reading
+    `is_side_effect_free`, whose purity folds in the fault potential the trap already accounts for.
+
+    A bare member read is a real effect unless the member is a shape member — `Length`, `Count` or
+    `Rank`, the ones `data.SHAPE_MEMBERS` names — whose value the receiver's shape decides and whose
+    getter is pure. Every other property may run a side-effecting getter this analysis cannot read,
+    so a resuming trap over one is kept; the shape members are what keep the payload loop's
+    `($x).Length` droppable.
+
+    A write is one the continuation can see when it stores a plain local a later statement reads, or
+    when `_skipped_writes` cannot prove it dead — a scope- or drive-qualified store, a store through
+    an index or member, or a `$Matches`-writing `-match` — whose reads may sit where the reach never
+    looks, so it is kept rather than guessed dead.
     """
     if isinstance(element, Ps1ExpressionStatement):
         effect = statement_effect(element, world)
@@ -2146,29 +2170,53 @@ def _skipped_statement_is_observable(
     for node in element.walk():
         if isinstance(node, (Ps1CommandInvocation, Ps1InvokeMember)):
             return True
-    return any(
-        reads.read_on(name, divergence.continuation)
-        for name in _local_writes(element)
-    )
+        if isinstance(node, Ps1MemberAccess):
+            member = get_member_name(node.member)
+            if member is None or member.lower() not in data.SHAPE_MEMBERS:
+                return True
+    escapes, names = _skipped_writes(element)
+    if escapes:
+        return True
+    return any(reads.read_on(name, divergence.continuation) for name in names)
 
 
-def _local_writes(element: Node) -> list[str]:
+def _skipped_writes(element: Node) -> tuple[bool, list[str]]:
     """
-    The unqualified local names *element* writes — an assignment target or a `++`/`--` operand that
-    is a plain `$name`. A scope-qualified target (`$script:`/`$global:`/`$env:`) is deliberately
-    absent: its reads may sit in a scope or a place the reach never visits, so it is never counted
-    dead, and leaving it out of the writes makes a statement that writes only such a name reach the
-    caller with no name to prove dead — kept, which is the sound direction.
+    What a skipped statement writes, split into the part the continuation's reads can prove dead and
+    the part they cannot.
+
+    The second element lists the unqualified local names *element* assigns or increments — a
+    plain `$name` an assignment stores into (a multi-assignment slot and a `[Type]$name` target
+    among them, which `assignment_target_variables` resolves) or a `++`/`--` operand — whose
+    liveness on the continuation decides the write. The first is `True` when *element* performs a
+    write no continuation read can be matched against: a scope- or drive-qualified store
+    (`$global:`/`$script:`/`$env:`), a store through an index or member (`$a[0] = …`, `$o.P = …`),
+    a multi-assignment slot that is not a plain variable, a qualified `++`/`--`, or a
+    `$Matches`-writing `-match`. A qualified target's reads may sit in a scope or a place the reach
+    never visits, and a store through a value mutates an object the name-liveness index does not
+    track, so neither can be called dead — the trap over it is kept.
     """
+    escapes = False
     names: list[str] = []
     for node in element.walk():
-        if isinstance(node, Ps1AssignmentExpression) and isinstance(node.target, Ps1Variable):
-            if _is_plain_local(node.target):
-                names.append(node.target.name.lower())
-        if isinstance(node, Ps1UnaryExpression) and node.operator in ('++', '--'):
-            if isinstance(node.operand, Ps1Variable) and _is_plain_local(node.operand):
-                names.append(node.operand.name.lower())
-    return names
+        if isinstance(node, Ps1AssignmentExpression):
+            if not assignment_target_is_all_variables(node.target):
+                escapes = True
+            else:
+                for target in assignment_target_variables(node.target):
+                    if _is_plain_local(target):
+                        names.append(target.name.lower())
+                    else:
+                        escapes = True
+        elif isinstance(node, Ps1UnaryExpression) and node.operator in ('++', '--'):
+            operand = node.operand
+            if isinstance(operand, Ps1Variable) and _is_plain_local(operand):
+                names.append(operand.name.lower())
+            else:
+                escapes = True
+        elif isinstance(node, Ps1BinaryExpression) and node.operator.lower() in _MATCH_OPERATORS:
+            escapes = True
+    return escapes, names
 
 
 def _is_plain_local(variable: Ps1Variable) -> bool:
@@ -2178,19 +2226,6 @@ def _is_plain_local(variable: Ps1Variable) -> bool:
     from a scope or a place the reach never visits, so a write to one is never called dead here.
     """
     return variable.scope in (Ps1ScopeModifier.NONE, Ps1ScopeModifier.LOCAL) and not variable.drive
-
-
-def _writes_the_variable(variable: Ps1Variable) -> bool:
-    """
-    Whether *variable* stands in a position that writes it rather than reads it — the target of an
-    assignment or the operand of `++`/`--` — so a name search does not read a store as a use.
-    """
-    parent = variable.parent
-    if isinstance(parent, Ps1AssignmentExpression) and parent.target is variable:
-        return True
-    if isinstance(parent, Ps1UnaryExpression) and parent.operator in ('++', '--'):
-        return parent.operand is variable
-    return False
 
 
 def _within_a_stored_body(node: Node) -> bool:

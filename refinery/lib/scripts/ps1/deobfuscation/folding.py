@@ -39,7 +39,13 @@ from refinery.lib.scripts.ps1.analysis.values import (
     unwrap_to_array_literal,
 )
 from refinery.lib.scripts.ps1.ast import get_member_name, unwrap_parens
-from refinery.lib.scripts.ps1.data import ENCODING_MAP, instance_overloads, named_type, resolve_type
+from refinery.lib.scripts.ps1.data import (
+    ENCODING_MAP,
+    SHAPE_MEMBERS,
+    instance_overloads,
+    named_type,
+    resolve_type,
+)
 from refinery.lib.scripts.ps1.dotnet import Ps1TypeName
 from refinery.lib.scripts.ps1.deobfuscation.constants import PS1_ENV_CONSTANTS
 from refinery.lib.scripts.ps1.deobfuscation.helpers import (
@@ -234,17 +240,6 @@ def _integer(value: int) -> Ps1IntegerLiteral:
     return Ps1IntegerLiteral(raw=str(value))
 
 
-#: The members whose value is decided by the shape of the receiver rather than by anything the
-#: receiver holds, and what each answers. Dispatch is on the member and never on the type its read
-#: produces: `Rank`, `Length` and `Count` all produce an `Int32`, so a gate that asked only for an
-#: integer result answered `Rank` with the element count — 5.1 says 1, because `Rank` is the number
-#: of dimensions of the array and not the number of things in it.
-#:
-#: Each answer is measured on a 5.1 host; see `TYPE_TRANSCRIPTS` in
-#: `test.lib.scripts.ps1.test_oracle`. The one that reads oddly is `Count` on a string, which is 1
-#: and not the character count: `Count` comes from the object adapter, which counts the value as one
-#: object, while `Length` is the string's own member.
-_SHAPE_MEMBERS = frozenset({'length', 'count', 'rank'})
 
 
 def _foreach_extracts_value(sb: Ps1ScriptBlock) -> bool:
@@ -688,7 +683,7 @@ class Ps1ConstantFolding(Transformer):
         discards are the pinned literals that let `read` answer at all, so it never refuses.
         """
         name = member.lower()
-        if name not in _SHAPE_MEMBERS:
+        if name not in SHAPE_MEMBERS:
             return None
         array = unwrap_to_array_literal(obj)
         if array is not None:

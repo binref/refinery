@@ -604,6 +604,70 @@ class TestPs1AResumingTrapOverASoftErrorInABracketedStatementListIsKept(TestBase
         self.assertTrue(self._trap_removal_is_observed(
             "trap { continue }; $x = $(for ($i = 0; $i -lt 1; $i++) { [int]'a' }; 'in'); Write-Host $x"))
 
+    def test_a_skipped_global_write_read_on_the_continuation_keeps_the_trap(self):
+        """
+        With the `trap`, the soft error resumes past the assignment and `$global:g` is never set;
+        without it 5.1 steps over to `$global:g = 5` within the bracket and sets it. `$global:g` is
+        read on the continuation, so the two runs differ there and the trap is load bearing. A
+        scope-qualified store is not a name the reach can prove dead, so it keeps the trap.
+        """
+        self.assertTrue(self._trap_removal_is_observed(
+            "trap { continue }; $x = $([int]'a'; $global:g = 5); Write-Host $global:g"))
+
+    def test_a_skipped_index_write_read_on_the_continuation_keeps_the_trap(self):
+        """
+        The skipped `$a[0] = 9` mutates the array `$a` on the untrapped fall-through; `$a[0]` on the
+        continuation reads that mutation, so the trap that would resume past it is load bearing. A
+        store through an index writes memory the name-liveness index does not track, so it is kept.
+        """
+        self.assertTrue(self._trap_removal_is_observed(
+            "trap { continue }; $a = @(1, 2); $x = $([int]'a'; $a[0] = 9); $a[0]"))
+
+    def test_a_skipped_member_write_read_on_the_continuation_keeps_the_trap(self):
+        """
+        As the index store, one level of member access: `$o.P = 9` is skipped by the resuming trap
+        and `$o.P` reads it on the continuation, so the runs differ and the trap is load bearing.
+        """
+        self.assertTrue(self._trap_removal_is_observed(
+            "trap { continue }; $o = [pscustomobject]@{ P = 1 }; $x = $([int]'a'; $o.P = 9); $o.P"))
+
+    def test_a_skipped_write_read_by_an_increment_on_the_continuation_keeps_the_trap(self):
+        """
+        `$q++` on the continuation reads `$q` before it writes it, so the skipped `$q = 99` is read
+        there: with the `trap` the increment yields `0` off an unset `$q`, without it `99`. A
+        read-modify-write is a read of the name it updates, so the write it observes keeps the trap.
+        """
+        self.assertTrue(self._trap_removal_is_observed(
+            "trap { continue }; $x = $([int]'a'; $q = 99); Write-Host ($q++)"))
+
+    def test_a_skipped_write_a_get_variable_in_a_body_may_read_keeps_the_trap(self):
+        """
+        `Get-Variable y` reads a variable named by data, so a call to `f` on the continuation may
+        read the skipped `$y = 5` from whatever scope it runs in. A dynamic reader written inside a
+        stored body is reachable through any call, so it keeps every skipped write.
+        """
+        self.assertTrue(self._trap_removal_is_observed(
+            "trap { continue }; function f { Get-Variable y }; $x = $([int]'a'; $y = 5); f"))
+
+    def test_a_skipped_read_of_a_non_shape_member_keeps_the_trap(self):
+        """
+        `$proc.Path` runs a property getter this analysis cannot prove pure — an Extended Type System
+        getter may shell out — so the trap that skips it is load bearing: untrapped the getter runs,
+        trapped it does not. Only a command and a method call used to be weighed here; a bare member
+        read is one too.
+        """
+        self.assertTrue(self._trap_removal_is_observed(
+            "trap { continue }; $x = $([int]'a'; $proc.Path); Write-Host 'z'"))
+
+    def test_a_skipped_read_of_a_shape_member_lets_the_trap_go(self):
+        """
+        `Length`, `Count` and `Rank` are decided by the receiver's shape and read no getter, so a
+        skipped read of one does nothing a run can see and the trap over it may go — the distinction
+        that keeps the payload loop's `($x).Length` foldable rather than pinning its trap.
+        """
+        self.assertFalse(self._trap_removal_is_observed(
+            "trap { continue }; $x = $([int]'a'; $y.Length); Write-Host 'z'"))
+
     def test_a_subexpression_that_raises_no_soft_error_lets_the_trap_go(self):
         self.assertFalse(self._trap_removal_is_observed(
             "trap { continue }; $x = $('a'; 'b')"))

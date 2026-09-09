@@ -51,7 +51,7 @@ from refinery.lib.scripts.ps1.ast import (
     unwrap_assignment_target,
     unwrap_parens,
 )
-from refinery.lib.scripts.ps1.data import PS1_KNOWN_VARIABLES
+from refinery.lib.scripts.ps1.data import PS1_KNOWN_VARIABLES, SHAPE_MEMBERS
 from refinery.lib.scripts.ps1.deobfuscation.removal import Ps1RemovalPlans
 from refinery.lib.scripts.ps1.deobfuscation.substitution import substitute, substitute_field
 from refinery.lib.scripts.ps1.model import (
@@ -175,12 +175,6 @@ _PS1_SKIP_VARIABLES = (
 _PS1_ENGINE_VARIABLES = _PS1_AUTOMATIC_VARIABLES | frozenset(_PS1_DEFAULT_VARIABLES)
 
 _MIN_EXPANSION_BUDGET = 256
-
-#: The members whose value the receiver's shape decides, folded to a small integer by
-#: `refinery.lib.scripts.ps1.deobfuscation.folding.Ps1ConstantFolding._fold_shape_member`. A
-#: reference at one of these positions is what the expansion budget charges for the digits of the
-#: count rather than for the whole collection it reads.
-_SHAPE_MEMBERS = frozenset({'length', 'count', 'rank'})
 
 
 def _collect_mutated_variables(root: Node) -> set[str]:
@@ -493,7 +487,7 @@ def _shape_member_of(var: Ps1Variable) -> str | None:
     if name is None:
         return None
     lowered = name.lower()
-    return lowered if lowered in _SHAPE_MEMBERS else None
+    return lowered if lowered in SHAPE_MEMBERS else None
 
 
 def _accumulation_terms(node: Node) -> tuple[str, Expression] | None:

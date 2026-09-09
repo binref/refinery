@@ -368,16 +368,10 @@ class Ps1RemovalPlan:
         if faults is None:
             return True
         if _removes_a_handler(proposal.statement):
-            observed = self._soft_step_over_observed
-            if observed is None:
-                return faults.removing_a_handler_is_observed(
-                    proposal.statement,
-                    lambda raiser: statement_can_raise(raiser, faults, self.world),
-                )
             return faults.removing_a_handler_is_observed(
                 proposal.statement,
                 lambda raiser: statement_can_raise(raiser, faults, self.world),
-                observed,
+                self._soft_step_over_observed or (lambda _handler: True),
             )
         if not self.removals_may_fault:
             return False
