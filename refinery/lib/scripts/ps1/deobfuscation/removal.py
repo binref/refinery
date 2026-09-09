@@ -189,10 +189,10 @@ class Ps1RemovalPlan:
 
         `error_state` is the third model the veto may consult, a sibling of `world`: whether a read
         of the record a raise leaves in `$Error`/`$StackTrace` is reachable after the raiser, which
-        keeps a raise no handler took but a later read observes. Optional and threaded exactly where
-        `world` is, because it answers the same removals — those a pass cannot rule out as fault-free.
-        Absent, that channel is skipped and the veto asks the handler question alone, which is what
-        every pass got before the model existed — see
+        keeps a raise no handler took but a later read observes. Optional and threaded exactly
+        where `world` is, because it answers the same removals — those a pass cannot rule out as
+        fault-free. Absent, that channel is skipped and the veto asks the handler question alone,
+        which is what every pass got before the model existed — see
         `refinery.lib.scripts.ps1.analysis.effects.deletion_is_observable`.
 
         `soft_step_over_observed` is the reader the `trap` transpose is handed for its step-over

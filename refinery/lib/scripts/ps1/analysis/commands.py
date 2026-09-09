@@ -191,8 +191,8 @@ class Denotation(NamedTuple):
 
 class Ps1ErrorReadSites(NamedTuple):
     """
-    The statements of one script that read back what a raise leaves behind, split by the two channels
-    a raise writes and kept apart because they observe a raise under different rules.
+    The statements of one script that read back what a raise leaves behind, split by the two
+    channels a raise writes and kept apart because they observe a raise under different rules.
 
     `persistent` is every node-placed read of `$Error`/`$StackTrace`, the record a terminating error
     leaves in place session-globally: a variable sigil and a cmdlet named-reference
@@ -200,8 +200,8 @@ class Ps1ErrorReadSites(NamedTuple):
     read of one observes a raise from anywhere forward-reachable before it.
 
     `success` is every node-placed read of `$?`, which every statement resets, so only a read that
-    runs immediately after a raise observes it — the rule `refinery.lib.scripts.ps1.analysis.errorstate`
-    layers on the persistent one for cluster 4.
+    runs immediately after a raise observes it — the rule
+    `refinery.lib.scripts.ps1.analysis.errorstate` layers on the persistent one for cluster 4.
 
     A read spelled in string text or built from a payload is in neither: it has no control-flow node
     until it is inlined, so it has no position, and the whole-script text scan
@@ -918,14 +918,15 @@ class Ps1CommandModel:
         The statements this script places that read back what a raise leaves behind — see
         `Ps1ErrorReadSites` for the split. This is the node-placed half of the same knowledge
         `reads_the_error_record` answers whole-script: it names the reads the control-flow graph
-        can order, so `refinery.lib.scripts.ps1.analysis.errorstate` can ask whether one runs after a
-        raise rather than merely anywhere in the file. The text and payload spellings the whole-script
-        bool also catches have no node and are deliberately absent, since a position is exactly what
-        they lack until they are inlined.
+        can order, so `refinery.lib.scripts.ps1.analysis.errorstate` can ask whether one runs
+        after a raise rather than merely anywhere in the file. The text and payload spellings the
+        whole-script bool also catches have no node and are deliberately absent, since a position
+        is exactly what they lack until they are inlined.
 
-        Split by channel here, where the naming knowledge already lives, so the reach model layered on
-        this composes position with a rule per channel rather than re-deriving which name is which.
-        Memoized for as long as the tree is unchanged, like every other whole-tree answer here.
+        Split by channel here, where the naming knowledge already lives, so the reach model
+        layered on this composes position with a rule per channel rather than re-deriving which
+        name is which. Memoized for as long as the tree is unchanged, like every other whole-tree
+        answer here.
         """
         if self._error_read_sites is None:
             self._error_read_sites = self._collect_error_state_read_sites()

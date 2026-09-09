@@ -239,6 +239,17 @@ class TestPs1AStatementThatRaisesIsVisibleInTheErrorRecord(_Ps1AutomaticVariable
             F'{_FAULTS}\n{_SUCCEEDS}\nWrite-Host $?',
             F'{_SUCCEEDS}\nWrite-Host $?')
 
+    @unittest.expectedFailure
+    def test_a_success_flag_read_immediately_after_the_raise_is_kept(self):
+        """
+        With nothing between the raise and the `$?` read to reset it, `$?` still reports the raise
+        on 5.1: the read prints `$false` where a script with the raise deleted prints `$true`. So
+        the raise is observable and must be kept — unlike the sibling above, whose `_SUCCEEDS`
+        resets `$?` first. Keeping it is the reset-aware `$?` query cluster 4 layers on this model;
+        until that lands the raise is deleted although the host keeps its effect, and this pins it.
+        """
+        self._assertKept(F'{_FAULTS}\nWrite-Host $?')
+
 
 class TestPs1TheTokenVariablesStayEmptyForTheWholeOfAScript(_Ps1AutomaticVariables):
     """

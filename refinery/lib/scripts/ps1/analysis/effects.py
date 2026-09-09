@@ -2026,11 +2026,12 @@ def deletion_is_observable(
     observes the raise even where no handler took it, and deleting the raiser empties a `$Error` the
     original filled. This is paired the same way: *stmt* has to be able to leave a record —
     `statement_can_raise`, the can-fault over-approximation the transpose also uses, so a raiser the
-    analysis proves cannot fault leaves none and stays removable — and a persistent-record read has
-    to be reachable after it, which `refinery.lib.scripts.ps1.analysis.errorstate.Ps1ErrorStateReach`
-    answers positionally. `error_state=None` skips the channel, the fail-open direction a caller with
-    no such model takes, consistent with `world=None`. `$?`'s reset rule is a query cluster 4 adds to
-    that model, not a fourth clause here.
+    analysis proves cannot fault leaves none and stays removable — and a persistent-record read
+    has to be reachable after it, which
+    `refinery.lib.scripts.ps1.analysis.errorstate.Ps1ErrorStateReach` answers positionally.
+    `error_state=None` skips the channel, the fail-open direction a caller with no such model
+    takes, consistent with `world=None`. `$?`'s reset rule is a query cluster 4 adds to that model,
+    not a fourth clause here.
     """
     operand = fault_operand(stmt)
     if (
