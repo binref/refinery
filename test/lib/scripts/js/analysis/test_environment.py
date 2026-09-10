@@ -5,6 +5,8 @@ from test import TestBase
 from refinery.lib.scripts.js.analysis.environment import (
     GUARANTEED_GLOBALS,
     HostEnvironment,
+    Presence,
+    typeof_of_global,
 )
 from refinery.lib.scripts.js.analysis.model import build_semantic_model
 from refinery.lib.scripts.js.model import JsIdentifier
@@ -86,6 +88,71 @@ class TestABareGlobalReadIsJudgedAgainstThePinnedHost(TestBase):
         for name in _HOST_CONDITIONAL_ALIASES:
             with self.subTest(name=name):
                 self.assertTrue(_bare_read_may_throw(F'{name};', name, HostEnvironment.universal))
+
+
+class TestPresenceIsThreeValued(TestBase):
+    """
+    A pinned host answers a name `PRESENT`, `ABSENT`, or `UNKNOWN`. `PRESENT` is exactly what `provides`
+    reports; `ABSENT` names the well-known globals of other hosts this one is characterized to lack; and
+    the two are disjoint, so no name is claimed present and absent at once. The default `universal` host
+    is certain of no absence — every non-guaranteed name is `UNKNOWN`, since some host defines it.
+    """
+
+    def test_presence_present_agrees_with_provides(self):
+        for environment in HostEnvironment:
+            for name in ('String', 'Buffer', 'window', 'global', 'zzz'):
+                with self.subTest(environment=environment.name, name=name):
+                    self.assertEqual(
+                        environment.presence(name) is Presence.PRESENT,
+                        environment.provides(name),
+                    )
+
+    def test_present_and_absent_are_disjoint(self):
+        for environment in HostEnvironment:
+            for name in ('String', 'Buffer', 'window', 'global', 'process', 'self', 'navigator'):
+                with self.subTest(environment=environment.name, name=name):
+                    presence = environment.presence(name)
+                    self.assertIn(presence, (Presence.PRESENT, Presence.ABSENT, Presence.UNKNOWN))
+                    if presence is Presence.PRESENT:
+                        self.assertTrue(environment.provides(name))
+
+    def test_the_universal_host_is_certain_of_no_absence(self):
+        for name in ('Buffer', 'window', 'global', 'process', 'require', 'self'):
+            with self.subTest(name=name):
+                self.assertIs(HostEnvironment.universal.presence(name), Presence.UNKNOWN)
+
+    def test_node_provides_navigator_and_never_calls_it_absent(self):
+        self.assertIsNot(HostEnvironment.node.presence('navigator'), Presence.ABSENT)
+
+
+class TestTypeofFoldsOnlyWhereTheHostSettlesIt(TestBase):
+    """
+    `typeof name` folds to a constant only where the result is host-independent or the pinned host settles
+    it. A universal name folds in every host; a host-conditional name folds to its type where the host
+    provides it and to `'undefined'` where the host is certain it is absent, and abstains otherwise.
+    """
+
+    def test_a_universal_typeof_folds_in_every_host(self):
+        for environment in HostEnvironment:
+            with self.subTest(environment=environment.name):
+                self.assertEqual(typeof_of_global('String', environment), 'function')
+                self.assertEqual(typeof_of_global('Math', environment), 'object')
+                self.assertEqual(typeof_of_global('escape', environment), 'function')
+
+    def test_a_host_conditional_typeof_abstains_without_a_pin(self):
+        for name in ('Buffer', 'console', 'setTimeout', 'atob', 'window', 'process'):
+            with self.subTest(name=name):
+                self.assertIsNone(typeof_of_global(name, HostEnvironment.universal))
+
+    def test_a_present_host_conditional_typeof_folds_to_its_type(self):
+        self.assertEqual(typeof_of_global('Buffer', HostEnvironment.node), 'function')
+        self.assertEqual(typeof_of_global('process', HostEnvironment.node), 'object')
+        self.assertEqual(typeof_of_global('window', HostEnvironment.browser), 'object')
+
+    def test_an_absent_host_conditional_typeof_folds_to_undefined(self):
+        self.assertEqual(typeof_of_global('Buffer', HostEnvironment.browser), 'undefined')
+        self.assertEqual(typeof_of_global('window', HostEnvironment.node), 'undefined')
+        self.assertEqual(typeof_of_global('global', HostEnvironment.browser), 'undefined')
 
 
 class TestDeletingAHostGlobalWithholdsItsPinnedPresence(TestBase):

@@ -4,6 +4,7 @@ import inspect
 
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 
+from refinery.lib.scripts.js.analysis.environment import HostEnvironment
 from refinery.lib.scripts.js.deobfuscation.evaluator import JsFunctionEvaluator
 from refinery.lib.scripts.js.deobfuscation.interpreter import IrreducibleExpression, JsInterpreter
 from refinery.lib.scripts.js.options import DeobfuscationOptions
@@ -1584,15 +1585,37 @@ class TestFunctionEvaluator(TestJsDeobfuscator):
         )
         self.assertEqual(source, self._evaluate(source))
 
-    def test_typeof_buffer_is_function(self):
+    def _evaluate_in(self, source: str, environment: HostEnvironment) -> str:
+        return self._run_transformer(
+            source, JsFunctionEvaluator, DeobfuscationOptions(environment=environment))
+
+    def test_typeof_a_host_conditional_global_abstains_without_a_pin(self):
+        """
+        `Buffer` is a Node global a browser lacks, so `typeof Buffer` is host-dependent; the default
+        universal host cannot settle it, so the guard is kept rather than folded to a wrong branch.
+        """
         source = inspect.cleandoc(
             """
             const f = () => typeof Buffer === 'function' ? 'yes' : 'no';
             var r = f();
             """
         )
-        result = self._evaluate(source)
-        self.assertEqual("var r = 'yes';", result)
+        self.assertEqual(
+            "var r = typeof Buffer === 'function' ? 'yes' : 'no';", self._evaluate(source))
+
+    def test_typeof_a_host_conditional_global_folds_under_a_pin(self):
+        """
+        Under `-e node` `Buffer` is present, so `typeof Buffer` is `'function'` and the guard folds to
+        'yes'; under `-e browser` it is absent, so `typeof Buffer` is `'undefined'` and it folds to 'no'.
+        """
+        source = inspect.cleandoc(
+            """
+            const f = () => typeof Buffer === 'function' ? 'yes' : 'no';
+            var r = f();
+            """
+        )
+        self.assertEqual("var r = 'yes';", self._evaluate_in(source, HostEnvironment.node))
+        self.assertEqual("var r = 'no';", self._evaluate_in(source, HostEnvironment.browser))
 
     def test_calling_null_throws_caught_type_error(self):
         # Calling `null` is a genuine TypeError, so the catch runs and `typeof e` is 'object'.
