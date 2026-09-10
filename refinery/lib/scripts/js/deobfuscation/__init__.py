@@ -28,6 +28,7 @@ from refinery.lib.scripts.js.deobfuscation.stringarray import JsStringArrayResol
 from refinery.lib.scripts.js.deobfuscation.unshuffle import JsArrayUnshuffle
 from refinery.lib.scripts.js.deobfuscation.unused import JsUnusedCodeRemoval
 from refinery.lib.scripts.js.deobfuscation.wrappers import JsCallWrapperInliner
+from refinery.lib.scripts.js.analysis.environment import HostEnvironment
 from refinery.lib.scripts.js.model import JsScript
 from refinery.lib.scripts.js.options import DeobfuscationOptions
 from refinery.lib.scripts.pipeline import (
@@ -98,6 +99,7 @@ def deobfuscate(
     *,
     module: bool = False,
     entrypoints: tuple[str, ...] = (),
+    environment: HostEnvironment = HostEnvironment.universal,
     observer: PipelineObserver | None = None,
 ) -> int:
     """
@@ -107,13 +109,17 @@ def deobfuscate(
     to converge fails loudly instead of hanging. The default is generous — real inputs settle in a few
     to a few dozen passes (the differential corpus peaks in the low tens) — so it never bounds a
     legitimate deobfuscation, only a runaway loop. Pass `0` to disable the bound entirely. *module*
-    selects the execution model the input is assumed to run under and *entrypoints* names top-level
-    functions a host calls by name; see
-    `refinery.lib.scripts.js.options.DeobfuscationOptions`. *observer* is called around
+    selects the execution model the input is assumed to run under, *entrypoints* names top-level
+    functions a host calls by name, and *environment* pins the host whose global names are assumed
+    present; see `refinery.lib.scripts.js.options.DeobfuscationOptions`. *observer* is called around
     every transformer, which is how a property of the tree is attributed to the pass that moved it; see
     `refinery.lib.scripts.js.deobfuscation.audit.StrictModeAudit`.
     """
-    options = DeobfuscationOptions(module=module, entrypoints=tuple(entrypoints))
+    options = DeobfuscationOptions(
+        module=module,
+        entrypoints=tuple(entrypoints),
+        environment=environment,
+    )
     return _pipeline.run(
         ast,
         max_steps=max_steps,

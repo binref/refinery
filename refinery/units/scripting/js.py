@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from refinery.lib.scripts.js.analysis.environment import HostEnvironment
 from refinery.lib.scripts.js.deobfuscation import deobfuscate
 from refinery.lib.scripts.js.model import JsScript
 from refinery.lib.scripts.js.parser import JsParser
@@ -32,8 +33,19 @@ class js(IterativeDeobfuscator):
             'Assume the input runs as an ES or CommonJS module (for example, node file.js), where a '
             'top-level declaration is scoped to the module and does not attach to the global object, '
             'rather than as a classic global script (a browser script tag, Windows Script Host).'))] = False,
+        environment: Param[str | HostEnvironment, Arg.Option('-e', metavar='E', choices=HostEnvironment,
+            help=(
+                'Pin the host the input runs in, so that the global names that host defines are assumed '
+                'present and the reads that rely on them are resolved. The default is {default}, which '
+                'assumes only the globals every host shares, so a host-conditional read such as window '
+                'or global is kept. Options are: {choices}.'))] = HostEnvironment.universal,
     ):
-        super().__init__(timeout=timeout, module=module, entrypoints=entrypoints)
+        super().__init__(
+            timeout=timeout,
+            module=module,
+            entrypoints=entrypoints,
+            environment=Arg.AsOption(environment, HostEnvironment),
+        )
 
     def parse(self, data: str) -> JsScript:
         return JsParser(data).parse()
@@ -43,6 +55,7 @@ class js(IterativeDeobfuscator):
             ast,
             module=self.args.module,
             entrypoints=tuple(self.args.entrypoints),
+            environment=self.args.environment,
         )
 
     def synthesize(self, ast: JsScript) -> str:

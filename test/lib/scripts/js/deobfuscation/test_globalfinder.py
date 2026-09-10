@@ -4,13 +4,19 @@ import inspect
 
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 
+from refinery.lib.scripts.js.analysis.environment import HostEnvironment
 from refinery.lib.scripts.js.deobfuscation.globalfinder import JsGlobalFinderInlining
+from refinery.lib.scripts.js.options import DeobfuscationOptions
 
 
 class TestGlobalFinderInlining(TestJsDeobfuscator):
 
     def _find(self, source: str) -> str:
         return self._run_transformer(source, JsGlobalFinderInlining)
+
+    def _find_in(self, source: str, environment: HostEnvironment) -> str:
+        options = DeobfuscationOptions(environment=environment)
+        return self._run_transformer(source, JsGlobalFinderInlining, options)
 
     def test_finder_call_becomes_globalthis(self):
         self.assertEqual(self._find('function g() { return globalThis; } g();'), inspect.cleandoc(
@@ -47,6 +53,51 @@ class TestGlobalFinderInlining(TestJsDeobfuscator):
             '''
         )
         self.assertEqual(source, self._find(source))
+
+    def test_a_pinned_node_host_substitutes_a_bare_global_finder(self):
+        """
+        `global` resolves under Node, so a finder that returns it drops no throw and its call folds to
+        `globalThis`; a browser alias the pinned host still lacks is left standing.
+        """
+        self.assertEqual(self._find_in(
+            'function g() { return global; } g();', HostEnvironment.node), inspect.cleandoc(
+            '''
+            function g() {
+              return global;
+            }
+            globalThis;
+            '''
+        ))
+        self.assertEqual(
+            self._find_in('function g() { return window; } g();', HostEnvironment.node),
+            'function g() {\n  return window;\n}\ng();',
+        )
+
+    def test_a_pinned_browser_host_substitutes_a_same_realm_alias_finder(self):
+        """
+        `window` and `self` are the browser's own same-realm global-object aliases, so a finder that
+        returns one folds to `globalThis` under the pin.
+        """
+        for alias in ('window', 'self'):
+            with self.subTest(alias=alias):
+                self.assertEqual(self._find_in(
+                    F'function g() {{ return {alias}; }} g();', HostEnvironment.browser),
+                    F'function g() {{\n  return {alias};\n}}\nglobalThis;',
+                )
+
+    def test_a_pinned_browser_host_keeps_a_cross_realm_alias_finder(self):
+        """
+        `top` and `frames` resolve in a browser, so the pin proves the finder throw-free, yet in a
+        framed document they name another realm's global object; substituting `globalThis` would change
+        meaning, so the finder is not treated as global-valued and its call is kept.
+        """
+        for alias in ('top', 'frames'):
+            with self.subTest(alias=alias):
+                source = F'function g() {{ return {alias}; }} g();'
+                self.assertEqual(
+                    self._find_in(source, HostEnvironment.browser),
+                    F'function g() {{\n  return {alias};\n}}\ng();',
+                )
 
     def test_host_read_before_the_anchor_is_not_substituted(self):
         """

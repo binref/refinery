@@ -46,10 +46,10 @@ def _transform_root_builds(transform: type[Transformer], source: str) -> tuple[i
     count = {'n': 0}
     real_model = cache_module.build_semantic_model
 
-    def counting_model(root):
+    def counting_model(root, *args, **kwargs):
         if root is script:
             count['n'] += 1
-        return real_model(root)
+        return real_model(root, *args, **kwargs)
 
     cache_module.build_semantic_model = counting_model
     try:
@@ -263,9 +263,9 @@ class TestSimplificationDoesNotRebuildPerFold(TestBase):
         real_model = cache_module.build_semantic_model
         real_effects = cache_module.build_effects
 
-        def counting_model(root):
+        def counting_model(root, *args, **kwargs):
             counts['model'] += 1
-            return real_model(root)
+            return real_model(root, *args, **kwargs)
 
         def counting_effects(model):
             counts['effects'] += 1

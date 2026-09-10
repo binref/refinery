@@ -117,3 +117,27 @@ class TestJsDeobfuscator(TestUnitBase):
             a0w();
             """.replace('[[URL]]', 'https'':''//lhockerline''.s''.gy/''1460d20e7505bb18')
         ))
+
+
+class TestJsHostEnvironmentPin(TestUnitBase):
+    """
+    The `-e` switch pins the host, so a bare read of a name that host defines is resolved and the folds
+    it enables are recovered. The default keeps such a read, since no universal host defines it.
+    """
+
+    def test_a_node_finder_that_returns_global_folds_to_nothing_when_pinned(self):
+        source = b'function g() { return global; } g();'
+        self.assertEqual(
+            source | self.load() | str,
+            'function g() {\n  return global;\n}\ng();',
+        )
+        self.assertEqual(source | self.load(environment='node') | str, '')
+
+    def test_a_node_host_collapses_a_global_alias_member_read(self):
+        source = b'console.log(global.String);'
+        self.assertEqual(source | self.load() | str, 'console.log(global.String);')
+        self.assertEqual(source | self.load(environment='node') | str, 'console.log(String);')
+
+    def test_an_unknown_host_keyword_is_a_usage_error(self):
+        with self.assertRaises(Exception):
+            self.load(environment='mainframe')

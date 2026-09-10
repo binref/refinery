@@ -29,6 +29,7 @@ from refinery.lib.scripts.js.analysis.effects import GLOBAL_OBJECT, EffectModel
 from refinery.lib.scripts.js.analysis.model import (
     FUNCTION_NODES,
     GLOBAL_OBJECT_ALIASES,
+    SAME_REALM_GLOBAL_OBJECT_ALIASES,
     Binding,
     SemanticModel,
 )
@@ -202,7 +203,7 @@ def _is_global_valued(
     if isinstance(expr, JsThisExpression):
         return True
     if isinstance(expr, JsIdentifier):
-        if _is_global_alias(expr, model):
+        if _is_same_realm_global_alias(expr, model):
             return True
         binding = model.resolve(expr)
         return binding is not None and id(binding) in taint
@@ -542,6 +543,20 @@ class _FinderThrowFreedom:
 
 def _is_global_alias(node: Node, model: SemanticModel) -> bool:
     if not isinstance(node, JsIdentifier) or node.name not in GLOBAL_OBJECT_ALIASES:
+        return False
+    scope = model.scope_of(node)
+    return scope is not None and model.lookup(node.name, scope) is None
+
+
+def _is_same_realm_global_alias(node: Node, model: SemanticModel) -> bool:
+    """
+    Whether *node* is an unbound alias of *this* realm's global object, the value the finder fold
+    substitutes with `globalThis`. `top` and `frames` are in the wider `GLOBAL_OBJECT_ALIASES` the
+    detector looks for and, under a pinned browser host, resolve without throwing, but in a framed
+    document they name another realm's global object; substituting `globalThis` for one would change
+    meaning, so a return whose only global value is such an alias is not treated as global-valued.
+    """
+    if not isinstance(node, JsIdentifier) or node.name not in SAME_REALM_GLOBAL_OBJECT_ALIASES:
         return False
     scope = model.scope_of(node)
     return scope is not None and model.lookup(node.name, scope) is None

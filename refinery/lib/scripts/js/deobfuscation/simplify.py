@@ -8,10 +8,12 @@ from refinery.lib.scripts.js.analysis.assignment import DefiniteAssignmentModel
 from refinery.lib.scripts.js.analysis.cache import ModelCache, model_cache
 from refinery.lib.scripts.js.analysis.dominance import DominanceModel
 from refinery.lib.scripts.js.analysis.effects import GLOBAL_OBJECT, EffectModel
-from refinery.lib.scripts.js.analysis.model import (
-    FUNCTION_NODES,
+from refinery.lib.scripts.js.analysis.environment import (
     GUARANTEED_GLOBAL_TYPEOF,
     GUARANTEED_GLOBALS,
+)
+from refinery.lib.scripts.js.analysis.model import (
+    FUNCTION_NODES,
     SAME_REALM_GLOBAL_OBJECT_ALIASES,
     Binding,
     BindingKind,

@@ -34,6 +34,7 @@ from dataclasses import dataclass, field
 from typing import Callable, Iterator
 
 from refinery.lib.scripts import Node, Statement
+from refinery.lib.scripts.js.analysis.environment import HostEnvironment
 from refinery.lib.scripts.js.model import (
     FUNCTION_NODES,
     JsArrayExpression,
@@ -162,86 +163,6 @@ The member keys a read may not pass while its base stays trusted for intrinsic d
 prototype-yielding key hands out the surface a write would displace the dispatch through, and the
 `__defineGetter__`/`__defineSetter__` pair installs on its receiver when invoked anywhere along
 the chain.
-"""
-
-GUARANTEED_GLOBAL_TYPEOF: dict[str, str] = {
-    'globalThis': 'object',
-    'NaN': 'number',
-    'Infinity': 'number',
-    'undefined': 'undefined',
-    'eval': 'function',
-    'isFinite': 'function',
-    'isNaN': 'function',
-    'parseFloat': 'function',
-    'parseInt': 'function',
-    'decodeURI': 'function',
-    'decodeURIComponent': 'function',
-    'encodeURI': 'function',
-    'encodeURIComponent': 'function',
-    'Object': 'function',
-    'Function': 'function',
-    'Boolean': 'function',
-    'Symbol': 'function',
-    'BigInt': 'function',
-    'Error': 'function',
-    'AggregateError': 'function',
-    'EvalError': 'function',
-    'RangeError': 'function',
-    'ReferenceError': 'function',
-    'SyntaxError': 'function',
-    'TypeError': 'function',
-    'URIError': 'function',
-    'Number': 'function',
-    'Math': 'object',
-    'Date': 'function',
-    'String': 'function',
-    'RegExp': 'function',
-    'Array': 'function',
-    'Int8Array': 'function',
-    'Uint8Array': 'function',
-    'Uint8ClampedArray': 'function',
-    'Int16Array': 'function',
-    'Uint16Array': 'function',
-    'Int32Array': 'function',
-    'Uint32Array': 'function',
-    'Float32Array': 'function',
-    'Float64Array': 'function',
-    'BigInt64Array': 'function',
-    'BigUint64Array': 'function',
-    'Map': 'function',
-    'Set': 'function',
-    'WeakMap': 'function',
-    'WeakSet': 'function',
-    'WeakRef': 'function',
-    'FinalizationRegistry': 'function',
-    'ArrayBuffer': 'function',
-    'DataView': 'function',
-    'JSON': 'object',
-    'Promise': 'function',
-    'Reflect': 'object',
-    'Proxy': 'function',
-}
-"""
-Maps each `GUARANTEED_GLOBALS` name to the string its `typeof` yields. Because the name resolves in
-every host to a value of a fixed type — a constructor or built-in function (`'function'`), a namespace
-object such as `Math`/`JSON`/`Reflect` or `globalThis` itself (`'object'`), the two numeric constants
-(`'number'`), or `undefined` — the operator's result is host-independent, unlike a host-conditional
-alias (`window`, `self`, …) whose `typeof` is `'undefined'` where the host omits the name. This is what
-lets a simplification fold `typeof globalThis !== 'undefined'` to `true` for a name it can prove
-pristine; the values were established under Node 24. `GUARANTEED_GLOBALS` is the key set of this map, so
-the two cannot drift.
-"""
-
-GUARANTEED_GLOBALS = frozenset(GUARANTEED_GLOBAL_TYPEOF)
-"""
-Names the ECMAScript specification mandates as properties of the global object and that every mainstream
-engine exposes unconditionally, so a bare read of one is guaranteed to resolve rather than throw a
-`ReferenceError`. This is an *existence* allowlist — distinct from the getter-purity and host-presence
-sets in `refinery.lib.scripts.js.analysis.effects` — used to decide whether `<global-alias>.name` may be
-collapsed to the bare `name` without turning the member read's `undefined` into a throw. It excludes host
-and alias names (`window`, `self`, `global`, `top`, `frames`, `console`, timers, `Buffer`, …) that are not
-universal, and `SharedArrayBuffer`/`Atomics`, which a conformant host may withhold outside a
-cross-origin-isolated context. `GUARANTEED_GLOBAL_TYPEOF` additionally records the `typeof` of each.
 """
 
 _PATTERN_CONTAINERS = (
@@ -1821,8 +1742,9 @@ class SemanticModel:
     `would_capture`, and `has_reflection_surface`.
     """
 
-    def __init__(self, root: JsScript):
+    def __init__(self, root: JsScript, environment: HostEnvironment = HostEnvironment.universal):
         self.root = root
+        self.environment = environment
         self._node_scope: dict[int, Scope] = {}
         self._binding_of: dict[int, Binding] = {}
         self._reflection_surface: bool | None = None
@@ -1832,6 +1754,7 @@ class SemanticModel:
         self._function_unread_source_sites: dict[int, list[Node]] = {}
         self.root_scope: Scope = _ScopeBuilder(self).build(root)
         self._build_def_use()
+        self._deleted_host_globals: frozenset[str] = self._scan_deleted_host_globals()
 
     def scope_of(self, node: Node) -> Scope | None:
         """
@@ -1967,16 +1890,19 @@ class SemanticModel:
         unresolved read as free is asserting the host defines the name, which for a name the program
         neither declares nor assigns is an assertion about someone else's global object.
 
-        A name resolves for certain when a declaration binds it, or when the specification mandates
-        it on the global object (`GUARANTEED_GLOBALS`) — the same existence allowlist that decides
-        whether a global-alias member read may be collapsed to a bare name. `globalThis` is on that
-        list and resolves everywhere; the other `GLOBAL_OBJECT_ALIASES` spellings (`window`, `self`,
-        `top`, `frames`, `global`) are a *host* assumption rather than a language one, and are not
-        admitted here: no host defines all of them, so a bare `window` throws under Node exactly as
-        a bare `global` throws in a browser. An analyst who knows the host recovers the resolved
-        reading with a pin; unpinned, the read is answered may-throw so no pass drops the
-        `ReferenceError` the absent host raises, and `_base_is_safe` agrees, refusing to clear a
-        property access on such an alias. Everything else may not be there:
+        A name resolves for certain when a declaration binds it, or when the pinned host environment
+        guarantees it on the global object (`HostEnvironment.provides`). The default `universal`
+        environment provides exactly `GUARANTEED_GLOBALS`, the existence allowlist the language
+        mandates everywhere, so `globalThis` resolves while the other `GLOBAL_OBJECT_ALIASES` spellings
+        (`window`, `self`, `top`, `frames`, `global`) are a *host* assumption rather than a language
+        one, and are not admitted: no host defines all of them, so a bare `window` throws under Node
+        exactly as a bare `global` throws in a browser. An analyst who knows the host pins it with the
+        `js` unit's `-e` switch, and the names that host guarantees become certain here, recovering the
+        reading the sound default refuses — except a host-conditional global the program `delete`s off a
+        same-realm alias, which `_scan_deleted_host_globals` withholds program-wide so the bare read
+        keeps its throw. Unpinned, the read is answered may-throw so no pass drops the `ReferenceError`
+        the absent host raises, and `_base_is_safe` agrees, refusing to clear a property access on such
+        an alias. Everything else may not be there:
 
         - a free name, which reaches the host and may simply not exist
         - a name whose only binding is an `IMPLICIT_GLOBAL`, which the assignment that creates it
@@ -1994,13 +1920,63 @@ class SemanticModel:
         """
         if not self.is_reference(node) or reference_role(node) is Role.WRITE:
             return False
-        if node.name in GUARANTEED_GLOBALS:
+        if self._certainly_resolves(node.name):
             return False
         if tolerates_unresolvable(node):
             return False
         scope = self._node_scope.get(id(node))
         binding = self.lookup(node.name, scope, cross_dynamic=True)
         return binding is None or binding.kind is BindingKind.IMPLICIT_GLOBAL
+
+    def _certainly_resolves(self, name: str) -> bool:
+        """
+        Whether a bare read of *name* is guaranteed to find a global the host defines, so it cannot
+        raise a `ReferenceError`. The pinned `environment` answers which names the host provides; a
+        host-conditional global the program deletes off a same-realm global alias is withheld, since
+        after that delete the bare read throws. A language-mandated name is never withheld, so the
+        default `universal` environment answers exactly as its `GUARANTEED_GLOBALS` membership did.
+        """
+        if not self.environment.provides(name):
+            return False
+        return not (
+            name in self._deleted_host_globals
+            and self.environment.withholds_on_delete(name)
+        )
+
+    def _scan_deleted_host_globals(self) -> frozenset[str]:
+        """
+        The host-conditional global names the program deletes off a global-object alias anywhere
+        (`delete globalThis.Buffer`, `delete window['setTimeout']`), whose presence the pinned host
+        would otherwise assert. The scan is flow-insensitive: a delete on any path, reachable or not,
+        withholds the name program-wide, which over-keeps a read's throw and so stays sound. It keys on
+        the wide `GLOBAL_OBJECT_ALIASES`, not the same-realm subset, because `top` and `frames` name
+        this realm's own global object in an unframed document, so a delete spelled through one there
+        removes the name here too; withholding on a framed document's cross-realm delete only over-keeps
+        a throw, which stays sound. It is the empty set under the default `universal` environment, which
+        withholds nothing and so needs no scan, keeping an unpinned run free of the walk. A delete
+        reached through a variable holding the global object rather than through an alias spelling is not
+        modelled, the limit the rest of the global-object analysis shares.
+        """
+        if self.environment is HostEnvironment.universal:
+            return frozenset()
+        deleted: set[str] = set()
+        for node in self.root.walk():
+            if not (isinstance(node, JsUnaryExpression) and node.operator == 'delete'):
+                continue
+            target = strip_parens(node.operand)
+            if not isinstance(target, JsMemberExpression):
+                continue
+            base = strip_parens(target.object)
+            if not isinstance(base, JsIdentifier):
+                continue
+            if base.name not in GLOBAL_OBJECT_ALIASES:
+                continue
+            if self.lookup(base.name, self._node_scope.get(id(base))) is not None:
+                continue
+            name = static_property_key(target)
+            if name is not None:
+                deleted.add(name)
+        return frozenset(deleted)
 
     def lexical_binding_read(self, node: JsIdentifier) -> Binding | None:
         """
@@ -3720,8 +3696,12 @@ class _ScopeBuilder:
             self._visit(stmt, sscope)
 
 
-def build_semantic_model(root: JsScript) -> SemanticModel:
+def build_semantic_model(
+    root: JsScript, environment: HostEnvironment = HostEnvironment.universal
+) -> SemanticModel:
     """
-    Build the `SemanticModel` for a parsed script.
+    Build the `SemanticModel` for a parsed script, resolving bare global reads against *environment*.
+    The default `universal` environment asserts only `GUARANTEED_GLOBALS`, so the model answers
+    `read_may_throw` exactly as an unpinned run; a pinned host recovers the reads that host guarantees.
     """
-    return SemanticModel(root)
+    return SemanticModel(root, environment)

@@ -22,7 +22,11 @@ from refinery.lib.scripts.js.analysis.liveness import LivenessModel, build_liven
 from refinery.lib.scripts.js.analysis.model import SemanticModel, build_semantic_model
 from refinery.lib.scripts.js.analysis.reaching import ReachingModel, build_reaching
 from refinery.lib.scripts.js.model import JsCallExpression, JsIdentifier, JsNewExpression, JsScript
-from refinery.lib.scripts.js.options import is_host_entrypoint, runs_as_module
+from refinery.lib.scripts.js.options import (
+    host_environment,
+    is_host_entrypoint,
+    runs_as_module,
+)
 from refinery.lib.scripts.modelcache import ModelCacheBase
 
 
@@ -73,7 +77,10 @@ class ModelCache(ModelCacheBase):
 
     @property
     def model(self) -> SemanticModel:
-        return self._lazy('_model', lambda: build_semantic_model(self.root))
+        return self._lazy('_model', lambda: build_semantic_model(
+            self.root,
+            host_environment(self.options),
+        ))
 
     @property
     def effects(self) -> EffectModel:

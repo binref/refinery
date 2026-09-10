@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from fnmatch import fnmatchcase
 from typing import TYPE_CHECKING
 
+from refinery.lib.scripts.js.analysis.environment import HostEnvironment
+
 if TYPE_CHECKING:
     from refinery.lib.scripts.js.model import JsScript
 
@@ -34,9 +36,16 @@ class DeobfuscationOptions:
     the file, so reachability computed over the file alone judges it dead and removes it, together with
     everything only it reached. Which names a host calls is not knowable from the file, so the analyst
     supplies them; each is matched case-sensitively, because JavaScript identifiers are.
+
+    *environment* pins the host the input is assumed to run in, which decides whether a bare read of a
+    name the program never declares resolves or throws a `ReferenceError`. The default `universal`
+    asserts only the globals every host shares, so a read of a host-conditional name such as `window` or
+    `global` is treated as possibly throwing and no pass drops it; naming the host recovers the folds
+    that read enables. See `refinery.lib.scripts.js.analysis.environment.HostEnvironment`.
     """
     module: bool = False
     entrypoints: tuple[str, ...] = ()
+    environment: HostEnvironment = HostEnvironment.universal
 
     def names_entrypoint(self, name: str) -> bool:
         """
@@ -52,6 +61,18 @@ def module_execution(options: object | None) -> bool:
     transformer run standalone, or with no options attached — defaults to the script model.
     """
     return isinstance(options, DeobfuscationOptions) and options.module
+
+
+def host_environment(options: object | None) -> HostEnvironment:
+    """
+    The host environment *options* pins, against which a bare global read is judged present or
+    throwing. Any value that is not a `DeobfuscationOptions` — a transformer run standalone, or with no
+    options attached — defaults to the `universal` environment, which asserts only the globals the
+    language mandates, so an unpinned run is unchanged.
+    """
+    if isinstance(options, DeobfuscationOptions):
+        return options.environment
+    return HostEnvironment.universal
 
 
 def runs_as_module(options: object | None, root: JsScript) -> bool:
