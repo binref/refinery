@@ -237,9 +237,6 @@ def _is_intrinsic_alias_value(effects: EffectModel, node: Node) -> bool:
 
 
 def _is_const_qualified(declarator: JsVariableDeclarator) -> bool:
-    """
-    Return whether a declarator belongs to a `const` declaration.
-    """
     parent = declarator.parent
     return isinstance(parent, JsVariableDeclaration) and parent.kind is JsVarKind.CONST
 

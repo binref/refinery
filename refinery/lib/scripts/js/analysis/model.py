@@ -2968,10 +2968,7 @@ class SemanticModel:
 
         `has_mapped_arguments` decides which functions have such an object at all, so a strict body, an
         arrow, and any list holding a default, a rest element or a destructuring pattern contribute
-        nothing. It is asked of the sloppy case first and the mode only afterwards, which is the same
-        conjunction it states — no function has such an object in strict mode — asked in the order that
-        pays for it: the mode is a climb to the root per function, while everything else is local, and
-        almost no function is a candidate.
+        nothing.
 
         Where the object is reached is `walk_receiver_scope`: an arrow reads the enclosing `arguments`
         and is descended, a nested function has its own and is not.

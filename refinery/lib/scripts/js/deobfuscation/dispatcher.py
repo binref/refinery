@@ -301,10 +301,6 @@ def _find_cache_id(body: list, first_param: str, second_param: str) -> tuple[str
 
 
 def _detect_dispatcher(func: JsFunctionDeclaration) -> _DispatcherInfo | None:
-    """
-    Structurally detect whether `func` is a dispatcher function. Returns the extracted metadata or
-    `None` if the function does not match the pattern.
-    """
     if wraps_return(func):
         return None
     if not isinstance(func.id, JsIdentifier):
@@ -837,9 +833,6 @@ class JsDispatcherUnwrapper(ScopeProcessingTransformer):
         return _DispatchSite(call, call.callee, key_arg.value, [])
 
     def _remove_boilerplate(self, scope: Node, body: list, info: _DispatcherInfo) -> None:
-        """
-        Remove dispatcher-related boilerplate declarations from the scope body.
-        """
         assert self._root is not None
         model = model_cache(self, self._root).model
         to_remove = []

@@ -230,7 +230,4 @@ class ReachingModel:
 
 
 def build_reaching(dominance: DominanceModel, effects: EffectModel) -> ReachingModel:
-    """
-    Build the `ReachingModel` from a script's dominance and effect models.
-    """
     return ReachingModel(dominance, effects)

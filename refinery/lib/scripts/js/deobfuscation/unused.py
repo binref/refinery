@@ -99,10 +99,7 @@ def _global_alias_read_names(model: SemanticModel, root: Node) -> frozenset[str]
     one deletes a read.
 
     A name the file gives the object to counts as well, and the model is asked which those are —
-    `refinery.lib.scripts.js.analysis.model.SemanticModel.names_the_global_object`. This pass used to
-    hold its own answer, admitting a `const` initialized with one same-realm spelling and nothing
-    else, which found neither a `var` nor the `A || B` guard a file meant for two hosts is written
-    with.
+    `refinery.lib.scripts.js.analysis.model.SemanticModel.names_the_global_object`.
 
     A computed access with a statically known string key (`globalThis['g']`) reads the same name its
     dot spelling reads, so it counts here through `access_key`; one whose key the text does not state

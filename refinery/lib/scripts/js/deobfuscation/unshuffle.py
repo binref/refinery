@@ -183,9 +183,6 @@ def _unrotate(elements: list, shift: int) -> list:
 
 
 def _find_rotation_functions(root: JsScript) -> set[str]:
-    """
-    Find all function declarations/expressions that are push/shift rotation functions.
-    """
     names: set[str] = set()
     for node in root.walk():
         if isinstance(node, JsFunctionDeclaration) and node.id is not None:

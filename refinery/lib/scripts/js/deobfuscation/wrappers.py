@@ -99,9 +99,6 @@ def _detect_wrapper(node: JsFunctionDeclaration) -> _WrapperInfo | None:
 
 
 def _collect_wrappers(root: Node) -> dict[str, _WrapperInfo]:
-    """
-    Walk the entire AST and collect all function declarations that qualify as call wrappers.
-    """
     wrappers: dict[str, _WrapperInfo] = {}
     for node in root.walk():
         if isinstance(node, JsFunctionDeclaration):

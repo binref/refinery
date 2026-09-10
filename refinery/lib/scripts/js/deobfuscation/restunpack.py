@@ -220,10 +220,6 @@ def _numeric_key(value: float) -> str | None:
 
 
 def _extract_access_key(node: JsMemberExpression) -> str | None:
-    """
-    Extract the key from a stack access expression. Returns a string representation of the key
-    or None if the key cannot be statically resolved.
-    """
     if node.computed:
         prop = node.property
         if isinstance(prop, JsNumericLiteral):

@@ -619,9 +619,7 @@ def container_literal_access_is_plain(node: Node | None) -> bool:
     Each of those asks a further question this deliberately does not answer, which is why they remain
     distinct predicates rather than aliases of this one: whether the base can be nullish, whether a
     primitive or a pristine intrinsic also qualifies, whether every slot is *writable* as opposed to
-    merely accessor-free. What they must not disagree about is this atom. They did: the accessor veto
-    lived in only two of the four copies, and the copy without it cleared a getter-carrying literal as
-    effect-free, which deleted the getter call outright.
+    merely accessor-free. What they must not disagree about is this atom.
 
     It answers only what the *literal* declares, so it is never sufficient on its own for a getter-freeness
     question: `[1, 2]` declares no accessor and still inherits everything on `Array.prototype` and
@@ -2029,16 +2027,12 @@ class EffectModel:
         rather than being a judgement each caller makes for itself. A caller folding one expression
         pays an unfolded expression for refusing, so it may as well refuse under a surface, and
         every one of them asks `read_chain_intact`. A caller deciding whether a whole *pass* may run
-        pays the pass, and a reflective surface is exactly what the real obfuscated files carry:
-        measured on the samples this project tests against, the surface is present in the input and
-        gone from the finished output, so a pass gated on it never runs and never clears the surface
-        that was gating it. Only those callers ask this — today namespace flattening and the
-        dispatcher unwrapper — and they accept that an unresolvable `eval` could in principle have
-        written a prototype, which is no worse than the nothing they asked before.
-
-        The two facts separate cleanly on the evidence rather than by assumption: every program in
-        the defect ledger that reaches a wrong answer here writes a chain root and has no reflective
-        surface, and every sample that has a surface writes no chain root.
+        pays the pass, and a reflective surface is exactly what real obfuscated files carry: the
+        surface is present in the input and gone from the finished output, so a pass gated on it
+        never runs and never clears the surface that was gating it. Only those callers ask this —
+        today namespace flattening and the dispatcher unwrapper — and they accept that an
+        unresolvable `eval` could in principle have written a prototype, which is no worse than the
+        nothing they asked before.
         """
         owner = _PROTOTYPE_OWNERS.get(value_type.__name__)
         if owner is None:
@@ -2332,10 +2326,8 @@ class EffectModel:
         neither runs user code on a read of a pristine chain.
 
         Syntax alone settles the *type* of a literal base but not its behaviour, which is why every arm ends
-        in `read_chain_intact` rather than returning on the node kind. A literal was previously cleared on
-        syntax alone, and that deleted reads which really did run a getter installed on the corresponding
-        prototype — Node-confirmed for array, object, string, boolean, function, and arrow bases, plus an
-        intrinsic root reached through `Object.prototype`. A container literal must additionally declare no
+        in `read_chain_intact` rather than returning on the node kind: the prototype may carry a getter. A
+        container literal must additionally declare no
         accessor of its own, the shared `container_literal_access_is_plain` question, since a getter written
         into the literal needs no prototype at all. There is no member-chain arm, for the reason given on
         `_base_is_safe`.
@@ -2845,9 +2837,8 @@ class _IntrinsicAliases:
     this answer stable while passes run — the pinning contract in
     `refinery.lib.scripts.js.analysis.cache.ModelCache` requires that this set never *grow* across a pass.
     And it stops at a call, so `var s = String.fromCharCode(x)` does not alias `String`: the local holds
-    the *result*, and a walk that merely collected identifiers from the initializer reported three such
-    false aliases on a real sample. Its member-chain arm over-approximates in the one remaining direction —
-    `var n = Array.length` reports `Array` — which is sound and measured to cost nothing.
+    the *result*. Its member-chain arm over-approximates in the one remaining direction —
+    `var n = Array.length` reports `Array` — which is sound and costs nothing.
     """
 
     def __init__(self, model: SemanticModel):

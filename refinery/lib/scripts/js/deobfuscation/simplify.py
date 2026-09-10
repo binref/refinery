@@ -197,8 +197,7 @@ class JsSimplifications(Transformer):
         "Every name its target may denote" spans two kinds of collapse, and both must already be accounted
         for. One is syntactic — `0 || Math` names `Math` before the fold that reduces it — and the other is
         an alias: `var m = Math; m.floor = f` names `Math` though the assignment mentions only `m`, so
-        inlining the alias reveals nothing the held set lacked. Attribution followed the syntax alone until
-        the alias step was added, which is exactly the stale-permissive case this argument rules out.
+        inlining the alias reveals nothing the held set lacked.
 
         A write need not be in the file at all for the same argument to be needed. An intrinsic handed to
         code whose writes cannot be enumerated — `patch(Math)` for an unresolvable `patch` — is recorded as

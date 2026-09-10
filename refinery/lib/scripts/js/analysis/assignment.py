@@ -722,9 +722,6 @@ def build_definite_assignment(
     module_scope: bool = False,
     host_entrypoint: Callable[[str], bool] | None = None,
 ) -> DefiniteAssignmentModel:
-    """
-    Build the `DefiniteAssignmentModel` for *model*'s script.
-    """
     return DefiniteAssignmentModel(
         model,
         control_flow,

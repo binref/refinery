@@ -48,9 +48,6 @@ class DeobfuscationOptions:
     environment: HostEnvironment = HostEnvironment.universal
 
     def names_entrypoint(self, name: str) -> bool:
-        """
-        Whether *name* matches one of the entrypoint patterns.
-        """
         return any(fnmatchcase(name, pattern) for pattern in self.entrypoints)
 
 

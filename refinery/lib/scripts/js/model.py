@@ -838,9 +838,6 @@ def code_context_at(node: Node, root_context: CodeContext = SCRIPT_CONTEXT) -> C
 
 
 def is_async_function(func: JsFunctionNode) -> bool:
-    """
-    Whether *func* is written `async`.
-    """
     return func.is_async
 
 

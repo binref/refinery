@@ -141,9 +141,6 @@ class _SMBlock:
 
 @dataclass
 class _GeneratorCFFMatch:
-    """
-    Structural match result for a generator-based state-machine CFF pattern.
-    """
     generator_name: str
     state_var_names: list[str]
     initial_state: list[int | float]
@@ -473,19 +470,12 @@ def _collect_namespace_homes(
     ns_names: set[str],
 ) -> dict[str, tuple[str, ...]] | None:
     """
-    Determine the canonical home namespace of every proven namespace-local member, or return
-    `None` to decline recovery when a member is ambiguous. Each `=` assignment target in the
-    switch — at any nesting depth, since the scope and namespace objects are closed over — is
-    fed through the destructuring collector to accumulate `member -> {home…}`. A member written
-    under exactly one namespace maps to that namespace as its home path. A member written under
-    two or more namespaces has no single canonical home: under the `with`-redirect its meaning
-    depends on which namespace the routing variable points at when each use executes, which
-    redirect-independent qualification cannot express — so recovery of the whole generator is
-    declined (`None`) rather than emitting a reference that would resolve to the wrong binding or
-    a free variable. A name with no namespace-defining write at all is genuinely free/global and
-    is absent from the map, so it stays bare and resolves to its outer binding once the `with` is
-    dissolved. Any assignment operator (plain, compound, or logical) and the update operators
-    (`++`/`--`) count as a defining write, since each names the slot as living on its namespace.
+    Determine the canonical home namespace of every proven namespace-local member, or `None` to
+    decline recovery when a member is written under two or more namespaces: under the `with`-redirect
+    its home depends on where the routing variable points when each use runs, which
+    redirect-independent qualification cannot express, so qualifying it could resolve to the wrong
+    binding. A member written under exactly one namespace maps to it; a name with no
+    namespace-defining write is free and stays bare once the `with` is dissolved.
     """
     accumulated: dict[str, set[str]] = {}
     for node in switch_stmt.walk():
@@ -1023,9 +1013,6 @@ def _extract_single_assignment(
     expr: JsAssignmentExpression,
     var_names: list[str],
 ) -> list[_SMRawAssignment] | None:
-    """
-    Extract a single state variable assignment.
-    """
     if not isinstance(expr.left, JsIdentifier):
         return None
     name = expr.left.name
@@ -1522,9 +1509,6 @@ def _reverse_postorder(cfg: _CFG) -> list[int]:
 
 
 def _dominates(idom: dict[int, int | None], a: int, b: int) -> bool:
-    """
-    Check if node `a` dominates node `b`.
-    """
     current = b
     while current is not None:
         if current == a:
@@ -2705,9 +2689,6 @@ def _resolve_shared_wrappers(
 
 
 def _walk_all(stmts: list[Statement]):
-    """
-    Yield all nodes reachable from a list of statements.
-    """
     for stmt in stmts:
         yield from stmt.walk()
 

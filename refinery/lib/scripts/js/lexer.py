@@ -121,9 +121,7 @@ def _continues_a_name(c: str) -> bool:
 def _at_identifier_start(src: str, pos: int) -> bool:
     """
     Whether an IdentifierName begins at *pos*. A backslash opens one only where it opens a
-    unicode escape; one that begins no escape is a character no name may hold, and reading it as
-    the start of a name is how a scan that consumed nothing yielded empty identifiers for as long
-    as anything read them.
+    unicode escape; one that begins no escape is a character no name may hold.
     """
     c = src[pos:pos + 1]
     if not c:

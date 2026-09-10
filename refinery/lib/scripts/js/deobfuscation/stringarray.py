@@ -71,27 +71,18 @@ class Encoding(enum.Enum):
 
 
 class ArrayFunction(NamedTuple):
-    """
-    Result of detecting the array-holder function pattern.
-    """
     node: JsFunctionDeclaration
     name: str
     strings: list[str]
 
 
 class AccessorFunction(NamedTuple):
-    """
-    Result of detecting the accessor function pattern.
-    """
     node: JsFunctionDeclaration
     name: str
     base_offset: int
 
 
 class RotationIIFE(NamedTuple):
-    """
-    Result of detecting the rotation IIFE pattern.
-    """
     node: Node
     target: int
     body: Sequence[Node]
@@ -99,9 +90,6 @@ class RotationIIFE(NamedTuple):
 
 
 class ChecksumInfo(NamedTuple):
-    """
-    Result of extracting the checksum expression from the rotation IIFE.
-    """
     node: Node
     local_accessors: frozenset[str]
     alias_map: dict[str, str]

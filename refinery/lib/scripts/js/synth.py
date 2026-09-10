@@ -564,10 +564,8 @@ class JsSynthesizer(Synthesizer):
         spelling cannot carry is the one Number whose sign is observable without reading it back,
         through `1 / -0`.
 
-        A byte array printed one element per line costs a screen of vertical space to say very little, and
-        decimal cannot be aligned: `15` and `216` differ in width, so the reader loses the column structure
-        that makes a key or ciphertext block legible. Hex is what buys the alignment, which is why the
-        radix change and the row width are one decision rather than two.
+        Hex is used rather than decimal because `15` and `216` differ in width: only a fixed-width
+        element keeps the column structure that makes a key or ciphertext block legible.
         """
         if len(elements) <= _BYTE_GRID_COLUMNS:
             return False

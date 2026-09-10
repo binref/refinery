@@ -140,9 +140,6 @@ numeric separator forbidden, and with no sign, since the sign belongs to the dec
 """
 
 _PREFIXED_RADIX = {'b': 2, 'o': 8, 'x': 16}
-"""
-The base each NonDecimalIntegerLiteral prefix letter selects.
-"""
 
 _MAX_DIGITS_IN_A_DOUBLE = {
     radix: math.ceil(1024 / math.log2(radix)) for radix in range(2, 37)

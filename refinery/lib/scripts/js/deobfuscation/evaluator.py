@@ -546,7 +546,7 @@ class JsFunctionEvaluator(ScriptLevelTransformer):
         decoder collapses in one step and the inner links are gone before they are reached. Admission is
         the shared gate's decision alone; this adds no question of its own, because every one it would ask
         — is the prototype intact, does a callback write outside itself, is an argument effectful — the gate
-        already asks, and asking twice in two vocabularies is how the fold surface fragmented before.
+        already asks.
         """
         effects = self._effects
         if effects is None or not effects.call_is_foldable(node):

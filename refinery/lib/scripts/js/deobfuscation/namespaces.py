@@ -426,11 +426,8 @@ class JsNamespaceFlattening(ScopeProcessingTransformer):
         func_assigns: dict[str, _PropertyAssignment],
     ) -> None:
         """
-        Hoist a function declaration for each flattened property that held a function expression.
-
-        All of them are spliced in one call. Splicing one at a time rebuilds and re-parents the whole
-        statement list per declaration, which a namespace holding a few hundred functions pays for
-        once per function over a body already thousands of statements long.
+        Hoist a function declaration for each flattened property that held a function expression, all
+        spliced in one call.
 
         The names are sorted in reverse because one splice keeps the order it is handed, where the
         head-insertion it replaced reversed it. The emitted order is the one that was emitted before,

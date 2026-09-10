@@ -2272,19 +2272,11 @@ class ScopeProcessingTransformer(Transformer):
         return None
 
     def _process_scope(self, scope: Node) -> None:
-        """
-        Receives the raw scope node (`refinery.lib.scripts.js.model.JsScript` or
-        `refinery.lib.scripts.js.model.JsBlockStatement`).
-        """
         body = get_body(scope)
         if body is not None:
             self._process_scope_body(scope, body)
 
     def _process_scope_body(self, scope: Node, body: list) -> None:
-        """
-        Receives the scope node and its `body` list. The `_process_scope` method extracts the body
-        and delegates here.
-        """
         raise NotImplementedError
 
 

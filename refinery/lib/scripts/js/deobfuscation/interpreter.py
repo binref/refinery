@@ -186,7 +186,7 @@ def _to_array_length(value: Value) -> int:
     Coerce a value to a valid array length. Per ECMA-262 ArraySetLength, `ToUint32(v)` must equal
     `ToNumber(v)`; otherwise the length is invalid and a JavaScript `RangeError` is signalled. This
     rejects NaN, +/-Infinity, negative, and non-integer lengths, each of which a real engine
-    (verified against Node and Chrome) reports as `Invalid array length`.
+    reports as `Invalid array length`.
     """
     number_len = to_number(value)
     length = _to_uint32(number_len)
@@ -1716,10 +1716,8 @@ class JsInterpreter:
     def _apply_binary(self, op: str, left: Value, right: Value) -> Value:
         """
         Apply the binary operator *op* to two already-evaluated values — the one place this interpreter
-        decides what an operator means. A binary expression and the arithmetic step of a compound assignment
-        ask the same question, so they must ask it here: the three compound paths used to hand-roll their own
-        answers, and the copies disagreed with this one on `-0`, on a zero divisor, and on which operators
-        exist at all.
+        decides what an operator means. A binary expression and the arithmetic step of a compound
+        assignment ask the same question, so they must ask it here.
 
         `eval_binary_op` handles the numeric operators alone, which is why the string cases resolve first:
         `+` needs ToPrimitive on both operands and may yield a concatenation, and a relational operator
@@ -2049,34 +2047,11 @@ class JsInterpreter:
         has an effect the resulting literal cannot carry: `[1,2].map(function (x) { n += x; return x; })`
         yields the right array while leaving `n` unchanged.
 
-        `is_effect_free_when_discarded` rather than `is_pure`, which is stricter than this position
-        needs: it tolerates a mutation the callback confines to a fresh local it returns. It does
-        not tolerate a throw the summary records in `throws` — a read of a name the specification
-        does not mandate on the global object sets that flag, so such a callback is refused here,
-        even though the throw would surface as a real `_ThrowSignal` an emulated `try/catch`
-        observes. A throw the summary defers per binding rather than recording in `throws` — a
-        `dead_zone_reads` read of an outer `let`/`const`/`class` binding, which fires only inside
-        that binding's dead zone — is not reflected in `is_effect_free_when_discarded` and so
-        passes this gate; the fold that consumes the callback refuses it downstream anyway. The
-        interpreter models no dead zone, so when `_eval_array_hof` runs the callback the outer
-        lexical name is simply absent from its environment and `_eval_identifier` raises
-        `IrreducibleExpression`, which `_evaluate_expression_and_replace` catches beside
-        `_ThrowSignal` and abandons the fold, keeping the call. The soundness of leaving that to
-        the fold rests on the read staying unresolved: were a future change to seed outer lexical
-        names into a callback closure (as hoisted `var` names already are), the read would fold to
-        a value and drop the throw, and this gate would then need an explicit `dead_zone_reads`
-        refusal.
-
-        Purity is not sufficient on its own either. A write to a *script-scope* `var` reports
-        `writes_captured=False`, because that binding is not captured from the callback's perspective, so it
-        slips through every purity flag. `written_bindings` records outer bindings by identity and catches it.
-
-        This refuses the `reduce` accumulator idiom, `(acc, v) => { acc.push(v); return acc; }`, whose
-        `acc.push` sets `calls_unknown` — a method call on a parameter is a callee the summary cannot
-        resolve. That is a real fold this declines, and deliberately: the same flag is the only thing
-        distinguishing `acc.push(v)` from a mutation of an outer array `s.push(v)`, so admitting one admits
-        the other. Separating them needs the callee resolution to see through the parameter to the argument,
-        which is a question for the effect model rather than a relaxation here.
+        It asks `is_effect_free_when_discarded` rather than `is_pure`, which is stricter than this
+        position needs: a mutation the callback confines to a fresh local it returns is tolerated, while
+        a throw the summary records in `throws` is not. Purity alone is not sufficient either — a write
+        to a *script-scope* `var` reports `writes_captured=False`, slipping through every purity flag —
+        so `written_bindings`, which records outer bindings by identity, is checked too.
         """
         effects = self._effects
         if effects is None:
@@ -2404,7 +2379,4 @@ class JsInterpreter:
         return js_strict_equal(a, b)
 
     def eval_expression(self, expr) -> Value:
-        """
-        Evaluate a single expression AST node and return a Python value.
-        """
         return self._eval(expr)
