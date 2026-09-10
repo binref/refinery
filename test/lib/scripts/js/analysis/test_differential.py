@@ -29,7 +29,7 @@ from test.lib.scripts.js.analysis.differential import (
 class TestDeobfuscationDifferential(TestBase):
     """
     Each case runs a benign snippet and its deobfuscation through Node.js and asserts they behave
-    identically. These guard the semantics-preservation invariant against the substrate migration.
+    identically.
     """
 
     def _check(self, source: str):
@@ -1562,7 +1562,7 @@ class TestDeobfuscationReflectionScope(TestBase):
     `_resolve_reflected_body` gate: a free name is inlined only when it still denotes the same global at
     the call site, a receiver `this` is rewritten to `globalThis`, a transient lexical declaration is
     declined, an expression-position IIFE/eval value is never fabricated, and a body is not inlined into
-    a `with`. Each case changed observable behavior before the gate was unified; they guard the fix.
+    a `with`.
     """
 
     def _check(self, source: str):
@@ -1666,8 +1666,7 @@ class TestDeobfuscationInlinerScope(TestBase):
     site. The substitution-safety gate resolves every spliced reference at the call site: a name that
     binds outside the inlined function, or to no binding at all, is inlined only when it still resolves
     to the same declaration there, so a same-named local at the call site that would recapture it
-    declines the substitution. Both cases changed observable behavior before the gate consulted the
-    call-site scope; they guard the fix.
+    declines the substitution.
     """
 
     def _check(self, source: str):
@@ -1712,8 +1711,7 @@ class TestDeobfuscationDirectEvalScope(TestBase):
     sloppy `var` or function actually declares in the caller: a top-level `let`/`const`/`class`, and a
     `var` under strict mode, live in the eval's own environment and leave nothing behind, while a `var`
     that does persist is inlined only where the eval site dominates every reference to the name —
-    hoisting it past an earlier reference would rebind that reference. Each case changed observable
-    behavior before the gate modeled direct-eval declaration scope; they guard the fix.
+    hoisting it past an earlier reference would rebind that reference.
     """
 
     def _check(self, source: str):
