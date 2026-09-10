@@ -300,6 +300,48 @@ class TestPs1AWriteALiveSuccessFlagReadObservesIsKept(_Ps1AutomaticVariables):
         self._assertKept(F'{_FAILS}\n$junk = 5\nWrite-Host $?')
 
 
+class TestPs1TheSuccessFlagGuardingALoopIsNotFoldedFromItsOwnBody(_Ps1AutomaticVariables):
+    """
+    A `$?` read guarding a loop is reached on the first iteration from the top of the script, where
+    `$?` is `$true`, as well as from the loop's own body. Where the body certainly raises, folding
+    the guard to `$false` would delete a body 5.1 runs once before the raise steps out of the loop,
+    so the guard is left in place and the whole loop is kept.
+    """
+
+    def test_a_while_guard_whose_body_certainly_raises_keeps_the_loop(self):
+        self._assertKept(F'while ($?) {{ {_PAYLOAD}\n{_FAULTS} }}\n{_TAIL}')
+
+
+class TestPs1TheSuccessFlagAtTheTopOfARerunningBlockIsNotAFreshStart(_Ps1AutomaticVariables):
+    """
+    5.1 runs `begin`, `end` and the unnamed body once, so a `$?` read at the top of one is a fresh
+    `$true` and its guard folds to the branch 5.1 takes. It re-enters `process` once per pipeline
+    input and carries `$?` across those entries, so the top of a `process` block is not a fresh start
+    and its guard is left in place. The two named-block forms are each other's control: the same
+    guard folds under `end` and is kept under `process`.
+    """
+
+    def test_the_success_flag_at_the_top_of_an_end_block_takes_the_then_branch(self):
+        self._assertDecidesTo(
+            F'end {{ if ($?) {{ {_PAYLOAD} }} else {{ {_OTHER} }} }}',
+            F'end {{ {_PAYLOAD} }}')
+
+    def test_the_success_flag_at_the_top_of_a_process_block_is_kept(self):
+        self._assertKept(F'process {{ if ($?) {{ {_PAYLOAD} }} else {{ {_OTHER} }} }}')
+
+    @unittest.expectedFailure
+    def test_a_success_flag_writer_observed_only_across_a_process_reentry_is_kept(self):
+        """
+        The trailing raise fails the statement, so 5.1 carries `$?`=`$false` into the next pipeline
+        input's top-of-`process` read, which takes the `else` branch there. The control-flow graph
+        sequences `process` once and draws no per-input back-edge, so the removal veto does not see
+        that read reach the raise and drops it as junk — the same unmodeled-reentry fail-open the
+        persistent channel has. Retire this once the graph models the `process` re-entry.
+        """
+        self._assertKept(
+            F'process {{ if ($?) {{ {_PAYLOAD} }} else {{ {_OTHER} }}\n{_FAULTS} }}')
+
+
 class TestPs1TheTokenVariablesStayEmptyForTheWholeOfAScript(_Ps1AutomaticVariables):
     """
     `$^` and `$$` hold the first and the last token of the previous command line, which only a host

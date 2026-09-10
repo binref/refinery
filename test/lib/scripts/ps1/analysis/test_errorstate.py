@@ -155,6 +155,32 @@ class TestPs1SuccessFlagAtDecidesFromPosition(TestBase):
         tree, reach = _reach("while ($?) { 'x' }")
         self.assertIsNone(reach.success_flag_at(_success_read(tree)))
 
+    def test_a_while_condition_whose_body_certainly_raises_stays_undecided(self):
+        tree, reach = _reach("""
+            while ($?) {
+              'x'
+              $Null = [Int]'abc'
+            }
+        """)
+        self.assertIsNone(reach.success_flag_at(_success_read(tree)))
+
+    def test_a_do_while_condition_after_a_body_that_certainly_raises_is_false(self):
+        tree, reach = _reach("""
+            do {
+              'x'
+              $Null = [Int]'abc'
+            } while ($?)
+        """)
+        self.assertIs(reach.success_flag_at(_success_read(tree)), False)
+
+    def test_a_read_at_the_top_of_a_process_block_is_undecided(self):
+        tree, reach = _reach("process { if ($?) { 'x' } }")
+        self.assertIsNone(reach.success_flag_at(_success_read(tree)))
+
+    def test_a_read_at_the_top_of_an_end_block_is_true(self):
+        tree, reach = _reach("end { if ($?) { 'x' } }")
+        self.assertIs(reach.success_flag_at(_success_read(tree)), True)
+
     def test_a_read_after_a_certain_raise_inside_a_function_is_false_inside_that_body(self):
         tree, reach = _reach("""
             function Invoke-Thing {
@@ -205,6 +231,18 @@ class TestPs1WritesSuccessFlagIsTheKillSet(TestBase):
 
     def test_a_command_is_a_writer(self):
         tree = _parse("Write-Host 'x'")
+        self.assertTrue(Ps1ErrorStateReach.writes_success_flag(tree.body[0]))
+
+    def test_an_assignment_whose_subexpression_runs_no_statement_still_writes(self):
+        """
+        Measured on Windows PowerShell 5.1: a leaf assignment resets `$?` even when its right-hand
+        subexpression runs zero statements. `Get-Item C:\\missing -EA SilentlyContinue; $x =
+        $(if ($false) {1}); $?` reads `$true`, and so do `$()`, `@()`, and a bare `$(if ($false)
+        {1})` statement. The KILL set is the statement kind, not what the subexpression evaluates, so
+        such a statement must never be read as transparent — doing so would free an earlier writer a
+        later read still observes.
+        """
+        tree = _parse('$x = $(if ($false) { 1 })')
         self.assertTrue(Ps1ErrorStateReach.writes_success_flag(tree.body[0]))
 
     def test_an_empty_if_is_transparent(self):

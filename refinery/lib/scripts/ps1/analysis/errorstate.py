@@ -116,15 +116,21 @@ class Ps1ErrorStateReach:
         **True** — the read is the first thing the script does: it stands in the root script's own
         graph (`refinery.lib.scripts.ps1.model.Ps1Script`, not a function or scriptblock body, whose
         `$?` reflects the caller), no element-bearing statement precedes it over plain control flow,
-        control reaches it from the entry rather than being stranded after a `throw`, and the script
-        runs no `param`/`dynamicparam` computation that could fail before the body. 5.1 starts `$?`
+        control reaches it from the entry rather than being stranded after a `throw`, the script runs
+        no `param`/`dynamicparam` computation that could fail before the body, and the read is not
+        inside the `process` block, which the engine re-enters once per pipeline input so that its
+        top reflects the previous input's last statement rather than a fresh start. 5.1 starts `$?`
         `$true`.
 
         **False** — every nearest statement that runs immediately before the read is certain to
-        raise a terminating error that steps over to it (`statement_certainly_throws`). A `throw` or
-        a Stop-disposition failure abandons the script and draws no plain edge onward, so it is never
-        such a predecessor: the edge structure supplies the statement- versus script-terminating
-        distinction the value domain alone cannot.
+        raise a terminating error that steps over to it (`statement_certainly_throws`), *and* no
+        plain path reaches the read from the entry. A `throw` or a Stop-disposition failure abandons
+        the script and draws no plain edge onward, so it is never such a predecessor: the edge
+        structure supplies the statement- versus script-terminating distinction the value domain
+        alone cannot. The entry guard is what keeps a loop condition out of this pole: a `$?` read
+        guarding a loop whose body certainly raises is reached both from the entry — where the first
+        iteration reads `$true` — and from the raising back-edge, so it is a merge and stays `None`,
+        never `$false`.
 
         **None** — anything else: an unprovable predecessor, a mix of raising and non-raising
         predecessors, a live loop back-edge, a handler-body entry, or a read in a non-root body
@@ -141,9 +147,14 @@ class Ps1ErrorStateReach:
             and reaches_entry
             and isinstance(graph.owner, Ps1Script)
             and not self._root_may_fail_before_body(graph.owner)
+            and not self._reads_at_the_top_of_a_rerunning_block(node, graph.owner)
         ):
             return True
-        if elements and all(statement_certainly_throws(element) for element in elements):
+        if (
+            elements
+            and not reaches_entry
+            and all(statement_certainly_throws(element) for element in elements)
+        ):
             return False
         return None
 
@@ -292,6 +303,28 @@ class Ps1ErrorStateReach:
                     return True
         dynamicparam = script.dynamicparam_block
         return dynamicparam is not None and bool(dynamicparam.body)
+
+    @staticmethod
+    def _reads_at_the_top_of_a_rerunning_block(node: Node, script: Ps1Script) -> bool:
+        """
+        Whether *node* is written inside *script*'s `process` block. The engine runs `begin`, `end`,
+        `dynamicparam` and the unnamed body once, but re-enters `process` once per pipeline input,
+        and `$?` persists across those entries — on the second input it holds what the first input's
+        last statement left. So a read at the top of `process` is *not* the first thing the script
+        does the way one at the top of a run-once block is, and the `$true` verdict must stand down
+        for it: measured on 5.1, `1, 2 | & { process { Write-Host $?; $Null = [Int]'abc' } }` prints
+        `True` then `False`. The control-flow graph sequences the block once and draws no per-input
+        back-edge, so this lexical check is what supplies the distinction the graph does not.
+        """
+        process = script.process_block
+        if process is None:
+            return False
+        cursor: Node | None = node
+        while cursor is not None and cursor is not script:
+            if cursor is process:
+                return True
+            cursor = cursor.parent
+        return False
 
 
 def build_error_state_reach(
