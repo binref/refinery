@@ -6,7 +6,9 @@ import unittest
 from test.lib.scripts.js.analysis.differential import deobfuscate_within
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 
+from refinery.lib.scripts.js.analysis.environment import HostEnvironment
 from refinery.lib.scripts.js.deobfuscation.scramble import JsScrambleStringDecoder, ScrambleCipher
+from refinery.lib.scripts.js.options import DeobfuscationOptions
 
 
 class TestScrambleStringDecoder(TestJsDeobfuscator):
@@ -167,6 +169,43 @@ class TestScrambleStringDecoder(TestJsDeobfuscator):
             """
         )
         self.assertIn('global.decode', self._run_transformer(source, JsScrambleStringDecoder))
+
+    def test_a_decoder_install_through_a_pinned_global_alias_is_removed_soundly(self):
+        """
+        Under `-e node` the alias `global` resolves, so `global.decode = decode` reads a base that
+        cannot throw and removing the redundant install drops no `ReferenceError`. The cleanup then
+        proceeds to the same URL the unpinned pass reaches, but soundly: this is the sound answer the
+        companion xfail cannot give unpinned, where the base may not resolve.
+        """
+        source = inspect.cleandoc(
+            """
+            class Scramble {
+              constructor(pw, salt) {
+                this.masterKey = pb(pw, salt, 200000, 32, 'sha256');
+                this.rounds = 3;
+              }
+              decode(input) { return decrypt(input, this.masterKey, this.rounds); }
+            }
+            var key = '2aaa9053353088d4d49b5bf32f403f2d85b3df97c9a9beedfcdbb1ecc27ba9c6';
+            var salt = 'fec5863b88643968ecff0c2c8afecbaf';
+            var instance = new Scramble(key, salt);
+            function decode(x) { return instance.decode(x); }
+            global.decode = decode;
+            var url = decode('hJQxp9Pvj3X2QId3C4RuMOe1C4EpuSg2b/8JyqzSWjrQm+VgNNg=');
+            """
+        )
+        expected = inspect.cleandoc(
+            """
+            var key = '2aaa9053353088d4d49b5bf32f403f2d85b3df97c9a9beedfcdbb1ecc27ba9c6';
+            var salt = 'fec5863b88643968ecff0c2c8afecbaf';
+            var url = 'https://api.github.com';
+            """
+        )
+        self.assertEqual(
+            self._run_transformer(
+                source, JsScrambleStringDecoder, DeobfuscationOptions(environment=HostEnvironment.node)),
+            expected,
+        )
 
     _CIPHER_CLASS = inspect.cleandoc(
         """
