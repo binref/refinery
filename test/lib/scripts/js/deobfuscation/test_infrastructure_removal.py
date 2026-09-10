@@ -134,9 +134,6 @@ def _names_called_without_a_declaration(source: str) -> set[str]:
 
 
 def _names_declared_at_the_top_level(source: str) -> set[str]:
-    """
-    Every name the top level of *source* declares.
-    """
     ast = JsParser(source).parse()
     return set(build_semantic_model(ast).root_scope.bindings)
 

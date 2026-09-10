@@ -90,9 +90,6 @@ def _lines(*parts: str) -> str:
 
 
 def a_call_wrapper(kw: str = '', read: str = 'w(7)') -> str:
-    """
-    A wrapper that forwards its argument to another function, which is what a call wrapper is for.
-    """
     return _lines(
         'function t(a) { return a; }',
         F'{kw}function w(a) {{ return t(a); }}',
@@ -101,9 +98,6 @@ def a_call_wrapper(kw: str = '', read: str = 'w(7)') -> str:
 
 
 def an_iife(read: str = '(function (a) { return a; })(7)') -> str:
-    """
-    A function expression called where it stands.
-    """
     return _lines(F'console.log({read});')
 
 
@@ -111,8 +105,6 @@ def a_global_finder(
     kw: str = '', read: str = 'g() === globalThis', closure_head: str = 'function',
 ) -> str:
     """
-    A function every return of which names the global object, reached through a call it makes.
-
     *closure_head* writes the keyword onto the closure the call reaches rather than onto the finder,
     which is where the finder's own effect summary cannot answer for it: `EffectSummary.absorb`
     leaves `wraps_return` out, so a callee's wrapping never reaches its caller's summary.
@@ -299,9 +291,6 @@ def a_base91_table(
 
 
 def a_self_disabling_wrapper(kw: str = '', read: str = 'W(a())') -> str:
-    """
-    A wrapper that overwrites itself with an empty function, called where its value is read.
-    """
     return _lines(
         F'{kw}function W() {{ W = function () {{}}; }}',
         'var log = [];',
@@ -698,9 +687,6 @@ def _the_names_a_pattern_binds(pattern: Node | None) -> set[str]:
 
 
 def _the_scopes_around(node: Node):
-    """
-    The functions and the script holding *node*, innermost first.
-    """
     owner = node.parent
     while owner is not None:
         if isinstance(owner, (JsScript, *FUNCTION_NODES)):

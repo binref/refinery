@@ -123,9 +123,6 @@ def dropped_source_characters(source: str, printed: str) -> str:
 
 
 def each_well_formed(programs: Iterable[str]) -> dict[str, bool]:
-    """
-    `well_formed` asked of each of *programs*, keyed by the program.
-    """
     return {program: well_formed(program) for program in programs}
 
 

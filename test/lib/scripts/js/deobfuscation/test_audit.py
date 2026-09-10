@@ -61,7 +61,6 @@ from refinery.lib.scripts.js.strict import (
 from refinery.lib.scripts.js.synth import JsSynthesizer
 from refinery.lib.scripts.pipeline import TransformerGroup
 
-#: The name the group of one transformer runs under, which is the other half of what a report names.
 _THE_GROUP = 'probe'
 
 
@@ -333,9 +332,6 @@ def _the_label_a_body_reports(host: Node) -> str:
 
 
 def _the_modes_the_audit_reads(source: str) -> dict[str, bool]:
-    """
-    The mode the audit reads for every body of *source*, by the label each of them prints under.
-    """
     return {
         _the_label_a_body_reports(node): strict
         for node, strict in mode_of_every_body(JsParser(source).parse()).values()
@@ -389,9 +385,6 @@ def _the_bodies_node_compiles_differently(before: str, after: str) -> dict[str, 
 
 
 def _audited(source: str) -> str:
-    """
-    What the audit reports over a whole deobfuscation of *source*.
-    """
     ast = JsParser(source).parse()
     audit = StrictModeAudit()
     deobfuscate(ast, observer=audit)

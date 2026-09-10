@@ -177,10 +177,6 @@ class TestADispatcherIsKeptWhileACallToItSurvives(TestBase):
     """
 
     def test_a_dispatch_through_a_computed_key_keeps_the_dispatcher(self):
-        """
-        Node prints `abc` for the one program of `A_DISPATCH_THROUGH_A_COMPUTED_KEY`, which spells
-        its callee name `"f" + 1`, and the deobfuscation prints it too.
-        """
         rows = A_DISPATCH_THROUGH_A_COMPUTED_KEY
         self.assertEqual(
             {source: before_and_after(source) for source in rows},
@@ -219,11 +215,6 @@ class TestADispatcherPayloadHoleIsTheChainsToAnswer(TestBase):
     """
 
     def test_a_payload_position_no_element_was_written_in_finds_what_the_chain_holds(self):
-        """
-        Node prints `firstXthird` for the one program of `A_DISPATCH_WHOSE_PAYLOAD_HOLDS_A_HOLE`,
-        which writes `X` at index 1 of `Array.prototype` before dispatching a payload whose second
-        position holds no element, and the deobfuscation prints it too.
-        """
         rows = A_DISPATCH_WHOSE_PAYLOAD_HOLDS_A_HOLE
         self.assertEqual(
             {source: before_and_after(source) for source in rows},

@@ -93,9 +93,6 @@ _READS_INSIDE_A_WRITE_TARGET = [
 
 
 def _in_position(template: str, target: str) -> str:
-    """
-    The snippet *template* with its `TARGET` placeholder replaced by the member expression *target*.
-    """
     return template.replace('TARGET', target)
 
 

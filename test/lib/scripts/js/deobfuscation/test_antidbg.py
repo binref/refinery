@@ -160,12 +160,6 @@ class TestAntiDebug(TestJsDeobfuscator):
 
 
 class TestRemoveSelfDefendingStructural(TestJsDeobfuscator):
-    """
-    Structural removal: the same run-once `apply`-payload factory template, payloads marked as
-    anti-analysis without the ReDoS string, three guard invocation shapes, sequence-operand
-    entanglement, and preservation of every guard whose payload carries no marker or whose stored
-    result the program reads.
-    """
 
     _FACTORY = (
         "var a = (function() {"

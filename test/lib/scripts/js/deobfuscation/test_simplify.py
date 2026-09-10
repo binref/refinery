@@ -1324,10 +1324,6 @@ class TestMembershipOverAWrittenPrototypeChain(TestJsDeobfuscator):
     receiver whose own keys the pass can read whole decides the question only while the chain behind
     it is one the program has not written. Each test below is that pair: the same receiver and the
     same key, folded where nothing wrote the chain and left standing where something did.
-
-    The pair is what makes either half readable. A source that comes back unchanged says nothing on
-    its own about whether a fold was refused or was never available, and a source that folds says
-    nothing about whether the refusal has any reach.
     """
 
     def test_absent_key_over_a_function_folds_only_while_its_chain_is_untouched(self):
@@ -1474,10 +1470,6 @@ class TestASequenceOperandThatMayThrowIsKept(TestJsDeobfuscator):
         )
 
     def test_a_throwing_operand_is_kept_inside_a_call_argument(self):
-        """
-        The same read spelled where a sequence stands in an argument list: `console.log((missing,
-        1));` throws before the call, and its simplification keeps the throw.
-        """
         self.assertEqual(
             behavior(self._simplify('console.log((missing, 1));')),
             ('', 'ReferenceError'),

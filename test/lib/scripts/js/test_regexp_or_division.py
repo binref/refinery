@@ -353,10 +353,6 @@ class TestJsRegExpOrDivision(TestBase):
         return yields
 
     def _round_trips(self, source: str, rounds: int) -> list[str]:
-        """
-        The source printed for the parse of *source*, the source printed for the parse of that, and
-        so on for *rounds* rounds.
-        """
         printed = []
         for _ in range(rounds):
             source = JsSynthesizer().convert(JsParser(source).parse())

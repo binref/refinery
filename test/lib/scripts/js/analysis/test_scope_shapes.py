@@ -579,12 +579,6 @@ class TestAFunctionDeclaredInsideABlockIsDeclaredInsideIt(TestBase):
     entry of the enclosing function and copies the block's function into it where the declaration
     runs, so a call before the block reads `undefined` and throws too, and only a call after it
     answers the function.
-
-    `refinery.lib.scripts.js.analysis.model` used to place every block function in the enclosing
-    variable scope whatever the mode, initialized as if it were declared there, without consulting
-    the strict-mode overlay that knows the difference and without modelling the point in the block
-    at which the copy runs, so every consumer read a binding holding a function where the program
-    held none and the folds downstream answered the call with the function's value.
     """
 
     def test_a_block_function_is_read_from_where_the_language_binds_it(self):
@@ -814,12 +808,6 @@ class TestACallToABlockFunctionIsFoldedWhereTheCopyHasRun(TestBase):
     so a call written after it is answered from the declaration exactly as it was, and one written
     before it is not answered at all - where it used to be answered with the function, which is the
     entry this retired.
-
-    An earlier design refused to value such a name at all, which would have given up all four of
-    these. Ordering the value against the call keeps three of them, and it is the reduction of a
-    real sample rather than these rows that says so: refusing collapsed
-    `test.units.scripting.test_js.TestJsDeobfuscator.test_obfuscated_fizzbuzz_03` from one statement
-    to eleven kilobytes.
 
     Read from the text and from nothing else: the first three programs print `1` either way, and
     only the last one prints differently, which the entry it retired says.

@@ -1004,23 +1004,11 @@ class TestRegressionBugs(TestJsDeobfuscator):
         )
 
 
-#: An argument to a method the object fold answers, whose evaluation the answer has to keep. The
-#: first is used by nothing the body returns; the second pair is used in the other order than it is
-#: written; the third pair is used with one argument behind a ternary arm. The next five turn the
-#: screw: a duplicate parameter name reads only the last argument, an identifier is read after the
-#: other argument writes it, an identifier is read on both sides of that write, an optional chain
-#: short-circuits past the argument's position, and the body calls one argument before evaluating
-#: the other. Substituting any of them into the body would drop, duplicate, reorder, or
-#: conditionalize an effect or a read, so each is answered by putting the function value itself
-#: where the method stood, immediately called, and its arguments still standing where they were
-#: written. The last two are the admitted side of the rule: an effectful argument used exactly
-#: once, unconditionally, in declaration order, and before the body's own operations is
-#: substituted. The final rows widen the screw once more: a logical assignment evaluates its right
-#: side conditionally, and a parameter read inside a nested arrow is evaluated on each later run of
-#: that arrow rather than at the call — an effectful or live-reading argument substituted into
-#: either is wrong, so both are answered by the standing function value. The last row is the
-#: oracle's own admitted side: two calls the analysis proves pure are reordered into the body
-#: without changing what the program prints. Each program is mapped to what Node prints for it.
+#: Each row maps a program probing one argument-evaluation-order edge case — a dropped, reordered,
+#: duplicated, or conditionally-read effect, a nested-arrow live read, or a pure-call reorder — to
+#: what Node prints for it. Where substitution would change that order the fold keeps the function
+#: value called with its arguments standing where they were written; where an argument is read once,
+#: unconditionally, in order, before the body's own effects, it is substituted.
 AN_ARGUMENT_WHOSE_EFFECT_THE_FOLD_OWES = {
     'function g() { SIDE = 1; return 2; }'
     ' var o = { m: function (a) { return 7; } };'

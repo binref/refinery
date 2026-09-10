@@ -925,10 +925,6 @@ A_FILE_THAT_ENDS_INSIDE_A_REGULAR_EXPRESSION = {
 
 
 class TestAFileThatEndsInsideARegularExpressionKeepsTheLiteralOpen(TestBase):
-    """
-    This was an entry of `A_FILE_THE_PARSER_REFUSES` while such a file came back as text the
-    parser could not read, and it stays as the regression test that entry became.
-    """
 
     def test_the_constructs_nothing_closed_are_the_ones_the_file_ends_inside(self):
         rows = A_FILE_THAT_ENDS_INSIDE_A_REGULAR_EXPRESSION

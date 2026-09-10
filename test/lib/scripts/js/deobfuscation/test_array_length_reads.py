@@ -204,9 +204,6 @@ _TARGET = '[1, 2, 3].length'
 
 
 def _deobfuscated(source: str) -> str:
-    """
-    The script `refinery.js` emits for *source*.
-    """
     return source.encode('utf8') | js() | str
 
 

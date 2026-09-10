@@ -191,23 +191,14 @@ _DID_NOT_FINISH = ('', 'the deobfuscation did not finish')
 
 
 def _walk(body: str) -> str:
-    """
-    A program whose one function runs *body* and prints what it returned.
-    """
     return F'function walk() {{ {body} }}\nconsole.log(walk());'
 
 
 def _walked(body: str) -> str:
-    """
-    The script `refinery.js` emits for the program `_walk` builds from *body*.
-    """
     return _walk(body).encode('utf8') | js() | str
 
 
 def _keys_of(literal: str) -> str:
-    """
-    An expression whose value is the keys of *literal*, in the order they are visited, joined.
-    """
     return F"Object.keys({literal}).join('|')"
 
 

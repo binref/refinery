@@ -584,11 +584,6 @@ class TestAKeyTheProgramDeletedIsInNothing(TestBase):
     a write to a prototype only ever adds a name, so a name the language already put there is there
     afterwards too — which is true of a write and false of a `delete`.
 
-    The read side of the same programs was already answered correctly, because absence is asked of
-    the effect model and a deletion is recorded there as a write to the prototype's owner. The model
-    knew all along; it was the presence side that did not ask, and `property_is_inherited` is where
-    the tables are now paired with the question they cannot answer.
-
     Retired from `test.lib.scripts.js.test_release_blockers` and kept as the regression it retired
     into.
     """

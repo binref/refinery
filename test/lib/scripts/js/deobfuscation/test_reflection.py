@@ -1173,8 +1173,8 @@ class TestReflectionInlining(TestJsDeobfuscator):
 
     def test_function_constructor_pure_body_inlined_in_strict_function(self):
         """
-        A body that behaves identically under strict mode — a pure `return 1 + 1` — now inlines into a
-        strict function, where the blunt strict-context gate used to decline every body.
+        A body that behaves identically under strict mode — a pure `return 1 + 1` — inlines into a
+        strict function.
         """
         source = inspect.cleandoc(
             """
