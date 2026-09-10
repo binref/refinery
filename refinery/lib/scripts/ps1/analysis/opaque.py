@@ -14,16 +14,15 @@ To a consumer they are one fact: at this point, some binding of this scope may h
 nothing says which. `writes_nobody_can_attribute` is that one question, and it is the only thing a
 consumer should have to ask.
 
-**This says nothing about when.** The point is the whole of what is known, and it is enough: a read
-that reaches its write without passing the point observes what it always would have. Turning the
-fact into a property of the enclosing scope instead was tried and it deadlocks — marking a scope in
-doubt for an `Invoke-Expression` stops the payload variable folding, so the call never becomes
-literal, so it never expands, so the mark never lifts, and a loader that used to unpack came back as
-the obfuscator wrote it.
+This says nothing about *when*: a read that reaches its write without passing the point observes
+what it always would have. The fact is a property of the point, not of the enclosing scope — a
+scope-level mark deadlocks, since marking a scope in doubt for an `Invoke-Expression` stops the
+payload variable folding, so the call never becomes literal, never expands, and the mark never
+lifts.
 
-**The recognition is deny-side.** A spelling this does not resolve is not a call declared harmless;
-it is one whose effect is unknown, so a miss here performs a corruption where a miss in a grant table
-such as `refinery.lib.scripts.ps1.analysis.effects` merely withholds a rewrite. That is also why no
+A spelling this does not resolve is not a call declared harmless; it is one whose effect is unknown,
+so a miss here performs a corruption where a miss in a grant table such as
+`refinery.lib.scripts.ps1.analysis.effects` merely withholds a rewrite. That is also why no
 `refinery.lib.scripts.ps1.analysis.world.Ps1TypeWorld` is consulted: a script that shadows `iex`
 runs something else, and something else is opaque too.
 

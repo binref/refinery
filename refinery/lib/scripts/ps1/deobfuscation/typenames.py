@@ -41,8 +41,7 @@ from refinery.lib.scripts.ps1.model import (
 def _accelerator_spelling(name: str) -> bool:
     """
     Whether `name` is written as a type accelerator, with or without array, pointer or reference
-    suffixes. A name the type-name grammar does not understand is judged as written, which is what
-    it was before the suffixes were understood at all.
+    suffixes. A name the type-name grammar does not understand is judged as written.
     """
     parsed = parse_type_name(name)
     if parsed is None:
@@ -58,8 +57,8 @@ def canonical_type_name(name: str) -> str | None:
     left untouched, where a verbose `[System.Int32]` still folds to `[Int32]`.
 
     The array suffixes are carried through rather than looked up, because the display table is keyed
-    by the element type: rendering `byte[]` off its definition alone answers `Byte`, which is a
-    different type, and `New-Object Byte[] $n` became `New-Object Byte $n`.
+    by the element type: rendering `byte[]` off its definition alone would answer `Byte`, a
+    different type, turning `New-Object Byte[] $n` into `New-Object Byte $n`.
 
     An accelerator keeps its spelling through a suffix too. `[byte[]]` is the readable form for the
     same reason `[byte]` is, and it reached the display table only because the name it was looked up
@@ -165,14 +164,8 @@ class VariableTypeAwareTransformer(Transformer):
     A pass that asks `refinery.lib.scripts.ps1.analysis.variable_types.type_at` what a variable
     holds where it is read, rather than carrying a table of names it built itself.
 
-    The flow model is captured once at the root, for the reason
-    `refinery.lib.scripts.ps1.deobfuscation.typecast.Ps1TypeCasts.visit` gives at greater length:
-    every fold below marks the pass changed, which drops the shared cache, so a per-site lookup
-    would rebuild the control-flow graphs of the whole script once per fold. Neither pass adds or
-    removes a statement, so the graphs it would rebuild are the graphs it already holds.
-
-    The model is dropped again when the walk it was captured for ends, so that a second walk over a
-    tree the first one rewrote cannot be answered from the first one's graphs. The answers are held
+    The flow model is captured once at the root and dropped when the walk ends, for the reason
+    `refinery.lib.scripts.ps1.deobfuscation.typecast.Ps1TypeCasts.visit` gives. The answers are held
     for as long as the model is, keyed on the occurrence they were asked about: `type_at` walks
     every write of a binding, and a member chain, two passes and every iteration of the normalize
     group ask about the same occurrences again. The occurrence is kept beside its answer because
@@ -264,9 +257,6 @@ class Ps1TypeSystemSimplifications(VariableTypeAwareTransformer):
         self,
         node: Ps1MemberAccess,
     ) -> Expression | None:
-        """
-        Resolve ($X | Get-Member)[N].Name to the Nth member name string.
-        """
         member_name = get_member_name(node.member)
         if member_name is None or member_name.lower() != 'name':
             return None

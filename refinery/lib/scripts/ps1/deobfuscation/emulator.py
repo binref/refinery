@@ -928,10 +928,6 @@ class _Ps1Interpreter:
         return [0] * size
 
     def _eval_string_parts(self, parts: list) -> str:
-        """
-        Evaluate the parts of an expandable string or expandable here-string by
-        resolving each variable / subexpression and concatenating the results.
-        """
         out: list[str] = []
         for part in parts:
             if isinstance(part, Ps1StringLiteral):
@@ -947,10 +943,6 @@ class _Ps1Interpreter:
         return result
 
     def _eval_array_expression(self, expr: Ps1ArrayExpression) -> list:
-        """
-        Evaluate an `@( ... )` array expression by executing its body statements and collecting the
-        emitted success-stream values into a flat list.
-        """
         results: list[_Value] = []
         for stmt in expr.body:
             self._emit_stmt(stmt, results)
@@ -970,21 +962,16 @@ class _Ps1Interpreter:
             name = '_'
         if name in self._caller_scope_names and not self._written(name):
             # A name an enclosing scope binds, read before this body writes it, is refused rather
-            # than read as `$null`, for the reason `_separator` states for `$OFS`: the outermost
-            # `_parent_env` is `None`, which is *unknown beyond here* and not *empty*, and the caller
-            # scope this fold is entered without is entitled to hold the value. Reading it as `$null`
-            # is a value 5.1 does not produce — `$q = $env:Temp; function f { $q + 1 }` is
-            # `$env:Temp + 1` on the host and not `1`. A name no enclosing scope writes is genuinely
-            # unset, so an accumulator like `$r = $r + …` still reads its first `$r` as `$null` and
-            # folds; only a name the script binds elsewhere withholds the fold.
+            # than read as `$null`: the caller scope this fold is entered without may hold the value
+            # (see `script_scope_write_names`). `$q = $env:Temp; function f { $q + 1 }` is
+            # `$env:Temp + 1` on the host, not `1`. A name no enclosing scope writes is genuinely
+            # unset, so an accumulator `$r = $r + …` still reads its first `$r` as `$null` and folds.
             raise _Ps1InterpreterError
         if self._strict and not self._written(name):
             # Under `Set-StrictMode` a read of a never-assigned name is a statement-terminating
             # error, not the `$null` an isolated body reads it as, so the fold is withheld rather
-            # than answered with a value 5.1 throws on. This is the emulator's half of what
-            # `Ps1NullVariableInlining` does at script scope, where the same arming stands the whole
-            # pass down. The accumulator the comment above folds — a first `$r` read as `$null` — is
-            # exactly a never-assigned read, and it too raises here where strict mode may be armed.
+            # than answered with a value 5.1 throws on — including the accumulator's first `$r`,
+            # which is exactly such a read.
             raise _Ps1InterpreterError
         return self._lookup(name)
 
@@ -1172,7 +1159,7 @@ class _Ps1Interpreter:
         if obj is None:
             # The object adapter fakes a `Count` of 0 onto `$null`, which reads on wherever
             # `Set-StrictMode -Version 2` is not armed and raises where it is; a real `Length` it
-            # does not fake, so that stays refused. This mirrors the value-domain folder's own gate.
+            # does not fake, so that stays refused.
             if name == 'count' and not self._strict_v2:
                 return 0
             return None
@@ -1750,8 +1737,7 @@ class _Ps1Interpreter:
         entitled to have written `$OFS`. Writing the fallback space there would be a value 5.1 does
         not produce, and an explicit refusal is what this unit owes a wrong answer.
         `refinery.lib.scripts.ps1.analysis.separator` asks the same question statically, at a point
-        where the enclosing scope is in view, and it is what folds the collections this declines;
-        the reconvergence of emulation and folding is what brings the two together.
+        where the enclosing scope is in view, and it is what folds the collections this declines.
 
         A write of `$null` is the fallback and a write of `''` is not — see that module for the
         measurement. A `Double` separator is refused because its text is the one thing here the
@@ -1877,14 +1863,11 @@ class Ps1FunctionEvaluator(Transformer):
             # the substitution above is unconditional. Deleting the *definition* is a name-keyed
             # removal, and an exported name has a caller this walk never read: the definition is a
             # reachable entry point and folding its one internal call proves nothing about it.
-            # Without the gate a `.psm1` lost the definition here, and the value it had been folded
-            # into was then a bare literal at the root that junk removal stripped as console text.
             #
-            # `exports_a_name` and not `is_readable`, deliberately. The other four unknowns that
-            # verdict carries — an open world, an opaque dispatch, an identity binding, a call
-            # resolving onto a name this script defines — are risks this pass has always taken in
-            # exchange for resolving the `iex` trampolines obfuscators are built out of. An export
-            # is not a risk taken for anything.
+            # `exports_a_name` and not `is_readable`, deliberately: the other four unknowns
+            # `is_readable` carries are risks this pass accepts to resolve the `iex` trampolines
+            # obfuscators are built out of, but an export is a reachable call site this walk never
+            # scans and is worth nothing to accept.
             if not exports:
                 self._remove_resolved_definitions(node)
             return None
@@ -1903,8 +1886,7 @@ class Ps1FunctionEvaluator(Transformer):
                 key = normalize_command_name(node.name)
                 # A name with more than one definition is not foldable: which body a call reaches
                 # depends on the order and scope in which the definitions run, which this pass does
-                # not model. Keeping the last one folded `F` where `function global:F` had replaced
-                # it, and the payload definition then read as uncalled and was removed.
+                # not model.
                 if key in self._functions:
                     self._ambiguous.add(key)
                 self._functions[key] = node
@@ -1992,10 +1974,9 @@ class Ps1FunctionEvaluator(Transformer):
         The value an argument expression pins, as the interpreter's own currency, or `(False, None)`
         where it pins none this can hold.
 
-        What stood here read the tree itself, and it read it wrongly in the one place it mattered:
-        a `Ps1IntegerLiteral` was taken at its derived `value`, so `0xFFFFFFFF` reached a bound
-        parameter as four billion where 5.1 binds -1. `read` is where a spelling becomes a value
-        now, and `_value_of` is what refuses the values this interpreter cannot carry.
+        The value comes through `read`, not from an integer literal's derived `value`: `0xFFFFFFFF`
+        binds to a parameter as -1, where its derived value is four billion. `_value_of` then
+        refuses the values this interpreter cannot carry.
         """
         return _value_of(read(val))
 
@@ -2125,9 +2106,7 @@ class Ps1FunctionEvaluator(Transformer):
         The expression that spells a computed value, or `None` where nothing does.
 
         Both halves are the domain's: `fact_of` says which PowerShell value a Python object
-        denotes, and `render` says how that value is written. What stood here spelled a number as
-        a bare decimal numeral and refused everything else, so a body producing `$true` or a
-        fraction was left unfolded although each of the two has a spelling.
+        denotes, and `render` says how that value is written.
 
         **Producing nothing is not producing `$null`**, and that is why `None` is refused here
         although `render` spells it. A variable bound to either reads the same, which is what makes
@@ -2233,9 +2212,8 @@ class Ps1FunctionEvaluator(Transformer):
         Delete the calls to functions this pass has just deleted, from `root`'s own body.
 
         Which statement a call *is* comes from
-        `refinery.lib.scripts.ps1.ast.standalone_command_statement`, so this pass and the one that
-        deletes a resolved alias definition mean the same thing by a command standing alone rather
-        than each recognizing the shape privately.
+        `refinery.lib.scripts.ps1.ast.standalone_command_statement`, shared so this pass and the
+        alias-definition remover recognize a standalone command the same way.
 
         The redirection refusal is a backstop and is measured to be one: a redirecting call is
         already refused at the visit, which leaves the definition's replaced and failed counts short
@@ -2243,10 +2221,7 @@ class Ps1FunctionEvaluator(Transformer):
         It is kept because what makes it unreachable is an invariant of a different method, and what
         it prevents if that invariant ever moves is a file: PowerShell opens the redirection target
         as it sets the redirection up, so `deadfunc > C:\\log` creates the file although the body
-        writes nothing. Dropping it is the loss
-        `refinery.lib.scripts.ps1.deobfuscation.substitution` refuses for every rewrite, and a
-        removal is entitled to it only by claiming the code does not run at all. This one claims the
-        opposite: the function ran, and nothing was observed.
+        writes nothing.
         """
         if not isinstance(root, (Ps1Script, Block)):
             return
@@ -2336,10 +2311,9 @@ class Ps1ForEachPipeline(Transformer):
         that way changes what the block is handed, not merely what it is called. `[Char[]]'ab'`
         hands out two Chars where the operand alone is one String, so dropping it changes the
         *count*; `[int[]]('1', '2')` hands out numbers where the elements alone are text, so
-        `$_ + 1` becomes concatenation. Both were refused before the reader was widened to a
-        scalar source and are refused here, and so is `[byte[]](300, 1)`, where the cast is not
-        merely narrower than the number but does not hold it: 5.1 throws there and the pipeline
-        never runs at all.
+        `$_ + 1` becomes concatenation. Both are refused here, and so is `[byte[]](300, 1)`, where
+        the cast is not merely narrower than the number but does not hold it: 5.1 throws there and
+        the pipeline never runs at all.
         """
         widths: list[str] = []
         while isinstance(expr, Ps1CastExpression):
@@ -2367,18 +2341,17 @@ class Ps1ForEachPipeline(Transformer):
         Turn the success stream of `<array> | %{ ... }` into a node.
 
         **A pipeline builds a collection whatever its items are**, so what stands here is the
-        stream and nothing narrower. A run of one-character strings used to be joined into one
-        String, which was a wrong answer measured six ways: `@('a', 'b') | %{ $_ }` is an
-        `Object[]` of two, so `.Count` is 2, `-join '-'` writes the separator, `foreach` runs
-        twice, and each of those changed. What the join was standing in for is `$OFS`, and it is
-        `refinery.lib.scripts.ps1.analysis.separator` that answers it now: the collection this
-        writes reaches the enclosing coercion as a collection, and the fold that follows the
-        emulation is where it becomes a String with the separator the script wrote.
+        stream and nothing narrower — joining a run of one-character strings into one String would
+        be wrong: `@('a', 'b') | %{ $_ }` is an `Object[]` of two, so `.Count` is 2, `-join '-'`
+        writes the separator, and `foreach` runs twice. Joining is `$OFS`'s job, which
+        `refinery.lib.scripts.ps1.analysis.separator` answers: the collection this writes reaches
+        the enclosing coercion as a collection, and the fold that follows the emulation is where it
+        becomes a String with the separator the script wrote.
 
-        **The stream arrives already assembled, and that is the whole reason `emit` exists beside
-        `execute`.** Concatenating what a block *returned* would flatten a block that hands out one
-        array into the objects inside it: measured, `@(1, 2) | %{ $_, $_ }` is four Int32s where
-        `%{ ,($_, $_) }` is two pairs, and a collapsed result spells both the same way. A stream
+        The stream arrives already assembled (see `emit`). Concatenating what a block *returned*
+        would flatten a block that hands out one array into the objects inside it: measured,
+        `@(1, 2) | %{ $_, $_ }` is four Int32s where `%{ ,($_, $_) }` is two pairs, and a collapsed
+        result spells both the same way. A stream
         that ends up empty is refused rather than spelled `$null`, because a pipeline that produced
         no value is not an expression this can put in its place.
         """

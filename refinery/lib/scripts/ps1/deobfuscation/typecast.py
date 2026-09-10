@@ -37,29 +37,18 @@ class Ps1TypeCasts(Transformer):
     A cast written back as the value it produces, asked of
     `refinery.lib.scripts.ps1.analysis.values` rather than decided here.
 
-    What stood here was a table of integer ranges and a dispatch on the accelerator's spelling, and
-    it lost a type on every fold whose target the language spells no literal for: `[byte] 5` became
-    `5`, which re-reads as an Int32. It read a String operand with Python's own `int(text, 0)`,
-    which knows a digit separator and the `0b` and `0o` prefixes that 5.1 has never had, so
-    `[int] '1_0'` answered ten for a script that stops. And it folded a `[char]` to a one-character
-    String, which is a different value from a Char and not merely a different type.
+    `-as` is **not** rewritten into a cast: the two are different expressions, measured. `'abc' -as
+    [int]` is `$null` where `[int] 'abc'` throws, and `300 -as [byte]` is `$null` where `[byte] 300`
+    throws. `Ps1Outcome` tells them apart, and a conversion that may throw folds neither, so an `-as`
+    this cannot answer is left standing rather than turned into the cast that stops the script.
 
-    `-as` is **not** rewritten into a cast. The two are different expressions, measured:
-    `'abc' -as [int]` is `$null` where `[int] 'abc'` throws, and `300 -as [byte]` is `$null` where
-    `[byte] 300` throws. `Ps1Outcome` is what tells them apart, and a conversion that may throw
-    folds neither of them — so an `-as` this cannot answer is left standing rather than turned into
-    the cast that stops the script.
+    `[string]` of a collection is read outside the value grid: its elements 5.1 joins with `$OFS`,
+    which `_joined_collection` answers. `[char[]]` of a list of numbers is a `Char[]`, which has no
+    literal, so `_spelled` writes none and the cast stands while an operator over it reads its type.
 
-    One arm is read outside the value grid and answers the separator a collection is joined with
-    rather than a value: `[string]` of a collection, whose elements 5.1 joins with `$OFS` — see
-    `_joined_collection`. `[char[]]` of a list of numbers stood beside it as a ledgered defect that
-    folded to a String, erasing the container and element types; the value domain now answers the
-    cast as the `Char[]` it is — which has no literal, so `_spelled` writes none and the cast stands
-    while an operator over it reads its type — and this pass no longer rewrites it at all.
-
-    Every question here is asked of one step. The operand has already been visited, so `read` names
-    whatever it came to and `convert` answers the cast over that; `evaluate` would walk the operand
-    again at every node, which is quadratic over a tree a visitor is already descending.
+    Every question here is asked of one step: the operand has already been visited, so `read` names
+    what it came to and `convert` answers the cast over that; `evaluate` would walk the operand again
+    at every node, quadratic over a tree a visitor is already descending.
     """
 
     def __init__(self):
@@ -72,13 +61,10 @@ class Ps1TypeCasts(Transformer):
         Captured once rather than per cast: every fold below marks the pass changed, which drops the
         cache, so a per-site lookup would rebuild the control-flow graphs of the whole script once
         per folded cast. This pass replaces an expression with the value it produces and neither
-        adds nor removes a statement, so the graphs it would rebuild are the graphs it already has,
-        and the writes it would find are the same writes.
+        adds nor removes a statement, so the graphs it would rebuild are the graphs it already has.
 
-        Dropped again when the walk it was captured for ends, for the reason
-        `refinery.lib.scripts.ps1.deobfuscation.typenames.VariableTypeAwareTransformer` states: a
-        second walk over a tree the first one rewrote enters on the guarded arm and would otherwise
-        be answered from the first walk's graphs.
+        Dropped again when the walk it was captured for ends, so that a second walk over a tree the
+        first one rewrote cannot be answered from the first walk's graphs.
         """
         if self._entry or not isinstance(node, Ps1Script):
             return super().visit(node)
@@ -127,11 +113,10 @@ class Ps1TypeCasts(Transformer):
 
     def _joined_collection(self, node: Ps1CastExpression, target) -> Expression | None:
         """
-        `[string]` of a collection, whose elements 5.1 separates with `$OFS`. The conversion grid
-        was captured over scalar targets only, so the domain has no cell to read for this, and the
-        separator is not a property of the value in any case:
-        `refinery.lib.scripts.ps1.analysis.separator` is what answers it, at the point the cast
-        stands, and refuses wherever a run could have written the name something else.
+        The conversion grid was captured over scalar targets only, so the domain has no cell for a
+        `[string]` of a collection, and the separator is not a property of the value in any case:
+        `refinery.lib.scripts.ps1.analysis.separator` answers it, at the point the cast stands, and
+        refuses wherever a run could have written the name something else.
         """
         if target != _STRING or node.operand is None or self._flow is None:
             return None

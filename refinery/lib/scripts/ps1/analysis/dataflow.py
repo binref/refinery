@@ -64,13 +64,11 @@ point to stand at: a write aimed at the script scope from anywhere, one aimed at
 chain cannot name, and one run by a block whose own run time this layer cannot place.
 
 A write inside a `trap` is a case this layer gets right for the wrong reason, and the distinction
-matters if either half is touched. 5.1 runs a trap body in a child scope, so the write cannot reach a
-read outside the trap at all; `refinery.lib.scripts.ps1.analysis.model.Ps1SemanticModel` does not model
-that and binds it to the enclosing scope. What refuses the answer is the kill rule — the trap's write
-is another write of the same binding, and the exceptional edge into the handler with the resume edge
-back out puts it on a path between any earlier write and that read. A rule keyed on the handler being
-entered exceptionally was tried instead and removed: it refuses `catch { $x = 'b'; Write-Host $x }`,
-where the handler's own store is genuinely what its own read sees.
+matters if either half is touched. 5.1 runs a trap body in a child scope, so the write cannot reach
+a read outside the trap at all; `refinery.lib.scripts.ps1.analysis.model.Ps1SemanticModel` does not
+model that and binds it to the enclosing scope. What refuses the answer is the kill rule — the
+trap's write is another write of the same binding, and the exceptional edge into the handler with
+the resume edge back out puts it on a path between any earlier write and that read.
 """
 from __future__ import annotations
 
@@ -260,8 +258,8 @@ class Ps1VariableFlow:
 
         One link holds when it certainly handed the object over, its definition runs first on every
         path to the store, and neither of the two names it joins is *rebound* between the two. A
-        store through either name does not end the link — that is the whole point of the
-        distinction: `$y = $x; $x[0] = 9; [Array]::Reverse($x)` leaves both names on the one array
+        store through either name does not end the link: `$y = $x; $x[0] = 9; [Array]::Reverse($x)`
+        leaves both names on the one array
         throughout. A replacing write does end it, on either side: `$y = 9, 9, 9` gives `$y` an
         array of its own, and `$x = 9, 9, 9` gives one to `$x` and leaves `$y` on what it had.
 
@@ -990,7 +988,4 @@ def build_variable_flow(
     blocks: Ps1BlockModel,
     cycles: CycleModel,
 ) -> Ps1VariableFlow:
-    """
-    Build the `Ps1VariableFlow` for a script from the models it joins.
-    """
     return Ps1VariableFlow(semantic, flow, dominators, blocks, cycles)

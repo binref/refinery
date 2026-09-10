@@ -363,27 +363,21 @@ class Ps1Lexer:
 
     def _read_number(self) -> Ps1Token | None:
         """
-        The numeral written at `Ps1Lexer.pos`, or `None` where what stands there only looks like
-        one. A digit is written there, or a dot and then a digit; `Ps1Lexer.scan` is what knows
-        that, and nothing else calls this.
+        The numeral written at `Ps1Lexer.pos`, or `None` where what stands there only looks like one.
 
-        The parts come in 5.1's order and are not alternatives to one another: a base, then a
-        fraction or a power, then a type suffix, then a multiplier. Reading a suffix *or* a
-        multiplier loses `1dkb`, which is a Decimal kilobyte, and `1.5L`, which is an Int64.
+        The parts come in 5.1's order and are not alternatives: a base, then a fraction or a power,
+        then a type suffix, then a multiplier. Reading a suffix *or* a multiplier loses `1dkb`, a
+        Decimal kilobyte, and `1.5L`, an Int64. A trailing dot belongs to the numeral — `3.` is
+        three, given back only to the range operator so `3..5` counts from three — but a dot after a
+        power does not, so `1e3` ends where the dot begins and 5.1 reads what follows as a member.
 
-        A trailing dot belongs to the numeral — `3.` is the number three — and is given back only to
-        the range operator, so that `3..5` counts from three. A dot after a power belongs to neither:
-        only the plain-decimal branch ever eats one, so `1e3` ends where the dot begins and 5.1 reads
-        what follows as a member.
+        Three spellings return `None` because the numeral itself cannot be one: `0x` names no digits,
+        `1e` raises nothing to a power, and a multiplier with no `b` behind it is part of the word
+        around it, so `1k` is a word where `1kb` is a number.
 
-        Three spellings end here rather than in `Ps1Lexer.scan`, because it is the numeral itself
-        that cannot be one: `0x` names no digits, `1e` raises nothing to a power, and a multiplier
-        with no `b` behind it is part of the word around it, so `1k` is a word where `1kb` is a
-        number. Everything else the numeral did not swallow is `Ps1Lexer.scan`'s to judge.
-
-        The kind reported is which literal the parser builds and not what the numeral is worth:
-        `1kb` is a real to spell and an `Int32` to read, and `refinery.lib.scripts.ps1.analysis
-        .values.read` is what decides the second.
+        The reported kind is which literal the parser builds, not what the numeral is worth: `1kb` is
+        a real to spell and an `Int32` to read, which `refinery.lib.scripts.ps1.analysis.values.read`
+        decides.
         """
         start = self.pos
         real = False
@@ -560,15 +554,12 @@ class Ps1Lexer:
     def scan_member_access(self) -> Ps1Token | None:
         """
         The member access operator written at `Ps1Lexer.pos`, or `None` where none is. A reader that
-        has just taken a value asks this instead of asking for a token, because one character has
-        two answers: a `.` before a digit begins a number where a value may start and names a member
-        where one has just ended, so `$x.5` reads the property `5` and `$x = .5` reads a half. 5.1
-        draws the line in the same place and by the same means — the operator has a scan of its own
-        there, and that scan never reaches the number scanner.
+        has just taken a value asks this instead of asking for a token, because one character has two
+        answers: a `.` before a digit begins a number where a value may start and names a member
+        where one has just ended, so `$x.5` reads the property `5` and `$x = .5` reads a half.
 
-        Whether anything binds here at all is the caller's question and not this one's: nothing is
-        passed over, so an operator that does not touch what precedes it is simply read at the wrong
-        position.
+        Whether anything binds here at all is the caller's question: nothing is passed over, so an
+        operator that does not touch what precedes it is simply read at the wrong position.
 
         Two spellings are refused rather than read. A second dot is the range operator, so `1..5`
         counts from one rather than reading a member of it. And where a bare word is a value, an
@@ -778,17 +769,14 @@ def reads_as_one_numeral(spelling: str, following: str, mode: Ps1LexerMode) -> b
     the word `3.ToString`, `0xFF` before it is the number and a member read, and `3` before `[0]`
     or `::MaxValue` is a word again because neither bracket nor colon ends a numeral.
 
-    The question is put to the lexer rather than restated here, so that a slot deciding whether the
-    value it holds needs a bracket and the reader that would read it back cannot come apart. That
-    also makes it the one thing to fix when the lexer is wrong: a repair reaches the writer for
-    free.
+    The question is put to the lexer rather than restated here, so the slot deciding whether its
+    value needs a bracket and the reader that would read it back cannot come apart.
 
     A sign is the one thing asked around the lexer rather than of it. Where an expression is read, a
-    `+` or `-` written straight against a numeral is part of it — 5.1 raises `AllowSignedNumbers`
-    for exactly that position — and the rest of the rule then applies to the whole of it:
-    measured, `-1kb.GetType()` reads the member of minus one kilobyte while `-1.GetType` is one
-    word. Where a bare word is a value no sign is ever taken, so the spelling is asked about as
-    it was written.
+    `+` or `-` written straight against a numeral is part of it, and the rest of the rule then
+    applies to the whole: measured, `-1kb.GetType()` reads the member of minus one kilobyte while
+    `-1.GetType` is one word. Where a bare word is a value no sign is ever taken, so the spelling is
+    asked about as it was written.
     """
     signed = mode is Ps1LexerMode.EXPRESSION and spelling[:1] in ('+', '-')
     numeral = spelling[1:] if signed else spelling

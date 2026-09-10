@@ -482,9 +482,9 @@ class _Builder(CfgBuilder):
         Each inner statement list is built through `block`, so a `trap` declared inside the construct
         installs as a handler over its siblings, not as noise the enclosing block owns. The inner
         frontier then feeds the outer statement's own node: the construct yields its value, then the
-        statement consuming it runs. This inner-then-outer order is the soundness hinge — a soft raiser
-        that is the last inner statement has the outer node as its successor, which keeps a trap that
-        guards it, where the reverse order would drop it.
+        statement consuming it runs. This inner-then-outer order matters: a soft raiser that is the
+        last inner statement has the outer node as its successor, which keeps a trap that guards it,
+        where the reverse order would drop it.
 
         Reached only where `descend` is set, which is only the fault reader's own graph; every other
         consumer reads the coarse model, in which this statement is one atomic node.

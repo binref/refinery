@@ -52,15 +52,8 @@ def store_dropped_to_value(rhs: Expression) -> Ps1ExpressionStatement:
     print something the original never printed — and inside a function body, return it. The same
     holds for a `for` initializer, which PowerShell evaluates in a void context:
     `for ((Get-Date); $False; ) { }` prints nothing where the bare `(Get-Date)` prints the date.
-    `$Null = ...` keeps the work and emits nothing, which is what both positions did.
-
-    It is also `StatementEffect.DISCARD`, so a later pass removes it when the work it wraps is pure
-    and keeps it when it is not — which is the whole of the recall this costs.
-
-    Building this adopts `rhs`, which is why it may be built before the batch holding it is known
-    to land: registering it with `refinery.lib.scripts.ps1.deobfuscation.removal.Ps1RemovalPlan`
-    gives the adoption straight back, and no replacement holds a claim on the tree until that plan
-    commits. A pass that builds one and never registers it owes the repair itself.
+    `$Null = ...` keeps the work and emits nothing. It carries `StatementEffect.DISCARD`, so a later
+    pass drops it when the work it wraps is pure.
     """
     discard = Ps1AssignmentExpression(
         target=Ps1Variable(name='Null'), operator='=', value=rhs)
@@ -159,9 +152,8 @@ def extract_foreach_scriptblock(
     all resolve to `foreach-object`, and a script that redefines that name runs its own body where
     the block would otherwise run: measured on 5.1, `function ForEach-Object { 'H' }` makes
     `1, 2 | % { $_ * 2 }` write `H`, not `2 4`, so a caller that folds the block as the cmdlet's
-    must pass the set and this refuses where the name is in it. The default is empty: a caller with
-    no world reads the name at face value, which is what every reader did before the set was
-    threaded.
+    must pass the set and this refuses where the name is in it. The default is empty, so a caller
+    with no world reads the name at face value.
     """
     if not isinstance(expr, Ps1CommandInvocation):
         return None
@@ -395,19 +387,17 @@ def dotnet_regex_pattern(pattern: str) -> str:
     no group is returned unchanged, and one Python already rejects is left for its own engine to
     reject.
 
-    Three things share the `(?<` opening a name is read from and are none: a look-behind `(?<=...)`
-    or `(?<!...)`, a `(?<` a backslash before it makes literal, and one inside a character class
-    `[...]`, where every metacharacter is text. A class is copied whole for the last reason, and a
-    backslash takes the character behind it with it, so an escaped `(` never opens a group.
+    Three things share the `(?<` opening but are not a named group and must not be rewritten: a
+    look-behind `(?<=...)`/`(?<!...)`, a `(?<` a backslash makes literal, and one inside a character
+    class `[...]`, where every metacharacter is text.
 
     A pattern that mixes a named group with an *unnamed* one is left untranslated, because the two
     dialects disagree about what number the named one takes: .NET numbers every unnamed group first
-    and the named ones after, while Python's `(?P<name>...)` numbers strictly by position. A numeric
-    token — a `\1` backreference or a `$1` in the replacement — would then resolve to a different
-    group than 5.1 reads, so `'ab' -replace '(?<n>a)(b)', '$1'` is `b` on the host and would fold to
-    `a`. Returning the pattern unchanged leaves the `(?<name>` for Python's engine to reject, the
-    same refusal an untranslated named group already earned before this rewrite existed. A pattern
-    whose groups are all named, or all unnamed, numbers alike in both and is translated.
+    and the named ones after, while Python numbers strictly by position. A numeric token — a `\1`
+    backreference or a `$1` in the replacement — would then resolve to a different group than 5.1
+    reads, so `'ab' -replace '(?<n>a)(b)', '$1'` is `b` on the host and would fold to `a`. Returning
+    the pattern unchanged leaves the `(?<name>` for Python's engine to reject. A pattern whose groups
+    are all named, or all unnamed, numbers alike in both and is translated.
     """
     out: list[str] = []
     i = 0
@@ -490,14 +480,9 @@ def set_command_name(node: Ps1CommandInvocation, name: str) -> bool:
     against self-resolving rewrites that would otherwise loop forever.
 
     Both edits go through the mutation API — the name through
-    `refinery.lib.scripts.ps1.deobfuscation.substitution.substitute_field`, which is the one route
-    by which a part of this tree takes another's place, and the operator through
+    `refinery.lib.scripts.ps1.deobfuscation.substitution.substitute_field` and the operator through
     `refinery.lib.scripts.set_value` — so the rewrite advances the tree's mutation counter and every
-    analysis model over it is rebuilt from the name now written rather than the one it replaced.
-    Assigning the two fields directly left that counter standing, and a caller was consistent with
-    the tree only for as long as it also announced the edit through
-    `refinery.lib.scripts.Transformer.mark_changed`, which is a second channel the counter exists so
-    as not to depend on.
+    analysis model over it is rebuilt from the name now written.
 
     The operator is written only once the name has landed, because a substitution that would drop a
     redirection is refused and the command then runs exactly as written, call operator included.

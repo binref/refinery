@@ -20,9 +20,8 @@ rather than a `Ps1ScriptBlock`, so no block here stands for it.
 
 **`CHILD` is the answer that has to be earned.** Calling a body `CALLER` that is really `CHILD` adds a
 kill nobody performs, which only ever loses an inlining; calling one `CHILD` that is really `CALLER`
-drops a kill somebody does perform, which silently keeps a stale value. So `UNKNOWN` is projected
-exactly as `CALLER` is by `writes_reaching_caller`, and only a position that *proves* a child scope
-answers `CHILD`.
+drops a kill somebody does perform, which silently keeps a stale value. So `UNKNOWN` is projected as
+`CALLER`, and only a position that *proves* a child scope answers `CHILD`.
 
 **`.` is the invoker's scope, not the writer's.** `function TakeDot([scriptblock] $b) { . $b }`
 dot-sources into `TakeDot`'s scope, so `TakeDot { $x = 'b' }` leaves the original caller's `$x` alone.

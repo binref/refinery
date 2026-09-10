@@ -12,9 +12,9 @@ can create the binding and file the occurrence. It is therefore a *definition so
 the model is built, not a decoration applied afterwards: there is nowhere to hang a decoration when
 `Get-Process -OutVariable x` is the only mention of `x` in the script.
 
-**The recognition is deny-side.** A command spelling this cannot resolve is not a command this may
-declare harmless — it is one whose effect is unknown, and the conservative answer is to record that
-the enclosing scope writes a name nobody can read. That is the opposite polarity from a grant table
+A command spelling this cannot resolve is not a command this may declare harmless — it is one whose
+effect is unknown, and the conservative answer is to record that the enclosing scope writes a name
+nobody can read. That is the opposite polarity from a grant table
 such as `refinery.lib.scripts.ps1.analysis.effects`'s purity allow-list, and the two must not be
 confused: an allow-list that misses an entry withholds a rewrite, and a deny-list that misses one
 performs a corruption.

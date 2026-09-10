@@ -1,11 +1,11 @@
 """
 What command a name denotes at a point in one PowerShell script.
 
-Command resolution is a language fact several passes each held half of: two of them split the alias
-relation, a third folded a call to a user function without asking whether an alias of the same name
-shadowed it, and none of them knew that a name used before its definition, or defined in a scope the
-use is not in, denotes no command at all. This model answers the whole question once, so a caller
-rewrites a name only where 5.1 would resolve it the same way.
+Command resolution is one language fact: which command a name runs, following aliases and the
+precedence and scoping rules that decide it. A name used before its definition, or defined in a
+scope the use is not in, denotes no command at all, and an alias can shadow a user function of the
+same name. This model answers the whole question once, so a caller rewrites a name only where 5.1
+would resolve it the same way.
 
 Three outcomes, kept apart because a caller does different things with each:
 
@@ -749,14 +749,13 @@ class Ps1CommandModel:
         `refinery.lib.scripts.ps1.analysis.world` takes on mutation, taken here for the same reason —
         the collected metadata omits hundreds of host commands, and reading every one of them as a
         possible reader would make this answer `None` for almost any script — and it carries the same
-        residual. `alias`, the built-in name of `Get-Alias`, being absent from the collected alias
-        table was therefore a soundness bug rather than a recall one.
+        residual: `alias`, the built-in name of `Get-Alias`, must resolve through the alias table,
+        or a statement that reads the alias table goes unrecognized.
 
         A name refused **with evidence** is the opposite case and answers `None`. Something was seen
         to bind it to something this model could not read through, so whether the statement is a
-        reader is precisely what is not known — and a set that passed over it would report that
-        nobody reads a name the statement may be reporting on, which is the fail-open direction
-        every whole-tree answer here has.
+        reader is precisely what is not known, and a set that passed over it would report that nobody
+        reads a name the statement may be reporting on.
         """
         if not self._introspected_known:
             self._introspected = self._collect_introspected_names()
@@ -820,8 +819,8 @@ class Ps1CommandModel:
         The normalized command names a script reads back out of the function table through the
         `$function:` variable namespace. `$function:K` reports the scriptblock bound to `K`, so a
         pass that removes the definition of `K` deletes what that read is about, and a group is kept
-        whole where a name is read this way — the mirror for the function drive of what
-        `reads_command_success` answers for `$?`.
+        whole where a name is read this way — the rule `reads_command_success` applies to `$?`,
+        applied to the function drive.
 
         Only a read is one: a `$function:K = { }` write is itself a definition, and
         `Ps1CallGraph.is_readable` already answers `False` wherever the tree holds one, so a caller
@@ -872,9 +871,8 @@ class Ps1CommandModel:
         number than the input gave it. Those are wrong answers rather than the residual below, and
         they are pinned in `test.lib.scripts.ps1.deobfuscation.test_removal_observability`.
 
-        Its cost in the other direction is one kind of false refusal, and it is the mirror of what
-        the scan is for: a script that *prints* `'$Error.Count'` and reads nothing is kept for
-        saying the words. Its limit is the payload no walk decodes at all, where the record is read
+        Its cost in the other direction is one kind of false refusal: a script that *prints*
+        `'$Error.Count'` and reads nothing is kept for saying the words. Its limit is the payload no walk decodes at all, where the record is read
         by code no scan here ever sees; that residual belongs to the caller, and
         `refinery.lib.scripts.ps1.deobfuscation.deadcode._is_injected_noise_bareword` states it.
 
@@ -923,10 +921,9 @@ class Ps1CommandModel:
         whole-script bool also catches have no node and are deliberately absent, since a position
         is exactly what they lack until they are inlined.
 
-        Split by channel here, where the naming knowledge already lives, so the reach model
-        layered on this composes position with a rule per channel rather than re-deriving which
-        name is which. Memoized for as long as the tree is unchanged, like every other whole-tree
-        answer here.
+        Split by channel here, where the naming knowledge already lives, so the reach model layered
+        on this need not re-derive which channel each name belongs to. Memoized for as long as the
+        tree is unchanged, like every other whole-tree answer here.
         """
         if self._error_read_sites is None:
             self._error_read_sites = self._collect_error_state_read_sites()

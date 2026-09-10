@@ -45,8 +45,8 @@ def _removes_a_handler(statement: Node) -> bool:
     deleting one re-routes the fault although the deleted statement cannot itself raise.
     `removals_may_fault` answers only the first half of the fault question — can what this pass
     removes throw — and says nothing about this half, so this half is asked of every pass, and it is
-    asked as the *transpose*: not where an error raised here would go, but whether anything is left
-    that could offer this handler one.
+    asked in reverse: not where an error raised here would go, but whether anything is left that
+    could offer this handler one.
     """
     return isinstance(statement, Ps1TrapStatement)
 
@@ -119,46 +119,25 @@ class Ps1RemovalPlan:
     `survivors`, and calls `commit`. What the class owns is the part every pass has to get right the
     same way: the per-statement veto, and the fact that the whole batch lands as one tree edit.
 
-    **Which set a guard must be shown is decided by its polarity, and the two answers are
-    opposite.**
+    **Which set a guard must be shown is decided by its polarity.** A guard *permissive* in the
+    survivor set — more survivors makes a removal more likely — must see the **pre-veto** set,
+    `survivors`; the veto therefore runs inside `commit`, after such a guard has had its answer, so a
+    vetoed statement is never read as cover for deleting its neighbour. A guard *restrictive* in it —
+    more survivors makes a removal **less** likely — must see the post-veto set, and reads `accepted`
+    rather than `survivors`, or a vetoed statement's dependencies are deleted out from under it.
+    Set-level guards stay with the passes, because they are not the same from one pass to the next.
 
-    A guard *permissive* in the survivor set — more survivors means a removal is more likely to be
-    allowed — must see the **pre-veto** set, which is `survivors`. Both
-    `refinery.lib.scripts.ps1.analysis.effects.output_is_covered` and
-    `refinery.lib.scripts.ps1.analysis.effects.pruning_erases_body` are this kind, so a guard shown
-    the post-veto set would read a vetoed statement as cover for deleting its neighbour, and a
-    statement kept because a handler observes its fault would license destroying the one beside it.
-    The veto therefore runs inside `commit`, after every such guard has had its answer, and
-    `survivors` cannot show one a veto.
+    `removals_may_fault` is the one thing about a pass this class must be told: whether what the pass
+    removes can raise. It is passed to
+    `refinery.lib.scripts.ps1.analysis.effects.deletion_is_observable`, which weighs the fault
+    statement by statement; a pass that removes only things that cannot raise
+    (`Ps1DeadCodeElimination`) sets it `False` and skips the veto. The set-level refusal that a batch
+    must not leave a protected body empty is asked of every pass whatever this flag says.
 
-    A guard *restrictive* in it — more survivors means a removal is **less** likely to be allowed —
-    must see the post-veto set, or a vetoed statement's dependencies are deleted out from under it.
-    Reachability and liveness are this kind, and they read `accepted`, which reports what this plan
-    would edit rather than reconstituting a survivor set the permissive guards could reach.
-
-    Set-level guards deliberately stay with the passes. They are not the same from one pass to the
-    next — `Ps1DeadCodeElimination` declines `output_is_covered` as too permissive for what it does,
-    and `Ps1JunkStatementRemoval._remove_inert_functions` weighs erasure against the definitions
-    alone rather than against everything it removes — so collapsing them into one call here would
-    have to be spelled as flags, which is the policy sprawl this class exists to reduce.
-
-    `removals_may_fault` is the one thing about a pass this class does have to be told, because the
-    fault refusal is not the same question for every pass either.
-    `refinery.lib.scripts.ps1.analysis.effects.deletion_is_observable` asks it — whether what the
-    removal takes away can raise, and where the error would go — so a pass that cannot rule the first
-    half out for itself says so and lets the veto weigh it statement by statement.
-    `Ps1DeadCodeElimination` can rule it out: it removes pure constants and constructs whose
-    condition it has already proved constant, neither of which can raise, so it skips the veto
-    entirely. The set-level refusal stands beside both — the batch must not leave a protected body
-    empty, because an empty `try` block is evidence about the pass rather than about the code as
-    written — and is asked of every pass whatever this flag says.
-
-    `all_or_nothing` is the second, for a batch whose parts are one edit rather than several. A veto
-    normally skips the proposal it lands on and lets the rest through, which is right when each
-    stands alone; it is wrong when a partly applied batch is not a smaller edit but a broken one.
-    `Ps1ControlFlowDeflattening` replaces a dispatcher loop and deletes the `$state = ...` seeding
-    it, and applying either alone leaves a state machine half dissolved. Neither the class nor the
-    veto can tell the two cases apart, so the pass says which it is.
+    `all_or_nothing` is the second: a veto normally skips the proposal it lands on and lets the rest
+    through, which is wrong when a partly applied batch is broken rather than smaller —
+    `Ps1ControlFlowDeflattening` deleting a dispatcher loop but not its `$state` seeding leaves a
+    state machine half dissolved. The class cannot tell the two cases apart, so the pass says which.
     """
 
     def __init__(
@@ -195,13 +174,12 @@ class Ps1RemovalPlan:
         which is what every pass got before the model existed — see
         `refinery.lib.scripts.ps1.analysis.effects.deletion_is_observable`.
 
-        `soft_step_over_observed` is the reader the `trap` transpose is handed for its step-over
-        branch — whether the region a resuming `trap` skips is observable. It is injected rather than
-        read off `world` because that judgment is one of emission and liveness the fault reader holds
-        none of, and it is kept apart from `world` so that giving the `trap` pass this reader does not
-        change what the `may_raise` half or the replacement veto ask of `statement_can_raise`, which
-        stay the context-free questions every pass has asked. Absent, the branch keeps a resuming trap
-        rather than removing it on a guess.
+        `soft_step_over_observed` answers, for the `trap` step-over branch, whether the region a
+        resuming `trap` skips is observable. It is injected rather than read off `world` because that
+        judgment is one of emission and liveness the fault reader holds none of, and it is kept apart
+        from `world` so that it does not change what the `may_raise` half or the replacement veto ask
+        of `statement_can_raise`. Absent, the branch keeps a resuming trap rather than removing it on
+        a guess.
         """
         self.parent = parent
         self.attr = attr
@@ -227,22 +205,12 @@ class Ps1RemovalPlan:
         the value is still computed. A pass that could only delete could express neither.
 
         **A registered replacement holds no claim on the tree until `commit` grants it one.**
-        Building one adopts the parts of the original it reuses, and the original is still standing,
-        so the adoption leaves nodes in the tree naming a holder that is not; the statement is put
-        back in order here, before this call returns. Everything that happens between a proposal and
-        the verdict reads the tree by walking upward — the set-level guards, the veto, the search
-        for the list a statement sits in — and a batch that decides against a tree it has already
-        half detached decides about a tree that does not exist. Making the repair a condition of
-        registering is also what lets a pass build every replacement up front and withdraw or
-        abandon afterwards without owing anything.
-
-        The repair is owed by every registration, not only by one that ends up carrying a
-        replacement. What has to be given back is what the *caller* built, and a pass routinely
-        builds a replacement and then decides against installing it before it ever gets here:
-        `Ps1DeadCodeElimination` hoists a construct's branch into new statements and only afterwards
-        drops the ones its set-level guard forbids, which can empty the list. Reading the argument
-        that arrives as the record of what was built is reading the survivors of that filter, and it
-        left a statement standing over a literal that named a node the pass had thrown away.
+        Building one adopts the parts of the original it reuses, so it leaves nodes naming a holder
+        that is not theirs; the statement is put back in order here, before this call returns, so
+        everything between a proposal and the verdict reads a tree whose pointers are true. The
+        repair is owed by every registration, not only one that carries a replacement — a pass
+        routinely builds a replacement and then decides against installing it — so a pass may build a
+        whole batch up front and withdraw or abandon it without owing anything.
         """
         proposal = _Proposal(statement, list(replacement or ()))
         try:
@@ -282,42 +250,20 @@ class Ps1RemovalPlan:
         The statements `commit` would edit, without editing them.
 
         This is for the *restrictive* guards — the ones that allow **fewer** removals as more
-        statements survive, which is the opposite polarity to `survivors`' readers. Reachability is
-        the example: it concludes a function is dead from the call sites that are going away, so a
-        vetoed caller it never heard about leaves the emitted script calling a function it does not
-        define. Such a guard asks this, drops what it now forbids with `withdraw`, and asks again;
-        the loop terminates because the batch only shrinks.
+        statements survive, the opposite polarity to `survivors`' readers. Reachability is the
+        example: it concludes a function is dead from the call sites going away, so a vetoed caller
+        it never heard about leaves the emitted script calling a function it does not define. Such a
+        guard asks this, drops what it now forbids with `withdraw`, and asks again; the loop
+        terminates because the batch only shrinks — except under `all_or_nothing`, or against a
+        protected body, where a withdrawal can grow this set, so a pass that loops on `accepted` owes
+        its own termination argument.
 
-        **That last part is not a fact about this query, and no flag makes it one.** Under
-        `all_or_nothing`, and against a protected body whatever the flags, a withdrawal can take
-        this set from empty to non-empty — the batch *grows*, and a loop resting on the shrinking
-        argument does not terminate. The protected-body refusal used to be reachable only with
-        `removals_may_fault=False`, so a `Ps1RemovalPlans` consumer could rest on the defaults; it
-        is asked of every plan now, so a pass that loops on `accepted` owes its own termination
-        argument — `refinery.lib.scripts.ps1.deobfuscation.unused.Ps1JunkStatementRemoval` has one,
-        because what shrinks there is the group set and not this.
-
-        What a caller obtains is what *this* plan would do, not a post-veto survivor set. The
-        distinction is the whole safety argument: `survivors` still cannot show a permissive guard a
-        veto, so a statement the veto keeps never becomes licence to delete the one beside it.
-
-        This must not edit the tree. A query that installs a replacement's claim on its children is
-        a query that decides the batch, and the guard asking it has not decided anything yet; the
-        claims are granted in `commit`, where the verdict is final.
-
-        A caller may read this as exact, and every consumer does: membership means *this is going
-        away*, so a statement reported here that `commit` then leaves standing is a rescue that
-        never happens and a dependency deleted out from under it — the failure the restrictive
-        polarity exists to prevent, not the safe side of it. The verdict a plan gives here is the
-        one it applies, and `Ps1RemovalPlans` reaches every verdict before it lands the first edit
-        so that stays true across a batch.
-
-        What that exactness rests on is the plan's list actually holding what was proposed against
-        it, which is a fact about the proposal and not one this query can establish: `BodyEdit`
-        ignores a splice for a node its list does not hold, and `_apply` reports such a proposal as
-        landing nothing. `Ps1RemovalPlans.propose` establishes it by finding the list, and
-        `Ps1RemovalPlans.propose_in` moves it to the caller, which is what a caller of that method
-        takes on.
+        This must not edit the tree: installing a replacement's claim would decide a batch the guard
+        asking has not decided. A caller reads membership as exact — *this is going away* — so a
+        statement reported here that `commit` then leaves standing is a dependency deleted out from
+        under its keeper, the failure the restrictive polarity exists to prevent. That exactness
+        rests on the plan's list actually holding what was proposed: `Ps1RemovalPlans.propose`
+        establishes it by finding the list, and `propose_in` moves it to the caller.
         """
         return [proposal.statement for proposal in self._allowed()]
 
@@ -331,45 +277,33 @@ class Ps1RemovalPlan:
         """
         Whether a single proposal must be skipped although the guards allowed the batch.
 
-        **A rewrite is refused here for one reason: it relocates a handler.** A replacement keeps
-        evaluating the original expression and so throws where the original threw, leaving an
-        enclosing handler as reachable as it was. What that argument does not cover is a `trap`
-        carried out of the block it was written in, which changes nothing about where *this*
-        statement's errors go and everything about where the rest of the target body's do; see
-        `_rescopes_a_handler`.
+        **A rewrite is refused for one reason: it relocates a handler.** A replacement keeps
+        evaluating the original expression and throws where the original threw, leaving an enclosing
+        handler as reachable as before. What that does not cover is a `trap` carried out of the block
+        it was written in (`_rescopes_a_handler`), which re-aims that handler over the rest of the
+        target body.
 
-        **The mirror of that question is asked beside it**: a replacement spliced *into* a block
-        that a resuming `trap` already guards moves the point that handler carries on at. A raise
+        **A replacement spliced *into* a block a resuming `trap` guards is refused too**: a raise
         inside a nested block abandons the rest of that block and resumes after it, so resolving the
-        block into the statements it holds puts them where the handler resumes — measured on 5.1 as
+        block into its statements puts them where the handler resumes — measured on 5.1 as
         `trap { continue }; if ($true) { throw 'e'; Write-Host 'tail' }; Write-Host 'next'`, which
-        writes `next` alone while the unrefused splice would write `tail` too. The splice is refused
-        where the target body is guarded by a trap set that resumes and a spliced statement other
-        than the last can raise, because only a raiser with a tail behind it in the block gains a
-        successor the block abandoned. A one-statement replacement, or one whose raiser is last,
-        moves nothing. Whether a statement can raise is the same over-approximation
-        `refinery.lib.scripts.ps1.analysis.effects.statement_can_raise` answers for the transpose, so
-        the refusal fires whenever a splice would move a resumption and over-refuses only a splice
-        that provably cannot; whether a resuming trap guards the target is read straight off the
-        control-flow graph, which draws a resumption edge only for a trap set that resumes.
+        writes `next` alone while the unrefused splice would write `tail` too. The refusal fires when
+        the target body is guarded by a resuming trap set and a spliced statement other than the last
+        can raise (`statement_can_raise`); a one-statement replacement, or one whose raiser is last,
+        moves nothing. A plan opened to substitute holds no fault model, so this half is skipped
+        there — a stated follow-on.
 
-        A plan opened to substitute holds no fault model, so this half is skipped there: the two
-        `substitute_statement` splice sites are not gated and are a stated follow-on.
+        **A handler and a statement that might fault are opposite questions.** Deleting a `trap`
+        re-routes errors it did not raise, so what decides it is whether anything is left that can
+        reach it, not `deletion_is_observable` (which asks where an error raised *at* the `trap`
+        would go, a position nothing raises at). Deleting anything else is `deletion_is_observable`,
+        and only for a pass that cannot rule the fault out itself.
 
-        **A handler and a statement that might fault are opposite questions**, and reading one as
-        the other invents a wrong answer in each direction. Deleting a `trap` re-routes errors the
-        `trap` did not raise, so what decides it is whether anything is left that can still reach it
-        — and asking `deletion_is_observable` of a `trap` instead asks where an error raised *at* the
-        `trap` would go, which is a position nothing raises at. Deleting anything else is
-        `deletion_is_observable`, and only for a pass that cannot rule the fault out itself.
-
-        **The success flag is a peer axis, not a fault question**, so it is asked ahead of the fault
-        gate and of `removals_may_fault`. Every leaf statement writes `$?` whether or not it can
-        raise, and a script can read the flag back, so removing a statement a live `$?` read observes
-        changes the value that read sees — the reset-channel dual of the persistent-record keep
-        `deletion_is_observable` weighs. `refinery.lib.scripts.ps1.analysis.errorstate` answers it
-        positionally through `success_flag_write_observed`; absent that model the channel is skipped,
-        the fail-open direction a pass with none takes.
+        **The success flag is answered separately from the fault question**, ahead of the fault gate
+        and of `removals_may_fault`. Every leaf statement writes `$?` whether or not it can raise,
+        and a script can read the flag back, so removing a statement a live `$?` read observes
+        changes what that read sees. `refinery.lib.scripts.ps1.analysis.errorstate` answers it
+        positionally through `success_flag_write_observed`; absent that model the channel is skipped.
         """
         if proposal.replacement:
             if _rescopes_a_handler(proposal.replacement):
@@ -457,11 +391,9 @@ class Ps1RemovalPlan:
         """
         Whether committing `allowed` would clear a `try` body beside a handler that acts.
 
-        Asked of every pass, and it was not always: while the per-statement veto refused every
-        removal from a guarded body whatever stood there, this question was already answered for the
-        passes that fire it and only the others had to ask. The veto now refuses a statement that
-        cannot raise nothing at all — which is what lets the padding inside a `try` go — so what
-        keeps the body itself from emptying is this and only this.
+        Asked of every pass. The per-statement veto lets a statement that cannot raise be removed —
+        which is what lets the padding inside a `try` go — so what keeps the body itself from
+        emptying is this and only this.
 
         `emptying_unhooks_a_handler` is a policy about the listing rather than a claim about what
         runs; the emptiness test lives here so that the two halves of the name are decided in one

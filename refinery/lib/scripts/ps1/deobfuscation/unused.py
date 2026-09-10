@@ -112,19 +112,14 @@ class Ps1UnusedVariableRemoval(Transformer):
         Plan every candidate edit, ask the batch what it would accept, and only then decide which
         bindings are dead.
 
-        The order matters and used to run the other way. A binding is dead because its every read
-        sits inside a right-hand side that is going away, so liveness is *restrictive* in the
-        survivor set and has to be asked of what the batch will actually do — see
-        `refinery.lib.scripts.ps1.deobfuscation.removal.Ps1RemovalPlan.accepted`. Two things keep a
-        right-hand side standing, and neither is visible before the edits are planned: a value that
-        does something survives as `$Null = <value>`, and a statement the fault veto declines to
-        delete survives whole. Deciding first and planning afterwards read both as erased and
-        deleted the assignment the surviving read needs.
-
-        Planning up front means the replacements exist before the batch is known to land, which
-        costs this pass nothing: registering one gives back whatever it adopted, so the tree the
-        liveness question is asked of is the tree as written, and a batch that ends in `abandon` —
-        or is simply dropped — owes it nothing.
+        A binding is dead because its every read sits inside a right-hand side that is going away,
+        so liveness is *restrictive* in the survivor set and has to be asked of what the batch will
+        actually do (`refinery.lib.scripts.ps1.deobfuscation.removal.Ps1RemovalPlan.accepted`). Two
+        things keep a right-hand side standing and neither is visible before the edits are planned: a
+        value that does something survives as `$Null = <value>`, and a statement the fault veto
+        declines to delete survives whole. Planning up front costs nothing — registering a
+        replacement gives back whatever it adopted — so the liveness question is asked of the tree as
+        written.
         """
         cache = model_cache(self, node)
         model = cache.model
@@ -256,8 +251,7 @@ class Ps1UnusedVariableRemoval(Transformer):
         `dissolving` holds the mutations whose planned edit really does take their right-hand side
         with it. A right-hand side that survives — as the value of a `$Null = <value>` discard, or
         because the fault veto declined to delete the whole statement — still holds its reads, so
-        the bindings they name stay live and their own assignments stay. Reading every candidate as
-        dissolving is what left `$Null = Start-Process -FilePath $a` beside no `$a`.
+        the bindings they name stay live and their own assignments stay.
 
         The veto is not the only thing that keeps an assignment standing, so this asks the same
         question `_all_targets_dead` asks. A target such as `$a, $arr[0]` names exactly one variable
@@ -405,12 +399,10 @@ class Ps1JunkStatementRemoval(Transformer):
         stream* inside it may be deleted needs the destination that write reaches, which position
         cannot supply for a function body, so `Ps1OutputFlow` resolves it across the call graph.
 
-        One outward walk answers both. The positional `Ps1OutputPath` is what the resolution reads,
-        so asking the two questions separately walked every ancestor chain twice for one answer.
-
-        Collapsing the two costs recall and did: a body the flow reports captured — a function whose
-        result someone stores — still holds `$Null = 1` discards that write nothing at all, and
-        skipping it over the output question left them standing.
+        One outward walk answers both, since the resolution reads the positional `Ps1OutputPath`.
+        Both must be asked: a body the flow reports captured — a function whose result someone stores
+        — still holds `$Null = 1` discards that write nothing, and the output question is what deletes
+        them.
         """
         cache = model_cache(self, node)
         flow = cache.output_flow
@@ -439,8 +431,8 @@ class Ps1JunkStatementRemoval(Transformer):
         if plans.commit():
             self.mark_changed()
         # A fresh world after the commit, not the one the loop read: the commit advanced the tree
-        # version, so a held world would answer at its fail-closed pole for every function this
-        # walk still has to weigh. The cache rebuilds it only because a removal landed.
+        # version, so a held world would answer `False` for every function this walk still has to
+        # weigh. The cache rebuilds it only because a removal landed.
         self._remove_inert_functions(node, cache.call_graph, cache.world_reach, unreached)
 
     @staticmethod
@@ -484,10 +476,9 @@ class Ps1JunkStatementRemoval(Transformer):
         one is not this pass's to reason about.
 
         "Every definition" can only mean every definition standing in this tree, so the tree has to
-        be the whole story. That is the graph's own `is_readable`, which this pass no longer answers
-        for itself: an open world, an opaque dispatch, an identity-namespace assignment and an
-        export all bind a name from somewhere the walk cannot read, and the empty body standing here
-        is then not the body the call reaches.
+        be the whole story. That is the graph's own `is_readable`: an open world, an opaque
+        dispatch, an identity-namespace assignment and an export all bind a name from somewhere the
+        walk cannot read, and the empty body standing here is then not the body the call reaches.
 
         The graph is built in source order, because removal is by identity scan over the containing
         list: taking the reverse order `Node.walk` yields would delete from the back and make every
@@ -497,8 +488,8 @@ class Ps1JunkStatementRemoval(Transformer):
         set at once. A script of nothing but inert definitions is inert by every measure this pass
         has and still may not be emptied — it is a module whose functions are dot-sourced from a
         caller the walk never read, and the call sites that would prove them live are exactly what
-        is out of reach. The same invariant already governs `_removable_in_body`; enforcing it there
-        and not here left one removal site able to erase what the other refuses to.
+        is out of reach. The same invariant governs `_removable_in_body`, so both removal sites hold
+        it.
 
         Only the definitions are weighed against that invariant, because only they are what a
         dot-sourcing caller would come for. A script holding a call site of its own is not the
@@ -507,8 +498,7 @@ class Ps1JunkStatementRemoval(Transformer):
 
         `deletion_is_observable` is applied for the same reason it is applied when a body is pruned:
         emptying a `try` body beside a handler that does something is what makes the handler read as
-        unreachable. Both removal sites have to answer that question the same way, and this one
-        did not.
+        unreachable, so both removal sites answer it the same way.
 
         A definition and the calls to it are one edit, and they routinely land in *different* plans,
         so no single plan's `all_or_nothing` can hold them together. The batch is therefore planned
@@ -695,7 +685,7 @@ class Ps1DeadStoreElimination(Transformer):
         model = cache.model
         # Model and world are both re-read per body through the version-keyed cache: removing a
         # store changes what the next body's scope says, and once a removal advances the version a
-        # held world would answer at its fail-closed pole for the rest of the pass. A body whose
+        # held world would answer `False` for the rest of the pass. A body whose
         # removal bumps the version rebuilds both, and a body that removes nothing reads the same
         # cached objects back, so the fresh read costs a rebuild only where the tree actually moved.
         world = cache.world_reach

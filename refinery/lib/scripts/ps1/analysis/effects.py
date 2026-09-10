@@ -183,8 +183,7 @@ def _canonical_sealed_value_type_set(names: set[str]) -> frozenset[Ps1TypeName]:
     against the shipped `sealed` flag. A type on the pure-read allow-list must be sealed: the
     whole-surface grant bets that a value of the type carries exactly the members reflection
     reports, which a subtype could violate. An entry the collected metadata does not mark sealed
-    fails the load,
-    retiring the sealedness the table used to assert by hand.
+    fails the load.
     """
     keys = data.required_type_keys(names)
     for key in keys:
@@ -649,9 +648,9 @@ def _invokes_a_member(cmd: Ps1CommandInvocation) -> bool:
     inspection of the blocks beside it proves anything about it.
 
     The question is therefore asked of the arguments, never of whether a block happened to be seen:
-    `| ForEach-Object { [Void]$_ } -MemberName Delete` has a block *and* invokes a member, and
-    reading the answer off the block is what let a discarding body vouch for the deletion sitting
-    next to it.
+    `| ForEach-Object { [Void]$_ } -MemberName Delete` has a block *and* invokes a member, so
+    reading the answer off the block would let a discarding body vouch for the deletion sitting next
+    to it.
 
     A `ForEach-Object` with no scriptblock at all is the same answer with the argument unread: there
     is no body to prove anything from.
@@ -835,10 +834,10 @@ def is_side_effect_free(node, world: Ps1WorldReach) -> bool:
         # metadata cannot resolve is not a type this analysis knows anything about. `Add-Type`, a
         # PowerShell `class` and `[Reflection.Assembly]::Load` all make such a name denote code —
         # PowerShell converts a string to it by running a constructor — so granting on the operand
-        # alone deleted the call. Resolving is necessary here, not sufficient: a conversion to a
-        # collected type can still run code (`[xml]$s` parses, and follows external DTDs), which
-        # `_PURE_CAST_TYPES` is the eventual answer to. The world is read before either check
-        # because it is a stored bool that can only veto, while both checks below walk.
+        # alone would delete a call that runs one. Resolving is necessary here, not sufficient: a
+        # conversion to a collected type can still run code (`[xml]$s` parses, and follows external
+        # DTDs), which `_PURE_CAST_TYPES` is the eventual answer to. The world is read before either
+        # check because it is a stored bool that can only veto, while both checks below walk.
         if not world.closed_at(node):
             return False
         if data.resolve_type(node.type_name) is None:
@@ -878,9 +877,9 @@ def is_side_effect_free(node, world: Ps1WorldReach) -> bool:
         return _grant(pure, node, world)
     if isinstance(node, Ps1MemberAccess):
         # A read is side-effect free only when the object is pure to evaluate *and* selecting the
-        # member runs no code. Returning the object's own purity was the fail-open shape this gate
-        # replaces: it deleted `(Get-Process).Path`, an Extended Type System getter that shells out,
-        # because the pipeline that produced the object was itself pure. A literal member name —
+        # member runs no code. Returning the object's own purity would clear `(Get-Process).Path`,
+        # an Extended Type System getter that shells out, because the pipeline that produced the
+        # object was itself pure. A literal member name —
         # bare (`.Path`) or quoted (`.'Path'`) — names one member the gate can check; a computed
         # member name (`$x.$(...)`) leaves the selected member unknown, so a read through it can
         # never be proven pure however pure the name expression is.
@@ -951,9 +950,9 @@ def is_side_effect_free(node, world: Ps1WorldReach) -> bool:
             return False
         name = name.lower()
         # A command a reachable statement may have rebound no longer surely runs what the metadata
-        # describes, so its purity is not the built-in's. The gate is positional — the identity
-        # twin of the `_grant` below — trusting the name only where no opener and no redefinition
-        # of this very name can have run first.
+        # describes, so its purity is not the built-in's. The gate is positional — the same check as
+        # `_grant` below — trusting the name only where no opener and no redefinition of this very
+        # name can have run first.
         if not world.may_trust_command_name_at(name, node):
             return False
         # The pipeline set is checked through the same gate rather than after the plain one: three
@@ -965,10 +964,10 @@ def is_side_effect_free(node, world: Ps1WorldReach) -> bool:
             return False
         # Routed through `_grant` like every other grant. `may_trust_command_name_at` above refuses
         # a name a rebinding statement can reach; `_grant` here refuses a member the type world
-        # does not hold at this node. The two read different floods — the name gate adds the
-        # per-name redefinition flood the type axis never reads — so a name that passed the first
-        # is still gated on the second, and narrowing either check back into the other would reopen
-        # a fail-open hole with nothing in the path to catch it.
+        # does not hold at this node. The two check different hazards — the name gate adds the
+        # per-name rebinding the type axis never reads — so a name that passed the first is still
+        # gated on the second, and narrowing either check back into the other would reopen a
+        # fail-open hole with nothing in the path to catch it.
         if name in _PURE_PIPELINE_CMDLETS:
             return _grant(_command_body_is_pure(node, world), node, world)
         return _grant(True, node, world)
@@ -1041,8 +1040,8 @@ def _range_is_fault_free(node: Ps1RangeExpression) -> bool:
     """
     Whether the range operator provably neither converts nor allocates its way into a fault.
 
-    Two separate faults, and weighing only the first is how a range that had already stopped the
-    script came to be deleted. Both endpoints go through `Int32`, so `4242424242..4242424245` is two
+    Two separate faults, and weighing only the first would delete a range that already stops the
+    script. Both endpoints go through `Int32`, so `4242424242..4242424245` is two
     perfectly good integer literals that still raise — the reason this is narrower than
     `_is_numeric_constant`, which merely reads a number, and why a real literal is not an endpoint
     at all since it rounds rather than converting cleanly. Then the operator materializes the whole
@@ -1084,10 +1083,9 @@ def is_fault_free(node) -> bool:
     are compared rather than trusted; see `_hash_literal_is_fault_free`.
 
     Purity is a different question and neither implies the other. `is_side_effect_free` accepts
-    `[Int]$x`, `$a / $b` and `$a[$i]`, all of which raise on the wrong operand, and it is the
-    predicate that was standing in for this one — a `try` body cannot be hoisted out of its own
-    construct on a purity argument, because an empty `catch` was swallowing what the hoisted
-    statement now raises into the caller.
+    `[Int]$x`, `$a / $b` and `$a[$i]`, all of which raise on the wrong operand, so it cannot answer
+    this: a `try` body cannot be hoisted out of its own construct on a purity argument, because an
+    empty `catch` would swallow what the hoisted statement raises into the caller.
 
     **A unary sign and a range coerce, and coercion is the fault this predicate exists to see.**
     Both read their operands through `Int32`, so `-'abc'` and `'a'..'z'` raise exactly what
@@ -1244,11 +1242,9 @@ def statement_effect(stmt, world: Ps1WorldReach) -> StatementEffect:
     whether a statement carries a body's output: a `DISCARD` emits nothing, an `OUTPUT` yields a
     value that emit-safety must protect in a captured body, and an `EFFECT` must always be kept.
 
-    **`DISCARD` is a claim about emission and about nothing else.** It used to be read as *always
-    safe to drop*, which held only because the one thing it admitted was a discard idiom over a pure
-    expression. A call returning `System.Void` emits as little and can still throw, so what decides
-    whether dropping it changes anything is the removal veto — `deletion_is_observable` — and not
-    this.
+    **`DISCARD` is a claim about emission and about nothing else.** A call returning `System.Void`
+    emits nothing and can still throw, so what decides whether dropping it changes anything is the
+    removal veto — `deletion_is_observable` — and not this.
     """
     if not isinstance(stmt, Ps1ExpressionStatement):
         return StatementEffect.EFFECT
@@ -1433,12 +1429,8 @@ class OutputSink(enum.Enum):
     `output_sink`, the positional question, do — and a caller that reads that answer as a
     destination is guessing.
 
-    This replaced a `BodyRole` that answered *where a body sits* and was read as *who reads it*.
-    Under that enum a bare value at the script root was unprotected, because the root was not a
-    "returning" body — so `'payload-marker'` beside `Write-Host 'go'` was deleted, and a `'junk'`
-    ahead of a `Write-Output` inside a function changed the caller's value from a two-element array
-    to a scalar. Position is the wrong question; the same block propagates to a different reader
-    depending on what encloses it, and only the walk outward answers that.
+    Position is the wrong question: the same block propagates to a different reader depending on
+    what encloses it, and only the walk outward answers that.
     """
     HOST = 'host'
     CALLER = 'caller'
@@ -1523,8 +1515,8 @@ def unconsumed_statement(expr: Node) -> Ps1ExpressionStatement | None:
     **This is not a capture test**, and the two are one walk apart. `$r = @(f)` and `$r = $(f)` hold
     `f` as a whole statement, so this answers with that statement while the value is very much
     captured — by the `@( ... )` around the *body* the statement sits in, which only the outward
-    walk in `output_path` sees. Reading this as "the value escapes" is how an assigned call came
-    to look like a discardable one.
+    walk in `output_path` sees. Reading this as "the value escapes" would mark an assigned call
+    discardable.
 
     What it does answer is where the value goes *next*, which is why the redirections are read here:
     `f > out.txt` yields nothing to the body around it, and a caller that judges it by shape alone
@@ -1599,14 +1591,13 @@ def _output_writes_through(cursor, prev) -> bool:
     Whether `cursor` hands the value produced at `prev` on to whatever encloses it, rather than
     being the thing that reads it.
 
-    **This is an allow-list of propagating positions, and the polarity is the whole point.** The
-    walk that reads it answers for any node in the tree, so a position this does not recognize is a
-    position whose reader is unknown, and the answer to an unknown reader is `CAPTURED` — the one
-    that prunes nothing. Enumerating the *consumers* instead and propagating by default is the
-    inverse, and it deletes payloads: every value slot such an enumeration missed — a command
-    argument, an `if` condition, a `foreach` source, an index, a `param` default — read as a value
-    nobody holds, so the function called there was judged to write only to the console and the bare
-    values in its body were deleted.
+    **This is an allow-list of propagating positions.** The walk that reads it answers for any node
+    in the tree, so a position this does not recognize is a position whose reader is unknown, and
+    the answer to an unknown reader is `CAPTURED` — the one that prunes nothing. Enumerating the
+    *consumers* instead and propagating by default is the inverse, and it deletes payloads: every
+    value slot such an enumeration missed — a command argument, an `if` condition, a `foreach`
+    source, an index, a `param` default — reads as a value nobody holds, so the function called
+    there is judged to write only to the console and the bare values in its body are deleted.
 
     A `refinery.lib.scripts.Block` is only ever a write-through statement list: an `if` branch, a
     loop or `switch` body, a `try`, `catch` or `finally` body, a `trap` body. The two spellings that
@@ -1641,8 +1632,7 @@ def output_path(node) -> Ps1OutputPath:
     root answers `HOST`, and everything else — a value slot, a redirection, an upstream pipeline
     position, and every position the allow-list does not name — answers `CAPTURED`.
 
-    So the same node answers differently depending on where it sits, and this is the point rather
-    than an inconsistency to resolve later:
+    So the same node answers differently depending on where it sits, by design:
 
         if ($x) { 1 }                    at script level  ->  HOST
         function f { if ($x) { 1 } }                      ->  CALLER
@@ -2333,14 +2323,15 @@ def pruning_erases_body(node, survivors: Sequence[Node]) -> bool:
     `survivors` is the surviving statement set itself and never a node to walk up from. A caller may
     hold freshly synthesized statements that are not parented into a body yet, and statements
     hoisted out of a pruned block still point at the block they came from; answering this kind of
-    question by walking `parent` is what used to delete live return values.
+    question by walking `parent` would misjudge a hoisted return value as belonging to the pruned
+    block.
 
     **A `trap` left standing is not something that survived**, for the reason
     `refinery.lib.scripts.ps1.deobfuscation.unused.Ps1JunkStatementRemoval` does not count a
     definition: it is machinery for the statements around it rather than one of them, and a body
-    holding nothing else runs nothing at all. Counting one let `trap { break }` beside a bare `'a'`
-    erase the whole script in two steps — this pass deleted `'a'` because the `trap` looked like a
-    survivor, and the next deleted the `trap` because nothing raised into it any more.
+    holding nothing else runs nothing at all. Counting one would let `trap { break }` beside a bare
+    `'a'` erase the whole script in two steps: `'a'` dropped because the `trap` reads as a survivor,
+    then the `trap` dropped because nothing raises into it any more.
     """
     return isinstance(node, Ps1Script) and not any(
         not isinstance(statement, Ps1TrapStatement) for statement in survivors

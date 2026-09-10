@@ -8,7 +8,7 @@ consults them, and edges to the body exit where the error gets past all of them.
 the reading of that graph — which handlers a point reaches, whether the error may leave the body,
 and the transpose, which points a handler is reachable from.
 
-**Three questions, and the difference between them is the whole of this module.** *Does an error
+This module answers three questions. *Does an error
 raised here reach a handler that acts* is a property of a **position**, and it is what a pass asks
 before it empties a guarded body. *Would deleting this statement change which handler runs* is a
 property of a **statement**, and it additionally needs to know whether the statement can raise at
@@ -289,7 +289,7 @@ def _arms_strict_mode_v2(node: Node) -> bool:
     version this asks about.
 
     The argument *is* read here, unlike in `_arms_strict_mode`, because version 1 and version 2 are
-    the two poles of the question. Only a `-Version` that is provably the integer `1` is read as
+    the two cases this distinguishes. Only a `-Version` that is provably the integer `1` is read as
     not arming version 2; every other spelling — a higher or non-constant version, `Latest`, `-Off`,
     or no readable value — is read as arming it, the direction that refuses a fold rather than
     granting one. A string value need only *contain* the command name, the way
@@ -366,11 +366,10 @@ def ends_the_script(element: Node) -> bool:
     over, where no handler takes it.
 
     PowerShell has two kinds of error a `trap` sees, and they are disposed of differently where
-    there is no `trap` — which is the whole reason this question is worth asking. A
-    **statement-terminating** error ends the statement it was raised in and the next statement runs:
-    a failing cast, a division by zero, a member access on `$null`, an exception out of a .NET
-    method, an unresolved command name. A **terminating** error ends the script, and only `throw`
-    and a command told to stop raise one. Both halves are measured.
+    there is no `trap`. A **statement-terminating** error ends the statement it was raised in and
+    the next statement runs: a failing cast, a division by zero, a member access on `$null`, an
+    exception out of a .NET method, an unresolved command name. A **terminating** error ends the
+    script, and only `throw` and a command told to stop raise one. Both halves are measured.
 
     `exit` is neither, and is deliberately absent: it ends the script by an exception no `trap`
     catches, so a handler over one disposes of nothing and reading `exit` as a raise would keep a
@@ -429,8 +428,8 @@ def _handled_in_the_body(routing: Ps1FaultRouting) -> bool:
     `catch` or `trap` that acts, or a `trap` set the error may get past, which 5.1 answers by ending
     the body rather than by reporting the error and stepping over it.
 
-    A `catch` that misses does not end the body — the sharp asymmetry between the two keywords — so
-    the escalation reading is keyed to the `trap` and not to the escape.
+    A `catch` that misses does not end the body, but a `trap` the error gets past does, so the
+    escalation reading is keyed to the `trap` and not to the escape.
     """
     if any(handler_acts(handler) for handler in routing.handlers):
         return True
@@ -786,8 +785,7 @@ class Ps1FaultReach:
         there; this decides whether to *delete* a body raise the `trap` would let end the scope, and a
         plain command whose default error is non-terminating does not fire the `trap`, so counting it
         would keep the junk body raise the deletion pass is written to drop. Excluding the plain
-        command is therefore the price of that removal, named in the plan's Known limits, not a
-        shortcut.
+        command is therefore the price of that removal.
         """
         operand = fault_operand(raiser)
         if operand is not None and self.fault_the_try_catches(operand):
@@ -891,7 +889,7 @@ class Ps1FaultReach:
 
             trap [System.IO.IOException] { }
 
-        guards nothing and is still the whole reason a script stops where it does.
+        guards nothing yet is still why the script stops where it does.
 
         **And a resuming `trap` is load bearing when the region it skips is observable.** A soft
         error caught by a resuming `trap` would, untrapped, step over to the next statement in its
@@ -1134,11 +1132,10 @@ class Ps1FaultReach:
         above it. A fragment carved out of a larger script is the case where the assumption is worth
         doubting.
 
-        **The empty pole is the opposite of the sibling's, and it is why this is not a copy of it.**
-        `_stops_on_every_error` answers `False` where the graphs place no script, which is safe
-        because a missed arming there only keeps a handler. This one grants a *removal*, so a script
-        the graphs hold nothing of has to refuse it rather than read as running under the lax
-        default.
+        Where the graphs place no script this refuses rather than reading as the lax default.
+        `_stops_on_every_error` answers `False` there safely, because a missed arming only keeps a
+        handler; this one grants a *removal*, so a script the graphs hold nothing of has to refuse it
+        rather than read as running under the lax default.
         """
         if self._strict is None:
             root = self._script

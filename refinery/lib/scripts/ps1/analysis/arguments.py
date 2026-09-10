@@ -8,10 +8,10 @@ argument is passed by value, and an array is a reference the callee writes throu
 `byref` marker on it. That is why this is a hand-kept table rather than a reading of the metadata,
 and why `refinery.lib.scripts.ps1.data.static_overloads` can only floor it.
 
-**The polarity is the opposite of the purity tables', and that is the whole design.** A purity
-allow-list is a *grant* table: a miss withholds a rewrite, so a missing entry costs a fold. This is
-a *deny* table: a miss lets a caller put a value where the callee was going to write, and the write
-is then lost — `[Array]::Copy($x, $y, 3)` with `$y` replaced by the array it held fills a temporary
+The polarity is the opposite of the purity tables'. A purity allow-list is a *grant* table: a miss
+withholds a rewrite, so a missing entry costs a fold. This is a *deny* table: a miss lets a caller
+put a value where the callee was going to write, and the write is then lost — `[Array]::Copy($x,
+$y, 3)` with `$y` replaced by the array it held fills a temporary
 and the script prints what `$y` started with. A missing entry here is a wrong answer, so the answer
 carries whether it is settled and a caller that cannot live with doubt refuses on it.
 
@@ -79,10 +79,8 @@ def _floored(
     each arity must be one some overload of it has, and each slot must address a part that call
     has.
 
-    The flooring is what stops a row rotting into silence. Two entries this replaces named
-    `[Array]::Fill` and a *static* `[Array]::SetValue`, neither of which 5.1 carries at all — the
-    first arrived in .NET Core — so both had been granting purity to a call the host answers with
-    `MethodNotFound`.
+    The flooring is what stops a row rotting into silence: a row the collected metadata cannot back
+    — a member 5.1 does not carry, an arity no overload has — is rejected rather than trusted.
 
     The slot check is the one that keeps a typo from flipping the polarity. A row naming a slot the
     arity does not reach is skipped by every consumer that indexes the arguments by it, so the call

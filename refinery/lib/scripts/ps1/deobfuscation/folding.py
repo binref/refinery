@@ -344,12 +344,10 @@ class _Selection(NamedTuple):
     Indexing is one such read and `.Length` is another: the count carries nothing forward at all, so
     every element is dropped and every element has to be answered for.
 
-    The two halves are answered together because they are one decision. A fold that reports only
-    what it carries forward leaves its caller to reconstruct the rest, and the reconstruction is
-    what went wrong: indexing an array literal was read as choosing among *values*, where the
-    elements are also *work* — `@(1, (Start-Process calc))[0]` folded to `1` and the command ran in
-    the original. It is the same rule the effect layer already states for `[Void](Start-Process x)`,
-    which is an `EFFECT` because the wrapper discards a value and never the evaluation behind it.
+    The two halves are answered together because they are one decision: the dropped elements are not
+    only values but *work*, so a fold reporting only what it carries forward would drop them.
+    `@(1, (Start-Process calc))[0]` is `1`, but the `Start-Process` still runs, so the fold has to
+    answer for it.
     """
     carried: Expression
     dropped: list[Expression]
@@ -572,14 +570,11 @@ class Ps1ConstantFolding(Transformer):
     """
     Fold constant expressions to their values. The purity questions the fold rests on are asked
     against the run's shared `refinery.lib.scripts.ps1.analysis.worldflow.Ps1WorldReach`, captured
-    once at entry from the version-keyed model cache rather than re-read per fold. One capture keeps
-    every fold in a sweep judged against one world, and — unlike the delete-only passes, which fetch
-    the world per body — folding cannot afford a per-question fetch: it edits in post-order, so a
-    fresh fetch after each child fold would rebuild the world flood on every index or member fold,
-    of which a string-picking obfuscation has thousands. Holding is sound because the captured world
-    reads its fail-closed pole once a fold advances the tree version, so a fold it can no longer
-    vouch for is deferred, not mis-granted; the pipeline re-runs this pass to a fixpoint, and the
-    deferred fold lands in the next sweep against a world rebuilt over the changed tree.
+    once at entry rather than re-read per fold: folding edits in post-order, so a per-fold fetch
+    would rebuild the world flood on every index or member fold, of which a string-picking
+    obfuscation has thousands. Holding is sound because once a fold advances the tree version the
+    captured world answers `False`, so a fold it can no longer vouch for is deferred to the next
+    sweep rather than mis-granted; the pipeline re-runs this pass to a fixpoint.
     """
 
     def __init__(self):
@@ -804,10 +799,9 @@ class Ps1ConstantFolding(Transformer):
         folds, so a verdict taken before its own edits is the more open, and so the more
         conservative, of the two.
 
-        A refused selection is released the way
-        `refinery.lib.scripts.ps1.deobfuscation.substitution` releases one: a multi-index read has
-        already built the array literal that carries the result, and building it adopted elements
-        that are still standing under `node`.
+        A refused selection has to release the elements it adopted: a multi-index read has already
+        built the array literal that carries the result, and building it adopted elements that are
+        still standing under `node`.
         """
         if selection is None:
             return None
@@ -869,8 +863,7 @@ class Ps1ConstantFolding(Transformer):
 
         The gate is the collected member surface and not the shape of the value: `System.Char` has a
         `ToUpper` whose every overload is static, so `([char]65).ToUpper()` reports `MethodNotFound`
-        on 5.1 while `[char]::ToUpper('a')` answers — and a receiver that used to reach here spelled
-        as a one-character String had every String method instead of none of them.
+        on 5.1 while `[char]::ToUpper('a')` answers.
         """
         receiver = read(node.object)
         owner = type_of(receiver)
@@ -1022,8 +1015,7 @@ class Ps1ConstantFolding(Transformer):
 
         A String is stricter than the cast in the one-argument form. `[Convert]::ToInt32('0x10')`
         throws where `[int]'0x10'` is 16, and so do `'7.5'`, `'1e3'`, `'1,000'`, `'1_0'`, `'0b1010'`
-        and the empty String, each of which a cast or Python's own `int` reads as a number — which
-        is what this used to do, so `[Convert]::ToInt32('0x10')` answered 16 for a script that stops.
+        and the empty String, each of which a cast or Python's own `int` reads as a number.
 
         With an explicit base it is stricter still and it reads a *pattern*: `'FFFFFFFF'` at base
         sixteen is the Int32 -1 and `'80000000'` is -2147483648, where the digits read as a number
@@ -1167,9 +1159,8 @@ class Ps1ConstantFolding(Transformer):
 
         A negative count is a throw and not an empty string. Measured: `'ab' * -1` terminates the
         script with an `ArgumentOutOfRangeException`, and so does `'ab' * 0xFFFFFFFF`, whose count
-        is the Int32 -1. Clamping it to zero answered `''` for both, which is the direction that
-        turns a script that stopped into one that carries on — and it only became reachable once
-        the count was read as the number its spelling names.
+        is the Int32 -1. Folding either to `''` would turn a script that stopped into one that
+        carries on, so a negative count is left unfolded.
         """
         s = text_of(read(node.left))
         count = integer_of(read(node.right))
@@ -1181,9 +1172,6 @@ class Ps1ConstantFolding(Transformer):
 
     @staticmethod
     def _bool_literal(result: bool) -> Ps1Variable:
-        """
-        Build the `$True`/`$False` variable node that represents a folded boolean value.
-        """
         return Ps1Variable(name='True' if result else 'False')
 
     def _handle_comparison(self, node: Ps1BinaryExpression, op: str) -> Expression | None:
@@ -1212,9 +1200,6 @@ class Ps1ConstantFolding(Transformer):
         return self._bool_literal(verdict if op == '-is' else not verdict)
 
     def _handle_logical(self, node: Ps1BinaryExpression, op: str) -> Expression | None:
-        """
-        Fold the logical operators `-and`, `-or`, and `-xor` when both operands are constant.
-        """
         left = is_truthy(node.left)
         right = is_truthy(node.right)
         if left is None or right is None:
@@ -1244,14 +1229,12 @@ class Ps1ConstantFolding(Transformer):
         What `+` does that the value domain does not answer: appending to a literal collection, and
         rewriting a concatenation with an unknown operand into an expandable string.
 
-        Two constants are not here at all — the domain answers them exactly, `apply` is asked first,
-        and the branch that stood here answered `'a' + $null` with the expandable `"a${Null}"` where
-        the value is the String `a`.
+        Two constants are not here at all: the domain answers them exactly, and `apply` is asked
+        first.
 
-        Re-associating a chain is gone with it. `($x + 'a') + 'b'` was rewritten to `$x + 'ab'`,
-        which is a different value wherever `$x` is not a String: measured, `@(1) + 'a' + 'b'` is a
-        three-element array and `@(1) + 'ab'` a two-element one. It only ever fired for an inner
-        left operand the domain cannot read, which is exactly the case it is wrong for.
+        This does not re-associate a chain: `($x + 'a') + 'b'` is not `$x + 'ab'` wherever `$x` is
+        not a String — measured, `@(1) + 'a' + 'b'` is a three-element array and `@(1) + 'ab'` a
+        two-element one — so an inner-left concat is left alone.
         """
         appended = self._appended_to_array(node)
         if appended is not None:

@@ -248,9 +248,6 @@ def _resolve_value(
     node: Node,
     env: dict[_VarKey, _StateKey | bool],
 ) -> _StateKey | None:
-    """
-    Try to resolve a node to a constant value given a variable environment.
-    """
     if not isinstance(node, Expression):
         return None
     expr = unwrap_parens(node)
@@ -269,9 +266,6 @@ def _resolve_bool(
     node: Node,
     env: dict[_VarKey, _StateKey | bool],
 ) -> bool | None:
-    """
-    Try to resolve a node to a boolean given a variable environment.
-    """
     if not isinstance(node, Expression):
         return None
     expr = unwrap_parens(node)
@@ -684,9 +678,6 @@ def _update_env(
     key: _VarKey,
     value: Node,
 ):
-    """
-    Update the variable environment for an internal assignment.
-    """
     if isinstance(value, Expression):
         value = unwrap_parens(value)
     const_val = _unwrap_constant(value)

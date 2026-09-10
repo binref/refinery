@@ -275,8 +275,8 @@ def _runs_unreadable_code(node, role: WorldRole) -> bool:
     excusing it would mean disbelieving a statement the walk can read. Neither is a command that
     writes the command table with the whole binding spelled out beside it — `New-Alias Get-Date
     Stop-Process`, `Set-Item alias:Out-Null Write-Host`, `Set-Item function:Get-Date { ... }`. That
-    is the same plain-sight change wearing the command table's clothes, and it is the one opener
-    nothing else covers: `_identity_redefinitions` classifies a `function` statement and a
+    is the same plain-sight change to command identity, and it is the one opener nothing else
+    covers: `_identity_redefinitions` classifies a `function` statement and a
     `function:`/`alias:` variable write, so a name an aliasing or item cmdlet takes over never
     reaches the shadow set, and the verdict is all that stands between such a statement and a later
     call to the name it rebound.

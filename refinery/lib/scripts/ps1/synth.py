@@ -113,21 +113,20 @@ def _numeral_spelling(node: Expression) -> str | None:
 class Ps1Synthesizer(Synthesizer):
     """
     Three things decide how a node is written, and all three are properties of the slot it goes into
-    rather than of the node. How tightly the slot binds decides whether a bracket is needed, and
-    `refinery.lib.scripts.ps1.precedence` is that scale. Whether the slot reads a bare word as a
-    value decides how a leaf is spelled, and that is `_word_slot`. How the text will be lexed back
-    decides where a spelling runs on into what touches it, and that is `_mode`.
+    rather than of the node: how tightly the slot binds, which decides whether a bracket is needed
+    (`refinery.lib.scripts.ps1.precedence`); whether the slot reads a bare word as a value, which
+    decides how a leaf is spelled (`_word_slot`); and how the text will be lexed back, which decides
+    where a spelling runs on into what touches it (`_mode`).
 
     A word with no quotes means a value where a command's name and arguments are read, and begins a
     command everywhere else. So `foo a, b` may keep its words while `foo (a, b)` may not — the
     bracket makes `a` a command name, and 5.1 then rejects the whole line. The parser's `raw` is
     only true of the slot it was read from, which is why replaying it is not enough.
 
-    The arming and the mode are close relatives and are not the same thing. The arming is spent on
-    one node, because only the leaf standing in the slot is spelled by it; the mode holds until a
-    delimiter is written, because 5.1 goes on lexing a command's arguments in command mode until
-    something opens a new one. `Write-Output $t.GetType()` is where they part: the member access
-    takes the arming, and the numeral several levels under it is still in the argument's text.
+    The arming is spent on one node, since only the leaf in the slot is spelled by it; the mode holds
+    until a delimiter is written, since 5.1 lexes a command's arguments in command mode until one
+    opens a new slot. `Write-Output $t.GetType()` is where they part: the member access takes the
+    arming, and the numeral several levels under it is still in the argument's text.
     """
 
     def __init__(self, *args, **kwargs):
@@ -203,11 +202,11 @@ class Ps1Synthesizer(Synthesizer):
     def visit_Ps1IntegerLiteral(self, node: Ps1IntegerLiteral):
         """
         A numeral is written exactly as it is spelled, and a numeral the source spelled is never
-        re-spelled. Where it stands in a command argument the text itself is passed on: 5.1 wraps a
-        literal argument so that `PSObject.TokenText` keeps what was written, and the receiving
-        command reads that back — `Write-Host 1.10` prints `1.10` and `notepad.exe 0x10` receives
-        `0x10` rather than `16`. Holding only `raw` is what makes that true by construction, and a
-        pass that normalized one would break it here without anything noticing.
+        re-spelled. Where it stands in a command argument the text itself is passed on: the
+        receiving command reads back what was written — `Write-Host 1.10` prints `1.10` and
+        `notepad.exe 0x10` receives `0x10` rather than `16`. Holding only `raw` is what makes that
+        true by construction, and a pass that normalized one would break it here without anything
+        noticing.
         """
         self._write(node.raw)
 
@@ -419,11 +418,11 @@ class Ps1Synthesizer(Synthesizer):
 
     def _emit_argument_value(self, value: Expression):
         """
-        An argument is read back by the rule that reads one bare, which reaches nothing that an
-        operator holds together: an operator would reach across the arguments beside this one, a
-        range re-lexes as a single bare word in argument mode, and a command swallows the rest of
-        the line. The comma is bracketed too, even though it binds tighter than all of them,
-        because it is what separates one argument from the next.
+        An argument is read back by the rule that reads one bare, which reaches nothing an operator
+        holds together: an operator would reach across the arguments beside this one, a range
+        re-lexes as a single bare word in argument mode, and a command swallows the rest of the line.
+        The comma is bracketed too, though it binds tighter than all of them, because it separates
+        one argument from the next.
 
         Two spellings survive the precedence scale and are still read as something else here, and
         both are bracketed. A numeral whose spelling this slot does not end where the tree does is
@@ -431,10 +430,9 @@ class Ps1Synthesizer(Synthesizer):
         `f +1` and `f -0.0` are words the same way. A cast is the other, measured: `f [byte] 5` is
         the one word `[byte]5`.
 
-        Neither bracket can change what a source wrote, because neither spelling can reach here from
-        one. A3a made the lexer read both the way 5.1 does — a dash or a bracket in an argument
-        begins a word — so a numeral or a cast standing in this slot is one a pass put here, and
-        bracketing it is what makes it mean what the pass meant.
+        Neither spelling can reach here from a source — a dash or a bracket in an argument begins a
+        word — so a numeral or a cast standing in this slot is one a pass put here, and bracketing it
+        is what makes it mean what the pass meant.
         """
         raw = _numeral_spelling(value)
         misread = isinstance(value, (Ps1CastExpression, Ps1TypeExpression)) or (

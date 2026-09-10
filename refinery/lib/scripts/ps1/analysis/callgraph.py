@@ -6,9 +6,9 @@ Two questions are asked of it, and they fail in opposite directions, which is wh
 both. *Reachability* decides whether a definition may be deleted, so a call site the walk misses
 deletes live code. *Output flow* — `refinery.lib.scripts.ps1.analysis.effects.Ps1OutputFlow` —
 decides whether a bare value inside a body may be deleted, so a call site the walk misses deletes a
-payload. The reachability expansion this replaced descended only into bodies it had already proven
-reachable: sound for its own question, and a deletion licence for the other, because a call site
-sitting inside an unreached function was never read at all.
+payload. A walk that expanded only bodies already proven reachable would be sound for the first
+question and a deletion licence for the second, so the walk here expands every body a name can
+denote.
 
 The graph is structure and nothing more. It says who can call what; what a call *does* with the
 value it produces is the effect layer's question, asked through here rather than answered here.

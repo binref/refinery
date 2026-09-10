@@ -4,17 +4,13 @@ The .NET type a variable carries where it is read.
 A variable has no type of its own — the value it holds does — so the question is which write a read
 observes and what type that write establishes. The first half is
 `refinery.lib.scripts.ps1.analysis.dataflow.Ps1VariableFlow.reaching_definition` and the second is
-`refinery.lib.scripts.ps1.analysis.values.resolve_expression_type`, so what is left here is the
-join, exactly as `refinery.lib.scripts.ps1.analysis.separator` joins the same two layers for `$OFS`.
+`refinery.lib.scripts.ps1.analysis.values.resolve_expression_type`; what is left here is the join.
 
-**A name is not a variable, and that is what this is for.** What stood before it scanned the whole
-script for names written exactly once and offered the type to every read of that name anywhere,
-which crosses every scope boundary the language has: a write inside a function body typed a read at
-the top level, so `function f { $q = New-Object Net.WebClient }` followed by
-`($q | Get-Member)[0].Name` folded to a member of a type the top-level `$q` never holds — it holds
-`$null`, and `Get-Member` over `$null` is an error rather than a member list. Counting writes also
-refused a name written twice however far apart, so a type that plainly reaches its read was thrown
-away beside the one that does not.
+The type must follow the reaching definition, not the name: a per-name scan crosses every scope
+boundary the language has. A write inside a function body would type a read at the top level, so
+`function f { $q = New-Object Net.WebClient }` followed by `($q | Get-Member)[0].Name` would fold to
+a member of a type the top-level `$q` never holds — it holds `$null`, and `Get-Member` over `$null`
+is an error rather than a member list.
 """
 from __future__ import annotations
 
@@ -166,9 +162,9 @@ def _established_by(write: Node, flow: Ps1VariableFlow) -> Ps1TypeName | None:
 
     Which occurrences are assignment targets is `refinery.lib.scripts.ps1.ast.assignment_of`'s to
     say, and asking it is what brings the two spellings a test of `write.parent` cannot see: a
-    constrained target, whose type the constraint decides rather than the value — measured,
-    `[string]$q = 'abc'` used to leave `$q` untyped and take the member spellings below it with it —
-    and a multi-assignment slot, where the value is the element standing opposite it.
+    constrained target, whose type the constraint decides rather than the value — `[string]$q =
+    'abc'` types `$q` as `String` and every member spelling below it reads against that — and a
+    multi-assignment slot, where the value is the element standing opposite it.
     """
     if isinstance(write, Ps1Variable):
         assignment = assignment_of(write)

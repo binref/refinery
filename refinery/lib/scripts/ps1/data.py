@@ -10,10 +10,7 @@ every table below is keyed by one, which is what makes two spellings of a type c
 `char[]`, `System.Char[]` and `[Char[]]` are one name, and none of them is `System.Char`.
 
 The remaining `*` tables (`KNOWN_CMDLETS`, `CANONICAL_TYPE_NAMES`, ...) are about *commands* and
-*display*, not about type identity. The lowercase-string type views that used to sit beside them —
-`TYPE_MEMBERS`, `PROPERTY_TYPES`, `MEMBER_LOOKUP`, `TYPE_ALIASES` — are gone: they were a second
-vocabulary in which an array suffix could not be written, so every member question about `char[]`
-was answered off `Char`.
+*display*, not about type identity.
 """
 from __future__ import annotations
 
@@ -36,11 +33,10 @@ def _load(name: str) -> dict:
     One captured table, as it ships: LZMA over compact JSON.
 
     LZMA rather than gzip because these tables are long stretches of repeated key names and type
-    names, which is what a large window pays off on — it halves them, 657KB to 331KB, where gzip and
-    a binary encoding both do worse. Decompressing costs 16ms more across all six and reading them
-    through `refinery.lib.json` gives back three times that, because the backend it prefers parses
-    faster than the standard library. Where that backend is absent the fallback is the standard
-    library, and loading is then a few percent slower than it was — a cost, not a failure.
+    names, which a large compression window roughly halves where gzip and a binary encoding both do
+    worse. Reading them through `refinery.lib.json` more than repays the extra decompression cost
+    where its preferred backend is present; where that backend is absent the standard-library
+    fallback is a few percent slower to load.
     """
     with datapath(name).open('rb') as fp:
         return loads(lzma.decompress(fp.read()))
@@ -75,20 +71,13 @@ _ACCELERATORS: dict[str, str] = {
 }
 _TYPE_TABLE: dict[str, dict] = _TYPES['types']
 
-#: Commands the capture reports that the host does not have. `Format-Hex` is described here exactly
-#: as PowerShell 7 describes it — a `Raw` switch and a `System.String` `Encoding` — and the
-#: `Microsoft.PowerShell.Utility` a 5.1 host loads reports version 7.0.0.0, so the collector read it
-#: from a shadowing 7.0 module rather than from the host it declares itself authoritative for.
-#: Measured three ways on 5.1: `Get-Command Format-Hex` reports CommandNotFoundException, `'ab' |
-#: Format-Hex` throws, and the loaded Utility module exports only `Format-Custom`, `Format-List`,
-#: `Format-Table` and `Format-Wide`. A probe of thirteen commands only PowerShell 6 or 7 ships found
-#: this to be the one that leaked.
+#: Commands the capture reports that the host does not have. `Format-Hex` leaked in from a shadowing
+#: PowerShell 7.0 `Microsoft.PowerShell.Utility` module; a 5.1 host cannot run it.
 #:
 #: A record for a command the host cannot run is not inert: the wildcard resolver draws its
-#: candidate universe from `KNOWN_CMDLETS`, so `Get-Command Format-H*` had a unique match and was
-#: rewritten into a call to a command 5.1 reports as not found — the same defect the `fhx` alias was
-#: removed for. Withheld from the derived table rather than deleted from the capture, which stays as
-#: collected the way `_PARSER_TYPE_KEYWORDS` above is kept beside it rather than injected into it.
+#: candidate universe from `KNOWN_CMDLETS`, so `Get-Command Format-H*` would have a unique match and
+#: be rewritten into a call to a command 5.1 reports as not found. Withheld from the derived table
+#: rather than deleted from the capture, which stays as collected.
 _MISCOLLECTED_COMMANDS = frozenset({'format-hex'})
 
 #: The bare nouns that name a program Windows itself ships, so that 5.1 runs the program rather than
@@ -108,10 +97,8 @@ _COMMAND_TABLE: dict[str, dict] = {
     if _name.lower() not in _MISCOLLECTED_COMMANDS
 }
 
-#: Member kinds that reflection reports and that the historical views expose. Fields and every
-#: Extended Type System member (`ets_*`) are collected but withheld from these views, because the
-#: prior database never saw them and the transforms that read the views were written against a
-#: reflection-only member set. The query API exposes them for the migration that consumes them.
+#: The member kinds these views expose. Fields and every Extended Type System member (`ets_*`) are
+#: collected but withheld from them; the query API exposes those separately.
 _VIEW_MEMBER_KINDS = frozenset({'method', 'property'})
 
 #: The members whose value the receiver's shape decides rather than anything it holds — the count of
@@ -135,8 +122,8 @@ VARIABLE_TYPES: dict[str, str] = {
     if _info['type'] is not None
 }
 #: `$PSCmdlet` exists only inside an advanced function's scope, so the pristine `Get-Variable` the
-#: generator runs never sees it. It is supplied here, as the previous database did, because it
-#: cannot be collected rather than because it is absent.
+#: generator runs never sees it. It is supplied here because it cannot be collected rather than
+#: because it is absent.
 VARIABLE_TYPES.setdefault('pscmdlet', 'system.management.automation.psscriptcmdlet')
 
 #: The set of type-accelerator spellings, lowercased. An accelerator is already the shortest
@@ -174,10 +161,6 @@ def is_type(name: str, target: str) -> bool:
     go through `resolve_type`, so no difference of spelling can make two names for one type answer
     `False`: an accelerator, an omitted `System.` prefix, a difference of case, whitespace inside the
     name, an assembly qualification and a generic argument list are all understood.
-
-    This used to compare a lowercased name against a lowercased full name, which meant it saw only
-    the three spellings that transformation happens to produce and answered `False` for the rest —
-    `[Byte[]]` among them, because an array suffix was not part of a name at all.
     """
     resolved = resolve_type(name)
     return resolved is not None and resolved == resolve_type(target)
@@ -185,31 +168,15 @@ def is_type(name: str, target: str) -> bool:
 
 #: The aliases the host binds, and nothing else. An entry here is not a harmless surplus: nothing in
 #: ordinary name lookup beats an alias, so a name added here is taken away from whatever 5.1 would
-#: have given it. `childitem`, `item`, `member` and `variable` were listed here once and are not
-#: aliases at all — they are the engine's implicit `Get-` retry, which is a *last resort* reached
-#: only once the alias, function and cmdlet tables have missed, so `function item { }` beats it. As
-#: aliases they claimed the name before the function tier, and a call to the script's own function
-#: was rewritten into a call to the cmdlet, deleting the body that ran. That rule lives in
-#: `refinery.lib.scripts.ps1.ast.implicit_get_retry` instead, where it is a retry.
+#: have given it. The engine's implicit `Get-` retry (`childitem`, `item`, ...) is not an alias — it
+#: is a *last resort* reached only once the alias, function and cmdlet tables have missed, so
+#: `function item { }` beats it — and lives in `refinery.lib.scripts.ps1.ast.implicit_get_retry`.
 #:
-#: `fhx` and `gerr` were listed too, and neither target is on the host: `Format-Hex` and `Get-Error`
-#: were both measured absent from 5.1, so a bare `gerr` was rewritten into a name the script then
-#: could not run, and the entry injected `Get-Error` as a cmdlet through the loop below on top of
-#: that. `Format-Hex` had leaked into the collected command table on its own as well and is withheld
-#: from it by `_MISCOLLECTED_COMMANDS` above.
-#:
-#: **A wrong record in either table is never merely surplus, because two things read them in a
-#: direction it corrupts.** `refinery.lib.scripts.ps1.deobfuscation.wildcards` matches a wildcard
-#: against `KNOWN_CMDLETS` and emits the unique hit as a command, which is what made a `Format-Hex`
-#: record produce a call to a command the host cannot run — the `fhx` defect reached through the
-#: other table. And `refinery.lib.scripts.ps1.ast.implicit_get_retry` refuses a retry for any name
-#: a table claims, so a record for a command the host does not have suppresses a retry 5.1 performs.
-#: The dash-free records were suspected of being that and are not: all 27 were measured on 5.1 and
-#: every one resolves. Ten are the engine's own default session functions (`cd..`, `cd\`, `help`,
-#: `importsystemmodules`, `mkdir`, `more`, `oss`, `pause`, `prompt`, `tabexpansion2`), fifteen are
-#: Pester, PSDesiredStateConfiguration and PSReadLine — all shipped with Windows and autoloaded by
-#: command name, so 5.1 really does resolve `describe` and `configuration` on a stock box — and
-#: `powershell` and `powershell_ise.exe` are programs, where suppressing the retry is the answer.
+#: A wrong record in either table is not merely surplus: two things read them in a direction it
+#: corrupts. `refinery.lib.scripts.ps1.deobfuscation.wildcards` matches a wildcard against
+#: `KNOWN_CMDLETS` and emits the unique hit as a command, and
+#: `refinery.lib.scripts.ps1.ast.implicit_get_retry` refuses a retry for any name a table claims, so
+#: a record for a command the host does not have suppresses a retry 5.1 performs.
 #:
 #: Anything added to either table has to be measured on a host first, and the ps1 oracle corpus is
 #: where such a measurement is recorded.
@@ -591,9 +558,9 @@ def resolve_type(name: str | Ps1TypeName) -> Ps1TypeName | None:
     resolved in turn. An argument that does not resolve makes the whole name unresolved, since a
     name is only as understood as its least understood part.
 
-    The array suffixes are carried rather than dropped. `char[]` used to resolve to `System.Char`,
-    so every member question about an array of characters was answered off the element type; what
-    an array's members actually are is `_member_surface`'s question, asked of the name this returns.
+    The array suffixes are carried rather than dropped, so `char[]` resolves to a name distinct from
+    `System.Char`; what an array's members actually are is `_member_surface`'s question, asked of the
+    name this returns.
     """
     parsed = parse_type_name(name) if isinstance(name, str) else name
     if parsed is None:
@@ -655,9 +622,7 @@ for _full in _TYPE_TABLE:
         _TYPE_LOOKUP.setdefault(_bare, []).append(_full)
 
 #: The WMI classes, shaped like a collected type record so that one resolver answers for them too. A
-#: WMI class is a type a PowerShell expression can have — `Get-WmiObject Win32_Process` yields one —
-#: and before this it was a lowercase string in a namespace of its own, which is one of the type
-#: vocabularies this module exists to have only one of.
+#: WMI class is a type a PowerShell expression can have — `Get-WmiObject Win32_Process` yields one.
 #:
 #: The capture records a class's property *names* and not their types, so each member says so with a
 #: `type` of `None`: a chain through a WMI property stops resolving there, which is the honest
@@ -682,8 +647,7 @@ for _cls in _WMI_TYPES:
 
 def canonical_type(name: str) -> Ps1TypeName | None:
     """
-    The canonical `Ps1TypeName` of the type a source name refers to, or `None` when it does not
-    resolve to a collected type.
+    An alias for `resolve_type`.
     """
     return resolve_type(name)
 
@@ -693,10 +657,9 @@ def required_type_key(name: str) -> Ps1TypeName:
     Resolve a hand-kept table's type spelling to the lowercased canonical .NET `FullName` that table
     keys on, raising when the collected metadata carries no such type. Building a table through this
     at import time is a fail-loud floor: an entry naming a type the current data cannot resolve
-    stops the module from loading rather than going silently unmatched, which is how a stale table
-    used to fail open. A generic type is named by its arity-marked definition
-    (`collections.generic.list` `` `1 ``), the only spelling `resolve_type` resolves without its
-    type arguments.
+    stops the module from loading rather than going silently unmatched. A generic type is named by
+    its arity-marked generic definition (the CLR's backtick-arity form), the only spelling
+    `resolve_type` resolves without its type arguments.
     """
     resolved = resolve_type(name)
     if resolved is None:
@@ -770,7 +733,7 @@ def _member_surface(name: str | Ps1TypeName) -> str | None:
 def type_members(name: str | Ps1TypeName) -> dict[str, dict] | None:
     """
     The full member table of a type, keyed by member name, including the fields and Extended Type
-    System members the historical views omit. Each value carries at least `kind` and `source`.
+    System members the view functions omit. Each value carries at least `kind` and `source`.
     Returns `None` when the type is not collected.
     """
     key = _member_surface(name)
@@ -830,7 +793,7 @@ class MemberLookup(enum.Enum):
 
 #: The members PowerShell's object adapter puts on every value, whatever its type. `Get-Member
 #: -Force` reports them per instance rather than per type, so the capture — which walks types —
-#: cannot hold them, and before this a read of one answered as though the member did not exist.
+#: cannot hold them.
 #:
 #: Each is measured on a 5.1 host rather than reasoned about; see `TYPE_TRANSCRIPTS` in
 #: `test.lib.scripts.ps1.test_oracle`. `Count` is 1 for a scalar, `PSTypeNames` is the type's own
@@ -995,9 +958,8 @@ def view_members(name: str | Ps1TypeName) -> dict[str, dict] | None:
     """
     The members of a type that `Get-Member` reports without `-Force`: the reflected methods and
     properties, and for a WMI class its properties. Fields and Extended Type System members are
-    withheld, as they are from the historical `TYPE_MEMBERS` view this replaces — the difference is
-    that the type is resolved through `resolve_type`, so an array answers off `System.Array` and a
-    spelling that is not already the lowercased `FullName` resolves instead of missing.
+    withheld. The type is resolved through `resolve_type`, so an array answers off `System.Array`
+    and a spelling that is not already the lowercased `FullName` resolves instead of missing.
 
     An enum has no members in this sense and its named values stand in for them, which is what the
     view has always done and what a caller listing what may follow a dot needs.
@@ -1162,29 +1124,19 @@ class OperatorOutcome(typing.NamedTuple):
         Whether every witnessed pair in this cell threw, so that no value was observed to come out
         of it at all.
 
-        **It names no cause, and must not be read as naming one.** 220 of the binary grid's cells
-        answer `True` and at least 26 of those are a *value* reason rather than a missing method:
-        `2 / $null` is `Attempted to divide by zero`, and division has a perfectly good method for
-        an Int32. They fill the cell only because `System.Void` has exactly one inhabitant, so
-        every witnessed pair threw and nothing survived to be a type. `Int32 / Boolean` is the
-        control that shows it: same operator, same value reason, **not** selected, because `$true`
-        divides fine and leaves `types` non-empty. A caller wanting to know *why* asks the host.
+        It names no cause and must not be read as one. Many `True` cells are a *value* reason rather
+        than a missing method: `2 / $null` is a divide-by-zero, and division has a perfectly good
+        method for an Int32. `Int32 / Boolean` is the control — same operator, same value reason, not
+        selected, because `$true` divides fine and leaves `types` non-empty. A caller wanting to know
+        *why* asks the host.
 
-        **`may_throw` alone answers a different question, and reading it as this one is the mistake
-        the grid invites.** Only five of the ten Boolean-left cells throw at all, and the split
-        that matters is inside those five: `$true * 2` throws with nothing witnessed, while
-        `$true / 2` is 0.5 and throws only over a divisor the left operand has no part in. Reading
-        the throw axis on its own put `/` and `%` into the emulator's refusal set, twice.
-
-        The claim is about the *cell* and never about one operand. Projecting it onto a side is a
-        separate step needing its own evidence — `_NO_OPERATOR_METHOD_ON_BOOLEAN` does exactly that
-        and is sound only because its three members were measured operand-wise against a host, and
-        because it is used to refuse, where a wrong projection costs a fold and cannot invent a
-        value.
-
-        A cell that produced `$null` did produce something, so `may_be_null` excludes it. No cell
-        of either grid carries that shape today, which makes the clause inert rather than idle: it
-        is what the sentence above means, and a capture that ever recorded one would need it.
+        `may_throw` answers a different question, and reading it as this one conflates them: `$true *
+        2` throws with nothing witnessed, while `$true / 2` is 0.5 and throws only over a divisor the
+        left operand has no part in. The claim is about the *cell*, never one operand; projecting it
+        onto a side (`_NO_OPERATOR_METHOD_ON_BOOLEAN`) needs its own operand-wise evidence and is
+        sound only because it is used to refuse, where a wrong projection costs a fold rather than
+        inventing a value. A cell that produced `$null` did produce something, so `may_be_null`
+        excludes it.
         """
         return self.may_throw and not self.may_be_null and not self.types
 

@@ -29,9 +29,8 @@ def _is_user_variable(var: Ps1Variable) -> bool:
 
 class Ps1VariableRenaming(Transformer):
     """
-    Rename obfuscated variable names to short sequential identifiers (var1, var2, ...).
-    Only activates when ALL user-defined variables in the script have obfuscated names,
-    preventing false positives on legitimate scripts.
+    Only activates when all user-defined variables in the script have obfuscated names, which
+    prevents false positives on legitimate scripts.
     """
 
     def visit(self, node: Node):

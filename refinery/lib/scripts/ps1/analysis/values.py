@@ -134,10 +134,10 @@ def is_truthy(node: Node | None) -> bool | None:
     spelled out here, so that a spelling this module has never seen is refused instead of being
     given a truth of its own invention.
 
-    A rule spelled out here is what this used to be, and `- '0'` is the case that ended it: a minus
-    sign in front of a String converts the String to a number, so the text `'0'` is true while the
-    number it negates to is false. The rule read the minus as leaving truth alone — which holds for
-    a number and for nothing else — and answered `True` where a host answers `False`.
+    A rule spelled out here rather than read from the value gets `- '0'` wrong: a minus sign in
+    front of a String converts the String to a number, so the text `'0'` is true while the number
+    it negates to is false. A rule reading the minus as leaving truth alone — which holds for a
+    number and for nothing else — answers `True` where a host answers `False`.
 
     **Both throws are refused, and they are two.** `evaluate` says whether reaching the value may
     throw and `convert` says whether making a Boolean of it may, and the second does not carry the
@@ -157,10 +157,6 @@ def is_truthy(node: Node | None) -> bool | None:
 
 
 def unwrap_to_array_literal(node: Node) -> Ps1ArrayLiteral | None:
-    """
-    Unwrap parentheses and array expressions to find an inner
-    `refinery.lib.scripts.ps1.model.Ps1ArrayLiteral`.
-    """
     node = unwrap_parens(node)
     if isinstance(node, Ps1ArrayLiteral):
         return node
@@ -195,8 +191,7 @@ def collect_integers(node: Node | None) -> list[int] | None:
     The integers an expression names, as a list, or `None` where it names anything else.
 
     What counts as an integer is `integer_of`, so a numeral whose spelling makes it something else
-    is not one and neither is a `$null`: the old reader here answered the *magnitude* of a
-    hexadecimal pattern, so `0xFFFFFFFF` reached its callers as 4294967295 where the value is -1.
+    is not one, and neither is a `$null`.
     """
     return _each(collect_facts(node), integer_of)
 
@@ -528,9 +523,9 @@ _UINT64 = _type('System.UInt64')
 #:
 #: Its lower bound is written down rather than spelled `-_DECIMAL_MAX`, because that expression is
 #: not the number it reads as: arithmetic on a `Decimal` is a *context* operation in Python and
-#: rounds to the ambient precision, which is 28 digits where this value has 29. Every range test
-#: written that way was comparing against `-79228162514264337593543950340` — a bound wider than the
-#: type has, and one that moved whenever anything in the process set `decimal.getcontext().prec`.
+#: rounds to the ambient precision, which is 28 digits where this value has 29, so `-_DECIMAL_MAX`
+#: reads as `-79228162514264337593543950340` — a bound wider than the type has, and one that moves
+#: whenever anything in the process sets `decimal.getcontext().prec`.
 _INT32_RANGE = (-0x80000000, 0x7FFFFFFF)
 _INT64_RANGE = (-0x8000000000000000, 0x7FFFFFFFFFFFFFFF)
 _DECIMAL_MAX = decimal.Decimal('79228162514264337593543950335')
@@ -1143,8 +1138,7 @@ def _cast_spelling(node: Ps1CastExpression) -> Ps1Fact:
     The value a cast *spells*, which is a question about the source and not an evaluation of it. The
     language has no literal for a `System.Char` or for any of the six integer widths, so `render`
     writes a value of one of those as a cast of a numeral, and this reads exactly that back:
-    `read(render(fact))` is `fact` for every value the domain can spell, and until this arm existed
-    it was not — a value this module wrote out could not be read in again.
+    `read(render(fact))` is `fact` for every value the domain can spell.
 
     One operator deep is where that matters, because one operator deep is where folding works. A
     pass standing at `[char] 72 + [char] 105` asks `read` for each operand and `apply` for the
@@ -1577,9 +1571,9 @@ def _negated(operand: Ps1Fact) -> Ps1Outcome:
     from it.
 
     A `Decimal` is subtracted like every other number, and by the same `_computed` a binary `-`
-    reaches, so that the one operation is computed one way. A sign flip through `copy_negate` stood
-    here and is the reading that does *not* agree with 5.1 on a zero — Python's `Decimal` has a
-    signed zero too, so `- 0d` came back as `-0` where a host writes `0`.
+    reaches, so the one operation is computed one way. Negating through a sign flip instead would
+    disagree with 5.1 on a zero: Python's `Decimal` has a signed zero, so it makes `- 0d` `-0` where
+    a host writes `0`.
 
     The result reaches `_decimal_result` for the same reason every binary kernel result does: a
     number that has left the range a `Decimal` holds is the throw a host raises, one that has
@@ -1917,9 +1911,6 @@ def _evaluated_unary(
     node: Ps1UnaryExpression,
     type_of_variable: Ps1VariableTyping | None,
 ) -> Ps1Outcome:
-    """
-    A unary operator, which is `apply_unary` over whatever its operand evaluates to.
-    """
     operand = _operand(node.operand, type_of_variable)
     applied = apply_unary(node.operator, operand.value)
     return Ps1Outcome(_throw_join(operand.throws, applied.throws), applied.value)
@@ -2026,15 +2017,14 @@ def _element_is_true(fact: Ps1Fact) -> bool | None:
     `(,[char]0)` is `$True` where `[char]0` is `$False`, and `(,(,0))` is `$True` where `(,0)` is
     `$False`. 5.1 reaches a different function here, one with no `Char` arm at all — so every Char
     is true to it — and one that answers a collection by whether it holds anything rather than by
-    asking this question again. The 5.1 source says in a comment that it declines to recurse on
-    purpose, to bound the work.
+    asking this question again.
 
     Everything else is the ordinary conversion, which is why this asks `_cast` for it rather than
     spelling a second copy of it out.
 
     An element that is not a value is refused rather than guessed at. A collection's payload does
     not guarantee its elements are values — `@() + (0 -shl $true)` holds a type and no value — and
-    the function 5.1 uses here ends in `return true`, which would report such an element as true.
+    reporting such an element as true would be a guess.
     """
     if fact is NULL:
         return False
@@ -2332,8 +2322,8 @@ def _rendered(fact: Ps1Constant) -> str | None:
     `[string]` against the operand. See `_concatenated`.
 
     A `Decimal` is written in plain notation rather than by `str`, which switches to an exponent
-    wherever the number is spelled with a positive one: `[string]1e3d` is `1000` on the host and was
-    `1E+3` here, which is a text no `Decimal` .NET writes ever takes.
+    wherever the number is spelled with a positive one: `[string]1e3d` is `1000` on the host, where
+    `str` would give `1E+3`, a text no `Decimal` .NET writes ever takes.
 
     A `Double` is written by `_double_text`. That the cast is culture-invariant is what lets this
     module compute it — `[string]0.5` is `0.5` on every host — where the `ToString()` a Double answers
@@ -2580,13 +2570,11 @@ def _stamped(value: _Number, candidates: frozenset[Ps1TypeName]) -> Ps1Fact:
     `Double` when the cell recorded one, which is the widening a host performs on overflow and the
     reason `2147483647 + 1` is a Double.
 
-    **The dispatch is exhaustive on purpose, and a payload of a kind not named here is refused.**
-    What stood at the end was `Double` for anything that reached it, which read as the arm for a
-    `float` and was in fact the arm for *everything else too* — so a kernel returning a collection
-    would have had it stamped `Ps1Constant(System.Double, (1, 2))`, a value of a type it is not, by
-    the one function whose whole job is to refuse exactly that. Nothing returns such a payload
-    today, which is what made it a trap rather than a defect: this is the guard every new kernel arm
-    is licensed by, so it has to fail closed for the kinds those arms will introduce.
+    **The dispatch is exhaustive on purpose, and a payload of a kind not named here is refused.** A
+    catch-all `Double` arm would stamp a kernel returning a collection as
+    `Ps1Constant(System.Double, (1, 2))`, a value of a type it is not, by the one function whose
+    whole job is to refuse exactly that. This is the guard every new kernel arm is licensed by, so
+    it has to fail closed for the kinds those arms will introduce.
 
     The final refusal is unreachable while `_Number` names no collection, and a type checker says
     so. That is the invariant rather than dead code: widening `_Number` is what a kernel arm over
@@ -2832,9 +2820,9 @@ def _decimal_remainder(a: decimal.Decimal, b: decimal.Decimal) -> decimal.Decima
 
 #: What an operation over two `Decimal`s has to be computed at. Python's operators are *context*
 #: operations and the ambient precision is 28 digits, where a `System.Decimal` is a 96-bit
-#: coefficient and holds 29: at the default context `79228162514264337593543950335d + 0d` came back
-#: as `79228162514264337593543950340`, a wrong value reported as a definite one, and anything else
-#: in the process moving `decimal.getcontext().prec` moved it again. The room here is for the
+#: coefficient and holds 29: at the default context `79228162514264337593543950335d + 0d` rounds to
+#: `79228162514264337593543950340`, a wrong value reported as a definite one, and moving
+#: `decimal.getcontext().prec` moves it again. The room here is for the
 #: *exact* result, so that what the type holds is decided by `_decimal_result` and
 #: `_decimal_quotient` rather than by a rounding whose rule nothing here measured. Both operands are
 #: inside the `Decimal` range, so a product is at most 58 digits, a sum at most 58 places, and the
@@ -3157,9 +3145,9 @@ def _throws_for_what_the_operands_are(operator: str, left: Ps1Fact, right: Ps1Fa
     on the left of a `Decimal` raises for `+`, `-`, `/` and `%` — `$true - 1.0d` throws where
     `1.0d - $true` is 0 and `$true - 1.5` is -0.5.
 
-    Both reached the kernel on the licence the *other* operand gave, and both were answered: the
-    String licence made `[char]48 * '1'` the number 48 and the `Decimal` licence made `$true - 1.0d`
-    a `Decimal` zero, each a value standing where the host aborts the script.
+    Without this guard both reach the kernel on the licence the *other* operand gives: the String
+    licence would make `[char]48 * '1'` the number 48 and the `Decimal` licence would make
+    `$true - 1.0d` a `Decimal` zero, each a value standing where the host aborts the script.
     """
     if operator == '*':
         return type_of(left) in (_BOOLEAN, _CHAR)
@@ -3559,9 +3547,8 @@ def make_string_literal(value: str) -> Ps1StringLiteral | Ps1HereString:
     The literal that spells `value` as a `String`, for a caller that holds a bare Python `str` and
     no fact. It is `render`'s String arm, and it is the last place in the unit where a value is
     spelled without its type having been named — a `str` reaching here becomes a String whatever it
-    was, which is what the ledger's Char rows were. Each caller loses this as it starts carrying a
-    `Ps1Fact` instead; what is left is the emulation of a .NET method that really does produce a
-    String, and a text this module computed itself.
+    was. What reaches it is the emulation of a .NET method that really does produce a String, and a
+    text this module computed itself.
 
     A here-string is chosen for multi-line text because it needs no escaping, and only where the
     text cannot close it early: a line beginning `'@` inside the value would end the string there

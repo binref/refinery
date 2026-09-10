@@ -29,10 +29,6 @@ from refinery.lib.scripts.ps1.model import (
 
 
 class Ps1ExpandableStringHoist(Transformer):
-    """
-    Extract void subexpressions from expandable strings into preceding or following statements,
-    then replace the expandable string with a plain string literal.
-    """
 
     def visit(self, node):
         for container in list(node.walk()):
@@ -54,10 +50,8 @@ class Ps1ExpandableStringHoist(Transformer):
     @staticmethod
     def _is_void_statement(stmt) -> bool:
         """
-        A statement is void when it contributes nothing to an interpolating string. Only assignments
-        qualify: a command invocation inside `$( ... )` writes its output into the surrounding
-        string, so hoisting it out would drop that interpolated value and leak the command's output
-        to the pipeline.
+        A statement is void when it contributes nothing to an interpolating string, which only an
+        assignment does.
         """
         if not isinstance(stmt, Ps1ExpressionStatement):
             return False
@@ -86,22 +80,15 @@ class Ps1ExpandableStringHoist(Transformer):
 
     def _extract_void_subexpressions(self, stmt) -> tuple[list, list, bool]:
         """
-        Walk the statement tree, find expandable strings whose every part is either literal text or
-        a void subexpression, replace them with string literals, and return
-        `(before_stmts, after_stmts, replaced)`.
+        Walk the statement tree, find expandable strings whose every part is literal text or a void
+        subexpression, replace them with string literals, and return `(before, after, replaced)`.
 
-        Every part has to be accounted for and not only the subexpressions. A part that is neither
-        — the `$env:APPDATA` in `"$env:APPDATA$($z=1)\\dropper.exe"` — has no text this can write
-        down, so rewriting the string around it would silently delete what it interpolated and leave
-        a literal the script never said.
-
-        `replaced` is reported separately from the two lists because a subexpression with an empty
-        body hoists no statement and still rewrites the string, so the lists alone cannot say
-        whether the tree moved.
-
-        The hoisted statements are collected only once the string has actually been replaced. The
-        walk is a snapshot, so a string nested inside one already rewritten is no longer reachable
-        from its parent, and hoisting its subexpressions out while it stands would run them twice.
+        Every part has to be accounted for: a part that is neither — the `$env:APPDATA` in
+        `"$env:APPDATA$($z=1)\\dropper.exe"` — has no text this can write down, so rewriting the
+        string around it would silently delete what it interpolated. `replaced` is reported apart
+        from the two lists because a subexpression with an empty body rewrites the string while
+        hoisting no statement; and hoisting is done only after the replace, so a string nested inside
+        one already rewritten is not reached and run twice.
         """
         before: list = []
         after: list = []

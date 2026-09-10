@@ -69,11 +69,8 @@ class Ps1Simplifications(Transformer):
 
     def visit(self, node: Node):
         """
-        The models are captured once at the root and dropped again when the walk they were captured
-        for ends, for the reason
-        `refinery.lib.scripts.ps1.deobfuscation.typenames.VariableTypeAwareTransformer` states: a
-        second walk over a tree the first one rewrote enters on the guarded arm and would otherwise
-        be answered from the first walk's graphs.
+        The models are captured once at the root and dropped when the walk ends, for the reason
+        `refinery.lib.scripts.ps1.deobfuscation.typecast.Ps1TypeCasts.visit` gives.
         """
         if self._entry or not isinstance(node, Ps1Script):
             return super().visit(node)
@@ -285,8 +282,8 @@ class Ps1Simplifications(Transformer):
 
         The world reads the surviving dot as its evidence that off-tree code runs
         (`refinery.lib.scripts.ps1.analysis.world.runs_another_script_file`), so dropping it from
-        `. helper` did not merely change scope: the world, rebuilt from the stripped tree, then read
-        closed and every grant in the script fired.
+        `. helper` would not merely change scope: the world, rebuilt from the stripped tree, would
+        read closed and every grant in the script would fire.
         """
         if node.invocation_operator == '&':
             return True

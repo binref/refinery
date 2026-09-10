@@ -169,9 +169,9 @@ class Ps1ModelCache(ModelCacheBase):
     def faults(self) -> Ps1FaultReach:
         """
         Where a terminating error raised at a point in this root goes, over `control_flow`. The
-        single place a pass asks whether deleting something changes which handler runs — the
-        question every removing pass used to answer for itself by looking at the statement's
-        immediate holder, which reads a handler one nesting level away as no handler at all.
+        single place a pass asks whether deleting something changes which handler runs; answering it
+        from a statement's immediate holder alone reads a handler one nesting level away as no
+        handler at all.
 
         It answers off a graph that descends into a `$( )` or `@( )`, so a soft error stepping over
         inside such a construct — and a `trap` written among its statements — is a point in its own
@@ -200,8 +200,7 @@ class Ps1ModelCache(ModelCacheBase):
         Where each script block of this root runs — at what point, in whose scope, how many times.
         Reads the whole-run shadow set from `closed_world` so a body handed to a `ForEach-Object` or
         `Where-Object` the script has redefined is placed as data, and is otherwise syntactic like
-        `control_flow` — the answer three other layers used to guess from the code a block is
-        *written* in.
+        `control_flow`. It answers where a block runs, not where it is written.
         """
         return self._lazy('_blocks', lambda: build_block_model(
             self.root, self.closed_world.shadowed_names))

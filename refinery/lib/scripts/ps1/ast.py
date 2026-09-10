@@ -380,8 +380,8 @@ def unwrap_parens(node: Node) -> Node:
 
 def get_member_name(member: str | Expression) -> str | None:
     """
-    Extract a plain member name string from a member that may be a string
-    or a string literal expression.
+    The member name as a string, or `None` for a computed member name that is neither a bare string
+    nor a string literal.
     """
     if isinstance(member, str):
         return member
@@ -393,9 +393,6 @@ def get_member_name(member: str | Expression) -> str | None:
 def extract_positional_values(
     cmd: Ps1CommandInvocation,
 ) -> list[Expression]:
-    """
-    Collect all positional argument values from a command invocation.
-    """
     result: list[Expression] = []
     for arg in cmd.arguments:
         if isinstance(arg, Ps1CommandArgument):
@@ -633,8 +630,6 @@ def free_positional_values(
     return result
 
 
-#: Type names that denote a by-reference wrapper. `[Ref]` is the PowerShell shorthand; the framework
-#: name it resolves to spells the same thing and appears in obfuscated scripts.
 def is_reference_cast(expr: Node | None) -> bool:
     """
     Whether `expr` is a `[ref]` cast, which hands the callee a wrapper it can store back through
@@ -707,9 +702,9 @@ def is_soft_error_source(node: Node) -> bool:
     reports and steps over to the next statement, as opposed to a terminating error that ends the
     script (those are named where `ends_the_script` classifies them) or no error at all.
 
-    A may-predicate and a pure shape: it reads syntax, never a value, so within a shape it lists it
-    answers True wherever that shape *can* fail and accepts that some instances never do — a cast that
-    always succeeds is still a source here, a missed simplification rather than a wrong answer.
+    A may-predicate and a pure shape: it reads syntax, never a value, and answers True wherever a
+    shape it lists *can* fail, accepting that some instances never do — a cast that always succeeds
+    is still a source here, a missed simplification rather than a wrong answer.
 
     **Completeness is the other axis, and here the roster is a hand-built list.** A soft-error shape
     it does not name reads as no source at all, so the one place this feeds — the trap-removal

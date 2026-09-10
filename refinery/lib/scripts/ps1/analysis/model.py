@@ -2,16 +2,15 @@
 A semantic model for PowerShell: a tree of scopes with resolved variable bindings and def/use sets,
 computed once over an AST and then queried by the deobfuscation transforms instead of each
 transform re-deriving scope, binding, and liveness facts on its own. This is the foundation layer of
-the ps1 analysis substrate, mirroring `refinery.lib.scripts.js.analysis.model` — later layers
-(effect and control-flow models) attach behind the same representation-agnostic surface.
+the ps1 analysis substrate; later layers (effect and control-flow models) attach behind the same
+representation-agnostic surface.
 
 Only three constructs introduce a scope: the script itself and every
 `refinery.lib.scripts.ps1.model.Ps1ScriptBlock` (a function or method body, a stored closure, or a
 bare `&{ ... }`). PowerShell has no block scoping — a variable assigned in an `if`/loop/`try` body
 is visible after it — so those bodies share the scope of their enclosing script or scriptblock.
 
-The two PowerShell scoping rules the model encodes are the point the two hand-rolled liveness passes
-used to disagree on, now made authoritative:
+The model encodes two PowerShell scoping rules:
 
 - **Write-local.** A bare (unqualified) assignment inside a scriptblock creates a scriptblock-local
   binding; it does not write the enclosing binding of that name.
@@ -352,9 +351,9 @@ def written_call_slot(var: Ps1Variable) -> Ps1CallSlot | None:
 
     The receiver's type is not asked for. This is a question about a *position*, answered wherever
     an occurrence stands and long before any flow model exists, so a call on a value is answered by
-    the union over every type carrying a member of that name. That is the deny-side answer and the
-    only one available here: `$x.CopyTo($y, 0)` refuses without knowing what `$x` is, and
-    `$x.Substring(1, 2)` is left alone because no row of the table mentions `Substring`.
+    the union over every type carrying a member of that name: `$x.CopyTo($y, 0)` refuses without
+    knowing what `$x` is, and `$x.Substring(1, 2)` is left alone because no row of the table mentions
+    `Substring`.
 
     What stands between the name and the slot is `_enclosing_call_slot`'s to climb and to report.
     A member this cannot name is not answered here at all: no row can be looked up for it, so no

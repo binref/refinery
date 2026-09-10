@@ -321,14 +321,13 @@ class Ps1Parser:
         """
         Read the enclosed construct in `mode` and restore the caller's mode afterwards. Changing the
         mode discards the lookahead, so a token scanned in one mode is never handed to a parse that
-        asked for another. That is the whole of the rule: it lives here rather than in the memory of
-        whoever writes the next call site.
+        asked for another.
 
         Every nested delimiter opens through here, so this is also where `_argument_head` is cleared:
-        the head of a command argument is where a bare word is a value, and a construct read inside a
-        bracket, an index or a call's arguments is not that head however the ambient lexer mode reads.
-        The flag is restored on the way out, so the argument's own postfix chain — `$x.Foo(1).` —
-        finds it set again once the `(1)` it descended into has closed.
+        a bare word is a value only at the head of a command argument, and a construct read inside a
+        bracket, an index, or a call's arguments is not that head. The flag is restored on the way
+        out, so the argument's own postfix chain — `$x.Foo(1).` — finds it set again once the `(1)`
+        it descended into has closed.
         """
         previous = self._lexer.mode
         previous_head = self._argument_head
@@ -679,19 +678,19 @@ class Ps1Parser:
         """
         Decide whether what comes next is a command or an expression. The token is re-scanned in
         expression mode first, so the kind classified is a fact about *this* pipeline element rather
-        than about whatever was parsed before it, and it is then discarded again, which is what makes
+        than about whatever was parsed before it, and is then discarded again, which is what makes
         scanning it here safe: `_parse_command` re-scans in argument mode before it reads a name.
 
-        Anything that cannot open an expression opens a command. Asking it in that direction is what
-        keeps the answer tied to the grammar, but it also means a kind nobody thought about becomes a
-        command name, so the kinds that may never be one are named in `_ARGUMENT_FORBIDDEN_KINDS` and
-        `_parse_command` declines them.
+        Anything that cannot open an expression opens a command. Asking it in that direction keeps
+        the answer tied to the grammar, but it also means a kind nobody thought about becomes a
+        command name, so the kinds that may never be one are named in `_ARGUMENT_FORBIDDEN_KINDS`
+        and `_parse_command` declines them.
 
         A keyword kind spells a command name only where nothing above will read it as a statement:
         at a statement start, where `_parse_statement` has already declined, inside `( )`, which
         holds a pipeline and never a statement, and after a `|`. Everywhere else — a `for` clause,
-        the operand of `return` — the keyword still opens a statement, and taking it for a name loses
-        that statement whole.
+        the operand of `return` — the keyword still opens a statement, and taking it for a name
+        loses that statement whole.
         """
         with self._mode(Ps1LexerMode.EXPRESSION):
             kind = self._current.kind
@@ -765,10 +764,10 @@ class Ps1Parser:
 
     def _parse_pipeline_element(self) -> Ps1PipelineElement | None:
         """
-        Read one element after a `|`. It is classified the way the first element is, so `1 | 2` keeps
-        the `2` as the number it spells; PowerShell reports that an expression may only come first
-        and then reads it anyway, and what an analyst needs back is the expression, not a command
-        named after it.
+        Read one element after a `|`. It is classified the way the first element is, so `1 | 2`
+        keeps the `2` as the number it spells; PowerShell reports that an expression may only come
+        first and then reads it anyway, and what an analyst needs back is the expression, not a
+        command named after it.
 
         A keyword names a command here without exception, because nothing above reads a statement
         from the middle of a pipeline. Asking with the caller's answer instead would sever
@@ -958,12 +957,11 @@ class Ps1Parser:
             return None
         with self._mode(Ps1LexerMode.EXPRESSION):
             if self._current.kind in self._ARGUMENT_PRIMARY_KINDS:
-                # The head of a command argument is where a bare word is a value, so a `.` or `::`
-                # with nothing behind it belongs to the word rather than naming a member: `f $x.`
-                # passes `$x` and then the word `.`, and `f $x.<newline>g 1` does not read `g` for
-                # the member of `$x`. `_member_access` asks the lexer for the operator in argument
-                # mode while this is set, which is where that refusal lives; the value grammar still
-                # reads in expression mode. `_mode` clears the flag at every nested delimiter.
+                # At an argument head a `.` or `::` with nothing behind it belongs to the word rather
+                # than naming a member: `f $x.` passes `$x` and then the word `.`, and
+                # `f $x.<newline>g 1` does not read `g` for the member of `$x`. `_member_access` asks
+                # the lexer for the operator in argument mode while this is set; the value grammar
+                # still reads in expression mode. `_mode` clears the flag at every nested delimiter.
                 self._argument_head = True
                 value = self._parse_unary_expression()
                 if value is not None:
@@ -1030,9 +1028,8 @@ class Ps1Parser:
 
     def _parse_argument_expression(self) -> Expression | None:
         """
-        Parse a single method argument expression. Uses the full expression
-        grammar but disables the comma operator so that commas delimit
-        arguments rather than forming array literals.
+        The comma operator is disabled so that commas delimit arguments rather than forming array
+        literals.
         """
         with self._comma_mode(disabled=True):
             return self._parse_expression()
@@ -1168,15 +1165,13 @@ class Ps1Parser:
     def _member_access(self) -> Ps1TokenKind | None:
         """
         The kind of member access operator written against the value just read, or `None` where
-        none is. 5.1 asks its tokenizer for this operator rather than for a token, and the two
-        questions have different answers for the same character: a `.` before a digit begins a
-        number where a value may start and names a member where one has just ended, so `$x.5` reads
-        the property `5` and `$x = .5` reads a half. Asking it here is what keeps that difference in
-        one place instead of in every rule that reads a value.
+        none is. The same character can be an operator or the start of a value: a `.` before a digit
+        begins a number where a value may start and names a member where one has just ended, so
+        `$x.5` reads the property `5` and `$x = .5` reads a half.
 
-        Whether anything binds at all is `Ps1Parser._adjacent`'s question and has been asked
-        already, so the lookahead is re-read where it began: what is settled here is only which
-        operator, if any, was written there.
+        Whether anything binds at all is `Ps1Parser._adjacent`'s question and has been asked already,
+        so the lookahead is re-read where it began: what is settled here is only which operator, if
+        any, was written there.
         """
         offset = self._current.offset
         self._resync(offset)
@@ -1294,9 +1289,8 @@ class Ps1Parser:
     def _split_generic_expandable(self, text: str) -> list[Expression]:
         """
         Split a GENERIC_EXPAND token value into interleaved literal and expression parts. Unlike
-        `Ps1Parser._split_expandable_string` (for double-quoted
-        strings), this operates on raw source text that may contain embedded single/double-quoted
-        strings and backtick escapes.
+        `Ps1Parser._split_expandable_string`, which handles double-quoted strings, this operates on
+        raw source text that may contain embedded single/double-quoted strings and backtick escapes.
         """
         parts: list[Expression] = []
         pos = 0
@@ -1632,8 +1626,8 @@ class Ps1Parser:
     def _parse_index_expression(self, obj: Expression) -> Expression:
         """
         An index, which is an expression wherever the value it indexes was written: `f $x[-1]`
-        passes one argument holding the last element, not a word beginning with a bracket. 5.1
-        reads it the same way, by pushing expression mode for the whole of the index.
+        passes one argument holding the last element, not a word beginning with a bracket. The whole
+        of the index is read as an expression.
         """
         self._advance()
         self._skip_newlines()
@@ -2294,8 +2288,7 @@ class Ps1Parser:
 
     #: What a primary expression can begin with, and the rule that reads each one. Every question of
     #: the form "can an expression start here" is answered from this table rather than from a list
-    #: kept beside it, because a list kept beside it drifts: the two that were here before this
-    #: disagreed with the grammar and with each other.
+    #: kept beside it, which would drift out of agreement with the grammar.
     _ATOM_RULES: dict[Ps1TokenKind, Callable[[Ps1Parser], Expression | None]] = {
         Ps1TokenKind.AT_LBRACE        : _parse_hash_literal,     # noqa
         Ps1TokenKind.AT_LPAREN        : _parse_array_expression, # noqa

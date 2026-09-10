@@ -5,9 +5,7 @@ definitions nothing needs any more.
 Command identity — which command a name runs, following aliases, honoring the precedence that makes a
 default alias beat a script function, and refusing a name that denotes nothing or cannot be resolved —
 is answered once by `refinery.lib.scripts.ps1.analysis.commands.Ps1CommandModel`. This pass reads that
-answer and does the rewrite; it holds none of the relation itself. Two passes used to split it, one
-resolving script `Set-Alias` definitions and the other the built-in alias and cmdlet tables, and they
-could disagree about the same name; now there is a single rewriter and a single model behind it.
+answer and does the rewrite; it holds none of the relation itself.
 
 A name is rewritten only when the model resolves it to a concrete command:
 
@@ -71,11 +69,6 @@ from refinery.lib.scripts.ps1.model import Ps1CommandInvocation, Ps1Script
 
 
 class Ps1AliasInlining(Transformer):
-    """
-    Rewrite each command name to the command it denotes, as answered by
-    `refinery.lib.scripts.ps1.analysis.commands.Ps1CommandModel`, and delete the alias definitions
-    that answer is no longer reached through.
-    """
 
     def visit(self, node: Node):
         if not isinstance(node, Ps1Script):
@@ -160,11 +153,6 @@ class Ps1AliasInlining(Transformer):
         and `Ps1CommandModel.world_role` is where that is answered. An invocation whose role is
         `IDENTITY` is allowed exactly when it is one of the definitions being taken, which is also
         the check that catches a defining command this pass never recognized as one.
-
-        The batch arrives here rather than being asked for again, so the set the `IDENTITY`
-        exemption is granted from is the same one the caller vetoes over. The gates are asked in
-        order of what they cost: the two whole-tree walks come after the verdicts the models already
-        hold, since a script with any other opener refuses without either of them being run.
         """
         if not cache.closed_world.closed_but_for_alias_bindings:
             return False

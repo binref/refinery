@@ -187,9 +187,7 @@ def _collect_mutated_variables(root: Node) -> set[str]:
     a slot of a call the callee writes through.
 
     That list is `refinery.lib.scripts.ps1.analysis.model.is_write_occurrence`'s to keep, and this
-    asks it rather than repeating it. The partial copy it replaces knew about assignments and
-    `[Array]::Reverse` and about nothing else, so a name only `[Array]::Sort` or `.CopyTo` ever
-    wrote read as never written at all.
+    asks it rather than repeating it.
 
     The key is `binding_key`, not `_candidate_key`: a write reaches the binding its qualifier
     names, so `$script:q = 5` writes the name `q` a later bare `$q` reads, and reading it under
@@ -206,8 +204,8 @@ def _collect_mutated_variables(root: Node) -> set[str]:
 
 def _candidate_key(var: Ps1Variable) -> str | None:
     """
-    Return the candidate lookup key for a variable, or `None` if it is not
-    eligible for constant inlining.
+    The constant-inlining lookup key for a variable — its lowercased name for an unqualified or
+    `$env:` variable, `None` for any other scope.
     """
     if var.scope == Ps1ScopeModifier.NONE:
         return var.name.lower()
@@ -242,49 +240,25 @@ def _preserves_sharing(occurrence: Ps1Variable, value: Expression, state: _Inlin
     reads observing what it observed.
 
     A bare read hands over the object the name holds rather than a copy of it, so `$y = $x` gives
-    one array two names. Writing the array's value where `$x` stands gives `$y` an array of its own
-    instead, and a `[Array]::Reverse($x)` below then reaches one of them and not the other — the
-    output prints an order the script never had. Measured: without this, `$x = 1, 2, 3; $y = $x;
-    $y[0] = 9; Write-Output $x[0]` emits `1` where 5.1 prints `9`.
+    one array two names. Writing the array's value where `$x` stands gives `$y` an array of its own,
+    and a `[Array]::Reverse($x)` below then reaches one and not the other. Measured: without this,
+    `$x = 1, 2, 3; $y = $x; $y[0] = 9; Write-Output $x[0]` emits `1` where 5.1 prints `9`.
 
-    **Four questions, asked in this order.** The first is about the *value*: is it one a store can
-    reach at all? A String, a number and a Char are what 5.1 never changes in place, so a copy of
-    one is the object and every question below is vacuous for it — which is what keeps a `$t +=
-    $s` chain and a `$PSHome` an obfuscated loader unpacks folding in a script that turns an array
-    around somewhere else. `_may_be_changed_in_place` is where it lives.
+    Four conditions must hold, cheapest first. The value must be one a store can reach at all
+    (`_may_be_changed_in_place`); a String, number or Char is never changed in place, so a copy is
+    the object. The script must change some object in place at all
+    (`Ps1SemanticModel.changes_an_object_in_place`) — a fact about the script, not this binding, so
+    that `$h['k'] = $x; $h['k'][0] = 9` is not missed by asking only about `$x`. The position must
+    not store the object (`_where_the_object_goes`). And the refusal is narrowed to where the
+    object's new name can be read off the source: for a plain `$y = $x` it is enough that neither
+    name is stored through, excusing the assignment's own target (the hand-off itself) but not a
+    share onto the name being read (`$a = $x; $a[0] = $x` stores through `$a` against `$x`); where
+    the object is stored somewhere this cannot name, the substitution is refused outright.
 
-    The second is about the *script*: does anything in it change an object in place at all? A script
-    with no store-through builds every object and leaves it, so there a copy and a share are
-    indistinguishable and the substitution is what it always was — which is what keeps `$y = $x`
-    folding in the ordinary case, and which is the question that decides almost every script.
-    `refinery.lib.scripts.ps1.analysis.model.Ps1SemanticModel.changes_an_object_in_place` is where
-    it lives, because it is a fact about the script and not about the name this is standing on:
-    asking only whether *this* binding is stored through is what let `$h['k'] = $x; $h['k'][0] = 9`
-    through, where the store is spelled on the hashtable and never on `$x`.
-
-    The third is about the *position*, and `_where_the_object_goes` is what answers it. A position
-    that stores the object gets a copy where the script had a share; a position that reads it where
-    it stands cannot tell the two apart.
-
-    The fourth narrows the refusal back where the object's new name can be read off the source.
-    Where a plain assignment stores the whole of the occurrence into one variable, the names that
-    hold the object are the two the assignment spells and it is enough that neither is stored
-    through — which is what keeps the ordinary `$y = $x` folding in a script that changes some
-    other object in place. The assignment's own target occurrence is not one of those stores: the
-    `$h` of `$h['k'] = $x` reaches into the hashtable to put the object there, which is the hand-off
-    itself and not a later change to what was handed over. It is excused on the *target* alone,
-    because the same occurrence shared onto the name being read is a store into the object that name
-    holds: `$a = $x; $a[0] = $x` files the store through `$a` against `$x` as well, and excusing it
-    there too would hand the array a copy of itself. Where the two names are one binding the store
-    is that hand-off and nothing else, so it is refused. Where the object is stored somewhere this
-    cannot name at all — a hash literal's entry, a multi-assignment slot, a name the script never
-    binds — the substitution is refused outright.
-
-    A callee is the one destination that is a doubt rather than a claim, and it is paid for
-    accordingly: `$list.Add($x)` keeps what it is handed and `[Buffer]::BlockCopy($s, 0, $d, 0, 3)`
-    does not, and nothing here reads which. So an argument is refused only where the object it
-    reads is one something is known to change in place under a name this can see, which is what
-    keeps the buffer of a decode folding into the call that reads it.
+    A callee is a doubt, not a claim: `$list.Add($x)` keeps what it is handed and
+    `[Buffer]::BlockCopy($s, 0, $d, 0, 3)` does not, and nothing here reads which. An argument is
+    refused only where the object it reads is one something is known to change in place under a name
+    this can see, which keeps a decode buffer folding into the call that reads it.
     """
     if not _may_be_changed_in_place(value) or not state.changes_an_object_in_place:
         return True
@@ -380,8 +354,7 @@ class _Destination(enum.Enum):
     `NOWHERE` — nothing keeps it past the expression, so a copy and a share are the same thing.
     `A_CALLEE` — it is handed to code this does not read, which *may* keep it. `$list.Add($x)` does
     and `[Buffer]::BlockCopy($s, 0, $d, 0, 3)` does not, and no reading of the call says which, so
-    this is a doubt and not a claim — the caller pays it only where the object is one something is
-    known to change in place.
+    the caller pays it only where the object is one something is known to change in place.
     `STORED` — it is certainly put somewhere a later statement can reach: an assignment's value, an
     entry of a hash literal, a slot of a multi-assignment.
     """
@@ -434,9 +407,9 @@ def _commands_handed_the_value(node: Node) -> Iterator[Ps1CommandInvocation]:
 
     The climb does not stop at the command it is standing in, because a command in a pipeline hands
     its output on. `Write-Output -NoEnumerate $x | Set-Variable z` emits the array itself as one
-    record, and 5.1's `SetVariableCommand` binds a single record to the name without collecting it,
-    so `z` names that very object — a walk that reported only `Write-Output` read the position as
-    keeping nothing.
+    record, and `Set-Variable` binds that single record to the name without collecting it, so `z`
+    names that very object — a walk that reported only `Write-Output` read the position as keeping
+    nothing.
     """
     cursor: Node | None = node
     while cursor is not None:
@@ -671,8 +644,7 @@ class _ConstantTable:
     Two tables because they answer two questions. A write is a point in the program and the flow
     model orders it against a read; an ambient constant is a value the engine established before the
     script ran — `$env:ComSpec`, `$ErrorActionPreference` — and there is no point to order it
-    against. The pass this replaces held one table for both and used the absence of a position as
-    the marker, so a write it could not place and a value that has no position were the same entry.
+    against.
 
     A write with no entry here is not a lesser kind of write. It is a write whose value this pass has
     nothing to say about, and the flow model orders and kills it exactly as it does any other:
@@ -698,11 +670,9 @@ class _ConstantTable:
                 continue
             key = binding_key(targets[0])
             if key in _PS1_ENGINE_VARIABLES:
-                # A preference or automatic variable is the engine's as much as the script's: it
-                # reads and writes these names between statements — `$_` per pipeline object,
-                # `$Matches` at every `-match` — so what the script last assigned is not what the
-                # name is worth. The ambient table is the only thing that may answer for one, and it
-                # answers only while the script leaves the name alone.
+                # A preference or automatic variable is the engine's as much as the script's, so a
+                # write of one is not recorded here; the ambient table answers for it, and only
+                # while the script leaves the name alone.
                 continue
             if _constant_value_key(node.value) is None:
                 continue

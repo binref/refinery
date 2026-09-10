@@ -2,11 +2,9 @@
 The single route by which a PowerShell cleanup pass puts one part of the tree in another's place.
 
 `refinery.lib.scripts.ps1.deobfuscation.removal` owns the other half of the same question: what a
-pass takes *out* of a statement list. Between them there was nothing, so a pass that rewrote a node
-sitting in a slot reached for the tree primitives directly, and any rule about what such a rewrite
-must not throw away had to be restated at every site that could break it. The sites disagree, which
-is how a redirected call came to be folded into its value in three different passes and left the
-file it named uncreated.
+pass takes *out* of a statement list. Both routes exist so the rule about what a rewrite must not
+throw away — a redirection that would be dropped — lives in one place rather than at every site that
+could break it.
 
 The entry points are named for the slot the node sits in — a direct field, one entry of a child
 list, the whole of one — rather than for the passes that reach them, because the slot is the only
@@ -88,27 +86,17 @@ def may_substitute(removed: Part, installed: Part, moved: Part = ()) -> bool:
 
     A replacement expression carries no redirections, so folding `f > C:\\log` into the value `f`
     returns puts that value on the console and leaves the file uncreated — PowerShell opens the
-    target as it sets the redirection up, so the file is touched even by a command that writes
-    nothing at all. **Every spelling is refused, including the merges that neither move output nor
-    open a file.** `f 2>&1` folds error records into the output stream, so dropping it is
-    observationally identical only when `f` writes nothing to stderr, and nothing here can know
-    that. What this asks is whether the replacement can carry the redirection, and it never can.
+    target as it sets the redirection up, so even a command that writes nothing touches the file.
+    Every spelling is refused, including merges like `f 2>&1` that neither move output nor open a
+    file, because nothing here can know the replacement reproduces them. Survival is decided by node
+    identity, not equality: a rebuilt redirection is refused though it wrote the same thing, the
+    conservative direction.
 
-    `moved` names nodes the caller lifts out of `removed` and re-installs elsewhere within the same
-    edit. `Ps1ExpandableStringHoist` rewrites `"a$($z = f > C:\\o.txt)b"` by replacing the string
-    with its text and hoisting the assignment into the enclosing body, so the redirection leaves
-    this substitution and returns one statement later; without saying so the pass would be refused
-    for an edit that loses nothing. Nothing checks the claim — a caller that names a node here and
-    then drops it loses exactly what this exists to keep — so it is owed by the caller, the way
-    `refinery.lib.scripts.ps1.deobfuscation.removal.Ps1RemovalPlans.propose_in` owes the list it
-    names.
-
-    Identity decides whether a redirection survived, not equality. A pass that rebuilt one would be
-    refused although it wrote the same thing down, which is the conservative direction: what a
-    wrong answer the other way costs is a payload deleted into a file that is never created.
-
-    The original is read first because almost nothing carries a redirection, and a substitution that
-    takes none away cannot lose one whatever the replacement holds.
+    `moved` names nodes the caller lifts out of `removed` and re-installs elsewhere in the same edit
+    — `Ps1ExpandableStringHoist` hoists an assignment carrying a redirection out of a string — so a
+    redirection that leaves and returns is not counted lost. Nothing checks the claim; the caller
+    owes it, the way `refinery.lib.scripts.ps1.deobfuscation.removal.Ps1RemovalPlans.propose_in`
+    owes the list it names.
     """
     lost = carried_redirections(removed)
     if not lost:

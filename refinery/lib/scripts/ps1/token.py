@@ -53,8 +53,8 @@ _ASCII_FORCE_NEW_TOKEN_AFTER_NUMBER = frozenset('!#%*+-./<=>]')
 def is_whitespace(c: str) -> bool:
     """
     Whether `c` stands between two tokens without being one. Above Latin-1 the question is Unicode's
-    rather than PowerShell's \u2014 every separator counts, so an em space and a line separator part two
-    words exactly as a space does \u2014 and below it the answer is a table, which is why a vertical tab
+    rather than PowerShell's — every separator counts, so an em space and a line separator part two
+    words exactly as a space does — and below it the answer is a table, which is why a vertical tab
     and a form feed are whitespace while a carriage return is not.
     """
     if c < '\x80':

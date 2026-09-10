@@ -117,8 +117,8 @@ def deobfuscate(
     default is generous — real inputs settle in the low tens of passes — so it never bounds a
     legitimate deobfuscation, only a runaway loop. Pass `0` to disable the bound entirely.
 
-    The three switches are not the same knob at three strengths. `remove_junk` decides whether that
-    second pass runs at all, so turning it off also keeps every dead store and uncalled function;
+    The three switches are independent. `remove_junk` decides whether that second pass runs at all,
+    so turning it off also keeps every dead store and uncalled function;
     `preserve_bare_output` decides one question inside it — whether a statement whose only effect is
     to write a value to the success output stream may be deleted — and leaves the rest of the pass
     working; `trust_eval` decides nothing about any pass, and instead changes what the analysis
@@ -126,15 +126,13 @@ def deobfuscate(
     `refinery.lib.scripts.ps1.options.Ps1DeobfuscationOptions` for what each costs and the
     assumption it rests on.
     """
-    # Both phases and the analysis under them are handed the same options, because a configuration
-    # they could disagree about is a configuration none of them states.
     options = Ps1DeobfuscationOptions(
         preserve_bare_output=preserve_bare_output,
         trust_eval=trust_eval,
     )
-    # One analysis cache is built over the script and shared across both phases; the now-honored
-    # `tree_version` counter keeps it consistent even across the two pipeline runs, so a transform in
-    # either phase queries models built on the current tree instead of rebuilding them per pass.
+    # One analysis cache is built over the script and shared across both phases; the `tree_version`
+    # counter keeps it consistent even across the two pipeline runs, so a transform in either phase
+    # queries models built on the current tree instead of rebuilding them per pass.
     cache = Ps1ModelCache(ast, options)
     steps = _phase1.run(ast, max_steps=max_steps, models=cache, options=options)
     if not remove_junk:

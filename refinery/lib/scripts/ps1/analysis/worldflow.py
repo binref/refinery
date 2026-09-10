@@ -25,8 +25,8 @@ at a point. This model answers *trust*: whether anything, including code no tree
 have made the name run something the metadata does not describe. Resolution picks among known
 meanings; trust bounds the unknown ones.
 
-The gate is deny-side — a wrong grant deletes code that had an effect, a refusal only costs recall —
-so every uncertainty fails toward *open*:
+A wrong grant deletes code that had an effect; a refusal only costs recall, so every uncertainty
+fails toward *open*:
 
 - A `class` or `enum` definition opens the world at no position: the engine compiles it before the
   first statement runs, so it stands before every read. Its presence anywhere returns the whole-run
@@ -119,12 +119,12 @@ class Ps1WorldReach:
     did not look" are the same refusal, deliberately, since both keep the read.
 
     Every answer is bound to the tree the model was built over: `build_world_reach` stamps that
-    tree's version onto the wrapper, and once the tree changes under it every answer returns its
-    fail-closed pole — all three questions read `False`. A transform reading this through the fresh
+    tree's version onto the wrapper, and once the tree changes under it all three questions read
+    `False`. A transform reading this through the fresh
     `refinery.lib.scripts.ps1.analysis.cache.Ps1ModelCache` slot never sees a stale one, since the
     cache rebuilds it on the same version bump. A pass that instead captures the wrapper and holds
-    it across its own edits reads the fail-closed pole from the first edit on: it loses recall until
-    the next pass rebuilds against the changed tree, never soundness. A rootless synthetic wrapper
+    it across its own edits reads `False` from the first edit on: it loses recall until the next
+    pass rebuilds against the changed tree, never soundness. A rootless synthetic wrapper
     carries no stamp and so never goes stale — it has no tree to change under it.
     """
 
@@ -183,10 +183,9 @@ class Ps1WorldReach:
         statement that could rebind it — an opener, which can rebind any name, or a classified
         redefinition of this very name — can have run on any path that reaches the statement
         evaluating `node`. The positional successor of `Ps1TypeWorld.may_trust_command_name`, which
-        lives on the leaf model and not on this one, exactly as `closed_at` succeeds
-        `closed_for_the_whole_run`: a name the whole run trusts is trusted at every position, and
-        one it refuses is refused wherever either flood reaches, plus everywhere the graphs cannot
-        place.
+        lives on the leaf model and not on this one: a name the whole run trusts is trusted at every
+        position, and one it refuses is refused wherever either flood reaches, plus everywhere the
+        graphs cannot place.
 
         The opener check deliberately overlaps the `closed_at` that a purity verdict also routes
         through `refinery.lib.scripts.ps1.analysis.effects._grant`: at the discard-sink
