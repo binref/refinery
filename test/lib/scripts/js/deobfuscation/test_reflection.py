@@ -139,8 +139,13 @@ class TestReflectionInlining(TestJsDeobfuscator):
         )
         self.assertEqual(source, self._reflect(source))
 
-    def test_indirect_eval_window(self):
-        self.assertEqual('var x = 1;', self._reflect("window.eval('var x = 1;');"))
+    def test_indirect_eval_through_a_host_conditional_alias_is_kept(self):
+        """
+        `window` is a host-conditional alias no universal host defines, so discarding it to inline
+        `window.eval` would drop the `ReferenceError` a lacking host raises reading it; the call is kept.
+        """
+        source = "window.eval('var x = 1;');"
+        self.assertEqual(source, self._reflect(source))
 
     def test_indirect_eval_globalthis(self):
         self.assertEqual('var x = 1;', self._reflect("globalThis.eval('var x = 1;');"))
@@ -451,8 +456,13 @@ class TestReflectionInlining(TestJsDeobfuscator):
         )
         self.assertEqual(source, self._reflect(source))
 
-    def test_top_alias_indirect_eval_inlined(self):
-        self.assertEqual('var x = 1;', self._reflect("top.eval('var x = 1;');"))
+    def test_top_alias_indirect_eval_is_kept(self):
+        """
+        `top` names another realm's global object in a framed document, so `top.eval` runs its code in
+        that realm; inlining it where the fold stands would move the code into this realm, so it is kept.
+        """
+        source = "top.eval('var x = 1;');"
+        self.assertEqual(source, self._reflect(source))
 
     def test_new_function_body_invoked(self):
         self.assertEqual('42;', self._reflect("new Function('return 42')();"))

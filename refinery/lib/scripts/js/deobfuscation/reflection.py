@@ -23,6 +23,7 @@ from refinery.lib.scripts.js.analysis.cache import model_cache
 from refinery.lib.scripts.js.analysis.effects import side_effect_free
 from refinery.lib.scripts.js.analysis.model import (
     REFLECTIVE_INTRINSICS,
+    SAME_REALM_GLOBAL_OBJECT_ALIASES,
     SYNC_EVAL_NAMES,
     TIMER_NAMES,
     Binding,
@@ -226,6 +227,7 @@ def _extract_indirect_eval_code(
     alias_name: Callable[[Expression | None], str | None],
     free_global_name: Callable[[Expression | None], str | None],
     eval_string: Callable[[Expression | None], str | None],
+    base_droppable: Callable[[Expression | None], bool] | None = None,
 ) -> str | None:
     """
     Extract the code string from indirect eval patterns:
@@ -237,6 +239,11 @@ def _extract_indirect_eval_code(
     scope (firing a getter or throwing), which the model-free check cannot see. *free_global_name*
     confirms the sequence tail is the free global `eval` and *alias_name* resolves a global-object-alias
     member to the intrinsic it names, both declining a shadowed name or a dynamic scope.
+
+    Inlining `<alias>.eval(code)` to `code` discards the base read and runs the code where the fold
+    stands rather than off the alias, so *base_droppable* gates it: the base must resolve, or its
+    `ReferenceError` where the host lacks the alias is dropped, and it must name *this* realm's global
+    object, or code that ran in another realm through `top`/`frames` is moved into this one.
     """
     if len(node.arguments) != 1:
         return None
@@ -247,6 +254,8 @@ def _extract_indirect_eval_code(
             if all(side_effect_free(e, read_effect=read_effect) for e in exprs[:-1]):
                 return string_value(node.arguments[0]) or eval_string(node.arguments[0])
     if alias_name(node.callee) == 'eval':
+        if base_droppable is None or not base_droppable(node.callee):
+            return None
         return string_value(node.arguments[0]) or eval_string(node.arguments[0])
     return None
 
@@ -962,6 +971,28 @@ class JsReflectionInlining(ScriptLevelTransformer):
             return name
         return resolve
 
+    def _reflective_base_droppable(self, root: JsScript) -> Callable[[Expression | None], bool]:
+        """
+        Whether the base of a global-object-alias `eval` member may be discarded when its call is
+        inlined. The base must name *this* realm's global object — `SAME_REALM_GLOBAL_OBJECT_ALIASES`,
+        never the cross-realm `top`/`frames`, whose `eval` runs code in another realm the inline would
+        move it out of — and resolve without throwing under the pinned host
+        (`SemanticModel.read_may_throw`), so the `ReferenceError` a lacking host raises reading it is not
+        dropped. The same base-read gate the finder fold and the alias-member collapse apply, resolved
+        lazily against *root*'s current model like `_alias_member_name`.
+        """
+        def resolve(callee: Expression | None) -> bool:
+            member = strip_parens(callee) if callee is not None else None
+            if not isinstance(member, JsMemberExpression):
+                return False
+            base = strip_parens(member.object)
+            if not isinstance(base, JsIdentifier):
+                return False
+            if base.name not in SAME_REALM_GLOBAL_OBJECT_ALIASES:
+                return False
+            return not model_cache(self, root).model.read_may_throw(base)
+        return resolve
+
     def _free_global_name(self, root: JsScript) -> Callable[[Expression | None], str | None]:
         """
         A resolver reporting the reflective intrinsic a bare callee identifier denotes — `eval` yields
@@ -1235,7 +1266,7 @@ class JsReflectionInlining(ScriptLevelTransformer):
             return (ReflectedScope.DIRECT_EVAL, parsed) if parsed is not None else None
         code = _extract_indirect_eval_code(
             node, read_effect, alias_name=alias_name, free_global_name=free_global_name,
-            eval_string=self._eval_string)
+            eval_string=self._eval_string, base_droppable=self._reflective_base_droppable(root))
         if code is not None:
             parsed = self._resolve_reflected_body(
                 code, site, root, ReflectedScope.GLOBAL_EVAL, at_global_scope,

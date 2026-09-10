@@ -861,12 +861,12 @@ class TestAnIndirectEvalThroughAHostConditionalAliasKeepsItsBaseThrow(TestBase):
     `JsReflectionInlining` folds `<alias>.eval(code)` to the code it runs, discarding the base read.
     For `globalThis` that base resolves in every host and the fold is sound, but for a host-conditional
     alias (`window`, `self`, `top`, `frames`, `global`) the base read throws a `ReferenceError` where
-    the host lacks the name, and discarding it drops that throw — the same base-read gate the finder
-    fold, the alias-member collapse, and the dead-write sweep already apply, not yet applied to the
-    reflective-inline site. An analyst who names the host with a pin recovers the resolved reading.
+    the host lacks the name, and discarding it drops that throw. The reflective-inline site now applies
+    the same base-read gate the finder fold and the alias-member collapse already do, so the call is
+    kept unless the host is pinned to one that defines the alias. An analyst who names the host with a
+    pin recovers the resolved reading.
     """
 
-    @unittest.expectedFailure
     def test_an_indirect_eval_through_a_host_conditional_alias_is_kept(self):
         """
         Node throws `ReferenceError: window is not defined` running the input; a correct deobfuscation

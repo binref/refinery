@@ -150,6 +150,15 @@ class TestJsHostEnvironmentPin(TestUnitBase):
             'foo = 1;\nfunction f() {\n  return foo;\n}\nf();\nconsole.log(1);',
         )
 
+    def test_a_browser_host_inlines_an_indirect_eval_through_a_same_realm_alias(self):
+        window_eval = b"window.eval('console.log(1);');"
+        self.assertEqual(window_eval | self.load() | str, "window.eval('console.log(1);');")
+        self.assertEqual(window_eval | self.load(environment='browser') | str, 'console.log(1);')
+
+    def test_a_cross_realm_alias_indirect_eval_is_kept_even_when_pinned(self):
+        top_eval = b"top.eval('console.log(1);');"
+        self.assertEqual(top_eval | self.load(environment='browser') | str, "top.eval('console.log(1);');")
+
     def test_an_unknown_host_keyword_is_a_usage_error(self):
         with self.assertRaises(Exception):
             self.load(environment='mainframe')
