@@ -362,6 +362,14 @@ class Ps1RemovalPlan:
         — and asking `deletion_is_observable` of a `trap` instead asks where an error raised *at* the
         `trap` would go, which is a position nothing raises at. Deleting anything else is
         `deletion_is_observable`, and only for a pass that cannot rule the fault out itself.
+
+        **The success flag is a peer axis, not a fault question**, so it is asked ahead of the fault
+        gate and of `removals_may_fault`. Every leaf statement writes `$?` whether or not it can
+        raise, and a script can read the flag back, so removing a statement a live `$?` read observes
+        changes the value that read sees — the reset-channel dual of the persistent-record keep
+        `deletion_is_observable` weighs. `refinery.lib.scripts.ps1.analysis.errorstate` answers it
+        positionally through `success_flag_write_observed`; absent that model the channel is skipped,
+        the fail-open direction a pass with none takes.
         """
         if proposal.replacement:
             if _rescopes_a_handler(proposal.replacement):
@@ -375,6 +383,11 @@ class Ps1RemovalPlan:
                     for raiser in proposal.replacement[:-1]
                 )
             )
+        if (
+            self.error_state is not None
+            and self.error_state.success_flag_write_observed(proposal.statement)
+        ):
+            return True
         faults = self.faults
         if faults is None:
             return True

@@ -16,6 +16,7 @@ from refinery.lib.scripts import (
 )
 from refinery.lib.scripts.ps1.analysis.cache import model_cache
 from refinery.lib.scripts.ps1.analysis.dataflow import Ps1VariableFlow
+from refinery.lib.scripts.ps1.analysis.errorstate import Ps1ErrorStateReach
 from refinery.lib.scripts.ps1.analysis.faults import Ps1FaultReach
 from refinery.lib.scripts.ps1.analysis.model import (
     Binding,
@@ -64,6 +65,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1CommandInvocation,
     Ps1DoLoop,
     Ps1EnumDefinition,
+    Ps1ExpandableHereString,
     Ps1ExpandableString,
     Ps1ExpressionStatement,
     Ps1ForLoop,
@@ -126,6 +128,7 @@ PS1_ENV_CONSTANTS = {
 }
 
 _PS1_AUTOMATIC_VARIABLES = frozenset({
+    '?',
     '_',
     'args',
     'error',
@@ -848,7 +851,7 @@ class Ps1ConstantInlining(Transformer):
             return None
         state = _Inlining(table, flow, self._blocked_by_expansion(node, table))
         self._substitute(node, state)
-        self._remove_dead_assignments(table, state, faults)
+        self._remove_dead_assignments(table, state, faults, cache.error_state)
         return None
 
     def _blocked_by_expansion(self, root: Node, table: _ConstantTable) -> set[str]:
@@ -1010,7 +1013,11 @@ class Ps1ConstantInlining(Transformer):
             state.installed(node, replacement)
 
     def _remove_dead_assignments(
-        self, table: _ConstantTable, state: _Inlining, faults: Ps1FaultReach,
+        self,
+        table: _ConstantTable,
+        state: _Inlining,
+        faults: Ps1FaultReach,
+        error_state: Ps1ErrorStateReach,
     ):
         """
         Delete the constant writes of every binding whose value nothing observes any more.
@@ -1035,7 +1042,7 @@ class Ps1ConstantInlining(Transformer):
         same fact on the read side. Deleting such a write leaves the caller reading the value from
         before the body.
         """
-        plans = Ps1RemovalPlans(faults)
+        plans = Ps1RemovalPlans(faults, error_state=error_state)
         for binding, replacements in state.record:
             if len(replacements) < len(binding.reads):
                 continue
@@ -1134,3 +1141,50 @@ class Ps1NullVariableInlining(Transformer):
             if not substitute(ref, Ps1Variable(name='Null')):
                 continue
             self.mark_changed()
+
+
+class Ps1SuccessFlagInlining(Transformer):
+    """
+    Replace a read of the `$?` automatic variable with the `$true`/`$false` value it holds at that
+    point, wherever the positional success-flag channel can prove it. `$?` reports whether the last
+    statement succeeded and resets after every statement, so its value is a property of the read's
+    position — decided by
+    `refinery.lib.scripts.ps1.analysis.errorstate.Ps1ErrorStateReach.success_flag_at` — and not a
+    fixed truth value. A read the channel cannot decide is left in place, which keeps the branch 5.1
+    runs.
+
+    It runs before every fold and every removal so the flag is frozen from what precedes the read
+    while that predecessor is still in the tree. A statement that raises leaves `$?` at `$false`, and
+    once its `$?` reader is a literal the raiser is unobserved and later removed as junk — so
+    resolving must happen first, or the reader would read as the top of the script once the raiser is
+    gone.
+
+    Unlike `Ps1NullVariableInlining` this needs no strict-mode stand-down: `$?` is always defined, so
+    reading it never throws, and the value substituted is the one 5.1 holds regardless of mode.
+    """
+
+    _SUCCESS_FLAG_KEY = '?'
+
+    def visit(self, node: Node):
+        # The error-state model is fetched on the first `$?` read rather than up front, so a script
+        # that reads none never pays to build it. Substituting `$?` swaps one value node for another
+        # and adds or removes no statement, so the control-flow graphs the model reads are unchanged
+        # by it and the captured model stays valid across the walk — the same reasoning
+        # `Ps1ConstantInlining.visit` rests on.
+        error_state: Ps1ErrorStateReach | None = None
+        for ref in list(node.walk()):
+            if not isinstance(ref, Ps1Variable):
+                continue
+            if _candidate_key(ref) != self._SUCCESS_FLAG_KEY:
+                continue
+            if is_assignment_write_target(ref):
+                continue
+            if isinstance(ref.parent, (Ps1ExpandableString, Ps1ExpandableHereString)):
+                continue
+            if error_state is None:
+                error_state = model_cache(self, node).error_state
+            decided = error_state.success_flag_at(ref)
+            if decided is None:
+                continue
+            if substitute(ref, Ps1Variable(name='True' if decided else 'False')):
+                self.mark_changed()

@@ -42,6 +42,7 @@ _MAX_STATES = 500
 _MAX_UNROLL_ITERATIONS = 500
 
 if TYPE_CHECKING:
+    from refinery.lib.scripts.ps1.analysis.errorstate import Ps1ErrorStateReach
     from refinery.lib.scripts.ps1.analysis.faults import Ps1FaultReach
     _VarKey = tuple[str, Ps1ScopeModifier]
     _StateKey = int | float | str
@@ -1264,6 +1265,7 @@ class Ps1ControlFlowDeflattening(Transformer):
         # the model built before the first dissolution answers the veto for every later one. It is
         # read lazily so a body holding no machine at all pays for no build.
         faults: Ps1FaultReach | None = None
+        error_state: Ps1ErrorStateReach | None = None
         i = 0
         while i < len(body):
             stmt = body[i]
@@ -1304,11 +1306,14 @@ class Ps1ControlFlowDeflattening(Transformer):
             # body that no longer has the shape the arithmetic below assumes, so the whole recovery
             # stands or falls together.
             if faults is None:
-                faults = model_cache(self, parent).faults
+                cache = model_cache(self, parent)
+                faults = cache.faults
+                error_state = cache.error_state
             plan = Ps1RemovalPlan(
                 parent,
                 all_or_nothing=True,
                 faults=faults,
+                error_state=error_state,
             )
             plan.propose(body[init_index])
             plan.propose(stmt, recovered)

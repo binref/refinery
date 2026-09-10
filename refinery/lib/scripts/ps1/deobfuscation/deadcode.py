@@ -16,15 +16,18 @@ from refinery.lib.scripts.ps1.analysis.cache import Ps1ModelCache, model_cache
 from refinery.lib.scripts.ps1.analysis.cfg import certain_catch_all, swallows_every_error
 from refinery.lib.scripts.ps1.analysis.effects import (
     OutputSink,
-    certainly_throws,
     is_fault_free,
     is_side_effect_free,
     output_sink,
     resuming_trap_step_over_is_observed,
 )
-from refinery.lib.scripts.ps1.analysis.values import integer_of, is_truthy, read
+from refinery.lib.scripts.ps1.analysis.values import (
+    integer_of,
+    is_truthy,
+    read,
+    statement_certainly_throws,
+)
 from refinery.lib.scripts.ps1.ast import (
-    fault_operand,
     get_body,
     is_builtin_variable,
     unwrap_parens,
@@ -550,6 +553,7 @@ class Ps1DeadCodeElimination(Transformer):
             parent,
             removals_may_fault=False,
             faults=cache.faults,
+            error_state=cache.error_state,
             soft_step_over_observed=lambda handler: resuming_trap_step_over_is_observed(
                 handler, cache.faults, cache.world_reach),
         )
@@ -792,19 +796,6 @@ class Ps1DeadCodeElimination(Transformer):
         finally_body = node.finally_block.body if node.finally_block is not None else []
         return survivors + list(finally_body)
 
-    @staticmethod
-    def _statement_certainly_throws(stmt: Statement) -> bool:
-        """
-        Whether *stmt* is proven to raise a terminating error under every state. A `throw` is one
-        whatever its argument; every other statement is read through `fault_operand`, so a
-        `$Null =`/`[Void]` discard is judged by what it evaluates — `$Null = [Int]'abc'` throws in
-        the cast before the assignment `certainly_throws` would otherwise read nothing certain in.
-        """
-        if certainly_throws(stmt):
-            return True
-        operand = fault_operand(stmt)
-        return operand is not None and certainly_throws(operand)
-
     def _collapse_through_certain_throw(
         self, node: Ps1TryCatchFinally, cache: Ps1ModelCache,
     ) -> list[Statement] | None:
@@ -814,8 +805,9 @@ class Ps1DeadCodeElimination(Transformer):
         Everything after the throw in the `try` body is dead — a terminating error abandons the rest
         of the block — and is dropped.
 
-        Every part of that is proven rather than guessed. `_statement_certainly_throws` fires only
-        where the value domain computes a throw 5.1 also takes, so a body the analysis cannot decide
+        Every part of that is proven rather than guessed.
+        `refinery.lib.scripts.ps1.analysis.values.statement_certainly_throws` fires only where the
+        value domain computes a throw 5.1 also takes, so a body the analysis cannot decide
         is left whole for the discard remover to keep (`deletion_is_observable`). The statements
         before the throw must be provably fault-free, so control is certain to reach it. The landing
         handler must be certain — `certain_catch_all` declines a narrow `catch` that might take the
@@ -843,7 +835,7 @@ class Ps1DeadCodeElimination(Transformer):
         prefix: list[Statement] = []
         raiser: Statement | None = None
         for stmt in body:
-            if self._statement_certainly_throws(stmt):
+            if statement_certainly_throws(stmt):
                 raiser = stmt
                 break
             if not isinstance(stmt, Ps1ExpressionStatement):

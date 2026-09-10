@@ -16,6 +16,7 @@ if TYPE_CHECKING:
 
 from refinery.lib.scripts import Block, Transformer
 from refinery.lib.scripts.ps1.analysis.cache import model_cache
+from refinery.lib.scripts.ps1.analysis.errorstate import Ps1ErrorStateReach
 from refinery.lib.scripts.ps1.analysis.faults import Ps1FaultReach
 from refinery.lib.scripts.ps1.analysis.model import is_write_occurrence
 from refinery.lib.scripts.ps1.analysis.commands import CommandKind, Ps1CommandModel
@@ -2172,7 +2173,9 @@ class Ps1FunctionEvaluator(Transformer):
         # deleting a definition changes no routing but its own: a body's graph is built from that
         # body alone. Where the deleted definition held the only acting handler the reused model
         # keeps refusing, which is the conservative direction.
-        faults = model_cache(self, root).faults
+        cache = model_cache(self, root)
+        faults = cache.faults
+        error_state = cache.error_state
         removed: set[str] = set()
         dead_functions: set[str] = set()
         for key, funcdef in self._functions.items():
@@ -2183,7 +2186,7 @@ class Ps1FunctionEvaluator(Transformer):
             failed = self._failed_counts.get(key, 0)
             if (replaced + failed) < call_count:
                 continue
-            if self._remove_funcdef(funcdef, faults):
+            if self._remove_funcdef(funcdef, faults, error_state):
                 removed.add(key)
             if failed > 0:
                 dead_functions.add(key)
@@ -2198,23 +2201,34 @@ class Ps1FunctionEvaluator(Transformer):
             # A removal can be declined — a definition holding a payload is kept whatever the call
             # graph says — and recording it as removed anyway would let the closure delete what it
             # still calls, manufacturing a call to a function that is no longer defined.
-            if self._remove_funcdef(funcdef, faults):
+            if self._remove_funcdef(funcdef, faults, error_state):
                 removed.add(key)
         if dead_functions:
-            self._remove_dead_calls(root, dead_functions, faults)
+            self._remove_dead_calls(root, dead_functions, faults, error_state)
 
-    def _remove_funcdef(self, funcdef: Ps1FunctionDefinition, faults: Ps1FaultReach) -> bool:
+    def _remove_funcdef(
+        self,
+        funcdef: Ps1FunctionDefinition,
+        faults: Ps1FaultReach,
+        error_state: Ps1ErrorStateReach,
+    ) -> bool:
         parent = funcdef.parent
         if not isinstance(parent, (Ps1Script, Block)):
             return False
-        plan = Ps1RemovalPlan(parent, faults=faults)
+        plan = Ps1RemovalPlan(parent, faults=faults, error_state=error_state)
         plan.propose(funcdef)
         if not plan.commit():
             return False
         self.mark_changed()
         return True
 
-    def _remove_dead_calls(self, root, dead_functions: set[str], faults: Ps1FaultReach):
+    def _remove_dead_calls(
+        self,
+        root,
+        dead_functions: set[str],
+        faults: Ps1FaultReach,
+        error_state: Ps1ErrorStateReach,
+    ):
         """
         Delete the calls to functions this pass has just deleted, from `root`'s own body.
 
@@ -2237,7 +2251,7 @@ class Ps1FunctionEvaluator(Transformer):
         if not isinstance(root, (Ps1Script, Block)):
             return
         held = {id(statement) for statement in root.body}
-        plan = Ps1RemovalPlan(root, faults=faults)
+        plan = Ps1RemovalPlan(root, faults=faults, error_state=error_state)
         for cmd in root.walk():
             if not isinstance(cmd, Ps1CommandInvocation):
                 continue

@@ -28,6 +28,10 @@ class Contribution(typing.NamedTuple):
 
 
 CONTRIBUTION: dict[str, Contribution] = {
+    'Ps1SuccessFlagInlining': Contribution(
+        lost=(),
+        changed=(),
+    ),
     'Ps1ConstantFolding': Contribution(
         lost=(
             "$t = '1e400' + 1; Write-Output (,$t); Write-Output $t",

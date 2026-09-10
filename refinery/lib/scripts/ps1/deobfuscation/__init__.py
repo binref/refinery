@@ -9,6 +9,7 @@ from refinery.lib.scripts.ps1.deobfuscation.aliases import Ps1AliasInlining
 from refinery.lib.scripts.ps1.deobfuscation.constants import (
     Ps1ConstantInlining,
     Ps1NullVariableInlining,
+    Ps1SuccessFlagInlining,
 )
 from refinery.lib.scripts.ps1.deobfuscation.deadcode import Ps1DeadCodeElimination
 from refinery.lib.scripts.ps1.deobfuscation.emulator import Ps1ForEachPipeline, Ps1FunctionEvaluator
@@ -31,6 +32,7 @@ from refinery.lib.scripts.ps1.model import Ps1Script
 from refinery.lib.scripts.ps1.options import Ps1DeobfuscationOptions
 
 _folds = (
+    Ps1SuccessFlagInlining,
     Ps1ConstantFolding,
     Ps1DeadCodeElimination,
     Ps1ControlFlowDeflattening,

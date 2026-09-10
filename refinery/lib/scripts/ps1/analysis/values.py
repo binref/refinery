@@ -54,6 +54,7 @@ from weakref import WeakKeyDictionary
 from refinery.lib.scripts import Node, _clone_node, mutation_epoch
 from refinery.lib.scripts.ps1.ast import (
     extract_first_positional_string,
+    fault_operand,
     get_command_name,
     get_member_name,
     is_builtin_variable,
@@ -102,6 +103,7 @@ from refinery.lib.scripts.ps1.model import (
     Ps1ScriptBlock,
     Ps1StringLiteral,
     Ps1SubExpression,
+    Ps1ThrowStatement,
     Ps1TypeExpression,
     Ps1UnaryExpression,
     Ps1Variable,
@@ -1810,6 +1812,47 @@ def evaluate(
 #: so that a tree nothing else holds is still collected; nothing here refers back to one.
 _EVALUATIONS: WeakKeyDictionary[Node, Ps1Outcome] = WeakKeyDictionary()
 _EVALUATED_AT = -1
+
+
+def certainly_throws(node: Node) -> bool:
+    """
+    Whether evaluating `node` is guaranteed to raise a terminating error under every runtime state
+    consistent with what is known — the must-throw dual of `is_fault_free`'s cannot-throw, and the
+    opposite polarity from `may_throw`. `False` is *not knowing*, never a claim of safety: an
+    expression this cannot prove throws answers `False` exactly as one that provably cannot does, so
+    a caller must read this only where a false positive is the cost it cannot pay and a false
+    negative merely declines to act.
+
+    **The value domain is the one that knows**, and this reads its `ALWAYS`: a leaf is certain only
+    where a value-precise computation on concrete operands reaches a throw 5.1 also takes — an
+    overflow, a division by zero, a String the invariant coercion cannot read — never from the
+    measured grid, which is a witnessed lower bound. An unknown operand makes the outcome `MAYBE`
+    (the domain answers `UNKNOWN` for an unread variable rather than reading it as `$null`), so
+    `[int]$x` is never certain and nothing built on this ever fires on a guessed value.
+
+    **A `throw` statement is the one certain throw that is not a value**: reaching it transfers
+    control abnormally whatever its argument is, so it answers `True` directly. Everything else is
+    the expression's outcome — including a statement the value domain names nothing for, which is
+    `MAYBE` and so `False`.
+    """
+    if isinstance(node, Ps1ThrowStatement):
+        return True
+    return evaluate(node).certainly_throws
+
+
+def statement_certainly_throws(stmt: Node) -> bool:
+    """
+    Whether *stmt* is proven to raise a terminating error under every state. A `throw` is one
+    whatever its argument; every other statement is read through
+    `refinery.lib.scripts.ps1.ast.fault_operand`, so a `$Null =`/`[Void]` discard is judged by what
+    it evaluates — `$Null = [Int]'abc'` throws in the cast before the assignment `certainly_throws`
+    would otherwise read nothing certain in. The statement-level dual `deadcode` and `errorstate`
+    both read, so the certain-raise judgment has one home.
+    """
+    if certainly_throws(stmt):
+        return True
+    operand = fault_operand(stmt)
+    return operand is not None and certainly_throws(operand)
 
 
 def _evaluated(

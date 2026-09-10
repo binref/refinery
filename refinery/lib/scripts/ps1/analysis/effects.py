@@ -114,7 +114,6 @@ from refinery.lib.scripts.ps1.model import (
     Ps1StringLiteral,
     Ps1SubExpression,
     Ps1SwitchStatement,
-    Ps1ThrowStatement,
     Ps1TrapStatement,
     Ps1TryCatchFinally,
     Ps1TypeExpression,
@@ -1126,32 +1125,6 @@ def is_fault_free(node) -> bool:
     return False
 
 
-def certainly_throws(node) -> bool:
-    """
-    Whether evaluating `node` is guaranteed to raise a terminating error under every runtime state
-    consistent with what is known — the must-throw dual of `is_fault_free`'s cannot-throw, and the
-    opposite polarity from `may_throw`. `False` is *not knowing*, never a claim of safety: an
-    expression this cannot prove throws answers `False` exactly as one that provably cannot does, so
-    a caller must read this only where a false positive is the cost it cannot pay and a false
-    negative merely declines to act.
-
-    **The value domain is the one that knows**, and this reads its `ALWAYS`: a leaf is certain only
-    where a value-precise computation on concrete operands reaches a throw 5.1 also takes — an
-    overflow, a division by zero, a String the invariant coercion cannot read — never from the
-    measured grid, which is a witnessed lower bound. An unknown operand makes the outcome `MAYBE`
-    (the domain answers `UNKNOWN` for an unread variable rather than reading it as `$null`), so
-    `[int]$x` is never certain and nothing built on this ever fires on a guessed value.
-
-    **A `throw` statement is the one certain throw that is not a value**: reaching it transfers
-    control abnormally whatever its argument is, so it answers `True` directly. Everything else is
-    the expression's outcome — including a statement the value domain names nothing for, which is
-    `MAYBE` and so `False`.
-    """
-    if isinstance(node, Ps1ThrowStatement):
-        return True
-    return evaluate(node).certainly_throws
-
-
 def may_be_dropped(node, world: Ps1WorldReach) -> bool:
     """
     Whether an expression the script evaluates may be deleted without changing what the script does.
@@ -2030,8 +2003,13 @@ def deletion_is_observable(
     has to be reachable after it, which
     `refinery.lib.scripts.ps1.analysis.errorstate.Ps1ErrorStateReach` answers positionally.
     `error_state=None` skips the channel, the fail-open direction a caller with no such model
-    takes, consistent with `world=None`. `$?`'s reset rule is a query cluster 4 adds to that model,
-    not a fourth clause here.
+    takes, consistent with `world=None`.
+
+    All three clauses are raise-keyed: this function answers *raise and handler* observability. `$?`
+    resets on every statement rather than persisting a raise, so its reset rule is not a fourth
+    clause here but a peer axis asked beside this one in
+    `refinery.lib.scripts.ps1.deobfuscation.removal.Ps1RemovalPlan._vetoed`, over the same
+    `Ps1ErrorStateReach` model through `success_flag_write_observed`.
     """
     operand = fault_operand(stmt)
     if (

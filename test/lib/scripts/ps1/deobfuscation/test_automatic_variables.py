@@ -66,69 +66,62 @@ class _Ps1AutomaticVariables(TestPs1):
 
 class TestPs1TheSuccessFlagIsTrueUntilSomethingFails(_Ps1AutomaticVariables):
     """
-    `$?` reports whether the last command succeeded. Windows PowerShell 5.1 starts a script with it
-    at `$true` and leaves it there after every command that succeeds, so a branch guarded by it is
-    one the script takes.
+    `$?` reports whether the last statement succeeded. Windows PowerShell 5.1 starts a script with
+    it at `$true` and leaves it there until something fails, so a branch guarded by it at the top of
+    a script is one the script takes. The deobfuscator resolves `$?` from its position: at the top
+    of the script it is `$true`, and the guard folds to the branch 5.1 runs.
 
-    The deobfuscator has no value for `$?` and reads it as `$null`. Every guard below therefore
-    decides the wrong way, and the branch 5.1 runs is deleted along with everything inside it.
+    Where the position cannot settle the flag the read is left in place and the guard is kept: a
+    command whose success the analysis cannot prove leaves `$?` undecided, and so does a `$?` read
+    inside a called function's body, whose value belongs to the caller.
     """
 
-    @unittest.expectedFailure
     def test_the_success_flag_at_the_top_of_a_script_takes_the_then_branch(self):
-        self._assertRunsTheSameStatements(
+        self._assertDecidesTo(
             F'if ($?) {{ {_PAYLOAD} }} else {{ {_OTHER} }}', _PAYLOAD)
 
-    @unittest.expectedFailure
-    def test_the_success_flag_after_a_command_that_succeeds_takes_the_then_branch(self):
-        self._assertRunsTheSameStatements(
-            F'{_SUCCEEDS}\nif ($?) {{ {_PAYLOAD} }} else {{ {_OTHER} }}',
-            F'{_SUCCEEDS}\n{_PAYLOAD}')
+    def test_the_success_flag_after_a_command_whose_success_is_unprovable_is_kept(self):
+        self._assertKept(F'{_SUCCEEDS}\nif ($?) {{ {_PAYLOAD} }} else {{ {_OTHER} }}')
 
-    @unittest.expectedFailure
     def test_the_negated_success_flag_takes_the_else_branch(self):
-        self._assertRunsTheSameStatements(
+        self._assertDecidesTo(
             F'if (-not $?) {{ {_OTHER} }} else {{ {_PAYLOAD} }}', _PAYLOAD)
 
-    @unittest.expectedFailure
     def test_the_success_flag_under_a_bang_takes_the_else_branch(self):
-        self._assertRunsTheSameStatements(
+        self._assertDecidesTo(
             F'if (!$?) {{ {_OTHER} }} else {{ {_PAYLOAD} }}', _PAYLOAD)
 
-    @unittest.expectedFailure
     def test_the_success_flag_compared_to_true_takes_the_then_branch(self):
-        self._assertRunsTheSameStatements(
+        self._assertDecidesTo(
             F'if ($? -eq $true) {{ {_PAYLOAD} }} else {{ {_OTHER} }}', _PAYLOAD)
 
-    @unittest.expectedFailure
     def test_the_success_flag_guarding_a_branch_without_an_else_keeps_the_body(self):
-        self._assertRunsTheSameStatements(
+        self._assertDecidesTo(
             F'if ($?) {{ {_PAYLOAD} }}\n{_TAIL}', F'{_PAYLOAD}\n{_TAIL}')
 
-    @unittest.expectedFailure
     def test_the_success_flag_copied_into_a_variable_takes_the_then_branch(self):
-        self._assertRunsTheSameStatements(
+        self._assertDecidesTo(
             F'$q = $?\nif ($q) {{ {_PAYLOAD} }} else {{ {_OTHER} }}', _PAYLOAD)
 
-    @unittest.expectedFailure
-    def test_a_while_loop_the_success_flag_guards_runs_its_body(self):
-        self._assertKept(F"""
+    def test_an_unconditional_break_reduces_a_while_the_success_flag_guards_to_its_body(self):
+        self._assertDecidesTo(F"""
             while ($?) {{
               {_PAYLOAD}
               break
             }}
+        """, _PAYLOAD)
+
+    def test_a_while_loop_the_success_flag_guards_without_a_break_is_kept(self):
+        self._assertKept(F"""
+            while ($?) {{
+              {_PAYLOAD}
+            }}
         """)
 
-    @unittest.expectedFailure
-    def test_the_success_flag_read_inside_a_called_function_takes_the_then_branch(self):
-        self._assertRunsTheSameStatements(F"""
+    def test_the_success_flag_read_inside_a_called_function_is_kept(self):
+        self._assertKept(F"""
             function Invoke-Thing {{
               if ($?) {{ {_PAYLOAD} }} else {{ {_OTHER} }}
-            }}
-            Invoke-Thing
-        """, F"""
-            function Invoke-Thing {{
-              {_PAYLOAD}
             }}
             Invoke-Thing
         """)
@@ -136,20 +129,18 @@ class TestPs1TheSuccessFlagIsTrueUntilSomethingFails(_Ps1AutomaticVariables):
 
 class TestPs1TheSuccessFlagIsFalseAfterAFailure(_Ps1AutomaticVariables):
     """
-    Controls for the pins above, in the direction the deobfuscator already answers correctly. 5.1
-    sets `$?` to `$false` after a command that fails and after a conversion that raises, and it
-    counts a suppressed error as a failure, so here the guard does take the branch the analysis
-    picks for it.
+    5.1 sets `$?` to `$false` after a statement that fails, so a guard reading it takes the other
+    branch. The deobfuscator settles the flag to `$false` only where it can prove the failure — a
+    conversion that certainly raises — and folds the guard the way 5.1 does. A command whose error
+    `-ErrorAction SilentlyContinue` suppresses fails on 5.1 too, but the analysis cannot prove that,
+    so it leaves `$?` undecided and keeps the guard rather than fold from a value it cannot stand on.
     """
 
-    def test_the_success_flag_after_a_command_that_fails_takes_the_else_branch(self):
-        self._assertDecidesTo(
-            F'{_FAILS}\nif ($?) {{ {_PAYLOAD} }} else {{ {_OTHER} }}', F'{_FAILS}\n{_OTHER}')
+    def test_the_success_flag_after_a_command_whose_suppressed_failure_is_unprovable_is_kept(self):
+        self._assertKept(F'{_FAILS}\nif ($?) {{ {_PAYLOAD} }} else {{ {_OTHER} }}')
 
-    def test_the_negated_success_flag_after_a_command_that_fails_takes_the_then_branch(self):
-        self._assertDecidesTo(
-            F'{_FAILS}\nif (-not $?) {{ {_PAYLOAD} }} else {{ {_OTHER} }}',
-            F'{_FAILS}\n{_PAYLOAD}')
+    def test_the_negated_success_flag_after_a_command_whose_failure_is_unprovable_is_kept(self):
+        self._assertKept(F'{_FAILS}\nif (!$?) {{ {_PAYLOAD} }} else {{ {_OTHER} }}')
 
     def test_the_success_flag_after_a_conversion_that_raises_takes_the_else_branch(self):
         self._assertDecidesTo(
@@ -239,16 +230,74 @@ class TestPs1AStatementThatRaisesIsVisibleInTheErrorRecord(_Ps1AutomaticVariable
             F'{_FAULTS}\n{_SUCCEEDS}\nWrite-Host $?',
             F'{_SUCCEEDS}\nWrite-Host $?')
 
-    @unittest.expectedFailure
-    def test_a_success_flag_read_immediately_after_the_raise_is_kept(self):
+    def test_a_success_flag_read_immediately_after_the_raise_freezes_it_to_false(self):
         """
-        With nothing between the raise and the `$?` read to reset it, `$?` still reports the raise
-        on 5.1: the read prints `$false` where a script with the raise deleted prints `$true`. So
-        the raise is observable and must be kept — unlike the sibling above, whose `_SUCCEEDS`
-        resets `$?` first. Keeping it is the reset-aware `$?` query cluster 4 layers on this model;
-        until that lands the raise is deleted although the host keeps its effect, and this pins it.
+        With nothing between the raise and the `$?` read to reset it, `$?` reports the raise: 5.1
+        prints `$false`. The reset-aware `$?` channel proves that — the raise is the read's
+        immediate predecessor and certainly throws — so the read is frozen to `$False`, and the
+        raiser, which now has no observer, is removed. The output prints `$false` exactly as 5.1
+        does, with the raise gone — unlike the sibling above, whose `_SUCCEEDS` resets `$?` first.
         """
-        self._assertKept(F'{_FAULTS}\nWrite-Host $?')
+        self._assertDeobfuscatesTo(F'{_FAULTS}\nWrite-Host $?', 'Write-Host $False')
+
+
+class TestPs1ARaiseSwallowedByAHandlerStaysVisibleToTheSuccessFlag(_Ps1AutomaticVariables):
+    """
+    A raise an empty `catch` swallows still fails the statement, so 5.1 leaves `$?` at `$false` after
+    the whole `try`/`catch` — measured on the host: `$?` read after `try { $Null = [Int]'abc' } catch
+    { }` is `$false`, and a guard on it takes the else branch.
+
+    The raiser and the guard survive the passes that dissolve the handler, so by the time a removal
+    reaches the top-level raiser the reset-aware `$?` channel places a live read after it and the veto
+    keeps it. The guard then folds against a raiser still standing before it — to the else branch the
+    host takes — rather than reading as the top of a script the removal emptied.
+    """
+
+    def test_a_success_flag_after_a_swallowed_certain_raise_does_not_take_the_then_branch(self):
+        self._assertRunsTheSameStatements(
+            F'try {{ {_FAULTS} }} catch {{ }}\nif ($?) {{ {_PAYLOAD} }} else {{ {_OTHER} }}', _OTHER)
+
+
+class TestPs1AWriteALiveSuccessFlagReadObservesIsKept(_Ps1AutomaticVariables):
+    """
+    Every leaf statement resets `$?`, so removing one a later `$?` read observes changes the value
+    that read sees — a success command before a dead store makes the store's success the flag the
+    guard reads, and dropping the store lets the earlier failure through. The removal veto keeps such
+    a write whatever the statement's own output is worth, because the flag is engine state the script
+    reads back.
+
+    A `$?`-transparent statement between the write and the read — an empty or never-entered `if` or
+    `foreach` — does not break the observation: the reaching-definition walk steps through it, so the
+    store is still kept. A no-op that runs nothing may itself be dropped, but the write it stood
+    between survives and the guard still reads the store's success.
+    """
+
+    def test_a_dead_store_before_a_success_flag_read_is_kept(self):
+        self._assertKept(
+            F'{_FAILS}\n$junk = 5\nif ($?) {{ {_PAYLOAD} }} else {{ {_OTHER} }}')
+
+    def test_a_discard_before_a_success_flag_read_is_kept(self):
+        self._assertKept(
+            F'{_FAILS}\n$Null = 5\nif ($?) {{ {_PAYLOAD} }} else {{ {_OTHER} }}')
+
+    def test_a_store_a_success_flag_read_observes_across_an_empty_if_is_kept(self):
+        self._assertRunsTheSameStatements(
+            F'{_FAILS}\n$junk = 5\nif ($zzz) {{ }}\nif ($?) {{ {_PAYLOAD} }} else {{ {_OTHER} }}',
+            F'{_FAILS}\n$junk = 5\nif ($?) {{ {_PAYLOAD} }} else {{ {_OTHER} }}')
+
+    def test_a_store_a_success_flag_read_observes_across_an_empty_foreach_is_kept(self):
+        self._assertRunsTheSameStatements(
+            F'{_FAILS}\n$junk = 5\nforeach ($i in $zzz) {{ }}\n'
+            F'if ($?) {{ {_PAYLOAD} }} else {{ {_OTHER} }}',
+            F'{_FAILS}\n$junk = 5\nif ($?) {{ {_PAYLOAD} }} else {{ {_OTHER} }}')
+
+    def test_a_constant_store_a_success_flag_read_observes_is_kept_while_its_value_inlines(self):
+        self._assertDecidesTo(
+            F'{_FAILS}\n$x = 5\nWrite-Host $?\nWrite-Host $x',
+            F'{_FAILS}\n$x = 5\nWrite-Host $?\nWrite-Host 5')
+
+    def test_a_store_before_an_immediate_success_flag_read_is_kept(self):
+        self._assertKept(F'{_FAILS}\n$junk = 5\nWrite-Host $?')
 
 
 class TestPs1TheTokenVariablesStayEmptyForTheWholeOfAScript(_Ps1AutomaticVariables):
