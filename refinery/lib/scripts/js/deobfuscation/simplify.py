@@ -9,8 +9,8 @@ from refinery.lib.scripts.js.analysis.cache import ModelCache, model_cache
 from refinery.lib.scripts.js.analysis.dominance import DominanceModel
 from refinery.lib.scripts.js.analysis.effects import GLOBAL_OBJECT, EffectModel
 from refinery.lib.scripts.js.analysis.environment import (
-    GUARANTEED_GLOBAL_TYPEOF,
     GUARANTEED_GLOBALS,
+    typeof_of_global,
 )
 from refinery.lib.scripts.js.analysis.model import (
     FUNCTION_NODES,
@@ -950,26 +950,29 @@ class JsSimplifications(Transformer):
                 return False
         return True
 
-    def _typeof_guaranteed_global(self, operand: Node | None) -> str | None:
+    def _typeof_of_global_read(self, operand: Node | None) -> str | None:
         """
-        The string `typeof <operand>` yields when *operand* is a bare read of a name the specification
-        mandates on the global object (`GUARANTEED_GLOBAL_TYPEOF`) that the program leaves pristine and
-        does not shadow at this site — `None` otherwise. Such a name resolves in every host to a value
-        of a fixed type, so its `typeof` is host-independent, unlike a host-conditional alias (`window`,
-        `self`, …) whose `typeof` is `'undefined'` where the host omits it and an object where it does
-        not. This is what lets a `typeof globalThis !== 'undefined'` guard fold to `true`, so
-        `refinery.lib.scripts.js.deobfuscation.deadcode.JsDeadCodeElimination` can prune the arm it
-        protects and a global-object finder reduce to `return globalThis`. Pristineness is
+        The string `typeof <operand>` yields when *operand* is a bare read of a global name the run's
+        host settles — `None` otherwise. `refinery.lib.scripts.js.analysis.environment.typeof_of_global`
+        answers it against the pinned host: a name whose `typeof` is host-independent (`String`,
+        `globalThis`, `escape`) folds in every host, and a host-conditional alias (`window`, `Buffer`)
+        folds only where the host proves it present — to its type — or absent — to `'undefined'`, and
+        abstains under the default `universal` host. This is what lets a `typeof globalThis !== 'undefined'`
+        guard fold to `true`, so `refinery.lib.scripts.js.deobfuscation.deadcode.JsDeadCodeElimination`
+        can prune the arm it protects and a global-object finder reduce to `return globalThis`, and what
+        lets `-e node` fold a `typeof Buffer` guard the same way. Pristineness is
         `refinery.lib.scripts.js.analysis.effects.EffectModel.trusted_intrinsic`, which refuses a name
         the program reassigns, shadows anywhere, or could reach through a reflection surface — any of
-        which could give `typeof` a different answer.
+        which could give `typeof` a different answer. This is the same host oracle the interpreter's
+        `typeof` fold reads, so a fold made here and one made there cannot disagree.
         """
         node = strip_parens(operand)
-        if not isinstance(node, JsIdentifier) or node.name not in GUARANTEED_GLOBAL_TYPEOF:
+        if not isinstance(node, JsIdentifier):
             return None
-        if self.effects.trusted_intrinsic(node) is None:
+        folded = typeof_of_global(node.name, self.model.environment)
+        if folded is None or self.effects.trusted_intrinsic(node) is None:
             return None
-        return GUARANTEED_GLOBAL_TYPEOF[node.name]
+        return folded
 
     def visit_JsUnaryExpression(self, node: JsUnaryExpression):
         """
@@ -978,7 +981,7 @@ class JsSimplifications(Transformer):
         operator applied by the interpreter cannot disagree; what is left is the two questions a value
         cannot answer — the type of an object whose identity no literal spells, and whether a `delete`
         may be dropped. A third, `typeof` of a pristine guaranteed global, is a value the operator hides
-        rather than one the operand denotes, so it is decided by name (`_typeof_guaranteed_global`).
+        rather than one the operand denotes, so it is decided by name (`_typeof_of_global_read`).
 
         A value whose spelling still needs a unary operator is left alone. `-Infinity` and `void 0` are
         how those two values are written, so folding one of them produces the expression it replaces:
@@ -999,7 +1002,7 @@ class JsSimplifications(Transformer):
             if op == '!':
                 return JsBooleanLiteral(value=False)
         if op == 'typeof':
-            typed = self._typeof_guaranteed_global(operand)
+            typed = self._typeof_of_global_read(operand)
             if typed is not None:
                 return make_string_literal(typed)
         apply = UNARY_OPS.get(op)

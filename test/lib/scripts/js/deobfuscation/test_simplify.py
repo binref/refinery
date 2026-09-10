@@ -6,6 +6,7 @@ import unittest
 from test.lib.scripts.js.analysis.differential import behavior, node_executable
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 
+from refinery.lib.scripts.js.analysis.environment import HostEnvironment
 from refinery.lib.scripts.js.deobfuscation.simplify import JsSimplifications
 from refinery.lib.scripts.js.options import DeobfuscationOptions
 from refinery.units.scripting.js import js
@@ -1711,6 +1712,19 @@ class TestTypeofAGuaranteedGlobalIsFolded(TestJsDeobfuscator):
         for name in ('window', 'self', 'global', 'top', 'frames', 'SharedArrayBuffer', 'Atomics'):
             with self.subTest(name=name):
                 self.assertEqual(F'typeof {name};', self._simplify(F'typeof {name};'))
+
+    def test_a_host_conditional_typeof_folds_under_a_pin(self):
+        """
+        Pinning the host settles a host-conditional `typeof` the same way the interpreter's fold does,
+        so a top-level guard folds too: `-e node` proves `Buffer` present (`'function'`) and `window`
+        absent (`'undefined'`); `-e browser` proves the reverse.
+        """
+        pinned = DeobfuscationOptions(environment=HostEnvironment.node)
+        self.assertEqual("'function';", self._run_transformer('typeof Buffer;', JsSimplifications, pinned))
+        self.assertEqual("'undefined';", self._run_transformer('typeof window;', JsSimplifications, pinned))
+        browser = DeobfuscationOptions(environment=HostEnvironment.browser)
+        self.assertEqual("'undefined';", self._run_transformer('typeof Buffer;', JsSimplifications, browser))
+        self.assertEqual("'object';", self._run_transformer('typeof window;', JsSimplifications, browser))
 
     def test_a_reassigned_or_shadowed_global_is_left_standing(self):
         """

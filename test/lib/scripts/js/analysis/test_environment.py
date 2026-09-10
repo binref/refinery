@@ -3,6 +3,7 @@ from __future__ import annotations
 from test import TestBase
 
 from refinery.lib.scripts.js.analysis.environment import (
+    _SPECS,
     GUARANTEED_GLOBALS,
     HostEnvironment,
     Presence,
@@ -122,7 +123,17 @@ class TestPresenceIsThreeValued(TestBase):
                 self.assertIs(HostEnvironment.universal.presence(name), Presence.UNKNOWN)
 
     def test_node_provides_navigator_and_never_calls_it_absent(self):
-        self.assertIsNot(HostEnvironment.node.presence('navigator'), Presence.ABSENT)
+        self.assertTrue(HostEnvironment.node.provides('navigator'))
+        self.assertIs(HostEnvironment.node.presence('navigator'), Presence.PRESENT)
+
+    def test_a_dedicated_worker_does_not_call_request_animation_frame_absent(self):
+        """
+        A dedicated worker exposes `requestAnimationFrame` through the `AnimationFrameProvider` mixin, so
+        `-e worker` must not assert it absent: `typeof requestAnimationFrame` abstains rather than folding
+        to `'undefined'`, which would drop a branch the host actually takes.
+        """
+        self.assertIsNot(HostEnvironment.worker.presence('requestAnimationFrame'), Presence.ABSENT)
+        self.assertIsNone(typeof_of_global('requestAnimationFrame', HostEnvironment.worker))
 
 
 class TestTypeofFoldsOnlyWhereTheHostSettlesIt(TestBase):
@@ -153,6 +164,17 @@ class TestTypeofFoldsOnlyWhereTheHostSettlesIt(TestBase):
         self.assertEqual(typeof_of_global('Buffer', HostEnvironment.browser), 'undefined')
         self.assertEqual(typeof_of_global('window', HostEnvironment.node), 'undefined')
         self.assertEqual(typeof_of_global('global', HostEnvironment.browser), 'undefined')
+
+    def test_every_provided_host_conditional_name_has_a_typeof(self):
+        """
+        A name a host provides beyond the language floor must have a recorded `typeof`, or `typeof
+        <name>` under that pin silently stops folding where the read itself resolves. This couples the
+        provide sets to the `typeof` map the way `GUARANTEED_GLOBALS` is coupled to its own.
+        """
+        for environment in HostEnvironment:
+            for name in _SPECS[environment].provided - GUARANTEED_GLOBALS:
+                with self.subTest(environment=environment.name, name=name):
+                    self.assertIsNotNone(typeof_of_global(name, environment))
 
 
 class TestDeletingAHostGlobalWithholdsItsPinnedPresence(TestBase):

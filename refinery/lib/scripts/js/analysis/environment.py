@@ -18,6 +18,13 @@ under-listing costs at most a fold a wider table would recover while over-listin
 throw. The `node` set was established by reading the globals out of Node v24 (benign introspection, no
 sample executed); the `browser` and `worker` sets are the web-platform globals every implementation of
 those scopes exposes.
+
+Each pinned host models its *current mainstream* version — the analyst asserting `-e node`/`-e browser`
+is asserting a present-day runtime, so recently standardized globals (`fetch`, `structuredClone`,
+`navigator` under Node) are treated as present; a sample targeting an older engine is not the case a pin
+serves. `worker` models a *dedicated* worker: its present set carries the dedicated-worker surface
+(`XMLHttpRequest`, the nested `Worker` constructor), which a service worker does not share, so `-e worker`
+is the pin for a dedicated worker rather than a service worker.
 """
 from __future__ import annotations
 
@@ -149,7 +156,6 @@ _HOST_CONDITIONAL_TYPEOF: dict[str, str] = {
     'WebAssembly': 'object',
     'Intl': 'object',
     'Buffer': 'function',
-    'require': 'function',
     'importScripts': 'function',
     'setTimeout': 'function',
     'setInterval': 'function',
@@ -200,6 +206,7 @@ _NODE_GLOBALS = frozenset({
     'global',
     'Buffer',
     'process',
+    'navigator',
     'console',
     'setTimeout',
     'setInterval',
@@ -285,11 +292,12 @@ _BROWSER_GLOBALS = frozenset({
     'WebAssembly',
 })
 """
-Global names a browser window exposes beyond `GUARANTEED_GLOBALS`. `window`, `self`, and `parent` are the
-same-realm aliases of the window's own global object; `top` and `frames` resolve too, but in a framed
+Global names a browser window exposes beyond `GUARANTEED_GLOBALS`. `window` and `self` are the same-realm
+aliases of the window's own global object; `top`, `parent`, and `frames` resolve too, but in a framed
 document they name another realm's global object, which is why the global-object finder keys its
-substitution to `refinery.lib.scripts.js.analysis.model.SAME_REALM_GLOBAL_OBJECT_ALIASES` rather than to
-mere existence. The set is conservative: a name is listed only where every browser provides it.
+substitution to `refinery.lib.scripts.js.analysis.model.SAME_REALM_GLOBAL_OBJECT_ALIASES` — which admits
+`window` and `self` but not `top`, `parent`, or `frames` — rather than to mere existence. The set is
+conservative: a name is listed only where every current browser provides it.
 """
 
 _WORKER_GLOBALS = frozenset({
@@ -394,13 +402,15 @@ _WORKER_ABSENT = _BROWSER_ABSENT - frozenset({'importScripts'}) | frozenset({
     'alert',
     'confirm',
     'prompt',
-    'requestAnimationFrame',
     'Image',
 })
 """
-The window-only and Node-only globals a worker global scope is certain to lack: it has no document and no
-window to frame, and it is not Node. `importScripts` is a worker global, so it is excluded from the
-Node/browser-absent base this builds on.
+The window-only and Node-only globals a dedicated worker global scope is certain to lack: it has no
+document and no window to frame, and it is not Node. `importScripts` is a worker global, so it is excluded
+from the Node/browser-absent base this builds on. `requestAnimationFrame` is deliberately *not* listed: a
+dedicated worker exposes it through the `AnimationFrameProvider` mixin, so it is left `UNKNOWN` rather than
+asserted absent — which would fold `typeof requestAnimationFrame` to `'undefined'` where the host in fact
+yields `'function'`.
 """
 
 

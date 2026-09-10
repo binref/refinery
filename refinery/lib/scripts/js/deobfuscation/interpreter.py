@@ -2205,6 +2205,7 @@ class JsInterpreter:
             max_array_len=self.max_array_len,
             max_recursion=self.max_recursion,
             effects=self._effects,
+            model=self._model,
             closure=callee_closure,
             closure_env=self._closure_env,
             established=self._established,

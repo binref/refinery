@@ -23,7 +23,6 @@ from refinery.lib.scripts.js.analysis.cache import model_cache
 from refinery.lib.scripts.js.analysis.effects import side_effect_free
 from refinery.lib.scripts.js.analysis.model import (
     REFLECTIVE_INTRINSICS,
-    SAME_REALM_GLOBAL_OBJECT_ALIASES,
     SYNC_EVAL_NAMES,
     TIMER_NAMES,
     Binding,
@@ -43,6 +42,7 @@ from refinery.lib.scripts.js.deobfuscation.helpers import (
     a_host_reaches_the_binding,
     access_key,
     get_body,
+    names_this_realms_global_object,
     nothing_still_names,
     property_key,
     references_receiver_this,
@@ -833,6 +833,7 @@ class JsReflectionInlining(ScriptLevelTransformer):
             self._read_effect = self._dynamic_read_effect(node)
             self._alias_name = self._alias_member_name(node)
             self._free_global = self._free_global_name(node)
+            self._base_droppable = self._reflective_base_droppable(node)
             self._eval_string = self._string_argument_value(node)
             self._pending_retire = {}
             self._retire_candidates = {}
@@ -974,23 +975,22 @@ class JsReflectionInlining(ScriptLevelTransformer):
     def _reflective_base_droppable(self, root: JsScript) -> Callable[[Expression | None], bool]:
         """
         Whether the base of a global-object-alias `eval` member may be discarded when its call is
-        inlined. The base must name *this* realm's global object — `SAME_REALM_GLOBAL_OBJECT_ALIASES`,
+        inlined. The base must name *this* realm's global object (`names_this_realms_global_object`, the
+        shared same-realm-alias predicate the finder fold and the alias-member collapse also key on),
         never the cross-realm `top`/`frames`, whose `eval` runs code in another realm the inline would
-        move it out of — and resolve without throwing under the pinned host
+        move it out of; and it must resolve without throwing under the pinned host
         (`SemanticModel.read_may_throw`), so the `ReferenceError` a lacking host raises reading it is not
-        dropped. The same base-read gate the finder fold and the alias-member collapse apply, resolved
-        lazily against *root*'s current model like `_alias_member_name`.
+        dropped. Resolved lazily against *root*'s current model like `_alias_member_name`.
         """
         def resolve(callee: Expression | None) -> bool:
             member = strip_parens(callee) if callee is not None else None
             if not isinstance(member, JsMemberExpression):
                 return False
+            model = model_cache(self, root).model
             base = strip_parens(member.object)
-            if not isinstance(base, JsIdentifier):
+            if not isinstance(base, JsIdentifier) or not names_this_realms_global_object(model, base):
                 return False
-            if base.name not in SAME_REALM_GLOBAL_OBJECT_ALIASES:
-                return False
-            return not model_cache(self, root).model.read_may_throw(base)
+            return not model.read_may_throw(base)
         return resolve
 
     def _free_global_name(self, root: JsScript) -> Callable[[Expression | None], str | None]:
@@ -1266,7 +1266,7 @@ class JsReflectionInlining(ScriptLevelTransformer):
             return (ReflectedScope.DIRECT_EVAL, parsed) if parsed is not None else None
         code = _extract_indirect_eval_code(
             node, read_effect, alias_name=alias_name, free_global_name=free_global_name,
-            eval_string=self._eval_string, base_droppable=self._reflective_base_droppable(root))
+            eval_string=self._eval_string, base_droppable=self._base_droppable)
         if code is not None:
             parsed = self._resolve_reflected_body(
                 code, site, root, ReflectedScope.GLOBAL_EVAL, at_global_scope,
