@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import inspect
+import unittest
 
+from test.lib.scripts.js.analysis.differential import behavior, node_executable
 from test.lib.scripts.js.deobfuscation import TestJsDeobfuscator
 
 from refinery.lib.scripts.js.deobfuscation.cff import JsGeneratorCFFUnflattening
@@ -375,8 +377,9 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
         """
         A degenerate multi-level-redirect sample: bare `Sub` is used while the `with` redirect still
         points at `NS`, so `Sub` never resolves and the original throws a `ReferenceError`. The
-        recovery keeps the genuinely free `val`/`extra`/`args` bare (they have no namespace-defining
-        write) and recovers `Sub` from its `scope.Sub` writes, remaining an equivalent throwing
+        recovery keeps the genuinely free `val`/`args` bare (they have no namespace-defining write),
+        declares `var extra;` for the never-written namespace member `scope.NS.extra` so it reads
+        `undefined`, and recovers `Sub` from its `scope.Sub` writes, remaining an equivalent throwing
         program.
         """
         result = self._deobfuscate(self.REDIRECT_QUALIFY_CFF)
@@ -1019,10 +1022,16 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
     )
 
     def test_generator_cff_mixed_sequence_branch_preserved(self):
+        """
+        The branch condition `scope.x` reads a member never written on the empty default scope, so it
+        is `undefined` and the recovery must declare `var x;` for the stripped bare read rather than
+        leave an unbound free `x`. The redirect sibling keeps `var extra;` for the same reason.
+        """
         self.assertEqual(
             inspect.cleandoc(
                 """
                 function wrapper() {
+                  var x;
                   if (x) {
                     console.log("mixed");
                   } else {
@@ -1034,6 +1043,20 @@ class TestGeneratorCFFUnflattening(TestJsDeobfuscator):
                 """
             ),
             self._deobfuscate(self.MIXED_SEQUENCE_BRANCH_CFF),
+        )
+
+    @unittest.skipIf(node_executable() is None, 'node.js is not available')
+    def test_generator_cff_mixed_sequence_branch_behaviour_preserved(self):
+        """
+        `wrapper()` takes the else branch (`scope.x` is `undefined`), prints `other` then `end`, and
+        returns `"result"`. Dropping the read to a bare free `x` would throw a `ReferenceError` before
+        any output, so the recovered code diverges unless it declares the name.
+        """
+        source = self.MIXED_SEQUENCE_BRANCH_CFF
+        invoke = '\nconsole.log(JSON.stringify(wrapper()));'
+        self.assertEqual(
+            behavior(source + invoke),
+            behavior(self._deobfuscate(source) + invoke),
         )
 
     FREE_NAMES_CFF = inspect.cleandoc(

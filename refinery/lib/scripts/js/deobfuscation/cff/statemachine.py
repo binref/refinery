@@ -1400,14 +1400,7 @@ def _build_cfg(
             false_prefix_payload = _process_branch_prefix(
                 transition.false_prefix, var_names, state, match,
             )
-            if match.qualifies_namespaces:
-                condition = _qualify_condition(condition, state, match)
-            else:
-                wrapper = JsExpressionStatement(expression=_clone_node(condition))
-                _substitute_in_scope(wrapper, state)
-                if match.scope_param_name:
-                    _strip_scope_prefix_walk(wrapper, match.scope_param_name)
-                condition = wrapper.expression
+            condition = _qualify_condition(condition, state, match)
 
         node = _CFGNode(
             node_id=node_id,
@@ -2120,10 +2113,17 @@ def _qualify_condition(
     Clone, substitute, strip, and qualify a transition condition expression using the same
     pipeline as block payloads. Wraps in a synthetic statement so that root-node scope members
     and identifiers are processed correctly.
+
+    A `scope.X` a condition reads is recorded in `scope_prop_names` before the strip, exactly as
+    the payload and branch-prefix paths record theirs. A scope member read only in a condition —
+    `if (scope.x)` on the empty default scope — is `undefined`, and the strip that turns it into a
+    bare `x` would leave an unbound free read were the name not then declared as a local reading
+    `undefined`; recording it here is what lets `_declare_recovered_scope_vars` declare it.
     """
     wrapper = JsExpressionStatement(expression=_clone_node(condition))
     _substitute_in_scope(wrapper, state)
     if match.scope_param_name:
+        _collect_scope_props([wrapper], match.scope_param_name, match.scope_prop_names)
         _strip_scope_prefix_walk(wrapper, match.scope_param_name)
     if match.qualifies_namespaces:
         _qualify_bare_walk(wrapper, match.namespace_homes, _qualify_exempt(match))
