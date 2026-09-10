@@ -1452,7 +1452,10 @@ class JsReflectionInlining(ScriptLevelTransformer):
         reference. A `var` or function persists: under indirect eval it becomes a global-object
         property, reproducible only at top-level script scope and never under the module model; under
         direct eval it lands in the caller's variable scope, but never under a strict direct eval,
-        whose `var` stays local to the eval. Such a declaration hoists to the head of its variable
+        whose `var` stays local to the eval. A module runs strict throughout, so a direct eval under
+        the module model is one of those strict evals however its own site is spelled: the mode is the
+        file's and not the tree's, which is why the module model is asked here and not left to
+        `strict_mode_at`. Such a declaration hoists to the head of its variable
         scope, so it is inlined only when the eval site strictly dominates every reference to the name
         already there — one that runs before it or shares its statement, or reads the name through a
         closure, would be rebound.
@@ -1468,7 +1471,11 @@ class JsReflectionInlining(ScriptLevelTransformer):
         if scope is ReflectedScope.GLOBAL_EVAL:
             if runs_as_module(self.options, root) or not at_global_scope:
                 return False
-        elif strict_mode_at(site) or declares_use_strict(body_model.root):
+        elif (
+            runs_as_module(self.options, root)
+            or strict_mode_at(site)
+            or declares_use_strict(body_model.root)
+        ):
             return False
         var_scope = site_scope.var_scope
         if var_scope is None:

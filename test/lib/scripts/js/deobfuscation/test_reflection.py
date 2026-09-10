@@ -301,8 +301,25 @@ class TestReflectionInlining(TestJsDeobfuscator):
             "setTimeout('var x = 1;', 0);",
             self._reflect_module("setTimeout('var x = 1;', 0);"))
 
-    def test_module_direct_eval_declaration_still_inlined(self):
-        self.assertEqual('var x = 1;', self._reflect_module("eval('var x = 1;');"))
+    def test_module_direct_eval_declaration_not_inlined(self):
+        """
+        A module runs strict throughout, so a direct eval in it runs strict, and a strict direct eval's
+        `var` lives in a fresh variable environment discarded when the eval returns. Inlining
+        `eval('var x = 1;')` to `var x = 1;` would materialize a module binding that never existed, so
+        the call is left standing.
+        """
+        self.assertEqual(
+            "eval('var x = 1;');",
+            self._reflect_module("eval('var x = 1;');"))
+
+    def test_module_direct_eval_declaration_read_not_inlined(self):
+        """
+        The read makes the divergence observable: the strict eval's `var x` is ephemeral, so
+        `typeof x` is `'undefined'`, whereas the inlined `var x = 1;` would make it `'number'`. The
+        call is left standing so the read still reaches nothing.
+        """
+        source = "eval('var x = 1;');\nconsole.log(typeof x);"
+        self.assertEqual(source, self._reflect_module(source))
 
     def test_module_indirect_eval_expression_still_inlined(self):
         self.assertEqual('foo();', self._reflect_module("(0, eval)('foo();');"))
