@@ -717,36 +717,33 @@ class TestACrossAliasGlobalPropertyCollapseKeepsItsBaseThrow(TestBase):
     cannot throw, which a write through the same alias establishes: `global._V = 1; global._V`
     proves `global` resolved before the read, so folding the read to `_V` drops no throw.
 
-    The proof is charged to the property's binding, not to the alias that wrote it, so a property
-    whose binding was established without resolving the reading alias borrows a resolution it was
-    never given. Two writes do that. A write through a second alias — `globalThis._V = 1` establishes
-    `_V` and resolves `globalThis`, and `global._V` then collapses to `_V` though nothing resolved
-    `global`. And a bare assignment — `foo = 1` mints `foo` while naming no alias at all, and
-    `global.foo` collapses just the same. A browser, which lacks `global`, throws a `ReferenceError`
-    on the base that either fold has removed. Charging the proof to the alias spelling, so only a
-    resolution of `global` vouches for a later read through `global`, is what closes it, and it
-    belongs with the host-existence work that gives each alias its own resolution fact.
+    The proof used to be charged to the property's binding, not to the alias that wrote it, so a
+    property whose binding was established without resolving the reading alias borrowed a resolution
+    it was never given. Two writes did that. A write through a second alias — `globalThis._V = 1`
+    establishes `_V` and resolves `globalThis`, and `global._V` then collapsed to `_V` though nothing
+    resolved `global`. And a bare assignment — `foo = 1` mints `foo` while naming no alias at all, and
+    `global.foo` collapsed just the same. A browser, which lacks `global`, throws a `ReferenceError`
+    on the base that either fold had removed. The collapse now additionally requires the base to
+    resolve — the host defines it, or every establishing write goes through this same alias spelling —
+    so both reads are kept unless the host is pinned to one that defines `global`.
     """
 
-    @unittest.expectedFailure
     def test_a_property_read_through_a_second_alias_keeps_its_base_throw(self):
         """
         Node defines `global` and prints `1` for `A_GLOBAL_PROPERTY_READ_THROUGH_A_SECOND_ALIAS`, so
-        the engine decides nothing and the text carries the answer. The read `global._V` must be
-        kept, because the write that established `_V` went through `globalThis` and left `global`
-        unresolved; the deobfuscation collapses it to `_V` instead.
+        the engine decides nothing and the text carries the answer. The read `global._V` is kept,
+        because the write that established `_V` went through `globalThis` and left `global` unresolved.
         """
         self.assertEqual(
             folded(A_GLOBAL_PROPERTY_READ_THROUGH_A_SECOND_ALIAS),
             'globalThis._V = 1;\nfunction f() {\n  return global._V;\n}\nf();\nconsole.log(1);',
         )
 
-    @unittest.expectedFailure
     def test_a_property_established_by_a_bare_assignment_keeps_its_base_throw(self):
         """
         Node defines `global` and prints `1` for `A_GLOBAL_PROPERTY_ESTABLISHED_BY_A_BARE_ASSIGNMENT`,
-        so the text carries the answer. The read `global.foo` must be kept, because the bare `foo = 1`
-        that established `foo` resolved no `global`; the deobfuscation collapses it to `foo` instead.
+        so the text carries the answer. The read `global.foo` is kept, because the bare `foo = 1` that
+        established `foo` resolved no `global`.
         """
         self.assertEqual(
             folded(A_GLOBAL_PROPERTY_ESTABLISHED_BY_A_BARE_ASSIGNMENT),

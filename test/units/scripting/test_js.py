@@ -138,6 +138,18 @@ class TestJsHostEnvironmentPin(TestUnitBase):
         self.assertEqual(source | self.load() | str, 'console.log(global.String);')
         self.assertEqual(source | self.load(environment='node') | str, 'console.log(String);')
 
+    def test_a_node_host_collapses_a_cross_alias_global_property_read(self):
+        second_alias = b'globalThis._V = 1;\nfunction f() { return global._V; }\nf();\nconsole.log(1);'
+        self.assertEqual(
+            second_alias | self.load(environment='node') | str,
+            'globalThis._V = 1;\nfunction f() {\n  return _V;\n}\nf();\nconsole.log(1);',
+        )
+        bare_assignment = b'foo = 1;\nfunction f() { return global.foo; }\nf();\nconsole.log(1);'
+        self.assertEqual(
+            bare_assignment | self.load(environment='node') | str,
+            'foo = 1;\nfunction f() {\n  return foo;\n}\nf();\nconsole.log(1);',
+        )
+
     def test_an_unknown_host_keyword_is_a_usage_error(self):
         with self.assertRaises(Exception):
             self.load(environment='mainframe')

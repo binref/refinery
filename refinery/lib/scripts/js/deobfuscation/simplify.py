@@ -250,19 +250,43 @@ class JsSimplifications(Transformer):
         declined.
 
         The base must resolve, so the `ReferenceError` an absent host raises reading it is not dropped:
-        a base the language mandates in every host (`globalThis`) or a bound local never throws
-        (`SemanticModel.read_may_throw`). A host-conditional alias (`window`, `self`, `top`, `frames`,
-        `global`) may not resolve — but where *name* is a global the program itself defines rather than
-        a specification intrinsic, its establishing write was made through this same alias and so
-        already resolved it on every path that reaches this read, which is exactly the case the property
-        check admits by finding a binding.
+        a base the language mandates in every host (`globalThis`) or one the pinned host defines never
+        throws (`SemanticModel.read_may_throw`). A host-conditional alias (`window`, `self`, `top`,
+        `frames`, `global`) may not resolve on its own — but where *name* is a global the program itself
+        defines, an establishing write made through this same alias spelling reads the base before
+        assigning, so its having run (which the definite-assignment proof requires) proves the base
+        resolved on every path reaching this read. A write through a *second* alias, or a bare
+        assignment naming no alias, establishes *name* without resolving this base, so the read is kept
+        unless the host defines the base outright; this is the cross-alias hole the resolution fact
+        closes.
         """
         binding = self.model.lookup(name, self.model.scope_of(member))
         if binding is None:
             if name not in GUARANTEED_GLOBALS:
                 return False
             return not self.model.read_may_throw(base)
-        return self.assignment.definitely_assigned_at(binding, member)
+        if not self.assignment.definitely_assigned_at(binding, member):
+            return False
+        return self._collapse_base_resolves(binding, base)
+
+    def _collapse_base_resolves(self, binding: Binding, base: JsIdentifier) -> bool:
+        """
+        Whether reading *base* is certain not to throw where one of *binding*'s accesses is collapsed to
+        a bare name. The base resolves when the host defines it, or when every write establishing the
+        global goes through this same alias spelling: such a write reads the base before it assigns, so
+        the write the definite-assignment proof relies on having run proves the base resolved, and no
+        path reaches the collapse without such a write. A write through another alias or a bare
+        assignment resolves nothing about this base, so its presence leaves the base unproven.
+        """
+        if not self.model.read_may_throw(base):
+            return True
+        writes = (*binding.writes, *binding.indefinite_writes)
+        return bool(writes) and all(
+            isinstance(write, JsMemberExpression)
+            and isinstance(write_base := strip_parens(write.object), JsIdentifier)
+            and write_base.name == base.name
+            for write in writes
+        )
 
     def _names_a_global(self, member: JsMemberExpression) -> str | None:
         """
