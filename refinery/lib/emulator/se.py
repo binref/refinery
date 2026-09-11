@@ -19,9 +19,9 @@ from refinery.lib.shared.speakeasy import speakeasy as se
 from refinery.lib.vfs import VirtualFileSystem
 
 if TYPE_CHECKING:
-    from speakeasy.speakeasy import Speakeasy as Se
     from speakeasy.common import Hook as SeHook
     from speakeasy.memmgr import MemMap
+    from speakeasy.speakeasy import Speakeasy as Se
 else:
     class Se:
         pass
