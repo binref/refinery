@@ -59,19 +59,28 @@ from refinery.lib.scripts.js.strict import collect_strict_violations
 _POISON_PILL_PROPERTIES = frozenset({'caller', 'callee', 'arguments'})
 
 
-def diverges_under_strict(parsed: JsScript, model: SemanticModel) -> bool:
+def diverges_under_strict(
+    parsed: JsScript,
+    model: SemanticModel,
+    site_resolved: frozenset[str] = frozenset(),
+) -> bool:
     """
     Whether the reflected body *parsed* — global sloppy code — would behave differently if it ran in strict
     mode, so that inlining it into a strict context would change meaning. *model* is a `SemanticModel` built
     over *parsed*. Reports divergence conservatively: any construct not provably mode-invariant declines. The
     reflection caller must have already rewritten the payload's own receiver `this` to `globalThis` (R2 sees
     only nested-function `this`).
+
+    *site_resolved* names the identifiers a pack substitution resolved to a binding defined at the call
+    site — a getter or setter target — so that they are references to a real binding there rather than
+    free names. R3 excludes them: a write to such a name targets the site binding and creates no
+    implicit global, so it does not diverge, though every other free-name write still does.
     """
     return (
         bool(collect_strict_violations(parsed, strict=True))
         or _has_direct_eval(parsed)
         or _references_this(parsed)
-        or _writes_free_name(parsed, model)
+        or _writes_free_name(parsed, model, site_resolved)
         or _writes_unsafe_member(parsed)
         or _has_block_function(parsed)
         or _has_mapped_arguments(parsed)
@@ -97,17 +106,23 @@ def _references_this(parsed: JsScript) -> bool:
     return any(isinstance(node, JsThisExpression) for node in parsed.walk())
 
 
-def _writes_free_name(parsed: JsScript, model: SemanticModel) -> bool:
+def _writes_free_name(parsed: JsScript, model: SemanticModel, site_resolved: frozenset[str]) -> bool:
     """
     R3 — whether the body assigns to a name that binds to no local declaration. Under sloppy such a write
     creates a global; under strict it throws a `ReferenceError` (or a `TypeError` for a read-only global
     such as `undefined`). A bare read of a free name throws in both modes and does not diverge, so only
     write and read-write references count.
+
+    A name in *site_resolved* is one a pack substitution rewrote to a getter/setter target defined at the
+    call site, so it resolves to a real binding there and its write creates no implicit global; it is free
+    only in *model*, which is built over the payload alone, and is skipped here for that reason.
     """
     for node in parsed.walk():
         if not isinstance(node, JsIdentifier) or not model.is_reference(node):
             continue
         if reference_role(node) is Role.READ:
+            continue
+        if node.name in site_resolved:
             continue
         binding = model.resolve(node)
         if binding is None or binding.kind is BindingKind.IMPLICIT_GLOBAL:

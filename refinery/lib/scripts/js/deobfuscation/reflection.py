@@ -614,7 +614,7 @@ def _try_unpack_function_constructor(
     getters, setters = mapping
     parsed = _try_parse(
         code,
-        strict=strict_mode_at(node),
+        strict=strict_mode_at(node) or module,
         module=module,
         context=code_context_at(node),
     )
@@ -1305,6 +1305,26 @@ class JsReflectionInlining(ScriptLevelTransformer):
             return None
         return value, binding
 
+    def _destination_may_be_strict(self, site: Node, root: JsScript) -> bool:
+        """
+        Whether the destination of an inline could run the spliced text in strict mode. A
+        syntactically strict site is strict; and the module execution model is strictness-ambiguous —
+        `DeobfuscationOptions.module` covers a strict ES module and a sloppy CommonJS file alike, and
+        nothing here tells the two apart — so a module destination is treated as possibly strict.
+
+        This is the one mode the reflected text must be legal and mode-invariant in, because inlining
+        must be sound for the strict reading too: a sloppy-only body spliced into what turns out to be
+        an ES module is a `SyntaxError` that takes the whole file down, or behaves differently, where
+        the call it replaced merely raised one the site caught. The sloppy reading only ever inlines a
+        strict subset of what this admits, so declining here costs a CommonJS-only recall and never a
+        soundness. This is why it is asked at every reflection strictness gate rather than left to
+        `strict_mode_at`, whose pure-tree answer is blind to the module option, and why the
+        complementary sloppy-conservative gates — a mapped `arguments` object, a rest unpacking — read
+        `strict_mode_at` alone: their soundness runs the other way, so they must assume the sloppy
+        CommonJS reading, not the strict one.
+        """
+        return strict_mode_at(site) or runs_as_module(self.options, root)
+
     def _resolve_reflected_body(
         self,
         code: str,
@@ -1327,7 +1347,7 @@ class JsReflectionInlining(ScriptLevelTransformer):
             return None
         parsed = _try_parse(
             code,
-            strict=strict_mode_at(site),
+            strict=self._destination_may_be_strict(site, root),
             module=runs_as_module(self.options, root),
             context=code_context_at(site) if destination is None else destination,
         )
@@ -1382,7 +1402,9 @@ class JsReflectionInlining(ScriptLevelTransformer):
         if scope is not ReflectedScope.FUNCTION_CONSTRUCTOR and _has_top_level_return(parsed.body):
             return None
         body_model = build_semantic_model(parsed)
-        if resolves_globally and site_is_strict and diverges_under_strict(parsed, body_model):
+        if resolves_globally and self._destination_may_be_strict(site, root) and diverges_under_strict(
+            parsed, body_model, site_resolved,
+        ):
             return None
         free = _body_free_names(body_model, parsed)
         if resolves_globally and 'arguments' in free:
@@ -1452,13 +1474,13 @@ class JsReflectionInlining(ScriptLevelTransformer):
         reference. A `var` or function persists: under indirect eval it becomes a global-object
         property, reproducible only at top-level script scope and never under the module model; under
         direct eval it lands in the caller's variable scope, but never under a strict direct eval,
-        whose `var` stays local to the eval. A module runs strict throughout, so a direct eval under
-        the module model is one of those strict evals however its own site is spelled: the mode is the
-        file's and not the tree's, which is why the module model is asked here and not left to
-        `strict_mode_at`. Such a declaration hoists to the head of its variable
-        scope, so it is inlined only when the eval site strictly dominates every reference to the name
-        already there — one that runs before it or shares its statement, or reads the name through a
-        closure, would be rebound.
+        whose `var` stays local to the eval. The module execution model could be a strict ES module,
+        where the `var` is ephemeral, so `_destination_may_be_strict` treats a module direct eval as
+        possibly strict and declines the inline; the sloppy CommonJS reading would leak the `var` and
+        keep the inline, but declining is sound for both. Such a declaration hoists to the head of its
+        variable scope, so it is inlined only when the eval site strictly dominates every reference to
+        the name already there — one that runs before it or shares its statement, or reads the name
+        through a closure, would be rebound.
         """
         root = root_model.root
         bindings = body_model.root_scope.bindings
@@ -1471,11 +1493,7 @@ class JsReflectionInlining(ScriptLevelTransformer):
         if scope is ReflectedScope.GLOBAL_EVAL:
             if runs_as_module(self.options, root) or not at_global_scope:
                 return False
-        elif (
-            runs_as_module(self.options, root)
-            or strict_mode_at(site)
-            or declares_use_strict(body_model.root)
-        ):
+        elif self._destination_may_be_strict(site, root) or declares_use_strict(body_model.root):
             return False
         var_scope = site_scope.var_scope
         if var_scope is None:

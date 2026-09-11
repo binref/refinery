@@ -321,6 +321,19 @@ class TestReflectionInlining(TestJsDeobfuscator):
         source = "eval('var x = 1;');\nconsole.log(typeof x);"
         self.assertEqual(source, self._reflect_module(source))
 
+    def test_module_direct_eval_strict_only_syntax_not_inlined(self):
+        """
+        A module runs strict throughout, so a direct eval in it parses its text as strict code, where a
+        `with` statement, a legacy octal literal, and a `delete` of a bare name are each a SyntaxError
+        the eval call throws at runtime. Splicing such a body into the module would make the whole file
+        unparseable instead — a throw the eval site caught becoming one the file cannot survive — so the
+        call is left standing whichever strict-only form the body takes.
+        """
+        for body in ('with ({}) { g(); }', '010;', 'delete x;'):
+            with self.subTest(body=body):
+                source = F"eval('{body}');"
+                self.assertEqual(source, self._reflect_module(source))
+
     def test_module_indirect_eval_expression_still_inlined(self):
         self.assertEqual('foo();', self._reflect_module("(0, eval)('foo();');"))
 
