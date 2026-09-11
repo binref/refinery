@@ -33,9 +33,9 @@ class TestPs1FoldCensus(unittest.TestCase):
     """
     Which folds the deobfuscator takes over the whole corpus, held against a recorded baseline.
 
-    This is the instrument that makes *losing* a fold visible. A change that refuses more than it
-    used to still passes every test that asserts an answer is correct, because a refusal is not a
-    wrong answer — it only stops being an answer. Here it is a key that went missing.
+    A change that refuses more than it used to still passes every test that asserts an answer is
+    correct, because a refusal is not a wrong answer — it only stops being an answer. Here it is a
+    key that went missing.
     """
 
     def test_every_fold_the_corpus_takes_is_the_one_recorded(self):
@@ -43,10 +43,9 @@ class TestPs1FoldCensus(unittest.TestCase):
 
     def test_a_neutered_pass_is_seen_by_the_census(self):
         """
-        The census can only be trusted to catch a lost fold if a lost fold moves it. Each folding
-        pass is disabled in turn and the census re-taken; what the pass was contributing is the
-        difference, and the rows themselves are pinned, so that a pass which drops one fold and
-        picks up another has to say which.
+        The census can only be trusted to catch a lost fold if a lost fold moves it. The rows
+        themselves are pinned, so that a pass which drops one fold and picks up another has to say
+        which.
         """
         baseline = census()
         for transformer in _folds:

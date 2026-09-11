@@ -6,9 +6,9 @@ this records why. A row is `lost` for a pass when neutering that pass stops the 
 at all, and `changed` when the row is still rewritten but to something else. A row can be lost for
 more than one pass, because the two may each be necessary.
 
-The rows are held rather than counted, which is the whole point of the shape: a count moves when a
-fold is lost and moves back when an unrelated one is gained, so a pass that swaps what it
-contributes reads as no change. Here each row is named, and a swap is a diff.
+The rows are held rather than counted: a count moves when a fold is lost and moves back when an
+unrelated one is gained, so a pass that swaps what it contributes reads as no change. Here each row
+is named, and a swap is a diff.
 
 A pass with two empty buckets contributes nothing to the corpus. That is a fact about the corpus and
 not about the pass — it holds no flattened control flow, and no expandable string that survives

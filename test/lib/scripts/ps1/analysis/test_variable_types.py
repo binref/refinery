@@ -30,7 +30,7 @@ class TestPs1TypeAt(TestBase):
     """
     What .NET type a variable carries at one read of it, expressed as the name PowerShell reports
     for that type. Reads are addressed by their position in the source rather than by name, since
-    the whole point is that two reads of one name can answer differently.
+    two reads of one name can answer differently.
     """
 
     def _type_at(self, source: str, read: int = -1, name: str = 'q') -> str | None:

@@ -59,10 +59,6 @@ def _write_output(value: Expression) -> Ps1CommandInvocation:
 class TestPs1Synthesizer(TestBase):
 
     def _round_trip(self, source: str):
-        """
-        Parse source, synthesize back, re-parse, synthesize again.
-        The two synthesized forms must be identical.
-        """
         synth = Ps1Synthesizer()
         ast1 = Ps1Parser(source).parse()
         out1 = synth.convert(ast1)
@@ -362,9 +358,8 @@ class TestPs1Synthesizer(TestBase):
                 self.assertEqual(Ps1Synthesizer().convert(Ps1Parser(source).parse()), source)
 
     def test_a_shape_the_language_cannot_write_is_refused(self):
-        # A comma operator with nothing to build an array out of has no spelling. Printing the
-        # empty array literal the parser used to build emitted nothing at all, which deleted the
-        # assignment's value in silence.
+        # A comma operator with nothing to build an array out of has no spelling, and an
+        # empty-element array literal cannot be printed at all.
         self.assertEqual(
             Ps1Synthesizer().convert(Ps1Parser('$x = ,').parse()), '$x = ,')
         self.assertRaises(

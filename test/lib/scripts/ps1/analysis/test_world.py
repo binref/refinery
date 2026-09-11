@@ -184,8 +184,8 @@ class TestPs1ShadowedCommands(Ps1TypeWorldTest):
 
     def test_a_redefinition_binding_a_visible_block_does_not_open_the_world(self):
         # `${function:X} = { ... }` is `function X { ... }` in the other spelling, and the block
-        # stands in the tree either way. Opening on it killed every member grant in the script over
-        # a name the shadow set already distrusts.
+        # stands in the tree either way, so it must not open the world over a name the shadow set
+        # already covers.
         for source in (
             '${function:Get-Date} = { 1 }',
             '${function:Get-Date} = ({ 1 })',

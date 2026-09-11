@@ -79,7 +79,6 @@ class TestPs1SemanticModel(TestBase):
         self.assertFalse(binding.is_dead)
 
     def test_qualified_read_keeps_binding_live(self):
-        # A $script:x read resolves to the script-scope binding and keeps it live.
         _, binding = self._script_binding(
             "$x = 'keepme'\nfunction f { Write-Host $script:x }\nf", 'x')
         assert binding is not None
@@ -125,7 +124,6 @@ class TestPs1SemanticModel(TestBase):
         self.assertIn('x', model.reads_in_scope(value, model.script_scope))
 
     def test_reads_in_scope_ignores_write_only_scriptblock(self):
-        # A scriptblock that only assigns (write-local) is not a read of the outer variable.
         ast = Ps1Parser("$inner = 1\n$cb = { $inner = 99 }").parse()
         model = build_semantic_model(ast)
         value = self._assignment_value(ast, 'cb')
@@ -230,8 +228,7 @@ class TestPs1OccurrenceRoles(TestBase):
     """
     What each occurrence of a name does to the value it holds, and the two questions that are not
     the role: whether a value may be installed in its place, and whether it brings the binding into
-    existence. Every transform used to assemble its own answer from a handful of positional
-    predicates, and `[ref]$n` came out a plain read in all of them at once.
+    existence.
     """
 
     @staticmethod
@@ -429,8 +426,8 @@ class TestPs1NamedReferenceAttribution(TestBase):
     """
     Where a name addressed as a string lands in the model. A recognizer that identifies
     `Set-Variable x` while the model files the reference on the wrong binding — or on none — reads
-    as working and corrupts exactly as before, so these assert the binding, its scope and its
-    occurrence counts rather than the recognizer's own answer.
+    as working, so these assert the binding, its scope and its occurrence counts rather than the
+    recognizer's own answer.
     """
 
     @staticmethod
@@ -729,8 +726,7 @@ class TestPs1AChainOfAliasesCostsAboutWhatItsLengthCosts(TestBase):
     the square of the length passes.
 
     The reversals are what the chain is written around: a chain carrying none of them, or one, is
-    answered a different way than a chain carrying two, and it was the second one that used to turn
-    the cost of the whole build superlinear.
+    answered a different way than a chain carrying two.
     """
 
     _SHORT = 100

@@ -38,8 +38,6 @@ class TestPs1ControlFlowDeflattening(TestPs1):
         self.assertLess(b_idx, c_idx)
 
     def test_statements_between_init_and_loop_preserved(self):
-        # `$keep = Get-Stuff` sits between the state init and the dispatcher loop and must survive
-        # deflattening.
         code = cleandoc("""
             $s = 0
             $keep = Get-Stuff
@@ -58,8 +56,6 @@ class TestPs1ControlFlowDeflattening(TestPs1):
         """))
 
     def test_data_variable_not_dropped_as_internal(self):
-        # `$key = 42` is read by emitted code, so it is real data, not a dispatch artifact, and
-        # must not be suppressed.
         code = cleandoc("""
             $s = 0
             while ($s -NE -1) {

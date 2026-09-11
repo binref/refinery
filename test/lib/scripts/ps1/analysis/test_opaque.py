@@ -60,8 +60,8 @@ class TestPs1UnreadableCode(TestBase):
     def test_a_relative_path_command_is_not_a_dot_invocation(self):
         """
         The dot of `.\\tool.exe` opens a path and the program runs in a scope of its own; only a dot
-        standing apart from its target dot-sources. Reading the two as one turns every relative-path
-        call in a script into a kill nothing performs.
+        standing apart from its target dot-sources. Conflating the two would mark every
+        relative-path call as an unattributable write it does not make.
         """
         for source in (r'.\tool.exe', r'./tool.exe', r'.\sub\stage.ps1 -Foo bar'):
             with self.subTest(source):
@@ -125,8 +125,7 @@ class TestPs1UnreadableCode(TestBase):
 class TestPs1UnattributableWriteSources(TestBase):
     """
     The two ways a script writes a name nothing can attribute are one question to a consumer: a
-    computed name, and code this analysis never sees. Asking them separately is what let a consumer
-    handle one and silently fold across the other.
+    computed name, and code this analysis never sees.
     """
 
     def test_a_computed_name_is_an_unattributable_write(self):

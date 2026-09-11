@@ -1376,9 +1376,9 @@ class TestPs1EmitSafety(Ps1EffectsTest):
                 self.assertFalse(pruning_erases_body(node, survivors))
 
     def test_the_erasure_guard_reads_only_the_sequence_it_is_given(self):
-        # The contract that used to be broken: a caller holds statements hoisted out of a block it
-        # just pruned, whose `parent` still points at the block they came from, and statements that
-        # are not parented into any body yet. The verdict has to be the same either way.
+        # A caller may hold statements hoisted out of a block it just pruned, whose `parent` still
+        # points at the block they came from, or statements not parented into any body yet. The
+        # verdict has to be the same either way.
         for source in (
             'function f { Write-Host hi; 42 }',
             'function f { function g { Write-Host hi } }',

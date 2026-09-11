@@ -675,10 +675,10 @@ class TestPs1DeadCodeEliminationDoesNotCarryStatementsIntoAResumingBlock(TestPs1
     Resolving the `if` into the statements it holds would put them at the level the handler resumes
     into, so the raise would then resume at `tail` and the output would write a line the input never
     writes — a semantics defect, the deobfuscated script running code the original does not.
-    `Ps1RemovalPlan._vetoed` refuses a replacement that carries a handler *out* of its block, and now
-    refuses one spliced *into* a body a resuming trap guards where a spliced statement other than the
-    last can raise. The `switch` fold splices its matched arm the same way and is refused the same
-    way, and so are the `for` and `try` folds — the two constructs the graph keys to no node of their
+    `Ps1RemovalPlan._vetoed` refuses a replacement that carries a handler *out* of its block, and one
+    spliced *into* a body a resuming trap guards where a spliced statement other than the last can
+    raise. The `switch` fold splices its matched arm the same way and is refused the same way, and so
+    are the `for` and `try` folds — the two constructs the graph keys to no node of their
     own, where the guard is read off a point inside them instead. A `trap { break }` re-raises and
     draws no resumption edge, so the identical construct under one is still resolved.
     """

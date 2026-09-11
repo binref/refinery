@@ -78,8 +78,8 @@ class TestPs1VariableFlow(TestBase):
 
     def test_a_write_in_a_branch_leaves_the_read_after_it_with_no_single_write(self):
         """
-        The reproduction the two-table split produced: the pass this replaces kept `'a'` here while
-        correctly refusing the identical shape with a non-constant value. Both must refuse.
+        A write on a branch leaves the read after it unanswered, whether or not the write is
+        constant; both shapes here must refuse.
         """
         self.assertIsNone(self._observed("$x = 'a'; if ($c) { $x = 'b' }; Write-Host $x"))
         self.assertIsNone(self._observed("$x = 'a'; if ($c) { $x = $y }; Write-Host $x"))

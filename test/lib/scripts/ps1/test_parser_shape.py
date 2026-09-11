@@ -538,17 +538,15 @@ class TestPs1ParseShape(TestBase):
     Three places where our node model spells 5.1's tree differently, and where the outline therefore
     reads differently from a transcript of that tree:
 
-    - A command argument is a `refinery.lib.scripts.ps1.model.Ps1CommandArgument` wrapper around its
-      value, where 5.1 lists the value directly under its `CommandAst`; a `-Name` parameter, which
-      5.1 spells as a `CommandParameterAst`, is such a wrapper of switch kind and carries no value.
-    - A statement holding an expression is a
-      `refinery.lib.scripts.ps1.model.Ps1ExpressionStatement`, where 5.1 wraps in a `PipelineAst`
-      with one `CommandExpressionAst`; a pipe makes the wrapper explicit as a
-      `refinery.lib.scripts.ps1.model.Ps1Pipeline` of
-      `refinery.lib.scripts.ps1.model.Ps1PipelineElement` nodes, one per element.
+    - A command argument is a `Ps1CommandArgument` wrapper around its value, where 5.1 lists the
+      value directly under its `CommandAst`; a `-Name` parameter, which 5.1 spells as a
+      `CommandParameterAst`, is such a wrapper of switch kind and carries no value.
+    - A statement holding an expression is a `Ps1ExpressionStatement`, where 5.1 wraps in a
+      `PipelineAst` with one `CommandExpressionAst`; a pipe makes the wrapper explicit as a
+      `Ps1Pipeline` of `Ps1PipelineElement` nodes, one per element.
     - 5.1 discards a `<` operator together with the word after it. We keep that word under a
-      `refinery.lib.scripts.ps1.model.Ps1InputRedirection`, which performs no transfer, so the
-      fragment an analyst reads back still spells what was written.
+      `Ps1InputRedirection`, which performs no transfer, so the fragment an analyst reads back still
+      spells what was written.
     """
 
     def test_parse_shape_matches_windows_powershell(self):

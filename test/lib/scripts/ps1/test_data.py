@@ -214,8 +214,8 @@ class TestPs1MetadataReader(unittest.TestCase):
 
     def test_command_output_types_are_none_when_undeclared(self):
         # Out-Null and Write-Host emit (or suppress) without an [OutputType] attribute, so their
-        # output_types list is empty by absence, not by promise; reading that as "emits nothing"
-        # is the fail-open shape the declared flag exists to prevent. An unknown command is None too.
+        # output_types is None by absence, not a promise of "emits nothing". An unknown command is
+        # None too.
         self.assertIsNone(data.command_output_types('Out-Null'))
         self.assertIsNone(data.command_output_types('Write-Host'))
         self.assertIsNone(data.command_output_types('Definitely-NotACommand'))
@@ -309,9 +309,7 @@ class TestPs1MetadataViews(unittest.TestCase):
 class TestPs1TypeIdentity(unittest.TestCase):
     """
     `is_type` decides whether two names denote one type, and every gate that acts on a specific type
-    rests on it. It used to compare one lowercased name against another as text, so it recognised
-    only the spellings it happened to be written against; an array suffix it could not express at
-    all, and `[Byte[]]` therefore answered `False` against every spelling of itself.
+    rests on it.
     """
 
     def test_an_accelerator_and_the_full_name_are_one_type(self):

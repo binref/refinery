@@ -471,9 +471,7 @@ class TestPs1OperatorOutcomeSingleType(unittest.TestCase):
     def test_single_type_is_none_when_the_cell_may_be_null(self):
         """
         Asked of a constructed outcome rather than of a cell, because no cell of either grid now
-        carries one type beside a `$null`. The one that did was `@() + @()`, and it read that way
-        only while an empty collection was reaching the capture as `$null`; with the witness built
-        so that it arrives as a collection, appending two of them is an `Object[]` and nothing else.
+        carries one type beside a `$null`.
         """
         collection = data.resolve_type('System.Object[]')
         self.assertIsNotNone(collection)
@@ -555,10 +553,6 @@ class TestPs1OperatorOutcomeUndefined(unittest.TestCase):
         beside it, and neither grid holds a cell of it, so a predicate that dropped the clause
         answers exactly as the shipped one does. The census is pinned whole rather than that one
         shape counted, so a regeneration producing the shape is read here first.
-
-        Four shapes are populated where six were. The two that went are the ones carrying a `$null`
-        beside a type, and they were the collection row reporting what `$null` does: an empty
-        collection reached the capture as `$null` until the witness was built to survive.
         """
         self.assertEqual(
             Counter(
@@ -671,9 +665,8 @@ class TestPs1OperatorGridLaws(unittest.TestCase):
 
     def test_the_bitwise_operators_are_not_commutative_over_null(self):
         """
-        Only over `$null`, and only for the three widths that keep their own. A collection used to
-        be here beside it, in the same three pairs, and it was `$null` being read as one: a bitwise
-        operator throws for a collection whichever side it stands on, which is symmetric.
+        Only over `$null`, and only for the three widths that keep their own type. A bitwise operator
+        throws for a collection whichever side it stands on, so a collection is symmetric.
         """
         expected = [
             ('System.UInt32', 'System.Void'),

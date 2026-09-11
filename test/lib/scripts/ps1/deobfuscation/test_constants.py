@@ -503,7 +503,7 @@ class TestPs1ReassignedVariableInlining(TestPs1):
 
 class TestPs1ConstantInliningAcrossControlFlow(TestPs1):
     """
-    Scripts this pass used to change the meaning of, each asserted as exact output against the pass
+    Scripts whose meaning this pass can change, each asserted as exact output against the pass
     alone. The full pipeline is the wrong instrument for them: it removes the dead branch of the
     first and unrolls the loop of the last, so a corruption this pass commits is repaired by another
     one and the test attributes the fix to the wrong place.
@@ -514,7 +514,7 @@ class TestPs1ConstantInliningAcrossControlFlow(TestPs1):
     def test_a_write_in_a_branch_is_not_ignored_because_its_value_is_constant(self):
         """
         `if ($c) { $x = 'b' }` and `if ($c) { $x = $y }` are the same statement in the same position,
-        and the pass this replaces folded the first to `'a'` while correctly refusing the second.
+        differing only in whether the branch write is constant, which is no reason to fold it.
         """
         self.assertEqual(
             self._apply("$x = 'a'; if ($c) { $x = 'b' }; Write-Host $x", Ps1ConstantInlining),
@@ -781,8 +781,7 @@ class TestPs1ConstantInliningAcrossAStoreItCannotSee(TestPs1):
 class TestPs1ConstantInliningAroundUnreachableCode(TestPs1):
     """
     Code no path reaches orders nothing, in either direction: it neither blocks a fold between two
-    statements that do run, nor lets a value into a region that never runs. Obfuscated scripts carry
-    a great deal of it, so both directions are the ordinary case rather than the exotic one.
+    statements that do run, nor lets a value into a region that never runs.
     """
 
     def test_a_dead_tail_does_not_block_the_fold_at_the_statement_after_it(self):

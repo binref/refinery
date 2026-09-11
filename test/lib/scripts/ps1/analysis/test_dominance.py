@@ -20,9 +20,8 @@ def _immediate_dominators_from_sets(
     iterated to a fixpoint, and its immediate dominator is the one of its strict dominators that has
     the most dominators of its own.
 
-    Held apart from the module under test as a second opinion, not a copy of it. The set formulation
-    says nothing about the order predecessors are folded in, which is what the module chooses and
-    what a reader has to take on trust.
+    Held apart from the module under test as a second opinion: the set formulation says nothing about
+    the order predecessors are folded in, so it cannot share an ordering bug with the module.
     """
     reachable = {id(node) for node in order}
     everything = frozenset(reachable)

@@ -42,9 +42,9 @@ class TestPs1TheFunctionDriveObservesADefinition(TestPs1):
     `$function:K` reads the function table through the variable namespace and reports the body bound
     to the name, so a script reading it sees a definition removed from under it.
     `Ps1CommandModel.function_drive_reads` collects that read and the inert-definition removal keeps
-    the group whole where it names a defined function, the mirror for this drive of what
-    `reads_command_success` does for `$?`; the provider-path spelling reaches the same fact through
-    `touches_identity_provider`, which opens the whole world rather than naming the one function.
+    the group whole where it names a defined function; the provider-path spelling reaches the same
+    fact through `touches_identity_provider`, which opens the whole world rather than naming the one
+    function.
     """
 
     def test_a_definition_a_function_drive_read_reports_on_is_kept(self):
@@ -326,9 +326,8 @@ class TestPs1ALeakAboveADefinitionCanRebindTheNameItBinds(TestPs1):
     Code the analysis cannot read may bind an alias for a name this script defines as a function,
     and an alias beats a function whichever of the two was bound first. A leak standing *above* the
     definition is therefore as much a reason to keep the pair as one standing between the definition
-    and its call, which is what separates a flood forward from every opener from a walk of what
-    stands between two statements. All three orderings are written out because only the middle one
-    is caught by asking what stands between.
+    and its call. All three orderings are written out because only the middle one is caught by asking
+    what stands between.
     """
 
     def test_a_definition_and_its_call_below_a_leak_are_kept(self):
@@ -492,7 +491,7 @@ class TestPs1ANoiseBarewordIsKeptWhereTheRecordItLeavesIsRead(TestPs1):
     kept anyway. What it does not reach is a payload nothing decodes, which is
     `TestPs1ANoiseBarewordIsDroppedAboveAPayloadTheWalkCannotRead` below.
 
-    **The `expectedFailure` row below is that defect, and scanning text is not what would fix it.**
+    The `expectedFailure` row below is that defect, and scanning text is not what would fix it.
     The drop is decided in the `fold` group and `Invoke-Expression` is inlined in `finalize`, so the
     question is asked while the read is still a string held in a variable. A scan reaches the
     spellings that survive as one literal and misses every one cut between two of them; measured, a
@@ -506,13 +505,11 @@ class TestPs1ANoiseBarewordIsKeptWhereTheRecordItLeavesIsRead(TestPs1):
     family: `refinery.lib.scripts.ps1.deobfuscation.deadcode._is_injected_noise_bareword` says as
     much about `$Error` itself, naming `refinery.lib.scripts.ps1.deobfuscation.removal.Ps1RemovalPlan`
     as where the general answer belongs. Every other statement remover in the package asks its own
-    absence question, and whether any of them is asked too early is unmeasured. Scheduling the drop
-    after `finalize` was measured to fix the two-string row below at no cost to the sample, and was
-    not taken because the family question outranks the one member.
+    absence question, and whether any of them is asked too early is unmeasured.
 
     A read spelled through the cmdlet that names the variable — `$v = Get-Variable Error` — is a
-    separate recall gap and is closed: `reads_the_error_record` now reads the name a command
-    addresses as a string, so a spelling that stores the result first is a read all the same.
+    read too: `reads_the_error_record` reads the name a command addresses as a string, so a spelling
+    that stores the result first is a read all the same.
     """
 
     def test_a_noise_bareword_is_kept_where_the_script_reads_the_error_list(self):
@@ -582,9 +579,6 @@ class TestPs1ANoiseBarewordIsKeptWhereTheRecordItLeavesIsRead(TestPs1):
         """)
 
     def test_a_noise_bareword_is_kept_where_the_read_is_built_out_of_characters(self):
-        # `read` pins a `[char[]]` cast over a literal, so `-join` folds the whole name to one
-        # string literal in the fold group — before the drop is decided — where the text scan
-        # reaches it. A payload cut across variables is not folded that early; the row below is.
         self._assertDeobfuscatesTo("""
             try {
               zzqq0 =5
@@ -704,9 +698,9 @@ class TestPs1ANoiseBarewordIsAnsweredWhereItStands(TestPs1):
 class TestPs1ANoiseBarewordIsDroppedAboveAPayloadTheWalkCannotRead(TestPs1):
     """
     A payload this cannot decode is not evidence that the statements above it do anything, so the
-    guess is made over them and the leak below is not a reason to refuse. Refusing on the presence
-    of a leak is the whole-run verdict these removals exist to replace, and it takes the whole
-    increment with it: on the motivating sample every noise bareword stands above one.
+    guess is made over them and the leak below is not a reason to refuse. Refusing on its mere
+    presence would veto every noise-bareword removal below one, and on the motivating sample every
+    noise bareword stands above one.
 
     What it costs is unobservable only where the payload really is opaque. Measured on 5.1,
     `$Error.Clear(); try { zzqq0 =5 } catch {}; Write-Host $Error.Count` writes 1 where the same
@@ -755,11 +749,10 @@ class TestPs1AProgramOnThePathIsSpelledLikeANoiseBareword(TestPs1):
     and both have to survive.
 
     `test_deadcode.TestPs1NoiseBarewordSpellings` asks the same of a closed-world script, where the
-    trust gate grants and the marker answers alone. These are the leaking half, which is the
-    population an obfuscated script is actually drawn from, and where the marker now answers alone
-    as well: the trust gate is asked at the position, and a bareword written above the leak is one
-    it grants. Both rows here survive on their argument lists, so the row below carries the shape
-    that has only the marker left between it and deletion.
+    trust gate grants and the marker answers alone. These are the open-world counterpart, and the
+    marker answers alone here too: the trust gate is asked at the position, and a bareword written
+    above the leak is one it grants. Both rows here survive on their argument lists, so the row below
+    carries the shape that has only the marker left between it and deletion.
     """
 
     def test_a_downloader_whose_arguments_carry_no_marker_is_kept_beside_a_leak(self):

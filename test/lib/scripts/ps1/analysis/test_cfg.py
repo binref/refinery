@@ -1072,10 +1072,9 @@ class TestPs1TrapResumptionIsCarriedForwardAsWellAsThroughTheHub(_Ps1ControlFlow
 
     def test_a_forward_flood_refuses_a_source_belonging_to_another_body(self):
         """
-        The precondition, made a refusal rather than a comment. Both facts the walk reads are
-        recorded per graph, so a node of another body reads as neither a hub nor hub-bound and the
-        walk takes the precise route over what this graph calls plain flow — the fail-open direction,
-        and one no caller could see going wrong.
+        The precondition made a refusal rather than a comment. Hub and hub-bound are recorded per
+        graph, so a node of another body reads as neither and would slip onto the plain-flow route;
+        the walk raises instead.
         """
         tree = Ps1Parser("trap { continue }\nfunction f { 'in' }\n'out'").parse()
         graphs = build_ps1_control_flow(tree)
@@ -1088,10 +1087,9 @@ class TestPs1TrapResumptionIsCarriedForwardAsWellAsThroughTheHub(_Ps1ControlFlow
 
     def test_a_resumption_edge_is_taken_on_a_throw_and_carries_no_error(self):
         """
-        The two bits `is_exceptional` used to conflate, told apart. The handler swallowed the error,
-        so nothing travels a resumption edge and `faults` must not read one as a route an error
-        took; the statement it leaves is nonetheless the one that did not finish, so `dataflow` must
-        not read a store it makes as done.
+        The handler swallowed the error, so nothing travels a resumption edge and `faults` must not
+        read one as a route an error took; the statement it leaves is nonetheless the one that did
+        not finish, so `dataflow` must not read a store it makes as done.
         """
         tree, graph = self._tree_and_graph("trap { continue }\n'one'\n'two'")
         one = self._required_node(graph, tree.body[1])

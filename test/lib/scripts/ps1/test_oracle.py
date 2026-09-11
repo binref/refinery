@@ -119,9 +119,8 @@ DEFECTS: dict[str, str] = {
 #: a record nothing here reads, so a raise whose only effect is that record, or an inert handler that
 #: merely suppressed one, is removed without changing the artifact. So a divergence here is the
 #: documented behaviour of that default and not a bug, which is why it is held apart from
-#: `BEHAVIOUR_DEFECTS` the way the parser's `DIVERGENCES` are held apart from its `DEFECTS`. Both
-#: tables are checked against the measured set in both directions, so a divergence that stops
-#: happening and a new one that starts both fail.
+#: `BEHAVIOUR_DEFECTS`. Both tables are checked against the measured set in both directions, so a
+#: divergence that stops happening and a new one that starts both fail.
 BEHAVIOUR_DIVERGENCES: dict[str, str] = {
     "try { zzq0000=5; 'tail' } catch {}; 'next'":
         'Nothing is carried out of the `try` any more: the drop claims the bareword raised, and a '
@@ -152,8 +151,8 @@ BEHAVIOUR_DIVERGENCES: dict[str, str] = {
 }
 
 #: Snippets whose deobfuscation does not behave like the snippet. Each is a semantics defect: the
-#: tool's first promise is that its output does the same thing as its input. Each entry states what
-#: the snippet writes and what its output writes instead, so a failure can be read here.
+#: output must do the same thing as the input. Each entry states what the snippet writes and what
+#: its output writes instead, so a failure can be read here.
 #:
 #: The variable entries are each a claim of the corruption ledger as well, and a defect that ledger
 #: already carries as an `expectedFailure`. That the two agree entry for entry matters there: the
@@ -3774,30 +3773,6 @@ TYPE_TRANSCRIPTS: dict[str, tuple[str, ...]] = {
 #: with a host-free twin for each, and these share a handful of root causes: the Char erasure and
 #: the cast whose target the fold drops.
 #:
-#: The pipeline collapse is gone, and five rows went with it. A `<array> | %{ … }` fold writes the
-#: collection the pipeline builds, and what used to join a run of one-character strings into one
-#: String was standing in for `$OFS` — which is now a question
-#: `refinery.lib.scripts.ps1.analysis.separator` answers at the point the collection is coerced.
-#: What is left of that group is one row, and it is the Char erasure rather than the collapse.
-#:
-#: The three that were about how a value is *spelled* rather than what it is have all gone. A
-#: numeral standing as a member receiver and a folded numeral inlined into a command argument were
-#: the last two, and the slot that writes them is what settled both: the synthesizer asks the lexer
-#: whether the spelling it is about to write is still read as the value it holds, and brackets it
-#: where it is not. Their host-free twins in
-#: `test.lib.scripts.ps1.deobfuscation.test_value_domain` are what ratchets them now.
-#:
-#: **The throwing half of the Char erasure is closed.** `([char]65).ToUpper()`,
-#: `([char]65).Substring(0)` and `([char]65) * 3` are measured to throw on 5.1, and a fold that
-#: answered `A` or `AAA` would be a script that stopped answering — the direction that turns a
-#: triage note into a wrong one. None is an entry here and none folds anywhere now: at the top level
-#: `emulator._value_of`'s round trip declines to carry a Char across the tree boundary at all, and
-#: one level in — inside a function body the tool emulates — the interpreter carries a Char as a
-#: value apart from a String and refuses a text method or a repeat on it, where it once computed in
-#: its own currency and answered `A`. `test.lib.scripts.ps1.deobfuscation.test_emulator` is where
-#: those in-body refusals are pinned; a top-level ledger like this one cannot see them, which is why
-#: a regression test written against the bare expression proves nothing about the body.
-#:
 #: What is left of the Char erasure here is a wrong type in the interpreter, which computes with no
 #: Char: a `[char]` cast inside a body it folds reaches the tree as the one-character String the
 #: character spells. The value domain no longer shares that gap — a `[char[]]` cast is answered as
@@ -4054,12 +4029,9 @@ class _RecordingUnit:
 
 class TestPs1RewritingHappensBeforeAnyHostRuns(TestBase):
     """
-    `behaviours` runs its hosts on a thread pool and calls the rewrite from each of them, and a unit
-    is a generator rather than a function: entered from two threads at once it raises
-    `ValueError: generator already executing`, which a differential reports as a broken host rather
-    than as what it is. `rewritten_by` exists to settle every rewrite before any host starts, so the
-    property to hold is that using the lookup enters the unit no further. No host is started, so
-    this ratchets wherever the tests run.
+    `rewritten_by` settles every rewrite before any host starts (see its docstring for why that
+    matters), so the property to hold is that using the lookup enters the unit no further. No host
+    is started, so this ratchets wherever the tests run.
     """
 
     def test_every_rewrite_is_computed_before_the_lookup_is_returned(self):
@@ -4146,8 +4118,8 @@ class TestPs1WordSpellingAgreesWithWindowsPowerShell(Ps1OracleTest):
 @unittest.skipIf(windows_powershell() is None, 'Windows PowerShell is not available')
 class TestPs1DeobfuscationPreservesBehaviour(Ps1OracleTest):
     """
-    The tool's first promise is that its output runs and does the same thing as its input. Every
-    other test of that promise compares our output against our own expectation of it.
+    The output must run and do the same thing as the input. Every other test of that compares our
+    output against our own expectation of it; this one measures both on a host.
     """
 
     def test_the_output_behaves_like_the_input(self):
@@ -4324,12 +4296,9 @@ class TestPs1CommandTablesRestOnMeasuredBeliefs(Ps1OracleTest):
 
     def test_every_binding_the_table_claims_the_host_also_binds(self):
         """
-        A subset, not an equality. Every name the table records the host *binding* — an alias it
-        resolves, a cmdlet it has, a command whose type it names — the host must still bind, because
-        a binding the table claims and the host lacks is the invented one this class exists to catch.
-        The names the table records the host *not* binding are left unchecked: an installation may
-        define an alias or command beyond the clean 5.1 set the resolver models, and that surplus is
-        no fault of a table that maps the default set, so it is not required here to be absent.
+        Every binding the table claims — an alias it resolves, a cmdlet it has, a command whose type
+        it names — the host must still have; a binding the table claims and the host lacks is the
+        invented one this class exists to catch.
         """
         measured = dict(zip(corpus.TABLES, behaviours(corpus.TABLES)))
         claimed = claimed_bindings(TABLE_TRANSCRIPTS)

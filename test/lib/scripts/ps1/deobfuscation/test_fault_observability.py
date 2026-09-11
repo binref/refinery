@@ -75,8 +75,7 @@ _UNSET_READ = '[void]$zzqunset'
 _UNSET_OUTPUT = '$zzqunset'
 
 #: The same read as the head of a discarded pipeline, which is the shape an obfuscator emits and the
-#: one no `_QUIET_` constant reaches: the graphs place the head in the block's own island, so the
-#: fault question for it used to be refused for want of a position rather than answered.
+#: one no `_QUIET_` constant reaches: the graphs place the head in the block's own island.
 _UNSET_PIPELINE = '$zzqunset | ForEach-Object { [void]$_ }'
 
 #: What turns every read above into a raise, spelled as the command.
@@ -135,10 +134,6 @@ class TestPs1AStatementNestedInAGuardedTryBlock(TestPs1):
     by a statement written directly in it. A branch body, a loop body, a `switch` case body and a
     scriptblock invoked in place with `&` are all inside the block, so a raising statement in any of
     them is one the handler depends on and none of them may be deleted.
-
-    The deobfuscator used to recognize a handler only for a statement whose immediate holder was the
-    `try` block itself. One nesting level was enough to hide the handler from it, so it deleted each
-    of these and left behind a `catch` body that could no longer run.
 
     Every shape is written twice. The second of the pair puts a statement that runs to completion
     where the raising one stood: no handler can observe it, deleting it is the job, and the nesting
@@ -272,9 +267,6 @@ class TestPs1AStatementInAFunctionAGuardedTryBlockCalls(TestPs1):
     A terminating error raised in a function reaches the `catch` clause guarding the call, so a
     function body is inside the `try` block for this purpose even though it is written outside it.
 
-    The deobfuscator used to empty the function body, because the call site is what the `try` block
-    holds and the raising statement is somewhere else entirely.
-
     A statement that runs to completion in that same function body reaches no handler at all, so
     emptying the body is the right answer for it and the two differ only in the raise.
     """
@@ -374,10 +366,6 @@ class TestPs1AnInnerFinallyDoesNotShieldAnOuterCatch(TestPs1):
     enclosing `catch`, which here has a body. The raising statement is what makes that handler run
     and must survive.
 
-    The deobfuscator used to read the inner `try` as unguarded, delete the raising statement, then
-    dissolve the construct and hoist the `finally` body into the outer block, leaving a `catch`
-    clause nothing reached.
-
     A statement that runs to completion under that same inner `finally` reaches no handler, so the
     whole sequence is the right answer for it and the two differ only in the raise.
     """
@@ -420,9 +408,6 @@ class TestPs1ALiveTrapGuardsItsWholeScope(TestPs1):
     whether it stands above the raising statement or below it, and whether the error is raised at
     the top of that block or inside a construct nested in it. A live `trap` over the raise makes the
     raising statement the reason the handler runs, so the statement survives.
-
-    The deobfuscator used to consult no `trap` when it decided a removal. It deleted the raising
-    statement in each of these and kept the `trap`, which was then a handler nothing could trigger.
 
     What a `trap` guards is the raise, so a statement that runs to completion gives it nothing to
     handle wherever in the block it stands. Every shape is written a second time with such a

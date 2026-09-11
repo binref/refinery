@@ -163,9 +163,7 @@ class TestPs1NameCensus(TestBase):
     def test_a_qualified_command_name_does_not_consume_the_name_it_writes(self):
         """
         A scope or module qualifier belongs to the command name, so the first argument is still the
-        name the command addresses. Both spellings used to arrive with the qualifier and the command
-        split apart, which handed the resolver the *argument* as the command and left the write
-        unattributed.
+        name the command addresses.
         """
         for source in (
             'global:sv x 5',

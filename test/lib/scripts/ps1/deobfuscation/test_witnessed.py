@@ -301,9 +301,8 @@ def _fault_observed_wherever_an_error_would_go(
     """
     The guard with its first half dropped: every point inside *stmt* is asked where an error raised
     there would go, and no point is asked whether it can raise one, so every statement is judged as
-    though it might. This refuses **more** than the guard does, which is what the padding an
-    obfuscator writes by the hundred used to cost — so what notices it is a test asserting that
-    something is still deleted.
+    though it might. This refuses more than the guard does, so what notices it is a test asserting
+    that something is still deleted.
     """
     judged = False
     for site in reach.points_in(stmt):

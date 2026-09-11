@@ -609,9 +609,7 @@ def _measured_operation_fact(expression: str) -> Ps1Fact:
 def _applied(expression: str) -> Ps1Outcome:
     """
     What `apply` makes of a measured operation: the operator the row spells, over the facts
-    `read_operand` makes of the two operands it stands between. This is the call
-    `refinery.lib.scripts.ps1.deobfuscation.folding` makes for the same expression, so what is
-    answered here is what that pass sees.
+    `read_operand` makes of the two operands it stands between.
 
     `read_operand` and not `read`, because an operand of an operator is not read the way the same
     numeral is read standing alone: 5.1 folds a constant expression in its parser and a `Decimal`
@@ -1064,9 +1062,8 @@ THROWN_COMPLEMENTS: tuple[str, ...] = tuple(
 
 def _complemented(expression: str) -> Ps1Outcome:
     """
-    What `apply_unary` makes of a measured complement, asked exactly as
-    `refinery.lib.scripts.ps1.deobfuscation.folding` asks it: the operator the row spells, over the
-    fact `read` makes of the operand it stands before.
+    What `apply_unary` makes of a measured complement: the operator the row spells, over the fact
+    `read` makes of the operand it stands before.
     """
     applied = _complement(expression)
     assert applied is not None, expression
@@ -1139,9 +1136,8 @@ ABBREVIATED_NEGATIONS: tuple[str, ...] = ('- [uint64]18446744073709551615',)
 
 def _negated(expression: str) -> Ps1Outcome:
     """
-    What `apply_unary` makes of a measured negation, asked exactly as
-    `refinery.lib.scripts.ps1.deobfuscation.folding` asks it: the operator the row spells, over the
-    fact `read` makes of the operand it stands before.
+    What `apply_unary` makes of a measured negation: the operator the row spells, over the fact
+    `read` makes of the operand it stands before.
     """
     applied = _negation(expression)
     assert applied is not None, expression
@@ -1323,20 +1319,15 @@ ELEMENT_PAIRS: tuple[tuple[str, str], ...] = (
 )
 
 
-#: The measured operations whose result a host printed to fewer digits than the value has: 5.1
-#: writes a Double as fifteen significant figures, and `512MB * 512MB` is 2 to the 58th exactly.
-#: What such a row measures is the widening, so the type is what the value is held against.
 #: The measured operations the domain answers with a value the host did not print. Empty, and the
 #: partition below is what keeps it so: an operation whose fold stops matching its measurement has
 #: to be written here before the suite passes again, which is a diff saying that a wrong constant is
 #: now being emitted rather than a number quietly moving.
-#:
-#: It held the parse-time `Decimal` fold until `read_operand` was written. 5.1 folds a constant
-#: expression in its parser and a numeral reaching that fold loses the places it has nothing to hold
-#: — `'x' + 1.00d` is `x1` where `'x' + 1.100d` is `x1.100`, and it is the *operand* that loses them
-#: and not the result, which is why `1.500d + 1.500d` is `3.000`.
 MISFOLDED_OPERATIONS: dict[str, str] = {}
 
+#: The measured operations whose result a host printed to fewer digits than the value has: 5.1
+#: writes a Double as fifteen significant figures, and `512MB * 512MB` is 2 to the 58th exactly.
+#: What such a row measures is the widening, so the type is what the value is held against.
 ABBREVIATED_OPERATIONS: tuple[str, ...] = (
     '$true + 9223372036854775807L',
     '0 - [uint64]18446744073709551615',
@@ -1853,13 +1844,10 @@ class TestPs1FactLattice(unittest.TestCase):
 
 class TestPs1WhatCountsAsAnInteger(unittest.TestCase):
     """
-    The number a caller wanting an integer is handed. Every site that used to take one off a literal
-    node asks here instead, so a value this answered wrongly would be an index, a repeat count, a
-    range bound, a format argument, a conversion base and a loop bound all at once.
-
-    Two things settle it, and both are the host's: the type it stamped the value with, and the
-    digits it printed. A type outside `INTEGER_TYPES` is a value 5.1 reaches a number *from*, by a
-    conversion with a rounding or a parsing rule in it, and never a number this may hand back.
+    The number a caller wanting an integer is handed. Two things settle it, and both are the host's:
+    the type it stamped the value with, and the digits it printed. A type outside `INTEGER_TYPES` is
+    a value 5.1 reaches a number *from*, by a conversion with a rounding or a parsing rule in it, and
+    never a number this may hand back.
     """
 
     def _integer_rows(self) -> dict[str, Ps1Fact]:
@@ -1900,9 +1888,9 @@ class TestPs1WhatCountsAsAnInteger(unittest.TestCase):
 
     def test_a_hexadecimal_numeral_that_fills_its_width_is_the_negative_number_it_names(self):
         """
-        The whole point of asking the domain: the digits of `0xFFFFFFFF` spell 4294967295 and the
-        value is -1, so a caller reading the digits and a caller reading the value differ by
-        4294967296 at every site that takes an integer.
+        The digits of `0xFFFFFFFF` spell 4294967295 and the value is -1, so a caller reading the
+        digits and a caller reading the value differ by 4294967296 at every site that takes an
+        integer.
         """
         self.assertEqual(_measured('0xFFFFFFFF'), ('System.Int32', '-1'))
         self.assertEqual(_measured('0xFFFFFFFFFFFFFFFF'), ('System.Int64', '-1'))
@@ -2421,8 +2409,7 @@ class TestPs1AComputedValueIsStampedOnlyByAnArmThatNamesItsKind(unittest.TestCas
     computed through, and it dispatches on the payload's Python kind: a `bool`, an `int`, a
     `Decimal`, a `str` and a `float` each have an arm, and the value is reported only under a type
     the measured cell recorded. A payload of any other kind is therefore the one thing it must
-    refuse, since stamping it would report a value under a type it does not have — which is what a
-    trailing `Double` arm did to everything that reached it.
+    refuse, since stamping it would report a value under a type it does not have.
     """
 
     #: A cell recording a type for every arm, and the array type as well, so that a refusal below is
@@ -2590,9 +2577,6 @@ class TestPs1CharConversions(unittest.TestCase):
     """
 
     def test_a_char_casts_to_the_number_and_to_the_text_the_host_printed(self):
-        """
-        Measured, `[int][char]65` is Int32 65 and `[string][char]65` is `A`.
-        """
         self.assertEqual(
             convert(Ps1Constant(CHAR, 'A'), INT32), Ps1Outcome(NEVER, Ps1Constant(INT32, 65)))
         self.assertEqual(
@@ -2866,9 +2850,7 @@ class TestPs1ZeroDivisors(unittest.TestCase):
 class TestPs1MeasuredOperators(unittest.TestCase):
     """
     What `left <operator> right` produces, held against what a 5.1 host printed for the same
-    expression. `apply` is asked here exactly as the folding pass asks it, so what this class
-    formalizes is which measured operations a script is rewritten by and to what — and the failure
-    it exists to catch is an answer the host did not produce.
+    expression. The failure it exists to catch is an answer the host did not produce.
     """
 
     def test_every_measured_operation_is_selected(self):
@@ -3335,8 +3317,7 @@ class TestPs1MeasuredTruth(unittest.TestCase):
     What `is_truthy` answers, held against what a host counted the same expression as. Refusing is
     always allowed and a disagreement never is: every caller of it drops a branch or a loop on the
     answer, so a truth that is not the host's is a script rewritten into a different one. The
-    question is asked of every condition the corpus settles rather than of a list chosen here, so a
-    row measured after this was written is one this is quantified over too.
+    question is asked of every condition the corpus settles rather than of a list chosen here.
 
     `- '0'` is the expression that makes this a measurement rather than a rule. A minus sign in
     front of a String converts the String to a number, so the text `'0'` is true while the Int32 it

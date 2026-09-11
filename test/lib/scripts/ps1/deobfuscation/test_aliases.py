@@ -47,8 +47,7 @@ class TestPs1AliasInlining(TestPs1):
         self.assertNotIn('myalias', result.split('\n')[-1])
 
     def test_self_alias_terminates(self):
-        # A self-resolving alias must reach a fixpoint (no infinite mark_changed loop) and leave
-        # the script unchanged.
+        # A self-resolving alias must terminate and leave the script unchanged.
         result = self._deobfuscate(cleandoc("""
             Set-Alias foo foo
             foo bar

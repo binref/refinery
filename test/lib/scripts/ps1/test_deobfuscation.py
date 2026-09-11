@@ -412,8 +412,8 @@ class TestPs1ClosedWorld(TestPs1):
                 self.assertIn('UserName', self._deobfuscate_iterative(opener + anchor))
 
     def test_a_temporary_mutator_is_deleted_only_in_a_closed_world(self):
-        # The in-place mutator on a temporary is pure — but the grant is a present-member grant, so it
-        # gates on the world too, the case both critic rounds caught.
+        # The in-place mutator on a temporary is pure, but the grant is a present-member grant, so
+        # it gates on the world too.
         anchor = "$Null = [Array]::Reverse('ab'.ToCharArray())\nWrite-Output 'anchor'\n"
         self.assertNotIn('Reverse', self._deobfuscate_iterative(anchor))
         self.assertIn('Reverse', self._deobfuscate_iterative('iex $x\n' + anchor))
@@ -573,8 +573,8 @@ class TestPs1NameTrustSurvivesRewriting(TestPs1):
     """
 
     def test_a_dot_source_of_a_script_keeps_its_operator(self):
-        # Regression: the dot was dropped for any bare-safe name, so `. helper` became `helper` and
-        # the world, rebuilt from the stripped tree, read closed and granted every purity check.
+        # `. helper` must keep its dot: dropping it hides the sourced script's scope effects from
+        # the world, which then reads closed and grants every purity check.
         out = self._deobfuscate_iterative(cleandoc(
             """
             . 'profile-loader'
@@ -606,9 +606,8 @@ class TestPs1NameTrustSurvivesRewriting(TestPs1):
         self.assertIn('Get-ChildItem', out)
 
     def test_a_regex_match_that_populates_matches_is_kept(self):
-        # Regression: `-match` writes the automatic `$Matches`, which is a store to engine state and
-        # not a value the expression merely yields, so deleting the match left the payload read on
-        # the next line looking at an unset variable.
+        # `-match` writes the automatic `$Matches`, a store to engine state and not merely a value
+        # the expression yields, so a later read of `$Matches` keeps the match alive.
         out = self._deobfuscate_iterative(cleandoc(
             """
             $c = 'aaa<<calc>>bbb'
@@ -619,9 +618,8 @@ class TestPs1NameTrustSurvivesRewriting(TestPs1):
         self.assertIn('-Match', out)
 
     def test_a_scope_qualified_redefinition_is_not_constant_folded(self):
-        # Regression: the evaluator keyed definitions by their written spelling and kept the last
-        # one, so `function F` was folded into the call that `function global:F` had replaced, and
-        # the payload definition then read as never called.
+        # `function global:F` and an unqualified `function F` of the same name are different
+        # definitions and must not be conflated.
         out = self._deobfuscate_iterative(cleandoc(
             """
             function F { 'A' }

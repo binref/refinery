@@ -222,9 +222,8 @@ class TestPs1TrustedEvalChangesNothingAboutAScriptThatRunsNoUnreadableCode(TestP
 
 class TestPs1TrustedEvalReachesTheAnswersOnePayloadDispatcherUsedToWithhold(TestPs1):
     """
-    The three families a real sample's payload dispatcher keeps standing, each reduced to the
-    statement that carries it, and none of them the discarded static call the classes above measure
-    with. Together they are the reason the option exists.
+    Three families kept standing, each reduced to the statement that carries it, and none of them
+    the discarded static call the classes above measure with.
     """
 
     def test_a_discarded_construction_below_an_eval_is_removed(self):

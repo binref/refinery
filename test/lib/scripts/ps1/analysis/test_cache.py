@@ -81,8 +81,7 @@ class TestPs1ModelCache(TestBase):
         self.assertIs(cache.model, first)
 
     def test_body_splice_advances_the_version_and_rebuilds(self):
-        # A whole-body rewrite through the counter-bumping splice helper must invalidate the
-        # cache the same way a per-node removal does.
+        # A whole-body rewrite must invalidate the cache the same way a per-node removal does.
         script = self._script("$a = 1\n$b = 2")
         cache = Ps1ModelCache(script)
         first = cache.model

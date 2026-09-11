@@ -141,9 +141,6 @@ class TestPs1ATrapWhoseTypeFilterMissesTheErrorEndsTheScript(_Ps1FaultEscalation
     scope to take the error, it ends the script: the body of that `trap` never runs and neither does
     anything written after the raise, whether the body is empty or writes to the host. Deleting the
     raise starts running the rest of the script.
-
-    The deobfuscator used to read a `trap` it could not match as no `trap` at all and delete the
-    raise.
     """
 
     def test_a_raising_cast_under_an_empty_trap_whose_filter_misses_is_kept(self):
@@ -166,9 +163,6 @@ class TestPs1ATrapBodyThatReachesBreakEndsTheScript(_Ps1FaultEscalation):
     A `trap` body that reaches `break` rethrows the error once it has run, which ends the script.
     Nothing written after the raise runs, so deleting the raise starts running it. The one-word
     variant of the same `trap` that reaches `continue` instead is licensed to lose the raise.
-
-    The deobfuscator used to read no `trap` body when it decided a removal, so it deleted the raise
-    and the `trap` with it and let the script run to its end.
     """
 
     def test_a_raising_cast_under_a_trap_that_breaks_is_kept(self):
@@ -222,11 +216,11 @@ class TestPs1ATrapThatTakesTheErrorAndSwallowsLeavesTheRaiseRemovable(_Ps1FaultE
 
 class TestPs1ACatchWhoseTypeFilterMissesLeavesTheRaiseRemovable(_Ps1FaultEscalation):
     """
-    A `catch` whose type filter does not match the error is the sharp opposite of a `trap` whose
-    filter does not match. The error leaves the construct unhandled, the script resumes at the
-    statement written after it, and the `catch` body never runs, so the raise may go. The clause
-    here carries the same filter and the same empty body as the `trap` that ends the script, and
-    only the keyword differs.
+    A `catch` whose type filter does not match the error is the opposite of a `trap` whose filter
+    does not match. The error leaves the construct unhandled, the script resumes at the statement
+    written after it, and the `catch` body never runs, so the raise may go. The clause here carries
+    the same filter and the same empty body as the `trap` that ends the script, and only the keyword
+    differs.
     """
 
     def test_a_raising_cast_under_an_empty_catch_whose_filter_misses_is_removed(self):
@@ -241,9 +235,6 @@ class TestPs1ATypedCatchThatMissesDoesNotShieldAnEnclosingCatch(_Ps1FaultEscalat
     A type filter decides whether a `catch` handles the error, so a `catch` that does not match
     passes it on to the enclosing `catch`, whose body then runs. The raise is what makes that
     handler run and must survive.
-
-    The deobfuscator used to read any `catch` written around the raise as taking it, delete the
-    raise, and leave the enclosing handler with nothing that could reach it.
     """
 
     def test_a_raising_cast_a_missing_filter_passes_to_a_live_outer_catch_is_kept(self):
@@ -303,9 +294,9 @@ class TestPs1AProvenThrowFoldsTheTryConstruct(_Ps1FaultEscalation):
     """
     A `try` body proven to throw runs the statements before the throw, then the body of the `catch`
     that takes it, then the `finally`, and nothing else. A terminating error abandons the rest of
-    the block, so the statements after the throw are dead and go. This is the aggressive dual of the
-    keep `TestPs1ASoftFaultBeforeALiveTailInAnEmptyCatchIsKept` makes: that one holds a construct
-    whose throw it cannot prove, this one folds one whose throw it can.
+    the block, so the statements after the throw are dead and go. The sibling
+    `TestPs1ASoftFaultBeforeALiveTailInAnEmptyCatchIsKept` holds a construct whose throw it cannot
+    prove; this one folds one whose throw it can.
 
     A `throw` and a cast of a non-numeric literal are both proven throws, and an empty `catch`, a
     bare catch-all and a universally typed one all take every error, so each lifts its body out
@@ -491,9 +482,6 @@ class TestPs1ATrapGuardsTheBlockItIsWrittenIn(_Ps1FaultEscalation):
     that declares a `trap` is the one that takes the error. A raise written in the same block as a
     live `trap` is what makes that `trap` run, and a raise beside the inner of two live traps is
     what makes the inner one run and the outer one not.
-
-    The deobfuscator used to consult no `trap` when it decided a removal, so it deleted the raise in
-    both and kept handlers nothing could trigger.
     """
 
     def test_a_raising_cast_beside_a_live_trap_in_the_same_nested_block_is_kept(self):
@@ -792,11 +780,10 @@ class TestPs1ARaiseInATrapBodyEndsThatBody(_Ps1FaultEscalation):
     to that guard, and an enclosing `catch` clause or a second, live `trap` runs its body over it.
     In each of these the raise inside the `trap` body decides what runs next, so it survives.
 
-    The deobfuscator used to read a `trap` body as statements no error can leave. It deleted the
-    raise there and ran the remainder of the body that the original abandoned. The keep fires only
-    where the `trap` provably fires — a cast, a fallible operator, a method call, a `throw`, or a
-    command a `Stop` makes terminating in the block the `trap` guards — so a `trap` nothing triggers
-    still leaves its dead body raise removable (`TestPs1ATrapBodyNothingTriggersLeavesTheRaiseInItRemovable`).
+    The keep fires only where the `trap` provably fires — a cast, a fallible operator, a method
+    call, a `throw`, or a command a `Stop` makes terminating in the block the `trap` guards — so a
+    `trap` nothing triggers still leaves its dead body raise removable
+    (`TestPs1ATrapBodyNothingTriggersLeavesTheRaiseInItRemovable`).
     """
 
     def test_a_raising_cast_before_another_statement_of_the_same_trap_body_is_kept(self):
@@ -1041,9 +1028,6 @@ class TestPs1ATrapTakesTheErrorsOfTheNamedBlockItIsWrittenIn(_Ps1FaultEscalation
     blocks, and a `trap` guards the named block it is written in. A raise in the same named block
     as a live `trap` is what makes that `trap` run, and execution then resumes at the next statement
     of that block, so both the raise and what follows it survive.
-
-    The deobfuscator used to consult no `trap` when it decided a removal, so it deleted the raise
-    from either block and kept a handler nothing could trigger.
     """
 
     def test_a_raising_cast_beside_a_live_trap_in_the_same_process_block_is_kept(self):
@@ -1563,10 +1547,10 @@ class TestPs1ATerminatingErrorInsideAStringThatIsRunIsInvisible(_Ps1FaultEscalat
     `trap { continue }; iex 'throw 1'; Write-Host 'after'` writes `after`, and the same script
     without the handler writes nothing.
 
-    Nothing in the statement's subtree is a `throw`, so the handler is judged removable. **This one
-    inflicts itself**: a later round inlines the string, materialises the `throw` the earlier round
-    answered False for, and drops everything after it as unreachable. Recognising it needs the
-    command name resolved against the world, which is a layer above this one.
+    Nothing in the statement's subtree is a `throw`, so the handler is judged removable, and a later
+    round inlines the string, materialises the `throw` the earlier round answered False for, and
+    drops everything after it as unreachable. Recognising it needs the command name resolved against
+    the world, which is a layer above this one.
     """
 
     @unittest.expectedFailure

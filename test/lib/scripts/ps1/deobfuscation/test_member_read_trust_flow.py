@@ -43,11 +43,10 @@ class _Ps1MemberReadTrustFlow(TestPs1):
 class TestPs1APureMemberReadFollowsTheSamePositionalTrust(_Ps1MemberReadTrustFlow):
     """
     A discarded pure member read on a pure typed cmdlet result is junk when nothing that could
-    change the command world has run before it, exactly as a discarded pure command is. Trust is
-    positional: a leak that only follows the read cannot have run at the read's position, so it
-    cannot make `(Get-Date)` resolve to anything other than the built-in whose result carries the
-    side-effect-free `.Ticks` property. With the leak ahead of the read instead, the read may observe
-    a rebound world and is soundly kept.
+    change the command world has run before it. Trust is positional: a leak that only follows the
+    read cannot have run at the read's position, so it cannot make `(Get-Date)` resolve to anything
+    other than the built-in whose result carries the side-effect-free `.Ticks` property. With the
+    leak ahead of the read instead, the read may observe a rebound world and is soundly kept.
     """
 
     def test_a_pure_member_read_with_no_leak_anywhere_is_removed(self):

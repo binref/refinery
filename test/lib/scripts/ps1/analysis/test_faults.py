@@ -653,8 +653,7 @@ class TestPs1AResumingTrapOverASoftErrorInABracketedStatementListIsKept(TestBase
         """
         `$proc.Path` runs a property getter this analysis cannot prove pure — an Extended Type System
         getter may shell out — so the trap that skips it is load bearing: untrapped the getter runs,
-        trapped it does not. Only a command and a method call used to be weighed here; a bare member
-        read is one too.
+        trapped it does not.
         """
         self.assertTrue(self._trap_removal_is_observed(
             "trap { continue }; $x = $([int]'a'; $proc.Path); Write-Host 'z'"))
@@ -975,9 +974,9 @@ class TestPs1AStrictModeArmingIsReadOverTheWholeScript(TestBase):
 
     def test_a_model_the_graphs_hold_no_script_for_refuses_the_grant(self):
         """
-        The pole this fact does not share with `_stops_on_every_error`, which answers `False` there.
-        What this one grants is a removal, so an empty model has to refuse it: a script nothing was
-        read of is not a script that was read and found to arm nothing.
+        Unlike `_stops_on_every_error`, which answers `False` for an empty model, this one grants a
+        removal, so an empty model has to refuse it: a script nothing was read of is not a script
+        that was read and found to arm nothing.
         """
         self.assertTrue(Ps1FaultReach(ControlFlowModel({})).strict_mode_may_be_in_force())
 

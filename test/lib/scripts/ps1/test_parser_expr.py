@@ -340,7 +340,6 @@ class TestPs1ParserExpressions(TestBase):
         self.assertIsInstance(expr.arguments[1], Ps1Variable)
 
     def test_unary_comma_not_parsed_in_method_args(self):
-        # In a method argument context, a leading comma must not be parsed as unary array-wrap.
         p = Ps1Parser('$obj.Method(,$a)')
         script = p.parse()
         self.assertIsInstance(script, Ps1Script)
@@ -362,7 +361,6 @@ class TestPs1ParserExpressions(TestBase):
         self.assertAlmostEqual(expr.value, 255 * 1024 ** 3)
 
     def test_type_literal_followed_by_comma_is_not_cast(self):
-        # [int],1 should be an array of a type expression and an integer, not a cast.
         expr = self._parse_expr('[int], 1')
         self.assertIsInstance(expr, Ps1ArrayLiteral)
         self.assertEqual(len(expr.elements), 2)
@@ -566,7 +564,6 @@ class TestPs1ParserExpressions(TestBase):
         self.assertEqual(expr.value, content)
 
     def test_generic_argument_token_is_decoded(self):
-        # The generic argument token `a'b c'd` decodes its embedded quotes to the value `ab cd`.
         script = Ps1Parser("echo a'b c'd").parse()
         values = [n.value for n in script.walk() if isinstance(n, Ps1StringLiteral)]
         self.assertEqual(values, ['ab cd', 'echo'])
@@ -818,8 +815,8 @@ class TestPs1ASignBelongsToTheDigitsItTouches(TestBase):
 
     def _assigned(self, source: str, kind: type[_T]) -> _T:
         """
-        The value *source* assigns to `$t`, which the caller states the shape of: what only one node
-        class carries is worth reading once that class is what came back.
+        The value *source* assigns to `$t`, whose node class the caller states; fails naming the
+        actual and expected class if it is another.
         """
         assignment, = (
             node for node in Ps1Parser(source).parse().walk()
@@ -1054,9 +1051,8 @@ class TestPs1ANumeralHoldsNothingBesideItsSpelling(TestBase):
 
     def test_a_number_cannot_be_stored_beside_the_spelling_it_is_read_from(self):
         """
-        Written through `setattr` and `**`, because a spelling a type checker rejects is not the
-        claim: what is stated here is that the refusal is the node's own at run time, which is what
-        a caller reaching for the old field would meet.
+        Written through `setattr` and `**` because a spelling a type checker rejects is not the
+        claim: the refusal is the node's own at run time, since `value` is derived from `raw`.
         """
         with self.assertRaises(AttributeError):
             setattr(self._literal('42'), 'value', 43)

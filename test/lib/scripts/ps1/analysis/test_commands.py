@@ -351,9 +351,9 @@ class TestPs1CommandWorldRole(TestBase):
 class TestPs1WorldRoleAgreement(TestBase):
     """
     The role an invocation is given and the verdict the closed-world model reaches over it are one
-    fact read twice, and the fact was moved out of that model: for every shape it has always
-    classified, the world is open exactly where the role is not `WorldRole.NONE`. Each source is a
-    single statement, so the whole-script verdict is the verdict on that one invocation.
+    fact: for every shape it has always classified, the world is open exactly where the role is not
+    `WorldRole.NONE`. Each source is a single statement, so the whole-script verdict is the verdict
+    on that one invocation.
     """
 
     _SHAPES = (

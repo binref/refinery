@@ -510,9 +510,6 @@ class TestPs1ParserStatements(TestBase):
         self.assertEqual(cmd.name.value, r'.\script.ps1')
 
     def test_native_command_double_dash_argument(self):
-        """
-        git --no-pager log should parse --no-pager as a single positional argument.
-        """
         stmt = self._parse_stmt('git --no-pager log')
         self.assertIsInstance(stmt, Ps1ExpressionStatement)
         cmd = stmt.expression
@@ -526,9 +523,6 @@ class TestPs1ParserStatements(TestBase):
         self.assertEqual(cmd.arguments[1].value.value, 'log')
 
     def test_dotfile_command_argument(self):
-        """
-        Copy-Item .gitignore dest should parse .gitignore as a positional argument.
-        """
         stmt = self._parse_stmt('Copy-Item .gitignore dest')
         self.assertIsInstance(stmt, Ps1ExpressionStatement)
         cmd = stmt.expression
@@ -542,9 +536,6 @@ class TestPs1ParserStatements(TestBase):
         self.assertEqual(cmd.arguments[1].value.value, 'dest')
 
     def test_wildcard_command_argument(self):
-        """
-        Get-ChildItem *.txt should parse *.txt as a single positional argument.
-        """
         stmt = self._parse_stmt('Get-ChildItem *.txt')
         self.assertIsInstance(stmt, Ps1ExpressionStatement)
         cmd = stmt.expression
@@ -555,9 +546,6 @@ class TestPs1ParserStatements(TestBase):
         self.assertEqual(cmd.arguments[0].value.value, '*.txt')
 
     def test_comma_separated_command_arguments_form_array(self):
-        """
-        Write-Host 1,2,3 should produce a single array argument, not three.
-        """
         stmt = self._parse_stmt('Write-Host 1,2,3')
         self.assertIsInstance(stmt, Ps1ExpressionStatement)
         cmd = stmt.expression
@@ -574,9 +562,6 @@ class TestPs1ParserStatements(TestBase):
         self.assertEqual(arg.value.elements[2].value, 3)
 
     def test_comma_separated_mixed_arguments(self):
-        """
-        Comma-delimited array followed by separate positional argument.
-        """
         stmt = self._parse_stmt('Write-Host 1,2 -Separator "x"')
         self.assertIsInstance(stmt, Ps1ExpressionStatement)
         cmd = stmt.expression
@@ -588,9 +573,6 @@ class TestPs1ParserStatements(TestBase):
         self.assertEqual(len(first_arg.value.elements), 2)
 
     def test_comma_separated_variables(self):
-        """
-        $a,$b,$c should form a single array argument.
-        """
         stmt = self._parse_stmt('Write-Output $a,$b,$c')
         self.assertIsInstance(stmt, Ps1ExpressionStatement)
         cmd = stmt.expression
@@ -606,10 +588,8 @@ class TestPs1ParserStatements(TestBase):
 
     def test_hyphenated_command_name_as_argument(self):
         """
-        Set-Alias myAlias New-Object must keep New-Object intact, not split it
-        into New and -Object. Regression test for a bug where the identifier
-        scanner dropped dashes in expression mode after consuming a preceding
-        generic-token argument.
+        `Set-Alias myAlias New-Object` must keep `New-Object` as one argument, not split it into
+        `New` and `-Object`.
         """
         stmt = self._parse_stmt('Set-Alias myAlias New-Object')
         self.assertIsInstance(stmt, Ps1ExpressionStatement)
@@ -624,8 +604,8 @@ class TestPs1ParserStatements(TestBase):
 
     def test_variable_path_argument_stays_separate(self):
         """
-        In SV zGK $ENV:aPpdatA\\path.exe the variable+path span becomes a
-        single expandable string argument that preserves variable semantics.
+        A command argument that splices a variable into a path parses as one expandable string,
+        keeping the variable rather than flattening it to text.
         """
         stmt = self._parse_stmt(r'SV zGK $ENV:aPpdatA\file.exe')
         self.assertIsInstance(stmt, Ps1ExpressionStatement)
@@ -640,9 +620,8 @@ class TestPs1ParserStatements(TestBase):
 
     def test_command_with_redirection_in_parens(self):
         """
-        Redirections like 2>&1 inside a parenthesized command must be consumed
-        by the parser, not orphaned as error nodes. Regression test for a bug
-        where (iex $d 2>&1) left stray ) tokens in the output.
+        A redirection like `2>&1` inside a parenthesized command is consumed by the parser, not left
+        as stray tokens.
         """
         stmt = self._parse_stmt('(iex $d 2>&1)')
         self.assertIsInstance(stmt, Ps1ExpressionStatement)

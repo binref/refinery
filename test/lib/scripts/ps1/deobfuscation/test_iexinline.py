@@ -109,7 +109,7 @@ class TestPs1IexInlining(TestPs1):
         self.assertNotIn('|', result)
 
     def test_iex_piped_deflate_pipeline(self):
-        # Base64-encoded raw deflate of "Write-Host hello"
+        # Base64-encoded raw deflate of `Write-Host hello`
         b64 = 'Cy/KLEnV9cgvLlHISM3JyQcA'
         data = (
             "(New-Object IO.Compression.DeflateStream("

@@ -99,7 +99,7 @@ class TestPs1PersistentReadObservedAfterAnswersFromReachability(TestBase):
 class TestPs1TheErrorReadSitesSplitTheTwoChannels(TestBase):
     """
     The channels a raise writes are told apart where the naming knowledge lives, so the persistent
-    query cannot absorb the success flag and cluster 4 has the `$?` sites waiting for it.
+    query cannot absorb the success flag.
     """
 
     def test_the_error_record_is_a_persistent_site_and_the_success_flag_a_success_site(self):

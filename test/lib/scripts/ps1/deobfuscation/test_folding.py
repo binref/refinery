@@ -222,7 +222,7 @@ class TestPs1StringEqualityFolding(TestPs1):
         self.assertEqual(self._apply("'M' -cne 'm'", Ps1ConstantFolding), '$True')
 
     def test_ordering_not_folded(self):
-        # Only equality is folded for strings; culture-dependent ordering is left untouched.
+        # String ordering is culture-dependent, so it is left untouched.
         self.assertEqual(self._apply("'a' -lt 'b'", Ps1ConstantFolding), "'a' -lt 'b'")
 
     def test_a_text_equality_no_reading_of_code_points_decides_is_left_alone(self):
@@ -254,7 +254,6 @@ class TestPs1LogicalFolding(TestPs1):
         self.assertEqual(self._apply('$null -and $true', Ps1ConstantFolding), '$False')
 
     def test_unknown_operand_not_folded(self):
-        # With one operand unresolved, the result is not constant and must be preserved.
         self.assertEqual(self._apply('$x -and $false', Ps1ConstantFolding), '$x -and $false')
 
 
@@ -1857,19 +1856,10 @@ class TestPs1AScopeQualifierNamesTheBindingItsBareSpellingNames(TestPs1):
     of the three spellings is the value a read under any other observes. What 5.1 writes for each of
     these four scripts is measured in `corpus.CLAIMS`: `b`, `b`, `x`, `x`.
 
-    A write reaches the binding its qualifier names, so a value written under a qualifier is now
-    observed by a bare read of the name — `test_a_bare_read_observes_what_the_qualified_spelling_wrote`
-    is that case, the same fix `TestPs1AnOperatorOverANameWrittenUnderAQualifierFoldsAsIfItWereNull`
-    below rests on.
-
-    A read spelled *with* a qualifier is still withheld, and the cause is that no such read is an
-    occurrence of anything. `Ps1SemanticModel._attribute_qualified_read` files none, setting
-    `Binding.dynamic_or_qualified` instead, and `Ps1VariableFlow` turns that flag into
-    `Ps1FlowUnknown.REACHED_BY_QUALIFIER` — an unknown over the whole binding, so one qualified read
-    anywhere withholds every value of the name everywhere. `$env:` is the one qualifier whose reads
-    are filed, and `test_an_environment_variable_is_folded_through_its_qualifier` below is the
-    control that says so. Each qualified-read entry is marked so that wiring one through reports an
-    unexpected success.
+    A value written under a qualifier is observed by a bare read of the name. A read spelled *with*
+    a qualifier is still withheld and folds nothing (the three xfails here): a qualified read is
+    filed against no occurrence of the name. `$env:` is the one qualifier whose reads are folded,
+    which the environment-variable test is the control for.
     """
 
     def test_an_environment_variable_is_folded_through_its_qualifier(self):
@@ -1900,18 +1890,10 @@ class TestPs1AnOperatorOverANameWrittenUnderAQualifierFoldsAsIfItWereNull(TestPs
     """
     A value written under `$script:` or `$global:` is the value a bare read of the name observes, so
     an operator over that bare read folds to it and not to `$null`. Measured on 5.1, the three
-    scripts here write `6`, `165` and `12`.
+    scripts here write `6`, `165` and `12`. The `-bxor` row is the soundness case: a decode key held
+    in a module-scoped variable, folded as `$null`, would hand back plaintext that never ran.
 
-    The `-bxor` row is what made this a soundness bug rather than a curiosity: a key held in a
-    module-scoped variable is how a loader hides one, and folding it as `$null` handed back a
-    plaintext that never ran. The cause was that the write collectors keyed a write under
-    `_candidate_key`, which refuses every qualifier, so `$script:q = 5` left the name `q` looking
-    never-written; `Ps1NullVariableInlining` then replaced the bare `$q` with `$Null`. Keying by
-    `binding_key` files the write under the name its qualifier reaches, which is the name a bare read
-    resolves to.
-
-    The recall half of the defect — a read spelled *with* a qualifier — is still open; the class
-    above pins it.
+    The recall half — a read spelled *with* a qualifier — is still open; the class above pins it.
     """
 
     def test_a_bare_read_of_a_qualified_written_name_is_not_folded_as_null(self):
@@ -1935,15 +1917,6 @@ class TestPs1ACompoundAssignmentLeavesTheValueItsLongSpellingLeaves(TestPs1):
     short one is not: `$s = 'a'; $s = $s + 'b'; Write-Output $s` comes back as `Write-Output 'ab'`
     and `$s = 'a'; $s += 'b'; Write-Output $s` comes back as it was written. What 5.1 writes for
     each of these scripts is measured in `corpus.CLAIMS`: `3`, `abc`, `2`, `3` and `5`.
-
-    The model already reads a compound write as one that observes the value it replaces, and the
-    flow layer already orders and kills it; what is missing is the value.
-    `_ConstantTable._collect_writes` takes only `operator == '='`, so a compound write is a write
-    the inliner has nothing to say about and every read below it is withheld.
-
-    The last entry is why this is worth having: accumulating a command into a string and running it
-    is what the short spelling is used for, and the tool recovers the long spelling of it and not
-    the short.
     """
 
     def test_the_long_spelling_of_an_accumulation_is_folded(self):
@@ -2370,11 +2343,9 @@ class TestPs1APositionThatStoresTheObjectIsNotHandedACopyOfIt(TestPs1):
 
 class TestPs1ACallFillingABufferArgumentDoesNotGetTheBuffersValue(TestPs1):
     """
-    A callee that fills an array it is handed writes the variable that hands it over, exactly as
-    `[Array]::Reverse` does, so the buffer's own value may not stand in that slot while the value in
-    a slot the callee only reads still may. `[Text.Encoding]::ASCII.GetBytes($s)` at one argument
-    fills nothing at all and is the control: it is the single most-folded call in an obfuscated
-    script and it has to keep folding.
+    A callee that fills an array it is handed writes the variable that hands it over, so the buffer's
+    own value may not stand in that slot while a slot the callee only reads still may.
+    `[Text.Encoding]::ASCII.GetBytes($s)` fills nothing and is the control: it must keep folding.
     """
 
     def test_the_destination_of_a_block_copy_keeps_its_name_while_the_source_folds(self):

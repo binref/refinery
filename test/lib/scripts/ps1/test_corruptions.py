@@ -15,8 +15,7 @@ without leaving this file.
 An entry marked `expectedFailure` is a defect the tool still has. That marking is a ratchet in both
 directions: a fix makes the entry an unexpected success, which is reported as a failure until the
 marking is removed, and a regression makes an unmarked entry fail outright. Neither direction can
-pass silently, which is what the substring table this file replaces could not manage — it scored
-entries on literals they did not contain, so a closed entry could reopen against a green suite.
+pass silently.
 
 The scoping facts the entries rest on, all measured:
 
@@ -1589,37 +1588,23 @@ class TestPs1Corruptions(_Ps1Ledger):
 
 class TestPs1AStoreThroughAContainerReachesTheArrayTheContainerWasHanded(_Ps1Ledger):
     """
-    A container is handed the array itself and not a copy of it. Measured on 5.1 in
-    `corpus.BEHAVIOURS`, a store made through `$x` after the array has been put into a hashtable
-    key, into an element of another array, into a key of a hashtable literal or into one target of
-    a multi-assignment is a store the read through the container observes.
+    A container is handed the array itself, not a copy. Measured on 5.1 in `corpus.BEHAVIOURS`, a
+    store made through `$x` after the array is put into a hashtable key, an element of another array,
+    a key of a hashtable literal or one target of a multi-assignment is observed by a read of the
+    container: each script writes the array with the number stored at its front — `9 2 3` for the
+    first four, `7 2 3` for the multi-assignment — never the `1 2 3` the array held when the
+    container was filled.
 
-    These ask the one question from the other side: the store is made through the container and the
-    read is of the container, so each script writes the array with the number that was stored at its
-    front — `9 2 3` for the first four and `7 2 3` for the multi-assignment — and never the `1 2 3`
-    the array held when the container was filled.
-
-    What each entry asks of the output is that the position still *names* `$x`. An array spelled
-    where the name stood is a second array of the same three numbers, which is what a store made
-    through `$x` reaches in no script and what the read of the container observes in none — the
-    identity is the whole claim, and only naming carries it. Asking merely for an array of `1, 2, 3`
-    is the same question of the two spellings and answers neither.
-
-    The property shape is given a receiver that has the property, because `New-Object PSObject`
-    mints none: measured, `$o = New-Object PSObject; $o.P = $x` throws rather than storing, and a
-    script that throws before it reaches the shape under test states nothing about it.
+    Each entry asserts that the position still *names* `$x`: an array spelled where the name stood is
+    a second array of the same numbers, which no store reaches and no read observes, so identity is
+    what is checked. The property shape is given a receiver that has the property, because
+    `New-Object PSObject` mints none — `$o = New-Object PSObject; $o.P = $x` throws rather than
+    storing, and a script that throws before the shape under test states nothing about it.
     """
 
     #: The same five shapes with nothing storing through the container afterwards. Measured on 5.1
     #: in `corpus.BEHAVIOURS`, each writes `1 2 3`, so the array may be spelled where the name
-    #: stands, and that these are answered is what keeps the refusals above from being the whole
-    #: shape refused wholesale.
-    #:
-    #: The last two carry that weight for the hash literal and the multi-assignment only in the
-    #: sense that every shape does: neither spells a store through a container, so neither reaches
-    #: the narrowing the first three control. They are kept because the claim they make — that these
-    #: positions are answered when nothing mutates — is the claim that fails first if the refusal is
-    #: ever widened from the position to the shape.
+    #: stands: the refusal above is scoped to the store-through-container case, not the shape itself.
     _UNREACHED = (
         inspect.cleandoc("""
             $x = 1, 2, 3
@@ -1736,8 +1721,7 @@ class TestPs1ADotSourcedBlockRebindsTheCallersNameAndAChildScopeDoesNot(_Ps1Ledg
     the child scope keeps, leaving the caller's `$y` on the array `$x` holds, so that script writes
     `3 2 1`.
 
-    Neither answer may be given to the other script, which is the whole of what the pair is for: the
-    two differ in one character and nothing else about them says which array is read.
+    The two scripts differ in one character, so neither answer may be given to the other.
     """
 
     def test_a_name_a_dot_sourced_block_rebinds_is_off_the_array_the_reversal_turns(self):
@@ -2018,10 +2002,9 @@ class TestPs1AnObjectHandedToABodyIsStillTheOneItsNameHolds(_Ps1Ledger):
 
 class TestPs1APositionThatBuildsANewObjectIsNotAHandOff(_Ps1Ledger):
     """
-    The controls for the two classes above, and they are not decoration: a fact that answered every
-    one of these the same way would satisfy both classes by refusing everything, which is not a
-    deobfuscator. Measured on 5.1 in `corpus.BEHAVIOURS`, both scripts are answered correctly today
-    and have to stay answered.
+    The controls for the two classes above: a blanket refusal would satisfy both, so both scripts
+    must stay correctly answered rather than merely refused. Measured on 5.1 in `corpus.BEHAVIOURS`,
+    both are answered correctly today.
 
     An index whose value the text does not fix already reaches its whole collection, so the loop is
     a store through `$p` and needs no hand-off to be seen. A function writing `, $script:x` returns

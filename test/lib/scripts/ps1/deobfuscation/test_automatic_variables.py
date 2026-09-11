@@ -222,9 +222,8 @@ class TestPs1AStatementThatRaisesIsVisibleInTheErrorRecord(_Ps1AutomaticVariable
     def test_a_success_flag_read_after_the_raise_does_not_keep_it(self):
         """
         `$?` is a different automatic variable from the error record, and every statement resets it,
-        so a read of it is the success channel a later increment adds to this same model — not the
-        persistent-error channel this one does. This increment must therefore not keep the raise on
-        the strength of a `$?` read, and the raise is removed although a `$?` read follows it.
+        so a `$?` read after the raise does not observe it. The raise is removed although a `$?` read
+        follows it.
         """
         self._assertDeobfuscatesTo(
             F'{_FAULTS}\n{_SUCCEEDS}\nWrite-Host $?',
@@ -236,7 +235,7 @@ class TestPs1AStatementThatRaisesIsVisibleInTheErrorRecord(_Ps1AutomaticVariable
         prints `$false`. The reset-aware `$?` channel proves that — the raise is the read's
         immediate predecessor and certainly throws — so the read is frozen to `$False`, and the
         raiser, which now has no observer, is removed. The output prints `$false` exactly as 5.1
-        does, with the raise gone — unlike the sibling above, whose `_SUCCEEDS` resets `$?` first.
+        does, with the raise gone.
         """
         self._assertDeobfuscatesTo(F'{_FAULTS}\nWrite-Host $?', 'Write-Host $False')
 
