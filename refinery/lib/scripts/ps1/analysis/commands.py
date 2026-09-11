@@ -872,8 +872,9 @@ class Ps1CommandModel:
         they are pinned in `test.lib.scripts.ps1.deobfuscation.test_removal_observability`.
 
         Its cost in the other direction is one kind of false refusal: a script that *prints*
-        `'$Error.Count'` and reads nothing is kept for saying the words. Its limit is the payload no walk decodes at all, where the record is read
-        by code no scan here ever sees; that residual belongs to the caller, and
+        `'$Error.Count'` and reads nothing is kept for saying the words. Its limit is the payload
+        no walk decodes at all, where the record is read by code no scan here ever sees; that
+        residual belongs to the caller, and
         `refinery.lib.scripts.ps1.deobfuscation.deadcode._is_injected_noise_bareword` states it.
 
         Reading the record through a cmdlet that names it — `Get-Variable Error`, `Get-Item

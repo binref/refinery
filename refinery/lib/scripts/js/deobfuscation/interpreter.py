@@ -1131,6 +1131,7 @@ def _list_to_string(buf: list, args: list[Value]) -> Value:
 
 STATIC_OBJECTS = frozenset({'Math', 'String', 'Object', 'Array', 'Number', 'JSON', 'Buffer'})
 
+
 def is_runtime_name(name: str) -> bool:
     """
     Return True if `name` is a known JavaScript runtime symbol — either a static object namespace

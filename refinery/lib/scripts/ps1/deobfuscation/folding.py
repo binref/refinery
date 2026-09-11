@@ -240,8 +240,6 @@ def _integer(value: int) -> Ps1IntegerLiteral:
     return Ps1IntegerLiteral(raw=str(value))
 
 
-
-
 def _foreach_extracts_value(sb: Ps1ScriptBlock) -> bool:
     """
     Check whether a ForEach scriptblock body is of the form `$_.Value`,
