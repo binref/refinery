@@ -82,6 +82,69 @@ class TestANameHoldingTheGlobalObjectReachesTheGlobals(TestBase):
                 self.assertEqual(after, before)
 
 
+#: Cost-side programs whose fold must not keep a declaration alive through a name that is not the
+#: global object, mapped to the text the fold must produce. Each declares a top-level `q` and reads a
+#: `q` off a name spelled or shaped like the object but not it, so each must still fold across it.
+_A_NAME_THAT_IS_NOT_THE_GLOBAL_OBJECT = {
+    'a parameter spelled like the object is not it': (
+        a_program("""
+            var q = 1;
+            function f(window) { console.log(window.q); }
+            f({ q: 9 });
+            console.log(q);
+            """),
+        a_program("""
+            function f(window) {
+              console.log(window.q);
+            }
+            f({ q: 9 });
+            console.log(1);
+            """).rstrip(chr(10)),
+    ),
+    'a name bound to an object literal is not it': (
+        a_program("""
+            var q = 1;
+            var w = { q: 9 };
+            console.log(w.q);
+            console.log(q);
+            """),
+        a_program("""
+            console.log(9);
+            console.log(1);
+            """).rstrip(chr(10)),
+    ),
+    'a name written twice holds no value to read': (
+        a_program("""
+            var q = 1;
+            var w = globalThis;
+            w = { q: 9 };
+            console.log(w.q);
+            console.log(q);
+            """),
+        a_program("""
+            var q = 1;
+            var w = globalThis;
+            w = { q: 9 };
+            console.log(w.q);
+            console.log(1);
+            """).rstrip(chr(10)),
+    ),
+    'the right of an and is what the name holds': (
+        a_program("""
+            var q = 1;
+            var w = globalThis && { q: 9 };
+            console.log(w.q);
+            console.log(q);
+            """),
+        a_program("""
+            var w = globalThis && { q: 9 };
+            console.log(w.q);
+            console.log(1);
+            """).rstrip(chr(10)),
+    ),
+}
+
+
 class TestANameThatIsNotTheGlobalObjectStillFolds(TestBase):
     """
     The cost side. Each program declares a `q` at the top level and reads a `q` off a name that is
@@ -89,58 +152,22 @@ class TestANameThatIsNotTheGlobalObjectStillFolds(TestBase):
     would keep the declaration alive.
     """
 
-    def test_a_parameter_spelled_like_the_object_is_not_it(self):
-        source = a_program("""
-            var q = 1;
-            function f(window) { console.log(window.q); }
-            f({ q: 9 });
-            console.log(q);
-            """)
-        self.assertEqual(folded(source), a_program("""
-            function f(window) {
-              console.log(window.q);
-            }
-            f({ q: 9 });
-            console.log(1);
-            """).rstrip(chr(10)))
+    def test_each_cost_row_folds_to_the_pinned_text(self):
+        for label, (source, expected) in _A_NAME_THAT_IS_NOT_THE_GLOBAL_OBJECT.items():
+            with self.subTest(label):
+                self.assertEqual(folded(source), expected)
 
-    def test_a_name_bound_to_an_object_literal_is_not_it(self):
-        source = a_program("""
-            var q = 1;
-            var w = { q: 9 };
-            console.log(w.q);
-            console.log(q);
-            """)
-        self.assertEqual(folded(source), a_program("""
-            console.log(9);
-            console.log(1);
-            """).rstrip(chr(10)))
 
-    def test_a_name_written_twice_holds_no_value_to_read(self):
-        source = a_program("""
-            var q = 1;
-            var w = globalThis;
-            w = { q: 9 };
-            console.log(w.q);
-            console.log(q);
-            """)
-        self.assertEqual(folded(source), a_program("""
-            var q = 1;
-            var w = globalThis;
-            w = { q: 9 };
-            console.log(w.q);
-            console.log(1);
-            """).rstrip(chr(10)))
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestANameThatIsNotTheGlobalObjectFoldsWithoutChangingBehaviour(TestBase):
+    """
+    The pinned text a cost row folds to is not on its own evidence the fold kept the program's
+    behavior; a reduction to the wrong value is text too. Read each under the script model the fold
+    is written for, so a fold that dropped a live read or moved a value fails here.
+    """
 
-    def test_the_right_of_an_and_is_what_the_name_holds(self):
-        source = a_program("""
-            var q = 1;
-            var w = globalThis && { q: 9 };
-            console.log(w.q);
-            console.log(q);
-            """)
-        self.assertEqual(folded(source), a_program("""
-            var w = globalThis && { q: 9 };
-            console.log(w.q);
-            console.log(1);
-            """).rstrip(chr(10)))
+    def test_each_cost_row_behaves_the_way_the_host_does(self):
+        for label, (source, _) in _A_NAME_THAT_IS_NOT_THE_GLOBAL_OBJECT.items():
+            with self.subTest(label):
+                before, after = before_and_after_in_a_host(source)
+                self.assertEqual(after, before)

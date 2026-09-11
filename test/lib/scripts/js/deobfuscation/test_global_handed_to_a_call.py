@@ -76,35 +76,32 @@ class TestACallHandedTheGlobalObjectReachesEveryGlobal(TestBase):
                 self.assertEqual(after, before)
 
 
-class TestWhatIsNotTheGlobalObjectStillFolds(TestBase):
-    """
-    The cost side. A reference is recorded for every global the file declares at each hand-over, so
-    the two ways of admitting one too many are asked here: a local spelled like the object, and a
-    binding the object does not carry.
-    """
-
-    def test_a_local_spelled_like_the_object_is_not_it(self):
-        source = a_program("""
+#: Cost-side programs whose fold must not admit one reference too many, mapped to the text the fold
+#: must produce. A local spelled like the object is not the object, and a binding the object does not
+#: carry is not reached through it, so each must still fold across the hand-over.
+_WHAT_IS_NOT_THE_GLOBAL_OBJECT = {
+    'a local spelled like the object is not it': (
+        a_program("""
             var q = 1;
             function f(window) { console.log(window); }
             f(0);
             console.log(q);
-            """)
-        self.assertEqual(folded(source), a_program("""
+            """),
+        a_program("""
             function f(window) {
               console.log(window);
             }
             f(0);
             console.log(1);
-            """).rstrip(chr(10)))
-
-    def test_the_object_carries_no_local_of_the_callee(self):
-        source = a_program("""
+            """).rstrip(chr(10)),
+    ),
+    'the object carries no local of the callee': (
+        a_program("""
             function a(g) { return g; }
             function m() { var t = 3; a(globalThis); return t; }
             console.log(m());
-            """)
-        self.assertEqual(folded(source), a_program("""
+            """),
+        a_program("""
             function a(g) {
               return g;
             }
@@ -113,7 +110,37 @@ class TestWhatIsNotTheGlobalObjectStillFolds(TestBase):
               return 3;
             }
             console.log(m());
-            """).rstrip(chr(10)))
+            """).rstrip(chr(10)),
+    ),
+}
+
+
+class TestWhatIsNotTheGlobalObjectStillFolds(TestBase):
+    """
+    The cost side. A reference is recorded for every global the file declares at each hand-over, so
+    the two ways of admitting one too many are asked here: a local spelled like the object, and a
+    binding the object does not carry.
+    """
+
+    def test_each_cost_row_folds_to_the_pinned_text(self):
+        for label, (source, expected) in _WHAT_IS_NOT_THE_GLOBAL_OBJECT.items():
+            with self.subTest(label):
+                self.assertEqual(folded(source), expected)
+
+
+@unittest.skipIf(node_executable() is None, 'node.js is not available')
+class TestWhatIsNotTheGlobalObjectFoldsWithoutChangingBehaviour(TestBase):
+    """
+    The pinned text a cost row folds to says nothing on its own about whether the fold kept the
+    program's behavior: a reduction to the wrong value is text too. Read each under the script model
+    the fold is written for, so a fold that dropped a real read or moved a value fails here.
+    """
+
+    def test_each_cost_row_behaves_the_way_the_host_does(self):
+        for label, (source, _) in _WHAT_IS_NOT_THE_GLOBAL_OBJECT.items():
+            with self.subTest(label):
+                before, after = before_and_after_in_a_host(source)
+                self.assertEqual(after, before)
 
 
 #: A wrapper that reads the global object it is handed only as the `thisArg` of an `apply`/`call` to

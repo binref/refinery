@@ -143,6 +143,24 @@ def deobfuscate_within(source: str, seconds: float) -> str | None:
 
 
 def _normalize_error(stderr: str) -> str:
+    """
+    The error type a nonzero-exit *stderr* names — `TypeError`, `ReferenceError`, and so on — read
+    off the `XxxError: …` line every thrown `Error` prints. Only the type is kept, for the reason
+    `behavior` gives: the message names the offending expression, which a semantics-preserving
+    rewrite may reshape.
+
+    RESOLUTION LIMIT: a program may `throw` a value that is not an `Error` — a string, a number, an
+    object, `null`, `undefined`, a symbol — and such a throw prints no `XxxError:` line, so every one
+    of them collapses to the single token `ERROR` here. Two programs that throw *different* non-Error
+    values are therefore indistinguishable by the error half of `behavior`, and a rewrite that changed
+    which non-Error value is thrown is invisible unless the standard output leading up to the throw
+    also differs. The exposure is narrow — the fuzzer never emits an uncaught non-Error throw, so only
+    a hand-authored ledger entry reaches it — but an entry that must tell two non-Error throws apart
+    asserts on standard output rather than on this token. Parsing the thrown value out of *stderr* is
+    deliberately not attempted: Node renders it in a shape that varies by value and version (an object
+    spans lines, a symbol renders as nothing), so a parse would trade a rare false match for a
+    version-fragile false difference between two runs that threw the very same value.
+    """
     match = _ERROR_RE.search(stderr)
     if match is not None:
         return match.group(1)

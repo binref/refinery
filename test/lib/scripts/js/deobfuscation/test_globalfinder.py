@@ -339,7 +339,25 @@ class TestGlobalFinderInlining(TestJsDeobfuscator):
             " throw new Error('no global'); }"
             " var g = getGlobal(); console.log(g);"
         )
-        self.assertIn('var g = globalThis;', self._deobfuscate(source))
+        self.assertEqual(self._deobfuscate(source), inspect.cleandoc(
+            '''
+            function getGlobal() {
+              return globalThis;
+              if (typeof self !== 'undefined') {
+                return self;
+              }
+              if (typeof window !== 'undefined') {
+                return window;
+              }
+              if (typeof global !== 'undefined') {
+                return global;
+              }
+              throw new Error('no global');
+            }
+            var g = globalThis;
+            console.log(g);
+            '''
+        ))
 
     def test_canonical_umd_getglobal_short_circuit_form_folds(self):
         """

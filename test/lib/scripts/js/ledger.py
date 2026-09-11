@@ -278,6 +278,18 @@ class Reading(Enum):
             return before_and_after_in_a_host(source)
         return before_and_after(source, module=self is Reading.ES_MODULE)
 
+    def behaves(self, source: str) -> Behavior:
+        """
+        What an engine makes of *source* alone under this model — the first half of what `read`
+        returns, computed without deobfuscating. It is the engine-anchor for a pinned behavior: a
+        program's own behavior is a fact about the program and not about the tool, so a ledger entry
+        that misstates it is wrong however the tool behaves, and asserting it outside expected
+        failure is what turns that mistake into a failure rather than one more tracked divergence.
+        """
+        if self is Reading.SCRIPT:
+            return host_behavior(source)
+        return behavior(source, module=self is Reading.ES_MODULE)
+
 
 class Program(NamedTuple):
     """
@@ -295,6 +307,9 @@ class Program(NamedTuple):
 
     def read(self) -> tuple[Behavior, Behavior]:
         return self.reading.read(self.text)
+
+    def behaves(self) -> Behavior:
+        return self.reading.behaves(self.text)
 
     def required(self) -> tuple[Behavior, Behavior]:
         return (self.prints, self.prints)
@@ -318,11 +333,20 @@ def one_expected_failure_per_program(
     """
     def install(entry: type) -> type:
         for label, row in rows.items():
+            slug = label.replace(' ', '_').replace('-', '_')
+
             def test(self, row=row):
                 self.assertEqual(row.read(), row.required())
-            test.__name__ = F'test_{label.replace(" ", "_").replace("-", "_")}_still_behaves_so'
+            test.__name__ = F'test_{slug}_still_behaves_so'
             if hasattr(entry, test.__name__):
                 raise AssertionError(F'{entry.__name__} already holds {test.__name__}')
             setattr(entry, test.__name__, unittest.expectedFailure(test))
+
+            def anchored(self, row=row):
+                self.assertEqual(row.behaves(), row.prints)
+            anchored.__name__ = F'test_{slug}_prints_what_is_pinned'
+            if hasattr(entry, anchored.__name__):
+                raise AssertionError(F'{entry.__name__} already holds {anchored.__name__}')
+            setattr(entry, anchored.__name__, anchored)
         return entry
     return install

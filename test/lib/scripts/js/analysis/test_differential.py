@@ -3778,6 +3778,12 @@ class TestUnaryOperatorFoldCoverage(TestBase):
             'console.log(String(+null));',
             'console.log(String(!{}));',
             'var o = { a: 1 }; console.log(String(delete o.a));',
+            'console.log(typeof 1);',
+            "console.log(typeof 'a');",
+            'console.log(typeof true);',
+            'console.log(String(void 7));',
+            'console.log(String(!null));',
+            'console.log(String(~1e21));',
         ):
             with self.subTest(source=source):
                 self._preserves(source)
