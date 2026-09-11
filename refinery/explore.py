@@ -32,6 +32,7 @@ _AGENT_DETAIL_LIST = [
     'dnrc',
     'dnstr',
     'dump',
+    'dumprel',
     'ef',
     'emit',
     'esc',
