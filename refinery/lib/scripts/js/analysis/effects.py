@@ -1900,8 +1900,9 @@ class EffectModel:
         """
         The global name *node* denotes, when that one name is provably still the built-in, or `None`. A
         name qualifies when the program never binds it, never assigns to it, never writes or updates a
-        property anywhere on it, and exposes no reflection surface through which it could be replaced at
-        runtime.
+        property anywhere on it, and neither exposes a reflection surface through which it could be
+        replaced at runtime nor stores a property on the global object under a runtime key
+        (`SemanticModel.has_opaque_global_write`), which may replace that name's value the same way.
 
         This differs from `intrinsic_of` in *scope of the question*, not in strictness. `intrinsic_of`
         rests on `intrinsics_pristine`, one program-wide flag over a fixed root set, so a single
@@ -1924,7 +1925,7 @@ class EffectModel:
         node = strip_parens(node)
         if not isinstance(node, JsIdentifier):
             return None
-        if self.model.has_reflection_surface():
+        if self.model.has_reflection_surface() or self.model.has_opaque_global_write():
             return None
         if node.name in self._globals_written:
             return None
@@ -2998,10 +2999,11 @@ def _intrinsics_pristine(model: SemanticModel) -> bool:
     """
     Whether the program leaves every trusted intrinsic untouched: it neither reassigns an intrinsic
     root nor writes a property on one, nor shadows one with a binding of its own, nor contains a
-    reflection surface through which an intrinsic could be replaced at runtime. Only then may a call to
-    a registry intrinsic be trusted to behave as specified.
+    reflection surface through which an intrinsic could be replaced at runtime, nor stores a
+    property on the global object under a runtime key, which may replace an intrinsic the same
+    way. Only then may a call to a registry intrinsic be trusted to behave as specified.
     """
-    if model.has_reflection_surface():
+    if model.has_reflection_surface() or model.has_opaque_global_write():
         return False
     if any(name in model.root_scope.bindings for name in _PURE_INTRINSIC_ROOTS):
         return False
@@ -3041,9 +3043,12 @@ def _global_pristine(model: SemanticModel) -> bool:
 
     A key whose value is *not* statically known — `Object[k]` — is deliberately not treated as an install.
     It would deny this trust to nearly every dynamic call, and it buys nothing: a variable key is resolved
-    by substitution in a different pass, never within the one that consumes this answer.
+    by substitution in a different pass, never within the one that consumes this answer. The global
+    object carrying one — `globalThis[k] = v` — is the one computed key that *is* an install for this
+    question: it may give the read property a new value or setter, so `has_opaque_global_write`
+    refuses here.
     """
-    if model.has_reflection_surface():
+    if model.has_reflection_surface() or model.has_opaque_global_write():
         return False
     for node in model.root.walk():
         if isinstance(node, JsMemberExpression) and accessor_install_method(node) is not None:

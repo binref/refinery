@@ -890,6 +890,38 @@ class TestEffectModel(TestBase):
         self.assertFalse(effects.intrinsics_pristine)
         self.assertFalse(effects.summary_of(self._func(ast, 'f')).is_pure)
 
+    def test_opaque_global_write_voids_pristine(self):
+        """
+        A computed write on the global object names no global — so it is no read-naming surface —
+        but it stores a property there, and the stored key may be the name of the intrinsic a call
+        spells. The write fact, not the surface, is what refuses here.
+        """
+        source = (
+            'var k = process.env.KEY || "Math";'
+            ' globalThis[k] = { floor: function () { return 999; } };'
+            ' function f(){ return Math.floor(1.5); }'
+        )
+        ast, effects = self._effects(source)
+        self.assertFalse(effects.intrinsics_pristine)
+        self.assertFalse(effects.summary_of(self._func(ast, 'f')).is_pure)
+
+    def test_opaque_global_write_through_a_name_holding_the_object_voids_pristine(self):
+        source = (
+            'var g = globalThis;'
+            ' var k = process.env.KEY || "Math";'
+            ' g[k] = { floor: function () { return 999; } };'
+            ' function f(){ return Math.floor(1.5); }'
+        )
+        ast, effects = self._effects(source)
+        self.assertFalse(effects.intrinsics_pristine)
+        self.assertFalse(effects.summary_of(self._func(ast, 'f')).is_pure)
+
+    def test_opaque_global_write_voids_global_pristine(self):
+        source = 'var k = process.env.KEY; globalThis[k] = 0; function f(){ return globalThis.Math; }'
+        ast, effects = self._effects(source)
+        self.assertFalse(effects.global_pristine)
+        self.assertFalse(effects.summary_of(self._func(ast, 'f')).is_pure)
+
     def test_locally_shadowed_intrinsic_is_not_trusted(self):
         source = 'function f(){ var Math = { floor: 0 }; return Math.floor; }'
         self.assertFalse(self._summary(source, 'f').is_pure)

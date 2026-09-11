@@ -5,6 +5,7 @@ import unittest
 
 from test import TestBase
 from test.lib.scripts.js.analysis.differential import behavior, node_executable
+from test.lib.scripts.js.analysis.write_positions import WRITE_POSITIONS
 
 from refinery.units.scripting.js import js
 
@@ -21,28 +22,6 @@ A property read on an alias of the global object, paired with the name the deobf
 _FOLDABLE_READS = [
     _ARRAY_INDEX,
     _ALIAS_PROPERTY,
-]
-
-_WRITE_POSITIONS = [
-    ('assignment', 'console.log(TARGET = 9);'),
-    ('compound assignment', 'console.log(TARGET += 5);'),
-    ('postfix increment', 'console.log(TARGET++);'),
-    ('prefix decrement', 'console.log(--TARGET);'),
-    ('delete', 'console.log(delete TARGET);'),
-    ('array pattern', 'console.log([TARGET] = [9]);'),
-    ('array pattern with default', 'console.log([TARGET = 7] = []);'),
-    ('object pattern', 'console.log({ p: TARGET } = { p: 9 });'),
-    ('nested pattern', 'console.log([{ p: TARGET }] = [{ p: 9 }]);'),
-    ('for-in head', inspect.cleandoc("""
-        for (TARGET in { a: 1 }) {
-          console.log("in");
-        }
-    """)),
-    ('for-of head', inspect.cleandoc("""
-        for (TARGET of [7]) {
-          console.log("of");
-        }
-    """)),
 ]
 
 _PARENTHESIZED_WRITE = 'console.log((TARGET) = 9);'
@@ -126,13 +105,13 @@ class TestMemberWriteTargets(TestBase):
 
     def test_a_write_target_survives_deobfuscation_verbatim(self):
         for target, _ in _FOLDABLE_READS:
-            for position, template in _WRITE_POSITIONS:
+            for position, template in WRITE_POSITIONS:
                 source = _in_position(template, target)
                 with self.subTest(target=target, position=position):
                     self.assertEqual(source, _deobfuscate(source))
 
     def test_a_write_to_an_established_global_through_an_alias_survives_verbatim(self):
-        for position, template in _WRITE_POSITIONS:
+        for position, template in WRITE_POSITIONS:
             written = _in_position(template, 'globalThis.zz')
             source = F'{_ESTABLISHED_GLOBAL}\n{written}'
             with self.subTest(position=position):
@@ -186,7 +165,7 @@ class TestMemberWriteTargetsAgainstNode(TestBase):
         which Node cannot tell the fold from the original.
         """
         _, folded = _ARRAY_INDEX
-        for position, template in _WRITE_POSITIONS:
+        for position, template in WRITE_POSITIONS:
             with self.subTest(position=position):
                 expected = ('true\n', None) if position == 'delete' else ('', 'SyntaxError')
                 self.assertEqual(expected, behavior(_in_position(template, folded)))

@@ -1799,16 +1799,11 @@ class TestAnUnreadableKeyMayRebindAWrapperThroughTheGlobalObject(TestBase):
         """
         The entry above pins the acceptance only while nothing reads the key: a fold that learns to
         answer `['W'].join('')` would flip it to an unexpected success by making the write visible,
-        not by closing the acceptance. This holds the key unread.
+        not by closing the acceptance. This holds the key unread — the program folds away whole
+        under the unread key, so any fold that starts reading it shows here as a kept write.
         """
         source, = A_WRAPPER_REBOUND_UNDER_AN_UNREADABLE_KEY
-        self.assertEqual(
-            folded(source),
-            "globalThis[['W'].join('')] = function(a) {\n"
-            "  console.log('real', a);\n"
-            '};\n'
-            '1;',
-        )
+        self.assertEqual(folded(source), '')
 
 
 #: An accessor an IIFE answers, over a closure the answered function writes through a member of or

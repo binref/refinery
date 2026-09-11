@@ -3,6 +3,7 @@ from __future__ import annotations
 import inspect
 
 from test import TestBase
+from test.lib.scripts.js.analysis.write_positions import WRITE_POSITIONS
 
 from refinery.lib.scripts.js.analysis.model import (
     Binding,
@@ -25,6 +26,28 @@ from refinery.lib.scripts.js.model import (
 )
 from refinery.lib.scripts.js.parser import JsParser
 from refinery.lib.scripts.js.synth import JsSynthesizer
+
+
+_GLOBAL_WRITE_ROLES = {
+    'assignment': (False, True),
+    'compound assignment': (True, True),
+    'postfix increment': (True, True),
+    'prefix decrement': (True, True),
+    'delete': (True, True),
+    'array pattern': (False, True),
+    'array pattern with default': (False, True),
+    'object pattern': (False, True),
+    'nested pattern': (False, True),
+    'for-in head': (True, True),
+    'for-of head': (True, True),
+}
+"""
+Each write position of a `globalThis[key]` access, mapped to whether the program holds a
+read-naming surface and whether it stores an opaque global property. Every position stores one —
+the write fact is about the store, not the spelling. The positions that read the old value on the
+way (compound, update, `delete`, loop heads) remain read-naming surfaces; the ones that overwrite
+outright (assignment, destructuring) name nothing and are exempt.
+"""
 
 
 class TestSemanticModel(TestBase):
@@ -837,6 +860,52 @@ class TestSemanticModel(TestBase):
         _, model = self._model('window[key]();')
         self.assertTrue(model.has_reflection_surface())
 
+    def test_a_computed_global_write_names_nothing_but_stores_one(self):
+        """
+        Each position a member expression can be written in, asked both questions the surface split
+        separates: whether the access could *read* a global by a runtime-computed name
+        (`has_reflection_surface`), and whether it *stores* a property on the global object under such
+        a key (`has_opaque_global_write`). Pinning both per row keeps a detection change honest: a
+        walk that loses the site from one fact cannot pass by losing it from both.
+        """
+        for position, template in WRITE_POSITIONS:
+            source = template.replace('TARGET', 'globalThis[key]')
+            with self.subTest(position=position):
+                _, model = self._model(source)
+                self.assertEqual(
+                    (model.has_reflection_surface(), model.has_opaque_global_write()),
+                    _GLOBAL_WRITE_ROLES[position],
+                )
+
+    def test_a_computed_global_read_stores_nothing(self):
+        _, model = self._model('console.log(globalThis[key]); globalThis[key]();')
+        self.assertTrue(model.has_reflection_surface())
+        self.assertFalse(model.has_opaque_global_write())
+
+    def test_a_computed_global_write_through_a_name_holding_the_object_stores_one(self):
+        """
+        The write fact resolves the base through the model — the row that distinguishes it from the
+        spelling-level exemption the read-naming surface grants: `g` is not spelled as the object,
+        but it holds it, and `g[key] = 1` stores a global under a key no spelling sees.
+        """
+        _, model = self._model('var g = globalThis; g[key] = 1;')
+        self.assertFalse(model.has_reflection_surface())
+        self.assertTrue(model.has_opaque_global_write())
+
+    def test_a_statically_keyed_global_write_is_neither_fact(self):
+        """
+        A string-literal key names the global it writes, so the effect model attributes the store to
+        that name; neither fact is needed to distrust it.
+        """
+        _, model = self._model("var g = globalThis; g['q'] = 1; globalThis.q = 2;")
+        self.assertFalse(model.has_reflection_surface())
+        self.assertFalse(model.has_opaque_global_write())
+
+    def test_a_computed_write_on_another_object_stores_no_global(self):
+        _, model = self._model('var o = {}; o[key] = 1;')
+        self.assertFalse(model.has_reflection_surface())
+        self.assertFalse(model.has_opaque_global_write())
+
     def test_static_global_access_is_not_a_reflection_surface(self):
         _, model = self._model("window['x']; self.y;")
         self.assertFalse(model.has_reflection_surface())
@@ -898,6 +967,44 @@ class TestSemanticModel(TestBase):
     def test_global_not_reachable_without_surface(self):
         ast, model = self._model('var x = 1; console.log(x);')
         self.assertFalse(model.reflection_can_reach(model.binding_of(self._decl(ast, model, 'x'))))
+
+    def test_global_reachable_by_an_opaque_global_write(self):
+        """
+        Storing a property on the global object under a runtime key reads nothing, but the stored
+        key may be the name a script-scope binding answers to, so the write can rebind it without a
+        reference the model records — the write-direction half of the reachability question.
+        """
+        ast, model = self._model('var x = 1; globalThis[k] = 2; console.log(x);')
+        self.assertFalse(model.has_reflection_surface())
+        self.assertTrue(model.reflection_can_reach(model.binding_of(self._decl(ast, model, 'x'))))
+
+    def test_local_not_reachable_by_an_opaque_global_write(self):
+        ast, model = self._model('function f(){ var x; } globalThis[k] = 2;')
+        self.assertFalse(model.reflection_can_reach(model.binding_of(self._decl(ast, model, 'x'))))
+
+    def test_a_destructuring_write_to_an_installed_property_is_not_a_read_of_it(self):
+        """
+        The reference points of a function installed as `BASE.key = function` are the reads of that
+        property. A destructuring target writes `BASE.key` without reading it, so it is not one —
+        the case the shared `is_simple_assignment_target` climb added when it replaced the
+        parent-only write-target check.
+        """
+        source = (
+            'var o = {};'
+            ' o.f = function () {};'
+            ' [o.f] = [1];'
+            ' console.log(o.f);'
+        )
+        ast, model = self._model(source)
+        function = next(n for n in ast.walk() if isinstance(n, JsFunctionExpression))
+        read = next(
+            node for node in ast.walk()
+            if isinstance(node, JsMemberExpression)
+            and node.object.name == 'o'
+            and isinstance(node.parent, JsCallExpression)
+        )
+        points = model.object_property_reference_points(function)
+        self.assertEqual(points, [read])
 
     def test_opaque_reflection_reaches_global_through_eval(self):
         ast, model = self._model('var x; eval(payload);')

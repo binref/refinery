@@ -165,10 +165,13 @@ class LivenessModel:
         whose load-time effect the move would strand, no reference reaches it through a global-object
         alias member (`globalThis.x`, which would no longer find it once it leaves the global object),
         it is not exported (an importer reads its value where the module leaves it, which a body local
-        cannot answer), and the program keeps no reflection surface that could read it by name.
+        cannot answer), the program keeps no reflection surface that could read it by name, and the
+        program stores no property on the global object under a runtime key
+        (`SemanticModel.has_opaque_global_write`) — such a write may target the binding's own name,
+        which a relocation would no longer receive.
         Relocating it tightens a pseudo-global into the local it behaves as.
         """
-        if self.model.has_reflection_surface():
+        if self.model.has_reflection_surface() or self.model.has_opaque_global_write():
             return None
         if binding.kind is not BindingKind.VAR or binding.scope is not self.model.root_scope:
             return None

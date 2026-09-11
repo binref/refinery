@@ -813,12 +813,18 @@ class JsReflectionInlining(ScriptLevelTransformer):
         Each inline splices in code that was a string, so this pass *can* reveal facts its held model
         predates — `eval('Math.floor = f')` makes a write visible that no pre-inline model could see. What
         makes holding the model sound is the precondition rather than the absence of such reveals: this
-        transform only ever does work on a script that has a reflective surface, and `has_reflection_surface`
+        transform only ever does work on a script that has a reflective surface — the eval, `Function`,
+        timer, and constructor-chain sites it inlines are themselves read surfaces — and
+        `has_reflection_surface`
         being true withdraws trust from every intrinsic (see
         `refinery.lib.scripts.js.analysis.effects.EffectModel.trusted_intrinsic`). No fold against a
         built-in can be admitted anywhere inside this window, so a write revealed here cannot be acted on
         before the pin is released and the model rebuilt. Inlining can only turn that flag off, never on,
-        which leaves the held answer the stricter one.
+        which leaves the held answer the stricter one. The write-side refusal
+        (`SemanticModel.has_opaque_global_write`) does not share that never-on property — a splice can
+        write one (`eval('globalThis[k] = f')`) — but it does not need it: while the read surface
+        stands, the same folds are refused under either fact, and the work sites keep the read
+        surface standing for as long as there is work to do.
 
         The retirement of consumed temporaries is the one decision that argument cannot carry — whether a
         temporary is still named is a structural fact the splices themselves change — so it runs after the
@@ -1285,8 +1291,12 @@ class JsReflectionInlining(ScriptLevelTransformer):
         the value the name provably holds (`SemanticModel.singular_value`, which already declines a
         reassigned or dynamically rebindable binding), taken only where that value is established before
         *node* (`DominanceModel.binding_established_before`) so the invocation cannot read it out of its
-        temporal dead zone. The body is inlined at *node*, never the construction relocated, so a
-        `Function` reference in the initializer keeps its original scope; retiring the dead temporary is
+        temporal dead zone — and not at all for a script-scope name while the program stores a property
+        on the global object under a runtime key (`SemanticModel.has_opaque_global_write`): under the
+        script execution model such a name is a property of that object, the one such a write may
+        rebind, so its spelled value is not what the call runs. The body is inlined at *node*, never the
+        construction relocated, so a `Function` reference in the initializer keeps its original scope;
+        retiring the dead temporary is
         left to `_retire_consumed_temporaries` on the model rebuilt after the pass.
         """
         callee = strip_parens(node.callee)
@@ -1298,6 +1308,12 @@ class JsReflectionInlining(ScriptLevelTransformer):
             return None
         cache = model_cache(self, root)
         binding = cache.model.resolve(callee)
+        if (
+            binding is not None
+            and binding.scope is cache.model.root_scope
+            and cache.model.has_opaque_global_write()
+        ):
+            return None
         value = strip_parens(cache.model.singular_value(binding))
         if not isinstance(value, (JsCallExpression, JsNewExpression)):
             return None

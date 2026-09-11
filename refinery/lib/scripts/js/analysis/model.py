@@ -1623,20 +1623,6 @@ def _aliased_parameter_positions(member: JsMemberExpression, count: int) -> rang
     return range(index, index + 1)
 
 
-def _is_member_assignment_target(member: JsMemberExpression) -> bool:
-    """
-    Whether *member* is the target of a plain `=` assignment (`m = x`), the one position where a member
-    access is written without its prior value being read. A compound assignment (`m += x`) or an update
-    (`m++`) reads the value before writing, so neither is counted here.
-    """
-    parent = member.parent
-    return (
-        isinstance(parent, JsAssignmentExpression)
-        and parent.operator == '='
-        and strip_parens(parent.left) is member
-    )
-
-
 def _is_a_named_global_object_base(node: Node | None) -> bool:
     """
     Whether *node* denotes the global object by one of the names written for it, which is
@@ -1655,8 +1641,12 @@ def _is_reflective_member(member: JsMemberExpression) -> bool:
     statically named property is a surface exactly when the name is a reflective intrinsic:
     `window.eval`, `g['Function']`, and the same under any unrecognized base, since the base may
     alias the global object. A computed access with a non-literal key is a surface when its base
-    is a global-object alias (`window[expr]`), through which any global can be named at runtime;
-    on any other base it designates a property of one specific object and is not a surface.
+    is a global-object alias (`window[expr]`), through which any global can be *read* at runtime;
+    the one form that names no global is a plain write (`window[expr] = x`, the one position where
+    the access is written without its prior value being read — `is_simple_assignment_target`),
+    which stores a property and consults nothing, and is counted by
+    `SemanticModel.has_opaque_global_write` instead. On any other base a computed access
+    designates a property of one specific object and is not a surface.
 
     A `constructor` key whose yield flows onward is one more spelling of the read: what it hands
     out is a constructor — off a function value, the `Function` intrinsic itself — so an alias
@@ -1671,7 +1661,9 @@ def _is_reflective_member(member: JsMemberExpression) -> bool:
             if prop.value in REFLECTIVE_INTRINSICS:
                 return True
             return prop.value == 'constructor' and _prototype_surface_escapes(member)
-        return is_global_object_base(member.object)
+        if not is_global_object_base(member.object):
+            return False
+        return not is_simple_assignment_target(member)
     if not isinstance(prop, JsIdentifier):
         return False
     if prop.name in REFLECTIVE_INTRINSICS:
@@ -1749,6 +1741,8 @@ class SemanticModel:
         self._binding_of: dict[int, Binding] = {}
         self._reflection_surface: bool | None = None
         self._opaque_surface_sites: list[Node] | None = None
+        self._opaque_global_write: bool | None = None
+        self._recording_def_use = False
         self._dispatch_surface_reached: bool | None = None
         self._function_direct_eval_sites: dict[int, list[Node]] = {}
         self._function_unread_source_sites: dict[int, list[Node]] = {}
@@ -2135,7 +2129,7 @@ class SemanticModel:
             name = member_property_name(access)
             if name is not None and name != key:
                 continue
-            if _is_member_assignment_target(access):
+            if is_simple_assignment_target(access):
                 continue
             points.append(access)
         points.extend(
@@ -2340,14 +2334,59 @@ class SemanticModel:
         by name at runtime: a value-read of the `eval` or `Function` intrinsic in any form — a
         direct or indirect call, an alias (`var e = eval`), a comma sequence (`(0, eval)`), or a
         member access (`window.eval`, `g['Function']`) — a string-valued timer, a dynamic property
-        access on the global object (`window[expr]`), a `with` statement, or a span of source this
+        read on the global object (`window[expr]`), a `with` statement, or a span of source this
         model never read, which may spell a name nothing here records. Computed conservatively
         (over-reporting is safe): while any such surface remains, a dead global must not be removed,
-        because reflective code may read it.
+        because reflective code may read it. A computed global *write* names no global
+        (`has_opaque_global_write` owns that question) and is not counted here.
         """
         self._ensure_reflection_detected()
         assert self._reflection_surface is not None
         return self._reflection_surface
+
+    def has_opaque_global_write(self) -> bool:
+        """
+        Whether the program stores a property on the global object under a key only the runtime
+        resolves (`window[expr] = x`), so an intrinsic or a script-scope name may hold something
+        else than what the text spells once the program runs. The read-naming question
+        `has_reflection_surface` answers is unaffected by such a write — storing a property names
+        nothing and runs nothing — but the *replacement* questions are not: a written key may be
+        `Math`, `String`, or the name a top-level `var` carries, so a consumer that trusts an
+        intrinsic by name, or that a script-scope binding keeps its spelled value, refuses while
+        this holds.
+
+        Detection is model-aware, distinct from the spelling-level exemption
+        `_is_reflective_member` grants the same sites: a base is the global object here whenever
+        the model resolves it to one (`_holds_the_global_object`), so a local holding the object
+        (`var g = globalThis; g[k] = 1`) is counted, not only its spelled names — the alias would
+        otherwise store a global under a key the spelling never saw. Every store form counts
+        (`is_member_write_target`: plain and compound assignment, update, `delete`, `for-in`/`for-of`
+        heads, destructuring patterns), so the fact stands on its own wherever a consumer consults it.
+        Computed lazily and memoized,
+        but never while `_record_def_use_references` is still recording: that walk is what fills the
+        `binding.writes` list `binding_values` reads, so an answer taken mid-walk would depend on how
+        far it had got; asked there, the conservative `True` is answered instead of a partial fact.
+        The alias-recording walks that follow consult only value facts those first walks froze, so
+        the answer they get is the final one.
+        """
+        if self._recording_def_use:
+            return True
+        cached = self._opaque_global_write
+        if cached is None:
+            cached = any(
+                self._is_opaque_global_write(member)
+                for member in self.root.walk()
+                if isinstance(member, JsMemberExpression)
+            )
+            self._opaque_global_write = cached
+        return cached
+
+    def _is_opaque_global_write(self, member: JsMemberExpression) -> bool:
+        if not member.computed or isinstance(member.property, JsStringLiteral):
+            return False
+        if not is_member_write_target(member):
+            return False
+        return self._holds_the_global_object(member.object)
 
     def reflection_can_reach(self, binding: Binding) -> bool:
         """
@@ -2355,17 +2394,19 @@ class SemanticModel:
         records. Derived over the precise dynamic-scope facts. A global is reachable through any
         reflective surface — `eval`, `Function`, a string timer, dynamic global access, `with` — all
         of which run in the global scope, so it defers to the whole-program
-        `has_reflection_surface`. A function-local is reachable only from within its own function
-        and only by name: a `with` body that names it (a `dynamic_references` entry), a direct
-        `eval` in the function (`local_reachable_by_direct_eval`), or a span of the function this
-        model never read (`unread_source_can_reach`), which may spell the name where nothing records
-        that it does. A `with` that never names it cannot reach it, and reflective code in the
-        global scope cannot name a local — so the local answer is exact, while the global one stays
+        `has_reflection_surface`, and by an opaque global write rebinding its name
+        (`has_opaque_global_write`), which no reference records either. A function-local is
+        reachable only from within its own function and only by name: a `with` body that names
+        it (a `dynamic_references` entry), a direct `eval` in the function
+        (`local_reachable_by_direct_eval`), or a span of the function this model never read
+        (`unread_source_can_reach`), which may spell the name where nothing records that it does.
+        A `with` that never names it cannot reach it, and reflective code in the global scope
+        cannot name a local — so the local answer is exact, while the global one stays
         conservative (any surface).
         """
         owner = binding.scope.var_scope
         if owner is None or owner.kind is ScopeKind.SCRIPT:
-            return self.has_reflection_surface()
+            return self.has_reflection_surface() or self.has_opaque_global_write()
         return (
             bool(binding.dynamic_refs)
             or self._function_has_direct_eval(owner.node)
@@ -2641,8 +2682,10 @@ class SemanticModel:
         return bool(self._opaque_reflection_sites())
 
     def _build_def_use(self):
+        self._recording_def_use = True
         self._create_implicit_globals()
         self._record_def_use_references()
+        self._recording_def_use = False
         self._record_arguments_alias_references()
         self._record_global_object_alias_references()
         self._record_exports()
@@ -3249,7 +3292,9 @@ class SemanticModel:
         refused while a reflection surface stands, since reflected code can replace that intrinsic
         with a forwarder no matter which function the name holds — and this subsumes every way
         reflection could reach the target binding itself — and likewise while text can reach the
-        prototype surface the dispatch walks (`_dispatch_surface_reachable`); a named target is
+        prototype surface the dispatch walks (`_dispatch_surface_reachable`) or stores a property
+        on the global object under a runtime key (`has_opaque_global_write`), which may replace
+        the intrinsic the same way; a named target is
         further refused when the program installs properties through it
         (`_properties_installed_through`), which can shadow the intrinsic on the object alone.
         """
@@ -3263,7 +3308,7 @@ class SemanticModel:
             return None
         if not parent.arguments or strip_parens(parent.arguments[0]) is not node:
             return None
-        if self.has_reflection_surface():
+        if self.has_reflection_surface() or self.has_opaque_global_write():
             return False
         if self._dispatch_surface_reachable():
             return False
